@@ -19,6 +19,7 @@ from ui.generic_table import render_generic_table
 from ui.overview_table import render_data_freshness
 from ui.bank_detail import render_bank_detail
 from ui.watchlist import render_watchlist_sidebar
+from ui.deposit_lookup import render_deposit_lookup
 
 # ── Page config ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -46,14 +47,19 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Tab navigation (selectbox for 11 tabs) ──────────────────────────────
-tab_index = st.sidebar.selectbox(
+# ── Tab navigation ──────────────────────────────────────────────────────
+ALL_VIEWS = TAB_LABELS + ["─── Tools ───", "🔍 Deposit Lookup"]
+view_index = st.sidebar.selectbox(
     "📊 View",
-    options=list(range(len(TABS))),
-    format_func=lambda i: TAB_LABELS[i],
+    options=list(range(len(ALL_VIEWS))),
+    format_func=lambda i: ALL_VIEWS[i],
     key="tab_nav",
 )
-current_tab = TABS[tab_index]
+
+# Determine if this is a table tab or a special page
+is_deposit_lookup = ALL_VIEWS[view_index] == "🔍 Deposit Lookup"
+is_separator = ALL_VIEWS[view_index].startswith("───")
+current_tab = TABS[view_index] if view_index < len(TABS) else None
 
 st.sidebar.markdown("---")
 
@@ -172,8 +178,16 @@ metrics_df = pd.DataFrame(all_metrics)
 # ── Main content area ───────────────────────────────────────────────────
 if "detail_ticker" in st.session_state and st.session_state.detail_ticker:
     render_bank_detail(st.session_state.detail_ticker, metrics_df)
-else:
-    # Header
+
+elif is_deposit_lookup:
+    # ── DEPOSIT LOOKUP PAGE ──────────────────────────────────────────
+    render_deposit_lookup()
+
+elif is_separator:
+    st.info("Select a view from the dropdown.")
+
+elif current_tab:
+    # ── TABLE TABS ───────────────────────────────────────────────────
     st.markdown(
         '<div class="dashboard-header">'
         f"<h1>{current_tab['title']}</h1>"
@@ -184,19 +198,16 @@ else:
         unsafe_allow_html=True,
     )
 
-    # Data freshness
     fdic_ages = {t: cache.fdic_age(t) for t in watchlist}
     sec_ages = {t: cache.sec_age(t) for t in watchlist}
     render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
 
     st.markdown("")
 
-    # Render table for current tab
     result_df = render_generic_table(
         all_metrics, current_tab["columns"], table_key=current_tab["key"]
     )
 
-    # Bank detail selector
     if result_df is not None and not result_df.empty:
         st.markdown("---")
         selected_bank = st.selectbox(
