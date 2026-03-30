@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+cache.db
+*.db
+.streamlit/secrets.toml
+watchlist.json
+.venv/
+venv/

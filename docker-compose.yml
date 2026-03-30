@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      # IBKR TWS/Gateway connection — point to host machine or remote server
+      - IBKR_HOST=${IBKR_HOST:-host.docker.internal}
+      - IBKR_PORT=${IBKR_PORT:-7497}
+      - IBKR_CLIENT_ID=${IBKR_CLIENT_ID:-1}
+      # SEC requires a User-Agent header with contact info
+      - SEC_USER_AGENT=${SEC_USER_AGENT:-BankValuationDashboard admin@company.com}
+      # Refresh settings
+      - PRICE_REFRESH_SECONDS=${PRICE_REFRESH_SECONDS:-5}
+      - FUNDAMENTAL_CACHE_TTL_HOURS=${FUNDAMENTAL_CACHE_TTL_HOURS:-24}
+    volumes:
+      # Persist cache and watchlist across container restarts
+      - ./data_persist:/app/cache.db
+      - ./data_persist/watchlist.json:/app/watchlist.json
+    restart: unless-stopped
+    # On Linux, use host networking to reach TWS on localhost
+    # Uncomment the line below and comment out the ports section above:
+    # network_mode: host
