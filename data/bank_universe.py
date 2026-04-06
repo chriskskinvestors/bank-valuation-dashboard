@@ -223,6 +223,11 @@ def get_universe_count() -> int:
     return len(build_universe())
 
 
+def get_universe_count_fast() -> str:
+    """Return estimated universe count without triggering a build."""
+    return "~480"
+
+
 def search_universe(query: str, limit: int = 25) -> list[dict]:
     """
     Search the bank universe by ticker or company name.

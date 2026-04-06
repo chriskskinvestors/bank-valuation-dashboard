@@ -9,7 +9,7 @@ import pandas as pd
 from data.bank_mapping import get_name, get_cik
 from data.sec_client import get_filing_info
 from data.filing_summarizer import fetch_filing_text, find_press_release_url, summarize_filing
-from data.bank_universe import get_universe_count
+from data.bank_universe import get_universe_count_fast
 
 
 def render_home(all_metrics: list[dict], watchlist: list[str]):
@@ -36,7 +36,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
                 {universe_count} banks in universe
             </p>
         </div>
-        """.format(watchlist_count=len(watchlist), universe_count=get_universe_count()),
+        """.format(watchlist_count=len(watchlist), universe_count=get_universe_count_fast()),
         unsafe_allow_html=True,
     )
 

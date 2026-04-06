@@ -40,6 +40,8 @@ DEFAULT_WATCHLIST = [
     "ISBA", "BANC", "FLG", "VLY", "KEY", "HBAN", "ZION",
 ]
 
+DEFAULT_PORTFOLIO = []  # User populates via sidebar
+
 # ---------------------------------------------------------------------------
 # Metric registry
 # ---------------------------------------------------------------------------
