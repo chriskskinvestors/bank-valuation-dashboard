@@ -96,18 +96,18 @@ def get_bg_color(key: str, value) -> str:
 
     if rule == "higher_better":
         if value >= good:
-            return "background-color: rgba(0,200,83,0.15)"
+            return "background-color: #e8f5e9; color: #1b5e20"
         elif value >= warn:
-            return "background-color: rgba(255,214,0,0.15)"
+            return "background-color: #fff8e1; color: #e65100"
         else:
-            return "background-color: rgba(255,23,68,0.15)"
+            return "background-color: #ffebee; color: #b71c1c"
     elif rule == "lower_better":
         if value <= good:
-            return "background-color: rgba(0,200,83,0.15)"
+            return "background-color: #e8f5e9; color: #1b5e20"
         elif value <= warn:
-            return "background-color: rgba(255,214,0,0.15)"
+            return "background-color: #fff8e1; color: #e65100"
         else:
-            return "background-color: rgba(255,23,68,0.15)"
+            return "background-color: #ffebee; color: #b71c1c"
 
     return ""
 

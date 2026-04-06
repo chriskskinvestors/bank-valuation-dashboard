@@ -19,18 +19,18 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     st.markdown(
         """
         <div style="
-            background: linear-gradient(135deg, #1a237e 0%, #0d47a1 50%, #01579b 100%);
+            background: #1a73e8;
             padding: 2.5rem 2rem;
-            border-radius: 12px;
+            border-radius: 10px;
             margin-bottom: 1.5rem;
         ">
-            <h1 style="color: white; margin: 0; font-size: 2.2rem;">
+            <h1 style="color: white; margin: 0; font-size: 2.2rem; font-weight: 700;">
                 KSK Investors
             </h1>
-            <p style="color: #b3d4fc; margin: 0.5rem 0 0 0; font-size: 1.1rem;">
+            <p style="color: rgba(255,255,255,0.85); margin: 0.5rem 0 0 0; font-size: 1.1rem;">
                 Bank Valuation & Analysis Platform
             </p>
-            <p style="color: #90caf9; margin: 0.3rem 0 0 0; font-size: 0.85rem;">
+            <p style="color: rgba(255,255,255,0.7); margin: 0.3rem 0 0 0; font-size: 0.85rem;">
                 Live FDIC · SEC EDGAR · IBKR &nbsp;|&nbsp;
                 {watchlist_count} banks in watchlist &nbsp;·&nbsp;
                 {universe_count} banks in universe
@@ -203,15 +203,15 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
                 col.markdown(
                     f"""
                     <div style="
-                        background: rgba(255,255,255,0.05);
-                        border: 1px solid rgba(255,255,255,0.1);
+                        background: #f8f9fa;
+                        border: 1px solid #e0e0e0;
                         border-radius: 8px;
                         padding: 1.2rem;
                         height: 140px;
                     ">
                         <div style="font-size: 1.5rem; margin-bottom: 0.3rem;">{icon}</div>
-                        <div style="font-weight: 600; margin-bottom: 0.3rem;">{title}</div>
-                        <div style="color: #aaa; font-size: 0.8rem;">{desc}</div>
+                        <div style="font-weight: 600; margin-bottom: 0.3rem; color: #1a1a1a;">{title}</div>
+                        <div style="color: #666; font-size: 0.8rem;">{desc}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
