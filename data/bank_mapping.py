@@ -76,6 +76,13 @@ BANK_MAP = {
     "KEY":   {"name": "KeyCorp",                            "fdic_cert": 17534,  "cik": 91576},
     "HBAN":  {"name": "Huntington Bancshares",              "fdic_cert": 6560,   "cik": 49196},
     "ZION":  {"name": "Zions Bancorporation",               "fdic_cert": 2270,   "cik": 109380},
+    "FNB":   {"name": "FNB Corp.",                          "fdic_cert": 2107,   "cik": 37808},
+    "OZK":   {"name": "Bank OZK",                           "fdic_cert": 110,    "cik": 1569650},
+    "EWBC":  {"name": "East West Bancorp",                  "fdic_cert": 32469,  "cik": 806279},
+    "CATY":  {"name": "Cathay General Bancorp",             "fdic_cert": 18503,  "cik": 861842},
+    "COLB":  {"name": "Columbia Banking System",            "fdic_cert": 17266,  "cik": 1166928},
+    "BOKF":  {"name": "BOK Financial Corp.",                "fdic_cert": 4214,   "cik": 875357},
+    "BOH":   {"name": "Bank of Hawaii Corp.",               "fdic_cert": 18053,  "cik": 46640},
 
     # ── Large US banks (for reference/comparison) ──────────────────────
     "JPM":   {"name": "JPMorgan Chase & Co.",               "fdic_cert": 628,    "cik": 19617},

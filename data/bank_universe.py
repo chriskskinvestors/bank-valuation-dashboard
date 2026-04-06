@@ -1,13 +1,12 @@
 """
 Master bank universe — all publicly traded and OTC-traded US banks.
 
-Builds the universe by cross-referencing:
-  - SEC EDGAR company_tickers_exchange.json (all public companies with tickers)
-  - FDIC institutions API (all FDIC-insured banks with holding company names)
+Two-phase discovery:
+  Phase 1: Cross-reference SEC company names with FDIC holding company names
+  Phase 2: For remaining candidates with bank-like names, verify SIC code
+           via EDGAR submissions API (6020-6036 = commercial banks / savings)
 
 The universe is cached for 24 hours via Streamlit's @st.cache_data.
-Individual lookups for banks not in the prebuilt universe fall back to
-the dynamic resolve_ticker() function in bank_mapping.py.
 """
 
 import time
@@ -15,54 +14,41 @@ import requests
 import streamlit as st
 
 SEC_HEADERS = {"User-Agent": "BankValuationDashboard admin@company.com"}
+BANK_SIC_CODES = {"6020", "6021", "6022", "6035", "6036", "6710", "6712"}
+BANK_NAME_KEYWORDS = {
+    "BANK", "BANCORP", "BANCSHARES", "BANC", "SAVINGS", "THRIFT",
+    "FINANCIAL", "BK ", "NATIONAL ASSN",
+}
 
-# ETF/ETP tickers from bank issuers that aren't actual bank stocks
-_ETF_TICKERS = {
+# ETF/ETP tickers from bank issuers
+_SKIP_TICKERS = {
     "BERZ", "BNKD", "BNKU", "BULZ", "CARD", "CARU", "CONL",
     "FLBL", "FLRT", "HERD", "NRGD", "NRGU", "OILK", "TSLZ",
     "FNGG", "FNGO", "HIBL", "HIBS", "WEBL", "WEBS", "ZSL",
-    "BACRP",  # ETN
+    "BACRP",
 }
 
 
-def _clean_name(n: str) -> str:
+def _clean(n: str) -> str:
     """Normalize a company name for matching."""
     n = n.upper()
     for s in [", INC.", ", INC", " INC.", " INC", " CORP.", " CORP",
               " CO.", " CO", " LTD.", " LTD", "/DE", "/MD", "/NJ",
               "/RI", "/PA", "/OH", "/NC", "/NY", "/VA", "/CA",
               "/WI", "/MI", "/MN", "/TX", "/FL", "/GA", "/IL",
-              " N.A.", " NA", ".", ","]:
+              " N.A.", " NA", ".", ",", "&"]:
         n = n.replace(s, "")
     return n.strip()
 
 
-@st.cache_data(ttl=86400, show_spinner="Building bank universe...")
-def build_universe() -> dict[str, dict]:
-    """
-    Build the full universe of publicly traded US banks.
-
-    Returns dict: ticker -> {name, cik, fdic_cert, exchange}
-    """
-    # ── Step 1: All SEC public companies ─────────────────────────────────
-    try:
-        resp = requests.get(
-            "https://www.sec.gov/files/company_tickers_exchange.json",
-            headers=SEC_HEADERS, timeout=15,
-        )
-        resp.raise_for_status()
-        sec_rows = resp.json().get("data", [])
-    except Exception as e:
-        print(f"[Universe] SEC fetch error: {e}")
-        sec_rows = []
-
-    # ── Step 2: All FDIC-insured institutions ────────────────────────────
+def _fetch_fdic_banks() -> dict[str, dict]:
+    """Fetch all FDIC institutions for the latest quarter and build HC lookup."""
     fdic_banks = []
     offset = 0
     while True:
         try:
             params = {
-                "filters": "ACTIVE:1",
+                "filters": "REPDTE:20251231",
                 "fields": "CERT,NAME,NAMEHCR,ASSET",
                 "sort_by": "ASSET",
                 "sort_order": "DESC",
@@ -92,67 +78,136 @@ def build_universe() -> dict[str, dict]:
         except Exception:
             break
 
-    # ── Step 3: Build HC name -> largest cert lookup ─────────────────────
-    hc_lookup = {}  # cleaned HC name -> {cert, asset}
+    # Deduplicate: HC name -> largest bank cert
+    hc_lookup = {}
     for b in fdic_banks:
         hc = b["namehcr"].upper().strip()
         if not hc or len(hc) < 3:
             continue
-        hc_clean = _clean_name(hc)
-        if hc_clean not in hc_lookup or b["asset"] > hc_lookup[hc_clean]["asset"]:
-            hc_lookup[hc_clean] = b
+        if hc not in hc_lookup or b["asset"] > hc_lookup[hc]["asset"]:
+            hc_lookup[hc] = b
+    return hc_lookup
 
-    # ── Step 4: Cross-reference SEC tickers with FDIC holding companies ──
+
+def _fetch_sec_companies() -> list[list]:
+    """Fetch all SEC public companies with tickers."""
+    try:
+        resp = requests.get(
+            "https://www.sec.gov/files/company_tickers_exchange.json",
+            headers=SEC_HEADERS, timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", [])
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=86400, show_spinner="Building bank universe...")
+def build_universe() -> dict[str, dict]:
+    """
+    Build the full universe of publicly traded US banks (~450-500 banks).
+
+    Returns dict: ticker -> {name, cik, fdic_cert, exchange}
+    """
+    sec_rows = _fetch_sec_companies()
+    hc_lookup = _fetch_fdic_banks()
+
     universe = {}
+
+    # ── Phase 1: Strong name matching ────────────────────────────────────
     for row in sec_rows:
         cik, name, ticker, exchange = row
-        if not ticker:
+        if not ticker or not name:
             continue
         ticker = ticker.upper()
-
-        # Skip preferred shares, warrants, ETFs/ETNs
-        if any(c in ticker for c in ["-", "+"]):
+        if any(c in ticker for c in ["-", "+"]) or len(ticker) > 5:
             continue
-        if ticker in _ETF_TICKERS:
-            continue
-        if len(ticker) > 5:  # Most bank tickers are 1-5 chars
+        if ticker in _SKIP_TICKERS:
             continue
 
-        sec_clean = _clean_name(name)
+        sec_clean = _clean(name)
 
-        # Find best FDIC match
-        best_cert = None
-        best_score = 0
+        for hc_raw, bank_info in hc_lookup.items():
+            hc_clean = _clean(hc_raw)
 
-        for hc_clean, bank_info in hc_lookup.items():
+            # Exact match
             if sec_clean == hc_clean:
-                best_cert = bank_info["cert"]
-                best_score = 100
+                universe[ticker] = {
+                    "name": name.title() if name.isupper() else name,
+                    "cik": int(cik),
+                    "fdic_cert": bank_info["cert"],
+                    "exchange": exchange or "OTC",
+                }
                 break
 
-            # Require both names to be long enough for prefix matching
-            min_len = min(len(sec_clean), len(hc_clean))
-            if min_len < 8:
+            # Strong prefix match (both names >= 8 chars, >= 65% overlap)
+            if len(sec_clean) >= 8 and len(hc_clean) >= 8:
+                if hc_clean.startswith(sec_clean) or sec_clean.startswith(hc_clean):
+                    overlap = min(len(sec_clean), len(hc_clean))
+                    ratio = overlap / max(len(sec_clean), len(hc_clean))
+                    if ratio >= 0.65:
+                        universe[ticker] = {
+                            "name": name.title() if name.isupper() else name,
+                            "cik": int(cik),
+                            "fdic_cert": bank_info["cert"],
+                            "exchange": exchange or "OTC",
+                        }
+                        break
+
+    # ── Phase 2: SIC code verification for bank-named candidates ─────────
+    candidates = []
+    for row in sec_rows:
+        cik, name, ticker, exchange = row
+        if not ticker or not name:
+            continue
+        ticker = ticker.upper()
+        if ticker in universe:
+            continue
+        if any(c in ticker for c in ["-", "+"]) or len(ticker) > 5:
+            continue
+        if ticker in _SKIP_TICKERS:
+            continue
+
+        name_upper = name.upper()
+        if any(kw in name_upper for kw in BANK_NAME_KEYWORDS):
+            candidates.append({
+                "cik": int(cik), "name": name,
+                "ticker": ticker, "exchange": exchange,
+            })
+
+    for c in candidates:
+        try:
+            time.sleep(0.12)  # SEC rate limit: 10 req/sec
+            cik_str = str(c["cik"]).zfill(10)
+            resp = requests.get(
+                f"https://data.sec.gov/submissions/CIK{cik_str}.json",
+                headers=SEC_HEADERS, timeout=8,
+            )
+            if resp.status_code != 200:
+                continue
+            sic = resp.json().get("sic", "")
+            if sic not in BANK_SIC_CODES:
                 continue
 
-            if hc_clean.startswith(sec_clean):
-                score = len(sec_clean) / len(hc_clean) * 90
-            elif sec_clean.startswith(hc_clean):
-                score = len(hc_clean) / len(sec_clean) * 90
-            else:
-                continue
+            # Confirmed bank — try to find FDIC cert
+            fdic_cert = None
+            name_clean = _clean(c["name"])
+            first_word = name_clean.split()[0] if name_clean else ""
+            if first_word and len(first_word) >= 4:
+                for hc_raw, bank_info in hc_lookup.items():
+                    hc_clean = _clean(hc_raw)
+                    if hc_clean.startswith(first_word) or first_word in hc_clean.split():
+                        fdic_cert = bank_info["cert"]
+                        break
 
-            if score > best_score:
-                best_cert = bank_info["cert"]
-                best_score = score
-
-        if best_cert and best_score >= 65:
-            universe[ticker] = {
-                "name": name.title() if name.isupper() else name,
-                "cik": int(cik),
-                "fdic_cert": best_cert,
-                "exchange": exchange or "OTC",
+            universe[c["ticker"]] = {
+                "name": c["name"].title() if c["name"].isupper() else c["name"],
+                "cik": c["cik"],
+                "fdic_cert": fdic_cert,
+                "exchange": c["exchange"] or "OTC",
             }
+        except Exception:
+            continue
 
     return universe
 
@@ -171,7 +226,6 @@ def get_universe_count() -> int:
 def search_universe(query: str, limit: int = 25) -> list[dict]:
     """
     Search the bank universe by ticker or company name.
-
     Returns list of {ticker, name, cik, fdic_cert, exchange}.
     """
     universe = build_universe()
