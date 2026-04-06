@@ -64,15 +64,22 @@ def render_watchlist_sidebar(st):
 
     watchlist = load_watchlist()
 
-    # Add ticker
-    col1, col2 = st.sidebar.columns([3, 1])
-    new_ticker = col1.text_input("Add ticker", key="add_ticker_input", label_visibility="collapsed", placeholder="Add ticker...")
-    if col2.button("+", key="add_btn"):
-        if new_ticker:
+    # ── Add ticker ────────────────────────────────────────────────────────
+    # Use a form so the text input value is preserved when the button is clicked
+    with st.sidebar.form("add_ticker_form", clear_on_submit=True):
+        col1, col2 = st.columns([3, 1])
+        new_ticker = col1.text_input(
+            "Add ticker",
+            label_visibility="collapsed",
+            placeholder="Add ticker...",
+            key="add_ticker_input",
+        )
+        submitted = col2.form_submit_button("+")
+        if submitted and new_ticker:
             watchlist = add_ticker(new_ticker)
             st.rerun()
 
-    # Bulk import
+    # ── Bulk import ───────────────────────────────────────────────────────
     with st.sidebar.expander("Bulk import/export"):
         bulk_text = st.text_area(
             "Paste tickers (comma separated)",
@@ -84,7 +91,7 @@ def render_watchlist_sidebar(st):
             watchlist = bulk_import(bulk_text)
             st.rerun()
 
-    # Current watchlist with remove buttons
+    # ── Current watchlist with remove buttons ─────────────────────────────
     st.sidebar.markdown(f"**{len(watchlist)} banks**")
     remove_target = None
     for ticker in watchlist:
