@@ -36,10 +36,16 @@ CUSTOM_CSS = """
     section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
         font-size: 1rem !important;
     }
-    /* Ticker list in sidebar */
-    section[data-testid="stSidebar"] code {
-        font-size: 0.95rem !important;
+    /* Ticker list in sidebar — match Watchlist heading size, tight spacing */
+    section[data-testid="stSidebar"] p code,
+    section[data-testid="stSidebar"] code[class*="emotion"] {
+        font-size: 13px !important;
         font-weight: 600 !important;
+        padding: 1px 4px !important;
+    }
+    /* Reduce vertical gap between ticker rows */
+    section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
+        margin-bottom: -12px !important;
     }
 
     /* Header styling — compact */
