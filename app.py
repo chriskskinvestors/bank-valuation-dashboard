@@ -70,6 +70,14 @@ current_tab = TABS[tab_offset] if 0 <= tab_offset < len(TABS) else None
 
 st.sidebar.markdown("---")
 
+# Refresh button — clears all cached data (FDIC, SEC, universe)
+if st.sidebar.button("🔄 Refresh All Data", use_container_width=True):
+    st.cache_data.clear()
+    cache.clear_all()
+    st.rerun()
+
+st.sidebar.markdown("---")
+
 # IBKR connection control
 st.sidebar.subheader("IBKR Connection")
 ibkr = get_ibkr_client()
