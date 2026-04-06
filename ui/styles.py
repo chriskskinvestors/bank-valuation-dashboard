@@ -25,26 +25,16 @@ CUSTOM_CSS = """
         padding: 0.3rem 0 !important;
     }
 
-    /* Smaller sidebar */
+    /* Sidebar — normal readable size */
     section[data-testid="stSidebar"] {
         background-color: #f8f9fa;
         border-right: 1px solid #e0e0e0;
-        width: 220px !important;
-    }
-    section[data-testid="stSidebar"] .block-container {
-        padding: 0.5rem 0.8rem !important;
     }
     section[data-testid="stSidebar"] h1 {
-        font-size: 1.2rem !important;
+        font-size: 1.5rem !important;
     }
     section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
-        font-size: 0.85rem !important;
-        margin-top: 0.3rem !important;
-    }
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] span {
-        font-size: 0.78rem !important;
+        font-size: 1rem !important;
     }
 
     /* Header styling — compact */
@@ -108,24 +98,35 @@ CUSTOM_CSS = """
         color: #c62828;
     }
 
-    /* Table — Bloomberg density */
+    /* Table — high density */
     .dataframe {
-        font-size: 0.65rem !important;
+        font-size: 0.6rem !important;
+        line-height: 1.2 !important;
     }
     .dataframe th {
         background-color: #f5f5f5 !important;
         color: #555 !important;
         font-weight: 600 !important;
         text-transform: uppercase;
-        font-size: 0.58rem !important;
+        font-size: 0.55rem !important;
         letter-spacing: 0.02em;
         border-bottom: 2px solid #ddd !important;
-        padding: 3px 4px !important;
+        padding: 2px 3px !important;
+        white-space: nowrap !important;
     }
     .dataframe td {
         color: #1a1a1a !important;
-        border-bottom: 1px solid #eee !important;
-        padding: 2px 4px !important;
+        border-bottom: 1px solid #f0f0f0 !important;
+        padding: 1px 3px !important;
+        white-space: nowrap !important;
+    }
+
+    /* Streamlit's glide-data-grid (the actual table renderer) */
+    div[data-testid="stDataFrame"] {
+        font-size: 0.6rem !important;
+    }
+    div[data-testid="stDataFrame"] canvas {
+        font-size: 11px !important;
     }
 
     /* Smaller selectboxes / inputs */
@@ -170,10 +171,9 @@ CUSTOM_CSS = """
         font-size: 0.8rem !important;
     }
 
-    /* Tighter button spacing */
+    /* Buttons — normal size */
     .stButton > button {
-        font-size: 0.78rem !important;
-        padding: 0.25rem 0.75rem !important;
+        font-size: 0.85rem !important;
     }
 </style>
 """
