@@ -8,6 +8,7 @@ import pandas as pd
 
 from data.bank_mapping import get_name, get_cik
 from data.sec_client import get_filing_info
+from data.filing_summarizer import fetch_filing_text, find_press_release_url, summarize_filing
 
 
 def render_home(all_metrics: list[dict], watchlist: list[str]):
@@ -128,15 +129,44 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
         recent_filings = recent_filings[:10]
 
         if recent_filings:
-            for f in recent_filings:
-                earnings_tag = " **EARNINGS**" if f["is_earnings"] else ""
+            for i, f in enumerate(recent_filings):
+                earnings_tag = " EARNINGS" if f["is_earnings"] else ""
                 form_icon = {"10-K": "📗", "10-Q": "📘", "8-K": "📄"}.get(f["form"], "📄")
-                link = f"[View]({f['url']})" if f["url"] else ""
 
-                st.markdown(
-                    f"{form_icon} **{f['ticker']}** {f['form']}{earnings_tag} "
-                    f"— {f['date']} {link}"
-                )
+                label = f"{form_icon} {f['ticker']} {f['form']}{earnings_tag} — {f['date']}"
+
+                with st.expander(label, expanded=False):
+                    # Links
+                    links = []
+                    if f["url"]:
+                        links.append(f"[📄 Filing]({f['url']})")
+
+                    # For earnings 8-Ks, find press release
+                    if f["is_earnings"] and f.get("accession"):
+                        pr_url = find_press_release_url(f["cik"], f["accession"])
+                        if pr_url:
+                            links.append(f"[📰 Press Release]({pr_url})")
+
+                    if links:
+                        st.markdown(" · ".join(links))
+
+                    # Summary
+                    summary_url = None
+                    if f["is_earnings"] and f.get("accession"):
+                        summary_url = find_press_release_url(f["cik"], f["accession"]) or f["url"]
+                    else:
+                        summary_url = f["url"]
+
+                    if summary_url:
+                        with st.spinner("Summarizing..."):
+                            text = fetch_filing_text(summary_url)
+                            if text and not text.startswith("[Error"):
+                                summary = summarize_filing(text, f["form"], f["ticker"])
+                                st.markdown(summary)
+                            else:
+                                st.caption("Could not fetch filing content.")
+                    else:
+                        st.caption("No document available.")
         else:
             st.info("Loading recent filings...")
 
