@@ -9,6 +9,7 @@ import pandas as pd
 from data.bank_mapping import get_name, get_cik
 from data.sec_client import get_filing_info
 from data.filing_summarizer import fetch_filing_text, find_press_release_url, summarize_filing
+from data.bank_universe import get_universe_count
 
 
 def render_home(all_metrics: list[dict], watchlist: list[str]):
@@ -30,10 +31,12 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
                 Bank Valuation & Analysis Platform
             </p>
             <p style="color: #90caf9; margin: 0.3rem 0 0 0; font-size: 0.85rem;">
-                Live FDIC · SEC EDGAR · IBKR &nbsp;|&nbsp; {count} banks tracked
+                Live FDIC · SEC EDGAR · IBKR &nbsp;|&nbsp;
+                {watchlist_count} banks in watchlist &nbsp;·&nbsp;
+                {universe_count} banks in universe
             </p>
         </div>
-        """.format(count=len(watchlist)),
+        """.format(watchlist_count=len(watchlist), universe_count=get_universe_count()),
         unsafe_allow_html=True,
     )
 

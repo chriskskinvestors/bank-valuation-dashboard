@@ -10,6 +10,7 @@ import pandas as pd
 
 from data.sec_client import get_filing_info
 from data.bank_mapping import get_cik, get_fdic_cert, get_name, get_ir_url
+from data.bank_universe import search_universe, get_universe_tickers
 from data.filing_summarizer import (
     fetch_filing_text,
     find_press_release_url,
@@ -110,13 +111,14 @@ def render_filings(watchlist: list[str]):
         unsafe_allow_html=True,
     )
 
-    # ── Bank selector ────────────────────────────────────────────────────
+    # ── Bank selector (full universe) ────────────────────────────────────
+    all_tickers = get_universe_tickers()
     col1, col2 = st.columns([2, 1])
     with col1:
         selected = st.selectbox(
             "Select bank",
-            options=[""] + watchlist,
-            format_func=lambda t: f"{t} — {get_name(t)}" if t else "Choose a bank...",
+            options=[""] + all_tickers,
+            format_func=lambda t: f"{t} — {get_name(t)}" if t else f"Search {len(all_tickers)} banks...",
             key="filings_bank_select",
         )
     with col2:

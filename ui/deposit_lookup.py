@@ -14,6 +14,7 @@ from data.sod_client import (
     search_bank_by_name,
 )
 from data.bank_mapping import get_fdic_cert, get_name
+from data.bank_universe import get_universe_tickers, get_universe_bank
 
 
 def render_deposit_lookup():
