@@ -20,6 +20,7 @@ from ui.overview_table import render_data_freshness
 from ui.bank_detail import render_bank_detail
 from ui.watchlist import render_watchlist_sidebar
 from ui.deposit_lookup import render_deposit_lookup
+from ui.filings import render_filings
 
 # ── Page config ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -48,7 +49,7 @@ st.sidebar.markdown(
 )
 
 # ── Tab navigation ──────────────────────────────────────────────────────
-ALL_VIEWS = TAB_LABELS + ["─── Tools ───", "🔍 Deposit Lookup"]
+ALL_VIEWS = TAB_LABELS + ["─── Tools ───", "🔍 Deposit Lookup", "📄 SEC & FDIC Filings"]
 view_index = st.sidebar.selectbox(
     "📊 View",
     options=list(range(len(ALL_VIEWS))),
@@ -58,6 +59,7 @@ view_index = st.sidebar.selectbox(
 
 # Determine if this is a table tab or a special page
 is_deposit_lookup = ALL_VIEWS[view_index] == "🔍 Deposit Lookup"
+is_filings = ALL_VIEWS[view_index] == "📄 SEC & FDIC Filings"
 is_separator = ALL_VIEWS[view_index].startswith("───")
 current_tab = TABS[view_index] if view_index < len(TABS) else None
 
@@ -182,6 +184,10 @@ if "detail_ticker" in st.session_state and st.session_state.detail_ticker:
 elif is_deposit_lookup:
     # ── DEPOSIT LOOKUP PAGE ──────────────────────────────────────────
     render_deposit_lookup()
+
+elif is_filings:
+    # ── FILINGS PAGE ─────────────────────────────────────────────────
+    render_filings(watchlist)
 
 elif is_separator:
     st.info("Select a view from the dropdown.")

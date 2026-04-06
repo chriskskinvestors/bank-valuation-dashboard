@@ -91,6 +91,72 @@ BANK_MAP = {
 }
 
 
+# ── IR page URLs (separate to keep BANK_MAP clean) ──────────────────────
+# Maps ticker -> investor relations URL. Not every bank is listed; the UI
+# falls back to the SEC EDGAR company page when missing.
+IR_URLS = {
+    "SFST":  "https://www.southernfirst.com/investor-relations",
+    "CFFI":  "https://www.cffc.com/investor-relations/",
+    "CBNK":  "https://ir.capitalbankmd.com/",
+    "FBIZ":  "https://ir.firstbusiness.bank/",
+    "CCBG":  "https://www.ccbg.com/investor-relations/",
+    "IBOC":  "https://www.ibc.com/investors",
+    "CARE":  "https://www.carterbankshares.com/investor-relations/",
+    "RNST":  "https://investors.renasant.com/",
+    "HTB":   "https://ir.htb.com/",
+    "SMBK":  "https://ir.smartfinancialinc.com/",
+    "BFST":  "https://ir.b1bank.com/",
+    "TCBX":  "https://ir.thirdcoast.bank/",
+    "FMBH":  "https://www.firstmidbancshares.com/investor-relations/",
+    "HBNC":  "https://investor.horizonbank.com/",
+    "PLBC":  "https://www.plumasbank.com/investor-relations",
+    "BANR":  "https://www.bannerbank.com/investor-relations",
+    "BRBS":  "https://www.mybrb.com/investor-relations/",
+    "FSBW":  "https://ir.fsbwa.com/",
+    "SPFI":  "https://ir.southplains.com/",
+    "ALRS":  "https://ir.alerus.com/",
+    "FMNB":  "https://www.farmersbankgroup.com/investor-relations",
+    "HFWA":  "https://ir.hf-wa.com/",
+    "CBAN":  "https://ir.colony.bank/",
+    "FRME":  "https://www.firstmerchants.com/investor-relations",
+    "WAL":   "https://ir.westernalliancebancorporation.com/",
+    "BKU":   "https://ir.bankunited.com/",
+    "PGC":   "https://www.pgbank.com/investor-relations",
+    "INBK":  "https://ir.firstib.com/",
+    "FGBI":  "https://www.firstguaranty.com/investor-relations",
+    "PNFP":  "https://ir.pnfp.com/",
+    "OZK":   "https://ir.ozk.com/",
+    "FHN":   "https://ir.firsthorizon.com/",
+    "UBSI":  "https://www.ubsi-wv.com/investor-relations",
+    "FBNC":  "https://ir.localfirstbank.com/",
+    "FFWM":  "https://ir.firstfoundationinc.com/",
+    "FFIN":  "https://www.ffin.com/investor-relations",
+    "HOMB":  "https://ir.homebancshares.com/",
+    "EGBN":  "https://ir.eaglebankcorp.com/",
+    "BANC":  "https://ir.bancofcal.com/",
+    "FLG":   "https://ir.flagstar.com/",
+    "VLY":   "https://www.valley.com/investor-relations",
+    "KEY":   "https://ir.key.com/",
+    "HBAN":  "https://ir.huntington.com/",
+    "ZION":  "https://www.zionsbancorporation.com/investor-relations",
+    "JPM":   "https://www.jpmorganchase.com/ir",
+    "BAC":   "https://investor.bankofamerica.com/",
+    "WFC":   "https://www.wellsfargo.com/about/investor-relations/",
+    "C":     "https://www.citigroup.com/global/investors",
+    "USB":   "https://ir.usbank.com/",
+    "PNC":   "https://investor.pnc.com/",
+    "TFC":   "https://ir.truist.com/",
+    "COF":   "https://ir.capitalone.com/",
+    "GS":    "https://www.goldmansachs.com/investor-relations/",
+    "MS":    "https://www.morganstanley.com/about-us-ir",
+}
+
+
+def get_ir_url(ticker: str) -> str | None:
+    """Return the IR page URL for a ticker, or None if unknown."""
+    return IR_URLS.get(ticker.upper())
+
+
 def get_bank_info(ticker: str) -> dict | None:
     """Return bank info dict for a ticker, or None if unknown."""
     return BANK_MAP.get(ticker.upper())

@@ -147,9 +147,43 @@ def get_historical_fundamentals(cik: int, concept: str = "EarningsPerShareDilute
     return _extract_time_series(facts, concept)
 
 
-def get_filing_info(cik: int) -> dict:
-    """Get recent filing metadata (dates, types, links)."""
-    url = SEC_SUBMISSIONS_URL.format(cik=_pad_cik(cik))
+def _build_filing_url(cik: int, accession: str, primary_doc: str) -> str:
+    """Build direct URL to a filing document on SEC.gov."""
+    acc_no_hyphens = accession.replace("-", "")
+    return (
+        f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_hyphens}/{primary_doc}"
+    )
+
+
+def _build_index_url(cik: int, accession: str) -> str:
+    """Build URL to the filing index page on SEC.gov."""
+    acc_no_hyphens = accession.replace("-", "")
+    return (
+        f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_hyphens}/"
+    )
+
+
+# Form types to include in the filings page
+FILING_FORM_TYPES = {
+    "10-K", "10-K/A", "10-Q", "10-Q/A",
+    "8-K", "8-K/A",
+    "DEF 14A", "DEFA14A",
+    "S-1", "S-1/A", "S-3", "S-3/A",
+    "SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A",
+    "4", "3",
+}
+
+
+def get_filing_info(cik: int, max_filings: int = 50) -> dict:
+    """
+    Get filing metadata with direct EDGAR links and earnings flagging.
+
+    Returns a dict with company info and a list of filings, each containing:
+      form, date, report_date, description, items, accession,
+      url (direct link), index_url, is_earnings, size
+    """
+    padded = _pad_cik(cik)
+    url = SEC_SUBMISSIONS_URL.format(cik=padded)
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
@@ -157,32 +191,70 @@ def get_filing_info(cik: int) -> dict:
     except Exception:
         return {}
 
+    raw_cik = int(data.get("cik", cik))
+
     recent = data.get("filings", {}).get("recent", {})
     if not recent:
         return {}
 
     forms = recent.get("form", [])
     dates = recent.get("filingDate", [])
+    report_dates = recent.get("reportDate", [])
     accessions = recent.get("accessionNumber", [])
     descriptions = recent.get("primaryDocDescription", [])
+    primary_docs = recent.get("primaryDocument", [])
+    items_list = recent.get("items", [])
+    sizes = recent.get("size", [])
+
+    def _safe(lst, i, default=""):
+        return lst[i] if i < len(lst) else default
 
     filings = []
     for i, form in enumerate(forms):
-        if form in ("10-K", "10-Q", "8-K"):
-            filings.append({
-                "form": form,
-                "date": dates[i] if i < len(dates) else "",
-                "accession": accessions[i] if i < len(accessions) else "",
-                "description": descriptions[i] if i < len(descriptions) else "",
-            })
-            if len(filings) >= 10:
-                break
+        if form not in FILING_FORM_TYPES:
+            continue
+
+        accession = _safe(accessions, i)
+        primary_doc = _safe(primary_docs, i)
+        items = _safe(items_list, i)
+
+        # Flag earnings releases: 8-K with Item 2.02
+        is_earnings = (
+            form in ("8-K", "8-K/A")
+            and isinstance(items, str)
+            and "2.02" in items
+        )
+
+        filing_url = ""
+        index_url = ""
+        if accession and primary_doc:
+            filing_url = _build_filing_url(raw_cik, accession, primary_doc)
+            index_url = _build_index_url(raw_cik, accession)
+
+        filings.append({
+            "form": form,
+            "date": _safe(dates, i),
+            "report_date": _safe(report_dates, i),
+            "description": _safe(descriptions, i),
+            "items": items if isinstance(items, str) else "",
+            "accession": accession,
+            "url": filing_url,
+            "index_url": index_url,
+            "is_earnings": is_earnings,
+            "size": _safe(sizes, i, 0),
+        })
+        if len(filings) >= max_filings:
+            break
 
     return {
         "name": data.get("name", ""),
-        "cik": data.get("cik", ""),
+        "cik": raw_cik,
         "sic": data.get("sic", ""),
         "sic_description": data.get("sicDescription", ""),
+        "fiscal_year_end": data.get("fiscalYearEnd", ""),
+        "website": (data.get("website") or ""),
+        "tickers": data.get("tickers", []),
+        "exchanges": data.get("exchanges", []),
         "recent_filings": filings,
     }
 
