@@ -42,9 +42,63 @@ def _html_to_text(html: str) -> str:
     return text
 
 
+def _strip_sec_boilerplate(text: str) -> str:
+    """
+    Remove SEC filing boilerplate (cover page, legal headers) to get
+    to the actual substance of the filing.
+    """
+    # Common markers that signal the start of real content
+    content_markers = [
+        # Press releases / earnings
+        "reports fourth quarter", "reports third quarter",
+        "reports second quarter", "reports first quarter",
+        "announces fourth quarter", "announces third quarter",
+        "announces second quarter", "announces first quarter",
+        "reports full year", "reports annual",
+        "financial results for",
+        "today announced", "today reported",
+        # 10-K / 10-Q content starts
+        "part i", "item 1.", "item 1 ",
+        "business overview", "overview",
+        "management's discussion",
+        # 8-K content
+        "item 2.02", "item 1.01", "item 5.02",
+        "press release", "news release",
+        # General
+        "highlights", "selected financial data",
+    ]
+
+    text_lower = text.lower()
+    best_pos = len(text)
+
+    for marker in content_markers:
+        pos = text_lower.find(marker)
+        if pos != -1 and pos < best_pos:
+            best_pos = pos
+
+    # If we found a content marker, back up to the start of its sentence
+    if best_pos < len(text):
+        # Go back to find sentence/paragraph start
+        search_start = max(0, best_pos - 200)
+        chunk = text[search_start:best_pos]
+        # Find last paragraph break or period before the marker
+        for sep in ["\n", ". ", "— "]:
+            last_break = chunk.rfind(sep)
+            if last_break != -1:
+                best_pos = search_start + last_break + len(sep)
+                break
+
+    # Skip at minimum the first 100 chars (always boilerplate)
+    if best_pos > 100:
+        return text[best_pos:].strip()
+
+    return text
+
+
 def fetch_filing_text(url: str, max_chars: int = 15000) -> str:
     """
-    Fetch a filing document from SEC EDGAR and return clean text.
+    Fetch a filing document from SEC EDGAR and return clean text
+    with boilerplate stripped.
     Truncates to max_chars to stay within API limits.
     """
     try:
@@ -59,6 +113,9 @@ def fetch_filing_text(url: str, max_chars: int = 15000) -> str:
         text = _html_to_text(resp.text)
     else:
         text = resp.text
+
+    # Strip SEC boilerplate to get to actual content
+    text = _strip_sec_boilerplate(text)
 
     # Truncate intelligently — try to end at a sentence boundary
     if len(text) > max_chars:
@@ -173,34 +230,78 @@ def summarize_filing(filing_text: str, form_type: str, ticker: str) -> str:
 def _extractive_summary(text: str, form_type: str) -> str:
     """
     Fallback: extract key sentences when no AI API is available.
-    Looks for sentences containing financial keywords.
+    Finds sentences with the most financial substance.
     """
-    keywords = [
-        "earnings per share", "eps", "net income", "revenue",
-        "net interest margin", "nim", "dividend", "loan growth",
-        "deposit growth", "total assets", "book value", "roaa",
-        "roae", "return on", "announces", "reported", "increased",
-        "decreased", "quarterly", "annual", "per share",
+    # High-value keywords (specific financial metrics)
+    high_keywords = [
+        "earnings per share", "eps of", "diluted eps",
+        "net income of", "net income was", "net income increased",
+        "net interest margin", "nim of", "nim was", "nim increased",
+        "total deposits", "total loans", "total assets of",
+        "book value per", "tangible book value",
+        "dividend of", "declared a dividend",
+        "return on average", "roaa", "roae", "roatce",
+        "efficiency ratio", "nonperforming",
+    ]
+
+    # Medium-value keywords
+    med_keywords = [
+        "increased", "decreased", "grew", "declined",
+        "up from", "compared to", "year-over-year",
+        "basis points", "percent", "million", "billion",
+        "per share", "per common share",
+        "reported", "announced", "quarterly",
+    ]
+
+    # Junk patterns to skip
+    skip_patterns = [
+        "securities and exchange", "commission file",
+        "registrant", "check the appropriate", "pursuant to",
+        "incorporated by reference", "exhibit",
+        "form 8-k", "form 10-k", "form 10-q",
+        "zip code", "telephone number", "irs employer",
+        "state of incorporation", "exact name",
     ]
 
     # Split into sentences
-    sentences = re.split(r"(?<=[.!])\s+", text[:8000])
+    sentences = re.split(r"(?<=[.!?])\s+", text[:10000])
     scored = []
-    for s in sentences:
-        s_lower = s.lower()
-        score = sum(1 for kw in keywords if kw in s_lower)
-        # Boost first few sentences (usually the lede)
-        if sentences.index(s) < 3:
+    for i, s in enumerate(sentences):
+        s_clean = s.strip()
+        if len(s_clean) < 30 or len(s_clean) > 500:
+            continue
+
+        s_lower = s_clean.lower()
+
+        # Skip boilerplate
+        if any(skip in s_lower for skip in skip_patterns):
+            continue
+
+        score = 0
+        score += sum(3 for kw in high_keywords if kw in s_lower)
+        score += sum(1 for kw in med_keywords if kw in s_lower)
+
+        # Boost sentences with dollar amounts or percentages
+        if re.search(r"\$[\d,.]+", s_clean):
             score += 2
-        if len(s) > 20 and score > 0:
-            scored.append((score, s.strip()))
+        if re.search(r"\d+\.?\d*\s*%", s_clean):
+            score += 1
+
+        # Slight boost for earlier content sentences (after boilerplate stripped)
+        if i < 5:
+            score += 1
+
+        if score > 0:
+            scored.append((score, s_clean))
 
     scored.sort(key=lambda x: x[0], reverse=True)
 
-    # Take top 3 sentences
-    top = scored[:3]
+    # Take top 4 most informative sentences
+    top = scored[:4]
     if not top:
-        return text[:300] + "..."
+        # Last resort: just take first 300 chars of content
+        clean = text.strip()
+        return clean[:400] + "..." if len(clean) > 400 else clean
 
     # Re-order by appearance in original text
     top_texts = [t[1] for t in top]
