@@ -20,17 +20,17 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
         """
         <div style="
             background: #1a73e8;
-            padding: 2.5rem 2rem;
-            border-radius: 10px;
-            margin-bottom: 1.5rem;
+            padding: 1.2rem 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 0.8rem;
         ">
-            <h1 style="color: white; margin: 0; font-size: 2.2rem; font-weight: 700;">
+            <h1 style="color: white; margin: 0; font-size: 1.5rem; font-weight: 700;">
                 KSK Investors
             </h1>
-            <p style="color: rgba(255,255,255,0.85); margin: 0.5rem 0 0 0; font-size: 1.1rem;">
+            <p style="color: rgba(255,255,255,0.85); margin: 0.3rem 0 0 0; font-size: 0.85rem;">
                 Bank Valuation & Analysis Platform
             </p>
-            <p style="color: rgba(255,255,255,0.7); margin: 0.3rem 0 0 0; font-size: 0.85rem;">
+            <p style="color: rgba(255,255,255,0.7); margin: 0.2rem 0 0 0; font-size: 0.72rem;">
                 Live FDIC · SEC EDGAR · IBKR &nbsp;|&nbsp;
                 {watchlist_count} banks in watchlist &nbsp;·&nbsp;
                 {universe_count} banks in universe
