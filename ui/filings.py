@@ -1,6 +1,8 @@
 """
 SEC & FDIC Filings page — browse recent filings, earnings releases,
-and regulatory documents for any bank in the watchlist.
+press releases, and regulatory documents for any bank in the watchlist.
+
+Includes AI-generated summaries when Anthropic API key is configured.
 """
 
 import streamlit as st
@@ -8,6 +10,11 @@ import pandas as pd
 
 from data.sec_client import get_filing_info
 from data.bank_mapping import get_cik, get_fdic_cert, get_name, get_ir_url
+from data.filing_summarizer import (
+    fetch_filing_text,
+    find_press_release_url,
+    summarize_filing,
+)
 
 
 # ── Color badges for form types ─────────────────────────────────────────
@@ -32,6 +39,35 @@ FORM_COLORS = {
     "SC 13G/A": "#00695c",
 }
 
+# 8-K item descriptions for human-readable labels
+ITEM_DESCRIPTIONS = {
+    "1.01": "Entry into a Material Definitive Agreement",
+    "1.02": "Termination of a Material Definitive Agreement",
+    "1.03": "Bankruptcy or Receivership",
+    "2.01": "Completion of Acquisition or Disposition of Assets",
+    "2.02": "Results of Operations and Financial Condition",
+    "2.03": "Creation of a Direct Financial Obligation",
+    "2.04": "Triggering Events That Accelerate an Obligation",
+    "2.05": "Costs Associated with Exit or Disposal Activities",
+    "2.06": "Material Impairments",
+    "3.01": "Notice of Delisting or Failure to Satisfy Listing Standards",
+    "3.02": "Unregistered Sales of Equity Securities",
+    "3.03": "Material Modification to Rights of Security Holders",
+    "4.01": "Changes in Registrant's Certifying Accountant",
+    "4.02": "Non-Reliance on Previously Issued Financial Statements",
+    "5.01": "Changes in Control of Registrant",
+    "5.02": "Departure/Election of Directors or Officers",
+    "5.03": "Amendments to Articles of Incorporation or Bylaws",
+    "5.04": "Temporary Suspension of Trading Under Employee Benefit Plans",
+    "5.05": "Amendment to Code of Ethics",
+    "5.06": "Change in Shell Company Status",
+    "5.07": "Submission of Matters to a Vote of Security Holders",
+    "5.08": "Shareholder Nominations",
+    "7.01": "Regulation FD Disclosure",
+    "8.01": "Other Events",
+    "9.01": "Financial Statements and Exhibits",
+}
+
 
 def _form_badge(form: str, is_earnings: bool = False) -> str:
     """Return an HTML badge for the form type."""
@@ -48,13 +84,28 @@ def _form_badge(form: str, is_earnings: bool = False) -> str:
     return badge
 
 
+def _items_description(items_str: str) -> str:
+    """Convert 8-K item codes to human-readable descriptions."""
+    if not items_str:
+        return ""
+    parts = []
+    for item in items_str.split(","):
+        item = item.strip()
+        desc = ITEM_DESCRIPTIONS.get(item)
+        if desc:
+            parts.append(f"Item {item}: {desc}")
+        elif item:
+            parts.append(f"Item {item}")
+    return " · ".join(parts)
+
+
 def render_filings(watchlist: list[str]):
     """Render the SEC & FDIC filings page."""
 
     st.markdown(
         '<div class="dashboard-header">'
         "<h1>SEC & FDIC Filings</h1>"
-        "<p>Browse filings, earnings releases & regulatory documents</p>"
+        "<p>Browse filings, earnings releases, press releases & regulatory documents</p>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -153,15 +204,29 @@ def render_filings(watchlist: list[str]):
         st.warning("No filings found.")
         return
 
-    # ── Tabs: All Filings | Earnings | Annual/Quarterly ──────────────────
-    tab_all, tab_earnings, tab_annual = st.tabs([
+    raw_cik = info.get("cik", cik)
+
+    # Identify press releases and earnings
+    press_releases = []
+    for f in filings:
+        if f["form"] in ("8-K", "8-K/A") and f.get("is_earnings"):
+            pr_url = find_press_release_url(raw_cik, f["accession"])
+            press_releases.append({**f, "press_release_url": pr_url})
+
+    # ── Tabs ─────────────────────────────────────────────────────────────
+    tab_all, tab_press, tab_earnings, tab_annual = st.tabs([
         f"All Filings ({len(filings)})",
+        f"Press Releases ({len(press_releases)})",
         "Earnings Releases",
         "Annual & Quarterly Reports",
     ])
 
     with tab_all:
-        _render_filings_section(filings, show_filters=True, key_prefix="all")
+        _render_filings_section(filings, show_filters=True, key_prefix="all",
+                                 ticker=ticker, cik=raw_cik)
+
+    with tab_press:
+        _render_press_releases(press_releases, ticker, raw_cik)
 
     with tab_earnings:
         earnings = [f for f in filings if f.get("is_earnings")]
@@ -170,7 +235,8 @@ def render_filings(watchlist: list[str]):
                 f"**{len(earnings)}** earnings releases found "
                 "(8-K filings with Item 2.02 — Results of Operations)"
             )
-            _render_filings_table(earnings, key_prefix="earn")
+            _render_filings_table(earnings, key_prefix="earn",
+                                   ticker=ticker, cik=raw_cik, show_summary=True)
         else:
             st.info("No earnings releases found in recent filings.")
 
@@ -180,21 +246,75 @@ def render_filings(watchlist: list[str]):
             if f["form"] in ("10-K", "10-K/A", "10-Q", "10-Q/A")
         ]
         if annual_quarterly:
-            _render_filings_table(annual_quarterly, key_prefix="aq")
+            _render_filings_table(annual_quarterly, key_prefix="aq",
+                                   ticker=ticker, cik=raw_cik, show_summary=True)
         else:
             st.info("No 10-K or 10-Q filings found.")
 
 
-def _render_filings_section(filings: list[dict], show_filters: bool = False, key_prefix: str = ""):
+def _render_press_releases(press_releases: list[dict], ticker: str, cik: int):
+    """Render the press releases tab with AI summaries."""
+
+    if not press_releases:
+        st.info("No press releases found. Press releases are identified from 8-K earnings filings (Item 2.02).")
+        return
+
+    st.markdown(
+        f"**{len(press_releases)}** earnings press releases found for **{ticker}**"
+    )
+    st.caption("Summaries are generated from the EX-99.1 exhibit of each 8-K filing.")
+
+    for i, pr in enumerate(press_releases):
+        date = pr.get("date", "")
+        form = pr.get("form", "8-K")
+        pr_url = pr.get("press_release_url")
+        filing_url = pr.get("url", "")
+
+        # Header with expandable detail
+        with st.expander(f"📰 {date} — {ticker} Earnings Release", expanded=(i == 0)):
+            # Links row
+            link_parts = []
+            if pr_url:
+                link_parts.append(f"[📄 Press Release]({pr_url})")
+            if filing_url:
+                link_parts.append(f"[📋 8-K Filing]({filing_url})")
+            if pr.get("index_url"):
+                link_parts.append(f"[📁 All Documents]({pr['index_url']})")
+
+            if link_parts:
+                st.markdown(" · ".join(link_parts))
+
+            # 8-K items
+            items_desc = _items_description(pr.get("items", ""))
+            if items_desc:
+                st.caption(items_desc)
+
+            # AI Summary
+            st.markdown("**Summary:**")
+
+            # Determine which URL to summarize
+            summary_url = pr_url or filing_url
+            if summary_url:
+                with st.spinner("Generating summary..."):
+                    text = fetch_filing_text(summary_url)
+                    if text and not text.startswith("[Error"):
+                        summary = summarize_filing(text, form, ticker)
+                        st.markdown(summary)
+                    else:
+                        st.caption("Could not fetch filing content for summary.")
+            else:
+                st.caption("No document URL available.")
+
+
+def _render_filings_section(filings: list[dict], show_filters: bool = False,
+                             key_prefix: str = "", ticker: str = "", cik: int = 0):
     """Render a filterable filings section."""
 
     filtered = filings
 
     if show_filters:
-        # Form type filter
         all_forms = sorted(set(f["form"] for f in filings))
         major_forms = ["10-K", "10-Q", "8-K"]
-        other_forms = [f for f in all_forms if f not in major_forms]
 
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -215,17 +335,20 @@ def _render_filings_section(filings: list[dict], show_filters: bool = False, key
         if earnings_only:
             filtered = [f for f in filtered if f.get("is_earnings")]
 
-    _render_filings_table(filtered, key_prefix=key_prefix)
+    _render_filings_table(filtered, key_prefix=key_prefix,
+                           ticker=ticker, cik=cik, show_summary=False)
 
 
-def _render_filings_table(filings: list[dict], key_prefix: str = ""):
-    """Render a styled filings table with links."""
+def _render_filings_table(filings: list[dict], key_prefix: str = "",
+                           ticker: str = "", cik: int = 0,
+                           show_summary: bool = False):
+    """Render a styled filings table with links and optional summaries."""
 
     if not filings:
         st.info("No filings match the current filters.")
         return
 
-    # Build HTML table for better formatting
+    # Build HTML table
     rows_html = []
     for f in filings:
         form_badge = _form_badge(f["form"], f.get("is_earnings", False))
@@ -234,6 +357,14 @@ def _render_filings_table(filings: list[dict], key_prefix: str = ""):
         desc = f.get("description", "")
         url = f.get("url", "")
         index_url = f.get("index_url", "")
+        items = f.get("items", "")
+
+        # Show 8-K item descriptions
+        items_html = ""
+        if items and f["form"] in ("8-K", "8-K/A"):
+            items_desc = _items_description(items)
+            if items_desc:
+                items_html = f'<div style="color:#90a4ae;font-size:0.75em;margin-top:2px;">{items_desc}</div>'
 
         # Truncate long descriptions
         if len(desc) > 60:
@@ -249,7 +380,7 @@ def _render_filings_table(filings: list[dict], key_prefix: str = ""):
             f"<tr>"
             f"<td style='padding:6px 10px;white-space:nowrap;'>{date}</td>"
             f"<td style='padding:6px 10px;'>{form_badge}</td>"
-            f"<td style='padding:6px 10px;'>{desc}</td>"
+            f"<td style='padding:6px 10px;'>{desc}{items_html}</td>"
             f"<td style='padding:6px 10px;white-space:nowrap;'>{report_date}</td>"
             f"<td style='padding:6px 10px;'>{link_html}</td>"
             f"</tr>"
@@ -276,3 +407,36 @@ def _render_filings_table(filings: list[dict], key_prefix: str = ""):
 
     st.markdown(table_html, unsafe_allow_html=True)
     st.caption(f"Showing {len(filings)} filing{'s' if len(filings) != 1 else ''}")
+
+    # Expandable summaries below the table
+    if show_summary and filings:
+        st.markdown("")
+        st.markdown("#### Filing Summaries")
+        st.caption("Click a filing to see its AI-generated summary")
+
+        for f in filings[:10]:  # Limit to most recent 10
+            url = f.get("url", "")
+            if not url:
+                continue
+
+            label = f"{f.get('date', '')} — {f['form']}"
+            if f.get("is_earnings"):
+                label += " (Earnings)"
+
+            with st.expander(label):
+                with st.spinner("Generating summary..."):
+                    text = fetch_filing_text(url)
+                    if text and not text.startswith("[Error"):
+                        summary = summarize_filing(text, f["form"], ticker)
+                        st.markdown(summary)
+                    else:
+                        st.warning("Could not fetch filing content.")
+
+                # Document links
+                links = []
+                if url:
+                    links.append(f"[📄 Filing]({url})")
+                if f.get("index_url"):
+                    links.append(f"[📁 All Documents]({f['index_url']})")
+                if links:
+                    st.markdown(" · ".join(links))

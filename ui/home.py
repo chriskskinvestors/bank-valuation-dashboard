@@ -92,12 +92,12 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
         else:
             st.info("Loading metrics...")
 
-    # ── Recent filings ───────────────────────────────────────────────────
+    # ── Recent filings & press releases ─────────────────────────────────
     with col_right:
-        st.markdown("### Recent Filings")
-        st.caption("Latest SEC filings across all banks")
+        st.markdown("### Recent Filings & Press Releases")
+        st.caption("Latest across all banks · click to expand summary")
 
-        # Sample a few banks to show recent filings without loading all 63
+        # Sample banks to show recent filings
         sample_tickers = watchlist[:10]
         recent_filings = []
 
@@ -111,10 +111,13 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
                     if f["form"] in ("10-K", "10-Q", "8-K"):
                         recent_filings.append({
                             "ticker": ticker,
+                            "cik": info.get("cik", cik),
                             "form": f["form"],
                             "date": f["date"],
                             "is_earnings": f.get("is_earnings", False),
                             "url": f.get("url", ""),
+                            "accession": f.get("accession", ""),
+                            "items": f.get("items", ""),
                             "description": f.get("description", ""),
                         })
             except Exception:
