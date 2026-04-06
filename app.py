@@ -21,6 +21,7 @@ from ui.bank_detail import render_bank_detail
 from ui.watchlist import render_watchlist_sidebar
 from ui.deposit_lookup import render_deposit_lookup
 from ui.filings import render_filings
+from ui.home import render_home
 
 # ── Page config ──────────────────────────────────────────────────────────
 st.set_page_config(
@@ -49,7 +50,7 @@ st.sidebar.markdown(
 )
 
 # ── Tab navigation ──────────────────────────────────────────────────────
-ALL_VIEWS = TAB_LABELS + ["─── Tools ───", "🔍 Deposit Lookup", "📄 SEC & FDIC Filings"]
+ALL_VIEWS = ["🏠 Home", "─── Analysis ───"] + TAB_LABELS + ["─── Tools ───", "🔍 Deposit Lookup", "📄 SEC & FDIC Filings"]
 view_index = st.sidebar.selectbox(
     "📊 View",
     options=list(range(len(ALL_VIEWS))),
@@ -57,11 +58,15 @@ view_index = st.sidebar.selectbox(
     key="tab_nav",
 )
 
-# Determine if this is a table tab or a special page
-is_deposit_lookup = ALL_VIEWS[view_index] == "🔍 Deposit Lookup"
-is_filings = ALL_VIEWS[view_index] == "📄 SEC & FDIC Filings"
-is_separator = ALL_VIEWS[view_index].startswith("───")
-current_tab = TABS[view_index] if view_index < len(TABS) else None
+# Determine which page to render
+selected_view = ALL_VIEWS[view_index]
+is_home = selected_view == "🏠 Home"
+is_deposit_lookup = selected_view == "🔍 Deposit Lookup"
+is_filings = selected_view == "📄 SEC & FDIC Filings"
+is_separator = selected_view.startswith("───")
+# Tab index offset: Home + Analysis separator = 2 items before TAB_LABELS
+tab_offset = view_index - 2
+current_tab = TABS[tab_offset] if 0 <= tab_offset < len(TABS) else None
 
 st.sidebar.markdown("---")
 
@@ -180,6 +185,10 @@ metrics_df = pd.DataFrame(all_metrics)
 # ── Main content area ───────────────────────────────────────────────────
 if "detail_ticker" in st.session_state and st.session_state.detail_ticker:
     render_bank_detail(st.session_state.detail_ticker, metrics_df)
+
+elif is_home:
+    # ── HOME PAGE ────────────────────────────────────────────────────
+    render_home(all_metrics, watchlist)
 
 elif is_deposit_lookup:
     # ── DEPOSIT LOOKUP PAGE ──────────────────────────────────────────
