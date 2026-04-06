@@ -158,28 +158,57 @@ def get_ir_url(ticker: str) -> str | None:
 
 
 def get_bank_info(ticker: str) -> dict | None:
-    """Return bank info dict for a ticker, or None if unknown."""
-    return BANK_MAP.get(ticker.upper())
+    """Return bank info dict for a ticker. Resolves dynamically if needed."""
+    ticker = ticker.upper()
+    info = BANK_MAP.get(ticker) or _RESOLVED_CACHE.get(ticker)
+    if info:
+        return info
+    # Trigger resolution
+    resolved = resolve_ticker(ticker)
+    return resolved if resolved.get("cik") or resolved.get("fdic_cert") else None
 
 
 def get_name(ticker: str) -> str:
-    """Return bank display name."""
-    info = BANK_MAP.get(ticker.upper())
-    return info["name"] if info else ticker.upper()
+    """Return bank display name. Resolves dynamically if not in static map."""
+    ticker = ticker.upper()
+    info = BANK_MAP.get(ticker) or _RESOLVED_CACHE.get(ticker)
+    if info:
+        return info["name"]
+    resolved = resolve_ticker(ticker)
+    return resolved.get("name", ticker)
 
 
 def get_fdic_cert(ticker: str) -> int | None:
-    info = BANK_MAP.get(ticker.upper())
-    return info["fdic_cert"] if info else None
+    """Return FDIC cert number. Resolves dynamically if not in static map."""
+    ticker = ticker.upper()
+    info = BANK_MAP.get(ticker) or _RESOLVED_CACHE.get(ticker)
+    if info:
+        return info.get("fdic_cert")
+    resolved = resolve_ticker(ticker)
+    return resolved.get("fdic_cert")
 
 
 def get_cik(ticker: str) -> int | None:
-    info = BANK_MAP.get(ticker.upper())
-    return info["cik"] if info else None
+    """Return SEC CIK. Resolves dynamically if not in static map."""
+    ticker = ticker.upper()
+    info = BANK_MAP.get(ticker) or _RESOLVED_CACHE.get(ticker)
+    if info:
+        return info.get("cik")
+    resolved = resolve_ticker(ticker)
+    return resolved.get("cik")
 
 
-def search_sec_by_ticker(ticker: str) -> int | None:
-    """Look up SEC CIK by ticker using the company_tickers.json endpoint."""
+# ── Runtime cache for dynamically resolved tickers ───────────────────────
+# Tickers added at runtime that aren't in BANK_MAP get resolved once
+# via SEC/FDIC API lookups and cached here for the session.
+_RESOLVED_CACHE: dict[str, dict] = {}
+
+
+def search_sec_by_ticker(ticker: str) -> tuple[int | None, str | None]:
+    """
+    Look up SEC CIK and company name by ticker using company_tickers.json.
+    Returns (cik, company_name) tuple.
+    """
     try:
         url = "https://www.sec.gov/files/company_tickers.json"
         headers = {"User-Agent": "BankValuationDashboard admin@company.com"}
@@ -189,7 +218,56 @@ def search_sec_by_ticker(ticker: str) -> int | None:
         ticker_upper = ticker.upper()
         for entry in data.values():
             if entry.get("ticker", "").upper() == ticker_upper:
-                return entry["cik_str"]
+                return entry.get("cik_str"), entry.get("title", "")
+        return None, None
+    except Exception:
+        return None, None
+
+
+def search_fdic_by_name(name: str) -> int | None:
+    """
+    Search FDIC for the primary bank subsidiary CERT number using the
+    holding company name (NAMEHCR) from SEC filings.
+
+    Strategy: search NAMEHCR by first distinctive word with wildcard,
+    sort by assets descending to get the primary (largest) subsidiary.
+    """
+    if not name:
+        return None
+    try:
+        # Clean SEC holding company name
+        clean = name.upper()
+        for suffix in [", INC.", ", INC", " INC.", " INC", " CORP.", " CORP",
+                       " CO.", " CO", " LTD.", " LTD", "/DE", "/MD", "/NJ",
+                       "/RI", "/PA", "/OH", "/NC"]:
+            clean = clean.replace(suffix, "")
+        clean = clean.strip()
+
+        # Use only the first word for wildcard search — multi-word wildcards
+        # in the FDIC API treat spaces as OR, leading to false matches.
+        # Sorting by ASSET DESC ensures we get the primary bank subsidiary.
+        words = clean.split()
+        # Skip very generic first words
+        search_word = words[0]
+        if search_word in ("FIRST", "UNITED", "AMERICAN", "NATIONAL") and len(words) > 1:
+            search_word = f"{words[0]}*%20AND%20NAMEHCR:{words[1]}"
+
+        params = {
+            "filters": f"NAMEHCR:{search_word}*",
+            "fields": "CERT,NAME,NAMEHCR,ASSET",
+            "sort_by": "ASSET",
+            "sort_order": "DESC",
+            "limit": 1,
+        }
+        resp = requests.get(
+            "https://banks.data.fdic.gov/api/financials",
+            params=params, timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("data"):
+            return int(data["data"][0]["data"]["CERT"])
+
         return None
     except Exception:
         return None
@@ -197,19 +275,36 @@ def search_sec_by_ticker(ticker: str) -> int | None:
 
 def resolve_ticker(ticker: str) -> dict:
     """
-    Resolve a ticker to full bank info. Uses static map first, falls back to
-    API lookups. Returns dict with name, fdic_cert, cik (any may be None).
+    Resolve a ticker to full bank info. Uses static map first, then runtime
+    cache, then falls back to SEC + FDIC API lookups. Results are cached
+    so subsequent calls are instant.
+
+    Returns dict with ticker, name, fdic_cert, cik (any may be None).
     """
     ticker = ticker.upper()
+
+    # 1. Static map
     info = BANK_MAP.get(ticker)
     if info:
         return {"ticker": ticker, **info}
 
-    # Fallback: try SEC lookup for CIK
-    cik = search_sec_by_ticker(ticker)
-    return {
-        "ticker": ticker,
-        "name": ticker,
-        "fdic_cert": None,
-        "cik": cik,
-    }
+    # 2. Runtime cache
+    if ticker in _RESOLVED_CACHE:
+        return {"ticker": ticker, **_RESOLVED_CACHE[ticker]}
+
+    # 3. Dynamic resolution
+    cik, sec_name = search_sec_by_ticker(ticker)
+
+    # Clean up SEC name to title case
+    name = sec_name.title() if sec_name else ticker
+    # Fix common title-case issues
+    for bad, good in [("'S", "'s"), ("Ii", "II"), ("Iii", "III"),
+                      ("Llc", "LLC"), ("N.A.", "N.A.")]:
+        name = name.replace(bad, good)
+
+    # Try to find FDIC cert from the SEC company name
+    fdic_cert = search_fdic_by_name(sec_name) if sec_name else None
+
+    resolved = {"name": name, "fdic_cert": fdic_cert, "cik": cik}
+    _RESOLVED_CACHE[ticker] = resolved
+    return {"ticker": ticker, **resolved}
