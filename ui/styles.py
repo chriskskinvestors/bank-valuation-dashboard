@@ -108,24 +108,24 @@ CUSTOM_CSS = """
         color: #c62828;
     }
 
-    /* Table — compact */
+    /* Table — Bloomberg density */
     .dataframe {
-        font-size: 0.75rem !important;
+        font-size: 0.65rem !important;
     }
     .dataframe th {
         background-color: #f5f5f5 !important;
         color: #555 !important;
         font-weight: 600 !important;
         text-transform: uppercase;
-        font-size: 0.65rem !important;
+        font-size: 0.58rem !important;
         letter-spacing: 0.02em;
         border-bottom: 2px solid #ddd !important;
-        padding: 4px 6px !important;
+        padding: 3px 4px !important;
     }
     .dataframe td {
         color: #1a1a1a !important;
         border-bottom: 1px solid #eee !important;
-        padding: 3px 6px !important;
+        padding: 2px 4px !important;
     }
 
     /* Smaller selectboxes / inputs */

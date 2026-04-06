@@ -70,9 +70,9 @@ def render_generic_table(
         renamed_df.style.apply(
             lambda row: _apply_row_colors(row, renamed_cols, rename), axis=1
         ).format(format_dict)
-        .set_properties(**{"font-size": "0.73rem", "padding": "2px 5px"}),
+        .set_properties(**{"font-size": "0.65rem", "padding": "1px 4px"}),
         use_container_width=True,
-        height=min(900, 32 + 28 * len(display_df)),
+        height=min(900, 28 + 24 * len(display_df)),
         hide_index=True,
     )
 
