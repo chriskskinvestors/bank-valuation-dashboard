@@ -36,6 +36,11 @@ CUSTOM_CSS = """
     section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
         font-size: 1rem !important;
     }
+    /* Ticker list in sidebar */
+    section[data-testid="stSidebar"] code {
+        font-size: 0.95rem !important;
+        font-weight: 600 !important;
+    }
 
     /* Header styling — compact */
     .dashboard-header {
