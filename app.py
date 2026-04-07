@@ -23,6 +23,7 @@ from ui.watchlist import render_watchlist_sidebar, load_watchlist, load_portfoli
 from ui.deposit_lookup import render_deposit_lookup, render_deposits_for_ticker
 from ui.filings import render_filings, render_filings_for_ticker
 from ui.earnings import render_earnings_consensus, render_earnings_overview
+from ui.historicals import render_historicals
 from ui.home import render_home
 
 # ── Page config ──────────────────────────────────────────────────────────
@@ -89,7 +90,7 @@ elif section == "🏦 Company Analysis":
         company_ticker = ticker_override.strip().upper()
 
     if company_ticker:
-        COMPANY_TABS = ["Overview", "Filings", "Deposits", "Earnings"]
+        COMPANY_TABS = ["Overview", "Financials", "Filings", "Deposits", "Earnings"]
         company_subtab = st.sidebar.radio(
             "View",
             COMPANY_TABS,
@@ -395,6 +396,9 @@ elif section == "🏦 Company Analysis":
 
     elif company_subtab == "Overview":
         render_bank_detail(company_ticker, metrics_df)
+
+    elif company_subtab == "Financials":
+        render_historicals(company_ticker)
 
     elif company_subtab == "Filings":
         render_filings_for_ticker(company_ticker)
