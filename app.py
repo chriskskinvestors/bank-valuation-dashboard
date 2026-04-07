@@ -76,7 +76,7 @@ elif section == "🏦 Company Analysis":
     wl = load_watchlist()
     company_ticker = st.sidebar.selectbox(
         "Bank",
-        options=[""] + wl,
+        options=[""] + sorted(wl),
         format_func=lambda t: f"{t} — {get_name(t)}" if t else "Select a bank...",
         key="company_bank",
     )
