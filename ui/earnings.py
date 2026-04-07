@@ -249,14 +249,59 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
         unsafe_allow_html=True,
     )
 
+    # ── Upload consensus document ────────────────────────────────────────
+    st.subheader("Upload Consensus Estimate")
+
+    u_col1, u_col2, u_col3 = st.columns([2, 1, 1])
+    with u_col1:
+        uploaded = st.file_uploader(
+            "Consensus file (PDF or Excel)",
+            type=["pdf", "xlsx", "xls", "csv"],
+            key="earnings_overview_upload",
+        )
+    with u_col2:
+        upload_ticker = st.text_input(
+            "Ticker",
+            placeholder="e.g. SFST",
+            key="earnings_overview_ticker",
+        )
+    with u_col3:
+        upload_period = st.text_input(
+            "Period",
+            placeholder="e.g. 2025Q4",
+            key="earnings_overview_period",
+        )
+
+    if uploaded and upload_ticker and upload_period:
+        with st.spinner("Parsing consensus document..."):
+            file_bytes = uploaded.read()
+            filename = uploaded.name.lower()
+            ticker_clean = upload_ticker.strip().upper()
+
+            if filename.endswith(".pdf"):
+                parsed = parse_consensus_pdf(file_bytes, ticker_clean, upload_period)
+            else:
+                parsed = parse_consensus_excel(file_bytes, ticker_clean, upload_period, filename)
+
+            if parsed.get("error"):
+                st.error(f"Error parsing: {parsed['error']}")
+            elif not parsed.get("metrics"):
+                st.warning("No metrics found in the document.")
+            else:
+                save_consensus(parsed)
+                st.success(f"Parsed {len(parsed['metrics'])} metrics for {ticker_clean} {upload_period}")
+                st.rerun()
+
+    st.markdown("---")
+
+    # ── Aggregate summary ────────────────────────────────────────────────
+    st.subheader("Beat / Miss Summary")
+
     # Get all consensus data
     all_consensus = list_all_consensus()
 
     if not all_consensus:
-        st.info(
-            "No consensus data uploaded yet. Go to **Company Analysis → Earnings** "
-            "to upload consensus estimates for individual banks."
-        )
+        st.info("No consensus data uploaded yet. Upload a file above to get started.")
         return
 
     # Build summary table
