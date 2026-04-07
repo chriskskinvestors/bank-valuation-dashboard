@@ -88,7 +88,11 @@ def _strip_sec_boilerplate(text: str) -> str:
                 best_pos = search_start + last_break + len(sep)
                 break
 
-    # Skip at minimum the first 100 chars (always boilerplate)
+    # If no content marker was found, return full text (skip first 100 chars of boilerplate)
+    if best_pos >= len(text):
+        return text[min(100, len(text)):].strip() if len(text) > 100 else text
+
+    # Skip to the content marker position
     if best_pos > 100:
         return text[best_pos:].strip()
 
