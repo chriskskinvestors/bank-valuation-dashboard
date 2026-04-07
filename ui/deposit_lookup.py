@@ -17,8 +17,18 @@ from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
 
 
+def render_deposits_for_ticker(ticker: str):
+    """Render deposit data for a specific ticker (no search UI)."""
+    cert = get_fdic_cert(ticker)
+    if not cert:
+        st.warning(f"No FDIC cert found for {ticker}.")
+        return
+    name = get_name(ticker)
+    _render_deposits_core(cert, name)
+
+
 def render_deposit_lookup():
-    """Render the deposit market share & branch map page."""
+    """Render the deposit market share & branch map page with search."""
 
     st.markdown(
         '<div class="dashboard-header">'
@@ -28,7 +38,6 @@ def render_deposit_lookup():
         unsafe_allow_html=True,
     )
 
-    # ── Bank search ──────────────────────────────────────────────────────
     col1, col2 = st.columns([2, 1])
     with col1:
         search_query = st.text_input(
@@ -43,7 +52,6 @@ def render_deposit_lookup():
             key="ticker_search",
         )
 
-    # Resolve the search to a CERT number
     selected_cert = None
     selected_name = None
 
@@ -54,7 +62,7 @@ def render_deposit_lookup():
             selected_cert = cert
             selected_name = get_name(ticker) or ticker
         else:
-            st.warning(f"Ticker '{ticker}' not found in bank mapping. Try searching by name instead.")
+            st.warning(f"Ticker '{ticker}' not found. Try searching by name instead.")
 
     elif search_query and len(search_query) >= 3:
         with st.spinner("Searching FDIC database..."):
@@ -73,8 +81,14 @@ def render_deposit_lookup():
             st.info("No banks found. Try a different name.")
 
     if not selected_cert:
-        st.info("👆 Search for a bank above to see its branch map and deposit market share.")
+        st.info("Search for a bank above to see its branch map and deposit market share.")
         return
+
+    _render_deposits_core(selected_cert, selected_name)
+
+
+def _render_deposits_core(selected_cert: int, selected_name: str):
+    """Core deposit rendering logic."""
 
     # ── Load branch data ─────────────────────────────────────────────────
     st.markdown("---")

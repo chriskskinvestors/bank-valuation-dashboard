@@ -180,18 +180,12 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     st.markdown("### Explore")
 
     cards = [
-        ("📊", "Valuation & Performance",
-         "P/E, P/TBV, ROATCE, fair value screening, dividend yields across all banks"),
-        ("🏦", "Balance Sheet",
-         "Loan mix, deposit composition, securities, capital ratios, credit quality"),
-        ("💰", "Deposits & Loans",
-         "Detailed deposit ratios, loan concentration, CRE exposure, brokered deposits"),
-        ("📈", "NIM & Income",
-         "Yield curves, cost of funds, net interest margin, efficiency ratios"),
-        ("🔍", "Deposit Lookup",
-         "Branch map, deposit market share by county/MSA for any FDIC-insured bank"),
-        ("📄", "SEC & FDIC Filings",
-         "Browse 10-K, 10-Q, 8-K filings with earnings release flagging and IR links"),
+        ("📊", "Screening",
+         "Compare all banks side-by-side: valuation, balance sheet, loans, deposits, NIM, capital, credit quality"),
+        ("🏦", "Company Analysis",
+         "Deep dive into any bank: overview, SEC filings, deposit market share, branch map, earnings vs consensus"),
+        ("📈", "Earnings Analysis",
+         "Track earnings beats/misses across your watchlist. Upload consensus PDFs or Excel to compare actuals"),
     ]
 
     # 3 cards per row

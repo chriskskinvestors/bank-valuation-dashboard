@@ -99,8 +99,13 @@ def _items_description(items_str: str) -> str:
     return " · ".join(parts)
 
 
+def render_filings_for_ticker(ticker: str):
+    """Render filings for a specific ticker (no bank selector UI)."""
+    _render_filings_core(ticker)
+
+
 def render_filings(watchlist: list[str]):
-    """Render the SEC & FDIC filings page."""
+    """Render the SEC & FDIC filings page with bank selector."""
 
     st.markdown(
         '<div class="dashboard-header">'
@@ -110,7 +115,6 @@ def render_filings(watchlist: list[str]):
         unsafe_allow_html=True,
     )
 
-    # ── Bank selector ────────────────────────────────────────────────────
     col1, col2 = st.columns([2, 1])
     with col1:
         selected = st.selectbox(
@@ -135,6 +139,12 @@ def render_filings(watchlist: list[str]):
     if not ticker:
         st.info("Select a bank above to view its SEC filings and earnings releases.")
         return
+
+    _render_filings_core(ticker)
+
+
+def _render_filings_core(ticker: str):
+    """Core filings rendering logic for a given ticker."""
 
     # ── Resolve CIK ──────────────────────────────────────────────────────
     cik = get_cik(ticker)
