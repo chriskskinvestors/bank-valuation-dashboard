@@ -248,6 +248,57 @@ elif section == "📊 Screening" and screening_tab:
             key=f"order_{screening_tab['key']}",
         )
 
+    # ── Metric filters ──────────────────────────────────────────────────
+    # Build filterable metrics from this tab's columns (only numeric ones)
+    filterable = []
+    for col_key in tab_columns:
+        m = METRICS_BY_KEY.get(col_key)
+        if m and m.get("format") in ("pct", "ratio", "currency", "number", "millions", "billions"):
+            filterable.append((col_key, m["label"], m.get("format", "")))
+
+    active_filters = []
+    with st.expander("🔍 Metric Filters", expanded=False):
+        # Up to 4 filters in a row
+        num_filters = st.selectbox(
+            "Number of filters",
+            options=[1, 2, 3, 4],
+            key=f"num_filters_{screening_tab['key']}",
+        )
+
+        filter_labels = ["—"] + [f[1] for f in filterable]
+        filter_keys = [None] + [f[0] for f in filterable]
+
+        for fi in range(num_filters):
+            fc1, fc2, fc3 = st.columns([3, 1, 2])
+            with fc1:
+                filt_idx = st.selectbox(
+                    "Metric",
+                    options=list(range(len(filter_labels))),
+                    format_func=lambda i, fl=filter_labels: fl[i],
+                    key=f"filt_metric_{screening_tab['key']}_{fi}",
+                    label_visibility="collapsed" if fi > 0 else "visible",
+                )
+            with fc2:
+                filt_op = st.selectbox(
+                    "Op",
+                    options=["<", "≤", ">", "≥", "="],
+                    key=f"filt_op_{screening_tab['key']}_{fi}",
+                    label_visibility="collapsed" if fi > 0 else "visible",
+                )
+            with fc3:
+                filt_val = st.number_input(
+                    "Value",
+                    value=0.0,
+                    step=0.1,
+                    format="%.2f",
+                    key=f"filt_val_{screening_tab['key']}_{fi}",
+                    label_visibility="collapsed" if fi > 0 else "visible",
+                )
+
+            filt_key = filter_keys[filt_idx] if filt_idx > 0 else None
+            if filt_key is not None:
+                active_filters.append((filt_key, filt_op, filt_val))
+
     # Resolve which banks to show
     if bank_filter == "Portfolio":
         display_tickers = portfolio
@@ -265,6 +316,37 @@ elif section == "📊 Screening" and screening_tab:
         else:
             display_metrics = []
 
+    # Apply metric filters
+    if active_filters and display_metrics:
+        filtered = []
+        for m in display_metrics:
+            passes = True
+            for fk, fop, fv in active_filters:
+                val = m.get(fk)
+                if val is None:
+                    passes = False
+                    break
+                try:
+                    val = float(val)
+                except (TypeError, ValueError):
+                    passes = False
+                    break
+                if fop == "<" and not (val < fv):
+                    passes = False
+                elif fop == "≤" and not (val <= fv):
+                    passes = False
+                elif fop == ">" and not (val > fv):
+                    passes = False
+                elif fop == "≥" and not (val >= fv):
+                    passes = False
+                elif fop == "=" and not (abs(val - fv) < 0.005):
+                    passes = False
+                if not passes:
+                    break
+            if passes:
+                filtered.append(m)
+        display_metrics = filtered
+
     # Apply sorting
     sort_key = sort_keys[sort_idx] if sort_idx > 0 else None
     if sort_key and display_metrics:
@@ -276,10 +358,12 @@ elif section == "📊 Screening" and screening_tab:
         )
 
     # Header
+    filter_note = f" · {len(active_filters)} filter{'s' if len(active_filters) != 1 else ''}" if active_filters else ""
+    total_before = len(display_tickers) if not active_filters else "filtered"
     st.markdown(
         '<div class="dashboard-header">'
         f"<h1>{screening_tab['title']}</h1>"
-        f"<p>{len(display_tickers)} banks ({bank_filter}) | "
+        f"<p>{len(display_metrics)} banks ({bank_filter}{filter_note}) | "
         f"{'IBKR Live' if st.session_state.ibkr_connected else 'IBKR Offline'} | "
         f"{len(screening_tab['columns'])} columns</p>"
         "</div>",
