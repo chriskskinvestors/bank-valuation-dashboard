@@ -39,24 +39,44 @@ gcloud builds submit --tag "${IMAGE}" --quiet
 DB_PASSWORD=$(gcloud secrets versions access latest --secret=db-password)
 DATABASE_URL="postgresql+psycopg2://${SQL_USER}:${DB_PASSWORD}@/${SQL_DB_NAME}?host=/cloudsql/${INSTANCE_CONN}"
 
+# Build the --set-secrets argument from only the secrets that actually exist.
+# This lets the user skip secrets during bootstrap without breaking deploy.
+SECRETS_ARG=""
+for SECRET_NAME in anthropic-api-key fred-api-key; do
+    if gcloud secrets describe "${SECRET_NAME}" --quiet >/dev/null 2>&1; then
+        ENV_VAR=$(echo "${SECRET_NAME}" | tr '[:lower:]-' '[:upper:]_')
+        if [[ -z "${SECRETS_ARG}" ]]; then
+            SECRETS_ARG="${ENV_VAR}=${SECRET_NAME}:latest"
+        else
+            SECRETS_ARG="${SECRETS_ARG},${ENV_VAR}=${SECRET_NAME}:latest"
+        fi
+    else
+        echo "  (skipping secret ${SECRET_NAME} — not in Secret Manager)"
+    fi
+done
+
 # Deploy to Cloud Run
 echo
 echo "▶ Deploying to Cloud Run..."
-gcloud run deploy "${RUN_SERVICE}" \
-    --image="${IMAGE}" \
-    --region="${REGION}" \
-    --service-account="${SA_EMAIL}" \
-    --add-cloudsql-instances="${INSTANCE_CONN}" \
-    --set-env-vars="GCS_BUCKET=${GCS_BUCKET},GCLOUD_PROJECT=${PROJECT_ID},DATABASE_URL=${DATABASE_URL}" \
-    --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest,FRED_API_KEY=fred-api-key:latest" \
-    --memory=2Gi \
-    --cpu=1 \
-    --min-instances=0 \
-    --max-instances=4 \
-    --concurrency=20 \
-    --timeout=300 \
-    --no-allow-unauthenticated \
+DEPLOY_ARGS=(
+    --image="${IMAGE}"
+    --region="${REGION}"
+    --service-account="${SA_EMAIL}"
+    --add-cloudsql-instances="${INSTANCE_CONN}"
+    --set-env-vars="GCS_BUCKET=${GCS_BUCKET},GCLOUD_PROJECT=${PROJECT_ID},DATABASE_URL=${DATABASE_URL}"
+    --memory=2Gi
+    --cpu=1
+    --min-instances=0
+    --max-instances=4
+    --concurrency=20
+    --timeout=300
+    --no-allow-unauthenticated
     --quiet
+)
+if [[ -n "${SECRETS_ARG}" ]]; then
+    DEPLOY_ARGS+=(--set-secrets="${SECRETS_ARG}")
+fi
+gcloud run deploy "${RUN_SERVICE}" "${DEPLOY_ARGS[@]}"
 
 URL=$(gcloud run services describe "${RUN_SERVICE}" \
         --region="${REGION}" --format="value(status.url)")
