@@ -2,6 +2,11 @@
 Number formatting and color coding helpers for the dashboard UI.
 """
 
+from __future__ import annotations  # Lazy-evaluate all type hints (PEP 563).
+                                     # Required because pd.io.formats.style.Styler
+                                     # isn't always importable at module-load time
+                                     # under older pandas / pinned Python versions.
+
 import pandas as pd
 from config import METRICS_BY_KEY
 
