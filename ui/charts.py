@@ -9,15 +9,7 @@ from plotly.subplots import make_subplots
 from config import METRICS_BY_KEY
 
 
-CHART_LAYOUT = dict(
-    template="plotly_dark",
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(color="#e0e0e0", size=12),
-    margin=dict(l=50, r=20, t=40, b=40),
-    xaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-    yaxis=dict(gridcolor="rgba(255,255,255,0.05)"),
-)
+from utils.chart_style import CHART_LAYOUT  # re-export for any old callers
 
 
 def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
@@ -150,32 +142,39 @@ def balance_sheet_chart(fdic_df: pd.DataFrame) -> go.Figure:
 
     fig = go.Figure()
 
+    # Determine scale (B or T) from max asset value
+    max_usd = 0
+    if "ASSET" in fdic_df.columns:
+        assets_series = fdic_df["ASSET"] * 1000  # thousands → dollars
+        max_usd = assets_series.abs().max() if not assets_series.empty else 0
+    scale, unit = (1e12, "T") if max_usd >= 1e12 else (1e9, "B")
+
     if "ASSET" in fdic_df.columns:
         fig.add_trace(go.Bar(
             x=fdic_df["REPDTE"],
-            y=fdic_df["ASSET"] * 1000 / 1e9,  # thousands to billions
+            y=fdic_df["ASSET"] * 1000 / scale,
             name="Total Assets",
             marker_color="#64b5f6",
         ))
     if "LNLSNET" in fdic_df.columns:
         fig.add_trace(go.Bar(
             x=fdic_df["REPDTE"],
-            y=fdic_df["LNLSNET"] * 1000 / 1e9,
+            y=fdic_df["LNLSNET"] * 1000 / scale,
             name="Net Loans",
             marker_color="#00c853",
         ))
     if "DEP" in fdic_df.columns:
         fig.add_trace(go.Bar(
             x=fdic_df["REPDTE"],
-            y=fdic_df["DEP"] * 1000 / 1e9,
+            y=fdic_df["DEP"] * 1000 / scale,
             name="Total Deposits",
             marker_color="#ffd600",
         ))
 
     fig.update_layout(
-        title="Balance Sheet Trend ($B)",
+        title=f"Balance Sheet Trend (${unit})",
         xaxis_title="Quarter",
-        yaxis_title="$ Billions",
+        yaxis_title=f"$ {'Trillions' if unit == 'T' else 'Billions'}",
         barmode="group",
         legend=dict(orientation="h", y=-0.2),
         **CHART_LAYOUT,

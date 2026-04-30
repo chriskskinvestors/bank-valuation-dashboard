@@ -13,8 +13,12 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from data.cloud_storage import save_json, load_json, list_files
+
 CONSENSUS_DIR = Path(__file__).parent.parent / "consensus"
 CONSENSUS_DIR.mkdir(exist_ok=True)
+
+CONSENSUS_PREFIX = "consensus"
 
 # ── Metric key mapping ───────────────────────────────────────────────────
 # Maps common consensus metric names to our internal metric keys.
@@ -210,6 +214,146 @@ Return ONLY the JSON array, no other text."""
         }
 
 
+def parse_bulk_consensus_pdf(file_bytes: bytes, period: str) -> dict:
+    """
+    Parse a PDF containing consensus estimates for MULTIPLE banks.
+
+    Uses Anthropic Claude to extract structured data grouped by ticker.
+    Works with broker research reports, sector summaries, multi-bank consensus docs.
+
+    Returns same format as parse_bulk_consensus():
+    {
+        "results": [{"ticker": "JPM", "period": "2026Q1", "metrics_count": 8, "status": "saved"}, ...],
+        "total_banks": 5,
+        "total_metrics": 42,
+        "errors": ["..."]
+    }
+    """
+    try:
+        import anthropic
+        import base64
+
+        client = anthropic.Anthropic(
+            api_key=os.environ.get("ANTHROPIC_API_KEY", st.secrets.get("ANTHROPIC_API_KEY", ""))
+        )
+
+        b64_pdf = base64.standard_b64encode(file_bytes).decode("utf-8")
+
+        prompt = """This document contains consensus estimates for MULTIPLE banks/companies.
+
+For EACH bank/company mentioned, extract:
+- ticker: the stock ticker symbol (e.g. "JPM", "BAC", "WFC")
+- metrics: all consensus estimate metrics you can find
+
+Return a JSON object grouped by ticker like this:
+{
+  "JPM": [
+    {"name": "EPS", "value": 5.44, "unit": "$"},
+    {"name": "Net Interest Margin", "value": 2.75, "unit": "%"},
+    {"name": "Efficiency Ratio", "value": 55.2, "unit": "%"}
+  ],
+  "BAC": [
+    {"name": "EPS", "value": 0.82, "unit": "$"},
+    {"name": "NIM", "value": 1.95, "unit": "%"}
+  ]
+}
+
+Rules:
+- Use standard US stock ticker symbols (JPM not "JP Morgan")
+- Extract every metric you can find per bank: EPS, revenue, NIM, efficiency, ROAA, ROATCE, ROE, NPL, CET1, net income, provision, deposits, loans, TBV, dividends, charge-offs, yields, costs, growth rates, noninterest income/expense, etc.
+- If a bank name is mentioned but you're not sure of the ticker, use your best guess
+- Values should be numeric (no commas or dollar signs in the value field)
+- Unit should be one of: %, $, $M, $B, bps, x, or blank
+
+Return ONLY the JSON object, no other text."""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=8192,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": b64_pdf,
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+
+        # Parse response
+        text = response.content[0].text.strip()
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            bank_data = json.loads(json_match.group())
+        else:
+            bank_data = json.loads(text)
+
+        # Save each bank's consensus
+        results = []
+        total_metrics = 0
+        errors = []
+
+        for ticker, raw_metrics in bank_data.items():
+            ticker = ticker.strip().upper()
+            if not ticker or not raw_metrics:
+                continue
+
+            metrics = []
+            for m in raw_metrics:
+                key = _normalize_key(m.get("name", ""))
+                try:
+                    val = float(m["value"]) if m.get("value") is not None else None
+                except (ValueError, TypeError):
+                    continue
+
+                metrics.append({
+                    "name": m.get("name", ""),
+                    "key": key,
+                    "value": val,
+                    "unit": m.get("unit", METRIC_UNITS.get(key, "")),
+                })
+
+            if metrics:
+                data = {
+                    "ticker": ticker,
+                    "period": period,
+                    "source": "bulk_pdf",
+                    "metrics": metrics,
+                }
+                try:
+                    save_consensus(data)
+                    results.append({
+                        "ticker": ticker,
+                        "period": period,
+                        "metrics_count": len(metrics),
+                        "status": "saved",
+                    })
+                    total_metrics += len(metrics)
+                except Exception as e:
+                    errors.append(f"{ticker}: {e}")
+
+        return {
+            "results": results,
+            "total_banks": len(results),
+            "total_metrics": total_metrics,
+            "errors": errors,
+        }
+
+    except Exception as e:
+        return {
+            "results": [],
+            "total_banks": 0,
+            "total_metrics": 0,
+            "errors": [f"PDF parsing error: {e}"],
+        }
+
+
 # ── Excel/CSV Parsing ────────────────────────────────────────────────────
 
 def parse_consensus_excel(file_bytes: bytes, ticker: str, period: str, filename: str = "") -> dict:
@@ -286,28 +430,333 @@ def parse_consensus_excel(file_bytes: bytes, ticker: str, period: str, filename:
         }
 
 
+# ── Bulk Multi-Bank Parsing ─────────────────────────────────────────────
+
+def parse_bulk_consensus(file_bytes: bytes, period: str, filename: str = "") -> dict:
+    """
+    Parse a file with consensus estimates for MULTIPLE banks.
+
+    Supports two formats:
+
+    Wide format (one row per bank, metrics as columns):
+        Ticker | EPS | NIM | Efficiency | ROATCE | ...
+        JPM    | 5.44| 2.75| 55.2       | 18.5   | ...
+        BAC    | 0.82| 1.95| 62.1       | 12.3   | ...
+
+    Long format (one metric per row):
+        Ticker | Metric    | Value
+        JPM    | EPS       | 5.44
+        JPM    | NIM       | 2.75
+        BAC    | EPS       | 0.82
+
+    Also supports multi-sheet Excel where each sheet = one bank (sheet name = ticker).
+
+    Returns:
+    {
+        "results": [
+            {"ticker": "JPM", "period": "2026Q1", "metrics_count": 8, "status": "saved"},
+            ...
+        ],
+        "total_banks": 5,
+        "total_metrics": 42,
+        "errors": ["..."]
+    }
+    """
+    results = []
+    errors = []
+    total_metrics = 0
+
+    try:
+        if filename.endswith(".csv"):
+            dfs = {"Sheet1": pd.read_csv(pd.io.common.BytesIO(file_bytes))}
+        else:
+            # Try reading all sheets
+            xls = pd.ExcelFile(pd.io.common.BytesIO(file_bytes))
+            sheet_names = xls.sheet_names
+            dfs = {name: pd.read_excel(xls, sheet_name=name) for name in sheet_names}
+    except Exception as e:
+        return {"results": [], "total_banks": 0, "total_metrics": 0,
+                "errors": [f"Could not read file: {e}"]}
+
+    for sheet_name, df in dfs.items():
+        if df.empty:
+            continue
+
+        cols_lower = {c.lower().strip(): c for c in df.columns}
+
+        # Detect if this sheet has a Ticker column
+        ticker_col = None
+        for name in ["ticker", "symbol", "bank", "company"]:
+            if name in cols_lower:
+                ticker_col = cols_lower[name]
+                break
+
+        if ticker_col:
+            # Has a ticker column — could be wide or long format
+            parsed = _parse_multi_bank_sheet(df, ticker_col, period, cols_lower)
+            results.extend(parsed["results"])
+            errors.extend(parsed["errors"])
+            total_metrics += parsed["total_metrics"]
+        elif len(dfs) > 1:
+            # Multi-sheet mode: sheet name = ticker
+            ticker = sheet_name.strip().upper()
+            if len(ticker) <= 6 and ticker.isalpha():
+                parsed = _parse_single_bank_sheet(df, ticker, period)
+                if parsed:
+                    results.append(parsed)
+                    total_metrics += parsed["metrics_count"]
+        else:
+            errors.append(f"No 'Ticker' column found in sheet '{sheet_name}'. "
+                         "Expected a column named Ticker, Symbol, Bank, or Company.")
+
+    return {
+        "results": results,
+        "total_banks": len(results),
+        "total_metrics": total_metrics,
+        "errors": errors,
+    }
+
+
+def _parse_multi_bank_sheet(df: pd.DataFrame, ticker_col: str, period: str,
+                             cols_lower: dict) -> dict:
+    """Parse a sheet with multiple banks (has a Ticker column)."""
+    results = []
+    errors = []
+    total_metrics = 0
+
+    # Check if this is long format (has Metric + Value columns)
+    metric_col = None
+    value_col = None
+    for name in ["metric", "item", "line item", "description", "name", "measure"]:
+        if name in cols_lower:
+            metric_col = cols_lower[name]
+            break
+    for name in ["value", "estimate", "consensus", "est", "mean", "median"]:
+        if name in cols_lower:
+            value_col = cols_lower[name]
+            break
+
+    if metric_col and value_col:
+        # ── Long format: Ticker | Metric | Value ──
+        bank_metrics = {}
+        for _, row in df.iterrows():
+            ticker = str(row[ticker_col]).strip().upper()
+            metric_name = str(row[metric_col]).strip()
+            val = row[value_col]
+
+            if not ticker or ticker == "NAN" or not metric_name or metric_name == "NAN":
+                continue
+            if pd.isna(val):
+                continue
+
+            try:
+                val = float(val)
+            except (ValueError, TypeError):
+                continue
+
+            if ticker not in bank_metrics:
+                bank_metrics[ticker] = []
+
+            key = _normalize_key(metric_name)
+            unit = METRIC_UNITS.get(key, "")
+            bank_metrics[ticker].append({
+                "name": metric_name,
+                "key": key,
+                "value": val,
+                "unit": unit,
+            })
+
+        for ticker, metrics in bank_metrics.items():
+            data = {
+                "ticker": ticker,
+                "period": period,
+                "source": "bulk_upload",
+                "metrics": metrics,
+            }
+            try:
+                save_consensus(data)
+                results.append({
+                    "ticker": ticker, "period": period,
+                    "metrics_count": len(metrics), "status": "saved",
+                })
+                total_metrics += len(metrics)
+            except Exception as e:
+                errors.append(f"{ticker}: {e}")
+
+    else:
+        # ── Wide format: Ticker | EPS | NIM | Efficiency | ... ──
+        # All non-ticker columns are treated as metric names
+        metric_columns = []
+        for col in df.columns:
+            if col == ticker_col:
+                continue
+            key = _normalize_key(col)
+            metric_columns.append((col, key))
+
+        for _, row in df.iterrows():
+            ticker = str(row[ticker_col]).strip().upper()
+            if not ticker or ticker == "NAN":
+                continue
+
+            metrics = []
+            for col, key in metric_columns:
+                val = row[col]
+                if pd.isna(val):
+                    continue
+                try:
+                    val = float(val)
+                except (ValueError, TypeError):
+                    continue
+
+                unit = METRIC_UNITS.get(key, "")
+                metrics.append({
+                    "name": col,
+                    "key": key,
+                    "value": val,
+                    "unit": unit,
+                })
+
+            if metrics:
+                data = {
+                    "ticker": ticker,
+                    "period": period,
+                    "source": "bulk_upload",
+                    "metrics": metrics,
+                }
+                try:
+                    save_consensus(data)
+                    results.append({
+                        "ticker": ticker, "period": period,
+                        "metrics_count": len(metrics), "status": "saved",
+                    })
+                    total_metrics += len(metrics)
+                except Exception as e:
+                    errors.append(f"{ticker}: {e}")
+
+    return {"results": results, "total_metrics": total_metrics, "errors": errors}
+
+
+def _parse_single_bank_sheet(df: pd.DataFrame, ticker: str, period: str) -> dict | None:
+    """Parse a single-bank sheet (no ticker column, sheet name = ticker)."""
+    cols_lower = {c.lower().strip(): c for c in df.columns}
+
+    # Try to find metric + value columns
+    metric_col = None
+    value_col = None
+    for name in ["metric", "item", "line item", "description", "name"]:
+        if name in cols_lower:
+            metric_col = cols_lower[name]
+            break
+    for name in ["estimate", "consensus", "value", "est", "mean", "median"]:
+        if name in cols_lower:
+            value_col = cols_lower[name]
+            break
+
+    metrics = []
+
+    if metric_col and value_col:
+        for _, row in df.iterrows():
+            name = str(row[metric_col]).strip()
+            val = row[value_col]
+            if pd.notna(val) and name and name != "nan":
+                key = _normalize_key(name)
+                try:
+                    val = float(val)
+                except (ValueError, TypeError):
+                    continue
+                unit = METRIC_UNITS.get(key, "")
+                metrics.append({"name": name, "key": key, "value": val, "unit": unit})
+    elif len(df.columns) >= 2:
+        for _, row in df.iterrows():
+            name = str(row.iloc[0]).strip()
+            val = row.iloc[1]
+            if pd.notna(val) and name and name != "nan":
+                key = _normalize_key(name)
+                try:
+                    val = float(val)
+                except (ValueError, TypeError):
+                    continue
+                unit = METRIC_UNITS.get(key, "")
+                metrics.append({"name": name, "key": key, "value": val, "unit": unit})
+
+    if not metrics:
+        return None
+
+    data = {
+        "ticker": ticker,
+        "period": period,
+        "source": "bulk_upload",
+        "metrics": metrics,
+    }
+    save_consensus(data)
+
+    return {
+        "ticker": ticker, "period": period,
+        "metrics_count": len(metrics), "status": "saved",
+    }
+
+
 # ── Storage ──────────────────────────────────────────────────────────────
 
 def save_consensus(data: dict) -> Path:
-    """Save parsed consensus to JSON. Returns the file path."""
+    """Save parsed consensus to JSON (local + GCS). Returns the local file path."""
     ticker = data["ticker"].upper()
     period = data["period"].replace("/", "-").replace(" ", "_")
-    path = CONSENSUS_DIR / f"{ticker}_{period}.json"
-    path.write_text(json.dumps(data, indent=2))
-    return path
+    filename = f"{ticker}_{period}.json"
+
+    # Save to both local and GCS
+    save_json(CONSENSUS_PREFIX, filename, data)
+
+    return CONSENSUS_DIR / filename
+
+
+def save_manual_consensus(ticker: str, period: str, metrics_dict: dict) -> Path:
+    """
+    Save manually entered consensus estimates.
+
+    Args:
+        ticker: Bank ticker
+        period: Period string (e.g. "2026Q1")
+        metrics_dict: {metric_key: value} e.g. {"eps": 1.25, "nim": 3.45}
+
+    Returns the file path.
+    """
+    metrics = []
+    for key, value in metrics_dict.items():
+        if value is not None:
+            metrics.append({
+                "name": METRIC_DISPLAY.get(key, key),
+                "key": key,
+                "value": float(value),
+                "unit": METRIC_UNITS.get(key, ""),
+            })
+
+    data = {
+        "ticker": ticker.upper(),
+        "period": period,
+        "source": "manual",
+        "metrics": metrics,
+    }
+    return save_consensus(data)
 
 
 def load_consensus(ticker: str, period: str | None = None) -> dict | None:
     """Load consensus for a ticker. If period is None, loads the latest."""
     ticker = ticker.upper()
-    files = sorted(CONSENSUS_DIR.glob(f"{ticker}_*.json"), reverse=True)
+
+    # Get all files for this ticker (from GCS + local)
+    all_files = sorted(
+        [f for f in list_files(CONSENSUS_PREFIX) if f.startswith(f"{ticker}_")],
+        reverse=True,
+    )
+
     if period:
         period_clean = period.replace("/", "-").replace(" ", "_")
-        for f in files:
-            if period_clean in f.stem:
-                return json.loads(f.read_text())
-    elif files:
-        return json.loads(files[0].read_text())
+        for f in all_files:
+            if period_clean in f.replace(".json", ""):
+                return load_json(CONSENSUS_PREFIX, f)
+    elif all_files:
+        return load_json(CONSENSUS_PREFIX, all_files[0])
     return None
 
 
@@ -315,23 +764,33 @@ def list_consensus(ticker: str) -> list[dict]:
     """List all consensus periods for a ticker."""
     ticker = ticker.upper()
     results = []
-    for f in sorted(CONSENSUS_DIR.glob(f"{ticker}_*.json"), reverse=True):
-        data = json.loads(f.read_text())
-        results.append({
-            "period": data.get("period", ""),
-            "source": data.get("source", ""),
-            "metric_count": len(data.get("metrics", [])),
-            "file": f.name,
-        })
+
+    all_files = sorted(
+        [f for f in list_files(CONSENSUS_PREFIX) if f.startswith(f"{ticker}_")],
+        reverse=True,
+    )
+
+    for filename in all_files:
+        data = load_json(CONSENSUS_PREFIX, filename)
+        if data:
+            results.append({
+                "period": data.get("period", ""),
+                "source": data.get("source", ""),
+                "metric_count": len(data.get("metrics", [])),
+                "file": filename,
+            })
     return results
 
 
 def list_all_consensus() -> dict[str, list[dict]]:
     """List consensus data for all tickers. Returns {ticker: [periods]}."""
     result = {}
-    for f in sorted(CONSENSUS_DIR.glob("*.json")):
-        data = json.loads(f.read_text())
-        ticker = data.get("ticker", f.stem.split("_")[0])
+
+    for filename in list_files(CONSENSUS_PREFIX):
+        data = load_json(CONSENSUS_PREFIX, filename)
+        if not data:
+            continue
+        ticker = data.get("ticker", filename.split("_")[0])
         if ticker not in result:
             result[ticker] = []
         result[ticker].append({

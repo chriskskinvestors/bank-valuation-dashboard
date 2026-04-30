@@ -24,6 +24,14 @@ def render_deposits_for_ticker(ticker: str):
         st.warning(f"No FDIC cert found for {ticker}.")
         return
     name = get_name(ticker)
+
+    # ── Deposit Dynamics (beta, alerts, trends) ──
+    from ui.deposit_dynamics import render_deposit_dynamics
+    render_deposit_dynamics(ticker)
+
+    st.markdown("---")
+
+    # ── Branch map & market share ──
     _render_deposits_core(cert, name)
 
 
@@ -109,11 +117,9 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Branches", f"{num_branches}")
-    # FDIC deposits are in thousands → divide by 1e6 to get billions
-    if total_deposits >= 1e6:
-        c2.metric("Total Deposits", f"${total_deposits / 1e6:,.1f}B")
-    else:
-        c2.metric("Total Deposits", f"${total_deposits / 1e3:,.0f}M")
+    # FDIC SOD deposits are in thousands; auto-scale T / B / M
+    from utils.formatting import fmt_dollars_from_thousands
+    c2.metric("Total Deposits", fmt_dollars_from_thousands(total_deposits, 2))
     c3.metric("States", f"{states}")
     c4.metric("Counties", f"{counties}")
 
@@ -202,11 +208,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                         rank = bank_row.iloc[0]["rank"]
                         share = bank_row.iloc[0]["market_share"]
                         deps = bank_row.iloc[0]["deposits"]
-                        def _dep_fmt(v):
-                            """Format deposits (in thousands) to human-readable."""
-                            if v >= 1e6:
-                                return f"${v / 1e6:,.1f}B"
-                            return f"${v / 1e3:,.0f}M"
+                        _dep_fmt = lambda v: fmt_dollars_from_thousands(v, 2)
 
                         st.markdown(
                             f"**{selected_name}** ranks **#{int(rank)}** in {county_label} "
@@ -250,10 +252,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                     msa_label = msa_options[msa_options["MSABR"] == selected_msa]["MSANAMB"].iloc[0]
                     total_msa_deps = ms_df["deposits"].sum()
 
-                    def _dep_fmt_msa(v):
-                        if v >= 1e6:
-                            return f"${v / 1e6:,.1f}B"
-                        return f"${v / 1e3:,.0f}M"
+                    _dep_fmt_msa = lambda v: fmt_dollars_from_thousands(v, 2)
 
                     bank_row = ms_df[ms_df["CERT"] == selected_cert]
                     if not bank_row.empty:

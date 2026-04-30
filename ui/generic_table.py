@@ -6,8 +6,40 @@ import pandas as pd
 import streamlit as st
 
 from config import METRICS_BY_KEY
-from data.bank_mapping import get_name
+from data.bank_mapping import get_name, BANK_MAP
 from utils.formatting import format_value, get_bg_color
+
+
+def _fast_name_lookup(tickers: pd.Series) -> pd.Series:
+    """
+    Vectorized bank name lookup.
+
+    For known tickers, uses the static BANK_MAP dict (O(1) hash lookup per row).
+    For unknown tickers, falls back to get_name() which may do dynamic resolution.
+    """
+    def _lookup_one(t):
+        if t is None or pd.isna(t):
+            return ""
+        entry = BANK_MAP.get(t)
+        if isinstance(entry, dict):
+            return entry.get("name") or t
+        return None  # signal "needs fallback"
+
+    known_names = tickers.map(_lookup_one)
+
+    # Slow path for unknowns: use get_name (which may hit resolve_ticker)
+    unknown_mask = known_names.isna()
+    if unknown_mask.any():
+        def _safe_get_name(t):
+            if t is None or pd.isna(t):
+                return ""
+            try:
+                return get_name(t)
+            except Exception:
+                return str(t)
+        known_names.loc[unknown_mask] = tickers.loc[unknown_mask].map(_safe_get_name)
+
+    return known_names
 
 
 def _apply_row_colors(row, renamed_cols, rename_map):
@@ -41,7 +73,7 @@ def render_generic_table(
         return None
 
     df = pd.DataFrame(metrics_data)
-    df.insert(0, "Bank", df["ticker"].apply(get_name))
+    df.insert(0, "Bank", _fast_name_lookup(df["ticker"]))
 
     # Filter to only columns that exist in the dataframe
     valid_cols = [c for c in columns if c in df.columns]

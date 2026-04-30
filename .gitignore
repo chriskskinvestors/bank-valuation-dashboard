@@ -8,3 +8,26 @@ cache.db
 watchlist.json
 .venv/
 venv/
+
+# Credentials — never commit
+.gcs_token
+gcs-key.json
+*-key.json
+*.pem
+
+# Per-source caches (large + ephemeral)
+estimates_cache/
+form13f_cache/
+form4_cache/
+macro_cache/
+
+# User-uploaded consensus PDFs / parsed data
+consensus/
+
+# Test artifacts (regenerated each run)
+tests/smoke_report.csv
+tests/universe_audit_report.csv
+tests/warning_verification.csv
+
+# Plan files
+.claude/plans/

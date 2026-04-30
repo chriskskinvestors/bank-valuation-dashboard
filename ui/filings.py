@@ -224,11 +224,12 @@ def _render_filings_core(ticker: str):
             press_releases.append({**f, "press_release_url": pr_url})
 
     # ── Tabs ─────────────────────────────────────────────────────────────
-    tab_all, tab_press, tab_earnings, tab_annual = st.tabs([
+    tab_all, tab_press, tab_earnings, tab_annual, tab_insider = st.tabs([
         f"All Filings ({len(filings)})",
         f"Press Releases ({len(press_releases)})",
         "Earnings Releases",
-        "Annual & Quarterly Reports",
+        "Annual & Quarterly",
+        "👥 Insider Activity",
     ])
 
     with tab_all:
@@ -237,6 +238,10 @@ def _render_filings_core(ticker: str):
 
     with tab_press:
         _render_press_releases(press_releases, ticker, raw_cik)
+
+    with tab_insider:
+        from ui.insider_activity import render_insider_activity
+        render_insider_activity(ticker)
 
     with tab_earnings:
         earnings = [f for f in filings if f.get("is_earnings")]
@@ -326,12 +331,15 @@ def _render_filings_section(filings: list[dict], show_filters: bool = False,
         all_forms = sorted(set(f["form"] for f in filings))
         major_forms = ["10-K", "10-Q", "8-K"]
 
+        # Only default-include forms that actually exist in the filings
+        # (avoids "default not in options" crash when some major forms aren't present)
+        default_forms = [f for f in major_forms if f in all_forms] or all_forms
         col1, col2 = st.columns([3, 1])
         with col1:
             selected_forms = st.multiselect(
                 "Filter by form type",
                 options=all_forms,
-                default=major_forms if set(major_forms) & set(all_forms) else all_forms,
+                default=default_forms,
                 key=f"{key_prefix}_form_filter",
             )
         with col2:

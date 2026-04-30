@@ -39,10 +39,103 @@ def compute_change_pct(price: float | None, prev_close: float | None) -> float |
     return ((price - prev_close) / prev_close) * 100
 
 
+def _infer_quarter(repdte) -> int | None:
+    """Return quarter number (1-4) from an FDIC REPDTE value."""
+    if repdte is None:
+        return None
+    try:
+        # REPDTE can be Timestamp, date, or string like '20251231' or '2025-12-31'
+        if hasattr(repdte, "month"):
+            m = repdte.month
+        else:
+            s = str(repdte)
+            if "-" in s:
+                m = int(s.split("-")[1])
+            else:
+                m = int(s[4:6])
+        return (m - 1) // 3 + 1
+    except Exception:
+        return None
+
+
+def _annualize_ytd(ytd_value: float | None, quarter: int | None) -> float | None:
+    """
+    Convert an FDIC YTD cumulative value (NETINC, EINTEXP, etc.) to an
+    annualized full-year equivalent.
+
+    Q1 YTD = 3 months → × 4
+    Q2 YTD = 6 months → × 2
+    Q3 YTD = 9 months → × 4/3
+    Q4 YTD = 12 months → × 1
+
+    If quarter unknown, assume full-year (Q4).
+    """
+    if ytd_value is None:
+        return None
+    if quarter is None or not (1 <= quarter <= 4):
+        return ytd_value
+    return ytd_value * (4 / quarter)
+
+
+def _derive_quarterly_value(field: str, fdic_hist: list[dict], idx: int) -> float | None:
+    """
+    Derive the single-quarter (non-YTD) value for a YTD-cumulative FDIC field
+    (NETINC, INTINC, EINTEXP, NONII, NONIX, etc.).
+
+    fdic_hist[idx] is the target period. We need YTD(idx) - YTD(prior_quarter_same_year).
+    If idx is Q1, quarterly = YTD.
+    """
+    current = fdic_hist[idx] if idx < len(fdic_hist) else None
+    if current is None:
+        return None
+    curr_ytd = current.get(field)
+    if curr_ytd is None:
+        return None
+
+    curr_qtr = _infer_quarter(current.get("REPDTE"))
+    if curr_qtr == 1 or curr_qtr is None:
+        return curr_ytd
+
+    # Find prior quarter in same calendar year within fdic_hist (which is desc-sorted)
+    try:
+        if hasattr(current.get("REPDTE"), "year"):
+            curr_year = current["REPDTE"].year
+        else:
+            curr_year = int(str(current.get("REPDTE"))[:4])
+    except Exception:
+        return curr_ytd
+
+    # fdic_hist is typically sorted most-recent-first
+    for j in range(idx + 1, len(fdic_hist)):
+        prior = fdic_hist[j]
+        try:
+            if hasattr(prior.get("REPDTE"), "year"):
+                prior_year = prior["REPDTE"].year
+            else:
+                prior_year = int(str(prior.get("REPDTE"))[:4])
+        except Exception:
+            continue
+        if prior_year != curr_year:
+            break  # left this fiscal year
+        prior_qtr = _infer_quarter(prior.get("REPDTE"))
+        if prior_qtr == curr_qtr - 1:
+            prior_ytd = prior.get(field)
+            if prior_ytd is None:
+                return None
+            return curr_ytd - prior_ytd
+    # Prior quarter not available — fall back to YTD
+    return curr_ytd
+
+
 def compute_roatce(fdic_data: dict) -> float | None:
     """
-    Compute Return on Average Tangible Common Equity from FDIC data.
-    ROATCE = Net Income / TCE, where TCE = Total Equity - Goodwill.
+    Compute annualized Return on Average Tangible Common Equity from FDIC data.
+
+    ROATCE = (Annualized Net Income) / TCE × 100
+    TCE = Total Equity − Goodwill.
+
+    NETINC is YTD (cumulative within calendar year). We annualize by multiplying
+    by (4 / quarter_number) so mid-year numbers are comparable to Q4.
     """
     net_income = fdic_data.get("NETINC")
     equity = fdic_data.get("EQTOT")
@@ -55,11 +148,44 @@ def compute_roatce(fdic_data: dict) -> float | None:
     if tce <= 0:
         return None
 
-    return (net_income / tce) * 100
+    quarter = _infer_quarter(fdic_data.get("REPDTE"))
+    ni_annualized = _annualize_ytd(net_income, quarter)
+
+    return (ni_annualized / tce) * 100
+
+
+def compute_roatce_holdco(sec_data: dict) -> float | None:
+    """
+    Compute HOLDING-COMPANY ROATCE using SEC data (what shareholders actually own).
+
+    For money-center banks, HoldCo includes non-bank operations (investment
+    banking, asset management) that aren't in the FDIC subsidiary-bank data.
+    Using HoldCo metrics is the institutional standard for stock valuation.
+
+    ROATCE = Net Income / Tangible Common Equity × 100
+    TCE = StockholdersEquity − Goodwill − IntangibleAssets
+    """
+    if not sec_data:
+        return None
+    ni = sec_data.get("net_income")
+    equity = sec_data.get("book_value_total")
+    goodwill = sec_data.get("goodwill") or 0
+    intangibles = sec_data.get("intangibles") or 0
+    if ni is None or equity is None:
+        return None
+    tce = equity - goodwill - intangibles
+    if tce <= 0:
+        return None
+    return (ni / tce) * 100
 
 
 def compute_4q_avg(fdic_hist: list[dict], field: str) -> float | None:
-    """Average a FDIC field over last 4 quarters."""
+    """
+    Average a FDIC field over last 4 quarters.
+
+    For FDIC ratio fields that are already annualized (NIMY, ROA, ROE, EEFFR, etc.),
+    this is fine — just average. For YTD cumulative fields, use compute_4q_avg_annualized.
+    """
     values = [q.get(field) for q in fdic_hist[:4] if q.get(field) is not None]
     if not values:
         return None
@@ -67,19 +193,43 @@ def compute_4q_avg(fdic_hist: list[dict], field: str) -> float | None:
 
 
 def compute_roatce_4q(fdic_hist: list[dict]) -> float | None:
-    """Average ROATCE over last 4 quarters from FDIC historical data."""
-    values = []
-    for q in fdic_hist[:4]:
-        ni = q.get("NETINC")
-        eq = q.get("EQTOT")
-        gw = q.get("INTANGW") or 0
-        if ni is not None and eq is not None:
-            tce = eq - gw
-            if tce > 0:
-                values.append((ni / tce) * 100)
-    if not values:
+    """
+    Trailing 4-quarter ROATCE: sum of last 4 QUARTERLY net incomes (annualized)
+    divided by average TCE across those quarters, expressed as %.
+
+    This is the canonical "TTM ROATCE" analysts use — it smooths quarter-to-quarter
+    noise while reflecting a full year of earnings power on current-era equity.
+    """
+    if not fdic_hist or len(fdic_hist) < 1:
         return None
-    return sum(values) / len(values)
+
+    # Derive actual single-quarter NI for last 4 quarters
+    # (fdic_hist is desc-sorted: index 0 = most recent)
+    ttm_ni = 0.0
+    tce_values = []
+    count = 0
+    for i in range(min(4, len(fdic_hist))):
+        ni_q = _derive_quarterly_value("NETINC", fdic_hist, i)
+        eq = fdic_hist[i].get("EQTOT")
+        gw = fdic_hist[i].get("INTANGW") or 0
+        if ni_q is None or eq is None:
+            continue
+        ttm_ni += ni_q
+        tce_values.append(eq - gw)
+        count += 1
+
+    if count == 0 or not tce_values:
+        return None
+    avg_tce = sum(tce_values) / len(tce_values)
+    if avg_tce <= 0:
+        return None
+
+    # TTM net income is already a "full year" — no annualization needed
+    # If we have fewer than 4 quarters, scale up to annualized
+    if count < 4:
+        ttm_ni = ttm_ni * (4 / count)
+
+    return (ttm_ni / avg_tce) * 100
 
 
 # ── Fair Value Screening ────────────────────────────────────────────────
@@ -172,7 +322,9 @@ def compute_fair_value_price(
     return fair_ptbv * tbvps
 
 
-def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict, fdic_hist: list[dict] | None = None) -> dict:
+def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
+                             fdic_hist: list[dict] | None = None,
+                             ticker: str | None = None) -> dict:
     """
     Compute all derived valuation metrics from raw data sources.
 
@@ -242,14 +394,17 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict, fd
 
     nim_spread = (intincy - intexpy) if (intincy is not None and intexpy is not None) else None
 
-    # Cost of funds = int expense / (deposits + borrowings)
-    eintexp = fdic_data.get("EINTEXP")
-    cost_of_funds = None
-    if eintexp is not None and dep and dep > 0:
-        # Use total deposits + fed funds as funding base (approximation)
-        funding = dep + (fdic_data.get("FREPO") or 0)
-        if funding > 0:
-            cost_of_funds = (eintexp / funding) * 100
+    # Cost of funds — prefer FDIC's pre-computed INTEXPY (annualized cost of
+    # interest-bearing liabilities). Only fall back to a manual calculation
+    # if INTEXPY is unavailable, and annualize properly from YTD EINTEXP.
+    cost_of_funds = intexpy
+    if cost_of_funds is None:
+        eintexp = fdic_data.get("EINTEXP")
+        int_bear_dep = fdic_data.get("DEPIDOM")
+        if eintexp is not None and int_bear_dep and int_bear_dep > 0:
+            quarter = _infer_quarter(fdic_data.get("REPDTE"))
+            eintexp_annualized = _annualize_ytd(eintexp, quarter)
+            cost_of_funds = (eintexp_annualized / int_bear_dep) * 100
 
     # Non-interest burden = non-int expense - non-int income, as % of assets
     nonint_burden = None
@@ -260,11 +415,13 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict, fd
     actual_ptbv = compute_ptbv_ratio(price, tbvps)
 
     # Profitability
-    roatce_current = compute_roatce(fdic_data)
-    roatce_4q = compute_roatce_4q(fdic_hist or [])
+    roatce_current = compute_roatce(fdic_data)   # sub-bank
+    roatce_4q = compute_roatce_4q(fdic_hist or [])   # sub-bank TTM
+    roatce_holdco = compute_roatce_holdco(sec_data)  # HoldCo (what stock represents)
 
-    # Fair value screening
-    roatce_blended = compute_roatce_blended(roatce_current, roatce_4q)
+    # Fair value screening — use HoldCo ROATCE when available (what investors
+    # price off); fall back to sub-bank blended if SEC data is missing.
+    roatce_blended = roatce_holdco if roatce_holdco is not None else compute_roatce_blended(roatce_current, roatce_4q)
     fair_ptbv = compute_fair_ptbv(roatce_blended)
     ptbv_discount = compute_ptbv_discount(actual_ptbv, fair_ptbv)
     fair_price = compute_fair_value_price(fair_ptbv, tbvps)
@@ -279,6 +436,7 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict, fd
         "ptbv_ratio": compute_ptbv_ratio(price, tbvps),
         "dividend_yield": compute_dividend_yield(price, dps),
         "roatce": roatce_current,
+        "roatce_holdco": roatce_holdco,
         "roaa_4q": compute_4q_avg(fdic_hist or [], "ROA"),
         "roatce_4q": roatce_4q,
         "nim_4q": compute_4q_avg(fdic_hist or [], "NIMY"),
@@ -303,4 +461,145 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict, fd
         "fair_ptbv": fair_ptbv,
         "fair_price": fair_price,
         "ptbv_discount": ptbv_discount,
+        # ── Deposit Dynamics (computed from fdic_hist) ──
+        **_compute_deposit_dynamics(fdic_hist),
+        # ── Credit Dynamics (computed from fdic_hist) ──
+        **_compute_credit_dynamics(fdic_hist),
+        # ── Capital Dynamics (computed from fdic_hist + SEC shares) ──
+        **_compute_capital_dynamics(fdic_hist, sec_data.get("shares_outstanding")),
+        # ── Capital Return Attribution (SEC XBRL: divs + buybacks + shares) ──
+        **_compute_capital_return_for_ticker(ticker, price_data, sec_data),
     }
+
+
+def _compute_capital_return_for_ticker(ticker: str | None, price_data: dict, sec_data: dict) -> dict:
+    """Wrapper: resolve CIK from ticker, pass market cap, call capital-return compute."""
+    if not ticker:
+        return dict(_CAPITAL_RETURN_DEFAULTS)
+    try:
+        from data.bank_mapping import get_cik
+        cik = get_cik(ticker)
+        if not cik:
+            return dict(_CAPITAL_RETURN_DEFAULTS)
+        price = price_data.get("price") if price_data else None
+        shares = sec_data.get("shares_outstanding") if sec_data else None
+        mcap = (price * shares) if (price and shares) else None
+        return _compute_capital_return(cik, mcap)
+    except Exception:
+        return dict(_CAPITAL_RETURN_DEFAULTS)
+
+
+def _compute_capital_dynamics(fdic_hist: list[dict] | None, shares: float | None) -> dict:
+    """Compute capital-dynamics metrics for screening."""
+    if not fdic_hist:
+        return {
+            "cet1_current": None, "cet1_qoq_pp": None,
+            "tbv_cagr_1y": None, "payout_ratio_4q": None,
+            "buyback_capacity_usd": None, "capital_alerts_count": None,
+        }
+    try:
+        from analysis.capital_dynamics import compute_capital_screening_metrics
+        return compute_capital_screening_metrics(fdic_hist, shares)
+    except Exception:
+        return {
+            "cet1_current": None, "cet1_qoq_pp": None,
+            "tbv_cagr_1y": None, "payout_ratio_4q": None,
+            "buyback_capacity_usd": None, "capital_alerts_count": None,
+        }
+
+
+_CAPITAL_RETURN_DEFAULTS = {
+    "shareholder_yield": None, "dividend_yield_sec": None, "buyback_yield": None,
+    "payout_ratio_ttm": None, "total_return_ratio_ttm": None,
+    "share_change_pct_ttm": None, "dps_yoy_pct": None,
+    "dividends_ttm": None, "buybacks_ttm": None,
+}
+
+
+def _compute_capital_return(cik: int | None, market_cap: float | None) -> dict:
+    """Compute SEC-sourced capital return metrics for screening."""
+    if not cik:
+        return dict(_CAPITAL_RETURN_DEFAULTS)
+    try:
+        from analysis.capital_return import summarize_capital_return
+        res = summarize_capital_return(cik, market_cap=market_cap, lookback_quarters=12)
+        ttm = res.get("ttm") or {}
+        yld = res.get("yield") or {}
+        growth = res.get("growth") or {}
+        return {
+            "shareholder_yield": yld.get("total_shareholder_yield_pct"),
+            "dividend_yield_sec": yld.get("dividend_yield_pct"),
+            "buyback_yield": yld.get("buyback_yield_pct"),
+            "payout_ratio_ttm": (ttm.get("payout_ratio_ttm") or 0) * 100 if ttm.get("payout_ratio_ttm") is not None else None,
+            "total_return_ratio_ttm": (ttm.get("total_return_ratio_ttm") or 0) * 100 if ttm.get("total_return_ratio_ttm") is not None else None,
+            "share_change_pct_ttm": ttm.get("share_change_pct_ttm"),
+            "dps_yoy_pct": growth.get("dps_yoy_pct"),
+            "dividends_ttm": ttm.get("dividends_ttm"),
+            "buybacks_ttm": ttm.get("buybacks_ttm"),
+        }
+    except Exception as e:
+        print(f"[capital_return] error for CIK {cik}: {e}")
+        return dict(_CAPITAL_RETURN_DEFAULTS)
+
+
+def _compute_credit_dynamics(fdic_hist: list[dict] | None) -> dict:
+    """Compute credit-quality trend metrics for screening."""
+    if not fdic_hist:
+        return {
+            "nco_4q_trend_bps": None,
+            "npl_trend_bps": None,
+            "pd_migration_bps": None,
+            "credit_alerts_count": None,
+            "reserve_coverage_pct": None,
+            "worst_segment_npl": None,
+        }
+    try:
+        from analysis.credit_dynamics import compute_credit_screening_metrics
+        return compute_credit_screening_metrics(fdic_hist)
+    except Exception:
+        return {
+            "nco_4q_trend_bps": None, "npl_trend_bps": None,
+            "pd_migration_bps": None, "credit_alerts_count": None,
+            "reserve_coverage_pct": None, "worst_segment_npl": None,
+        }
+
+
+def _compute_deposit_dynamics(fdic_hist: list[dict] | None) -> dict:
+    """Compute deposit-beta and QoQ metrics for screening."""
+    if not fdic_hist:
+        return {
+            "deposit_cycle_beta": None,
+            "deposit_rolling_beta": None,
+            "dep_qoq_growth": None,
+            "cod_qoq_bps": None,
+            "deposit_alerts_count": None,
+        }
+    try:
+        from analysis.deposit_dynamics import summarize_bank_deposits
+        summary = summarize_bank_deposits(fdic_hist)
+        timeline = summary.get("timeline")
+        if timeline is None or timeline.empty:
+            return {
+                "deposit_cycle_beta": None, "deposit_rolling_beta": None,
+                "dep_qoq_growth": None, "cod_qoq_bps": None,
+                "deposit_alerts_count": 0,
+            }
+
+        latest = summary["latest"]
+        cycle = summary["cycle_beta"]
+        rolling = summary["rolling_beta"]
+        cod_change = latest.get("cod_qoq_change")
+
+        return {
+            "deposit_cycle_beta": cycle.get("beta"),
+            "deposit_rolling_beta": rolling.get("beta"),
+            "dep_qoq_growth": latest.get("dep_qoq_growth"),
+            "cod_qoq_bps": cod_change * 100 if cod_change is not None else None,
+            "deposit_alerts_count": len(summary.get("alerts", [])),
+        }
+    except Exception:
+        return {
+            "deposit_cycle_beta": None, "deposit_rolling_beta": None,
+            "dep_qoq_growth": None, "cod_qoq_bps": None,
+            "deposit_alerts_count": None,
+        }

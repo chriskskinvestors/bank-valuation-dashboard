@@ -168,19 +168,27 @@ def render_historicals(ticker: str):
         fig1.update_layout(height=320, margin=dict(t=40, b=30, l=40, r=20), font_size=11, showlegend=True, legend=dict(font_size=10))
         st.plotly_chart(fig1, use_container_width=True)
 
-        # Chart 2: Balance Sheet Growth
+        # Chart 2: Balance Sheet Growth — auto-scale to B or T
         fig2 = make_subplots(rows=1, cols=2, subplot_titles=("Assets & Loans", "Deposits"))
 
-        assets = [v / 1e6 if v else None for v in df["ASSET"].tolist()[::-1]]
-        loans = [v / 1e6 if v else None for v in df["LNLSNET"].tolist()[::-1]]
-        deps = [v / 1e6 if v else None for v in df["DEP"].tolist()[::-1]]
-        core = [v / 1e6 if v else None for v in df["COREDEP"].tolist()[::-1]] if "COREDEP" in df.columns else []
+        # FDIC values are in thousands; convert to dollars to find max
+        raw_assets = [v * 1000 if v else None for v in df["ASSET"].tolist()[::-1]]
+        max_usd = max([abs(v) for v in raw_assets if v is not None] or [0])
+        scale, unit = (1e12, "T") if max_usd >= 1e12 else (1e9, "B")
 
-        fig2.add_trace(go.Bar(x=periods, y=assets, name="Assets ($B)", marker_color="#1a73e8", opacity=0.7), row=1, col=1)
-        fig2.add_trace(go.Bar(x=periods, y=loans, name="Loans ($B)", marker_color="#2e7d32", opacity=0.7), row=1, col=1)
-        fig2.add_trace(go.Bar(x=periods, y=deps, name="Deposits ($B)", marker_color="#1a73e8", opacity=0.7), row=1, col=2)
+        def _scale(series_name: str) -> list:
+            return [v * 1000 / scale if v else None for v in df[series_name].tolist()[::-1]]
+
+        assets = _scale("ASSET")
+        loans = _scale("LNLSNET")
+        deps = _scale("DEP")
+        core = _scale("COREDEP") if "COREDEP" in df.columns else []
+
+        fig2.add_trace(go.Bar(x=periods, y=assets, name=f"Assets (${unit})", marker_color="#1a73e8", opacity=0.7), row=1, col=1)
+        fig2.add_trace(go.Bar(x=periods, y=loans, name=f"Loans (${unit})", marker_color="#2e7d32", opacity=0.7), row=1, col=1)
+        fig2.add_trace(go.Bar(x=periods, y=deps, name=f"Deposits (${unit})", marker_color="#1a73e8", opacity=0.7), row=1, col=2)
         if core:
-            fig2.add_trace(go.Bar(x=periods, y=core, name="Core ($B)", marker_color="#2e7d32", opacity=0.7), row=1, col=2)
+            fig2.add_trace(go.Bar(x=periods, y=core, name=f"Core (${unit})", marker_color="#2e7d32", opacity=0.7), row=1, col=2)
 
         fig2.update_layout(height=300, margin=dict(t=40, b=30, l=40, r=20), font_size=11, barmode="group", showlegend=True, legend=dict(font_size=10))
         st.plotly_chart(fig2, use_container_width=True)

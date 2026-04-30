@@ -163,15 +163,21 @@ METRICS = [
         "category": "Profitability",
     },
     {
-        "key": "roatce", "label": "ROATCE", "source": "computed",
+        "key": "roatce", "label": "ROATCE (Sub)", "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 12, "warn": 7},
         "category": "Profitability",
     },
     {
-        "key": "roatce_4q", "label": "ROATCE 4Q", "source": "computed",
+        "key": "roatce_4q", "label": "ROATCE 4Q (Sub)", "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 12, "warn": 7},
+        "category": "Profitability",
+    },
+    {
+        "key": "roatce_holdco", "label": "ROATCE (HoldCo)", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "higher_better", "thresholds": {"good": 14, "warn": 8},
         "category": "Profitability",
     },
     {
@@ -527,6 +533,170 @@ METRICS = [
         "format": "pct", "decimals": 1,
         "color_rule": "higher_better", "thresholds": {"good": 30, "warn": 15},
         "category": "Deposit Ratios",
+    },
+
+    # ── Capital Dynamics (computed from history + SEC shares) ────────────
+    {
+        "key": "cet1_current", "label": "CET1 %", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "higher_better", "thresholds": {"good": 10.0, "warn": 8.0},
+        "category": "Capital Dynamics",
+    },
+    {
+        "key": "cet1_qoq_pp", "label": "CET1 QoQ (pp)", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "higher_better", "thresholds": {"good": 0, "warn": -0.25},
+        "category": "Capital Dynamics",
+    },
+    {
+        "key": "tbv_cagr_1y", "label": "TBV CAGR 1Y", "source": "computed",
+        "format": "pct", "decimals": 1,
+        "color_rule": "higher_better", "thresholds": {"good": 8.0, "warn": 3.0},
+        "category": "Capital Dynamics",
+    },
+    {
+        "key": "payout_ratio_4q", "label": "Payout 4Q %", "source": "computed",
+        "format": "pct", "decimals": 0,
+        "color_rule": "lower_better", "thresholds": {"good": 50, "warn": 80},
+        "category": "Capital Dynamics",
+    },
+    {
+        "key": "buyback_capacity_usd", "label": "Free Capital", "source": "computed",
+        "format": "dollars_auto", "decimals": 1,
+        "color_rule": "higher_better", "thresholds": {"good": 0, "warn": -1_000_000},
+        "category": "Capital Dynamics",
+    },
+    {
+        "key": "capital_alerts_count", "label": "⚠ Cap Alerts", "source": "computed",
+        "format": "number", "decimals": 0,
+        "color_rule": "lower_better", "thresholds": {"good": 0, "warn": 1},
+        "category": "Capital Dynamics",
+    },
+
+    # ── Capital Return Attribution (SEC-sourced) ─────────────────────────
+    {
+        "key": "shareholder_yield", "label": "Shareholder Yield", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "higher_better", "thresholds": {"good": 5.0, "warn": 2.0},
+        "category": "Capital Return",
+    },
+    {
+        "key": "dividend_yield_sec", "label": "Div Yield", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "higher_better", "thresholds": {"good": 3.0, "warn": 1.0},
+        "category": "Capital Return",
+    },
+    {
+        "key": "buyback_yield", "label": "Buyback Yield", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "higher_better", "thresholds": {"good": 3.0, "warn": 1.0},
+        "category": "Capital Return",
+    },
+    {
+        "key": "payout_ratio_ttm", "label": "Payout % (TTM)", "source": "computed",
+        "format": "pct", "decimals": 0,
+        "color_rule": None, "thresholds": {},
+        "category": "Capital Return",
+    },
+    {
+        "key": "total_return_ratio_ttm", "label": "Total Ret % (TTM)", "source": "computed",
+        "format": "pct", "decimals": 0,
+        "color_rule": "higher_better", "thresholds": {"good": 80, "warn": 40},
+        "category": "Capital Return",
+    },
+    {
+        "key": "share_change_pct_ttm", "label": "Share Δ TTM", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "lower_better", "thresholds": {"good": -2.0, "warn": 0.0},
+        "category": "Capital Return",
+    },
+    {
+        "key": "dps_yoy_pct", "label": "DPS YoY", "source": "computed",
+        "format": "pct", "decimals": 1,
+        "color_rule": "higher_better", "thresholds": {"good": 8.0, "warn": 0.0},
+        "category": "Capital Return",
+    },
+    {
+        "key": "dividends_ttm", "label": "Divs TTM", "source": "computed",
+        "format": "dollars_auto", "decimals": 1,
+        "color_rule": None, "thresholds": {},
+        "category": "Capital Return",
+    },
+    {
+        "key": "buybacks_ttm", "label": "Buybacks TTM", "source": "computed",
+        "format": "dollars_auto", "decimals": 1,
+        "color_rule": None, "thresholds": {},
+        "category": "Capital Return",
+    },
+
+    # ── Credit Dynamics (computed from history) ──────────────────────────
+    {
+        "key": "nco_4q_trend_bps", "label": "NCO Δ 4Q (bps)", "source": "computed",
+        "format": "number", "decimals": 0,
+        "color_rule": "lower_better", "thresholds": {"good": 0, "warn": 15},
+        "category": "Credit Dynamics",
+    },
+    {
+        "key": "npl_trend_bps", "label": "NPL QoQ (bps)", "source": "computed",
+        "format": "number", "decimals": 0,
+        "color_rule": "lower_better", "thresholds": {"good": 0, "warn": 10},
+        "category": "Credit Dynamics",
+    },
+    {
+        "key": "pd_migration_bps", "label": "PD 30-89 QoQ (bps)", "source": "computed",
+        "format": "number", "decimals": 0,
+        "color_rule": "lower_better", "thresholds": {"good": 0, "warn": 10},
+        "category": "Credit Dynamics",
+    },
+    {
+        "key": "reserve_coverage_pct", "label": "Rsv/NPL %", "source": "computed",
+        "format": "pct", "decimals": 0,
+        "color_rule": "higher_better", "thresholds": {"good": 200, "warn": 100},
+        "category": "Credit Dynamics",
+    },
+    {
+        "key": "worst_segment_npl", "label": "Worst Seg NPL %", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "lower_better", "thresholds": {"good": 1.0, "warn": 2.0},
+        "category": "Credit Dynamics",
+    },
+    {
+        "key": "credit_alerts_count", "label": "⚠ Credit Alerts", "source": "computed",
+        "format": "number", "decimals": 0,
+        "color_rule": "lower_better", "thresholds": {"good": 0, "warn": 1},
+        "category": "Credit Dynamics",
+    },
+
+    # ── Deposit Dynamics (computed from history) ─────────────────────────
+    {
+        "key": "deposit_cycle_beta", "label": "Cycle β", "source": "computed",
+        "format": "ratio", "decimals": 2,
+        "color_rule": "lower_better", "thresholds": {"good": 0.30, "warn": 0.50},
+        "category": "Deposit Dynamics",
+    },
+    {
+        "key": "deposit_rolling_beta", "label": "Rolling β (4Q)", "source": "computed",
+        "format": "ratio", "decimals": 2,
+        "color_rule": "lower_better", "thresholds": {"good": 0.30, "warn": 0.50},
+        "category": "Deposit Dynamics",
+    },
+    {
+        "key": "dep_qoq_growth", "label": "Dep QoQ %", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "higher_better", "thresholds": {"good": 0, "warn": -2},
+        "category": "Deposit Dynamics",
+    },
+    {
+        "key": "cod_qoq_bps", "label": "CoD QoQ (bps)", "source": "computed",
+        "format": "number", "decimals": 0,
+        "color_rule": "lower_better", "thresholds": {"good": 0, "warn": 15},
+        "category": "Deposit Dynamics",
+    },
+    {
+        "key": "deposit_alerts_count", "label": "⚠ Alerts", "source": "computed",
+        "format": "number", "decimals": 0,
+        "color_rule": "lower_better", "thresholds": {"good": 0, "warn": 1},
+        "category": "Deposit Dynamics",
     },
 
     # ── Securities Portfolio ─────────────────────────────────────────────
@@ -939,6 +1109,17 @@ TABS = [
         ],
     },
     {
+        "key": "deposit_dynamics",
+        "label": "Deposit Dynamics",
+        "title": "Deposit Dynamics — Beta, Flows & Alerts",
+        "columns": [
+            "total_deposits", "dep_qoq_growth", "cod_qoq_bps",
+            "deposit_cycle_beta", "deposit_rolling_beta",
+            "nonint_dep_pct", "uninsured_pct", "brokered_pct",
+            "deposit_alerts_count",
+        ],
+    },
+    {
         "key": "securities",
         "label": "Securities",
         "title": "Securities Portfolio",
@@ -958,9 +1139,19 @@ TABS = [
             "npl_nres_re", "npl_ci", "npl_consumer",
             "nco_ratio", "nco_re", "nco_ci",
             "past_due_30_89", "past_due_90",
-            "reserve_coverage", "reserve_to_loans",
+            "reserve_coverage_pct", "reserve_to_loans",
             "nco_to_reserve", "reserve_nco_coverage",
             "allowance_loans",
+        ],
+    },
+    {
+        "key": "credit_dynamics",
+        "label": "Credit Dynamics",
+        "title": "Credit Dynamics — Trends, Coverage & Alerts",
+        "columns": [
+            "npl_ratio", "npl_trend_bps", "nco_ratio", "nco_4q_trend_bps",
+            "pd_migration_bps", "reserve_coverage_pct",
+            "worst_segment_npl", "credit_alerts_count",
         ],
     },
     {
@@ -971,6 +1162,27 @@ TABS = [
             "total_equity", "equity_to_assets",
             "cet1_ratio", "total_capital_ratio", "leverage_ratio",
             "total_assets",
+        ],
+    },
+    {
+        "key": "capital_dynamics",
+        "label": "Capital Dynamics",
+        "title": "Capital Dynamics — Trends, TBV Growth & Buyback Capacity",
+        "columns": [
+            "cet1_current", "cet1_qoq_pp", "tbv_cagr_1y",
+            "payout_ratio_4q", "buyback_capacity_usd",
+            "capital_alerts_count",
+        ],
+    },
+    {
+        "key": "capital_return",
+        "label": "Capital Return",
+        "title": "Capital Return Attribution — Dividends, Buybacks, Shareholder Yield",
+        "columns": [
+            "shareholder_yield", "dividend_yield_sec", "buyback_yield",
+            "total_return_ratio_ttm", "payout_ratio_ttm",
+            "share_change_pct_ttm", "dps_yoy_pct",
+            "dividends_ttm", "buybacks_ttm",
         ],
     },
     {

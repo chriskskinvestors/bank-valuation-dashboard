@@ -7,15 +7,25 @@ import re
 from pathlib import Path
 
 from config import DEFAULT_WATCHLIST, DEFAULT_PORTFOLIO
+from data.cloud_storage import save_json, load_json
 
 _ROOT = Path(__file__).parent.parent
 WATCHLIST_FILE = _ROOT / "watchlist.json"
 PORTFOLIO_FILE = _ROOT / "portfolio.json"
 
+_LIST_PREFIX = "lists"
+
 
 # ── Generic list helpers ─────────────────────────────────────────────────
 
 def _load_list(path: Path, defaults: list[str]) -> list[str]:
+    # Try GCS first
+    filename = path.name
+    cloud_data = load_json(_LIST_PREFIX, filename)
+    if cloud_data and isinstance(cloud_data, list) and cloud_data:
+        return [t.upper().strip() for t in cloud_data if t.strip()]
+
+    # Fall back to local
     if path.exists():
         try:
             data = json.loads(path.read_text())
@@ -29,6 +39,8 @@ def _load_list(path: Path, defaults: list[str]) -> list[str]:
 def _save_list(path: Path, tickers: list[str]):
     tickers = [t.upper().strip() for t in tickers if t.strip()]
     path.write_text(json.dumps(tickers, indent=2))
+    # Also save to GCS
+    save_json(_LIST_PREFIX, path.name, tickers)
 
 
 def _add(path: Path, defaults: list[str], ticker: str) -> list[str]:

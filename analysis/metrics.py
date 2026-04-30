@@ -6,7 +6,17 @@ appropriate source (fdic_data, sec_data, price_data, or computed).
 """
 
 from config import METRICS
-from analysis.valuation import compute_all_valuations
+from analysis.valuation import compute_all_valuations, _infer_quarter, _annualize_ytd
+
+
+# FDIC income-statement fields are YTD cumulative within the calendar year.
+# We annualize these when displaying as "annual" dollar values in screens.
+# IMPORTANT: FDIC "NIM" field = NET INTEREST INCOME (dollars, YTD). The NIM
+# RATIO is "NIMY" — which is already annualized as a %, do not annualize.
+FDIC_YTD_INCOME_FIELDS = {
+    "NETINC", "INTINC", "EINTEXP", "NIM", "NONII", "NONIX",
+    "ELNATR", "PTAXNETINC", "ITAX",
+}
 
 
 def build_bank_metrics(
@@ -21,8 +31,9 @@ def build_bank_metrics(
 
     Returns {metric_key: value} for every metric in the registry.
     """
-    # Compute derived valuations first
-    computed = compute_all_valuations(price_data, sec_data, fdic_data, fdic_hist)
+    # Compute derived valuations first (pass ticker so SEC-sourced capital
+    # return metrics can look up CIK)
+    computed = compute_all_valuations(price_data, sec_data, fdic_data, fdic_hist, ticker=ticker)
 
     result = {"ticker": ticker}
 
@@ -33,7 +44,14 @@ def build_bank_metrics(
         if source == "fdic":
             field = m.get("fdic_field")
             val = fdic_data.get(field) if field else None
-            # FDIC dollar amounts are in thousands — convert to raw dollars
+
+            # Step 1: annualize YTD income-statement fields BEFORE unit conversion
+            # so displayed values reflect full-year-equivalent regardless of quarter.
+            if field in FDIC_YTD_INCOME_FIELDS and val is not None:
+                quarter = _infer_quarter(fdic_data.get("REPDTE"))
+                val = _annualize_ytd(val, quarter)
+
+            # Step 2: FDIC dollar amounts are in thousands — convert to raw dollars
             FDIC_THOUSANDS_FIELDS = {
                 "ASSET", "DEP", "LNLSNET", "LNLSGR", "SC", "CHBAL", "EQTOT",
                 "INTAN", "ORE", "COREDEP", "DEPINS", "DEPUNINS", "DEPDOM",

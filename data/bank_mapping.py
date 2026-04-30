@@ -42,7 +42,8 @@ BANK_MAP = {
     "CBAN":  {"name": "Colony Bankcorp Inc.",               "fdic_cert": 22257,  "cik": 711669},
     "OVBC":  {"name": "Ohio Valley Banc Corp.",             "fdic_cert": 384,    "cik": 894671},
     "FRME":  {"name": "First Merchants Corp.",              "fdic_cert": 4365,   "cik": 712534},
-    "LNKB":  {"name": "LINKBANCORP Inc.",                   "fdic_cert": 9889,   "cik": 1756701},
+    # LINKBANCORP's sub is LINKBANK (cert 14863). Cert 9889 is Mid Penn Bank.
+    "LNKB":  {"name": "LINKBANCORP Inc.",                   "fdic_cert": 14863,  "cik": 1756701},
     "WAL":   {"name": "Western Alliance Bancorporation",    "fdic_cert": 57512,  "cik": 1212545},
     "TSBK":  {"name": "Timberland Bancorp",                 "fdic_cert": 28453,  "cik": 1046050},
     "BKU":   {"name": "BankUnited Inc.",                    "fdic_cert": 58979,  "cik": 1504008},
@@ -78,11 +79,22 @@ BANK_MAP = {
     "ZION":  {"name": "Zions Bancorporation",               "fdic_cert": 2270,   "cik": 109380},
     "FNB":   {"name": "FNB Corp.",                          "fdic_cert": 2107,   "cik": 37808},
     "OZK":   {"name": "Bank OZK",                           "fdic_cert": 110,    "cik": 1569650},
-    "EWBC":  {"name": "East West Bancorp",                  "fdic_cert": 32469,  "cik": 806279},
+    # Cert 32469 is UCBH's failed predecessor. East West Bank's real cert is 31628.
+    # CIK 806279 was wrong (another entity). Official SEC CIK for EWBC is 1069157.
+    "EWBC":  {"name": "East West Bancorp",                  "fdic_cert": 31628,  "cik": 1069157},
     "CATY":  {"name": "Cathay General Bancorp",             "fdic_cert": 18503,  "cik": 861842},
-    "COLB":  {"name": "Columbia Banking System",            "fdic_cert": 17266,  "cik": 1166928},
+    # Post-Umpqua merger (Mar 2023) the official SEC CIK is 887343, not 1166928.
+    "COLB":  {"name": "Columbia Banking System",            "fdic_cert": 17266,  "cik": 887343},
     "BOKF":  {"name": "BOK Financial Corp.",                "fdic_cert": 4214,   "cik": 875357},
     "BOH":   {"name": "Bank of Hawaii Corp.",               "fdic_cert": 18053,  "cik": 46640},
+
+    # ── Small/thrift banks where the dynamic FDIC resolver mis-matches ──
+    # These names collide with larger banks and the Jaccard-similarity
+    # search picks the wrong sub-bank. Hardcoded to prevent regression.
+    "IBCP":  {"name": "Independent Bank Corp. (MI)",        "fdic_cert": 27811,  "cik": 39311},    # NOT 9712 (Rockland Trust)
+    "FMAO":  {"name": "Farmers & Merchants Bancorp (OH)",   "fdic_cert": 5969,   "cik": 792966},   # NOT 13421 (Union Bank Trust NE)
+    "FBLA":  {"name": "FB Bancorp (MD)",                    "fdic_cert": None,   "cik": 2013639},  # Recent IPO; no FDIC match
+    "MGNO":  {"name": "Magnolia Bancorp",                   "fdic_cert": None,   "cik": 2033615},  # Recent IPO; no FDIC match
 
     # ── Large US banks (for reference/comparison) ──────────────────────
     "JPM":   {"name": "JPMorgan Chase & Co.",               "fdic_cert": 628,    "cik": 19617},
@@ -231,50 +243,139 @@ def search_sec_by_ticker(ticker: str) -> tuple[int | None, str | None]:
         return None, None
 
 
-def search_fdic_by_name(name: str) -> int | None:
-    """
-    Search FDIC for the primary bank subsidiary CERT number using the
-    holding company name (NAMEHCR) from SEC filings.
+def _clean_name(name: str) -> str:
+    """Normalize a holding-company name for matching."""
+    if not name:
+        return ""
+    s = name.upper()
+    for suffix in [", INC.", ", INC", " INC.", " INC", " CORP.", " CORP",
+                   " CO.", " CO", " LTD.", " LTD", " CORPORATION",
+                   " HOLDINGS", " FINANCIAL", " BANCORP", " BANCORPORATION",
+                   " GROUP", " LLC", "/DE", "/MD", "/NJ", "/RI", "/PA", "/OH", "/NC"]:
+        s = s.replace(suffix, "")
+    # Strip punctuation
+    for p in [",", ".", "'", "&"]:
+        s = s.replace(p, " ")
+    return " ".join(s.split())  # collapse multi-space
 
-    Strategy: search NAMEHCR by first distinctive word with wildcard,
-    sort by assets descending to get the primary (largest) subsidiary.
+
+def _name_similarity(a: str, b: str) -> float:
+    """
+    Jaccard similarity of cleaned-name word sets. 1.0 = identical word set.
+    Avoids 'starts-with' false positives that matched everything to BAC.
+    """
+    wa = set(_clean_name(a).split())
+    wb = set(_clean_name(b).split())
+    if not wa or not wb:
+        return 0.0
+    # Ignore trivial words that match everything
+    trivial = {"BANK", "BANKS", "BK", "BANCORP", "BANCORPORATION",
+               "THE", "A", "AN", "OF"}
+    wa -= trivial
+    wb -= trivial
+    if not wa or not wb:
+        # If both names are only trivial words, fall back to exact-ish match
+        return 1.0 if _clean_name(a) == _clean_name(b) else 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def search_fdic_by_name(name: str, min_similarity: float = 0.5) -> int | None:
+    """
+    Search FDIC for the primary bank subsidiary CERT matching a holding-
+    company name.
+
+    Strategy:
+      1. Build 1-3 quoted-phrase queries from the cleaned name (the FDIC API
+         treats bare spaces as OR, so we MUST quote phrases to search exact
+         substrings).
+      2. Run each query against the FDIC institutions endpoint (sorted by
+         ASSET DESC) and collect candidate banks.
+      3. Score each candidate by name similarity to the query.
+      4. Return the highest-similarity match above `min_similarity`;
+         otherwise return None rather than wire up the wrong cert.
+
+    This replaces an earlier implementation that did a single-word wildcard
+    search which silently fell through to BAC (cert=3510) for many small banks.
     """
     if not name:
         return None
+
+    import urllib.parse
+
     try:
-        # Clean SEC holding company name
-        clean = name.upper()
-        for suffix in [", INC.", ", INC", " INC.", " INC", " CORP.", " CORP",
-                       " CO.", " CO", " LTD.", " LTD", "/DE", "/MD", "/NJ",
-                       "/RI", "/PA", "/OH", "/NC"]:
-            clean = clean.replace(suffix, "")
-        clean = clean.strip()
-
-        # Use only the first word for wildcard search — multi-word wildcards
-        # in the FDIC API treat spaces as OR, leading to false matches.
-        # Sorting by ASSET DESC ensures we get the primary bank subsidiary.
+        clean = _clean_name(name)
+        if not clean:
+            return None
         words = clean.split()
-        # Skip very generic first words
-        search_word = words[0]
-        if search_word in ("FIRST", "UNITED", "AMERICAN", "NATIONAL") and len(words) > 1:
-            search_word = f"{words[0]}*%20AND%20NAMEHCR:{words[1]}"
 
-        params = {
-            "filters": f"NAMEHCR:{search_word}*",
-            "fields": "CERT,NAME,NAMEHCR,ASSET",
-            "sort_by": "ASSET",
-            "sort_order": "DESC",
-            "limit": 1,
-        }
-        resp = requests.get(
-            "https://banks.data.fdic.gov/api/financials",
-            params=params, timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("data"):
-            return int(data["data"][0]["data"]["CERT"])
+        # Build candidate quoted phrases in order of specificity.
+        # For "ATLANTIC UNION BANKSHARES" we'd try:
+        #   "ATLANTIC UNION BANKSHARES"  (most specific — might not match)
+        #   "ATLANTIC UNION"
+        #   "ATLANTIC"
+        phrases = []
+        if len(words) >= 3:
+            phrases.append(" ".join(words[:3]))
+        if len(words) >= 2:
+            phrases.append(" ".join(words[:2]))
+        if words:
+            # Avoid single-word generic first words that would match too broadly
+            generic_singletons = {
+                "BANK", "FIRST", "NATIONAL", "AMERICAN", "UNITED", "CITIZENS",
+                "COMMUNITY", "PEOPLES", "HERITAGE", "HOME", "CENTRAL",
+                "SOUTHERN", "NORTHERN", "EASTERN", "WESTERN", "PACIFIC",
+                "SUMMIT", "PREMIER", "INDEPENDENT", "TRUST", "THE",
+            }
+            if words[0] not in generic_singletons:
+                phrases.append(words[0])
 
+        # Dedupe while preserving order
+        seen = set(); phrases = [p for p in phrases if not (p in seen or seen.add(p))]
+
+        all_candidates = []
+        for phrase in phrases:
+            quoted = f'"{phrase}"'
+            encoded = urllib.parse.quote(quoted)
+            params = {
+                "filters": f"NAMEHCR:{encoded}",
+                "fields": "CERT,NAME,NAMEHCR,ASSET,ACTIVE",
+                "sort_by": "ASSET",
+                "sort_order": "DESC",
+                "limit": 20,
+            }
+            try:
+                resp = requests.get(
+                    "https://banks.data.fdic.gov/api/institutions",
+                    params=params, timeout=10,
+                )
+                resp.raise_for_status()
+                for cand in resp.json().get("data", []):
+                    all_candidates.append(cand.get("data", {}))
+            except Exception:
+                continue
+
+            # If the most specific phrase returned a confident match, stop early
+            if all_candidates:
+                break
+
+        if not all_candidates:
+            return None
+
+        # Prefer ACTIVE institutions
+        active = [c for c in all_candidates if c.get("ACTIVE") == 1]
+        pool = active or all_candidates
+
+        # Score by similarity
+        best = None; best_score = 0.0
+        for cand in pool:
+            cand_name = cand.get("NAMEHCR", "")
+            score = _name_similarity(name, cand_name)
+            if score > best_score:
+                best_score = score
+                best = cand
+
+        if best and best_score >= min_similarity:
+            return int(best["CERT"])
         return None
     except Exception:
         return None

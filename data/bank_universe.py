@@ -20,12 +20,18 @@ BANK_NAME_KEYWORDS = {
     "FINANCIAL", "BK ", "NATIONAL ASSN",
 }
 
-# ETF/ETP tickers from bank issuers
+# ETF/ETP tickers from bank issuers (e.g. Deutsche Bank issues ~30 ETNs
+# that share CIK 1159508 with DB itself, polluting the bank universe).
 _SKIP_TICKERS = {
     "BERZ", "BNKD", "BNKU", "BULZ", "CARD", "CARU", "CONL",
     "FLBL", "FLRT", "HERD", "NRGD", "NRGU", "OILK", "TSLZ",
     "FNGG", "FNGO", "HIBL", "HIBS", "WEBL", "WEBS", "ZSL",
     "BACRP",
+    # Deutsche Bank-issued PowerShares/X-trackers ETNs
+    "DGP", "DGZ", "DZZ", "DEE", "DEENF", "ADZCF", "OLOXF",
+    "DBA", "DBB", "DBC", "DBE", "DBEU", "DBJP", "DBMV",
+    "DBO", "DBP", "DBS", "DBV", "DJCI", "DJCB", "UDN",
+    "UUP", "USDU", "BNO", "PPLT", "PALL",
 }
 
 
@@ -212,15 +218,27 @@ def build_universe() -> dict[str, dict]:
     return universe
 
 
+# Module-level cache to avoid re-deserializing the universe dict on every call
+_UNIVERSE_CACHE: dict | None = None
+
+
+def get_universe() -> dict[str, dict]:
+    """Get the universe dict, cached at module level for maximum speed."""
+    global _UNIVERSE_CACHE
+    if _UNIVERSE_CACHE is None:
+        _UNIVERSE_CACHE = build_universe()
+    return _UNIVERSE_CACHE
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_universe_tickers() -> list[str]:
     """Return sorted list of all bank tickers in the universe."""
-    return sorted(build_universe().keys())
+    return sorted(get_universe().keys())
 
 
 def get_universe_count() -> int:
     """Return the number of banks in the universe."""
-    return len(build_universe())
+    return len(get_universe())
 
 
 def get_universe_count_fast() -> str:
@@ -233,7 +251,7 @@ def search_universe(query: str, limit: int = 25) -> list[dict]:
     Search the bank universe by ticker or company name.
     Returns list of {ticker, name, cik, fdic_cert, exchange}.
     """
-    universe = build_universe()
+    universe = get_universe()
     query_upper = query.upper().strip()
 
     if not query_upper:
@@ -244,14 +262,17 @@ def search_universe(query: str, limit: int = 25) -> list[dict]:
         return [{"ticker": query_upper, **universe[query_upper]}]
 
     results = []
+    seen_tickers = set()
+
     # Ticker prefix match first
     for ticker, info in universe.items():
         if ticker.startswith(query_upper):
             results.append({"ticker": ticker, **info})
+            seen_tickers.add(ticker)
 
-    # Then name match
+    # Then name match (O(1) lookup via set instead of O(n) list scan)
     for ticker, info in universe.items():
-        if ticker in [r["ticker"] for r in results]:
+        if ticker in seen_tickers:
             continue
         if query_upper in info["name"].upper():
             results.append({"ticker": ticker, **info})
@@ -265,7 +286,7 @@ def get_universe_bank(ticker: str) -> dict | None:
     Falls back to dynamic resolution if not in prebuilt universe.
     """
     ticker = ticker.upper()
-    universe = build_universe()
+    universe = get_universe()
     info = universe.get(ticker)
     if info:
         return {"ticker": ticker, **info}
