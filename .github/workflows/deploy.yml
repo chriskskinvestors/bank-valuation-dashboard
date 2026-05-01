@@ -42,7 +42,15 @@ jobs:
       - name: Build container image
         run: |
           IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.SERVICE }}:${{ github.sha }}"
-          gcloud builds submit --tag "$IMAGE" --quiet
+          # Use a regional build so logs land in a user-owned regional bucket
+          # that the github-deployer service account can read.
+          # The default global logs bucket requires Project Viewer/Owner,
+          # which we don't (and shouldn't) grant the deployer SA.
+          gcloud builds submit \
+            --tag "$IMAGE" \
+            --region="${{ env.REGION }}" \
+            --default-buckets-behavior=REGIONAL_USER_OWNED_BUCKET \
+            --quiet
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
       - name: Build secrets-arg from existing Secret Manager entries
