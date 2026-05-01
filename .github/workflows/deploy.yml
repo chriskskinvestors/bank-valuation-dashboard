@@ -1,0 +1,100 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ace-beanbag-486220-a8
+  REGION: us-central1
+  SERVICE: bank-dashboard
+  AR_REPO: bank-dashboard
+  SQL_INSTANCE: bank-dashboard-db
+  SQL_DB: dashboard
+  SQL_USER: dashboard
+  GCS_BUCKET: ksk-bank-dashboard-data
+  SA_EMAIL: bank-dashboard-sa@ace-beanbag-486220-a8.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Required for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build container image
+        run: |
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.SERVICE }}:${{ github.sha }}"
+          gcloud builds submit --tag "$IMAGE" --quiet
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      - name: Build secrets-arg from existing Secret Manager entries
+        id: secrets_arg
+        run: |
+          SECRETS=""
+          for s in anthropic-api-key fred-api-key; do
+            if gcloud secrets describe "$s" --quiet >/dev/null 2>&1; then
+              env_var=$(echo "$s" | tr '[:lower:]-' '[:upper:]_')
+              if [[ -z "$SECRETS" ]]; then
+                SECRETS="${env_var}=${s}:latest"
+              else
+                SECRETS="${SECRETS},${env_var}=${s}:latest"
+              fi
+            fi
+          done
+          echo "secrets=${SECRETS}" >> $GITHUB_OUTPUT
+
+      - name: Build DATABASE_URL
+        id: db
+        run: |
+          INSTANCE_CONN=$(gcloud sql instances describe "${{ env.SQL_INSTANCE }}" --format='value(connectionName)')
+          DB_PASSWORD=$(gcloud secrets versions access latest --secret=db-password)
+          URL="postgresql+psycopg2://${{ env.SQL_USER }}:${DB_PASSWORD}@/${{ env.SQL_DB }}?host=/cloudsql/${INSTANCE_CONN}"
+          # Mask the password in logs
+          echo "::add-mask::${DB_PASSWORD}"
+          echo "instance_conn=${INSTANCE_CONN}" >> $GITHUB_OUTPUT
+          echo "url=${URL}" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Cloud Run
+        run: |
+          ARGS=(
+            --image="${{ env.IMAGE }}"
+            --region="${{ env.REGION }}"
+            --service-account="${{ env.SA_EMAIL }}"
+            --add-cloudsql-instances="${{ steps.db.outputs.instance_conn }}"
+            --set-env-vars="GCS_BUCKET=${{ env.GCS_BUCKET }},GCLOUD_PROJECT=${{ env.PROJECT_ID }},DATABASE_URL=${{ steps.db.outputs.url }}"
+            --memory=2Gi
+            --cpu=1
+            --min-instances=1
+            --max-instances=4
+            --concurrency=20
+            --timeout=300
+            --no-allow-unauthenticated
+            --quiet
+          )
+          if [[ -n "${{ steps.secrets_arg.outputs.secrets }}" ]]; then
+            ARGS+=(--set-secrets="${{ steps.secrets_arg.outputs.secrets }}")
+          fi
+          gcloud run deploy "${{ env.SERVICE }}" "${ARGS[@]}"
+
+      - name: Show service URL
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE }} --region=${{ env.REGION }} --format='value(status.url)')
+          echo "Deployed: $URL"
