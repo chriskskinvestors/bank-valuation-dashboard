@@ -1,0 +1,56 @@
+"""
+PR Newswire RSS adapter.
+
+PR Newswire's per-industry RSS feeds. Financial services is most relevant;
+we also pull the "Banking & Financial Services" and corporate feeds.
+"""
+
+from __future__ import annotations
+from datetime import datetime, timezone, timedelta
+from data.events.base import Event, SourceAdapter
+from data.events.wire_base import fetch_rss, match_tickers, classify_press_release
+
+
+PRN_FEEDS = [
+    "https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss",
+    "https://www.prnewswire.com/rss/banking-financial-services-news/banking-financial-services-news-list.rss",
+]
+
+
+class PRNewswireAdapter(SourceAdapter):
+    name = "prnewswire"
+    LOOKBACK_DAYS = 7
+
+    def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
+        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        in_universe = set(tickers)
+        out: list[Event] = []
+        seen_guids: set[str] = set()
+
+        for url in PRN_FEEDS:
+            items = fetch_rss(url)
+            for item in items:
+                if item.published and item.published < cutoff:
+                    continue
+                if item.guid in seen_guids:
+                    continue
+                seen_guids.add(item.guid)
+
+                text = f"{item.title}. {item.summary}"
+                matched = [t for t in match_tickers(text) if t in in_universe]
+                if not matched:
+                    continue
+
+                for ticker in matched:
+                    out.append(Event(
+                        ticker=ticker,
+                        source=self.name,
+                        event_type=classify_press_release(item.title),
+                        headline=item.title,
+                        published_at=item.published or datetime.now(timezone.utc),
+                        url=item.link,
+                        summary=item.summary[:1500],
+                        external_id=f"{item.guid}::{ticker}",
+                        raw={"feed": url, "guid": item.guid},
+                    ))
+        return out

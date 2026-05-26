@@ -31,6 +31,9 @@ def main() -> int:
     from config import DEFAULT_WATCHLIST
     from data.events import init_schema, insert_events, last_seen_published
     from data.events.sec_8k import SEC8KAdapter
+    from data.events.businesswire import BusinessWireAdapter
+    from data.events.prnewswire import PRNewswireAdapter
+    from data.events.globenewswire import GlobeNewswireAdapter
 
     init_schema()
 
@@ -40,7 +43,15 @@ def main() -> int:
     universe = set(get_universe_tickers())
     targets = sorted(watchlist | universe)
 
-    adapters = [SEC8KAdapter()]
+    # Order: SEC 8-K first (highest signal, fastest), then wire feeds.
+    # Wire feeds match on company-name text — if SEC already ingested the
+    # same release as an 8-K, the dedupe constraint quietly skips it.
+    adapters = [
+        SEC8KAdapter(),
+        BusinessWireAdapter(),
+        PRNewswireAdapter(),
+        GlobeNewswireAdapter(),
+    ]
 
     print(f"▶ Polling {len(adapters)} sources × {len(targets)} tickers")
     t0 = time.time()
