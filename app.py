@@ -53,7 +53,7 @@ st.sidebar.markdown(
 )
 
 # ── Level 1 Navigation ──────────────────────────────────────────────────
-SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis", "🆚 Peer Comparison", "📈 Earnings Analysis"]
+SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis", "🆚 Peer Comparison", "📈 Earnings Analysis", "📰 Activity"]
 section = st.sidebar.radio("Navigate", SECTIONS, key="nav_section", label_visibility="collapsed")
 
 st.sidebar.markdown("---")
@@ -90,7 +90,7 @@ elif section == "🏦 Company Analysis":
         company_ticker = ticker_override.strip().upper()
 
     if company_ticker:
-        COMPANY_TABS = ["Overview", "Financials", "Filings", "Deposits", "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership", "Earnings", "🔍 Data Quality"]
+        COMPANY_TABS = ["Overview", "Activity", "Financials", "Filings", "Deposits", "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership", "Earnings", "🔍 Data Quality"]
         company_subtab = st.sidebar.radio(
             "View",
             COMPANY_TABS,
@@ -615,6 +615,10 @@ elif section == "🏦 Company Analysis":
         single_df = pd.DataFrame([single])
         render_bank_detail(company_ticker, single_df)
 
+    elif company_subtab == "Activity":
+        from ui.recent_activity import render_recent_activity
+        render_recent_activity(company_ticker)
+
     elif company_subtab == "Financials":
         render_historicals(company_ticker)
 
@@ -671,6 +675,11 @@ elif section == "📈 Earnings Analysis":
         all_metrics, metrics_df = load_all_data(watchlist)
         cache.put("watchlist_metrics_last", all_metrics)
     render_earnings_overview(watchlist, all_metrics)
+
+elif section == "📰 Activity":
+    # ── ACTIVITY: Universe-wide event feed ──────────────────────────────
+    from ui.recent_activity import render_activity_overview
+    render_activity_overview()
 
 
 # ── Auto-refresh ─────────────────────────────────────────────────────────
