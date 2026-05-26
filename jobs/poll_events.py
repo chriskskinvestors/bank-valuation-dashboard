@@ -34,38 +34,40 @@ def main() -> int:
     from data.events.businesswire import BusinessWireAdapter
     from data.events.prnewswire import PRNewswireAdapter
     from data.events.globenewswire import GlobeNewswireAdapter
+    from data.events.yfinance_news import YFinanceNewsAdapter
+    from data.events.ir_site import IRSiteAdapter
 
     init_schema()
 
-    # Watchlist gets every poll; full universe gets a poll once per day-ish
-    # to keep API load + LLM cost bounded.
-    watchlist = set(DEFAULT_WATCHLIST)
-    universe = set(get_universe_tickers())
-    targets = sorted(watchlist | universe)
+    watchlist = sorted(set(DEFAULT_WATCHLIST))
+    universe = sorted(set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
 
-    # Order: SEC 8-K first (highest signal, fastest), then wire feeds.
-    # Wire feeds match on company-name text — if SEC already ingested the
-    # same release as an 8-K, the dedupe constraint quietly skips it.
-    adapters = [
+    # SEC 8-K + wire feeds run against the full universe (cheap: one feed
+    # call covers all banks via name-matching).
+    # YFinance news runs against watchlist only: it's per-ticker, so 50
+    # API calls (manageable) instead of 370 (Yahoo would rate-limit).
+    broad_adapters = [
         SEC8KAdapter(),
         BusinessWireAdapter(),
         PRNewswireAdapter(),
         GlobeNewswireAdapter(),
     ]
+    narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
+    adapters = broad_adapters + narrow_adapters
 
-    print(f"▶ Polling {len(adapters)} sources × {len(targets)} tickers")
+    print(f"▶ Polling — broad: {len(broad_adapters)} sources × {len(universe)} tickers, "
+          f"narrow: {len(narrow_adapters)} sources × {len(watchlist)} tickers")
     t0 = time.time()
     crashes = 0
     total_new = 0
 
     for adapter in adapters:
         try:
-            # Pick up where we left off last poll to avoid re-fetching the
-            # whole 7-day window. We trust the dedup unique constraint as
-            # the backstop.
+            # Narrow adapters (per-ticker APIs) only run against watchlist
+            scope = watchlist if adapter in narrow_adapters else universe
             since = last_seen_published(adapter.name)
-            print(f"  [{adapter.name}] since={since}")
-            events = adapter.poll(targets, since=since)
+            print(f"  [{adapter.name}] scope={len(scope)} tickers since={since}")
+            events = adapter.poll(scope, since=since)
             n = insert_events(events)
             total_new += n
             print(f"  [{adapter.name}] {len(events)} fetched, {n} new")
