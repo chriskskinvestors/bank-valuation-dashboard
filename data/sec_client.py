@@ -38,15 +38,36 @@ def _pad_cik(cik: int) -> str:
 
 
 def fetch_company_facts(cik: int) -> dict:
-    """Fetch all XBRL facts for a company."""
+    """
+    Fetch all XBRL facts for a company. Cached for FUNDAMENTAL_CACHE_TTL_HOURS
+    (default 24h) in the same Postgres/SQLite store used for everything else.
+
+    These responses are 5-50 MB each — caching saves ~30s of latency per
+    bank, dominating the slowness of any view that fans out across the
+    watchlist (Home, Screening, Peer Comparison).
+    """
+    from data import cache
+    cache_key = f"sec_facts:{cik}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     url = SEC_COMPANY_FACTS_URL.format(cik=_pad_cik(cik))
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
-        return resp.json()
+        facts = resp.json()
     except Exception as e:
         print(f"[SEC] Error fetching CIK {cik}: {e}")
         return {}
+
+    if facts:
+        try:
+            cache.put(cache_key, facts)
+        except Exception as e:
+            # Cache failure shouldn't break the call — log and move on.
+            print(f"[SEC] Cache put failed for CIK {cik}: {e}")
+    return facts
 
 
 def _extract_latest_value_with_source(facts: dict, concept: str,

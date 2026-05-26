@@ -107,24 +107,34 @@ if st.sidebar.button("🔄 Refresh All Data", use_container_width=True):
     st.rerun()
 
 # ── IBKR connection ──────────────────────────────────────────────────────
-with st.sidebar.expander("IBKR Connection"):
-    ibkr = get_ibkr_client()
-    if not st.session_state.ibkr_connected:
-        if st.button("Connect to IBKR", key="ibkr_connect"):
-            with st.spinner("Connecting..."):
-                success = ibkr.connect()
-                if success:
-                    st.session_state.ibkr_connected = True
-                    ibkr.start_event_loop()
-                    st.success("Connected!")
-                else:
-                    st.error("Connection failed.")
-    else:
-        st.markdown('<span class="status-dot status-connected"></span> Connected', unsafe_allow_html=True)
-        if st.button("Disconnect", key="ibkr_disconnect"):
-            ibkr.disconnect()
-            st.session_state.ibkr_connected = False
-            st.rerun()
+# In cloud deployment ib_insync isn't installed (HAS_IBKR=False), so the
+# Connect button can't succeed. Hide the whole expander unless the local
+# install actually has IBKR support — keeps the sidebar uncluttered and
+# avoids "Connected" UI artifacts that confuse users.
+from data.ibkr_client import HAS_IBKR
+if HAS_IBKR:
+    with st.sidebar.expander("IBKR Connection"):
+        ibkr = get_ibkr_client()
+        if not st.session_state.ibkr_connected:
+            if st.button("Connect to IBKR", key="ibkr_connect"):
+                with st.spinner("Connecting..."):
+                    success = ibkr.connect()
+                    if success:
+                        st.session_state.ibkr_connected = True
+                        ibkr.start_event_loop()
+                        st.success("Connected!")
+                    else:
+                        st.error("Connection failed.")
+        else:
+            st.markdown('<span class="status-dot status-connected"></span> Connected', unsafe_allow_html=True)
+            if st.button("Disconnect", key="ibkr_disconnect"):
+                ibkr.disconnect()
+                st.session_state.ibkr_connected = False
+                st.rerun()
+else:
+    # Force-reset the flag so the rest of the app behaves as offline,
+    # regardless of any state inherited from another browser tab.
+    st.session_state.ibkr_connected = False
 
 # ── Watchlist + Portfolio management ─────────────────────────────────────
 watchlist, portfolio = render_watchlist_sidebar(st)
