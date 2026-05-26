@@ -136,18 +136,25 @@ auto_refresh = st.sidebar.checkbox("Auto-refresh prices", value=False, key="auto
 # ── Data loading ─────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner="Loading FDIC data...")
 def load_fdic_data(tickers: tuple) -> tuple[dict, dict]:
-    """Load FDIC data with parallel fetching for uncached banks."""
+    """Load FDIC data — batched cache lookup + parallel fetch for misses."""
     latest_results = {}
     hist_results = {}
 
-    # First pass: collect cached data and find uncached tickers
+    # First pass: ONE batched SELECT for all watchlist tickers' cache entries
+    # Old code did N individual SELECTs (2N round-trips); for a 50-bank
+    # watchlist over a Cloud SQL Unix socket this dominated load time.
+    fdic_keys = [f"fdic:{t}" for t in tickers if get_fdic_cert(t)]
+    hist_keys = [f"fdic_hist:{t}" for t in tickers if get_fdic_cert(t)]
+    all_keys = fdic_keys + hist_keys
+    batch = cache.get_multi(all_keys)
+
     uncached_certs = {}  # ticker -> cert
     for ticker in tickers:
         cert = get_fdic_cert(ticker)
         if not cert:
             continue
-        cached = cache.get_fdic(ticker)
-        hist_cached = cache.get(f"fdic_hist:{ticker}")
+        cached = batch.get(f"fdic:{ticker}")
+        hist_cached = batch.get(f"fdic_hist:{ticker}")
         if cached and hist_cached:
             latest_results[ticker] = cached
             hist_results[ticker] = hist_cached
@@ -174,13 +181,16 @@ def load_fdic_data(tickers: tuple) -> tuple[dict, dict]:
 
 @st.cache_data(ttl=3600, show_spinner="Loading SEC data...")
 def load_sec_data(tickers: tuple) -> dict:
-    """Load SEC data with parallel fetching for uncached banks (rate-limited)."""
+    """Load SEC data — batched cache lookup + parallel fetch for misses."""
     results = {}
 
-    # First pass: collect cached data and find uncached CIKs
+    # Same batch optimization as FDIC: one SELECT for all keys
+    sec_keys = [f"sec:{t}" for t in tickers]
+    batch = cache.get_multi(sec_keys)
+
     uncached_ciks = {}  # ticker -> cik
     for ticker in tickers:
-        cached = cache.get_sec(ticker)
+        cached = batch.get(f"sec:{ticker}")
         if cached:
             results[ticker] = cached
             continue

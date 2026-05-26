@@ -144,6 +144,47 @@ def clear_all():
         conn.execute(text("DELETE FROM cache"))
 
 
+def get_multi(keys: list[str]) -> dict[str, dict]:
+    """
+    Bulk-fetch multiple keys with a single round-trip to the backend.
+
+    Returns {key: value} only for keys that exist AND are not expired.
+    Missing/expired keys are absent from the returned dict.
+
+    Use this instead of N calls to get() when you have a known list of
+    keys (e.g. loading the watchlist) — turns N network round-trips into 1.
+    """
+    from sqlalchemy import text
+    if not keys:
+        return {}
+    eng = _get_engine()
+    now = time.time()
+    with eng.connect() as conn:
+        if _USE_POSTGRES:
+            rows = conn.execute(
+                text("SELECT key, value, timestamp FROM cache WHERE key = ANY(:ks)"),
+                {"ks": list(keys)},
+            ).fetchall()
+        else:
+            # SQLite doesn't support ANY/= — use IN with named placeholders
+            placeholders = ",".join(f":k{i}" for i in range(len(keys)))
+            params = {f"k{i}": k for i, k in enumerate(keys)}
+            rows = conn.execute(
+                text(f"SELECT key, value, timestamp FROM cache WHERE key IN ({placeholders})"),
+                params,
+            ).fetchall()
+
+    out: dict[str, dict] = {}
+    for k, v, ts in rows:
+        if now - float(ts) > TTL_SECONDS:
+            continue
+        try:
+            out[k] = json.loads(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def get_age(key: str) -> float | None:
     """Return age of cached entry in seconds, or None if not cached."""
     from sqlalchemy import text
