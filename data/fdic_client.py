@@ -3,13 +3,43 @@ FDIC BankFind API client.
 
 Fetches Call Report financial data for banks by FDIC certificate number.
 API docs: https://banks.data.fdic.gov/api/
+
+Rate-limiting note: FDIC's public API returns 429 Too Many Requests when
+hit too fast. We retry up to 3 times with exponential backoff + jitter,
+and cap parallel workers at 4 to stay well under their limit.
 """
 
+import random
+import time
 import requests
 import pandas as pd
 from config import get_fdic_fields
 
 FDIC_FINANCIALS_URL = "https://banks.data.fdic.gov/api/financials"
+
+
+def _get_with_retry(url: str, params: dict, timeout: int = 15,
+                    max_attempts: int = 3) -> requests.Response | None:
+    """GET with exponential backoff + jitter on 429s and connection errors."""
+    for attempt in range(max_attempts):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            if resp.status_code == 429:
+                # Honor Retry-After if provided, else exponential backoff
+                wait = float(resp.headers.get("Retry-After", 0)) or (
+                    (2 ** attempt) + random.uniform(0, 1)
+                )
+                time.sleep(min(wait, 30))
+                continue
+            resp.raise_for_status()
+            return resp
+        except requests.HTTPError:
+            raise  # non-429 HTTP errors aren't retried
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep((2 ** attempt) + random.uniform(0, 1))
+    return None
 
 
 def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
@@ -37,8 +67,9 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     }
 
     try:
-        resp = requests.get(FDIC_FINANCIALS_URL, params=params, timeout=15)
-        resp.raise_for_status()
+        resp = _get_with_retry(FDIC_FINANCIALS_URL, params)
+        if resp is None:
+            return pd.DataFrame()
         data = resp.json()
     except Exception as e:
         print(f"[FDIC] Error fetching cert {cert}: {e}")
@@ -118,15 +149,20 @@ def fetch_multiple_banks(certs: dict[str, int]) -> dict[str, dict]:
 
 
 def fetch_multiple_banks_parallel(
-    certs: dict[str, int], limit: int = 4, max_workers: int = 10
+    certs: dict[str, int], limit: int = 4, max_workers: int = 4
 ) -> dict[str, pd.DataFrame]:
     """
     Fetch FDIC financials for multiple banks in parallel.
 
+    max_workers is intentionally low (4) — FDIC's public API rate-limits
+    at low concurrency. The per-call _get_with_retry handles transient 429s,
+    but going higher than 4 parallel produces sustained 429 storms that
+    even retries can't clear in reasonable time.
+
     Args:
         certs: {ticker: fdic_cert_number}
         limit: number of recent quarters to fetch
-        max_workers: concurrent HTTP connections
+        max_workers: concurrent HTTP connections (default 4)
 
     Returns: {ticker: DataFrame of quarterly financials}
     """

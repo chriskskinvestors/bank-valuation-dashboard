@@ -62,7 +62,9 @@ BANK_MAP = {
     "IBTN":  {"name": "iBank Financial Corp.",              "fdic_cert": None,   "cik": None},
     "FGBI":  {"name": "First Guaranty Bancshares",          "fdic_cert": 14028,  "cik": 1408534},
     "PNFP":  {"name": "Pinnacle Financial Partners",        "fdic_cert": 35583,  "cik": 2082866},
-    "OZK":   {"name": "Bank OZK",                           "fdic_cert": 110,    "cik": 1569650},
+    # Bank OZK is a National Bank (no holding company) — files Call Reports
+    # with FFIEC only, no SEC XBRL filings. cik=None forces FDIC-only path.
+    "OZK":   {"name": "Bank OZK",                           "fdic_cert": 110,    "cik": None},
     "FHN":   {"name": "First Horizon Corp.",                "fdic_cert": 4977,   "cik": 36966},
     "UBSI":  {"name": "United Bankshares Inc.",             "fdic_cert": 22858,  "cik": 729986},
     "FBNC":  {"name": "First Bancorp (NC)",                 "fdic_cert": 15019,  "cik": 811589},
@@ -78,7 +80,7 @@ BANK_MAP = {
     "HBAN":  {"name": "Huntington Bancshares",              "fdic_cert": 6560,   "cik": 49196},
     "ZION":  {"name": "Zions Bancorporation",               "fdic_cert": 2270,   "cik": 109380},
     "FNB":   {"name": "FNB Corp.",                          "fdic_cert": 2107,   "cik": 37808},
-    "OZK":   {"name": "Bank OZK",                           "fdic_cert": 110,    "cik": 1569650},
+    # OZK is defined above as cik=None (National Bank, no SEC XBRL).
     # Cert 32469 is UCBH's failed predecessor. East West Bank's real cert is 31628.
     # CIK 806279 was wrong (another entity). Official SEC CIK for EWBC is 1069157.
     "EWBC":  {"name": "East West Bancorp",                  "fdic_cert": 31628,  "cik": 1069157},
