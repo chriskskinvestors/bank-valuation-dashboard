@@ -88,12 +88,13 @@ jobs:
             --service-account="${{ env.SA_EMAIL }}"
             --add-cloudsql-instances="${{ steps.db.outputs.instance_conn }}"
             --set-env-vars="GCS_BUCKET=${{ env.GCS_BUCKET }},GCLOUD_PROJECT=${{ env.PROJECT_ID }},DATABASE_URL=${{ steps.db.outputs.url }}"
-            --memory=2Gi
-            --cpu=1
+            --memory=4Gi
+            --cpu=2
             --min-instances=1
             --max-instances=4
-            --concurrency=20
+            --concurrency=40
             --timeout=300
+            --ingress=internal-and-cloud-load-balancing
             --no-allow-unauthenticated
             --quiet
           )
