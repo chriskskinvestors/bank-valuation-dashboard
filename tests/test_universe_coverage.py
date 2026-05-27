@@ -23,29 +23,51 @@ sys.path.insert(0, str(REPO_ROOT))
 UA = {"User-Agent": "BankValuationDashboard test@kskinvestors.com"}
 
 
+import random
+import time
+
+
+def _get_with_retry(url: str, params: dict | None = None,
+                    timeout: int = 10, max_attempts: int = 4) -> requests.Response | None:
+    """GET with exponential backoff for 429s — needed because the gate
+    hammers FDIC + SEC with hundreds of requests in parallel."""
+    for attempt in range(max_attempts):
+        try:
+            r = requests.get(url, params=params, headers=UA, timeout=timeout)
+            if r.status_code == 429:
+                wait = float(r.headers.get("Retry-After", 0)) or (
+                    (2 ** attempt) + random.uniform(0, 1)
+                )
+                time.sleep(min(wait, 30))
+                continue
+            return r
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt == max_attempts - 1:
+                return None
+            time.sleep((2 ** attempt) + random.uniform(0, 1))
+    return None
+
+
 def _has_sec_xbrl(cik: int) -> bool:
     if not cik:
         return False
-    try:
-        r = requests.get(
-            f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json",
-            headers=UA, timeout=10,
-        )
-        return r.status_code == 200
-    except Exception:
-        return False
+    r = _get_with_retry(
+        f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json",
+    )
+    return r is not None and r.status_code == 200
 
 
 def _has_fdic_data(cert: int) -> bool:
     if not cert:
         return False
+    r = _get_with_retry(
+        "https://banks.data.fdic.gov/api/financials",
+        params={"filters": f"CERT:{cert}", "fields": "CERT,REPDTE", "limit": 1},
+    )
+    if r is None or r.status_code != 200:
+        return False
     try:
-        r = requests.get(
-            "https://banks.data.fdic.gov/api/financials",
-            params={"filters": f"CERT:{cert}", "fields": "CERT,REPDTE", "limit": 1},
-            headers=UA, timeout=10,
-        )
-        return r.status_code == 200 and bool(r.json().get("data"))
+        return bool(r.json().get("data"))
     except Exception:
         return False
 
@@ -69,7 +91,10 @@ def main() -> int:
     print(f"Checking {len(tickers)} tickers for data-source coverage...")
 
     failures: list[tuple[str, int | None, int | None]] = []
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    # max_workers kept low (4) — both SEC and FDIC's free public APIs
+    # rate-limit under sustained concurrency. Each ticker hits both, so
+    # 4 workers = 8 concurrent outbound requests at the burst peak.
+    with ThreadPoolExecutor(max_workers=4) as ex:
         futures = {ex.submit(_check_ticker, t): t for t in tickers}
         done = 0
         for fut in as_completed(futures):
