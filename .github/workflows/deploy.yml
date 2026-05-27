@@ -108,11 +108,11 @@ jobs:
           URL=$(gcloud run services describe ${{ env.SERVICE }} --region=${{ env.REGION }} --format='value(status.url)')
           echo "Deployed: $URL"
 
-      # Block silent regressions: the deploy succeeded, but if a universe
-      # ticker no longer resolves to ANY data source, fail the workflow
-      # (the bad code is still live — operator must roll back or fix and
-      # re-push). This is the "no gaps ever" guardrail.
+      # Block silent regressions: deploy succeeded but if any ticker no
+      # longer resolves to a working data source, fail the workflow so it
+      # surfaces in the GitHub UI + CI status. The service still serves
+      # the previous green revision until the operator fixes + re-pushes.
       - name: Verify coverage (every ticker has at least one data source)
         run: |
-          python -m pip install --quiet requests
+          python -m pip install --quiet -r requirements.txt
           python tests/test_universe_coverage.py
