@@ -219,32 +219,59 @@ def load_sec_data(tickers: tuple) -> dict:
     return results
 
 
-def load_ibkr_prices(tickers: list, max_wait: float = 3.0) -> dict:
-    """Load IBKR prices with smart polling (early return when prices arrive)."""
-    if not st.session_state.ibkr_connected:
-        return {t: get_empty_price() for t in tickers}
-    ibkr = get_ibkr_client()
-    ibkr.subscribe(tickers)
+def load_prices(tickers: list, max_wait: float = 3.0) -> dict:
+    """
+    Load real-time prices for a list of tickers.
 
-    # Poll every 100ms until all tickers have prices or timeout
-    waited = 0.0
-    while waited < max_wait:
-        if all(ibkr.get_price(t) for t in tickers):
-            break
-        time.sleep(0.1)
-        waited += 0.1
+    Priority:
+      1. IBKR live data — when the user has TWS/Gateway connected locally.
+      2. FMP API        — used in cloud (no IBKR), or as fallback when IBKR
+                          is disconnected. ~60s cache.
+      3. Empty dict     — when neither source is available.
 
-    prices = {}
-    for t in tickers:
-        p = ibkr.get_price(t)
-        prices[t] = p if p else get_empty_price()
-    return prices
+    Returns {ticker: {price, change, change_pct, ...}} compatible with the
+    existing IBKR shape so downstream metric builders stay unchanged.
+    """
+    # 1. IBKR if live
+    if st.session_state.ibkr_connected:
+        ibkr = get_ibkr_client()
+        ibkr.subscribe(tickers)
+        waited = 0.0
+        while waited < max_wait:
+            if all(ibkr.get_price(t) for t in tickers):
+                break
+            time.sleep(0.1)
+            waited += 0.1
+        prices = {}
+        for t in tickers:
+            p = ibkr.get_price(t)
+            prices[t] = p if p else get_empty_price()
+        # If IBKR returned mostly empty prices (e.g. subscription issues),
+        # fall through to FMP as a backup
+        non_empty = sum(1 for p in prices.values() if p.get("price"))
+        if non_empty >= len(tickers) * 0.5:
+            return prices
+
+    # 2. FMP fallback / primary in cloud
+    try:
+        from data.fmp_client import get_quote_batch, _has_key
+        if _has_key():
+            return get_quote_batch(tickers)
+    except Exception as e:
+        print(f"[prices] FMP fallback failed: {type(e).__name__}: {e}")
+
+    # 3. No source — empty
+    return {t: get_empty_price() for t in tickers}
+
+
+# Backwards-compat alias for any callers still using the old name
+load_ibkr_prices = load_prices
 
 
 def load_all_data(tickers: list[str]) -> tuple[list[dict], pd.DataFrame]:
     fdic, hist = load_fdic_data(tuple(tickers))
     sec = load_sec_data(tuple(tickers))
-    prices = load_ibkr_prices(tickers)
+    prices = load_prices(tickers)
     metrics = build_all_bank_metrics(tickers, fdic, sec, prices, hist)
     return metrics, pd.DataFrame(metrics)
 

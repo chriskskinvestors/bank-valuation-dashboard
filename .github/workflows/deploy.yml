@@ -57,7 +57,7 @@ jobs:
         id: secrets_arg
         run: |
           SECRETS=""
-          for s in anthropic-api-key fred-api-key; do
+          for s in anthropic-api-key fred-api-key fmp-api-key; do
             if gcloud secrets describe "$s" --quiet >/dev/null 2>&1; then
               env_var=$(echo "$s" | tr '[:lower:]-' '[:upper:]_')
               if [[ -z "$SECRETS" ]]; then

@@ -51,12 +51,21 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
         "Period", list(duration_options.keys()), horizontal=True, key="price_period"
     )
 
+    # Try IBKR first (when running locally with TWS); fall back to FMP
+    # (works in cloud + offline IBKR).
     ibkr = get_ibkr_client()
     hist_df = pd.DataFrame()
     if ibkr.connected:
         duration_str = duration_options[selected_duration]
         bar_size = "1 day" if selected_duration in ("3M", "1Y", "5Y") else "1 hour" if selected_duration == "1M" else "15 mins"
         hist_df = ibkr.get_historical_data(ticker, duration_str, bar_size)
+    if hist_df is None or hist_df.empty:
+        try:
+            from data.fmp_client import get_history
+            hist_df = get_history(ticker, selected_duration)
+        except Exception as e:
+            print(f"[bank_detail] FMP history fallback failed: {e}")
+            hist_df = pd.DataFrame()
 
     st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True)
 

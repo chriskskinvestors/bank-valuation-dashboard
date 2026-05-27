@@ -1,0 +1,251 @@
+"""
+Financial Modeling Prep (FMP) price client.
+
+Replaces IBKR for stock-price data in the cloud deployment (IBKR requires
+a local TWS/Gateway process which doesn't run in Cloud Run).
+
+Uses FMP's `stable` endpoint family — the legacy v3 endpoints were
+deprecated 2025-08-31. Auth via FMP_API_KEY env var.
+
+Functions:
+  get_quote(ticker)              — single bank: {price, change, ...}
+  get_quote_batch(tickers)       — bulk fetch for screening views
+  get_history(ticker, period)    — historical price series (DataFrame)
+
+Cache:
+  Quotes are cached for 60 seconds in Postgres so a Streamlit page reload
+  doesn't re-hit FMP. History is cached for 1 hour. Falls back to the same
+  shape as get_empty_price() so views render gracefully without a key.
+"""
+
+from __future__ import annotations
+import json
+import os
+import time
+from datetime import datetime, timedelta
+from typing import Iterable
+
+import requests
+import pandas as pd
+
+FMP_BASE = "https://financialmodelingprep.com/stable"
+
+# Override at the env-var level (Cloud Run mounts this from Secret Manager).
+def _api_key() -> str:
+    return (os.environ.get("FMP_API_KEY") or "").strip()
+
+
+def _has_key() -> bool:
+    return bool(_api_key())
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Cache helpers
+# ──────────────────────────────────────────────────────────────────────────
+
+QUOTE_TTL_SECONDS = 60
+HISTORY_TTL_SECONDS = 3600
+
+
+def _cache_get(key: str, ttl: int) -> dict | None:
+    """Tiny custom-TTL cache layered on the Postgres cache backend.
+
+    Stores the timestamp inside the value so we can use a shorter TTL
+    than the global cache.TTL_SECONDS (which is 24h) without changing
+    the backend.
+    """
+    from data import cache as _cache
+    cached = _cache.get(key)
+    if not cached:
+        return None
+    ts = cached.get("_ts")
+    if ts and time.time() - float(ts) > ttl:
+        return None
+    return cached.get("_v")
+
+
+def _cache_put(key: str, value):
+    from data import cache as _cache
+    _cache.put(key, {"_ts": time.time(), "_v": value})
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Generic GET with retry
+# ──────────────────────────────────────────────────────────────────────────
+
+def _get(path: str, params: dict, timeout: int = 10) -> object | None:
+    """GET against FMP. Returns parsed JSON or None on failure."""
+    if not _has_key():
+        return None
+    params = {**params, "apikey": _api_key()}
+    try:
+        resp = requests.get(f"{FMP_BASE}/{path}", params=params, timeout=timeout)
+        if resp.status_code == 429:
+            # Sleep + retry once
+            time.sleep(2)
+            resp = requests.get(f"{FMP_BASE}/{path}", params=params, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"[FMP] {path} error: {type(e).__name__}: {e}")
+        return None
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Public API — quote
+# ──────────────────────────────────────────────────────────────────────────
+
+# Shape compatible with data/ibkr_client.get_empty_price() so callers don't
+# need to know which source the data came from.
+def _empty_quote() -> dict:
+    return {
+        "price": None,
+        "bid": None,
+        "ask": None,
+        "close": None,
+        "open": None,
+        "high": None,
+        "low": None,
+        "volume": None,
+        "change": None,
+        "change_pct": None,
+    }
+
+
+def get_quote(ticker: str) -> dict:
+    """Single-ticker quote. Returns dict with same keys as IBKR client."""
+    if not _has_key():
+        return _empty_quote()
+    ticker = ticker.upper()
+    cache_key = f"fmp_quote:{ticker}"
+    cached = _cache_get(cache_key, QUOTE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("quote", {"symbol": ticker})
+    if not data or not isinstance(data, list) or not data:
+        return _empty_quote()
+    row = data[0]
+
+    out = {
+        "price": row.get("price"),
+        "bid": None,  # not in stable/quote
+        "ask": None,
+        "close": row.get("previousClose"),
+        "open": row.get("open"),
+        "high": row.get("dayHigh"),
+        "low": row.get("dayLow"),
+        "volume": row.get("volume"),
+        "change": row.get("change"),
+        "change_pct": row.get("changePercentage"),
+    }
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_quote_batch(tickers: Iterable[str]) -> dict[str, dict]:
+    """
+    Bulk-fetch quotes. FMP's stable endpoint accepts a single symbol per
+    call; we fan out in a small thread pool and cache each response.
+
+    Returns {ticker: quote_dict}.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    tickers = [t.upper() for t in tickers if t]
+    if not tickers:
+        return {}
+    if not _has_key():
+        return {t: _empty_quote() for t in tickers}
+
+    out: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(get_quote, t): t for t in tickers}
+        for fut in as_completed(futures):
+            t = futures[fut]
+            try:
+                out[t] = fut.result()
+            except Exception as e:
+                print(f"[FMP] {t} batch error: {e}")
+                out[t] = _empty_quote()
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Public API — historical price chart
+# ──────────────────────────────────────────────────────────────────────────
+
+# Period → FMP endpoint mapping. Different time horizons use different
+# series-of-data endpoints; intraday for short windows, daily otherwise.
+_PERIOD_TO_ENDPOINT = {
+    "1W":  ("historical-chart/15min", 7),       # last 7 days, 15-min bars
+    "1M":  ("historical-chart/1hour", 30),      # last 30 days, 1-hour bars
+    "3M":  ("historical-price-eod/full", 90),
+    "1Y":  ("historical-price-eod/full", 365),
+    "5Y":  ("historical-price-eod/full", 1826),
+}
+
+
+def get_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
+    """
+    Return a DataFrame of (date, close, open, high, low, volume) for `ticker`
+    over `period`. Period: "1W" | "1M" | "3M" | "1Y" | "5Y".
+    """
+    if not _has_key():
+        return pd.DataFrame()
+    ticker = ticker.upper()
+    cache_key = f"fmp_history:{ticker}:{period}"
+    cached = _cache_get(cache_key, HISTORY_TTL_SECONDS)
+    if cached is not None:
+        try:
+            return pd.DataFrame(cached)
+        except Exception:
+            pass
+
+    endpoint, days = _PERIOD_TO_ENDPOINT.get(period, _PERIOD_TO_ENDPOINT["1Y"])
+
+    from_d = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    to_d = datetime.utcnow().strftime("%Y-%m-%d")
+
+    params = {"symbol": ticker, "from": from_d, "to": to_d}
+    data = _get(endpoint, params, timeout=15)
+    if not data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data)
+    if df.empty:
+        return df
+
+    # Stable's historical-chart returns: date, open, high, low, close, volume
+    # Stable's historical-price-eod returns: date, open, high, low, close, volume, ...
+    # Normalize column names.
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.dropna(subset=["date"]).sort_values("date")
+    keep_cols = [c for c in ["date", "open", "high", "low", "close", "volume"]
+                 if c in df.columns]
+    df = df[keep_cols].reset_index(drop=True)
+
+    # Cache the parsed records
+    try:
+        _cache_put(cache_key, df.to_dict("records"))
+    except Exception:
+        pass
+    return df
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Diagnostic
+# ──────────────────────────────────────────────────────────────────────────
+
+def status() -> dict:
+    """For the Data Quality tab — confirm FMP wiring is healthy."""
+    if not _has_key():
+        return {"ok": False, "reason": "FMP_API_KEY not set"}
+    try:
+        q = get_quote("JPM")
+        return {"ok": q.get("price") is not None,
+                "sample_price_jpm": q.get("price"),
+                "key_prefix": _api_key()[:6] + "...",
+                "endpoint": FMP_BASE}
+    except Exception as e:
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
