@@ -62,16 +62,38 @@ def get_sec_info(ticker: str) -> dict | None:
     return {"cik": info["cik_str"], "name": info["title"]}
 
 
-def sec_has_xbrl(cik: int) -> bool:
-    """Does SEC's companyfacts endpoint return data for this CIK?"""
+def sec_has_xbrl(cik: int, max_age_years: int = 2) -> bool:
+    """
+    Does SEC's companyfacts endpoint return *recent* data for this CIK?
+
+    HTTP 200 is not enough — companyfacts also returns 200 for deregistered
+    companies whose XBRL data is years old (e.g. CCNB last filed XBRL in
+    2013). Verifies that at least one of a few key concepts has a value
+    dated within `max_age_years`.
+    """
     try:
         r = requests.get(
             f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json",
             headers=UA, timeout=10,
         )
-        return r.status_code == 200
+        if r.status_code != 200:
+            return False
+        data = r.json()
     except Exception:
         return False
+
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=365 * max_age_years)).strftime("%Y-%m-%d")
+    us_gaap = (data.get("facts") or {}).get("us-gaap", {})
+    # Check a few concepts that any active filer would update
+    for concept in ("NetIncomeLoss", "StockholdersEquity", "Assets", "Revenues",
+                     "EarningsPerShareBasic"):
+        units = (us_gaap.get(concept) or {}).get("units", {})
+        for vals in units.values():
+            for v in vals:
+                if (v.get("end") or "") >= cutoff:
+                    return True
+    return False
 
 
 # ──────────────────────────────────────────────────────────────────────────

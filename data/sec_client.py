@@ -298,6 +298,28 @@ def get_latest_fundamentals(cik: int) -> dict:
         if not result.get("net_income"):
             result["net_income"] = _extract_latest_value(facts, "ProfitLoss", max_age_years=1)
 
+    # Same TTM treatment for EPS — quarterly Q1/Q2/Q3 filings would otherwise
+    # give a single-period EPS, producing P/E values 4× too high.
+    # (e.g. WAL Q1 EPS $1.65 → P/E = $79/$1.65 = 48x; real TTM EPS ≈ $7,
+    # P/E ≈ 11x.)
+    for concept, field in [
+        ("EarningsPerShareDiluted", "eps"),
+        ("EarningsPerShareBasic", "eps_basic"),
+    ]:
+        ttm_val = _extract_ttm_value(facts, concept)
+        if ttm_val is not None:
+            result[f"{field}_latest_period"] = result.get(field)
+            result[field] = ttm_val
+            result[f"{field}_ttm"] = ttm_val
+
+    # Dividends per share: also TTM. A quarterly DPS shown as the annual
+    # dividend would understate yield by 4×.
+    dps_ttm = _extract_ttm_value(facts, "CommonStockDividendsPerShareDeclared")
+    if dps_ttm is not None:
+        result["dividends_per_share_latest_period"] = result.get("dividends_per_share")
+        result["dividends_per_share"] = dps_ttm
+        result["dividends_per_share_ttm"] = dps_ttm
+
     # Share-count fallback chain — some issuers (e.g., Citi) stopped
     # reporting CommonStockSharesOutstanding years ago. Fall back in order:
     # 1. CommonStockSharesOutstanding (primary)
