@@ -5,10 +5,16 @@
     "fdic_score": 0.33,
     "name": "Ameris Bancorp"
   },
+  "ACNB": {
+    "cik": 715579,
+    "fdic_cert": 7506,
+    "fdic_score": 1.0,
+    "name": "ACNB CORP"
+  },
   "AFBI": {
     "cik": 1823406,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 29510,
+    "fdic_score": 1.0,
     "name": "Affinity Bancshares, Inc."
   },
   "ALLY": {
@@ -59,6 +65,12 @@
     "fdic_score": 1.0,
     "name": "AMERISERV FINANCIAL INC /PA/"
   },
+  "ATLO": {
+    "cik": 1132651,
+    "fdic_cert": 57391,
+    "fdic_score": 1.0,
+    "name": "AMES NATIONAL CORP"
+  },
   "AUB": {
     "cik": 883948,
     "fdic_cert": 34589,
@@ -88,6 +100,12 @@
     "fdic_cert": 35546,
     "fdic_score": 1.0,
     "name": "Axos Financial, Inc."
+  },
+  "AXP": {
+    "cik": 4962,
+    "fdic_cert": 27471,
+    "fdic_score": 1.0,
+    "name": "AMERICAN EXPRESS CO"
   },
   "BAC": {
     "cik": 70858,
@@ -155,6 +173,12 @@
     "fdic_score": 0.0,
     "name": "BCB BANCORP INC"
   },
+  "BCML": {
+    "cik": 1730984,
+    "fdic_cert": 57716,
+    "fdic_score": 1.0,
+    "name": "BayCom Corp"
+  },
   "BCOW": {
     "cik": 1847360,
     "fdic_cert": 29120,
@@ -181,8 +205,8 @@
   },
   "BHB": {
     "cik": 743367,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 11971,
+    "fdic_score": 1.0,
     "name": "BAR HARBOR BANKSHARES"
   },
   "BHRB": {
@@ -259,8 +283,8 @@
   },
   "BSBK": {
     "cik": 1787414,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 29941,
+    "fdic_score": 0.5,
     "name": "Bogota Financial Corp."
   },
   "BSPA": {
@@ -280,6 +304,12 @@
     "fdic_cert": 4147,
     "fdic_score": 1.0,
     "name": "Bank7 Corp."
+  },
+  "BUSE": {
+    "cik": 314489,
+    "fdic_cert": 16450,
+    "fdic_score": 0.5,
+    "name": "FIRST BUSEY CORP /NV/"
   },
   "BVFL": {
     "cik": 1302387,
@@ -322,6 +352,12 @@
     "fdic_cert": 7213,
     "fdic_score": 1.0,
     "name": "CITIGROUP INC"
+  },
+  "CAC": {
+    "cik": 750686,
+    "fdic_cert": 4255,
+    "fdic_score": 1.0,
+    "name": "CAMDEN NATIONAL CORP"
   },
   "CARE": {
     "cik": 1829576,
@@ -391,8 +427,8 @@
   },
   "CBSH": {
     "cik": 22356,
-    "fdic_cert": 24998,
-    "fdic_score": 1.0,
+    "fdic_cert": 1374,
+    "fdic_score": 0.5,
     "name": "COMMERCE BANCSHARES INC /MO/"
   },
   "CBU": {
@@ -467,6 +503,12 @@
     "fdic_score": 1.0,
     "name": "CULLEN/FROST BANKERS, INC."
   },
+  "CHCO": {
+    "cik": 726854,
+    "fdic_cert": 17735,
+    "fdic_score": 1.0,
+    "name": "CITY HOLDING CO"
+  },
   "CHMG": {
     "cik": 763563,
     "fdic_cert": 597,
@@ -481,8 +523,8 @@
   },
   "CLBK": {
     "cik": 1723596,
-    "fdic_cert": 8775,
-    "fdic_score": 1.0,
+    "fdic_cert": 28834,
+    "fdic_score": 0.5,
     "name": "Columbia Financial, Inc."
   },
   "CLST": {
@@ -535,14 +577,14 @@
   },
   "CPBI": {
     "cik": 1979332,
-    "fdic_cert": 29476,
-    "fdic_score": 1.0,
+    "fdic_cert": 18118,
+    "fdic_score": 0.5,
     "name": "Central Plains Bancshares, Inc."
   },
   "CPF": {
     "cik": 701347,
-    "fdic_cert": 17308,
-    "fdic_score": 1.0,
+    "fdic_cert": 23041,
+    "fdic_score": 0.5,
     "name": "CENTRAL PACIFIC FINANCIAL CORP"
   },
   "CPKF": {
@@ -624,8 +666,8 @@
     "name": "Dime Community Bancshares, Inc. /NY/"
   },
   "DWNX": {
-    "cik": null,
-    "fdic_cert": 19638,
+    "cik": 927719,
+    "fdic_cert": 7025,
     "fdic_score": 1.0,
     "name": "DELHI BANK CORP"
   },
@@ -637,8 +679,8 @@
   },
   "EBMT": {
     "cik": 1478454,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 58482,
+    "fdic_score": 0.5,
     "name": "Eagle Bancorp Montana, Inc."
   },
   "ECBK": {
@@ -689,6 +731,12 @@
     "fdic_score": 1.0,
     "name": "EQUITY BANCSHARES INC"
   },
+  "ESQ": {
+    "cik": 1531031,
+    "fdic_cert": 58140,
+    "fdic_score": 1.0,
+    "name": "Esquire Financial Holdings, Inc."
+  },
   "EWBC": {
     "cik": 1069157,
     "fdic_cert": 31628,
@@ -737,11 +785,23 @@
     "fdic_score": 0.0,
     "name": "FIRST BANCSHARES INC /MO/"
   },
+  "FCAP": {
+    "cik": 1070296,
+    "fdic_cert": 31223,
+    "fdic_score": 1.0,
+    "name": "FIRST CAPITAL INC"
+  },
   "FCBC": {
     "cik": 859070,
-    "fdic_cert": 13012,
-    "fdic_score": 1.0,
-    "name": "FIRST COMMUNITY BANKSHARES INC /VA/"
+    "fdic_cert": 3850,
+    "fdic_score": 0.5,
+    "name": "FIRST COMMUNITY BANCSHARES INC /NV/"
+  },
+  "FCCO": {
+    "cik": 932781,
+    "fdic_cert": 34047,
+    "fdic_score": 0.5,
+    "name": "FIRST COMMUNITY CORP /SC/"
   },
   "FCF": {
     "cik": 712537,
@@ -833,6 +893,12 @@
     "fdic_score": 1.0,
     "name": "FORESIGHT FINANCIAL GROUP INC"
   },
+  "FHB": {
+    "cik": 36377,
+    "fdic_cert": 17985,
+    "fdic_score": 1.0,
+    "name": "FIRST HAWAIIAN, INC."
+  },
   "FHN": {
     "cik": 36966,
     "fdic_cert": 4977,
@@ -899,6 +965,12 @@
     "fdic_score": 0.0,
     "name": "FIFTH THIRD BANCORP"
   },
+  "FKYS": {
+    "cik": 737875,
+    "fdic_cert": 7404,
+    "fdic_score": 1.0,
+    "name": "FIRST KEYSTONE CORP"
+  },
   "FLG": {
     "cik": 910073,
     "fdic_cert": null,
@@ -913,9 +985,9 @@
   },
   "FMBH": {
     "cik": 700565,
-    "fdic_cert": 3705,
-    "fdic_score": 1.0,
-    "name": "FIRST MID BANCSHARES, INC."
+    "fdic_cert": 22874,
+    "fdic_score": 0.5,
+    "name": "FIRST MID ILLINOIS BANCSHARES INC"
   },
   "FMBM": {
     "cik": 740806,
@@ -1055,11 +1127,17 @@
     "fdic_score": 1.0,
     "name": "FULTON FINANCIAL CORP"
   },
+  "FUNC": {
+    "cik": 763907,
+    "fdic_cert": 4857,
+    "fdic_score": 0.5,
+    "name": "FIRST UNITED CORP/MD/"
+  },
   "FUSB": {
     "cik": 717806,
-    "fdic_cert": 17077,
-    "fdic_score": 1.0,
-    "name": "FIRST US BANCSHARES, INC."
+    "fdic_cert": 1867,
+    "fdic_score": 0.5,
+    "name": "UNITED SECURITY BANCSHARES INC"
   },
   "FVCB": {
     "cik": 1675644,
@@ -1177,8 +1255,8 @@
   },
   "HBT": {
     "cik": 775215,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 20369,
+    "fdic_score": 1.0,
     "name": "HBT Financial, Inc."
   },
   "HFBL": {
@@ -1189,8 +1267,8 @@
   },
   "HFWA": {
     "cik": 1046025,
-    "fdic_cert": 29012,
-    "fdic_score": 1.0,
+    "fdic_cert": 58220,
+    "fdic_score": 0.5,
     "name": "HERITAGE FINANCIAL CORP /WA/"
   },
   "HNVR": {
@@ -1201,7 +1279,7 @@
   },
   "HOMB": {
     "cik": 1331520,
-    "fdic_cert": 11241,
+    "fdic_cert": 9196,
     "fdic_score": 1.0,
     "name": "HOME BANCSHARES INC"
   },
@@ -1237,7 +1315,7 @@
   },
   "IBOC": {
     "cik": 315709,
-    "fdic_cert": 19629,
+    "fdic_cert": 24961,
     "fdic_score": 1.0,
     "name": "INTERNATIONAL BANCSHARES CORP"
   },
@@ -1276,6 +1354,12 @@
     "fdic_cert": 1005,
     "fdic_score": 1.0,
     "name": "ISABELLA BANK CORP"
+  },
+  "ISTR": {
+    "cik": 1602658,
+    "fdic_cert": 58316,
+    "fdic_score": 1.0,
+    "name": "Investar Holding Corp"
   },
   "ITUB": {
     "cik": null,
@@ -1325,6 +1409,12 @@
     "fdic_score": 0.0,
     "name": "LANDMARK BANCORP INC"
   },
+  "LCNB": {
+    "cik": 1074902,
+    "fdic_cert": 6623,
+    "fdic_score": 1.0,
+    "name": "LCNB CORP"
+  },
   "LKFN": {
     "cik": 721994,
     "fdic_cert": 13102,
@@ -1339,8 +1429,8 @@
   },
   "LOB": {
     "cik": 1462120,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 58665,
+    "fdic_score": 1.0,
     "name": "Live Oak Bancshares, Inc."
   },
   "LSBK": {
@@ -1451,6 +1541,12 @@
     "fdic_score": 0.67,
     "name": "MID PENN BANCORP INC"
   },
+  "MRBK": {
+    "cik": 1750735,
+    "fdic_cert": 57777,
+    "fdic_score": 1.0,
+    "name": "Meridian Corp"
+  },
   "MS": {
     "cik": 895421,
     "fdic_cert": 34221,
@@ -1483,8 +1579,8 @@
   },
   "MVBF": {
     "cik": 1277902,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 34603,
+    "fdic_score": 1.0,
     "name": "MVB FINANCIAL CORP"
   },
   "MYFW": {
@@ -1573,8 +1669,8 @@
   },
   "NWPP": {
     "cik": 1163389,
-    "fdic_cert": 34890,
-    "fdic_score": 1.0,
+    "fdic_cert": 16152,
+    "fdic_score": 0.5,
     "name": "NEW PEOPLES BANKSHARES INC"
   },
   "OAKV": {
@@ -1717,8 +1813,8 @@
   },
   "PFBX": {
     "cik": 770460,
-    "fdic_cert": 340,
-    "fdic_score": 1.0,
+    "fdic_cert": 10075,
+    "fdic_score": 0.5,
     "name": "PEOPLES FINANCIAL CORP /MS/"
   },
   "PFIS": {
@@ -1775,11 +1871,29 @@
     "fdic_score": 0.67,
     "name": "Pinnacle Financial Partners, Inc."
   },
+  "PRK": {
+    "cik": 805676,
+    "fdic_cert": 6653,
+    "fdic_score": 0.5,
+    "name": "PARK NATIONAL CORP /OH/"
+  },
   "PROV": {
     "cik": 1010470,
     "fdic_cert": null,
     "fdic_score": 0.0,
     "name": "PROVIDENT FINANCIAL HOLDINGS INC"
+  },
+  "QCRH": {
+    "cik": 906465,
+    "fdic_cert": 18272,
+    "fdic_score": 1.0,
+    "name": "QCR HOLDINGS INC"
+  },
+  "QNBC": {
+    "cik": 750558,
+    "fdic_cert": 7714,
+    "fdic_score": 1.0,
+    "name": "QNB CORP"
   },
   "QNTO": {
     "cik": 1391933,
@@ -1883,11 +1997,29 @@
     "fdic_score": 1.0,
     "name": "ServisFirst Bancshares, Inc."
   },
+  "SFCO": {
+    "cik": 1831523,
+    "fdic_cert": 16288,
+    "fdic_score": 1.0,
+    "name": "Southern Financial Corp"
+  },
+  "SFDL": {
+    "cik": 818677,
+    "fdic_cert": 31100,
+    "fdic_score": 1.0,
+    "name": "SECURITY FEDERAL CORP"
+  },
+  "SFNC": {
+    "cik": 90498,
+    "fdic_cert": 3890,
+    "fdic_score": 1.0,
+    "name": "SIMMONS FIRST NATIONAL CORP"
+  },
   "SFST": {
     "cik": 1090009,
-    "fdic_cert": 35295,
+    "fdic_cert": 22394,
     "fdic_score": 1.0,
-    "name": "SOUTHERN FIRST BANCSHARES INC"
+    "name": "GREENVILLE FIRST BANCSHARES INC"
   },
   "SHBI": {
     "cik": 1035092,
@@ -1915,9 +2047,9 @@
   },
   "SMBK": {
     "cik": 1038773,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
-    "name": "SMARTFINANCIAL INC."
+    "fdic_cert": 57576,
+    "fdic_score": 1.0,
+    "name": "CORNERSTONE BANCSHARES INC"
   },
   "SNNF": {
     "cik": 2072421,
@@ -1936,6 +2068,12 @@
     "fdic_cert": 28778,
     "fdic_score": 0.5,
     "name": "SR Bancorp, Inc."
+  },
+  "SRCE": {
+    "cik": 34782,
+    "fdic_cert": 9087,
+    "fdic_score": 1.0,
+    "name": "1ST SOURCE CORP"
   },
   "SSB": {
     "cik": 764038,
@@ -2033,6 +2171,12 @@
     "fdic_score": 1.0,
     "name": "TOMPKINS FINANCIAL CORP"
   },
+  "TRMK": {
+    "cik": 36146,
+    "fdic_cert": 4988,
+    "fdic_score": 1.0,
+    "name": "TRUSTMARK CORP"
+  },
   "TRST": {
     "cik": 357301,
     "fdic_cert": null,
@@ -2047,8 +2191,8 @@
   },
   "TYFG": {
     "cik": 1725262,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 15752,
+    "fdic_score": 1.0,
     "name": "Tri-County Financial Group, Inc."
   },
   "UBCP": {
@@ -2062,6 +2206,12 @@
     "fdic_cert": 22858,
     "fdic_score": 1.0,
     "name": "UNITED BANCSHARES INC/OH"
+  },
+  "UBS": {
+    "cik": 1610520,
+    "fdic_cert": 57565,
+    "fdic_score": 1.0,
+    "name": "UBS Group AG"
   },
   "UBSI": {
     "cik": 729986,
@@ -2089,7 +2239,7 @@
   },
   "UNB": {
     "cik": 706863,
-    "fdic_cert": 14158,
+    "fdic_cert": 6180,
     "fdic_score": 1.0,
     "name": "UNION BANKSHARES INC"
   },
@@ -2128,6 +2278,12 @@
     "fdic_cert": 7759,
     "fdic_score": 1.0,
     "name": "UNIVEST FINANCIAL Corp"
+  },
+  "UWHR": {
+    "cik": 898171,
+    "fdic_cert": 24919,
+    "fdic_score": 1.0,
+    "name": "UWHARRIE CAPITAL CORP"
   },
   "VABK": {
     "cik": 1572334,
@@ -2195,6 +2351,12 @@
     "fdic_score": 1.0,
     "name": "WEBSTER FINANCIAL CORP"
   },
+  "WF": {
+    "cik": 1264136,
+    "fdic_cert": 24920,
+    "fdic_score": 1.0,
+    "name": "WOORI FINANCIAL GROUP INC."
+  },
   "WFC": {
     "cik": 72971,
     "fdic_cert": 14025,
@@ -2206,6 +2368,12 @@
     "fdic_cert": null,
     "fdic_score": 0.0,
     "name": "Western New England Bancorp, Inc."
+  },
+  "WRIV": {
+    "cik": 1328409,
+    "fdic_cert": 89,
+    "fdic_score": 1.0,
+    "name": "WHITE RIVER BANCSHARES CO"
   },
   "WSBC": {
     "cik": 203596,
