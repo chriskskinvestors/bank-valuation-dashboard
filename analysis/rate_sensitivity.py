@@ -5,13 +5,37 @@ Given a bank's current balance sheet (earning assets, int-bearing liabilities,
 cost of deposits, earning asset yield), models NIM and NII impact under
 rate scenarios.
 
-Two beta models:
-  - Historical: use the bank's measured deposit beta (from deposit_dynamics)
-  - Textbook:   50% beta on interest-bearing deposits, 0% on non-interest
+Beta models:
+  • Historical — use the bank's measured deposit beta (from deposit_dynamics)
+  • Textbook   — 50% beta on interest-bearing deposits, 0% on non-interest
 
-Asset repricing: assume 100% beta on earning assets (simplification).
-Real-world asset repricing is slower due to fixed-rate loans, but this is
-a first-order approximation used across sell-side research.
+Asset repricing pace (model_pace=True):
+  Earning assets do NOT all reprice immediately. Loans reprice on schedule
+  (floating-rate loans pass through fast; fixed-rate loans only when they
+  amortize / mature). Securities reprice when they roll over.
+
+  The FDIC public API doesn't expose granular asset-maturity buckets
+  (ASTM3MY etc are blank for most banks), so we approximate from portfolio
+  composition + industry-typical durations:
+    • Securities (~3.5-year average duration): ~29%/yr reprice
+    • Loans split between floating and fixed:
+        – Floating-rate loans (estimated 30% of book): reprice within 1Q
+        – Fixed-rate loans (~70%): reprice on amortization, ~15%/yr
+  Cumulative repricing pace by year N is a weighted average of these.
+
+  Per-bank refinement: floating-loan share is taken from LNLSDEPR (loan
+  yield variability vs. deposits — high values indicate more floating-rate).
+
+Deposit mix-shift (apply_mix_shift=True):
+  Holding NIB-to-IB ratio constant under-states funding cost increases in
+  steep rate-up scenarios. We model a shift = max(0, rate_change_pp × 0.04)
+  i.e. ~4 pp of NIB migrates to IB per 100 bps of rate move (rough cycle
+  average; will refine with per-bank fit later).
+
+EPS impact:
+  Compute NII delta → pretax income delta. Apply the bank's effective tax
+  rate (FDIC ITAX / PTAXNETINC; defaults to 21%). Divide by shares
+  outstanding (from SEC data) for EPS delta per scenario.
 """
 
 from __future__ import annotations
@@ -22,6 +46,27 @@ DEFAULT_SCENARIOS_BPS = [-200, -100, -50, 0, 50, 100, 200]
 
 TEXTBOOK_INT_BEARING_BETA = 0.50  # half of rate change flows to int-bearing deposits
 TEXTBOOK_NON_INT_BETA = 0.0       # non-int bearing deposits don't reprice
+
+# Asset repricing pace assumptions (industry averages)
+# Cumulative fraction of earning assets repriced by end of year N.
+# Securities-heavy banks reprice slightly slower; loan-heavy slightly faster.
+_REPRICING_BASE = {
+    # year: (securities_pace, fixed_loan_pace, floating_loan_pace_q1)
+    1: (0.29, 0.15, 1.00),
+    2: (0.55, 0.28, 1.00),
+    3: (0.75, 0.40, 1.00),
+    4: (0.90, 0.50, 1.00),
+    5: (1.00, 0.58, 1.00),
+}
+
+# Default share of loans that are floating-rate (industry avg).
+_DEFAULT_FLOATING_LOAN_SHARE = 0.30
+
+# Deposit mix-shift: per 100 bps rate up, what % of NIB migrates to IB
+_MIX_SHIFT_PER_100BPS = 0.04
+
+# Default effective tax rate if FDIC data missing
+_DEFAULT_TAX_RATE = 0.21
 
 
 def _safe(val, default=0.0):
@@ -66,9 +111,32 @@ def build_rate_sensitivity_inputs(
     cost_of_int_bearing = fdic_latest.get("INTEXPY")  # cost of int-bearing liabilities
     current_nim = fdic_latest.get("NIMY")              # current NIM
 
+    # Portfolio composition for repricing-pace modeling
+    if earning_assets_k > 0:
+        sec_share = securities_k / earning_assets_k
+        loan_share = total_loans_k / earning_assets_k
+    else:
+        sec_share = 0.0
+        loan_share = 0.0
+
+    # Effective tax rate for EPS impact. PTAXNETINC is pretax NI; ITAX is
+    # tax expense — both reported quarterly so the ratio is meaningful even
+    # for a single quarter. Bounded to [0, 0.40] to filter outliers like
+    # tax-benefit quarters (negative rate) or one-time items.
+    itax = _safe(fdic_latest.get("ITAX"))
+    ptax_ni = _safe(fdic_latest.get("PTAXNETINC"))
+    if ptax_ni > 0:
+        tax_rate = max(0.0, min(0.40, itax / ptax_ni))
+    else:
+        tax_rate = _DEFAULT_TAX_RATE
+
     return {
         "total_assets_usd": total_assets_k * 1000,
         "earning_assets_usd": earning_assets_k * 1000,
+        "securities_usd": securities_k * 1000,
+        "loans_usd": total_loans_k * 1000,
+        "securities_share": sec_share,
+        "loans_share": loan_share,
         "total_deposits_usd": total_deposits_k * 1000,
         "int_bearing_dep_usd": int_bearing_dep_k * 1000,
         "non_int_dep_usd": non_int_dep_k * 1000,
@@ -76,6 +144,7 @@ def build_rate_sensitivity_inputs(
         "earning_asset_yield_pct": earning_asset_yield,
         "cost_of_int_bearing_pct": cost_of_int_bearing,
         "current_nim_pct": current_nim,
+        "effective_tax_rate": tax_rate,
     }
 
 
@@ -90,6 +159,150 @@ def compute_historical_deposit_beta(fdic_hist: list[dict] | None) -> float | Non
         return cycle.get("beta")
     except Exception:
         return None
+
+
+def compute_repricing_pace(
+    inputs: dict, floating_loan_share: float | None = None,
+) -> dict[int, float]:
+    """
+    Cumulative fraction of earning assets that has repriced by end of year N.
+
+    Returns {1: x1, 2: x2, ..., 5: x5} where each value is in [0, 1].
+
+    Mix:
+      • Securities: per-year pace from _REPRICING_BASE (~29%/yr)
+      • Floating-rate loans: ~100% in Q1
+      • Fixed-rate loans: per-year pace from _REPRICING_BASE (~15%/yr)
+
+    floating_loan_share defaults to _DEFAULT_FLOATING_LOAN_SHARE (0.30).
+    """
+    sec_share = _safe(inputs.get("securities_share"))
+    loan_share = _safe(inputs.get("loans_share"))
+    fls = floating_loan_share if floating_loan_share is not None \
+        else _DEFAULT_FLOATING_LOAN_SHARE
+    fls = max(0.0, min(1.0, fls))
+
+    floating_share = loan_share * fls
+    fixed_share = loan_share * (1 - fls)
+
+    pace: dict[int, float] = {}
+    for year, (sec_p, fixed_p, flo_p) in _REPRICING_BASE.items():
+        cum = (sec_share * sec_p) + (fixed_share * fixed_p) + (floating_share * flo_p)
+        pace[year] = max(0.0, min(1.0, cum))
+    return pace
+
+
+def apply_rate_scenario_phased(
+    inputs: dict,
+    rate_change_bps: float,
+    deposit_beta_int_bearing: float,
+    deposit_beta_non_int: float = 0.0,
+    floating_loan_share: float | None = None,
+    apply_mix_shift: bool = True,
+    shares_outstanding: float | None = None,
+    horizon_years: int = 3,
+) -> dict:
+    """
+    Multi-year rate scenario with phased asset repricing + deposit mix shift
+    + EPS impact.
+
+    Returns:
+      {
+        rate_change_bps: ...,
+        years: [{year: 1, nim_new_pct, nim_delta_bps, nii_delta_usd,
+                  pretax_delta_usd, net_income_delta_usd, eps_delta},
+                {year: 2, ...}, ...],
+        current_nim_pct, current_nii_usd, ...
+      }
+    """
+    ea_yield = _safe(inputs.get("earning_asset_yield_pct"))
+    cost_ibl = _safe(inputs.get("cost_of_int_bearing_pct"))
+    current_nim = _safe(inputs.get("current_nim_pct"))
+    earning_assets = _safe(inputs.get("earning_assets_usd"))
+    int_bearing_dep = _safe(inputs.get("int_bearing_dep_usd"))
+    non_int_dep = _safe(inputs.get("non_int_dep_usd"))
+    total_dep = _safe(inputs.get("total_deposits_usd"))
+    tax_rate = _safe(inputs.get("effective_tax_rate"), _DEFAULT_TAX_RATE)
+
+    pace = compute_repricing_pace(inputs, floating_loan_share)
+    nii_current = earning_assets * (current_nim / 100)
+    rate_pp = rate_change_bps / 100.0
+
+    # Deposit cost moves immediately (floating-rate exposure is mostly
+    # already there; CDs reprice on maturity but that's largely <1yr).
+    cost_ibl_new = cost_ibl + rate_pp * deposit_beta_int_bearing
+
+    # Deposit mix-shift in rate-up scenarios: NIB customers move to IB.
+    # Applied as a 1-time shift at the end of year 1 (cycle assumption).
+    if apply_mix_shift and rate_pp > 0 and total_dep > 0:
+        shift_frac = max(0.0, rate_pp * _MIX_SHIFT_PER_100BPS)
+        shifted_nib = min(non_int_dep, non_int_dep * shift_frac)
+        eff_int_bearing_dep = int_bearing_dep + shifted_nib
+        eff_non_int_dep = non_int_dep - shifted_nib
+    else:
+        eff_int_bearing_dep = int_bearing_dep
+        eff_non_int_dep = non_int_dep
+
+    years_out = []
+    horizon = min(max(1, horizon_years), 5)
+    for year in range(1, horizon + 1):
+        repriced_frac = pace.get(year, 1.0)
+        # Asset yield: only the repriced portion benefits from the rate move.
+        # Unpriced portion stays at current yield.
+        ea_yield_new = ea_yield + rate_pp * repriced_frac
+
+        # Blended cost of funds — uses (possibly mix-shifted) deposit balances
+        if total_dep > 0:
+            ib_weight = eff_int_bearing_dep / total_dep
+            ni_weight = eff_non_int_dep / total_dep
+            current_blended_cof = (int_bearing_dep / total_dep) * cost_ibl
+            new_blended_cof = (
+                ib_weight * cost_ibl_new
+                + ni_weight * (rate_pp * deposit_beta_non_int)
+            )
+            cof_change = new_blended_cof - current_blended_cof
+        else:
+            cof_change = rate_pp * deposit_beta_int_bearing
+
+        yield_delta_pp = rate_pp * repriced_frac
+        nim_delta_pp = yield_delta_pp - cof_change
+        nim_new = current_nim + nim_delta_pp
+        nii_new = earning_assets * (nim_new / 100)
+        nii_delta = nii_new - nii_current
+
+        # EPS impact: NII delta → pretax (assume opex/fees unchanged) → net
+        # income → divide by shares. Pretax delta == NII delta because we're
+        # only modeling the rate-sensitive component.
+        pretax_delta = nii_delta
+        net_income_delta = pretax_delta * (1 - tax_rate)
+        eps_delta = (net_income_delta / shares_outstanding) if shares_outstanding else None
+
+        years_out.append({
+            "year": year,
+            "repriced_fraction": repriced_frac,
+            "nim_new_pct": nim_new,
+            "nim_delta_bps": nim_delta_pp * 100,
+            "earning_asset_yield_new_pct": ea_yield_new,
+            "cost_of_funds_new_pct": cost_ibl_new,
+            "nii_new_usd": nii_new,
+            "nii_delta_usd": nii_delta,
+            "pretax_delta_usd": pretax_delta,
+            "net_income_delta_usd": net_income_delta,
+            "eps_delta": eps_delta,
+        })
+
+    return {
+        "rate_change_bps": rate_change_bps,
+        "current_nim_pct": current_nim,
+        "current_nii_usd": nii_current,
+        "deposit_beta_used": deposit_beta_int_bearing,
+        "floating_loan_share_used": floating_loan_share if floating_loan_share is not None
+                                      else _DEFAULT_FLOATING_LOAN_SHARE,
+        "mix_shift_applied": apply_mix_shift and rate_pp > 0,
+        "shares_outstanding": shares_outstanding,
+        "tax_rate_used": tax_rate,
+        "years": years_out,
+    }
 
 
 def apply_rate_scenario(
@@ -391,6 +604,61 @@ def _resolve_deposit_beta(
         beta_int = max(-0.20, min(1.50, hist_beta))
         return (beta_int, 0.0, "historical")
     return (TEXTBOOK_INT_BEARING_BETA, TEXTBOOK_NON_INT_BETA, "textbook_fallback")
+
+
+def run_rate_sensitivity_phased(
+    fdic_latest: dict,
+    fdic_hist: list[dict] | None = None,
+    sec_data: dict | None = None,
+    beta_mode: str = "historical",
+    scenarios_bps: list[int] | None = None,
+    custom_deposit_beta: float | None = None,
+    floating_loan_share: float | None = None,
+    apply_mix_shift: bool = True,
+    horizon_years: int = 3,
+) -> dict:
+    """
+    Run the enhanced phased rate sensitivity across scenarios.
+
+    Returns the same structure as run_rate_sensitivity but each scenario
+    now has a `years` list with per-year NIM/NII/EPS impacts.
+    """
+    if scenarios_bps is None:
+        scenarios_bps = DEFAULT_SCENARIOS_BPS
+
+    inputs = build_rate_sensitivity_inputs(fdic_latest, fdic_hist)
+    beta_int, beta_ni, beta_mode_used = _resolve_deposit_beta(
+        inputs, fdic_hist, beta_mode, custom_deposit_beta,
+    )
+
+    shares = None
+    if sec_data:
+        shares = sec_data.get("shares_outstanding")
+
+    scenario_results = [
+        apply_rate_scenario_phased(
+            inputs,
+            rate_change_bps=bps,
+            deposit_beta_int_bearing=beta_int,
+            deposit_beta_non_int=beta_ni,
+            floating_loan_share=floating_loan_share,
+            apply_mix_shift=apply_mix_shift,
+            shares_outstanding=shares,
+            horizon_years=horizon_years,
+        )
+        for bps in scenarios_bps
+    ]
+
+    return {
+        "inputs": inputs,
+        "beta_used": beta_int,
+        "beta_mode": beta_mode_used,
+        "repricing_pace": compute_repricing_pace(inputs, floating_loan_share),
+        "scenarios": scenario_results,
+        "horizon_years": horizon_years,
+        "shares_outstanding": shares,
+        "tax_rate_used": inputs.get("effective_tax_rate"),
+    }
 
 
 def run_rate_sensitivity(

@@ -18,6 +18,7 @@ from data.cache import get as cache_get, put as cache_put
 from data import fdic_client
 from analysis.rate_sensitivity import (
     run_rate_sensitivity, run_curve_sensitivity, run_curve_matrix,
+    run_rate_sensitivity_phased,
     DEFAULT_SCENARIOS_BPS, TEXTBOOK_INT_BEARING_BETA, NAMED_SCENARIOS,
 )
 from utils.formatting import fmt_dollars
@@ -142,11 +143,15 @@ def render_rate_sensitivity(ticker: str):
     st.markdown("---")
 
     # ── Tabs ────────────────────────────────────────────────────────────
-    tab_named, tab_matrix, tab_parallel = st.tabs([
+    tab_phased, tab_named, tab_matrix, tab_parallel = st.tabs([
+        "📅 Multi-Year Impact (phased)",
         "🎯 Named Curve Scenarios",
         "🔥 Curve Matrix (3M × 5Y)",
         "Parallel Shift (legacy)",
     ])
+
+    with tab_phased:
+        _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta)
 
     with tab_named:
         _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta)
@@ -184,6 +189,140 @@ def render_rate_sensitivity(ticker: str):
         under stress. These are first-order annualized NIM/NII impacts — directionally
         correct for ranking but not a replacement for a full ALM model.
         """)
+
+
+# ── Multi-Year Phased Impact (new model) ─────────────────────────────
+
+def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
+    """
+    Show per-year NIM, NII, and EPS impact of parallel rate scenarios with
+    asset repricing pace + deposit mix-shift modeling.
+    """
+    st.markdown(
+        "**Phased model** assumes assets reprice gradually (securities ~29%/yr, "
+        "fixed loans ~15%/yr, floating loans Q1). Deposit mix-shift applied to "
+        "rate-up scenarios. EPS computed using TTM share count + effective tax rate."
+    )
+
+    # Pull SEC data for shares outstanding + effective tax fallback
+    sec = None
+    try:
+        from data.bank_mapping import get_cik
+        from data import sec_client
+        cik = get_cik(ticker)
+        if cik:
+            sec = sec_client.get_latest_fundamentals(cik)
+    except Exception:
+        sec = None
+
+    # Per-bank floating-loan-share slider — biggest single lever for the
+    # accuracy of Yr1 numbers.
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        horizon = st.selectbox(
+            "Horizon", [1, 2, 3, 4, 5], index=2,
+            key=f"phased_horizon_{ticker}",
+        )
+    with col2:
+        floating_share = st.slider(
+            "Floating-rate loan share",
+            min_value=0.0, max_value=1.0, value=0.30, step=0.05,
+            key=f"phased_floating_{ticker}",
+            help="Share of loan book that re-prices within Q1 (floating rate). "
+                  "Industry avg ~30%; commercial-heavy banks 40-55%; consumer/mortgage-"
+                  "heavy banks 15-25%.",
+        )
+    with col3:
+        apply_shift = st.checkbox(
+            "Apply NIB → IB deposit mix-shift (rate-up scenarios)",
+            value=True,
+            key=f"phased_mixshift_{ticker}",
+            help="In rate-up scenarios, NIB customers migrate to IB accounts, "
+                  "raising effective funding cost. ~4pp of NIB shifts per +100bps.",
+        )
+
+    result = run_rate_sensitivity_phased(
+        latest, hist, sec_data=sec,
+        beta_mode=mode_key, custom_deposit_beta=custom_beta,
+        floating_loan_share=floating_share,
+        apply_mix_shift=apply_shift,
+        horizon_years=horizon,
+        scenarios_bps=[-200, -100, -50, 50, 100, 200],
+    )
+
+    inputs = result["inputs"]
+    # Context strip
+    cc1, cc2, cc3, cc4, cc5 = st.columns(5)
+    with cc1: st.metric("Current NIM", f"{inputs.get('current_nim_pct', 0):.2f}%")
+    with cc2: st.metric("Earning Assets", fmt_dollars(inputs.get("earning_assets_usd")))
+    with cc3: st.metric("Securities", f"{inputs.get('securities_share', 0)*100:.0f}%")
+    with cc4: st.metric("Loans", f"{inputs.get('loans_share', 0)*100:.0f}%")
+    with cc5: st.metric("Tax Rate", f"{result.get('tax_rate_used', 0)*100:.0f}%")
+
+    # Repricing pace mini-chart
+    pace = result["repricing_pace"]
+    pace_df = pd.DataFrame({
+        "year": list(pace.keys()),
+        "cumulative_repriced_pct": [v * 100 for v in pace.values()],
+    })
+    import plotly.express as px
+    fig_pace = px.line(
+        pace_df, x="year", y="cumulative_repriced_pct",
+        markers=True,
+        title=f"Asset repricing pace — {floating_share*100:.0f}% floating loans",
+        labels={"year": "Year", "cumulative_repriced_pct": "Cumulative % repriced"},
+    )
+    apply_standard_layout(fig_pace, height=CHART_HEIGHT_COMPACT)
+    fig_pace.update_yaxes(ticksuffix="%", range=[0, 100])
+    st.plotly_chart(fig_pace, use_container_width=True)
+
+    # Per-scenario table: rows = scenarios, columns = years
+    st.markdown(f"### NIM / EPS impact by year — horizon: {horizon}Y")
+
+    rows = []
+    for s in result["scenarios"]:
+        bps = s["rate_change_bps"]
+        row = {"Scenario": f"{bps:+d}bps"}
+        for y in s["years"]:
+            yr = y["year"]
+            nim_d = y["nim_delta_bps"]
+            eps_d = y["eps_delta"]
+            row[f"Yr{yr} ΔNIM"] = f"{nim_d:+.0f}bps"
+            row[f"Yr{yr} ΔNII"] = fmt_dollars(y["nii_delta_usd"])
+            row[f"Yr{yr} ΔEPS"] = f"${eps_d:+.2f}" if eps_d is not None else "—"
+        rows.append(row)
+    table_df = pd.DataFrame(rows)
+    st.dataframe(table_df, use_container_width=True, hide_index=True,
+                  height=min(420, 38 * (len(table_df) + 1) + 4))
+
+    # Honest disclosure
+    with st.expander("Model assumptions + known limitations"):
+        shares = result.get("shares_outstanding")
+        shares_str = f"{shares/1e6:,.0f}M" if shares else "missing"
+        st.markdown(f"""
+**Inputs used:**
+- Deposit beta: **{result['beta_used']:.2f}** ({result['beta_mode']})
+- Floating-loan share: **{floating_share*100:.0f}%**
+- Repricing pace per yr: {', '.join(f'Yr{k}={v*100:.0f}%' for k, v in pace.items())}
+- Mix-shift in rate-up scenarios: **{'ON' if apply_shift else 'OFF'}** (4pp NIB/100bps)
+- Effective tax rate: **{result['tax_rate_used']*100:.0f}%** (from FDIC ITAX/PTAXNETINC)
+- Shares outstanding (TTM): **{shares_str}** (from SEC)
+
+**What's modeled:**
+- Phased asset repricing (securities ~29%/yr, fixed loans ~15%/yr)
+- Immediate deposit beta (cycle-measured or textbook)
+- NIB→IB deposit shift in rate-up scenarios
+- EPS impact: NII delta × (1 − tax rate) / shares
+
+**Still NOT modeled:**
+- Volume changes (loan demand, deposit outflows)
+- Securities AOCI marks (capital impact, not NIM)
+- Non-interest income/expense response
+- Bank-specific maturity ladder (FDIC public API lacks granular buckets)
+
+**Use as:** ranking tool for rate sensitivity across banks. **Don't use as:** the
+only input for trade sizing — pair with the bank's own ALM disclosures.
+""")
 
 
 # ── Named Curve Scenarios ─────────────────────────────────────────────
