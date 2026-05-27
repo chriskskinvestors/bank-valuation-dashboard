@@ -32,6 +32,15 @@ _SKIP_TICKERS = {
     "DBA", "DBB", "DBC", "DBE", "DBEU", "DBJP", "DBMV",
     "DBO", "DBP", "DBS", "DBV", "DJCI", "DJCB", "UDN",
     "UUP", "USDU", "BNO", "PPLT", "PALL",
+
+    # Foreign-bank ADRs — our pipeline depends on SEC XBRL + FDIC Call
+    # Reports, neither of which covers foreign banks. They legitimately
+    # have no US-regulator data, so the universe filter would drop them
+    # anyway — listing here makes the intent explicit.
+    "BBD", "BBDO",  # Banco Bradesco (Brazil)
+    "BNS",          # Bank of Nova Scotia (Canada)
+    "ITUB",         # Itaú Unibanco (Brazil)
+    "DB",           # Deutsche Bank (Germany) — covered above too via ETN dedup
 }
 
 

@@ -7,8 +7,8 @@
   },
   "AFBI": {
     "cik": 1823406,
-    "fdic_cert": 29510,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Affinity Bancshares, Inc."
   },
   "ALLY": {
@@ -19,8 +19,8 @@
   },
   "ALRS": {
     "cik": 903419,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 3931,
+    "fdic_score": 1.0,
     "name": "ALERUS FINANCIAL CORP"
   },
   "AMAL": {
@@ -43,14 +43,14 @@
   },
   "ASB": {
     "cik": 7789,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 5296,
+    "fdic_score": 1.0,
     "name": "ASSOCIATED BANC-CORP"
   },
   "ASBA": {
     "cik": 7789,
-    "fdic_cert": 5296,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "ASSOCIATED BANC-CORP"
   },
   "ASRV": {
@@ -126,13 +126,13 @@
     "name": "BANNER CORP"
   },
   "BBD": {
-    "cik": 1160330,
+    "cik": null,
     "fdic_cert": null,
     "fdic_score": 0.0,
     "name": "BANK BRADESCO"
   },
   "BBDO": {
-    "cik": 1160330,
+    "cik": null,
     "fdic_cert": null,
     "fdic_score": 0.0,
     "name": "BANK BRADESCO"
@@ -151,8 +151,8 @@
   },
   "BCBP": {
     "cik": 1228454,
-    "fdic_cert": 35541,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "BCB BANCORP INC"
   },
   "BCOW": {
@@ -175,14 +175,14 @@
   },
   "BFST": {
     "cik": 1624322,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 58228,
+    "fdic_score": 1.0,
     "name": "Business First Bancshares, Inc."
   },
   "BHB": {
     "cik": 743367,
-    "fdic_cert": 11971,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "BAR HARBOR BANKSHARES"
   },
   "BHRB": {
@@ -198,7 +198,7 @@
     "name": "Bank of New York Mellon Corp"
   },
   "BKSC": {
-    "cik": 1007273,
+    "cik": null,
     "fdic_cert": 26912,
     "fdic_score": 1.0,
     "name": "BANK OF SOUTH CAROLINA CORP"
@@ -222,7 +222,7 @@
     "name": "Bank of Marin Bancorp"
   },
   "BNS": {
-    "cik": 9631,
+    "cik": null,
     "fdic_cert": null,
     "fdic_score": 0.0,
     "name": "BANK OF NOVA SCOTIA"
@@ -235,8 +235,8 @@
   },
   "BOKF": {
     "cik": 875357,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 4214,
+    "fdic_score": 1.0,
     "name": "BOK FINANCIAL CORP"
   },
   "BOTJ": {
@@ -247,8 +247,8 @@
   },
   "BPRN": {
     "cik": 1913971,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 58513,
+    "fdic_score": 0.5,
     "name": "Princeton Bancorp, Inc."
   },
   "BRBS": {
@@ -259,8 +259,8 @@
   },
   "BSBK": {
     "cik": 1787414,
-    "fdic_cert": 29941,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Bogota Financial Corp."
   },
   "BSPA": {
@@ -271,14 +271,14 @@
   },
   "BSRR": {
     "cik": 1130144,
-    "fdic_cert": 22597,
-    "fdic_score": 0.33,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "SIERRA BANCORP"
   },
   "BSVN": {
     "cik": 1746129,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 4147,
+    "fdic_score": 1.0,
     "name": "Bank7 Corp."
   },
   "BVFL": {
@@ -295,8 +295,8 @@
   },
   "BWBBP": {
     "cik": 1341317,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 58210,
+    "fdic_score": 1.0,
     "name": "Bridgewater Bancshares Inc"
   },
   "BWFG": {
@@ -307,8 +307,8 @@
   },
   "BY": {
     "cik": 1702750,
-    "fdic_cert": 20624,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "BYLINE BANCORP, INC."
   },
   "BYFC": {
@@ -337,14 +337,14 @@
   },
   "CASH": {
     "cik": 907471,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 30776,
+    "fdic_score": 1.0,
     "name": "PATHWARD FINANCIAL, INC."
   },
   "CATY": {
     "cik": 861842,
-    "fdic_cert": 18503,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "CATHAY GENERAL BANCORP"
   },
   "CBAN": {
@@ -361,20 +361,20 @@
   },
   "CBFV": {
     "cik": 1605301,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 7848,
+    "fdic_score": 1.0,
     "name": "CB Financial Services, Inc."
   },
   "CBK": {
     "cik": 1981546,
-    "fdic_cert": 15555,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Commercial Bancgroup, Inc."
   },
   "CBKM": {
     "cik": 1006830,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 19482,
+    "fdic_score": 0.5,
     "name": "CONSUMERS BANCORP INC /OH/"
   },
   "CBNA": {
@@ -385,8 +385,8 @@
   },
   "CBNK": {
     "cik": 1419536,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 4297,
+    "fdic_score": 0.5,
     "name": "Capital Bancorp Inc"
   },
   "CBSH": {
@@ -420,7 +420,7 @@
     "name": "MUNCY COLUMBIA FINANCIAL Corp"
   },
   "CCNB": {
-    "cik": 1437213,
+    "cik": null,
     "fdic_cert": 58864,
     "fdic_score": 1.0,
     "name": "Coastal Carolina Bancshares, Inc."
@@ -475,8 +475,8 @@
   },
   "CIVB": {
     "cik": 944745,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 12982,
+    "fdic_score": 1.0,
     "name": "CIVISTA BANCSHARES, INC."
   },
   "CLBK": {
@@ -493,20 +493,20 @@
   },
   "CMTV": {
     "cik": 718413,
-    "fdic_cert": 6989,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "COMMUNITY BANCORP /VT"
   },
   "CNOB": {
     "cik": 712771,
-    "fdic_cert": 57919,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "ConnectOne Bancorp, Inc."
   },
   "CNOBP": {
     "cik": 712771,
-    "fdic_cert": 57919,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "ConnectOne Bancorp, Inc."
   },
   "COF": {
@@ -535,8 +535,8 @@
   },
   "CPBI": {
     "cik": 1979332,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 29476,
+    "fdic_score": 1.0,
     "name": "Central Plains Bancshares, Inc."
   },
   "CPF": {
@@ -553,14 +553,14 @@
   },
   "CSBB": {
     "cik": 880417,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 23257,
+    "fdic_score": 1.0,
     "name": "CSB Bancorp, Inc."
   },
   "CTBI": {
     "cik": 350852,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 6989,
+    "fdic_score": 0.5,
     "name": "COMMUNITY TRUST BANCORP INC /KY/"
   },
   "CUBB": {
@@ -576,7 +576,7 @@
     "name": "Customers Bancorp, Inc."
   },
   "CULL": {
-    "cik": 1845799,
+    "cik": null,
     "fdic_cert": 30167,
     "fdic_score": 0.5,
     "name": "Cullman Bancorp, Inc. /MD/"
@@ -589,8 +589,8 @@
   },
   "CWBC": {
     "cik": 1127371,
-    "fdic_cert": 23030,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Community West Bancshares"
   },
   "CZFS": {
@@ -606,15 +606,15 @@
     "name": "Citizens Community Bancorp Inc."
   },
   "DB": {
-    "cik": 1159508,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "cik": null,
+    "fdic_cert": 623,
+    "fdic_score": 0.67,
     "name": "DEUTSCHE BANK AKTIENGESELLSCHAFT"
   },
   "DCBG": {
     "cik": 846617,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 6976,
+    "fdic_score": 1.0,
     "name": "Dime Community Bancshares, Inc. /NY/"
   },
   "DCOM": {
@@ -624,15 +624,15 @@
     "name": "Dime Community Bancshares, Inc. /NY/"
   },
   "DWNX": {
-    "cik": 927719,
+    "cik": null,
     "fdic_cert": 19638,
     "fdic_score": 1.0,
     "name": "DELHI BANK CORP"
   },
   "EBC": {
     "cik": 1810546,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 32773,
+    "fdic_score": 1.0,
     "name": "Eastern Bankshares, Inc."
   },
   "EBMT": {
@@ -649,14 +649,14 @@
   },
   "EFSC": {
     "cik": 1025835,
-    "fdic_cert": 27237,
-    "fdic_score": 0.67,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "ENTERPRISE FINANCIAL SERVICES CORP"
   },
   "EFSCP": {
     "cik": 1025835,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 27237,
+    "fdic_score": 0.67,
     "name": "ENTERPRISE FINANCIAL SERVICES CORP"
   },
   "EFSI": {
@@ -667,8 +667,8 @@
   },
   "EGBN": {
     "cik": 1050441,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 25883,
+    "fdic_score": 1.0,
     "name": "EAGLE BANCORP INC"
   },
   "EMYB": {
@@ -685,20 +685,20 @@
   },
   "EQBK": {
     "cik": 1227500,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 25858,
+    "fdic_score": 1.0,
     "name": "EQUITY BANCSHARES INC"
   },
   "EWBC": {
     "cik": 1069157,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 31628,
+    "fdic_score": 0.67,
     "name": "EAST WEST BANCORP INC"
   },
   "EWSB": {
     "cik": 2013792,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 30313,
+    "fdic_score": 0.5,
     "name": "EWSB Bancorp, Inc. /MD/"
   },
   "FBIZ": {
@@ -709,8 +709,8 @@
   },
   "FBK": {
     "cik": 1649749,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 8663,
+    "fdic_score": 1.0,
     "name": "FB Financial Corp"
   },
   "FBLA": {
@@ -732,21 +732,21 @@
     "name": "FIRST BANCORP /PR/"
   },
   "FBSI": {
-    "cik": 912967,
-    "fdic_cert": null,
+    "cik": null,
+    "fdic_cert": 12854,
     "fdic_score": 0.0,
     "name": "FIRST BANCSHARES INC /MO/"
   },
   "FCBC": {
     "cik": 859070,
-    "fdic_cert": 6989,
-    "fdic_score": 0.5,
+    "fdic_cert": 13012,
+    "fdic_score": 1.0,
     "name": "FIRST COMMUNITY BANKSHARES INC /VA/"
   },
   "FCF": {
     "cik": 712537,
-    "fdic_cert": 7468,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "FIRST COMMONWEALTH FINANCIAL CORP /PA/"
   },
   "FCNCA": {
@@ -823,8 +823,8 @@
   },
   "FGBIP": {
     "cik": 1408534,
-    "fdic_cert": 10907,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "First Guaranty Bancshares, Inc."
   },
   "FGFH": {
@@ -835,8 +835,8 @@
   },
   "FHN": {
     "cik": 36966,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 4977,
+    "fdic_score": 1.0,
     "name": "FIRST HORIZON CORP"
   },
   "FIBK": {
@@ -859,8 +859,8 @@
   },
   "FINW": {
     "cik": 1856365,
-    "fdic_cert": 35323,
-    "fdic_score": 0.33,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Finwise Bancorp"
   },
   "FISI": {
@@ -984,9 +984,9 @@
     "name": "Finward Bancorp"
   },
   "FOTB": {
-    "cik": 1099668,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "cik": null,
+    "fdic_cert": 3719,
+    "fdic_score": 1.0,
     "name": "FIRST OTTAWA BANCSHARES, INC."
   },
   "FRAF": {
@@ -1027,8 +1027,8 @@
   },
   "FSEA": {
     "cik": 1943802,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 29744,
+    "fdic_score": 0.5,
     "name": "First Seacoast Bancorp, Inc."
   },
   "FSRL": {
@@ -1045,8 +1045,8 @@
   },
   "FULT": {
     "cik": 700564,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 7551,
+    "fdic_score": 1.0,
     "name": "FULTON FINANCIAL CORP"
   },
   "FULTP": {
@@ -1099,8 +1099,8 @@
   },
   "GLBZ": {
     "cik": 890066,
-    "fdic_cert": 16820,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "GLEN BURNIE BANCORP"
   },
   "GOVB": {
@@ -1117,14 +1117,14 @@
   },
   "GSBC": {
     "cik": 854560,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 29546,
+    "fdic_score": 0.67,
     "name": "GREAT SOUTHERN BANCORP, INC."
   },
   "HAFC": {
     "cik": 1109242,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 24170,
+    "fdic_score": 1.0,
     "name": "HANMI FINANCIAL CORP"
   },
   "HBAN": {
@@ -1147,8 +1147,8 @@
   },
   "HBANP": {
     "cik": 49196,
-    "fdic_cert": 6560,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "HUNTINGTON BANCSHARES INC /MD/"
   },
   "HBANZ": {
@@ -1177,8 +1177,8 @@
   },
   "HBT": {
     "cik": 775215,
-    "fdic_cert": 20369,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "HBT Financial, Inc."
   },
   "HFBL": {
@@ -1237,8 +1237,8 @@
   },
   "IBOC": {
     "cik": 315709,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 19629,
+    "fdic_score": 1.0,
     "name": "INTERNATIONAL BANCSHARES CORP"
   },
   "IBTN": {
@@ -1261,14 +1261,14 @@
   },
   "INBKZ": {
     "cik": 1562463,
-    "fdic_cert": 34607,
-    "fdic_score": 0.33,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "First Internet Bancorp"
   },
   "INDB": {
     "cik": 776901,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 9712,
+    "fdic_score": 1.0,
     "name": "INDEPENDENT BANK CORP"
   },
   "ISBA": {
@@ -1278,15 +1278,15 @@
     "name": "ISABELLA BANK CORP"
   },
   "ITUB": {
-    "cik": 1132597,
+    "cik": null,
     "fdic_cert": null,
     "fdic_score": 0.0,
     "name": "Itau Unibanco Holding S.A."
   },
   "JMSB": {
     "cik": 1710482,
-    "fdic_cert": 58243,
-    "fdic_score": 0.67,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "John Marshall Bancorp, Inc."
   },
   "JPM": {
@@ -1351,14 +1351,14 @@
   },
   "MBBC": {
     "cik": 1835385,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 29745,
+    "fdic_score": 0.5,
     "name": "Marathon Bancorp, Inc. /MD/"
   },
   "MBIN": {
     "cik": 1629019,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 4365,
+    "fdic_score": 0.5,
     "name": "Merchants Bancorp"
   },
   "MBINL": {
@@ -1375,14 +1375,14 @@
   },
   "MBINN": {
     "cik": 1629019,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 4365,
+    "fdic_score": 0.5,
     "name": "Merchants Bancorp"
   },
   "MBWM": {
     "cik": 1042729,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 34598,
+    "fdic_score": 1.0,
     "name": "MERCANTILE BANK CORP"
   },
   "MCB": {
@@ -1399,8 +1399,8 @@
   },
   "MCBS": {
     "cik": 1747068,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 58181,
+    "fdic_score": 1.0,
     "name": "MetroCity Bankshares, Inc."
   },
   "MCHB": {
@@ -1417,20 +1417,20 @@
   },
   "MFG": {
     "cik": 1335730,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 21843,
+    "fdic_score": 1.0,
     "name": "MIZUHO FINANCIAL GROUP INC"
   },
   "MGNO": {
     "cik": 2033615,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 8120,
+    "fdic_score": 1.0,
     "name": "Magnolia Bancorp, Inc."
   },
   "MGYR": {
     "cik": 1337068,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 30704,
+    "fdic_score": 0.5,
     "name": "Magyar Bancorp, Inc."
   },
   "MNSB": {
@@ -1441,14 +1441,14 @@
   },
   "MNSBP": {
     "cik": 1693577,
-    "fdic_cert": 57742,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "MainStreet Bancshares, Inc."
   },
   "MPB": {
     "cik": 879635,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 9889,
+    "fdic_score": 0.67,
     "name": "MID PENN BANCORP INC"
   },
   "MS": {
@@ -1477,14 +1477,14 @@
   },
   "MTB": {
     "cik": 36270,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 588,
+    "fdic_score": 1.0,
     "name": "M&T BANK CORP"
   },
   "MVBF": {
     "cik": 1277902,
-    "fdic_cert": 34603,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "MVB FINANCIAL CORP"
   },
   "MYFW": {
@@ -1507,7 +1507,7 @@
   },
   "NBHC": {
     "cik": 1475841,
-    "fdic_cert": null,
+    "fdic_cert": 59052,
     "fdic_score": 0.0,
     "name": "National Bank Holdings Corp"
   },
@@ -1537,7 +1537,7 @@
   },
   "NKSH": {
     "cik": 796534,
-    "fdic_cert": null,
+    "fdic_cert": 6821,
     "fdic_score": 0.0,
     "name": "NATIONAL BANKSHARES INC"
   },
@@ -1549,14 +1549,14 @@
   },
   "NRIM": {
     "cik": 1163370,
-    "fdic_cert": 33216,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "NORTHRIM BANCORP INC"
   },
   "NSTS": {
     "cik": 1881592,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 27683,
+    "fdic_score": 0.5,
     "name": "NSTS Bancorp, Inc."
   },
   "NWBI": {
@@ -1585,8 +1585,8 @@
   },
   "OBK": {
     "cik": 1516912,
-    "fdic_cert": 12614,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Origin Bancorp, Inc."
   },
   "OBT": {
@@ -1609,8 +1609,8 @@
   },
   "ONB": {
     "cik": 707179,
-    "fdic_cert": 3832,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "OLD NATIONAL BANCORP /IN/"
   },
   "ONBPO": {
@@ -1627,8 +1627,8 @@
   },
   "OPBK": {
     "cik": 1722010,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 57944,
+    "fdic_score": 0.33,
     "name": "OP Bancorp"
   },
   "OPHC": {
@@ -1639,8 +1639,8 @@
   },
   "ORRF": {
     "cik": 826154,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 713,
+    "fdic_score": 0.67,
     "name": "ORRSTOWN FINANCIAL SERVICES INC"
   },
   "OSBC": {
@@ -1650,7 +1650,7 @@
     "name": "OLD SECOND BANCORP INC"
   },
   "OSBK": {
-    "cik": 1076691,
+    "cik": null,
     "fdic_cert": 18143,
     "fdic_score": 1.0,
     "name": "OCONEE FINANCIAL CORP"
@@ -1681,14 +1681,14 @@
   },
   "PBFS": {
     "cik": 1769663,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 6913,
+    "fdic_score": 1.0,
     "name": "Pioneer Bancorp, Inc./MD"
   },
   "PBHC": {
     "cik": 1609065,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 57497,
+    "fdic_score": 0.5,
     "name": "Pathfinder Bancorp, Inc."
   },
   "PCB": {
@@ -1717,8 +1717,8 @@
   },
   "PFBX": {
     "cik": 770460,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 340,
+    "fdic_score": 1.0,
     "name": "PEOPLES FINANCIAL CORP /MS/"
   },
   "PFIS": {
@@ -1729,8 +1729,8 @@
   },
   "PFS": {
     "cik": 1178970,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 12010,
+    "fdic_score": 0.67,
     "name": "PROVIDENT FINANCIAL SERVICES INC"
   },
   "PFSB": {
@@ -1759,14 +1759,14 @@
   },
   "PNBK": {
     "cik": 1098146,
-    "fdic_cert": 33928,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "PATRIOT NATIONAL BANCORP INC"
   },
   "PNC": {
     "cik": 713676,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 6384,
+    "fdic_score": 0.67,
     "name": "PNC FINANCIAL SERVICES GROUP, INC."
   },
   "PNFP": {
@@ -1777,8 +1777,8 @@
   },
   "PROV": {
     "cik": 1010470,
-    "fdic_cert": 30879,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "PROVIDENT FINANCIAL HOLDINGS INC"
   },
   "QNTO": {
@@ -1795,20 +1795,20 @@
   },
   "RBCAA": {
     "cik": 921557,
-    "fdic_cert": 4801,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "REPUBLIC BANCORP INC /KY/"
   },
   "RBKB": {
     "cik": 1751783,
-    "fdic_cert": 16032,
-    "fdic_score": 0.33,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Rhinebeck Bancorp, Inc."
   },
   "REDW": {
     "cik": null,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 31028,
+    "fdic_score": 1.0,
     "name": "REDWOOD FINANCIAL INC /MN/"
   },
   "RF": {
@@ -1896,7 +1896,7 @@
     "name": "SHORE BANCSHARES INC"
   },
   "SHG": {
-    "cik": 1263043,
+    "cik": null,
     "fdic_cert": 33188,
     "fdic_score": 1.0,
     "name": "SHINHAN FINANCIAL GROUP CO LTD"
@@ -1909,14 +1909,14 @@
   },
   "SMBC": {
     "cik": 916907,
-    "fdic_cert": 28332,
-    "fdic_score": 0.67,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "SOUTHERN MISSOURI BANCORP, INC."
   },
   "SMBK": {
     "cik": 1038773,
-    "fdic_cert": 58463,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "SMARTFINANCIAL INC."
   },
   "SNNF": {
@@ -1963,13 +1963,13 @@
   },
   "SYBT": {
     "cik": 835324,
-    "fdic_cert": 258,
-    "fdic_score": 0.67,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Stock Yards Bancorp, Inc."
   },
   "TBBK": {
     "cik": 1295401,
-    "fdic_cert": 35444,
+    "fdic_cert": null,
     "fdic_score": 0.0,
     "name": "Bancorp, Inc."
   },
@@ -1999,8 +1999,8 @@
   },
   "TCBX": {
     "cik": 1781730,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 58716,
+    "fdic_score": 1.0,
     "name": "Third Coast Bancshares, Inc."
   },
   "TFC": {
@@ -2023,14 +2023,14 @@
   },
   "THFF": {
     "cik": 714562,
-    "fdic_cert": 4382,
+    "fdic_cert": null,
     "fdic_score": 0.0,
     "name": "FIRST FINANCIAL CORP /IN/"
   },
   "TMP": {
     "cik": 1005817,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 609,
+    "fdic_score": 1.0,
     "name": "TOMPKINS FINANCIAL CORP"
   },
   "TRST": {
@@ -2041,14 +2041,14 @@
   },
   "TSBK": {
     "cik": 1046050,
-    "fdic_cert": 28453,
-    "fdic_score": 0.5,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "TIMBERLAND BANCORP INC"
   },
   "TYFG": {
     "cik": 1725262,
-    "fdic_cert": 15752,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Tri-County Financial Group, Inc."
   },
   "UBCP": {
@@ -2058,9 +2058,9 @@
     "name": "UNITED BANCORP INC /OH/"
   },
   "UBOH": {
-    "cik": 1087456,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "cik": null,
+    "fdic_cert": 22858,
+    "fdic_score": 1.0,
     "name": "UNITED BANCSHARES INC/OH"
   },
   "UBSI": {
@@ -2113,9 +2113,9 @@
   },
   "USB": {
     "cik": 36104,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
-    "name": "US BANCORP \\DE\\"
+    "fdic_cert": 17077,
+    "fdic_score": 0.5,
+    "name": "US BANCORP DE"
   },
   "USCB": {
     "cik": 1901637,
@@ -2155,26 +2155,26 @@
   },
   "VLYPP": {
     "cik": 714310,
-    "fdic_cert": 9396,
-    "fdic_score": 0.33,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "VALLEY NATIONAL BANCORP"
   },
   "VWFB": {
     "cik": 1913838,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 29495,
+    "fdic_score": 0.5,
     "name": "VWF Bancorp, Inc."
   },
   "WABC": {
     "cik": 311094,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 3430,
+    "fdic_score": 0.33,
     "name": "WESTAMERICA BANCORPORATION"
   },
   "WAL": {
     "cik": 1212545,
-    "fdic_cert": null,
-    "fdic_score": 0.0,
+    "fdic_cert": 57512,
+    "fdic_score": 0.5,
     "name": "WESTERN ALLIANCE BANCORPORATION"
   },
   "WASH": {
@@ -2203,8 +2203,8 @@
   },
   "WNEB": {
     "cik": 1157647,
-    "fdic_cert": 90300,
-    "fdic_score": 0.75,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "Western New England Bancorp, Inc."
   },
   "WSBC": {
@@ -2215,8 +2215,8 @@
   },
   "WSBCO": {
     "cik": 203596,
-    "fdic_cert": 803,
-    "fdic_score": 1.0,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "WESBANCO INC"
   },
   "WSBF": {
@@ -2239,8 +2239,8 @@
   },
   "WTBA": {
     "cik": 1166928,
-    "fdic_cert": 15614,
-    "fdic_score": 0.33,
+    "fdic_cert": null,
+    "fdic_score": 0.0,
     "name": "WEST BANCORPORATION INC"
   },
   "WTFC": {
