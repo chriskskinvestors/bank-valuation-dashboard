@@ -19,6 +19,52 @@ FDIC_FINANCIALS_URL = "https://banks.data.fdic.gov/api/financials"
 FDIC_INSTITUTIONS_URL = "https://banks.data.fdic.gov/api/institutions"
 
 
+def list_all_active_institutions() -> list[dict]:
+    """
+    Enumerate every active FDIC-insured institution (used by refresh_sod
+    to ingest branches for the full ~4,500-bank universe, not just our
+    public-ticker subset).
+
+    Paginates the institutions endpoint in 1,000-row chunks. Returns a
+    list of {cert, name, namehcr, stalp, asset} dicts.
+    """
+    out: list[dict] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        params = {
+            "filters": "ACTIVE:1",
+            "fields": "CERT,NAME,NAMEHCR,STALP,ASSET",
+            "limit": page_size,
+            "offset": offset,
+            "sort_by": "ASSET",
+            "sort_order": "DESC",
+        }
+        try:
+            resp = _get_with_retry(FDIC_INSTITUTIONS_URL, params, timeout=30)
+            if resp is None:
+                break
+            data = resp.json().get("data", [])
+        except Exception as e:
+            print(f"[FDIC] list_all_active error at offset {offset}: {e}")
+            break
+        if not data:
+            break
+        for entry in data:
+            d = entry.get("data", {})
+            out.append({
+                "cert": d.get("CERT"),
+                "name": d.get("NAME", ""),
+                "namehcr": d.get("NAMEHCR", ""),
+                "state": d.get("STALP", ""),
+                "asset": d.get("ASSET", 0),
+            })
+        if len(data) < page_size:
+            break
+        offset += page_size
+    return out
+
+
 def cert_is_active(cert: int, ttl_seconds: int = 7 * 86400) -> bool:
     """
     Is this FDIC certificate's institution currently active?

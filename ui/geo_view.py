@@ -118,19 +118,36 @@ def render_geo_view():
             branches = get_branches_by_state(state, year=year)
             banks = get_banks_by_state(state, year=year)
 
-            st.markdown(f"### Banks operating in {state} — {len(banks)} institutions")
-            if not banks.empty:
-                table = banks.copy()
+            # Public-only toggle (state view) — defaults to OFF so users
+            # see the full deposit landscape including private/community banks.
+            public_only_state = st.checkbox(
+                "Public-traded banks only", value=False,
+                key=f"geo_state_public_{state}",
+                help="Filter to banks with a public ticker. Off = include "
+                      "all FDIC-insured banks operating in the state.",
+            )
+            if public_only_state and not banks.empty:
+                banks_disp = banks[banks["ticker"].notna() & (banks["ticker"] != "")]
+                branches_disp = branches[branches["ticker"].notna() & (branches["ticker"] != "")]
+            else:
+                banks_disp = banks
+                branches_disp = branches
+
+            st.markdown(f"### Banks operating in {state} — {len(banks_disp)} institutions")
+            if not banks_disp.empty:
+                table = banks_disp.copy()
+                # Private banks have ticker=None; show "—" so the column is readable
+                table["ticker"] = table["ticker"].fillna("").replace("", "—")
                 table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
                 table = table.rename(columns={
                     "ticker": "Ticker", "bank_name": "Bank",
                     "n_branches": "Branches",
                 })[["Ticker", "Bank", "Branches", "Deposits"]]
                 st.dataframe(table, use_container_width=True, hide_index=True,
-                              height=min(420, 38 * (len(table) + 1) + 4))
+                              height=min(500, 38 * (len(table) + 1) + 4))
 
-            st.markdown(f"### Branch map — {len(branches):,} branches")
-            _render_map(branches)
+            st.markdown(f"### Branch map — {len(branches_disp):,} branches")
+            _render_map(branches_disp)
 
     # ───────── MSA view ─────────
     with tab_msa:
@@ -154,19 +171,32 @@ def render_geo_view():
             branches = get_branches_by_msa(msa_code, year=year)
             banks = get_banks_by_msa(msa_code, year=year)
 
-            st.markdown(f"### Banks operating in {msa_label} — {len(banks)} institutions")
-            if not banks.empty:
-                table = banks.copy()
+            public_only_msa = st.checkbox(
+                "Public-traded banks only", value=False,
+                key=f"geo_msa_public_{msa_code}",
+                help="Off = include all FDIC-insured banks in the MSA.",
+            )
+            if public_only_msa and not banks.empty:
+                banks_disp = banks[banks["ticker"].notna() & (banks["ticker"] != "")]
+                branches_disp = branches[branches["ticker"].notna() & (branches["ticker"] != "")]
+            else:
+                banks_disp = banks
+                branches_disp = branches
+
+            st.markdown(f"### Banks operating in {msa_label} — {len(banks_disp)} institutions")
+            if not banks_disp.empty:
+                table = banks_disp.copy()
+                table["ticker"] = table["ticker"].fillna("").replace("", "—")
                 table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
                 table = table.rename(columns={
                     "ticker": "Ticker", "bank_name": "Bank",
                     "n_branches": "Branches",
                 })[["Ticker", "Bank", "Branches", "Deposits"]]
                 st.dataframe(table, use_container_width=True, hide_index=True,
-                              height=min(420, 38 * (len(table) + 1) + 4))
+                              height=min(500, 38 * (len(table) + 1) + 4))
 
-            st.markdown(f"### Branch map — {len(branches):,} branches")
-            _render_map(branches)
+            st.markdown(f"### Branch map — {len(branches_disp):,} branches")
+            _render_map(branches_disp)
 
     # ───────── Multi-bank view ─────────
     with tab_banks:
