@@ -4,13 +4,43 @@ FDIC Summary of Deposits (SOD) API client.
 Provides branch-level deposit data, geographic coordinates, and
 market share analysis by county/MSA.
 
+Rate-limit hardening: FDIC's public API throttles aggressive callers
+with 429s. We retry up to 3 times with exponential backoff + jitter
+honoring any Retry-After header. Mirrors the same pattern as
+data.fdic_client._get_with_retry().
+
 API docs: https://banks.data.fdic.gov/api/
 """
 
+import random
+import time
 import requests
 import pandas as pd
 
 SOD_URL = "https://banks.data.fdic.gov/api/sod"
+
+
+def _get_with_retry(url: str, params: dict, timeout: int = 20,
+                    max_attempts: int = 3) -> requests.Response | None:
+    """GET with exponential backoff on 429s and transient connection errors."""
+    for attempt in range(max_attempts):
+        try:
+            resp = requests.get(url, params=params, timeout=timeout)
+            if resp.status_code == 429:
+                wait = float(resp.headers.get("Retry-After", 0)) or (
+                    (2 ** attempt) + random.uniform(0, 1)
+                )
+                time.sleep(min(wait, 30))
+                continue
+            resp.raise_for_status()
+            return resp
+        except requests.HTTPError:
+            raise
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep((2 ** attempt) + random.uniform(0, 1))
+    return None
 
 BRANCH_FIELDS = [
     "CERT", "YEAR", "BRNUM", "NAMEBR", "NAMEFULL",
@@ -56,8 +86,9 @@ def fetch_branches(cert: int, year: int | None = None) -> pd.DataFrame:
         "limit": 500,
     }
     try:
-        resp = requests.get(SOD_URL, params=params, timeout=20)
-        resp.raise_for_status()
+        resp = _get_with_retry(SOD_URL, params)
+        if resp is None:
+            return pd.DataFrame()
         data = resp.json()
     except Exception as e:
         print(f"[SOD] Error fetching cert {cert}: {e}")

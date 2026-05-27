@@ -53,7 +53,7 @@ st.sidebar.markdown(
 )
 
 # ── Level 1 Navigation ──────────────────────────────────────────────────
-SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis", "🆚 Peer Comparison", "📈 Earnings Analysis", "📰 Activity"]
+SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis", "🆚 Peer Comparison", "📈 Earnings Analysis", "📰 Activity", "🗺️ Geographic"]
 section = st.sidebar.radio("Navigate", SECTIONS, key="nav_section", label_visibility="collapsed")
 
 st.sidebar.markdown("---")
@@ -700,6 +700,11 @@ elif section == "📰 Activity":
     # ── ACTIVITY: Universe-wide event feed ──────────────────────────────
     from ui.recent_activity import render_activity_overview
     render_activity_overview()
+
+elif section == "🗺️ Geographic":
+    # ── GEOGRAPHIC: Multi-bank branch map + state/MSA deposit lookup ────
+    from ui.geo_view import render_geo_view
+    render_geo_view()
 
 
 # ── Auto-refresh ─────────────────────────────────────────────────────────

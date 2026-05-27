@@ -1,0 +1,227 @@
+"""
+Geographic view — multi-bank branch map + state/MSA bank lookup.
+
+Two surfaces sharing one map:
+
+1. State / MSA picker  → highlights branches in that geography +
+   shows a ranked table of banks operating there with deposits + branch counts.
+
+2. Multi-bank picker   → cross-section across selected tickers,
+   color-coded on the map so you can see overlap and concentration.
+
+Data source: the `branches` table populated by jobs/refresh_sod.py
+(nightly Cloud Run Job). UI is read-only against Postgres so it's fast
+regardless of FDIC API health.
+"""
+
+from __future__ import annotations
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+from data.branches_store import (
+    list_states, list_msas, get_latest_year,
+    get_branches_by_state, get_branches_by_msa,
+    get_banks_by_state, get_banks_by_msa,
+    get_branch_counts_by_ticker,
+)
+
+
+def _fmt_dollars_k(thousands: float | int | None) -> str:
+    """SOD deposits are in $thousands. Format with auto B/M/K scale."""
+    if thousands is None or pd.isna(thousands):
+        return "—"
+    v = float(thousands) * 1000  # convert thousands to dollars
+    if v >= 1e12: return f"${v/1e12:.2f}T"
+    if v >= 1e9:  return f"${v/1e9:.2f}B"
+    if v >= 1e6:  return f"${v/1e6:.1f}M"
+    if v >= 1e3:  return f"${v/1e3:.0f}K"
+    return f"${v:.0f}"
+
+
+def _render_map(df: pd.DataFrame, title: str = ""):
+    """Render a branch map from a DataFrame of branches."""
+    if df.empty:
+        st.info("No branches found for the selected filter.")
+        return
+
+    plot_df = df.dropna(subset=["lat", "lng"]).copy()
+    if plot_df.empty:
+        st.info("No branches with geographic coordinates available.")
+        return
+
+    # Size by deposits (clipped + log-scaled so big-bank branches don't
+    # overwhelm small-bank ones visually)
+    import numpy as np
+    plot_df["size"] = np.log1p(plot_df["deposits"].clip(lower=0))
+    plot_df["size"] = (plot_df["size"] / plot_df["size"].max() * 25 + 5).fillna(5)
+    plot_df["deposits_fmt"] = plot_df["deposits"].apply(_fmt_dollars_k)
+
+    hover = ["ticker", "bank_name", "branch_name", "address", "city",
+             "state", "msa_name", "deposits_fmt"]
+
+    fig = px.scatter_mapbox(
+        plot_df,
+        lat="lat", lon="lng",
+        size="size",
+        color="ticker",
+        hover_data=hover,
+        zoom=3,
+        height=620,
+        mapbox_style="carto-positron",
+        title=title or None,
+    )
+    fig.update_layout(margin=dict(l=0, r=0, t=40 if title else 0, b=0),
+                       legend_title_text="Ticker")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_geo_view():
+    """Main entry point — wired from app.py."""
+    st.markdown(
+        '<div class="dashboard-header">'
+        '<h1>🗺️ Geographic</h1>'
+        '<p>Multi-bank branch map + state/MSA deposit rankings</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    year = get_latest_year()
+    if year is None:
+        st.warning(
+            "No branch data ingested yet. The nightly **refresh-sod** Cloud Run Job "
+            "populates this view. Manual run: `gcloud run jobs execute refresh-sod`."
+        )
+        return
+
+    st.caption(f"Data as of FDIC Summary of Deposits, year {year}.")
+
+    tab_state, tab_msa, tab_banks = st.tabs([
+        "By State",
+        "By MSA",
+        "By Bank(s)",
+    ])
+
+    # ───────── State view ─────────
+    with tab_state:
+        states = list_states()
+        if not states:
+            st.info("No states loaded yet — wait for the refresh job to finish.")
+        else:
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                state = st.selectbox("State", states, key="geo_state",
+                                      index=states.index("CA") if "CA" in states else 0)
+            with col2:
+                st.write("")  # spacing
+
+            branches = get_branches_by_state(state, year=year)
+            banks = get_banks_by_state(state, year=year)
+
+            st.markdown(f"### Banks operating in {state} — {len(banks)} institutions")
+            if not banks.empty:
+                table = banks.copy()
+                table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
+                table = table.rename(columns={
+                    "ticker": "Ticker", "bank_name": "Bank",
+                    "n_branches": "Branches",
+                })[["Ticker", "Bank", "Branches", "Deposits"]]
+                st.dataframe(table, use_container_width=True, hide_index=True,
+                              height=min(420, 38 * (len(table) + 1) + 4))
+
+            st.markdown(f"### Branch map — {len(branches):,} branches")
+            _render_map(branches)
+
+    # ───────── MSA view ─────────
+    with tab_msa:
+        msas_df = list_msas()
+        if msas_df.empty:
+            st.info("No MSAs loaded yet — wait for the refresh job.")
+        else:
+            opts = msas_df.to_dict("records")
+            opts.sort(key=lambda r: r["msa_name"])
+            labels = [f"{r['msa_name']}" for r in opts]
+            label_to_code = {f"{r['msa_name']}": r["msa_code"] for r in opts}
+
+            col1, col2 = st.columns([2, 2])
+            with col1:
+                default_idx = next(
+                    (i for i, r in enumerate(opts) if "New York" in r["msa_name"]), 0,
+                )
+                msa_label = st.selectbox("MSA", labels, key="geo_msa", index=default_idx)
+            msa_code = label_to_code[msa_label]
+
+            branches = get_branches_by_msa(msa_code, year=year)
+            banks = get_banks_by_msa(msa_code, year=year)
+
+            st.markdown(f"### Banks operating in {msa_label} — {len(banks)} institutions")
+            if not banks.empty:
+                table = banks.copy()
+                table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
+                table = table.rename(columns={
+                    "ticker": "Ticker", "bank_name": "Bank",
+                    "n_branches": "Branches",
+                })[["Ticker", "Bank", "Branches", "Deposits"]]
+                st.dataframe(table, use_container_width=True, hide_index=True,
+                              height=min(420, 38 * (len(table) + 1) + 4))
+
+            st.markdown(f"### Branch map — {len(branches):,} branches")
+            _render_map(branches)
+
+    # ───────── Multi-bank view ─────────
+    with tab_banks:
+        coverage = get_branch_counts_by_ticker()
+        if coverage.empty:
+            st.info("No banks loaded yet.")
+            return
+
+        all_tickers = sorted(coverage["ticker"].dropna().unique().tolist())
+        # default to top-5 by deposits
+        top5 = coverage.head(5)["ticker"].tolist()
+        selected = st.multiselect(
+            "Banks to show on the map",
+            options=all_tickers,
+            default=top5,
+            key="geo_banks_select",
+        )
+        if not selected:
+            st.info("Pick one or more banks above.")
+            return
+
+        # Pull branches for the selected tickers across all states
+        # (use the by_state query with no state restriction by querying each)
+        from data.branches_store import _q_to_df
+        from data.branches_store import _USE_POSTGRES
+        params: dict = {}
+        if _USE_POSTGRES:
+            params["tickers"] = [t.upper() for t in selected]
+            params["year"] = year
+            sql = ("SELECT * FROM branches "
+                   "WHERE ticker = ANY(:tickers) AND year = :year "
+                   "ORDER BY deposits DESC")
+        else:
+            placeholders = ",".join(f":t{i}" for i in range(len(selected)))
+            for i, t in enumerate(selected):
+                params[f"t{i}"] = t.upper()
+            params["year"] = year
+            sql = (f"SELECT * FROM branches WHERE ticker IN ({placeholders}) "
+                   f"AND year = :year ORDER BY deposits DESC")
+        branches = _q_to_df(sql, params)
+
+        # Summary table per selected bank
+        if not branches.empty:
+            agg = (branches.groupby(["ticker", "bank_name"])
+                   .agg(n_branches=("brnum", "count"),
+                        total_deposits=("deposits", "sum"))
+                   .reset_index()
+                   .sort_values("total_deposits", ascending=False))
+            agg["Deposits"] = agg["total_deposits"].apply(_fmt_dollars_k)
+            agg = agg.rename(columns={
+                "ticker": "Ticker", "bank_name": "Bank",
+                "n_branches": "Branches",
+            })[["Ticker", "Bank", "Branches", "Deposits"]]
+            st.markdown(f"### Selected banks — combined {len(branches):,} branches")
+            st.dataframe(agg, use_container_width=True, hide_index=True,
+                          height=min(280, 38 * (len(agg) + 1) + 4))
+
+        _render_map(branches)
