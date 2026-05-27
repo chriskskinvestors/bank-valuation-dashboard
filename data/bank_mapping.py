@@ -93,6 +93,9 @@ BANK_MAP = {
     "IBTN":  {"name": "InsCorp, Inc.",                      "fdic_cert": 35521,  "cik": None},
     "FGBI":  {"name": "First Guaranty Bancshares",          "fdic_cert": 14028,  "cik": 1408534},
     "PNFP":  {"name": "Pinnacle Financial Partners",        "fdic_cert": 35583,  "cik": 2082866},
+    # OTC-traded community bank — not in SEC's exchange-listed tickers.json
+    # but trades as CMHF with CIK 1792597 (sub-bank: Middletown Valley Bank MD)
+    "CMHF":  {"name": "Community Heritage Financial, Inc.",  "fdic_cert": 14017,  "cik": 1792597},
     # Bank OZK is a National Bank (no holding company) — files Call Reports
     # with FFIEC only, no SEC XBRL filings. cik=None forces FDIC-only path.
     "OZK":   {"name": "Bank OZK",                           "fdic_cert": 110,    "cik": None},
