@@ -81,11 +81,13 @@ def build_capital_timeline(hist_records: list[dict], shares_outstanding: float |
             else:
                 # Walk backward to find the PRIOR QUARTER in the same year.
                 # Don't just take i-1 — data may be sparse.
+                # All rows in `group` are already the same year (we
+                # grouped by year), so no need for a year-equality check.
+                # NOTE: pandas 2.x removes the grouping column from the
+                # passed-in group DataFrame, so p["year"] would KeyError.
                 prior_ytd = None
                 for j in range(i - 1, -1, -1):
                     p = group.iloc[j]
-                    if p["year"] != row.year:
-                        break
                     if p["quarter"] == row.quarter - 1:
                         prior_ytd = p["net_income_k_ytd"]
                         break
