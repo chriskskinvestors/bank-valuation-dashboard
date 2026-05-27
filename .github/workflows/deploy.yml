@@ -107,3 +107,12 @@ jobs:
         run: |
           URL=$(gcloud run services describe ${{ env.SERVICE }} --region=${{ env.REGION }} --format='value(status.url)')
           echo "Deployed: $URL"
+
+      # Block silent regressions: the deploy succeeded, but if a universe
+      # ticker no longer resolves to ANY data source, fail the workflow
+      # (the bad code is still live — operator must roll back or fix and
+      # re-push). This is the "no gaps ever" guardrail.
+      - name: Verify coverage (every ticker has at least one data source)
+        run: |
+          python -m pip install --quiet requests
+          python tests/test_universe_coverage.py
