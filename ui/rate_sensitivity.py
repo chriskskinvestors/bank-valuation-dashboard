@@ -504,7 +504,7 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
         return "background-color: #f5f5f5;"
 
     st.markdown("##### Δ NIM Matrix (bps)")
-    styled_nim = nim_df.style.applymap(_cell_color).format("{:+.0f}")
+    styled_nim = nim_df.style.map(_cell_color).format("{:+.0f}")
     st.dataframe(styled_nim, use_container_width=True)
 
     st.caption(
@@ -536,7 +536,7 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
         return "background-color: #f5f5f5;"
 
     st.markdown(f"##### Δ NII Matrix (annualized, ${nii_unit})")
-    styled_nii = nii_df.style.applymap(_nii_cell_color).format("${:+,.2f}")
+    styled_nii = nii_df.style.map(_nii_cell_color).format("${:+,.2f}")
     st.dataframe(styled_nii, use_container_width=True)
 
     # Plotly heat-map (optional visual)

@@ -48,11 +48,20 @@ def _load_sec(ticker: str) -> dict:
 
 
 def _load_price(ticker: str) -> float | None:
-    """Try to get current price from cache/IBKR."""
-    from data.ibkr_client import get_ibkr_client
+    """Try IBKR first, fall back to FMP in cloud (where IBKR isn't reachable)."""
+    # IBKR path (only works when running locally with TWS connected)
     try:
+        from data.ibkr_client import get_ibkr_client
         ibkr = get_ibkr_client()
         p = ibkr.get_price(ticker)
+        if p and p.get("price"):
+            return p["price"]
+    except Exception:
+        pass
+    # FMP fallback — primary path in cloud
+    try:
+        from data.fmp_client import get_quote
+        p = get_quote(ticker)
         if p and p.get("price"):
             return p["price"]
     except Exception:
@@ -368,7 +377,7 @@ def render_valuation_model(ticker: str):
                 return "background-color: #ffebee;"
             return "background-color: #fff3e0;"
 
-        styled1 = grid_df.style.applymap(_color_dcf).format("${:.2f}", na_rep="—")
+        styled1 = grid_df.style.map(_color_dcf).format("${:.2f}", na_rep="—")
         st.dataframe(styled1, use_container_width=True)
         if price:
             st.caption(
@@ -389,7 +398,7 @@ def render_valuation_model(ticker: str):
             index=[f"ROATCE {r:.1f}%" for r in roatce_range],
             columns=[f"CoE {c:.1f}%" for c in coe_range2],
         )
-        styled2 = grid2_df.style.applymap(_color_dcf).format("${:.2f}", na_rep="—")
+        styled2 = grid2_df.style.map(_color_dcf).format("${:.2f}", na_rep="—")
         st.dataframe(styled2, use_container_width=True)
         if price:
             st.caption(
