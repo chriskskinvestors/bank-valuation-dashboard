@@ -56,7 +56,11 @@ BANK_MAP = {
     # OTC-only, no SEC XBRL. FDIC cert 35214 = First Reliance Bank, SC.
     "FSRL":  {"name": "First Reliance Bancshares, Inc.",    "fdic_cert": 35214,  "cik": None},
     "BANR":  {"name": "Banner Corp.",                       "fdic_cert": 28489,  "cik": 946673},
-    "MCBI":  {"name": "Mountain Commerce Bancshares",       "fdic_cert": 4931,   "cik": None},
+    # MCBI (Mountain Commerce Bancshares) was acquired 04/01/2026 — FDIC
+    # cert 4931 is ACTIVE=0. The universe filter would drop it anyway via
+    # cert_is_active() in data/fdic_client.py, but keeping it here as an
+    # explicit None signals "we know about this; intentionally excluded".
+    "MCBI":  {"name": "Mountain Commerce Bancshares (acquired)", "fdic_cert": None, "cik": None},
     "BRBS":  {"name": "Blue Ridge Bankshares",              "fdic_cert": 17773,  "cik": 842717},
     "FSBW":  {"name": "FS Bancorp Inc.",                    "fdic_cert": 57633,  "cik": 1530249},
     "SPFI":  {"name": "South Plains Financial Inc.",        "fdic_cert": 25103,  "cik": 1163668},

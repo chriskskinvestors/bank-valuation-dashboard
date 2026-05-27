@@ -243,19 +243,32 @@ def get_universe() -> dict[str, dict]:
 def get_universe_tickers() -> list[str]:
     """
     Return sorted list of all bank tickers in the universe — FILTERED to
-    only those that resolve to at least one data source (SEC CIK with XBRL
-    OR FDIC cert). Tickers that can't resolve are silently dropped at this
-    boundary so they never appear empty in the UI.
+    only those that resolve to at least one ACTIVE data source:
+      • SEC CIK with XBRL data (validated by the resolver), OR
+      • FDIC cert pointing to an ACTIVE institution (not acquired/closed).
+
+    Tickers that can't resolve, or whose only data source is an inactive
+    FDIC cert (acquired bank like MCBI), are dropped here so they never
+    appear empty or stale in the UI.
     """
     from data.bank_mapping import get_cik, get_fdic_cert
+    from data.fdic_client import cert_is_active
 
     all_tickers = sorted(get_universe().keys())
-    resolved = [t for t in all_tickers
-                if get_cik(t) is not None or get_fdic_cert(t) is not None]
+
+    def _resolves(t: str) -> bool:
+        cik = get_cik(t)
+        if cik is not None:
+            return True  # SEC path; resolver already validated XBRL recency
+        cert = get_fdic_cert(t)
+        if cert is None:
+            return False
+        return cert_is_active(cert)  # Drop acquired/closed institutions
+
+    resolved = [t for t in all_tickers if _resolves(t)]
     dropped = set(all_tickers) - set(resolved)
     if dropped:
-        # Log so we can investigate, but don't fail the build
-        print(f"[universe] Dropped {len(dropped)} unresolvable tickers: "
+        print(f"[universe] Dropped {len(dropped)} unresolvable/inactive tickers: "
               f"{', '.join(sorted(dropped)[:10])}"
               f"{'...' if len(dropped) > 10 else ''}")
     return resolved

@@ -16,6 +16,44 @@ import pandas as pd
 from config import get_fdic_fields
 
 FDIC_FINANCIALS_URL = "https://banks.data.fdic.gov/api/financials"
+FDIC_INSTITUTIONS_URL = "https://banks.data.fdic.gov/api/institutions"
+
+
+def cert_is_active(cert: int, ttl_seconds: int = 7 * 86400) -> bool:
+    """
+    Is this FDIC certificate's institution currently active?
+
+    Banks that were acquired or failed are marked ACTIVE=0 in FDIC's
+    institutions endpoint — we want to drop these from the universe so
+    they don't appear in screens with stale data. Cached for a week in
+    Postgres so this check costs ~one HTTP call per bank per week.
+    """
+    if not cert:
+        return False
+    from data import cache as _cache
+    key = f"fdic_active:{cert}"
+    cached = _cache.get(key)
+    if cached is not None:
+        ts = (cached or {}).get("_ts", 0)
+        if time.time() - float(ts) < ttl_seconds:
+            return bool(cached.get("_v", False))
+
+    try:
+        resp = _get_with_retry(FDIC_INSTITUTIONS_URL, {
+            "filters": f"CERT:{cert}",
+            "fields": "CERT,ACTIVE",
+        })
+        active = False
+        if resp is not None:
+            data = resp.json().get("data", [])
+            if data:
+                active = int(data[0].get("data", {}).get("ACTIVE", 0)) == 1
+        _cache.put(key, {"_ts": time.time(), "_v": active})
+        return active
+    except Exception:
+        # On API failure assume active (don't drop banks on a transient
+        # FDIC outage). The next refresh will re-check.
+        return True
 
 
 def _get_with_retry(url: str, params: dict, timeout: int = 15,
