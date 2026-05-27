@@ -32,7 +32,7 @@ FUNDAMENTAL_CACHE_TTL_HOURS = int(os.getenv("FUNDAMENTAL_CACHE_TTL_HOURS", "24")
 DEFAULT_WATCHLIST = [
     "SFST", "CFFI", "CBNK", "FBIZ", "CCBG", "IBOC", "CARE", "RNST",
     "HTB", "FRBA", "SMBK", "BFST", "TCBX", "FMBH", "HBNC", "PLBC",
-    "FSRL", "BANR", "MCBI", "BRBS", "FSBW", "SPFI", "ALRS", "FMNB",
+    "FSRL", "BANR", "BRBS", "FSBW", "SPFI", "ALRS", "FMNB",  # MCBI removed (acquired 04/2026)
     "HFWA", "BAFN", "CBAN", "OVBC", "FRME", "LNKB", "WAL", "TSBK",
     "BKU", "PGC", "SBFG", "FNWB", "INBC", "CCNB", "JMSB", "RVSB",
     "SLBK", "INBK", "RMBI", "TFSL", "CBK", "IBTN", "FGBI", "PNFP",

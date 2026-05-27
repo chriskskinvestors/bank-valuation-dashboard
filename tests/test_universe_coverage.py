@@ -87,7 +87,19 @@ def main() -> int:
     from data.bank_universe import get_universe_tickers
     from config import DEFAULT_WATCHLIST
 
-    tickers = sorted(set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
+    # Build the candidate list, then strip "explicit exclusions" — tickers
+    # we've intentionally set to all-None in BANK_MAP (acquired/dead-data).
+    # These are removed-by-design and shouldn't cause gate failures.
+    from data.bank_mapping import BANK_MAP
+    explicit_exclusions = {
+        t for t, info in BANK_MAP.items()
+        if info.get("cik") is None and info.get("fdic_cert") is None
+    }
+    tickers = sorted((set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
+                       - explicit_exclusions)
+    if explicit_exclusions:
+        print(f"(Skipping {len(explicit_exclusions)} explicit-exclusion tickers: "
+              f"{', '.join(sorted(explicit_exclusions))})")
     print(f"Checking {len(tickers)} tickers for data-source coverage...")
 
     failures: list[tuple[str, int | None, int | None]] = []
