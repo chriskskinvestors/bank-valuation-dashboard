@@ -197,11 +197,40 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     """
     Show per-year NIM, NII, and EPS impact of parallel rate scenarios with
     asset repricing pace + deposit mix-shift modeling.
+
+    Securities-repricing pace uses the bank's actual FFIEC Call Report
+    Schedule RC-B Memo 2 maturity ladder when available; otherwise falls
+    back to a generic ~29%/yr industry average.
     """
+    # Try to pull bank-specific maturity ladder from Postgres (populated
+    # quarterly by jobs/refresh_ffiec.py).
+    securities_ladder = None
+    try:
+        from data.call_report_store import get_latest_ladder
+        cert = get_fdic_cert(ticker)
+        if cert:
+            securities_ladder = get_latest_ladder(int(cert))
+    except Exception:
+        securities_ladder = None
+
+    if securities_ladder:
+        st.markdown(
+            f":green-badge[Bank-specific FFIEC ladder] &middot; "
+            f"period **{securities_ladder.get('reporting_period','—')}** &middot; "
+            f"weighted-avg duration **{securities_ladder.get('weighted_avg_duration_years',0):.1f} yrs**"
+        )
+    else:
+        st.markdown(
+            ":blue-badge[Generic industry assumption] &middot; "
+            "no FFIEC ladder cached for this bank — using ~29%/yr securities."
+        )
+
     st.markdown(
-        "**Phased model** assumes assets reprice gradually (securities ~29%/yr, "
-        "fixed loans ~15%/yr, floating loans Q1). Deposit mix-shift applied to "
-        "rate-up scenarios. EPS computed using TTM share count + effective tax rate."
+        "**Phased model**: securities pace from the bank's actual maturity "
+        "ladder when available (FFIEC RC-B Memo 2), else industry default "
+        "(~29%/yr). Fixed loans ~15%/yr, floating loans Q1. "
+        "Deposit mix-shift applied to rate-up scenarios. EPS computed using "
+        "TTM share count + effective tax rate."
     )
 
     # Pull SEC data for shares outstanding + effective tax fallback
@@ -248,6 +277,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
         apply_mix_shift=apply_shift,
         horizon_years=horizon,
         scenarios_bps=[-200, -100, -50, 50, 100, 200],
+        securities_ladder=securities_ladder,
     )
 
     inputs = result["inputs"]
@@ -259,22 +289,60 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     with cc4: st.metric("Loans", f"{inputs.get('loans_share', 0)*100:.0f}%")
     with cc5: st.metric("Tax Rate", f"{result.get('tax_rate_used', 0)*100:.0f}%")
 
-    # Repricing pace mini-chart
-    pace = result["repricing_pace"]
-    pace_df = pd.DataFrame({
-        "year": list(pace.keys()),
-        "cumulative_repriced_pct": [v * 100 for v in pace.values()],
-    })
+    # Charts side-by-side: pace curve + (if available) the actual maturity ladder
     import plotly.express as px
-    fig_pace = px.line(
-        pace_df, x="year", y="cumulative_repriced_pct",
-        markers=True,
-        title=f"Asset repricing pace — {floating_share*100:.0f}% floating loans",
-        labels={"year": "Year", "cumulative_repriced_pct": "Cumulative % repriced"},
-    )
-    apply_standard_layout(fig_pace, height=CHART_HEIGHT_COMPACT)
-    fig_pace.update_yaxes(ticksuffix="%", range=[0, 100])
-    st.plotly_chart(fig_pace, use_container_width=True)
+    pace = result["repricing_pace"]
+
+    if securities_ladder and securities_ladder.get("buckets"):
+        # Two columns: pace line + ladder bar
+        ch_left, ch_right = st.columns([1, 1])
+        with ch_left:
+            pace_df = pd.DataFrame({
+                "year": list(pace.keys()),
+                "cumulative_repriced_pct": [v * 100 for v in pace.values()],
+            })
+            fig_pace = px.line(
+                pace_df, x="year", y="cumulative_repriced_pct",
+                markers=True,
+                title=f"Earning-asset repricing pace ({floating_share*100:.0f}% floating loans)",
+                labels={"year": "Year", "cumulative_repriced_pct": "Cumulative % repriced"},
+            )
+            apply_standard_layout(fig_pace, height=CHART_HEIGHT_COMPACT)
+            fig_pace.update_yaxes(ticksuffix="%", range=[0, 100])
+            st.plotly_chart(fig_pace, use_container_width=True)
+        with ch_right:
+            bucket_labels = {
+                "le_3mo": "≤ 3 mo", "3mo_1y": "3 mo – 1 yr",
+                "1y_3y": "1 – 3 yr", "3y_5y": "3 – 5 yr",
+                "5y_15y": "5 – 15 yr", "gt_15y": "> 15 yr",
+            }
+            buckets = securities_ladder["buckets"]
+            ladder_df = pd.DataFrame([
+                {"bucket": bucket_labels.get(k, k), "pct_of_securities": v * 100}
+                for k, v in buckets.items()
+            ])
+            fig_ladder = px.bar(
+                ladder_df, x="bucket", y="pct_of_securities",
+                title="Securities maturity ladder (FFIEC RC-B)",
+                labels={"bucket": "", "pct_of_securities": "% of total debt securities"},
+            )
+            apply_standard_layout(fig_ladder, height=CHART_HEIGHT_COMPACT)
+            fig_ladder.update_yaxes(ticksuffix="%")
+            st.plotly_chart(fig_ladder, use_container_width=True)
+    else:
+        pace_df = pd.DataFrame({
+            "year": list(pace.keys()),
+            "cumulative_repriced_pct": [v * 100 for v in pace.values()],
+        })
+        fig_pace = px.line(
+            pace_df, x="year", y="cumulative_repriced_pct",
+            markers=True,
+            title=f"Earning-asset repricing pace ({floating_share*100:.0f}% floating loans) — generic",
+            labels={"year": "Year", "cumulative_repriced_pct": "Cumulative % repriced"},
+        )
+        apply_standard_layout(fig_pace, height=CHART_HEIGHT_COMPACT)
+        fig_pace.update_yaxes(ticksuffix="%", range=[0, 100])
+        st.plotly_chart(fig_pace, use_container_width=True)
 
     # Per-scenario table: rows = scenarios, columns = years
     st.markdown(f"### NIM / EPS impact by year — horizon: {horizon}Y")
@@ -299,17 +367,25 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     with st.expander("Model assumptions + known limitations"):
         shares = result.get("shares_outstanding")
         shares_str = f"{shares/1e6:,.0f}M" if shares else "missing"
+        ladder_source = result.get("ladder_source", "generic")
+        ladder_note = (
+            f"FFIEC RC-B Memo 2 ({securities_ladder.get('reporting_period','—')})"
+            if securities_ladder else "generic industry average"
+        )
         st.markdown(f"""
 **Inputs used:**
 - Deposit beta: **{result['beta_used']:.2f}** ({result['beta_mode']})
 - Floating-loan share: **{floating_share*100:.0f}%**
+- Securities repricing source: **{ladder_note}**
 - Repricing pace per yr: {', '.join(f'Yr{k}={v*100:.0f}%' for k, v in pace.items())}
 - Mix-shift in rate-up scenarios: **{'ON' if apply_shift else 'OFF'}** (4pp NIB/100bps)
 - Effective tax rate: **{result['tax_rate_used']*100:.0f}%** (from FDIC ITAX/PTAXNETINC)
 - Shares outstanding (TTM): **{shares_str}** (from SEC)
 
 **What's modeled:**
-- Phased asset repricing (securities ~29%/yr, fixed loans ~15%/yr)
+- Phased asset repricing — securities pace from the bank's actual FFIEC
+  RC-B Memo 2 maturity ladder when available, else ~29%/yr default
+- Fixed loans ~15%/yr, floating loans Q1
 - Immediate deposit beta (cycle-measured or textbook)
 - NIB→IB deposit shift in rate-up scenarios
 - EPS impact: NII delta × (1 − tax rate) / shares
@@ -318,7 +394,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
 - Volume changes (loan demand, deposit outflows)
 - Securities AOCI marks (capital impact, not NIM)
 - Non-interest income/expense response
-- Bank-specific maturity ladder (FDIC public API lacks granular buckets)
+- Per-bank loan repricing buckets (uses generic 15%/yr fixed)
 
 **Use as:** ranking tool for rate sensitivity across banks. **Don't use as:** the
 only input for trade sizing — pair with the bank's own ALM disclosures.

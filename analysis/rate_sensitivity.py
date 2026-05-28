@@ -162,7 +162,9 @@ def compute_historical_deposit_beta(fdic_hist: list[dict] | None) -> float | Non
 
 
 def compute_repricing_pace(
-    inputs: dict, floating_loan_share: float | None = None,
+    inputs: dict,
+    floating_loan_share: float | None = None,
+    securities_ladder: dict | None = None,
 ) -> dict[int, float]:
     """
     Cumulative fraction of earning assets that has repriced by end of year N.
@@ -170,11 +172,15 @@ def compute_repricing_pace(
     Returns {1: x1, 2: x2, ..., 5: x5} where each value is in [0, 1].
 
     Mix:
-      • Securities: per-year pace from _REPRICING_BASE (~29%/yr)
+      • Securities: per-year pace from _REPRICING_BASE (~29%/yr) OR, if
+        securities_ladder is provided, the bank's actual maturity ladder
+        (FFIEC RC-B Memorandum 2). Bank-specific data wins.
       • Floating-rate loans: ~100% in Q1
       • Fixed-rate loans: per-year pace from _REPRICING_BASE (~15%/yr)
 
     floating_loan_share defaults to _DEFAULT_FLOATING_LOAN_SHARE (0.30).
+    securities_ladder is the dict returned by ffiec_client.get_securities_maturity_ladder
+    or call_report_store.get_latest_ladder.
     """
     sec_share = _safe(inputs.get("securities_share"))
     loan_share = _safe(inputs.get("loans_share"))
@@ -185,8 +191,19 @@ def compute_repricing_pace(
     floating_share = loan_share * fls
     fixed_share = loan_share * (1 - fls)
 
+    # Securities yearly pace: prefer bank-specific ladder if supplied
+    sec_pace_by_year: dict[int, float] = {}
+    if securities_ladder and securities_ladder.get("buckets"):
+        try:
+            from data.ffiec_client import maturity_ladder_to_yearly_pace
+            sec_pace_by_year = maturity_ladder_to_yearly_pace(securities_ladder)
+        except Exception:
+            sec_pace_by_year = {}
+
     pace: dict[int, float] = {}
-    for year, (sec_p, fixed_p, flo_p) in _REPRICING_BASE.items():
+    for year, (sec_p_default, fixed_p, flo_p) in _REPRICING_BASE.items():
+        sec_p = sec_pace_by_year.get(year, sec_p_default) if sec_pace_by_year \
+            else sec_p_default
         cum = (sec_share * sec_p) + (fixed_share * fixed_p) + (floating_share * flo_p)
         pace[year] = max(0.0, min(1.0, cum))
     return pace
@@ -201,6 +218,7 @@ def apply_rate_scenario_phased(
     apply_mix_shift: bool = True,
     shares_outstanding: float | None = None,
     horizon_years: int = 3,
+    securities_ladder: dict | None = None,
 ) -> dict:
     """
     Multi-year rate scenario with phased asset repricing + deposit mix shift
@@ -224,7 +242,7 @@ def apply_rate_scenario_phased(
     total_dep = _safe(inputs.get("total_deposits_usd"))
     tax_rate = _safe(inputs.get("effective_tax_rate"), _DEFAULT_TAX_RATE)
 
-    pace = compute_repricing_pace(inputs, floating_loan_share)
+    pace = compute_repricing_pace(inputs, floating_loan_share, securities_ladder)
     nii_current = earning_assets * (current_nim / 100)
     rate_pp = rate_change_bps / 100.0
 
@@ -616,9 +634,14 @@ def run_rate_sensitivity_phased(
     floating_loan_share: float | None = None,
     apply_mix_shift: bool = True,
     horizon_years: int = 3,
+    securities_ladder: dict | None = None,
 ) -> dict:
     """
     Run the enhanced phased rate sensitivity across scenarios.
+
+    If securities_ladder is provided, the securities-repricing pace uses
+    the bank's actual maturity profile (FFIEC RC-B Memo 2) instead of the
+    generic ~29%/yr assumption. The UI passes this in when available.
 
     Returns the same structure as run_rate_sensitivity but each scenario
     now has a `years` list with per-year NIM/NII/EPS impacts.
@@ -645,6 +668,7 @@ def run_rate_sensitivity_phased(
             apply_mix_shift=apply_mix_shift,
             shares_outstanding=shares,
             horizon_years=horizon_years,
+            securities_ladder=securities_ladder,
         )
         for bps in scenarios_bps
     ]
@@ -653,11 +677,17 @@ def run_rate_sensitivity_phased(
         "inputs": inputs,
         "beta_used": beta_int,
         "beta_mode": beta_mode_used,
-        "repricing_pace": compute_repricing_pace(inputs, floating_loan_share),
+        "repricing_pace": compute_repricing_pace(
+            inputs, floating_loan_share, securities_ladder,
+        ),
         "scenarios": scenario_results,
         "horizon_years": horizon_years,
         "shares_outstanding": shares,
         "tax_rate_used": inputs.get("effective_tax_rate"),
+        "securities_ladder": securities_ladder,
+        "ladder_source": (
+            securities_ladder.get("source", "ffiec") if securities_ladder else "generic"
+        ),
     }
 
 

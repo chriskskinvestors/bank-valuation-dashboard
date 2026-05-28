@@ -26,7 +26,10 @@ def list_all_active_institutions() -> list[dict]:
     public-ticker subset).
 
     Paginates the institutions endpoint in 1,000-row chunks. Returns a
-    list of {cert, name, namehcr, stalp, asset} dicts.
+    list of {cert, rssd_id, name, namehcr, stalp, asset} dicts.
+
+    FED_RSSD is included because the FFIEC Call Report API keys on RSSD
+    (not FDIC cert), so refresh_ffiec needs both.
     """
     out: list[dict] = []
     page_size = 1000
@@ -34,7 +37,7 @@ def list_all_active_institutions() -> list[dict]:
     while True:
         params = {
             "filters": "ACTIVE:1",
-            "fields": "CERT,NAME,NAMEHCR,STALP,ASSET",
+            "fields": "CERT,NAME,NAMEHCR,STALP,ASSET,FED_RSSD",
             "limit": page_size,
             "offset": offset,
             "sort_by": "ASSET",
@@ -54,6 +57,7 @@ def list_all_active_institutions() -> list[dict]:
             d = entry.get("data", {})
             out.append({
                 "cert": d.get("CERT"),
+                "rssd_id": d.get("FED_RSSD"),
                 "name": d.get("NAME", ""),
                 "namehcr": d.get("NAMEHCR", ""),
                 "state": d.get("STALP", ""),
