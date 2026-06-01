@@ -183,20 +183,25 @@ SECURITIES_MATURITY_BUCKETS = [
 _schema_logged = False
 
 
-def fetch_call_report(rssd_id: int, reporting_period: str | None = None) -> pd.DataFrame:
-    """
-    Pull the entire Call Report for one bank in one HTTP call.
+def _previous_quarter(period: str) -> str:
+    """Step back one quarter. Accepts 'MM/DD/YYYY' and returns same format."""
+    m, d, y = period.split("/")
+    m, d, y = int(m), int(d), int(y)
+    # Map current quarter-end → previous quarter-end
+    if (m, d) == (3, 31):
+        return f"12/31/{y - 1}"
+    if (m, d) == (6, 30):
+        return f"03/31/{y}"
+    if (m, d) == (9, 30):
+        return f"06/30/{y}"
+    if (m, d) == (12, 31):
+        return f"09/30/{y}"
+    # Defensive — return as-is
+    return period
 
-    Returns a DataFrame with one row per MDRM code (the package's standard
-    schema). Empty DataFrame if FFIEC isn't configured, the call fails, or
-    the bank didn't file for that period.
-    """
-    global _schema_logged
-    creds = _get_creds()
-    if creds is None:
-        return pd.DataFrame()
 
-    period = reporting_period or latest_reporting_period()
+def _call_collect_data(creds, rssd_id: int, period: str) -> pd.DataFrame:
+    """Single attempt. Returns empty DF on any failure."""
     try:
         from ffiec_data_connect.methods import collect_data
         df = collect_data(
@@ -206,69 +211,105 @@ def fetch_call_report(rssd_id: int, reporting_period: str | None = None) -> pd.D
             series="call",
             output_type="pandas",
         )
-        # Log the schema once so we can see actual column names in CR-Run logs
-        if df is not None and not df.empty and not _schema_logged:
-            try:
-                print(f"[FFIEC] First call_report DF — rssd={rssd_id} "
-                      f"period={period} rows={len(df)} cols={list(df.columns)}",
-                      flush=True)
-                # Sample first row to see value shapes
-                print(f"[FFIEC] First row sample: {df.iloc[0].to_dict()}",
-                      flush=True)
-            except Exception:
-                pass
-            _schema_logged = True
         return df if df is not None else pd.DataFrame()
     except Exception as e:
-        print(f"[FFIEC] fetch_call_report({rssd_id}, {period}) failed: {e}")
+        msg = str(e)
+        # 204 No Content = bank hasn't filed for this quarter yet. Caller
+        # decides whether to retry against the previous quarter.
+        if "204" in msg:
+            return pd.DataFrame()
+        print(f"[FFIEC] fetch_call_report({rssd_id}, {period}) failed: {e}",
+              flush=True)
         return pd.DataFrame()
+
+
+def fetch_call_report(rssd_id: int, reporting_period: str | None = None) -> pd.DataFrame:
+    """
+    Pull the entire Call Report for one bank in one HTTP call.
+
+    Returns a DataFrame with one row per MDRM code (the package's standard
+    schema). Empty DataFrame if FFIEC isn't configured, the call fails, or
+    the bank didn't file for that period.
+
+    Auto-fallback: if the requested period returns empty (typically a 204
+    because the bank hasn't filed yet — common for small community banks
+    a few weeks after quarter-end), retry the previous quarter once.
+    """
+    global _schema_logged
+    creds = _get_creds()
+    if creds is None:
+        return pd.DataFrame()
+
+    period = reporting_period or latest_reporting_period()
+    df = _call_collect_data(creds, rssd_id, period)
+    if df.empty:
+        # Try one quarter back — covers slow filers without burning
+        # extra API budget on the rest of the universe
+        prior = _previous_quarter(period)
+        df = _call_collect_data(creds, rssd_id, prior)
+
+    # One-shot schema log so the first successful call surfaces actual
+    # column names + first row shape in Cloud Run logs
+    if not df.empty and not _schema_logged:
+        try:
+            print(f"[FFIEC] First call_report DF — rssd={rssd_id} "
+                  f"rows={len(df)} cols={list(df.columns)}",
+                  flush=True)
+            print(f"[FFIEC] First row sample: {df.iloc[0].to_dict()}",
+                  flush=True)
+        except Exception:
+            pass
+        _schema_logged = True
+    return df
 
 
 def _lookup_concept(df: pd.DataFrame, code: str) -> float | None:
     """
     Pull a single concept's value from a Call Report DataFrame.
 
-    The ffiec-data-connect package returns a long-form DF with columns
-    that include the MDRM code (e.g. "mdrm" or "concept") and a value
-    column. Try several column name patterns since v3 schema isn't
-    pinned in docs.
+    ffiec-data-connect v3 returns a long-form DF with this schema:
+      mdrm        — concept code (e.g. 'RCFDA549')
+      rssd        — bank ID
+      quarter     — reporting period
+      data_type   — 'int' | 'float' | 'bool' | 'str'
+      int_data    — populated when data_type=='int'
+      float_data  — populated when data_type=='float'
+      bool_data   — populated when data_type=='bool'
+      str_data    — populated when data_type=='str'
 
     For our codes we want the consolidated (RCFD) value preferred over
     domestic-only (RCON), since global banks like JPM use RCFD.
     """
-    if df is None or df.empty:
+    if df is None or df.empty or "mdrm" not in df.columns:
         return None
 
-    # Find the code-identifier column
-    code_col = None
-    for candidate in ("mdrm", "concept", "code", "id"):
-        if candidate in df.columns:
-            code_col = candidate
-            break
-    if code_col is None:
-        return None
+    def _typed_value(row) -> float | None:
+        """Pick the right typed column based on data_type."""
+        dt = str(row.get("data_type", "")).lower()
+        if dt == "float":
+            v = row.get("float_data")
+        elif dt == "int":
+            v = row.get("int_data")
+        else:
+            # bool/str don't make sense for $ amounts
+            return None
+        if v is None:
+            return None
+        try:
+            f = float(v)
+            return f if not pd.isna(f) else None
+        except (ValueError, TypeError):
+            return None
 
-    # Find the value column
-    val_col = None
-    for candidate in ("value", "data_value", "amount", "val"):
-        if candidate in df.columns:
-            val_col = candidate
-            break
-    if val_col is None:
-        return None
-
-    # RCFD beats RCON when both exist
+    # RCFD beats RCON when both exist (RCFD = consolidated, RCON = domestic)
     best = None
     for prefix in ("RCFD", "RCON"):
         full_code = f"{prefix}{code}"
-        match = df[df[code_col].astype(str).str.upper() == full_code]
+        match = df[df["mdrm"].astype(str).str.upper() == full_code]
         if not match.empty:
-            try:
-                v = float(match.iloc[0][val_col])
-                if best is None or v > best:
-                    best = v
-            except (ValueError, TypeError):
-                continue
+            v = _typed_value(match.iloc[0])
+            if v is not None and (best is None or v > best):
+                best = v
     return best
 
 

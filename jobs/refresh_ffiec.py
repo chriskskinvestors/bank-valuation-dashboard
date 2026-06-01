@@ -194,10 +194,21 @@ def main() -> int:
         for cert, err in errors[:10]:
             print(f"  cert={cert} {err}")
 
-    success_rate = success / max(1, len(candidates))
-    if success_rate >= 0.80:
+    # Exit-code logic measures errors per attempt — banks with no
+    # securities (legitimate empty RC-B Memo 2) are not failures.
+    # Auth/network failures populate `errors`.
+    error_rate = len(errors) / max(1, len(candidates))
+    no_data_rate = no_data / max(1, len(candidates))
+
+    # If we got literally zero ladders AND no errors, the schema lookup
+    # is silently broken (every bank fetched but parser produced nothing).
+    if success == 0 and len(errors) == 0 and no_data > 10:
+        print("\n⚠ Zero ladders ingested with no errors — schema mismatch?")
+        return 2
+
+    if error_rate < 0.05:
         return 0
-    if success_rate >= 0.50:
+    if error_rate < 0.20:
         return 1
     return 2  # mostly broken — likely auth issue
 
