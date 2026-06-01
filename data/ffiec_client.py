@@ -138,21 +138,26 @@ def latest_reporting_period(as_of: pd.Timestamp | None = None) -> str:
 
     Returns date string in MM/DD/YYYY format expected by the package.
     """
-    now = as_of or pd.Timestamp.utcnow()
-    candidates = [
-        (now.year, 12, 31),
-        (now.year, 9, 30),
-        (now.year, 6, 30),
-        (now.year, 3, 31),
-        (now.year - 1, 12, 31),
-    ]
+    # Strip tz so the arithmetic with tz-naive Timestamp(year,month,day)
+    # below doesn't blow up — we only care about calendar dates here, not
+    # wall-clock precision. pandas 2.x returns tz-aware from utcnow().
+    now = as_of if as_of is not None else pd.Timestamp.utcnow()
+    if getattr(now, "tzinfo", None) is not None:
+        now = now.tz_localize(None)
+    # Walk back through every quarter-end for the last 2 calendar years
+    # so we never silently jump a year if the per-year list misses.
+    candidates: list[tuple[int, int, int]] = []
+    for y in (now.year, now.year - 1, now.year - 2):
+        for m, d in ((12, 31), (9, 30), (6, 30), (3, 31)):
+            candidates.append((y, m, d))
     for y, m, d in candidates:
         # Allow 45-day filing window after quarter-end
         quarter_end = pd.Timestamp(year=y, month=m, day=d)
         if (now - quarter_end).days >= 45:
             return f"{m:02d}/{d:02d}/{y}"
-    # Fall back to last year's Q4
-    return f"12/31/{now.year - 2}"
+    # Should never reach here, but defensive: oldest candidate
+    y, m, d = candidates[-1]
+    return f"{m:02d}/{d:02d}/{y}"
 
 
 # ─────────────────────────────────────────────────────────────────────
