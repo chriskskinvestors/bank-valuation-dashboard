@@ -11,17 +11,23 @@ then reads from this table instead of using the generic ~29%/yr default.
 Auth: requires FFIEC_USERNAME + FFIEC_JWT_TOKEN env vars (mounted from
 Google Secret Manager). If missing, the job exits early with code 2.
 
+Rate limit: FFIEC PWS allows ~2,500 requests/hour per user. With ~4,500
+active banks the job needs ≥2 hourly windows. We pace ourselves at 2,400
+requests/hour (small safety margin) and sleep when we hit the cap.
+
 Exit codes:
   0  — successful ingest (≥80% of attempted banks)
   1  — partial failure (worth investigating, dashboard still works)
   2  — auth/config error (FFIEC creds missing or invalid)
 """
 
+# Stay just below FFIEC's 2,500/hr cap to avoid 429s killing the long run.
+_HOURLY_REQUEST_BUDGET = 2400
+
 from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -98,40 +104,53 @@ def main() -> int:
               flush=True)
         return 1
 
-    # Conservative concurrency: FFIEC REST API rate-limits and we don't
-    # want to look hostile. 3 workers @ ~1s/call ≈ 25 min for 4,500 banks.
+    # Sequential pacing: FFIEC PWS caps each user at ~2,500 requests/hour.
+    # We pace at 2,400/hr and sleep to top-of-next-hour when we hit the cap.
+    # ~4,500 banks ÷ 2,400/hr = 2 hourly windows (~90 min total wall-clock).
     t0 = time.time()
     success = 0
     no_data = 0
     errors: list[tuple[int, str]] = []
-    workers = 3
+    requests_in_window = 0
+    window_start = time.time()
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {
-            ex.submit(_refresh_one, int(i["cert"]), int(i["rssd_id"]), period): i
-            for i in candidates
-        }
-        done = 0
-        total = len(futures)
-        for fut in as_completed(futures):
-            cert, n_buckets, err = fut.result()
-            done += 1
-            if err == "":
-                if n_buckets > 0:
-                    success += 1
-                else:
-                    no_data += 1
-            elif err in ("empty_call_report", "no_securities_data"):
-                no_data += 1
+    for i in candidates:
+        # Rate-limit window enforcement
+        if requests_in_window >= _HOURLY_REQUEST_BUDGET:
+            elapsed_in_window = time.time() - window_start
+            sleep_until_next_window = max(0, 3600 - elapsed_in_window) + 5
+            print(f"[{time.strftime('%H:%M:%S')}] Hit hourly cap "
+                  f"({requests_in_window} req). Sleeping "
+                  f"{sleep_until_next_window:.0f}s for next window...",
+                  flush=True)
+            time.sleep(sleep_until_next_window)
+            requests_in_window = 0
+            window_start = time.time()
+
+        cert, n_buckets, err = _refresh_one(
+            int(i["cert"]), int(i["rssd_id"]), period,
+        )
+        requests_in_window += 1
+
+        if err == "":
+            if n_buckets > 0:
+                success += 1
             else:
-                errors.append((cert, err))
-            if done % 200 == 0 or done == total:
-                elapsed = time.time() - t0
-                rate = done / elapsed if elapsed > 0 else 0
-                eta = (total - done) / rate if rate > 0 else 0
-                print(f"  {done}/{total} ({elapsed:.0f}s, "
-                      f"ok={success} no_data={no_data} err={len(errors)} "
-                      f"~{eta:.0f}s remaining)", flush=True)
+                no_data += 1
+        elif err in ("empty_call_report", "no_securities_data"):
+            no_data += 1
+        else:
+            errors.append((cert, err))
+
+        done = success + no_data + len(errors)
+        total = len(candidates)
+        if done % 200 == 0 or done == total:
+            elapsed = time.time() - t0
+            rate = done / elapsed if elapsed > 0 else 0
+            eta = (total - done) / rate if rate > 0 else 0
+            print(f"  {done}/{total} ({elapsed:.0f}s, "
+                  f"ok={success} no_data={no_data} err={len(errors)} "
+                  f"~{eta:.0f}s remaining)", flush=True)
 
     elapsed = time.time() - t0
     print()
