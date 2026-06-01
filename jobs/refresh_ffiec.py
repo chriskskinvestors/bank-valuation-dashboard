@@ -21,9 +21,6 @@ Exit codes:
   2  — auth/config error (FFIEC creds missing or invalid)
 """
 
-# Stay just below FFIEC's 2,500/hr cap to avoid 429s killing the long run.
-_HOURLY_REQUEST_BUDGET = 2400
-
 from __future__ import annotations
 import sys
 import time
@@ -31,6 +28,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+# Stay just below FFIEC's 2,500/hr cap to avoid 429s killing the long run.
+_HOURLY_REQUEST_BUDGET = 2400
 
 
 def _refresh_one(
