@@ -89,20 +89,50 @@ def main() -> int:
     print(f"[{time.strftime('%H:%M:%S')}] Using reporting period: {period}",
           flush=True)
 
-    print(f"[{time.strftime('%H:%M:%S')}] Enumerating active FDIC banks...",
+    # Build the universe: only banks in our published watchlist + the
+    # OTC-discovered set. ~400-500 banks vs. ~4,500 active FDIC institutions.
+    # Saves ~90% of the FFIEC PWS request budget and drops runtime to ~10 min.
+    from data.bank_mapping import BANK_MAP
+    universe_certs: set[int] = set()
+    for ticker, info in BANK_MAP.items():
+        cert = info.get("fdic_cert")
+        if cert:
+            universe_certs.add(int(cert))
+    try:
+        from data.bank_mapping import _RESOLVED_FROM_JSON
+        for t, info in _RESOLVED_FROM_JSON.items():
+            cert = info.get("fdic_cert")
+            if cert:
+                universe_certs.add(int(cert))
+    except Exception:
+        pass
+    print(f"[{time.strftime('%H:%M:%S')}] Universe size: "
+          f"{len(universe_certs)} certs (BANK_MAP + resolved JSON)",
           flush=True)
+
+    print(f"[{time.strftime('%H:%M:%S')}] Enumerating active FDIC banks "
+          "(to map CERT → FFIEC RSSD)...", flush=True)
     institutions = list_all_active_institutions()
     candidates = [
         i for i in institutions
         if i.get("cert") and i.get("rssd_id")
+        and int(i["cert"]) in universe_certs
     ]
     print(f"[{time.strftime('%H:%M:%S')}] {len(institutions)} active banks, "
-          f"{len(candidates)} with both CERT + RSSD", flush=True)
+          f"{len(candidates)} in universe with both CERT + RSSD",
+          flush=True)
 
     if not candidates:
-        print("⚠ No candidates with RSSD — institutions endpoint may be stale.",
+        print("⚠ No universe candidates with RSSD — check BANK_MAP / resolved JSON.",
               flush=True)
         return 1
+
+    # Sanity: warn if we're missing universe certs (acquired / inactive)
+    found_certs = {int(i["cert"]) for i in candidates}
+    missing = universe_certs - found_certs
+    if missing:
+        print(f"  [warn] {len(missing)} universe certs absent from active "
+              f"FDIC list (likely acquired/inactive)", flush=True)
 
     # Sequential pacing: FFIEC PWS caps each user at ~2,500 requests/hour.
     # We pace at 2,400/hr and sleep to top-of-next-hour when we hit the cap.
