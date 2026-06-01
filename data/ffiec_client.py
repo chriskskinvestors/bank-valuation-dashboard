@@ -177,6 +177,12 @@ SECURITIES_MATURITY_BUCKETS = [
 ]
 
 
+# One-shot schema log so we can see what columns ffiec-data-connect
+# actually returns. Helps debug when every bank silently produces
+# no_data because our _lookup_concept column-name guessing is off.
+_schema_logged = False
+
+
 def fetch_call_report(rssd_id: int, reporting_period: str | None = None) -> pd.DataFrame:
     """
     Pull the entire Call Report for one bank in one HTTP call.
@@ -185,6 +191,7 @@ def fetch_call_report(rssd_id: int, reporting_period: str | None = None) -> pd.D
     schema). Empty DataFrame if FFIEC isn't configured, the call fails, or
     the bank didn't file for that period.
     """
+    global _schema_logged
     creds = _get_creds()
     if creds is None:
         return pd.DataFrame()
@@ -199,6 +206,18 @@ def fetch_call_report(rssd_id: int, reporting_period: str | None = None) -> pd.D
             series="call",
             output_type="pandas",
         )
+        # Log the schema once so we can see actual column names in CR-Run logs
+        if df is not None and not df.empty and not _schema_logged:
+            try:
+                print(f"[FFIEC] First call_report DF — rssd={rssd_id} "
+                      f"period={period} rows={len(df)} cols={list(df.columns)}",
+                      flush=True)
+                # Sample first row to see value shapes
+                print(f"[FFIEC] First row sample: {df.iloc[0].to_dict()}",
+                      flush=True)
+            except Exception:
+                pass
+            _schema_logged = True
         return df if df is not None else pd.DataFrame()
     except Exception as e:
         print(f"[FFIEC] fetch_call_report({rssd_id}, {period}) failed: {e}")
