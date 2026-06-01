@@ -68,6 +68,20 @@ _MIX_SHIFT_PER_100BPS = 0.04
 # Default effective tax rate if FDIC data missing
 _DEFAULT_TAX_RATE = 0.21
 
+# Volume-effect coefficients: how rate moves shift balance-sheet growth.
+# Calibrated to industry-typical 2022-24 cycle data.
+#   loan_growth_per_100bps    — +100bps shaves ~2pp off annual loan growth
+#                                (higher rates → lower demand)
+#   deposit_growth_per_100bps — +100bps shaves ~1pp off annual deposit growth
+#                                (NIB drains faster than IB grows)
+#   securities_growth_per_100bps — +100bps lifts securities growth ~0.5pp
+#                                (reinvestment at higher yields)
+_VOLUME_SENSITIVITY = {
+    "loans_per_100bps": -0.02,
+    "deposits_per_100bps": -0.01,
+    "securities_per_100bps": 0.005,
+}
+
 
 def _safe(val, default=0.0):
     if val is None:
@@ -161,6 +175,72 @@ def compute_historical_deposit_beta(fdic_hist: list[dict] | None) -> float | Non
         return None
 
 
+def compute_historical_growth_rates(
+    fdic_hist: list[dict] | None,
+) -> dict | None:
+    """
+    Compute trailing-year YoY growth rates for the bank's key balance-sheet
+    items: loans, deposits, earning assets, securities.
+
+    Returns annual fractional growth rates (e.g. 0.06 = 6% YoY):
+      {
+        "loans_growth":           0.06,
+        "deposits_growth":        0.04,
+        "earning_assets_growth":  0.05,
+        "securities_growth":      0.03,
+      }
+    or None if insufficient history (need ≥ 5 quarters).
+
+    Uses the most recent quarter vs the same quarter one year ago to
+    smooth seasonal effects.
+    """
+    if not fdic_hist or len(fdic_hist) < 5:
+        return None
+    # fdic_hist is newest-first
+    latest = fdic_hist[0]
+    year_ago = fdic_hist[4] if len(fdic_hist) > 4 else fdic_hist[-1]
+
+    def _growth(field: str) -> float:
+        v1 = _safe(latest.get(field))
+        v0 = _safe(year_ago.get(field))
+        if v0 <= 0:
+            return 0.0
+        return (v1 - v0) / v0
+
+    ea_growth = _growth("ERNAST") if year_ago.get("ERNAST") else _growth("ASSET")
+    return {
+        "loans_growth": _growth("LNLSNET"),
+        "deposits_growth": _growth("DEP"),
+        "earning_assets_growth": ea_growth,
+        "securities_growth": _growth("SC"),
+    }
+
+
+def adjust_growth_for_rates(
+    base_growth: dict, rate_change_bps: float,
+) -> dict:
+    """
+    Apply rate-sensitivity to baseline growth rates.
+
+    Higher rates dampen loan + deposit growth (industry-typical
+    coefficients). Returns a new dict with the adjusted rates.
+    """
+    rate_pp_100 = rate_change_bps / 100.0
+    return {
+        "loans_growth": base_growth.get("loans_growth", 0.0)
+            + rate_pp_100 * _VOLUME_SENSITIVITY["loans_per_100bps"],
+        "deposits_growth": base_growth.get("deposits_growth", 0.0)
+            + rate_pp_100 * _VOLUME_SENSITIVITY["deposits_per_100bps"],
+        "earning_assets_growth": base_growth.get("earning_assets_growth", 0.0)
+            + rate_pp_100 * (
+                _VOLUME_SENSITIVITY["loans_per_100bps"] * 0.7
+                + _VOLUME_SENSITIVITY["securities_per_100bps"] * 0.3
+            ),
+        "securities_growth": base_growth.get("securities_growth", 0.0)
+            + rate_pp_100 * _VOLUME_SENSITIVITY["securities_per_100bps"],
+    }
+
+
 def compute_repricing_pace(
     inputs: dict,
     floating_loan_share: float | None = None,
@@ -219,6 +299,8 @@ def apply_rate_scenario_phased(
     shares_outstanding: float | None = None,
     horizon_years: int = 3,
     securities_ladder: dict | None = None,
+    base_growth_rates: dict | None = None,
+    apply_volume_effects: bool = False,
 ) -> dict:
     """
     Multi-year rate scenario with phased asset repricing + deposit mix shift
@@ -261,6 +343,13 @@ def apply_rate_scenario_phased(
         eff_int_bearing_dep = int_bearing_dep
         eff_non_int_dep = non_int_dep
 
+    # Volume effects: project EA forward each year using rate-adjusted growth.
+    # Without this (the default), EA is held flat across the horizon — which
+    # under-states NII for high-growth banks in down-rate scenarios.
+    adj_growth = None
+    if apply_volume_effects and base_growth_rates:
+        adj_growth = adjust_growth_for_rates(base_growth_rates, rate_change_bps)
+
     years_out = []
     horizon = min(max(1, horizon_years), 5)
     for year in range(1, horizon + 1):
@@ -268,6 +357,13 @@ def apply_rate_scenario_phased(
         # Asset yield: only the repriced portion benefits from the rate move.
         # Unpriced portion stays at current yield.
         ea_yield_new = ea_yield + rate_pp * repriced_frac
+
+        # Earning-asset balance for this projection year
+        if adj_growth is not None:
+            ea_growth_rate = adj_growth.get("earning_assets_growth", 0.0)
+            ea_year = earning_assets * ((1 + ea_growth_rate) ** year)
+        else:
+            ea_year = earning_assets
 
         # Blended cost of funds — uses (possibly mix-shifted) deposit balances
         if total_dep > 0:
@@ -285,7 +381,10 @@ def apply_rate_scenario_phased(
         yield_delta_pp = rate_pp * repriced_frac
         nim_delta_pp = yield_delta_pp - cof_change
         nim_new = current_nim + nim_delta_pp
-        nii_new = earning_assets * (nim_new / 100)
+        # NII uses the projected EA for this year — if volume effects are off,
+        # ea_year == earning_assets and behavior is identical to the prior
+        # version. nii_current is computed off the year-0 base for the delta.
+        nii_new = ea_year * (nim_new / 100)
         nii_delta = nii_new - nii_current
 
         # EPS impact: NII delta → pretax (assume opex/fees unchanged) → net
@@ -302,6 +401,7 @@ def apply_rate_scenario_phased(
             "nim_delta_bps": nim_delta_pp * 100,
             "earning_asset_yield_new_pct": ea_yield_new,
             "cost_of_funds_new_pct": cost_ibl_new,
+            "earning_assets_usd": ea_year,
             "nii_new_usd": nii_new,
             "nii_delta_usd": nii_delta,
             "pretax_delta_usd": pretax_delta,
@@ -317,6 +417,8 @@ def apply_rate_scenario_phased(
         "floating_loan_share_used": floating_loan_share if floating_loan_share is not None
                                       else _DEFAULT_FLOATING_LOAN_SHARE,
         "mix_shift_applied": apply_mix_shift and rate_pp > 0,
+        "volume_effects_applied": apply_volume_effects and base_growth_rates is not None,
+        "growth_rates_used": adj_growth,
         "shares_outstanding": shares_outstanding,
         "tax_rate_used": tax_rate,
         "years": years_out,
@@ -635,6 +737,8 @@ def run_rate_sensitivity_phased(
     apply_mix_shift: bool = True,
     horizon_years: int = 3,
     securities_ladder: dict | None = None,
+    apply_volume_effects: bool = False,
+    custom_growth_rates: dict | None = None,
 ) -> dict:
     """
     Run the enhanced phased rate sensitivity across scenarios.
@@ -658,6 +762,11 @@ def run_rate_sensitivity_phased(
     if sec_data:
         shares = sec_data.get("shares_outstanding")
 
+    # Resolve growth rates for volume effects. Custom override (UI sliders)
+    # wins; else use historical YoY from fdic_hist.
+    growth_rates = custom_growth_rates if custom_growth_rates is not None \
+        else compute_historical_growth_rates(fdic_hist)
+
     scenario_results = [
         apply_rate_scenario_phased(
             inputs,
@@ -669,6 +778,8 @@ def run_rate_sensitivity_phased(
             shares_outstanding=shares,
             horizon_years=horizon_years,
             securities_ladder=securities_ladder,
+            base_growth_rates=growth_rates,
+            apply_volume_effects=apply_volume_effects,
         )
         for bps in scenarios_bps
     ]
@@ -688,6 +799,8 @@ def run_rate_sensitivity_phased(
         "ladder_source": (
             securities_ladder.get("source", "ffiec") if securities_ladder else "generic"
         ),
+        "base_growth_rates": growth_rates,
+        "volume_effects_applied": apply_volume_effects and growth_rates is not None,
     }
 
 
@@ -761,4 +874,189 @@ def run_rate_sensitivity(
         "beta_mode": beta_mode,
         "scenarios": scenario_results,
         "asymmetry_bps": asymmetry_bps,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Historical backtest — replay rate cycle, predicted vs actual NIM
+# ─────────────────────────────────────────────────────────────────────
+
+def backtest_bank(
+    fdic_hist: list[dict],
+    beta_mode: str = "historical",
+    custom_deposit_beta: float | None = None,
+    floating_loan_share: float | None = None,
+    securities_ladder: dict | None = None,
+) -> dict | None:
+    """
+    Walk forward through fdic_hist quarter-by-quarter. At each quarter t:
+      • Take the bank's state at quarter t (4 quarters before our prediction)
+        as the baseline
+      • Compute the actual FedFunds change from baseline to t+4
+      • Run apply_rate_scenario_phased with that rate change, 1-year horizon
+      • Compare predicted NIM at t+4 to actual NIMY at t+4
+
+    Returns:
+      {
+        "quarters":        ["2023-Q1", "2023-Q2", ...],
+        "actual_nim_pct":  [3.12, 2.98, ...],
+        "predicted_nim_pct": [3.18, 3.04, ...],
+        "r_squared":       0.78,
+        "rmse_bps":        14.2,
+        "bias_bps":        +2.1,   # mean(predicted - actual), positive = over-predicts
+        "n_quarters":      12,
+      }
+    or None if insufficient history (need ≥ 8 quarters).
+    """
+    if not fdic_hist or len(fdic_hist) < 8:
+        return None
+
+    # Sort oldest first for the walk-forward
+    def _q_str(rec):
+        d = rec.get("REPDTE")
+        if hasattr(d, "strftime"):
+            return d.strftime("%Y%m%d")
+        return str(d) if d else ""
+
+    hist_sorted = sorted(fdic_hist, key=_q_str)
+    # We need FedFunds at each quarter end. Pull and align.
+    try:
+        from data.fred_client import fetch_series
+        ff_df = fetch_series("FEDFUNDS", years=10)
+    except Exception:
+        ff_df = None
+    if ff_df is None or ff_df.empty:
+        return None
+    # FRED FedFunds is monthly. Index by date for nearest-month lookup.
+    import pandas as pd
+    ff_df = ff_df.copy()
+    ff_df["date"] = pd.to_datetime(ff_df["date"])
+    ff_df = ff_df.sort_values("date").reset_index(drop=True)
+
+    def _fedfunds_at(rec) -> float | None:
+        d = rec.get("REPDTE")
+        if not hasattr(d, "strftime"):
+            return None
+        # Find FedFunds value for the month containing REPDTE
+        target = pd.Timestamp(d)
+        before = ff_df[ff_df["date"] <= target]
+        if before.empty:
+            return None
+        return float(before.iloc[-1]["value"])
+
+    quarters: list[str] = []
+    actual: list[float] = []
+    predicted: list[float] = []
+
+    # Walk forward: predict each quarter from a baseline 4 quarters earlier.
+    # This gives the model a real 1-year forward to reprice assets.
+    LOOKBACK = 4
+    for i in range(LOOKBACK, len(hist_sorted)):
+        baseline = hist_sorted[i - LOOKBACK]
+        target = hist_sorted[i]
+
+        ff_base = _fedfunds_at(baseline)
+        ff_target = _fedfunds_at(target)
+        if ff_base is None or ff_target is None:
+            continue
+
+        rate_change_bps = (ff_target - ff_base) * 100  # pp → bps
+
+        # Build inputs from baseline quarter
+        inputs = build_rate_sensitivity_inputs(
+            baseline, hist_sorted[max(0, i - LOOKBACK - 8):i - LOOKBACK + 1],
+        )
+        if not inputs.get("current_nim_pct"):
+            continue
+
+        # Resolve beta from the same baseline window so the test is honest
+        beta_int, beta_ni, _ = _resolve_deposit_beta(
+            inputs, hist_sorted[max(0, i - LOOKBACK - 8):i - LOOKBACK + 1],
+            beta_mode, custom_deposit_beta,
+        )
+
+        scenario = apply_rate_scenario_phased(
+            inputs,
+            rate_change_bps=rate_change_bps,
+            deposit_beta_int_bearing=beta_int,
+            deposit_beta_non_int=beta_ni,
+            floating_loan_share=floating_loan_share,
+            apply_mix_shift=True,
+            horizon_years=1,  # we're predicting 1 year forward
+            securities_ladder=securities_ladder,
+        )
+        if not scenario.get("years"):
+            continue
+        predicted_nim = scenario["years"][0]["nim_new_pct"]
+        actual_nim = _safe(target.get("NIMY"))
+        if actual_nim <= 0:
+            continue
+
+        # Quarter label
+        d = target.get("REPDTE")
+        if hasattr(d, "strftime"):
+            q_label = d.strftime("%Y-Q") + str(((d.month - 1) // 3) + 1)
+        else:
+            q_label = str(d)
+
+        quarters.append(q_label)
+        actual.append(actual_nim)
+        predicted.append(predicted_nim)
+
+    if len(actual) < 4:
+        return None
+
+    # ── Metrics ───────────────────────────────────────────────────────
+    # Two complementary measures:
+    #   1. Absolute fit (R², RMSE, bias on NIM levels) — strict but penalizes
+    #      the model for not knowing how the balance sheet evolved.
+    #   2. Directional fit (correlation of Δpredicted vs Δactual) — answers
+    #      "did the model predict the right *direction* of NIM moves as rates
+    #      changed?" which is the model's actual job.
+    import math
+    n = len(actual)
+    errors = [p - a for p, a in zip(predicted, actual)]
+    bias_pp = sum(errors) / n
+    rmse_pp = math.sqrt(sum(e * e for e in errors) / n)
+
+    mean_actual = sum(actual) / n
+    ss_tot = sum((a - mean_actual) ** 2 for a in actual)
+    ss_res = sum(e * e for e in errors)
+    r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else None
+
+    # Directional fit: Pearson correlation between the quarter-over-quarter
+    # changes (skip i=0 since there's no prior delta).
+    if n >= 3:
+        pred_d = [predicted[i] - predicted[i - 1] for i in range(1, n)]
+        actual_d = [actual[i] - actual[i - 1] for i in range(1, n)]
+        m_p = sum(pred_d) / len(pred_d)
+        m_a = sum(actual_d) / len(actual_d)
+        num = sum((p - m_p) * (a - m_a) for p, a in zip(pred_d, actual_d))
+        den_p = math.sqrt(sum((p - m_p) ** 2 for p in pred_d))
+        den_a = math.sqrt(sum((a - m_a) ** 2 for a in actual_d))
+        directional_corr = num / (den_p * den_a) if (den_p * den_a) > 0 else None
+        # Hit rate: fraction of quarters where Δpredicted and Δactual have
+        # the same sign (excluding ties)
+        same_sign = sum(
+            1 for p, a in zip(pred_d, actual_d) if (p > 0 and a > 0) or (p < 0 and a < 0)
+        )
+        denom_hr = sum(
+            1 for p, a in zip(pred_d, actual_d) if (p > 0 or p < 0) and (a > 0 or a < 0)
+        )
+        directional_hit_rate = same_sign / denom_hr if denom_hr > 0 else None
+    else:
+        directional_corr = None
+        directional_hit_rate = None
+
+    return {
+        "quarters": quarters,
+        "actual_nim_pct": actual,
+        "predicted_nim_pct": predicted,
+        "r_squared": r_squared,
+        "rmse_bps": rmse_pp * 100,
+        "bias_bps": bias_pp * 100,
+        "directional_corr": directional_corr,
+        "directional_hit_rate": directional_hit_rate,
+        "n_quarters": n,
+        "lookback_quarters": LOOKBACK,
     }

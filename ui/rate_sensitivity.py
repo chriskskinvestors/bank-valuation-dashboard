@@ -143,11 +143,12 @@ def render_rate_sensitivity(ticker: str):
     st.markdown("---")
 
     # ── Tabs ────────────────────────────────────────────────────────────
-    tab_phased, tab_named, tab_matrix, tab_parallel = st.tabs([
+    tab_phased, tab_named, tab_matrix, tab_parallel, tab_backtest = st.tabs([
         "📅 Multi-Year Impact (phased)",
         "🎯 Named Curve Scenarios",
         "🔥 Curve Matrix (3M × 5Y)",
         "Parallel Shift (legacy)",
+        "📊 Historical Fit",
     ])
 
     with tab_phased:
@@ -161,6 +162,9 @@ def render_rate_sensitivity(ticker: str):
 
     with tab_parallel:
         _render_parallel_legacy(latest, hist, mode_key, custom_beta)
+
+    with tab_backtest:
+        _render_backtest(ticker, hist, mode_key, custom_beta)
 
     # ── Methodology ─────────────────────────────────────────────────────
     with st.expander("📐 Methodology"):
@@ -270,6 +274,31 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
                   "raising effective funding cost. ~4pp of NIB shifts per +100bps.",
         )
 
+    # Volume effects toggle — projects earning assets forward each year
+    # using the bank's historical YoY growth, optionally damped by the rate
+    # scenario (higher rates → lower loan demand).
+    vol_col1, vol_col2 = st.columns([1, 3])
+    with vol_col1:
+        apply_volume = st.checkbox(
+            "Apply volume effects",
+            value=False,
+            key=f"phased_volume_{ticker}",
+            help="Projects earning assets forward using historical YoY growth, "
+                  "damped by rate scenarios (loans -2pp / +100bps, deposits "
+                  "-1pp / +100bps). Off = balance sheet held flat across horizon.",
+        )
+    with vol_col2:
+        if apply_volume:
+            from analysis.rate_sensitivity import compute_historical_growth_rates
+            ghist = compute_historical_growth_rates(hist) or {}
+            ea_g = ghist.get("earning_assets_growth", 0.05) * 100
+            st.caption(
+                f"📈 Historical YoY: loans **{ghist.get('loans_growth', 0)*100:+.1f}%** · "
+                f"deposits **{ghist.get('deposits_growth', 0)*100:+.1f}%** · "
+                f"earning assets **{ea_g:+.1f}%** · "
+                f"securities **{ghist.get('securities_growth', 0)*100:+.1f}%**"
+            )
+
     result = run_rate_sensitivity_phased(
         latest, hist, sec_data=sec,
         beta_mode=mode_key, custom_deposit_beta=custom_beta,
@@ -278,6 +307,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
         horizon_years=horizon,
         scenarios_bps=[-200, -100, -50, 50, 100, 200],
         securities_ladder=securities_ladder,
+        apply_volume_effects=apply_volume,
     )
 
     inputs = result["inputs"]
@@ -402,6 +432,143 @@ only input for trade sizing — pair with the bank's own ALM disclosures.
 
 
 # ── Named Curve Scenarios ─────────────────────────────────────────────
+
+# ── Historical Backtest ───────────────────────────────────────────────
+
+def _render_backtest(ticker, hist, mode_key, custom_beta):
+    """
+    Replay the rate cycle through the phased model and compare predicted
+    NIM to actual NIM quarter-by-quarter. Surfaces R², RMSE, bias, plus
+    a directional correlation (does Δpredicted move with Δactual?).
+    """
+    st.markdown(
+        "**Honest model self-test.** Walks forward through this bank's "
+        "20 quarters of FDIC history, predicts NIM one year out from each "
+        "baseline using the actual FedFunds rate change, then compares "
+        "to the bank's reported NIM."
+    )
+
+    if not hist or len(hist) < 8:
+        st.warning("Need at least 8 quarters of FDIC history to backtest. "
+                   "This bank has fewer.")
+        return
+
+    from analysis.rate_sensitivity import backtest_bank
+
+    # Pull the same ladder used elsewhere so the backtest uses the bank-
+    # specific repricing pace when available
+    securities_ladder = None
+    try:
+        from data.call_report_store import get_latest_ladder
+        cert = get_fdic_cert(ticker)
+        if cert:
+            securities_ladder = get_latest_ladder(int(cert))
+    except Exception:
+        securities_ladder = None
+
+    bt = backtest_bank(
+        hist,
+        beta_mode=mode_key,
+        custom_deposit_beta=custom_beta,
+        securities_ladder=securities_ladder,
+    )
+    if bt is None:
+        st.warning("Backtest unavailable — insufficient quarter coverage "
+                   "or missing FedFunds data.")
+        return
+
+    # ── Metric strip ──────────────────────────────────────────────────
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric("Quarters tested", f"{bt['n_quarters']}")
+    with c2:
+        r2 = bt.get("r_squared")
+        st.metric("Levels R²", f"{r2:.2f}" if r2 is not None else "—",
+                  help="1.0 = perfect fit to NIM levels. Negative = model "
+                       "fits worse than just predicting the mean. Levels are "
+                       "hard to predict because balance-sheet evolution isn't "
+                       "modeled — look at the directional metrics for cleaner "
+                       "model-skill signal.")
+    with c3:
+        st.metric("RMSE", f"{bt['rmse_bps']:.0f} bps",
+                  help="Root mean squared error in NIM level (basis points). "
+                       "Lower = better.")
+    with c4:
+        st.metric("Bias", f"{bt['bias_bps']:+.0f} bps",
+                  help="Mean (predicted − actual). Positive = model "
+                       "systematically over-predicts NIM. Near zero is good.")
+    with c5:
+        dc = bt.get("directional_corr")
+        st.metric("Directional corr.",
+                  f"{dc:+.2f}" if dc is not None else "—",
+                  help="Correlation between quarter-over-quarter ΔPredicted "
+                       "and ΔActual. +1 = perfect direction tracking. "
+                       "0 = no signal. The cleanest measure of whether the "
+                       "model gets rate-driven NIM moves right.")
+
+    hr = bt.get("directional_hit_rate")
+    if hr is not None:
+        st.caption(
+            f"**Directional hit rate**: model called the right direction "
+            f"of quarter-over-quarter NIM moves **{hr*100:.0f}%** of the "
+            f"time (random = 50%)."
+        )
+
+    # ── Time series chart ─────────────────────────────────────────────
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=bt["quarters"], y=bt["actual_nim_pct"],
+        mode="lines+markers", name="Actual NIM",
+        line=dict(width=3, color="#1f77b4"),
+    ))
+    fig.add_trace(go.Scatter(
+        x=bt["quarters"], y=bt["predicted_nim_pct"],
+        mode="lines+markers", name="Model prediction",
+        line=dict(width=2, color="#ff7f0e", dash="dash"),
+    ))
+    fig.update_layout(
+        title=f"{ticker} — predicted vs actual NIM, 1-year forward from each baseline",
+        xaxis_title="Quarter", yaxis_title="NIM (%)",
+        hovermode="x unified",
+    )
+    apply_standard_layout(fig, height=CHART_HEIGHT_FULL)
+    fig.update_yaxes(ticksuffix="%")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # ── Interpretation block ──────────────────────────────────────────
+    with st.expander("How to read this backtest"):
+        st.markdown("""
+**What the backtest is doing:**
+1. Takes each quarter t in the bank's 20-quarter history
+2. Goes back 4 quarters (to t-4) as a baseline
+3. Computes the actual FedFunds change from t-4 to t
+4. Runs the phased model with that rate change, 1-year horizon
+5. Compares predicted NIM to actual NIM at quarter t
+
+**What it does NOT model** (so absolute-level fit will always be limited):
+- Balance-sheet evolution (mix shifts, M&A, loan-loss provision moves)
+- Fee income / non-interest expense changes
+- Credit-cycle effects on yields
+- Deposit competition / runoff during stress
+
+**How to use the metrics:**
+- **Levels R²** — if positive, the model captures the NIM level decently.
+  Often negative for big banks because their NIM is driven by many
+  non-rate factors. Read it as a strict sanity check.
+- **Directional correlation + hit rate** — the cleaner question:
+  given a rate move, does the model get the direction right? If hit rate
+  is well above 50% and correlation > 0.3, the model has real signal.
+  This is the metric to actually trust the forward predictions on.
+- **Bias** — systematic over- or under-prediction. Near zero is good.
+
+**Use the forward predictions** (Multi-Year Impact tab) **more confidently**
+when this backtest shows high directional correlation. If it's flat or
+negative, the model isn't picking up much rate-driven signal for this
+bank — pair the forecast with the bank's own ALM disclosures before
+sizing trades.
+""")
+
 
 def _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta):
     result = run_curve_sensitivity(
