@@ -38,7 +38,7 @@ def _refresh_one(
 ) -> tuple[int, int, str]:
     """Fetch + store one bank. Returns (cert, n_buckets_written, err)."""
     from data.ffiec_client import (
-        fetch_call_report, get_securities_maturity_ladder,
+        fetch_call_report, get_securities_maturity_ladder, get_loan_repricing,
     )
     from data.call_report_store import upsert_securities_ladder
 
@@ -51,9 +51,13 @@ def _refresh_one(
         ladder = get_securities_maturity_ladder(rssd_id, period, call_report_df=df)
         if ladder is None:
             return cert, 0, "no_securities_data"
-        # Stash floating-loan-share derivation as None for now — would need
-        # additional RC-K parsing per bank, future work.
-        n = upsert_securities_ladder(cert, rssd_id, ladder, floating_loan_share=None)
+        # Derive floating-loan share from the same Call Report (RC-C Memo 2
+        # loan repricing buckets) — no extra HTTP call. None if the bank
+        # didn't report the loan-repricing memoranda.
+        loan_rp = get_loan_repricing(rssd_id, period, call_report_df=df)
+        floating_share = loan_rp.get("floating_loan_share") if loan_rp else None
+        n = upsert_securities_ladder(
+            cert, rssd_id, ladder, floating_loan_share=floating_share)
         return cert, len(ladder.get("buckets", {})), "" if n else "upsert_failed"
     except Exception as e:
         return cert, 0, f"{type(e).__name__}: {str(e)[:80]}"

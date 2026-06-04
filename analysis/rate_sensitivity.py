@@ -175,6 +175,72 @@ def compute_historical_deposit_beta(fdic_hist: list[dict] | None) -> float | Non
         return None
 
 
+# ── Subcategory deposit-beta blending ──────────────────────────────────────
+# Defaults grounded in the backtest: a blended beta near 0.40 minimized
+# small-bank NIM-prediction error. NIB ~0 (sticky), IB-core ~0.40
+# (savings/MMDA/NOW reprice partially), brokered ~0.95 (fully rate-driven).
+DEFAULT_BETA_NIB = 0.0
+DEFAULT_BETA_IB_CORE = 0.40
+DEFAULT_BETA_BROKERED = 0.95
+
+
+def deposit_subcategory_weights(inputs: dict) -> dict:
+    """
+    Split total deposits into the 3 subcategories the user can tweak, as
+    fractions of TOTAL deposits:
+      • nib       — non-interest-bearing (DEPNIDOM)
+      • ib_core   — interest-bearing core = interest-bearing − brokered
+      • brokered  — brokered / wholesale (BRO), assumed interest-bearing
+
+    Returns {nib, ib_core, brokered, ib_total} fractions of total deposits.
+    """
+    total = _safe(inputs.get("total_deposits_usd"))
+    nib = _safe(inputs.get("non_int_dep_usd"))
+    ib = _safe(inputs.get("int_bearing_dep_usd"))
+    bro = _safe(inputs.get("brokered_usd"))
+    if total <= 0:
+        return {"nib": 0.0, "ib_core": 0.0, "brokered": 0.0, "ib_total": 0.0}
+    bro = max(0.0, min(bro, ib))          # brokered can't exceed int-bearing
+    ib_core = max(0.0, ib - bro)
+    return {
+        "nib": nib / total,
+        "ib_core": ib_core / total,
+        "brokered": bro / total,
+        "ib_total": ib / total,
+    }
+
+
+def blend_deposit_betas(
+    inputs: dict,
+    beta_nib: float | None = None,
+    beta_ib_core: float | None = None,
+    beta_brokered: float | None = None,
+) -> tuple[float, float]:
+    """
+    Collapse the 3 user-tweakable subcategory betas into the
+    (beta_int_bearing, beta_non_int) pair that apply_rate_scenario_phased wants.
+
+    beta_int_bearing = balance-weighted avg of ib_core + brokered betas
+    beta_non_int     = the NIB beta (default 0)
+
+    Any None falls back to the DEFAULT_BETA_* constant.
+    """
+    b_nib = DEFAULT_BETA_NIB if beta_nib is None else beta_nib
+    b_core = DEFAULT_BETA_IB_CORE if beta_ib_core is None else beta_ib_core
+    b_bro = DEFAULT_BETA_BROKERED if beta_brokered is None else beta_brokered
+
+    ib = _safe(inputs.get("int_bearing_dep_usd"))
+    bro = max(0.0, min(_safe(inputs.get("brokered_usd")), ib))
+    ib_core = max(0.0, ib - bro)
+
+    denom = ib_core + bro
+    if denom > 0:
+        beta_int = (ib_core * b_core + bro * b_bro) / denom
+    else:
+        beta_int = b_core
+    return (max(0.0, min(1.5, beta_int)), max(0.0, min(1.5, b_nib)))
+
+
 def compute_historical_growth_rates(
     fdic_hist: list[dict] | None,
 ) -> dict | None:
@@ -241,10 +307,21 @@ def adjust_growth_for_rates(
     }
 
 
+def _duration_to_cumulative_pace(duration_yrs: float) -> dict[int, float]:
+    """
+    Convert an average duration (years) to a cumulative repricing schedule
+    using straight-line amortization: by year N, min(1, N / duration) of the
+    book has repriced. A 2.5y-duration book reprices ~40%/yr.
+    """
+    d = max(0.1, float(duration_yrs))
+    return {yr: max(0.0, min(1.0, yr / d)) for yr in range(1, 6)}
+
+
 def compute_repricing_pace(
     inputs: dict,
     floating_loan_share: float | None = None,
     securities_ladder: dict | None = None,
+    asset_durations: dict | None = None,
 ) -> dict[int, float]:
     """
     Cumulative fraction of earning assets that has repriced by end of year N.
@@ -271,19 +348,34 @@ def compute_repricing_pace(
     floating_share = loan_share * fls
     fixed_share = loan_share * (1 - fls)
 
-    # Securities yearly pace: prefer bank-specific ladder if supplied
+    # Asset-duration overrides (user's own view) take top priority, then the
+    # bank-specific FFIEC ladder, then the generic industry default.
+    ad = asset_durations or {}
+    sec_dur = ad.get("sec_duration_yrs")
+    fixed_dur = ad.get("fixed_loan_duration_yrs")
+
+    # Securities yearly cumulative pace
     sec_pace_by_year: dict[int, float] = {}
-    if securities_ladder and securities_ladder.get("buckets"):
+    if sec_dur:
+        sec_pace_by_year = _duration_to_cumulative_pace(sec_dur)
+    elif securities_ladder and securities_ladder.get("buckets"):
         try:
             from data.ffiec_client import maturity_ladder_to_yearly_pace
             sec_pace_by_year = maturity_ladder_to_yearly_pace(securities_ladder)
         except Exception:
             sec_pace_by_year = {}
 
+    # Fixed-loan yearly cumulative pace (override via duration if supplied)
+    fixed_pace_by_year: dict[int, float] = {}
+    if fixed_dur:
+        fixed_pace_by_year = _duration_to_cumulative_pace(fixed_dur)
+
     pace: dict[int, float] = {}
-    for year, (sec_p_default, fixed_p, flo_p) in _REPRICING_BASE.items():
+    for year, (sec_p_default, fixed_p_default, flo_p) in _REPRICING_BASE.items():
         sec_p = sec_pace_by_year.get(year, sec_p_default) if sec_pace_by_year \
             else sec_p_default
+        fixed_p = fixed_pace_by_year.get(year, fixed_p_default) if fixed_pace_by_year \
+            else fixed_p_default
         cum = (sec_share * sec_p) + (fixed_share * fixed_p) + (floating_share * flo_p)
         pace[year] = max(0.0, min(1.0, cum))
     return pace
@@ -301,6 +393,7 @@ def apply_rate_scenario_phased(
     securities_ladder: dict | None = None,
     base_growth_rates: dict | None = None,
     apply_volume_effects: bool = False,
+    asset_durations: dict | None = None,
 ) -> dict:
     """
     Multi-year rate scenario with phased asset repricing + deposit mix shift
@@ -324,7 +417,9 @@ def apply_rate_scenario_phased(
     total_dep = _safe(inputs.get("total_deposits_usd"))
     tax_rate = _safe(inputs.get("effective_tax_rate"), _DEFAULT_TAX_RATE)
 
-    pace = compute_repricing_pace(inputs, floating_loan_share, securities_ladder)
+    pace = compute_repricing_pace(
+        inputs, floating_loan_share, securities_ladder, asset_durations,
+    )
     nii_current = earning_assets * (current_nim / 100)
     rate_pp = rate_change_bps / 100.0
 
@@ -739,6 +834,8 @@ def run_rate_sensitivity_phased(
     securities_ladder: dict | None = None,
     apply_volume_effects: bool = False,
     custom_growth_rates: dict | None = None,
+    subcategory_betas: dict | None = None,
+    asset_durations: dict | None = None,
 ) -> dict:
     """
     Run the enhanced phased rate sensitivity across scenarios.
@@ -747,6 +844,16 @@ def run_rate_sensitivity_phased(
     the bank's actual maturity profile (FFIEC RC-B Memo 2) instead of the
     generic ~29%/yr assumption. The UI passes this in when available.
 
+    subcategory_betas (analyst override, "⚙️ My Assumptions" panel) is a dict
+    with any of {beta_nib, beta_ib_core, beta_brokered}. When provided, the
+    int-bearing + non-int deposit betas are rebuilt from the bank's actual
+    deposit mix via blend_deposit_betas, taking priority over beta_mode.
+
+    asset_durations (analyst override) is a dict with any of
+    {sec_duration_yrs, fixed_loan_duration_yrs}; it overrides the FFIEC ladder
+    / generic securities + fixed-loan repricing pace. floating_loan_share is a
+    separate top-level arg.
+
     Returns the same structure as run_rate_sensitivity but each scenario
     now has a `years` list with per-year NIM/NII/EPS impacts.
     """
@@ -754,9 +861,21 @@ def run_rate_sensitivity_phased(
         scenarios_bps = DEFAULT_SCENARIOS_BPS
 
     inputs = build_rate_sensitivity_inputs(fdic_latest, fdic_hist)
-    beta_int, beta_ni, beta_mode_used = _resolve_deposit_beta(
-        inputs, fdic_hist, beta_mode, custom_deposit_beta,
-    )
+
+    if subcategory_betas:
+        # Analyst's per-subcategory betas win: rebuild int/non-int betas from
+        # the bank's actual deposit mix (NIB / IB-core / brokered weights).
+        beta_int, beta_ni = blend_deposit_betas(
+            inputs,
+            beta_nib=subcategory_betas.get("beta_nib"),
+            beta_ib_core=subcategory_betas.get("beta_ib_core"),
+            beta_brokered=subcategory_betas.get("beta_brokered"),
+        )
+        beta_mode_used = "custom_subcategory"
+    else:
+        beta_int, beta_ni, beta_mode_used = _resolve_deposit_beta(
+            inputs, fdic_hist, beta_mode, custom_deposit_beta,
+        )
 
     shares = None
     if sec_data:
@@ -780,6 +899,7 @@ def run_rate_sensitivity_phased(
             securities_ladder=securities_ladder,
             base_growth_rates=growth_rates,
             apply_volume_effects=apply_volume_effects,
+            asset_durations=asset_durations,
         )
         for bps in scenarios_bps
     ]
@@ -787,9 +907,11 @@ def run_rate_sensitivity_phased(
     return {
         "inputs": inputs,
         "beta_used": beta_int,
+        "beta_non_int_used": beta_ni,
         "beta_mode": beta_mode_used,
         "repricing_pace": compute_repricing_pace(
             inputs, floating_loan_share, securities_ladder,
+            asset_durations=asset_durations,
         ),
         "scenarios": scenario_results,
         "horizon_years": horizon_years,
@@ -887,6 +1009,7 @@ def backtest_bank(
     custom_deposit_beta: float | None = None,
     floating_loan_share: float | None = None,
     securities_ladder: dict | None = None,
+    min_abs_rate_change_bps: float = 0.0,
 ) -> dict | None:
     """
     Walk forward through fdic_hist quarter-by-quarter. At each quarter t:
@@ -961,6 +1084,14 @@ def backtest_bank(
             continue
 
         rate_change_bps = (ff_target - ff_base) * 100  # pp → bps
+
+        # Optional: only score quarters where rates actually moved. In flat-rate
+        # windows the model correctly predicts ~no NIM change, but actual NIM
+        # still drifts on idiosyncratic balance-sheet noise — that washes out
+        # directional correlation. Filtering to rate-active quarters isolates
+        # whether the model has skill *when there is a rate signal to track*.
+        if abs(rate_change_bps) < min_abs_rate_change_bps:
+            continue
 
         # Build inputs from baseline quarter
         inputs = build_rate_sensitivity_inputs(

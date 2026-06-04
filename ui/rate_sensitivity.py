@@ -197,6 +197,180 @@ def render_rate_sensitivity(ticker: str):
 
 # ── Multi-Year Phased Impact (new model) ─────────────────────────────
 
+def _render_assumptions_panel(ticker, latest, hist, securities_ladder,
+                              floating_share, cert=None, saved=None):
+    """
+    "⚙️ My Assumptions" override panel: lets the analyst set their own
+    subcategory deposit betas (NIB / IB-core / brokered) and asset durations
+    (securities + fixed-loan), persisted per-bank in user_nim_assumptions.
+
+    Returns (subcategory_betas, asset_durations) — both None unless the user
+    has ticked "Use my assumptions". When non-None they override the page's
+    beta selector inside run_rate_sensitivity_phased.
+
+    cert + saved may be passed in by the caller (already loaded) to avoid a
+    duplicate DB read; both are resolved here if omitted.
+    """
+    from analysis.rate_sensitivity import (
+        build_rate_sensitivity_inputs, deposit_subcategory_weights,
+        blend_deposit_betas,
+        DEFAULT_BETA_NIB, DEFAULT_BETA_IB_CORE, DEFAULT_BETA_BROKERED,
+    )
+
+    if cert is None:
+        cert = get_fdic_cert(ticker)
+    inputs_preview = build_rate_sensitivity_inputs(latest, hist)
+    wt = deposit_subcategory_weights(inputs_preview)
+
+    if saved is None and cert:
+        try:
+            from data.nim_assumptions_store import get_assumptions
+            saved = get_assumptions(int(cert))
+        except Exception:
+            saved = None
+
+    ladder_dur = (
+        securities_ladder.get("weighted_avg_duration_years")
+        if securities_ladder else None
+    )
+
+    def _sv(key, fallback):
+        if saved and saved.get(key) is not None:
+            return float(saved[key])
+        return float(fallback)
+
+    subcategory_betas = None
+    asset_durations = None
+
+    with st.expander("⚙️ My Assumptions — override betas & durations",
+                     expanded=bool(saved)):
+        use_overrides = st.checkbox(
+            "Use my assumptions (override the deposit-beta selector above)",
+            value=bool(saved),
+            key=f"nim_use_overrides_{ticker}",
+            help="When on, the model blends your three subcategory deposit "
+                 "betas using this bank's actual deposit mix, and uses your "
+                 "asset durations for the repricing pace.",
+        )
+        st.caption(
+            f"Deposit mix for this bank — non-int-bearing **{wt['nib']*100:.0f}%** · "
+            f"IB core (sav/MMDA/NOW) **{wt['ib_core']*100:.0f}%** · "
+            f"brokered/wholesale **{wt['brokered']*100:.0f}%** of total deposits."
+        )
+
+        bcol1, bcol2, bcol3 = st.columns(3)
+        with bcol1:
+            beta_nib = st.slider(
+                "β non-int-bearing", 0.0, 1.0,
+                value=_sv("beta_nib", DEFAULT_BETA_NIB), step=0.05,
+                key=f"beta_nib_{ticker}",
+                help="Pass-through on non-interest-bearing deposits. Usually "
+                     "~0 — they don't reprice with rates.",
+            )
+        with bcol2:
+            beta_ib_core = st.slider(
+                "β IB core (sav/MMDA/NOW)", 0.0, 1.0,
+                value=_sv("beta_ib_core", DEFAULT_BETA_IB_CORE), step=0.05,
+                key=f"beta_ibcore_{ticker}",
+                help="Pass-through on core interest-bearing deposits. Sticky "
+                     "retail franchises ~0.2-0.4; rate-sensitive books higher.",
+            )
+        with bcol3:
+            beta_brokered = st.slider(
+                "β brokered/wholesale", 0.0, 1.0,
+                value=_sv("beta_brokered", DEFAULT_BETA_BROKERED), step=0.05,
+                key=f"beta_brokered_{ticker}",
+                help="Pass-through on brokered/wholesale funding. Reprices "
+                     "~1:1 with the market (~0.9-1.0).",
+            )
+
+        bi, bn = blend_deposit_betas(
+            inputs_preview, beta_nib, beta_ib_core, beta_brokered)
+        st.caption(
+            f"→ Blends to interest-bearing beta **{bi:.2f}**, non-int beta "
+            f"**{bn:.2f}** (weighted by this bank's deposit mix)."
+        )
+
+        st.markdown("**Asset durations** (drive the repricing pace)")
+        dcol1, dcol2, dcol3 = st.columns(3)
+        with dcol1:
+            sec_dur = st.number_input(
+                "Securities duration (yrs)", min_value=0.1, max_value=20.0,
+                value=_sv("sec_duration_yrs", ladder_dur if ladder_dur else 3.0),
+                step=0.25, key=f"sec_dur_{ticker}",
+                help="Avg duration of the securities book. Pre-filled from the "
+                     "FFIEC RC-B ladder when available.",
+            )
+        with dcol2:
+            fixed_dur = st.number_input(
+                "Fixed-loan duration (yrs)", min_value=0.1, max_value=20.0,
+                value=_sv("fixed_loan_duration_yrs", 4.0),
+                step=0.25, key=f"fixed_dur_{ticker}",
+                help="Avg duration of the fixed-rate loan book. Lower reprices "
+                     "faster (shorter-dated consumer/auto); higher = mortgages.",
+            )
+        with dcol3:
+            st.caption(
+                f"Floating-loan share **{floating_share*100:.0f}%** — set with "
+                "the slider above; saved together with these."
+            )
+
+        note = st.text_input(
+            "Note (your rationale)",
+            value=(saved.get("note") if saved and saved.get("note") else ""),
+            key=f"nim_note_{ticker}",
+            placeholder="e.g. 60% of deposits are sticky operating accounts; "
+                        "securities ladder skews short.",
+        )
+
+        sv1, sv2, _sp = st.columns([1, 1, 3])
+        with sv1:
+            if st.button("💾 Save assumptions", key=f"nim_save_{ticker}",
+                         disabled=not cert, use_container_width=True):
+                try:
+                    from data.nim_assumptions_store import upsert_assumptions
+                    upsert_assumptions(int(cert), {
+                        "beta_nib": beta_nib,
+                        "beta_ib_core": beta_ib_core,
+                        "beta_brokered": beta_brokered,
+                        "sec_duration_yrs": sec_dur,
+                        "floating_loan_share": floating_share,
+                        "fixed_loan_duration_yrs": fixed_dur,
+                        "note": note,
+                    }, updated_by="dashboard")
+                    st.success("Saved — will persist across sessions.")
+                except Exception as e:
+                    st.error(f"Save failed: {e}")
+        with sv2:
+            if st.button("↺ Clear (revert to auto)", key=f"nim_clear_{ticker}",
+                         disabled=not (cert and saved), use_container_width=True):
+                try:
+                    from data.nim_assumptions_store import delete_assumptions
+                    delete_assumptions(int(cert))
+                    st.success("Cleared — reverts to auto-defaults on rerun.")
+                except Exception as e:
+                    st.error(f"Clear failed: {e}")
+
+        if saved and saved.get("updated_at"):
+            st.caption(
+                f"Last saved {saved['updated_at']} by "
+                f"{saved.get('updated_by', 'dashboard')}."
+            )
+
+        if use_overrides:
+            subcategory_betas = {
+                "beta_nib": beta_nib,
+                "beta_ib_core": beta_ib_core,
+                "beta_brokered": beta_brokered,
+            }
+            asset_durations = {
+                "sec_duration_yrs": sec_dur,
+                "fixed_loan_duration_yrs": fixed_dur,
+            }
+
+    return subcategory_betas, asset_durations
+
+
 def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     """
     Show per-year NIM, NII, and EPS impact of parallel rate scenarios with
@@ -248,6 +422,35 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     except Exception:
         sec = None
 
+    # Load any saved analyst overrides once, here, so both the floating-loan
+    # slider and the "⚙️ My Assumptions" panel below pre-fill consistently.
+    cert = get_fdic_cert(ticker)
+    saved_assumptions = None
+    if cert:
+        try:
+            from data.nim_assumptions_store import get_assumptions
+            saved_assumptions = get_assumptions(int(cert))
+        except Exception:
+            saved_assumptions = None
+
+    # Floating-loan-share default priority:
+    #   1. analyst's saved override
+    #   2. FFIEC-derived (RC-C Memo 2 ≤3-month repricing share)
+    #   3. generic 0.30
+    ffiec_floating = (
+        securities_ladder.get("floating_loan_share")
+        if securities_ladder else None
+    )
+    if saved_assumptions and saved_assumptions.get("floating_loan_share") is not None:
+        floating_default = float(saved_assumptions["floating_loan_share"])
+        floating_src = "your saved override"
+    elif ffiec_floating is not None:
+        floating_default = float(ffiec_floating)
+        floating_src = "FFIEC RC-C Memo 2 (actual)"
+    else:
+        floating_default = 0.30
+        floating_src = "generic ~30% default"
+
     # Per-bank floating-loan-share slider — biggest single lever for the
     # accuracy of Yr1 numbers.
     col1, col2, col3 = st.columns([1, 1, 2])
@@ -259,12 +462,14 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     with col2:
         floating_share = st.slider(
             "Floating-rate loan share",
-            min_value=0.0, max_value=1.0, value=0.30, step=0.05,
+            min_value=0.0, max_value=1.0, value=floating_default, step=0.05,
             key=f"phased_floating_{ticker}",
             help="Share of loan book that re-prices within Q1 (floating rate). "
-                  "Industry avg ~30%; commercial-heavy banks 40-55%; consumer/mortgage-"
-                  "heavy banks 15-25%.",
+                 f"Pre-filled from {floating_src}. "
+                 "Industry avg ~30%; commercial-heavy banks 40-55%; consumer/mortgage-"
+                 "heavy banks 15-25%.",
         )
+        st.caption(f"source: {floating_src}")
     with col3:
         apply_shift = st.checkbox(
             "Apply NIB → IB deposit mix-shift (rate-up scenarios)",
@@ -299,6 +504,15 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
                 f"securities **{ghist.get('securities_growth', 0)*100:+.1f}%**"
             )
 
+    # ── ⚙️ My Assumptions: per-bank subcategory betas + asset durations ───
+    # Lets the analyst inject their own deposit stickiness + asset-repricing
+    # view (durations) instead of the noisy trailing-historical estimator.
+    # When enabled, these override the beta selector at the top of the page.
+    subcategory_betas, asset_durations = _render_assumptions_panel(
+        ticker, latest, hist, securities_ladder, floating_share,
+        cert=cert, saved=saved_assumptions,
+    )
+
     result = run_rate_sensitivity_phased(
         latest, hist, sec_data=sec,
         beta_mode=mode_key, custom_deposit_beta=custom_beta,
@@ -308,7 +522,16 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
         scenarios_bps=[-200, -100, -50, 50, 100, 200],
         securities_ladder=securities_ladder,
         apply_volume_effects=apply_volume,
+        subcategory_betas=subcategory_betas,
+        asset_durations=asset_durations,
     )
+
+    if subcategory_betas:
+        st.markdown(
+            ":violet-badge[⚙️ Using your saved assumptions] &middot; "
+            f"blended IB beta **{result.get('beta_used', 0):.2f}** · "
+            "subcategory betas + durations override the selector above."
+        )
 
     inputs = result["inputs"]
     # Context strip

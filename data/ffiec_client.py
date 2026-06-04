@@ -374,6 +374,95 @@ def get_securities_maturity_ladder(
     }
 
 
+# Schedule RC-C Part I, Memorandum item 2 — "Loans and leases with a
+# remaining maturity or next repricing date of…". Two sub-schedules summed:
+#   2.a  Closed-end loans secured by 1st liens on 1-4 family residential
+#   2.b  All other loans and all leases
+# A loan in the ≤3-month bucket either floats (reprices each quarter off
+# prime/SOFR) or matures within the quarter — both behave as floating for
+# NIM repricing. So floating_loan_share ≈ the ≤3-month fraction.
+LOAN_REPRICING_BUCKETS = [
+    # key,       [2.a code, 2.b code], lo_yr, hi_yr, label
+    ("le_3mo",  ["A564", "A570"], 0.0,  0.25, "≤ 3 months"),
+    ("3mo_1y",  ["A565", "A571"], 0.25, 1.0,  "3 months – 1 year"),
+    ("1y_3y",   ["A566", "A572"], 1.0,  3.0,  "1 – 3 years"),
+    ("3y_5y",   ["A567", "A573"], 3.0,  5.0,  "3 – 5 years"),
+    ("5y_15y",  ["A568", "A574"], 5.0,  15.0, "5 – 15 years"),
+    ("gt_15y",  ["A569", "A575"], 15.0, 30.0, "> 15 years"),
+]
+
+
+def get_loan_repricing(
+    rssd_id: int,
+    reporting_period: str | None = None,
+    call_report_df: pd.DataFrame | None = None,
+) -> dict | None:
+    """
+    Return the bank's loan repricing/maturity ladder (Schedule RC-C Part I
+    Memorandum 2) as fractions of total reported loans, plus a derived
+    floating_loan_share (the ≤3-month repricing fraction) for the NIM model.
+
+    Returns:
+      {
+        "reporting_period": "12/31/2025",
+        "buckets": {"le_3mo": 0.34, "3mo_1y": 0.12, ...},
+        "amounts_usd": {...},
+        "total_usd": 3_200_000,
+        "floating_loan_share": 0.34,        # reprices within Q1
+        "reprice_within_1y_share": 0.46,    # reprices within a year
+        "weighted_avg_duration_years": 3.8, # midpoint-weighted
+      }
+    or None if the data isn't available.
+
+    Pass call_report_df to reuse a Call Report the caller already fetched
+    (the quarterly refresh job pulls it once for securities + loans).
+    """
+    if call_report_df is None:
+        df = fetch_call_report(rssd_id, reporting_period)
+    else:
+        df = call_report_df
+    if df is None or df.empty:
+        return None
+
+    amounts: dict[str, float] = {}
+    for key, codes, _lo, _hi, _label in LOAN_REPRICING_BUCKETS:
+        bucket_sum = 0.0
+        found = False
+        for code in codes:
+            v = _lookup_concept(df, code)
+            if v is not None:
+                bucket_sum += v
+                found = True
+        if found:
+            amounts[key] = bucket_sum
+
+    if not amounts:
+        return None
+
+    total = sum(amounts.values())
+    if total <= 0:
+        return None
+
+    fractions = {k: v / total for k, v in amounts.items()}
+
+    floating_share = fractions.get("le_3mo", 0.0)
+    within_1y = fractions.get("le_3mo", 0.0) + fractions.get("3mo_1y", 0.0)
+
+    weighted_dur = 0.0
+    for key, _codes, lo, hi, _label in LOAN_REPRICING_BUCKETS:
+        weighted_dur += fractions.get(key, 0.0) * ((lo + hi) / 2)
+
+    return {
+        "reporting_period": reporting_period or latest_reporting_period(),
+        "buckets": fractions,
+        "amounts_usd": amounts,
+        "total_usd": total,
+        "floating_loan_share": round(floating_share, 4),
+        "reprice_within_1y_share": round(within_1y, 4),
+        "weighted_avg_duration_years": round(weighted_dur, 2),
+    }
+
+
 def maturity_ladder_to_yearly_pace(ladder: dict) -> dict[int, float]:
     """
     Convert a 6-bucket maturity ladder to cumulative repricing fractions
