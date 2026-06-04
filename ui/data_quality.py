@@ -246,6 +246,74 @@ def render_data_quality(ticker: str):
         else:
             st.caption("No FDIC data available.")
 
+        st.markdown("---")
+
+        st.markdown("##### FFIEC Call Report Ladder (NIM repricing)")
+        st.caption(
+            "Drives this bank's phased asset-repricing pace in the Rate "
+            "Sensitivity model. When absent, NIM falls back to the generic "
+            "~29%/yr repricing assumption."
+        )
+        _render_ffiec_status(cert)
+
+
+def _render_ffiec_status(cert):
+    """Token health + this bank's stored securities/loan repricing ladder."""
+    from data.ffiec_client import health_check, is_configured
+
+    if not is_configured():
+        st.caption("FFIEC not configured in this environment (no token mounted).")
+        return
+
+    hc = health_check()
+    days = hc.get("days_until_expiry")
+    if not hc.get("ok"):
+        st.warning(
+            f"FFIEC token problem: {hc.get('reason', 'unknown')}. "
+            "Quarterly ladder refresh will fail until it's fixed."
+        )
+    elif days is not None and days < 14:
+        st.error(
+            f"⚠️ FFIEC JWT expires in {days:.0f} days — rotate it now "
+            "(`gcloud secrets versions add ffiec-jwt-token`) or the next "
+            "quarterly refresh will fail."
+        )
+    elif days is not None and days < 30:
+        st.warning(
+            f"FFIEC JWT expires in {days:.0f} days — plan to rotate it soon "
+            "via Secret Manager (`ffiec-jwt-token`)."
+        )
+    elif days is not None:
+        st.caption(f"✅ FFIEC token healthy — {days:.0f} days until expiry.")
+    else:
+        st.caption("✅ FFIEC token configured.")
+
+    ladder = None
+    if cert:
+        try:
+            from data.call_report_store import get_latest_ladder
+            ladder = get_latest_ladder(int(cert))
+        except Exception:
+            ladder = None
+
+    if not ladder:
+        st.caption(
+            "No stored ladder for this bank — NIM uses the generic "
+            "~29%/yr repricing assumption."
+        )
+        return
+
+    fls = ladder.get("floating_loan_share")
+    dur = ladder.get("weighted_avg_duration_years") or 0.0
+    rows = [
+        {"Field": "Reporting period", "Value": ladder.get("reporting_period", "—")},
+        {"Field": "Securities duration (wtd-avg)", "Value": f"{dur:.2f} yrs"},
+        {"Field": "Floating-loan share (RC-C Memo 2)",
+         "Value": f"{fls * 100:.1f}%" if fls is not None else "— (not reported)"},
+        {"Field": "Source", "Value": ladder.get("source", "ffiec")},
+    ]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
 
 def _fmt_for_display(val, unit: str) -> str:
     """Format a raw value for display based on unit hint."""

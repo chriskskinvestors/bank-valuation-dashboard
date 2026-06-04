@@ -164,6 +164,11 @@ def latest_reporting_period(as_of: pd.Timestamp | None = None) -> str:
 # Per-bank data fetch
 # ─────────────────────────────────────────────────────────────────────
 
+# FFIEC Call Report dollar fields (RCFD/RCON) are reported in THOUSANDS of
+# dollars. Multiply raw values by this to expose actual USD in *_usd fields.
+# (Fractions/shares are ratios and unaffected by the scale.)
+FFIEC_DOLLAR_SCALE = 1_000
+
 # RCON codes for Schedule RC-B Memorandum 2.
 # Banks with foreign offices use RCFD (consolidated) instead of RCON (domestic).
 # We try both and use the larger value (consolidated wins for global banks).
@@ -329,8 +334,8 @@ def get_securities_maturity_ladder(
             "le_3mo": 0.12, "3mo_1y": 0.18, "1y_3y": 0.25,
             "3y_5y": 0.20, "5y_15y": 0.20, "gt_15y": 0.05,
         },
-        "amounts_usd": {...},      # raw dollar amounts
-        "total_usd": 821_000_000,
+        "amounts_usd": {...},      # actual USD (FFIEC thousands × 1,000)
+        "total_usd": 821_000_000_000,
         "weighted_avg_duration_years": 4.2,  # midpoint-weighted
       }
     or None if the data isn't available.
@@ -368,8 +373,9 @@ def get_securities_maturity_ladder(
     return {
         "reporting_period": reporting_period or latest_reporting_period(),
         "buckets": fractions,
-        "amounts_usd": amounts,
-        "total_usd": total,
+        # FFIEC reports in $thousands — scale to actual USD.
+        "amounts_usd": {k: v * FFIEC_DOLLAR_SCALE for k, v in amounts.items()},
+        "total_usd": total * FFIEC_DOLLAR_SCALE,
         "weighted_avg_duration_years": round(weighted_dur, 2),
     }
 
@@ -406,8 +412,8 @@ def get_loan_repricing(
       {
         "reporting_period": "12/31/2025",
         "buckets": {"le_3mo": 0.34, "3mo_1y": 0.12, ...},
-        "amounts_usd": {...},
-        "total_usd": 3_200_000,
+        "amounts_usd": {...},               # actual USD (FFIEC thousands × 1,000)
+        "total_usd": 3_200_000_000,
         "floating_loan_share": 0.34,        # reprices within Q1
         "reprice_within_1y_share": 0.46,    # reprices within a year
         "weighted_avg_duration_years": 3.8, # midpoint-weighted
@@ -455,8 +461,9 @@ def get_loan_repricing(
     return {
         "reporting_period": reporting_period or latest_reporting_period(),
         "buckets": fractions,
-        "amounts_usd": amounts,
-        "total_usd": total,
+        # FFIEC reports in $thousands — scale to actual USD.
+        "amounts_usd": {k: v * FFIEC_DOLLAR_SCALE for k, v in amounts.items()},
+        "total_usd": total * FFIEC_DOLLAR_SCALE,
         "floating_loan_share": round(floating_share, 4),
         "reprice_within_1y_share": round(within_1y, 4),
         "weighted_avg_duration_years": round(weighted_dur, 2),
