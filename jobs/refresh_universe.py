@@ -34,8 +34,14 @@ sys.path.insert(0, str(REPO_ROOT))
 warnings.filterwarnings("ignore")
 
 
-def refresh_one(ticker: str) -> dict:
-    """Refresh a single bank's SEC + FDIC data. Returns a status dict."""
+def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
+    """Refresh a single bank's SEC + FDIC data. Returns a status dict.
+
+    price_data: real {price, close} from FMP so price-dependent metrics
+    (P/E, P/TBV, market cap, yields) get validated with real prices. When
+    None/absent, those metrics compute as None and are skipped by the range
+    checks (no false flags from a synthetic price).
+    """
     from data.bank_mapping import get_cik, get_fdic_cert
     from data import sec_client, fdic_client, cache, validation
     from analysis.metrics import build_bank_metrics
@@ -74,7 +80,9 @@ def refresh_one(ticker: str) -> dict:
     # Run validation
     try:
         if sec_data or fdic_data:
-            metrics = build_bank_metrics(ticker, fdic_data, sec_data, {"price": 50}, fdic_hist)
+            metrics = build_bank_metrics(
+                ticker, fdic_data, sec_data,
+                price_data or {"price": None}, fdic_hist)
             findings = validation.validate_bank_metrics(metrics, sec_data=sec_data, fdic_data=fdic_data)
             for f in findings:
                 if f.severity == "error":
@@ -96,11 +104,25 @@ def main():
     universe = sorted(set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Refreshing {len(universe)} banks", flush=True)
 
+    # Batch-fetch real market prices so price-dependent metrics (P/E, P/TBV,
+    # market cap, yields) are validated against reality, not a synthetic price.
+    # Falls back to empty quotes (price None) when FMP isn't configured.
+    prices = {}
+    try:
+        from data import fmp_client
+        prices = fmp_client.get_quote_batch(universe)
+        n_priced = sum(1 for q in prices.values() if q and q.get("price"))
+        print(f"[{time.strftime('%H:%M:%S')}] Fetched {n_priced}/{len(universe)} "
+              "real prices for price-dependent validation", flush=True)
+    except Exception as e:
+        print(f"[warn] price batch fetch failed ({type(e).__name__}); "
+              "price-dependent metrics will be skipped in validation", flush=True)
+
     t0 = time.time()
     results = []
     workers = int(os.environ.get("REFRESH_WORKERS", "8"))
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = {ex.submit(refresh_one, t): t for t in universe}
+        futures = {ex.submit(refresh_one, t, prices.get(t)): t for t in universe}
         done = 0
         for fut in as_completed(futures):
             try:

@@ -232,7 +232,20 @@ def render_data_quality(ticker: str):
                 if v is None:
                     continue
                 if unit.startswith("$"):
-                    display = f"${v:,.0f}" if abs(v) < 1000 else f"${v*1000/1e9:.2f}B"
+                    # FDIC dollar fields are reported in $thousands. Scale to
+                    # actual dollars, then format adaptively so small banks and
+                    # negative net income render correctly (the old < 1000
+                    # threshold mislabeled any sub-$1M line item as raw dollars).
+                    dollars = v * 1000
+                    a = abs(dollars)
+                    if a >= 1e9:
+                        display = f"${dollars/1e9:.2f}B"
+                    elif a >= 1e6:
+                        display = f"${dollars/1e6:.1f}M"
+                    elif a >= 1e3:
+                        display = f"${dollars/1e3:.0f}K"
+                    else:
+                        display = f"${dollars:,.0f}"
                 else:
                     display = f"{v:.2f}%"
                 rows.append({

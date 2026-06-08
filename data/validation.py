@@ -192,6 +192,161 @@ def cross_check_net_income(sec_ni: float | None, fdic_ni_ytd: float | None,
     return findings
 
 
+def cross_check_assets(sec_holdco_assets: float | None,
+                        fdic_sub_assets: float | None) -> list[Finding]:
+    """
+    Verify SEC HoldCo total assets vs FDIC sub-bank total assets.
+
+    A bank holding company consolidates the bank, so HoldCo assets should be
+    within a modest band of sub-bank assets for most BHCs (the vast majority
+    are ~100% bank). A large mismatch is almost always one of:
+      - a unit error (thousands vs dollars → ~99% or ~10,000% gap)
+      - a wrong CIK mapping (HoldCo assets a fraction of the bank's)
+    Both are exactly what we want to catch.
+
+    Inputs must be in the SAME units (raw USD). Caller scales FDIC ×1000.
+    """
+    findings: list[Finding] = []
+    if not sec_holdco_assets or not fdic_sub_assets:
+        return findings
+    if sec_holdco_assets <= 0 or fdic_sub_assets <= 0:
+        return findings
+    gap_pct = (sec_holdco_assets - fdic_sub_assets) / fdic_sub_assets * 100
+
+    if gap_pct < -50:
+        findings.append(Finding(
+            severity="error",
+            field="assets_reconciliation",
+            message=(
+                f"HoldCo assets (${sec_holdco_assets/1e9:.1f}B) are "
+                f"{abs(gap_pct):.0f}% below sub-bank assets (${fdic_sub_assets/1e9:.1f}B). "
+                "A gap this large points to a unit error or wrong CIK mapping."
+            ),
+        ))
+    elif abs(gap_pct) > 35:
+        findings.append(Finding(
+            severity="warning",
+            field="assets_reconciliation",
+            message=(
+                f"HoldCo assets (${sec_holdco_assets/1e9:.1f}B) differ "
+                f"{gap_pct:+.0f}% from sub-bank assets (${fdic_sub_assets/1e9:.1f}B). "
+                "Verify entity mapping / material non-bank assets."
+            ),
+        ))
+    return findings
+
+
+def check_loan_composition(fdic_data: dict) -> list[Finding]:
+    """
+    Internal consistency on the loan book: no top-level segment can exceed
+    total loans, and the mutually-exclusive top-level categories shouldn't
+    sum to materially more than gross loans. A unit error in one segment
+    field blows its ratio past 1.0 — a strong tripwire.
+
+    Uses raw FDIC values (thousands); all comparisons are ratios so the
+    common scale cancels out.
+    """
+    findings: list[Finding] = []
+    gross = fdic_data.get("LNLSGR") or fdic_data.get("LNLSNET")
+    if not gross or gross <= 0:
+        return findings
+
+    # Mutually-exclusive top-level FDIC loan categories.
+    segments = {
+        "real estate (LNRE)": fdic_data.get("LNRE"),
+        "C&I (LNCI)": fdic_data.get("LNCI"),
+        "consumer (LNCON)": fdic_data.get("LNCON"),
+        "agricultural (LNAG)": fdic_data.get("LNAG"),
+    }
+    for label, v in segments.items():
+        if v is not None and v > gross * 1.02:
+            findings.append(Finding(
+                severity="error",
+                field="loan_composition",
+                message=(
+                    f"Loan segment {label} exceeds gross loans "
+                    f"({v/max(gross,1)*100:.0f}% of total). Almost certainly a "
+                    "unit mismatch in this field."
+                ),
+                value=v,
+            ))
+    present = [v for v in segments.values() if v is not None]
+    if present:
+        s = sum(present)
+        if s > gross * 1.05:
+            findings.append(Finding(
+                severity="warning",
+                field="loan_composition",
+                message=(
+                    f"Top-level loan segments sum to {s/gross*100:.0f}% of gross "
+                    "loans (>105%). Possible double-count or unit error."
+                ),
+            ))
+    return findings
+
+
+def check_deposit_composition(fdic_data: dict) -> list[Finding]:
+    """
+    Internal consistency on deposits: insured+uninsured should ≈ total, and
+    interest-bearing + non-interest-bearing (domestic) should be ≤ total.
+    A unit error in one component blows the sum past total deposits.
+
+    Uses raw FDIC values (thousands); comparisons are ratios.
+    """
+    findings: list[Finding] = []
+    total = fdic_data.get("DEP")
+    if not total or total <= 0:
+        return findings
+
+    pairs = [
+        ("insured+uninsured", fdic_data.get("DEPINS"), fdic_data.get("DEPUNINS"), True),
+        ("IB+NIB (domestic)", fdic_data.get("DEPIDOM"), fdic_data.get("DEPNIDOM"), False),
+    ]
+    for label, a, b, check_low in pairs:
+        if a is None or b is None:
+            continue
+        ratio = (a + b) / total
+        if ratio > 1.05:
+            findings.append(Finding(
+                severity="warning",
+                field="deposit_composition",
+                message=(
+                    f"Deposit split '{label}' sums to {ratio*100:.0f}% of total "
+                    "deposits (>105%). Possible unit error or double-count."
+                ),
+            ))
+        elif check_low and ratio < 0.90:
+            # Domestic IB+NIB can legitimately run below total DEP (foreign
+            # deposits), so only the insured+uninsured pair triggers the low side.
+            findings.append(Finding(
+                severity="warning",
+                field="deposit_composition",
+                message=(
+                    f"Insured+uninsured deposits sum to only {ratio*100:.0f}% of "
+                    "total deposits (<90%). Check for a missing component field."
+                ),
+            ))
+    return findings
+
+
+def _coerce_date_str(d) -> str | None:
+    """Normalize a date-like value (datetime, 'YYYY-MM-DD', 'YYYYMMDD') to
+    'YYYY-MM-DD' for check_staleness. Returns None if unparseable."""
+    if d is None:
+        return None
+    if hasattr(d, "strftime"):
+        try:
+            return d.strftime("%Y-%m-%d")
+        except Exception:
+            return None
+    s = str(d).strip()
+    if len(s) >= 10 and s[4:5] == "-":
+        return s[:10]
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return None
+
+
 # ───── STALENESS ──────────────────────────────────────────────────────
 
 def check_staleness(as_of: str | None, max_age_days: int,
@@ -255,6 +410,37 @@ def validate_bank_metrics(metrics: dict, sec_data: dict | None = None,
             except Exception:
                 pass
         findings.extend(cross_check_net_income(sec_ni, fdic_ni, quarter))
+
+        # Cross-source: total-assets reconciliation (catches unit errors and
+        # wrong CIK mappings — a unit mismatch shows up as a ~99% / ~10,000% gap)
+        sec_assets = sec_data.get("total_assets_sec")
+        fdic_assets = fdic_data.get("ASSET")
+        if fdic_assets:
+            fdic_assets = fdic_assets * 1000  # thousands to dollars
+        findings.extend(cross_check_assets(sec_assets, fdic_assets))
+
+    # Internal consistency: loan & deposit composition must sum sensibly.
+    # These run off raw FDIC fields (ratios, so scale-independent) and are
+    # strong tripwires for a single mis-scaled field.
+    if fdic_data:
+        findings.extend(check_loan_composition(fdic_data))
+        findings.extend(check_deposit_composition(fdic_data))
+
+    # Staleness — flag data that's fallen behind. FDIC Call Reports are
+    # quarterly and post ~45 days after quarter-end, so >135 days means we've
+    # missed a full quarter. SEC filings: >200 days (missed a 10-Q cycle).
+    if fdic_data:
+        f = check_staleness(
+            _coerce_date_str(fdic_data.get("REPDTE")),
+            max_age_days=135, field_name="fdic_call_report")
+        if f:
+            findings.append(f)
+    if sec_data:
+        f = check_staleness(
+            _coerce_date_str(sec_data.get("sec_as_of")),
+            max_age_days=200, field_name="sec_filings")
+        if f:
+            findings.append(f)
 
     # Internal consistency
     ltd = metrics.get("loans_to_deposits")

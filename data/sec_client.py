@@ -362,7 +362,32 @@ def get_latest_fundamentals(cik: int) -> dict:
         result["book_value_per_share"] = None
         result["tangible_book_value_per_share"] = None
 
+    # Stamp the latest filing end-date so downstream staleness checks have an
+    # anchor. Use the equity concept (every bank reports it every quarter);
+    # fall back to total assets, then net income.
+    result["sec_as_of"] = (
+        _latest_end_date(facts, "StockholdersEquity")
+        or _latest_end_date(facts, "Assets")
+        or _latest_end_date(facts, "NetIncomeLoss")
+    )
+
     return result
+
+
+def _latest_end_date(facts: dict, concept: str) -> str | None:
+    """Return the most recent period end-date ('YYYY-MM-DD') reported for a
+    US-GAAP concept, or None. Used to stamp data freshness."""
+    try:
+        units = facts.get("facts", {}).get("us-gaap", {}).get(concept, {}).get("units", {})
+        latest = None
+        for entries in units.values():
+            for e in entries:
+                end = e.get("end")
+                if end and (latest is None or end > latest):
+                    latest = end
+        return latest
+    except Exception:
+        return None
 
 
 def get_fundamentals_with_provenance(cik: int) -> dict:

@@ -30,6 +30,8 @@ consensus/
 tests/smoke_report.csv
 tests/universe_audit_report.csv
 tests/warning_verification.csv
+tests/verify_metrics_report.csv
+tests/live_audit_report.csv
 
 # Plan files
 .claude/plans/

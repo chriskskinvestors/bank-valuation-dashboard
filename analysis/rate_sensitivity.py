@@ -59,10 +59,17 @@ _REPRICING_BASE = {
     5: (1.00, 0.58, 1.00),
 }
 
-# Default share of loans that are floating-rate (industry avg).
-_DEFAULT_FLOATING_LOAN_SHARE = 0.30
+# Default share of loans that are floating-rate, used only as a fallback when
+# a bank has no FFIEC RC-C Memo 2 ladder (8 of 329 mapped banks as of 2026-Q1).
+# Empirically recalibrated (tools/recalibrate_constants.py, 2026-06) against
+# the 321 banks WITH actual FFIEC floating shares: mean 0.307, median 0.268.
+# We use the median — more robust to the right-skewed tail (max 0.93).
+_DEFAULT_FLOATING_LOAN_SHARE = 0.27
 
-# Deposit mix-shift: per 100 bps rate up, what % of NIB migrates to IB
+# Deposit mix-shift: per 100 bps rate up, what fraction of NIB migrates to IB.
+# Empirically confirmed (tools/recalibrate_constants.py, 2026-06) by measuring
+# the actual NIB-share decline across the 2021Q4→2023Q4 hiking cycle (+5.25pp):
+# mean 0.0376, median 0.0334 per 100bps. 0.04 sits right at the mean.
 _MIX_SHIFT_PER_100BPS = 0.04
 
 # Default effective tax rate if FDIC data missing
@@ -176,9 +183,16 @@ def compute_historical_deposit_beta(fdic_hist: list[dict] | None) -> float | Non
 
 
 # ── Subcategory deposit-beta blending ──────────────────────────────────────
-# Defaults grounded in the backtest: a blended beta near 0.40 minimized
-# small-bank NIM-prediction error. NIB ~0 (sticky), IB-core ~0.40
-# (savings/MMDA/NOW reprice partially), brokered ~0.95 (fully rate-driven).
+# IB-core 0.40 is an EFFECTIVE NIM-prediction beta, not a pure cost-of-deposits
+# beta. Verified twice (tools/recalibrate_constants.py, 2026-06):
+#   • Pure cost beta (ΔINTEXPY/Δffr) across the cycle measured ~0.30, BUT
+#   • Sweeping the beta through the walk-forward NIM backtest (60 banks, 1080
+#     rate-active quarters) shows error AND bias are BOTH minimized at exactly
+#     0.40 (RMSE 45.5bps, bias −0.4bps); 0.30 over-predicts NIM (bias +3.2bps,
+#     RMSE 47.4). The effective beta absorbs model simplifications, so 0.40 is
+#     correct for prediction even though raw deposit repricing looks softer.
+#     DO NOT lower it to the raw cost beta without re-running the sweep.
+# NIB ~0 (sticky), brokered ~0.95 (fully rate-driven wholesale funding).
 DEFAULT_BETA_NIB = 0.0
 DEFAULT_BETA_IB_CORE = 0.40
 DEFAULT_BETA_BROKERED = 0.95
