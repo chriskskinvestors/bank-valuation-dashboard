@@ -114,7 +114,7 @@ jobs:
       # image they were created with — easy to forget, painful to debug.
       - name: Sync Cloud Run Jobs to deployed image
         run: |
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices verify-metrics; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               echo "  Updating $job..."
               gcloud run jobs update "$job" \

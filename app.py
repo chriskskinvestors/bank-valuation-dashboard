@@ -252,16 +252,32 @@ def load_prices(tickers: list, max_wait: float = 3.0) -> dict:
         if non_empty >= len(tickers) * 0.5:
             return prices
 
-    # 2. FMP fallback / primary in cloud
+    # 2. Warm price cache (Postgres) — the fast path in cloud. A market-hours
+    #    job (jobs/refresh_prices.py) keeps every universe price fresh, so a
+    #    full screen reads instantly instead of fanning out ~355 FMP calls
+    #    (~70s cold against FMP's ~300/min cap). Stale/missing tickers fall
+    #    through to live FMP below.
+    out: dict = {}
     try:
-        from data.fmp_client import get_quote_batch, _has_key
-        if _has_key():
-            return get_quote_batch(tickers)
+        from data.price_cache_store import get_prices as get_warm_prices
+        out = get_warm_prices(tickers)  # {ticker: quote} for cached rows
     except Exception as e:
-        print(f"[prices] FMP fallback failed: {type(e).__name__}: {e}")
+        print(f"[prices] warm cache read failed: {type(e).__name__}: {e}")
 
-    # 3. No source — empty
-    return {t: get_empty_price() for t in tickers}
+    missing = [t for t in tickers if t not in out]
+
+    # 3. Live FMP for anything not warm-cached (local/dev, brand-new tickers,
+    #    or a cache that hasn't been warmed yet).
+    if missing:
+        try:
+            from data.fmp_client import get_quote_batch, _has_key
+            if _has_key():
+                out.update(get_quote_batch(missing))
+        except Exception as e:
+            print(f"[prices] FMP fallback failed: {type(e).__name__}: {e}")
+
+    # 4. Fill any remaining gaps with empty quotes.
+    return {t: out.get(t) or get_empty_price() for t in tickers}
 
 
 # Backwards-compat alias for any callers still using the old name
