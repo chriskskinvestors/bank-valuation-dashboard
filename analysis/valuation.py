@@ -269,6 +269,42 @@ def compute_roatce_blended(
     return None
 
 
+def _normalized_earnings_factor(fdic_hist: list[dict] | None) -> float:
+    """
+    Dampening factor (0.2–1.0) that strips one-time earnings spikes out of the
+    TTM net income that drives fair value.
+
+    A non-recurring gain — a large loan recovery, a tax benefit, a securities
+    gain — inflates a single quarter, which inflates TTM ROATCE, which the
+    linear fair-P/TBV model extrapolates into an absurd fair value and a FALSE
+    "undervalued" signal (e.g. Carter Bankshares' Q1-2026 loan recovery drove
+    ROATCE to 21.6% and fair value to $49 vs a ~$23 normalized value).
+
+    Method: winsorize each of the 4 most-recent single-quarter net incomes at
+    2× the trailing-8-quarter median, then return normalized_TTM / raw_TTM.
+    Returns 1.0 (no change) for banks with steady earnings.
+    """
+    if not fdic_hist or len(fdic_hist) < 5:
+        return 1.0
+    import statistics
+    qtrs = []
+    for i in range(min(8, len(fdic_hist))):
+        v = _derive_quarterly_value("NETINC", fdic_hist, i)
+        if v is not None:
+            qtrs.append(v)
+    if len(qtrs) < 5:
+        return 1.0
+    med = statistics.median(qtrs)
+    if med <= 0:
+        return 1.0
+    raw_ttm = sum(qtrs[:4])
+    if raw_ttm <= 0:
+        return 1.0
+    cap = 2.0 * med
+    norm_ttm = sum(min(q, cap) for q in qtrs[:4])
+    return max(0.2, min(1.0, norm_ttm / raw_ttm))
+
+
 def compute_fair_ptbv(roatce_blended: float | None) -> float | None:
     """
     Implied fair P/TBV multiple from blended ROATCE.
@@ -284,7 +320,10 @@ def compute_fair_ptbv(roatce_blended: float | None) -> float | None:
         return None
     if roatce_blended <= 0:
         return 0.0
-    return roatce_blended / 10.0
+    # Cap at 2.5x: even a sustainably high-ROATCE bank rarely warrants more
+    # than ~2.5x tangible book, and the cap is a backstop against any residual
+    # earnings distortion slipping through normalization.
+    return min(2.5, roatce_blended / 10.0)
 
 
 def compute_ptbv_discount(
@@ -422,7 +461,15 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # Fair value screening — use HoldCo ROATCE when available (what investors
     # price off); fall back to sub-bank blended if SEC data is missing.
     roatce_blended = roatce_holdco if roatce_holdco is not None else compute_roatce_blended(roatce_current, roatce_4q)
-    fair_ptbv = compute_fair_ptbv(roatce_blended)
+
+    # Normalize away one-time earnings spikes (loan recoveries, tax benefits,
+    # securities gains) before deriving fair value — otherwise a non-recurring
+    # gain inflates ROATCE and produces a false "undervalued" signal.
+    earnings_norm_factor = _normalized_earnings_factor(fdic_hist)
+    roatce_normalized = (
+        roatce_blended * earnings_norm_factor if roatce_blended is not None else None
+    )
+    fair_ptbv = compute_fair_ptbv(roatce_normalized)
     ptbv_discount = compute_ptbv_discount(actual_ptbv, fair_ptbv)
     fair_price = compute_fair_value_price(fair_ptbv, tbvps)
 
@@ -461,6 +508,8 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "cost_of_funds": cost_of_funds,
         "nonint_burden": nonint_burden,
         "roatce_blended": roatce_blended,
+        "roatce_normalized": roatce_normalized,
+        "earnings_norm_factor": earnings_norm_factor,
         "fair_ptbv": fair_ptbv,
         "fair_price": fair_price,
         "ptbv_discount": ptbv_discount,
