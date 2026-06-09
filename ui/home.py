@@ -36,7 +36,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
             </div>
             <div class="ksk-hero-meta">
                 <span class="dot"></span>
-                <span>Live · FDIC · SEC EDGAR · IBKR</span>
+                <span>Live · FDIC · SEC EDGAR · FMP</span>
                 <span style="color:#cbd5e1;">—</span>
                 <span><strong style="color:#0f172a;">{len(watchlist)}</strong> watchlist</span>
                 <span style="color:#cbd5e1;">·</span>
@@ -48,31 +48,28 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     )
     st.markdown("")
 
-    # ── Macro KPIs (yield curve context) ─────────────────────────────────
+    # ── Macro KPIs (full Treasury curve) ─────────────────────────────────
     try:
-        from data.fred_client import latest_value, recession_probability
+        from data.fred_client import latest_value
         ff = latest_value("FEDFUNDS")
-        t10 = latest_value("DGS10")
+        t3m = latest_value("DGS3MO")
         t2 = latest_value("DGS2")
+        t5 = latest_value("DGS5")
+        t10 = latest_value("DGS10")
         spread = latest_value("T10Y2Y")
-        rec = recession_probability()
 
-        m1, m2, m3, m4, m5 = st.columns(5)
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
         m1.metric("Fed Funds", f"{ff:.2f}%" if ff is not None else "—")
-        m2.metric("2Y / 10Y", f"{t2:.2f}% / {t10:.2f}%" if (t2 and t10) else "—")
-        m3.metric(
+        m2.metric("3M", f"{t3m:.2f}%" if t3m is not None else "—")
+        m3.metric("2Y", f"{t2:.2f}%" if t2 is not None else "—")
+        m4.metric("5Y", f"{t5:.2f}%" if t5 is not None else "—")
+        m5.metric("10Y", f"{t10:.2f}%" if t10 is not None else "—")
+        m6.metric(
             "10Y - 2Y",
             f"{spread:+.2f}pp" if spread is not None else "—",
             delta="Inverted" if (spread is not None and spread < 0) else "Normal",
             delta_color="inverse",
         )
-        rec_color = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(rec["level"], "—")
-        m4.metric(
-            "Recession Signal",
-            f"{rec_color} {rec['level'].title()}",
-            delta=f"{rec['score']}/100", delta_color="off",
-        )
-        m5.metric("Banks Tracked", f"{len(watchlist)}")
     except Exception:
         pass
 
@@ -82,17 +79,25 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     if all_metrics:
         df = pd.DataFrame(all_metrics)
 
-        # Aggregate stats
-        avg_roatce = df["roatce_blended"].mean() if "roatce_blended" in df.columns and df["roatce_blended"].notna().any() else None
-        avg_nim = df["nim"].mean() if "nim" in df.columns and df["nim"].notna().any() else None
-        avg_efficiency = df["efficiency_ratio"].mean() if "efficiency_ratio" in df.columns and df["efficiency_ratio"].notna().any() else None
-        avg_cet1 = df["cet1_ratio"].mean() if "cet1_ratio" in df.columns and df["cet1_ratio"].notna().any() else None
+        def _avg(col):
+            return df[col].mean() if col in df.columns and df[col].notna().any() else None
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Avg ROATCE", f"{avg_roatce:.1f}%" if avg_roatce else "—")
-        c2.metric("Avg NIM", f"{avg_nim:.2f}%" if avg_nim else "—")
-        c3.metric("Avg Efficiency", f"{avg_efficiency:.1f}%" if avg_efficiency else "—")
-        c4.metric("Avg CET1", f"{avg_cet1:.2f}%" if avg_cet1 else "—")
+        def _fmt(v, suffix="%", dp=1):
+            return f"{v:.{dp}f}{suffix}" if v is not None else "—"
+
+        # Row 1 — profitability & capital
+        r1 = st.columns(4)
+        r1[0].metric("Avg ROATCE", _fmt(_avg("roatce_blended")))
+        r1[1].metric("Avg NIM", _fmt(_avg("nim"), dp=2))
+        r1[2].metric("Avg Efficiency", _fmt(_avg("efficiency_ratio")))
+        r1[3].metric("Avg CET1", _fmt(_avg("cet1_ratio"), dp=2))
+
+        # Row 2 — returns, credit, valuation, funding risk
+        r2 = st.columns(4)
+        r2[0].metric("Avg ROAA", _fmt(_avg("roaa"), dp=2))
+        r2[1].metric("Avg NPL", _fmt(_avg("npl_ratio"), dp=2))
+        r2[2].metric("Avg P/TBV", _fmt(_avg("ptbv_ratio"), suffix="x", dp=2))
+        r2[3].metric("Avg Uninsured Dep", _fmt(_avg("uninsured_pct"), dp=0))
 
     st.markdown("")
 

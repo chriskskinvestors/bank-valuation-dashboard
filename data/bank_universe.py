@@ -280,8 +280,26 @@ def get_universe_count() -> int:
 
 
 def get_universe_count_fast() -> str:
-    """Return estimated universe count without triggering a build."""
-    return "~480"
+    """
+    Return the universe size for the header WITHOUT forcing an expensive build.
+
+    Prefers the real built count when the universe is already cached this
+    process; otherwise falls back to the curated mapping count (cheap, static).
+    Never returns a hardcoded guess.
+    """
+    if _UNIVERSE_CACHE is not None:
+        return str(len(_UNIVERSE_CACHE))
+    try:
+        from data.bank_mapping import BANK_MAP
+        certs = set(BANK_MAP)
+        try:
+            from data.bank_mapping import _RESOLVED_FROM_JSON
+            certs |= set(_RESOLVED_FROM_JSON)
+        except Exception:
+            pass
+        return str(len(certs))
+    except Exception:
+        return "—"
 
 
 def search_universe(query: str, limit: int = 25) -> list[dict]:
