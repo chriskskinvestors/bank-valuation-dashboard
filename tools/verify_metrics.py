@@ -101,9 +101,13 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
     eps = sec.get("eps")
     dps = sec.get("dividends_per_share")
 
-    tbvps = None
-    if equity is not None and shares and shares > 0:
-        tbvps = (equity - gw - intang) / shares
+    # Tangible book uses the robust intangible adjustment resolved by
+    # sec_client (goodwill + other-intangibles across alternate XBRL concepts).
+    # The independent TBV check is the FMP cross-check below, not a naive
+    # re-derivation that would miss the same concepts.
+    tbvps = sec.get("tangible_book_value_per_share")
+    adj = sec.get("intangible_adjustment")
+    tce = (equity - adj) if (equity is not None and adj is not None) else None
 
     # Computed metrics.
     out["market_cap"] = price * shares if (price and shares) else None
@@ -111,7 +115,6 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
     out["ptbv_ratio"] = (price / tbvps) if (price and tbvps and tbvps > 0) else None
     out["dividend_yield"] = ((dps / price) * 100) if (price and dps and price > 0) else None
 
-    tce = (equity - gw - intang) if equity is not None else None
     out["roatce_holdco"] = (ni / tce * 100) if (ni is not None and tce and tce > 0) else None
 
     return out
@@ -184,8 +187,9 @@ def verify_ticker(ticker: str) -> dict:
     except Exception:
         fmp = {}
     if fmp:
+        # TBV (tangible book) is the figure that matters for banks — compare
+        # TBV-vs-TBV. (Plain book value is deliberately not cross-checked.)
         fmp_checks = [
-            ("fmp:bvps", fmp.get("bvps"), sec.get("book_value_per_share")),
             ("fmp:tbvps", fmp.get("tbvps"), sec.get("tangible_book_value_per_share")),
             ("fmp:pe_ratio", fmp.get("pe_ratio"), dash.get("pe_ratio")),
             ("fmp:dividend_yield", fmp.get("dividend_yield"), dash.get("dividend_yield")),

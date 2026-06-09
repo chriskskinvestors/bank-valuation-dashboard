@@ -434,15 +434,10 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "pe_ratio": compute_pe_ratio(price, eps),
         "pb_ratio": compute_pb_ratio(price, bvps),
         "ptbv_ratio": compute_ptbv_ratio(price, tbvps),
-        # Prefer FMP's pre-computed dividend yield (carried in price_data from
-        # the warm cache) — our XBRL TTM dividend-per-share derivation is
-        # unreliable (per/declaration vs cumulative reporting). Fall back to our
-        # SEC-derived computation when FMP's value isn't available.
-        "dividend_yield": (
-            price_data.get("dividend_yield")
-            if price_data.get("dividend_yield") is not None
-            else compute_dividend_yield(price, dps)
-        ),
+        # Computed from our own robust TTM dividend-per-share (anchored to the
+        # latest period; handles cut/skipped quarters). FMP's dividend figure is
+        # ALSO unreliable, so we derive from the filing rather than adopt it.
+        "dividend_yield": compute_dividend_yield(price, dps),
         "roatce": roatce_current,
         "roatce_holdco": roatce_holdco,
         "roaa_4q": compute_4q_avg(fdic_hist or [], "ROA"),

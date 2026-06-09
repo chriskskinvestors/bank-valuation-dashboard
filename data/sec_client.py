@@ -220,6 +220,80 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
     return None
 
 
+def _extract_ttm_dividend(
+    facts: dict, concept: str = "CommonStockDividendsPerShareDeclared",
+) -> float | None:
+    """
+    Robust trailing-twelve-months dividends-per-share.
+
+    Dividends need special handling vs other flow concepts: a bank can skip or
+    cut a quarter (untagged → effectively $0), so naively summing the "4 most
+    recent quarterly-tagged entries" pulls from a STALE window and overstates
+    the dividend (e.g. BAFN: Q3/Q4-2025 were $0 and untagged, so the 4 newest
+    tagged quarters were Q3-24..Q2-25 = $0.32 vs the true FY2025 of $0.16).
+
+    Algorithm, anchored to the latest reported period-end E (so we never count
+    stale quarters):
+      1. If an annual (~365-day) entry ends at E → return it (authoritative).
+      2. Else sum single-quarter entries ending within (E−370d, E].
+      3. Else fall back to the latest year-to-date cumulative entry.
+    """
+    from datetime import datetime, timedelta
+    units = facts.get("facts", {}).get("us-gaap", {}).get(concept, {}).get("units", {})
+    entries: list[dict] = []
+    for unit_type in ("USD/shares", "USD"):
+        for e in units.get(unit_type, []):
+            if e.get("form") not in ("10-K", "10-Q"):
+                continue
+            start, end, val = e.get("start"), e.get("end"), e.get("val")
+            if not start or not end or val is None:
+                continue
+            try:
+                span = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days
+            except ValueError:
+                continue
+            entries.append({"start": start, "end": end, "val": val,
+                            "span": span, "filed": e.get("filed", "")})
+    if not entries:
+        return None
+
+    E = max(e["end"] for e in entries)
+    Ed = datetime.fromisoformat(E)
+
+    # Staleness guard: if the most recent dividend tag is too old (the bank
+    # stopped tagging dividends in XBRL — e.g. CBNK after mid-2024), we don't
+    # know the current dividend. Return None rather than present a stale value
+    # as if it were current.
+    if (datetime.now() - Ed).days > 400:
+        return None
+
+    # 1) Annual entry ending at the anchor — the authoritative full-year figure.
+    annual_at_e = [e for e in entries if 350 <= e["span"] <= 380
+                   and abs((datetime.fromisoformat(e["end"]) - Ed).days) <= 15]
+    if annual_at_e:
+        annual_at_e.sort(key=lambda x: x["filed"], reverse=True)
+        return float(annual_at_e[0]["val"])
+
+    # 2) Sum single-quarter entries within the trailing 12 months of the anchor.
+    window_start = Ed - timedelta(days=370)
+    by_end: dict[str, dict] = {}
+    for e in entries:
+        if 80 <= e["span"] <= 100:
+            de = datetime.fromisoformat(e["end"])
+            if window_start < de <= Ed:
+                if e["end"] not in by_end or e["filed"] > by_end[e["end"]]["filed"]:
+                    by_end[e["end"]] = e
+    if by_end:
+        return float(sum(v["val"] for v in by_end.values()))
+
+    # 3) Latest year-to-date cumulative entry (best available).
+    cumulative = [e for e in entries if e["span"] > 100]
+    if cumulative:
+        cumulative.sort(key=lambda x: (x["end"], x["filed"]), reverse=True)
+        return float(cumulative[0]["val"])
+    return None
+
+
 def _extract_time_series(facts: dict, concept: str) -> pd.DataFrame:
     """Extract a time series of values for a concept."""
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
@@ -312,13 +386,15 @@ def get_latest_fundamentals(cik: int) -> dict:
             result[field] = ttm_val
             result[f"{field}_ttm"] = ttm_val
 
-    # Dividends per share: also TTM. A quarterly DPS shown as the annual
-    # dividend would understate yield by 4×.
-    dps_ttm = _extract_ttm_value(facts, "CommonStockDividendsPerShareDeclared")
-    if dps_ttm is not None:
-        result["dividends_per_share_latest_period"] = result.get("dividends_per_share")
-        result["dividends_per_share"] = dps_ttm
-        result["dividends_per_share_ttm"] = dps_ttm
+    # Dividends per share: robust TTM anchored to the latest period (handles
+    # cut/skipped quarters that would otherwise pull a stale 4-quarter window).
+    # Authoritative: the robust TTM extractor's result wins even when it's None
+    # (stale/unavailable), overriding the plain 3-year-max-age value the concept
+    # loop set above — we'd rather show no yield than a stale one.
+    result["dividends_per_share_latest_period"] = result.get("dividends_per_share")
+    result["dividends_per_share"] = _extract_ttm_dividend(
+        facts, "CommonStockDividendsPerShareDeclared")
+    result["dividends_per_share_ttm"] = result["dividends_per_share"]
 
     # Share-count fallback chain — some issuers (e.g., Citi) stopped
     # reporting CommonStockSharesOutstanding years ago. Fall back in order:
@@ -352,12 +428,20 @@ def get_latest_fundamentals(cik: int) -> dict:
     # Compute derived values
     equity = result.get("book_value_total")
     shares = result.get("shares_outstanding")
-    goodwill = result.get("goodwill") or 0
-    intangibles = result.get("intangibles") or 0
+
+    # Robust intangible adjustment for TANGIBLE book value. Banks tag goodwill
+    # and intangibles inconsistently, and missing either OVERSTATES TBV:
+    #   • Some stop reporting plain `Goodwill` (e.g. BKU after 2019) and report
+    #     `IntangibleAssetsNetIncludingGoodwill` (combined) instead.
+    #   • Some report other intangibles under `FiniteLivedIntangibleAssetsNet`
+    #     rather than `IntangibleAssetsNetExcludingGoodwill`.
+    # Resolve the full goodwill + other-intangibles adjustment via fallbacks.
+    intangible_adjustment = _resolve_intangible_adjustment(facts, result)
 
     if equity and shares and shares > 0:
         result["book_value_per_share"] = equity / shares
-        result["tangible_book_value_per_share"] = (equity - goodwill - intangibles) / shares
+        result["tangible_book_value_per_share"] = (
+            equity - intangible_adjustment) / shares
     else:
         result["book_value_per_share"] = None
         result["tangible_book_value_per_share"] = None
@@ -372,6 +456,43 @@ def get_latest_fundamentals(cik: int) -> dict:
     )
 
     return result
+
+
+def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
+    """
+    Return the total goodwill + other-intangibles to subtract from common
+    equity for tangible book value, robust to inconsistent XBRL tagging.
+
+    Resolution order:
+      1. other-intangibles: `IntangibleAssetsNetExcludingGoodwill`, else
+         `FiniteLivedIntangibleAssetsNet` (current only).
+      2. If `Goodwill` is current → adjustment = Goodwill + other-intangibles.
+      3. Else if `IntangibleAssetsNetIncludingGoodwill` is current → use it
+         directly (it already bundles goodwill + intangibles).
+      4. Else → just the other-intangibles (or 0).
+
+    Updates result["goodwill"], result["intangibles"], and stores
+    result["intangible_adjustment"] for traceability.
+    """
+    goodwill = result.get("goodwill")  # plain `Goodwill`, current only
+    intangibles = result.get("intangibles")  # IntangibleAssetsNetExcludingGoodwill
+    if intangibles is None:
+        intangibles = _extract_latest_value(
+            facts, "FiniteLivedIntangibleAssetsNet", max_age_years=1)
+        result["intangibles"] = intangibles
+
+    incl_goodwill = _extract_latest_value(
+        facts, "IntangibleAssetsNetIncludingGoodwill", max_age_years=1)
+
+    if goodwill is not None:
+        adjustment = goodwill + (intangibles or 0)
+    elif incl_goodwill is not None:
+        adjustment = incl_goodwill
+    else:
+        adjustment = intangibles or 0
+
+    result["intangible_adjustment"] = adjustment
+    return adjustment
 
 
 def _latest_end_date(facts: dict, concept: str) -> str | None:
