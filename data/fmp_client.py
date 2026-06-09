@@ -143,10 +143,17 @@ def get_quote(ticker: str) -> dict:
     return out
 
 
-def get_quote_batch(tickers: Iterable[str]) -> dict[str, dict]:
+def get_quote_batch(tickers: Iterable[str],
+                    max_per_min: int | None = None) -> dict[str, dict]:
     """
     Bulk-fetch quotes. FMP's stable endpoint accepts a single symbol per
     call; we fan out in a small thread pool and cache each response.
+
+    max_per_min: when set, pace request submission so we stay under FMP's
+    per-minute rate cap. A cold full-universe burst (~369 symbols) otherwise
+    exceeds the ~300/min plan limit and ~13% of calls get throttled to empty.
+    The warm-price job passes ~270 here; the live UI path leaves it None
+    (it only ever fetches a handful of cache-miss tickers).
 
     Returns {ticker: quote_dict}.
     """
@@ -157,9 +164,15 @@ def get_quote_batch(tickers: Iterable[str]) -> dict[str, dict]:
     if not _has_key():
         return {t: _empty_quote() for t in tickers}
 
+    interval = (60.0 / max_per_min) if max_per_min else 0.0
+
     out: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(get_quote, t): t for t in tickers}
+        futures = {}
+        for t in tickers:
+            futures[ex.submit(get_quote, t)] = t
+            if interval:
+                time.sleep(interval)  # spread submissions under the rate cap
         for fut in as_completed(futures):
             t = futures[fut]
             try:

@@ -51,7 +51,9 @@ def main() -> int:
     init_price_cache_schema()
 
     t0 = time.time()
-    quotes = fmp_client.get_quote_batch(tickers)
+    # Pace under FMP's ~300/min cap so the full-universe burst isn't throttled
+    # (an unpaced cold burst loses ~13% of quotes to 429s).
+    quotes = fmp_client.get_quote_batch(tickers, max_per_min=270)
     n_written = upsert_prices(quotes)
     elapsed = time.time() - t0
 
