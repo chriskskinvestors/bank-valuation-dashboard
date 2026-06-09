@@ -31,7 +31,7 @@ def main() -> int:
 
     from data import fmp_client
     from data.price_cache_store import init_price_cache_schema, upsert_prices
-    from data.bank_universe import get_universe_tickers
+    from data.bank_universe import get_universe
     from config import DEFAULT_WATCHLIST
 
     print(f"[{time.strftime('%H:%M:%S')}] price refresh starting", flush=True)
@@ -40,7 +40,12 @@ def main() -> int:
         print("⚠ FMP_API_KEY not configured — cannot warm price cache.", flush=True)
         return 2
 
-    tickers = sorted(set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
+    # Use the UNFILTERED base universe (file-based, no API calls). The filtered
+    # get_universe_tickers() makes a live FDIC call per ticker (cert_is_active),
+    # which rate-limits in a cold job and silently collapses the set to the
+    # watchlist. The base set is a superset of what the UI screen requests, so
+    # warming it guarantees coverage; dead tickers just return null (skipped).
+    tickers = sorted(set(get_universe().keys()) | set(DEFAULT_WATCHLIST))
     print(f"[{time.strftime('%H:%M:%S')}] fetching {len(tickers)} quotes...", flush=True)
 
     init_price_cache_schema()
