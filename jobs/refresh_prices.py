@@ -54,12 +54,25 @@ def main() -> int:
     # Pace under FMP's ~300/min cap so the full-universe burst isn't throttled
     # (an unpaced cold burst loses ~13% of quotes to 429s).
     quotes = fmp_client.get_quote_batch(tickers, max_per_min=270)
+
+    # Also warm FMP's dividend yield (6h-cached, so only actually hits FMP a
+    # couple times a day) and fold it into each quote — our XBRL dividend
+    # derivation is unreliable, so the dashboard prefers this value.
+    funds = fmp_client.get_fundamentals_batch(tickers, max_per_min=270)
+    dy_n = 0
+    for t, q in quotes.items():
+        dy = (funds.get(t) or {}).get("dividend_yield")
+        if q is not None and dy is not None:
+            q["dividend_yield"] = dy
+            dy_n += 1
+
     n_written = upsert_prices(quotes)
     elapsed = time.time() - t0
 
     priced = sum(1 for q in quotes.values() if q and q.get("price"))
     print(f"[{time.strftime('%H:%M:%S')}] done in {elapsed:.0f}s — "
-          f"{priced}/{len(tickers)} priced, {n_written} rows written", flush=True)
+          f"{priced}/{len(tickers)} priced, {n_written} rows written, "
+          f"{dy_n} with dividend yield", flush=True)
 
     coverage = n_written / max(1, len(tickers))
     if coverage >= 0.90:

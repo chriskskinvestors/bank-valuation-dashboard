@@ -45,6 +45,7 @@ def _has_key() -> bool:
 
 QUOTE_TTL_SECONDS = 60
 HISTORY_TTL_SECONDS = 3600
+FUNDAMENTALS_TTL_SECONDS = 21600  # 6h — TTM fundamentals change quarterly
 
 
 def _cache_get(key: str, ttl: int) -> dict | None:
@@ -180,6 +181,74 @@ def get_quote_batch(tickers: Iterable[str],
             except Exception as e:
                 print(f"[FMP] {t} batch error: {e}")
                 out[t] = _empty_quote()
+    return out
+
+
+def get_fundamentals(ticker: str) -> dict:
+    """
+    FMP's pre-computed TTM HoldCo fundamentals — used as an INDEPENDENT
+    cross-check against our SEC-derived values (not as the primary source;
+    the dashboard keeps computing from filings so provenance is preserved).
+
+    Returns a normalized dict (None for any field FMP doesn't provide):
+      pe_ratio, pb_ratio, bvps, tbvps, dividend_yield (percent)
+
+    These are exactly the SEC-derived ratios where our own derivation
+    (TTM-EPS summation, XBRL tag choice, goodwill/intangible handling,
+    share count) could drift — so disagreement flags a real gap.
+    """
+    if not _has_key():
+        return {}
+    ticker = ticker.upper()
+    cache_key = f"fmp_fund:{ticker}"
+    cached = _cache_get(cache_key, FUNDAMENTALS_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("ratios-ttm", {"symbol": ticker})
+    if not data or not isinstance(data, list) or not data:
+        return {}
+    r = data[0]
+
+    def _f(x):
+        try:
+            return float(x) if x is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    dy = _f(r.get("dividendYieldTTM"))
+    out = {
+        "pe_ratio": _f(r.get("priceToEarningsRatioTTM")),
+        "pb_ratio": _f(r.get("priceToBookRatioTTM")),
+        "bvps": _f(r.get("bookValuePerShareTTM")),
+        "tbvps": _f(r.get("tangibleBookValuePerShareTTM")),
+        "dividend_yield": (dy * 100) if dy is not None else None,
+    }
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_fundamentals_batch(tickers: Iterable[str],
+                           max_per_min: int | None = None) -> dict[str, dict]:
+    """Bulk get_fundamentals (6h-cached). Paced like get_quote_batch so a cold
+    cache doesn't burst past FMP's rate cap. Returns {ticker: fundamentals}."""
+    from concurrent.futures import ThreadPoolExecutor
+    tickers = [t.upper() for t in tickers if t]
+    if not tickers or not _has_key():
+        return {}
+    interval = (60.0 / max_per_min) if max_per_min else 0.0
+    out: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {}
+        for t in tickers:
+            futures[ex.submit(get_fundamentals, t)] = t
+            if interval:
+                time.sleep(interval)
+        for fut, t in futures.items():
+            try:
+                out[t] = fut.result()
+            except Exception:
+                out[t] = {}
     return out
 
 

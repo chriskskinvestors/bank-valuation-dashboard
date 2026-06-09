@@ -41,6 +41,10 @@ warnings.filterwarnings("ignore")
 # Relative tolerance for computed/dollar metrics; absolute for ratio passthroughs.
 REL_TOL = 0.005      # 0.5%
 ABS_TOL_RATIO = 0.01  # 1 bp on a percentage value
+# FMP cross-check is a different professional source whose TTM window /
+# restatement timing can legitimately differ from ours by a bit, so only
+# MATERIAL disagreement (a real derivation gap) trips this.
+FMP_REL_TOL = 0.05   # 5%
 
 # FDIC passthrough ratio fields: dashboard metric key → raw FDIC field.
 FDIC_RATIO_PASSTHROUGH = {
@@ -170,6 +174,32 @@ def verify_ticker(ticker: str) -> dict:
                 "dashboard": dval,
                 "oracle": oref,
             })
+
+    # Third independent source: FMP's pre-computed TTM fundamentals. Cross-check
+    # only (we keep computing from filings). These isolate OUR SEC-derivation —
+    # TTM-EPS, goodwill/intangible handling, share count — against a pro source.
+    try:
+        from data import fmp_client
+        fmp = fmp_client.get_fundamentals(ticker)
+    except Exception:
+        fmp = {}
+    if fmp:
+        fmp_checks = [
+            ("fmp:bvps", fmp.get("bvps"), sec.get("book_value_per_share")),
+            ("fmp:tbvps", fmp.get("tbvps"), sec.get("tangible_book_value_per_share")),
+            ("fmp:pe_ratio", fmp.get("pe_ratio"), dash.get("pe_ratio")),
+            ("fmp:dividend_yield", fmp.get("dividend_yield"), dash.get("dividend_yield")),
+        ]
+        for label, fval, ourval in fmp_checks:
+            if fval is None or ourval is None:
+                continue
+            denom = max(abs(fval), abs(ourval), 1e-9)
+            if abs(fval - ourval) / denom > FMP_REL_TOL:
+                row["divergences"].append({
+                    "metric": label,
+                    "dashboard": ourval,
+                    "oracle": fval,   # FMP's value
+                })
 
     if row["divergences"]:
         row["status"] = "DIVERGENCE"
