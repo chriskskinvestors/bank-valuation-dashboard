@@ -481,15 +481,27 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
             facts, "FiniteLivedIntangibleAssetsNet", max_age_years=1)
         result["intangibles"] = intangibles
 
-    incl_goodwill = _extract_latest_value(
+    incl = _extract_latest_value(
         facts, "IntangibleAssetsNetIncludingGoodwill", max_age_years=1)
 
-    if goodwill is not None:
-        adjustment = goodwill + (intangibles or 0)
-    elif incl_goodwill is not None:
-        adjustment = incl_goodwill
+    # Guard: goodwill alone cannot exceed goodwill+intangibles. When the plain
+    # `Goodwill` tag is larger than the combined figure, that tag is stale or
+    # dimensional (e.g. PNFP reads $3.48B goodwill vs $1.88B combined) — trust
+    # the combined figure.
+    if goodwill is not None and incl is not None and goodwill > incl * 1.05:
+        adjustment = incl
     else:
-        adjustment = intangibles or 0
+        # Otherwise take the MAX of the company's combined figure and our
+        # piecewise (goodwill + other-intangibles) sum, so we never miss
+        # intangibles whichever way the bank tags them.
+        candidates = []
+        if incl is not None:
+            candidates.append(incl)
+        if goodwill is not None:
+            candidates.append(goodwill + (intangibles or 0))
+        elif intangibles is not None:
+            candidates.append(intangibles)
+        adjustment = max(candidates) if candidates else 0.0
 
     result["intangible_adjustment"] = adjustment
     return adjustment

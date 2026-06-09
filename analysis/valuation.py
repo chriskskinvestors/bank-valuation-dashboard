@@ -300,7 +300,11 @@ def _normalized_earnings_factor(fdic_hist: list[dict] | None) -> float:
     raw_ttm = sum(qtrs[:4])
     if raw_ttm <= 0:
         return 1.0
-    cap = 2.0 * med
+    # Cap each quarter at 3x the trailing median: ordinary growth/volatility
+    # (a quarter up to ~3x a normal one) passes through untouched; only an
+    # extreme, almost-certainly-non-recurring spike (loan recovery, big tax
+    # benefit) gets winsorized. Avoids over-penalizing genuine improvement.
+    cap = 3.0 * med
     norm_ttm = sum(min(q, cap) for q in qtrs[:4])
     return max(0.2, min(1.0, norm_ttm / raw_ttm))
 
