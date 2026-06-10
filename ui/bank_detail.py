@@ -40,6 +40,9 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
             links.append(
                 f'<a href="https://banks.data.fdic.gov/bankfind-suite/bankfind/details/'
                 f'{cert}" target="_blank" style="text-decoration:none;">🏦 FDIC BankFind</a>')
+        # Price, change, market cap, P/E and the price chart come from FMP — credit it.
+        links.append('<span title="Price, change, market cap, P/E and the price chart">'
+                     '📈 FMP (market data)</span>')
         if links:
             st.markdown(
                 '<div style="margin-top:7px; font-size:0.8rem; color:#64748b;">'
