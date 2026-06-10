@@ -99,6 +99,54 @@ def _items_description(items_str: str) -> str:
     return " · ".join(parts)
 
 
+# Short, plain-English label for the most material item in a filing.
+_ITEM_SHORT = {
+    "4.02": "Financial restatement", "2.06": "Material impairment",
+    "5.01": "Change in control", "2.01": "Acquisition / disposition",
+    "1.01": "Material agreement", "5.02": "Leadership change",
+    "3.01": "Listing / delisting notice", "5.07": "Shareholder vote results",
+    "3.02": "Equity issuance", "5.03": "Charter / bylaw amendment",
+    "2.02": "Earnings — results of operations", "7.01": "Reg FD disclosure",
+    "8.01": "Other event", "9.01": "Financial statements / exhibits",
+}
+# Most-material first — the headline picks the highest-priority item present.
+_ITEM_PRIORITY = ["4.02", "2.06", "5.01", "2.01", "1.01", "5.02", "3.01",
+                  "5.07", "3.02", "5.03", "2.02", "7.01", "8.01", "9.01"]
+
+
+def _filing_primary(form: str, items: str, is_earnings: bool) -> str:
+    """A concise, plain-English headline for a filing (better than raw item codes)."""
+    if form.startswith("10-K"):
+        return "Annual report (10-K)"
+    if form.startswith("10-Q"):
+        return "Quarterly report (10-Q)"
+    if is_earnings:
+        return "Earnings release — results of operations"
+    its = [i.strip() for i in (items or "").split(",") if i.strip()]
+    for p in _ITEM_PRIORITY:
+        if p in its:
+            return _ITEM_SHORT.get(p, f"Item {p}")
+    if its:
+        return _ITEM_SHORT.get(its[0], f"Item {its[0]}")
+    return form
+
+
+def _event_summaries(ticker: str) -> dict:
+    """{accession: claude_summary} from the events table (8-K summaries the
+    poll-events job generated). Empty/safe if events aren't available."""
+    try:
+        from data.events import get_recent_events
+        out = {}
+        for e in get_recent_events(ticker, limit=200):
+            acc = (e.get("external_id") or "").strip()
+            summ = (e.get("summary") or "").strip()
+            if acc and summ:
+                out[acc] = summ
+        return out
+    except Exception:
+        return {}
+
+
 def render_filings_for_ticker(ticker: str):
     """Render filings for a specific ticker (no bank selector UI)."""
     _render_filings_core(ticker)
@@ -366,65 +414,81 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
         st.info("No filings match the current filters.")
         return
 
-    # Build HTML table
+    summaries = _event_summaries(ticker) if ticker else {}
+
     rows_html = []
-    for f in filings:
+    for i, f in enumerate(filings):
         form_badge = _form_badge(f["form"], f.get("is_earnings", False))
         date = f.get("date", "")
         report_date = f.get("report_date", "")
-        desc = f.get("description", "")
         url = f.get("url", "")
         index_url = f.get("index_url", "")
         items = f.get("items", "")
+        acc = (f.get("accession") or "").strip()
 
-        # Show 8-K item descriptions
-        items_html = ""
+        # Plain-English headline (better than raw item codes).
+        primary = _filing_primary(f["form"], items, f.get("is_earnings", False))
+        # The actual content summary (Claude, from the events table) if we have it.
+        summ = summaries.get(acc, "")
+        if summ and len(summ) > 220:
+            summ = summ[:217].rstrip() + "…"
+        summ_html = (f'<div style="color:#475569;font-size:0.86em;margin-top:2px;'
+                     f'line-height:1.4;">{summ}</div>') if summ else ""
+        # Item chips as faint supporting detail (8-Ks only).
+        chips_html = ""
         if items and f["form"] in ("8-K", "8-K/A"):
-            items_desc = _items_description(items)
-            if items_desc:
-                items_html = f'<div style="color:#90a4ae;font-size:0.75em;margin-top:2px;">{items_desc}</div>'
-
-        # Truncate long descriptions
-        if len(desc) > 60:
-            desc = desc[:57] + "..."
+            chips = _items_description(items)
+            if chips:
+                chips_html = (f'<div style="color:#94a3b8;font-size:0.74em;'
+                              f'margin-top:2px;">{chips}</div>')
 
         link_html = ""
         if url:
-            link_html = f'<a href="{url}" target="_blank" style="color:#4fc3f7;">View</a>'
+            link_html = (f'<a href="{url}" target="_blank" '
+                         f'style="color:#2563eb;text-decoration:none;">View</a>')
             if index_url:
-                link_html += f' · <a href="{index_url}" target="_blank" style="color:#90a4ae;">Index</a>'
+                link_html += (f' · <a href="{index_url}" target="_blank" '
+                              f'style="color:#64748b;text-decoration:none;">Index</a>')
 
+        zebra = "background:rgba(148,163,184,0.045);" if i % 2 else ""
         rows_html.append(
-            f"<tr>"
-            f"<td style='padding:6px 10px;white-space:nowrap;'>{date}</td>"
-            f"<td style='padding:6px 10px;'>{form_badge}</td>"
-            f"<td style='padding:6px 10px;'>{desc}{items_html}</td>"
-            f"<td style='padding:6px 10px;white-space:nowrap;'>{report_date}</td>"
-            f"<td style='padding:6px 10px;'>{link_html}</td>"
+            f"<tr style='{zebra}'>"
+            f"<td style='padding:8px 10px;white-space:nowrap;color:#64748b;vertical-align:top;'>{date}</td>"
+            f"<td style='padding:8px 10px;vertical-align:top;'>{form_badge}</td>"
+            f"<td style='padding:8px 10px;'>"
+            f"<div style='color:#0f172a;font-weight:600;font-size:0.9em;'>{primary}</div>"
+            f"{summ_html}{chips_html}</td>"
+            f"<td style='padding:8px 10px;white-space:nowrap;color:#64748b;vertical-align:top;'>{report_date}</td>"
+            f"<td style='padding:8px 10px;white-space:nowrap;vertical-align:top;'>{link_html}</td>"
             f"</tr>"
         )
 
     table_html = f"""
+    <style>
+    .filings-tbl {{ width:100%; border-collapse:collapse; font-size:13px;
+      border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
+    .filings-tbl thead th {{ padding:8px 10px; text-align:left; color:#0f172a;
+      font-weight:600; border-bottom:1px solid rgba(148,163,184,0.3);
+      background:rgba(241,245,249,0.6); }}
+    .filings-tbl tbody tr {{ border-bottom:1px solid rgba(148,163,184,0.12); }}
+    .filings-tbl tbody tr:hover td {{ background:rgba(37,99,235,0.05) !important; }}
+    </style>
     <div style="overflow-x:auto;">
-    <table style="width:100%;border-collapse:collapse;font-size:0.9em;">
-    <thead>
-    <tr style="border-bottom:2px solid #444;">
-        <th style="padding:8px 10px;text-align:left;">Filed</th>
-        <th style="padding:8px 10px;text-align:left;">Form</th>
-        <th style="padding:8px 10px;text-align:left;">Description</th>
-        <th style="padding:8px 10px;text-align:left;">Report Date</th>
-        <th style="padding:8px 10px;text-align:left;">Links</th>
-    </tr>
-    </thead>
-    <tbody>
-    {"".join(rows_html)}
-    </tbody>
+    <table class="filings-tbl">
+    <thead><tr>
+        <th>Filed</th><th>Form</th><th>Description</th><th>Report Date</th><th>Links</th>
+    </tr></thead>
+    <tbody>{"".join(rows_html)}</tbody>
     </table>
     </div>
     """
 
     st.markdown(table_html, unsafe_allow_html=True)
-    st.caption(f"Showing {len(filings)} filing{'s' if len(filings) != 1 else ''}")
+    n_summ = sum(1 for f in filings if summaries.get((f.get("accession") or "").strip()))
+    cap = f"Showing {len(filings)} filing{'s' if len(filings) != 1 else ''}"
+    if n_summ:
+        cap += f" · {n_summ} with AI summaries"
+    st.caption(cap)
 
     # Expandable summaries below the table
     if show_summary and filings:
