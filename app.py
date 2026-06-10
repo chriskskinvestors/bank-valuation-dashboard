@@ -564,7 +564,7 @@ elif section == "📊 Screening" and screening_tab:
         '<div class="dashboard-header">'
         f"<h1>{screening_tab['title']}</h1>"
         f"<p>{len(display_metrics)} banks ({bank_filter}{filter_note}) | "
-        f"{'IBKR Live' if st.session_state.ibkr_connected else 'IBKR Offline'} | "
+        f"{'IBKR Live' if st.session_state.ibkr_connected else 'FMP'} | "
         f"{len(screening_tab['columns'])} columns</p>"
         "</div>",
         unsafe_allow_html=True,

@@ -142,10 +142,22 @@ def render_data_freshness(fdic_ages: dict, sec_ages: dict, ibkr_connected: bool)
                 unsafe_allow_html=True,
             )
         else:
-            st.markdown(
-                '<span class="freshness-badge freshness-stale">IBKR OFFLINE</span>',
-                unsafe_allow_html=True,
-            )
+            # Cloud price source is FMP (live), not IBKR. Show its real status.
+            try:
+                from data.fmp_client import _has_key
+                fmp_ok = _has_key()
+            except Exception:
+                fmp_ok = False
+            if fmp_ok:
+                st.markdown(
+                    '<span class="freshness-badge freshness-live">FMP LIVE</span>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<span class="freshness-badge freshness-stale">PRICES OFFLINE</span>',
+                    unsafe_allow_html=True,
+                )
 
     with cols[1]:
         ages = [a for a in fdic_ages.values() if a is not None]
