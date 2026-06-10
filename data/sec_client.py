@@ -37,14 +37,69 @@ def _pad_cik(cik: int) -> str:
     return str(cik).zfill(10)
 
 
+# XBRL concepts the dashboard actually reads. The raw companyfacts blob is
+# 6-8 MB (650-900 us-gaap concepts) but we use ~two dozen, so we cache only a
+# projection over these — ~14× smaller (~450 KB), and json.loads is near-instant
+# on the slim copy (vs seconds on the full blob). tools/verify_slim_facts.py
+# asserts the projection yields byte-identical fundamentals to the full blob
+# across many banks; ADD a concept here before referencing it anywhere.
+SLIM_USGAAP_CONCEPTS = {
+    "Assets", "Liabilities",
+    "StockholdersEquity",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    "CommonStockSharesOutstanding", "CommonStockSharesIssued",
+    "TreasuryStockCommonShares", "WeightedAverageNumberOfSharesOutstandingBasic",
+    "EarningsPerShareDiluted", "EarningsPerShareBasic",
+    "NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss",
+    "Revenues", "CommonStockDividendsPerShareDeclared",
+    "CashAndCashEquivalentsAtCarryingValue",
+    "InterestIncome", "InterestExpense",
+    "Goodwill", "IntangibleAssetsNetExcludingGoodwill",
+    "IntangibleAssetsNetIncludingGoodwill", "FiniteLivedIntangibleAssetsNet",
+}
+
+
+def _slim_facts(facts: dict) -> dict:
+    """Project a full companyfacts blob down to the concepts we use. Keeps the
+    exact JSON shape (so all extractors work unchanged) plus the whole `dei`
+    namespace (small, and used for cover-page shares)."""
+    if not facts:
+        return facts
+    f = facts.get("facts", {}) or {}
+    ug = f.get("us-gaap", {}) or {}
+    return {
+        "cik": facts.get("cik"),
+        "entityName": facts.get("entityName"),
+        "facts": {
+            "us-gaap": {k: v for k, v in ug.items() if k in SLIM_USGAAP_CONCEPTS},
+            "dei": f.get("dei", {}),
+        },
+    }
+
+
+def _download_company_facts(cik: int) -> dict:
+    """Raw SEC companyfacts download (no cache, full blob). Used by the cache
+    layer and the slim-vs-full verification harness."""
+    url = SEC_COMPANY_FACTS_URL.format(cik=_pad_cik(cik))
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=20)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"[SEC] Error fetching CIK {cik}: {e}")
+        return {}
+
+
 def fetch_company_facts(cik: int) -> dict:
     """
-    Fetch all XBRL facts for a company. Cached for FUNDAMENTAL_CACHE_TTL_HOURS
-    (default 24h) in the same Postgres/SQLite store used for everything else.
+    Fetch the XBRL facts the dashboard uses for a company, cached for
+    FUNDAMENTAL_CACHE_TTL_HOURS (default 24h) in the Postgres/SQLite store.
 
-    These responses are 5-50 MB each — caching saves ~30s of latency per
-    bank, dominating the slowness of any view that fans out across the
-    watchlist (Home, Screening, Peer Comparison).
+    We cache a SLIM projection (the ~two dozen concepts we read, plus `dei`),
+    not the full 6-8 MB blob — caching the full universe would be multiple GB
+    and every cold load would pay a ~30s json.loads. The slim copy is
+    ~30-50× smaller and parses instantly. Provenance (accession/form per
+    value) is preserved because we keep each kept concept's full unit arrays.
     """
     from data import cache
     cache_key = f"sec_facts:{cik}"
@@ -52,22 +107,16 @@ def fetch_company_facts(cik: int) -> dict:
     if cached is not None:
         return cached
 
-    url = SEC_COMPANY_FACTS_URL.format(cik=_pad_cik(cik))
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        facts = resp.json()
-    except Exception as e:
-        print(f"[SEC] Error fetching CIK {cik}: {e}")
+    facts = _download_company_facts(cik)
+    if not facts:
         return {}
-
-    if facts:
-        try:
-            cache.put(cache_key, facts)
-        except Exception as e:
-            # Cache failure shouldn't break the call — log and move on.
-            print(f"[SEC] Cache put failed for CIK {cik}: {e}")
-    return facts
+    slim = _slim_facts(facts)
+    try:
+        cache.put(cache_key, slim)
+    except Exception as e:
+        # Cache failure shouldn't break the call — log and move on.
+        print(f"[SEC] Cache put failed for CIK {cik}: {e}")
+    return slim
 
 
 def _extract_latest_value_with_source(facts: dict, concept: str,
