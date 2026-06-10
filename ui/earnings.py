@@ -161,27 +161,37 @@ def _render_auto_estimates(ticker: str, estimates: dict):
     """Show auto-populated analyst estimates from yfinance."""
     st.subheader("Analyst Estimates")
 
-    cols = st.columns(5)
+    from ui.source_trace import render_traceable_cards, make_calc
+    from data.bank_mapping import get_name
+    entity = f"{get_name(ticker)} ({ticker})"
 
-    with cols[0]:
-        ned = estimates.get("next_earnings_date")
-        st.metric("Next Earnings", ned if ned else "Unknown")
+    ned = estimates.get("next_earnings_date")
+    eps_est = estimates.get("eps_estimate"); eps_fwd = estimates.get("eps_fwd_annual")
+    target = estimates.get("target_price"); analysts = estimates.get("analyst_count")
+    SRC = "Analyst consensus (market data)"
 
-    with cols[1]:
-        eps_est = estimates.get("eps_estimate")
-        st.metric("EPS Est (Next Qtr)", f"${eps_est:.2f}" if eps_est else "—")
+    def analyst_card(label, value, definition):
+        # Forward-looking analyst consensus — sourced from market data, NOT a
+        # filing (clearly distinguished from the reported/computed figures).
+        return {"label": label, "value": value,
+                "calc": make_calc(label, value, entity=entity, source=SRC, asof="latest consensus",
+                                  unit="estimate", ref="forward analyst estimate",
+                                  definition=definition,
+                                  terms=[{"label": label, "val": value}], reported=True)}
 
-    with cols[2]:
-        eps_fwd = estimates.get("eps_fwd_annual")
-        st.metric("EPS Est (Annual)", f"${eps_fwd:.2f}" if eps_fwd else "—")
-
-    with cols[3]:
-        target = estimates.get("target_price")
-        st.metric("Avg Price Target", f"${target:.2f}" if target else "—")
-
-    with cols[4]:
-        analysts = estimates.get("analyst_count")
-        st.metric("Analyst Coverage", str(analysts) if analysts else "—")
+    cards = [
+        analyst_card("Next Earnings", (ned if ned else "Unknown"),
+                     "Estimated date of the next quarterly earnings release."),
+        analyst_card("EPS Est (Next Qtr)", (f"${eps_est:.2f}" if eps_est else "—"),
+                     "Consensus analyst estimate for next-quarter diluted EPS."),
+        analyst_card("EPS Est (Annual)", (f"${eps_fwd:.2f}" if eps_fwd else "—"),
+                     "Consensus analyst estimate for forward annual diluted EPS."),
+        analyst_card("Avg Price Target", (f"${target:.2f}" if target else "—"),
+                     "Average of analysts' 12-month price targets."),
+        analyst_card("Analyst Coverage", (str(analysts) if analysts else "—"),
+                     "Number of sell-side analysts contributing estimates."),
+    ]
+    render_traceable_cards(cards, key=f"earn_estimates_{ticker}", columns=5)
 
     # Price target range
     t_low = estimates.get("target_low")
@@ -475,34 +485,88 @@ def _render_comparison_table(comparison: list[dict]):
 
 
 def _render_key_metrics(ticker: str, actual_metrics: dict):
-    """Show key reported metrics for context."""
+    """Show key reported metrics — every value click-to-source (same provenance
+    as the Overview cards): FDIC ratios → Call Report, SEC per-share → 10-K/10-Q,
+    ROATCE → formula + inputs, with the one-time-item ⚠️ flag preserved."""
     st.markdown("---")
     st.subheader("Key Reported Metrics")
 
-    key_metrics = [
-        ("eps", "EPS"), ("nim", "NIM"), ("efficiency_ratio", "Efficiency"),
-        ("roaa", "ROAA"), ("roatce_blended", "ROATCE"), ("cet1_ratio", "CET1"),
-        ("npl_ratio", "NPL Ratio"), ("tbvps", "TBV/Share"),
-    ]
+    from ui.source_trace import render_traceable_cards, fdic_calc, make_calc, sec_doc_for
+    from ui.financial_highlights import _fdic_doc, _disp_date, _num, _thou
+    from data.bank_mapping import get_fdic_cert, get_cik, get_name
+    from data import fdic_client, sec_client
 
-    # One-time-item handling, consistent with the rest of the dashboard: show
-    # the reported (TTM) ROATCE, flag it ⚠️ when a non-recurring gain distorted
-    # earnings, and surface the sustainable figure in the tooltip.
+    cert = get_fdic_cert(ticker); cik = get_cik(ticker)
+    entity = f"{get_name(ticker)} ({ticker})"
+    rec = (fdic_client.get_latest_financials(cert) or {}) if cert else {}
+    facts = sec_client.fetch_company_facts(cik) if cik else {}
+    fund = (sec_client.get_latest_fundamentals(cik) or {}) if cik else {}
+    cr_doc = _fdic_doc(cert, rec.get("REPDTE")) if (cert and rec.get("REPDTE")) else None
+    asof = _disp_date(rec.get("REPDTE")) if rec.get("REPDTE") else "latest"
+    eps_doc = sec_doc_for(cik, facts, "EarningsPerShareDiluted", instant=False) if facts else None
+    eq_doc = sec_doc_for(cik, facts, "StockholdersEquity", instant=True) if facts else None
+    sh_doc = ((sec_doc_for(cik, facts, "EntityCommonStockSharesOutstanding", instant=True, ns="dei")
+               or sec_doc_for(cik, facts, "CommonStockSharesOutstanding", instant=True)) if facts else None)
+
+    def fmt(key):
+        return _format_val(actual_metrics.get(key), METRIC_UNITS.get(key, "%" if "roatce" in key else ""))
+
     distorted = bool(actual_metrics.get("earnings_distorted"))
-    roatce_norm = actual_metrics.get("roatce_normalized")
+    rn = actual_metrics.get("roatce_normalized")
+    shares = _num(fund.get("shares_outstanding")); equity = _num(fund.get("book_value_total"))
+    tbvps = _num(actual_metrics.get("tbvps"))
+    tce = (tbvps * shares) if (tbvps is not None and shares) else None
+    adj = (equity - tce) if (equity is not None and tce is not None) else None
+    ni = _num(rec.get("NETINC")); eqf = _num(rec.get("EQTOT")); intanf = _num(rec.get("INTAN")) or 0
+    tcef = (eqf - intanf) if eqf is not None else None
 
-    cols = st.columns(4)
-    for i, (key, label) in enumerate(key_metrics):
-        val = actual_metrics.get(key)
-        unit = METRIC_UNITS.get(key, "%" if "roatce" in key else "")
-        with cols[i % 4]:
-            if key == "roatce_blended" and distorted and roatce_norm is not None:
-                st.metric(
-                    f"{label} ⚠️", _format_val(val, unit),
-                    help=f"One-time item inflated earnings — sustainable ≈ {roatce_norm:.1f}%",
-                )
-            else:
-                st.metric(label, _format_val(val, unit))
+    def fdic_card(label, field, key, defi):
+        return {"label": label, "value": fmt(key),
+                "calc": fdic_calc(label, field, rec, cert, unit="%", entity=entity,
+                                  value=fmt(key), reported=True, definition=defi)}
+
+    cards = [
+        {"label": "EPS", "value": fmt("eps"),
+         "calc": make_calc("Diluted EPS (TTM)", fmt("eps"), entity=entity,
+                           source="SEC filing (10-K/10-Q)", asof=(eps_doc or {}).get("label", "latest filing"),
+                           unit="$ / share", ref="XBRL EarningsPerShareDiluted",
+                           definition="Trailing-twelve-month diluted EPS from the holding company's filings.",
+                           terms=[{"label": "Diluted EPS (TTM, reported)", "val": fmt("eps"), "doc": eps_doc}],
+                           reported=True, link=(eps_doc or {}).get("url"))},
+        fdic_card("NIM", "NIMY", "nim", "Net interest income as a percent of average earning assets."),
+        fdic_card("Efficiency", "EEFFR", "efficiency_ratio",
+                  "Non-interest expense ÷ (net interest income + non-interest income)."),
+        fdic_card("ROAA", "ROA", "roaa", "Annualized net income as a percent of average assets."),
+        {"label": ("ROATCE ⚠️" if (distorted and rn is not None) else "ROATCE"), "value": fmt("roatce_blended"),
+         "calc": make_calc("ROATCE", fmt("roatce_blended"), entity=entity, source="FDIC Call Report",
+                           asof=asof, unit="%", ref="Computed from Call Report",
+                           definition=("Blended trailing net income ÷ tangible common equity."
+                                       + (f" One-time item inflated earnings — sustainable ≈ {rn:.1f}%."
+                                          if (distorted and rn is not None) else "")),
+                           terms=[{"label": "Tangible common equity",
+                                   "val": (_thou(tcef) + " ($000)" if tcef is not None else "—"), "doc": cr_doc,
+                                   "sub": (f"Equity {_thou(eqf)} − Intangibles {_thou(intanf)}" if eqf is not None else None)},
+                                  {"label": "Net income", "val": "trailing-twelve-months",
+                                   "sub": "blended across recent quarters — see Financials tab"}],
+                           op="Net income ÷ tangible common equity × 100", reported=False,
+                           link=(cr_doc or {}).get("url"))},
+        fdic_card("CET1", "IDT1CER", "cet1_ratio",
+                  "Common equity tier 1 capital ÷ risk-weighted assets (bank-level)."),
+        fdic_card("NPL Ratio", "NCLNLSR", "npl_ratio", "Non-current loans as a percent of total loans."),
+        {"label": "TBV/Share", "value": fmt("tbvps"),
+         "calc": make_calc("Tangible BV / share", fmt("tbvps"), entity=entity,
+                           source="SEC filing (10-K/10-Q)", asof=(eq_doc or {}).get("label", "latest filing"),
+                           unit="$ / share", ref="(equity − intangibles) ÷ shares",
+                           definition="Tangible common equity (equity − intangibles) ÷ shares outstanding.",
+                           terms=[{"label": "Tangible common equity", "val": (_thou((tce or 0) / 1000) + " ($000)"),
+                                   "doc": eq_doc,
+                                   "sub": (f"Equity {_thou((equity or 0)/1000)} − intangibles "
+                                           f"{_thou((adj or 0)/1000)} ($000)")},
+                                  {"label": "Shares outstanding",
+                                   "val": (f"{shares:,.0f}" if shares else "—"), "doc": sh_doc}],
+                           op="Tangible common equity ÷ shares")},
+    ]
+    render_traceable_cards(cards, key=f"earn_keymetrics_{ticker}", columns=4)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
