@@ -57,9 +57,9 @@ SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis"
 # Company Analysis sub-tabs. Rendered horizontally at the TOP of the main
 # content (under the bank picker), not in the sidebar. One shared template per
 # bank — every bank gets the same sub-tabs.
-COMPANY_TABS = ["Financials", "Overview", "Activity", "Filings", "Deposits",
-                "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership",
-                "Earnings", "🔍 Data Quality"]
+COMPANY_TABS = ["Overview", "Financials", "Valuation", "Earnings", "Credit",
+                "Capital", "Deposits", "NIM Sensitivity", "Ownership", "Activity",
+                "Filings", "🔍 Data Quality"]
 section = st.sidebar.radio("Navigate", SECTIONS, key="nav_section", label_visibility="collapsed")
 
 st.sidebar.markdown("---")
