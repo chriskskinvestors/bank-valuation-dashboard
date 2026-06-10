@@ -31,23 +31,41 @@ def render_ownership(ticker: str):
         )
         return
 
-    # ── Headline metrics ───────────────────────────────────────────────
-    c1, c2, c3, c4 = st.columns(4)
+    # ── Headline metrics (click any value for its source) ──
+    from ui.source_trace import render_traceable_cards, make_calc
+    entity = f"{name} ({ticker})"
+    SRC = "SEC 13F-HR filings (EDGAR full-text search)"
+    nf = summary["total_filers"]
+    tot_val = summary.get("total_value_usd") or 0
+    top5_val = sum(h["value_usd"] for h in holders[:5] if h.get("value_usd"))
 
-    with c1:
-        st.metric("Institutional Filers", summary["total_filers"])
-    with c2:
-        st.metric("Total Shares Held", f"{summary['total_shares']:,.0f}")
-    with c3:
-        st.metric("Total Value", fmt_dollars(summary["total_value_usd"], 2))
-    with c4:
-        st.metric(
-            "Top 5 Concentration",
-            f"{summary['top_5_concentration']:.0f}%",
-            delta="of institutional $", delta_color="off",
-        )
+    def own_card(label, value, definition, terms, op=None):
+        return {"label": label, "value": value,
+                "calc": make_calc(label, value, entity=entity, source=SRC,
+                                  asof="last ~90 days", unit="", ref="aggregated 13F-HR filings",
+                                  definition=definition, terms=terms, op=op, reported=(op is None))}
 
-    st.markdown("---")
+    cards = [
+        own_card("Institutional Filers", str(nf),
+                 "Number of institutions (>$100M AUM) reporting a position in their latest "
+                 "13F-HR filing over the last ~90 days.",
+                 [{"label": "13F-HR filers", "val": str(nf)}]),
+        own_card("Total Shares Held", f"{summary['total_shares']:,.0f}",
+                 "Total shares held across all reporting institutions.",
+                 [{"label": "Shares (summed across filers)", "val": f"{summary['total_shares']:,.0f}",
+                   "sub": f"across {nf} 13F-HR filings"}]),
+        own_card("Total Value", fmt_dollars(tot_val, 2),
+                 "Total reported market value of institutional holdings.",
+                 [{"label": "Value (summed across filers)", "val": fmt_dollars(tot_val, 2),
+                   "sub": f"across {nf} 13F-HR filings"}]),
+        own_card("Top 5 Concentration", f"{summary['top_5_concentration']:.0f}%",
+                 "Share of total institutional dollar value held by the five largest holders — "
+                 "a concentration/crowding gauge.",
+                 [{"label": "Top-5 holders' value", "val": fmt_dollars(top5_val, 2)},
+                  {"label": "Total institutional value", "val": fmt_dollars(tot_val, 2)}],
+                 op="Top-5 value ÷ total institutional value × 100"),
+    ]
+    render_traceable_cards(cards, key=f"ownership_{ticker}", columns=4)
 
     # ── Holders table ──────────────────────────────────────────────────
     rows = []
