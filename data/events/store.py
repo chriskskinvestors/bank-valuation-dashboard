@@ -114,19 +114,20 @@ def init_schema():
         ))
 
 
-def insert_events(events: Iterable[Event]) -> int:
+def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
     """
-    Insert events idempotently. Returns count of NEW rows actually written
-    (duplicates by (source, external_id) are skipped silently).
+    Insert events idempotently. Returns the list of events that were ACTUALLY
+    written (duplicates by (source, external_id) are skipped). Callers that
+    only need the count can use insert_events().
     """
     from sqlalchemy import text
 
     events = [e for e in events if e]
     if not events:
-        return 0
+        return []
 
     eng = _get_engine()
-    inserted = 0
+    new: list[Event] = []
     with eng.begin() as conn:
         for e in events:
             if not e.external_id:
@@ -164,8 +165,14 @@ def insert_events(events: Iterable[Event]) -> int:
                        :external_id, :published_at, :raw_json)
                 """)
             result = conn.execute(stmt, params)
-            inserted += result.rowcount or 0
-    return inserted
+            if (result.rowcount or 0) > 0:
+                new.append(e)
+    return new
+
+
+def insert_events(events: Iterable[Event]) -> int:
+    """Insert events idempotently. Returns count of NEW rows written."""
+    return len(insert_events_returning_new(events))
 
 
 def get_recent_events(ticker: str, limit: int = 20) -> list[dict]:

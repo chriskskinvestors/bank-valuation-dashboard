@@ -114,7 +114,14 @@ class SEC8KAdapter(SourceAdapter):
 
         events: list[Event] = []
         for i, form in enumerate(forms):
-            if not form.startswith("8-K"):
+            is_8k = form.startswith("8-K")
+            # 10-K / 10-Q (and amendments) update the company's XBRL facts, so
+            # they're what the financial views depend on. We emit them as
+            # events AND the runner uses them to invalidate the fundamentals
+            # cache, so a new periodic filing flows into the dashboard within
+            # one poll cycle (~30 min) instead of waiting for the 24h TTL.
+            is_periodic = form in ("10-K", "10-K/A", "10-Q", "10-Q/A")
+            if not (is_8k or is_periodic):
                 continue
             try:
                 filed_at = datetime.strptime(dates[i], "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -126,6 +133,28 @@ class SEC8KAdapter(SourceAdapter):
 
             accession = accessions[i] if i < len(accessions) else ""
             primary = primary_docs[i] if i < len(primary_docs) else ""
+
+            if is_periodic:
+                acc_nodash = accession.replace("-", "")
+                filing_url = (
+                    f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+                    f"{acc_nodash}/{primary}" if primary else
+                    f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+                    f"{acc_nodash}/{accession}-index.htm"
+                )
+                events.append(Event(
+                    ticker=ticker.upper(),
+                    source=self.name,
+                    event_type="filing",
+                    headline=f"{form} filed",
+                    published_at=filed_at,
+                    url=filing_url,
+                    summary="",
+                    external_id=accession,
+                    raw={"cik": cik, "form": form, "filing_date": dates[i]},
+                ))
+                continue
+
             item_str = items_list[i] if i < len(items_list) else ""
             items = [it.strip() for it in re.split(r"[,;]", item_str) if it.strip()]
 

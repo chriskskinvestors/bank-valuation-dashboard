@@ -17,6 +17,7 @@ from data.events.base import Event, SourceAdapter
 from data.events.store import (
     init_schema,
     insert_events,
+    insert_events_returning_new,
     get_recent_events,
     get_universe_recent,
     last_seen_published,
@@ -27,6 +28,7 @@ __all__ = [
     "SourceAdapter",
     "init_schema",
     "insert_events",
+    "insert_events_returning_new",
     "get_recent_events",
     "get_universe_recent",
     "last_seen_published",

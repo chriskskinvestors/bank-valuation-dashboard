@@ -29,7 +29,7 @@ def main() -> int:
 
     from data.bank_universe import get_universe_tickers
     from config import DEFAULT_WATCHLIST
-    from data.events import init_schema, insert_events, last_seen_published
+    from data.events import init_schema, insert_events_returning_new, last_seen_published
     from data.events.sec_8k import SEC8KAdapter
     from data.events.businesswire import BusinessWireAdapter
     from data.events.prnewswire import PRNewswireAdapter
@@ -60,6 +60,7 @@ def main() -> int:
     t0 = time.time()
     crashes = 0
     total_new = 0
+    new_events = []
 
     for adapter in adapters:
         try:
@@ -68,13 +69,20 @@ def main() -> int:
             since = last_seen_published(adapter.name)
             print(f"  [{adapter.name}] scope={len(scope)} tickers since={since}")
             events = adapter.poll(scope, since=since)
-            n = insert_events(events)
-            total_new += n
-            print(f"  [{adapter.name}] {len(events)} fetched, {n} new")
+            newly = insert_events_returning_new(events)
+            new_events.extend(newly)
+            total_new += len(newly)
+            print(f"  [{adapter.name}] {len(events)} fetched, {len(newly)} new")
         except Exception as e:
             crashes += 1
             print(f"  [{adapter.name}] CRASH {type(e).__name__}: {e}")
             traceback.print_exc()
+
+    # A new 10-K/10-Q means the company's XBRL facts changed — drop the cached
+    # SEC facts for those banks so the next dashboard load re-pulls fresh data
+    # (new figures AND new source-document links) instead of serving up to 24h
+    # of staleness. FDIC data is already fetched live on every render.
+    _invalidate_fundamentals_for_filings(new_events)
 
     # Optional: LLM-summarize any events with empty summaries (most recent first).
     if os.environ.get("ANTHROPIC_API_KEY"):
@@ -87,6 +95,33 @@ def main() -> int:
     elapsed = time.time() - t0
     print(f"✓ Done in {elapsed:.1f}s — {total_new} new events, {crashes} adapter crashes")
     return 0 if crashes < len(adapters) else 1
+
+
+def _invalidate_fundamentals_for_filings(new_events) -> None:
+    """For each newly-detected 10-K/10-Q, drop the bank's cached SEC facts so
+    the next dashboard render re-pulls fresh figures + source-doc links."""
+    periodic = {"10-K", "10-K/A", "10-Q", "10-Q/A"}
+    try:
+        from data import cache
+    except Exception:
+        return
+    seen = set()
+    for e in new_events:
+        raw = getattr(e, "raw", None) or {}
+        if raw.get("form") not in periodic:
+            continue
+        cik = raw.get("cik")
+        if cik is None or cik in seen:
+            continue
+        seen.add(cik)
+        # Invalidate both key spellings (callers pass cik as int or str).
+        for kf in (f"sec_facts:{cik}", f"sec_facts:{int(cik)}"):
+            try:
+                cache.invalidate(kf)
+            except Exception:
+                pass
+        print(f"  ↻ fundamentals cache invalidated for {e.ticker} ({raw.get('form')}) "
+              f"— next load re-pulls SEC facts")
 
 
 def _summarize_recent_events(limit: int = 20) -> int:

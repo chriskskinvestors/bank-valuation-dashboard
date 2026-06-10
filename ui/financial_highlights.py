@@ -624,6 +624,21 @@ def render_financial_highlights(ticker: str):
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
     components.html(html, height=height, scrolling=False)
 
+    # Freshness / sourcing line — visible on every load so it's clear the data
+    # is current and where it comes from. FDIC is fetched live each render;
+    # SEC facts are cached but invalidated within ~30 min of a new 10-K/10-Q
+    # (poll-events job), with a 24h TTL backstop.
+    fresh = f"Latest data: FDIC Call Report {asof[keys[-1]]}"
+    try:
+        from data import cache
+        age = cache.get_age(f"sec_facts:{int(cik)}") if cik else None
+        if age is not None:
+            fresh += f" · SEC facts refreshed {age/3600:.0f}h ago"
+    except Exception:
+        pass
+    st.caption(fresh + ". Auto-updates on new filings — FDIC live each load; "
+               "SEC within ~30 min of a 10-K/10-Q posting (24h max).")
+
 
 def _tce_ta_builder(recs, asof, fdic_link, P):
     def b(k):
