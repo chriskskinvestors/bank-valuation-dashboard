@@ -23,9 +23,16 @@ def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
 
     d = df.sort_values("date")
     y = d["close"].astype(float)
-    up = y.iloc[-1] >= y.iloc[0]
+    first, last = float(y.iloc[0]), float(y.iloc[-1])
+    up = last >= first
     color = "#059669" if up else "#dc2626"
     fill = "rgba(5,150,105,0.07)" if up else "rgba(220,38,38,0.07)"
+
+    # Explicit, informative title (never None — a None/missing title rendered as
+    # a stray "undefined" in the browser). Shows last price + change over window.
+    pct = ((last - first) / first * 100) if first else 0.0
+    title = (f"{ticker}  ${last:,.2f}  "
+             f"<span style='color:{color}'>{pct:+.2f}% over period</span>")
 
     fig = go.Figure(go.Scatter(
         x=d["date"], y=y, mode="lines", name=ticker,
@@ -33,7 +40,7 @@ def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
         fill="tozeroy", fillcolor=fill,
         hovertemplate="%{x|%b %d, %Y}<br>$%{y:.2f}<extra></extra>",
     ))
-    apply_standard_layout(fig, title=None, height=240, show_legend=False,
+    apply_standard_layout(fig, title=title, height=260, show_legend=False,
                           hovermode="x unified")
     # Zoom the y-axis to the data range so the move is visible (not a flat line).
     ymin, ymax = float(y.min()), float(y.max())

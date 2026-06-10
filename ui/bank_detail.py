@@ -21,11 +21,6 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
 
     st.markdown(f"### {name} ({ticker})")
 
-    # Back button
-    if st.button("< Back to Overview"):
-        st.session_state.pop("detail_ticker", None)
-        st.rerun()
-
     # ── Key stats grid ───────────────────────────────────────────────
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
     if not bank_row.empty:

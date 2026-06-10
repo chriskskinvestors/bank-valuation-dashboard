@@ -54,6 +54,12 @@ st.sidebar.markdown(
 
 # ── Level 1 Navigation ──────────────────────────────────────────────────
 SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis", "🆚 Peer Comparison", "📈 Earnings Analysis", "📰 Activity", "🗺️ Geographic"]
+# Company Analysis sub-tabs. Rendered horizontally at the TOP of the main
+# content (under the bank picker), not in the sidebar. One shared template per
+# bank — every bank gets the same sub-tabs.
+COMPANY_TABS = ["Financials", "Overview", "Activity", "Filings", "Deposits",
+                "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership",
+                "Earnings", "🔍 Data Quality"]
 section = st.sidebar.radio("Navigate", SECTIONS, key="nav_section", label_visibility="collapsed")
 
 st.sidebar.markdown("---")
@@ -86,18 +92,14 @@ elif section == "🏦 Company Analysis":
     company_ticker = _ov or (st.session_state.get("company_bank") or None)
 
     if company_ticker:
-        COMPANY_TABS = ["Financials", "Overview", "Activity", "Filings", "Deposits", "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership", "Earnings", "🔍 Data Quality"]
+        # Deep-link ?tab=<token> pre-selects the sub-tab. The sub-tab radio
+        # itself renders in the MAIN content area (top of the page), so we only
+        # pre-set its session_state value here; the widget reads it there.
         _TAB_TOKENS = {"financials": "Financials", "valuation": "Valuation",
                        "dataquality": "🔍 Data Quality", "filings": "Filings"}
         _goto = _TAB_TOKENS.get((_qp.get("tab") or "").lower())
         if _goto and _goto in COMPANY_TABS:
             st.session_state["company_subtab"] = _goto
-        company_subtab = st.sidebar.radio(
-            "View",
-            COMPANY_TABS,
-            key="company_subtab",
-            horizontal=True,
-        )
         # Consume deep-link params so they don't persist on the next interaction.
         for _k in ("bank", "tab"):
             if _k in _qp:
@@ -689,6 +691,20 @@ elif section == "🏦 Company Analysis":
 
     if not company_ticker:
         st.info("👆 Pick a bank above (watchlist dropdown) or type any ticker to begin.")
+    else:
+        # Sub-tab navigation lives at the TOP of the page (under the picker),
+        # horizontal — same set for every bank.
+        company_subtab = st.radio(
+            "View", COMPANY_TABS, key="company_subtab",
+            horizontal=True, label_visibility="collapsed",
+        )
+        st.markdown(
+            "<div style='border-bottom:1px solid rgba(148,163,184,0.2); margin:2px 0 14px;'></div>",
+            unsafe_allow_html=True,
+        )
+
+    if not company_ticker:
+        pass
 
     elif company_subtab == "Overview":
         # Use cached single-bank metrics for fast switching
