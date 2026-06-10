@@ -13,46 +13,33 @@ from utils.chart_style import CHART_LAYOUT  # re-export for any old callers
 
 
 def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
-    """Create a candlestick/line price chart from IBKR historical data."""
-    if df.empty:
+    """Clean, compact area price chart (green if up over the window, red if down)."""
+    from utils.chart_style import apply_standard_layout
+    if df is None or df.empty or "close" not in df.columns:
         fig = go.Figure()
-        fig.update_layout(
-            title=f"{ticker} — No price data available",
-            **CHART_LAYOUT,
-        )
+        apply_standard_layout(fig, title=f"{ticker} — no price data",
+                              height=240, show_legend=False)
         return fig
 
-    if all(col in df.columns for col in ["open", "high", "low", "close"]):
-        fig = go.Figure(data=[
-            go.Candlestick(
-                x=df["date"],
-                open=df["open"],
-                high=df["high"],
-                low=df["low"],
-                close=df["close"],
-                increasing_line_color="#00c853",
-                decreasing_line_color="#ff1744",
-                name=ticker,
-            )
-        ])
-    else:
-        fig = go.Figure(data=[
-            go.Scatter(
-                x=df["date"],
-                y=df["close"],
-                mode="lines",
-                line=dict(color="#64b5f6", width=2),
-                name=ticker,
-            )
-        ])
+    d = df.sort_values("date")
+    y = d["close"].astype(float)
+    up = y.iloc[-1] >= y.iloc[0]
+    color = "#059669" if up else "#dc2626"
+    fill = "rgba(5,150,105,0.07)" if up else "rgba(220,38,38,0.07)"
 
-    fig.update_layout(
-        title=f"{ticker} Price",
-        xaxis_title="Date",
-        yaxis_title="Price ($)",
-        xaxis_rangeslider_visible=False,
-        **CHART_LAYOUT,
-    )
+    fig = go.Figure(go.Scatter(
+        x=d["date"], y=y, mode="lines", name=ticker,
+        line=dict(color=color, width=2),
+        fill="tozeroy", fillcolor=fill,
+        hovertemplate="%{x|%b %d, %Y}<br>$%{y:.2f}<extra></extra>",
+    ))
+    apply_standard_layout(fig, title=None, height=240, show_legend=False,
+                          hovermode="x unified")
+    # Zoom the y-axis to the data range so the move is visible (not a flat line).
+    ymin, ymax = float(y.min()), float(y.max())
+    pad = (ymax - ymin) * 0.08 or max(ymax * 0.01, 0.5)
+    fig.update_yaxes(range=[ymin - pad, ymax + pad], tickprefix="$")
+    fig.update_xaxes(showgrid=False)
     return fig
 
 

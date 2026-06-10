@@ -26,21 +26,60 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
         st.session_state.pop("detail_ticker", None)
         st.rerun()
 
-    # ── Key stats row ────────────────────────────────────────────────
+    # ── Key stats grid ───────────────────────────────────────────────
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
     if not bank_row.empty:
         row = bank_row.iloc[0]
-        stat_cols = st.columns(6)
-        key_stats = ["price", "change_pct", "pe_ratio", "ptbv_ratio", "roatce", "cet1_ratio"]
-        for i, key in enumerate(key_stats):
-            m = METRICS_BY_KEY.get(key)
-            if m:
-                val = row.get(key)
-                with stat_cols[i]:
-                    st.metric(
-                        label=m["label"],
-                        value=format_value(val, m["format"], m.get("decimals", 2)),
-                    )
+        # (key, label) — 12 cards across two rows: market/valuation then fundamentals.
+        cards = [
+            ("price", "Price"), ("change_pct", "Chg %"), ("market_cap", "Mkt Cap"),
+            ("pe_ratio", "P/E"), ("ptbv_ratio", "P/TBV"), ("dividend_yield", "Div Yield"),
+            ("roatce_blended", "ROATCE"), ("roaa", "ROAA"), ("nim", "NIM"),
+            ("efficiency_ratio", "Efficiency"), ("cet1_ratio", "CET1"), ("npl_ratio", "NPL"),
+        ]
+
+        def _stat_card(key, label):
+            m = METRICS_BY_KEY.get(key, {})
+            val = row.get(key)
+            disp = (format_value(val, m.get("format", "number"), m.get("decimals", 2))
+                    if val is not None and not pd.isna(val) else "—")
+            accent = "inherit"
+            if key == "change_pct" and val is not None and not pd.isna(val):
+                accent = "#059669" if val >= 0 else "#dc2626"
+            return (
+                '<div style="background:rgba(148,163,184,0.06); border:1px solid '
+                'rgba(148,163,184,0.18); border-radius:10px; padding:9px 13px;">'
+                f'<div style="font-size:0.62rem; color:#64748b; font-weight:600; '
+                'text-transform:uppercase; letter-spacing:0.03em;">' + label + '</div>'
+                f'<div style="font-size:1.12rem; font-weight:700; color:{accent}; '
+                f'line-height:1.35;">{disp}</div></div>'
+            )
+
+        st.markdown(
+            '<div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:8px;">'
+            + "".join(_stat_card(k, lbl) for k, lbl in cards) + "</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Click-through to the primary data sources for this bank.
+        cik = info.get("cik") if info else None
+        cert = info.get("fdic_cert") if info else None
+        links = []
+        if cik:
+            links.append(
+                f'<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany'
+                f'&CIK={cik}&type=10-K&dateb=&owner=include&count=40" target="_blank" '
+                'style="text-decoration:none;">📄 SEC filings (EDGAR)</a>')
+        if cert:
+            links.append(
+                f'<a href="https://banks.data.fdic.gov/bankfind-suite/bankfind/details/'
+                f'{cert}" target="_blank" style="text-decoration:none;">🏦 FDIC BankFind</a>')
+        if links:
+            st.markdown(
+                '<div style="margin-top:7px; font-size:0.8rem; color:#64748b;">'
+                'Sources: ' + " &nbsp;·&nbsp; ".join(links) + "</div>",
+                unsafe_allow_html=True,
+            )
 
     st.markdown("---")
 
