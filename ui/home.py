@@ -278,13 +278,19 @@ _NEWS_TYPES = {
 }
 
 
+# Only actionable sources: SEC filings (8-K/10-K/10-Q) and real press releases
+# issued over the news wires. Deliberately EXCLUDES the yfinance news aggregator
+# and the IR-site scraper — those are noisy/low-signal ("crap").
+_NEWS_SOURCES = ["sec_8k", "businesswire", "prnewswire", "globenewswire"]
+
+
 def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
-    """Most important + recent events across the watchlist (earnings, M&A,
-    regulatory, leadership, filings, press releases) with their AI summaries."""
+    """Actionable news across the watchlist — SEC filings + real press releases
+    only (no news-aggregator noise) — with their AI summaries."""
     import datetime as dt
     try:
         from data.events import get_universe_recent
-        rows = get_universe_recent(limit=250)
+        rows = get_universe_recent(limit=300, sources=_NEWS_SOURCES)
     except Exception:
         return []
 
@@ -322,8 +328,9 @@ def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
 
 def _render_news_tab(alerts: list[dict]):
     if not alerts:
-        st.info("No recent watchlist news yet. The poller refreshes every ~30 min "
-                "during market hours (8-Ks, press releases, news).")
+        st.info("No recent SEC filings or press releases for your watchlist. "
+                "(News aggregator noise is intentionally excluded — only filings "
+                "and real press releases appear here.)")
         return
     for a in alerts:
         emoji, label, weight = _NEWS_TYPES.get(a["event_type"], ("📰", "News", 1))
