@@ -59,32 +59,33 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
         spread = latest_value("T10Y2Y")
         spread_5y3m = (t5 - t3m) if (t5 is not None and t3m is not None) else None
 
-        def _chip(label, val, is_spread=False):
+        def _pill(label, val, is_spread=False):
             if val is None:
-                disp = "—"
+                disp, col = "—", "#94a3b8"
             elif is_spread:
-                disp = f"{val:+.2f}pp"
+                disp = f"{val:+.2f}"
+                col = "#dc2626" if val < 0 else "#059669"
             else:
-                disp = f"{val:.2f}%"
+                disp, col = f"{val:.2f}%", "inherit"
             return (
-                '<div style="flex:1 1 0; min-width:78px; border:1px solid '
-                'rgba(148,163,184,0.25); border-radius:8px; padding:4px 10px; '
-                'background:rgba(148,163,184,0.05);">'
-                f'<div style="font-size:0.64rem; color:#64748b; font-weight:600; '
-                'text-transform:uppercase; letter-spacing:0.02em;">' + label + '</div>'
-                f'<div style="font-size:0.92rem; font-weight:700; line-height:1.35;">'
-                + disp + '</div></div>'
+                '<span style="display:inline-flex; flex-direction:column; '
+                'padding:2px 11px; border-radius:7px; background:rgba(148,163,184,0.08); '
+                'border:1px solid rgba(148,163,184,0.18); line-height:1.2;">'
+                f'<span style="font-size:0.56rem; color:#94a3b8; font-weight:600; '
+                'letter-spacing:0.04em;">' + label + '</span>'
+                f'<span style="font-size:0.84rem; font-weight:700; color:' + col + ';">'
+                + disp + '</span></span>'
             )
 
-        chips = [
-            _chip("Fed Funds", ff), _chip("3M", t3m), _chip("2Y", t2),
-            _chip("5Y", t5), _chip("10Y", t10),
-            _chip("5Y − 3M", spread_5y3m, is_spread=True),
-            _chip("10Y − 2Y", spread, is_spread=True),
+        pills = [
+            _pill("FED FUNDS", ff), _pill("3M", t3m), _pill("2Y", t2),
+            _pill("5Y", t5), _pill("10Y", t10),
+            _pill("5Y−3M", spread_5y3m, is_spread=True),
+            _pill("10Y−2Y", spread, is_spread=True),
         ]
         st.markdown(
-            '<div style="display:flex; gap:7px; flex-wrap:wrap; margin-bottom:4px;">'
-            + "".join(chips) + "</div>",
+            '<div style="display:flex; gap:6px; flex-wrap:wrap; margin:2px 0 8px;">'
+            + "".join(pills) + "</div>",
             unsafe_allow_html=True,
         )
     except Exception:
