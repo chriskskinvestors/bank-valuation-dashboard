@@ -86,7 +86,7 @@ elif section == "🏦 Company Analysis":
     company_ticker = _ov or (st.session_state.get("company_bank") or None)
 
     if company_ticker:
-        COMPANY_TABS = ["Overview", "Activity", "Financials", "Filings", "Deposits", "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership", "Earnings", "🔍 Data Quality"]
+        COMPANY_TABS = ["Financials", "Overview", "Activity", "Filings", "Deposits", "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership", "Earnings", "🔍 Data Quality"]
         _TAB_TOKENS = {"financials": "Financials", "valuation": "Valuation",
                        "dataquality": "🔍 Data Quality", "filings": "Filings"}
         _goto = _TAB_TOKENS.get((_qp.get("tab") or "").lower())
@@ -701,7 +701,10 @@ elif section == "🏦 Company Analysis":
         render_recent_activity(company_ticker)
 
     elif company_subtab == "Financials":
-        render_historicals(company_ticker)
+        from ui.financial_highlights import render_financial_highlights
+        render_financial_highlights(company_ticker)
+        with st.expander("Trend charts", expanded=False):
+            render_historicals(company_ticker)
 
     elif company_subtab == "Filings":
         render_filings_for_ticker(company_ticker)

@@ -36,8 +36,8 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
         cards = [
             ("price", "Price", None), ("change_pct", "Chg %", None),
             ("market_cap", "Mkt Cap", None), ("pe_ratio", "P/E", None),
-            ("eps", "EPS", "dataquality"), ("ptbv_ratio", "P/TBV", None),
-            ("tbvps", "TBV/Sh", "dataquality"),
+            ("eps", "EPS", "financials"), ("ptbv_ratio", "P/TBV", None),
+            ("tbvps", "TBV/Sh", "financials"),
             ("dividend_yield", "Div Yield", None), ("roatce_blended", "ROATCE", None),
             ("roaa", "ROAA", None), ("nim", "NIM", None),
             ("efficiency_ratio", "Efficiency", None), ("cet1_ratio", "CET1", None),
