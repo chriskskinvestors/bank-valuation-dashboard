@@ -91,18 +91,25 @@ body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
   letter-spacing:0.03em; }
 .card .lbl .arr { color:#2563eb; }
 .card .val { font-size:1.1rem; font-weight:700; line-height:1.35; }
-#panel { margin-top:12px; border:1px solid rgba(148,163,184,0.25); border-radius:10px;
-  background:#fff; overflow:hidden; }
-.hint { padding:16px; font-size:12.5px; color:#94a3b8; text-align:center; }
-.hd { padding:11px 16px; border-bottom:1px solid rgba(148,163,184,0.18); }
+/* Empty state: no box — just a faint centered hint (reads as whitespace, not
+   an empty white card). The bordered box only appears once a metric is
+   clicked (.filled), and scrolls internally if a calc is tall. */
+#panel { margin-top:8px; border-radius:10px; }
+#panel.filled { border:1px solid rgba(148,163,184,0.25); background:#fff;
+  max-height:152px; overflow-y:auto; }
+.hint { padding:14px 4px; font-size:11.5px; color:#aab4c0; text-align:center; }
+.hd { padding:8px 14px; border-bottom:1px solid rgba(148,163,184,0.18); position:relative; }
 .ttl { display:flex; justify-content:space-between; align-items:baseline;
-  font-size:15px; font-weight:700; color:#0f172a; }
-.ent { font-size:12px; color:#475569; margin-top:2px; }
-.meta { font-size:11.5px; color:#64748b; margin-top:2px; }
-.def { font-size:12px; color:#475569; padding:9px 16px; line-height:1.5;
+  font-size:14px; font-weight:700; color:#0f172a; padding-right:18px; }
+.cls { position:absolute; top:6px; right:10px; border:none; background:none;
+  font-size:16px; line-height:1; color:#b6c0cc; cursor:pointer; }
+.cls:hover { color:#64748b; }
+.ent { font-size:11.5px; color:#475569; margin-top:1px; }
+.meta { font-size:11px; color:#64748b; margin-top:1px; }
+.def { font-size:11.5px; color:#475569; padding:6px 14px; line-height:1.45;
   border-bottom:1px solid rgba(148,163,184,0.12); }
 .def b { color:#2563eb; font-weight:600; letter-spacing:0.03em; font-size:10.5px; }
-.calc { padding:10px 16px 14px; }
+.calc { padding:8px 14px 10px; }
 .term { display:flex; justify-content:space-between; padding:4px 0 4px 14px;
   font-size:12.5px; color:#334155; border-top:1px dashed rgba(148,163,184,0.25); }
 .term .tv { color:#1d4ed8; font-variant-numeric:tabular-nums; }
@@ -118,9 +125,15 @@ body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
 _PANEL_JS = """
 const panel=document.getElementById("panel");
 function esc(s){return (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;");}
+function clearCalc(){
+  panel.classList.remove("filled");
+  document.querySelectorAll(".card.sel").forEach(x=>x.classList.remove("sel"));
+  panel.innerHTML=`<div class="hint">Click any metric above to see its calculation and source documents.</div>`;
+}
 function showCalc(c,el){
   document.querySelectorAll(".card.sel").forEach(x=>x.classList.remove("sel"));
   if(el) el.classList.add("sel");
+  panel.classList.add("filled");
   let terms=(c.terms||[]).map(t=>
     `<div class="term"><span>${esc(t.label)}</span><span class="tv">${esc(t.val)}</span></div>`
     +(t.sub?`<div class="sub">${esc(t.sub)}</div>`:"")
@@ -130,7 +143,7 @@ function showCalc(c,el){
   let opline=c.op?`<div class="op">${esc(c.op)}</div>`:"";
   let rep=c.reported?`<div class="rep">Reported directly by ${esc(c.source)}.</div>`:"";
   let srclink=c.link?`<a class="src" href="${esc(c.link)}" target="_blank">View source →</a>`:"";
-  panel.innerHTML=`<div class="hd"><div class="ttl"><span>${esc(c.metric)}</span><span>${esc(c.value)}</span></div>`
+  panel.innerHTML=`<div class="hd"><button class="cls" onclick="clearCalc()" aria-label="Close">×</button><div class="ttl"><span>${esc(c.metric)}</span><span>${esc(c.value)}</span></div>`
     +`<div class="ent">${esc(c.entity)}</div>`
     +`<div class="meta">${esc(c.source)} &nbsp;|&nbsp; ${esc(c.asof)} &nbsp;|&nbsp; ${esc(c.unit)} &nbsp;|&nbsp; ${esc(c.ref)}</div></div>`
     +(c.definition?`<div class="def"><b>DEFINITION</b> &nbsp; ${esc(c.definition)}</div>`:"")
@@ -163,7 +176,7 @@ def render_traceable_cards(cards, key, columns=7, height=None):
 
     rows = -(-len(cards) // columns)
     if height is None:
-        height = 18 + rows * 64 + 240  # grid + inline detail panel
+        height = 18 + rows * 64 + 168  # grid + compact detail panel (empty state is borderless)
     data = json.dumps(cells)
     html = (f'<!doctype html><html><head><meta charset="utf-8"><style>{_CARD_CSS}'
             f'.grid{{grid-template-columns:repeat({columns},minmax(0,1fr));}}</style></head>'
