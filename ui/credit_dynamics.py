@@ -62,6 +62,78 @@ def _coverage_color(pct: float | None, peer_med: float | None = None) -> str:
     return "#b71c1c"
 
 
+def _render_credit_headline(ticker, hist, summary, peer_median):
+    """Credit headline cards — every number click-to-source. Reported FDIC
+    ratios link to the Call Report facsimile; computed ratios (reserve
+    coverage, past-due %) show their formula + the raw Call Report inputs."""
+    from ui.source_trace import render_traceable_cards, fdic_calc, make_calc
+    from ui.financial_highlights import _fdic_doc, _disp_date, _thou, _num
+
+    cert = get_fdic_cert(ticker)
+    entity = f"{get_name(ticker)} ({ticker})"
+    rec = hist[0]
+    latest = summary["latest"]
+    cr_doc = _fdic_doc(cert, rec.get("REPDTE")) if cert else None
+    asof = _disp_date(rec.get("REPDTE"))
+
+    def pct(x):
+        return f"{x:.2f}%" if x is not None else "—"
+
+    def qoq(val, q, fmt, worse_up=True):
+        if q is None:
+            return val
+        bad = (q >= 0) if worse_up else (q < 0)
+        col = "#dc2626" if bad else "#059669"
+        return f"{val} <span style='font-size:0.68rem; color:{col}; font-weight:600;'>{fmt(q)}</span>"
+
+    npl = latest.get("npl_ratio"); nco = latest.get("nco_ratio")
+    rc = latest.get("reserve_coverage"); pd89 = latest.get("past_due_30_89_pct")
+    rtl = latest.get("reserve_to_loans")
+    p3 = _num(rec.get("P3ASSET")); loans = _num(rec.get("LNLSNET"))
+    cov_val = f"{rc:.0f}%" if rc is not None else "—"
+
+    cards = [
+        {"label": "NPL Ratio",
+         "value": qoq(pct(npl), latest.get("npl_ratio_qoq"), lambda q: f"{q*100:+.0f}bps"),
+         "calc": fdic_calc("NPL ratio", "NCLNLSR", rec, cert, unit="%", entity=entity,
+                           value=pct(npl), reported=True,
+                           definition="Non-current loans (90+ days past due or nonaccrual) "
+                                       "as a percent of total loans.")},
+        {"label": "NCO Ratio",
+         "value": qoq(pct(nco), latest.get("nco_ratio_qoq"), lambda q: f"{q*100:+.0f}bps"),
+         "calc": fdic_calc("NCO ratio", "NTLNLSR", rec, cert, unit="%", entity=entity,
+                           value=pct(nco), reported=True,
+                           definition="Annualized net charge-offs as a percent of total loans.")},
+        {"label": "Reserve / NPL", "value": cov_val,
+         "calc": make_calc("Reserve coverage (reserves / NPL)", cov_val, entity=entity,
+                           source="FDIC Call Report", asof=asof, unit="%",
+                           ref="Computed from Call Report",
+                           definition="Loan-loss reserves as a multiple of non-current loans — "
+                                       "how well reserves cover NPLs."
+                                       + (f" Peer median {peer_median:.0f}%." if peer_median else ""),
+                           terms=[{"label": "Reserves / loans (%)", "val": pct(rtl), "doc": cr_doc},
+                                  {"label": "NPL ratio (%)", "val": pct(npl), "doc": cr_doc}],
+                           op="Reserves/loans ÷ NPL ratio × 100", reported=False,
+                           link=(cr_doc or {}).get("url"))},
+        {"label": "Past Due 30-89",
+         "value": qoq(pct(pd89), latest.get("past_due_30_89_pct_qoq"), lambda q: f"{q:+.2f}pp"),
+         "calc": make_calc("Past due 30-89 days", pct(pd89), entity=entity,
+                           source="FDIC Call Report", asof=asof, unit="%",
+                           ref="Computed from Call Report",
+                           definition="Loans 30-89 days past due as a percent of total loans "
+                                       "(early-delinquency signal).",
+                           terms=[{"label": "30-89 days past due ($000)", "val": _thou(p3), "doc": cr_doc},
+                                  {"label": "Total loans ($000)", "val": _thou(loans), "doc": cr_doc}],
+                           op="30-89 past due ÷ total loans × 100", reported=False,
+                           link=(cr_doc or {}).get("url"))},
+        {"label": "Reserves / Loans", "value": pct(rtl),
+         "calc": fdic_calc("Reserves / loans", "LNATRESR", rec, cert, unit="%", entity=entity,
+                           value=pct(rtl), reported=True,
+                           definition="Allowance for credit losses as a percent of total loans.")},
+    ]
+    render_traceable_cards(cards, key=f"credit_{ticker}", columns=5)
+
+
 def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
     """Render the Credit Quality analysis panel for a bank."""
     hist = _load_hist(ticker)
@@ -96,65 +168,9 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
             unsafe_allow_html=True,
         )
 
-    # ── Headline metrics ───────────────────────────────────────────────
+    # ── Headline metrics (click any value for its calc + Call Report) ──
     latest = summary["latest"]
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    with c1:
-        npl = latest.get("npl_ratio")
-        npl_qoq = latest.get("npl_ratio_qoq")
-        st.metric(
-            "NPL Ratio",
-            f"{npl:.2f}%" if npl is not None else "—",
-            delta=f"{npl_qoq*100:+.0f}bps QoQ" if npl_qoq is not None else None,
-            delta_color="inverse",
-        )
-
-    with c2:
-        nco = latest.get("nco_ratio")
-        nco_qoq = latest.get("nco_ratio_qoq")
-        st.metric(
-            "NCO Ratio",
-            f"{nco:.2f}%" if nco is not None else "—",
-            delta=f"{nco_qoq*100:+.0f}bps QoQ" if nco_qoq is not None else None,
-            delta_color="inverse",
-        )
-
-    with c3:
-        rc = latest.get("reserve_coverage")
-        color = _coverage_color(rc, peer_median)
-        benchmark_text = (
-            f"Peer median: {peer_median:.0f}%" if peer_median else "No peer data"
-        )
-        st.markdown(
-            f"""
-            <div style="padding:4px 0;">
-                <div style="font-size:0.85rem; color:#666;">Reserve/NPL</div>
-                <div style="font-size:1.75rem; font-weight:600; color:{color};">
-                    {f"{rc:.0f}%" if rc is not None else "—"}
-                </div>
-                <div style="font-size:0.75rem; color:#999;">{benchmark_text}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with c4:
-        pd_30_89 = latest.get("past_due_30_89_pct")
-        pd_qoq = latest.get("past_due_30_89_pct_qoq")
-        st.metric(
-            "Past Due 30-89",
-            f"{pd_30_89:.2f}%" if pd_30_89 is not None else "—",
-            delta=f"{pd_qoq:+.2f}pp QoQ" if pd_qoq is not None else None,
-            delta_color="inverse",
-        )
-
-    with c5:
-        rtl = latest.get("reserve_to_loans")
-        st.metric(
-            "Reserves / Loans",
-            f"{rtl:.2f}%" if rtl is not None else "—",
-        )
+    _render_credit_headline(ticker, hist, summary, peer_median)
 
     # Absolute + peer context
     if peer_median:

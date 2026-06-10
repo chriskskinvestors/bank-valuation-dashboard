@@ -95,6 +95,99 @@ def _fmt_usd(amount_k: float | None) -> str:
     return fmt_dollars_from_thousands(amount_k)
 
 
+def _render_capital_headline(ticker, hist, summary, timeline, peer_cet1):
+    """Capital headline cards — click-to-source. Reported capital ratios (CET1,
+    total capital, leverage) link to the Call Report; model metrics (TBV CAGR,
+    free capital, payout) show their formula + the FDIC inputs feeding them."""
+    from ui.source_trace import render_traceable_cards, fdic_calc, make_calc
+    from ui.financial_highlights import _fdic_doc, _disp_date, _thou, _num
+    from data.bank_mapping import get_name
+
+    cert = get_fdic_cert(ticker)
+    entity = f"{get_name(ticker)} ({ticker})"
+    rec = hist[0]
+    latest = summary["latest"]
+    cr_doc = _fdic_doc(cert, rec.get("REPDTE")) if cert else None
+    asof = _disp_date(rec.get("REPDTE"))
+
+    def pct(x, dp=2):
+        return f"{x:.{dp}f}%" if x is not None else "—"
+
+    cet1 = latest.get("cet1_pct"); total_cap = latest.get("total_cap_pct")
+    leverage = latest.get("leverage_pct"); cet1_qoq = latest.get("cet1_qoq_pp")
+    bb = summary.get("buyback_capacity") or {}
+    free = bb.get("free_capital"); organic = bb.get("organic_need"); retained = bb.get("retained")
+    ni = _num(latest.get("net_income_k_qtr")); cap_ret = _num(latest.get("capital_returned_k"))
+    tbv_cagr = summary.get("tbv_cagr_1y"); tbv_cagr2 = summary.get("tbv_cagr_2y")
+    tbv_k = _num(latest.get("tbv_k"))
+
+    cet1_disp = pct(cet1)
+    if cet1_qoq is not None:
+        col = "#059669" if cet1_qoq >= 0 else "#dc2626"
+        cet1_disp += (f" <span style='font-size:0.68rem; color:{col}; "
+                      f"font-weight:600;'>{cet1_qoq:+.2f}pp</span>")
+
+    retention_4q = timeline["retention_ratio"].tail(4).dropna() if "retention_ratio" in timeline else []
+    payout = max(0.0, (1 - retention_4q.mean()) * 100) if len(retention_4q) else None
+
+    cards = [
+        {"label": "CET1 Ratio", "value": cet1_disp,
+         "calc": fdic_calc("CET1 ratio", "IDT1CER", rec, cert, unit="%", entity=entity,
+                           value=pct(cet1), reported=True,
+                           definition="Common equity tier 1 capital to risk-weighted assets "
+                                       "(bank-level)." + (f" Peer median {peer_cet1:.2f}%."
+                                                          if peer_cet1 else ""))},
+        {"label": "TBV/Share CAGR (1Y)",
+         "value": (f"{tbv_cagr:.1f}%" if tbv_cagr is not None else "—"),
+         "calc": make_calc("TBV / share CAGR (1-year)",
+                           (f"{tbv_cagr:.1f}%" if tbv_cagr is not None else "—"), entity=entity,
+                           source="Model — trailing tangible book", asof=asof, unit="%",
+                           ref="(TBV/sh now ÷ TBV/sh 1yr ago) − 1",
+                           definition="Growth in tangible book value per share over the trailing "
+                                       "year — the core compounding metric for a bank."
+                                       + (f" 2-year CAGR {tbv_cagr2:.1f}%." if tbv_cagr2 is not None else ""),
+                           terms=[{"label": "Tangible book value ($000)", "val": _thou(tbv_k),
+                                   "doc": cr_doc,
+                                   "sub": "equity − goodwill − other intangibles (FDIC)"}],
+                           op="(TBV/share now ÷ TBV/share 1 year ago − 1) × 100")},
+        {"label": "Free Capital (Q)", "value": _fmt_usd(free),
+         "calc": make_calc("Free capital (quarter)", _fmt_usd(free), entity=entity,
+                           source="Model — capital generation", asof=asof, unit="$",
+                           ref="retained earnings − organic loan-growth need",
+                           definition="Capital generated this quarter beyond what's needed to "
+                                       "support loan growth at target CET1 — the buffer available "
+                                       "for buybacks/special dividends.",
+                           terms=[{"label": "Retained earnings", "val": _fmt_usd(retained), "doc": cr_doc,
+                                   "sub": "net income − dividends/buybacks (FDIC)"},
+                                  {"label": "Organic loan-growth need", "val": _fmt_usd(organic)}],
+                           op="Retained earnings − organic loan-growth capital need")},
+        {"label": "Payout Ratio (4Q)",
+         "value": (f"{payout:.0f}%" if payout is not None else "—"),
+         "calc": make_calc("Payout ratio (4-quarter)",
+                           (f"{payout:.0f}%" if payout is not None else "—"), entity=entity,
+                           source="FDIC Call Report", asof=asof, unit="%",
+                           ref="Computed from Call Report",
+                           definition="Share of earnings returned to shareholders (dividends + "
+                                       "buybacks) over the trailing four quarters.",
+                           terms=[{"label": "Capital returned (Q, $000)", "val": _thou(cap_ret), "doc": cr_doc},
+                                  {"label": "Net income (Q, $000)", "val": _thou(ni), "doc": cr_doc}],
+                           op="≈ capital returned ÷ net income (4-quarter avg) × 100", reported=False,
+                           link=(cr_doc or {}).get("url"))},
+        {"label": "Total Cap / Leverage",
+         "value": f"{pct(total_cap)} / {pct(leverage)}",
+         "calc": make_calc("Total capital & leverage ratios",
+                           f"{pct(total_cap)} / {pct(leverage)}", entity=entity,
+                           source="FDIC Call Report", asof=asof, unit="%",
+                           ref="FDIC fields RBCRWAJ / RBCT1JR",
+                           definition="Total risk-based capital ratio and tier-1 leverage ratio "
+                                       "(bank-level).",
+                           terms=[{"label": "Total capital ratio", "val": pct(total_cap), "doc": cr_doc},
+                                  {"label": "Tier-1 leverage ratio", "val": pct(leverage), "doc": cr_doc}],
+                           reported=True, link=(cr_doc or {}).get("url"))},
+    ]
+    render_traceable_cards(cards, key=f"capital_{ticker}", columns=5)
+
+
 def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     """Render the Capital Adequacy & Buyback Capacity panel."""
     hist = _load_hist(ticker)
@@ -132,80 +225,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
 
     # ── Headline metrics ───────────────────────────────────────────────
     latest = summary["latest"]
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    with c1:
-        cet1 = latest.get("cet1_pct")
-        cet1_qoq = latest.get("cet1_qoq_pp")
-        color = _cet1_color(cet1)
-        benchmark = f"Peer: {peer_cet1:.2f}%" if peer_cet1 else ""
-        st.markdown(
-            f"""
-            <div style="padding:4px 0;">
-                <div style="font-size:0.85rem; color:#666;">CET1 Ratio</div>
-                <div style="font-size:1.75rem; font-weight:600; color:{color};">
-                    {f"{cet1:.2f}%" if cet1 is not None else "—"}
-                </div>
-                <div style="font-size:0.75rem; color:#999;">
-                    {f"{cet1_qoq:+.2f}pp QoQ · {benchmark}" if cet1_qoq is not None else benchmark}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with c2:
-        tbv_cagr = summary["tbv_cagr_1y"]
-        tbv_cagr_2y = summary["tbv_cagr_2y"]
-        st.metric(
-            "TBV/Share CAGR (1Y)",
-            f"{tbv_cagr:.1f}%" if tbv_cagr is not None else "—",
-            delta=f"2Y: {tbv_cagr_2y:.1f}%" if tbv_cagr_2y is not None else None,
-            delta_color="off",
-        )
-
-    with c3:
-        bb = summary["buyback_capacity"]
-        free = bb.get("free_capital")
-        organic = bb.get("organic_need")
-        st.metric(
-            "Free Capital (Q)",
-            _fmt_usd(free),
-            delta=f"after {_fmt_usd(organic)} loan-growth need",
-            delta_color="off",
-        )
-
-    with c4:
-        # Payout ratio (4Q avg)
-        retention_4q = timeline["retention_ratio"].tail(4).dropna()
-        if len(retention_4q) > 0:
-            avg_retention = retention_4q.mean()
-            payout = max(0, (1 - avg_retention) * 100)
-            color = "#b71c1c" if payout > 80 else ("#e65100" if payout > 60 else "#1b5e20")
-            st.markdown(
-                f"""
-                <div style="padding:4px 0;">
-                    <div style="font-size:0.85rem; color:#666;">Payout Ratio (4Q)</div>
-                    <div style="font-size:1.75rem; font-weight:600; color:{color};">
-                        {payout:.0f}%
-                    </div>
-                    <div style="font-size:0.75rem; color:#999;">Capital returned / NI</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.metric("Payout Ratio (4Q)", "—")
-
-    with c5:
-        total_cap = latest.get("total_cap_pct")
-        leverage = latest.get("leverage_pct")
-        st.metric(
-            "Total Cap / Leverage",
-            f"{total_cap:.2f}%" if total_cap is not None else "—",
-            delta=f"Leverage: {leverage:.2f}%" if leverage is not None else None,
-            delta_color="off",
-        )
+    _render_capital_headline(ticker, hist, summary, timeline, peer_cet1)
 
     # Buyback capacity explainer
     bb = summary["buyback_capacity"]

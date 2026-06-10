@@ -64,6 +64,101 @@ def _load_hist(ticker: str) -> list[dict]:
     return records
 
 
+def _render_deposit_headline(ticker, hist, summary, timeline):
+    """Deposit headline cards — click-to-source. Reported FDIC fields (total
+    deposits, funding cost) link to the Call Report; computed shares and the
+    model betas show their formula + the FDIC/FRED inputs."""
+    from ui.source_trace import render_traceable_cards, fdic_calc, make_calc
+    from ui.financial_highlights import _fdic_doc, _disp_date, _thou, _num
+
+    cert = get_fdic_cert(ticker)
+    entity = f"{get_name(ticker)} ({ticker})"
+    rec = hist[0]
+    latest = summary["latest"]
+    cycle_beta = summary.get("cycle_beta") or {}
+    rolling_beta = summary.get("rolling_beta") or {}
+    cr_doc = _fdic_doc(cert, rec.get("REPDTE")) if cert else None
+    asof = _disp_date(rec.get("REPDTE"))
+
+    total = _num(latest.get("total_dep"))
+    qoq = latest.get("dep_qoq_growth")
+    cod = latest.get("cost_of_deposits")
+    nonint_pct = latest.get("nonint_dep_pct"); unins = latest.get("uninsured_pct")
+    depni = _num(rec.get("DEPNIDOM")); dep = _num(rec.get("DEP"))
+
+    tot_disp = fmt_dollars_from_thousands(total)
+    if qoq is not None:
+        col = "#059669" if qoq >= 0 else "#dc2626"
+        tot_disp += (f" <span style='font-size:0.68rem; color:{col}; "
+                     f"font-weight:600;'>{qoq:+.1f}%</span>")
+    cod_disp = f"{cod:.2f}%" if cod is not None else "—"
+    if len(timeline) >= 2 and cod is not None:
+        prev = timeline["cost_of_deposits"].iloc[-2]
+        if prev is not None and not pd.isna(prev):
+            chg = (cod - prev) * 100
+            col = "#dc2626" if chg >= 0 else "#059669"  # rising cost = bad
+            cod_disp += (f" <span style='font-size:0.68rem; color:{col}; "
+                         f"font-weight:600;'>{chg:+.0f}bps</span>")
+
+    cb = cycle_beta.get("beta"); rb = rolling_beta.get("beta")
+    r2 = rolling_beta.get("r_squared")
+    ff_chg = cycle_beta.get("ff_change"); cod_chg = cycle_beta.get("cod_change")
+
+    cards = [
+        {"label": "Total Deposits", "value": tot_disp,
+         "calc": fdic_calc("Total deposits", "DEP", rec, cert, unit="$ in thousands",
+                           entity=entity, value=fmt_dollars_from_thousands(total),
+                           reported=True, definition="Total domestic and foreign deposits.")},
+        {"label": "Cost of Deposits", "value": cod_disp,
+         "calc": fdic_calc("Cost of deposits (funding)", "INTEXPY", rec, cert, unit="%",
+                           entity=entity, value=(f"{cod:.2f}%" if cod is not None else "—"),
+                           reported=True,
+                           definition="Annualized cost of interest-bearing liabilities (FDIC "
+                                       "INTEXPY — deposits plus other borrowings; a funding-cost "
+                                       "proxy for pure-deposit banks).")},
+        {"label": f"Cycle Beta", "value": (f"{cb:.2f}" if cb is not None else "—"),
+         "calc": make_calc("Deposit cycle beta", (f"{cb:.2f}" if cb is not None else "—"),
+                           entity=entity, source="Model — rate-cycle regression", asof=asof,
+                           unit="beta", ref="Δ cost of deposits ÷ Δ fed funds (cycle)",
+                           definition="How much of a Fed-funds move passes through to deposit "
+                                       "cost over a full rate cycle. <0.30 = sticky deposits, "
+                                       ">0.50 = rate-sensitive.",
+                           terms=[{"label": "Δ Fed funds over cycle (pp)",
+                                   "val": (f"{ff_chg:+.2f}" if ff_chg is not None else "—"),
+                                   "sub": "FRED — effective federal funds rate"},
+                                  {"label": "Δ Cost of deposits over cycle (pp)",
+                                   "val": (f"{cod_chg:+.2f}" if cod_chg is not None else "—"),
+                                   "doc": cr_doc, "sub": "FDIC INTEXPY"}],
+                           op="Δ cost of deposits ÷ Δ fed funds")},
+        {"label": "Rolling Beta (4Q)", "value": (f"{rb:.2f}" if rb is not None else "—"),
+         "calc": make_calc("Rolling deposit beta (4-quarter)",
+                           (f"{rb:.2f}" if rb is not None else "—"), entity=entity,
+                           source="Model — 4Q rolling regression", asof=asof, unit="beta",
+                           ref="regression slope, trailing 4 quarters",
+                           definition="Recent deposit-cost sensitivity to Fed funds, fit over the "
+                                       "last four quarters (more responsive than the cycle beta).",
+                           terms=[{"label": "Regression R²",
+                                   "val": (f"{r2:.2f}" if r2 is not None else "—"),
+                                   "sub": "goodness of fit"}],
+                           op="slope of Δ cost-of-deposits vs Δ fed funds (4Q)")},
+        {"label": "Non-Int Dep %", "value": (f"{nonint_pct:.1f}%" if nonint_pct is not None else "—"),
+         "calc": make_calc("Non-interest-bearing deposit share",
+                           (f"{nonint_pct:.1f}%" if nonint_pct is not None else "—"), entity=entity,
+                           source="FDIC Call Report", asof=asof, unit="%",
+                           ref="Computed from Call Report",
+                           definition="Non-interest-bearing (checking) deposits as a share of total "
+                                       "— a stickiness/low-cost-funding gauge."
+                                       + (f" Uninsured deposits {unins:.0f}% of total."
+                                          if unins is not None else ""),
+                           terms=[{"label": "Non-interest-bearing deposits ($000)",
+                                   "val": _thou(depni), "doc": cr_doc},
+                                  {"label": "Total deposits ($000)", "val": _thou(dep), "doc": cr_doc}],
+                           op="Non-interest deposits ÷ total deposits × 100", reported=False,
+                           link=(cr_doc or {}).get("url"))},
+    ]
+    render_traceable_cards(cards, key=f"deposits_{ticker}", columns=5)
+
+
 def render_deposit_dynamics(ticker: str):
     """Render the Deposit Dynamics analysis panel for a specific bank."""
     hist = _load_hist(ticker)
@@ -98,83 +193,11 @@ def render_deposit_dynamics(ticker: str):
             unsafe_allow_html=True,
         )
 
-    # ── Key Metrics Row ────────────────────────────────────────────────
+    # ── Key Metrics Row (click any value for its calc + sources) ──
     latest = summary["latest"]
     cycle_beta = summary["cycle_beta"]
     rolling_beta = summary["rolling_beta"]
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    with c1:
-        total = latest.get("total_dep")
-        qoq = latest.get("dep_qoq_growth")
-        val = fmt_dollars_from_thousands(total)
-        delta = f"{qoq:+.1f}% QoQ" if qoq is not None else None
-        st.metric("Total Deposits", val, delta=delta, delta_color="normal")
-
-    with c2:
-        cod = latest.get("cost_of_deposits")
-        # Compute QoQ change
-        if len(timeline) >= 2:
-            prev_cod = timeline["cost_of_deposits"].iloc[-2]
-            cod_chg = (cod - prev_cod) * 100 if (cod is not None and prev_cod is not None) else None
-        else:
-            cod_chg = None
-        st.metric(
-            "Cost of Deposits",
-            f"{cod:.2f}%" if cod is not None else "—",
-            delta=f"{cod_chg:+.0f} bps QoQ" if cod_chg is not None else None,
-            delta_color="inverse",  # rising cost = bad
-        )
-
-    with c3:
-        cb = cycle_beta.get("beta")
-        direction = cycle_beta.get("cycle_direction", "").title()
-        color = _beta_color(cb)
-        st.markdown(
-            f"""
-            <div style="padding:4px 0;">
-                <div style="font-size:0.85rem; color:#666;">Cycle Beta ({direction})</div>
-                <div style="font-size:1.75rem; font-weight:600; color:{color};">
-                    {f"{cb:.2f}" if cb is not None else "—"}
-                </div>
-                <div style="font-size:0.75rem; color:#999;">
-                    {f"n={cycle_beta.get('n_quarters', '—')}Q" if cb is not None else ""}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with c4:
-        rb = rolling_beta.get("beta")
-        r2 = rolling_beta.get("r_squared")
-        color = _beta_color(rb)
-        st.markdown(
-            f"""
-            <div style="padding:4px 0;">
-                <div style="font-size:0.85rem; color:#666;">Rolling Beta (4Q)</div>
-                <div style="font-size:1.75rem; font-weight:600; color:{color};">
-                    {f"{rb:.2f}" if rb is not None else "—"}
-                </div>
-                <div style="font-size:0.75rem; color:#999;">
-                    {f"R²={r2:.2f}" if r2 is not None else ""}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with c5:
-        nii_pct = latest.get("nonint_dep_pct")
-        unins = latest.get("uninsured_pct")
-        # Show both — non-int % tells you stickiness, uninsured tells you run risk
-        st.metric(
-            "Non-Int Dep %",
-            f"{nii_pct:.1f}%" if nii_pct is not None else "—",
-            delta=f"Uninsured: {unins:.0f}%" if unins is not None else None,
-            delta_color="off",
-        )
+    _render_deposit_headline(ticker, hist, summary, timeline)
 
     # ── Cycle Beta Explainer ───────────────────────────────────────────
     if cycle_beta:
