@@ -73,21 +73,10 @@ if section == "📊 Screening":
     screening_tab = TABS[screening_tab_idx]
 
 elif section == "🏦 Company Analysis":
-    # Bank selector — watchlist first, then type any ticker
-    wl = load_watchlist()
-    company_ticker = st.sidebar.selectbox(
-        "Bank",
-        options=[""] + sorted(wl),
-        format_func=lambda t: f"{t} — {get_name(t)}" if t else "Select a bank...",
-        key="company_bank",
-    )
-    ticker_override = st.sidebar.text_input(
-        "Or enter ticker",
-        placeholder="Any ticker...",
-        key="company_ticker_input",
-    )
-    if ticker_override:
-        company_ticker = ticker_override.strip().upper()
+    # The bank is picked in the MAIN content area (not the sidebar). Read the
+    # current selection from session_state so the sub-tab nav can render here.
+    _ov = (st.session_state.get("company_ticker_input") or "").strip().upper()
+    company_ticker = _ov or (st.session_state.get("company_bank") or None)
 
     if company_ticker:
         COMPANY_TABS = ["Overview", "Activity", "Financials", "Filings", "Deposits", "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership", "Earnings", "🔍 Data Quality"]
@@ -662,15 +651,25 @@ elif section == "📊 Screening" and screening_tab:
 elif section == "🏦 Company Analysis":
     # ── COMPANY ANALYSIS: Single-bank deep dive ─────────────────────────
 
-    if not company_ticker:
-        st.markdown(
-            '<div class="dashboard-header">'
-            "<h1>Company Analysis</h1>"
-            "<p>Select a bank from the sidebar to begin</p>"
-            "</div>",
-            unsafe_allow_html=True,
+    # In-page bank picker (no need to use the sidebar). The widgets live here;
+    # the sidebar sub-tab nav reads the selection from session_state above.
+    _wl = load_watchlist()
+    _pc1, _pc2 = st.columns([3, 2])
+    with _pc1:
+        st.selectbox(
+            "Bank (watchlist)",
+            options=[""] + sorted(_wl),
+            format_func=lambda t: f"{t} — {get_name(t)}" if t else "Select a bank…",
+            key="company_bank",
         )
-        st.info("👈 Choose a bank from the sidebar dropdown or type a ticker.")
+    with _pc2:
+        st.text_input("Or enter any ticker", placeholder="e.g. JPM",
+                      key="company_ticker_input")
+    _ov2 = (st.session_state.get("company_ticker_input") or "").strip().upper()
+    company_ticker = _ov2 or (st.session_state.get("company_bank") or None)
+
+    if not company_ticker:
+        st.info("👆 Pick a bank above (watchlist dropdown) or type any ticker to begin.")
 
     elif company_subtab == "Overview":
         # Use cached single-bank metrics for fast switching
