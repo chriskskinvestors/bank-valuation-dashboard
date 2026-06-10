@@ -122,6 +122,95 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     }
 
 
+def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
+                               w_fair_price, blended, pv_explicit, pv_terminal, seed):
+    """Headline fair-value cards where every number is click-to-source: the
+    model OUTPUTS show their formula + inputs; the SEED inputs (EPS, ROATCE,
+    TBV/share) link to the SEC/FDIC filings they're derived from."""
+    from ui.source_trace import render_traceable_cards, make_calc, fmp_calc, sec_doc_for
+    from ui.financial_highlights import _fdic_doc
+
+    cik = get_cik(ticker); cert = get_fdic_cert(ticker)
+    entity = f"{name} ({ticker})"
+    facts = sec_client.fetch_company_facts(cik) if cik else {}
+    cr_doc = _fdic_doc(cert, hist[0].get("REPDTE")) if (cert and hist) else None
+    eps_doc = sec_doc_for(cik, facts, "EarningsPerShareDiluted", instant=False) if facts else None
+
+    def dol(x):
+        return f"${x:,.2f}" if x is not None else "—"
+
+    def pct(x):
+        return f"{x:.2f}%" if x is not None else "—"
+
+    def vs_price(val_str, fv):
+        if fv and price:
+            up = (fv / price - 1) * 100
+            col = "#059669" if up >= 0 else "#dc2626"
+            return (f"{val_str} <span style='font-size:0.72rem; color:{col}; "
+                    f"font-weight:600;'>{up:+.0f}%</span>")
+        return val_str
+
+    # Seed-input terms (traceable to filings) + assumption terms (editable).
+    EPS = {"label": "Base EPS (TTM, $)", "val": dol(seed["base_eps"]), "doc": eps_doc,
+           "sub": "SEC diluted EPS, trailing 12 months"}
+    ROATCE = {"label": "ROATCE (normalized, %)", "val": pct(seed["roatce_pct"]), "doc": cr_doc,
+              "sub": "trailing-4Q ROATCE from FDIC, one-time spikes winsorized"}
+    TBVPS = {"label": "TBV / share ($)", "val": dol(seed["tbvps"]), "doc": cr_doc,
+             "sub": "FDIC tangible common equity ÷ SEC shares"}
+    GROWTH = {"label": "EPS growth (avg %)", "val": pct(seed["eps_growth_avg"]),
+              "sub": "model assumption (editable)"}
+    PAYOUT = {"label": "Payout ratio", "val": f"{seed['payout_ratio']:.0%}",
+              "sub": "model assumption (editable)"}
+    COE = {"label": "Cost of equity (%)", "val": pct(seed["cost_of_equity"]),
+           "sub": "model assumption (editable)"}
+    TG = {"label": "Terminal growth (%)", "val": pct(seed["terminal_growth"]),
+          "sub": "model assumption (editable)"}
+    wptbv_str = f"{w_ptbv:.2f}×" if w_ptbv else "—"
+
+    cards = [
+        {"label": "Current Price", "value": dol(price),
+         "calc": fmp_calc("Current price", dol(price), entity=entity, unit="$ / share",
+                          definition="Latest market price from FMP.")},
+        {"label": "DCF Fair Value", "value": vs_price(dol(dcf_fv), dcf_fv),
+         "calc": make_calc("DCF fair value", dol(dcf_fv), entity=entity,
+                           source="Model — FCFE DCF", asof="live model", unit="$ / share",
+                           ref="PV(5-yr FCFE) + PV(terminal value)",
+                           definition="Free cash flow to equity discounted at the cost of "
+                                       "equity: present value of 5 years of FCFE plus the "
+                                       "present value of the terminal value.",
+                           terms=[EPS, GROWTH, PAYOUT, COE, TG,
+                                  {"label": "PV of 5-yr FCFE", "val": dol(pv_explicit)},
+                                  {"label": "PV of terminal value", "val": dol(pv_terminal)}],
+                           op="DCF = PV(5-yr FCFE) + PV(terminal value)")},
+        {"label": "Warranted P/TBV", "value": wptbv_str,
+         "calc": make_calc("Warranted P/TBV", wptbv_str, entity=entity,
+                           source="Model — Gordon growth", asof="live model", unit="×",
+                           ref="(ROATCE − g) ÷ (CoE − g)",
+                           definition="Justified price-to-tangible-book multiple from the "
+                                       "Gordon growth model: (ROATCE − terminal growth) ÷ "
+                                       "(cost of equity − terminal growth).",
+                           terms=[ROATCE, COE, TG], op="(ROATCE − g) ÷ (CoE − g)")},
+        {"label": "Warranted Price", "value": vs_price(dol(w_fair_price), w_fair_price),
+         "calc": make_calc("Warranted price", dol(w_fair_price), entity=entity,
+                           source="Model — P/TBV × TBV", asof="live model", unit="$ / share",
+                           ref="warranted P/TBV × TBV per share",
+                           definition="The warranted P/TBV multiple applied to tangible book "
+                                       "value per share.",
+                           terms=[{"label": "Warranted P/TBV", "val": wptbv_str}, TBVPS],
+                           op="Warranted P/TBV × TBV per share")},
+        {"label": "Blended Fair Value", "value": vs_price(dol(blended), blended),
+         "calc": make_calc("Blended fair value", dol(blended), entity=entity,
+                           source="Model — average", asof="live model", unit="$ / share",
+                           ref="(DCF + warranted price) ÷ 2",
+                           definition="Simple average of the DCF fair value and the "
+                                       "warranted-P/TBV price.",
+                           terms=[{"label": "DCF fair value", "val": dol(dcf_fv)},
+                                  {"label": "Warranted price", "val": dol(w_fair_price)}],
+                           op="(DCF fair value + warranted price) ÷ 2")},
+    ]
+    render_traceable_cards(cards, key=f"valuation_{ticker}", columns=5)
+
+
 def render_valuation_model(ticker: str):
     """Render the full valuation model panel."""
     hist = _load_hist(ticker)
@@ -262,50 +351,18 @@ def render_valuation_model(ticker: str):
     w_ptbv = warranted_ptbv(roatce_pct, cost_of_equity, terminal_growth)
     w_fair_price = w_ptbv * tbvps if (w_ptbv is not None and tbvps) else None
 
-    # ── Headline Metrics ──────────────────────────────────────────────
+    # ── Headline Metrics (click any value to see its formula + sources) ──
     dcf_fv = dcf.get("fair_value_per_share")
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    with c1:
-        st.metric("Current Price", f"${price:.2f}" if price else "—")
-    with c2:
-        st.metric(
-            "DCF Fair Value",
-            f"${dcf_fv:.2f}" if dcf_fv else "—",
-            delta=(
-                f"{((dcf_fv / price) - 1) * 100:+.1f}% vs price"
-                if (dcf_fv and price) else None
-            ),
-        )
-    with c3:
-        st.metric(
-            "Warranted P/TBV",
-            f"{w_ptbv:.2f}x" if w_ptbv else "—",
-            delta=f"@ ROATCE {roatce_pct:.1f}%, CoE {cost_of_equity:.1f}%",
-            delta_color="off",
-        )
-    with c4:
-        st.metric(
-            "Warranted Price",
-            f"${w_fair_price:.2f}" if w_fair_price else "—",
-            delta=(
-                f"{((w_fair_price / price) - 1) * 100:+.1f}% vs price"
-                if (w_fair_price and price) else None
-            ),
-        )
-    with c5:
-        if dcf_fv and w_fair_price:
-            blended = (dcf_fv + w_fair_price) / 2
-            st.metric(
-                "Blended Fair Value",
-                f"${blended:.2f}",
-                delta=(
-                    f"{((blended / price) - 1) * 100:+.1f}% vs price"
-                    if price else None
-                ),
-            )
-        else:
-            st.metric("Blended Fair Value", "—")
+    pv_explicit = dcf.get("pv_explicit")
+    pv_terminal = dcf.get("pv_terminal")
+    blended = ((dcf_fv + w_fair_price) / 2) if (dcf_fv and w_fair_price) else None
+    _render_valuation_headline(
+        ticker, name, hist, sec, price, dcf_fv, w_ptbv, w_fair_price, blended,
+        pv_explicit, pv_terminal,
+        seed={"base_eps": base_eps, "roatce_pct": roatce_pct, "tbvps": tbvps,
+              "eps_growth_avg": eps_growth_avg, "payout_ratio": payout_ratio,
+              "cost_of_equity": cost_of_equity, "terminal_growth": terminal_growth},
+    )
 
     st.markdown("---")
 
