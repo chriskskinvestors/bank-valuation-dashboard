@@ -693,15 +693,16 @@ elif section == "🏦 Company Analysis":
         st.info("👆 Pick a bank above (watchlist dropdown) or type any ticker to begin.")
     else:
         # Sub-tab navigation lives at the TOP of the page (under the picker),
-        # horizontal — same set for every bank.
-        company_subtab = st.radio(
-            "View", COMPANY_TABS, key="company_subtab",
-            horizontal=True, label_visibility="collapsed",
-        )
-        st.markdown(
-            "<div style='border-bottom:1px solid rgba(148,163,184,0.2); margin:2px 0 14px;'></div>",
-            unsafe_allow_html=True,
-        )
+        # horizontal — same set for every bank. Wrapped in a keyed container so
+        # the CSS in ui/styles.py can render it as a clean tab bar (the radio
+        # keeps all the deep-link / session_state behaviour; only its look
+        # changes — see .st-key-company_subtab_nav styles).
+        with st.container(key="company_subtab_nav"):
+            company_subtab = st.radio(
+                "View", COMPANY_TABS, key="company_subtab",
+                horizontal=True, label_visibility="collapsed",
+            )
+        st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
 
     if not company_ticker:
         pass
