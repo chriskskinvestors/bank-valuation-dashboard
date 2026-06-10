@@ -60,6 +60,99 @@ def _pick_nii_scale(max_abs: float) -> tuple[float, str]:
     return 1e3, "K"
 
 
+def _render_phased_inputs(ticker, latest, inputs, tax_rate):
+    """The phased-model input strip — every value click-to-source. NIM and
+    earning assets are reported FDIC fields; the securities/loan mix is computed
+    from the Call Report; the tax rate is a model assumption."""
+    from ui.source_trace import render_traceable_cards, fdic_calc, make_calc
+    from ui.financial_highlights import _fdic_doc, _disp_date, _num, _thou
+    from data.bank_mapping import get_fdic_cert, get_name
+
+    cert = get_fdic_cert(ticker)
+    entity = f"{get_name(ticker)} ({ticker})"
+    cr_doc = _fdic_doc(cert, latest.get("REPDTE")) if (cert and latest.get("REPDTE")) else None
+    asof = _disp_date(latest.get("REPDTE")) if latest.get("REPDTE") else "latest"
+    ern = _num(latest.get("ERNAST")); sc = _num(latest.get("SC")); ln = _num(latest.get("LNLSNET"))
+    nim = inputs.get("current_nim_pct", 0); ea = inputs.get("earning_assets_usd")
+    sec_sh = inputs.get("securities_share", 0); ln_sh = inputs.get("loans_share", 0)
+
+    cards = [
+        {"label": "Current NIM", "value": f"{nim:.2f}%",
+         "calc": fdic_calc("Current net interest margin", "NIMY", latest, cert, unit="%",
+                           entity=entity, value=f"{nim:.2f}%", reported=True,
+                           definition="The bank's latest reported net interest margin — the "
+                                       "starting point the rate scenarios shock.")},
+        {"label": "Earning Assets", "value": fmt_dollars(ea),
+         "calc": fdic_calc("Total earning assets", "ERNAST", latest, cert, unit="$ in thousands",
+                           entity=entity, value=fmt_dollars(ea), reported=True,
+                           definition="Total interest-earning assets — the base the NIM is "
+                                       "applied to.")},
+        {"label": "Securities", "value": f"{sec_sh*100:.0f}%",
+         "calc": make_calc("Securities share of earning assets", f"{sec_sh*100:.0f}%", entity=entity,
+                           source="FDIC Call Report", asof=asof, unit="%",
+                           ref="Computed from Call Report",
+                           definition="Investment securities as a share of earning assets — the "
+                                       "slower-repricing bucket in the model.",
+                           terms=[{"label": "Securities ($000)", "val": _thou(sc), "doc": cr_doc},
+                                  {"label": "Earning assets ($000)", "val": _thou(ern), "doc": cr_doc}],
+                           op="Securities ÷ earning assets × 100", reported=False,
+                           link=(cr_doc or {}).get("url"))},
+        {"label": "Loans", "value": f"{ln_sh*100:.0f}%",
+         "calc": make_calc("Loan share of earning assets", f"{ln_sh*100:.0f}%", entity=entity,
+                           source="FDIC Call Report", asof=asof, unit="%",
+                           ref="Computed from Call Report",
+                           definition="Net loans as a share of earning assets — the faster-"
+                                       "repricing bucket (especially floating-rate loans).",
+                           terms=[{"label": "Net loans ($000)", "val": _thou(ln), "doc": cr_doc},
+                                  {"label": "Earning assets ($000)", "val": _thou(ern), "doc": cr_doc}],
+                           op="Net loans ÷ earning assets × 100", reported=False,
+                           link=(cr_doc or {}).get("url"))},
+        {"label": "Tax Rate", "value": f"{tax_rate*100:.0f}%",
+         "calc": make_calc("Effective tax rate", f"{tax_rate*100:.0f}%", entity=entity,
+                           source="Model assumption", asof="model", unit="%",
+                           ref="model input",
+                           definition="Effective tax rate used to convert pre-tax NII changes into "
+                                       "EPS impact (a model assumption, editable in the inputs).",
+                           terms=[{"label": "Effective tax rate", "val": f"{tax_rate*100:.0f}%"}])},
+    ]
+    render_traceable_cards(cards, key=f"nim_phased_inputs_{ticker}", columns=5)
+
+
+def _render_rate_context(ff, t3m, t5, curve_5y_3m):
+    """Macro rate strip — values from FRED (daily). Click for source."""
+    from ui.source_trace import render_traceable_cards, make_calc
+    FRED = "FRED — Federal Reserve daily data"
+
+    def rate_card(label, value, definition, series):
+        return {"label": label, "value": value,
+                "calc": make_calc(label, value, entity="US Treasury / Fed", source=FRED,
+                                  asof="latest daily", unit="%", ref=f"FRED series {series}",
+                                  definition=definition, terms=[{"label": label, "val": value}],
+                                  reported=True, link="https://fred.stlouisfed.org/series/" + series)}
+
+    slope_label = "Steep" if (curve_5y_3m and curve_5y_3m > 0.5) else (
+        "Flat" if (curve_5y_3m and abs(curve_5y_3m) <= 0.5) else "Inverted")
+    slope_val = (f"{curve_5y_3m:+.2f}pp" if curve_5y_3m is not None else "—")
+    cards = [
+        rate_card("Fed Funds", (f"{ff:.2f}%" if ff is not None else "—"),
+                  "Effective federal funds rate — the overnight policy rate.", "DFF"),
+        rate_card("3M Treasury", (f"{t3m:.2f}%" if t3m is not None else "—"),
+                  "3-month Treasury bill yield — drives short-term funding costs.", "DGS3MO"),
+        rate_card("5Y Treasury", (f"{t5:.2f}%" if t5 is not None else "—"),
+                  "5-year Treasury yield — a proxy for asset-reinvestment rates.", "DGS5"),
+        {"label": "5Y − 3M Slope", "value": f"{slope_val}  ({slope_label})",
+         "calc": make_calc("5Y − 3M curve slope", slope_val, entity="US Treasury",
+                           source="FRED — Federal Reserve daily data", asof="latest daily", unit="pp",
+                           ref="DGS5 − DGS3MO",
+                           definition="Yield-curve slope between the 5-year and 3-month points. "
+                                       "Positive = steep, negative = inverted.",
+                           terms=[{"label": "5Y Treasury (DGS5)", "val": (f"{t5:.2f}%" if t5 is not None else "—")},
+                                  {"label": "3M Treasury (DGS3MO)", "val": (f"{t3m:.2f}%" if t3m is not None else "—")}],
+                           op="5Y yield − 3M yield")},
+    ]
+    render_traceable_cards(cards, key="nim_rate_context", columns=4)
+
+
 def render_rate_sensitivity(ticker: str):
     """Render the NIM Sensitivity panel for a bank."""
     hist = _load_hist(ticker)
@@ -86,22 +179,7 @@ def render_rate_sensitivity(ticker: str):
     except Exception:
         ff, t3m, t5, curve_5y_3m = None, None, None, None
 
-    cc1, cc2, cc3, cc4 = st.columns(4)
-    with cc1:
-        st.metric("Fed Funds", f"{ff:.2f}%" if ff is not None else "—")
-    with cc2:
-        st.metric("3M Treasury", f"{t3m:.2f}%" if t3m is not None else "—")
-    with cc3:
-        st.metric("5Y Treasury", f"{t5:.2f}%" if t5 is not None else "—")
-    with cc4:
-        slope_label = "Steep" if (curve_5y_3m and curve_5y_3m > 0.5) else (
-            "Flat" if (curve_5y_3m and abs(curve_5y_3m) <= 0.5) else "Inverted"
-        )
-        st.metric(
-            "5Y − 3M Slope",
-            f"{curve_5y_3m:+.2f}pp" if curve_5y_3m is not None else "—",
-            delta=slope_label, delta_color="off",
-        )
+    _render_rate_context(ff, t3m, t5, curve_5y_3m)
 
     st.markdown("---")
 
@@ -534,13 +612,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
         )
 
     inputs = result["inputs"]
-    # Context strip
-    cc1, cc2, cc3, cc4, cc5 = st.columns(5)
-    with cc1: st.metric("Current NIM", f"{inputs.get('current_nim_pct', 0):.2f}%")
-    with cc2: st.metric("Earning Assets", fmt_dollars(inputs.get("earning_assets_usd")))
-    with cc3: st.metric("Securities", f"{inputs.get('securities_share', 0)*100:.0f}%")
-    with cc4: st.metric("Loans", f"{inputs.get('loans_share', 0)*100:.0f}%")
-    with cc5: st.metric("Tax Rate", f"{result.get('tax_rate_used', 0)*100:.0f}%")
+    _render_phased_inputs(ticker, latest, inputs, result.get("tax_rate_used", 0))
 
     # Charts side-by-side: pace curve + (if available) the actual maturity ladder
     import plotly.express as px
