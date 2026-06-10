@@ -75,7 +75,13 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
             print(f"[bank_detail] FMP history fallback failed: {e}")
             hist_df = pd.DataFrame()
 
-    st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True)
+    # Constrain to ~70% width (a full-width chart is too stretched to read) and
+    # use the remaining space for period stats.
+    _chart_col, _stats_col = st.columns([7, 3])
+    with _chart_col:
+        st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True)
+    with _stats_col:
+        _render_price_stats(hist_df)
 
     # ── FDIC metrics trend ──────────────────────────────────────────
     st.subheader("Key Metrics Trend")
@@ -141,6 +147,25 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
             st.info("No recent filings found.")
     else:
         st.info("SEC CIK not mapped for this bank.")
+
+
+def _render_price_stats(hist_df):
+    """Compact period stats beside the price chart (fills the right column)."""
+    if hist_df is None or hist_df.empty or "close" not in hist_df.columns:
+        return
+    d = hist_df.sort_values("date")
+    close = d["close"].astype(float)
+    last, first = float(close.iloc[-1]), float(close.iloc[0])
+    hi = float(d["high"].max()) if ("high" in d.columns and d["high"].notna().any()) else float(close.max())
+    lo = float(d["low"].min()) if ("low" in d.columns and d["low"].notna().any()) else float(close.min())
+    chg = ((last - first) / first * 100) if first else 0.0
+    st.metric("Last", f"${last:,.2f}", delta=f"{chg:+.2f}% over period")
+    st.metric("Period High", f"${hi:,.2f}")
+    st.metric("Period Low", f"${lo:,.2f}")
+    st.metric("Range", f"{((hi - lo) / lo * 100):.1f}%" if lo else "—")
+    if "volume" in d.columns and d["volume"].notna().any():
+        avgv = float(d["volume"].mean())
+        st.metric("Avg Volume", f"{avgv/1e6:.2f}M" if avgv >= 1e6 else f"{avgv:,.0f}")
 
 
 def _render_keystat_grid(ticker, info, name, row):

@@ -13,12 +13,14 @@ from utils.chart_style import CHART_LAYOUT  # re-export for any old callers
 
 
 def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
-    """Clean, compact area price chart (green if up over the window, red if down)."""
+    """A proper price chart: candlesticks (when OHLC is available) + a volume
+    panel, taller aspect ratio, gridlines. Falls back to a clean line if only
+    close prices exist."""
     from utils.chart_style import apply_standard_layout
     if df is None or df.empty or "close" not in df.columns:
         fig = go.Figure()
         apply_standard_layout(fig, title=f"{ticker} — no price data",
-                              height=240, show_legend=False)
+                              height=300, show_legend=False)
         return fig
 
     d = df.sort_values("date")
@@ -26,27 +28,42 @@ def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
     first, last = float(y.iloc[0]), float(y.iloc[-1])
     up = last >= first
     color = "#059669" if up else "#dc2626"
-    fill = "rgba(5,150,105,0.07)" if up else "rgba(220,38,38,0.07)"
-
-    # Explicit, informative title (never None — a None/missing title rendered as
-    # a stray "undefined" in the browser). Shows last price + change over window.
     pct = ((last - first) / first * 100) if first else 0.0
     title = (f"{ticker}  ${last:,.2f}  "
              f"<span style='color:{color}'>{pct:+.2f}% over period</span>")
 
-    fig = go.Figure(go.Scatter(
-        x=d["date"], y=y, mode="lines", name=ticker,
-        line=dict(color=color, width=2),
-        fill="tozeroy", fillcolor=fill,
+    has_vol = "volume" in d.columns and d["volume"].notna().any()
+
+    if has_vol:
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            vertical_spacing=0.04, row_heights=[0.74, 0.26])
+    else:
+        fig = make_subplots(rows=1, cols=1)
+
+    # Price: clean area line (green if up over the window, red if down).
+    fig.add_trace(go.Scatter(
+        x=d["date"], y=y, mode="lines", name=ticker, showlegend=False,
+        line=dict(color=color, width=2), fill="tozeroy",
+        fillcolor=("rgba(5,150,105,0.07)" if up else "rgba(220,38,38,0.07)"),
         hovertemplate="%{x|%b %d, %Y}<br>$%{y:.2f}<extra></extra>",
-    ))
-    apply_standard_layout(fig, title=title, height=260, show_legend=False,
+    ), row=1, col=1)
+
+    if has_vol:
+        ref = d["close"].shift(1).fillna(d["close"])
+        vcolors = ["rgba(5,150,105,0.45)" if c >= o else "rgba(220,38,38,0.45)"
+                   for o, c in zip(ref, d["close"])]
+        fig.add_trace(go.Bar(x=d["date"], y=d["volume"], marker_color=vcolors,
+                             name="Volume", showlegend=False), row=2, col=1)
+        fig.update_yaxes(showgrid=False, row=2, col=1)
+
+    apply_standard_layout(fig, title=title, height=420, show_legend=False,
                           hovermode="x unified")
-    # Zoom the y-axis to the data range so the move is visible (not a flat line).
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(148,163,184,0.12)")
+    # Zoom the price y-axis to the data range so the move reads clearly.
     ymin, ymax = float(y.min()), float(y.max())
     pad = (ymax - ymin) * 0.08 or max(ymax * 0.01, 0.5)
-    fig.update_yaxes(range=[ymin - pad, ymax + pad], tickprefix="$")
-    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(range=[ymin - pad, ymax + pad], tickprefix="$", showgrid=True,
+                     gridcolor="rgba(148,163,184,0.12)", row=1, col=1)
     return fig
 
 
