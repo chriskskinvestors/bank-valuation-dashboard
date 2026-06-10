@@ -146,50 +146,147 @@ def peer_radar_chart(radar_data: dict) -> go.Figure:
     return fig
 
 
+def _b(v):
+    """FDIC $thousands → $billions."""
+    try:
+        return float(v) / 1e6
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def balance_sheet_chart(fdic_df: pd.DataFrame) -> go.Figure:
-    """Stacked bar chart of assets, loans, deposits over time."""
-    if fdic_df.empty:
+    """Tightened trend LINE of total assets / net loans / total deposits ($B)."""
+    from utils.chart_style import apply_standard_layout
+    if fdic_df is None or fdic_df.empty:
         fig = go.Figure()
-        fig.update_layout(title="Balance Sheet", **CHART_LAYOUT)
+        apply_standard_layout(fig, title="Balance Sheet — no data", height=300, show_legend=False)
         return fig
-
+    d = fdic_df.sort_values("REPDTE")
     fig = go.Figure()
+    for field, label, color in [("ASSET", "Total Assets", "#42a5f5"),
+                                ("LNLSNET", "Net Loans", "#26a69a"),
+                                ("DEP", "Total Deposits", "#ffb300")]:
+        if field in d.columns:
+            fig.add_trace(go.Scatter(
+                x=d["REPDTE"], y=d[field] / 1e6, mode="lines+markers", name=label,
+                line=dict(color=color, width=2.5), marker=dict(size=4),
+                hovertemplate="%{x|%b %Y}<br>$%{y:.2f}B<extra></extra>"))
+    apply_standard_layout(fig, title="Balance Sheet Trend ($B)", height=320,
+                          hovermode="x unified")
+    fig.update_yaxes(tickprefix="$", ticksuffix="B")
+    fig.update_layout(legend=dict(orientation="h", y=-0.2))
+    return fig
 
-    # Determine scale (B or T) from max asset value
-    max_usd = 0
-    if "ASSET" in fdic_df.columns:
-        assets_series = fdic_df["ASSET"] * 1000  # thousands → dollars
-        max_usd = assets_series.abs().max() if not assets_series.empty else 0
-    scale, unit = (1e12, "T") if max_usd >= 1e12 else (1e9, "B")
 
-    if "ASSET" in fdic_df.columns:
-        fig.add_trace(go.Bar(
-            x=fdic_df["REPDTE"],
-            y=fdic_df["ASSET"] * 1000 / scale,
-            name="Total Assets",
-            marker_color="#64b5f6",
-        ))
-    if "LNLSNET" in fdic_df.columns:
-        fig.add_trace(go.Bar(
-            x=fdic_df["REPDTE"],
-            y=fdic_df["LNLSNET"] * 1000 / scale,
-            name="Net Loans",
-            marker_color="#00c853",
-        ))
-    if "DEP" in fdic_df.columns:
-        fig.add_trace(go.Bar(
-            x=fdic_df["REPDTE"],
-            y=fdic_df["DEP"] * 1000 / scale,
-            name="Total Deposits",
-            marker_color="#ffd600",
-        ))
+def _donut(labels, values, title, colors):
+    """Reusable donut for composition snapshots (values in $B)."""
+    pairs = [(l, v, c) for l, v, c in zip(labels, values, colors) if v and v > 0]
+    if not pairs:
+        fig = go.Figure()
+        fig.update_layout(title=f"{title} — no data", height=300, **CHART_LAYOUT)
+        return fig
+    ls, vs, cs = zip(*pairs)
+    fig = go.Figure(go.Pie(
+        labels=ls, values=vs, hole=0.58, sort=False,
+        marker=dict(colors=cs, line=dict(color="#ffffff", width=1)),
+        textinfo="percent", textfont_size=11, textposition="inside",
+        hovertemplate="%{label}: $%{value:.2f}B (%{percent})<extra></extra>"))
+    fig.update_layout(title=title, height=300, showlegend=True,
+                      legend=dict(orientation="h", y=-0.12, font=dict(size=10)),
+                      **CHART_LAYOUT)
+    return fig
 
-    fig.update_layout(
-        title=f"Balance Sheet Trend (${unit})",
-        xaxis_title="Quarter",
-        yaxis_title=f"$ {'Trillions' if unit == 'T' else 'Billions'}",
-        barmode="group",
-        legend=dict(orientation="h", y=-0.2),
-        **CHART_LAYOUT,
-    )
+
+def asset_composition_chart(fdic_df: pd.DataFrame) -> go.Figure:
+    """Donut of the latest balance sheet's asset mix."""
+    if fdic_df is None or fdic_df.empty:
+        return _donut([], [], "Asset Composition", [])
+    r = fdic_df.sort_values("REPDTE").iloc[-1]
+    asset = _b(r.get("ASSET")); loans = _b(r.get("LNLSNET"))
+    sec = _b(r.get("SC")); cash = _b(r.get("CHBAL"))
+    other = max(0.0, asset - loans - sec - cash)
+    return _donut(["Net loans", "Securities", "Cash & balances", "Other"],
+                  [loans, sec, cash, other], "Asset Composition (latest)",
+                  ["#1e88e5", "#26a69a", "#ffb300", "#b0bec5"])
+
+
+def loan_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
+    """Donut of the latest loan portfolio mix."""
+    if fdic_df is None or fdic_df.empty:
+        return _donut([], [], "Loan Mix", [])
+    r = fdic_df.sort_values("REPDTE").iloc[-1]
+    resi = _b(r.get("LNRERES"))
+    cre = _b(r.get("LNRENRES")) + _b(r.get("LNREMULT"))
+    constr = _b(r.get("LNRECONS"))
+    ci = _b(r.get("LNCI")); cons = _b(r.get("LNCON")); ag = _b(r.get("LNREAG"))
+    total = _b(r.get("LNLSNET"))
+    named = resi + cre + constr + ci + cons + ag
+    other = max(0.0, total - named)
+    return _donut(["1-4 Family residential", "CRE (income property)", "Construction",
+                   "C&I", "Consumer", "Ag / other"],
+                  [resi, cre, constr, ci, cons, ag + other], "Loan Mix (latest)",
+                  ["#42a5f5", "#5e35b1", "#ef6c00", "#2e7d32", "#00897b", "#b0bec5"])
+
+
+def funding_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
+    """Donut of the latest funding stack (how the bank is funded)."""
+    if fdic_df is None or fdic_df.empty:
+        return _donut([], [], "Funding Mix", [])
+    r = fdic_df.sort_values("REPDTE").iloc[-1]
+    nib = _b(r.get("DEPNIDOM")); dep = _b(r.get("DEP"))
+    ib = max(0.0, dep - nib)
+    equity = _b(r.get("EQTOT")); liab = _b(r.get("LIAB"))
+    borrow = max(0.0, liab - dep)
+    fig = _donut(["Non-int deposits", "Interest-bearing deposits", "Borrowings / other", "Equity"],
+                 [nib, ib, borrow, equity], "Funding Mix (latest)",
+                 ["#43a047", "#1e88e5", "#fb8c00", "#8e24aa"])
+    unins = _b(r.get("DEPUNINS"))
+    if dep and unins:
+        fig.update_layout(title=f"Funding Mix (latest) · {unins/dep*100:.0f}% uninsured")
+    return fig
+
+
+def cet1_trend_chart(fdic_df: pd.DataFrame) -> go.Figure:
+    """CET1 capital ratio over time."""
+    from utils.chart_style import apply_standard_layout
+    if fdic_df is None or fdic_df.empty or "IDT1CER" not in fdic_df.columns:
+        fig = go.Figure()
+        apply_standard_layout(fig, title="CET1 Ratio — no data", height=300, show_legend=False)
+        return fig
+    d = fdic_df.sort_values("REPDTE")
+    fig = go.Figure(go.Scatter(
+        x=d["REPDTE"], y=d["IDT1CER"], mode="lines+markers", name="CET1",
+        line=dict(color="#5e35b1", width=2.5), marker=dict(size=4), fill="tozeroy",
+        fillcolor="rgba(94,53,177,0.06)",
+        hovertemplate="%{x|%b %Y}<br>%{y:.2f}%<extra></extra>"))
+    apply_standard_layout(fig, title="CET1 Ratio (%)", height=300, show_legend=False,
+                          hovermode="x")
+    ys = d["IDT1CER"].dropna()
+    if not ys.empty:
+        fig.update_yaxes(range=[max(0, ys.min() - 1.5), ys.max() + 1.0], ticksuffix="%")
+    return fig
+
+
+def growth_trend_chart(fdic_df: pd.DataFrame) -> go.Figure:
+    """Year-over-year growth of assets / loans / deposits (%)."""
+    from utils.chart_style import apply_standard_layout
+    if fdic_df is None or fdic_df.empty:
+        fig = go.Figure()
+        apply_standard_layout(fig, title="YoY Growth — no data", height=300, show_legend=False)
+        return fig
+    d = fdic_df.sort_values("REPDTE")
+    fig = go.Figure()
+    for field, label, color in [("ASSET", "Assets", "#42a5f5"),
+                                ("LNLSNET", "Loans", "#26a69a"),
+                                ("DEP", "Deposits", "#ffb300")]:
+        if field in d.columns and len(d) > 4:
+            yoy = d[field].pct_change(4) * 100
+            fig.add_trace(go.Scatter(
+                x=d["REPDTE"], y=yoy, mode="lines+markers", name=label,
+                line=dict(color=color, width=2), marker=dict(size=4),
+                hovertemplate="%{x|%b %Y}<br>%{y:+.1f}% YoY<extra></extra>"))
+    fig.add_hline(y=0, line_color="#cbd5e1", line_width=1)
+    apply_standard_layout(fig, title="YoY Growth (%)", height=300, hovermode="x unified")
+    fig.update_yaxes(ticksuffix="%")
+    fig.update_layout(legend=dict(orientation="h", y=-0.2))
     return fig

@@ -11,7 +11,11 @@ from data import fdic_client, sec_client
 from data.ibkr_client import get_ibkr_client
 from analysis.peer_comparison import build_radar_data, get_peer_group_by_asset_size
 from utils.formatting import format_value
-from ui.charts import price_chart, metrics_trend_chart, peer_radar_chart, balance_sheet_chart
+from ui.charts import (
+    price_chart, metrics_trend_chart, peer_radar_chart, balance_sheet_chart,
+    asset_composition_chart, loan_mix_chart, funding_mix_chart,
+    cet1_trend_chart, growth_trend_chart,
+)
 
 
 def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
@@ -107,9 +111,25 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
         st.plotly_chart(metrics_trend_chart(fdic_hist, ["nco_ratio"], "Net Charge-Off Ratio"),
                         use_container_width=True)
 
-    # ── Balance sheet trend ─────────────────────────────────────────
+    # ── Balance sheet trend + composition snapshots ─────────────────
     st.subheader("Balance Sheet")
     st.plotly_chart(balance_sheet_chart(fdic_hist), use_container_width=True)
+
+    st.markdown("**Composition & funding** — latest quarter")
+    _bc1, _bc2, _bc3 = st.columns(3)
+    with _bc1:
+        st.plotly_chart(asset_composition_chart(fdic_hist), use_container_width=True)
+    with _bc2:
+        st.plotly_chart(loan_mix_chart(fdic_hist), use_container_width=True)
+    with _bc3:
+        st.plotly_chart(funding_mix_chart(fdic_hist), use_container_width=True)
+
+    st.markdown("**Capital & growth**")
+    _gc1, _gc2 = st.columns(2)
+    with _gc1:
+        st.plotly_chart(cet1_trend_chart(fdic_hist), use_container_width=True)
+    with _gc2:
+        st.plotly_chart(growth_trend_chart(fdic_hist), use_container_width=True)
 
     # ── All metrics table ───────────────────────────────────────────
     st.subheader("All Metrics")
