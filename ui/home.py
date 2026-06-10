@@ -126,44 +126,6 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     # ── ALERT INBOX ────────────────────────────────────────────────────
     _render_alert_inbox(all_metrics, watchlist)
 
-    st.markdown("")
-    st.markdown("---")
-
-    # ── Navigation cards ─────────────────────────────────────────────────
-    st.markdown("### Explore")
-
-    cards = [
-        ("🌐", "Macro",
-         "Fed funds, yield curve, recession signals. Rate environment context for your models."),
-        ("📊", "Screening",
-         "14 screening tables: valuation, balance sheet, loans, deposits, credit, capital, NIM, dynamics."),
-        ("🏦", "Company Analysis",
-         "Deep dive: overview, financials, filings, deposits, credit, capital, NIM sensitivity, valuation, ownership, earnings."),
-        ("🆚", "Peer Comparison",
-         "Side-by-side peer table, 2D scatters (presets + custom), radar charts. Auto-grouped by size or mix."),
-        ("📈", "Earnings Analysis",
-         "Earnings calendar, beat/miss tracking, surprise rankings. Upload consensus PDFs/Excel."),
-    ]
-
-    for i in range(0, len(cards), 3):
-        cols = st.columns(3)
-        for j, col in enumerate(cols):
-            if i + j < len(cards):
-                icon, title, desc = cards[i + j]
-                col.markdown(
-                    f"""
-                    <div class="nav-card">
-                        <div class="icon">{icon}</div>
-                        <div class="title">{title}</div>
-                        <div class="desc">{desc}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-    st.markdown("")
-    st.caption("Navigate via the sidebar.")
-
 
 # ══════════════════════════════════════════════════════════════════════
 # Alert Inbox
