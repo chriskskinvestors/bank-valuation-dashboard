@@ -467,7 +467,10 @@ def _build_scatter(peers: list[dict], preset: dict, height: int = 320):
 # ── Radar Chart ──────────────────────────────────────────────────────
 
 _RADAR_METRICS = [
-    ("roatce", "ROATCE", True),              # higher better
+    # Normalized ROATCE (one-time spikes winsorized) for a fair peer comparison
+    # — the single-quarter "roatce" can spike (e.g. CARE's loan-recovery quarter
+    # → ~71%) and distort the radar.
+    ("roatce_normalized", "ROATCE", True),   # higher better
     ("nim", "NIM", True),
     ("efficiency_ratio", "Efficiency", False),  # lower better — will invert
     ("cet1_ratio", "CET1", True),

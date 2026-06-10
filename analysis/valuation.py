@@ -514,6 +514,12 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "roatce_blended": roatce_blended,
         "roatce_normalized": roatce_normalized,
         "earnings_norm_factor": earnings_norm_factor,
+        # True when a one-time item materially inflated TTM earnings (the
+        # normalization removed >15%). Drives the "⚠ one-time item" flag the UI
+        # shows next to the reported ROATCE across all views.
+        "earnings_distorted": (
+            earnings_norm_factor is not None and earnings_norm_factor < 0.85
+        ),
         "fair_ptbv": fair_ptbv,
         "fair_price": fair_price,
         "ptbv_discount": ptbv_discount,

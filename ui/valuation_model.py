@@ -74,13 +74,18 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     if not hist:
         return {}
 
-    from analysis.valuation import compute_roatce
+    from analysis.valuation import (
+        compute_roatce, compute_roatce_4q, _normalized_earnings_factor,
+    )
     latest = hist[0]
     # Trailing EPS
     base_eps = sec.get("eps") or 0.0
-    # ROATCE (current, annualized) — use the canonical helper so we share
-    # the annualization logic with screening / fair value screens.
-    roatce_pct = compute_roatce(latest) or 12.0
+    # ROATCE default — use the trailing-4Q figure (smoother than a single
+    # quarter) and winsorize one-time spikes, so the warranted-P/TBV model
+    # isn't seeded off a non-recurring quarter (e.g. CARE's loan-recovery
+    # quarter would otherwise default to ~71%). Matches the fair-value screen.
+    roatce_raw = compute_roatce_4q(hist) or compute_roatce(latest) or 12.0
+    roatce_pct = roatce_raw * _normalized_earnings_factor(hist)
     equity = latest.get("EQTOT") or 0
     goodwill = latest.get("INTANGW") or 0
     tce = equity - goodwill

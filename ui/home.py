@@ -288,6 +288,8 @@ def _collect_valuation_alerts(all_metrics: list[dict]) -> list[dict]:
             "discount": discount,
             "fair_price": m.get("fair_price"),
             "roatce": m.get("roatce_blended") or m.get("roatce"),
+            "roatce_norm": m.get("roatce_normalized"),
+            "distorted": m.get("earnings_distorted"),
             "price": m.get("price"),
         })
     alerts.sort(key=lambda a: a["discount"], reverse=True)
@@ -426,7 +428,12 @@ def _render_valuation_tab(alerts: list[dict]):
         extras = []
         if price: extras.append(f"Now ${price:.2f}")
         if fair: extras.append(f"Fair ${fair:.2f}")
-        if roatce: extras.append(f"ROATCE {roatce:.1f}%")
+        if roatce is not None:
+            if a.get("distorted") and a.get("roatce_norm") is not None:
+                extras.append(
+                    f"ROATCE {roatce:.1f}% ⚠️ (adj {a['roatce_norm']:.1f}%)")
+            else:
+                extras.append(f"ROATCE {roatce:.1f}%")
 
         left = (
             f'<strong>{ticker}</strong> '

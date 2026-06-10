@@ -47,6 +47,11 @@ def fmt_dollars_from_thousands(amount_k: float | None, decimals: int = 2) -> str
 
 def format_value(value, fmt: str, decimals: int = 2) -> str:
     """Format a single value according to its format type."""
+    # Boolean flag (e.g. one-time-earnings distortion) — render before the
+    # numeric coercion below so False shows blank, not "—".
+    if fmt == "flag":
+        return "⚠️" if value else ""
+
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "—"
 

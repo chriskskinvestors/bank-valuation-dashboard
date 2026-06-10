@@ -131,6 +131,22 @@ METRICS = [
         "category": "Fair Value",
     },
     {
+        # Reported ROATCE with one-time earnings spikes winsorized out — the
+        # sustainable figure that drives fair value and ranking.
+        "key": "roatce_normalized", "label": "ROATCE adj", "source": "computed",
+        "format": "pct", "decimals": 2,
+        "color_rule": "higher_better", "thresholds": {"good": 12, "warn": 7},
+        "category": "Fair Value",
+    },
+    {
+        # ⚠️ flag: reported earnings materially inflated by a one-time item
+        # (loan recovery, tax benefit). Reported ROATCE is real but not
+        # sustainable; use ROATCE adj for valuation.
+        "key": "earnings_distorted", "label": "1-time", "source": "computed",
+        "format": "flag",
+        "category": "Fair Value",
+    },
+    {
         "key": "fair_ptbv", "label": "Fair P/TBV", "source": "computed",
         "format": "ratio", "decimals": 2,
         "color_rule": None, "thresholds": {},
@@ -1050,7 +1066,8 @@ TABS = [
         "columns": [
             "price", "change_pct", "market_cap",
             "eps", "pe_ratio", "tbvps", "ptbv_ratio", "dividend_yield",
-            "roatce_blended", "fair_ptbv", "fair_price", "ptbv_discount",
+            "roatce_blended", "roatce_normalized", "earnings_distorted",
+            "fair_ptbv", "fair_price", "ptbv_discount",
             "roaa", "roaa_4q", "roatce", "roatce_4q", "nim", "nim_4q", "efficiency_ratio",
             "npl_ratio", "cet1_ratio", "total_assets",
         ],
