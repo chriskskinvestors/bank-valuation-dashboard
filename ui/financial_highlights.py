@@ -613,7 +613,8 @@ def render_financial_highlights(ticker: str):
                     tds.append(f'<td class="val" data-cid="{cid}">{payload["v"]}</td>')
                 else:
                     tds.append(f'<td class="val dead">{payload.get("v", "—")}</td>')
-            rows_html.append(f'<tr>{"".join(tds)}</tr>')
+            zebra = ' class="zebra"' if ri % 2 == 1 else ""
+            rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
 
     head = ('<th class="lblh">($ in thousands unless noted)</th>'
@@ -666,16 +667,25 @@ body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto
 table {{ width:100%; border-collapse:collapse; font-size:13px;
   border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
 thead th {{ border-bottom:1px solid rgba(148,163,184,0.3); padding:6px 12px; }}
-.lblh {{ text-align:left; color:#64748b; font-weight:500; }}
+.lblh {{ text-align:left; color:#64748b; font-weight:500;
+  border-right:1px solid rgba(148,163,184,0.22); }}
 .colh {{ text-align:right; font-weight:600; color:#0f172a; }}
 td.sec {{ padding:9px 10px 3px; font-weight:700; color:#1e3a8a; font-size:11px;
-  text-transform:uppercase; letter-spacing:0.04em; background:rgba(241,245,249,0.5); }}
-td.lbl {{ text-align:left; padding:4px 10px; color:#475569; }}
-td.val {{ text-align:right; padding:4px 12px; color:#1d4ed8; cursor:pointer;
-  position:relative; }}
-td.val:hover {{ background:rgba(37,99,235,0.08); text-decoration:underline; }}
+  text-transform:uppercase; letter-spacing:0.04em; background:rgba(241,245,249,0.6); }}
+/* Label column: anchored with a right divider so the eye can run across a row. */
+td.lbl {{ text-align:left; padding:5px 10px; color:#475569;
+  border-right:1px solid rgba(148,163,184,0.22);
+  border-bottom:1px solid rgba(148,163,184,0.10); }}
+td.val {{ text-align:right; padding:5px 12px; color:#1d4ed8; cursor:pointer;
+  position:relative; border-bottom:1px solid rgba(148,163,184,0.10);
+  font-variant-numeric:tabular-nums; }}
 td.val.dead {{ color:#94a3b8; cursor:default; }}
-tbody tr:hover td.lbl {{ color:#1e293b; }}
+/* Zebra striping (alternate metric rows) for static scannability. */
+tr.zebra td.lbl, tr.zebra td.val {{ background:rgba(148,163,184,0.055); }}
+/* Whole-row highlight on hover — trace label ↔ values across the row. */
+tbody tr:hover td.lbl, tbody tr:hover td.val {{ background:rgba(37,99,235,0.09); }}
+tbody tr:hover td.lbl {{ color:#0f172a; font-weight:600; }}
+td.val:hover {{ background:rgba(37,99,235,0.16) !important; text-decoration:underline; }}
 .foot {{ margin-top:8px; font-size:12px; color:#64748b; }}
 .foot a {{ color:#2563eb; text-decoration:none; }}
 #ov {{ position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none;
