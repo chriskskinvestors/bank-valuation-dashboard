@@ -178,6 +178,73 @@ def _shares_map(facts: dict) -> dict[str, float]:
     return out
 
 
+def _sec_prov_map(facts: dict, concept: str, instant: bool, span: str = "both",
+                  ns: str = "us-gaap") -> dict[str, dict]:
+    """{end_date: {accn, form, end}} — the *original* filing (earliest filed)
+    that first reported this concept for this period, for source-doc linking."""
+    out: dict[str, dict] = {}
+    try:
+        units = facts.get("facts", {}).get(ns, {}).get(concept, {}).get("units", {})
+    except Exception:
+        return out
+    for arr in units.values():
+        for e in arr:
+            form = e.get("form")
+            if form not in ("10-K", "10-K/A", "10-Q", "10-Q/A"):
+                continue
+            end, val = e.get("end"), e.get("val")
+            if not end or val is None:
+                continue
+            if not instant:
+                start = e.get("start")
+                if not start:
+                    continue
+                try:
+                    days = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days
+                except ValueError:
+                    continue
+                is_q, is_a = 80 <= days <= 100, 350 <= days <= 380
+                if (span == "quarter" and not is_q) or (span == "annual" and not is_a) \
+                        or (span == "both" and not (is_q or is_a)):
+                    continue
+            filed = e.get("filed", "9999-99-99")
+            cur = out.get(end)
+            if cur is None or filed < cur["filed"]:
+                out[end] = {"accn": e.get("accn"), "form": form, "end": end, "filed": filed}
+    return out
+
+
+def _shares_prov_map(facts: dict) -> dict[str, dict]:
+    out = _sec_prov_map(facts, "EntityCommonStockSharesOutstanding", instant=True, ns="dei")
+    for k, v in _sec_prov_map(facts, "CommonStockSharesOutstanding", instant=True).items():
+        out.setdefault(k, v)
+    return out
+
+
+def _sec_doc(cik, prov):
+    """{url, label} pointing at the exact 10-K/10-Q filing index on EDGAR."""
+    if not cik or not prov or not prov.get("accn"):
+        return None
+    accn = prov["accn"]
+    nod = accn.replace("-", "")
+    end = prov.get("end", "")
+    try:
+        dd = datetime.fromisoformat(end)
+        lbl = f"{dd.month}/{dd.day}/{dd.year}"
+    except ValueError:
+        lbl = end
+    return {"url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{nod}/{accn}-index.htm",
+            "label": f"{lbl} {prov.get('form', 'filing')}"}
+
+
+def _fdic_doc(cert, repdte):
+    """{url, label} → FFIEC CDR Call Report facsimile for this cert + quarter."""
+    dd = _iso(repdte)
+    return {"url": (f"https://cdr.ffiec.gov/public/ViewFacsimileDirect.aspx?ds=call"
+                    f"&idType=fdiccert&id={cert}&date={dd.strftime('%m%d%Y')}"),
+            "label": f"{dd.month}/{dd.day}/{dd.year} Call Report"}
+
+
 def _flow_for(d: datetime, q_map: dict, a_map: dict, quarterly: bool):
     """Pick the right flow value for a column end-date. Annual mode → full-year
     (365d). Quarterly mode → single-quarter (90d); Q4 derived as annual −
@@ -215,6 +282,15 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
     intang = _sec_map(facts, "IntangibleAssetsNetExcludingGoodwill", instant=True)
     incl = _sec_map(facts, "IntangibleAssetsNetIncludingGoodwill", instant=True)
     shares = _shares_map(facts)
+    # provenance (original filing accession/form per period) for source-doc links
+    eq_prov = _sec_prov_map(facts, "StockholdersEquity", instant=True)
+    sh_prov = _shares_prov_map(facts)
+    epsq_prov = _sec_prov_map(facts, "EarningsPerShareDiluted", instant=False, span="quarter")
+    epsa_prov = _sec_prov_map(facts, "EarningsPerShareDiluted", instant=False, span="annual")
+    dpsq_prov = _sec_prov_map(facts, "CommonStockDividendsPerShareDeclared",
+                              instant=False, span="quarter")
+    dpsa_prov = _sec_prov_map(facts, "CommonStockDividendsPerShareDeclared",
+                              instant=False, span="annual")
 
     out = {}
     for d in ends:
@@ -245,6 +321,10 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
             "_eq": eq, "_eq_date": eq_date, "_sh_date": sh_date,
             "_adj": adj, "_gw": gw, "_other": other, "_incl": incl.get(key),
             "_adj_basis": adj_basis,
+            "_eq_prov": eq_prov.get(eq_date) if eq_date else None,
+            "_sh_prov": sh_prov.get(sh_date) if sh_date else None,
+            "_eps_prov": epsq_prov.get(key) or epsa_prov.get(key),
+            "_dps_prov": dpsq_prov.get(key) or dpsa_prov.get(key),
         }
     return out
 
@@ -406,53 +486,62 @@ def render_financial_highlights(ticker: str):
 
     def sec_eps(k):
         ps = col_ps.get(k, {}); v = ps.get("eps")
+        doc = _sec_doc(cik, ps.get("_eps_prov"))
         terms = [{"label": "Diluted EPS (reported)", "val": _dollars_ps(v),
-                  "sub": ps.get("eps_note")}]
+                  "sub": ps.get("eps_note"), "doc": doc}]
         return P(_dollars_ps(v), "Diluted EPS", "SEC filing (10-K/10-Q)",
                  _disp_date(ends[k]), "$ / share", "XBRL EarningsPerShareDiluted",
-                 terms, None, ps.get("eps_note") is None, sec_link)
+                 terms, None, ps.get("eps_note") is None, (doc or {}).get("url") or sec_link)
 
     def sec_dps(k):
         ps = col_ps.get(k, {}); v = ps.get("dps")
+        doc = _sec_doc(cik, ps.get("_dps_prov"))
         terms = [{"label": "Dividends declared / share", "val": _dollars_ps(v),
-                  "sub": ps.get("dps_note")}]
+                  "sub": ps.get("dps_note"), "doc": doc}]
         return P(_dollars_ps(v), "Dividends / share", "SEC filing (10-K/10-Q)",
                  _disp_date(ends[k]), "$ / share",
                  "XBRL CommonStockDividendsPerShareDeclared",
-                 terms, None, ps.get("dps_note") is None, sec_link)
+                 terms, None, ps.get("dps_note") is None, (doc or {}).get("url") or sec_link)
 
     def sec_bvps(k):
         ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
+        eq_doc = _sec_doc(cik, ps.get("_eq_prov")); sh_doc = _sec_doc(cik, ps.get("_sh_prov"))
         terms = [{"label": "Total common equity", "val": _thou((eq or 0) / 1000) + " ($000)",
-                  "sub": f"as of {ps.get('_eq_date') or '—'} · XBRL StockholdersEquity"},
+                  "sub": f"as of {ps.get('_eq_date') or '—'} · XBRL StockholdersEquity",
+                  "doc": eq_doc},
                  {"label": "Shares outstanding", "val": _count(sh),
-                  "sub": f"as of {ps.get('_sh_date') or '—'}"}]
+                  "sub": f"as of {ps.get('_sh_date') or '—'}", "doc": sh_doc}]
         return P(_dollars_ps(ps.get("bvps")), "Book value / share",
                  "SEC filing (10-K/10-Q)", _disp_date(ends[k]), "$ / share",
                  "Computed: equity ÷ shares", terms,
-                 "Total common equity ÷ shares outstanding", False, sec_link)
+                 "Total common equity ÷ shares outstanding", False,
+                 (eq_doc or {}).get("url") or sec_link)
 
     def sec_tbvps(k):
         ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
         adj = ps.get("_adj"); tce = (eq - adj) if (eq is not None and adj is not None) else None
         basis = ps.get("_adj_basis", "intangibles")
+        eq_doc = _sec_doc(cik, ps.get("_eq_prov")); sh_doc = _sec_doc(cik, ps.get("_sh_prov"))
         terms = [{"label": "Tangible common equity", "val": _thou((tce or 0) / 1000) + " ($000)",
                   "sub": (f"Equity {_thou((eq or 0)/1000)} − {basis} "
-                          f"{_thou((adj or 0)/1000)} ($000)")},
+                          f"{_thou((adj or 0)/1000)} ($000)"), "doc": eq_doc},
                  {"label": "Shares outstanding", "val": _count(sh),
-                  "sub": f"as of {ps.get('_sh_date') or '—'}"}]
+                  "sub": f"as of {ps.get('_sh_date') or '—'}", "doc": sh_doc}]
         return P(_dollars_ps(ps.get("tbvps")), "Tangible BV / share",
                  "SEC filing (10-K/10-Q)", _disp_date(ends[k]), "$ / share",
                  "Computed: (equity − intangibles) ÷ shares", terms,
-                 "Tangible common equity ÷ shares outstanding", False, sec_link)
+                 "Tangible common equity ÷ shares outstanding", False,
+                 (eq_doc or {}).get("url") or sec_link)
 
     def sec_shares(k):
         ps = col_ps.get(k, {}); sh = ps.get("shares")
+        doc = _sec_doc(cik, ps.get("_sh_prov"))
         terms = [{"label": "Common shares outstanding", "val": _count(sh),
-                  "sub": f"as of {ps.get('_sh_date') or '—'} · cover-page / year-end"}]
+                  "sub": f"as of {ps.get('_sh_date') or '—'} · cover-page / year-end",
+                  "doc": doc}]
         return P(_count(sh), "Shares outstanding", "SEC filing (10-K/10-Q)",
                  _disp_date(ends[k]), "shares", "XBRL EntityCommonStockSharesOutstanding",
-                 terms, None, True, sec_link)
+                 terms, None, True, (doc or {}).get("url") or sec_link)
 
     sections = [
         ("Balance Sheet", [
@@ -514,7 +603,13 @@ def render_financial_highlights(ticker: str):
                     payload = {"v": "—", "calc": None}
                 cid = f"{ri}_{ci}"
                 if payload.get("calc"):
-                    cells[cid] = payload["calc"]
+                    calc = payload["calc"]
+                    # FDIC terms all trace to the same quarterly Call Report.
+                    if calc.get("source", "").startswith("FDIC"):
+                        cr_doc = _fdic_doc(cert, recs[k].get("REPDTE"))
+                        for t in calc.get("terms", []):
+                            t.setdefault("doc", cr_doc)
+                    cells[cid] = calc
                     tds.append(f'<td class="val" data-cid="{cid}">{payload["v"]}</td>')
                 else:
                     tds.append(f'<td class="val dead">{payload.get("v", "—")}</td>')
@@ -588,7 +683,10 @@ tbody tr:hover td.lbl {{ color:#1e293b; }}
 .term {{ display:flex; justify-content:space-between; padding:4px 0 4px 14px;
   font-size:12.5px; color:#334155; border-top:1px dashed rgba(148,163,184,0.25); }}
 .term .tv {{ color:#1d4ed8; font-variant-numeric:tabular-nums; }}
-.sub {{ font-size:11px; color:#94a3b8; padding:0 0 4px 14px; }}
+.sub {{ font-size:11px; color:#94a3b8; padding:0 0 2px 14px; }}
+.doc {{ font-size:11px; color:#94a3b8; padding:0 0 5px 14px; }}
+.doc a {{ color:#2563eb; text-decoration:none; }}
+.doc a:hover {{ text-decoration:underline; }}
 .op {{ font-size:12px; color:#64748b; text-align:center; padding:8px 0 2px;
   font-style:italic; }}
 .rep {{ font-size:11.5px; color:#475569; padding:8px 0 2px; }}
@@ -607,7 +705,10 @@ function esc(s){{ return (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/<
 function open(c){{
   let terms = (c.terms||[]).map(t =>
     `<div class="term"><span>${{esc(t.label)}}</span><span class="tv">${{esc(t.val)}}</span></div>`
-    + (t.sub ? `<div class="sub">${{esc(t.sub)}}</div>` : "")).join("");
+    + (t.sub ? `<div class="sub">${{esc(t.sub)}}</div>` : "")
+    + (t.doc ? `<div class="doc"><i>Source document available</i> — `
+        + `<a href="${{esc(t.doc.url)}}" target="_blank">view ${{esc(t.doc.label)}} →</a></div>` : "")
+    ).join("");
   let opline = c.op ? `<div class="op">${{esc(c.op)}}</div>` : "";
   let rep = c.reported ? `<div class="rep">Reported directly by ${{esc(c.source)}}.</div>` : "";
   card.innerHTML =
