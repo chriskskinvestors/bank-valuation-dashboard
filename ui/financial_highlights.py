@@ -3,14 +3,22 @@ Financial Highlights — a multi-period, SNL/Capital-IQ-style summary table that
 is the landing page for each bank under Company Analysis.
 
 A period toggle switches columns between Annual (last 5 fiscal years) and
-Quarterly (last 8 quarters). Rows are grouped: Balance Sheet, Profitability,
-Balance-Sheet Ratios, Asset Quality, Capital Adequacy (FDIC Call Reports) and
-Per-Share (SEC filings, HoldCo).
+Quarterly (last 8 quarters). Every cell is clickable: it opens a drill-down
+popup showing the calculation and the underlying source numbers (FDIC Call
+Report fields / SEC XBRL tags), as-of date, and a link to the primary source.
+
+Principle: show our work where we compute a value, and cite the source where
+the source reports it directly. FDIC-reported ratios (ROAA, NIM, CET1…) are
+labelled "reported by FDIC, field X"; ratios we derive (ROAE, ROATCE,
+loans/deposits, TCE/TA, BVPS, TBVPS) show the formula with the actual
+numerator and denominator and their source tags.
 """
 from __future__ import annotations
+import json
 from datetime import datetime
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 
 from data.bank_mapping import get_bank_info
@@ -84,8 +92,19 @@ def _count(v):
     return f"{v:,.0f}" if v is not None else "—"
 
 
+def _thou(v):
+    """Format a $-in-thousands integer with commas (FDIC native unit)."""
+    v = _num(v)
+    return f"{v:,.0f}" if v is not None else "—"
+
+
 def _iso(d):
     return d if hasattr(d, "year") else datetime.fromisoformat(str(d)[:10])
+
+
+def _disp_date(d):
+    dd = _iso(d)
+    return dd.strftime("%b-%d-%Y")
 
 
 # ── SEC extraction (keyed by period end-date) ────────────────────────────────
@@ -129,11 +148,9 @@ def _sec_map(facts: dict, concept: str, instant: bool, span: str = "both") -> di
     return out
 
 
-def _nearest(date_map: dict[str, float], target: datetime, fwd_days=110, back_days=400):
-    """Value whose end-date is nearest the target (preferring on/after)."""
-    if not date_map:
-        return None
-    best, best_gap = None, None
+def _nearest_kv(date_map: dict[str, float], target: datetime, fwd_days=110, back_days=400):
+    """(end_date_str, value) whose end-date is nearest the target (prefer on/after)."""
+    best_k, best_v, best_gap = None, None, None
     for k, v in date_map.items():
         try:
             d = datetime.fromisoformat(k)
@@ -141,10 +158,10 @@ def _nearest(date_map: dict[str, float], target: datetime, fwd_days=110, back_da
             continue
         gap = (d - target).days
         if -back_days <= gap <= fwd_days:
-            score = gap if gap >= 0 else (abs(gap) + 1000)  # prefer on/after
+            score = gap if gap >= 0 else (abs(gap) + 1000)
             if best_gap is None or score < best_gap:
-                best, best_gap = v, score
-    return best
+                best_k, best_v, best_gap = k, v, score
+    return best_k, best_v
 
 
 def _shares_map(facts: dict) -> dict[str, float]:
@@ -162,28 +179,28 @@ def _shares_map(facts: dict) -> dict[str, float]:
 
 
 def _flow_for(d: datetime, q_map: dict, a_map: dict, quarterly: bool):
-    """Pick the right flow value for a column end-date. Annual mode → the
-    full-year (365d) value. Quarterly mode → the single-quarter (90d) value;
-    for Q4 (no 10-Q) derive it as annual − (Q1+Q2+Q3)."""
+    """Pick the right flow value for a column end-date. Annual mode → full-year
+    (365d). Quarterly mode → single-quarter (90d); Q4 derived as annual −
+    (Q1+Q2+Q3) since there is no Q4 10-Q. Returns (value, derived_note)."""
     key = d.strftime("%Y-%m-%d")
     if not quarterly:
-        return a_map.get(key)
+        return a_map.get(key), None
     v = q_map.get(key)
     if v is not None:
-        return v
-    if d.month == 12:  # Q4: annual minus the three reported quarters
+        return v, None
+    if d.month == 12:
         annual = a_map.get(key)
         q1 = q_map.get(f"{d.year}-03-31")
         q2 = q_map.get(f"{d.year}-06-30")
         q3 = q_map.get(f"{d.year}-09-30")
         if annual is not None and None not in (q1, q2, q3):
-            return round(annual - (q1 + q2 + q3), 2)
-    return None
+            return round(annual - (q1 + q2 + q3), 2), \
+                f"derived: FY {annual:.2f} − 9-mo {q1 + q2 + q3:.2f}"
+    return None, None
 
 
 def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> dict:
-    """{end_date(datetime): {eps, dps, bvps, tbvps, shares}}. For annual columns
-    pass year-end dates; for quarterly pass quarter-end dates."""
+    """{end_date(datetime): {...per-share values + raw inputs for drill-down}}."""
     if not cik:
         return {}
     facts = sec_client.fetch_company_facts(cik)
@@ -202,18 +219,70 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
     out = {}
     for d in ends:
         key = d.strftime("%Y-%m-%d")
-        eq = equity.get(key) or _nearest(equity, d, fwd_days=10, back_days=10)
-        sh = shares.get(key) or _nearest(shares, d)
+        if key in equity:
+            eq, eq_date = equity[key], key
+        else:
+            eq_date, eq = _nearest_kv(equity, d, 12, 12)
+        if key in shares:
+            sh, sh_date = shares[key], key
+        else:
+            sh_date, sh = _nearest_kv(shares, d)
         gw = goodwill.get(key)
-        adj = (gw + (intang.get(key) or 0)) if gw is not None else incl.get(key)
+        other = intang.get(key)
+        if gw is not None:
+            adj = gw + (other or 0)
+            adj_basis = "goodwill + other intangibles" if other else "goodwill"
+        else:
+            adj = incl.get(key)
+            adj_basis = "intangibles incl. goodwill"
         bvps = (eq / sh) if (eq and sh) else None
         tbvps = ((eq - adj) / sh) if (eq and sh and adj is not None) else bvps
+        eps, eps_note = _flow_for(d, eps_q, eps_a, quarterly)
+        dps, dps_note = _flow_for(d, dps_q, dps_a, quarterly)
         out[d] = {
-            "eps": _flow_for(d, eps_q, eps_a, quarterly),
-            "dps": _flow_for(d, dps_q, dps_a, quarterly),
+            "eps": eps, "eps_note": eps_note, "dps": dps, "dps_note": dps_note,
             "bvps": bvps, "tbvps": tbvps, "shares": sh,
+            "_eq": eq, "_eq_date": eq_date, "_sh_date": sh_date,
+            "_adj": adj, "_gw": gw, "_other": other, "_incl": incl.get(key),
+            "_adj_basis": adj_basis,
         }
     return out
+
+
+# ── definitions (shown in the drill-down, CapIQ-style) ───────────────────────
+_DEFS = {
+    "Total assets": "Total assets reported on the Call Report balance sheet.",
+    "Net loans": "Loans and leases net of unearned income and the allowance.",
+    "Total deposits": "Total interest- and non-interest-bearing deposits.",
+    "Total equity": "Total bank equity capital.",
+    "Securities": "Total investment securities (HTM + AFS, at carrying value).",
+    "Net income (YTD)": "Year-to-date net income after taxes and extraordinary items.",
+    "ROAA": "Annualized net income as a percent of average assets.",
+    "ROAE": "Annualized net income as a percent of total equity.",
+    "ROATCE": "Annualized net income as a percent of tangible common equity "
+              "(equity less intangible assets).",
+    "Net interest margin": "Net interest income as a percent of average earning assets.",
+    "Efficiency ratio": "Non-interest expense divided by the sum of net interest "
+                        "income and non-interest income.",
+    "Loans / deposits": "Net loans divided by total deposits — a liquidity/funding gauge.",
+    "Securities / assets": "Investment securities as a percent of total assets.",
+    "Equity / assets": "Total equity as a percent of total assets.",
+    "Tang. common equity / tang. assets":
+        "Tangible common equity (equity − intangibles) divided by tangible assets "
+        "(assets − intangibles).",
+    "NPLs / loans": "Non-current loans and leases as a percent of total loans.",
+    "Net charge-offs / loans": "Annualized net charge-offs as a percent of total loans.",
+    "Loan-loss reserves / loans": "Allowance for credit losses as a percent of total loans.",
+    "CET1 ratio": "Common equity tier 1 capital to risk-weighted assets (bank-level).",
+    "Total capital ratio": "Total risk-based capital to risk-weighted assets (bank-level).",
+    "Leverage ratio": "Tier 1 capital to average total assets (bank-level).",
+    "Diluted EPS": "Diluted earnings per common share, as reported by the holding company.",
+    "Dividends / share": "Common dividends declared per share.",
+    "Book value / share": "Total common equity divided by shares outstanding.",
+    "Tangible BV / share": "Tangible common equity (equity − intangibles) divided by "
+                           "shares outstanding.",
+    "Shares outstanding": "Common shares outstanding (cover-page / year-end).",
+}
 
 
 # ── the table ───────────────────────────────────────────────────────────────
@@ -227,7 +296,7 @@ def render_financial_highlights(ticker: str):
     period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
                       key=f"fh_period_{ticker}", label_visibility="collapsed")
     st.caption("Fiscal figures from FDIC Call Reports; per-share from SEC filings "
-               "(holding company). $ amounts scaled to B/M.")
+               "(holding company). Click any number to see the calculation and its sources.")
 
     if not cert:
         st.info("No FDIC Call Report data mapped for this bank.")
@@ -243,7 +312,6 @@ def render_financial_highlights(ticker: str):
     hist["_m"] = hist["REPDTE"].apply(_month)
     hist = hist.sort_values("REPDTE")
 
-    # Build columns: key → (label, fdic record, period-end datetime).
     if period == "Annual":
         ye = hist[hist["_m"] == 12].dropna(subset=["_y"])
         years = sorted({int(y) for y in ye["_y"]})[-5:]
@@ -264,102 +332,298 @@ def render_financial_highlights(ticker: str):
 
     persh = _per_share_for_ends(cik, list(ends.values()), quarterly=(period == "Quarterly"))
     col_ps = {k: persh.get(ends[k], {}) for k in keys}
+    asof = {k: _disp_date(recs[k].get("REPDTE")) for k in keys}
+
+    fdic_link = f"https://banks.data.fdic.gov/bankfind-suite/bankfind/details/{cert}"
+    sec_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                f"&CIK={cik}&type=10-K") if cik else fdic_link
+    entity = f"{name} ({ticker})"
 
     def _annual_factor(r):
-        # FDIC net income is year-to-date; annualize partial-year quarters so
-        # return ratios are comparable to FDIC's own annualized ROA.
         m = _month(r.get("REPDTE")) or 12
         return 12.0 / m if m else 1.0
 
-    def _roatce(r):
-        ni, eq, intan = _num(r.get("NETINC")), _num(r.get("EQTOT")), _num(r.get("INTAN")) or 0
-        tce = (eq - intan) if eq is not None else None
-        if ni is None or not tce or tce <= 0:
-            return "—"
-        return f"{ni * _annual_factor(r) / tce * 100:.2f}%"
+    # payload builders ── each returns {"v": display, "calc": {...}}
+    def P(v, metric, source, asof_s, unit, ref, terms, op, reported, link):
+        return {"v": v, "calc": {
+            "metric": metric, "entity": entity, "source": source, "asof": asof_s,
+            "unit": unit, "ref": ref, "definition": _DEFS.get(metric, ""),
+            "terms": terms, "op": op, "reported": reported, "link": link}}
 
-    def _roae(r):
-        ni, eq = _num(r.get("NETINC")), _num(r.get("EQTOT"))
-        if ni is None or not eq:
-            return "—"
-        return f"{ni * _annual_factor(r) / eq * 100:.2f}%"
+    def fdic_dollar(metric, field):
+        def b(k):
+            raw = _num(recs[k].get(field))
+            return P(_usd(raw), metric, "FDIC Call Report", asof[k], "$ in thousands",
+                     f"FDIC field {field}",
+                     [{"label": metric, "val": _thou(raw) + " ($000)"}],
+                     None, True, fdic_link)
+        return b
+
+    def fdic_pct(metric, field):
+        def b(k):
+            raw = _num(recs[k].get(field))
+            return P(_pct(raw), metric, "FDIC Call Report", asof[k], "%",
+                     f"FDIC field {field}",
+                     [{"label": metric + " (as reported)", "val": _pct(raw)}],
+                     None, True, fdic_link)
+        return b
+
+    def fdic_ratio(metric, nf, df_, nlbl, dlbl):
+        def b(k):
+            n, d = _num(recs[k].get(nf)), _num(recs[k].get(df_))
+            return P(_ratio_pct(n, d), metric, "FDIC Call Report", asof[k], "%",
+                     "Computed from Call Report",
+                     [{"label": nlbl, "val": _thou(n) + " ($000)"},
+                      {"label": dlbl, "val": _thou(d) + " ($000)"}],
+                     f"{nlbl} ÷ {dlbl} × 100", False, fdic_link)
+        return b
+
+    def roae(k):
+        r = recs[k]; ni, eq = _num(r.get("NETINC")), _num(r.get("EQTOT"))
+        f = _annual_factor(r)
+        v = f"{ni*f/eq*100:.2f}%" if (ni is not None and eq) else "—"
+        ni_a = round(ni * f) if ni is not None else None
+        terms = [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
+                  "val": _thou(ni_a) + " ($000)",
+                  "sub": (f"YTD {_thou(ni)} × 12/{int(round(12/f))}" if f != 1 else None)},
+                 {"label": "Total equity", "val": _thou(eq) + " ($000)"}]
+        return P(v, "ROAE", "FDIC Call Report", asof[k], "%", "Computed from Call Report",
+                 terms, "Net income ÷ Total equity × 100", False, fdic_link)
+
+    def roatce(k):
+        r = recs[k]; ni = _num(r.get("NETINC")); eq = _num(r.get("EQTOT"))
+        intan = _num(r.get("INTAN")) or 0
+        f = _annual_factor(r); tce = (eq - intan) if eq is not None else None
+        v = f"{ni*f/tce*100:.2f}%" if (ni is not None and tce and tce > 0) else "—"
+        ni_a = round(ni * f) if ni is not None else None
+        terms = [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
+                  "val": _thou(ni_a) + " ($000)",
+                  "sub": (f"YTD {_thou(ni)} × 12/{int(round(12/f))}" if f != 1 else None)},
+                 {"label": "Tangible common equity", "val": _thou(tce) + " ($000)",
+                  "sub": f"Equity {_thou(eq)} − Intangibles {_thou(intan)}"}]
+        return P(v, "ROATCE", "FDIC Call Report", asof[k], "%", "Computed from Call Report",
+                 terms, "Net income ÷ Tangible common equity × 100", False, fdic_link)
+
+    def sec_eps(k):
+        ps = col_ps.get(k, {}); v = ps.get("eps")
+        terms = [{"label": "Diluted EPS (reported)", "val": _dollars_ps(v),
+                  "sub": ps.get("eps_note")}]
+        return P(_dollars_ps(v), "Diluted EPS", "SEC filing (10-K/10-Q)",
+                 _disp_date(ends[k]), "$ / share", "XBRL EarningsPerShareDiluted",
+                 terms, None, ps.get("eps_note") is None, sec_link)
+
+    def sec_dps(k):
+        ps = col_ps.get(k, {}); v = ps.get("dps")
+        terms = [{"label": "Dividends declared / share", "val": _dollars_ps(v),
+                  "sub": ps.get("dps_note")}]
+        return P(_dollars_ps(v), "Dividends / share", "SEC filing (10-K/10-Q)",
+                 _disp_date(ends[k]), "$ / share",
+                 "XBRL CommonStockDividendsPerShareDeclared",
+                 terms, None, ps.get("dps_note") is None, sec_link)
+
+    def sec_bvps(k):
+        ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
+        terms = [{"label": "Total common equity", "val": _thou((eq or 0) / 1000) + " ($000)",
+                  "sub": f"as of {ps.get('_eq_date') or '—'} · XBRL StockholdersEquity"},
+                 {"label": "Shares outstanding", "val": _count(sh),
+                  "sub": f"as of {ps.get('_sh_date') or '—'}"}]
+        return P(_dollars_ps(ps.get("bvps")), "Book value / share",
+                 "SEC filing (10-K/10-Q)", _disp_date(ends[k]), "$ / share",
+                 "Computed: equity ÷ shares", terms,
+                 "Total common equity ÷ shares outstanding", False, sec_link)
+
+    def sec_tbvps(k):
+        ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
+        adj = ps.get("_adj"); tce = (eq - adj) if (eq is not None and adj is not None) else None
+        basis = ps.get("_adj_basis", "intangibles")
+        terms = [{"label": "Tangible common equity", "val": _thou((tce or 0) / 1000) + " ($000)",
+                  "sub": (f"Equity {_thou((eq or 0)/1000)} − {basis} "
+                          f"{_thou((adj or 0)/1000)} ($000)")},
+                 {"label": "Shares outstanding", "val": _count(sh),
+                  "sub": f"as of {ps.get('_sh_date') or '—'}"}]
+        return P(_dollars_ps(ps.get("tbvps")), "Tangible BV / share",
+                 "SEC filing (10-K/10-Q)", _disp_date(ends[k]), "$ / share",
+                 "Computed: (equity − intangibles) ÷ shares", terms,
+                 "Tangible common equity ÷ shares outstanding", False, sec_link)
+
+    def sec_shares(k):
+        ps = col_ps.get(k, {}); sh = ps.get("shares")
+        terms = [{"label": "Common shares outstanding", "val": _count(sh),
+                  "sub": f"as of {ps.get('_sh_date') or '—'} · cover-page / year-end"}]
+        return P(_count(sh), "Shares outstanding", "SEC filing (10-K/10-Q)",
+                 _disp_date(ends[k]), "shares", "XBRL EntityCommonStockSharesOutstanding",
+                 terms, None, True, sec_link)
 
     sections = [
         ("Balance Sheet", [
-            ("Total assets", lambda r, k: _usd(r.get("ASSET"))),
-            ("Net loans", lambda r, k: _usd(r.get("LNLSNET"))),
-            ("Total deposits", lambda r, k: _usd(r.get("DEP"))),
-            ("Total equity", lambda r, k: _usd(r.get("EQTOT"))),
-            ("Securities", lambda r, k: _usd(r.get("SC"))),
+            ("Total assets", fdic_dollar("Total assets", "ASSET")),
+            ("Net loans", fdic_dollar("Net loans", "LNLSNET")),
+            ("Total deposits", fdic_dollar("Total deposits", "DEP")),
+            ("Total equity", fdic_dollar("Total equity", "EQTOT")),
+            ("Securities", fdic_dollar("Securities", "SC")),
         ]),
         ("Profitability", [
-            ("Net income (YTD)", lambda r, k: _usd(r.get("NETINC"))),
-            ("ROAA", lambda r, k: _pct(r.get("ROA"))),
-            ("ROAE", lambda r, k: _roae(r)),
-            ("ROATCE", lambda r, k: _roatce(r)),
-            ("Net interest margin", lambda r, k: _pct(r.get("NIMY"))),
-            ("Efficiency ratio", lambda r, k: _pct(r.get("EEFFR"))),
+            ("Net income (YTD)", fdic_dollar("Net income (YTD)", "NETINC")),
+            ("ROAA", fdic_pct("ROAA", "ROA")),
+            ("ROAE", roae),
+            ("ROATCE", roatce),
+            ("Net interest margin", fdic_pct("Net interest margin", "NIMY")),
+            ("Efficiency ratio", fdic_pct("Efficiency ratio", "EEFFR")),
         ]),
         ("Balance Sheet Ratios", [
-            ("Loans / deposits", lambda r, k: _ratio_pct(r.get("LNLSNET"), r.get("DEP"))),
-            ("Securities / assets", lambda r, k: _ratio_pct(r.get("SC"), r.get("ASSET"))),
-            ("Equity / assets", lambda r, k: _ratio_pct(r.get("EQTOT"), r.get("ASSET"))),
-            ("Tang. common equity / tang. assets",
-             lambda r, k: _ratio_pct((_num(r.get("EQTOT")) or 0) - (_num(r.get("INTAN")) or 0),
-                                     (_num(r.get("ASSET")) or 0) - (_num(r.get("INTAN")) or 0))),
+            ("Loans / deposits", fdic_ratio("Loans / deposits", "LNLSNET", "DEP",
+                                            "Net loans", "Total deposits")),
+            ("Securities / assets", fdic_ratio("Securities / assets", "SC", "ASSET",
+                                               "Securities", "Total assets")),
+            ("Equity / assets", fdic_ratio("Equity / assets", "EQTOT", "ASSET",
+                                           "Total equity", "Total assets")),
+            ("Tang. common equity / tang. assets", _tce_ta_builder(recs, asof, fdic_link, P)),
         ]),
         ("Asset Quality", [
-            ("NPLs / loans", lambda r, k: _pct(r.get("NCLNLSR"))),
-            ("Net charge-offs / loans", lambda r, k: _pct(r.get("NTLNLSR"))),
-            ("Loan-loss reserves / loans", lambda r, k: _pct(r.get("LNATRESR"))),
+            ("NPLs / loans", fdic_pct("NPLs / loans", "NCLNLSR")),
+            ("Net charge-offs / loans", fdic_pct("Net charge-offs / loans", "NTLNLSR")),
+            ("Loan-loss reserves / loans", fdic_pct("Loan-loss reserves / loans", "LNATRESR")),
         ]),
         ("Capital Adequacy (bank-level)", [
-            ("CET1 ratio", lambda r, k: _pct(r.get("IDT1CER"))),
-            ("Total capital ratio", lambda r, k: _pct(r.get("RBCRWAJ"))),
-            ("Leverage ratio", lambda r, k: _pct(r.get("RBCT1JR"))),
+            ("CET1 ratio", fdic_pct("CET1 ratio", "IDT1CER")),
+            ("Total capital ratio", fdic_pct("Total capital ratio", "RBCRWAJ")),
+            ("Leverage ratio", fdic_pct("Leverage ratio", "RBCT1JR")),
         ]),
         ("Per Share (HoldCo)", [
-            ("Diluted EPS", lambda r, k: _dollars_ps(col_ps.get(k, {}).get("eps"))),
-            ("Dividends / share", lambda r, k: _dollars_ps(col_ps.get(k, {}).get("dps"))),
-            ("Book value / share", lambda r, k: _dollars_ps(col_ps.get(k, {}).get("bvps"))),
-            ("Tangible BV / share", lambda r, k: _dollars_ps(col_ps.get(k, {}).get("tbvps"))),
-            ("Shares outstanding", lambda r, k: _count(col_ps.get(k, {}).get("shares"))),
+            ("Diluted EPS", sec_eps),
+            ("Dividends / share", sec_dps),
+            ("Book value / share", sec_bvps),
+            ("Tangible BV / share", sec_tbvps),
+            ("Shares outstanding", sec_shares),
         ]),
     ]
 
-    head = ('<tr><th style="text-align:left; padding:5px 10px;">($ scaled)</th>'
-            + "".join(f'<th style="text-align:right; padding:5px 12px; font-weight:600; '
-                      f'color:#0f172a;">{labels[k]}</th>' for k in keys) + "</tr>")
-    body = []
+    # Build cells + HTML rows
+    cells: dict[str, dict] = {}
+    rows_html = []
+    ri = 0
     for sec_name, rows in sections:
-        body.append(
-            f'<tr><td colspan="{len(keys)+1}" style="padding:9px 10px 3px; font-weight:700; '
-            f'color:#1e3a8a; font-size:0.8rem; text-transform:uppercase; '
-            f'letter-spacing:0.03em;">{sec_name}</td></tr>')
+        rows_html.append(
+            f'<tr><td class="sec" colspan="{len(keys)+1}">{sec_name}</td></tr>')
         for label, fn in rows:
-            cells = []
-            for k in keys:
+            tds = [f'<td class="lbl">{label}</td>']
+            for ci, k in enumerate(keys):
                 try:
-                    v = fn(recs.get(k, {}), k)
+                    payload = fn(k)
                 except Exception:
-                    v = "—"
-                cells.append(f'<td style="text-align:right; padding:4px 12px; color:#1d4ed8;">{v}</td>')
-            body.append(f'<tr><td style="text-align:left; padding:4px 10px; '
-                        f'color:#475569;">{label}</td>' + "".join(cells) + "</tr>")
+                    payload = {"v": "—", "calc": None}
+                cid = f"{ri}_{ci}"
+                if payload.get("calc"):
+                    cells[cid] = payload["calc"]
+                    tds.append(f'<td class="val" data-cid="{cid}">{payload["v"]}</td>')
+                else:
+                    tds.append(f'<td class="val dead">{payload.get("v", "—")}</td>')
+            rows_html.append(f'<tr>{"".join(tds)}</tr>')
+            ri += 1
 
-    st.markdown(
-        '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; '
-        'font-size:0.85rem; border:1px solid rgba(148,163,184,0.18);">'
-        f'<thead style="border-bottom:1px solid rgba(148,163,184,0.3);">{head}</thead>'
-        f"<tbody>{''.join(body)}</tbody></table></div>",
-        unsafe_allow_html=True,
-    )
+    head = ('<th class="lblh">($ in thousands unless noted)</th>'
+            + "".join(f'<th class="colh">{labels[k]}</th>' for k in keys))
 
-    cik_link = (f' · <a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany'
-                f'&CIK={cik}&type=10-K" target="_blank">SEC filings</a>') if cik else ""
-    st.markdown(
-        '<div style="margin-top:8px; font-size:0.78rem; color:#64748b;">'
-        f'Source: <a href="https://banks.data.fdic.gov/bankfind-suite/bankfind/details/{cert}" '
-        f'target="_blank">FDIC BankFind</a>{cik_link}</div>',
-        unsafe_allow_html=True,
-    )
+    n_rows = ri + len(sections) + 1
+    height = 150 + 29 * n_rows
+    html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
+    components.html(html, height=height, scrolling=False)
+
+
+def _tce_ta_builder(recs, asof, fdic_link, P):
+    def b(k):
+        eq = _num(recs[k].get("EQTOT")) or 0
+        intan = _num(recs[k].get("INTAN")) or 0
+        asset = _num(recs[k].get("ASSET")) or 0
+        tce, ta = eq - intan, asset - intan
+        v = f"{tce/ta*100:.2f}%" if ta else "—"
+        terms = [{"label": "Tangible common equity", "val": _thou(tce) + " ($000)",
+                  "sub": f"Equity {_thou(eq)} − Intangibles {_thou(intan)}"},
+                 {"label": "Tangible assets", "val": _thou(ta) + " ($000)",
+                  "sub": f"Assets {_thou(asset)} − Intangibles {_thou(intan)}"}]
+        return P(v, "Tang. common equity / tang. assets", "FDIC Call Report", asof[k],
+                 "%", "Computed from Call Report", terms,
+                 "Tangible common equity ÷ tangible assets × 100", False, fdic_link)
+    return b
+
+
+def _build_component(head_html, body_html, cells, entity, fdic_link, sec_link):
+    data = json.dumps(cells)
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+* {{ box-sizing:border-box; }}
+body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  color:#1e293b; background:transparent; }}
+table {{ width:100%; border-collapse:collapse; font-size:13px;
+  border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
+thead th {{ border-bottom:1px solid rgba(148,163,184,0.3); padding:6px 12px; }}
+.lblh {{ text-align:left; color:#64748b; font-weight:500; }}
+.colh {{ text-align:right; font-weight:600; color:#0f172a; }}
+td.sec {{ padding:9px 10px 3px; font-weight:700; color:#1e3a8a; font-size:11px;
+  text-transform:uppercase; letter-spacing:0.04em; background:rgba(241,245,249,0.5); }}
+td.lbl {{ text-align:left; padding:4px 10px; color:#475569; }}
+td.val {{ text-align:right; padding:4px 12px; color:#1d4ed8; cursor:pointer;
+  position:relative; }}
+td.val:hover {{ background:rgba(37,99,235,0.08); text-decoration:underline; }}
+td.val.dead {{ color:#94a3b8; cursor:default; }}
+tbody tr:hover td.lbl {{ color:#1e293b; }}
+.foot {{ margin-top:8px; font-size:12px; color:#64748b; }}
+.foot a {{ color:#2563eb; text-decoration:none; }}
+#ov {{ position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none;
+  align-items:flex-start; justify-content:center; padding-top:40px; z-index:50; }}
+#card {{ width:min(440px,92%); background:#fff; border:1px solid rgba(148,163,184,0.3);
+  border-radius:10px; box-shadow:0 12px 40px rgba(15,23,42,0.25); overflow:hidden; }}
+#card .hd {{ padding:13px 16px; border-bottom:1px solid rgba(148,163,184,0.2); }}
+#card .ttl {{ display:flex; justify-content:space-between; align-items:center;
+  font-size:15px; font-weight:700; color:#0f172a; }}
+#card .ttl button {{ border:none; background:none; font-size:18px; color:#94a3b8;
+  cursor:pointer; line-height:1; }}
+#card .ent {{ font-size:12px; color:#475569; margin-top:3px; }}
+#card .meta {{ font-size:11.5px; color:#64748b; margin-top:2px; }}
+#card .def {{ font-size:12px; color:#475569; padding:10px 16px; line-height:1.5;
+  border-bottom:1px solid rgba(148,163,184,0.15); }}
+#card .def b {{ color:#2563eb; font-weight:600; letter-spacing:0.03em; font-size:10.5px; }}
+#card .calc {{ padding:12px 16px; }}
+.bigrow {{ display:flex; justify-content:space-between; align-items:baseline;
+  font-weight:700; color:#0f172a; font-size:15px; margin-bottom:8px; }}
+.term {{ display:flex; justify-content:space-between; padding:4px 0 4px 14px;
+  font-size:12.5px; color:#334155; border-top:1px dashed rgba(148,163,184,0.25); }}
+.term .tv {{ color:#1d4ed8; font-variant-numeric:tabular-nums; }}
+.sub {{ font-size:11px; color:#94a3b8; padding:0 0 4px 14px; }}
+.op {{ font-size:12px; color:#64748b; text-align:center; padding:8px 0 2px;
+  font-style:italic; }}
+.rep {{ font-size:11.5px; color:#475569; padding:8px 0 2px; }}
+.src {{ display:inline-block; margin-top:10px; font-size:12px; color:#2563eb;
+  text-decoration:none; }}
+</style></head><body>
+<table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>
+<div class="foot">Source:
+  <a href="{fdic_link}" target="_blank">FDIC BankFind</a> ·
+  <a href="{sec_link}" target="_blank">SEC EDGAR</a> — click any value for its calculation.</div>
+<div id="ov"><div id="card"></div></div>
+<script>
+const CELLS = {data};
+const ov = document.getElementById("ov"), card = document.getElementById("card");
+function esc(s){{ return (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;"); }}
+function open(c){{
+  let terms = (c.terms||[]).map(t =>
+    `<div class="term"><span>${{esc(t.label)}}</span><span class="tv">${{esc(t.val)}}</span></div>`
+    + (t.sub ? `<div class="sub">${{esc(t.sub)}}</div>` : "")).join("");
+  let opline = c.op ? `<div class="op">${{esc(c.op)}}</div>` : "";
+  let rep = c.reported ? `<div class="rep">Reported directly by ${{esc(c.source)}}.</div>` : "";
+  card.innerHTML =
+    `<div class="hd"><div class="ttl"><span>${{esc(c.metric)}}</span>`
+    + `<button onclick="hide()" aria-label="Close">×</button></div>`
+    + `<div class="ent">${{esc(c.entity)}}</div>`
+    + `<div class="meta">${{esc(c.source)}} &nbsp;|&nbsp; ${{esc(c.asof)}} &nbsp;|&nbsp; ${{esc(c.unit)}} &nbsp;|&nbsp; ${{esc(c.ref)}}</div></div>`
+    + (c.definition ? `<div class="def"><b>DEFINITION</b> &nbsp; ${{esc(c.definition)}}</div>` : "")
+    + `<div class="calc"><div class="bigrow"><span>${{esc(c.metric)}}</span></div>`
+    + terms + opline + rep
+    + `<a class="src" href="${{esc(c.link)}}" target="_blank">View source →</a></div>`;
+  ov.style.display = "flex";
+}}
+function hide(){{ ov.style.display = "none"; }}
+ov.addEventListener("click", e => {{ if(e.target===ov) hide(); }});
+document.addEventListener("keydown", e => {{ if(e.key==="Escape") hide(); }});
+document.querySelectorAll("td.val[data-cid]").forEach(td =>
+  td.addEventListener("click", () => {{ const c = CELLS[td.dataset.cid]; if(c) open(c); }}));
+</script></body></html>"""
