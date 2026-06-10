@@ -80,7 +80,7 @@ def fmp_calc(metric, value, *, entity, unit, definition, terms=None):
 _CARD_CSS = """
 * { box-sizing:border-box; }
 body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  color:#1e293b; background:transparent; }
+  color:#1e293b; background:transparent; position:relative; }
 .grid { display:grid; gap:8px; }
 .card { background:rgba(148,163,184,0.06); border:1px solid rgba(148,163,184,0.18);
   border-radius:10px; padding:9px 13px; }
@@ -91,13 +91,14 @@ body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
   letter-spacing:0.03em; }
 .card .lbl .arr { color:#2563eb; }
 .card .val { font-size:1.1rem; font-weight:700; line-height:1.35; }
-/* Empty state: no box — just a faint centered hint (reads as whitespace, not
-   an empty white card). The bordered box only appears once a metric is
-   clicked (.filled), and scrolls internally if a calc is tall. */
-#panel { margin-top:8px; border-radius:10px; }
-#panel.filled { border:1px solid rgba(148,163,184,0.25); background:#fff;
-  max-height:152px; overflow-y:auto; }
-.hint { padding:14px 4px; font-size:11.5px; color:#aab4c0; text-align:center; }
+/* The detail popover OVERLAYS the grid (so there's no reserved empty space
+   below the cards): clicking a metric covers the cards with its calculation;
+   × restores the grid. Scrolls internally if a calc is taller than the grid. */
+.ov { position:absolute; inset:0; display:none; z-index:30; }
+.ov.show { display:block; }
+.ov .box { height:100%; overflow-y:auto; background:#fff;
+  border:1px solid rgba(148,163,184,0.3); border-radius:10px;
+  box-shadow:0 4px 18px rgba(15,23,42,0.10); }
 .hd { padding:8px 14px; border-bottom:1px solid rgba(148,163,184,0.18); position:relative; }
 .ttl { display:flex; justify-content:space-between; align-items:baseline;
   font-size:14px; font-weight:700; color:#0f172a; padding-right:18px; }
@@ -123,17 +124,15 @@ body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
 """
 
 _PANEL_JS = """
-const panel=document.getElementById("panel");
+const ov=document.getElementById("ov"), box=document.getElementById("ovbox");
 function esc(s){return (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;");}
-function clearCalc(){
-  panel.classList.remove("filled");
+function closeCalc(){
+  ov.classList.remove("show");
   document.querySelectorAll(".card.sel").forEach(x=>x.classList.remove("sel"));
-  panel.innerHTML=`<div class="hint">Click any metric above to see its calculation and source documents.</div>`;
 }
 function showCalc(c,el){
   document.querySelectorAll(".card.sel").forEach(x=>x.classList.remove("sel"));
   if(el) el.classList.add("sel");
-  panel.classList.add("filled");
   let terms=(c.terms||[]).map(t=>
     `<div class="term"><span>${esc(t.label)}</span><span class="tv">${esc(t.val)}</span></div>`
     +(t.sub?`<div class="sub">${esc(t.sub)}</div>`:"")
@@ -143,12 +142,15 @@ function showCalc(c,el){
   let opline=c.op?`<div class="op">${esc(c.op)}</div>`:"";
   let rep=c.reported?`<div class="rep">Reported directly by ${esc(c.source)}.</div>`:"";
   let srclink=c.link?`<a class="src" href="${esc(c.link)}" target="_blank">View source →</a>`:"";
-  panel.innerHTML=`<div class="hd"><button class="cls" onclick="clearCalc()" aria-label="Close">×</button><div class="ttl"><span>${esc(c.metric)}</span><span>${esc(c.value)}</span></div>`
+  box.innerHTML=`<div class="hd"><button class="cls" onclick="closeCalc()" aria-label="Close">×</button><div class="ttl"><span>${esc(c.metric)}</span><span>${esc(c.value)}</span></div>`
     +`<div class="ent">${esc(c.entity)}</div>`
     +`<div class="meta">${esc(c.source)} &nbsp;|&nbsp; ${esc(c.asof)} &nbsp;|&nbsp; ${esc(c.unit)} &nbsp;|&nbsp; ${esc(c.ref)}</div></div>`
     +(c.definition?`<div class="def"><b>DEFINITION</b> &nbsp; ${esc(c.definition)}</div>`:"")
     +`<div class="calc">${terms}${opline}${rep}${srclink}</div>`;
+  box.scrollTop=0;
+  ov.classList.add("show");
 }
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeCalc();});
 document.querySelectorAll(".card.click[data-cid]").forEach(el=>
   el.addEventListener("click",()=>{const c=CELLS[el.dataset.cid];if(c)showCalc(c,el);}));
 """
@@ -156,8 +158,8 @@ document.querySelectorAll(".card.click[data-cid]").forEach(el=>
 
 def render_traceable_cards(cards, key, columns=7, height=None):
     """cards: list of {label, value, accent?, calc?}. Renders a responsive grid
-    of metric cards; clicking any card with a calc shows its calculation +
-    source documents in an inline panel below the grid."""
+    of metric cards; clicking any card with a calc opens its calculation +
+    source documents as a popover that overlays the grid (no reserved space)."""
     cells = {}
     html_cards = []
     for i, c in enumerate(cards):
@@ -176,12 +178,13 @@ def render_traceable_cards(cards, key, columns=7, height=None):
 
     rows = -(-len(cards) // columns)
     if height is None:
-        height = 18 + rows * 64 + 168  # grid + compact detail panel (empty state is borderless)
+        # Just the grid (+8). The popover overlays the grid, so we only enforce a
+        # floor (~150px) so a single-row grid still has room to show a calc.
+        height = max(18 + rows * 64 + 8, 150)
     data = json.dumps(cells)
     html = (f'<!doctype html><html><head><meta charset="utf-8"><style>{_CARD_CSS}'
             f'.grid{{grid-template-columns:repeat({columns},minmax(0,1fr));}}</style></head>'
             f'<body><div class="grid">{"".join(html_cards)}</div>'
-            f'<div id="panel"><div class="hint">Click any metric above to see its '
-            f'calculation and source documents.</div></div>'
+            f'<div class="ov" id="ov"><div class="box" id="ovbox"></div></div>'
             f'<script>const CELLS={data};{_PANEL_JS}</script></body></html>')
     components.html(html, height=height, scrolling=False)
