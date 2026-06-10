@@ -279,14 +279,17 @@ _NEWS_TYPES = {
 
 
 # Only actionable sources: SEC filings (8-K/10-K/10-Q) and real press releases
-# issued over the news wires. Deliberately EXCLUDES the yfinance news aggregator
-# and the IR-site scraper — those are noisy/low-signal ("crap").
-_NEWS_SOURCES = ["sec_8k", "businesswire", "prnewswire", "globenewswire"]
+# (the news wires + IR-site press releases). Deliberately EXCLUDES the yfinance
+# news aggregator — that's the noisy/low-signal "crap". IR-site PRs are kept
+# only for banks the wires don't cover (the wires are cleaner; see below), so
+# we don't double-list the same press release.
+_WIRE_SOURCES = {"businesswire", "prnewswire", "globenewswire"}
+_NEWS_SOURCES = ["sec_8k", "businesswire", "prnewswire", "globenewswire", "ir_site"]
 
 
 def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
     """Actionable news across the watchlist — SEC filings + real press releases
-    only (no news-aggregator noise) — with their AI summaries."""
+    (wires, plus IR-site for non-wire banks) — with their AI summaries."""
     import datetime as dt
     try:
         from data.events import get_universe_recent
@@ -295,12 +298,17 @@ def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
         return []
 
     wl = set(watchlist)
+    # Banks that have wire-service press releases in this window — for these we
+    # skip the IR-site scraper (it would just duplicate the cleaner wire PR).
+    wire_covered = {r.get("ticker") for r in rows if r.get("source") in _WIRE_SOURCES}
     now = dt.datetime.now(dt.timezone.utc).timestamp()
     out, seen = [], set()
     for r in rows:
         tk = r.get("ticker")
         if wl and tk not in wl:
             continue
+        if r.get("source") == "ir_site" and tk in wire_covered:
+            continue  # wires cover this bank — don't double-list IR-site PRs
         head = (r.get("headline") or "").strip()
         key = (tk, head[:60])
         if not head or key in seen:
