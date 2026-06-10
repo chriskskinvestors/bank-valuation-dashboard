@@ -224,23 +224,23 @@ def _render_alert_inbox(all_metrics: list[dict], watchlist: list[str]):
     st.caption("Prioritized across your watchlist. Click into any row to jump to the bank.")
 
     # Collect alerts from each source
+    news_alerts = _collect_news_alerts(watchlist)
     earnings_alerts = _collect_earnings_alerts(watchlist)
     dynamics_alerts = _collect_dynamics_alerts(all_metrics)
     insider_alerts = _collect_insider_alerts(watchlist)
     valuation_alerts = _collect_valuation_alerts(all_metrics)
 
-    # Tabs for the 4 alert types
-    total_counts = [
-        len(earnings_alerts), len(dynamics_alerts),
-        len(insider_alerts), len(valuation_alerts),
-    ]
-    tab1, tab2, tab3, tab4 = st.tabs([
-        f"📅 Earnings ({total_counts[0]})",
-        f"⚠️ Dynamics Alerts ({total_counts[1]})",
-        f"👥 Insider Buys ({total_counts[2]})",
-        f"💰 Value Opps ({total_counts[3]})",
+    # Important News is the main (first) tab.
+    tab_news, tab1, tab2, tab3, tab4 = st.tabs([
+        f"📰 Important News ({len(news_alerts)})",
+        f"📅 Earnings ({len(earnings_alerts)})",
+        f"⚠️ Dynamics Alerts ({len(dynamics_alerts)})",
+        f"👥 Insider Buys ({len(insider_alerts)})",
+        f"💰 Value Opps ({len(valuation_alerts)})",
     ])
 
+    with tab_news:
+        _render_news_tab(news_alerts)
     with tab1:
         _render_earnings_tab(earnings_alerts)
     with tab2:
@@ -249,6 +249,103 @@ def _render_alert_inbox(all_metrics: list[dict], watchlist: list[str]):
         _render_insider_tab(insider_alerts)
     with tab4:
         _render_valuation_tab(valuation_alerts)
+
+
+def _relative_time(p) -> str:
+    import datetime as dt
+    if p is None:
+        return ""
+    try:
+        t = p if hasattr(p, "year") else dt.datetime.fromisoformat(str(p).replace("Z", "+00:00"))
+    except Exception:
+        return ""
+    now = dt.datetime.now(dt.timezone.utc) if t.tzinfo else dt.datetime.now()
+    secs = max(0, (now - t).total_seconds())
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    d = int(secs // 86400)
+    return f"{d}d ago" if d < 30 else (t.strftime("%b %d") if hasattr(t, "strftime") else "")
+
+
+# event_type → (emoji, label, weight). Weight + recency rank "important news".
+_NEWS_TYPES = {
+    "earnings": ("📊", "Earnings", 5), "m_and_a": ("🤝", "M&A", 5),
+    "regulatory": ("🏛", "Regulatory", 4), "executive_change": ("👤", "Leadership", 3),
+    "shareholder_vote": ("🗳", "Shareholder vote", 2), "filing": ("📄", "Filing", 2),
+    "press_release": ("📰", "Press release", 1), "news": ("📰", "News", 1),
+}
+
+
+def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
+    """Most important + recent events across the watchlist (earnings, M&A,
+    regulatory, leadership, filings, press releases) with their AI summaries."""
+    import datetime as dt
+    try:
+        from data.events import get_universe_recent
+        rows = get_universe_recent(limit=250)
+    except Exception:
+        return []
+
+    wl = set(watchlist)
+    now = dt.datetime.now(dt.timezone.utc).timestamp()
+    out, seen = [], set()
+    for r in rows:
+        tk = r.get("ticker")
+        if wl and tk not in wl:
+            continue
+        head = (r.get("headline") or "").strip()
+        key = (tk, head[:60])
+        if not head or key in seen:
+            continue
+        seen.add(key)
+        et = r.get("event_type") or "news"
+        weight = _NEWS_TYPES.get(et, ("📰", "News", 1))[2]
+        # recency
+        p = r.get("published_at")
+        try:
+            t = p if hasattr(p, "year") else dt.datetime.fromisoformat(str(p).replace("Z", "+00:00"))
+            ts = t.timestamp()
+        except Exception:
+            ts = 0.0
+        age_days = max(0.0, (now - ts) / 86400) if ts else 999
+        score = weight / (1 + age_days * 0.35)  # recent + material floats up
+        out.append({
+            "ticker": tk, "event_type": et, "headline": head,
+            "summary": (r.get("summary") or "").strip(), "url": r.get("url") or "",
+            "published_at": p, "score": score,
+        })
+    out.sort(key=lambda o: o["score"], reverse=True)
+    return out[:20]
+
+
+def _render_news_tab(alerts: list[dict]):
+    if not alerts:
+        st.info("No recent watchlist news yet. The poller refreshes every ~30 min "
+                "during market hours (8-Ks, press releases, news).")
+        return
+    for a in alerts:
+        emoji, label, weight = _NEWS_TYPES.get(a["event_type"], ("📰", "News", 1))
+        tk = a["ticker"]; name = get_name(tk)[:34]
+        when = _relative_time(a["published_at"])
+        sev = "high" if weight >= 5 else ("medium" if weight >= 3 else "")
+        summ = a["summary"]
+        if summ and len(summ) > 240:
+            summ = summ[:237].rstrip() + "…"
+        link = (f' <a href="{a["url"]}" target="_blank" style="color:var(--brand-accent); '
+                f'text-decoration:none;">open ↗</a>') if a["url"] else ""
+        body = (
+            f'<div class="alert-row severity-{sev}" style="display:block; padding:9px 14px;">'
+            f'<div style="font-size:0.78rem; color:var(--text-muted);">'
+            f'{emoji} {label} &nbsp;·&nbsp; <strong style="color:var(--text-primary);">{tk}</strong> '
+            f'<span style="color:var(--text-secondary);">{name}</span> &nbsp;·&nbsp; {when}{link}</div>'
+            f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{a["headline"]}</div>'
+            + (f'<div style="color:var(--text-secondary); font-size:0.86rem; margin-top:2px; '
+               f'line-height:1.45;">{summ}</div>' if summ else "")
+            + '</div>'
+        )
+        st.markdown(body, unsafe_allow_html=True)
 
 
 def _collect_earnings_alerts(watchlist: list[str]) -> list[dict]:
