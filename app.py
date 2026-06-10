@@ -73,6 +73,13 @@ if section == "📊 Screening":
     screening_tab = TABS[screening_tab_idx]
 
 elif section == "🏦 Company Analysis":
+    # Deep-link support: a metric card can link to ?bank=X&tab=<token> to jump
+    # straight to the tab that shows that figure (carries the bank so the deep
+    # link survives a full page navigation).
+    _qp = st.query_params
+    if _qp.get("bank"):
+        st.session_state["company_bank"] = _qp.get("bank").upper()
+
     # The bank is picked in the MAIN content area (not the sidebar). Read the
     # current selection from session_state so the sub-tab nav can render here.
     _ov = (st.session_state.get("company_ticker_input") or "").strip().upper()
@@ -80,12 +87,24 @@ elif section == "🏦 Company Analysis":
 
     if company_ticker:
         COMPANY_TABS = ["Overview", "Activity", "Financials", "Filings", "Deposits", "Credit", "Capital", "NIM Sensitivity", "Valuation", "Ownership", "Earnings", "🔍 Data Quality"]
+        _TAB_TOKENS = {"financials": "Financials", "valuation": "Valuation",
+                       "dataquality": "🔍 Data Quality", "filings": "Filings"}
+        _goto = _TAB_TOKENS.get((_qp.get("tab") or "").lower())
+        if _goto and _goto in COMPANY_TABS:
+            st.session_state["company_subtab"] = _goto
         company_subtab = st.sidebar.radio(
             "View",
             COMPANY_TABS,
             key="company_subtab",
             horizontal=True,
         )
+        # Consume deep-link params so they don't persist on the next interaction.
+        for _k in ("bank", "tab"):
+            if _k in _qp:
+                try:
+                    del st.query_params[_k]
+                except Exception:
+                    pass
 
 st.sidebar.markdown("---")
 

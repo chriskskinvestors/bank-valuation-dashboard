@@ -30,15 +30,21 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
     if not bank_row.empty:
         row = bank_row.iloc[0]
-        # (key, label) — 12 cards across two rows: market/valuation then fundamentals.
+        # (key, label, deeplink-tab) — EPS sits next to P/E and TBV/share next
+        # to P/TBV; clicking EPS or TBV jumps to the Data Quality tab, which
+        # shows that figure and its source filing. 7 cards per row.
         cards = [
-            ("price", "Price"), ("change_pct", "Chg %"), ("market_cap", "Mkt Cap"),
-            ("pe_ratio", "P/E"), ("ptbv_ratio", "P/TBV"), ("dividend_yield", "Div Yield"),
-            ("roatce_blended", "ROATCE"), ("roaa", "ROAA"), ("nim", "NIM"),
-            ("efficiency_ratio", "Efficiency"), ("cet1_ratio", "CET1"), ("npl_ratio", "NPL"),
+            ("price", "Price", None), ("change_pct", "Chg %", None),
+            ("market_cap", "Mkt Cap", None), ("pe_ratio", "P/E", None),
+            ("eps", "EPS", "dataquality"), ("ptbv_ratio", "P/TBV", None),
+            ("tbvps", "TBV/Sh", "dataquality"),
+            ("dividend_yield", "Div Yield", None), ("roatce_blended", "ROATCE", None),
+            ("roaa", "ROAA", None), ("nim", "NIM", None),
+            ("efficiency_ratio", "Efficiency", None), ("cet1_ratio", "CET1", None),
+            ("npl_ratio", "NPL", None),
         ]
 
-        def _stat_card(key, label):
+        def _stat_card(key, label, link_tab):
             m = METRICS_BY_KEY.get(key, {})
             val = row.get(key)
             disp = (format_value(val, m.get("format", "number"), m.get("decimals", 2))
@@ -46,18 +52,24 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
             accent = "inherit"
             if key == "change_pct" and val is not None and not pd.isna(val):
                 accent = "#059669" if val >= 0 else "#dc2626"
-            return (
+            arrow = ' <span style="color:#2563eb;">↗</span>' if link_tab else ""
+            inner = (
                 '<div style="background:rgba(148,163,184,0.06); border:1px solid '
-                'rgba(148,163,184,0.18); border-radius:10px; padding:9px 13px;">'
+                'rgba(148,163,184,0.18); border-radius:10px; padding:9px 13px; height:100%;">'
                 f'<div style="font-size:0.62rem; color:#64748b; font-weight:600; '
-                'text-transform:uppercase; letter-spacing:0.03em;">' + label + '</div>'
-                f'<div style="font-size:1.12rem; font-weight:700; color:{accent}; '
+                'text-transform:uppercase; letter-spacing:0.03em;">' + label + arrow + '</div>'
+                f'<div style="font-size:1.1rem; font-weight:700; color:{accent}; '
                 f'line-height:1.35;">{disp}</div></div>'
             )
+            if link_tab:
+                return (f'<a href="?bank={ticker}&tab={link_tab}" target="_self" '
+                        'style="text-decoration:none; color:inherit;" '
+                        'title="See this figure and its source filing →">' + inner + '</a>')
+            return inner
 
         st.markdown(
-            '<div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:8px;">'
-            + "".join(_stat_card(k, lbl) for k, lbl in cards) + "</div>",
+            '<div style="display:grid; grid-template-columns:repeat(7, 1fr); gap:8px;">'
+            + "".join(_stat_card(k, lbl, lk) for k, lbl, lk in cards) + "</div>",
             unsafe_allow_html=True,
         )
 
