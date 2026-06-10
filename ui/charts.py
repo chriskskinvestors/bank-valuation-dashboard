@@ -102,6 +102,8 @@ def metrics_trend_chart(
         xaxis_title="Quarter",
         yaxis_title="Value (%)",
         legend=dict(orientation="h", y=-0.2),
+        showlegend=len(fig.data) > 1,  # single-metric charts don't need a legend
+        height=300,
         **CHART_LAYOUT,
     )
     return fig

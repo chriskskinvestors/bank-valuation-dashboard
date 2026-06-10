@@ -90,17 +90,22 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
     if cert:
         fdic_hist = fdic_client.get_historical_financials(cert, quarters=20)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.plotly_chart(
-            metrics_trend_chart(fdic_hist, ["roaa", "roatce", "nim"], "Profitability"),
-            use_container_width=True,
-        )
-    with col2:
-        st.plotly_chart(
-            metrics_trend_chart(fdic_hist, ["npl_ratio", "nco_ratio"], "Credit Quality"),
-            use_container_width=True,
-        )
+    # One metric per chart — ROAA/NIM and NPL/NCO have very different scales, so
+    # sharing a y-axis squishes the smaller series. Each gets its own axis.
+    _r1c1, _r1c2 = st.columns(2)
+    with _r1c1:
+        st.plotly_chart(metrics_trend_chart(fdic_hist, ["roaa"], "ROAA"),
+                        use_container_width=True)
+    with _r1c2:
+        st.plotly_chart(metrics_trend_chart(fdic_hist, ["nim"], "Net Interest Margin"),
+                        use_container_width=True)
+    _r2c1, _r2c2 = st.columns(2)
+    with _r2c1:
+        st.plotly_chart(metrics_trend_chart(fdic_hist, ["npl_ratio"], "NPL Ratio"),
+                        use_container_width=True)
+    with _r2c2:
+        st.plotly_chart(metrics_trend_chart(fdic_hist, ["nco_ratio"], "Net Charge-Off Ratio"),
+                        use_container_width=True)
 
     # ── Balance sheet trend ─────────────────────────────────────────
     st.subheader("Balance Sheet")
