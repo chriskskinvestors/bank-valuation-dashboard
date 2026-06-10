@@ -27,6 +27,21 @@ PRICE_REFRESH_SECONDS = int(os.getenv("PRICE_REFRESH_SECONDS", "5"))
 FUNDAMENTAL_CACHE_TTL_HOURS = int(os.getenv("FUNDAMENTAL_CACHE_TTL_HOURS", "24"))
 
 # ---------------------------------------------------------------------------
+# Market benchmarks shown on the Home price strip (ETFs/indices for context).
+# Bank-relevant first (regional / community / broad banks), then broad market.
+# ---------------------------------------------------------------------------
+MARKET_BENCHMARKS = [
+    ("KRE", "Regional banks"),
+    ("KBE", "Banks"),
+    ("QABA", "Community banks"),
+    ("IWM", "Small caps"),
+    ("SPY", "S&P 500"),
+    ("QQQ", "Nasdaq 100"),
+    ("XLF", "Financials"),
+]
+
+
+# ---------------------------------------------------------------------------
 # Default watchlist (users can edit in the UI)
 # ---------------------------------------------------------------------------
 DEFAULT_WATCHLIST = [

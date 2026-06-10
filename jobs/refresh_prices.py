@@ -45,7 +45,9 @@ def main() -> int:
     # which rate-limits in a cold job and silently collapses the set to the
     # watchlist. The base set is a superset of what the UI screen requests, so
     # warming it guarantees coverage; dead tickers just return null (skipped).
-    tickers = sorted(set(get_universe().keys()) | set(DEFAULT_WATCHLIST))
+    from config import MARKET_BENCHMARKS
+    tickers = sorted(set(get_universe().keys()) | set(DEFAULT_WATCHLIST)
+                     | {t for t, _ in MARKET_BENCHMARKS})
     print(f"[{time.strftime('%H:%M:%S')}] fetching {len(tickers)} quotes...", flush=True)
 
     init_price_cache_schema()

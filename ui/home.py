@@ -95,6 +95,54 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     except Exception:
         pass
 
+    # ── Market benchmarks (price strip) ─────────────────────────────────
+    try:
+        from config import MARKET_BENCHMARKS
+        syms = [t for t, _ in MARKET_BENCHMARKS]
+        quotes = {}
+        try:
+            from data.price_cache_store import get_prices as _warm
+            quotes = _warm(syms)  # warmed by the refresh-prices job
+        except Exception:
+            quotes = {}
+        missing = [t for t in syms if t not in quotes]
+        if missing:
+            try:
+                from data import fmp_client
+                quotes.update(fmp_client.get_quote_batch(missing))
+            except Exception:
+                pass
+
+        def _mkt(label, desc, q):
+            price = (q or {}).get("price")
+            chg = (q or {}).get("change_pct")
+            if price is None:
+                val, sub, col = "—", "", "#94a3b8"
+            else:
+                val = f"${price:,.2f}"
+                col = "#dc2626" if (chg is not None and chg < 0) else "#059669"
+                sub = f"{chg:+.2f}%" if chg is not None else ""
+            return (
+                '<span title="' + desc + '" style="display:inline-flex; '
+                'flex-direction:column; padding:2px 11px; border-radius:7px; '
+                'background:rgba(148,163,184,0.08); border:1px solid '
+                'rgba(148,163,184,0.18); line-height:1.2;">'
+                f'<span style="font-size:0.56rem; color:#94a3b8; font-weight:600; '
+                'letter-spacing:0.04em;">' + label + '</span>'
+                f'<span style="font-size:0.84rem; font-weight:700;">{val}'
+                f'<span style="font-size:0.62rem; font-weight:600; margin-left:5px; '
+                f'color:{col};">{sub}</span></span></span>'
+            )
+
+        chips = [_mkt(t, desc, quotes.get(t)) for t, desc in MARKET_BENCHMARKS]
+        st.markdown(
+            '<div style="display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px;">'
+            + "".join(chips) + "</div>",
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        pass
+
     st.markdown("")
 
     # ── Watchlist summary ──────────────────────────────────────────────

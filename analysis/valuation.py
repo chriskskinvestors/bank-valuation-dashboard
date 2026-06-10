@@ -163,17 +163,21 @@ def compute_roatce_holdco(sec_data: dict) -> float | None:
     Using HoldCo metrics is the institutional standard for stock valuation.
 
     ROATCE = Net Income / Tangible Common Equity × 100
-    TCE = StockholdersEquity − Goodwill − IntangibleAssets
+    TCE = StockholdersEquity − (goodwill + other intangibles)
     """
     if not sec_data:
         return None
     ni = sec_data.get("net_income")
     equity = sec_data.get("book_value_total")
-    goodwill = sec_data.get("goodwill") or 0
-    intangibles = sec_data.get("intangibles") or 0
     if ni is None or equity is None:
         return None
-    tce = equity - goodwill - intangibles
+    # Use the robust intangible adjustment (goodwill + intangibles resolved
+    # across alternate XBRL tags) so TCE matches the tangible-book calc. Fall
+    # back to the raw fields only if the adjustment wasn't computed.
+    adj = sec_data.get("intangible_adjustment")
+    if adj is None:
+        adj = (sec_data.get("goodwill") or 0) + (sec_data.get("intangibles") or 0)
+    tce = equity - adj
     if tce <= 0:
         return None
     return (ni / tce) * 100
