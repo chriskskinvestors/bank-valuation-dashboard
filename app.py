@@ -84,12 +84,10 @@ elif section == "🏦 Company Analysis":
     # link survives a full page navigation).
     _qp = st.query_params
     if _qp.get("bank"):
-        st.session_state["company_bank"] = _qp.get("bank").upper()
+        st.session_state["company_pick"] = _qp.get("bank").upper()
 
-    # The bank is picked in the MAIN content area (not the sidebar). Read the
-    # current selection from session_state so the sub-tab nav can render here.
-    _ov = (st.session_state.get("company_ticker_input") or "").strip().upper()
-    company_ticker = _ov or (st.session_state.get("company_bank") or None)
+    # A single search box (rendered in the main content) holds the selection.
+    company_ticker = (st.session_state.get("company_pick") or "").strip().upper() or None
 
     if company_ticker:
         # Deep-link ?tab=<token> pre-selects the sub-tab. The sub-tab radio
@@ -672,25 +670,31 @@ elif section == "📊 Screening" and screening_tab:
 elif section == "🏦 Company Analysis":
     # ── COMPANY ANALYSIS: Single-bank deep dive ─────────────────────────
 
-    # In-page bank picker (no need to use the sidebar). The widgets live here;
-    # the sidebar sub-tab nav reads the selection from session_state above.
-    _wl = load_watchlist()
-    _pc1, _pc2 = st.columns([3, 2])
-    with _pc1:
-        st.selectbox(
-            "Bank (watchlist)",
-            options=[""] + sorted(_wl),
-            format_func=lambda t: f"{t} — {get_name(t)}" if t else "Select a bank…",
-            key="company_bank",
-        )
-    with _pc2:
-        st.text_input("Or enter any ticker", placeholder="e.g. JPM",
-                      key="company_ticker_input")
-    _ov2 = (st.session_state.get("company_ticker_input") or "").strip().upper()
-    company_ticker = _ov2 or (st.session_state.get("company_bank") or None)
+    # Single search box: type a ticker. It autocompletes your watchlist and
+    # accepts any ticker not on it (accept_new_options) — one field, not two.
+    _wl = sorted(load_watchlist())
+    _opts = list(_wl)
+    _cur = st.session_state.get("company_pick")
+    if _cur and _cur not in _opts:
+        _opts.append(_cur)  # keep the current/deep-linked selection selectable
+
+    def _fmt_pick(t):
+        nm = get_name(t)
+        return f"{t} — {nm}" if (nm and nm != t) else t
+
+    st.selectbox(
+        "Bank",
+        options=_opts,
+        format_func=_fmt_pick,
+        placeholder="Search or type any ticker… (e.g. BANR, JPM)",
+        accept_new_options=True,
+        key="company_pick",
+        label_visibility="collapsed",
+    )
+    company_ticker = (st.session_state.get("company_pick") or "").strip().upper() or None
 
     if not company_ticker:
-        st.info("👆 Pick a bank above (watchlist dropdown) or type any ticker to begin.")
+        st.info("👆 Type a ticker above to begin (your watchlist autocompletes; any ticker works).")
     else:
         # Sub-tab navigation lives at the TOP of the page (under the picker),
         # horizontal — same set for every bank. Wrapped in a keyed container so
