@@ -30,48 +30,7 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
     if not bank_row.empty:
         row = bank_row.iloc[0]
-        # (key, label, deeplink-tab) — EPS sits next to P/E and TBV/share next
-        # to P/TBV; clicking EPS or TBV jumps to the Data Quality tab, which
-        # shows that figure and its source filing. 7 cards per row.
-        cards = [
-            ("price", "Price", None), ("change_pct", "Chg %", None),
-            ("market_cap", "Mkt Cap", None), ("pe_ratio", "P/E", None),
-            ("eps", "EPS", "financials"), ("ptbv_ratio", "P/TBV", None),
-            ("tbvps", "TBV/Sh", "financials"),
-            ("dividend_yield", "Div Yield", None), ("roatce_blended", "ROATCE", None),
-            ("roaa", "ROAA", None), ("nim", "NIM", None),
-            ("efficiency_ratio", "Efficiency", None), ("cet1_ratio", "CET1", None),
-            ("npl_ratio", "NPL", None),
-        ]
-
-        def _stat_card(key, label, link_tab):
-            m = METRICS_BY_KEY.get(key, {})
-            val = row.get(key)
-            disp = (format_value(val, m.get("format", "number"), m.get("decimals", 2))
-                    if val is not None and not pd.isna(val) else "—")
-            accent = "inherit"
-            if key == "change_pct" and val is not None and not pd.isna(val):
-                accent = "#059669" if val >= 0 else "#dc2626"
-            arrow = ' <span style="color:#2563eb;">↗</span>' if link_tab else ""
-            inner = (
-                '<div style="background:rgba(148,163,184,0.06); border:1px solid '
-                'rgba(148,163,184,0.18); border-radius:10px; padding:9px 13px; height:100%;">'
-                f'<div style="font-size:0.62rem; color:#64748b; font-weight:600; '
-                'text-transform:uppercase; letter-spacing:0.03em;">' + label + arrow + '</div>'
-                f'<div style="font-size:1.1rem; font-weight:700; color:{accent}; '
-                f'line-height:1.35;">{disp}</div></div>'
-            )
-            if link_tab:
-                return (f'<a href="?bank={ticker}&tab={link_tab}" target="_self" '
-                        'style="text-decoration:none; color:inherit;" '
-                        'title="See this figure and its source filing →">' + inner + '</a>')
-            return inner
-
-        st.markdown(
-            '<div style="display:grid; grid-template-columns:repeat(7, 1fr); gap:8px;">'
-            + "".join(_stat_card(k, lbl, lk) for k, lbl, lk in cards) + "</div>",
-            unsafe_allow_html=True,
-        )
+        _render_keystat_grid(ticker, info, name, row)
 
         # Click-through to the primary data sources for this bank.
         cik = info.get("cik") if info else None
@@ -184,3 +143,147 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
             st.info("No recent filings found.")
     else:
         st.info("SEC CIK not mapped for this bank.")
+
+
+def _render_keystat_grid(ticker, info, name, row):
+    """Key-stat cards where every number is click-to-source: FDIC ratios link
+    to the Call Report facsimile, SEC per-share figures to the exact 10-K/10-Q,
+    computed ratios show their formula + inputs, price is labelled FMP live."""
+    from ui.source_trace import render_traceable_cards, make_calc, fdic_calc, fmp_calc, sec_doc_for
+    from ui.financial_highlights import _num, _thou
+
+    cert = info.get("fdic_cert") if info else None
+    cik = info.get("cik") if info else None
+    entity = f"{name} ({ticker})"
+    _cnt = lambda v: f"{v:,.0f}" if v else "—"
+
+    fdic_rec = {}
+    if cert:
+        try:
+            fdic_rec = fdic_client.get_latest_financials(cert) or {}
+        except Exception:
+            fdic_rec = {}
+    facts = sec_client.fetch_company_facts(cik) if cik else {}
+    fund = {}
+    if cik:
+        try:
+            fund = sec_client.get_latest_fundamentals(cik) or {}
+        except Exception:
+            fund = {}
+
+    def disp(key):
+        m = METRICS_BY_KEY.get(key, {})
+        v = row.get(key)
+        return (format_value(v, m.get("format", "number"), m.get("decimals", 2))
+                if v is not None and not pd.isna(v) else "—")
+
+    price = _num(row.get("price"))
+    eps = _num(row.get("eps")); tbvps = _num(row.get("tbvps"))
+    shares = _num(fund.get("shares_outstanding")); equity = _num(fund.get("book_value_total"))
+    dps = _num(fund.get("dividends_per_share"))
+    tce = (tbvps * shares) if (tbvps is not None and shares) else None
+    adj = (equity - tce) if (equity is not None and tce is not None) else None
+
+    eps_doc = sec_doc_for(cik, facts, "EarningsPerShareDiluted", instant=False) if facts else None
+    eq_doc = sec_doc_for(cik, facts, "StockholdersEquity", instant=True) if facts else None
+    sh_doc = ((sec_doc_for(cik, facts, "EntityCommonStockSharesOutstanding", instant=True, ns="dei")
+               or sec_doc_for(cik, facts, "CommonStockSharesOutstanding", instant=True))
+              if facts else None)
+    dps_doc = sec_doc_for(cik, facts, "CommonStockDividendsPerShareDeclared", instant=False) if facts else None
+
+    FMP_PRICE = {"label": "Price (FMP live)", "val": (f"${price:,.2f}" if price is not None else "—")}
+    sterm = lambda label, val, doc, sub=None: {"label": label, "val": val, "doc": doc, "sub": sub}
+
+    cards = [
+        {"label": "Price", "value": disp("price"),
+         "calc": fmp_calc("Price", disp("price"), entity=entity, unit="$ / share",
+                          definition="Last trade price from FMP market data.")},
+        {"label": "Chg %", "value": disp("change_pct"),
+         "accent": ("#059669" if (_num(row.get("change_pct")) or 0) >= 0 else "#dc2626"),
+         "calc": fmp_calc("Daily change", disp("change_pct"), entity=entity, unit="%",
+                          definition="Percent change in price since the prior close (FMP).")},
+        {"label": "Mkt Cap", "value": disp("market_cap"),
+         "calc": make_calc("Market cap", disp("market_cap"), entity=entity,
+                           source="Computed (FMP price × SEC shares)", asof="latest", unit="$",
+                           ref="price × shares outstanding",
+                           definition="Shares outstanding × latest price.",
+                           terms=[FMP_PRICE, sterm("Shares outstanding", _cnt(shares), sh_doc)],
+                           op="Price × shares outstanding")},
+        {"label": "P/E", "value": disp("pe_ratio"),
+         "calc": make_calc("P/E (TTM)", disp("pe_ratio"), entity=entity,
+                           source="Computed (FMP price ÷ SEC EPS)", asof="latest", unit="×",
+                           ref="price ÷ diluted EPS (TTM)",
+                           definition="Price divided by trailing-twelve-month diluted EPS.",
+                           terms=[FMP_PRICE, sterm("Diluted EPS (TTM)",
+                                                   (f"${eps:.2f}" if eps else "—"), eps_doc)],
+                           op="Price ÷ diluted EPS")},
+        {"label": "EPS", "value": disp("eps"),
+         "calc": make_calc("Diluted EPS (TTM)", disp("eps"), entity=entity,
+                           source="SEC filing (10-K/10-Q)",
+                           asof=(eps_doc or {}).get("label", "latest filing"), unit="$ / share",
+                           ref="XBRL EarningsPerShareDiluted",
+                           definition="Trailing-twelve-month diluted EPS from the holding company's filings.",
+                           terms=[sterm("Diluted EPS (TTM, reported)", disp("eps"), eps_doc)],
+                           reported=True, link=(eps_doc or {}).get("url"))},
+        {"label": "P/TBV", "value": disp("ptbv_ratio"),
+         "calc": make_calc("P/TBV", disp("ptbv_ratio"), entity=entity,
+                           source="Computed (FMP price ÷ SEC TBV/sh)", asof="latest", unit="×",
+                           ref="price ÷ tangible book value per share",
+                           definition="Price divided by tangible book value per share.",
+                           terms=[FMP_PRICE, sterm("Tangible BV / share",
+                                                   (f"${tbvps:.2f}" if tbvps else "—"), eq_doc)],
+                           op="Price ÷ tangible BV per share")},
+        {"label": "TBV/Sh", "value": disp("tbvps"),
+         "calc": make_calc("Tangible BV / share", disp("tbvps"), entity=entity,
+                           source="SEC filing (10-K/10-Q)",
+                           asof=(eq_doc or {}).get("label", "latest filing"), unit="$ / share",
+                           ref="(equity − intangibles) ÷ shares",
+                           definition="Tangible common equity (equity − intangibles) ÷ shares outstanding.",
+                           terms=[sterm("Tangible common equity",
+                                        (_thou((tce or 0) / 1000) + " ($000)"), eq_doc,
+                                        sub=(f"Equity {_thou((equity or 0)/1000)} − intangibles "
+                                             f"{_thou((adj or 0)/1000)} ($000)")),
+                                  sterm("Shares outstanding", _cnt(shares), sh_doc)],
+                           op="Tangible common equity ÷ shares")},
+        {"label": "Div Yield", "value": disp("dividend_yield"),
+         "calc": make_calc("Dividend yield", disp("dividend_yield"), entity=entity,
+                           source="Computed (SEC DPS ÷ FMP price)", asof="latest", unit="%",
+                           ref="TTM dividends ÷ price",
+                           definition="Trailing-twelve-month dividends per share ÷ price.",
+                           terms=[sterm("Dividends / share (TTM)",
+                                        (f"${dps:.2f}" if dps else "—"), dps_doc), FMP_PRICE],
+                           op="DPS ÷ price × 100")},
+    ]
+
+    ni = _num(fdic_rec.get("NETINC")); eqf = _num(fdic_rec.get("EQTOT"))
+    intanf = _num(fdic_rec.get("INTAN")) or 0
+    tcef = (eqf - intanf) if eqf is not None else None
+    cards.append(
+        {"label": "ROATCE", "value": disp("roatce_blended"),
+         "calc": fdic_calc("ROATCE", "NETINC", fdic_rec, cert, unit="%", entity=entity,
+                           value=disp("roatce_blended"), reported=False,
+                           definition="Blended trailing net income ÷ tangible common equity "
+                                       "(equity − intangibles).",
+                           terms=[{"label": "Tangible common equity",
+                                   "val": (_thou(tcef) + " ($000)" if tcef is not None else "—"),
+                                   "sub": (f"Equity {_thou(eqf)} − Intangibles {_thou(intanf)}"
+                                           if eqf is not None else None)},
+                                  {"label": "Net income", "val": "trailing-twelve-months",
+                                   "sub": "blended across recent quarters — see Financials tab "
+                                          "for the per-period figures"}],
+                           op="Net income ÷ tangible common equity × 100")})
+
+    for key, label, field, defi in [
+        ("roaa", "ROAA", "ROA", "Annualized net income as a percent of average assets."),
+        ("nim", "NIM", "NIMY", "Net interest income as a percent of average earning assets."),
+        ("efficiency_ratio", "Efficiency", "EEFFR",
+         "Non-interest expense ÷ (net interest income + non-interest income)."),
+        ("cet1_ratio", "CET1", "IDT1CER",
+         "Common equity tier 1 capital ÷ risk-weighted assets (bank-level)."),
+        ("npl_ratio", "NPL", "NCLNLSR", "Non-current loans as a percent of total loans."),
+    ]:
+        cards.append({"label": label, "value": disp(key),
+                      "calc": fdic_calc(label, field, fdic_rec, cert, unit="%", entity=entity,
+                                        value=disp(key), reported=True, definition=defi)})
+
+    render_traceable_cards(cards, key=f"keystat_{ticker}", columns=7)
