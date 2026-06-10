@@ -481,16 +481,28 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
 
     key_metrics = [
         ("eps", "EPS"), ("nim", "NIM"), ("efficiency_ratio", "Efficiency"),
-        ("roaa", "ROAA"), ("roatce", "ROATCE"), ("cet1_ratio", "CET1"),
+        ("roaa", "ROAA"), ("roatce_blended", "ROATCE"), ("cet1_ratio", "CET1"),
         ("npl_ratio", "NPL Ratio"), ("tbvps", "TBV/Share"),
     ]
+
+    # One-time-item handling, consistent with the rest of the dashboard: show
+    # the reported (TTM) ROATCE, flag it ⚠️ when a non-recurring gain distorted
+    # earnings, and surface the sustainable figure in the tooltip.
+    distorted = bool(actual_metrics.get("earnings_distorted"))
+    roatce_norm = actual_metrics.get("roatce_normalized")
 
     cols = st.columns(4)
     for i, (key, label) in enumerate(key_metrics):
         val = actual_metrics.get(key)
-        unit = METRIC_UNITS.get(key, "")
+        unit = METRIC_UNITS.get(key, "%" if "roatce" in key else "")
         with cols[i % 4]:
-            st.metric(label, _format_val(val, unit))
+            if key == "roatce_blended" and distorted and roatce_norm is not None:
+                st.metric(
+                    f"{label} ⚠️", _format_val(val, unit),
+                    help=f"One-time item inflated earnings — sustainable ≈ {roatce_norm:.1f}%",
+                )
+            else:
+                st.metric(label, _format_val(val, unit))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

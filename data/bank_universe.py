@@ -224,6 +224,37 @@ def build_universe() -> dict[str, dict]:
         except Exception:
             continue
 
+    # ── Reconcile with curated mappings ──────────────────────────────────
+    # The live name-matching above silently drops banks whose SEC and FDIC
+    # names don't align — including mega-caps (JPM, C, WFC, GS, MS) and many
+    # mid-caps. We have curated, verified CIK+CERT mappings for those, so fold
+    # every one in. Skip ETNs (_SKIP_TICKERS) and the handful of foreign ADRs /
+    # acquired banks our SEC-XBRL + FDIC-Call-Report pipeline genuinely can't
+    # cover (no US-regulator data).
+    _NON_COVERABLE = {"DB", "BBD", "BBDO", "BNS", "UBS", "ITUB", "WF", "MCBI"}
+    from data.bank_mapping import BANK_MAP
+    curated = dict(BANK_MAP)
+    try:
+        from data.bank_mapping import _RESOLVED_FROM_JSON
+        for t, info in _RESOLVED_FROM_JSON.items():
+            curated.setdefault(t, info)
+    except Exception:
+        pass
+    for ticker, info in curated.items():
+        t = ticker.upper()
+        if t in universe or t in _SKIP_TICKERS or t in _NON_COVERABLE:
+            continue
+        cik = info.get("cik")
+        cert = info.get("fdic_cert")
+        if not cik and not cert:
+            continue
+        universe[t] = {
+            "name": info.get("name") or t,
+            "cik": int(cik) if cik else None,
+            "fdic_cert": int(cert) if cert else None,
+            "exchange": info.get("exchange") or "OTC",
+        }
+
     return universe
 
 
