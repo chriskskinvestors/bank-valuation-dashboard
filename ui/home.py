@@ -113,33 +113,45 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
             except Exception:
                 pass
 
-        def _mkt(label, desc, q):
-            price = (q or {}).get("price")
-            chg = (q or {}).get("change_pct")
-            if price is None:
-                val, sub, col = "—", "", "#94a3b8"
-            else:
-                val = f"${price:,.2f}"
-                col = "#dc2626" if (chg is not None and chg < 0) else "#059669"
-                sub = f"{chg:+.2f}%" if chg is not None else ""
-            return (
-                '<span title="' + desc + '" style="display:inline-flex; '
-                'flex-direction:column; padding:2px 11px; border-radius:7px; '
-                'background:rgba(148,163,184,0.08); border:1px solid '
-                'rgba(148,163,184,0.18); line-height:1.2;">'
-                f'<span style="font-size:0.56rem; color:#94a3b8; font-weight:600; '
-                'letter-spacing:0.04em;">' + label + '</span>'
-                f'<span style="font-size:0.84rem; font-weight:700;">{val}'
-                f'<span style="font-size:0.62rem; font-weight:600; margin-left:5px; '
-                f'color:{col};">{sub}</span></span></span>'
-            )
+        # Clickable: each benchmark is a popover that opens a 1-year price chart.
+        from utils.chart_style import apply_standard_layout
+        import plotly.graph_objects as go
 
-        chips = [_mkt(t, desc, quotes.get(t)) for t, desc in MARKET_BENCHMARKS]
-        st.markdown(
-            '<div style="display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px;">'
-            + "".join(chips) + "</div>",
-            unsafe_allow_html=True,
-        )
+        cols = st.columns(len(MARKET_BENCHMARKS))
+        for col, (t, desc) in zip(cols, MARKET_BENCHMARKS):
+            q = quotes.get(t) or {}
+            price = q.get("price")
+            chg = q.get("change_pct")
+            if price is None:
+                label = f"{t}  —"
+            elif chg is not None:
+                label = f"{t}  ${price:,.2f}  {'▲' if chg >= 0 else '▼'}{abs(chg):.1f}%"
+            else:
+                label = f"{t}  ${price:,.2f}"
+            with col:
+                with st.popover(label, use_container_width=True):
+                    st.markdown(f"**{t}** · {desc}")
+                    if price is not None:
+                        delta = f"{chg:+.2f}% today" if chg is not None else ""
+                        st.caption(f"${price:,.2f}   {delta}")
+                    try:
+                        from data import fmp_client
+                        hist = fmp_client.get_history(t, period="1Y")
+                        if hist is not None and not hist.empty and "close" in hist:
+                            up = hist["close"].iloc[-1] >= hist["close"].iloc[0]
+                            figh = go.Figure(go.Scatter(
+                                x=hist["date"], y=hist["close"], mode="lines",
+                                line=dict(color="#059669" if up else "#dc2626", width=2),
+                            ))
+                            apply_standard_layout(figh, title=f"{t} — 1 year",
+                                                  height=240, show_legend=False)
+                            figh.update_yaxes(tickprefix="$")
+                            st.plotly_chart(figh, use_container_width=True,
+                                            key=f"bench_{t}")
+                        else:
+                            st.caption("Chart unavailable.")
+                    except Exception:
+                        st.caption("Chart unavailable.")
     except Exception:
         pass
 
