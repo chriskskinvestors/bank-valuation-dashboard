@@ -56,6 +56,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
         t2 = latest_value("DGS2")
         t5 = latest_value("DGS5")
         t10 = latest_value("DGS10")
+        t30 = latest_value("DGS30")
         spread = latest_value("T10Y2Y")
         spread_5y3m = (t5 - t3m) if (t5 is not None and t3m is not None) else None
 
@@ -79,7 +80,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
 
         pills = [
             _pill("FED FUNDS", ff), _pill("3M", t3m), _pill("2Y", t2),
-            _pill("5Y", t5), _pill("10Y", t10),
+            _pill("5Y", t5), _pill("10Y", t10), _pill("30Y", t30),
             _pill("5Y−3M", spread_5y3m, is_spread=True),
             _pill("10Y−2Y", spread, is_spread=True),
         ]
