@@ -78,15 +78,18 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
                 + disp + '</span></span>'
             )
 
-        pills = [
+        yields = [
             _pill("FED FUNDS", ff), _pill("3M", t3m), _pill("2Y", t2),
             _pill("5Y", t5), _pill("10Y", t10), _pill("30Y", t30),
+        ]
+        spreads = [
             _pill("5Y−3M", spread_5y3m, is_spread=True),
             _pill("10Y−2Y", spread, is_spread=True),
         ]
+        row = "display:flex; gap:6px; flex-wrap:wrap;"
         st.markdown(
-            '<div style="display:flex; gap:6px; flex-wrap:wrap; margin:2px 0 8px;">'
-            + "".join(pills) + "</div>",
+            f'<div style="{row} margin:2px 0 6px;">' + "".join(yields) + "</div>"
+            f'<div style="{row} margin:0 0 8px;">' + "".join(spreads) + "</div>",
             unsafe_allow_html=True,
         )
     except Exception:
