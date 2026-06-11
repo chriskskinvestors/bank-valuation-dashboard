@@ -174,14 +174,180 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
 
     st.markdown("")
 
-    # ── Industry valuations ────────────────────────────────────────────
+    # ── WHAT MOVED IN MY BOOK ──────────────────────────────────────────
     if all_metrics:
-        _render_industry_valuations(pd.DataFrame(all_metrics))
-
-    st.markdown("")
+        _render_watchlist_movers(all_metrics)
+        st.markdown("")
 
     # ── ALERT INBOX ────────────────────────────────────────────────────
     _render_alert_inbox(all_metrics, watchlist)
+
+    st.markdown("")
+
+    # ── SECTOR M&A / DEALS ─────────────────────────────────────────────
+    _render_sector_ma(watchlist)
+
+    st.markdown("")
+
+    # ── INDUSTRY VALUATIONS (sector context) ───────────────────────────
+    if all_metrics:
+        _render_industry_valuations(pd.DataFrame(all_metrics))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Watchlist movers — what moved in my book
+# ══════════════════════════════════════════════════════════════════════
+
+def _render_watchlist_movers(all_metrics: list[dict]):
+    """Biggest price moves across the watchlist — gainers and losers side by
+    side, each row a deep-link into that bank. The 'what happened to my book'
+    panel. Uses the latest session's close-to-close change."""
+    rows = []
+    for m in all_metrics:
+        tk = m.get("ticker")
+        chg = m.get("change_pct")
+        if not tk or chg is None:
+            continue
+        try:
+            chg = float(chg)
+        except (TypeError, ValueError):
+            continue
+        rows.append((tk, m.get("price"), chg))
+    if not rows:
+        return
+
+    adv = sum(1 for _, _, c in rows if c > 0)
+    dec = sum(1 for _, _, c in rows if c < 0)
+    flat = len(rows) - adv - dec
+    rows.sort(key=lambda r: r[2], reverse=True)
+    gainers = [r for r in rows if r[2] > 0][:8]
+    losers = [r for r in rows if r[2] < 0]
+    losers = sorted(losers, key=lambda r: r[2])[:8]
+
+    st.markdown(
+        '### 📊 Watchlist Movers '
+        f'<span style="font-size:0.8rem; font-weight:500; color:#64748b;">'
+        f'· {adv} up · {dec} down · {flat} flat</span>',
+        unsafe_allow_html=True,
+    )
+
+    def _row(tk, price, chg):
+        name = (get_name(tk) or "")[:24]
+        col = "#059669" if chg > 0 else ("#dc2626" if chg < 0 else "#64748b")
+        px = f"${price:,.2f}" if isinstance(price, (int, float)) else "—"
+        return (
+            f'<a href="?bank={tk}" target="_self" style="display:flex; '
+            'align-items:baseline; justify-content:space-between; gap:8px; '
+            'padding:5px 11px; border-radius:7px; text-decoration:none; '
+            'border:1px solid #eef2f7;">'
+            f'<span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
+            f'<strong style="color:#0f172a;">{tk}</strong> '
+            f'<span style="color:#94a3b8; font-size:0.8rem;">{name}</span></span>'
+            f'<span style="white-space:nowrap; font-variant-numeric:tabular-nums;">'
+            f'<span style="color:#64748b; font-size:0.82rem; margin-right:8px;">{px}</span>'
+            f'<b style="color:{col};">{chg:+.2f}%</b></span></a>'
+        )
+
+    def _col(title, items, accent):
+        head = (f'<div style="font-size:0.66rem; font-weight:700; letter-spacing:0.05em; '
+                f'color:{accent}; margin:0 0 5px;">{title}</div>')
+        body = "".join(_row(*it) for it in items) or \
+            '<div style="color:#94a3b8; font-size:0.82rem; padding:5px 11px;">None</div>'
+        return ('<div style="display:flex; flex-direction:column; gap:4px;">'
+                + head + body + '</div>')
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(_col("▲ TOP GAINERS", gainers, "#059669"), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_col("▼ TOP LOSERS", losers, "#dc2626"), unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Sector M&A / deals
+# ══════════════════════════════════════════════════════════════════════
+
+# Headline patterns that mark a deal even when the pipeline didn't tag it
+# m_and_a — bank consolidation is constant and the language is formulaic.
+_MA_KEYWORDS = (
+    "to acquire", "acquisition of", "acquires", "to buy", "merger", "to merge",
+    "combination with", "agrees to", "definitive agreement", "to combine",
+    "completes acquisition", "completes merger", "all-stock", "merger of equals",
+)
+
+
+def _is_ma_headline(head: str) -> bool:
+    h = (head or "").lower()
+    return any(k in h for k in _MA_KEYWORDS)
+
+
+def _render_sector_ma(watchlist: list[str]):
+    """Bank M&A and deal announcements across the WHOLE universe (not just the
+    watchlist) — consolidation is the sector's biggest catalyst and deals at
+    banks you don't own still move comps and signal where multiples are going."""
+    import datetime as dt
+    st.markdown("### 🤝 Sector M&A & Deals")
+    try:
+        from data.events import get_universe_recent
+        from data.events.wire_base import is_safe_news_url
+        rows = get_universe_recent(limit=500, sources=_NEWS_SOURCES)
+    except Exception:
+        st.caption("Deal feed temporarily unavailable.")
+        return
+
+    wl = set(watchlist)
+    out, seen = [], set()
+    for r in rows:
+        if not is_safe_news_url(r.get("url")):
+            continue
+        head = (r.get("headline") or "").strip()
+        et = r.get("event_type") or ""
+        if not head or (et != "m_and_a" and not _is_ma_headline(head)):
+            continue
+        tk = r.get("ticker")
+        key = (tk, head[:64])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"ticker": tk, "headline": head, "url": r.get("url") or "",
+                    "published_at": r.get("published_at"),
+                    "summary": (r.get("summary") or "").strip()})
+    # newest first
+    def _ts(p):
+        try:
+            t = p if hasattr(p, "year") else dt.datetime.fromisoformat(str(p).replace("Z", "+00:00"))
+            return t.timestamp()
+        except Exception:
+            return 0.0
+    out.sort(key=lambda o: _ts(o["published_at"]), reverse=True)
+    out = out[:12]
+
+    if not out:
+        st.caption("No bank M&A or deal announcements in the recent window.")
+        return
+
+    for a in out:
+        tk = a["ticker"]; name = (get_name(tk) or "")[:30] if tk else ""
+        when = _relative_time(a["published_at"])
+        owned = ' <span style="color:#2563eb; font-size:0.7rem; font-weight:700;">★ watchlist</span>' if tk in wl else ""
+        tkr = (f'<a href="?bank={tk}" target="_self" style="text-decoration:none;">'
+               f'<strong style="color:#0f172a;">{tk}</strong></a> '
+               f'<span style="color:#94a3b8;">{name}</span>') if tk else \
+              '<span style="color:#94a3b8;">Sector</span>'
+        link = (f' <a href="{a["url"]}" target="_blank" style="color:var(--brand-accent); '
+                f'text-decoration:none;">open ↗</a>') if a["url"] else ""
+        summ = a["summary"]
+        if summ and len(summ) > 200:
+            summ = summ[:197].rstrip() + "…"
+        st.markdown(
+            '<div class="alert-row severity-high" style="display:block; padding:9px 14px;">'
+            f'<div style="font-size:0.78rem; color:var(--text-muted);">🤝 M&amp;A · {tkr}{owned} · {when}{link}</div>'
+            f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{a["headline"]}</div>'
+            + (f'<div style="color:var(--text-secondary); font-size:0.86rem; margin-top:2px; '
+               f'line-height:1.45;">{summ}</div>' if summ else "")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════

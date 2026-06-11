@@ -75,6 +75,12 @@ COMPANY_NAV = {
 COMPANY_LEAVES = [leaf for subs in COMPANY_NAV.values() for leaf in subs]
 # Which section a given leaf lives under.
 COMPANY_SECTION_OF = {leaf: sec for sec, subs in COMPANY_NAV.items() for leaf in subs}
+# A ?bank=X deep-link (e.g. a click on a Home movers/news row) should jump
+# straight into Company Analysis. Set the section's session_state BEFORE the
+# radio instantiates so it opens on the right page; the bank itself is picked
+# up below from the same query param.
+if st.query_params.get("bank") and st.session_state.get("nav_section") != "🏦 Company Analysis":
+    st.session_state["nav_section"] = "🏦 Company Analysis"
 section = st.sidebar.radio("Navigate", SECTIONS, key="nav_section", label_visibility="collapsed")
 
 st.sidebar.markdown("---")
