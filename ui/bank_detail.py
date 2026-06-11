@@ -2,6 +2,8 @@
 Bank detail page — deep dive on a single bank.
 """
 
+import html as _html
+
 import pandas as pd
 import streamlit as st
 
@@ -81,6 +83,184 @@ def _kv_table(title, pairs):
         f'<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
         f'color:#1e3a8a;font-weight:700;margin:0 0 3px;">{title}</div>'
         f'<table style="width:100%;border-collapse:collapse;">{body}</table>')
+
+
+def _render_valuation_performance_tables(row):
+    """Valuation + Performance as two side-by-side reference tables, matching the
+    Market Data / Company Profile format above (consistent, dense)."""
+    def disp(key):
+        m = METRICS_BY_KEY.get(key, {})
+        v = row.get(key)
+        return (format_value(v, m.get("format", "number"), m.get("decimals", 2))
+                if v is not None and not pd.isna(v) else None)
+
+    chg = _num(row.get("change_pct"))
+    chg_html = None
+    if chg is not None:
+        c = "#059669" if chg >= 0 else "#dc2626"
+        chg_html = f'<span style="color:{c};">{chg:+.2f}%</span>'
+
+    valuation = [
+        ("Last Price", disp("price")),
+        ("Change", chg_html),
+        ("Market Cap", disp("market_cap")),
+        ("P/E (LTM)", disp("pe_ratio")),
+        ("EPS (TTM)", disp("eps")),
+        ("P/TBV", disp("ptbv_ratio")),
+        ("TBV / Share", disp("tbvps")),
+        ("Dividend Yield", disp("dividend_yield")),
+    ]
+    performance = [
+        ("ROATCE", disp("roatce_blended")),
+        ("ROAA", disp("roaa")),
+        ("Net Interest Margin", disp("nim")),
+        ("Efficiency Ratio", disp("efficiency_ratio")),
+        ("CET1 Ratio", disp("cet1_ratio")),
+        ("NPL Ratio", disp("npl_ratio")),
+    ]
+    c_val, c_perf = st.columns(2)
+    with c_val:
+        st.markdown(_kv_table("Valuation", valuation), unsafe_allow_html=True)
+    with c_perf:
+        st.markdown(_kv_table("Performance", performance), unsafe_allow_html=True)
+
+    st.markdown(
+        '<div style="margin-top:7px; font-size:0.8rem; color:#64748b;">'
+        'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
+        'FMP (market data)</div>', unsafe_allow_html=True)
+
+
+def _fmt_repdte(v):
+    try:
+        return pd.to_datetime(v).strftime("%b %Y")
+    except Exception:
+        return str(v)
+
+
+def _render_financial_highlights_table(ticker, info):
+    """SNL-style Financial Highlights — key FDIC figures for the latest quarter vs
+    a year ago, side by side."""
+    cert = info.get("fdic_cert") if info else None
+    if not cert:
+        return
+    try:
+        df = fdic_client.get_historical_financials(cert, quarters=8)
+    except Exception:
+        return
+    if df is None or df.empty or "REPDTE" not in df.columns:
+        return
+    df = df.sort_values("REPDTE")
+    latest = df.iloc[-1]
+    prior = df.iloc[-5] if len(df) >= 5 else None
+
+    def num(rec, f):
+        if rec is None:
+            return None
+        return _num(rec.get(f))
+
+    def bil(rec, f):
+        v = num(rec, f)
+        return f"${v/1e6:.2f}B" if v is not None else "—"
+
+    def pct(rec, f):
+        v = num(rec, f)
+        return f"{v:.2f}%" if v is not None else "—"
+
+    def tce_ta(rec):
+        eq, intan, asset = num(rec, "EQTOT"), (num(rec, "INTAN") or 0), num(rec, "ASSET")
+        if eq is None or asset is None or (asset - intan) == 0:
+            return "—"
+        return f"{(eq - intan) / (asset - intan) * 100:.2f}%"
+
+    rows = [
+        ("Total Assets", bil(prior, "ASSET"), bil(latest, "ASSET")),
+        ("Total Deposits", bil(prior, "DEP"), bil(latest, "DEP")),
+        ("Net Loans", bil(prior, "LNLSNET"), bil(latest, "LNLSNET")),
+        ("Total Equity", bil(prior, "EQTOT"), bil(latest, "EQTOT")),
+        ("TCE / Tangible Assets", tce_ta(prior), tce_ta(latest)),
+        ("LTM ROAA", pct(prior, "ROA"), pct(latest, "ROA")),
+        ("LTM ROAE", pct(prior, "ROE"), pct(latest, "ROE")),
+        ("Net Interest Margin", pct(prior, "NIMY"), pct(latest, "NIMY")),
+        ("Efficiency Ratio", pct(prior, "EEFFR"), pct(latest, "EEFFR")),
+        ("CET1 Ratio", pct(prior, "IDT1CER"), pct(latest, "IDT1CER")),
+        ("NPL Ratio", pct(prior, "NCLNLSR"), pct(latest, "NCLNLSR")),
+        ("NCO Ratio", pct(prior, "NTLNLSR"), pct(latest, "NTLNLSR")),
+        ("Reserves / Loans", pct(prior, "LNATRESR"), pct(latest, "LNATRESR")),
+    ]
+    p_lbl = _fmt_repdte(prior["REPDTE"]) if prior is not None else "Prior"
+    l_lbl = _fmt_repdte(latest["REPDTE"])
+    body = "".join(
+        f'<tr style="border-bottom:1px solid rgba(148,163,184,0.10);">'
+        f'<td style="padding:3px 2px;color:#334155;font-size:0.82rem;">{lbl}</td>'
+        f'<td style="padding:3px 8px;text-align:right;color:#64748b;font-size:0.82rem;">{pv}</td>'
+        f'<td style="padding:3px 2px;text-align:right;font-weight:600;color:#0f172a;'
+        f'font-size:0.82rem;">{lv}</td></tr>'
+        for lbl, pv, lv in rows)
+    st.markdown(
+        '<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
+        'color:#1e3a8a;font-weight:700;margin:0 0 3px;">Financial Highlights</div>'
+        '<table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr><th></th>'
+        f'<th style="text-align:right;padding:2px 8px;color:#94a3b8;font-size:0.72rem;font-weight:600;">{p_lbl}</th>'
+        f'<th style="text-align:right;padding:2px 2px;color:#1e3a8a;font-size:0.72rem;font-weight:700;">{l_lbl}</th>'
+        f'</tr></thead><tbody>{body}</tbody></table>',
+        unsafe_allow_html=True)
+
+
+def _render_latest_activity(ticker, info):
+    """SNL-style Latest Activity — recent first-party news + recent filings."""
+    from data.events.wire_base import is_safe_news_url, is_routine_noise
+    evs = []
+    try:
+        from data.events import get_recent_events
+        evs = [e for e in get_recent_events(ticker, limit=12)
+               if is_safe_news_url(e.get("url")) and not is_routine_noise(e.get("headline"))][:6]
+    except Exception:
+        evs = []
+
+    docs = []
+    cik = info.get("cik") if info else None
+    if cik:
+        try:
+            fi = sec_client.get_filing_info(cik) or {}
+            docs = (fi.get("recent_filings") or [])[:8]
+        except Exception:
+            docs = []
+
+    c_news, c_docs = st.columns(2)
+    with c_news:
+        st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
+                    'color:#1e3a8a;font-weight:700;margin:0 0 3px;">📰 Latest News</div>',
+                    unsafe_allow_html=True)
+        if evs:
+            rows = []
+            for e in evs:
+                h = _html.escape((e.get("headline") or "")[:90])
+                url = e.get("url")
+                link = (f'<a href="{_html.escape(str(url))}" target="_blank" '
+                        f'style="color:#0f172a;text-decoration:none;">{h}</a>') if url else h
+                rows.append(f'<div style="padding:3px 0;border-bottom:1px solid rgba(148,163,184,0.10);'
+                            f'font-size:0.82rem;line-height:1.3;">{link}</div>')
+            st.markdown("".join(rows), unsafe_allow_html=True)
+        else:
+            st.caption("No recent company news.")
+    with c_docs:
+        st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
+                    'color:#1e3a8a;font-weight:700;margin:0 0 3px;">📄 Recent Filings</div>',
+                    unsafe_allow_html=True)
+        if docs:
+            rows = []
+            for f in docs:
+                acc = (f.get("accession") or "").replace("-", "")
+                url = f.get("url") or (f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}" if acc else "")
+                label = f"{f.get('form','')} — {f.get('date','')}"
+                link = (f'<a href="{_html.escape(str(url))}" target="_blank" '
+                        f'style="color:#0f172a;text-decoration:none;">{_html.escape(label)}</a>') if url else _html.escape(label)
+                rows.append(f'<div style="padding:3px 0;border-bottom:1px solid rgba(148,163,184,0.10);'
+                            f'font-size:0.82rem;">{link}</div>')
+            st.markdown("".join(rows), unsafe_allow_html=True)
+        else:
+            st.caption("No recent filings.")
 
 
 def _render_snapshot(ticker, info, name, row):
@@ -254,8 +434,11 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     # Capital-IQ-style snapshot: identity, quick links, market + company profile.
     _render_snapshot(ticker, info, name, row)
     st.markdown("---")
-    st.markdown("##### Valuation & Performance")
-    _render_keystat_grid(ticker, info, name, row)
+    _render_valuation_performance_tables(row)
+    st.markdown("---")
+    _render_financial_highlights_table(ticker, info)
+    st.markdown("---")
+    _render_latest_activity(ticker, info)
 
     # Click-through to the primary data sources for this bank.
     cik = info.get("cik") if info else None
