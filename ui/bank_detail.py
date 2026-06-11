@@ -31,6 +31,10 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
         row = bank_row.iloc[0]
         _render_keystat_grid(ticker, info, name, row)
 
+        # Peer-percentile context — where this bank ranks vs same-size peers.
+        from ui.peer_context import render_peer_context
+        render_peer_context(ticker, self_metrics=row.to_dict())
+
         # Click-through to the primary data sources for this bank.
         cik = info.get("cik") if info else None
         cert = info.get("fdic_cert") if info else None

@@ -110,6 +110,63 @@ def get_peer_group_for_bank(ticker: str, all_metrics: list[dict], mode: str = "s
     return groups[key].get(my_tier, [])
 
 
+# Curated headline metrics for peer-context badges — strong FDIC coverage so
+# the cohort is well-populated. ROATCE uses the normalized (winsorized) figure.
+CONTEXT_METRIC_KEYS = ["roaa", "roatce_normalized", "nim", "efficiency_ratio",
+                       "npl_ratio", "nco_ratio", "cet1_ratio"]
+
+
+def _higher_is_better(key: str) -> bool:
+    from config import METRICS_BY_KEY
+    return METRICS_BY_KEY.get(key, {}).get("color_rule") != "lower_better"
+
+
+def metric_percentile_context(ticker: str, all_metrics: list[dict],
+                              metric_keys: list[str] | None = None,
+                              mode: str = "size", min_peers: int = 5) -> dict:
+    """Where a bank sits vs its same-tier peers on each headline metric.
+
+    Returns {metric_key: {value, percentile, raw, median, n, higher_better, label}}
+    plus a "_meta" entry {tier, cohort_size, mode}. ``percentile`` is the
+    *goodness* percentile (higher = better; inverted for lower-is-better metrics
+    like efficiency / NPL / NCO) so the same colour scale reads intuitively.
+    Metrics with fewer than ``min_peers`` populated peers are omitted.
+    """
+    import statistics
+    from config import METRICS_BY_KEY
+
+    self_m = next((m for m in all_metrics if m.get("ticker") == ticker), None)
+    if not self_m:
+        return {}
+    cohort = get_peer_group_for_bank(ticker, all_metrics, mode=mode)
+    assets = self_m.get("total_assets")
+    if assets and assets < 1e9:
+        assets = assets * 1000
+    out = {"_meta": {"tier": asset_size_tier(assets),
+                     "cohort_size": len(cohort), "mode": mode}}
+    for k in (metric_keys or CONTEXT_METRIC_KEYS):
+        v = self_m.get(k)
+        if v is None:
+            continue
+        peer_vals = [m.get(k) for m in cohort if m.get(k) is not None]
+        if len(peer_vals) < min_peers:
+            continue
+        raw = compute_peer_percentile(v, peer_vals)
+        if raw is None:
+            continue
+        hib = _higher_is_better(k)
+        out[k] = {
+            "value": v,
+            "percentile": raw if hib else (100 - raw),
+            "raw": raw,
+            "median": statistics.median(peer_vals),
+            "n": len(peer_vals),
+            "higher_better": hib,
+            "label": METRICS_BY_KEY.get(k, {}).get("label", k),
+        }
+    return out
+
+
 def compute_peer_percentile(bank_value: float | None, peer_values: list[float]) -> float | None:
     """
     Return the bank's percentile rank within peer group (0-100).
