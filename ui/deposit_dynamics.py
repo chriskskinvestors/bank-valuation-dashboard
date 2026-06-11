@@ -32,17 +32,6 @@ def _fmt_quarter(ts) -> str:
     return str(ts)
 
 
-def _beta_color(beta: float | None) -> str:
-    """Green for low (sticky), yellow for medium, red for high (sensitive)."""
-    if beta is None:
-        return "#999"
-    if beta < 0.30:
-        return "#1b5e20"  # green — sticky
-    if beta < 0.50:
-        return "#e65100"  # amber
-    return "#b71c1c"  # red — rate-sensitive
-
-
 def _load_hist(ticker: str) -> list[dict]:
     """Load 20 qtrs of FDIC history, fetching if not cached."""
     hist = cache_get(f"fdic_hist:{ticker}")

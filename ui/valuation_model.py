@@ -651,7 +651,6 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
 
     # Implied IRR
     irr = implied_irr(price, base_params) if price else None
-    base_fv = base_params  # (used in base case)
 
     ic1, ic2, ic3 = st.columns(3)
     with ic1:

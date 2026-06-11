@@ -1062,13 +1062,6 @@ def get_fdic_fields():
     """Return set of FDIC field names needed."""
     return {m["fdic_field"] for m in METRICS if m.get("fdic_field")}
 
-def get_sec_concepts():
-    """Return set of SEC XBRL concept names needed."""
-    return {m["sec_concept"] for m in METRICS if m.get("sec_concept")}
-
-def get_metrics_for_category(category):
-    """Return metrics belonging to a category."""
-    return [m for m in METRICS if m["category"] == category]
 
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB DEFINITIONS — each tab has a name, title, and default column list
@@ -1246,7 +1239,6 @@ TABS = [
 ]
 
 TAB_LABELS = [t["label"] for t in TABS]
-TABS_BY_KEY = {t["key"]: t for t in TABS}
 
 # Legacy aliases
 DEFAULT_TABLE_COLUMNS = TABS[0]["columns"]

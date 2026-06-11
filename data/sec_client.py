@@ -900,14 +900,3 @@ def get_filing_info(cik: int, max_filings: int = 50) -> dict:
     }
 
 
-def fetch_multiple_banks(ciks: dict[str, int]) -> dict[str, dict]:
-    """
-    Fetch latest fundamentals for multiple banks.
-    ciks: {ticker: cik_number}
-    Returns: {ticker: fundamentals_dict}
-    """
-    results = {}
-    for ticker, cik in ciks.items():
-        if cik is not None:
-            results[ticker] = get_latest_fundamentals(cik)
-    return results

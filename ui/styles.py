@@ -343,7 +343,6 @@ CUSTOM_CSS = """
         margin-right: 6px;
     }
     .status-connected { background: var(--success); box-shadow: 0 0 8px rgba(5,150,105,0.4); }
-    .status-disconnected { background: var(--danger); box-shadow: 0 0 8px rgba(220,38,38,0.4); }
 
     /* ═══════════════════════════════════════════════════════════════════
        Tabs
@@ -528,40 +527,6 @@ CUSTOM_CSS = """
     }
 
     /* ═══════════════════════════════════════════════════════════════════
-       Navigation cards (Home → Explore)
-    ═══════════════════════════════════════════════════════════════════ */
-    .nav-card {
-        background: var(--bg-elevated);
-        border: 1px solid var(--border-subtle);
-        border-radius: var(--radius-md);
-        padding: 1rem 1.1rem;
-        height: 100%;
-        transition: all 0.15s ease;
-        cursor: pointer;
-        box-shadow: var(--shadow-sm);
-    }
-    .nav-card:hover {
-        border-color: var(--brand-border);
-        transform: translateY(-1px);
-        box-shadow: var(--shadow-md);
-    }
-    .nav-card .icon {
-        font-size: 1.4rem;
-        margin-bottom: 0.4rem;
-    }
-    .nav-card .title {
-        font-weight: 600;
-        color: var(--text-primary);
-        margin-bottom: 0.3rem;
-        font-size: 0.95rem;
-    }
-    .nav-card .desc {
-        color: var(--text-secondary);
-        font-size: 0.8rem;
-        line-height: 1.45;
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════
        Alert row (Home inbox) — consistent visual
     ═══════════════════════════════════════════════════════════════════ */
     .alert-row {
@@ -614,20 +579,6 @@ CUSTOM_CSS = """
         background: var(--danger-soft);
         color: var(--danger);
         border-color: var(--danger-border);
-    }
-
-    /* ═══════════════════════════════════════════════════════════════════
-       Category headers
-    ═══════════════════════════════════════════════════════════════════ */
-    .category-header {
-        color: var(--brand-primary);
-        font-size: 0.68rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        margin: 0.8rem 0 0.3rem 0;
-        padding-bottom: 0.2rem;
-        border-bottom: 1px solid var(--border-subtle);
     }
 
     /* ═══════════════════════════════════════════════════════════════════

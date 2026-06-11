@@ -1373,13 +1373,8 @@ def _render_upload_section(watchlist: list[str]):
             if custom_ticker:
                 upload_ticker = custom_ticker.strip().upper()
 
-        with uc2:
-            upload_period = st.text_input(
-                "Period",
-                placeholder="e.g. 2026Q1",
-                key="manual_overview_period",
-            )
-
+        # (No Period field here — _render_manual_input has its own; the
+        # duplicate box this branch used to show was never read.)
         if upload_ticker:
             _render_manual_input(upload_ticker)
 

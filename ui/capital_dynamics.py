@@ -37,16 +37,6 @@ def _pick_scale(max_abs_dollars: float) -> tuple[float, str]:
     return 1.0, ""
 
 
-def _cet1_color(cet1: float | None) -> str:
-    if cet1 is None:
-        return "#999"
-    if cet1 >= CET1_BUFFER_FLOOR + 2:  # well capitalized
-        return "#1b5e20"
-    if cet1 >= CET1_BUFFER_FLOOR:
-        return "#e65100"
-    return "#b71c1c"
-
-
 def _load_hist(ticker: str) -> list[dict]:
     hist = cache_get(f"fdic_hist:{ticker}")
     if hist and len(hist) >= 8:

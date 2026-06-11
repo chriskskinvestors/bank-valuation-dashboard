@@ -18,10 +18,9 @@ from analysis.metrics import build_all_bank_metrics
 from ui.styles import CUSTOM_CSS
 from ui.generic_table import render_generic_table
 from ui.overview_table import render_data_freshness
-from ui.bank_detail import render_bank_detail
 from ui.watchlist import render_watchlist_sidebar, load_watchlist, load_portfolio
-from ui.deposit_lookup import render_deposit_lookup, render_deposits_for_ticker
-from ui.filings import render_filings, render_filings_for_ticker
+from ui.deposit_lookup import render_deposits_for_ticker
+from ui.filings import render_filings_for_ticker
 from ui.earnings import render_earnings_consensus, render_earnings_overview
 from ui.historicals import render_historicals
 from ui.home import render_home
@@ -39,8 +38,6 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # ── Session state initialization ─────────────────────────────────────────
 if "ibkr_connected" not in st.session_state:
     st.session_state.ibkr_connected = False
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = 0
 
 
 # ── Sidebar ──────────────────────────────────────────────────────────────
@@ -327,12 +324,8 @@ def load_prices(tickers: list, max_wait: float = 3.0) -> dict:
     return {t: out.get(t) or get_empty_price() for t in tickers}
 
 
-# Backwards-compat alias for any callers still using the old name
-load_ibkr_prices = load_prices
-
-
 @st.cache_data(ttl=900, show_spinner=False)
-def _load_all_data_cached(tickers: tuple) -> tuple[list[dict], pd.DataFrame]:
+def _load_all_data_cached(tickers: tuple) -> list[dict]:
     """Cached core — caches the price fetch + metric computation for the whole
     watchlist (the prior version re-fetched 62 banks' prices and recomputed every
     metric on every page load, ~15-20s). Keyed on the ticker tuple so it's a hit
@@ -340,11 +333,10 @@ def _load_all_data_cached(tickers: tuple) -> tuple[list[dict], pd.DataFrame]:
     fdic, hist = load_fdic_data(tickers)
     sec = load_sec_data(tickers)
     prices = load_prices(list(tickers))
-    metrics = build_all_bank_metrics(list(tickers), fdic, sec, prices, hist)
-    return metrics, pd.DataFrame(metrics)
+    return build_all_bank_metrics(list(tickers), fdic, sec, prices, hist)
 
 
-def load_all_data(tickers: list[str]) -> tuple[list[dict], pd.DataFrame]:
+def load_all_data(tickers: list[str]) -> list[dict]:
     return _load_all_data_cached(tuple(tickers))
 
 
@@ -360,7 +352,7 @@ def load_single_bank_metrics_cached(ticker: str) -> dict:
     """
     fdic, hist = load_fdic_data((ticker,))
     sec = load_sec_data((ticker,))
-    prices = load_ibkr_prices([ticker])
+    prices = load_prices([ticker])
     metrics = build_all_bank_metrics([ticker], fdic, sec, prices, hist)
     return metrics[0] if metrics else {"ticker": ticker}
 
@@ -373,7 +365,7 @@ def get_watchlist_cohort() -> list[dict]:
     cached = cache.get("watchlist_metrics_last")
     if cached:
         return cached
-    metrics, _ = load_all_data(watchlist)
+    metrics = load_all_data(watchlist)
     cache.put("watchlist_metrics_last", metrics)
     return metrics
 
@@ -390,12 +382,11 @@ _NEEDS_WATCHLIST = (
 )
 
 if _NEEDS_WATCHLIST:
-    all_metrics, metrics_df = load_all_data(watchlist)
+    all_metrics = load_all_data(watchlist)
     # Stash for cross-tab use (peer-relative valuation, home alerts, etc.)
     cache.put("watchlist_metrics_last", all_metrics)
 else:
     all_metrics = []
-    metrics_df = pd.DataFrame()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -581,7 +572,7 @@ elif section == "📊 Screening" and screening_tab:
 
     if display_metrics is None:
         if display_tickers:
-            display_metrics, _ = load_all_data(display_tickers)
+            display_metrics = load_all_data(display_tickers)
         else:
             display_metrics = []
 
@@ -894,14 +885,14 @@ elif section == "🆚 Peer Comparison":
     # ── PEER COMPARISON: Side-by-side bank comparison ───────────────────
     from ui.peer_comparison import render_peer_comparison
     if not all_metrics:
-        all_metrics, metrics_df = load_all_data(watchlist)
+        all_metrics = load_all_data(watchlist)
         cache.put("watchlist_metrics_last", all_metrics)
     render_peer_comparison(all_metrics, watchlist, portfolio)
 
 elif section == "📈 Earnings Analysis":
     # ── EARNINGS ANALYSIS: Aggregate tracking ───────────────────────────
     if not all_metrics:
-        all_metrics, metrics_df = load_all_data(watchlist)
+        all_metrics = load_all_data(watchlist)
         cache.put("watchlist_metrics_last", all_metrics)
     render_earnings_overview(watchlist, all_metrics)
 

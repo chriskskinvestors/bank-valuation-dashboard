@@ -8,9 +8,7 @@ import html as _html
 import streamlit as st
 import pandas as pd
 
-from data.bank_mapping import get_name, get_cik
-from data.sec_client import get_filing_info
-from data.filing_summarizer import fetch_filing_text, find_press_release_url, summarize_filing
+from data.bank_mapping import get_name
 from data.bank_universe import get_universe_count_fast
 
 
@@ -1233,12 +1231,7 @@ def _render_valuation_tab(alerts: list[dict]):
         roatce = a["roatce"]
         price = a["price"]
 
-        if discount > 30:
-            sev = "ok"
-        elif discount > 20:
-            sev = "ok"
-        else:
-            sev = ""
+        sev = "ok" if discount > 20 else ""
 
         extras = []
         if price: extras.append(f"Now ${price:.2f}")

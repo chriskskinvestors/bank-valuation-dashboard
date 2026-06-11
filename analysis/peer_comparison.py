@@ -32,24 +32,6 @@ def compute_percentile_ranks(df: pd.DataFrame) -> pd.DataFrame:
     return ranks
 
 
-def compute_z_scores(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute z-scores for each metric across all banks."""
-    metric_keys = [m["key"] for m in METRICS if m["key"] in df.columns]
-    z = pd.DataFrame(index=df.index)
-    z["ticker"] = df["ticker"]
-
-    for key in metric_keys:
-        col = df[key]
-        mean = col.mean()
-        std = col.std()
-        if std and std > 0:
-            z[key] = (col - mean) / std
-        else:
-            z[key] = None
-
-    return z
-
-
 def get_peer_group_by_asset_size(df: pd.DataFrame, ticker: str, n: int = 5) -> list[str]:
     """
     Find the n closest peers by total assets.

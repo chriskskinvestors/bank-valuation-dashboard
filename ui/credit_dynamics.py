@@ -51,17 +51,6 @@ def _load_peer_median_reserve_coverage(watchlist: list[str]) -> float | None:
     return float(pd.Series(covs).median())
 
 
-def _coverage_color(pct: float | None, peer_med: float | None = None) -> str:
-    """Green if well-reserved, yellow if adequate, red if thin."""
-    if pct is None:
-        return "#999"
-    if pct >= 200:
-        return "#1b5e20"
-    if pct >= 100:
-        return "#e65100"
-    return "#b71c1c"
-
-
 def _render_credit_headline(ticker, hist, summary, peer_median):
     """Credit headline cards — every number click-to-source. Reported FDIC
     ratios link to the Call Report facsimile; computed ratios (reserve
@@ -264,7 +253,6 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     _g2 = st.columns(2)
     with _g2[0]:
         st.plotly_chart(fig4, use_container_width=True)
-
 
 
 def _render_by_loan_type(ticker: str, summary: dict, timeline):

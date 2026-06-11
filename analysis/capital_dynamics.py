@@ -275,21 +275,6 @@ def detect_capital_alerts(
     return alerts
 
 
-def compute_peer_cet1_median(all_bank_hist: dict[str, list[dict]]) -> float | None:
-    """Compute peer median CET1 ratio from dict of ticker→history."""
-    cet1s = []
-    for ticker, hist in all_bank_hist.items():
-        if not hist:
-            continue
-        latest = hist[0]
-        c = latest.get("IDT1CER")
-        if c is not None and c > 0:
-            cet1s.append(c)
-    if not cet1s:
-        return None
-    return float(pd.Series(cet1s).median())
-
-
 def summarize_bank_capital(
     hist_records: list[dict],
     shares_outstanding: float | None = None,

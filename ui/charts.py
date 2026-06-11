@@ -9,7 +9,7 @@ from plotly.subplots import make_subplots
 from config import METRICS_BY_KEY
 
 
-from utils.chart_style import CHART_LAYOUT  # re-export for any old callers
+from utils.chart_style import CHART_LAYOUT
 
 
 def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
@@ -253,27 +253,6 @@ def funding_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
     unins = _b(r.get("DEPUNINS"))
     if dep and unins:
         fig.update_layout(title=f"Funding Mix (latest) · {unins/dep*100:.0f}% uninsured")
-    return fig
-
-
-def cet1_trend_chart(fdic_df: pd.DataFrame) -> go.Figure:
-    """CET1 capital ratio over time."""
-    from utils.chart_style import apply_standard_layout
-    if fdic_df is None or fdic_df.empty or "IDT1CER" not in fdic_df.columns:
-        fig = go.Figure()
-        apply_standard_layout(fig, title="CET1 Ratio — no data", height=300, show_legend=False)
-        return fig
-    d = fdic_df.sort_values("REPDTE")
-    fig = go.Figure(go.Scatter(
-        x=d["REPDTE"], y=d["IDT1CER"], mode="lines+markers", name="CET1",
-        line=dict(color="#5e35b1", width=2.5), marker=dict(size=4), fill="tozeroy",
-        fillcolor="rgba(94,53,177,0.06)",
-        hovertemplate="%{x|%b %Y}<br>%{y:.2f}%<extra></extra>"))
-    from utils.chart_style import tighten_yaxis, CHART_HEIGHT_FULL
-    apply_standard_layout(fig, title="CET1 Ratio (%)", height=CHART_HEIGHT_FULL,
-                          show_legend=False, hovermode="x")
-    # Anchored low (fills to zero) but zoom in so quarter-to-quarter moves show.
-    tighten_yaxis(fig, d["IDT1CER"].dropna().tolist(), floor_zero=True, ticksuffix="%")
     return fig
 
 

@@ -57,31 +57,6 @@ def warranted_ptbv(
     return (r - g) / (coe - g)
 
 
-def warranted_ptbv_scenarios(
-    roatce_list: list[float],
-    ptbv_list: list[float],
-    tbvps: float,
-) -> list[list[dict]]:
-    """
-    Build a grid of fair prices across ROATCE × P/TBV cells.
-    Used for display — not the DCF, but for scenario visualization.
-
-    Returns grid where grid[i][j] = {"ptbv": ptbv_list[j], "price": roatce * ptbv * adj}.
-    """
-    # This is a simple cross-tab: just multiplies tbvps × ptbv for each cell
-    grid = []
-    for r in roatce_list:
-        row = []
-        for p in ptbv_list:
-            row.append({
-                "roatce": r,
-                "ptbv": p,
-                "fair_price": tbvps * p if tbvps else None,
-            })
-        grid.append(row)
-    return grid
-
-
 # ── FCFE DCF ────────────────────────────────────────────────────────────
 
 def project_earnings(
@@ -95,22 +70,6 @@ def project_earnings(
         current = current * (1 + g)
         projection.append(current)
     return projection
-
-
-def project_dividends(
-    projected_eps: list[float],
-    payout_ratio: float,
-) -> list[float]:
-    """Dividend per share = EPS × payout."""
-    return [eps * payout_ratio for eps in projected_eps]
-
-
-def project_retained_capital_per_share(
-    projected_eps: list[float],
-    payout_ratio: float,
-) -> list[float]:
-    """Retained capital = EPS × (1 − payout). Builds TBV."""
-    return [eps * (1 - payout_ratio) for eps in projected_eps]
 
 
 def project_fcfe_per_share(

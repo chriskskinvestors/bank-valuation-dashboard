@@ -14,6 +14,9 @@ import time
 import pandas as pd
 
 from config import get_fdic_fields
+# The shared retry policy (data/http.py) — this module's local implementation
+# was the original it was extracted from.
+from data.http import get_with_retry as _get_with_retry
 
 FDIC_FINANCIALS_URL = "https://banks.data.fdic.gov/api/financials"
 FDIC_INSTITUTIONS_URL = "https://banks.data.fdic.gov/api/institutions"
@@ -104,11 +107,6 @@ def cert_is_active(cert: int, ttl_seconds: int = 7 * 86400) -> bool:
         # On API failure assume active (don't drop banks on a transient
         # FDIC outage). The next refresh will re-check.
         return True
-
-
-# The shared retry policy (data/http.py) — this module's local implementation
-# was the original it was extracted from.
-from data.http import get_with_retry as _get_with_retry
 
 
 def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
@@ -214,19 +212,6 @@ def build_fdic_provenance(cert: int, field: str, repdte) -> dict:
 def get_historical_financials(cert: int, quarters: int = 20) -> pd.DataFrame:
     """Fetch historical quarterly data for trend charts."""
     return fetch_financials(cert, limit=quarters)
-
-
-def fetch_multiple_banks(certs: dict[str, int]) -> dict[str, dict]:
-    """
-    Fetch latest financials for multiple banks.
-    certs: {ticker: fdic_cert_number}
-    Returns: {ticker: latest_financials_dict}
-    """
-    results = {}
-    for ticker, cert in certs.items():
-        if cert is not None:
-            results[ticker] = get_latest_financials(cert)
-    return results
 
 
 def fetch_multiple_banks_parallel(
