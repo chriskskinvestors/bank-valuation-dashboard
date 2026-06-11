@@ -14,7 +14,7 @@ no name-matching needed (Yahoo's index does that for us).
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from data.events.base import Event, SourceAdapter
-from data.events.wire_base import classify_press_release
+from data.events.wire_base import classify_press_release, is_company_press_release
 
 
 class YFinanceNewsAdapter(SourceAdapter):
@@ -51,6 +51,10 @@ class YFinanceNewsAdapter(SourceAdapter):
 
                     title = (content.get("title") or "").strip()
                     if not title:
+                        continue
+                    # First-party only — drop third-party articles/commentary
+                    # (Yahoo is mostly aggregated coverage = junk for our feed).
+                    if not is_company_press_release(title):
                         continue
 
                     # Extract URL and timestamp robustly across yfinance versions

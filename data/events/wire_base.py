@@ -330,3 +330,44 @@ def classify_press_release(headline: str) -> str:
     if any(k in h for k in ("offering", "prices", "underwritten", "senior notes", "debt")):
         return "capital_raise"
     return "press_release"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# First-party filter — keep the COMPANY's own releases, drop third-party
+# articles/commentary (analyst notes, roundups, opinion). Used to gate news
+# aggregators (Google News, Yahoo) so the feed isn't full of junk.
+# ──────────────────────────────────────────────────────────────────────────
+
+# Verbs/phrases that mark a first-party company release (third person, e.g.
+# "<Bank> Announces …", "<Bank> Reports …", "<Bank> Declares a Dividend").
+_PR_VERB_RE = re.compile(
+    r"\b(announc\w+|report\w+|declar\w+|complet\w+|names?|appoint\w+|provid\w+|"
+    r"sets? |schedul\w+|pric\w+|clos\w+|authoriz\w+|increas\w+|reduc\w+|"
+    r"present\w*|participat\w+|to host|hosts?|acquir\w+|launch\w+|introduc\w+|"
+    r"post\w+|releas\w+|issu\w+|elect\w+|approv\w+|rais\w+|adopt\w+|expand\w+|"
+    r"to report|earnings release|conference call|business update|to merge|"
+    r"enters? into|to be acquired|prices? offering|commences?)\b",
+    re.IGNORECASE,
+)
+
+# Markers of third-party coverage/commentary — if present, it's NOT a company
+# release, no matter what.
+_COMMENTARY_RE = re.compile(
+    r"\b(analyst|price target|upgrad\w+|downgrad\w+|\brating\b|\bbuy\b|\bsell\b|"
+    r"\bhold\b|should you|how |why |\d+\s+reasons|\bvs\.?\b|compared to|"
+    r"best place to work|motley fool|zacks|seeking alpha|simply ?wall|"
+    r"insider monkey|benzinga|the globe and mail|market cap of|stock to|"
+    r"is it a|here's (what|why)|what to know|outperform|underperform|"
+    r"top \d+|best \d+|moving average|short interest|hedge fund)\b",
+    re.IGNORECASE,
+)
+
+
+def is_company_press_release(headline: str) -> bool:
+    """True if a headline reads like the company's OWN press release (not a
+    third-party article about it). Conservative: commentary markers always
+    reject; otherwise require a press-release verb."""
+    h = headline or ""
+    if _COMMENTARY_RE.search(h):
+        return False
+    return bool(_PR_VERB_RE.search(h))

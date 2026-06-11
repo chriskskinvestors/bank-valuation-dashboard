@@ -20,7 +20,9 @@ from datetime import datetime, timezone, timedelta
 
 from data.bank_mapping import get_name
 from data.events.base import Event, SourceAdapter
-from data.events.wire_base import fetch_rss, match_tickers, classify_press_release
+from data.events.wire_base import (
+    fetch_rss, match_tickers, classify_press_release, is_company_press_release,
+)
 
 # A browser UA — Google News returns an empty/blocked feed to obvious bots.
 _GN_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -72,6 +74,10 @@ class GoogleNewsAdapter(SourceAdapter):
             # Confirm this bank is actually the subject (reuse the wire
             # name-matcher); drops tangential mentions Google returns.
             if ticker not in match_tickers(headline):
+                continue
+            # Keep only the company's OWN releases — drop third-party articles,
+            # analyst notes, roundups, opinion (the junk).
+            if not is_company_press_release(headline):
                 continue
             # Dedup by normalized headline so the same release syndicated by
             # multiple outlets collapses to one event (stable across polls).
