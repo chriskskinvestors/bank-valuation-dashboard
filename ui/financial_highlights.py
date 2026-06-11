@@ -48,31 +48,13 @@ def _month(repdte):
         return None
 
 
-def _num(v):
-    try:
-        if v is None or pd.isna(v):
-            return None
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _usd(v_thousands):
-    v = _num(v_thousands)
-    if v is None:
-        return "—"
-    v *= 1000
-    a = abs(v)
-    if a >= 1e9:
-        return f"${v/1e9:,.2f}B"
-    if a >= 1e6:
-        return f"${v/1e6:,.1f}M"
-    return f"${v:,.0f}"
-
-
-def _pct(v, dp=2):
-    v = _num(v)
-    return f"{v:.{dp}f}%" if v is not None else "—"
+# Shared numeric primitives (utils/formatting) — kept under the old local
+# names because several modules import them from here.
+from utils.formatting import (
+    num as _num, thou as _thou, pct as _pct,
+    usd_compact_from_thousands as _usd,
+)
+_count = _thou  # was a same-bodied duplicate of _thou
 
 
 def _ratio_pct(num, den, dp=2):
@@ -85,17 +67,6 @@ def _ratio_pct(num, den, dp=2):
 def _dollars_ps(v, dp=2):
     v = _num(v)
     return f"${v:.{dp}f}" if v is not None else "—"
-
-
-def _count(v):
-    v = _num(v)
-    return f"{v:,.0f}" if v is not None else "—"
-
-
-def _thou(v):
-    """Format a $-in-thousands integer with commas (FDIC native unit)."""
-    v = _num(v)
-    return f"{v:,.0f}" if v is not None else "—"
 
 
 def _iso(d):

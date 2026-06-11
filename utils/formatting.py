@@ -11,6 +11,47 @@ import pandas as pd
 from config import METRICS_BY_KEY
 
 
+# ── Shared numeric primitives ────────────────────────────────────────────
+# One implementation for the null-safe coercion/format helpers that were
+# previously copy-pasted across financial_highlights / financials_statements /
+# bank_detail (and defined twice in one of them).
+
+def num(v) -> float | None:
+    """Null-safe float: None for None/NaN/unparseable."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def thou(v) -> str:
+    """Comma-grouped integer (FDIC's native $-in-thousands display), or —."""
+    v = num(v)
+    return f"{v:,.0f}" if v is not None else "—"
+
+
+def pct(v, dp: int = 2) -> str:
+    """Percentage with dp decimals, or —."""
+    v = num(v)
+    return f"{v:.{dp}f}%" if v is not None else "—"
+
+
+def usd_compact_from_thousands(v_thousands) -> str:
+    """FDIC $thousands → compact $X.XXB / $X.XM / $N, or —."""
+    v = num(v_thousands)
+    if v is None:
+        return "—"
+    d = v * 1000.0
+    a = abs(d)
+    if a >= 1e9:
+        return f"${d/1e9:,.2f}B"
+    if a >= 1e6:
+        return f"${d/1e6:,.1f}M"
+    return f"${d:,.0f}"
+
+
 def fmt_dollars(dollars: float | None, decimals: int = 2) -> str:
     """
     Auto-scale a dollar value to T / B / M / K / $.

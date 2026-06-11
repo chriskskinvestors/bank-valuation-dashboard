@@ -20,34 +20,11 @@ from data import fdic_client
 from ui.financial_highlights import _build_component
 
 
-def _num(v):
-    try:
-        return None if (v is None or pd.isna(v)) else float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _usd(v_thousands):
-    v = _num(v_thousands)
-    if v is None:
-        return "—"
-    d = v * 1000.0
-    a = abs(d)
-    if a >= 1e9:
-        return f"${d/1e9:.2f}B"
-    if a >= 1e6:
-        return f"${d/1e6:.1f}M"
-    return f"${d:,.0f}"
-
-
-def _thou(v):
-    v = _num(v)
-    return f"{v:,.0f}" if v is not None else "—"
-
-
-def _pct(v):
-    v = _num(v)
-    return f"{v:.2f}%" if v is not None else "—"
+# Shared numeric primitives — one implementation in utils/formatting.
+from utils.formatting import (
+    num as _num, thou as _thou, pct as _pct,
+    usd_compact_from_thousands as _usd,
+)
 
 
 def _yr(repdte):

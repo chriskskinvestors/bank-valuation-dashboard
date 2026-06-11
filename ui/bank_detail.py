@@ -23,13 +23,8 @@ _MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
-def _num(v):
-    try:
-        if v is None or pd.isna(v):
-            return None
-        return float(v)
-    except (TypeError, ValueError):
-        return None
+# Shared null-safe float (utils/formatting), kept under the local name.
+from utils.formatting import num as _num
 
 
 def _usd_b(v):
