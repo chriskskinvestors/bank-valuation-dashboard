@@ -155,12 +155,16 @@ def metric_percentile_context(ticker: str, all_metrics: list[dict],
         if raw is None:
             continue
         hib = _higher_is_better(k)
+        # Rank position (1 = best). Ties share the better rank.
+        better = sum(1 for x in peer_vals if (x > v if hib else x < v))
         out[k] = {
             "value": v,
             "percentile": raw if hib else (100 - raw),
             "raw": raw,
             "median": statistics.median(peer_vals),
             "n": len(peer_vals),
+            "rank": better + 1,
+            "out_of": len(peer_vals),
             "higher_better": hib,
             "label": METRICS_BY_KEY.get(k, {}).get("label", k),
         }

@@ -58,8 +58,8 @@ SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis"
 # content (under the bank picker), not in the sidebar. One shared template per
 # bank — every bank gets the same sub-tabs.
 COMPANY_TABS = ["Overview", "Financials", "Valuation", "Earnings", "Credit",
-                "Capital", "Deposits", "NIM Sensitivity", "Ownership", "Activity",
-                "Filings", "🔍 Data Quality"]
+                "Capital", "Deposits", "NIM Sensitivity", "Ownership", "Peer Rank",
+                "Activity", "Filings", "🔍 Data Quality"]
 section = st.sidebar.radio("Navigate", SECTIONS, key="nav_section", label_visibility="collapsed")
 
 st.sidebar.markdown("---")
@@ -755,6 +755,15 @@ elif section == "🏦 Company Analysis":
     elif company_subtab == "Ownership":
         from ui.ownership import render_ownership
         render_ownership(company_ticker)
+
+    elif company_subtab == "Peer Rank":
+        from ui.peer_rank import render_peer_rank
+        # Peer ranking needs the watchlist cohort; load it on demand here (this
+        # is the one view that's explicitly about peers, so the wait is warranted).
+        if not all_metrics:
+            all_metrics, metrics_df = load_all_data(watchlist)
+            cache.put("watchlist_metrics_last", all_metrics)
+        render_peer_rank(company_ticker, all_metrics)
 
     elif company_subtab == "🔍 Data Quality":
         from ui.data_quality import render_data_quality
