@@ -174,34 +174,136 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
 
     st.markdown("")
 
-    # ── Watchlist summary ──────────────────────────────────────────────
+    # ── Industry valuations ────────────────────────────────────────────
     if all_metrics:
-        df = pd.DataFrame(all_metrics)
-
-        def _avg(col):
-            return df[col].mean() if col in df.columns and df[col].notna().any() else None
-
-        def _fmt(v, suffix="%", dp=1):
-            return f"{v:.{dp}f}{suffix}" if v is not None else "—"
-
-        # Row 1 — profitability & capital
-        r1 = st.columns(4)
-        r1[0].metric("Avg ROATCE", _fmt(_avg("roatce_blended")))
-        r1[1].metric("Avg NIM", _fmt(_avg("nim"), dp=2))
-        r1[2].metric("Avg Efficiency", _fmt(_avg("efficiency_ratio")))
-        r1[3].metric("Avg CET1", _fmt(_avg("cet1_ratio"), dp=2))
-
-        # Row 2 — returns, credit, valuation, funding risk
-        r2 = st.columns(4)
-        r2[0].metric("Avg ROAA", _fmt(_avg("roaa"), dp=2))
-        r2[1].metric("Avg NPL", _fmt(_avg("npl_ratio"), dp=2))
-        r2[2].metric("Avg P/TBV", _fmt(_avg("ptbv_ratio"), suffix="x", dp=2))
-        r2[3].metric("Avg Uninsured Dep", _fmt(_avg("uninsured_pct"), dp=0))
+        _render_industry_valuations(pd.DataFrame(all_metrics))
 
     st.markdown("")
 
     # ── ALERT INBOX ────────────────────────────────────────────────────
     _render_alert_inbox(all_metrics, watchlist)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Industry valuations
+# ══════════════════════════════════════════════════════════════════════
+
+def _render_industry_valuations(df: pd.DataFrame):
+    """
+    Where bank valuations sit right now — median multiples across coverage,
+    segmented by asset-size tier. Medians (not means) so a single mis-priced
+    or thinly-traded name can't distort the read.
+    """
+    from analysis.peer_groups import asset_size_tier
+
+    st.markdown("### 🏦 Industry Valuations")
+
+    if "total_assets" not in df.columns:
+        df = df.copy()
+        df["total_assets"] = None
+
+    # Normalize assets to dollars (some flows store $thousands) before tiering.
+    def _assets_usd(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return None
+        if v <= 0:
+            return None
+        return v * 1000.0 if v < 1e9 else v
+
+    df = df.copy()
+    df["_tier"] = df["total_assets"].map(lambda v: asset_size_tier(_assets_usd(v)))
+
+    def _med(sub, col):
+        if col not in sub.columns:
+            return None
+        s = pd.to_numeric(sub[col], errors="coerce").dropna()
+        return float(s.median()) if not s.empty else None
+
+    def _x(v, dp=2):
+        return f"{v:.{dp}f}x" if v is not None else "—"
+
+    def _pct(v, dp=1):
+        return f"{v:.{dp}f}%" if v is not None else "—"
+
+    # Headline: overall median P/TBV, P/E, div yield, and how many screen cheap.
+    n = len(df)
+    disc = pd.to_numeric(df.get("ptbv_discount"), errors="coerce") if "ptbv_discount" in df.columns else pd.Series(dtype=float)
+    n_cheap = int((disc > 0).sum()) if not disc.empty else 0
+    head_items = [
+        ("MEDIAN P/TBV", _x(_med(df, "ptbv_ratio"))),
+        ("MEDIAN P/E", _x(_med(df, "pe_ratio"), dp=1)),
+        ("MEDIAN DIV YIELD", _pct(_med(df, "dividend_yield"))),
+        ("MEDIAN ROATCE", _pct(_med(df, "roatce_blended"))),
+        ("BELOW FAIR VALUE", f"{n_cheap} / {n}"),
+    ]
+    pills = "".join(
+        '<span style="display:inline-flex; flex-direction:column; padding:4px 13px; '
+        'border-radius:8px; background:rgba(37,99,235,0.05); '
+        'border:1px solid rgba(37,99,235,0.14); line-height:1.25;">'
+        f'<span style="font-size:0.55rem; color:#64748b; font-weight:700; '
+        f'letter-spacing:0.05em;">{lbl}</span>'
+        f'<span style="font-size:0.98rem; font-weight:700; color:#1e3a8a;">{val}</span>'
+        '</span>'
+        for lbl, val in head_items
+    )
+    st.markdown(
+        '<div style="display:flex; gap:7px; flex-wrap:wrap; margin:0 0 10px;">'
+        + pills + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Tier table — order large → small, only tiers that have banks, then All.
+    tier_order = [
+        "Money-Center (>$1T)", "Large Regional ($100B-$1T)",
+        "Regional ($10-100B)", "Community (<$10B)",
+    ]
+    rows = []
+    for tier in tier_order:
+        sub = df[df["_tier"] == tier]
+        if len(sub):
+            rows.append((tier, sub))
+    rows.append(("All coverage", df))
+
+    body = ""
+    for i, (tier, sub) in enumerate(rows):
+        bold = ' style="font-weight:700; border-top:2px solid #e2e8f0;"' if tier == "All coverage" else ""
+        zebra = "background:rgba(148,163,184,0.05);" if (i % 2 == 1 and tier != "All coverage") else ""
+        cells = "".join(
+            f'<td style="text-align:right; padding:6px 12px; font-variant-numeric:tabular-nums;">{c}</td>'
+            for c in [
+                str(len(sub)),
+                _x(_med(sub, "ptbv_ratio")),
+                _x(_med(sub, "pe_ratio"), dp=1),
+                _x(_med(sub, "pb_ratio")),
+                _pct(_med(sub, "dividend_yield")),
+                _pct(_med(sub, "roatce_blended")),
+            ]
+        )
+        body += (
+            f'<tr{bold} style="{zebra}">'
+            f'<td style="text-align:left; padding:6px 12px; color:#0f172a;">{tier}</td>'
+            f'{cells}</tr>'
+        )
+
+    headers = ["Asset-Size Tier", "Banks", "P/TBV", "P/E", "P/B", "Div Yld", "ROATCE"]
+    head_html = "".join(
+        f'<th style="text-align:{"left" if i == 0 else "right"}; padding:7px 12px; '
+        'font-size:0.62rem; font-weight:700; letter-spacing:0.04em; color:#64748b; '
+        f'border-bottom:1px solid #e2e8f0;">{h}</th>'
+        for i, h in enumerate(headers)
+    )
+    st.markdown(
+        '<table style="width:100%; border-collapse:collapse; font-size:0.82rem; '
+        'background:#fff; border:1px solid #e2e8f0; border-radius:10px; overflow:hidden;">'
+        f'<thead><tr>{head_html}</tr></thead><tbody>{body}</tbody></table>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Median valuation multiples across {n} covered banks · live FDIC + market data. "
+        "Medians are robust to outliers; tiers by total assets."
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════
