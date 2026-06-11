@@ -7,6 +7,7 @@ Two entry points:
 """
 
 from __future__ import annotations
+import html as _html
 from datetime import datetime, timezone
 
 import streamlit as st
@@ -61,42 +62,60 @@ def _fmt_ago(ts: datetime | None) -> str:
     return f"{days // 365}y ago"
 
 
-def _badge(label: str, color: str) -> str:
-    return (
-        f'<span style="background:{color}1a;color:{color};'
-        f'padding:2px 8px;border-radius:10px;font-size:0.75rem;'
-        f'font-weight:600;margin-right:6px;">{label}</span>'
-    )
+_FEED_CSS = """
+<style>
+.ev-feed { margin-top: 2px; }
+.ev-row { padding: 6px 0 7px; border-bottom: 1px solid rgba(148,163,184,0.14); }
+.ev-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.2; }
+.ev-tk { font-weight: 700; color: #0f172a; font-size: 0.82rem; }
+.ev-badge { font-size: 0.64rem; font-weight: 600; padding: 1px 7px; border-radius: 9px;
+            background: rgba(107,114,128,0.12); color: #6b7280; white-space: nowrap; }
+.ev-ago { color: #94a3b8; font-size: 0.72rem; margin-left: auto; white-space: nowrap; }
+.ev-head { font-size: 0.88rem; font-weight: 600; color: #0f172a; line-height: 1.3; margin-top: 1px; }
+.ev-head a.ev-src { color: #2563eb; text-decoration: none; font-weight: 400; }
+.ev-sum { font-size: 0.79rem; color: #475569; line-height: 1.38; margin-top: 1px;
+          display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+</style>
+"""
 
 
-def _render_event_card(ev: dict, show_ticker: bool = False):
-    src_label = SOURCE_LABELS.get(ev["source"], ev["source"])
+def _summary_text(ev: dict) -> str:
+    """The best one/two-line summary for an event, trimmed; never just echo the
+    headline back."""
+    s = (ev.get("summary") or "").strip()
+    head = (ev.get("headline") or "").strip()
+    if not s or s.lower() == head.lower():
+        return ""
+    # Collapse whitespace; clamp length (the CSS also line-clamps to 2 lines).
+    s = " ".join(s.split())
+    return s[:260].rstrip() + ("…" if len(s) > 260 else "")
+
+
+def _event_row(ev: dict, show_ticker: bool) -> str:
     type_label = EVENT_TYPE_LABELS.get(ev["event_type"], ev["event_type"])
     color = EVENT_TYPE_COLORS.get(ev["event_type"], "#6b7280")
+    src_label = SOURCE_LABELS.get(ev["source"], ev["source"])
     ago = _fmt_ago(ev.get("published_at"))
-
-    header_html = (
-        _badge(type_label, color)
-        + _badge(src_label, "#6b7280")
-        + f'<span style="color:#6b7280;font-size:0.85rem;">{ago}</span>'
+    url = ev.get("url")
+    link = f'<a class="ev-src" href="{_html.escape(str(url))}" target="_blank">↗</a>' if url else ""
+    tk = (f'<span class="ev-tk">{_html.escape(str(ev.get("ticker") or ""))}</span>'
+          if (show_ticker and ev.get("ticker")) else "")
+    headline = _html.escape(ev.get("headline") or "(no headline)")
+    summ = _summary_text(ev)
+    sum_html = f'<div class="ev-sum">{_html.escape(summ)}</div>' if summ else ""
+    return (
+        f'<div class="ev-row"><div class="ev-meta">{tk}'
+        f'<span class="ev-badge" style="color:{color};background:{color}14;">{_html.escape(type_label)}</span>'
+        f'<span class="ev-badge">{_html.escape(src_label)}</span>'
+        f'<span class="ev-ago">{ago}</span></div>'
+        f'<div class="ev-head">{headline} {link}</div>{sum_html}</div>'
     )
-    if show_ticker:
-        header_html = (
-            f'<strong style="font-size:1rem;margin-right:8px;">{ev["ticker"]}</strong>'
-            + header_html
-        )
 
-    st.markdown(header_html, unsafe_allow_html=True)
-    st.markdown(f"**{ev.get('headline', '(no headline)')}**")
-    if ev.get("summary"):
-        st.markdown(
-            f'<div style="color:#374151;margin-top:4px;font-size:0.9rem;">'
-            f'{ev["summary"]}</div>',
-            unsafe_allow_html=True,
-        )
-    if ev.get("url"):
-        st.markdown(f"[View source →]({ev['url']})")
-    st.markdown("---")
+
+def _render_feed(events: list[dict], show_ticker: bool = False):
+    """Render the whole feed as a single dense HTML block (no inter-element gaps)."""
+    body = "".join(_event_row(e, show_ticker) for e in events)
+    st.markdown(_FEED_CSS + f'<div class="ev-feed">{body}</div>', unsafe_allow_html=True)
 
 
 def render_recent_activity(ticker: str, limit: int = 20):
@@ -120,8 +139,7 @@ def render_recent_activity(ticker: str, limit: int = 20):
         )
         return
 
-    for ev in events:
-        _render_event_card(ev, show_ticker=False)
+    _render_feed(events, show_ticker=False)
 
 
 def render_activity_overview(limit: int = 50):
@@ -164,5 +182,4 @@ def render_activity_overview(limit: int = 50):
         )
         return
 
-    for ev in events:
-        _render_event_card(ev, show_ticker=True)
+    _render_feed(events, show_ticker=True)
