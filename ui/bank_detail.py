@@ -80,12 +80,12 @@ def _kv_table(title, pairs):
         f'<td style="padding:2px 2px;text-align:right;font-weight:600;color:#0f172a;'
         f'font-size:0.8rem;white-space:nowrap;">{v}</td></tr>'
         for l, v in rows)
-    # width:auto so the table hugs its content instead of stretching across the
-    # column and flinging the value to the far edge (the big label↔value gap).
+    # width:100% to fill its (narrow, 1-of-4) column. In a quarter-width column
+    # the label→value gap is small, and four tables across use the whole width.
     return (
         f'<div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:.04em;'
         f'color:#1e3a8a;font-weight:700;margin:0 0 2px;">{title}</div>'
-        f'<table style="width:auto;max-width:100%;border-collapse:collapse;">{body}</table>')
+        f'<table style="width:100%;border-collapse:collapse;">{body}</table>')
 
 
 def _render_valuation_performance_tables(row, fdic_rec=None):
@@ -147,16 +147,7 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
         ("CET1 Ratio", _fd_pct("IDT1CER")),
         ("NPL Ratio", _fd_pct("NCLNLSR")),
     ]
-    c_val, c_perf = st.columns(2)
-    with c_val:
-        st.markdown(_kv_table("Valuation", valuation), unsafe_allow_html=True)
-    with c_perf:
-        st.markdown(_kv_table("Performance", performance), unsafe_allow_html=True)
-
-    st.markdown(
-        '<div style="margin-top:7px; font-size:0.8rem; color:#64748b;">'
-        'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
-        'FMP (market data)</div>', unsafe_allow_html=True)
+    return _kv_table("Valuation", valuation), _kv_table("Performance", performance)
 
 
 def _fmt_repdte(v):
@@ -441,11 +432,9 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
         ("FDIC Cert", str(cert) if cert else None),
     ]
 
-    c_mkt, c_co = st.columns(2)
-    with c_mkt:
-        st.markdown(_kv_table("Market Data", market), unsafe_allow_html=True)
-    with c_co:
-        st.markdown(_kv_table("Company Profile", company), unsafe_allow_html=True)
+    # Return the two tables so the caller can pack them into a single 4-across
+    # row with Valuation + Performance (no half-width dead space).
+    return _kv_table("Market Data", market), _kv_table("Company Profile", company)
 
 
 def _valuation_history_chart(ticker: str, info: dict):
@@ -563,15 +552,26 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
             fdic_rec = fdic_client.get_latest_financials(cert) or {}
         except Exception:
             fdic_rec = {}
-    # Capital-IQ-style snapshot: identity, quick links, market + company profile.
-    _render_snapshot(ticker, info, name, row, fdic_rec)
-    st.markdown("---")
-    _render_valuation_performance_tables(row, fdic_rec)
+    # Capital-IQ-style snapshot: identity + quick links, then four reference
+    # tables packed across the full width (no half-width dead space).
+    mkt_html, co_html = _render_snapshot(ticker, info, name, row, fdic_rec)
+    val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
+    _g = st.columns(4)
+    for _col, _html in zip(_g, (mkt_html, val_html, perf_html, co_html)):
+        _col.markdown(_html, unsafe_allow_html=True)
+    st.markdown(
+        '<div style="margin-top:5px; font-size:0.75rem; color:#64748b;">'
+        'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
+        'FMP (market data)</div>', unsafe_allow_html=True)
     _render_overview_charts(ticker, info)
     st.markdown("---")
-    _render_financial_highlights_table(ticker, info)
-    st.markdown("---")
-    _render_latest_activity(ticker, info)
+    # Highlights (year-ago vs latest) beside the activity feed so both fill the
+    # width instead of each spreading across the page.
+    _hl, _act = st.columns([1, 2])
+    with _hl:
+        _render_financial_highlights_table(ticker, info)
+    with _act:
+        _render_latest_activity(ticker, info)
 
     # Click-through to the primary data sources for this bank.
     cik = info.get("cik") if info else None

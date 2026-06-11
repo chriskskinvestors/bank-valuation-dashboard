@@ -695,12 +695,15 @@ body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto
   color:#1e293b; background:transparent; }}
 /* width:auto + fixed column widths so the table sizes to its content (no
    stretching that throws a big empty gap between labels and values). */
-table {{ width:auto; max-width:100%; border-collapse:collapse; font-size:12px;
+/* width:100% so the table fills its column instead of hugging the left and
+   leaving a dead gap next to the charts. The label column is fixed; the period
+   columns share the rest evenly. */
+table {{ width:100%; border-collapse:collapse; font-size:12px;
   border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
 thead th {{ border-bottom:1px solid rgba(148,163,184,0.3); padding:4px 10px; }}
-.lblh {{ text-align:left; color:#64748b; font-weight:500; width:190px;
+.lblh {{ text-align:left; color:#64748b; font-weight:500; width:34%;
   border-right:1px solid rgba(148,163,184,0.22); }}
-.colh {{ text-align:right; font-weight:600; color:#0f172a; width:88px; }}
+.colh {{ text-align:right; font-weight:600; color:#0f172a; }}
 td.sec {{ padding:6px 9px 2px; font-weight:700; color:#1e3a8a; font-size:10px;
   text-transform:uppercase; letter-spacing:0.04em; background:rgba(241,245,249,0.6); }}
 /* Label column: anchored with a right divider so the eye can run across a row. */
