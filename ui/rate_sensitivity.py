@@ -4,10 +4,10 @@ Rate Sensitivity UI — NIM scenario analysis per bank.
 Primary view: 3M × 5Y curve shifts (bank-appropriate — short end drives
 funding costs, 5Y drives asset yields).
 
-Three tabs:
-  1. Named Curve Scenarios — preset steepener/flattener/parallel combos
-  2. 2D Curve Matrix — heat-map of ΔNIM across Δ3M × Δ5Y grid
-  3. Parallel Shift (legacy) — simple +/- rate scenarios
+Tabs: Multi-Year Impact (phased) · Named Curve Scenarios · Curve Matrix
+(3M × 5Y) · Historical Fit. The old "Parallel Shift (legacy)" tab was
+removed — it used a deposit-beta convention the phased model documents as
+wrong (divided the cycle beta by ib_weight, ~1.4× inflated).
 """
 
 import streamlit as st
@@ -17,7 +17,7 @@ from data.bank_mapping import get_fdic_cert
 from data.cache import get as cache_get, put as cache_put
 from data import fdic_client
 from analysis.rate_sensitivity import (
-    run_rate_sensitivity, run_curve_sensitivity, run_curve_matrix,
+    run_curve_sensitivity, run_curve_matrix,
     run_rate_sensitivity_phased,
     DEFAULT_SCENARIOS_BPS, TEXTBOOK_INT_BEARING_BETA, NAMED_SCENARIOS,
 )
@@ -217,11 +217,15 @@ def render_rate_sensitivity(ticker: str):
     )
 
     # ── Tabs ────────────────────────────────────────────────────────────
-    tab_phased, tab_named, tab_matrix, tab_parallel, tab_backtest = st.tabs([
+    # The "Parallel Shift (legacy)" tab was removed: its model divided the
+    # historical cycle beta by ib_weight — a convention _resolve_deposit_beta
+    # explicitly documents as wrong (~1.4x inflated) — so the same screen
+    # showed two different "historical" betas. The phased/curve tabs are the
+    # supported model.
+    tab_phased, tab_named, tab_matrix, tab_backtest = st.tabs([
         "📅 Multi-Year Impact (phased)",
         "🎯 Named Curve Scenarios",
         "🔥 Curve Matrix (3M × 5Y)",
-        "Parallel Shift (legacy)",
         "📊 Historical Fit",
     ])
 
@@ -233,9 +237,6 @@ def render_rate_sensitivity(ticker: str):
 
     with tab_matrix:
         _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta)
-
-    with tab_parallel:
-        _render_parallel_legacy(latest, hist, mode_key, custom_beta)
 
     with tab_backtest:
         _render_backtest(ticker, hist, mode_key, custom_beta)
@@ -1237,59 +1238,3 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
         pass
 
 
-# ── Parallel Shift (Legacy) ───────────────────────────────────────────
-
-def _render_parallel_legacy(latest, hist, mode_key, custom_beta):
-    """Render the old parallel-shift scenarios."""
-    st.caption(
-        "Legacy view: assumes all rates move together in parallel. "
-        "For more realistic NIM impact, see the Named Curve Scenarios or Curve Matrix tabs."
-    )
-
-    result = run_rate_sensitivity(
-        latest, hist, beta_mode=mode_key, custom_deposit_beta=custom_beta,
-    )
-    inputs = result["inputs"]
-    scenarios = result["scenarios"]
-
-    rows = []
-    for s in scenarios:
-        rows.append({
-            "Scenario": f"{s['rate_change_bps']:+d} bps" if s['rate_change_bps'] != 0 else "Flat",
-            "EA Yield": f"{s.get('earning_asset_yield_new_pct'):.2f}%" if s.get("earning_asset_yield_new_pct") else "—",
-            "Cost of IBL": f"{s.get('cost_of_funds_new_pct'):.2f}%" if s.get("cost_of_funds_new_pct") else "—",
-            "NIM": f"{s.get('nim_new_pct'):.2f}%",
-            "Δ NIM": f"{s.get('nim_delta_bps'):+.0f} bps",
-            "Δ NII (annual)": fmt_dollars(s.get("nii_delta_usd"), 2),
-        })
-    df = pd.DataFrame(rows)
-
-    def _style(row):
-        label = row["Scenario"]
-        if label == "Flat":
-            return ["background-color: #f5f5f5; font-weight: 600;"] * len(row)
-        try:
-            bps = int(label.split(" ")[0])
-        except Exception:
-            return [""] * len(row)
-        scen = next((s for s in scenarios if s["rate_change_bps"] == bps), None)
-        if not scen:
-            return [""] * len(row)
-        d = scen["nim_delta_bps"]
-        if d > 20: return ["background-color: #e8f5e9; color: #1b5e20;"] * len(row)
-        if d > 0: return ["background-color: #f1f8e9;"] * len(row)
-        if d < -20: return ["background-color: #ffebee; color: #b71c1c;"] * len(row)
-        if d < 0: return ["background-color: #fff3e0;"] * len(row)
-        return [""] * len(row)
-
-    styled = df.style.apply(_style, axis=1).set_properties(
-        **{"font-size": "0.85rem", "padding": "4px 8px"}
-    )
-    st.dataframe(styled, use_container_width=True, hide_index=True, height=40 + 35 * len(df))
-
-    asym = result.get("asymmetry_bps")
-    if asym is not None:
-        label = "Asset-sensitive (benefits from rate hikes)" if asym > 5 else (
-            "Liability-sensitive (benefits from rate cuts)" if asym < -5 else "Symmetric"
-        )
-        st.caption(f"**Asymmetry: {asym:+.0f} bps** → {label}")

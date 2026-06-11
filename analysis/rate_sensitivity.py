@@ -534,94 +534,6 @@ def apply_rate_scenario_phased(
     }
 
 
-def apply_rate_scenario(
-    inputs: dict,
-    rate_change_bps: float,
-    deposit_beta_int_bearing: float,
-    deposit_beta_non_int: float = 0.0,
-    asset_beta: float = 1.0,
-) -> dict:
-    """
-    Apply a rate scenario and return the projected NIM + NII impact.
-
-    Args:
-        inputs: dict from build_rate_sensitivity_inputs()
-        rate_change_bps: basis points change (e.g., 100 = +1% parallel shift)
-        deposit_beta_int_bearing: 0-1, % of rate change that flows to int-bearing deposits
-        deposit_beta_non_int: 0-1, for non-interest-bearing deposits (typically ~0)
-        asset_beta: 0-1, % of rate change that flows to earning asset yields
-                    (1.0 = full pass-through; lower = slower repricing)
-
-    Returns:
-        {
-            "rate_change_bps": 100,
-            "earning_asset_yield_new_pct": 5.75,
-            "cost_of_funds_new_pct": 2.80,
-            "nim_new_pct": 2.95,
-            "nim_delta_bps": 12,
-            "nii_current_usd": ...,
-            "nii_new_usd": ...,
-            "nii_delta_usd": ...,
-        }
-    """
-    # Current state
-    ea_yield = _safe(inputs.get("earning_asset_yield_pct"))
-    cost_ibl = _safe(inputs.get("cost_of_int_bearing_pct"))
-    current_nim = _safe(inputs.get("current_nim_pct"))
-    earning_assets = _safe(inputs.get("earning_assets_usd"))
-    int_bearing_dep = _safe(inputs.get("int_bearing_dep_usd"))
-    non_int_dep = _safe(inputs.get("non_int_dep_usd"))
-    total_dep = _safe(inputs.get("total_deposits_usd"))
-
-    # Current NII = earning assets × NIM
-    nii_current = earning_assets * (current_nim / 100)
-
-    # Rate move in pp
-    rate_pp = rate_change_bps / 100.0
-
-    # New earning asset yield
-    ea_yield_new = ea_yield + rate_pp * asset_beta
-
-    # New cost of int-bearing liabilities
-    cost_ibl_new = cost_ibl + rate_pp * deposit_beta_int_bearing
-
-    # Effective cost of total deposits (weighted by int-bearing vs non-int)
-    if total_dep > 0:
-        ib_weight = int_bearing_dep / total_dep
-        ni_weight = non_int_dep / total_dep
-        # Approximate current blended cost of deposits
-        current_blended_cof = (ib_weight * cost_ibl) + (ni_weight * 0.0)  # non-int = 0
-        new_blended_cof = (
-            ib_weight * cost_ibl_new +
-            ni_weight * (rate_pp * deposit_beta_non_int)
-        )
-        cof_change = new_blended_cof - current_blended_cof
-    else:
-        cof_change = rate_pp * deposit_beta_int_bearing
-
-    # NIM delta: asset yield up, cost up — spread impact
-    # Assume earning assets ≈ funded by deposits (simplification)
-    yield_delta = rate_pp * asset_beta
-    nim_delta_pp = yield_delta - cof_change
-    nim_new = current_nim + nim_delta_pp
-
-    # NII impact
-    nii_new = earning_assets * (nim_new / 100)
-    nii_delta = nii_new - nii_current
-
-    return {
-        "rate_change_bps": rate_change_bps,
-        "earning_asset_yield_new_pct": ea_yield_new,
-        "cost_of_funds_new_pct": (cost_ibl_new if int_bearing_dep > 0 else None),
-        "nim_current_pct": current_nim,
-        "nim_new_pct": nim_new,
-        "nim_delta_bps": nim_delta_pp * 100,
-        "nii_current_usd": nii_current,
-        "nii_new_usd": nii_new,
-        "nii_delta_usd": nii_delta,
-    }
-
-
 # ── Curve-based scenarios (3M × 5Y) ────────────────────────────────────
 
 def apply_curve_scenario(
@@ -726,7 +638,7 @@ def run_curve_sensitivity(
 ) -> dict:
     """
     Run curve-shift scenarios (non-parallel 3M × 5Y).
-    Returns same shape as run_rate_sensitivity with per-scenario NIM/NII impacts.
+    Returns {inputs, beta_used, scenarios: [...]} with per-scenario NIM/NII impacts.
     """
     inputs = build_rate_sensitivity_inputs(fdic_latest, fdic_hist)
     beta_int, beta_ni, resolved_mode = _resolve_deposit_beta(
@@ -868,7 +780,7 @@ def run_rate_sensitivity_phased(
     / generic securities + fixed-loan repricing pace. floating_loan_share is a
     separate top-level arg.
 
-    Returns the same structure as run_rate_sensitivity but each scenario
+    Returns {inputs, beta_used, scenarios: [...]} where each scenario
     now has a `years` list with per-year NIM/NII/EPS impacts.
     """
     if scenarios_bps is None:
@@ -937,79 +849,6 @@ def run_rate_sensitivity_phased(
         ),
         "base_growth_rates": growth_rates,
         "volume_effects_applied": apply_volume_effects and growth_rates is not None,
-    }
-
-
-def run_rate_sensitivity(
-    fdic_latest: dict,
-    fdic_hist: list[dict] | None = None,
-    beta_mode: str = "historical",  # "historical" or "textbook"
-    scenarios_bps: list[int] | None = None,
-    custom_deposit_beta: float | None = None,
-) -> dict:
-    """
-    Run the full rate sensitivity analysis across scenarios.
-
-    Returns:
-        {
-            "inputs": {...},
-            "beta_used": 0.42,
-            "beta_mode": "historical",
-            "scenarios": [{rate_change_bps: -100, ...}, ...],
-            "asymmetry_bps": float  # up scenario vs down scenario NIM delta
-        }
-    """
-    if scenarios_bps is None:
-        scenarios_bps = DEFAULT_SCENARIOS_BPS
-
-    inputs = build_rate_sensitivity_inputs(fdic_latest, fdic_hist)
-
-    # Decide deposit beta
-    if custom_deposit_beta is not None:
-        beta_int = max(0.0, min(1.0, custom_deposit_beta))
-        beta_ni = 0.0
-    elif beta_mode == "textbook":
-        beta_int = TEXTBOOK_INT_BEARING_BETA
-        beta_ni = TEXTBOOK_NON_INT_BETA
-    else:  # historical
-        hist_beta = compute_historical_deposit_beta(fdic_hist)
-        if hist_beta is not None:
-            # Historical beta measures "cost response to Fed funds change"
-            # We need to translate that to int-bearing deposit beta
-            # The measured beta ≈ blended deposit beta; so we adjust:
-            # measured = ib_weight * beta_int + ni_weight * 0
-            # => beta_int = measured / ib_weight
-            total_dep = inputs.get("total_deposits_usd") or 0
-            int_bearing = inputs.get("int_bearing_dep_usd") or 0
-            ib_weight = int_bearing / total_dep if total_dep > 0 else 1.0
-            beta_int = hist_beta / ib_weight if ib_weight > 0 else hist_beta
-            # Clip to reasonable range — very negative = anomaly
-            beta_int = max(-0.20, min(1.50, beta_int))
-            beta_ni = 0.0
-        else:
-            # Fall back to textbook
-            beta_int = TEXTBOOK_INT_BEARING_BETA
-            beta_ni = TEXTBOOK_NON_INT_BETA
-            beta_mode = "textbook_fallback"
-
-    scenario_results = [
-        apply_rate_scenario(inputs, bps, beta_int, beta_ni, asset_beta=1.0)
-        for bps in scenarios_bps
-    ]
-
-    # Asymmetry: compare NIM delta at +100 vs -100
-    up_100 = next((s for s in scenario_results if s["rate_change_bps"] == 100), None)
-    dn_100 = next((s for s in scenario_results if s["rate_change_bps"] == -100), None)
-    asymmetry_bps = None
-    if up_100 and dn_100:
-        asymmetry_bps = up_100["nim_delta_bps"] + dn_100["nim_delta_bps"]
-
-    return {
-        "inputs": inputs,
-        "beta_used": beta_int,
-        "beta_mode": beta_mode,
-        "scenarios": scenario_results,
-        "asymmetry_bps": asymmetry_bps,
     }
 
 
