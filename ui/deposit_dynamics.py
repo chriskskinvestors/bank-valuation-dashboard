@@ -240,15 +240,12 @@ def render_deposit_dynamics(ticker: str):
         ))
         apply_standard_layout(
             fig1, title="Cost of Deposits vs Fed Funds",
-            height=CHART_HEIGHT_FULL, yaxis_title="Rate",
+            height=CHART_HEIGHT_COMPACT, yaxis_title="Rate",
         )
         tighten_yaxis(fig1, floor_zero=True, ticksuffix="%")
-        st.plotly_chart(fig1, use_container_width=True)
-
-        # Charts 2 & 3 side-by-side for density
-        cc1, cc2 = st.columns(2)
 
         # Chart 2: Deposit Composition Trend
+        fig2 = None
         if "nonint_dep_pct" in timeline.columns:
             fig2 = go.Figure()
             fig2.add_trace(go.Scatter(
@@ -273,8 +270,6 @@ def render_deposit_dynamics(ticker: str):
                 height=CHART_HEIGHT_COMPACT, yaxis_title="% of Total Deposits",
             )
             tighten_yaxis(fig2, floor_zero=True, ticksuffix="%")
-            with cc1:
-                st.plotly_chart(fig2, use_container_width=True)
 
         # Chart 3: QoQ Deposit Growth
         fig3 = go.Figure()
@@ -296,8 +291,15 @@ def render_deposit_dynamics(ticker: str):
             show_legend=False, hovermode="x",
         )
         fig3.update_yaxes(ticksuffix="%")
-        with cc2:
-            st.plotly_chart(fig3, use_container_width=True)
+
+        # Row 1: cost trend | composition (2-up). Row 2: QoQ growth bars (wide).
+        _g1 = st.columns(2)
+        with _g1[0]:
+            st.plotly_chart(fig1, use_container_width=True)
+        if fig2 is not None:
+            with _g1[1]:
+                st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig3, use_container_width=True)
 
     except ImportError:
         st.warning("Install plotly to view deposit trend charts.")

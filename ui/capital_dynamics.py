@@ -274,7 +274,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
 
         apply_standard_layout(
             fig1, title="CET1 Ratio Trend",
-            height=CHART_HEIGHT_FULL, yaxis_title="CET1",
+            height=CHART_HEIGHT_COMPACT, yaxis_title="CET1",
             show_legend=False, hovermode="x",
         )
         # Zoom to the data + regulatory floors so the trend reads, instead of a
@@ -282,12 +282,9 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         _c = [v for v in timeline["cet1_pct"].tolist() if v is not None]
         _refs = [CET1_REG_MIN, CET1_BUFFER_FLOOR] + ([peer_cet1] if peer_cet1 else [])
         tighten_yaxis(fig1, _c + _refs, floor_zero=True, ticksuffix="%", pad_frac=0.20)
-        st.plotly_chart(fig1, use_container_width=True)
-
-        # Charts 2 & 3 side-by-side
-        cc1, cc2 = st.columns(2)
 
         # Chart 2: TBV/share trend
+        fig2 = None
         if "tbv_per_share" in timeline.columns and timeline["tbv_per_share"].notna().any():
             fig2 = go.Figure()
             fig2.add_trace(go.Scatter(
@@ -303,8 +300,6 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
                 wide_left_margin=True,
             )
             tighten_yaxis(fig2, timeline["tbv_per_share"].dropna().tolist(), tickprefix="$")
-            with cc1:
-                st.plotly_chart(fig2, use_container_width=True)
 
         # Chart 3: Capital return mix — auto-scaled
         # Coerce to numeric first: columns may contain None from stale/missing FDIC
@@ -331,8 +326,6 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             show_legend=True, wide_left_margin=True,
         )
         fig3.update_layout(barmode="group")
-        with cc2:
-            st.plotly_chart(fig3, use_container_width=True)
 
         # Chart 4: Capital Generation Waterfall (last quarter)
         #
@@ -341,6 +334,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         # We can't separate them without pulling from SEC 10-Q AOCI components.
         # The waterfall shows Starting Equity + NI − (NI − ΔEquity) = Ending Equity,
         # which by construction sums exactly — no residual.
+        fig4 = None
         prior_eq = timeline["equity_k"].iloc[-2] if len(timeline) >= 2 else None
         curr_eq = latest.get("equity_k")
         ni = latest.get("net_income_k_qtr")
@@ -382,7 +376,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
                 period_label = ""
             apply_standard_layout(
                 fig4, title=f"Capital Generation — {period_label}",
-                height=CHART_HEIGHT_FULL, yaxis_title=f"$ {unit}",
+                height=CHART_HEIGHT_COMPACT, yaxis_title=f"$ {unit}",
                 show_legend=False, wide_left_margin=True,
             )
             # A 0-based axis makes the ±flows invisible against the ~$2B equity
@@ -395,7 +389,20 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             _lo, _hi = min(_levels), max(_levels)
             _pad = max((_hi - _lo) * 0.6, 0.03 * max(abs(x) for x in _levels), 0.02)
             fig4.update_yaxes(range=[_lo - _pad, _hi + _pad])
-            st.plotly_chart(fig4, use_container_width=True)
+
+        # Dense 2×2 grid — no full-width single charts.
+        _g1 = st.columns(2)
+        with _g1[0]:
+            st.plotly_chart(fig1, use_container_width=True)
+        if fig2 is not None:
+            with _g1[1]:
+                st.plotly_chart(fig2, use_container_width=True)
+        _g2 = st.columns(2)
+        with _g2[0]:
+            st.plotly_chart(fig3, use_container_width=True)
+        if fig4 is not None:
+            with _g2[1]:
+                st.plotly_chart(fig4, use_container_width=True)
 
     except ImportError:
         st.warning("Install plotly to view capital charts.")
