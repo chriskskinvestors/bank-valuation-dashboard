@@ -358,6 +358,10 @@ def check_staleness(as_of: str | None, max_age_days: int,
         d = datetime.strptime(as_of, "%Y-%m-%d")
         age = (datetime.now() - d).days
     except Exception:
+        # An unparseable date means the staleness check is being skipped —
+        # the validator itself failing open. Log it so it's visible.
+        print(f"[validation] unparseable as_of date {as_of!r} for "
+              f"{field_name or 'unknown field'} — staleness check skipped")
         return None
 
     if age > max_age_days:

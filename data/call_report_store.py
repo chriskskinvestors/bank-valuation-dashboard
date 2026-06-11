@@ -225,7 +225,11 @@ def get_latest_ladder(cert: int) -> dict | None:
     try:
         buckets = json.loads(row.buckets_json) if row.buckets_json else {}
         amounts = json.loads(row.amounts_json) if row.amounts_json else {}
-    except Exception:
+    except Exception as e:
+        # Corrupted stored JSON would otherwise pose as a valid empty ladder
+        # (repricing pace silently zero).
+        print(f"[call_report_store] corrupted ladder JSON for cert {cert}: "
+              f"{type(e).__name__}: {e}")
         buckets, amounts = {}, {}
 
     report_date = row.report_date

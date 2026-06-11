@@ -9,10 +9,10 @@ hit too fast. We retry up to 3 times with exponential backoff + jitter,
 and cap parallel workers at 4 to stay well under their limit.
 """
 
-import random
 import time
-import requests
+
 import pandas as pd
+
 from config import get_fdic_fields
 
 FDIC_FINANCIALS_URL = "https://banks.data.fdic.gov/api/financials"
@@ -106,28 +106,9 @@ def cert_is_active(cert: int, ttl_seconds: int = 7 * 86400) -> bool:
         return True
 
 
-def _get_with_retry(url: str, params: dict, timeout: int = 15,
-                    max_attempts: int = 3) -> requests.Response | None:
-    """GET with exponential backoff + jitter on 429s and connection errors."""
-    for attempt in range(max_attempts):
-        try:
-            resp = requests.get(url, params=params, timeout=timeout)
-            if resp.status_code == 429:
-                # Honor Retry-After if provided, else exponential backoff
-                wait = float(resp.headers.get("Retry-After", 0)) or (
-                    (2 ** attempt) + random.uniform(0, 1)
-                )
-                time.sleep(min(wait, 30))
-                continue
-            resp.raise_for_status()
-            return resp
-        except requests.HTTPError:
-            raise  # non-429 HTTP errors aren't retried
-        except (requests.ConnectionError, requests.Timeout):
-            if attempt == max_attempts - 1:
-                raise
-            time.sleep((2 ** attempt) + random.uniform(0, 1))
-    return None
+# The shared retry policy (data/http.py) — this module's local implementation
+# was the original it was extracted from.
+from data.http import get_with_retry as _get_with_retry
 
 
 def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:

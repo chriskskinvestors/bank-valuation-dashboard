@@ -4,43 +4,19 @@ FDIC Summary of Deposits (SOD) API client.
 Provides branch-level deposit data, geographic coordinates, and
 market share analysis by county/MSA.
 
-Rate-limit hardening: FDIC's public API throttles aggressive callers
-with 429s. We retry up to 3 times with exponential backoff + jitter
-honoring any Retry-After header. Mirrors the same pattern as
-data.fdic_client._get_with_retry().
+Rate-limit hardening: FDIC's public API throttles aggressive callers with
+429s. All fetches go through the shared data.http.get_with_retry (previously
+this module kept a verbatim copy AND four raw requests.get call sites that
+bypassed it).
 
 API docs: https://banks.data.fdic.gov/api/
 """
 
-import random
-import time
-import requests
 import pandas as pd
 
+from data.http import get_with_retry as _get_with_retry
+
 SOD_URL = "https://banks.data.fdic.gov/api/sod"
-
-
-def _get_with_retry(url: str, params: dict, timeout: int = 20,
-                    max_attempts: int = 3) -> requests.Response | None:
-    """GET with exponential backoff on 429s and transient connection errors."""
-    for attempt in range(max_attempts):
-        try:
-            resp = requests.get(url, params=params, timeout=timeout)
-            if resp.status_code == 429:
-                wait = float(resp.headers.get("Retry-After", 0)) or (
-                    (2 ** attempt) + random.uniform(0, 1)
-                )
-                time.sleep(min(wait, 30))
-                continue
-            resp.raise_for_status()
-            return resp
-        except requests.HTTPError:
-            raise
-        except (requests.ConnectionError, requests.Timeout):
-            if attempt == max_attempts - 1:
-                raise
-            time.sleep((2 ** attempt) + random.uniform(0, 1))
-    return None
 
 BRANCH_FIELDS = [
     "CERT", "YEAR", "BRNUM", "NAMEBR", "NAMEFULL",
@@ -61,7 +37,7 @@ def get_latest_sod_year() -> int:
         "limit": 1,
     }
     try:
-        resp = requests.get(SOD_URL, params=params, timeout=15)
+        resp = _get_with_retry(SOD_URL, params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
         if data.get("data"):
@@ -127,7 +103,7 @@ def fetch_county_market_share(stcntybr: str, year: int | None = None) -> pd.Data
         "limit": 10000,
     }
     try:
-        resp = requests.get(SOD_URL, params=params, timeout=30)
+        resp = _get_with_retry(SOD_URL, params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -169,7 +145,7 @@ def fetch_msa_market_share(msabr: int, year: int | None = None) -> pd.DataFrame:
         "limit": 10000,
     }
     try:
-        resp = requests.get(SOD_URL, params=params, timeout=30)
+        resp = _get_with_retry(SOD_URL, params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -201,20 +177,22 @@ def search_bank_by_name(name: str) -> list[dict]:
     Returns list of {cert, name} dicts for matching banks.
     """
     params = {
-        "filters": f'NAMEFULL:"{name}*" AND YEAR:2025',
+        # Latest survey year derived, not hardcoded (same rot class as the
+        # frozen 2024 fallback this module used to have).
+        "filters": f'NAMEFULL:"{name}*" AND YEAR:{get_latest_sod_year()}',
         "fields": "CERT,NAMEFULL",
         "limit": 200,
     }
     try:
-        resp = requests.get(SOD_URL, params=params, timeout=15)
+        resp = _get_with_retry(SOD_URL, params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
     except Exception:
         # Fallback: try institutions endpoint
         try:
-            resp = requests.get(
+            resp = _get_with_retry(
                 "https://banks.data.fdic.gov/api/financials",
-                params={"filters": f'REPNM:"{name}*"', "fields": "CERT,REPNM", "limit": 50, "sort_by": "REPDTE", "sort_order": "DESC"},
+                {"filters": f'REPNM:"{name}*"', "fields": "CERT,REPNM", "limit": 50, "sort_by": "REPDTE", "sort_order": "DESC"},
                 timeout=15,
             )
             resp.raise_for_status()

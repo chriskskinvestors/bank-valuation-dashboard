@@ -223,8 +223,10 @@ def fetch_earnings_calendar(tickers: tuple) -> list[dict]:
                         "target_price": est.get("target_price"),
                         "recommendation": est.get("recommendation"),
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                # Otherwise the bank silently vanishes from the calendar.
+                print(f"[estimates] calendar entry failed for {ticker}: "
+                      f"{type(e).__name__}: {e}")
 
     calendar.sort(key=lambda x: x.get("next_earnings_date", "9999"))
     return calendar

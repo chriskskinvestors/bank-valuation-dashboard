@@ -25,7 +25,6 @@ import time
 from datetime import datetime, timedelta
 from typing import Iterable
 
-import requests
 import pandas as pd
 
 FMP_BASE = "https://financialmodelingprep.com/stable"
@@ -75,18 +74,15 @@ def _cache_put(key: str, value):
 # ──────────────────────────────────────────────────────────────────────────
 
 def _get(path: str, params: dict, timeout: int = 10) -> object | None:
-    """GET against FMP. Returns parsed JSON or None on failure."""
+    """GET against FMP via the shared retry policy. Returns parsed JSON or
+    None on failure (logged)."""
+    from data.http import get_with_retry
     if not _has_key():
         return None
     params = {**params, "apikey": _api_key()}
     try:
-        resp = requests.get(f"{FMP_BASE}/{path}", params=params, timeout=timeout)
-        if resp.status_code == 429:
-            # Sleep + retry once
-            time.sleep(2)
-            resp = requests.get(f"{FMP_BASE}/{path}", params=params, timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()
+        resp = get_with_retry(f"{FMP_BASE}/{path}", params=params, timeout=timeout)
+        return resp.json() if resp is not None else None
     except Exception as e:
         print(f"[FMP] {path} error: {type(e).__name__}: {e}")
         return None

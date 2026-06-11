@@ -5,7 +5,6 @@ Fetches structured financial data (XBRL) from SEC EDGAR for public companies.
 API docs: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
 """
 
-import requests
 import pandas as pd
 from config import SEC_USER_AGENT
 
@@ -79,14 +78,18 @@ def _slim_facts(facts: dict) -> dict:
 
 def _download_company_facts(cik: int) -> dict:
     """Raw SEC companyfacts download (no cache, full blob). Used by the cache
-    layer and the slim-vs-full verification harness."""
+    layer and the slim-vs-full verification harness.
+
+    Every SEC fundamental on the dashboard depends on this fetch, so it gets
+    the shared retry policy (it previously had ONE attempt while far less
+    critical fetches retried three times)."""
+    from data.http import get_with_retry
     url = SEC_COMPANY_FACTS_URL.format(cik=_pad_cik(cik))
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=20)
-        resp.raise_for_status()
-        return resp.json()
+        resp = get_with_retry(url, headers=HEADERS, timeout=20)
+        return resp.json() if resp is not None else {}
     except Exception as e:
-        print(f"[SEC] Error fetching CIK {cik}: {e}")
+        print(f"[SEC] companyfacts fetch failed for CIK {cik}: {type(e).__name__}: {e}")
         return {}
 
 
@@ -568,7 +571,10 @@ def _latest_end_date(facts: dict, concept: str) -> str | None:
                 if end and (latest is None or end > latest):
                     latest = end
         return latest
-    except Exception:
+    except Exception as e:
+        # A missing as-of means downstream staleness validation silently
+        # skips this bank — log so the gap is visible.
+        print(f"[SEC] _latest_end_date failed for {concept}: {type(e).__name__}: {e}")
         return None
 
 
@@ -801,23 +807,19 @@ def get_filing_info(cik: int, max_filings: int = 50) -> dict:
       form, date, report_date, description, items, accession,
       url (direct link), index_url, is_earnings, size
     """
-    import time as _t
     padded = _pad_cik(cik)
     url = SEC_SUBMISSIONS_URL.format(cik=padded)
-    # Retry transient SEC failures (429 rate-limit, timeouts) so the Filings page
-    # doesn't show "Failed to load" on a single hiccup.
+    # Shared retry (429 / timeouts) so the Filings page doesn't show
+    # "Failed to load" on a single hiccup. The old inline loop here swallowed
+    # ALL exceptions bare — including code bugs.
+    from data.http import get_with_retry
     data = None
-    for attempt in range(3):
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=15)
-            if resp.status_code == 429:
-                _t.sleep(float(resp.headers.get("Retry-After", 2)) + attempt)
-                continue
-            resp.raise_for_status()
+    try:
+        resp = get_with_retry(url, headers=HEADERS, timeout=15)
+        if resp is not None:
             data = resp.json()
-            break
-        except Exception:
-            _t.sleep(1.0 + attempt)
+    except Exception as e:
+        print(f"[SEC] submissions fetch failed for CIK {cik}: {type(e).__name__}: {e}")
     if data is None:
         return {}
 
