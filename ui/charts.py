@@ -84,15 +84,14 @@ def metrics_trend_chart(
     title: str = "Key Metrics Over Time",
 ) -> go.Figure:
     """Plot FDIC metrics over time (quarterly)."""
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
     if fdic_df.empty:
         fig = go.Figure()
-        fig.update_layout(title=title, **CHART_LAYOUT)
+        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT, show_legend=False)
         return fig
 
     fig = go.Figure()
-
-    colors = ["#64b5f6", "#00c853", "#ffd600", "#ff1744", "#ce93d8", "#4dd0e1"]
-
     for i, key in enumerate(metric_keys):
         m = METRICS_BY_KEY.get(key)
         if not m:
@@ -104,25 +103,15 @@ def metrics_trend_chart(
                 y=fdic_df[field],
                 mode="lines+markers",
                 name=m["label"],
-                line=dict(color=colors[i % len(colors)], width=2),
+                line=dict(color=CATEGORICAL_PALETTE[i % len(CATEGORICAL_PALETTE)], width=2),
                 marker=dict(size=5),
             ))
 
-    fig.update_layout(
-        title=title,
-        xaxis_title=None,
-        yaxis_title="%",
-        legend=dict(orientation="h", y=-0.25, font=dict(size=10)),
-        showlegend=len(fig.data) > 1,  # single-metric charts don't need a legend
-        height=240,
-        **CHART_LAYOUT,
-    )
-    # Tighten the y-axis to the data (not 0-based) so small moves read clearly.
-    allv = [v for tr in fig.data for v in tr.y if v is not None and v == v]
-    if allv:
-        lo, hi = min(allv), max(allv)
-        pad = (hi - lo) * 0.14 or max(abs(hi) * 0.05, 0.05)
-        fig.update_yaxes(range=[lo - pad, hi + pad])
+    # Single-metric charts don't need a legend.
+    apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                          yaxis_title="%", show_legend=len(fig.data) > 1,
+                          hovermode="x unified")
+    tighten_yaxis(fig)  # zoom to data so small moves read clearly
     return fig
 
 
@@ -188,10 +177,10 @@ def balance_sheet_chart(fdic_df: pd.DataFrame) -> go.Figure:
                 x=d["REPDTE"], y=d[field] / 1e6, mode="lines+markers", name=label,
                 line=dict(color=color, width=2.5), marker=dict(size=4),
                 hovertemplate="%{x|%b %Y}<br>$%{y:.2f}B<extra></extra>"))
-    apply_standard_layout(fig, title="Balance Sheet Trend ($B)", height=320,
+    from utils.chart_style import CHART_HEIGHT_FULL
+    apply_standard_layout(fig, title="Balance Sheet Trend ($B)", height=CHART_HEIGHT_FULL,
                           hovermode="x unified")
     fig.update_yaxes(tickprefix="$", ticksuffix="B")
-    fig.update_layout(legend=dict(orientation="h", y=-0.2))
     return fig
 
 
@@ -280,11 +269,11 @@ def cet1_trend_chart(fdic_df: pd.DataFrame) -> go.Figure:
         line=dict(color="#5e35b1", width=2.5), marker=dict(size=4), fill="tozeroy",
         fillcolor="rgba(94,53,177,0.06)",
         hovertemplate="%{x|%b %Y}<br>%{y:.2f}%<extra></extra>"))
-    apply_standard_layout(fig, title="CET1 Ratio (%)", height=300, show_legend=False,
-                          hovermode="x")
-    ys = d["IDT1CER"].dropna()
-    if not ys.empty:
-        fig.update_yaxes(range=[max(0, ys.min() - 1.5), ys.max() + 1.0], ticksuffix="%")
+    from utils.chart_style import tighten_yaxis, CHART_HEIGHT_FULL
+    apply_standard_layout(fig, title="CET1 Ratio (%)", height=CHART_HEIGHT_FULL,
+                          show_legend=False, hovermode="x")
+    # Anchored low (fills to zero) but zoom in so quarter-to-quarter moves show.
+    tighten_yaxis(fig, d["IDT1CER"].dropna().tolist(), floor_zero=True, ticksuffix="%")
     return fig
 
 
@@ -307,15 +296,10 @@ def growth_trend_chart(fdic_df: pd.DataFrame) -> go.Figure:
                 line=dict(color=color, width=2), marker=dict(size=4),
                 hovertemplate="%{x|%b %Y}<br>%{y:+.1f}% YoY<extra></extra>"))
     fig.add_hline(y=0, line_color="#cbd5e1", line_width=1)
-    apply_standard_layout(fig, title="YoY Growth (%)", height=240, hovermode="x unified")
-    fig.update_yaxes(ticksuffix="%")
-    fig.update_layout(legend=dict(orientation="h", y=-0.25, font=dict(size=10)))
-    allv = [v for tr in fig.data for v in (tr.y if tr.y is not None else [])
-            if v is not None and v == v]
-    if allv:
-        lo, hi = min(allv), max(allv)
-        pad = (hi - lo) * 0.12 or 1.0
-        fig.update_yaxes(range=[lo - pad, hi + pad])
+    from utils.chart_style import tighten_yaxis, CHART_HEIGHT_COMPACT
+    apply_standard_layout(fig, title="YoY Growth (%)", height=CHART_HEIGHT_COMPACT,
+                          hovermode="x unified")
+    tighten_yaxis(fig, ticksuffix="%")
     return fig
 
 
@@ -334,10 +318,8 @@ def loans_deposits_chart(fdic_df: pd.DataFrame) -> go.Figure:
         line=dict(color="#00897b", width=2.5), marker=dict(size=4), fill="tozeroy",
         fillcolor="rgba(0,137,123,0.06)",
         hovertemplate="%{x|%b %Y}<br>%{y:.1f}%<extra></extra>"))
-    apply_standard_layout(fig, title="Loans / Deposits (%)", height=240, show_legend=False,
-                          hovermode="x")
-    ys = ld.dropna()
-    if not ys.empty:
-        pad = (ys.max() - ys.min()) * 0.14 or 2
-        fig.update_yaxes(range=[ys.min() - pad, ys.max() + pad], ticksuffix="%")
+    from utils.chart_style import tighten_yaxis, CHART_HEIGHT_COMPACT
+    apply_standard_layout(fig, title="Loans / Deposits (%)", height=CHART_HEIGHT_COMPACT,
+                          show_legend=False, hovermode="x")
+    tighten_yaxis(fig, ld.dropna().tolist(), ticksuffix="%")
     return fig

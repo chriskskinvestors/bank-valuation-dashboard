@@ -297,7 +297,8 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
                 show_legend=False, hovermode="x",
                 wide_left_margin=True,
             )
-            fig2.update_yaxes(tickprefix="$")
+            from utils.chart_style import tighten_yaxis
+            tighten_yaxis(fig2, timeline["tbv_per_share"].dropna().tolist(), tickprefix="$")
             with cc1:
                 st.plotly_chart(fig2, use_container_width=True)
 

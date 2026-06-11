@@ -116,6 +116,36 @@ def apply_standard_layout(fig, title: str = None, height: int = CHART_HEIGHT_FUL
     return fig
 
 
+def tighten_yaxis(fig, values=None, *, pad_frac: float = 0.14, floor_zero: bool = False,
+                  min_pad: float = 0.05, ticksuffix: str = None, tickprefix: str = None):
+    """Zoom the y-axis to the data range so small moves read clearly.
+
+    The single standard for trend legibility — replaces the ad-hoc range math
+    that was duplicated across chart functions. If ``values`` is omitted the
+    range is taken from every trace's y data on the figure.
+
+    pad_frac   fraction of the data span added above and below as breathing room.
+    floor_zero clamp the lower bound at 0 (for ratios that shouldn't go negative).
+    min_pad    minimum padding when the span is ~flat, so a flat line isn't a
+               hairline against the axis.
+    """
+    if values is None:
+        values = [v for tr in fig.data for v in (tr.y if tr.y is not None else [])]
+    finite = [float(v) for v in values if v is not None and v == v]
+    if not finite:
+        return fig
+    lo, hi = min(finite), max(finite)
+    pad = (hi - lo) * pad_frac or max(abs(hi) * 0.05, min_pad)
+    low = max(0.0, lo - pad) if floor_zero else lo - pad
+    upd = dict(range=[low, hi + pad])
+    if ticksuffix is not None:
+        upd["ticksuffix"] = ticksuffix
+    if tickprefix is not None:
+        upd["tickprefix"] = tickprefix
+    fig.update_yaxes(**upd)
+    return fig
+
+
 # Alert row styles — light theme with semantic color accents
 ALERT_STYLE = {
     "high": (

@@ -221,7 +221,8 @@ def render_deposit_dynamics(ticker: str):
     # ── Charts ─────────────────────────────────────────────────────────
     try:
         import plotly.graph_objects as go
-        from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT
+        from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                       CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
 
         # Chart 1: Cost of Deposits vs Fed Funds (main)
         fig1 = go.Figure()
@@ -241,7 +242,7 @@ def render_deposit_dynamics(ticker: str):
             fig1, title="Cost of Deposits vs Fed Funds",
             height=CHART_HEIGHT_FULL, yaxis_title="Rate",
         )
-        fig1.update_yaxes(ticksuffix="%")
+        tighten_yaxis(fig1, floor_zero=True, ticksuffix="%")
         st.plotly_chart(fig1, use_container_width=True)
 
         # Charts 2 & 3 side-by-side for density
@@ -271,7 +272,7 @@ def render_deposit_dynamics(ticker: str):
                 fig2, title="Deposit Composition",
                 height=CHART_HEIGHT_COMPACT, yaxis_title="% of Total Deposits",
             )
-            fig2.update_yaxes(ticksuffix="%")
+            tighten_yaxis(fig2, floor_zero=True, ticksuffix="%")
             with cc1:
                 st.plotly_chart(fig2, use_container_width=True)
 

@@ -225,10 +225,11 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
                     line=dict(color=color, width=width),
                     marker=dict(size=5 if width < 3 else 7),
                 ))
-        from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT
+        from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                       CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
         apply_standard_layout(fig1, title="NPL by Loan Segment", height=CHART_HEIGHT_FULL,
                               yaxis_title="NPL %", show_legend=True)
-        fig1.update_yaxes(ticksuffix="%")
+        tighten_yaxis(fig1, floor_zero=True, ticksuffix="%")
         st.plotly_chart(fig1, use_container_width=True)
 
         # Charts 2 & 3 side-by-side (NCO + Past Due) for density
@@ -265,7 +266,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
             ))
         apply_standard_layout(fig3, title="Past Due Migration", height=CHART_HEIGHT_COMPACT,
                               yaxis_title="% of Loans", show_legend=True)
-        fig3.update_yaxes(ticksuffix="%")
+        tighten_yaxis(fig3, floor_zero=True, ticksuffix="%")
         with cc2:
             st.plotly_chart(fig3, use_container_width=True)
 
@@ -284,7 +285,11 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
                             annotation_text=f"Peer median {peer_median:.0f}%", annotation_position="top right")
         apply_standard_layout(fig4, title="Reserve Coverage vs NPL", height=CHART_HEIGHT_COMPACT,
                               yaxis_title="Reserve / NPL", show_legend=False, hovermode="x")
-        fig4.update_yaxes(ticksuffix="%")
+        # Keep the 100% floor (and peer median) line in frame while zooming to data.
+        _rc_vals = [v for v in timeline["reserve_coverage"].tolist() if v is not None] + [100]
+        if peer_median:
+            _rc_vals.append(peer_median)
+        tighten_yaxis(fig4, _rc_vals, floor_zero=True, ticksuffix="%")
         st.plotly_chart(fig4, use_container_width=True)
 
     except ImportError:
