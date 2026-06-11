@@ -448,6 +448,7 @@ _PERFORMANCE = [
         ("Yield: total loans", "yield", "ILNDOM", "LNLSGR"),
         ("Yield: investment securities", "yield", "ISC", "SC"),
         ("Yield: interest-earning assets", "pct", "INTINCY"),
+        ("Cost: interest-bearing deposits", "yield", "EDEP", "DEPIDOM"),
         ("Cost: total deposits", "yield", "EDEP", "DEP"),
         ("Cost: funding (earning-asset basis)", "pct", "INTEXPY"),
     ]),

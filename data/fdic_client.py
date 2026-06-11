@@ -153,6 +153,8 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
         "INTINCY", "NONIIAY", "NONIXAY", "ROAPTX",
         # Normalization inputs: realized securities gains/losses + extraordinary.
         "IGLSEC", "EXTRA",
+        # Interest-bearing deposit balance (for cost of IB deposits).
+        "DEPIDOM",
     }
     all_fields = sorted(base_fields | fields_needed)
 

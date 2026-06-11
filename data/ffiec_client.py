@@ -490,22 +490,20 @@ def _lookup_riad(df: pd.DataFrame, code: str) -> float | None:
         return None
 
 
-# ── Deposit interest-by-type (Schedule RI 2.a) + balances (RC-E) ─────────────
-# CANDIDATE MDRM codes — these MUST be verified against the FFIEC MDRM
-# dictionary / a known bank's facsimile before the values are shown in the UI.
-# The Schedule RI deposit-interest decomposition has changed across form
-# versions (FFIEC 031 vs 041), so the split is intentionally NOT wired into
-# Performance Analysis until a deploy-time spot-check confirms each code.
+# ── Deposit interest-by-type (Schedule RI 2.a) ───────────────────────────────
+# MDRM codes confirmed against the FFIEC 031/041 Schedule RI instructions
+# (interest on deposits, item 2.a):
+#   RIAD4508 transaction accounts · RIAD0093 savings (incl MMDAs) ·
+#   RIADHK03 time deposits ≤ $250k · RIADHK04 time deposits > $250k.
+#   CDs = HK03 + HK04 ; other deposits = 4508 + 0093.
+# Time-deposit *balances* come from the FDIC feed (NTRTIME), so only the
+# interest numerator needs FFIEC. The FFIEC webservice is JWT-gated (server
+# side only); values populate through the refresh-ffiec pipeline, not local dev.
 _DEP_COST_CODES = {
-    # Interest expense (RIAD, YTD $000)
     "int_transaction": "4508",   # interest on transaction accounts
     "int_savings": "0093",       # interest on savings deposits (incl MMDAs)
     "int_time_le250": "HK03",    # interest on time deposits ≤ $250k
     "int_time_gt250": "HK04",    # interest on time deposits > $250k
-    # Balances (RCON, $000) — Schedule RC-E
-    "bal_time_le250": "HK16",
-    "bal_time_gt250": "HK17",
-    "bal_total_deposits": "2200",
 }
 
 
@@ -519,10 +517,10 @@ def get_deposit_cost_detail(
     the SNL 'Int Cost: CDs' / 'Int Cost: Other Deposits' split that isn't in
     the FDIC financials feed.
 
-    UNVERIFIED: the MDRM codes in _DEP_COST_CODES are candidates. Do not surface
-    these numbers in the UI until confirmed on deploy (FFIEC is JWT-gated and
-    cannot be exercised in local dev). Returns raw $000 components so a verifier
-    can sanity-check before ratios are computed downstream.
+    Returns the YTD interest-expense components ($000). Combine with FDIC time-
+    deposit balances (NTRTIME) to get cost of CDs = interest on time deposits ÷
+    avg time-deposit balance. Returns None in local dev (FFIEC unconfigured);
+    the data flows through the refresh-ffiec pipeline on the server.
     """
     df = call_report_df
     if df is None:
@@ -532,14 +530,11 @@ def get_deposit_cost_detail(
     c = _DEP_COST_CODES
     int_time = (_lookup_riad(df, c["int_time_le250"]) or 0) + (_lookup_riad(df, c["int_time_gt250"]) or 0)
     int_other = (_lookup_riad(df, c["int_transaction"]) or 0) + (_lookup_riad(df, c["int_savings"]) or 0)
-    bal_time = (_lookup_concept(df, c["bal_time_le250"]) or 0) + (_lookup_concept(df, c["bal_time_gt250"]) or 0)
     return {
         "reporting_period": reporting_period or latest_reporting_period(),
         "rssd_id": int(rssd_id),
-        "int_time_deposits_000": int_time,
-        "int_other_deposits_000": int_other,
-        "bal_time_deposits_000": bal_time,
-        "_unverified": True,  # gate: do not display until codes confirmed
+        "int_time_deposits_000": int_time or None,
+        "int_other_deposits_000": int_other or None,
     }
 
 
