@@ -60,9 +60,12 @@ SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis"
 # Two-level company navigation: top-level section → sub-tabs (Capital-IQ style).
 COMPANY_NAV = {
     "Overview": ["Corporate Profile"],
-    "Financials": ["Highlights", "Price & Trends", "All Metrics", "Credit Quality",
-                   "Capital", "Interest Rate Risk", "Data Quality"],
-    "Valuation": ["Valuation Model", "Peer Rank"],
+    "Financials": ["Financial Highlights", "Income Statement", "Balance Sheet",
+                   "Performance Analysis", "Capital Adequacy", "Asset Quality Detail",
+                   "Asset Quality by Loan Type", "Deposit/Loan Composition",
+                   "Interest Rate Risk", "Fair Value Analysis", "Portfolio Analysis",
+                   "Capital Structure Details"],
+    "Valuation": ["Valuation Model", "Peer Rank", "Price & Trends"],
     "Estimates / Earnings": ["Earnings"],
     "News & Filings": ["Filings", "Activity"],
     "Market Analysis": ["Deposit Trends", "Market Share & Branches"],
@@ -105,10 +108,10 @@ elif section == "🏦 Company Analysis":
         # Deep-link ?tab=<token> pre-selects the sub-tab. The sub-tab radio
         # itself renders in the MAIN content area (top of the page), so we only
         # pre-set its session_state value here; the widget reads it there.
-        _TAB_TOKENS = {"financials": "Highlights", "valuation": "Valuation Model",
-                       "dataquality": "Data Quality", "filings": "Filings",
-                       "peer": "Peer Rank", "ownership": "Institutional (13F)",
-                       "earnings": "Earnings", "deposits": "Deposit Trends"}
+        _TAB_TOKENS = {"financials": "Financial Highlights", "valuation": "Valuation Model",
+                       "filings": "Filings", "peer": "Peer Rank",
+                       "ownership": "Institutional (13F)", "earnings": "Earnings",
+                       "deposits": "Deposit Trends"}
         _goto = _TAB_TOKENS.get((_qp.get("tab") or "").lower())
         if _goto and _goto in COMPANY_SECTION_OF:
             _sec = COMPANY_SECTION_OF[_goto]
@@ -763,33 +766,41 @@ elif section == "🏦 Company Analysis":
         from ui.bank_detail import render_price_trends
         render_price_trends(company_ticker)
 
-    elif company_subtab == "All Metrics":
-        from ui.bank_detail import render_all_metrics_section
-        single_df = pd.DataFrame([load_single_bank_metrics_cached(company_ticker)])
-        render_all_metrics_section(company_ticker, single_df)
-
-    elif company_subtab == "Data Quality":
-        from ui.data_quality import render_data_quality
-        render_data_quality(company_ticker)
-
     # ── Financials section ──────────────────────────────────────────
-    elif company_subtab == "Highlights":
+    elif company_subtab == "Financial Highlights":
         from ui.financial_highlights import render_financial_highlights
         render_financial_highlights(company_ticker)
         with st.expander("Trend charts", expanded=False):
             render_historicals(company_ticker)
 
-    elif company_subtab == "Credit Quality":
+    elif company_subtab == "Capital Adequacy":
+        from ui.capital_dynamics import render_capital_dynamics
+        render_capital_dynamics(company_ticker, watchlist)
+
+    elif company_subtab == "Asset Quality Detail":
         from ui.credit_dynamics import render_credit_dynamics
         render_credit_dynamics(company_ticker, watchlist)
 
-    elif company_subtab == "Capital":
-        from ui.capital_dynamics import render_capital_dynamics
-        render_capital_dynamics(company_ticker, watchlist)
+    elif company_subtab == "Asset Quality by Loan Type":
+        from ui.credit_dynamics import render_credit_dynamics
+        render_credit_dynamics(company_ticker, watchlist)
+
+    elif company_subtab == "Deposit/Loan Composition":
+        render_deposits_for_ticker(company_ticker)
 
     elif company_subtab == "Interest Rate Risk":
         from ui.rate_sensitivity import render_rate_sensitivity
         render_rate_sensitivity(company_ticker)
+
+    elif company_subtab in ("Income Statement", "Balance Sheet", "Performance Analysis",
+                            "Fair Value Analysis", "Portfolio Analysis",
+                            "Capital Structure Details"):
+        name = get_name(company_ticker)
+        st.subheader(f"{name} ({company_ticker}) — {company_subtab}")
+        st.info(
+            f"This **{company_subtab}** statement is being built as an SNL-style "
+            "multi-period table (fiscal years / quarters across columns), every number "
+            "click-to-source from the FDIC Call Report and SEC filings. Shipping next.")
 
     # ── Valuation section ───────────────────────────────────────────
     elif company_subtab == "Valuation Model":
