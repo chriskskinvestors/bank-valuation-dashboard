@@ -143,6 +143,10 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     base_fields = {
         "CERT", "REPNM", "REPDTE", "ASSET", "DEP", "LNLSNET", "NETINC",
         "EQTOT", "INTANGW", "ERNAST", "INTEXPY", "INTINCY", "NIMY",
+        # Income-statement + balance-sheet detail for the SNL-style statement tabs.
+        "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR", "ITAX", "PTAXNETINC",
+        "SC", "LNLSGR", "CHBAL", "DEPNIDOM", "LIAB", "ROA", "ROE", "EEFFR",
+        "NCLNLSR", "NTLNLSR", "LNATRESR", "IDT1CER", "RBCRWAJ", "RBCT1JR", "INTAN",
     }
     all_fields = sorted(base_fields | fields_needed)
 

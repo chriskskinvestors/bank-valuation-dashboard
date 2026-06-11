@@ -62,13 +62,13 @@ COMPANY_NAV = {
     "Overview": ["Corporate Profile"],
     "Financials": ["Financial Highlights", "Income Statement", "Balance Sheet",
                    "Performance Analysis", "Capital Adequacy", "Asset Quality Detail",
-                   "Asset Quality by Loan Type", "Deposit/Loan Composition",
+                   "Asset Quality by Loan Type", "Deposit/Loan Composition", "Deposit Trends",
                    "Interest Rate Risk", "Fair Value Analysis", "Portfolio Analysis",
                    "Capital Structure Details"],
     "Valuation": ["Valuation Model", "Peer Rank", "Price & Trends"],
     "Estimates / Earnings": ["Earnings"],
     "News & Filings": ["Filings", "Activity"],
-    "Market Analysis": ["Deposit Trends", "Market Share & Branches"],
+    "Market Analysis": ["Market Share & Branches"],
     "Ownership": ["Institutional (13F)", "Insider Activity"],
 }
 # Flat list of every leaf sub-tab (for deep-link validation, etc.).
@@ -801,15 +801,29 @@ elif section == "🏦 Company Analysis":
         from ui.rate_sensitivity import render_rate_sensitivity
         render_rate_sensitivity(company_ticker)
 
-    elif company_subtab in ("Income Statement", "Balance Sheet", "Performance Analysis",
-                            "Fair Value Analysis", "Portfolio Analysis",
-                            "Capital Structure Details"):
-        name = get_name(company_ticker)
-        st.subheader(f"{name} ({company_ticker}) — {company_subtab}")
-        st.info(
-            f"This **{company_subtab}** statement is being built as an SNL-style "
-            "multi-period table (fiscal years / quarters across columns), every number "
-            "click-to-source from the FDIC Call Report and SEC filings. Shipping next.")
+    elif company_subtab == "Income Statement":
+        from ui.financials_statements import render_income_statement
+        render_income_statement(company_ticker)
+
+    elif company_subtab == "Balance Sheet":
+        from ui.financials_statements import render_balance_sheet
+        render_balance_sheet(company_ticker)
+
+    elif company_subtab == "Performance Analysis":
+        from ui.financials_statements import render_performance_analysis
+        render_performance_analysis(company_ticker)
+
+    elif company_subtab == "Fair Value Analysis":
+        from ui.financials_statements import render_fair_value
+        render_fair_value(company_ticker)
+
+    elif company_subtab == "Portfolio Analysis":
+        from ui.financials_statements import render_portfolio
+        render_portfolio(company_ticker)
+
+    elif company_subtab == "Capital Structure Details":
+        from ui.financials_statements import render_capital_structure
+        render_capital_structure(company_ticker)
 
     # ── Valuation section ───────────────────────────────────────────
     elif company_subtab == "Valuation Model":
