@@ -181,8 +181,6 @@ def render_rate_sensitivity(ticker: str):
 
     _render_rate_context(ff, t3m, t5, curve_5y_3m)
 
-    st.markdown("---")
-
     # ── Beta selector (shared across tabs) ─────────────────────────────
     bc1, bc2 = st.columns([2, 3])
     with bc1:
@@ -190,7 +188,7 @@ def render_rate_sensitivity(ticker: str):
             "Deposit beta model",
             ["Historical (measured)", "Textbook (50%)", "Custom"],
             key=f"beta_mode_{ticker}",
-            horizontal=False,
+            horizontal=True,
         )
     custom_beta = None
     with bc2:
@@ -217,8 +215,6 @@ def render_rate_sensitivity(ticker: str):
         else "textbook" if beta_mode.startswith("Textbook")
         else "custom"
     )
-
-    st.markdown("---")
 
     # ── Tabs ────────────────────────────────────────────────────────────
     tab_phased, tab_named, tab_matrix, tab_parallel, tab_backtest = st.tabs([
@@ -531,7 +527,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
 
     # Per-bank floating-loan-share slider — biggest single lever for the
     # accuracy of Yr1 numbers.
-    col1, col2, col3 = st.columns([1, 1, 2])
+    col1, col2, col3, col4 = st.columns([1, 1.3, 1.6, 1.1])
     with col1:
         horizon = st.selectbox(
             "Horizon", [1, 2, 3, 4, 5], index=2,
@@ -556,12 +552,10 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
             help="In rate-up scenarios, NIB customers migrate to IB accounts, "
                   "raising effective funding cost. ~4pp of NIB shifts per +100bps.",
         )
-
-    # Volume effects toggle — projects earning assets forward each year
-    # using the bank's historical YoY growth, optionally damped by the rate
-    # scenario (higher rates → lower loan demand).
-    vol_col1, vol_col2 = st.columns([1, 3])
-    with vol_col1:
+    with col4:
+        # Projects earning assets forward each year using the bank's historical
+        # YoY growth, optionally damped by the rate scenario (higher rates →
+        # lower loan demand).
         apply_volume = st.checkbox(
             "Apply volume effects",
             value=False,
@@ -570,17 +564,16 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
                   "damped by rate scenarios (loans -2pp / +100bps, deposits "
                   "-1pp / +100bps). Off = balance sheet held flat across horizon.",
         )
-    with vol_col2:
-        if apply_volume:
-            from analysis.rate_sensitivity import compute_historical_growth_rates
-            ghist = compute_historical_growth_rates(hist) or {}
-            ea_g = ghist.get("earning_assets_growth", 0.05) * 100
-            st.caption(
-                f"📈 Historical YoY: loans **{ghist.get('loans_growth', 0)*100:+.1f}%** · "
-                f"deposits **{ghist.get('deposits_growth', 0)*100:+.1f}%** · "
-                f"earning assets **{ea_g:+.1f}%** · "
-                f"securities **{ghist.get('securities_growth', 0)*100:+.1f}%**"
-            )
+    if apply_volume:
+        from analysis.rate_sensitivity import compute_historical_growth_rates
+        ghist = compute_historical_growth_rates(hist) or {}
+        ea_g = ghist.get("earning_assets_growth", 0.05) * 100
+        st.caption(
+            f"📈 Historical YoY: loans **{ghist.get('loans_growth', 0)*100:+.1f}%** · "
+            f"deposits **{ghist.get('deposits_growth', 0)*100:+.1f}%** · "
+            f"earning assets **{ea_g:+.1f}%** · "
+            f"securities **{ghist.get('securities_growth', 0)*100:+.1f}%**"
+        )
 
     # ── ⚙️ My Assumptions: per-bank subcategory betas + asset durations ───
     # Lets the analyst inject their own deposit stickiness + asset-repricing
@@ -629,10 +622,11 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
             fig_pace = px.line(
                 pace_df, x="year", y="cumulative_repriced_pct",
                 markers=True,
-                title=f"Earning-asset repricing pace ({floating_share*100:.0f}% floating loans)",
                 labels={"year": "Year", "cumulative_repriced_pct": "Cumulative % repriced"},
             )
-            apply_standard_layout(fig_pace, height=CHART_HEIGHT_COMPACT)
+            apply_standard_layout(
+                fig_pace, height=CHART_HEIGHT_COMPACT,
+                title=f"Earning-asset repricing pace ({floating_share*100:.0f}% floating loans)")
             fig_pace.update_yaxes(ticksuffix="%", range=[0, 100])
             st.plotly_chart(fig_pace, use_container_width=True)
         with ch_right:
@@ -648,10 +642,10 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
             ])
             fig_ladder = px.bar(
                 ladder_df, x="bucket", y="pct_of_securities",
-                title="Securities maturity ladder (FFIEC RC-B)",
                 labels={"bucket": "", "pct_of_securities": "% of total debt securities"},
             )
-            apply_standard_layout(fig_ladder, height=CHART_HEIGHT_COMPACT)
+            apply_standard_layout(fig_ladder, height=CHART_HEIGHT_COMPACT,
+                                  title="Securities maturity ladder (FFIEC RC-B)")
             fig_ladder.update_yaxes(ticksuffix="%")
             st.plotly_chart(fig_ladder, use_container_width=True)
     else:
@@ -662,10 +656,11 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
         fig_pace = px.line(
             pace_df, x="year", y="cumulative_repriced_pct",
             markers=True,
-            title=f"Earning-asset repricing pace ({floating_share*100:.0f}% floating loans) — generic",
             labels={"year": "Year", "cumulative_repriced_pct": "Cumulative % repriced"},
         )
-        apply_standard_layout(fig_pace, height=CHART_HEIGHT_COMPACT)
+        apply_standard_layout(
+            fig_pace, height=CHART_HEIGHT_COMPACT,
+            title=f"Earning-asset repricing pace ({floating_share*100:.0f}% floating loans) — generic")
         fig_pace.update_yaxes(ticksuffix="%", range=[0, 100])
         st.plotly_chart(fig_pace, use_container_width=True)
 
