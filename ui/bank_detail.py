@@ -75,14 +75,17 @@ def _kv_table(title, pairs):
         return ""
     body = "".join(
         f'<tr style="border-bottom:1px solid rgba(148,163,184,0.10);">'
-        f'<td style="padding:3px 2px;color:#64748b;font-size:0.8rem;white-space:nowrap;">{l}</td>'
-        f'<td style="padding:3px 2px;text-align:right;font-weight:600;color:#0f172a;'
-        f'font-size:0.82rem;">{v}</td></tr>'
+        f'<td style="padding:2px 24px 2px 2px;color:#64748b;font-size:0.78rem;'
+        f'white-space:nowrap;">{l}</td>'
+        f'<td style="padding:2px 2px;text-align:right;font-weight:600;color:#0f172a;'
+        f'font-size:0.8rem;white-space:nowrap;">{v}</td></tr>'
         for l, v in rows)
+    # width:auto so the table hugs its content instead of stretching across the
+    # column and flinging the value to the far edge (the big label↔value gap).
     return (
-        f'<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
-        f'color:#1e3a8a;font-weight:700;margin:0 0 3px;">{title}</div>'
-        f'<table style="width:100%;border-collapse:collapse;">{body}</table>')
+        f'<div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:.04em;'
+        f'color:#1e3a8a;font-weight:700;margin:0 0 2px;">{title}</div>'
+        f'<table style="width:auto;max-width:100%;border-collapse:collapse;">{body}</table>')
 
 
 def _render_valuation_performance_tables(row, fdic_rec=None):

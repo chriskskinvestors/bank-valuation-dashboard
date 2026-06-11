@@ -73,27 +73,39 @@ CUSTOM_CSS = """
         -moz-osx-font-smoothing: grayscale;
     }
 
-    /* Main container — slightly tighter */
+    /* Slightly smaller base so the whole dashboard shows more per screen. */
+    html { font-size: 15px; }
+
+    /* Main container — dense: more usable width, tight top padding. */
     .main > div.block-container,
     .block-container {
-        padding-top: 0.9rem !important;
-        padding-bottom: 2rem !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
+        padding-top: 0.6rem !important;
+        padding-bottom: 1.25rem !important;
+        padding-left: 1.25rem !important;
+        padding-right: 1.25rem !important;
         max-width: 100%;
     }
 
-    /* Typography */
+    /* Compress vertical rhythm so you scroll far less. */
+    [data-testid="stVerticalBlock"] { gap: 0.45rem !important; }
+    [data-testid="stElementContainer"] { margin-bottom: 0 !important; }
+    [data-testid="stHorizontalBlock"] { gap: 0.6rem !important; }
+    .stMarkdown p { margin-bottom: 0.35rem; }
+    hr { margin: 0.5rem 0 !important; }
+
+    /* Typography — tighter headings */
     h1, h2, h3, h4, h5, h6 {
         color: var(--text-primary);
         font-weight: 600;
         letter-spacing: -0.011em;
         font-family: 'Inter', system-ui, sans-serif;
+        margin-top: 0.2rem !important;
+        margin-bottom: 0.3rem !important;
     }
-    h1 { font-size: 1.75rem; letter-spacing: -0.022em; }
-    h2 { font-size: 1.375rem; letter-spacing: -0.02em; }
-    h3 { font-size: 1.125rem; }
-    h4 { font-size: 1rem; }
+    h1 { font-size: 1.5rem; letter-spacing: -0.022em; }
+    h2 { font-size: 1.2rem; letter-spacing: -0.02em; }
+    h3 { font-size: 1.02rem; }
+    h4 { font-size: 0.92rem; }
 
     .stMarkdown p {
         color: var(--text-secondary);
