@@ -311,12 +311,21 @@ def load_prices(tickers: list, max_wait: float = 3.0) -> dict:
 load_ibkr_prices = load_prices
 
 
-def load_all_data(tickers: list[str]) -> tuple[list[dict], pd.DataFrame]:
-    fdic, hist = load_fdic_data(tuple(tickers))
-    sec = load_sec_data(tuple(tickers))
-    prices = load_prices(tickers)
-    metrics = build_all_bank_metrics(tickers, fdic, sec, prices, hist)
+@st.cache_data(ttl=900, show_spinner=False)
+def _load_all_data_cached(tickers: tuple) -> tuple[list[dict], pd.DataFrame]:
+    """Cached core — caches the price fetch + metric computation for the whole
+    watchlist (the prior version re-fetched 62 banks' prices and recomputed every
+    metric on every page load, ~15-20s). Keyed on the ticker tuple so it's a hit
+    across reruns. 15-min TTL keeps the Home aggregates reasonably fresh."""
+    fdic, hist = load_fdic_data(tickers)
+    sec = load_sec_data(tickers)
+    prices = load_prices(list(tickers))
+    metrics = build_all_bank_metrics(list(tickers), fdic, sec, prices, hist)
     return metrics, pd.DataFrame(metrics)
+
+
+def load_all_data(tickers: list[str]) -> tuple[list[dict], pd.DataFrame]:
+    return _load_all_data_cached(tuple(tickers))
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
