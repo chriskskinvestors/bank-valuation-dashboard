@@ -19,19 +19,11 @@ from data.consensus import list_consensus, load_consensus
 from utils.formatting import fmt_dollars
 
 
+# Shared loader (data/loaders); this tab keeps its lower history threshold
+# (renders with >=4 cached quarters), now EXPLICIT instead of a silent fork.
 def _load_hist(ticker: str) -> list[dict]:
-    hist = cache_get(f"fdic_hist:{ticker}")
-    if hist and len(hist) >= 4:
-        return hist
-    cert = get_fdic_cert(ticker)
-    if not cert:
-        return hist or []
-    df = fdic_client.fetch_financials(cert, limit=20)
-    if df.empty:
-        return hist or []
-    records = df.to_dict("records")
-    cache_put(f"fdic_hist:{ticker}", records)
-    return records
+    from data.loaders import load_fdic_hist
+    return load_fdic_hist(ticker, min_quarters=4)
 
 
 def _load_sec(ticker: str) -> dict:

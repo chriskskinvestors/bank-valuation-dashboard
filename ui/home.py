@@ -886,37 +886,9 @@ _NEWS_SOURCES = ["sec_8k", "businesswire", "prnewswire", "globenewswire",
                  "ir_site", "google_news"]
 
 
-import re as _re
-
-# Headlines that mention a bank but aren't ABOUT it — third-party SEO/aggregator
-# spam, structured-note issuance, and non-material branch trivia. These slip past
-# name-matching because the bank's name appears in someone else's story.
-_JUNK_RE = _re.compile(
-    r"\b(issues?\s+(optimistic|pessimistic|bullish|bearish)\s+forecast|"
-    r"price\s+target|forecast\s+for|target\s+price|"
-    r"shares?\s+(sold|bought|purchased|acquired)\s+by|"
-    r"(funding|investment)\s+from|to\s+(buy|sell)\s+\$?\d|"
-    r"office\s+leader|branch\s+manager|relationship\s+manager|"
-    r"new\s+\w+\s+(branch|location|office)|"
-    r"contingent[-\s]?interest\s+notes|callable\s+\w*\s*notes|auto[-\s]?callable|"
-    r"buffered\s+notes|structured\s+notes|market[-\s]?linked|leveraged\s+notes|"
-    r"digital\s+notes|trigger\s+\w*\s*notes)\b",
-    _re.I,
-)
-# A foreign ticker tag like (NYSE:CHWY) — if it's NOT this bank's ticker, the
-# story is about another company.
-_PAREN_TICKER_RE = _re.compile(
-    r"\((?:NYSE|NASDAQ|NYSEAMERICAN|NYSEARCA|AMEX|OTC|CBOE)[:\s]+([A-Z.]{1,6})\)", _re.I)
-
-
-def _is_junk_news(headline: str, ticker: str | None) -> bool:
-    h = headline or ""
-    if _JUNK_RE.search(h):
-        return True
-    for other in _PAREN_TICKER_RE.findall(h):
-        if other.upper() != (ticker or "").upper():
-            return True
-    return False
+# Junk filtering is unified in data/events/wire_base.is_junk_news — the same
+# filter the adapters apply at ingest (it previously lived split between there
+# and here, with drifting regexes).
 
 
 def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
@@ -929,7 +901,7 @@ def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
     except Exception:
         return []
 
-    from data.events.wire_base import is_safe_news_url
+    from data.events.wire_base import is_safe_news_url, is_junk_news
     rows = [r for r in rows if is_safe_news_url(r.get("url"))]  # drop spam/social links
 
     wl = set(watchlist)
@@ -948,7 +920,7 @@ def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
         key = (tk, head[:60])
         if not head or key in seen:
             continue
-        if _is_junk_news(head, tk):
+        if is_junk_news(head, tk):
             continue  # third-party mentions, structured notes, branch-hire trivia
         seen.add(key)
         et = r.get("event_type") or "news"

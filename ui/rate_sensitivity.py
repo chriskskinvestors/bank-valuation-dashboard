@@ -25,19 +25,8 @@ from utils.formatting import fmt_dollars
 from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT
 
 
-def _load_hist(ticker: str) -> list[dict]:
-    hist = cache_get(f"fdic_hist:{ticker}")
-    if hist and len(hist) >= 8:
-        return hist
-    cert = get_fdic_cert(ticker)
-    if not cert:
-        return hist or []
-    df = fdic_client.fetch_financials(cert, limit=20)
-    if df.empty:
-        return hist or []
-    records = df.to_dict("records")
-    cache_put(f"fdic_hist:{ticker}", records)
-    return records
+# Shared loader (data/loaders) — was a verbatim copy in five tab modules.
+from data.loaders import load_fdic_hist as _load_hist
 
 
 def _nim_color(delta_bps: float | None) -> str:

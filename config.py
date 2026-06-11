@@ -2,8 +2,10 @@
 Central configuration for the Bank Valuation Dashboard.
 
 TO ADD A NEW METRIC: append a dict to the METRICS list below.
-TO REMOVE A METRIC:  delete or comment out its dict entry.
-No other code changes needed.
+  • source "fdic" / "sec" / "ibkr": no other code changes needed.
+  • source "computed": ALSO add the computation in analysis/valuation.py
+    (compute_all_valuations) — the registry entry alone won't produce values.
+TO REMOVE A METRIC: delete or comment out its dict entry.
 """
 
 import os
@@ -70,7 +72,8 @@ DEFAULT_PORTFOLIO = []  # User populates via sidebar
 #   source       – "fdic" | "sec" | "ibkr" | "computed"
 #   fdic_field   – (if source=fdic) FDIC API field name
 #   sec_concept  – (if source=sec) XBRL concept name
-#   format       – "pct" | "currency" | "ratio" | "number" | "millions" | "billions"
+#   format       – "pct" | "currency" | "ratio" | "number" | "millions" |
+#                  "billions" | "dollars_auto" (auto T/B/M/K) | "flag" (⚠️/blank)
 #   decimals     – decimal places (default 2)
 #   color_rule   – "higher_better" | "lower_better" | None
 #   thresholds   – {"good": val, "warn": val} for color-coding
@@ -82,7 +85,6 @@ METRICS = [
     {
         "key": "price", "label": "Price", "source": "ibkr",
         "format": "currency", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Market",
     },
     {
@@ -94,13 +96,11 @@ METRICS = [
     {
         "key": "volume", "label": "Volume", "source": "ibkr",
         "format": "number", "decimals": 0,
-        "color_rule": None, "thresholds": {},
         "category": "Market",
     },
     {
         "key": "market_cap", "label": "Mkt Cap ($B)", "source": "computed",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Market",
     },
 
@@ -120,7 +120,6 @@ METRICS = [
     {
         "key": "tbvps", "label": "TBV/Sh", "source": "sec", "sec_concept": "tangible_book_value_per_share",
         "format": "currency", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Valuation",
     },
     {
@@ -165,13 +164,11 @@ METRICS = [
     {
         "key": "fair_ptbv", "label": "Fair P/TBV", "source": "computed",
         "format": "ratio", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Fair Value",
     },
     {
         "key": "fair_price", "label": "Fair Price", "source": "computed",
         "format": "currency", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Fair Value",
     },
     {
@@ -247,7 +244,6 @@ METRICS = [
     {
         "key": "allowance_loans", "label": "ALL/Loans", "source": "fdic", "fdic_field": "ELNANTR",
         "format": "pct", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Credit Quality",
     },
 
@@ -279,67 +275,56 @@ METRICS = [
     {
         "key": "total_assets", "label": "Total Assets ($B)", "source": "fdic", "fdic_field": "ASSET",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "total_loans", "label": "Loans ($B)", "source": "fdic", "fdic_field": "LNLSNET",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "total_loans_gross", "label": "Loans Gross ($B)", "source": "fdic", "fdic_field": "LNLSGR",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "securities", "label": "Securities ($B)", "source": "fdic", "fdic_field": "SC",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "cash_balances", "label": "Cash ($B)", "source": "fdic", "fdic_field": "CHBAL",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "fed_funds_sold", "label": "Fed Funds ($M)", "source": "fdic", "fdic_field": "FREPO",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "total_liab", "label": "Liabilities ($B)", "source": "fdic", "fdic_field": "LIAB",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "total_equity", "label": "Equity ($B)", "source": "fdic", "fdic_field": "EQTOT",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "intangibles", "label": "Intangibles ($M)", "source": "fdic", "fdic_field": "INTAN",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "ore", "label": "OREO ($M)", "source": "fdic", "fdic_field": "ORE",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
     {
         "key": "trading_assets", "label": "Trading ($M)", "source": "fdic", "fdic_field": "TRADE",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Balance Sheet",
     },
 
@@ -347,79 +332,66 @@ METRICS = [
     {
         "key": "ln_re_total", "label": "RE Loans ($B)", "source": "fdic", "fdic_field": "LNRE",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_re_residential", "label": "1-4 Fam RE ($B)", "source": "fdic", "fdic_field": "LNRERES",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_re_nres_oo", "label": "CRE Ownr Occ ($B)", "source": "fdic", "fdic_field": "LNRENROW",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_re_nres_noo", "label": "CRE Non-OO ($B)", "source": "fdic", "fdic_field": "LNRENROT",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_re_nres", "label": "CRE Total ($B)", "source": "fdic", "fdic_field": "LNRENRES",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_re_multifam", "label": "Multifamily ($B)", "source": "fdic", "fdic_field": "LNREMULT",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_re_construct", "label": "Construction ($B)", "source": "fdic", "fdic_field": "LNRECONS",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_re_ag", "label": "Ag RE ($M)", "source": "fdic", "fdic_field": "LNREAG",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_ci", "label": "C&I ($B)", "source": "fdic", "fdic_field": "LNCI",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_consumer", "label": "Consumer ($M)", "source": "fdic", "fdic_field": "LNCON",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_auto", "label": "Auto ($M)", "source": "fdic", "fdic_field": "LNAUTO",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_credit_card", "label": "Credit Card ($M)", "source": "fdic", "fdic_field": "LNCRCD",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
     {
         "key": "ln_ag", "label": "Ag Prod ($M)", "source": "fdic", "fdic_field": "LNAG",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Mix",
     },
 
@@ -427,43 +399,36 @@ METRICS = [
     {
         "key": "ln_re_pct", "label": "RE %", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Concentration",
     },
     {
         "key": "ln_cre_pct", "label": "CRE %", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Concentration",
     },
     {
         "key": "ln_resi_pct", "label": "1-4 Fam %", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Concentration",
     },
     {
         "key": "ln_multifam_pct", "label": "Multifam %", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Concentration",
     },
     {
         "key": "ln_construct_pct", "label": "Construct %", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Concentration",
     },
     {
         "key": "ln_ci_pct", "label": "C&I %", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Concentration",
     },
     {
         "key": "ln_consumer_pct", "label": "Consumer %", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Loan Concentration",
     },
     {
@@ -477,67 +442,56 @@ METRICS = [
     {
         "key": "total_deposits", "label": "Deposits ($B)", "source": "fdic", "fdic_field": "DEP",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "core_deposits", "label": "Core Dep ($B)", "source": "fdic", "fdic_field": "COREDEP",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "insured_deposits", "label": "Insured ($B)", "source": "fdic", "fdic_field": "DEPINS",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "uninsured_deposits", "label": "Uninsured ($B)", "source": "fdic", "fdic_field": "DEPUNINS",
         "format": "billions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "brokered_deposits", "label": "Brokered ($B)", "source": "fdic", "fdic_field": "BRO",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "demand_deposits", "label": "Demand ($B)", "source": "fdic", "fdic_field": "DDT",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "mmda_savings", "label": "MMDA/Savings ($B)", "source": "fdic", "fdic_field": "NTRSMMDA",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "large_time_dep", "label": "Large Time ($B)", "source": "fdic", "fdic_field": "DEPLGAMT",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "dep_lt_250k", "label": "Dep < $250K ($B)", "source": "fdic", "fdic_field": "DEPSMAMT",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "int_bearing_dep", "label": "Int-Bear Dep ($B)", "source": "fdic", "fdic_field": "DEPIDOM",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
     {
         "key": "nonint_dep", "label": "Non-Int Dep ($B)", "source": "fdic", "fdic_field": "DEPNIDOM",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Deposits",
     },
 
@@ -627,7 +581,6 @@ METRICS = [
     {
         "key": "payout_ratio_ttm", "label": "Payout % (TTM)", "source": "computed",
         "format": "pct", "decimals": 0,
-        "color_rule": None, "thresholds": {},
         "category": "Capital Return",
     },
     {
@@ -651,13 +604,11 @@ METRICS = [
     {
         "key": "dividends_ttm", "label": "Divs TTM", "source": "computed",
         "format": "dollars_auto", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Capital Return",
     },
     {
         "key": "buybacks_ttm", "label": "Buybacks TTM", "source": "computed",
         "format": "dollars_auto", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Capital Return",
     },
 
@@ -735,43 +686,36 @@ METRICS = [
     {
         "key": "sec_afs", "label": "AFS ($B)", "source": "fdic", "fdic_field": "SCAF",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
         "key": "sec_htm", "label": "HTM ($B)", "source": "fdic", "fdic_field": "SCHA",
         "format": "billions", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
         "key": "sec_ust", "label": "UST ($M)", "source": "fdic", "fdic_field": "SCUST",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
         "key": "sec_agency", "label": "Agency ($M)", "source": "fdic", "fdic_field": "SCAGE",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
         "key": "sec_uso", "label": "USG Oblig ($M)", "source": "fdic", "fdic_field": "SCUSO",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
         "key": "sec_muni", "label": "Muni ($M)", "source": "fdic", "fdic_field": "SCMUNI",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
         "key": "sec_abs", "label": "ABS ($M)", "source": "fdic", "fdic_field": "SCABS",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
@@ -783,19 +727,16 @@ METRICS = [
     {
         "key": "sec_htm_unreal", "label": "HTM Unreal ($M)", "source": "fdic", "fdic_field": "SCSNHAA",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
         "key": "sec_to_assets_pct", "label": "Sec/Assets %", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
     {
         "key": "htm_pct", "label": "HTM % of Sec", "source": "computed",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Securities",
     },
 
@@ -803,19 +744,16 @@ METRICS = [
     {
         "key": "loans_to_deposits", "label": "Loans/Dep", "source": "fdic", "fdic_field": "LNLSDEPR",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Composition",
     },
     {
         "key": "loans_to_assets", "label": "Loans/Assets", "source": "fdic", "fdic_field": "LNLSNTV",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Composition",
     },
     {
         "key": "deposits_to_assets", "label": "Dep/Assets", "source": "fdic", "fdic_field": "DEPDASTR",
         "format": "pct", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Composition",
     },
     {
@@ -883,13 +821,11 @@ METRICS = [
     {
         "key": "past_due_30_89", "label": "PD 30-89 ($M)", "source": "fdic", "fdic_field": "P3ASSET",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Credit Detail",
     },
     {
         "key": "past_due_90", "label": "PD 90+ ($M)", "source": "fdic", "fdic_field": "P9ASSET",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Credit Detail",
     },
     {
@@ -901,7 +837,6 @@ METRICS = [
     {
         "key": "reserve_to_loans", "label": "Rsv/Loans %", "source": "fdic", "fdic_field": "LNATRESR",
         "format": "pct", "decimals": 2,
-        "color_rule": None, "thresholds": {},
         "category": "Credit Detail",
     },
     {
@@ -921,55 +856,46 @@ METRICS = [
     {
         "key": "net_income", "label": "Net Inc ($M)", "source": "fdic", "fdic_field": "NETINC",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
         "key": "int_income", "label": "Int Inc ($M)", "source": "fdic", "fdic_field": "INTINC",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
         "key": "int_expense", "label": "Int Exp ($M)", "source": "fdic", "fdic_field": "EINTEXP",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
         "key": "net_interest_income", "label": "NII ($M)", "source": "fdic", "fdic_field": "NIM",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
         "key": "nonint_income", "label": "Non-Int Inc ($M)", "source": "fdic", "fdic_field": "NONII",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
         "key": "nonint_expense", "label": "Non-Int Exp ($M)", "source": "fdic", "fdic_field": "NONIX",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
         "key": "provision", "label": "Provision ($M)", "source": "fdic", "fdic_field": "ELNATR",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
         "key": "pretax_income", "label": "Pretax Inc ($M)", "source": "fdic", "fdic_field": "PTAXNETINC",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
         "key": "taxes", "label": "Taxes ($M)", "source": "fdic", "fdic_field": "ITAX",
         "format": "millions", "decimals": 1,
-        "color_rule": None, "thresholds": {},
         "category": "Income",
     },
     {
@@ -1005,7 +931,6 @@ METRICS = [
     {
         "key": "employees", "label": "Employees", "source": "fdic", "fdic_field": "NUMEMP",
         "format": "number", "decimals": 0,
-        "color_rule": None, "thresholds": {},
         "category": "Operational",
     },
     {
@@ -1017,7 +942,6 @@ METRICS = [
     {
         "key": "branches", "label": "Branches", "source": "fdic", "fdic_field": "OFFDOM",
         "format": "number", "decimals": 0,
-        "color_rule": None, "thresholds": {},
         "category": "Operational",
     },
 
@@ -1053,6 +977,13 @@ METRICS = [
         "category": "NIM Metrics",
     },
 ]
+
+# Defaults for optional metric fields — replaces 79 repeated
+# '"color_rule": None, "thresholds": {}' boilerplate lines in the registry.
+for _m in METRICS:
+    _m.setdefault("color_rule", None)
+    _m.setdefault("thresholds", {})
+del _m
 
 # Build lookup helpers
 METRICS_BY_KEY = {m["key"]: m for m in METRICS}

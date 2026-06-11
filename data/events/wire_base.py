@@ -410,6 +410,43 @@ def is_routine_noise(headline: str) -> bool:
     return bool(_NOISE_RE.search(headline or ""))
 
 
+# Headlines that mention a bank but aren't ABOUT it — third-party SEO/
+# aggregator spam (broker forecasts, shares-sold-by articles), funding stories
+# about someone else, and non-material branch/staffing trivia. These slip past
+# name-matching because the bank's name appears in another company's story.
+# (Structured-note issuance is covered by _NOISE_RE above.)
+_THIRD_PARTY_RE = re.compile(
+    r"\b(issues?\s+(optimistic|pessimistic|bullish|bearish)\s+forecast|"
+    r"price\s+target|forecast\s+for|target\s+price|"
+    r"shares?\s+(sold|bought|purchased|acquired)\s+by|"
+    r"(funding|investment)\s+from|to\s+(buy|sell)\s+\$?\d|"
+    r"office\s+leader|branch\s+manager|relationship\s+manager|"
+    r"new\s+\w+\s+(branch|location|office))\b",
+    re.IGNORECASE,
+)
+# A parenthetical exchange tag like (NYSE:CHWY) — if it's NOT this bank's
+# ticker, the story is about another company.
+_PAREN_TICKER_RE = re.compile(
+    r"\((?:NYSE|NASDAQ|NYSEAMERICAN|NYSEARCA|AMEX|OTC|CBOE)[:\s]+([A-Z.]{1,6})\)",
+    re.IGNORECASE,
+)
+
+
+def is_junk_news(headline: str, ticker: str | None = None) -> bool:
+    """ONE junk filter for ingest AND display: third-party mentions, routine
+    structured-note issuance, and (when ``ticker`` is given) headlines tagged
+    with a different company's exchange ticker. This logic previously lived
+    split between here and ui/home.py, where the two regexes drifted."""
+    h = headline or ""
+    if _THIRD_PARTY_RE.search(h) or is_routine_noise(h):
+        return True
+    if ticker:
+        for other in _PAREN_TICKER_RE.findall(h):
+            if other.upper() != ticker.upper():
+                return True
+    return False
+
+
 def is_safe_news_url(url: str) -> bool:
     """False for URLs that can't be a real press release / filing — messaging,
     social, shorteners. A real release links to a wire, an IR site, EDGAR, or a
