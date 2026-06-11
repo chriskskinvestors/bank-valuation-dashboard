@@ -22,6 +22,7 @@ SOURCE_LABELS = {
     "globenewswire": "GlobeNewswire",
     "yfinance_news": "Yahoo News",
     "ir_site": "IR Site",
+    "google_news": "Google News",
 }
 
 EVENT_TYPE_LABELS = {

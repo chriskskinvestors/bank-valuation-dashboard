@@ -284,7 +284,8 @@ _NEWS_TYPES = {
 # only for banks the wires don't cover (the wires are cleaner; see below), so
 # we don't double-list the same press release.
 _WIRE_SOURCES = {"businesswire", "prnewswire", "globenewswire"}
-_NEWS_SOURCES = ["sec_8k", "businesswire", "prnewswire", "globenewswire", "ir_site"]
+_NEWS_SOURCES = ["sec_8k", "businesswire", "prnewswire", "globenewswire",
+                 "ir_site", "google_news"]
 
 
 def _collect_news_alerts(watchlist: list[str]) -> list[dict]:

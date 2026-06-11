@@ -36,6 +36,7 @@ def main() -> int:
     from data.events.globenewswire import GlobeNewswireAdapter
     from data.events.yfinance_news import YFinanceNewsAdapter
     from data.events.ir_site import IRSiteAdapter
+    from data.events.google_news import GoogleNewsAdapter
 
     init_schema()
 
@@ -52,7 +53,7 @@ def main() -> int:
         PRNewswireAdapter(),
         GlobeNewswireAdapter(),
     ]
-    narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
+    narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter(), GoogleNewsAdapter()]
     adapters = broad_adapters + narrow_adapters
 
     print(f"▶ Polling — broad: {len(broad_adapters)} sources × {len(universe)} tickers, "
