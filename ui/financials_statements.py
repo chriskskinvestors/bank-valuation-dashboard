@@ -65,7 +65,12 @@ def _disp(repdte):
         return str(repdte)
 
 
-def render_statement(ticker: str, key_prefix: str, title: str, spec: list):
+_DEFAULT_TRENDS = [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
+                   ("efficiency_ratio", "Efficiency Ratio"), ("cet1_ratio", "CET1 Ratio")]
+
+
+def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
+                     trends: list | None = None):
     info = get_bank_info(ticker)
     name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
@@ -166,21 +171,62 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list):
     sec_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K"
                 if cik else fdic_link)
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
-    components.html(html, height=height, scrolling=False)
+
+    # Table on the left; fill the empty space to its right with trend charts
+    # built from the same FDIC history.
+    tr = _DEFAULT_TRENDS if trends is None else trends
+    _tbl_col, _chart_col = st.columns([2, 1])
+    with _tbl_col:
+        components.html(html, height=height, scrolling=False)
+    with _chart_col:
+        _render_statement_trends(hist, ticker, key_prefix, tr)
     st.caption(f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load.")
+
+
+def _render_statement_trends(hist, ticker, key_prefix, trends):
+    if not trends:
+        return
+    try:
+        from ui.charts import metrics_trend_chart
+    except Exception:
+        return
+    h = hist.sort_values("REPDTE").tail(20)
+    st.markdown('<div style="font-size:0.7rem; text-transform:uppercase; '
+                'letter-spacing:0.04em; color:#64748b; font-weight:700; '
+                'margin:2px 0 2px;">Trends</div>', unsafe_allow_html=True)
+    for key, label in trends:
+        try:
+            st.plotly_chart(metrics_trend_chart(h, [key], label),
+                            use_container_width=True,
+                            key=f"{key_prefix}_tr_{ticker}_{key}")
+        except Exception:
+            pass
 
 
 # ── Statement specs ─────────────────────────────────────────────────────────
 _INCOME = [
-    ("Net Interest Income", [
+    ("Interest Income", [
+        ("Interest & fees on loans", "dollar", "ILNDOM"),
+        ("Income on investment securities", "dollar", "ISC"),
         ("Total interest income", "dollar", "INTINC"),
-        ("Total interest expense", "dollar", "EINTEXP"),
-        ("Net interest income", "diff", "INTINC", "EINTEXP"),
     ]),
-    ("Provision & Non-Interest", [
+    ("Interest Expense", [
+        ("Interest on deposits", "dollar", "EDEP"),
+        ("Total interest expense", "dollar", "EINTEXP"),
+    ]),
+    ("Net Interest Income", [
+        ("Net interest income", "diff", "INTINC", "EINTEXP"),
         ("Provision for credit losses", "dollar", "ELNATR"),
-        ("Non-interest income", "dollar", "NONII"),
-        ("Non-interest expense", "dollar", "NONIX"),
+    ]),
+    ("Non-Interest Income", [
+        ("Total non-interest income", "dollar", "NONII"),
+    ]),
+    ("Non-Interest Expense", [
+        ("Salaries & employee benefits", "dollar", "ESAL"),
+        ("Premises & equipment", "dollar", "EPREMAGG"),
+        ("Amortization of intangibles", "dollar", "EAMINTAN"),
+        ("Other non-interest expense", "dollar", "EOTHNINT"),
+        ("Total non-interest expense", "dollar", "NONIX"),
     ]),
     ("Pre-Tax & Net Income", [
         ("Pre-tax net income", "dollar", "PTAXNETINC"),

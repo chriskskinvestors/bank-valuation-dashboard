@@ -147,6 +147,10 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
         "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR", "ITAX", "PTAXNETINC",
         "SC", "LNLSGR", "CHBAL", "DEPNIDOM", "LIAB", "ROA", "ROE", "EEFFR",
         "NCLNLSR", "NTLNLSR", "LNATRESR", "IDT1CER", "RBCRWAJ", "RBCT1JR", "INTAN",
+        # Granular income-statement line items (verified present via FDIC probe).
+        "ILNDOM", "ISC", "EDEP", "ESAL", "EPREMAGG", "EAMINTAN", "EOTHNINT",
+        # Performance-analysis yields / costs.
+        "INTINCY", "NONIIAY", "NONIXAY", "ROAPTX",
     }
     all_fields = sorted(base_fields | fields_needed)
 

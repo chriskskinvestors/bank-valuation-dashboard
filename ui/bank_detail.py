@@ -85,14 +85,24 @@ def _kv_table(title, pairs):
         f'<table style="width:100%;border-collapse:collapse;">{body}</table>')
 
 
-def _render_valuation_performance_tables(row):
+def _render_valuation_performance_tables(row, fdic_rec=None):
     """Valuation + Performance as two side-by-side reference tables, matching the
-    Market Data / Company Profile format above (consistent, dense)."""
+    Market Data / Company Profile format above (consistent, dense).
+
+    Performance ratios read from a live FDIC record (passed in) rather than the
+    batch metrics row — the batch build can silently drop FDIC fields on a
+    transient API failure, which left this column blank."""
+    fdic_rec = fdic_rec or {}
+
     def disp(key):
         m = METRICS_BY_KEY.get(key, {})
         v = row.get(key)
         return (format_value(v, m.get("format", "number"), m.get("decimals", 2))
                 if v is not None and not pd.isna(v) else None)
+
+    def _fd_pct(field):
+        v = _num(fdic_rec.get(field))
+        return f"{v:.2f}%" if v is not None else None
 
     chg = _num(row.get("change_pct"))
     chg_html = None
@@ -110,13 +120,29 @@ def _render_valuation_performance_tables(row):
         ("TBV / Share", disp("tbvps")),
         ("Dividend Yield", disp("dividend_yield")),
     ]
+
+    # ROATCE: prefer the engine's blended figure; fall back to an annualized
+    # figure computed straight from the live FDIC record.
+    roatce_v = disp("roatce_blended")
+    if roatce_v is None and fdic_rec:
+        ni = _num(fdic_rec.get("NETINC")); eq = _num(fdic_rec.get("EQTOT"))
+        intan = _num(fdic_rec.get("INTAN")) or 0
+        mo = 12
+        try:
+            mo = pd.to_datetime(fdic_rec.get("REPDTE")).month or 12
+        except Exception:
+            pass
+        tce = (eq - intan) if eq is not None else None
+        if ni is not None and tce and tce > 0:
+            roatce_v = f"{ni * (12.0 / mo) / tce * 100:.2f}%"
+
     performance = [
-        ("ROATCE", disp("roatce_blended")),
-        ("ROAA", disp("roaa")),
-        ("Net Interest Margin", disp("nim")),
-        ("Efficiency Ratio", disp("efficiency_ratio")),
-        ("CET1 Ratio", disp("cet1_ratio")),
-        ("NPL Ratio", disp("npl_ratio")),
+        ("ROATCE", roatce_v),
+        ("ROAA", _fd_pct("ROA")),
+        ("Net Interest Margin", _fd_pct("NIMY")),
+        ("Efficiency Ratio", _fd_pct("EEFFR")),
+        ("CET1 Ratio", _fd_pct("IDT1CER")),
+        ("NPL Ratio", _fd_pct("NCLNLSR")),
     ]
     c_val, c_perf = st.columns(2)
     with c_val:
@@ -263,7 +289,7 @@ def _render_latest_activity(ticker, info):
             st.caption("No recent filings.")
 
 
-def _render_snapshot(ticker, info, name, row):
+def _render_snapshot(ticker, info, name, row, fdic_rec=None):
     """Capital-IQ-style snapshot: identity line, quick links, and a two-column
     Market Data / Company Profile block built from the data we already pull."""
     cik = info.get("cik") if info else None
@@ -281,12 +307,13 @@ def _render_snapshot(ticker, info, name, row):
         quote = get_quote(ticker) or {}
     except Exception:
         quote = {}
-    fdic_rec = {}
-    if cert:
-        try:
-            fdic_rec = fdic_client.get_latest_financials(cert) or {}
-        except Exception:
-            fdic_rec = {}
+    if fdic_rec is None:
+        fdic_rec = {}
+        if cert:
+            try:
+                fdic_rec = fdic_client.get_latest_financials(cert) or {}
+            except Exception:
+                fdic_rec = {}
     fund = {}
     if cik:
         try:
@@ -523,10 +550,20 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
         st.info("No metrics available for this bank yet.")
         return
     row = bank_row.iloc[0]
+    # Fetch the latest FDIC record once and share it — the snapshot's Company
+    # Profile and the Performance table both read from it (live, not the batch
+    # metrics row which can drop FDIC fields on a transient API failure).
+    cert = info.get("fdic_cert") if info else None
+    fdic_rec = {}
+    if cert:
+        try:
+            fdic_rec = fdic_client.get_latest_financials(cert) or {}
+        except Exception:
+            fdic_rec = {}
     # Capital-IQ-style snapshot: identity, quick links, market + company profile.
-    _render_snapshot(ticker, info, name, row)
+    _render_snapshot(ticker, info, name, row, fdic_rec)
     st.markdown("---")
-    _render_valuation_performance_tables(row)
+    _render_valuation_performance_tables(row, fdic_rec)
     _render_overview_charts(ticker, info)
     st.markdown("---")
     _render_financial_highlights_table(ticker, info)
