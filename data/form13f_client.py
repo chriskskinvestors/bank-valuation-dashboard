@@ -197,9 +197,65 @@ def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str) -> list[
     return positions
 
 
+def filing_index_url(cik: str | int, accession: str) -> str:
+    """Human-readable EDGAR filing-index URL for a 13F-HR accession."""
+    acc_no_hyphens = str(accession).replace("-", "")
+    return (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+            f"{acc_no_hyphens}/{accession}-index.htm")
+
+
+def _filer_13f_history(cik: str | int) -> list[tuple[str, str]]:
+    """List a filer's 13F-HR accessions as (accession, filing_date), newest first."""
+    try:
+        url = f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json"
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        recent = r.json().get("filings", {}).get("recent", {})
+    except Exception:
+        return []
+    forms = recent.get("form", [])
+    accs = recent.get("accessionNumber", [])
+    dates = recent.get("filingDate", [])
+    out = [(accs[i], dates[i]) for i in range(len(forms))
+           if forms[i] in ("13F-HR", "13F-HR/A")]
+    # submissions API is already newest-first, but sort defensively by date
+    out.sort(key=lambda t: t[1], reverse=True)
+    return out
+
+
+def _prior_quarter_shares(cik: str, current_date: str, target_ticker: str):
+    """Shares this filer held of target_ticker in their 13F-HR filed *before*
+    current_date. Returns float shares, or None if no prior filing / not held."""
+    history = _filer_13f_history(cik)
+    prior_acc = next((acc for acc, dt in history if dt < (current_date or "")), None)
+    if not prior_acc:
+        return None
+    positions = _fetch_13f_info_table(cik, prior_acc, target_ticker)
+    if not positions:
+        return None
+    return sum(p.get("shares") or 0 for p in positions) or None
+
+
+def _classify_change(current_shares, prior_shares) -> dict:
+    """Position-change status vs prior quarter."""
+    if prior_shares is None:
+        return {"change_status": "New", "change_pct": None}
+    if prior_shares <= 0:
+        return {"change_status": "New", "change_pct": None}
+    delta = (current_shares - prior_shares) / prior_shares * 100
+    if abs(delta) < 0.5:
+        status = "Unchanged"
+    elif delta > 0:
+        status = "Added"
+    else:
+        status = "Trimmed"
+    return {"change_status": status, "change_pct": delta}
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def fetch_institutional_holdings(ticker: str, company_name: str = "",
-                                   max_filers: int = 25) -> list[dict]:
+                                   max_filers: int = 25,
+                                   with_changes: bool = True) -> list[dict]:
     """
     Find 13F filings holding this ticker's stock, return list of holders.
     """
@@ -267,6 +323,7 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
             "filer_name": c["filer_name"],
             "date_filed": c["date_filed"],
             "accession": c["accession"],
+            "filing_url": filing_index_url(filer_id, c["accession"]),
             "shares": total_shares,
             "value_usd": total_value_usd,
             "positions": positions,
@@ -274,6 +331,18 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
 
     # Sort by value desc
     all_holders.sort(key=lambda h: h.get("value_usd", 0), reverse=True)
+
+    # Quarter-over-quarter position change vs each filer's prior 13F-HR. Best
+    # effort and bounded to what we display (one extra EDGAR fetch per filer).
+    if with_changes:
+        for h in all_holders[:max_filers]:
+            try:
+                prior = _prior_quarter_shares(
+                    h["filer_cik"], h.get("date_filed", ""), search_term)
+            except Exception:
+                prior = None
+            h["prior_shares"] = prior
+            h.update(_classify_change(h["shares"], prior))
 
     try:
         save_json(FORM13F_CACHE_PREFIX, f"{ticker.upper()}.json", {

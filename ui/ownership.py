@@ -67,7 +67,29 @@ def render_ownership(ticker: str):
     ]
     render_traceable_cards(cards, key=f"ownership_{ticker}", columns=4)
 
-    # ── Holders table ──────────────────────────────────────────────────
+    # ── QoQ flow summary (added / trimmed / new vs prior quarter) ──────
+    n_added = sum(1 for h in holders if h.get("change_status") == "Added")
+    n_trim = sum(1 for h in holders if h.get("change_status") == "Trimmed")
+    n_new = sum(1 for h in holders if h.get("change_status") == "New")
+    if n_added or n_trim or n_new:
+        st.caption(
+            f"**Vs prior quarter:** 🟢 {n_added} added · 🔴 {n_trim} trimmed · "
+            f"🆕 {n_new} new positions · click any **Filing ↗** for the source 13F-HR."
+        )
+
+    # ── Holders table — each row links to its 13F-HR; change vs prior Q ──
+    def _chg(h):
+        status = h.get("change_status")
+        pct = h.get("change_pct")
+        if status == "New":
+            return "🆕 New"
+        if status == "Unchanged":
+            return "— Unch."
+        if pct is None:
+            return "—"
+        arrow = "▲" if pct > 0 else "▼"
+        return f"{arrow} {pct:+.0f}%"
+
     rows = []
     total_val = summary["total_value_usd"] or 1
     for h in holders:
@@ -75,19 +97,30 @@ def render_ownership(ticker: str):
         rows.append({
             "Rank": len(rows) + 1,
             "Institution": h["filer_name"],
+            "Δ QoQ": _chg(h),
             "Date Filed": h.get("date_filed") or "—",
             "Shares": f"{h['shares']:,.0f}",
             "Value": fmt_dollars(h["value_usd"], 2),
             "% of Inst": f"{pct_of_inst:.1f}%",
+            "Filing": h.get("filing_url") or None,
         })
 
     df = pd.DataFrame(rows)
     st.dataframe(
         df, use_container_width=True, hide_index=True,
-        height=min(700, 50 + 32 * len(df)),
+        height=min(640, 36 + 35 * len(df)),
+        column_config={
+            "Δ QoQ": st.column_config.TextColumn(
+                "Δ QoQ", help="Share change vs the filer's prior 13F-HR quarter",
+                width="small"),
+            "Filing": st.column_config.LinkColumn(
+                "Filing", help="Open the source 13F-HR on SEC EDGAR",
+                display_text="SEC ↗", width="small"),
+        },
     )
 
     st.caption(
-        "Note: 13F filings are only required for institutions managing >$100M. "
-        "They cover equity holdings only (not derivatives), filed 45 days after quarter-end."
+        "13F filings are required for institutions managing >$100M, cover equity holdings "
+        "only (not derivatives), and are filed 45 days after quarter-end. Δ QoQ compares each "
+        "filer's share count to their previous 13F-HR."
     )
