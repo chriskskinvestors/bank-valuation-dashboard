@@ -33,14 +33,24 @@ from data.events.base import Event, SourceAdapter
 from data.events.wire_base import classify_press_release
 
 
-# URL paths to try off of the IR home page (in order of preference)
+# URL paths to try off of the IR home page (in order of preference). Covers the
+# common IR-platform conventions (Q4, Issuer Direct, EQS, etc.) — e.g. Capital
+# Bank lists under /news-releases, which the original short list missed.
 _PRESS_PAGE_CANDIDATES = [
+    "/news-releases",
     "/news/press-releases",
     "/news/news-releases",
     "/press-releases",
+    "/investor-news",
+    "/news-events/press-releases",
+    "/news-and-events/news",
+    "/investors/news",
+    "/investor-relations/news",
     "/news",
     "/newsroom",
     "/press",
+    "/news-events",
+    "/news-and-events",
     "",  # IR home itself sometimes lists releases
 ]
 

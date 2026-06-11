@@ -88,7 +88,7 @@ def main() -> int:
     # Optional: LLM-summarize any events with empty summaries (most recent first).
     if os.environ.get("ANTHROPIC_API_KEY"):
         try:
-            n_summarized = _summarize_recent_events(limit=20)
+            n_summarized = _summarize_recent_events(limit=40)
             print(f"▶ Summarized {n_summarized} recent events via Claude")
         except Exception as e:
             print(f"  [summarizer] failed: {type(e).__name__}: {e}")
@@ -169,11 +169,12 @@ def _summarize_recent_events(limit: int = 20) -> int:
                 messages=[{
                     "role": "user",
                     "content": (
-                        f"You are summarizing a SEC 8-K filing for {r['ticker']}.\n"
-                        f"Headline: {r['headline']}\n\n"
-                        "In 2-3 sentences, summarize the substance for a bank analyst. "
-                        "Focus on dollar amounts, dates, and impact. Skip boilerplate.\n\n"
-                        f"FILING TEXT:\n{text_body}"
+                        f"You are summarizing a company news item / SEC filing for {r['ticker']}.\n"
+                        f"Source: {r['source']}. Headline: {r['headline']}\n\n"
+                        "In 1-2 tight sentences, summarize the substance for a bank "
+                        "analyst — dollar amounts, dates, people, and impact. Skip "
+                        "boilerplate, disclaimers, and forward-looking-statement language.\n\n"
+                        f"TEXT:\n{text_body}"
                     ),
                 }],
             )
