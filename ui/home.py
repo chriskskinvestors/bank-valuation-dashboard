@@ -12,6 +12,20 @@ from data.filing_summarizer import fetch_filing_text, find_press_release_url, su
 from data.bank_universe import get_universe_count_fast
 
 
+def _section_header(emoji: str, title: str, subtitle: str = ""):
+    """Consistent section divider so each block on the home page reads as its
+    own clearly-delineated section."""
+    sub = (f'<span style="font-size:0.78rem; color:#94a3b8; font-weight:500; '
+           f'margin-left:auto;">{subtitle}</span>') if subtitle else ""
+    st.markdown(
+        '<div style="display:flex; align-items:baseline; gap:9px; margin:22px 0 9px; '
+        'padding-bottom:6px; border-bottom:2px solid #e2e8f0;">'
+        f'<span style="font-size:1.0rem; font-weight:700; color:#0f172a; '
+        f'letter-spacing:-0.01em;">{emoji} {title}</span>{sub}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_home(all_metrics: list[dict], watchlist: list[str]):
     """Render the home/dashboard page."""
 
@@ -47,6 +61,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
         unsafe_allow_html=True,
     )
     st.markdown("")
+    _section_header("📈", "Markets & Rates", "Treasury curve · bank-sector ETFs · live")
 
     # ── Macro KPIs (full Treasury curve) — compact strip ────────────────
     try:
@@ -172,22 +187,22 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     except Exception:
         pass
 
-    st.markdown("")
-
     # ── WHAT MOVED IN MY BOOK ──────────────────────────────────────────
     if all_metrics:
         _render_watchlist_movers(all_metrics)
-        st.markdown("")
+
+    # ── TODAY'S CALENDAR ───────────────────────────────────────────────
+    _render_todays_calendar(watchlist)
+
+    # ── COVERAGE LEADERBOARD (best / worst each way) ───────────────────
+    if all_metrics:
+        _render_coverage_leaderboard(all_metrics)
 
     # ── ALERT INBOX ────────────────────────────────────────────────────
     _render_alert_inbox(all_metrics, watchlist)
 
-    st.markdown("")
-
     # ── SECTOR M&A / DEALS ─────────────────────────────────────────────
     _render_sector_ma(watchlist)
-
-    st.markdown("")
 
     # ── INDUSTRY VALUATIONS (sector context) ───────────────────────────
     if all_metrics:
@@ -224,12 +239,8 @@ def _render_watchlist_movers(all_metrics: list[dict]):
     losers = [r for r in rows if r[2] < 0]
     losers = sorted(losers, key=lambda r: r[2])[:8]
 
-    st.markdown(
-        '### 📊 Watchlist Movers '
-        f'<span style="font-size:0.8rem; font-weight:500; color:#64748b;">'
-        f'· {adv} up · {dec} down · {flat} flat</span>',
-        unsafe_allow_html=True,
-    )
+    _section_header("📊", "Watchlist Movers",
+                    f"prior session · {adv} up · {dec} down · {flat} flat")
 
     def _row(tk, price, chg):
         name = (get_name(tk) or "")[:24]
@@ -264,6 +275,106 @@ def _render_watchlist_movers(all_metrics: list[dict]):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Today's calendar
+# ══════════════════════════════════════════════════════════════════════
+
+def _render_todays_calendar(watchlist: list[str]):
+    """What's on the schedule — watchlist names reporting earnings, grouped by
+    urgency. (Macro releases / ex-div are the next add to this section.)"""
+    _section_header("🗓️", "Today's Calendar", "watchlist earnings — next 14 days")
+    alerts = _collect_earnings_alerts(watchlist)
+    if not alerts:
+        st.caption("No watchlist earnings in the next 14 days.")
+        return
+
+    buckets = [("Today", []), ("This week", []), ("Next week", [])]
+    for a in alerts:
+        d = a["days_until"]
+        if d == 0:
+            buckets[0][1].append(a)
+        elif d <= 7:
+            buckets[1][1].append(a)
+        else:
+            buckets[2][1].append(a)
+
+    def _chip(a):
+        tk = a["ticker"]; name = (get_name(tk) or "")[:22]
+        eps = a.get("eps_est")
+        est = f' <span style="color:#94a3b8; font-size:0.78rem;">est ${eps:.2f}</span>' if eps is not None else ""
+        return (
+            f'<a href="?bank={tk}" target="_self" style="display:flex; '
+            'align-items:baseline; justify-content:space-between; gap:8px; '
+            'padding:5px 11px; border-radius:7px; text-decoration:none; border:1px solid #eef2f7;">'
+            f'<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
+            f'<strong style="color:#0f172a;">{tk}</strong> '
+            f'<span style="color:#94a3b8; font-size:0.8rem;">{name}</span></span>'
+            f'<span style="white-space:nowrap; color:#475569; font-size:0.8rem;">{a["date"]}{est}</span></a>'
+        )
+
+    cols = st.columns(3)
+    for col, (label, items) in zip(cols, buckets):
+        with col:
+            accent = "#dc2626" if label == "Today" else "#475569"
+            st.markdown(
+                f'<div style="font-size:0.66rem; font-weight:700; letter-spacing:0.05em; '
+                f'color:{accent}; margin:0 0 5px;">{label.upper()} · {len(items)}</div>'
+                '<div style="display:flex; flex-direction:column; gap:4px;">'
+                + ("".join(_chip(a) for a in items) or
+                   '<div style="color:#cbd5e1; font-size:0.82rem; padding:5px 11px;">—</div>')
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Coverage leaderboard — ranked extremes
+# ══════════════════════════════════════════════════════════════════════
+
+def _render_coverage_leaderboard(all_metrics: list[dict]):
+    """Ranked extremes across coverage — the value-screen lists you scan each
+    morning: cheapest, highest-returning, best-yielding, widest discount."""
+    _section_header("🏅", "Coverage Leaderboard", "ranked extremes across your watchlist")
+    df = pd.DataFrame(all_metrics)
+
+    def _list(title, col, ascending, fmt, color="#0f172a"):
+        if col not in df.columns:
+            return f'<div style="font-size:0.66rem; font-weight:700; color:#94a3b8;">{title}</div>'
+        sub = df[["ticker", col]].copy()
+        sub[col] = pd.to_numeric(sub[col], errors="coerce")
+        sub = sub.dropna(subset=[col]).sort_values(col, ascending=ascending).head(6)
+        rows = ""
+        for _, r in sub.iterrows():
+            tk = r["ticker"]; name = (get_name(tk) or "")[:20]
+            rows += (
+                f'<a href="?bank={tk}" target="_self" style="display:flex; '
+                'align-items:baseline; justify-content:space-between; gap:8px; '
+                'padding:4px 11px; border-radius:6px; text-decoration:none; border:1px solid #eef2f7;">'
+                f'<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
+                f'<strong style="color:#0f172a;">{tk}</strong> '
+                f'<span style="color:#94a3b8; font-size:0.78rem;">{name}</span></span>'
+                f'<b style="color:{color}; white-space:nowrap; font-variant-numeric:tabular-nums;">'
+                f'{fmt(r[col])}</b></a>'
+            )
+        if not rows:
+            rows = '<div style="color:#cbd5e1; font-size:0.82rem; padding:4px 11px;">—</div>'
+        return (f'<div style="font-size:0.66rem; font-weight:700; letter-spacing:0.05em; '
+                f'color:#64748b; margin:0 0 5px;">{title}</div>'
+                '<div style="display:flex; flex-direction:column; gap:3px;">' + rows + '</div>')
+
+    lists = [
+        ("CHEAPEST · P/TBV", "ptbv_ratio", True, lambda v: f"{v:.2f}x", "#059669"),
+        ("WIDEST DISCOUNT TO FAIR", "ptbv_discount", False, lambda v: f"{v:+.0f}%", "#059669"),
+        ("HIGHEST ROATCE", "roatce_blended", False, lambda v: f"{v:.1f}%"),
+        ("HIGHEST DIVIDEND YIELD", "dividend_yield", False, lambda v: f"{v:.1f}%"),
+    ]
+    cols = st.columns(2)
+    for i, (title, col, asc, fmt, *c) in enumerate(lists):
+        with cols[i % 2]:
+            st.markdown(_list(title, col, asc, fmt, *(c or ["#0f172a"])), unsafe_allow_html=True)
+            st.markdown("")
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Sector M&A / deals
 # ══════════════════════════════════════════════════════════════════════
 
@@ -286,7 +397,7 @@ def _render_sector_ma(watchlist: list[str]):
     watchlist) — consolidation is the sector's biggest catalyst and deals at
     banks you don't own still move comps and signal where multiples are going."""
     import datetime as dt
-    st.markdown("### 🤝 Sector M&A & Deals")
+    _section_header("🤝", "Sector M&A & Deals", "universe-wide · deals move the comps")
     try:
         from data.events import get_universe_recent
         from data.events.wire_base import is_safe_news_url
@@ -362,7 +473,7 @@ def _render_industry_valuations(df: pd.DataFrame):
     """
     from analysis.peer_groups import asset_size_tier
 
-    st.markdown("### 🏦 Industry Valuations")
+    _section_header("🏦", "Industry Valuations", "median multiples by asset-size tier")
 
     if "total_assets" not in df.columns:
         df = df.copy()
@@ -488,7 +599,7 @@ def _render_alert_inbox(all_metrics: list[dict], watchlist: list[str]):
         st.info("Loading watchlist data...")
         return
 
-    st.markdown("### 🔔 Alert Inbox")
+    _section_header("🔔", "Alert Inbox", "news · earnings · dynamics · insider · value opps")
     st.caption("Prioritized across your watchlist. Click into any row to jump to the bank.")
 
     # Collect alerts from each source
