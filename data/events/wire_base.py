@@ -115,19 +115,49 @@ def build_name_index() -> list[tuple[str, str]]:
     """
     Build a sorted list of (normalized_name, ticker) tuples.
 
-    Includes the legal name from BANK_MAP + any brand aliases from
-    _BRAND_ALIASES. Sorted longest-first so the most specific name
-    matches first ('BANK OF AMERICA' beats 'BANK OF').
+    Sources, in precedence order:
+      1. BANK_MAP legal names + _BRAND_ALIASES (curated, highest quality).
+      2. The FULL tracked universe (get_name per ticker) — so wire/Google
+         matching covers every bank the dashboard knows about, not just the
+         curated subset. Without this, a universe bank like Regions (RF) is
+         polled but its name never matches, so its press releases are dropped.
+
+    Sorted longest-first so the most specific name wins ('BANK OF AMERICA'
+    beats 'BANK OF'); BANK_MAP entries win ties over universe-derived names.
     """
     pairs: list[tuple[str, str]] = []
+    curated_tickers: set[str] = set()
     for ticker, info in BANK_MAP.items():
+        curated_tickers.add(ticker)
         names = [info.get("name", "")] + _BRAND_ALIASES.get(ticker, [])
         for name in names:
             normalized = _normalize_name(name)
             if not normalized or _is_too_generic(normalized):
                 continue
             pairs.append((normalized, ticker))
-    # Deduplicate (same normalized name → same ticker), preserve longest-first
+
+    # 2. Universe names not already curated.
+    try:
+        from data.bank_universe import get_universe_tickers
+        from data.bank_mapping import get_name
+        for ticker in get_universe_tickers():
+            if ticker in curated_tickers:
+                continue
+            nm = get_name(ticker) or ""
+            # Skip placeholders (name == ticker) and anything too short/generic
+            # to match safely.
+            if not nm or nm.strip().upper() == ticker.upper():
+                continue
+            normalized = _normalize_name(nm)
+            if len(normalized) < 6 or _is_too_generic(normalized):
+                continue
+            pairs.append((normalized, ticker))
+    except Exception as e:
+        print(f"[wire] universe name index skipped: {type(e).__name__}: {e}")
+
+    # Deduplicate (same normalized name → first/most-specific ticker wins).
+    # Stable sort keeps BANK_MAP entries (added first) ahead of universe ones
+    # on equal length.
     seen: set[str] = set()
     unique: list[tuple[str, str]] = []
     pairs.sort(key=lambda x: -len(x[0]))
