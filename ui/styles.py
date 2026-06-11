@@ -682,5 +682,30 @@ CUSTOM_CSS = """
     .st-key-company_subtab_nav div[role="radiogroup"] > label:has(input:checked) p {
         color: #2563eb; font-weight: 600;
     }
+
+    /* ── Native traceable metric cards (ui/source_trace) ──────────────────
+       Rendered as plain HTML (no iframe), so the grid sizes to its content —
+       hover a card for the calculation, click ↗ for the source filing. */
+    .mc-grid { display: grid; gap: 8px; margin: 2px 0 8px; }
+    .mc {
+        background: rgba(148,163,184,0.05);
+        border: 1px solid rgba(148,163,184,0.16);
+        border-radius: 10px; padding: 8px 12px; min-width: 0;
+        transition: border-color 0.12s, background 0.12s;
+    }
+    .mc[title]:hover { border-color: rgba(37,99,235,0.35); background: rgba(37,99,235,0.05); }
+    .mc[title] { cursor: help; }
+    .mc-l {
+        font-size: 0.6rem; color: var(--text-secondary); font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.02em;
+        display: flex; justify-content: space-between; align-items: center; gap: 4px;
+    }
+    .mc-v {
+        font-size: 1.05rem; font-weight: 700; color: var(--text-primary);
+        line-height: 1.3; margin-top: 3px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .mc-src { color: #b6c0cc; text-decoration: none; font-weight: 400; flex-shrink: 0; }
+    .mc-src:hover { color: var(--brand-primary); }
 </style>
 """

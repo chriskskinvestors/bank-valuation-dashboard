@@ -8,9 +8,11 @@ CHART_HEIGHT_FULL = 300     # main charts (bigger, detailed)
 CHART_HEIGHT_COMPACT = 260  # secondary charts (bars, bar of one dim)
 CHART_HEIGHT_DENSE = 220    # very small inline charts
 
-# Standard margins
-CHART_MARGIN = dict(l=50, r=20, t=40, b=40)
-CHART_MARGIN_WIDE_LEFT = dict(l=65, r=20, t=40, b=40)
+# Standard margins. Top leaves room for the title; the legend sits *below* the
+# plot (never overlapping the title), so a shown legend reserves extra bottom.
+CHART_MARGIN = dict(l=50, r=20, t=44, b=44)
+CHART_MARGIN_WIDE_LEFT = dict(l=65, r=20, t=44, b=44)
+_LEGEND_BOTTOM_PAD = 30
 
 # Design token colors (matched to light-theme styles.py)
 _BG_SURFACE = "#ffffff"
@@ -85,18 +87,26 @@ def apply_standard_layout(fig, title: str = None, height: int = CHART_HEIGHT_FUL
                           yaxis_title: str = None, xaxis_title: str = None,
                           show_legend: bool = True, hovermode: str = "x unified",
                           wide_left_margin: bool = False):
-    """Apply standard formatting to a plotly figure."""
-    margin = CHART_MARGIN_WIDE_LEFT if wide_left_margin else CHART_MARGIN
+    """Apply standard formatting to a plotly figure.
+
+    The legend, when shown, is anchored *below* the plot area so it can never
+    collide with the title (a recurring layout bug). The bottom margin grows to
+    reserve room for it.
+    """
+    margin = dict(CHART_MARGIN_WIDE_LEFT if wide_left_margin else CHART_MARGIN)
+    if show_legend:
+        margin = dict(margin, b=margin["b"] + _LEGEND_BOTTOM_PAD)
     fig.update_layout(
-        title=dict(text=title, font=dict(size=13, color="#1a1a1a")) if title else None,
+        title=dict(text=title, font=dict(size=13, color="#1a1a1a"),
+                   x=0, xanchor="left", y=0.98, yanchor="top") if title else None,
         height=height,
         margin=margin,
         yaxis_title=yaxis_title,
         xaxis_title=xaxis_title,
         legend=dict(
             orientation="h",
-            yanchor="bottom", y=1.02,
-            xanchor="left", x=0,
+            yanchor="top", y=-0.18,
+            xanchor="center", x=0.5,
             font=dict(size=11),
         ) if show_legend else None,
         showlegend=show_legend,
