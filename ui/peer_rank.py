@@ -158,17 +158,32 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
             unsafe_allow_html=True,
         )
 
-    # ── Scorecard by group ─────────────────────────────────────────────
-    for gname, keys in RANK_GROUPS:
-        rows = [(_metric_row(k, ctx[k])) for k in keys if k in ctx]
-        if not rows:
-            continue
-        st.markdown(
-            f'<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
-            f'color:#64748b;font-weight:700;margin:10px 0 2px;">{gname}</div>'
-            + "".join(rows),
-            unsafe_allow_html=True,
-        )
+    # ── Scorecard: grouped by category, or flat-sorted by percentile ───
+    view = st.radio(
+        "Sort", ["By category", "Strongest first", "Weakest first"],
+        horizontal=True, key=f"peerrank_view_{ticker}",
+        help="By category = grouped reads (Profitability / Credit / Capital / "
+             "Funding). Strongest / Weakest first = a single list of every metric "
+             "ranked by goodness percentile, so the standouts and the soft spots "
+             "rise to the top.",
+    )
+    if view == "By category":
+        for gname, keys in RANK_GROUPS:
+            rows = [_metric_row(k, ctx[k]) for k in keys if k in ctx]
+            if not rows:
+                continue
+            st.markdown(
+                f'<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
+                f'color:#64748b;font-weight:700;margin:10px 0 2px;">{gname}</div>'
+                + "".join(rows),
+                unsafe_allow_html=True,
+            )
+    else:
+        items = [(k, ctx[k]) for k in _ALL_KEYS if k in ctx]
+        items.sort(key=lambda kv: kv[1]["percentile"],
+                   reverse=(view == "Strongest first"))
+        st.markdown("".join(_metric_row(k, d) for k, d in items),
+                    unsafe_allow_html=True)
 
     st.caption(
         "Rank #1 = best in the peer set. Bars show the goodness percentile. "
