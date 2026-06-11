@@ -682,15 +682,18 @@ elif section == "🏦 Company Analysis":
         nm = get_name(t)
         return f"{t} — {nm}" if (nm and nm != t) else t
 
-    st.selectbox(
-        "Bank",
-        options=_opts,
-        format_func=_fmt_pick,
-        placeholder="Search or type any ticker… (e.g. BANR, JPM)",
-        accept_new_options=True,
-        key="company_pick",
-        label_visibility="collapsed",
-    )
+    # Narrow box (it doesn't need full width); a short visible label keeps the
+    # selected value from rendering clipped (a known collapsed-label quirk).
+    _pcol, _ = st.columns([2, 3])
+    with _pcol:
+        st.selectbox(
+            "🔎 Search a bank",
+            options=_opts,
+            format_func=_fmt_pick,
+            placeholder="Ticker or name… (e.g. BANR, JPM)",
+            accept_new_options=True,
+            key="company_pick",
+        )
     company_ticker = (st.session_state.get("company_pick") or "").strip().upper() or None
 
     if not company_ticker:
@@ -706,7 +709,7 @@ elif section == "🏦 Company Analysis":
                 "View", COMPANY_TABS, key="company_subtab",
                 horizontal=True, label_visibility="collapsed",
             )
-        st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-bottom:4px;'></div>", unsafe_allow_html=True)
 
     if not company_ticker:
         pass
