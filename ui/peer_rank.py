@@ -64,6 +64,18 @@ def _band_word(p: float):
     return "bottom-quartile", "#dc2626"
 
 
+def _resolve_cohort(all_metrics: list[dict] | None) -> list[dict]:
+    """Use the passed cohort, else pull (and lazily load) the watchlist cohort so
+    Peer Rank works even if a caller hands us nothing."""
+    if all_metrics:
+        return all_metrics
+    try:
+        from app import get_watchlist_cohort
+        return get_watchlist_cohort() or []
+    except Exception:
+        return []
+
+
 def _ensure_self(all_metrics: list[dict], ticker: str) -> list[dict]:
     """Make sure the subject bank is in the cohort (ad-hoc tickers aren't in the
     watchlist metrics)."""
@@ -107,7 +119,7 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
     name = get_name(ticker)
     st.subheader(f"🏅 Peer Rank — {name} ({ticker})")
 
-    metrics = _ensure_self(all_metrics, ticker)
+    metrics = _ensure_self(_resolve_cohort(all_metrics), ticker)
 
     # ── Peer-set toggle: asset size vs business mix ───────────────────
     mode_label = st.radio(

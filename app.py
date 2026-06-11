@@ -317,6 +317,19 @@ def load_single_bank_metrics_cached(ticker: str) -> dict:
     return metrics[0] if metrics else {"ticker": ticker}
 
 
+def get_watchlist_cohort() -> list[dict]:
+    """Peer cohort = watchlist metrics. Returns the cached set, loading it on
+    first use so peer ranking (the Peer Rank tab) is reliably available even if
+    the user hasn't visited Home / Screening / Peer Comparison this session.
+    Centralizes what was an inline load in the Peer Rank dispatch."""
+    cached = cache.get("watchlist_metrics_last")
+    if cached:
+        return cached
+    metrics, _ = load_all_data(watchlist)
+    cache.put("watchlist_metrics_last", metrics)
+    return metrics
+
+
 # ── Lazy data loading ─────────────────────────────────────────────────
 # Only load watchlist metrics if actually needed by the current view.
 # This avoids a 5-15 second wait when switching to "All Banks" screening
@@ -758,12 +771,9 @@ elif section == "🏦 Company Analysis":
 
     elif company_subtab == "Peer Rank":
         from ui.peer_rank import render_peer_rank
-        # Peer ranking needs the watchlist cohort; load it on demand here (this
-        # is the one view that's explicitly about peers, so the wait is warranted).
-        if not all_metrics:
-            all_metrics, metrics_df = load_all_data(watchlist)
-            cache.put("watchlist_metrics_last", all_metrics)
-        render_peer_rank(company_ticker, all_metrics)
+        # Peer ranking needs the watchlist cohort; the accessor loads it on first
+        # use so this view is always populated.
+        render_peer_rank(company_ticker, all_metrics or get_watchlist_cohort())
 
     elif company_subtab == "🔍 Data Quality":
         from ui.data_quality import render_data_quality
