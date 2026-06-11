@@ -64,6 +64,17 @@ def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
     pad = (ymax - ymin) * 0.08 or max(ymax * 0.01, 0.5)
     fig.update_yaxes(range=[ymin - pad, ymax + pad], tickprefix="$", showgrid=True,
                      gridcolor="rgba(148,163,184,0.12)", row=1, col=1)
+    # Collapse non-trading gaps so the line isn't flat across nights/weekends —
+    # i.e. show trading sessions back-to-back. Weekends always; overnight too
+    # when the data is intraday (median bar < 12h).
+    breaks = [dict(bounds=["sat", "mon"])]
+    try:
+        gaps = d["date"].diff().dropna()
+        if not gaps.empty and gaps.median() < pd.Timedelta(hours=12):
+            breaks.append(dict(bounds=[16, 9.5], pattern="hour"))
+    except Exception:
+        pass
+    fig.update_xaxes(rangebreaks=breaks)
     return fig
 
 
@@ -99,13 +110,19 @@ def metrics_trend_chart(
 
     fig.update_layout(
         title=title,
-        xaxis_title="Quarter",
-        yaxis_title="Value (%)",
-        legend=dict(orientation="h", y=-0.2),
+        xaxis_title=None,
+        yaxis_title="%",
+        legend=dict(orientation="h", y=-0.25, font=dict(size=10)),
         showlegend=len(fig.data) > 1,  # single-metric charts don't need a legend
-        height=300,
+        height=240,
         **CHART_LAYOUT,
     )
+    # Tighten the y-axis to the data (not 0-based) so small moves read clearly.
+    allv = [v for tr in fig.data for v in tr.y if v is not None and v == v]
+    if allv:
+        lo, hi = min(allv), max(allv)
+        pad = (hi - lo) * 0.14 or max(abs(hi) * 0.05, 0.05)
+        fig.update_yaxes(range=[lo - pad, hi + pad])
     return fig
 
 
@@ -188,12 +205,16 @@ def _donut(labels, values, title, colors):
     ls, vs, cs = zip(*pairs)
     fig = go.Figure(go.Pie(
         labels=ls, values=vs, hole=0.58, sort=False,
+        domain=dict(x=[0.0, 0.52]),  # pie on the left, legend fills the right
         marker=dict(colors=cs, line=dict(color="#ffffff", width=1)),
         textinfo="percent", textfont_size=11, textposition="inside",
         hovertemplate="%{label}: $%{value:.2f}B (%{percent})<extra></extra>"))
-    fig.update_layout(title=title, height=300, showlegend=True,
-                      legend=dict(orientation="h", y=-0.12, font=dict(size=10)),
-                      **CHART_LAYOUT)
+    fig.update_layout(
+        title=title, height=270, showlegend=True,
+        legend=dict(orientation="v", x=0.54, xanchor="left", y=0.5, yanchor="middle",
+                    font=dict(size=9.5)),
+        margin=dict(l=6, r=6, t=34, b=6),
+        **CHART_LAYOUT)
     return fig
 
 
@@ -286,7 +307,37 @@ def growth_trend_chart(fdic_df: pd.DataFrame) -> go.Figure:
                 line=dict(color=color, width=2), marker=dict(size=4),
                 hovertemplate="%{x|%b %Y}<br>%{y:+.1f}% YoY<extra></extra>"))
     fig.add_hline(y=0, line_color="#cbd5e1", line_width=1)
-    apply_standard_layout(fig, title="YoY Growth (%)", height=300, hovermode="x unified")
+    apply_standard_layout(fig, title="YoY Growth (%)", height=240, hovermode="x unified")
     fig.update_yaxes(ticksuffix="%")
-    fig.update_layout(legend=dict(orientation="h", y=-0.2))
+    fig.update_layout(legend=dict(orientation="h", y=-0.25, font=dict(size=10)))
+    allv = [v for tr in fig.data for v in (tr.y if tr.y is not None else [])
+            if v is not None and v == v]
+    if allv:
+        lo, hi = min(allv), max(allv)
+        pad = (hi - lo) * 0.12 or 1.0
+        fig.update_yaxes(range=[lo - pad, hi + pad])
+    return fig
+
+
+def loans_deposits_chart(fdic_df: pd.DataFrame) -> go.Figure:
+    """Loans-to-deposits ratio over time (a funding/liquidity gauge)."""
+    from utils.chart_style import apply_standard_layout
+    if (fdic_df is None or fdic_df.empty
+            or "LNLSNET" not in fdic_df.columns or "DEP" not in fdic_df.columns):
+        fig = go.Figure()
+        apply_standard_layout(fig, title="Loans / Deposits — no data", height=240, show_legend=False)
+        return fig
+    d = fdic_df.sort_values("REPDTE")
+    ld = (d["LNLSNET"] / d["DEP"] * 100)
+    fig = go.Figure(go.Scatter(
+        x=d["REPDTE"], y=ld, mode="lines+markers", name="Loans/Deposits",
+        line=dict(color="#00897b", width=2.5), marker=dict(size=4), fill="tozeroy",
+        fillcolor="rgba(0,137,123,0.06)",
+        hovertemplate="%{x|%b %Y}<br>%{y:.1f}%<extra></extra>"))
+    apply_standard_layout(fig, title="Loans / Deposits (%)", height=240, show_legend=False,
+                          hovermode="x")
+    ys = ld.dropna()
+    if not ys.empty:
+        pad = (ys.max() - ys.min()) * 0.14 or 2
+        fig.update_yaxes(range=[ys.min() - pad, ys.max() + pad], ticksuffix="%")
     return fig

@@ -14,7 +14,7 @@ from utils.formatting import format_value
 from ui.charts import (
     price_chart, metrics_trend_chart, peer_radar_chart, balance_sheet_chart,
     asset_composition_chart, loan_mix_chart, funding_mix_chart,
-    cet1_trend_chart, growth_trend_chart,
+    growth_trend_chart, loans_deposits_chart,
 )
 
 
@@ -94,26 +94,18 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
     if cert:
         fdic_hist = fdic_client.get_historical_financials(cert, quarters=20)
 
-    # One metric per chart — ROAA/NIM and NPL/NCO have very different scales, so
-    # sharing a y-axis squishes the smaller series. Each gets its own axis.
-    _r1c1, _r1c2 = st.columns(2)
-    with _r1c1:
-        st.plotly_chart(metrics_trend_chart(fdic_hist, ["roaa"], "ROAA"),
-                        use_container_width=True)
-    with _r1c2:
-        st.plotly_chart(metrics_trend_chart(fdic_hist, ["nim"], "Net Interest Margin"),
-                        use_container_width=True)
-    _r2c1, _r2c2 = st.columns(2)
-    with _r2c1:
-        st.plotly_chart(metrics_trend_chart(fdic_hist, ["npl_ratio"], "NPL Ratio"),
-                        use_container_width=True)
-    with _r2c2:
-        st.plotly_chart(metrics_trend_chart(fdic_hist, ["nco_ratio"], "Net Charge-Off Ratio"),
-                        use_container_width=True)
+    # One metric per chart (separate axes — different scales), all on one row.
+    _km = [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
+           ("npl_ratio", "NPL Ratio"), ("nco_ratio", "Net Charge-Off Ratio")]
+    for _col, (_k, _lbl) in zip(st.columns(4), _km):
+        with _col:
+            st.plotly_chart(metrics_trend_chart(fdic_hist, [_k], _lbl), use_container_width=True)
 
     # ── Balance sheet trend + composition snapshots ─────────────────
     st.subheader("Balance Sheet")
-    st.plotly_chart(balance_sheet_chart(fdic_hist), use_container_width=True)
+    _bst, _ = st.columns([2, 1])  # the trend line doesn't need full width
+    with _bst:
+        st.plotly_chart(balance_sheet_chart(fdic_hist), use_container_width=True)
 
     st.markdown("**Composition & funding** — latest quarter")
     _bc1, _bc2, _bc3 = st.columns(3)
@@ -125,11 +117,15 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
         st.plotly_chart(funding_mix_chart(fdic_hist), use_container_width=True)
 
     st.markdown("**Capital & growth**")
-    _gc1, _gc2 = st.columns(2)
+    _gc1, _gc2, _gc3 = st.columns(3)
     with _gc1:
-        st.plotly_chart(cet1_trend_chart(fdic_hist), use_container_width=True)
+        st.plotly_chart(
+            metrics_trend_chart(fdic_hist, ["cet1_ratio", "total_capital_ratio", "leverage_ratio"],
+                                "Capital Ratios"), use_container_width=True)
     with _gc2:
         st.plotly_chart(growth_trend_chart(fdic_hist), use_container_width=True)
+    with _gc3:
+        st.plotly_chart(loans_deposits_chart(fdic_hist), use_container_width=True)
 
     # ── All metrics table ───────────────────────────────────────────
     st.subheader("All Metrics")
