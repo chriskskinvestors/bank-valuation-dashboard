@@ -115,6 +115,10 @@ def _event_row(ev: dict, show_ticker: bool) -> str:
 
 def _render_feed(events: list[dict], show_ticker: bool = False):
     """Render the whole feed as a single dense HTML block (no inter-element gaps)."""
+    from data.events.wire_base import is_safe_news_url
+    # Defensive: never render an event whose link is a messaging/social/spam URL
+    # (e.g. a content-farm "earnings" article linking to a WhatsApp group).
+    events = [e for e in events if is_safe_news_url(e.get("url"))]
     body = "".join(_event_row(e, show_ticker) for e in events)
     st.markdown(_FEED_CSS + f'<div class="ev-feed">{body}</div>', unsafe_allow_html=True)
 

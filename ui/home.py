@@ -298,6 +298,9 @@ def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
     except Exception:
         return []
 
+    from data.events.wire_base import is_safe_news_url
+    rows = [r for r in rows if is_safe_news_url(r.get("url"))]  # drop spam/social links
+
     wl = set(watchlist)
     # Banks that have wire-service press releases in this window — for these we
     # skip the IR-site scraper (it would just duplicate the cleaner wire PR).

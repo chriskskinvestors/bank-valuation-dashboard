@@ -12,7 +12,10 @@ Feed URLs reference:
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from data.events.base import Event, SourceAdapter
-from data.events.wire_base import fetch_rss, match_tickers, classify_press_release
+from data.events.wire_base import (
+    fetch_rss, match_tickers, classify_press_release, is_routine_noise,
+    is_safe_news_url,
+)
 
 
 # Business Wire's banking + financial-services RSS feeds
@@ -43,6 +46,8 @@ class BusinessWireAdapter(SourceAdapter):
                     continue
                 seen_guids.add(item.guid)
 
+                if is_routine_noise(item.title) or not is_safe_news_url(item.link):
+                    continue
                 text = f"{item.title}. {item.summary}"
                 matched = match_tickers(text)
                 # Keep only matches that are in the user's universe

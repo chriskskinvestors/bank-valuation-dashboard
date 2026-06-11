@@ -371,3 +371,61 @@ def is_company_press_release(headline: str) -> bool:
     if _COMMENTARY_RE.search(h):
         return False
     return bool(_PR_VERB_RE.search(h))
+
+
+# Domains a legitimate press release / filing NEVER lives on — messaging apps,
+# social media, link shorteners, forums. Spam/content-farm "news" links to these
+# (e.g. a fake earnings article whose link is a WhatsApp group invite). Reject
+# any event URL on these hosts, at ingest AND display.
+_BLOCKED_URL_DOMAINS = {
+    "whatsapp.com", "chat.whatsapp.com", "wa.me",
+    "t.me", "telegram.me", "telegram.org", "telegram.dog",
+    "facebook.com", "fb.com", "fb.me", "fb.watch", "m.facebook.com",
+    "instagram.com", "tiktok.com", "twitter.com", "x.com",
+    "youtube.com", "youtu.be", "reddit.com", "discord.gg", "discord.com",
+    "linktr.ee", "linktree.com", "medium.com",
+    "bit.ly", "tinyurl.com", "goo.gl", "ow.ly", "buff.ly", "is.gd",
+    "cutt.ly", "rebrand.ly", "shorturl.at", "lnkd.in", "t.co", "rb.gy",
+}
+
+
+# Structured-product / retail-note issuances — big banks (esp. JPM, GS, MS, C)
+# file hundreds of these. They're technically press releases but pure noise for a
+# bank investor. Reject them across every news source.
+_NOISE_RE = re.compile(
+    r"\b(buffered|auto-?call\w*|autocallable|contingent[\s-]?interest|barrier|"
+    r"uncapped|capped\s+\w*\s*notes?|leveraged\s+notes?|digital\s+notes?|"
+    r"review\s+notes?|market[\s-]?linked|dual\s+directional|trigger\s+\w+\s+notes?|"
+    r"principal\s+at\s+risk|callable\s+\w*\s*notes?|step[\s-]?up\s+notes?|"
+    r"range\s+accrual|phoenix\s+notes?|buffer\s+notes?|return\s+notes?|"
+    r"index[\s-]?linked\s+notes?|notes?\s+linked\s+to|notes?\s+tied\s+to|"
+    r"structured\s+notes?|fixed\s+to\s+floating)\b",
+    re.IGNORECASE,
+)
+
+
+def is_routine_noise(headline: str) -> bool:
+    """True for structured-note / retail-product issuances — high-volume filler a
+    bank analyst doesn't track. Applied to ALL news sources (wires included)."""
+    return bool(_NOISE_RE.search(headline or ""))
+
+
+def is_safe_news_url(url: str) -> bool:
+    """False for URLs that can't be a real press release / filing — messaging,
+    social, shorteners. A real release links to a wire, an IR site, EDGAR, or a
+    news outlet; never to a WhatsApp/Telegram/social/shortener host."""
+    if not url:
+        return True  # no link is fine (the headline still stands)
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(url).hostname or "").lower().lstrip(".")
+    except Exception:
+        return False
+    if not host:
+        return False
+    # Match the host or any parent domain (covers subdomains).
+    parts = host.split(".")
+    for i in range(len(parts) - 1):
+        if ".".join(parts[i:]) in _BLOCKED_URL_DOMAINS:
+            return False
+    return True

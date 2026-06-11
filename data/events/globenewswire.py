@@ -8,7 +8,10 @@ The Financial Services subject feed catches most US bank releases.
 from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from data.events.base import Event, SourceAdapter
-from data.events.wire_base import fetch_rss, match_tickers, classify_press_release
+from data.events.wire_base import (
+    fetch_rss, match_tickers, classify_press_release, is_routine_noise,
+    is_safe_news_url,
+)
 
 
 # GlobeNewswire's financial-services subject feed
@@ -40,6 +43,8 @@ class GlobeNewswireAdapter(SourceAdapter):
                     continue
                 seen_guids.add(item.guid)
 
+                if is_routine_noise(item.title) or not is_safe_news_url(item.link):
+                    continue
                 text = f"{item.title}. {item.summary}"
                 matched = [t for t in match_tickers(text) if t in in_universe]
                 if not matched:

@@ -88,6 +88,15 @@ def main() -> int:
     # of staleness. FDIC data is already fetched live on every render.
     _invalidate_fundamentals_for_filings(new_events)
 
+    # Purge any junk that slipped in before the safety filters existed —
+    # spam/social URLs (e.g. a WhatsApp-group link) and structured-note noise.
+    try:
+        n_purged = _purge_junk_events()
+        if n_purged:
+            print(f"▶ Purged {n_purged} junk events (unsafe URL / structured-note noise)")
+    except Exception as e:
+        print(f"  [purge] failed: {type(e).__name__}: {e}")
+
     # Optional: LLM-summarize any events with empty summaries (most recent first).
     if os.environ.get("ANTHROPIC_API_KEY"):
         try:
@@ -126,6 +135,26 @@ def _invalidate_fundamentals_for_filings(new_events) -> None:
                 pass
         print(f"  ↻ fundamentals cache invalidated for {e.ticker} ({raw.get('form')}) "
               f"— next load re-pulls SEC facts")
+
+
+def _purge_junk_events() -> int:
+    """Delete events with spam/social URLs or structured-note noise headlines.
+    Idempotent; reuses the same filters the adapters now apply at ingest."""
+    from sqlalchemy import text
+    from data.events.store import _get_engine
+    from data.events.wire_base import is_safe_news_url, is_routine_noise
+
+    eng = _get_engine()
+    with eng.connect() as conn:
+        rows = conn.execute(text("SELECT id, url, headline FROM events")).mappings().all()
+    bad = [r["id"] for r in rows
+           if (not is_safe_news_url(r["url"])) or is_routine_noise(r["headline"])]
+    if not bad:
+        return 0
+    with eng.begin() as conn:
+        for _id in bad:
+            conn.execute(text("DELETE FROM events WHERE id = :id"), {"id": _id})
+    return len(bad)
 
 
 def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int:
