@@ -375,58 +375,53 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
 
     st.subheader("Earnings Surprise History")
 
-    try:
-        import plotly.graph_objects as go
+    import plotly.graph_objects as go
 
-        past_reversed = list(reversed(past[:8]))
+    past_reversed = list(reversed(past[:8]))
 
-        dates = [e["date"] for e in past_reversed]
-        actuals = [e["eps_actual"] for e in past_reversed]
-        estimates_vals = [e["eps_estimate"] for e in past_reversed]
-        surprises = [e.get("surprise_pct", 0) or 0 for e in past_reversed]
+    dates = [e["date"] for e in past_reversed]
+    actuals = [e["eps_actual"] for e in past_reversed]
+    estimates_vals = [e["eps_estimate"] for e in past_reversed]
+    surprises = [e.get("surprise_pct", 0) or 0 for e in past_reversed]
 
-        fig = go.Figure()
+    fig = go.Figure()
 
-        fig.add_trace(go.Bar(
-            x=dates, y=actuals,
-            name="Actual EPS",
-            marker_color=["#1b5e20" if s >= 0 else "#b71c1c" for s in surprises],
-            opacity=0.7,
-        ))
+    fig.add_trace(go.Bar(
+        x=dates, y=actuals,
+        name="Actual EPS",
+        marker_color=["#1b5e20" if s >= 0 else "#b71c1c" for s in surprises],
+        opacity=0.7,
+    ))
 
-        fig.add_trace(go.Scatter(
-            x=dates, y=estimates_vals,
-            name="Consensus EPS",
-            mode="lines+markers",
-            line=dict(color="#1a73e8", width=2, dash="dash"),
-            marker=dict(size=8),
-        ))
+    fig.add_trace(go.Scatter(
+        x=dates, y=estimates_vals,
+        name="Consensus EPS",
+        mode="lines+markers",
+        line=dict(color="#1a73e8", width=2, dash="dash"),
+        marker=dict(size=8),
+    ))
 
-        # Add surprise % as text above bars
-        for i, (d, a, s) in enumerate(zip(dates, actuals, surprises)):
-            fig.add_annotation(
-                x=d, y=a,
-                text=f"{s:+.1f}%",
-                showarrow=False,
-                yshift=15,
-                font=dict(size=10, color="#1b5e20" if s >= 0 else "#b71c1c"),
-            )
-
-        fig.update_layout(
-            height=220,
-            margin=dict(l=40, r=14, t=26, b=30),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            yaxis_title="EPS ($)",
-            plot_bgcolor="white",
-            paper_bgcolor="white",
+    # Add surprise % as text above bars
+    for i, (d, a, s) in enumerate(zip(dates, actuals, surprises)):
+        fig.add_annotation(
+            x=d, y=a,
+            text=f"{s:+.1f}%",
+            showarrow=False,
+            yshift=15,
+            font=dict(size=10, color="#1b5e20" if s >= 0 else "#b71c1c"),
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(
+        height=220,
+        margin=dict(l=40, r=14, t=26, b=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        yaxis_title="EPS ($)",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+    )
 
-    except ImportError:
-        # Fallback without plotly
-        df = pd.DataFrame(past[:8])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    st.plotly_chart(fig, use_container_width=True)
+
 
 
 def _render_comparison_table(comparison: list[dict]):
@@ -802,120 +797,117 @@ def _render_surprise_heatmap(watchlist: list[str]):
     # Bank labels with name
     row_labels = [f"{t}" for t in tickers_list]
 
-    try:
-        import plotly.graph_objects as go
+    import plotly.graph_objects as go
 
-        # Build text (surprise %) and hover text
-        text_matrix = [
-            [
-                (f"{v:+.0f}%" if v is not None else "")
-                for v in row
-            ]
-            for row in matrix
+    # Build text (surprise %) and hover text
+    text_matrix = [
+        [
+            (f"{v:+.0f}%" if v is not None else "")
+            for v in row
         ]
-        hover_matrix = [
-            [
-                (
-                    f"{tickers_list[i]} · {col_labels[j]}<br>"
-                    f"Consensus: ${est_matrix[i][j]:.2f}<br>"
-                    f"Actual: ${actual_matrix[i][j]:.2f}<br>"
-                    f"Surprise: {matrix[i][j]:+.1f}%"
-                    if matrix[i][j] is not None else ""
-                )
-                for j in range(n_qtrs)
-            ]
-            for i in range(n_banks)
-        ]
-
-        fig = go.Figure(data=go.Heatmap(
-            z=matrix,
-            x=col_labels,
-            y=row_labels,
-            text=text_matrix,
-            texttemplate="%{text}",
-            textfont={"size": 10},
-            customdata=hover_matrix,
-            hovertemplate="%{customdata}<extra></extra>",
-            colorscale=[
-                [0, "#b71c1c"], [0.3, "#ef9a9a"], [0.5, "#fafafa"],
-                [0.7, "#a5d6a7"], [1, "#1b5e20"],
-            ],
-            zmid=0,
-            zmin=-20, zmax=20,
-            colorbar=dict(
-                title=dict(text="Surprise %", side="right"),
-                tickvals=[-20, -10, 0, 10, 20],
-                ticktext=["-20%", "-10%", "0", "+10%", "+20%"],
-                len=0.8,
-            ),
-        ))
-        fig.update_layout(
-            title="EPS Surprise History — Heat-Map (last 8 quarters)",
-            height=max(300, 30 + 22 * n_banks),
-            margin=dict(l=60, r=20, t=50, b=50),
-            xaxis=dict(tickangle=0, side="top"),
-            yaxis=dict(autorange="reversed"),  # keep sort order top→bottom
-            plot_bgcolor="white", paper_bgcolor="white",
-            font=dict(size=11),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.caption(
-            "Each cell = EPS surprise % for that bank's quarter. "
-            "Dark green = big beat, dark red = big miss. "
-            "Banks sorted by most recent surprise (best on top)."
-        )
-
-        # Summary stats — consistency metrics
-        st.markdown("##### Consistency Metrics")
-        stats_rows = []
-        for ticker in tickers_list:
-            history = bank_data[ticker]
-            surprises = [e.get("surprise_pct") for e in history
-                         if e.get("surprise_pct") is not None][:8]
-            if not surprises:
-                continue
-            beat_count = sum(1 for s in surprises if s > 1)
-            miss_count = sum(1 for s in surprises if s < -1)
-            inline_count = len(surprises) - beat_count - miss_count
-            avg_surprise = sum(surprises) / len(surprises)
-            # Std dev as volatility
-            if len(surprises) >= 2:
-                mean = avg_surprise
-                vol = (sum((s - mean) ** 2 for s in surprises) / (len(surprises) - 1)) ** 0.5
-            else:
-                vol = None
-            stats_rows.append({
-                "Ticker": ticker,
-                "Bank": get_name(ticker)[:30],
-                "Beat Rate": f"{beat_count}/{len(surprises)} ({beat_count/len(surprises)*100:.0f}%)",
-                "Avg Surprise": f"{avg_surprise:+.1f}%",
-                "Volatility": f"{vol:.1f}pp" if vol else "—",
-                "Last Qtr": f"{surprises[0]:+.1f}%",
-            })
-        if stats_rows:
-            stats_df = pd.DataFrame(stats_rows)
-
-            def _stats_color(row):
-                last_str = row["Last Qtr"]
-                try:
-                    v = float(last_str.replace("%", "").replace("+", ""))
-                except Exception:
-                    return [""] * len(row)
-                if v > 5: return ["background-color: #e8f5e9;"] * len(row)
-                if v > 1: return ["background-color: #f1f8e9;"] * len(row)
-                if v < -5: return ["background-color: #ffebee; color: #b71c1c;"] * len(row)
-                if v < -1: return ["background-color: #fff3e0;"] * len(row)
-                return [""] * len(row)
-
-            styled = stats_df.style.apply(_stats_color, axis=1).set_properties(
-                **{"font-size": "0.82rem", "padding": "3px 8px"}
+        for row in matrix
+    ]
+    hover_matrix = [
+        [
+            (
+                f"{tickers_list[i]} · {col_labels[j]}<br>"
+                f"Consensus: ${est_matrix[i][j]:.2f}<br>"
+                f"Actual: ${actual_matrix[i][j]:.2f}<br>"
+                f"Surprise: {matrix[i][j]:+.1f}%"
+                if matrix[i][j] is not None else ""
             )
-            st.dataframe(styled, use_container_width=True, hide_index=True,
-                          height=min(500, 50 + 32 * len(stats_df)))
+            for j in range(n_qtrs)
+        ]
+        for i in range(n_banks)
+    ]
 
-    except ImportError:
-        st.warning("Install plotly to view the heat-map.")
+    fig = go.Figure(data=go.Heatmap(
+        z=matrix,
+        x=col_labels,
+        y=row_labels,
+        text=text_matrix,
+        texttemplate="%{text}",
+        textfont={"size": 10},
+        customdata=hover_matrix,
+        hovertemplate="%{customdata}<extra></extra>",
+        colorscale=[
+            [0, "#b71c1c"], [0.3, "#ef9a9a"], [0.5, "#fafafa"],
+            [0.7, "#a5d6a7"], [1, "#1b5e20"],
+        ],
+        zmid=0,
+        zmin=-20, zmax=20,
+        colorbar=dict(
+            title=dict(text="Surprise %", side="right"),
+            tickvals=[-20, -10, 0, 10, 20],
+            ticktext=["-20%", "-10%", "0", "+10%", "+20%"],
+            len=0.8,
+        ),
+    ))
+    fig.update_layout(
+        title="EPS Surprise History — Heat-Map (last 8 quarters)",
+        height=max(300, 30 + 22 * n_banks),
+        margin=dict(l=60, r=20, t=50, b=50),
+        xaxis=dict(tickangle=0, side="top"),
+        yaxis=dict(autorange="reversed"),  # keep sort order top→bottom
+        plot_bgcolor="white", paper_bgcolor="white",
+        font=dict(size=11),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.caption(
+        "Each cell = EPS surprise % for that bank's quarter. "
+        "Dark green = big beat, dark red = big miss. "
+        "Banks sorted by most recent surprise (best on top)."
+    )
+
+    # Summary stats — consistency metrics
+    st.markdown("##### Consistency Metrics")
+    stats_rows = []
+    for ticker in tickers_list:
+        history = bank_data[ticker]
+        surprises = [e.get("surprise_pct") for e in history
+                     if e.get("surprise_pct") is not None][:8]
+        if not surprises:
+            continue
+        beat_count = sum(1 for s in surprises if s > 1)
+        miss_count = sum(1 for s in surprises if s < -1)
+        inline_count = len(surprises) - beat_count - miss_count
+        avg_surprise = sum(surprises) / len(surprises)
+        # Std dev as volatility
+        if len(surprises) >= 2:
+            mean = avg_surprise
+            vol = (sum((s - mean) ** 2 for s in surprises) / (len(surprises) - 1)) ** 0.5
+        else:
+            vol = None
+        stats_rows.append({
+            "Ticker": ticker,
+            "Bank": get_name(ticker)[:30],
+            "Beat Rate": f"{beat_count}/{len(surprises)} ({beat_count/len(surprises)*100:.0f}%)",
+            "Avg Surprise": f"{avg_surprise:+.1f}%",
+            "Volatility": f"{vol:.1f}pp" if vol else "—",
+            "Last Qtr": f"{surprises[0]:+.1f}%",
+        })
+    if stats_rows:
+        stats_df = pd.DataFrame(stats_rows)
+
+        def _stats_color(row):
+            last_str = row["Last Qtr"]
+            try:
+                v = float(last_str.replace("%", "").replace("+", ""))
+            except Exception:
+                return [""] * len(row)
+            if v > 5: return ["background-color: #e8f5e9;"] * len(row)
+            if v > 1: return ["background-color: #f1f8e9;"] * len(row)
+            if v < -5: return ["background-color: #ffebee; color: #b71c1c;"] * len(row)
+            if v < -1: return ["background-color: #fff3e0;"] * len(row)
+            return [""] * len(row)
+
+        styled = stats_df.style.apply(_stats_color, axis=1).set_properties(
+            **{"font-size": "0.82rem", "padding": "3px 8px"}
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True,
+                      height=min(500, 50 + 32 * len(stats_df)))
+
 
 
 # ── Earnings Calendar ──────────────────────────────────────────────────
@@ -1305,22 +1297,19 @@ def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watc
         mc5.metric("Avg Surprise", f"{avg_s:+.1f}%")
 
         # Beat/miss bar chart
-        try:
-            import plotly.graph_objects as go
-            fig = go.Figure(data=[
-                go.Bar(name="Beat", x=["EPS"], y=[beats], marker_color="#1b5e20"),
-                go.Bar(name="Inline", x=["EPS"], y=[inlines], marker_color="#e65100"),
-                go.Bar(name="Miss", x=["EPS"], y=[misses], marker_color="#b71c1c"),
-            ])
-            fig.update_layout(
-                barmode="stack", height=200,
-                margin=dict(l=40, r=20, t=20, b=30),
-                plot_bgcolor="white", paper_bgcolor="white",
-                legend=dict(orientation="h"),
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        except ImportError:
-            pass
+        import plotly.graph_objects as go
+        fig = go.Figure(data=[
+            go.Bar(name="Beat", x=["EPS"], y=[beats], marker_color="#1b5e20"),
+            go.Bar(name="Inline", x=["EPS"], y=[inlines], marker_color="#e65100"),
+            go.Bar(name="Miss", x=["EPS"], y=[misses], marker_color="#b71c1c"),
+        ])
+        fig.update_layout(
+            barmode="stack", height=200,
+            margin=dict(l=40, r=20, t=20, b=30),
+            plot_bgcolor="white", paper_bgcolor="white",
+            legend=dict(orientation="h"),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")
 

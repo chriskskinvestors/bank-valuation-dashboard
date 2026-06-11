@@ -200,74 +200,71 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     st.markdown("---")
 
     # ── Charts (bank-level) ────────────────────────────────────────────
-    try:
-        import plotly.graph_objects as go
-        from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                       CHART_HEIGHT_COMPACT)
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT)
 
-        # Chart 2: NCO trend
-        fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["nco_ratio"],
-            name="NCO Rate", mode="lines+markers",
-            line=dict(color="#b71c1c", width=2.5),
-            marker=dict(size=6), fill="tozeroy",
-            fillcolor="rgba(183,28,28,0.10)",
+    # Chart 2: NCO trend
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(
+        x=timeline["date"], y=timeline["nco_ratio"],
+        name="NCO Rate", mode="lines+markers",
+        line=dict(color="#b71c1c", width=2.5),
+        marker=dict(size=6), fill="tozeroy",
+        fillcolor="rgba(183,28,28,0.10)",
+    ))
+    apply_standard_layout(fig2, title="Net Charge-Off Rate", height=CHART_HEIGHT_COMPACT,
+                          yaxis_title="NCO %", show_legend=False, hovermode="x")
+    fig2.update_yaxes(ticksuffix="%")
+
+    # Chart 3: Past due migration
+    fig3 = go.Figure()
+    if "past_due_30_89_pct" in timeline.columns:
+        fig3.add_trace(go.Scatter(
+            x=timeline["date"], y=timeline["past_due_30_89_pct"],
+            name="30-89 Past Due", mode="lines+markers",
+            line=dict(color="#e65100", width=2),
         ))
-        apply_standard_layout(fig2, title="Net Charge-Off Rate", height=CHART_HEIGHT_COMPACT,
-                              yaxis_title="NCO %", show_legend=False, hovermode="x")
-        fig2.update_yaxes(ticksuffix="%")
-
-        # Chart 3: Past due migration
-        fig3 = go.Figure()
-        if "past_due_30_89_pct" in timeline.columns:
-            fig3.add_trace(go.Scatter(
-                x=timeline["date"], y=timeline["past_due_30_89_pct"],
-                name="30-89 Past Due", mode="lines+markers",
-                line=dict(color="#e65100", width=2),
-            ))
-        if "past_due_90_pct" in timeline.columns:
-            fig3.add_trace(go.Scatter(
-                x=timeline["date"], y=timeline["past_due_90_pct"],
-                name="90+ Past Due", mode="lines+markers",
-                line=dict(color="#b71c1c", width=2),
-            ))
-        apply_standard_layout(fig3, title="Past Due Migration", height=CHART_HEIGHT_COMPACT,
-                              yaxis_title="% of Loans", show_legend=True)
-        tighten_yaxis(fig3, floor_zero=True, ticksuffix="%")
-
-        # Chart 4: Reserve coverage trend with peer median line
-        fig4 = go.Figure()
-        fig4.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["reserve_coverage"],
-            name="Reserve / NPL", mode="lines+markers",
-            line=dict(color="#1b5e20", width=2.5),
-            marker=dict(size=6),
+    if "past_due_90_pct" in timeline.columns:
+        fig3.add_trace(go.Scatter(
+            x=timeline["date"], y=timeline["past_due_90_pct"],
+            name="90+ Past Due", mode="lines+markers",
+            line=dict(color="#b71c1c", width=2),
         ))
-        fig4.add_hline(y=100, line_color="#b71c1c", line_width=1, line_dash="dash",
-                        annotation_text="100% floor", annotation_position="bottom right")
-        if peer_median:
-            fig4.add_hline(y=peer_median, line_color="#1a73e8", line_width=1, line_dash="dot",
-                            annotation_text=f"Peer median {peer_median:.0f}%", annotation_position="top right")
-        apply_standard_layout(fig4, title="Reserve Coverage vs NPL", height=CHART_HEIGHT_COMPACT,
-                              yaxis_title="Reserve / NPL", show_legend=False, hovermode="x")
-        _rc_vals = [v for v in timeline["reserve_coverage"].tolist() if v is not None] + [100]
-        if peer_median:
-            _rc_vals.append(peer_median)
-        tighten_yaxis(fig4, _rc_vals, floor_zero=True, ticksuffix="%")
+    apply_standard_layout(fig3, title="Past Due Migration", height=CHART_HEIGHT_COMPACT,
+                          yaxis_title="% of Loans", show_legend=True)
+    tighten_yaxis(fig3, floor_zero=True, ticksuffix="%")
 
-        # Dense grid — NCO + past-due 2-up, reserve coverage below.
-        _g1 = st.columns(2)
-        with _g1[0]:
-            st.plotly_chart(fig2, use_container_width=True)
-        with _g1[1]:
-            st.plotly_chart(fig3, use_container_width=True)
-        _g2 = st.columns(2)
-        with _g2[0]:
-            st.plotly_chart(fig4, use_container_width=True)
+    # Chart 4: Reserve coverage trend with peer median line
+    fig4 = go.Figure()
+    fig4.add_trace(go.Scatter(
+        x=timeline["date"], y=timeline["reserve_coverage"],
+        name="Reserve / NPL", mode="lines+markers",
+        line=dict(color="#1b5e20", width=2.5),
+        marker=dict(size=6),
+    ))
+    fig4.add_hline(y=100, line_color="#b71c1c", line_width=1, line_dash="dash",
+                    annotation_text="100% floor", annotation_position="bottom right")
+    if peer_median:
+        fig4.add_hline(y=peer_median, line_color="#1a73e8", line_width=1, line_dash="dot",
+                        annotation_text=f"Peer median {peer_median:.0f}%", annotation_position="top right")
+    apply_standard_layout(fig4, title="Reserve Coverage vs NPL", height=CHART_HEIGHT_COMPACT,
+                          yaxis_title="Reserve / NPL", show_legend=False, hovermode="x")
+    _rc_vals = [v for v in timeline["reserve_coverage"].tolist() if v is not None] + [100]
+    if peer_median:
+        _rc_vals.append(peer_median)
+    tighten_yaxis(fig4, _rc_vals, floor_zero=True, ticksuffix="%")
 
-    except ImportError:
-        st.warning("Install plotly to view credit trend charts.")
+    # Dense grid — NCO + past-due 2-up, reserve coverage below.
+    _g1 = st.columns(2)
+    with _g1[0]:
+        st.plotly_chart(fig2, use_container_width=True)
+    with _g1[1]:
+        st.plotly_chart(fig3, use_container_width=True)
+    _g2 = st.columns(2)
+    with _g2[0]:
+        st.plotly_chart(fig4, use_container_width=True)
+
 
 
 def _render_by_loan_type(ticker: str, summary: dict, timeline):
@@ -294,32 +291,29 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
             st.caption("No segment NPLs above the bank-wide ratio.")
 
     with _chart:
-        try:
-            import plotly.graph_objects as go
-            from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                           CHART_HEIGHT_FULL)
-            fig = go.Figure()
-            segments = [
-                ("npl_ratio", "Total", "#0f172a", 3),
-                ("npl_cre", "CRE", "#b71c1c", 2),
-                ("npl_resi", "Residential", "#1a73e8", 2),
-                ("npl_multifam", "Multifamily", "#e65100", 2),
-                ("npl_nres_re", "Non-Res RE", "#6a1b9a", 2),
-                ("npl_ci", "C&I", "#1b5e20", 2),
-                ("npl_consumer", "Consumer", "#ff6f00", 2),
-            ]
-            for key, label, color, width in segments:
-                if key in timeline.columns and timeline[key].notna().any():
-                    fig.add_trace(go.Scatter(
-                        x=timeline["date"], y=timeline[key],
-                        name=label, mode="lines+markers",
-                        line=dict(color=color, width=width),
-                        marker=dict(size=5 if width < 3 else 7),
-                    ))
-            apply_standard_layout(fig, title="NPL by Loan Segment",
-                                  height=CHART_HEIGHT_FULL,
-                                  yaxis_title="NPL %", show_legend=True)
-            tighten_yaxis(fig, floor_zero=True, ticksuffix="%")
-            st.plotly_chart(fig, use_container_width=True)
-        except ImportError:
-            st.warning("Install plotly to view segment trend charts.")
+        import plotly.graph_objects as go
+        from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                       CHART_HEIGHT_FULL)
+        fig = go.Figure()
+        segments = [
+            ("npl_ratio", "Total", "#0f172a", 3),
+            ("npl_cre", "CRE", "#b71c1c", 2),
+            ("npl_resi", "Residential", "#1a73e8", 2),
+            ("npl_multifam", "Multifamily", "#e65100", 2),
+            ("npl_nres_re", "Non-Res RE", "#6a1b9a", 2),
+            ("npl_ci", "C&I", "#1b5e20", 2),
+            ("npl_consumer", "Consumer", "#ff6f00", 2),
+        ]
+        for key, label, color, width in segments:
+            if key in timeline.columns and timeline[key].notna().any():
+                fig.add_trace(go.Scatter(
+                    x=timeline["date"], y=timeline[key],
+                    name=label, mode="lines+markers",
+                    line=dict(color=color, width=width),
+                    marker=dict(size=5 if width < 3 else 7),
+                ))
+        apply_standard_layout(fig, title="NPL by Loan Segment",
+                              height=CHART_HEIGHT_FULL,
+                              yaxis_title="NPL %", show_legend=True)
+        tighten_yaxis(fig, floor_zero=True, ticksuffix="%")
+        st.plotly_chart(fig, use_container_width=True)

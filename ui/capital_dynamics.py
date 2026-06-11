@@ -247,165 +247,162 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     st.markdown("---")
 
     # ── Charts ─────────────────────────────────────────────────────────
-    try:
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
 
-        # Chart 1: CET1 with regulatory floor lines
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["cet1_pct"],
-            name="CET1", mode="lines+markers",
-            line=dict(color="#1a73e8", width=2.5),
-            marker=dict(size=7),
+    # Chart 1: CET1 with regulatory floor lines
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(
+        x=timeline["date"], y=timeline["cet1_pct"],
+        name="CET1", mode="lines+markers",
+        line=dict(color="#1a73e8", width=2.5),
+        marker=dict(size=7),
+    ))
+    fig1.add_hline(y=CET1_REG_MIN, line_color="#b71c1c", line_width=1, line_dash="dash",
+                    annotation_text=f"{CET1_REG_MIN}% reg min + buffer",
+                    annotation_position="bottom right")
+    fig1.add_hline(y=CET1_BUFFER_FLOOR, line_color="#e65100", line_width=1, line_dash="dot",
+                    annotation_text=f"{CET1_BUFFER_FLOOR}% comfort floor",
+                    annotation_position="top right")
+    if peer_cet1:
+        fig1.add_hline(y=peer_cet1, line_color="#1b5e20", line_width=1, line_dash="dashdot",
+                        annotation_text=f"Peer median {peer_cet1:.2f}%",
+                        annotation_position="top left")
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
+
+    apply_standard_layout(
+        fig1, title="CET1 Ratio Trend",
+        height=CHART_HEIGHT_COMPACT, yaxis_title="CET1",
+        show_legend=False, hovermode="x",
+    )
+    # Zoom to the data + regulatory floors so the trend reads, instead of a
+    # flat line pinned to the top of a 0-13% axis.
+    _c = [v for v in timeline["cet1_pct"].tolist() if v is not None]
+    _refs = [CET1_REG_MIN, CET1_BUFFER_FLOOR] + ([peer_cet1] if peer_cet1 else [])
+    tighten_yaxis(fig1, _c + _refs, floor_zero=True, ticksuffix="%", pad_frac=0.20)
+
+    # Chart 2: TBV/share trend
+    fig2 = None
+    if "tbv_per_share" in timeline.columns and timeline["tbv_per_share"].notna().any():
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=timeline["date"], y=timeline["tbv_per_share"],
+            name="TBV / Share", mode="lines+markers",
+            line=dict(color="#1b5e20", width=2.5),
+            marker=dict(size=6),
         ))
-        fig1.add_hline(y=CET1_REG_MIN, line_color="#b71c1c", line_width=1, line_dash="dash",
-                        annotation_text=f"{CET1_REG_MIN}% reg min + buffer",
-                        annotation_position="bottom right")
-        fig1.add_hline(y=CET1_BUFFER_FLOOR, line_color="#e65100", line_width=1, line_dash="dot",
-                        annotation_text=f"{CET1_BUFFER_FLOOR}% comfort floor",
-                        annotation_position="top right")
-        if peer_cet1:
-            fig1.add_hline(y=peer_cet1, line_color="#1b5e20", line_width=1, line_dash="dashdot",
-                            annotation_text=f"Peer median {peer_cet1:.2f}%",
-                            annotation_position="top left")
-        from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                       CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
-
         apply_standard_layout(
-            fig1, title="CET1 Ratio Trend",
-            height=CHART_HEIGHT_COMPACT, yaxis_title="CET1",
+            fig2, title="Tangible Book Value Per Share",
+            height=CHART_HEIGHT_COMPACT, yaxis_title="TBV/Share",
             show_legend=False, hovermode="x",
+            wide_left_margin=True,
         )
-        # Zoom to the data + regulatory floors so the trend reads, instead of a
-        # flat line pinned to the top of a 0-13% axis.
-        _c = [v for v in timeline["cet1_pct"].tolist() if v is not None]
-        _refs = [CET1_REG_MIN, CET1_BUFFER_FLOOR] + ([peer_cet1] if peer_cet1 else [])
-        tighten_yaxis(fig1, _c + _refs, floor_zero=True, ticksuffix="%", pad_frac=0.20)
+        tighten_yaxis(fig2, timeline["tbv_per_share"].dropna().tolist(), tickprefix="$")
 
-        # Chart 2: TBV/share trend
-        fig2 = None
-        if "tbv_per_share" in timeline.columns and timeline["tbv_per_share"].notna().any():
-            fig2 = go.Figure()
-            fig2.add_trace(go.Scatter(
-                x=timeline["date"], y=timeline["tbv_per_share"],
-                name="TBV / Share", mode="lines+markers",
-                line=dict(color="#1b5e20", width=2.5),
-                marker=dict(size=6),
-            ))
-            apply_standard_layout(
-                fig2, title="Tangible Book Value Per Share",
-                height=CHART_HEIGHT_COMPACT, yaxis_title="TBV/Share",
-                show_legend=False, hovermode="x",
-                wide_left_margin=True,
-            )
-            tighten_yaxis(fig2, timeline["tbv_per_share"].dropna().tolist(), tickprefix="$")
+    # Chart 3: Capital return mix — auto-scaled
+    # Coerce to numeric first: columns may contain None from stale/missing FDIC
+    # rows (e.g., banks right after their cert becomes active).
+    _ni = pd.to_numeric(timeline["net_income_k_qtr"], errors="coerce")
+    _cr = pd.to_numeric(timeline["capital_returned_k"], errors="coerce")
+    max_val = max(_ni.abs().max() or 0, _cr.abs().max() or 0)
+    scale, unit = _pick_scale(max_val * 1000)
+    ni_scaled = timeline["net_income_k_qtr"] * 1000 / scale
+    cr_scaled = timeline["capital_returned_k"] * 1000 / scale
 
-        # Chart 3: Capital return mix — auto-scaled
-        # Coerce to numeric first: columns may contain None from stale/missing FDIC
-        # rows (e.g., banks right after their cert becomes active).
-        _ni = pd.to_numeric(timeline["net_income_k_qtr"], errors="coerce")
-        _cr = pd.to_numeric(timeline["capital_returned_k"], errors="coerce")
-        max_val = max(_ni.abs().max() or 0, _cr.abs().max() or 0)
-        scale, unit = _pick_scale(max_val * 1000)
-        ni_scaled = timeline["net_income_k_qtr"] * 1000 / scale
-        cr_scaled = timeline["capital_returned_k"] * 1000 / scale
+    fig3 = go.Figure()
+    fig3.add_trace(go.Bar(
+        x=timeline["date"], y=ni_scaled,
+        name="Net Income", marker_color="#1a73e8", opacity=0.85,
+    ))
+    fig3.add_trace(go.Bar(
+        x=timeline["date"], y=cr_scaled,
+        name="Capital Returned", marker_color="#b71c1c", opacity=0.85,
+    ))
+    apply_standard_layout(
+        fig3, title="Net Income vs Capital Returned",
+        height=CHART_HEIGHT_COMPACT, yaxis_title=f"$ {unit}",
+        show_legend=True, wide_left_margin=True,
+    )
+    fig3.update_layout(barmode="group")
 
-        fig3 = go.Figure()
-        fig3.add_trace(go.Bar(
-            x=timeline["date"], y=ni_scaled,
-            name="Net Income", marker_color="#1a73e8", opacity=0.85,
+    # Chart 4: Capital Generation Waterfall (last quarter)
+    #
+    # Note: "Capital Returned" is DERIVED as NI − ΔEquity, so it captures
+    # dividends + buybacks + AOCI + any other equity adjustments together.
+    # We can't separate them without pulling from SEC 10-Q AOCI components.
+    # The waterfall shows Starting Equity + NI − (NI − ΔEquity) = Ending Equity,
+    # which by construction sums exactly — no residual.
+    fig4 = None
+    prior_eq = timeline["equity_k"].iloc[-2] if len(timeline) >= 2 else None
+    curr_eq = latest.get("equity_k")
+    ni = latest.get("net_income_k_qtr")
+    if (prior_eq is not None and curr_eq is not None and ni is not None):
+        cap_returned = latest.get("capital_returned_k") or 0
+
+        scale, unit = _pick_scale(curr_eq * 1000)
+        wf_scaled = [
+            prior_eq * 1000 / scale,
+            ni * 1000 / scale,
+            -cap_returned * 1000 / scale,
+            curr_eq * 1000 / scale,
+        ]
+
+        waterfall_labels = [
+            "Starting<br>Equity",
+            "+ Net<br>Income",
+            "- Capital Returned<br>(Divs + Buybacks + AOCI)",
+            "Ending<br>Equity",
+        ]
+
+        fig4 = go.Figure()
+        fig4.add_trace(go.Waterfall(
+            x=waterfall_labels,
+            measure=["absolute", "relative", "relative", "total"],
+            y=wf_scaled,
+            text=[f"${v:,.1f}{unit}" for v in wf_scaled],
+            textposition="outside",
+            connector={"line": {"color": "rgb(150,150,150)"}},
+            increasing={"marker": {"color": "#1b5e20"}},
+            decreasing={"marker": {"color": "#b71c1c"}},
+            totals={"marker": {"color": "#1a73e8"}},
         ))
-        fig3.add_trace(go.Bar(
-            x=timeline["date"], y=cr_scaled,
-            name="Capital Returned", marker_color="#b71c1c", opacity=0.85,
-        ))
+        latest_ts = latest.get("date")
+        if latest_ts is not None and hasattr(latest_ts, "month"):
+            q = (latest_ts.month - 1) // 3 + 1
+            period_label = f"{latest_ts.year}-Q{q}"
+        else:
+            period_label = ""
         apply_standard_layout(
-            fig3, title="Net Income vs Capital Returned",
+            fig4, title=f"Capital Generation — {period_label}",
             height=CHART_HEIGHT_COMPACT, yaxis_title=f"$ {unit}",
-            show_legend=True, wide_left_margin=True,
+            show_legend=False, wide_left_margin=True,
         )
-        fig3.update_layout(barmode="group")
+        # A 0-based axis makes the ±flows invisible against the ~$2B equity
+        # bars. Zoom to the level of the bridge so NI and capital-returned
+        # actually read as steps.
+        _running, _levels = 0.0, []
+        for _m, _v in zip(["absolute", "relative", "relative", "total"], wf_scaled):
+            _running = _v if _m in ("absolute", "total") else _running + _v
+            _levels.append(_running)
+        _lo, _hi = min(_levels), max(_levels)
+        _pad = max((_hi - _lo) * 0.6, 0.03 * max(abs(x) for x in _levels), 0.02)
+        fig4.update_yaxes(range=[_lo - _pad, _hi + _pad])
 
-        # Chart 4: Capital Generation Waterfall (last quarter)
-        #
-        # Note: "Capital Returned" is DERIVED as NI − ΔEquity, so it captures
-        # dividends + buybacks + AOCI + any other equity adjustments together.
-        # We can't separate them without pulling from SEC 10-Q AOCI components.
-        # The waterfall shows Starting Equity + NI − (NI − ΔEquity) = Ending Equity,
-        # which by construction sums exactly — no residual.
-        fig4 = None
-        prior_eq = timeline["equity_k"].iloc[-2] if len(timeline) >= 2 else None
-        curr_eq = latest.get("equity_k")
-        ni = latest.get("net_income_k_qtr")
-        if (prior_eq is not None and curr_eq is not None and ni is not None):
-            cap_returned = latest.get("capital_returned_k") or 0
+    # Dense 2×2 grid — no full-width single charts.
+    _g1 = st.columns(2)
+    with _g1[0]:
+        st.plotly_chart(fig1, use_container_width=True)
+    if fig2 is not None:
+        with _g1[1]:
+            st.plotly_chart(fig2, use_container_width=True)
+    _g2 = st.columns(2)
+    with _g2[0]:
+        st.plotly_chart(fig3, use_container_width=True)
+    if fig4 is not None:
+        with _g2[1]:
+            st.plotly_chart(fig4, use_container_width=True)
 
-            scale, unit = _pick_scale(curr_eq * 1000)
-            wf_scaled = [
-                prior_eq * 1000 / scale,
-                ni * 1000 / scale,
-                -cap_returned * 1000 / scale,
-                curr_eq * 1000 / scale,
-            ]
-
-            waterfall_labels = [
-                "Starting<br>Equity",
-                "+ Net<br>Income",
-                "- Capital Returned<br>(Divs + Buybacks + AOCI)",
-                "Ending<br>Equity",
-            ]
-
-            fig4 = go.Figure()
-            fig4.add_trace(go.Waterfall(
-                x=waterfall_labels,
-                measure=["absolute", "relative", "relative", "total"],
-                y=wf_scaled,
-                text=[f"${v:,.1f}{unit}" for v in wf_scaled],
-                textposition="outside",
-                connector={"line": {"color": "rgb(150,150,150)"}},
-                increasing={"marker": {"color": "#1b5e20"}},
-                decreasing={"marker": {"color": "#b71c1c"}},
-                totals={"marker": {"color": "#1a73e8"}},
-            ))
-            latest_ts = latest.get("date")
-            if latest_ts is not None and hasattr(latest_ts, "month"):
-                q = (latest_ts.month - 1) // 3 + 1
-                period_label = f"{latest_ts.year}-Q{q}"
-            else:
-                period_label = ""
-            apply_standard_layout(
-                fig4, title=f"Capital Generation — {period_label}",
-                height=CHART_HEIGHT_COMPACT, yaxis_title=f"$ {unit}",
-                show_legend=False, wide_left_margin=True,
-            )
-            # A 0-based axis makes the ±flows invisible against the ~$2B equity
-            # bars. Zoom to the level of the bridge so NI and capital-returned
-            # actually read as steps.
-            _running, _levels = 0.0, []
-            for _m, _v in zip(["absolute", "relative", "relative", "total"], wf_scaled):
-                _running = _v if _m in ("absolute", "total") else _running + _v
-                _levels.append(_running)
-            _lo, _hi = min(_levels), max(_levels)
-            _pad = max((_hi - _lo) * 0.6, 0.03 * max(abs(x) for x in _levels), 0.02)
-            fig4.update_yaxes(range=[_lo - _pad, _hi + _pad])
-
-        # Dense 2×2 grid — no full-width single charts.
-        _g1 = st.columns(2)
-        with _g1[0]:
-            st.plotly_chart(fig1, use_container_width=True)
-        if fig2 is not None:
-            with _g1[1]:
-                st.plotly_chart(fig2, use_container_width=True)
-        _g2 = st.columns(2)
-        with _g2[0]:
-            st.plotly_chart(fig3, use_container_width=True)
-        if fig4 is not None:
-            with _g2[1]:
-                st.plotly_chart(fig4, use_container_width=True)
-
-    except ImportError:
-        st.warning("Install plotly to view capital charts.")
 
     # ── Capital Return Attribution (SEC-sourced) ────────────────────────
     st.markdown("---")
@@ -536,100 +533,97 @@ def _render_capital_return_attribution(ticker: str):
                       delta="combined", delta_color="off")
 
     # ── Quarterly trend chart ──────────────────────────────────────────
-    try:
-        import plotly.graph_objects as go
-        from utils.chart_style import apply_standard_layout, CHART_HEIGHT_COMPACT
+    import plotly.graph_objects as go
+    from utils.chart_style import apply_standard_layout, CHART_HEIGHT_COMPACT
 
-        # Only show quarters with actual data
-        df = timeline.dropna(subset=["dividends_q", "buybacks_q"], how="all")
-        if not df.empty:
-            # Coerce columns to numeric — any may contain None from sparse quarters
-            _div = pd.to_numeric(df["dividends_q"], errors="coerce")
-            _bb = pd.to_numeric(df["buybacks_q"], errors="coerce")
-            _ni = pd.to_numeric(df["net_income_q"], errors="coerce")
-            # Pick scale
-            max_abs = max(
-                _div.abs().max() or 0,
-                _bb.abs().max() or 0,
-                _ni.abs().max() or 0,
-            )
-            if max_abs >= 1e9:
-                scale, unit = 1e9, "B"
-            elif max_abs >= 1e6:
-                scale, unit = 1e6, "M"
-            else:
-                scale, unit = 1e3, "K"
+    # Only show quarters with actual data
+    df = timeline.dropna(subset=["dividends_q", "buybacks_q"], how="all")
+    if not df.empty:
+        # Coerce columns to numeric — any may contain None from sparse quarters
+        _div = pd.to_numeric(df["dividends_q"], errors="coerce")
+        _bb = pd.to_numeric(df["buybacks_q"], errors="coerce")
+        _ni = pd.to_numeric(df["net_income_q"], errors="coerce")
+        # Pick scale
+        max_abs = max(
+            _div.abs().max() or 0,
+            _bb.abs().max() or 0,
+            _ni.abs().max() or 0,
+        )
+        if max_abs >= 1e9:
+            scale, unit = 1e9, "B"
+        elif max_abs >= 1e6:
+            scale, unit = 1e6, "M"
+        else:
+            scale, unit = 1e3, "K"
 
-            cc1, cc2 = st.columns(2)
+        cc1, cc2 = st.columns(2)
 
-            # Chart 1: Stacked bar NI vs Div+BB
-            fig1 = go.Figure()
-            fig1.add_trace(go.Bar(
-                x=df["date"], y=df["net_income_q"] / scale,
-                name="Net Income", marker_color="#2563eb",
-                opacity=0.45,
-            ))
-            fig1.add_trace(go.Bar(
-                x=df["date"], y=df["dividends_q"].fillna(0) / scale,
-                name="Dividends", marker_color="#059669",
-            ))
-            fig1.add_trace(go.Bar(
-                x=df["date"], y=df["buybacks_q"].fillna(0) / scale,
-                name="Buybacks", marker_color="#d97706",
-            ))
-            apply_standard_layout(
-                fig1, title="Net Income vs Capital Returned (Quarterly)",
-                height=CHART_HEIGHT_COMPACT,
-                yaxis_title=f"$ {unit}",
-                show_legend=True, wide_left_margin=True,
-            )
-            fig1.update_layout(barmode="group")
-            with cc1:
-                st.plotly_chart(fig1, use_container_width=True)
+        # Chart 1: Stacked bar NI vs Div+BB
+        fig1 = go.Figure()
+        fig1.add_trace(go.Bar(
+            x=df["date"], y=df["net_income_q"] / scale,
+            name="Net Income", marker_color="#2563eb",
+            opacity=0.45,
+        ))
+        fig1.add_trace(go.Bar(
+            x=df["date"], y=df["dividends_q"].fillna(0) / scale,
+            name="Dividends", marker_color="#059669",
+        ))
+        fig1.add_trace(go.Bar(
+            x=df["date"], y=df["buybacks_q"].fillna(0) / scale,
+            name="Buybacks", marker_color="#d97706",
+        ))
+        apply_standard_layout(
+            fig1, title="Net Income vs Capital Returned (Quarterly)",
+            height=CHART_HEIGHT_COMPACT,
+            yaxis_title=f"$ {unit}",
+            show_legend=True, wide_left_margin=True,
+        )
+        fig1.update_layout(barmode="group")
+        with cc1:
+            st.plotly_chart(fig1, use_container_width=True)
 
-            # Chart 2: Total return ratio % trend
-            fig2 = go.Figure()
-            ratio_pct = df["total_return_ratio_q"] * 100
-            fig2.add_trace(go.Scatter(
-                x=df["date"], y=ratio_pct,
+        # Chart 2: Total return ratio % trend
+        fig2 = go.Figure()
+        ratio_pct = df["total_return_ratio_q"] * 100
+        fig2.add_trace(go.Scatter(
+            x=df["date"], y=ratio_pct,
+            mode="lines+markers",
+            line=dict(color="#2563eb", width=2.5),
+            marker=dict(size=6),
+            name="Total Return Ratio",
+        ))
+        fig2.add_hline(y=100, line_color="#dc2626", line_width=1, line_dash="dash",
+                       annotation_text="100% (returning all NI)",
+                       annotation_position="top right", annotation_font_size=10)
+        apply_standard_layout(
+            fig2, title="Total Return Ratio (Divs+BB / NI)",
+            height=CHART_HEIGHT_COMPACT,
+            yaxis_title="%", show_legend=False,
+        )
+        fig2.update_yaxes(ticksuffix="%")
+        with cc2:
+            st.plotly_chart(fig2, use_container_width=True)
+
+        # Chart 3: Share count trend
+        if df["shares_outstanding"].notna().any():
+            fig3 = go.Figure()
+            fig3.add_trace(go.Scatter(
+                x=df["date"], y=df["shares_outstanding"] / 1e6,
                 mode="lines+markers",
-                line=dict(color="#2563eb", width=2.5),
+                line=dict(color="#9333ea", width=2.5),
                 marker=dict(size=6),
-                name="Total Return Ratio",
+                fill="tozeroy",
+                fillcolor="rgba(147, 51, 234, 0.08)",
+                name="Shares Outstanding",
             ))
-            fig2.add_hline(y=100, line_color="#dc2626", line_width=1, line_dash="dash",
-                           annotation_text="100% (returning all NI)",
-                           annotation_position="top right", annotation_font_size=10)
             apply_standard_layout(
-                fig2, title="Total Return Ratio (Divs+BB / NI)",
+                fig3, title="Shares Outstanding (M) — declining = buybacks working",
                 height=CHART_HEIGHT_COMPACT,
-                yaxis_title="%", show_legend=False,
+                yaxis_title="Shares (M)", show_legend=False,
             )
-            fig2.update_yaxes(ticksuffix="%")
-            with cc2:
-                st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig3, use_container_width=True)
 
-            # Chart 3: Share count trend
-            if df["shares_outstanding"].notna().any():
-                fig3 = go.Figure()
-                fig3.add_trace(go.Scatter(
-                    x=df["date"], y=df["shares_outstanding"] / 1e6,
-                    mode="lines+markers",
-                    line=dict(color="#9333ea", width=2.5),
-                    marker=dict(size=6),
-                    fill="tozeroy",
-                    fillcolor="rgba(147, 51, 234, 0.08)",
-                    name="Shares Outstanding",
-                ))
-                apply_standard_layout(
-                    fig3, title="Shares Outstanding (M) — declining = buybacks working",
-                    height=CHART_HEIGHT_COMPACT,
-                    yaxis_title="Shares (M)", show_legend=False,
-                )
-                st.plotly_chart(fig3, use_container_width=True)
-
-    except ImportError:
-        pass
 
     # ── Quarterly detail table ─────────────────────────────────────────
     with st.expander("📋 Quarterly detail (last 8 quarters)"):

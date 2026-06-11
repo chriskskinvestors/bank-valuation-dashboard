@@ -570,37 +570,34 @@ def render_valuation_model(ticker: str):
         st.dataframe(styled3, use_container_width=True, hide_index=True)
 
         # Bar chart
-        try:
-            import plotly.graph_objects as go
-            fig = go.Figure()
-            scen_names = ["Bear", "Base", "Bull"]
-            scen_fvs = [scenarios["bear"].get("fair_value_per_share") or 0,
-                        scenarios["base"].get("fair_value_per_share") or 0,
-                        scenarios["bull"].get("fair_value_per_share") or 0]
-            colors = ["#b71c1c", "#1a73e8", "#1b5e20"]
-            fig.add_trace(go.Bar(
-                x=scen_names, y=scen_fvs,
-                marker_color=colors,
-                text=[f"${v:.2f}" for v in scen_fvs],
-                textposition="outside",
-            ))
-            if price:
-                fig.add_hline(
-                    y=price, line_color="#000", line_width=2, line_dash="dash",
-                    annotation_text=f"Market ${price:.2f}",
-                    annotation_position="top right",
-                )
-            from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL
-            apply_standard_layout(
-                fig, title="Fair Value by Scenario",
-                height=CHART_HEIGHT_FULL, yaxis_title="Fair Value",
-                show_legend=False, hovermode="x",
-                wide_left_margin=True,
+        import plotly.graph_objects as go
+        fig = go.Figure()
+        scen_names = ["Bear", "Base", "Bull"]
+        scen_fvs = [scenarios["bear"].get("fair_value_per_share") or 0,
+                    scenarios["base"].get("fair_value_per_share") or 0,
+                    scenarios["bull"].get("fair_value_per_share") or 0]
+        colors = ["#b71c1c", "#1a73e8", "#1b5e20"]
+        fig.add_trace(go.Bar(
+            x=scen_names, y=scen_fvs,
+            marker_color=colors,
+            text=[f"${v:.2f}" for v in scen_fvs],
+            textposition="outside",
+        ))
+        if price:
+            fig.add_hline(
+                y=price, line_color="#000", line_width=2, line_dash="dash",
+                annotation_text=f"Market ${price:.2f}",
+                annotation_position="top right",
             )
-            fig.update_yaxes(tickprefix="$")
-            st.plotly_chart(fig, use_container_width=True)
-        except ImportError:
-            pass
+        from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL
+        apply_standard_layout(
+            fig, title="Fair Value by Scenario",
+            height=CHART_HEIGHT_FULL, yaxis_title="Fair Value",
+            show_legend=False, hovermode="x",
+            wide_left_margin=True,
+        )
+        fig.update_yaxes(tickprefix="$")
+        st.plotly_chart(fig, use_container_width=True)
 
     # ── Tab 4: Tornado + Implied IRR ──────────────────────────────────
     with tab4:
@@ -707,65 +704,62 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
         "target_cet1_pct": "Target CET1 (±1pp)",
     }
 
-    try:
-        import plotly.graph_objects as go
+    import plotly.graph_objects as go
 
-        # Sort ascending so biggest bar appears at top
-        tornado_sorted = sorted(tornado, key=lambda t: t["range"])
-        labels = [labels_map.get(t["input"], t["input"]) for t in tornado_sorted]
-        base_fv = tornado_sorted[0]["base_fv"]
+    # Sort ascending so biggest bar appears at top
+    tornado_sorted = sorted(tornado, key=lambda t: t["range"])
+    labels = [labels_map.get(t["input"], t["input"]) for t in tornado_sorted]
+    base_fv = tornado_sorted[0]["base_fv"]
 
-        low_vals = [t["low_fv"] - base_fv for t in tornado_sorted]
-        high_vals = [t["high_fv"] - base_fv for t in tornado_sorted]
+    low_vals = [t["low_fv"] - base_fv for t in tornado_sorted]
+    high_vals = [t["high_fv"] - base_fv for t in tornado_sorted]
 
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=low_vals, y=labels, orientation="h",
-            marker_color="#b71c1c", name="Low adj",
-            base=base_fv,
-            text=[f"${base_fv + v:.2f}" for v in low_vals],
-            textposition="outside",
-        ))
-        fig.add_trace(go.Bar(
-            x=high_vals, y=labels, orientation="h",
-            marker_color="#1b5e20", name="High adj",
-            base=base_fv,
-            text=[f"${base_fv + v:.2f}" for v in high_vals],
-            textposition="outside",
-        ))
-        fig.add_vline(x=base_fv, line_color="#000", line_width=2, line_dash="dash",
-                      annotation_text=f"Base ${base_fv:.2f}", annotation_position="top")
-        if price:
-            fig.add_vline(x=price, line_color="#1a73e8", line_width=2,
-                          annotation_text=f"Market ${price:.2f}",
-                          annotation_position="bottom")
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=low_vals, y=labels, orientation="h",
+        marker_color="#b71c1c", name="Low adj",
+        base=base_fv,
+        text=[f"${base_fv + v:.2f}" for v in low_vals],
+        textposition="outside",
+    ))
+    fig.add_trace(go.Bar(
+        x=high_vals, y=labels, orientation="h",
+        marker_color="#1b5e20", name="High adj",
+        base=base_fv,
+        text=[f"${base_fv + v:.2f}" for v in high_vals],
+        textposition="outside",
+    ))
+    fig.add_vline(x=base_fv, line_color="#000", line_width=2, line_dash="dash",
+                  annotation_text=f"Base ${base_fv:.2f}", annotation_position="top")
+    if price:
+        fig.add_vline(x=price, line_color="#1a73e8", line_width=2,
+                      annotation_text=f"Market ${price:.2f}",
+                      annotation_position="bottom")
 
-        from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL
-        apply_standard_layout(
-            fig, title="Tornado: Input Sensitivity",
-            height=CHART_HEIGHT_FULL,
-            xaxis_title="Fair Value ($)", yaxis_title="",
-            show_legend=True, hovermode="closest",
-        )
-        fig.update_layout(barmode="overlay")
-        fig.update_xaxes(tickprefix="$")
-        st.plotly_chart(fig, use_container_width=True)
+    from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL
+    apply_standard_layout(
+        fig, title="Tornado: Input Sensitivity",
+        height=CHART_HEIGHT_FULL,
+        xaxis_title="Fair Value ($)", yaxis_title="",
+        show_legend=True, hovermode="closest",
+    )
+    fig.update_layout(barmode="overlay")
+    fig.update_xaxes(tickprefix="$")
+    st.plotly_chart(fig, use_container_width=True)
 
-        # Tornado table
-        rows = []
-        for t in tornado:
-            rows.append({
-                "Input": labels_map.get(t["input"], t["input"]),
-                "Low-case FV": f"${t['low_fv']:.2f}",
-                "Δ Low %": f"{t['low_delta_pct']:+.1f}%",
-                "High-case FV": f"${t['high_fv']:.2f}",
-                "Δ High %": f"{t['high_delta_pct']:+.1f}%",
-                "Range ($)": f"${t['range']:.2f}",
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    # Tornado table
+    rows = []
+    for t in tornado:
+        rows.append({
+            "Input": labels_map.get(t["input"], t["input"]),
+            "Low-case FV": f"${t['low_fv']:.2f}",
+            "Δ Low %": f"{t['low_delta_pct']:+.1f}%",
+            "High-case FV": f"${t['high_fv']:.2f}",
+            "Δ High %": f"{t['high_delta_pct']:+.1f}%",
+            "Range ($)": f"${t['range']:.2f}",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    except ImportError:
-        pass
 
 
 # ── Peer-Relative Warranted P/TBV ───────────────────────────────────

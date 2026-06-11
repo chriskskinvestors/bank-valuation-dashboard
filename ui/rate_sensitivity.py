@@ -922,55 +922,52 @@ def _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta):
     st.dataframe(styled, use_container_width=True, hide_index=True, height=40 + 35 * len(df))
 
     # Bar chart
-    try:
-        import plotly.graph_objects as go
-        scenario_names = [s["name"] for s in scenarios]
-        nim_deltas = [s["nim_delta_bps"] for s in scenarios]
-        nii_deltas = [s["nii_delta_usd"] for s in scenarios]
-        nii_scale, nii_unit = _pick_nii_scale(max(abs(d) for d in nii_deltas) if nii_deltas else 0)
-        nii_scaled = [d / nii_scale for d in nii_deltas]
+    import plotly.graph_objects as go
+    scenario_names = [s["name"] for s in scenarios]
+    nim_deltas = [s["nim_delta_bps"] for s in scenarios]
+    nii_deltas = [s["nii_delta_usd"] for s in scenarios]
+    nii_scale, nii_unit = _pick_nii_scale(max(abs(d) for d in nii_deltas) if nii_deltas else 0)
+    nii_scaled = [d / nii_scale for d in nii_deltas]
 
-        cc1, cc2 = st.columns(2)
+    cc1, cc2 = st.columns(2)
 
-        fig1 = go.Figure()
-        fig1.add_trace(go.Bar(
-            x=scenario_names, y=nim_deltas,
-            marker_color=[_nim_color(d) for d in nim_deltas],
-            text=[f"{d:+.0f}" for d in nim_deltas],
-            textposition="outside",
-        ))
-        fig1.add_hline(y=0, line_color="#666", line_width=1)
-        apply_standard_layout(
-            fig1, title="Δ NIM by Scenario",
-            height=CHART_HEIGHT_COMPACT,
-            yaxis_title="Δ NIM (bps)",
-            show_legend=False, hovermode="x",
-        )
-        fig1.update_xaxes(tickangle=30)
-        with cc1:
-            st.plotly_chart(fig1, use_container_width=True)
+    fig1 = go.Figure()
+    fig1.add_trace(go.Bar(
+        x=scenario_names, y=nim_deltas,
+        marker_color=[_nim_color(d) for d in nim_deltas],
+        text=[f"{d:+.0f}" for d in nim_deltas],
+        textposition="outside",
+    ))
+    fig1.add_hline(y=0, line_color="#666", line_width=1)
+    apply_standard_layout(
+        fig1, title="Δ NIM by Scenario",
+        height=CHART_HEIGHT_COMPACT,
+        yaxis_title="Δ NIM (bps)",
+        show_legend=False, hovermode="x",
+    )
+    fig1.update_xaxes(tickangle=30)
+    with cc1:
+        st.plotly_chart(fig1, use_container_width=True)
 
-        fig2 = go.Figure()
-        fig2.add_trace(go.Bar(
-            x=scenario_names, y=nii_scaled,
-            marker_color=[_nim_color(d) for d in nim_deltas],
-            text=[f"${v:+,.1f}{nii_unit}" for v in nii_scaled],
-            textposition="outside",
-        ))
-        fig2.add_hline(y=0, line_color="#666", line_width=1)
-        apply_standard_layout(
-            fig2, title="Δ Net Interest Income (Annualized)",
-            height=CHART_HEIGHT_COMPACT,
-            yaxis_title=f"Δ NII ($ {nii_unit})",
-            show_legend=False, hovermode="x",
-            wide_left_margin=True,
-        )
-        fig2.update_xaxes(tickangle=30)
-        with cc2:
-            st.plotly_chart(fig2, use_container_width=True)
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(
+        x=scenario_names, y=nii_scaled,
+        marker_color=[_nim_color(d) for d in nim_deltas],
+        text=[f"${v:+,.1f}{nii_unit}" for v in nii_scaled],
+        textposition="outside",
+    ))
+    fig2.add_hline(y=0, line_color="#666", line_width=1)
+    apply_standard_layout(
+        fig2, title="Δ Net Interest Income (Annualized)",
+        height=CHART_HEIGHT_COMPACT,
+        yaxis_title=f"Δ NII ($ {nii_unit})",
+        show_legend=False, hovermode="x",
+        wide_left_margin=True,
+    )
+    fig2.update_xaxes(tickangle=30)
+    with cc2:
+        st.plotly_chart(fig2, use_container_width=True)
 
-    except ImportError:
-        pass
 
     # ── Historical NIM-vs-slope scatter ────────────────────────────────
     st.markdown("")
@@ -986,11 +983,8 @@ def _render_historical_nim_scatter(hist: list[dict]):
     if not hist or len(hist) < 8:
         return
 
-    try:
-        import plotly.graph_objects as go
-        from data.fred_client import fetch_series
-    except ImportError:
-        return
+    import plotly.graph_objects as go
+    from data.fred_client import fetch_series
 
     # Pull DGS5 and DGS3MO history
     try:
@@ -1213,28 +1207,25 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
     st.dataframe(styled_nii, use_container_width=True)
 
     # Plotly heat-map (optional visual)
-    try:
-        import plotly.graph_objects as go
-        fig = go.Figure(data=go.Heatmap(
-            z=nim_mat,
-            x=[f"{l:+d}" for l in long_range],
-            y=[f"{s:+d}" for s in short_range],
-            text=[[f"{v:+.0f}" for v in row] for row in nim_mat],
-            texttemplate="%{text}",
-            textfont={"size": 11},
-            colorscale=[[0, "#b71c1c"], [0.5, "#f5f5f5"], [1, "#1b5e20"]],
-            zmid=0,
-            hovertemplate="Δ3M %{y} bps<br>Δ5Y %{x} bps<br>ΔNIM: %{z:+.0f} bps<extra></extra>",
-        ))
-        apply_standard_layout(
-            fig, title="Δ NIM Heat-Map",
-            height=CHART_HEIGHT_FULL,
-            xaxis_title="Δ 5Y Treasury (bps)",
-            yaxis_title="Δ 3M Treasury (bps)",
-            show_legend=False, hovermode="closest",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    except ImportError:
-        pass
+    import plotly.graph_objects as go
+    fig = go.Figure(data=go.Heatmap(
+        z=nim_mat,
+        x=[f"{l:+d}" for l in long_range],
+        y=[f"{s:+d}" for s in short_range],
+        text=[[f"{v:+.0f}" for v in row] for row in nim_mat],
+        texttemplate="%{text}",
+        textfont={"size": 11},
+        colorscale=[[0, "#b71c1c"], [0.5, "#f5f5f5"], [1, "#1b5e20"]],
+        zmid=0,
+        hovertemplate="Δ3M %{y} bps<br>Δ5Y %{x} bps<br>ΔNIM: %{z:+.0f} bps<extra></extra>",
+    ))
+    apply_standard_layout(
+        fig, title="Δ NIM Heat-Map",
+        height=CHART_HEIGHT_FULL,
+        xaxis_title="Δ 5Y Treasury (bps)",
+        yaxis_title="Δ 3M Treasury (bps)",
+        show_legend=False, hovermode="closest",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 

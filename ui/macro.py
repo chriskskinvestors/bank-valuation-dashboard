@@ -121,140 +121,137 @@ def render_macro_dashboard():
         "DGS10":  ("10Y", "#2563eb"),
         "DGS30":  ("30Y", "#1e3a8a"),
     }
-    try:
-        import plotly.graph_objects as go
+    import plotly.graph_objects as go
 
-        # ── Chart 1: the actual yield curve — today / 3M ago / 1Y ago ──────
-        def _at(df, days_ago):
-            if df is None or df.empty:
-                return None
-            d = df.dropna(subset=["value"]).sort_values("date")
-            if d.empty:
-                return None
-            if days_ago == 0:
-                return float(d["value"].iloc[-1])
-            cutoff = d["date"].iloc[-1] - pd.Timedelta(days=days_ago)
-            prior = d[d["date"] <= cutoff]
-            return float(prior["value"].iloc[-1]) if not prior.empty else None
+    # ── Chart 1: the actual yield curve — today / 3M ago / 1Y ago ──────
+    def _at(df, days_ago):
+        if df is None or df.empty:
+            return None
+        d = df.dropna(subset=["value"]).sort_values("date")
+        if d.empty:
+            return None
+        if days_ago == 0:
+            return float(d["value"].iloc[-1])
+        cutoff = d["date"].iloc[-1] - pd.Timedelta(days=days_ago)
+        prior = d[d["date"] <= cutoff]
+        return float(prior["value"].iloc[-1]) if not prior.empty else None
 
-        tenors = [("3M", "DGS3MO"), ("2Y", "DGS2"), ("5Y", "DGS5"),
-                  ("10Y", "DGS10"), ("30Y", "DGS30")]
-        labels, cur_y, m3_y, y1_y = [], [], [], []
-        for lbl, sid in tenors:
-            d = fetch_series(sid, years=2)
-            labels.append(lbl)
-            cur_y.append(_at(d, 0)); m3_y.append(_at(d, 90)); y1_y.append(_at(d, 365))
+    tenors = [("3M", "DGS3MO"), ("2Y", "DGS2"), ("5Y", "DGS5"),
+              ("10Y", "DGS10"), ("30Y", "DGS30")]
+    labels, cur_y, m3_y, y1_y = [], [], [], []
+    for lbl, sid in tenors:
+        d = fetch_series(sid, years=2)
+        labels.append(lbl)
+        cur_y.append(_at(d, 0)); m3_y.append(_at(d, 90)); y1_y.append(_at(d, 365))
 
-        figc = go.Figure()
-        figc.add_trace(go.Scatter(
-            x=labels, y=y1_y, name="1Y ago", mode="lines+markers",
-            line=dict(color="#cbd5e1", width=2, dash="dot"),
-            marker=dict(size=5, color="#cbd5e1"),
+    figc = go.Figure()
+    figc.add_trace(go.Scatter(
+        x=labels, y=y1_y, name="1Y ago", mode="lines+markers",
+        line=dict(color="#cbd5e1", width=2, dash="dot"),
+        marker=dict(size=5, color="#cbd5e1"),
+    ))
+    figc.add_trace(go.Scatter(
+        x=labels, y=m3_y, name="3M ago", mode="lines+markers",
+        line=dict(color="#93c5fd", width=2, dash="dash"),
+        marker=dict(size=5, color="#93c5fd"),
+    ))
+    figc.add_trace(go.Scatter(
+        x=labels, y=cur_y, name="Today", mode="lines+markers+text",
+        line=dict(color="#2563eb", width=3),
+        marker=dict(size=9, color="#2563eb"),
+        text=[f"{v:.2f}%" if v is not None else "" for v in cur_y],
+        textposition="top center", textfont=dict(size=11, color="#1e3a8a"),
+    ))
+    apply_standard_layout(figc, title="Treasury Yield Curve — today vs 3M & 1Y ago",
+                          height=CHART_HEIGHT_FULL, yaxis_title="Yield",
+                          xaxis_title="Maturity", hovermode="x unified")
+    figc.update_yaxes(ticksuffix="%")
+    st.plotly_chart(figc, use_container_width=True)
+
+    # ── Chart 2: rate history (3Y), cohesive palette ───────────────────
+    fig1 = go.Figure()
+    ffdf = fetch_series("FEDFUNDS", years=3)
+    if not ffdf.empty:
+        fig1.add_trace(go.Scatter(
+            x=ffdf["date"], y=ffdf["value"], name="Fed Funds",
+            mode="lines", line=dict(color="#64748b", width=2, dash="dot"),
         ))
-        figc.add_trace(go.Scatter(
-            x=labels, y=m3_y, name="3M ago", mode="lines+markers",
-            line=dict(color="#93c5fd", width=2, dash="dash"),
-            marker=dict(size=5, color="#93c5fd"),
-        ))
-        figc.add_trace(go.Scatter(
-            x=labels, y=cur_y, name="Today", mode="lines+markers+text",
-            line=dict(color="#2563eb", width=3),
-            marker=dict(size=9, color="#2563eb"),
-            text=[f"{v:.2f}%" if v is not None else "" for v in cur_y],
-            textposition="top center", textfont=dict(size=11, color="#1e3a8a"),
-        ))
-        apply_standard_layout(figc, title="Treasury Yield Curve — today vs 3M & 1Y ago",
-                              height=CHART_HEIGHT_FULL, yaxis_title="Yield",
-                              xaxis_title="Maturity", hovermode="x unified")
-        figc.update_yaxes(ticksuffix="%")
-        st.plotly_chart(figc, use_container_width=True)
-
-        # ── Chart 2: rate history (3Y), cohesive palette ───────────────────
-        fig1 = go.Figure()
-        ffdf = fetch_series("FEDFUNDS", years=3)
-        if not ffdf.empty:
+    for sid, (label, color) in CURVE.items():
+        df = fetch_series(sid, years=3)
+        if not df.empty:
             fig1.add_trace(go.Scatter(
-                x=ffdf["date"], y=ffdf["value"], name="Fed Funds",
-                mode="lines", line=dict(color="#64748b", width=2, dash="dot"),
+                x=df["date"], y=df["value"], name=label, mode="lines",
+                line=dict(color=color, width=2),
             ))
-        for sid, (label, color) in CURVE.items():
-            df = fetch_series(sid, years=3)
-            if not df.empty:
-                fig1.add_trace(go.Scatter(
-                    x=df["date"], y=df["value"], name=label, mode="lines",
-                    line=dict(color=color, width=2),
-                ))
-        apply_standard_layout(fig1, title="Rate History (3Y)", height=CHART_HEIGHT_FULL,
-                              yaxis_title="Rate")
-        fig1.update_yaxes(ticksuffix="%")
-        st.plotly_chart(fig1, use_container_width=True)
+    apply_standard_layout(fig1, title="Rate History (3Y)", height=CHART_HEIGHT_FULL,
+                          yaxis_title="Rate")
+    fig1.update_yaxes(ticksuffix="%")
+    st.plotly_chart(fig1, use_container_width=True)
 
-        # ── Charts 3 & 4 side-by-side ──────────────────────────────────────
-        cc1, cc2 = st.columns(2)
+    # ── Charts 3 & 4 side-by-side ──────────────────────────────────────
+    cc1, cc2 = st.columns(2)
 
-        # Chart 3: curve spreads — 10Y-3M (the NY Fed recession indicator) is
-        # emphasized, with the inverted (<0) zone shaded red and a live callout.
-        fig2 = go.Figure()
-        fig2.add_hrect(y0=-4, y1=0, fillcolor="rgba(220,38,38,0.07)",
-                       line_width=0, layer="below")
-        last_3m, last_3m_date = None, None
-        for sid, label, color, width in [
-            ("T10Y2Y", "10Y − 2Y", "#93c5fd", 1.6),
-            ("T10Y3M", "10Y − 3M (recession signal)", "#dc2626", 2.8),
-        ]:
-            df = fetch_series(sid, years=5)
-            if not df.empty:
-                fig2.add_trace(go.Scatter(
-                    x=df["date"], y=df["value"], name=label, mode="lines",
-                    line=dict(color=color, width=width),
-                ))
-                if sid == "T10Y3M":
-                    dd = df.dropna(subset=["value"]).sort_values("date")
-                    if not dd.empty:
-                        last_3m = float(dd["value"].iloc[-1])
-                        last_3m_date = dd["date"].iloc[-1]
-        fig2.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
-        if last_3m is not None:
-            inv = last_3m < 0
-            fig2.add_annotation(
-                x=last_3m_date, y=last_3m,
-                text=f"10Y−3M {last_3m:+.2f}pp · {'inverted' if inv else 'normal'}",
-                showarrow=True, arrowhead=0, ax=-70, ay=-26,
-                font=dict(size=10, color="#dc2626" if inv else "#059669"),
-                bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3,
-            )
-        apply_standard_layout(fig2, title="Curve Spreads (5Y) — 10Y−3M is the recession signal",
-                              height=CHART_HEIGHT_COMPACT, yaxis_title="Spread")
-        fig2.update_yaxes(ticksuffix="pp")
-        with cc1:
-            st.plotly_chart(fig2, use_container_width=True)
-
-        # Chart 4: unemployment + HY credit spread (dual axis)
-        fig3 = go.Figure()
-        unemp_df = fetch_series("UNRATE", years=5)
-        hy_df = fetch_series("BAMLH0A0HYM2", years=5)
-        if not unemp_df.empty:
-            fig3.add_trace(go.Scatter(
-                x=unemp_df["date"], y=unemp_df["value"], name="Unemployment",
-                mode="lines", line=dict(color="#0891b2", width=2), yaxis="y",
+    # Chart 3: curve spreads — 10Y-3M (the NY Fed recession indicator) is
+    # emphasized, with the inverted (<0) zone shaded red and a live callout.
+    fig2 = go.Figure()
+    fig2.add_hrect(y0=-4, y1=0, fillcolor="rgba(220,38,38,0.07)",
+                   line_width=0, layer="below")
+    last_3m, last_3m_date = None, None
+    for sid, label, color, width in [
+        ("T10Y2Y", "10Y − 2Y", "#93c5fd", 1.6),
+        ("T10Y3M", "10Y − 3M (recession signal)", "#dc2626", 2.8),
+    ]:
+        df = fetch_series(sid, years=5)
+        if not df.empty:
+            fig2.add_trace(go.Scatter(
+                x=df["date"], y=df["value"], name=label, mode="lines",
+                line=dict(color=color, width=width),
             ))
-        if not hy_df.empty:
-            fig3.add_trace(go.Scatter(
-                x=hy_df["date"], y=hy_df["value"], name="HY Credit Spread",
-                mode="lines", line=dict(color="#d97706", width=2), yaxis="y2",
-            ))
-        apply_standard_layout(fig3, title="Labor & Credit (5Y)", height=CHART_HEIGHT_COMPACT,
-                              yaxis_title="Unemployment %")
-        fig3.update_layout(
-            yaxis=dict(ticksuffix="%"),
-            yaxis2=dict(title="HY Spread %", overlaying="y", side="right",
-                        ticksuffix="%", showgrid=False),
+            if sid == "T10Y3M":
+                dd = df.dropna(subset=["value"]).sort_values("date")
+                if not dd.empty:
+                    last_3m = float(dd["value"].iloc[-1])
+                    last_3m_date = dd["date"].iloc[-1]
+    fig2.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+    if last_3m is not None:
+        inv = last_3m < 0
+        fig2.add_annotation(
+            x=last_3m_date, y=last_3m,
+            text=f"10Y−3M {last_3m:+.2f}pp · {'inverted' if inv else 'normal'}",
+            showarrow=True, arrowhead=0, ax=-70, ay=-26,
+            font=dict(size=10, color="#dc2626" if inv else "#059669"),
+            bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3,
         )
-        with cc2:
-            st.plotly_chart(fig3, use_container_width=True)
+    apply_standard_layout(fig2, title="Curve Spreads (5Y) — 10Y−3M is the recession signal",
+                          height=CHART_HEIGHT_COMPACT, yaxis_title="Spread")
+    fig2.update_yaxes(ticksuffix="pp")
+    with cc1:
+        st.plotly_chart(fig2, use_container_width=True)
 
-    except ImportError:
-        st.warning("Install plotly to view macro charts.")
+    # Chart 4: unemployment + HY credit spread (dual axis)
+    fig3 = go.Figure()
+    unemp_df = fetch_series("UNRATE", years=5)
+    hy_df = fetch_series("BAMLH0A0HYM2", years=5)
+    if not unemp_df.empty:
+        fig3.add_trace(go.Scatter(
+            x=unemp_df["date"], y=unemp_df["value"], name="Unemployment",
+            mode="lines", line=dict(color="#0891b2", width=2), yaxis="y",
+        ))
+    if not hy_df.empty:
+        fig3.add_trace(go.Scatter(
+            x=hy_df["date"], y=hy_df["value"], name="HY Credit Spread",
+            mode="lines", line=dict(color="#d97706", width=2), yaxis="y2",
+        ))
+    apply_standard_layout(fig3, title="Labor & Credit (5Y)", height=CHART_HEIGHT_COMPACT,
+                          yaxis_title="Unemployment %")
+    fig3.update_layout(
+        yaxis=dict(ticksuffix="%"),
+        yaxis2=dict(title="HY Spread %", overlaying="y", side="right",
+                    ticksuffix="%", showgrid=False),
+    )
+    with cc2:
+        st.plotly_chart(fig3, use_container_width=True)
+
 
     st.markdown("---")
     st.caption(

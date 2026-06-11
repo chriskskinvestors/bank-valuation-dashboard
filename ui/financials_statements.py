@@ -316,6 +316,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         return "—", None
 
     cells, rows_html, ri = {}, [], 0
+    cell_errors: list[str] = []
     ncol = len(recs_list)
     for sec_name, rows in spec:
         rows_html.append(f'<tr><td class="sec" colspan="{ncol+1}">{sec_name}</td></tr>')
@@ -325,7 +326,10 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             for ci, rec in enumerate(recs_list):
                 try:
                     v, c = cell(ci, kind, args, label)
-                except Exception:
+                except Exception as e:
+                    # A computation bug must not be indistinguishable from
+                    # "not reported" — collect and log once per render.
+                    cell_errors.append(f"{label}[{ci}]: {type(e).__name__}: {e}")
                     v, c = "—", None
                 cid = f"{ri}_{ci}"
                 if c:
@@ -336,6 +340,10 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             zebra = ' class="zebra"' if ri % 2 == 1 else ""
             rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
+
+    if cell_errors:
+        print(f"[statements] {ticker} {title}: {len(cell_errors)} cell(s) "
+              f"failed to compute — {'; '.join(cell_errors[:5])}")
 
     head = ('<th class="lblh">($ in thousands unless noted)</th>'
             + "".join(f'<th class="colh">{lb}</th>' for lb in labels))

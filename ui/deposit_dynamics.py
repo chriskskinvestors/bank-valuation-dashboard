@@ -219,87 +219,84 @@ def render_deposit_dynamics(ticker: str):
     st.markdown("---")
 
     # ── Charts ─────────────────────────────────────────────────────────
-    try:
-        import plotly.graph_objects as go
-        from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                       CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
 
-        # Chart 1: Cost of Deposits vs Fed Funds (main)
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["fed_funds"],
-            name="Fed Funds", mode="lines+markers",
-            line=dict(color="#1a73e8", width=2, dash="dot"),
-            marker=dict(size=6),
-        ))
-        fig1.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["cost_of_deposits"],
-            name="Cost of Deposits", mode="lines+markers",
-            line=dict(color="#b71c1c", width=2.5),
-            marker=dict(size=7),
-        ))
-        apply_standard_layout(
-            fig1, title="Cost of Deposits vs Fed Funds",
-            height=CHART_HEIGHT_COMPACT, yaxis_title="Rate",
-        )
-        tighten_yaxis(fig1, floor_zero=True, ticksuffix="%")
+    # Chart 1: Cost of Deposits vs Fed Funds (main)
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(
+        x=timeline["date"], y=timeline["fed_funds"],
+        name="Fed Funds", mode="lines+markers",
+        line=dict(color="#1a73e8", width=2, dash="dot"),
+        marker=dict(size=6),
+    ))
+    fig1.add_trace(go.Scatter(
+        x=timeline["date"], y=timeline["cost_of_deposits"],
+        name="Cost of Deposits", mode="lines+markers",
+        line=dict(color="#b71c1c", width=2.5),
+        marker=dict(size=7),
+    ))
+    apply_standard_layout(
+        fig1, title="Cost of Deposits vs Fed Funds",
+        height=CHART_HEIGHT_COMPACT, yaxis_title="Rate",
+    )
+    tighten_yaxis(fig1, floor_zero=True, ticksuffix="%")
 
-        # Chart 2: Deposit Composition Trend
-        fig2 = None
-        if "nonint_dep_pct" in timeline.columns:
-            fig2 = go.Figure()
+    # Chart 2: Deposit Composition Trend
+    fig2 = None
+    if "nonint_dep_pct" in timeline.columns:
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=timeline["date"], y=timeline["nonint_dep_pct"],
+            name="Non-Int Bearing", mode="lines+markers",
+            line=dict(color="#1b5e20", width=2.5),
+        ))
+        if "brokered_pct" in timeline.columns and timeline["brokered_pct"].notna().any():
             fig2.add_trace(go.Scatter(
-                x=timeline["date"], y=timeline["nonint_dep_pct"],
-                name="Non-Int Bearing", mode="lines+markers",
-                line=dict(color="#1b5e20", width=2.5),
+                x=timeline["date"], y=timeline["brokered_pct"],
+                name="Brokered", mode="lines+markers",
+                line=dict(color="#e65100", width=2),
             ))
-            if "brokered_pct" in timeline.columns and timeline["brokered_pct"].notna().any():
-                fig2.add_trace(go.Scatter(
-                    x=timeline["date"], y=timeline["brokered_pct"],
-                    name="Brokered", mode="lines+markers",
-                    line=dict(color="#e65100", width=2),
-                ))
-            if "uninsured_pct" in timeline.columns and timeline["uninsured_pct"].notna().any():
-                fig2.add_trace(go.Scatter(
-                    x=timeline["date"], y=timeline["uninsured_pct"],
-                    name="Uninsured", mode="lines+markers",
-                    line=dict(color="#b71c1c", width=2, dash="dash"),
-                ))
-            apply_standard_layout(
-                fig2, title="Deposit Composition",
-                height=CHART_HEIGHT_COMPACT, yaxis_title="% of Total Deposits",
-            )
-            tighten_yaxis(fig2, floor_zero=True, ticksuffix="%")
-
-        # Chart 3: QoQ Deposit Growth
-        fig3 = go.Figure()
-        colors = [
-            "#1b5e20" if (g is not None and g >= 0) else "#b71c1c"
-            for g in timeline["dep_qoq_growth"]
-        ]
-        fig3.add_trace(go.Bar(
-            x=timeline["date"], y=timeline["dep_qoq_growth"],
-            marker_color=colors, name="QoQ Growth",
-        ))
-        fig3.add_hline(y=0, line_color="#666", line_width=1)
-        fig3.add_hline(y=-2, line_color="#b71c1c", line_width=1, line_dash="dash",
-                       annotation_text="Alert", annotation_position="bottom right",
-                       annotation_font_size=10)
+        if "uninsured_pct" in timeline.columns and timeline["uninsured_pct"].notna().any():
+            fig2.add_trace(go.Scatter(
+                x=timeline["date"], y=timeline["uninsured_pct"],
+                name="Uninsured", mode="lines+markers",
+                line=dict(color="#b71c1c", width=2, dash="dash"),
+            ))
         apply_standard_layout(
-            fig3, title="QoQ Deposit Growth",
-            height=CHART_HEIGHT_COMPACT, yaxis_title="% QoQ",
-            show_legend=False, hovermode="x",
+            fig2, title="Deposit Composition",
+            height=CHART_HEIGHT_COMPACT, yaxis_title="% of Total Deposits",
         )
-        fig3.update_yaxes(ticksuffix="%")
+        tighten_yaxis(fig2, floor_zero=True, ticksuffix="%")
 
-        # Row 1: cost trend | composition (2-up). Row 2: QoQ growth bars (wide).
-        _g1 = st.columns(2)
-        with _g1[0]:
-            st.plotly_chart(fig1, use_container_width=True)
-        if fig2 is not None:
-            with _g1[1]:
-                st.plotly_chart(fig2, use_container_width=True)
-        st.plotly_chart(fig3, use_container_width=True)
+    # Chart 3: QoQ Deposit Growth
+    fig3 = go.Figure()
+    colors = [
+        "#1b5e20" if (g is not None and g >= 0) else "#b71c1c"
+        for g in timeline["dep_qoq_growth"]
+    ]
+    fig3.add_trace(go.Bar(
+        x=timeline["date"], y=timeline["dep_qoq_growth"],
+        marker_color=colors, name="QoQ Growth",
+    ))
+    fig3.add_hline(y=0, line_color="#666", line_width=1)
+    fig3.add_hline(y=-2, line_color="#b71c1c", line_width=1, line_dash="dash",
+                   annotation_text="Alert", annotation_position="bottom right",
+                   annotation_font_size=10)
+    apply_standard_layout(
+        fig3, title="QoQ Deposit Growth",
+        height=CHART_HEIGHT_COMPACT, yaxis_title="% QoQ",
+        show_legend=False, hovermode="x",
+    )
+    fig3.update_yaxes(ticksuffix="%")
 
-    except ImportError:
-        st.warning("Install plotly to view deposit trend charts.")
+    # Row 1: cost trend | composition (2-up). Row 2: QoQ growth bars (wide).
+    _g1 = st.columns(2)
+    with _g1[0]:
+        st.plotly_chart(fig1, use_container_width=True)
+    if fig2 is not None:
+        with _g1[1]:
+            st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig3, use_container_width=True)
+

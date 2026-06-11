@@ -318,11 +318,7 @@ _CURATED_SCATTERS = [
 
 def _render_peer_scatters(selected_peers: list[dict]):
     """Render curated preset scatters + custom 2-axis picker."""
-    try:
-        import plotly.graph_objects as go
-    except ImportError:
-        st.warning("Install plotly to view scatter plots.")
-        return
+    import plotly.graph_objects as go
 
     if len(selected_peers) < 3:
         st.info("Need at least 3 banks in the peer group for meaningful scatter plots.")
@@ -392,11 +388,8 @@ def _render_peer_scatters(selected_peers: list[dict]):
 
 def _build_scatter(peers: list[dict], preset: dict, height: int = 320):
     """Build a single scatter plot from a preset config."""
-    try:
-        import plotly.graph_objects as go
-        from utils.chart_style import apply_standard_layout
-    except ImportError:
-        return None
+    import plotly.graph_objects as go
+    from utils.chart_style import apply_standard_layout
 
     x_key = preset["x"]
     y_key = preset["y"]
@@ -490,12 +483,8 @@ _RADAR_METRICS = [
 
 def _render_peer_radar(selected_peers: list[dict]):
     """Render a radar chart comparing banks on 8 key metrics by percentile rank."""
-    try:
-        import plotly.graph_objects as go
-        from utils.chart_style import apply_standard_layout
-    except ImportError:
-        st.warning("Install plotly to view radar chart.")
-        return
+    import plotly.graph_objects as go
+    from utils.chart_style import apply_standard_layout
 
     if len(selected_peers) < 2:
         st.info("Need at least 2 banks for radar comparison.")

@@ -591,6 +591,7 @@ def render_financial_highlights(ticker: str):
     cells: dict[str, dict] = {}
     rows_html = []
     ri = 0
+    cell_errors: list[str] = []
     for sec_name, rows in sections:
         rows_html.append(
             f'<tr><td class="sec" colspan="{len(keys)+1}">{sec_name}</td></tr>')
@@ -599,7 +600,10 @@ def render_financial_highlights(ticker: str):
             for ci, k in enumerate(keys):
                 try:
                     payload = fn(k)
-                except Exception:
+                except Exception as e:
+                    # A computation bug must not be indistinguishable from
+                    # "not reported" — collect and log once per render.
+                    cell_errors.append(f"{label}[{k}]: {type(e).__name__}: {e}")
                     payload = {"v": "—", "calc": None}
                 cid = f"{ri}_{ci}"
                 if payload.get("calc"):
@@ -616,6 +620,10 @@ def render_financial_highlights(ticker: str):
             zebra = ' class="zebra"' if ri % 2 == 1 else ""
             rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
+
+    if cell_errors:
+        print(f"[financial_highlights] {ticker}: {len(cell_errors)} cell(s) "
+              f"failed to compute — {'; '.join(cell_errors[:5])}")
 
     head = ('<th class="lblh">($ in thousands unless noted)</th>'
             + "".join(f'<th class="colh">{labels[k]}</th>' for k in keys))
