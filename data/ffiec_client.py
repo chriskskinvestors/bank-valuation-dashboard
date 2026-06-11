@@ -528,13 +528,20 @@ def get_deposit_cost_detail(
     if df is None or df.empty:
         return None
     c = _DEP_COST_CODES
-    int_time = (_lookup_riad(df, c["int_time_le250"]) or 0) + (_lookup_riad(df, c["int_time_gt250"]) or 0)
-    int_other = (_lookup_riad(df, c["int_transaction"]) or 0) + (_lookup_riad(df, c["int_savings"]) or 0)
+
+    def _sum_or_none(*codes):
+        """Sum the components, but only when at least one was actually
+        reported — a bank with a true $0 must not be conflated with
+        'field missing from the filing' (the old `or None` did exactly that)."""
+        vals = [_lookup_riad(df, code) for code in codes]
+        present = [v for v in vals if v is not None]
+        return sum(present) if present else None
+
     return {
         "reporting_period": reporting_period or latest_reporting_period(),
         "rssd_id": int(rssd_id),
-        "int_time_deposits_000": int_time or None,
-        "int_other_deposits_000": int_other or None,
+        "int_time_deposits_000": _sum_or_none(c["int_time_le250"], c["int_time_gt250"]),
+        "int_other_deposits_000": _sum_or_none(c["int_transaction"], c["int_savings"]),
     }
 
 

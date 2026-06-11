@@ -170,7 +170,14 @@ def compute_buyback_capacity(
 
 
 def compute_tbv_cagr(timeline_df: pd.DataFrame, periods: int = 4) -> float | None:
-    """Trailing N-quarter TBV/share CAGR (annualized)."""
+    """Trailing N-quarter AGGREGATE tangible-common-equity CAGR (annualized).
+
+    tbv_per_share applies TODAY's share count to every historical quarter, so
+    the count cancels in the start/end ratio — this measures aggregate TCE
+    growth, NOT per-share compounding. For a bank shrinking its share count
+    via buybacks, true per-share CAGR is higher by roughly the buyback rate.
+    Labeled "TCE CAGR" in the UI accordingly; computing true per-share CAGR
+    needs historical share counts (SEC), which this FDIC-only path lacks."""
     if "tbv_per_share" not in timeline_df.columns or len(timeline_df) < periods + 1:
         return None
     df = timeline_df.dropna(subset=["tbv_per_share"]).copy()

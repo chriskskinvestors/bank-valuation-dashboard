@@ -366,6 +366,7 @@ def render_valuation_model(ticker: str):
     eps_growth_rates = [eps_growth_avg / 100] * 5
     loan_growth_rates = [loan_growth_avg / 100] * 5
 
+    roatce_pct = defaults.get("roatce_pct") or 12.0
     base_params = {
         "base_eps": base_eps,
         "eps_growth_rates": eps_growth_rates,
@@ -375,6 +376,9 @@ def render_valuation_model(ticker: str):
         "target_cet1_pct": target_cet1,
         "cost_of_equity_pct": cost_of_equity,
         "terminal_growth_pct": terminal_growth,
+        # Terminal payout derives from the sustainable-growth identity
+        # (1 − g/ROATCE) using the bank's actual normalized ROATCE.
+        "roatce_pct": roatce_pct,
     }
     try:
         dcf = run_fcfe_dcf(**base_params)
@@ -383,7 +387,6 @@ def render_valuation_model(ticker: str):
         return
 
     # ── Warranted P/TBV ────────────────────────────────────────────────
-    roatce_pct = defaults.get("roatce_pct") or 12.0
     w_ptbv = warranted_ptbv(roatce_pct, cost_of_equity, terminal_growth)
     w_fair_price = w_ptbv * tbvps if (w_ptbv is not None and tbvps) else None
 

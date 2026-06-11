@@ -116,19 +116,21 @@ def _render_capital_headline(ticker, hist, summary, timeline, peer_cet1):
                            definition="Common equity tier 1 capital to risk-weighted assets "
                                        "(bank-level)." + (f" Peer median {peer_cet1:.2f}%."
                                                           if peer_cet1 else ""))},
-        {"label": "TBV/Share CAGR (1Y)",
+        {"label": "TCE CAGR (1Y)",
          "value": (f"{tbv_cagr:.1f}%" if tbv_cagr is not None else "—"),
-         "calc": make_calc("TBV / share CAGR (1-year)",
+         "calc": make_calc("Tangible common equity CAGR (1-year)",
                            (f"{tbv_cagr:.1f}%" if tbv_cagr is not None else "—"), entity=entity,
                            source="Model — trailing tangible book", asof=asof, unit="%",
-                           ref="(TBV/sh now ÷ TBV/sh 1yr ago) − 1",
-                           definition="Growth in tangible book value per share over the trailing "
-                                       "year — the core compounding metric for a bank."
+                           ref="(TCE now ÷ TCE 1yr ago) − 1",
+                           definition="Growth in AGGREGATE tangible common equity over the "
+                                       "trailing year. Note: not per-share — buybacks aren't "
+                                       "credited (per-share CAGR would need historical share "
+                                       "counts)."
                                        + (f" 2-year CAGR {tbv_cagr2:.1f}%." if tbv_cagr2 is not None else ""),
-                           terms=[{"label": "Tangible book value ($000)", "val": _thou(tbv_k),
+                           terms=[{"label": "Tangible common equity ($000)", "val": _thou(tbv_k),
                                    "doc": cr_doc,
                                    "sub": "equity − goodwill − other intangibles (FDIC)"}],
-                           op="(TBV/share now ÷ TBV/share 1 year ago − 1) × 100")},
+                           op="(TCE now ÷ TCE 1 year ago − 1) × 100")},
         {"label": "Free Capital (Q)", "value": _fmt_usd(free),
          "calc": make_calc("Free capital (quarter)", _fmt_usd(free), entity=entity,
                            source="Model — capital generation", asof=asof, unit="$",

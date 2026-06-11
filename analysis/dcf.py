@@ -108,16 +108,21 @@ def present_value(
 
 
 def terminal_value(
-    terminal_cf: float,
+    terminal_cf_next_year: float,
     discount_rate_pct: float,
     terminal_growth_pct: float,
 ) -> float | None:
-    """Gordon growth terminal value at end of explicit period."""
+    """Gordon growth terminal value at the end of the explicit period.
+
+    ``terminal_cf_next_year`` is the FIRST terminal-year cash flow (CF_{N+1});
+    TV_N = CF_{N+1} / (r − g). The previous version multiplied by (1+g) here
+    while the caller had ALREADY grown the flow to year N+1 — double-counting
+    one growth year and overstating every terminal value by ~(1+g)."""
     r = discount_rate_pct / 100
     g = terminal_growth_pct / 100
     if r <= g:
         return None
-    return terminal_cf * (1 + g) / (r - g)
+    return terminal_cf_next_year / (r - g)
 
 
 def run_fcfe_dcf(
@@ -130,6 +135,7 @@ def run_fcfe_dcf(
     cost_of_equity_pct: float,
     terminal_growth_pct: float,
     terminal_payout_ratio: float | None = None,
+    roatce_pct: float | None = None,
 ) -> dict:
     """
     Run a multi-year FCFE DCF.
@@ -154,11 +160,15 @@ def run_fcfe_dcf(
 
     # Terminal FCFE — at steady state, loan growth = terminal growth
     # So FCFE_steady = EPS_terminal × (1 − retention_for_growth)
-    # Use terminal payout if provided, else compute implied
+    # Use terminal payout if provided, else derive from the sustainable-growth
+    # identity g = ROE × retention  ⇒  payout = 1 − g/ROE, using the bank's
+    # actual ROATCE. (The previous version substituted average EPS GROWTH for
+    # ROE — a category error that produced ~33% payouts where real bank ROEs
+    # of 10-15% imply ~65-75%, systematically distorting terminal value.)
     if terminal_payout_ratio is None:
-        # Implied payout = 1 − (g/ROE); use average of last 2 years growth as ROE proxy
+        roe = roatce_pct if (roatce_pct and roatce_pct > 0) else 12.0  # bank-typical default
         terminal_payout_ratio = max(0.0, min(0.99,
-            1.0 - (terminal_growth_pct / 100) / max(0.01, sum(eps_growth_rates[-2:]) / 2 + 0.01)
+            1.0 - (terminal_growth_pct / 100) / (roe / 100)
         ))
 
     terminal_eps = projected_eps[-1] * (1 + terminal_growth_pct / 100)
@@ -334,19 +344,24 @@ def implied_irr(
         except Exception:
             return None
 
-    # Bracket: lower CoE = higher FV, higher CoE = lower FV
-    low, high = 3.0, 30.0
+    # Bracket: lower CoE = higher FV, higher CoE = lower FV. The floor must
+    # sit ABOVE terminal growth — at CoE ≤ g the Gordon terminal value is
+    # undefined, so the old fixed 3% floor made the solver return None for
+    # ANY input with the typical 3.5-4% terminal growth (caught by the
+    # IRR round-trip test).
+    g = float(base_params.get("terminal_growth_pct") or 0)
+    low, high = max(3.0, g + 0.5), 30.0
     low_fv = _fv_at(low)
     high_fv = _fv_at(high)
 
     if low_fv is None or high_fv is None:
         return None
 
-    # If market price is outside the bracket's FV range, can't solve
-    if current_price > low_fv:
-        return 2.0  # below 3% — essentially unmodelable (very high FV at any rate)
-    if current_price < high_fv:
-        return 30.0  # above 30% — extreme
+    # If market price is outside the bracket's FV range, the IRR is not
+    # solvable in [3%, 30%] — return None rather than a fake sentinel value
+    # (the old 2.0/30.0 returns were indistinguishable from real solutions).
+    if current_price > low_fv or current_price < high_fv:
+        return None
 
     # Bisection
     for _ in range(max_iter):

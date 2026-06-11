@@ -754,14 +754,18 @@ def _render_surprise_heatmap(watchlist: list[str]):
     sorted_quarters = sorted(all_quarters, reverse=True)[:8]
     sorted_quarters.reverse()  # chronological left→right
 
-    # Short labels: "2026Q1" style
+    # Labels show the FISCAL quarter the results cover — the most recent
+    # completed calendar quarter before the announcement date. (Binning the
+    # raw announcement date shifted every column one quarter late: Q4-2025
+    # results announced 2026-01 were labeled "2026Q1".)
     def _quarter_label(date_str: str) -> str:
         if not date_str:
             return "—"
         try:
-            y, m, _ = date_str.split("-")[:3]
-            q = (int(m) - 1) // 3 + 1
-            return f"{y}Q{q}"
+            y, m = int(date_str[:4]), int(date_str[5:7])
+            ann_q = (m - 1) // 3 + 1   # calendar quarter of the announcement
+            fy, fq = (y, ann_q - 1) if ann_q > 1 else (y - 1, 4)
+            return f"{fy}Q{fq}"
         except Exception:
             return date_str[:7] if date_str else "—"
 
@@ -855,7 +859,8 @@ def _render_surprise_heatmap(watchlist: list[str]):
     st.plotly_chart(fig, use_container_width=True)
 
     st.caption(
-        "Each cell = EPS surprise % for that bank's quarter. "
+        "Each cell = EPS surprise % for that bank's FISCAL quarter (the "
+        "completed quarter the announcement covered). "
         "Dark green = big beat, dark red = big miss. "
         "Banks sorted by most recent surprise (best on top)."
     )

@@ -535,7 +535,9 @@ METRICS = [
         "category": "Capital Dynamics",
     },
     {
-        "key": "tbv_cagr_1y", "label": "TBV CAGR 1Y", "source": "computed",
+        # Aggregate tangible-common-equity growth (today's share count cancels
+        # in the ratio) — NOT per-share compounding; buybacks aren't credited.
+        "key": "tbv_cagr_1y", "label": "TCE CAGR 1Y", "source": "computed",
         "format": "pct", "decimals": 1,
         "color_rule": "higher_better", "thresholds": {"good": 8.0, "warn": 3.0},
         "category": "Capital Dynamics",
