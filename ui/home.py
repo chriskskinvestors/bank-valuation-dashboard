@@ -191,15 +191,15 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     if all_metrics:
         _render_watchlist_movers(all_metrics)
 
+    # ── ALERT INBOX ────────────────────────────────────────────────────
+    _render_alert_inbox(all_metrics, watchlist)
+
     # ── TODAY'S CALENDAR ───────────────────────────────────────────────
     _render_todays_calendar(watchlist)
 
     # ── COVERAGE LEADERBOARD (best / worst each way) ───────────────────
     if all_metrics:
         _render_coverage_leaderboard(all_metrics)
-
-    # ── ALERT INBOX ────────────────────────────────────────────────────
-    _render_alert_inbox(all_metrics, watchlist)
 
     # ── SECTOR M&A / DEALS ─────────────────────────────────────────────
     _render_sector_ma(watchlist)
@@ -251,7 +251,7 @@ def _render_watchlist_movers(all_metrics: list[dict]):
             'align-items:baseline; justify-content:space-between; gap:8px; '
             'padding:5px 11px; border-radius:7px; text-decoration:none; '
             'border:1px solid #eef2f7;">'
-            f'<span style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
+            f'<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
             f'<strong style="color:#0f172a;">{tk}</strong> '
             f'<span style="color:#94a3b8; font-size:0.8rem;">{name}</span></span>'
             f'<span style="white-space:nowrap; font-variant-numeric:tabular-nums;">'
@@ -305,7 +305,7 @@ def _render_todays_calendar(watchlist: list[str]):
             f'<a href="?bank={tk}" target="_self" style="display:flex; '
             'align-items:baseline; justify-content:space-between; gap:8px; '
             'padding:5px 11px; border-radius:7px; text-decoration:none; border:1px solid #eef2f7;">'
-            f'<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
+            f'<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
             f'<strong style="color:#0f172a;">{tk}</strong> '
             f'<span style="color:#94a3b8; font-size:0.8rem;">{name}</span></span>'
             f'<span style="white-space:nowrap; color:#475569; font-size:0.8rem;">{a["date"]}{est}</span></a>'
@@ -349,7 +349,7 @@ def _render_coverage_leaderboard(all_metrics: list[dict]):
                 f'<a href="?bank={tk}" target="_self" style="display:flex; '
                 'align-items:baseline; justify-content:space-between; gap:8px; '
                 'padding:4px 11px; border-radius:6px; text-decoration:none; border:1px solid #eef2f7;">'
-                f'<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
+                f'<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
                 f'<strong style="color:#0f172a;">{tk}</strong> '
                 f'<span style="color:#94a3b8; font-size:0.78rem;">{name}</span></span>'
                 f'<b style="color:{color}; white-space:nowrap; font-variant-numeric:tabular-nums;">'
