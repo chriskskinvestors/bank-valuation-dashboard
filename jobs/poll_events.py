@@ -128,11 +128,18 @@ def _invalidate_fundamentals_for_filings(new_events) -> None:
               f"— next load re-pulls SEC facts")
 
 
-def _summarize_recent_events(limit: int = 20) -> int:
+def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int:
     """
     Backfill summaries on the most-recently-ingested events that don't have
     one yet. Uses a small Claude call per event; cheap and idempotent.
+
+    Only SEC filings (8-K) are summarized — their item codes ("Other Events")
+    are opaque so a summary adds real value, and fetch_filing_text returns the
+    EX-99.1 cleanly. Wire/news headlines are already self-explanatory and their
+    URLs (often redirects) fetch slowly, so we skip them. Bounded by a hard time
+    budget so the summarizer can never dominate a poll run.
     """
+    import time as _t
     from sqlalchemy import text
     from data.events.store import _get_engine
 
@@ -141,7 +148,7 @@ def _summarize_recent_events(limit: int = 20) -> int:
         rows = conn.execute(text("""
             SELECT id, ticker, source, headline, url
             FROM events
-            WHERE summary IS NULL OR summary = ''
+            WHERE (summary IS NULL OR summary = '') AND source = 'sec_8k'
             ORDER BY published_at DESC
             LIMIT :n
         """), {"n": limit}).mappings().all()
@@ -154,10 +161,16 @@ def _summarize_recent_events(limit: int = 20) -> int:
     except ImportError:
         return 0
 
-    client = anthropic.Anthropic()
+    # Short per-call timeout — the SDK default is 600s, which would let one hung
+    # call wedge the whole job.
+    client = anthropic.Anthropic(timeout=20.0, max_retries=1)
     n = 0
+    deadline = _t.monotonic() + max_seconds
 
     for r in rows:
+        if _t.monotonic() > deadline:
+            print(f"    [summarizer] time budget ({max_seconds:.0f}s) reached after {n}")
+            break
         try:
             # Fetch the filing text (filing_summarizer caches via TTL)
             text_body = fetch_filing_text(r["url"]) if r["url"] else ""
