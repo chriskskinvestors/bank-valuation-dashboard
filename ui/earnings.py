@@ -199,8 +199,9 @@ def _render_auto_estimates(ticker: str, estimates: dict):
     rec = estimates.get("recommendation")
     if t_low and t_high:
         st.caption(
-            f"Price target range: ${t_low:.2f} – ${t_high:.2f}"
-            + (f" · Consensus: {rec.replace('_', ' ').title()}" if rec else "")
+            (f"Price target range: ${t_low:.2f} – ${t_high:.2f}"
+             + (f" · Consensus: {rec.replace('_', ' ').title()}" if rec else "")
+             ).replace("$", "\\$")  # avoid $X – $Y rendering as LaTeX
         )
 
     # Offer to auto-populate consensus from estimates

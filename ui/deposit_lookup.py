@@ -211,9 +211,10 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                         _dep_fmt = lambda v: fmt_dollars_from_thousands(v, 2)
 
                         st.markdown(
-                            f"**{selected_name}** ranks **#{int(rank)}** in {county_label} "
-                            f"with **{share:.1f}%** market share "
-                            f"({_dep_fmt(deps)} of {_dep_fmt(total_county_deps)} total)"
+                            (f"**{selected_name}** ranks **#{int(rank)}** in {county_label} "
+                             f"with **{share:.1f}%** market share "
+                             f"({_dep_fmt(deps)} of {_dep_fmt(total_county_deps)} total)"
+                             ).replace("$", "\\$")  # don't let $X of $Y render as LaTeX
                         )
 
                     # Display top banks
@@ -260,9 +261,10 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                         share = bank_row.iloc[0]["market_share"]
                         deps = bank_row.iloc[0]["deposits"]
                         st.markdown(
-                            f"**{selected_name}** ranks **#{int(rank)}** in {msa_label} "
-                            f"with **{share:.1f}%** market share "
-                            f"({_dep_fmt_msa(deps)} of {_dep_fmt_msa(total_msa_deps)} total)"
+                            (f"**{selected_name}** ranks **#{int(rank)}** in {msa_label} "
+                             f"with **{share:.1f}%** market share "
+                             f"({_dep_fmt_msa(deps)} of {_dep_fmt_msa(total_msa_deps)} total)"
+                             ).replace("$", "\\$")  # don't let $X of $Y render as LaTeX
                         )
 
                     display = ms_df.head(25).copy()

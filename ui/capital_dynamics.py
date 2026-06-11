@@ -241,7 +241,8 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             )
             if bb.get("free_capital") < 0:
                 explainer += " *(Negative = already returning more than earnings support at current loan-growth pace.)*"
-            st.caption(explainer)
+            # Escape $ so Streamlit doesn't parse "$56M ... $774K" as LaTeX math.
+            st.caption(explainer.replace("$", "\\$"))
 
     st.markdown("---")
 
@@ -256,8 +257,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             x=timeline["date"], y=timeline["cet1_pct"],
             name="CET1", mode="lines+markers",
             line=dict(color="#1a73e8", width=2.5),
-            marker=dict(size=7), fill="tozeroy",
-            fillcolor="rgba(26,115,232,0.10)",
+            marker=dict(size=7),
         ))
         fig1.add_hline(y=CET1_REG_MIN, line_color="#b71c1c", line_width=1, line_dash="dash",
                         annotation_text=f"{CET1_REG_MIN}% reg min + buffer",
@@ -269,14 +269,19 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             fig1.add_hline(y=peer_cet1, line_color="#1b5e20", line_width=1, line_dash="dashdot",
                             annotation_text=f"Peer median {peer_cet1:.2f}%",
                             annotation_position="top left")
-        from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT
+        from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                       CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
 
         apply_standard_layout(
             fig1, title="CET1 Ratio Trend",
             height=CHART_HEIGHT_FULL, yaxis_title="CET1",
             show_legend=False, hovermode="x",
         )
-        fig1.update_yaxes(ticksuffix="%")
+        # Zoom to the data + regulatory floors so the trend reads, instead of a
+        # flat line pinned to the top of a 0-13% axis.
+        _c = [v for v in timeline["cet1_pct"].tolist() if v is not None]
+        _refs = [CET1_REG_MIN, CET1_BUFFER_FLOOR] + ([peer_cet1] if peer_cet1 else [])
+        tighten_yaxis(fig1, _c + _refs, floor_zero=True, ticksuffix="%", pad_frac=0.20)
         st.plotly_chart(fig1, use_container_width=True)
 
         # Charts 2 & 3 side-by-side
@@ -297,7 +302,6 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
                 show_legend=False, hovermode="x",
                 wide_left_margin=True,
             )
-            from utils.chart_style import tighten_yaxis
             tighten_yaxis(fig2, timeline["tbv_per_share"].dropna().tolist(), tickprefix="$")
             with cc1:
                 st.plotly_chart(fig2, use_container_width=True)
@@ -381,6 +385,16 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
                 height=CHART_HEIGHT_FULL, yaxis_title=f"$ {unit}",
                 show_legend=False, wide_left_margin=True,
             )
+            # A 0-based axis makes the ±flows invisible against the ~$2B equity
+            # bars. Zoom to the level of the bridge so NI and capital-returned
+            # actually read as steps.
+            _running, _levels = 0.0, []
+            for _m, _v in zip(["absolute", "relative", "relative", "total"], wf_scaled):
+                _running = _v if _m in ("absolute", "total") else _running + _v
+                _levels.append(_running)
+            _lo, _hi = min(_levels), max(_levels)
+            _pad = max((_hi - _lo) * 0.6, 0.03 * max(abs(x) for x in _levels), 0.02)
+            fig4.update_yaxes(range=[_lo - _pad, _hi + _pad])
             st.plotly_chart(fig4, use_container_width=True)
 
     except ImportError:
