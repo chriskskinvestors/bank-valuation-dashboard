@@ -139,11 +139,14 @@ def metric_percentile_context(ticker: str, all_metrics: list[dict],
     if not self_m:
         return {}
     cohort = get_peer_group_for_bank(ticker, all_metrics, mode=mode)
-    assets = self_m.get("total_assets")
-    if assets and assets < 1e9:
-        assets = assets * 1000
-    out = {"_meta": {"tier": asset_size_tier(assets),
-                     "cohort_size": len(cohort), "mode": mode}}
+    if mode == "size":
+        assets = self_m.get("total_assets")
+        if assets and assets < 1e9:
+            assets = assets * 1000
+        tier = asset_size_tier(assets)
+    else:
+        tier = business_mix_tier(self_m)
+    out = {"_meta": {"tier": tier, "cohort_size": len(cohort), "mode": mode}}
     for k in (metric_keys or CONTEXT_METRIC_KEYS):
         v = self_m.get(k)
         if v is None:

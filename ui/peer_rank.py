@@ -14,7 +14,9 @@ import html as _html
 import streamlit as st
 
 from data.bank_mapping import get_name
-from analysis.peer_groups import metric_percentile_context, asset_size_tier
+from analysis.peer_groups import (
+    metric_percentile_context, get_peer_group_for_bank, _higher_is_better,
+)
 
 
 # Metric groups for the scorecard. Missing metrics / thin cohorts auto-skip.
@@ -106,24 +108,37 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
     st.subheader(f"🏅 Peer Rank — {name} ({ticker})")
 
     metrics = _ensure_self(all_metrics, ticker)
-    ctx = metric_percentile_context(ticker, metrics, metric_keys=_ALL_KEYS)
+
+    # ── Peer-set toggle: asset size vs business mix ───────────────────
+    mode_label = st.radio(
+        "Peer set", ["Asset size", "Business mix"], horizontal=True,
+        key=f"peerrank_mode_{ticker}",
+        help="Asset size = banks in the same total-asset tier. Business mix = "
+             "banks with the same dominant balance-sheet profile (CRE-heavy, "
+             "C&I-focused, mortgage-heavy, retail-heavy, diversified).",
+    )
+    mode = "size" if mode_label == "Asset size" else "mix"
+
+    ctx = metric_percentile_context(ticker, metrics, metric_keys=_ALL_KEYS, mode=mode)
     meta = ctx.pop("_meta", {})
     tier = meta.get("tier")
     n = meta.get("cohort_size", 0)
 
     if not ctx or n < 6:
         st.info(
-            "Not enough same-size peers loaded to rank this bank yet. "
+            f"Not enough **{mode_label.lower()}** peers loaded to rank this bank yet. "
             "Open **Home**, **Screening**, or **Peer Comparison** once to load the "
-            "watchlist, then return — or this bank's asset-size tier has too few "
-            "tracked peers for a meaningful ranking."
+            "watchlist, then return — or this peer set has too few tracked banks for "
+            "a meaningful ranking (try the other peer set)."
         )
         return
 
+    set_desc = ("the same asset-size tier" if mode == "size"
+                else "the same business-mix profile")
     st.caption(
         f"Ranked against **{n}** tracked **{_html.escape(str(tier))}** peers "
-        "(banks in the same asset-size tier). Percentile is goodness-adjusted — "
-        "higher is always better, including for efficiency / NPL / NCO."
+        f"({set_desc}). Percentile is goodness-adjusted — higher is always better, "
+        "including for efficiency / NPL / NCO."
     )
 
     # ── At-a-glance verdict by category ────────────────────────────────
@@ -159,3 +174,53 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
         "Rank #1 = best in the peer set. Bars show the goodness percentile. "
         "Peer median is the same-tier median for context."
     )
+
+    # ── Full leaderboard for a chosen metric ───────────────────────────
+    st.markdown("---")
+    ranked_keys = [k for k in _ALL_KEYS if k in ctx]
+    pick = st.selectbox(
+        "Full peer leaderboard for:",
+        options=ranked_keys,
+        format_func=lambda k: _LABELS.get(k, k),
+        key=f"peerrank_leaderboard_{ticker}",
+    )
+    if pick:
+        _render_leaderboard(ticker, metrics, pick, mode)
+
+
+def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str):
+    """Rank every cohort bank on one metric, subject highlighted."""
+    cohort = get_peer_group_for_bank(ticker, metrics, mode=mode)
+    hib = _higher_is_better(key)
+    rows = [(m.get("ticker"), m.get(key)) for m in cohort if m.get(key) is not None]
+    rows.sort(key=lambda r: r[1], reverse=hib)  # best first
+
+    cells = []
+    for i, (tk, v) in enumerate(rows, start=1):
+        is_self = (tk == ticker)
+        bg = "background:rgba(37,99,235,0.10);" if is_self else (
+            "background:rgba(148,163,184,0.04);" if i % 2 else "")
+        weight = "700" if is_self else "500"
+        marker = "👉 " if is_self else ""
+        nm = _html.escape((get_name(tk) or "")[:34])
+        cells.append(
+            f'<tr style="{bg}">'
+            f'<td style="padding:5px 10px;color:#64748b;width:46px;">#{i}</td>'
+            f'<td style="padding:5px 10px;font-weight:{weight};color:#0f172a;white-space:nowrap;">{marker}{_html.escape(str(tk))}</td>'
+            f'<td style="padding:5px 10px;color:#475569;">{nm}</td>'
+            f'<td style="padding:5px 10px;text-align:right;font-weight:{weight};color:#0f172a;">{v:.2f}%</td>'
+            f'</tr>'
+        )
+    table = (
+        f'<div style="font-size:0.72rem;color:#64748b;margin-bottom:4px;">'
+        f'{_LABELS.get(key, key)} — {"higher" if hib else "lower"} is better · {len(rows)} banks</div>'
+        '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;'
+        'border:1px solid rgba(148,163,184,0.22);border-radius:8px;overflow:hidden;">'
+        '<thead><tr style="background:rgba(241,245,249,0.7);color:#0f172a;">'
+        '<th style="padding:6px 10px;text-align:left;">Rank</th>'
+        '<th style="padding:6px 10px;text-align:left;">Ticker</th>'
+        '<th style="padding:6px 10px;text-align:left;">Bank</th>'
+        '<th style="padding:6px 10px;text-align:right;">Value</th>'
+        '</tr></thead><tbody>' + "".join(cells) + '</tbody></table>'
+    )
+    st.markdown(table, unsafe_allow_html=True)
