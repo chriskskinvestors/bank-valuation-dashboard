@@ -165,7 +165,7 @@ def render_historicals(ticker: str):
         fig1.add_trace(go.Scatter(x=periods, y=roa, name="ROAA", line=dict(color="#1a73e8", width=2)), row=1, col=2)
         fig1.add_trace(go.Scatter(x=periods, y=eff, name="Efficiency", line=dict(color="#e65100", width=2)), row=1, col=2)
 
-        fig1.update_layout(height=320, margin=dict(t=40, b=30, l=40, r=20), font_size=11, showlegend=True, legend=dict(font_size=10))
+        fig1.update_layout(height=230, margin=dict(t=32, b=24, l=40, r=14), font_size=11, showlegend=True, legend=dict(font_size=10))
         st.plotly_chart(fig1, use_container_width=True)
 
         # Chart 2: Balance Sheet Growth — auto-scale to B or T
@@ -190,7 +190,7 @@ def render_historicals(ticker: str):
         if core:
             fig2.add_trace(go.Bar(x=periods, y=core, name=f"Core (${unit})", marker_color="#2e7d32", opacity=0.7), row=1, col=2)
 
-        fig2.update_layout(height=300, margin=dict(t=40, b=30, l=40, r=20), font_size=11, barmode="group", showlegend=True, legend=dict(font_size=10))
+        fig2.update_layout(height=210, margin=dict(t=32, b=24, l=40, r=14), font_size=11, barmode="group", showlegend=True, legend=dict(font_size=10))
         st.plotly_chart(fig2, use_container_width=True)
 
         # Chart 3: Credit Quality
@@ -200,7 +200,7 @@ def render_historicals(ticker: str):
         if "IDT1CER" in df.columns:
             cet1 = df["IDT1CER"].tolist()[::-1]
             fig3.add_trace(go.Scatter(x=periods, y=cet1, name="CET1 Ratio", line=dict(color="#2e7d32", width=2)))
-        fig3.update_layout(height=280, title="Credit Quality & Capital", margin=dict(t=40, b=30, l=40, r=20), font_size=11, legend=dict(font_size=10))
+        fig3.update_layout(height=190, title="Credit Quality & Capital", margin=dict(t=32, b=24, l=40, r=14), font_size=11, legend=dict(font_size=10))
         st.plotly_chart(fig3, use_container_width=True)
 
     # ── TAB 2: Quarterly Detail ──────────────────────────────────────────

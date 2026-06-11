@@ -409,8 +409,8 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
             )
 
         fig.update_layout(
-            height=300,
-            margin=dict(l=40, r=20, t=30, b=40),
+            height=220,
+            margin=dict(l=40, r=14, t=26, b=30),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
             yaxis_title="EPS ($)",
             plot_bgcolor="white",
