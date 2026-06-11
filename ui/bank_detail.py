@@ -418,6 +418,98 @@ def _render_snapshot(ticker, info, name, row):
         st.markdown(_kv_table("Company Profile", company), unsafe_allow_html=True)
 
 
+def _valuation_history_chart(ticker: str, info: dict):
+    """Quarter-end P/TBV and P/E over the last ~3 years, dual-axis. Price from
+    market history ÷ per-share book/earnings from SEC filings."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    from utils.chart_style import apply_standard_layout
+    cert = info.get("fdic_cert") if info else None
+    cik = info.get("cik") if info else None
+    if not cik:
+        return None
+    try:
+        from ui.financial_highlights import _per_share_for_ends
+        from data.fmp_client import get_history
+    except Exception:
+        return None
+
+    ends = []
+    if cert:
+        fh = fdic_client.get_historical_financials(cert, quarters=20)
+        if fh is not None and not fh.empty:
+            ds = pd.to_datetime(fh["REPDTE"]).dropna().sort_values()
+            ends = [d.to_pydatetime() for d in ds][-12:]
+    if not ends:
+        return None
+
+    try:
+        ps = _per_share_for_ends(cik, ends, quarterly=False)
+        px = get_history(ticker, "5Y")
+    except Exception:
+        return None
+    if px is None or px.empty or "close" not in px.columns:
+        return None
+    px = px.dropna(subset=["close"]).copy()
+    px["date"] = pd.to_datetime(px["date"], errors="coerce")
+    px = px.dropna(subset=["date"]).sort_values("date")
+
+    dates, ptbvs, pes = [], [], []
+    for e in ends:
+        rec = ps.get(e) or {}
+        tbvps, eps = rec.get("tbvps"), rec.get("eps")
+        sub = px[px["date"] <= pd.Timestamp(e)]
+        if sub.empty:
+            continue
+        price = float(sub["close"].iloc[-1])
+        dates.append(e)
+        ptbvs.append(price / tbvps if (tbvps and tbvps > 0) else None)
+        pes.append(price / eps if (eps and eps > 0) else None)
+    if not dates or all(v is None for v in ptbvs):
+        return None
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Scatter(
+        x=dates, y=ptbvs, name="P/TBV", mode="lines+markers",
+        connectgaps=True, line=dict(color="#2563eb", width=2), marker=dict(size=5),
+        hovertemplate="%{x|%b %Y}<br>P/TBV %{y:.2f}x<extra></extra>"), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=dates, y=pes, name="P/E", mode="lines+markers",
+        connectgaps=True, line=dict(color="#d97706", width=2), marker=dict(size=5),
+        hovertemplate="%{x|%b %Y}<br>P/E %{y:.1f}x<extra></extra>"), secondary_y=True)
+    apply_standard_layout(fig, title="P/TBV & P/E — quarter-end", height=420,
+                          show_legend=True, hovermode="x unified")
+    fig.update_yaxes(title_text="P/TBV", secondary_y=False, ticksuffix="x")
+    fig.update_yaxes(title_text="P/E", secondary_y=True, ticksuffix="x", showgrid=False)
+    return fig
+
+
+def _render_overview_charts(ticker: str, info: dict):
+    """Price chart + valuation-multiple history, side by side, to fill the space
+    next to the snapshot tables. Both are interactive (zoom / hover)."""
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Price**")
+        per = st.radio("Period", ["1M", "3M", "1Y", "5Y"], index=2, horizontal=True,
+                       key=f"ov_price_per_{ticker}", label_visibility="collapsed")
+        hist_df = pd.DataFrame()
+        try:
+            from data.fmp_client import get_history
+            hist_df = get_history(ticker, per)
+        except Exception:
+            pass
+        st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True,
+                        key=f"ov_price_{ticker}")
+    with c2:
+        st.markdown("**Valuation — P/TBV & P/E**")
+        fig = _valuation_history_chart(ticker, info)
+        if fig is not None:
+            st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
+        else:
+            st.caption("Valuation history unavailable for this bank.")
+
+
 def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     """Overview ▸ Corporate Profile — identity snapshot, market + company data,
     quick links, and the valuation/performance key-stat cards."""
@@ -435,6 +527,7 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     _render_snapshot(ticker, info, name, row)
     st.markdown("---")
     _render_valuation_performance_tables(row)
+    _render_overview_charts(ticker, info)
     st.markdown("---")
     _render_financial_highlights_table(ticker, info)
     st.markdown("---")

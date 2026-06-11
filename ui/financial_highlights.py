@@ -623,7 +623,14 @@ def render_financial_highlights(ticker: str):
     n_rows = ri + len(sections) + 1
     height = 150 + 29 * n_rows
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
-    components.html(html, height=height, scrolling=False)
+
+    # Table on the left; fill the empty space to its right with trend charts
+    # built from the same FDIC history (last ~20 quarters).
+    _tbl_col, _chart_col = st.columns([2, 1])
+    with _tbl_col:
+        components.html(html, height=height, scrolling=False)
+    with _chart_col:
+        _render_fh_trends(hist, ticker)
 
     # Freshness / sourcing line — visible on every load so it's clear the data
     # is current and where it comes from. FDIC is fetched live each render;
@@ -639,6 +646,27 @@ def render_financial_highlights(ticker: str):
         pass
     st.caption(fresh + ". Auto-updates on new filings — FDIC live each load; "
                "SEC within ~30 min of a 10-K/10-Q posting (24h max).")
+
+
+def _render_fh_trends(hist, ticker: str):
+    """Compact profitability / capital trend charts shown beside the highlights
+    table so the otherwise-empty right column carries the visual story."""
+    try:
+        from ui.charts import metrics_trend_chart
+    except Exception:
+        return
+    h = hist.sort_values("REPDTE").tail(20)
+    st.markdown('<div style="font-size:0.7rem; text-transform:uppercase; '
+                'letter-spacing:0.04em; color:#64748b; font-weight:700; '
+                'margin:2px 0 2px;">Trends</div>', unsafe_allow_html=True)
+    for key, label in [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
+                       ("efficiency_ratio", "Efficiency Ratio"),
+                       ("cet1_ratio", "CET1 Ratio")]:
+        try:
+            st.plotly_chart(metrics_trend_chart(h, [key], label),
+                            use_container_width=True, key=f"fh_tr_{ticker}_{key}")
+        except Exception:
+            pass
 
 
 def _tce_ta_builder(recs, asof, fdic_link, P):
