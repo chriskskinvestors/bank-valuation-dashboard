@@ -698,6 +698,7 @@ elif section == "📊 Screening" and screening_tab:
                     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
                         export_df.to_excel(writer, index=False, sheet_name=tab_key[:31])
                         # Freeze header row, set column widths
+                        from openpyxl.utils import get_column_letter
                         ws = writer.sheets[tab_key[:31]]
                         ws.freeze_panes = "A2"
                         for col_idx, col_name in enumerate(export_df.columns, start=1):
@@ -705,7 +706,7 @@ elif section == "📊 Screening" and screening_tab:
                                 len(str(col_name)),
                                 export_df[col_name].astype(str).map(len).max() if len(export_df) else 10,
                             )
-                            ws.column_dimensions[chr(64 + col_idx) if col_idx <= 26 else "A"].width = min(28, max_len + 2)
+                            ws.column_dimensions[get_column_letter(col_idx)].width = min(28, max_len + 2)
                     st.download_button(
                         "📊 Excel",
                         buf.getvalue(),
@@ -812,7 +813,7 @@ elif section == "🏦 Company Analysis":
 
     elif company_subtab == "Asset Quality by Loan Type":
         from ui.credit_dynamics import render_credit_dynamics
-        render_credit_dynamics(company_ticker, watchlist)
+        render_credit_dynamics(company_ticker, watchlist, view="by_loan_type")
 
     elif company_subtab == "Deposit/Loan Composition":
         render_deposits_for_ticker(company_ticker)

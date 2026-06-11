@@ -52,23 +52,30 @@ CATEGORY_METRICS = {
 }
 
 
+# Percentile color scale — single source of truth for BOTH the table cells and
+# the legend (they previously diverged: the legend showed an old palette that no
+# longer appeared anywhere in the table).
+# (min_effective_percentile, label, background, text color, bold)
+_PCT_SCALE = [
+    (80, "Top 20%", "#d1fae5", "#065f46", True),
+    (60, "60–80th", "#ecfdf5", "#047857", False),
+    (40, "40–60th", "#f8fafc", "#475569", False),
+    (20, "20–40th", "#fef2f2", "#991b1b", False),
+    (0,  "Bottom 20%", "#fee2e2", "#991b1b", True),
+]
+
+
 def _percentile_color(pct: float | None, higher_better: bool = True) -> str:
     """Color based on percentile rank (0-100)."""
     if pct is None:
         return ""
     # Normalize: if lower-is-better, invert the percentile
     effective = pct if higher_better else (100 - pct)
-    # Light-theme percentile color scale — soft tints, dark text
-    if effective >= 80:
-        return "background-color: #d1fae5; color:#065f46; font-weight:600;"
-    elif effective >= 60:
-        return "background-color: #ecfdf5; color:#047857;"
-    elif effective >= 40:
-        return "background-color: #f8fafc; color:#475569;"
-    elif effective >= 20:
-        return "background-color: #fef2f2; color:#991b1b;"
-    else:
-        return "background-color: #fee2e2; color:#991b1b; font-weight:600;"
+    for floor, _label, bg, fg, bold in _PCT_SCALE:
+        if effective >= floor:
+            weight = " font-weight:600;" if bold else ""
+            return f"background-color: {bg}; color:{fg};{weight}"
+    return ""
 
 
 def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfolio: list[str]):
@@ -268,17 +275,17 @@ def _render_metrics_table(selected_peers: list[dict], category: str):
         height=min(800, 60 + 38 * len(df_display)),
     )
 
-    # ── Legend ─────────────────────────────────────────────────────────
-    legend_html = """
-    <div style="display:flex; gap:12px; margin-top:8px; flex-wrap:wrap; font-size:0.8rem;">
-        <div style="background:#c8e6c9; padding:4px 10px; border-radius:4px; color:#1b5e20;"><b>Best 20%</b></div>
-        <div style="background:#e8f5e9; padding:4px 10px; border-radius:4px;">Above median</div>
-        <div style="background:#fff3e0; padding:4px 10px; border-radius:4px;">Below median</div>
-        <div style="background:#ffebee; padding:4px 10px; border-radius:4px;">Bottom 40%</div>
-        <div style="background:#ffcdd2; padding:4px 10px; border-radius:4px; color:#b71c1c;"><b>Worst 20%</b></div>
-    </div>
-    """
-    st.markdown(legend_html, unsafe_allow_html=True)
+    # ── Legend — built from the same scale that colors the cells ────────
+    chips = "".join(
+        f'<div style="background:{bg}; padding:4px 10px; border-radius:4px; '
+        f'color:{fg};">{"<b>" + label + "</b>" if bold else label}</div>'
+        for _floor, label, bg, fg, bold in _PCT_SCALE
+    )
+    st.markdown(
+        '<div style="display:flex; gap:12px; margin-top:8px; flex-wrap:wrap; '
+        f'font-size:0.8rem;">{chips}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ── Scatter Plots ────────────────────────────────────────────────────

@@ -3,6 +3,8 @@ Home page — branded landing with live summary stats, top opportunities,
 recent filings, and navigation cards.
 """
 
+import html as _html
+
 import streamlit as st
 import pandas as pd
 
@@ -665,12 +667,16 @@ def _render_sector_ma(watchlist: list[str]):
         summ = a["summary"]
         if summ and len(summ) > 200:
             summ = summ[:197].rstrip() + "…"
+        # Headlines/summaries are third-party feed text — escape before
+        # interpolating into unsafe_allow_html (one stray '<' corrupts the page).
+        head_safe = _html.escape(a["headline"])
+        summ_safe = _html.escape(summ) if summ else ""
         st.markdown(
             '<div class="alert-row severity-high" style="display:block; padding:9px 14px;">'
             f'<div style="font-size:0.78rem; color:var(--text-muted);">🤝 M&amp;A · {tkr}{owned} · {when}{link}</div>'
-            f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{a["headline"]}</div>'
+            f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{head_safe}</div>'
             + (f'<div style="color:var(--text-secondary); font-size:0.86rem; margin-top:2px; '
-               f'line-height:1.45;">{summ}</div>' if summ else "")
+               f'line-height:1.45;">{summ_safe}</div>' if summ else "")
             + '</div>',
             unsafe_allow_html=True,
         )
@@ -983,14 +989,17 @@ def _render_news_tab(alerts: list[dict]):
             summ = summ[:237].rstrip() + "…"
         link = (f' <a href="{a["url"]}" target="_blank" style="color:var(--brand-accent); '
                 f'text-decoration:none;">open ↗</a>') if a["url"] else ""
+        # Third-party feed text — escape before unsafe_allow_html.
+        head_safe = _html.escape(a["headline"])
+        summ_safe = _html.escape(summ) if summ else ""
         body = (
             f'<div class="alert-row severity-{sev}" style="display:block; padding:9px 14px;">'
             f'<div style="font-size:0.78rem; color:var(--text-muted);">'
             f'{emoji} {label} &nbsp;·&nbsp; <strong style="color:var(--text-primary);">{tk}</strong> '
             f'<span style="color:var(--text-secondary);">{name}</span> &nbsp;·&nbsp; {when}{link}</div>'
-            f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{a["headline"]}</div>'
+            f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{head_safe}</div>'
             + (f'<div style="color:var(--text-secondary); font-size:0.86rem; margin-top:2px; '
-               f'line-height:1.45;">{summ}</div>' if summ else "")
+               f'line-height:1.45;">{summ_safe}</div>' if summ else "")
             + '</div>'
         )
         st.markdown(body, unsafe_allow_html=True)

@@ -134,8 +134,16 @@ def _render_credit_headline(ticker, hist, summary, peer_median):
     render_traceable_cards(cards, key=f"credit_{ticker}", columns=5)
 
 
-def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
-    """Render the Credit Quality analysis panel for a bank."""
+def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
+                           view: str = "detail"):
+    """Render the Credit Quality analysis panel for a bank.
+
+    view="detail"        — bank-level: alerts, headline cards, NCO / past-due /
+                           reserve-coverage trends (the Asset Quality Detail tab).
+    view="by_loan_type"  — segment-level: hotspots table + NPL by loan segment
+                           (the Asset Quality by Loan Type tab). Previously both
+                           nav tabs rendered the identical page.
+    """
     hist = _load_hist(ticker)
     if not hist:
         st.info("No FDIC history available for credit analysis.")
@@ -147,6 +155,10 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
 
     if timeline.empty:
         st.info("Insufficient data for credit analysis.")
+        return
+
+    if view == "by_loan_type":
+        _render_by_loan_type(ticker, summary, timeline)
         return
 
     st.subheader("🏦 Credit Quality Dynamics")
@@ -187,49 +199,11 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
 
     st.markdown("---")
 
-    # ── Segment Hotspots Table ─────────────────────────────────────────
-    hotspots = summary["hotspots"]
-    if hotspots:
-        st.subheader("🎯 Segment Hotspots")
-        hs_rows = []
-        for h in hotspots:
-            hs_rows.append({
-                "Segment": h["segment"],
-                "NPL %": f"{h['npl_pct']:.2f}%",
-                "vs Bank Total": f"{h['vs_total_multiple']:.1f}x",
-            })
-        hs_df = pd.DataFrame(hs_rows)
-        st.dataframe(hs_df, use_container_width=True, hide_index=True)
-        st.markdown("")
-
-    # ── Charts ─────────────────────────────────────────────────────────
+    # ── Charts (bank-level) ────────────────────────────────────────────
     try:
         import plotly.graph_objects as go
-
-        # Chart 1: NPL by segment over time (stacked/line)
-        fig1 = go.Figure()
-        segments = [
-            ("npl_ratio", "Total", "#1a1a1a", 3),
-            ("npl_cre", "CRE", "#b71c1c", 2),
-            ("npl_resi", "Residential", "#1a73e8", 2),
-            ("npl_multifam", "Multifamily", "#e65100", 2),
-            ("npl_nres_re", "Non-Res RE", "#6a1b9a", 2),
-            ("npl_ci", "C&I", "#1b5e20", 2),
-            ("npl_consumer", "Consumer", "#ff6f00", 2),
-        ]
-        for key, label, color, width in segments:
-            if key in timeline.columns and timeline[key].notna().any():
-                fig1.add_trace(go.Scatter(
-                    x=timeline["date"], y=timeline[key],
-                    name=label, mode="lines+markers",
-                    line=dict(color=color, width=width),
-                    marker=dict(size=5 if width < 3 else 7),
-                ))
         from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                       CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
-        apply_standard_layout(fig1, title="NPL by Loan Segment", height=CHART_HEIGHT_COMPACT,
-                              yaxis_title="NPL %", show_legend=True)
-        tighten_yaxis(fig1, floor_zero=True, ticksuffix="%")
+                                       CHART_HEIGHT_COMPACT)
 
         # Chart 2: NCO trend
         fig2 = go.Figure()
@@ -282,17 +256,70 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None):
             _rc_vals.append(peer_median)
         tighten_yaxis(fig4, _rc_vals, floor_zero=True, ticksuffix="%")
 
-        # Dense 2×2 grid — no full-width single charts.
+        # Dense grid — NCO + past-due 2-up, reserve coverage below.
         _g1 = st.columns(2)
         with _g1[0]:
-            st.plotly_chart(fig1, use_container_width=True)
-        with _g1[1]:
             st.plotly_chart(fig2, use_container_width=True)
+        with _g1[1]:
+            st.plotly_chart(fig3, use_container_width=True)
         _g2 = st.columns(2)
         with _g2[0]:
-            st.plotly_chart(fig3, use_container_width=True)
-        with _g2[1]:
             st.plotly_chart(fig4, use_container_width=True)
 
     except ImportError:
         st.warning("Install plotly to view credit trend charts.")
+
+
+def _render_by_loan_type(ticker: str, summary: dict, timeline):
+    """Asset Quality by Loan Type — segment hotspots table + NPL trend per
+    loan segment. Split out of the main credit view so the two nav tabs show
+    distinct content."""
+    st.subheader("🎯 Asset Quality by Loan Type")
+
+    hotspots = summary["hotspots"]
+    _tbl, _chart = st.columns([1, 2])
+    with _tbl:
+        if hotspots:
+            st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;'
+                        'letter-spacing:.04em;color:#1e3a8a;font-weight:700;'
+                        'margin:0 0 3px;">Segment Hotspots — NPL vs bank total</div>',
+                        unsafe_allow_html=True)
+            hs_df = pd.DataFrame([{
+                "Segment": h["segment"],
+                "NPL %": f"{h['npl_pct']:.2f}%",
+                "vs Bank Total": f"{h['vs_total_multiple']:.1f}x",
+            } for h in hotspots])
+            st.dataframe(hs_df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No segment NPLs above the bank-wide ratio.")
+
+    with _chart:
+        try:
+            import plotly.graph_objects as go
+            from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                           CHART_HEIGHT_FULL)
+            fig = go.Figure()
+            segments = [
+                ("npl_ratio", "Total", "#0f172a", 3),
+                ("npl_cre", "CRE", "#b71c1c", 2),
+                ("npl_resi", "Residential", "#1a73e8", 2),
+                ("npl_multifam", "Multifamily", "#e65100", 2),
+                ("npl_nres_re", "Non-Res RE", "#6a1b9a", 2),
+                ("npl_ci", "C&I", "#1b5e20", 2),
+                ("npl_consumer", "Consumer", "#ff6f00", 2),
+            ]
+            for key, label, color, width in segments:
+                if key in timeline.columns and timeline[key].notna().any():
+                    fig.add_trace(go.Scatter(
+                        x=timeline["date"], y=timeline[key],
+                        name=label, mode="lines+markers",
+                        line=dict(color=color, width=width),
+                        marker=dict(size=5 if width < 3 else 7),
+                    ))
+            apply_standard_layout(fig, title="NPL by Loan Segment",
+                                  height=CHART_HEIGHT_FULL,
+                                  yaxis_title="NPL %", show_legend=True)
+            tighten_yaxis(fig, floor_zero=True, ticksuffix="%")
+            st.plotly_chart(fig, use_container_width=True)
+        except ImportError:
+            st.warning("Install plotly to view segment trend charts.")
