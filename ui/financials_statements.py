@@ -65,12 +65,37 @@ def _disp(repdte):
         return str(repdte)
 
 
+def _psd(v):
+    v = _num(v)
+    return f"${v:,.2f}" if v is not None else "—"
+
+
+def _eff_tax(rec):
+    """Effective tax rate from the period; clamped, default 21%."""
+    itax, pti = _num(rec.get("ITAX")), _num(rec.get("PTAXNETINC"))
+    if itax is not None and pti:
+        return min(max(itax / pti, 0.0), 0.40)
+    return 0.21
+
+
+def _core_income(rec):
+    """Net income excluding realized securities gains/losses (tax-effected) and
+    extraordinary items — a defensible 'core' earnings figure for banks."""
+    ni = _num(rec.get("NETINC"))
+    if ni is None:
+        return None
+    igl = _num(rec.get("IGLSEC")) or 0.0
+    extra = _num(rec.get("EXTRA")) or 0.0
+    t = _eff_tax(rec)
+    return ni - igl * (1 - t) - extra
+
+
 _DEFAULT_TRENDS = [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
                    ("efficiency_ratio", "Efficiency Ratio"), ("cet1_ratio", "CET1 Ratio")]
 
 
 def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
-                     trends: list | None = None):
+                     trends: list | None = None, with_persh: bool = False):
     info = get_bank_info(ticker)
     name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
@@ -104,13 +129,29 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         st.info("No periods available.")
         return
 
+    # Per-share data (SEC holding-company filings) — only loaded when a spec
+    # needs it (Performance Analysis), keyed by column index.
+    ps_by_ci = {}
+    if with_persh and cik:
+        try:
+            from ui.financial_highlights import _per_share_for_ends
+            ends = [pd.to_datetime(r["REPDTE"]).to_pydatetime() for r in recs_list]
+            persh = _per_share_for_ends(cik, ends, quarterly=(period == "Quarterly"))
+            ps_by_ci = {i: (persh.get(ends[i], {}) or {}) for i in range(len(recs_list))}
+        except Exception:
+            ps_by_ci = {}
+
     fdic_link = f"https://banks.data.fdic.gov/bankfind-suite/bankfind/details/{cert}"
+    sec_filing_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                       f"&CIK={cik}&type=10-K") if cik else fdic_link
     entity = f"{name} ({ticker})"
 
-    def calc(metric, v, asof, ref, terms, op, reported):
-        return {"metric": metric, "entity": entity, "source": "FDIC Call Report",
+    def calc(metric, v, asof, ref, terms, op, reported,
+             source="FDIC Call Report", link=None):
+        return {"metric": metric, "entity": entity, "source": source,
                 "asof": asof, "unit": "", "ref": ref, "definition": "",
-                "terms": terms, "op": op, "reported": reported, "link": fdic_link}
+                "terms": terms, "op": op, "reported": reported,
+                "link": link or fdic_link}
 
     def _af(rec):
         """Annualization factor — YTD interim figures are scaled to an annual
@@ -204,6 +245,70 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                              "val": _thou(round((a-b)*f)) + " ($000)" if (a is not None and b is not None) else "—"},
                             {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
                            f"({af_} − {bf_}) ÷ avg {df_} × 100", False)
+        # ── Per-share (SEC holding-company filings) ──────────────────────
+        ps = ps_by_ci.get(ci, {})
+        if kind == "ps":
+            key = args[0]; v = _psd(ps.get(key))
+            return v, calc(label, v, asof, "SEC filing (holding company)",
+                           [{"label": label, "val": v}], None, True,
+                           source="SEC filing", link=sec_filing_link)
+        if kind == "shares":
+            sh = _num(ps.get("shares"))
+            v = f"{sh:,.0f}" if sh is not None else "—"
+            return v, calc(label, v, asof, "SEC filing (holding company)",
+                           [{"label": label, "val": v}], None, True,
+                           source="SEC filing", link=sec_filing_link)
+        if kind == "payout":
+            dps, eps = _num(ps.get("dps")), _num(ps.get("eps"))
+            v = f"{dps/eps*100:.2f}%" if (dps is not None and eps) else "—"
+            return v, calc(label, v, asof, "Computed from SEC per-share",
+                           [{"label": "Dividends / share", "val": _psd(dps)},
+                            {"label": "Diluted EPS", "val": _psd(eps)}],
+                           "DPS ÷ EPS × 100", False,
+                           source="SEC filing", link=sec_filing_link)
+        # ── Normalized 'Core' (ex realized securities gains/losses) ──────
+        if kind == "core_income":
+            core = _core_income(rec)
+            v = _usd(core)
+            igl = _num(rec.get("IGLSEC")) or 0.0
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Net income", "val": _thou(_num(rec.get("NETINC"))) + " ($000)"},
+                            {"label": "Less: securities gains (after-tax)",
+                             "val": _thou(round(igl*(1-_eff_tax(rec)))) + " ($000)"}],
+                           "Net income − after-tax securities gains/losses", False)
+        if kind == "core_roaa":
+            core = _core_income(rec); a = _avg(ci, "ASSET")
+            v = f"{core*f/a*100:.2f}%" if (core is not None and a) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Core income" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(core*f)) + " ($000)" if core is not None else "—"},
+                            {"label": "Avg assets", "val": _thou(round(a)) + " ($000)" if a else "—"}],
+                           "Core income ÷ avg assets × 100", False)
+        if kind == "core_roae":
+            core = _core_income(rec); e = _avg(ci, "EQTOT")
+            v = f"{core*f/e*100:.2f}%" if (core is not None and e) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Core income" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(core*f)) + " ($000)" if core is not None else "—"},
+                            {"label": "Avg equity", "val": _thou(round(e)) + " ($000)" if e else "—"}],
+                           "Core income ÷ avg equity × 100", False)
+        if kind == "core_eps":
+            core = _core_income(rec); sh = _num(ps.get("shares"))
+            v = f"${core*1000/sh:,.2f}" if (core is not None and sh) else "—"
+            return v, calc(label, v, asof, "Computed (FDIC core income ÷ SEC shares)",
+                           [{"label": "Core income", "val": _usd(core)},
+                            {"label": "Avg diluted shares", "val": f"{sh:,.0f}" if sh else "—"}],
+                           "Core income ÷ avg diluted shares", False,
+                           source="FDIC + SEC", link=sec_filing_link)
+        if kind == "nonrecur":
+            igl = _num(rec.get("IGLSEC")) or 0.0; extra = _num(rec.get("EXTRA")) or 0.0
+            pti = _num(rec.get("PTAXNETINC"))
+            v = f"{(igl+extra)/pti*100:.2f}%" if pti else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Securities gains + extraordinary",
+                             "val": _thou(round(igl+extra)) + " ($000)"},
+                            {"label": "Pre-tax net income", "val": _thou(pti) + " ($000)"}],
+                           "(Securities gains + extraordinary) ÷ pre-tax income × 100", False)
         return "—", None
 
     cells, rows_html, ri = {}, [], 0
@@ -351,6 +456,21 @@ _PERFORMANCE = [
         ("Net charge-offs / loans", "pct", "NTLNLSR"),
         ("Loan-loss reserves / loans", "pct", "LNATRESR"),
     ]),
+    ("Core Earnings — normalized (ex realized securities gains/losses)", [
+        ("Core income", "core_income"),
+        ("Core EPS", "core_eps"),
+        ("Core ROAA", "core_roaa"),
+        ("Core ROAE", "core_roae"),
+        ("Net nonrecurring income / pre-tax income", "nonrecur"),
+    ]),
+    ("Share & Per-Share Info (HoldCo, SEC)", [
+        ("Diluted EPS", "ps", "eps"),
+        ("Book value / share", "ps", "bvps"),
+        ("Tangible book value / share", "ps", "tbvps"),
+        ("Dividends declared / share", "ps", "dps"),
+        ("Dividend payout ratio", "payout"),
+        ("Avg diluted shares (actual)", "shares"),
+    ]),
 ]
 
 _FAIR_VALUE = [
@@ -396,7 +516,7 @@ def render_balance_sheet(ticker):
 
 
 def render_performance_analysis(ticker):
-    render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE)
+    render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE, with_persh=True)
 
 
 def render_fair_value(ticker):

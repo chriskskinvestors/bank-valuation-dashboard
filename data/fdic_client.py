@@ -151,6 +151,8 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
         "ILNDOM", "ISC", "EDEP", "ESAL", "EPREMAGG", "EAMINTAN", "EOTHNINT",
         # Performance-analysis yields / costs.
         "INTINCY", "NONIIAY", "NONIXAY", "ROAPTX",
+        # Normalization inputs: realized securities gains/losses + extraordinary.
+        "IGLSEC", "EXTRA",
     }
     all_fields = sorted(base_fields | fields_needed)
 
