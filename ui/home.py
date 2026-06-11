@@ -26,6 +26,315 @@ def _section_header(emoji: str, title: str, subtitle: str = ""):
     )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Markets & Rates
+# ══════════════════════════════════════════════════════════════════════
+
+_TENORS = [("3M", "DGS3MO"), ("2Y", "DGS2"), ("5Y", "DGS5"),
+           ("10Y", "DGS10"), ("30Y", "DGS30")]
+
+
+def _fred_points(series_id: str):
+    """Return (latest, prior_business_day, ~1-week-ago) for a FRED series."""
+    try:
+        from data.fred_client import fetch_series
+        df = fetch_series(series_id, years=1)
+        if df is None or df.empty:
+            return (None, None, None)
+        vals = df.dropna(subset=["value"])["value"].tolist()
+        if not vals:
+            return (None, None, None)
+        latest = float(vals[-1])
+        prior = float(vals[-2]) if len(vals) >= 2 else None
+        weekago = float(vals[-6]) if len(vals) >= 6 else float(vals[0])
+        return (latest, prior, weekago)
+    except Exception:
+        return (None, None, None)
+
+
+def _market_status():
+    """(label, color) for US equity market state in Eastern time."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York"))
+        if now.weekday() >= 5:
+            return "Closed", "#94a3b8"
+        hm = now.hour * 60 + now.minute
+        if hm < 9 * 60 + 30:
+            return "Pre-market", "#d97706"
+        if hm < 16 * 60:
+            return "Open", "#059669"
+        return "Closed", "#94a3b8"
+    except Exception:
+        return "", "#94a3b8"
+
+
+def _rates_asof():
+    try:
+        from data.fred_client import latest_date
+        d = latest_date("DGS10")
+        return d.strftime("%b %d") if d is not None else "—"
+    except Exception:
+        return "—"
+
+
+def _delta_html(change, unit, up_is_good=True):
+    """Small colored Δ chip. change in the unit's terms (bp or pt)."""
+    if change is None or abs(change) < (0.5 if unit == "bp" else 0.05):
+        return '<span style="font-size:0.55rem; color:#94a3b8; font-weight:600;">unch</span>'
+    good = (change > 0) == up_is_good
+    col = "#059669" if good else "#dc2626"
+    dp = 0 if unit == "bp" else 1
+    return (f'<span style="font-size:0.56rem; font-weight:700; color:{col};">'
+            f'{change:+.{dp}f} {unit}</span>')
+
+
+def _stat_pill(label, value_html, delta_html):
+    return (
+        '<span style="display:inline-flex; flex-direction:column; '
+        'padding:3px 11px; border-radius:7px; background:rgba(148,163,184,0.08); '
+        'border:1px solid rgba(148,163,184,0.18); line-height:1.22;">'
+        f'<span style="font-size:0.55rem; color:#94a3b8; font-weight:600; '
+        f'letter-spacing:0.04em;">{label}</span>'
+        f'<span style="font-size:0.84rem; font-weight:700; color:#0f172a; '
+        f'white-space:nowrap;">{value_html} {delta_html}</span></span>'
+    )
+
+
+def _curve_svg(points):
+    """Mini yield-curve sparkline: today (blue) vs ~1 week ago (gray).
+    points = [(label, today, weekago), ...]."""
+    vals = [p[1] for p in points if p[1] is not None] + \
+           [p[2] for p in points if p[2] is not None]
+    if len(vals) < 2:
+        return ""
+    lo, hi = min(vals), max(vals)
+    pad = (hi - lo) * 0.18 or 0.1
+    lo -= pad; hi += pad
+    W, H, px, ptop, pbot = 300, 86, 10, 8, 18
+    n = len(points)
+
+    def X(i):
+        return px + i * ((W - 2 * px) / (n - 1))
+
+    def Y(v):
+        return ptop + (1 - (v - lo) / (hi - lo)) * (H - ptop - pbot)
+
+    def poly(idx, color, w, op):
+        pts = [f"{X(i):.1f},{Y(p[idx]):.1f}" for i, p in enumerate(points)
+               if p[idx] is not None]
+        return (f'<polyline points="{" ".join(pts)}" fill="none" stroke="{color}" '
+                f'stroke-width="{w}" opacity="{op}" stroke-linejoin="round"/>') if len(pts) >= 2 else ""
+
+    wk = poly(2, "#cbd5e1", 1.5, 1)
+    td = poly(1, "#2563eb", 2.2, 1)
+    dots = "".join(
+        f'<circle cx="{X(i):.1f}" cy="{Y(p[1]):.1f}" r="2.3" fill="#2563eb"/>'
+        for i, p in enumerate(points) if p[1] is not None)
+    labels = "".join(
+        f'<text x="{X(i):.1f}" y="{H-5}" font-size="8" fill="#94a3b8" '
+        f'text-anchor="middle">{p[0]}</text>' for i, p in enumerate(points))
+    return (f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
+            f'xmlns="http://www.w3.org/2000/svg">{wk}{td}{dots}{labels}</svg>')
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _etf_context(symbols: tuple) -> dict:
+    """1-week and YTD % change per ETF (cached hourly). EOD history works on
+    the FMP Starter plan; quote endpoints don't, so this is a separate call."""
+    out = {}
+    try:
+        from data import fmp_client
+        for s in symbols:
+            try:
+                h = fmp_client.get_history(s, "1Y")
+                if h is None or h.empty or "close" not in h:
+                    continue
+                h = h.dropna(subset=["close"]).sort_values("date")
+                if h.empty:
+                    continue
+                last = float(h["close"].iloc[-1])
+                w = float(h["close"].iloc[-6]) if len(h) >= 6 else None
+                yr = h[h["date"].dt.year == h["date"].iloc[-1].year]
+                ytd0 = float(yr["close"].iloc[0]) if not yr.empty else None
+                out[s] = {
+                    "w1": (last / w - 1) * 100 if w else None,
+                    "ytd": (last / ytd0 - 1) * 100 if ytd0 else None,
+                }
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
+
+
+def _render_markets_rates():
+    status, status_col = _market_status()
+    sub = (f'rates as of {_rates_asof()} · market '
+           f'<span style="color:{status_col}; font-weight:700;">{status}</span>')
+    _section_header("📈", "Markets & Rates", sub)
+
+    # ── Treasury curve: level + daily bps move ──────────────────────────
+    td = {lab: _fred_points(sid) for lab, sid in _TENORS}
+    ff = _fred_points("FEDFUNDS")[0]
+
+    def _rate_pill(label, level, prior, is_spread=False):
+        if level is None:
+            val = "—"
+        elif is_spread:
+            col = "#dc2626" if level < 0 else "#0f172a"
+            val = f'<span style="color:{col};">{level:+.2f}</span>'
+        else:
+            val = f"{level:.2f}%"
+        chg = (level - prior) * 100 if (level is not None and prior is not None) else None
+        return _stat_pill(label, val, _delta_html(chg, "bp"))
+
+    pills = [_stat_pill("FED FUNDS", f"{ff:.2f}%" if ff is not None else "—", "")]
+    for lab, _ in _TENORS:
+        lv, pr, _wk = td[lab]
+        pills.append(_rate_pill(lab, lv, pr))
+
+    sp2, sp2p, _ = _fred_points("T10Y2Y")
+    t5, t5p = td["5Y"][0], td["5Y"][1]
+    t3, t3p = td["3M"][0], td["3M"][1]
+    sp53 = (t5 - t3) if (t5 is not None and t3 is not None) else None
+    sp53p = (t5p - t3p) if (t5p is not None and t3p is not None) else None
+    sp_pills = [
+        _rate_pill("5Y−3M", sp53, sp53p, is_spread=True),
+        _rate_pill("10Y−2Y", sp2, sp2p, is_spread=True),
+    ]
+
+    cpts = [(lab, td[lab][0], td[lab][2]) for lab, _ in _TENORS]
+    svg = _curve_svg(cpts)
+
+    row = "display:flex; gap:6px; flex-wrap:wrap;"
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        st.markdown(
+            f'<div style="{row} margin:2px 0 6px;">' + "".join(pills) + "</div>"
+            f'<div style="{row} margin:0;">' + "".join(sp_pills) + "</div>",
+            unsafe_allow_html=True,
+        )
+    with c2:
+        if svg:
+            st.markdown(
+                '<div style="text-align:center;">' + svg +
+                '<div style="font-size:0.56rem; color:#94a3b8; margin-top:-2px;">'
+                'curve · <span style="color:#2563eb;">today</span> vs '
+                '<span style="color:#94a3b8;">1wk ago</span></div></div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Risk & vol row: HY / IG credit spreads, equity vol ──────────────
+    hy = _fred_points("BAMLH0A0HYM2")
+    ig = _fred_points("BAMLC0A0CM")
+    vix = _fred_points("VIXCLS")
+
+    def _risk_pill(label, p, unit):
+        lv, pr, _ = p
+        if lv is None:
+            return _stat_pill(label, "—", "")
+        val = f"{lv:.2f}%" if unit == "bp" else f"{lv:.1f}"
+        chg = (lv - pr) * (100 if unit == "bp" else 1) if pr is not None else None
+        # rising spreads / vol = risk-off = red
+        return _stat_pill(label, val, _delta_html(chg, unit, up_is_good=False))
+
+    risk = [_risk_pill("HY OAS", hy, "bp"), _risk_pill("IG OAS", ig, "bp"),
+            _risk_pill("VIX", vix, "pt")]
+    st.markdown(f'<div style="{row} margin:8px 0 6px;">' + "".join(risk) + "</div>",
+                unsafe_allow_html=True)
+
+    # ── Bank & market ETFs: price, daily %, 1wk, YTD ────────────────────
+    _render_etf_strip()
+
+
+def _render_etf_strip():
+    from config import MARKET_BENCHMARKS
+    syms = [t for t, _ in MARKET_BENCHMARKS]
+    quotes = {}
+    try:
+        from data.price_cache_store import get_prices as _warm
+        quotes = _warm(syms)
+    except Exception:
+        quotes = {}
+    missing = [t for t in syms if t not in quotes]
+    if missing:
+        try:
+            from data import fmp_client
+            quotes.update(fmp_client.get_quote_batch(missing))
+        except Exception:
+            pass
+    ctx = _etf_context(tuple(syms))
+
+    sel = st.query_params.get("bench")
+    bench_map = dict(MARKET_BENCHMARKS)
+
+    def _pill_link(t, desc, q):
+        price = (q or {}).get("price")
+        chg = (q or {}).get("change_pct")
+        if price is None:
+            val, sub, sub_col = "—", "", "#94a3b8"
+        else:
+            val = f"${price:,.2f}"
+            sub_col = "#dc2626" if (chg is not None and chg < 0) else "#059669"
+            sub = f"{chg:+.2f}%" if chg is not None else ""
+        c = ctx.get(t, {})
+
+        def _ctx(lbl, v):
+            if v is None:
+                return ""
+            cc = "#059669" if v >= 0 else "#dc2626"
+            return (f'<span style="color:#94a3b8;">{lbl}</span>'
+                    f'<span style="color:{cc}; font-weight:600;"> {v:+.1f}%</span>')
+        ctx_bits = " · ".join(b for b in [_ctx("1w", c.get("w1")),
+                                          _ctx("ytd", c.get("ytd"))] if b)
+        ctx_html = (f'<span style="font-size:0.56rem; margin-top:1px;">{ctx_bits}</span>'
+                    if ctx_bits else "")
+        border = "#2563eb" if t == sel else "rgba(148,163,184,0.18)"
+        return (
+            f'<a href="?bench={t}" target="_self" title="{desc}" '
+            'style="text-decoration:none; color:inherit;">'
+            '<span style="display:inline-flex; flex-direction:column; '
+            'padding:3px 12px; border-radius:7px; background:rgba(148,163,184,0.08); '
+            f'border:1px solid {border}; line-height:1.25; cursor:pointer;">'
+            f'<span style="font-size:0.58rem; color:#94a3b8; font-weight:600; '
+            f'letter-spacing:0.04em;">{t}</span>'
+            f'<span style="font-size:0.86rem; font-weight:700;">{val}'
+            f'<span style="font-size:0.64rem; font-weight:600; margin-left:5px; '
+            f'color:{sub_col};">{sub}</span></span>{ctx_html}</span></a>'
+        )
+
+    pills = [_pill_link(t, desc, quotes.get(t)) for t, desc in MARKET_BENCHMARKS]
+    st.markdown(
+        '<div style="display:flex; gap:6px; flex-wrap:wrap; margin:0 0 6px;">'
+        + "".join(pills) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if sel and sel in bench_map:
+        try:
+            from data import fmp_client
+            from utils.chart_style import apply_standard_layout
+            import plotly.graph_objects as go
+            hist = fmp_client.get_history(sel, period="1Y")
+            if hist is not None and not hist.empty and "close" in hist:
+                up = hist["close"].iloc[-1] >= hist["close"].iloc[0]
+                figh = go.Figure(go.Scatter(
+                    x=hist["date"], y=hist["close"], mode="lines",
+                    line=dict(color="#059669" if up else "#dc2626", width=2)))
+                apply_standard_layout(
+                    figh, title=f"{sel} — {bench_map[sel]} · 1 year",
+                    height=240, show_legend=False)
+                figh.update_yaxes(tickprefix="$")
+                st.plotly_chart(figh, use_container_width=True, key=f"bench_chart_{sel}")
+            if st.button("✕ close chart", key="bench_close"):
+                del st.query_params["bench"]
+                st.rerun()
+        except Exception:
+            pass
+
+
 def render_home(all_metrics: list[dict], watchlist: list[str]):
     """Render the home/dashboard page."""
 
@@ -61,131 +370,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
         unsafe_allow_html=True,
     )
     st.markdown("")
-    _section_header("📈", "Markets & Rates", "Treasury curve · bank-sector ETFs · live")
-
-    # ── Macro KPIs (full Treasury curve) — compact strip ────────────────
-    try:
-        from data.fred_client import latest_value
-        ff = latest_value("FEDFUNDS")
-        t3m = latest_value("DGS3MO")
-        t2 = latest_value("DGS2")
-        t5 = latest_value("DGS5")
-        t10 = latest_value("DGS10")
-        t30 = latest_value("DGS30")
-        spread = latest_value("T10Y2Y")
-        spread_5y3m = (t5 - t3m) if (t5 is not None and t3m is not None) else None
-
-        def _pill(label, val, is_spread=False):
-            if val is None:
-                disp, col = "—", "#94a3b8"
-            elif is_spread:
-                disp = f"{val:+.2f}"
-                col = "#dc2626" if val < 0 else "#059669"
-            else:
-                disp, col = f"{val:.2f}%", "inherit"
-            return (
-                '<span style="display:inline-flex; flex-direction:column; '
-                'padding:2px 11px; border-radius:7px; background:rgba(148,163,184,0.08); '
-                'border:1px solid rgba(148,163,184,0.18); line-height:1.2;">'
-                f'<span style="font-size:0.56rem; color:#94a3b8; font-weight:600; '
-                'letter-spacing:0.04em;">' + label + '</span>'
-                f'<span style="font-size:0.84rem; font-weight:700; color:' + col + ';">'
-                + disp + '</span></span>'
-            )
-
-        yields = [
-            _pill("FED FUNDS", ff), _pill("3M", t3m), _pill("2Y", t2),
-            _pill("5Y", t5), _pill("10Y", t10), _pill("30Y", t30),
-        ]
-        spreads = [
-            _pill("5Y−3M", spread_5y3m, is_spread=True),
-            _pill("10Y−2Y", spread, is_spread=True),
-        ]
-        row = "display:flex; gap:6px; flex-wrap:wrap;"
-        st.markdown(
-            f'<div style="{row} margin:2px 0 6px;">' + "".join(yields) + "</div>"
-            f'<div style="{row} margin:0 0 8px;">' + "".join(spreads) + "</div>",
-            unsafe_allow_html=True,
-        )
-    except Exception:
-        pass
-
-    # ── Market benchmarks (price strip) ─────────────────────────────────
-    try:
-        from config import MARKET_BENCHMARKS
-        syms = [t for t, _ in MARKET_BENCHMARKS]
-        quotes = {}
-        try:
-            from data.price_cache_store import get_prices as _warm
-            quotes = _warm(syms)  # warmed by the refresh-prices job
-        except Exception:
-            quotes = {}
-        missing = [t for t in syms if t not in quotes]
-        if missing:
-            try:
-                from data import fmp_client
-                quotes.update(fmp_client.get_quote_batch(missing))
-            except Exception:
-                pass
-
-        # Colored pills showing price + daily change %; clicking a pill sets
-        # ?bench=<ticker> and opens that benchmark's 1-year chart below.
-        sel = st.query_params.get("bench")
-        bench_map = dict(MARKET_BENCHMARKS)
-
-        def _pill_link(t, desc, q):
-            price = (q or {}).get("price")
-            chg = (q or {}).get("change_pct")
-            if price is None:
-                val, sub, sub_col = "—", "", "#94a3b8"
-            else:
-                val = f"${price:,.2f}"
-                sub_col = "#dc2626" if (chg is not None and chg < 0) else "#059669"
-                sub = f"{chg:+.2f}%" if chg is not None else ""
-            border = "#2563eb" if t == sel else "rgba(148,163,184,0.18)"
-            return (
-                f'<a href="?bench={t}" target="_self" title="{desc}" '
-                'style="text-decoration:none; color:inherit;">'
-                '<span style="display:inline-flex; flex-direction:column; '
-                'padding:3px 12px; border-radius:7px; background:rgba(148,163,184,0.08); '
-                f'border:1px solid {border}; line-height:1.25; cursor:pointer;">'
-                f'<span style="font-size:0.58rem; color:#94a3b8; font-weight:600; '
-                f'letter-spacing:0.04em;">{t}</span>'
-                f'<span style="font-size:0.86rem; font-weight:700;">{val}'
-                f'<span style="font-size:0.64rem; font-weight:600; margin-left:5px; '
-                f'color:{sub_col};">{sub}</span></span></span></a>'
-            )
-
-        pills = [_pill_link(t, desc, quotes.get(t)) for t, desc in MARKET_BENCHMARKS]
-        st.markdown(
-            '<div style="display:flex; gap:6px; flex-wrap:wrap; margin:0 0 6px;">'
-            + "".join(pills) + "</div>",
-            unsafe_allow_html=True,
-        )
-
-        if sel and sel in bench_map:
-            try:
-                from data import fmp_client
-                from utils.chart_style import apply_standard_layout
-                import plotly.graph_objects as go
-                hist = fmp_client.get_history(sel, period="1Y")
-                if hist is not None and not hist.empty and "close" in hist:
-                    up = hist["close"].iloc[-1] >= hist["close"].iloc[0]
-                    figh = go.Figure(go.Scatter(
-                        x=hist["date"], y=hist["close"], mode="lines",
-                        line=dict(color="#059669" if up else "#dc2626", width=2)))
-                    apply_standard_layout(
-                        figh, title=f"{sel} — {bench_map[sel]} · 1 year",
-                        height=240, show_legend=False)
-                    figh.update_yaxes(tickprefix="$")
-                    st.plotly_chart(figh, use_container_width=True, key=f"bench_chart_{sel}")
-                if st.button("✕ close chart", key="bench_close"):
-                    del st.query_params["bench"]
-                    st.rerun()
-            except Exception:
-                pass
-    except Exception:
-        pass
+    _render_markets_rates()
 
     # ── WHAT MOVED IN MY BOOK ──────────────────────────────────────────
     if all_metrics:

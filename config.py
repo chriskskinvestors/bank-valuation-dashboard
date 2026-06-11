@@ -31,6 +31,7 @@ FUNDAMENTAL_CACHE_TTL_HOURS = int(os.getenv("FUNDAMENTAL_CACHE_TTL_HOURS", "24")
 # Bank-relevant first (regional / community / broad banks), then broad market.
 # ---------------------------------------------------------------------------
 MARKET_BENCHMARKS = [
+    ("KBWB", "KBW Nasdaq Bank Index"),
     ("KRE", "Regional banks"),
     ("KBE", "Banks"),
     ("QABA", "Community banks"),
