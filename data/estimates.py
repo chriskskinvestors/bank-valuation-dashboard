@@ -22,18 +22,10 @@ ESTIMATES_PREFIX = "estimates_cache"
 CACHE_TTL_SECONDS = 21600
 
 
+# Shared freshness check (data/freshness) bound to this module's TTL.
 def _is_fresh_data(data: dict | None) -> bool:
-    """Check if cached data is still fresh."""
-    if not data:
-        return False
-    cached_at = data.get("cached_at", "")
-    if not cached_at:
-        return False
-    try:
-        ts = datetime.fromisoformat(cached_at)
-        return (datetime.now() - ts).total_seconds() < CACHE_TTL_SECONDS
-    except Exception:
-        return False
+    from data.freshness import is_fresh
+    return is_fresh(data, CACHE_TTL_SECONDS)
 
 
 def fetch_estimates(ticker: str) -> dict:

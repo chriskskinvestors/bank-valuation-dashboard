@@ -28,13 +28,9 @@ Public functions:
   • get_all_prices(max_age_s)        — bulk read everything fresh
 """
 from __future__ import annotations
-import os
 from datetime import datetime, timezone
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-_USE_POSTGRES = _DATABASE_URL.startswith(
-    ("postgres://", "postgresql://", "postgresql+psycopg2://")
-)
+from data.db import USE_POSTGRES as _USE_POSTGRES
 
 _engine = None
 
@@ -43,45 +39,25 @@ _FIELDS = ("price", "prev_close", "change", "change_pct", "volume")
 
 
 def _get_engine():
+    """Shared engine (data/db) + this store's first-use schema init."""
     global _engine
     if _engine is not None:
         return _engine
 
-    from sqlalchemy import create_engine
-    from pathlib import Path
-
-    if _USE_POSTGRES:
-        url = _DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
-        _engine = create_engine(
-            url,
-            pool_size=2, max_overflow=3,
-            pool_pre_ping=True, pool_recycle=300,
-            future=True,
-        )
-    else:
-        db_path = Path(__file__).parent.parent / "cache.db"
-        _engine = create_engine(
-            f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False},
-            future=True,
-        )
+    from data.db import get_engine
+    _engine = get_engine()
     init_price_cache_schema()
     return _engine
 
 
 def init_price_cache_schema():
     """Create the price_cache table. Idempotent."""
-    from sqlalchemy import create_engine, text
-    from pathlib import Path
+    from sqlalchemy import text
+    from data.db import get_engine
 
-    if _USE_POSTGRES:
-        url = _DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
-        eng = create_engine(url, future=True)
-        ts_default = "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
-    else:
-        db_path = Path(__file__).parent.parent / "cache.db"
-        eng = create_engine(f"sqlite:///{db_path}", future=True)
-        ts_default = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+    eng = get_engine()
+    ts_default = ("TIMESTAMP WITH TIME ZONE DEFAULT NOW()" if _USE_POSTGRES
+                  else "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
 
     with eng.begin() as conn:
         conn.execute(text(f"""

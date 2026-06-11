@@ -17,9 +17,7 @@ need to know which one is active.
 from __future__ import annotations
 
 import json
-import os
 import time
-from pathlib import Path
 
 from config import FUNDAMENTAL_CACHE_TTL_HOURS
 
@@ -27,44 +25,22 @@ TTL_SECONDS = FUNDAMENTAL_CACHE_TTL_HOURS * 3600
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Backend selection
+# Backend — the process-wide shared engine lives in data/db.py
 # ──────────────────────────────────────────────────────────────────────────
-_DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-_USE_POSTGRES = _DATABASE_URL.startswith(("postgres://", "postgresql://", "postgresql+psycopg2://"))
+from data.db import USE_POSTGRES as _USE_POSTGRES
 
-
-# ──────────────────────────────────────────────────────────────────────────
-# SQLAlchemy engine (shared across calls, lazily initialized)
-# ──────────────────────────────────────────────────────────────────────────
 _engine = None
 
 
 def _get_engine():
-    """Lazily build an engine; pool size kept small for Cloud Run."""
+    """Shared engine (data/db) + this store's first-use schema init."""
     global _engine
     if _engine is not None:
         return _engine
 
-    from sqlalchemy import create_engine, text
-
-    if _USE_POSTGRES:
-        # Normalize Heroku-style "postgres://" to SQLAlchemy's expected form
-        url = _DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
-        _engine = create_engine(
-            url,
-            pool_size=2,            # Cloud Run instances are small
-            max_overflow=3,
-            pool_pre_ping=True,     # Drop stale connections silently
-            pool_recycle=300,       # Recycle every 5 min
-            future=True,
-        )
-    else:
-        db_path = Path(__file__).parent.parent / "cache.db"
-        _engine = create_engine(
-            f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False},
-            future=True,
-        )
+    from sqlalchemy import text
+    from data.db import get_engine
+    _engine = get_engine()
 
     # Create the table on first use
     with _engine.begin() as conn:

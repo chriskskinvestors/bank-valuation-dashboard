@@ -33,17 +33,10 @@ HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept": "application/json"}
 EDGAR_FTS = "https://efts.sec.gov/LATEST/search-index"
 
 
+# Shared freshness check (data/freshness) bound to this module's TTL.
 def _is_fresh(cached: dict | None) -> bool:
-    if not cached:
-        return False
-    ts = cached.get("cached_at", "")
-    if not ts:
-        return False
-    try:
-        age = (datetime.now() - datetime.fromisoformat(ts)).total_seconds()
-        return age < CACHE_TTL_SECONDS
-    except Exception:
-        return False
+    from data.freshness import is_fresh
+    return is_fresh(cached, CACHE_TTL_SECONDS)
 
 
 def _search_13f_for_ticker(ticker: str, limit: int = 40) -> list[dict]:
