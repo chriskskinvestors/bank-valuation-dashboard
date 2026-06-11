@@ -700,15 +700,15 @@ def _render_industry_valuations(df: pd.DataFrame):
         df = df.copy()
         df["total_assets"] = None
 
-    # Normalize assets to dollars (some flows store $thousands) before tiering.
+    # total_assets is always raw dollars (analysis/metrics.py converts FDIC
+    # $thousands at the boundary) — the old "< 1e9 → ×1000" guess here
+    # misclassified genuine sub-$1B banks into trillion-dollar tiers.
     def _assets_usd(v):
         try:
             v = float(v)
         except (TypeError, ValueError):
             return None
-        if v <= 0:
-            return None
-        return v * 1000.0 if v < 1e9 else v
+        return v if v > 0 else None
 
     df = df.copy()
     df["_tier"] = df["total_assets"].map(lambda v: asset_size_tier(_assets_usd(v)))

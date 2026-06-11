@@ -75,11 +75,10 @@ def group_banks(all_metrics: list[dict]) -> dict:
     by_mix = {}
 
     for m in all_metrics:
+        # total_assets is ALWAYS raw dollars (analysis/metrics.py converts FDIC
+        # $thousands at the boundary). The old "< 1e9 → ×1000" guess here
+        # double-converted genuine sub-$1B banks into trillion-dollar tiers.
         assets = m.get("total_assets")
-        # total_assets may be stored in thousands or dollars depending on flow
-        if assets and assets < 1e9:
-            # likely in thousands — convert
-            assets = assets * 1000
         tier = asset_size_tier(assets)
         if tier:
             by_size.setdefault(tier, []).append(m)
@@ -100,10 +99,7 @@ def get_peer_group_for_bank(ticker: str, all_metrics: list[dict], mode: str = "s
         return []
 
     if mode == "size":
-        assets = bank.get("total_assets")
-        if assets and assets < 1e9:
-            assets = assets * 1000
-        my_tier = asset_size_tier(assets)
+        my_tier = asset_size_tier(bank.get("total_assets"))
     else:
         my_tier = business_mix_tier(bank)
 
@@ -140,10 +136,7 @@ def metric_percentile_context(ticker: str, all_metrics: list[dict],
         return {}
     cohort = get_peer_group_for_bank(ticker, all_metrics, mode=mode)
     if mode == "size":
-        assets = self_m.get("total_assets")
-        if assets and assets < 1e9:
-            assets = assets * 1000
-        tier = asset_size_tier(assets)
+        tier = asset_size_tier(self_m.get("total_assets"))
     else:
         tier = business_mix_tier(self_m)
     out = {"_meta": {"tier": tier, "cohort_size": len(cohort), "mode": mode}}

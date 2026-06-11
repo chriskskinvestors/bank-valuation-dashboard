@@ -56,12 +56,15 @@ def build_credit_timeline(hist_records: list[dict]) -> pd.DataFrame:
         for key, fdic_field in _CREDIT_FIELDS.items():
             row[key] = r.get(fdic_field)
 
-        # Past-due ratios as % of total loans
-        total_loans = row.get("total_loans") or 1
-        if row.get("past_due_30_89") is not None:
-            row["past_due_30_89_pct"] = row["past_due_30_89"] / total_loans * 100
-        if row.get("past_due_90") is not None:
-            row["past_due_90_pct"] = row["past_due_90"] / total_loans * 100
+        # Past-due ratios as % of total loans. If the denominator is missing,
+        # SKIP the ratio — the old `or 1` fallback divided dollars-in-thousands
+        # by 1, producing absurd percentages that fed the migration alerts.
+        total_loans = row.get("total_loans")
+        if total_loans and total_loans > 0:
+            if row.get("past_due_30_89") is not None:
+                row["past_due_30_89_pct"] = row["past_due_30_89"] / total_loans * 100
+            if row.get("past_due_90") is not None:
+                row["past_due_90_pct"] = row["past_due_90"] / total_loans * 100
 
         # Compute reserve coverage from constituent ratios — more reliable than
         # FDIC's IDERNCVR field which has scaling issues at holding-company level.

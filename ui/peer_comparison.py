@@ -186,9 +186,9 @@ def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfo
     with st.expander("📊 Peer group composition"):
         comp_rows = []
         for m in selected_peers:
+            # total_assets is always raw dollars (converted at the metrics
+            # boundary) — no unit guessing.
             assets = m.get("total_assets")
-            if assets and assets < 1e9:
-                assets = assets * 1000
             comp_rows.append({
                 "Ticker": m["ticker"],
                 "Bank": get_name(m["ticker"]),

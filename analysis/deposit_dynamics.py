@@ -29,8 +29,16 @@ FED_FUNDS_QUARTERLY = {
 }
 
 
+# Quarters beyond the static table, derived live from FRED (memoized).
+_FED_FUNDS_LIVE: dict[str, float] = {}
+
+
 def _get_fed_funds(date_str: str) -> float | None:
-    """Look up Fed funds rate for a given quarter-end date."""
+    """Look up Fed funds rate (quarterly avg) for a given quarter-end date.
+
+    Static table first; quarters beyond its last entry are derived from FRED's
+    monthly FEDFUNDS series. Previously a new quarter simply wasn't in the
+    table, its rows were dropna'd, and the beta window silently truncated."""
     if not date_str:
         return None
     # Handle pandas Timestamp
@@ -38,7 +46,24 @@ def _get_fed_funds(date_str: str) -> float | None:
         date_str = date_str.strftime("%Y-%m-%d")
     elif isinstance(date_str, str) and len(date_str) > 10:
         date_str = date_str[:10]
-    return FED_FUNDS_QUARTERLY.get(date_str)
+    v = FED_FUNDS_QUARTERLY.get(date_str)
+    if v is not None:
+        return v
+    if date_str in _FED_FUNDS_LIVE:
+        return _FED_FUNDS_LIVE[date_str]
+    try:
+        from data.fred_client import fetch_series
+        df = fetch_series("FEDFUNDS", years=3)
+        if df is not None and not df.empty:
+            per = pd.Period(pd.Timestamp(date_str), freq="Q")
+            vals = df.loc[df["date"].dt.to_period("Q") == per, "value"].dropna()
+            if not vals.empty:
+                _FED_FUNDS_LIVE[date_str] = round(float(vals.mean()), 2)
+                return _FED_FUNDS_LIVE[date_str]
+    except Exception as e:
+        print(f"[deposit_dynamics] FRED fed-funds lookup failed for {date_str}: "
+              f"{type(e).__name__}: {e}")
+    return None
 
 
 def _cost_of_funding(row: dict) -> float | None:

@@ -198,12 +198,16 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            [{"label": f1, "val": _thou(a) + " ($000)"},
                             {"label": f2, "val": _thou(b) + " ($000)"}], f"{f1} ÷ {f2} × 100", False)
         if kind == "tce":
-            eq = _num(rec.get("EQTOT")); intan = _num(rec.get("INTANGW")) or 0
+            # TCE = equity − TOTAL intangibles (INTAN, incl. goodwill) — the
+            # standard convention, and the same field the roatce kind uses.
+            # (Previously this used INTANGW = goodwill only while roatce used
+            # INTAN, so "TCE" and "ROATCE" on the same page disagreed.)
+            eq = _num(rec.get("EQTOT")); intan = _num(rec.get("INTAN")) or 0
             v = _usd(eq - intan) if eq is not None else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Total equity", "val": _thou(eq) + " ($000)"},
-                            {"label": "Intangibles", "val": _thou(intan) + " ($000)"}],
-                           "Total equity − intangibles", False)
+                            {"label": "Intangibles (incl. goodwill)", "val": _thou(intan) + " ($000)"}],
+                           "Total equity − total intangibles", False)
         if kind == "roatce":
             ni = _num(rec.get("NETINC")); eq = _num(rec.get("EQTOT"))
             intan = _num(rec.get("INTAN")) or 0
@@ -420,7 +424,10 @@ _BALANCE = [
     ("Equity", [
         ("Total equity capital", "dollar", "EQTOT"),
         ("Tangible common equity", "tce"),
-        ("Intangible assets", "dollar", "INTANGW"),
+        # INTAN = total intangibles incl. goodwill (INTANGW is goodwill only —
+        # it was previously shown here under the "Intangible assets" label).
+        ("Intangible assets (incl. goodwill)", "dollar", "INTAN"),
+        ("Goodwill", "dollar", "INTANGW"),
     ]),
 ]
 
