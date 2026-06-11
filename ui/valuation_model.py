@@ -211,6 +211,50 @@ def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
     render_traceable_cards(cards, key=f"valuation_{ticker}", columns=5)
 
 
+def _render_verdict_banner(price, blended, dcf_fv, w_fair_price, irr, coe_pct):
+    """One-line conclusion up top: is it cheap, and what do you earn? Reads before
+    the model detail so the answer comes first."""
+    if not price or not blended:
+        return
+    disc = (blended / price - 1) * 100  # positive = upside (undervalued)
+    if disc >= 10:
+        verdict, color, bg, bd = "Undervalued", "#065f46", "#ecfdf5", "#a7f3d0"
+    elif disc <= -10:
+        verdict, color, bg, bd = "Overvalued", "#991b1b", "#fef2f2", "#fecaca"
+    else:
+        verdict, color, bg, bd = "Fairly valued", "#9a3412", "#fff7ed", "#fed7aa"
+
+    irr_txt = (f"{irr:.1f}%" if irr is not None else "—")
+    irr_gap = (f"{irr - coe_pct:+.1f}pp vs CoE" if irr is not None else "")
+    up_word = "upside" if disc >= 0 else "downside"
+
+    def stat(label, value, sub=""):
+        sub_html = (f'<div style="font-size:0.66rem;color:#94a3b8;">{sub}</div>'
+                    if sub else "")
+        return (f'<div style="padding:0 16px;border-left:1px solid {bd};">'
+                f'<div style="font-size:0.64rem;text-transform:uppercase;letter-spacing:.03em;'
+                f'color:#64748b;font-weight:600;">{label}</div>'
+                f'<div style="font-size:1.05rem;font-weight:700;color:#0f172a;">{value}</div>'
+                f'{sub_html}</div>')
+
+    banner = (
+        f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;'
+        f'background:{bg};border:1px solid {bd};border-radius:12px;'
+        f'padding:12px 16px;margin:2px 0 10px;">'
+        f'<div style="padding-right:16px;">'
+        f'<div style="font-size:0.64rem;text-transform:uppercase;letter-spacing:.04em;'
+        f'color:{color};font-weight:700;">Verdict</div>'
+        f'<div style="font-size:1.5rem;font-weight:800;color:{color};line-height:1.1;">{verdict}</div>'
+        f'</div>'
+        + stat("Price", f"${price:,.2f}")
+        + stat("Blended fair value", f"${blended:,.2f}")
+        + stat(f"Implied {up_word}", f"{disc:+.0f}%", "to blended fair value")
+        + stat("Implied IRR", irr_txt, irr_gap)
+        + '</div>'
+    )
+    st.markdown(banner, unsafe_allow_html=True)
+
+
 def render_valuation_model(ticker: str):
     """Render the full valuation model panel."""
     hist = _load_hist(ticker)
@@ -356,6 +400,15 @@ def render_valuation_model(ticker: str):
     pv_explicit = dcf.get("pv_explicit")
     pv_terminal = dcf.get("pv_terminal")
     blended = ((dcf_fv + w_fair_price) / 2) if (dcf_fv and w_fair_price) else None
+
+    # ── Verdict banner (conclusion first) ──────────────────────────────
+    try:
+        from analysis.dcf import implied_irr
+        _irr = implied_irr(price, base_params) if price else None
+    except Exception:
+        _irr = None
+    _render_verdict_banner(price, blended, dcf_fv, w_fair_price, _irr, cost_of_equity)
+
     _render_valuation_headline(
         ticker, name, hist, sec, price, dcf_fv, w_ptbv, w_fair_price, blended,
         pv_explicit, pv_terminal,
