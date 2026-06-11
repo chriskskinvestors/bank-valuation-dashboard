@@ -107,8 +107,8 @@ def render_recent_activity(ticker: str, limit: int = 20):
 
     st.subheader(f"📰 Recent Activity — {ticker}")
     st.caption(
-        "SEC 8-K filings and (coming soon) press-release wire feeds. "
-        "Refreshed automatically every 30 minutes during market hours."
+        "SEC 8-K filings plus Business Wire, PR Newswire, GlobeNewswire and Yahoo "
+        "News feeds. Refreshed automatically every 30 minutes during market hours."
     )
 
     events = get_recent_events(ticker, limit=limit)
@@ -128,8 +128,8 @@ def render_activity_overview(limit: int = 50):
     """Universe-wide event feed (Home page or Activity tab)."""
     st.subheader("📰 Recent Activity (Universe)")
     st.caption(
-        f"Most recent {limit} events across all banks in the universe. "
-        "8-K filings are pulled from SEC EDGAR; wire press releases coming next."
+        f"Most recent {limit} events across all banks in the universe — SEC 8-K "
+        "filings plus Business Wire, PR Newswire, GlobeNewswire and Yahoo News."
     )
 
     # Filter widgets
