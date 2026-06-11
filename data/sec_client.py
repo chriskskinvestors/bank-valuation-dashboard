@@ -865,6 +865,7 @@ def get_filing_info(cik: int, max_filings: int = 50) -> dict:
         if len(filings) >= max_filings:
             break
 
+    biz_addr = (data.get("addresses", {}) or {}).get("business", {}) or {}
     return {
         "name": data.get("name", ""),
         "cik": raw_cik,
@@ -874,6 +875,14 @@ def get_filing_info(cik: int, max_filings: int = 50) -> dict:
         "website": (data.get("website") or ""),
         "tickers": data.get("tickers", []),
         "exchanges": data.get("exchanges", []),
+        # Corporate profile fields (SEC submissions also carries these).
+        "phone": data.get("phone", "") or "",
+        "state_of_incorp": data.get("stateOfIncorporation", "") or "",
+        "entity_category": data.get("category", "") or "",
+        "hq_street": biz_addr.get("street1", "") or "",
+        "hq_city": biz_addr.get("city", "") or "",
+        "hq_state": biz_addr.get("stateOrCountry", "") or "",
+        "hq_zip": biz_addr.get("zipCode", "") or "",
         "recent_filings": filings,
     }
 

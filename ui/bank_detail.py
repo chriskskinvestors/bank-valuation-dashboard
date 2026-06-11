@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from config import METRICS, METRICS_BY_KEY, METRIC_CATEGORIES
-from data.bank_mapping import get_name, get_bank_info
+from data.bank_mapping import get_name, get_bank_info, get_ir_url
 from data import fdic_client, sec_client
 from data.ibkr_client import get_ibkr_client
 from analysis.peer_comparison import build_radar_data, get_peer_group_by_asset_size
@@ -17,18 +17,241 @@ from ui.charts import (
     growth_trend_chart, loans_deposits_chart,
 )
 
+_MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _num(v):
+    try:
+        if v is None or pd.isna(v):
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _usd_b(v):
+    """Dollars → $X.XB / $XXX.XM."""
+    v = _num(v)
+    if v is None:
+        return None
+    if abs(v) >= 1e9:
+        return f"${v/1e9:.2f}B"
+    if abs(v) >= 1e6:
+        return f"${v/1e6:.1f}M"
+    return f"${v:,.0f}"
+
+
+def _usd_b_thou(v):
+    """FDIC $thousands → $X.XB / $XXX.XM."""
+    v = _num(v)
+    return _usd_b(v * 1000) if v is not None else None
+
+
+def _fy_end(mmdd):
+    """SEC fiscalYearEnd 'MMDD' → 'Dec 31'."""
+    if not mmdd or len(str(mmdd)) != 4:
+        return None
+    try:
+        mm, dd = int(str(mmdd)[:2]), int(str(mmdd)[2:])
+        return f"{_MONTHS[mm]} {dd}"
+    except (ValueError, IndexError):
+        return None
+
+
+def _phone(p):
+    digits = "".join(ch for ch in str(p or "") if ch.isdigit())
+    if len(digits) == 10:
+        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+    return p or None
+
+
+def _kv_table(title, pairs):
+    """Compact label/value reference table; rows with empty values are dropped."""
+    rows = [(l, v) for l, v in pairs if v not in (None, "", "—")]
+    if not rows:
+        return ""
+    body = "".join(
+        f'<tr style="border-bottom:1px solid rgba(148,163,184,0.10);">'
+        f'<td style="padding:3px 2px;color:#64748b;font-size:0.8rem;white-space:nowrap;">{l}</td>'
+        f'<td style="padding:3px 2px;text-align:right;font-weight:600;color:#0f172a;'
+        f'font-size:0.82rem;">{v}</td></tr>'
+        for l, v in rows)
+    return (
+        f'<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
+        f'color:#1e3a8a;font-weight:700;margin:0 0 3px;">{title}</div>'
+        f'<table style="width:100%;border-collapse:collapse;">{body}</table>')
+
+
+def _render_snapshot(ticker, info, name, row):
+    """Capital-IQ-style snapshot: identity line, quick links, and a two-column
+    Market Data / Company Profile block built from the data we already pull."""
+    cik = info.get("cik") if info else None
+    cert = info.get("fdic_cert") if info else None
+
+    filing = {}
+    if cik:
+        try:
+            filing = sec_client.get_filing_info(cik) or {}
+        except Exception:
+            filing = {}
+    quote = {}
+    try:
+        from data.fmp_client import get_quote
+        quote = get_quote(ticker) or {}
+    except Exception:
+        quote = {}
+    fdic_rec = {}
+    if cert:
+        try:
+            fdic_rec = fdic_client.get_latest_financials(cert) or {}
+        except Exception:
+            fdic_rec = {}
+    fund = {}
+    if cik:
+        try:
+            fund = sec_client.get_latest_fundamentals(cik) or {}
+        except Exception:
+            fund = {}
+
+    # 52-week range + average volume from a 1-year history (cached).
+    wk_hi = wk_lo = avg_vol = None
+    try:
+        from data.fmp_client import get_history
+        h1y = get_history(ticker, "1Y")
+        if h1y is not None and not h1y.empty:
+            if "high" in h1y and h1y["high"].notna().any():
+                wk_hi = float(h1y["high"].max())
+            if "low" in h1y and h1y["low"].notna().any():
+                wk_lo = float(h1y["low"].min())
+            if "volume" in h1y and h1y["volume"].notna().any():
+                avg_vol = float(h1y["volume"].tail(63).mean())  # ~3 trading months
+    except Exception:
+        pass
+
+    # ── Identity sub-line ──────────────────────────────────────────────
+    exch = (filing.get("exchanges") or [None])[0]
+    ident_bits = []
+    if exch:
+        ident_bits.append(f"{exch}: {ticker}")
+    if filing.get("sic_description"):
+        ident_bits.append(filing["sic_description"].title())
+    if filing.get("hq_city") and filing.get("hq_state"):
+        ident_bits.append(f"HQ: {filing['hq_city'].title()}, {filing['hq_state']}")
+    if ident_bits:
+        st.markdown(
+            '<div style="color:#64748b;font-size:0.9rem;margin:-4px 0 8px;">'
+            + " &nbsp;·&nbsp; ".join(ident_bits) + "</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Quick links ────────────────────────────────────────────────────
+    def _btn(label, url):
+        return (f'<a href="{url}" target="_blank" style="display:inline-block;'
+                f'padding:3px 10px;margin:0 6px 6px 0;border:1px solid rgba(148,163,184,0.35);'
+                f'border-radius:6px;font-size:0.78rem;color:#1e3a8a;text-decoration:none;'
+                f'background:rgba(241,245,249,0.6);">{label}</a>')
+
+    links = []
+    tenk = next((f for f in filing.get("recent_filings", []) if f["form"].startswith("10-K")), None)
+    tenq = next((f for f in filing.get("recent_filings", []) if f["form"].startswith("10-Q")), None)
+    if tenk and tenk.get("url"):
+        links.append(_btn("📄 10-K", tenk["url"]))
+    if tenq and tenq.get("url"):
+        links.append(_btn("📄 10-Q", tenq["url"]))
+    if cik:
+        links.append(_btn("📋 EDGAR", f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                                      f"&CIK={cik}&type=&dateb=&owner=include&count=40"))
+    ir = get_ir_url(ticker)
+    if ir:
+        links.append(_btn("🌐 IR", ir))
+    if cert:
+        links.append(_btn("🏦 FDIC", f"https://banks.data.fdic.gov/bankfind-suite/bankfind/details/{cert}"))
+        links.append(_btn("📑 FFIEC", "https://cdr.ffiec.gov/public/ManageFacsimiles.aspx"))
+    if links:
+        st.markdown('<div style="margin:2px 0 10px;">' + "".join(links) + "</div>",
+                    unsafe_allow_html=True)
+
+    # ── Market Data + Company Profile (two columns) ────────────────────
+    price = _num(quote.get("price")) if quote.get("price") is not None else _num(row.get("price"))
+    prev = _num(quote.get("close"))
+    chg = _num(quote.get("change")); chg_pct = _num(quote.get("change_pct"))
+    if chg_pct is None:
+        chg_pct = _num(row.get("change_pct"))
+    o = _num(quote.get("open")); hi = _num(quote.get("high")); lo = _num(quote.get("low"))
+    vol = _num(quote.get("volume")) or _num(row.get("volume"))
+    shares = _num(fund.get("shares_outstanding"))
+    dy = _num(row.get("dividend_yield"))
+    mcap = _num(row.get("market_cap"))
+
+    chg_html = None
+    if chg is not None and chg_pct is not None:
+        c = "#059669" if chg >= 0 else "#dc2626"
+        chg_html = f'<span style="color:{c};">{chg:+.2f} ({chg_pct:+.2f}%)</span>'
+    elif chg_pct is not None:
+        c = "#059669" if chg_pct >= 0 else "#dc2626"
+        chg_html = f'<span style="color:{c};">{chg_pct:+.2f}%</span>'
+
+    market = [
+        ("Last Price", f"${price:,.2f}" if price is not None else None),
+        ("Change", chg_html),
+        ("Previous Close", f"${prev:,.2f}" if prev is not None else None),
+        ("Open", f"${o:,.2f}" if o is not None else None),
+        ("Day Range", f"${lo:,.2f} – ${hi:,.2f}" if (lo is not None and hi is not None) else None),
+        ("52-Week Range", f"${wk_lo:,.2f} – ${wk_hi:,.2f}" if (wk_lo and wk_hi) else None),
+        ("Volume", f"{vol:,.0f}" if vol is not None else None),
+        ("Avg Volume (3M)", f"{avg_vol:,.0f}" if avg_vol else None),
+        ("Market Cap", _usd_b(mcap)),
+        ("Shares Outstanding", f"{shares:,.0f}" if shares else None),
+        ("Dividend Yield", f"{dy:.2f}%" if dy is not None else None),
+    ]
+
+    web = filing.get("website") or ""
+    if web and not web.startswith("http"):
+        web = "https://" + web
+    web_html = (f'<a href="{web}" target="_blank" style="color:#1e3a8a;">'
+                f'{filing["website"]}</a>') if web else None
+    hq = None
+    if filing.get("hq_city") and filing.get("hq_state"):
+        hq = f"{filing['hq_city'].title()}, {filing['hq_state']} {filing.get('hq_zip','')}".strip()
+
+    company = [
+        ("Industry", (filing.get("sic_description") or "").title() or None),
+        ("Exchange", exch),
+        ("State of Incorp.", filing.get("state_of_incorp")),
+        ("Fiscal Year End", _fy_end(filing.get("fiscal_year_end"))),
+        ("Headquarters", hq),
+        ("Phone", _phone(filing.get("phone"))),
+        ("Website", web_html),
+        ("Total Assets", _usd_b_thou(fdic_rec.get("ASSET"))),
+        ("Total Deposits", _usd_b_thou(fdic_rec.get("DEP"))),
+        ("Net Loans", _usd_b_thou(fdic_rec.get("LNLSNET"))),
+        ("Total Equity", _usd_b_thou(fdic_rec.get("EQTOT"))),
+        ("CIK", str(cik) if cik else None),
+        ("FDIC Cert", str(cert) if cert else None),
+    ]
+
+    c_mkt, c_co = st.columns(2)
+    with c_mkt:
+        st.markdown(_kv_table("Market Data", market), unsafe_allow_html=True)
+    with c_co:
+        st.markdown(_kv_table("Company Profile", company), unsafe_allow_html=True)
+
 
 def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
     """Render the full detail page for a single bank."""
     info = get_bank_info(ticker)
     name = info["name"] if info else ticker
 
-    st.markdown(f"### {name} ({ticker})")
+    st.markdown(f"## {name} ({ticker})")
 
-    # ── Key stats grid ───────────────────────────────────────────────
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
     if not bank_row.empty:
         row = bank_row.iloc[0]
+        # Capital-IQ-style snapshot: identity, quick links, market + company profile.
+        _render_snapshot(ticker, info, name, row)
+        st.markdown("---")
+        st.markdown("##### Valuation & Performance")
         _render_keystat_grid(ticker, info, name, row)
 
         # Click-through to the primary data sources for this bank.
