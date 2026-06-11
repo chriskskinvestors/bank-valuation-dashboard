@@ -50,20 +50,24 @@ def render_ownership(ticker: str):
                  "Number of institutions (>$100M AUM) reporting a position in their latest "
                  "13F-HR filing over the last ~90 days.",
                  [{"label": "13F-HR filers", "val": str(nf)}]),
-        own_card("Total Shares Held", f"{summary['total_shares']:,.0f}",
-                 "Total shares held across all reporting institutions.",
+        own_card("Shares Held (top filers)", f"{summary['total_shares']:,.0f}",
+                 "Shares held across the largest reporting institutions found via "
+                 "EDGAR full-text search — a sample of the biggest filers, not the "
+                 "complete institutional base.",
                  [{"label": "Shares (summed across filers)", "val": f"{summary['total_shares']:,.0f}",
-                   "sub": f"across {nf} 13F-HR filings"}]),
-        own_card("Total Value", fmt_dollars(tot_val, 2),
-                 "Total reported market value of institutional holdings.",
+                   "sub": f"across {nf} 13F-HR filings (largest found)"}]),
+        own_card("Value (top filers)", fmt_dollars(tot_val, 2),
+                 "Reported market value across the largest reporting institutions "
+                 "found via EDGAR full-text search — a sample of the biggest filers, "
+                 "not total institutional ownership.",
                  [{"label": "Value (summed across filers)", "val": fmt_dollars(tot_val, 2),
-                   "sub": f"across {nf} 13F-HR filings"}]),
+                   "sub": f"across {nf} 13F-HR filings (largest found)"}]),
         own_card("Top 5 Concentration", f"{summary['top_5_concentration']:.0f}%",
-                 "Share of total institutional dollar value held by the five largest holders — "
-                 "a concentration/crowding gauge.",
+                 "Share of the sampled institutional dollar value held by the five "
+                 "largest holders — a concentration/crowding gauge.",
                  [{"label": "Top-5 holders' value", "val": fmt_dollars(top5_val, 2)},
-                  {"label": "Total institutional value", "val": fmt_dollars(tot_val, 2)}],
-                 op="Top-5 value ÷ total institutional value × 100"),
+                  {"label": "Sampled institutional value", "val": fmt_dollars(tot_val, 2)}],
+                 op="Top-5 value ÷ sampled institutional value × 100"),
     ]
     render_traceable_cards(cards, key=f"ownership_{ticker}", columns=4)
 
@@ -71,10 +75,12 @@ def render_ownership(ticker: str):
     n_added = sum(1 for h in holders if h.get("change_status") == "Added")
     n_trim = sum(1 for h in holders if h.get("change_status") == "Trimmed")
     n_new = sum(1 for h in holders if h.get("change_status") == "New")
-    if n_added or n_trim or n_new:
+    n_unk = sum(1 for h in holders if h.get("change_status") == "Unknown")
+    if n_added or n_trim or n_new or n_unk:
+        unk = f" · ❔ {n_unk} prior-quarter lookup failed" if n_unk else ""
         st.caption(
             f"**Vs prior quarter:** 🟢 {n_added} added · 🔴 {n_trim} trimmed · "
-            f"🆕 {n_new} new positions · click any **Filing ↗** for the source 13F-HR."
+            f"🆕 {n_new} new positions{unk} · click any **Filing ↗** for the source 13F-HR."
         )
 
     # ── Holders table — each row links to its 13F-HR; change vs prior Q ──

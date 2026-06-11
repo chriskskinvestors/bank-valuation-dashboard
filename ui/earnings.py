@@ -356,9 +356,13 @@ def _render_file_upload(ticker: str):
             elif not parsed.get("metrics"):
                 st.warning("No metrics found in the document.")
             else:
-                save_consensus(parsed)
-                st.success(f"Parsed {len(parsed['metrics'])} metrics for {ticker} {period}")
-                st.rerun()
+                try:
+                    save_consensus(parsed)
+                except IOError as e:
+                    st.error(str(e))
+                else:
+                    st.success(f"Parsed {len(parsed['metrics'])} metrics for {ticker} {period}")
+                    st.rerun()
 
 
 def _render_earnings_history_chart(ticker: str, estimates: dict):
@@ -621,12 +625,16 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_
     """Top summary KPIs across the whole watchlist."""
     from datetime import datetime, date
 
-    # Reports in next 14 days
+    # Reports in next 14 days. A feed failure must NOT display as "0 reporting"
+    # — that's a confident wrong number; show unavailable instead.
+    cal_failed = False
     try:
         from data.estimates import fetch_earnings_calendar
         cal = fetch_earnings_calendar(tuple(watchlist))
-    except Exception:
+    except Exception as e:
+        print(f"[earnings] calendar fetch failed: {type(e).__name__}: {e}")
         cal = []
+        cal_failed = True
 
     today = date.today()
     upcoming_14 = 0
@@ -670,8 +678,8 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_
     with c1:
         st.metric(
             "Reporting This Week",
-            upcoming_7,
-            delta=f"{upcoming_14} in 14d",
+            "⚠ n/a" if cal_failed else upcoming_7,
+            delta="calendar feed unavailable" if cal_failed else f"{upcoming_14} in 14d",
             delta_color="off",
         )
     with c2:
@@ -703,8 +711,9 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_
                         surprises.append(sp)
             if surprises:
                 avg_surprise = sum(surprises) / len(surprises)
-        except Exception:
-            pass
+        except Exception as e:
+            # Renders "—" below, which is honest; log so the failure is visible.
+            print(f"[earnings] surprise fetch failed: {type(e).__name__}: {e}")
         st.metric(
             "Last Qtr Avg Surprise",
             f"{avg_surprise:+.1f}%" if avg_surprise is not None else "—",
@@ -1422,9 +1431,13 @@ def _render_upload_section(watchlist: list[str]):
                 elif not parsed.get("metrics"):
                     st.warning("No metrics found in the document.")
                 else:
-                    save_consensus(parsed)
-                    st.success(f"Parsed {len(parsed['metrics'])} metrics for {ticker_clean} {upload_period}")
-                    st.rerun()
+                    try:
+                        save_consensus(parsed)
+                    except IOError as e:
+                        st.error(str(e))
+                    else:
+                        st.success(f"Parsed {len(parsed['metrics'])} metrics for {ticker_clean} {upload_period}")
+                        st.rerun()
 
 
 def _render_bulk_upload():

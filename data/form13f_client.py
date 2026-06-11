@@ -339,8 +339,14 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
             try:
                 prior = _prior_quarter_shares(
                     h["filer_cik"], h.get("date_filed", ""), search_term)
-            except Exception:
-                prior = None
+            except Exception as e:
+                # A failed lookup must not masquerade as a confident "New"
+                # position — that's a wrong label, not missing data.
+                print(f"[13F] prior-quarter lookup failed for "
+                      f"{h.get('filer_name', h['filer_cik'])}: {type(e).__name__}: {e}")
+                h["prior_shares"] = None
+                h.update({"change_status": "Unknown", "change_pct": None})
+                continue
             h["prior_shares"] = prior
             h.update(_classify_change(h["shares"], prior))
 

@@ -102,14 +102,17 @@ def _strip_sec_boilerplate(text: str) -> str:
 def fetch_filing_text(url: str, max_chars: int = 15000) -> str:
     """
     Fetch a filing document from SEC EDGAR and return clean text
-    with boilerplate stripped.
+    with boilerplate stripped. Returns "" on fetch failure — previously an
+    error message was returned AS the document text, which then flowed into
+    the summarizer and could be rendered as if it were filing content.
     Truncates to max_chars to stay within API limits.
     """
     try:
         resp = requests.get(url, headers=SEC_HEADERS, timeout=20)
         resp.raise_for_status()
     except Exception as e:
-        return f"[Error fetching filing: {e}]"
+        print(f"[filing] fetch failed for {url}: {type(e).__name__}: {e}")
+        return ""
 
     content_type = resp.headers.get("Content-Type", "")
 
@@ -228,7 +231,12 @@ def summarize_filing(filing_text: str, form_type: str, ticker: str) -> str:
         return message.content[0].text
 
     except Exception as e:
-        return _extractive_summary(filing_text, form_type)
+        # Fall back to the extractive summary, but say so — a silently degraded
+        # summary is indistinguishable from the AI one to the reader.
+        print(f"[summarizer] Claude call failed ({type(e).__name__}: {e}); "
+              "using extractive fallback")
+        return (_extractive_summary(filing_text, form_type)
+                + "\n\n*_(extractive summary — AI summarization unavailable)_*")
 
 
 def _extractive_summary(text: str, form_type: str) -> str:

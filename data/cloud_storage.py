@@ -94,14 +94,18 @@ def is_gcs_enabled() -> bool:
 # ── Write ──────────────────────────────────────────────────────────────
 
 def save_json(prefix: str, filename: str, data: dict) -> bool:
-    """Save a JSON file. Uses GCS if available, local filesystem otherwise."""
+    """Save a JSON file. Uses GCS if available, local filesystem otherwise.
+
+    Returns False when GCS is configured but the durable write failed — on
+    Cloud Run the local copy lives on ephemeral disk and evaporates on
+    instance recycle, so reporting success here meant user uploads (e.g.
+    consensus estimates) could silently vanish."""
     # Always save locally too (for dev and as cache)
     local_dir = Path(__file__).parent.parent / prefix
     local_dir.mkdir(exist_ok=True)
     local_path = local_dir / filename
     local_path.write_text(json.dumps(data, indent=2, default=str))
 
-    # Also save to GCS if enabled
     if is_gcs_enabled():
         try:
             bucket = _get_bucket()
@@ -114,6 +118,8 @@ def save_json(prefix: str, filename: str, data: dict) -> bool:
                 return True
         except Exception as e:
             print(f"[GCS] Error saving {prefix}/{filename}: {e}")
+        # GCS configured but the write didn't happen — the data is NOT durable.
+        return False
 
     return True
 

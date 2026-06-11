@@ -66,9 +66,14 @@ def get_latest_sod_year() -> int:
         data = resp.json()
         if data.get("data"):
             return int(data["data"][0]["data"]["YEAR"])
-    except Exception:
-        pass
-    return 2024  # fallback
+    except Exception as e:
+        print(f"[SOD] latest-year lookup failed ({type(e).__name__}: {e}); "
+              "falling back to prior calendar year")
+    # The June-30 SOD survey publishes each October, so the prior calendar
+    # year is always available. Derived, not hardcoded — the previous frozen
+    # literal (2024) was already a year stale and would have rotted silently.
+    from datetime import date
+    return date.today().year - 1
 
 
 def fetch_branches(cert: int, year: int | None = None) -> pd.DataFrame:

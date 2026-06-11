@@ -56,14 +56,40 @@ def _clean(n: str) -> str:
     return n.strip()
 
 
+def _repdte_candidates(n: int = 4) -> list[str]:
+    """Most recent completed quarter-ends, newest first (YYYYMMDD).
+
+    The FDIC publishes institution financials ~2 months after quarter end, so
+    the newest candidate may return no rows yet — callers try in order. This
+    replaces a hardcoded vintage that would have silently rotted."""
+    from datetime import date
+    d = date.today()
+    y, q = d.year, (d.month - 1) // 3  # last completed quarter index (0 = prior year Q4)
+    out = []
+    for _ in range(n):
+        if q == 0:
+            y -= 1
+            q = 4
+        mm_dd = {1: "0331", 2: "0630", 3: "0930", 4: "1231"}[q]
+        out.append(f"{y}{mm_dd}")
+        q -= 1
+    return out
+
+
 def _fetch_fdic_banks() -> dict[str, dict]:
-    """Fetch all FDIC institutions for the latest quarter and build HC lookup."""
-    fdic_banks = []
-    offset = 0
-    while True:
-        try:
+    """Fetch all FDIC institutions for the latest published quarter and build
+    the HC lookup.
+
+    Raises on fetch failure or an empty result — a partial list must never be
+    silently used (the previous `except: break` could shrink the universe and
+    have the shrunken result cached for 24h)."""
+    fdic_banks: list[dict] = []
+    for repdte in _repdte_candidates():
+        fdic_banks = []
+        offset = 0
+        while True:
             params = {
-                "filters": "REPDTE:20251231",
+                "filters": f"REPDTE:{repdte}",
                 "fields": "CERT,NAME,NAMEHCR,ASSET",
                 "sort_by": "ASSET",
                 "sort_order": "DESC",
@@ -90,8 +116,13 @@ def _fetch_fdic_banks() -> dict[str, dict]:
             if offset >= data.get("totals", {}).get("count", 0):
                 break
             time.sleep(0.05)
-        except Exception:
-            break
+        if fdic_banks:
+            break  # newest published vintage found
+    if not fdic_banks:
+        raise RuntimeError(
+            "FDIC institutions endpoint returned no rows for any recent quarter "
+            f"(tried {', '.join(_repdte_candidates())})"
+        )
 
     # Deduplicate: HC name -> largest bank cert
     hc_lookup = {}
@@ -105,16 +136,17 @@ def _fetch_fdic_banks() -> dict[str, dict]:
 
 
 def _fetch_sec_companies() -> list[list]:
-    """Fetch all SEC public companies with tickers."""
-    try:
-        resp = requests.get(
-            "https://www.sec.gov/files/company_tickers_exchange.json",
-            headers=SEC_HEADERS, timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json().get("data", [])
-    except Exception:
-        return []
+    """Fetch all SEC public companies with tickers. Raises on failure — an
+    empty list here would silently collapse the universe to the curated map."""
+    resp = requests.get(
+        "https://www.sec.gov/files/company_tickers_exchange.json",
+        headers=SEC_HEADERS, timeout=15,
+    )
+    resp.raise_for_status()
+    rows = resp.json().get("data", [])
+    if not rows:
+        raise RuntimeError("SEC company_tickers_exchange.json returned no rows")
+    return rows
 
 
 @st.cache_data(ttl=86400, show_spinner="Building bank universe...")
@@ -123,9 +155,22 @@ def build_universe() -> dict[str, dict]:
     Build the full universe of publicly traded US banks (~450-500 banks).
 
     Returns dict: ticker -> {name, cik, fdic_cert, exchange}
+
+    A transient source failure must not produce (and cache for 24h) a shrunken
+    universe — on failure we serve the last successful build, persisted in the
+    DB cache. Only if no last-good build exists does the failure surface.
     """
-    sec_rows = _fetch_sec_companies()
-    hc_lookup = _fetch_fdic_banks()
+    try:
+        sec_rows = _fetch_sec_companies()
+        hc_lookup = _fetch_fdic_banks()
+    except Exception as e:
+        from data import cache as _cache
+        lastgood = _cache.get("bank_universe_lastgood")
+        if lastgood:
+            print(f"[universe] live build failed ({type(e).__name__}: {e}); "
+                  f"serving last-good universe ({len(lastgood)} banks)")
+            return lastgood
+        raise
 
     universe = {}
 
@@ -254,6 +299,13 @@ def build_universe() -> dict[str, dict]:
             "fdic_cert": int(cert) if cert else None,
             "exchange": info.get("exchange") or "OTC",
         }
+
+    # Persist last-known-good for the failure fallback above.
+    try:
+        from data import cache as _cache
+        _cache.put("bank_universe_lastgood", universe)
+    except Exception as e:
+        print(f"[universe] could not persist last-good build: {type(e).__name__}: {e}")
 
     return universe
 

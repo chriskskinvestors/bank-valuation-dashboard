@@ -699,13 +699,20 @@ def _parse_single_bank_sheet(df: pd.DataFrame, ticker: str, period: str) -> dict
 # ── Storage ──────────────────────────────────────────────────────────────
 
 def save_consensus(data: dict) -> Path:
-    """Save parsed consensus to JSON (local + GCS). Returns the local file path."""
+    """Save parsed consensus to JSON (local + GCS). Returns the local file path.
+
+    Raises IOError when the durable (GCS) write fails — on Cloud Run the local
+    copy is ephemeral, so silently continuing meant the upload could vanish on
+    instance recycle while the user saw a success message."""
     ticker = data["ticker"].upper()
     period = data["period"].replace("/", "-").replace(" ", "_")
     filename = f"{ticker}_{period}.json"
 
-    # Save to both local and GCS
-    save_json(CONSENSUS_PREFIX, filename, data)
+    if not save_json(CONSENSUS_PREFIX, filename, data):
+        raise IOError(
+            f"Consensus for {ticker} {period} could not be written to durable "
+            "storage (GCS). Not saved — please retry."
+        )
 
     return CONSENSUS_DIR / filename
 
