@@ -112,15 +112,37 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 "asof": asof, "unit": "", "ref": ref, "definition": "",
                 "terms": terms, "op": op, "reported": reported, "link": fdic_link}
 
-    def cell(rec, kind, args, label):
+    def _af(rec):
+        """Annualization factor — YTD interim figures are scaled to an annual
+        rate; Q4 / fiscal-year records pass through unchanged."""
+        m = _mo(rec.get("REPDTE")) or 12
+        return 12.0 / m if m else 1.0
+
+    def _avg(ci, field):
+        """Average balance over the current and prior period (begin+end)/2;
+        falls back to the period-end value for the first column."""
+        cur = _num(recs_list[ci].get(field))
+        if ci > 0:
+            prev = _num(recs_list[ci - 1].get(field))
+            if cur is not None and prev is not None:
+                return (cur + prev) / 2.0
+        return cur
+
+    def _revenue(rec):
+        ii, ie, noni = _num(rec.get("INTINC")), _num(rec.get("EINTEXP")), _num(rec.get("NONII"))
+        return (ii - ie + noni) if None not in (ii, ie, noni) else None
+
+    def cell(ci, kind, args, label):
+        rec = recs_list[ci]
         asof = _disp(rec.get("REPDTE"))
+        f = _af(rec)
         if kind == "dollar":
-            f = args[0]; raw = _num(rec.get(f))
-            return _usd(raw), calc(label, _usd(raw), asof, f"FDIC field {f}",
+            fl = args[0]; raw = _num(rec.get(fl))
+            return _usd(raw), calc(label, _usd(raw), asof, f"FDIC field {fl}",
                                    [{"label": label, "val": _thou(raw) + " ($000)"}], None, True)
         if kind == "pct":
-            f = args[0]; raw = _num(rec.get(f))
-            return _pct(raw), calc(label, _pct(raw), asof, f"FDIC field {f}",
+            fl = args[0]; raw = _num(rec.get(fl))
+            return _pct(raw), calc(label, _pct(raw), asof, f"FDIC field {fl}",
                                    [{"label": label + " (as reported)", "val": _pct(raw)}], None, True)
         if kind == "diff":
             f1, f2 = args; a, b = _num(rec.get(f1)), _num(rec.get(f2))
@@ -141,6 +163,47 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            [{"label": "Total equity", "val": _thou(eq) + " ($000)"},
                             {"label": "Intangibles", "val": _thou(intan) + " ($000)"}],
                            "Total equity − intangibles", False)
+        if kind == "roatce":
+            ni = _num(rec.get("NETINC")); eq = _num(rec.get("EQTOT"))
+            intan = _num(rec.get("INTAN")) or 0
+            tce = (eq - intan) if eq is not None else None
+            v = f"{ni*f/tce*100:.2f}%" if (ni is not None and tce and tce > 0) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(ni*f)) + " ($000)" if ni is not None else "—"},
+                            {"label": "Tangible common equity", "val": _thou(tce) + " ($000)"}],
+                           "Net income ÷ tangible common equity × 100", False)
+        if kind == "marginrev":   # flow ÷ total revenue × 100 (both YTD, no annualizing)
+            fl = args[0]; n = _num(rec.get(fl)); rev = _revenue(rec)
+            v = f"{n/rev*100:.2f}%" if (n is not None and rev) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": fl, "val": _thou(n) + " ($000)"},
+                            {"label": "Total revenue (NII + non-int income)",
+                             "val": _thou(round(rev)) + " ($000)" if rev else "—"}],
+                           f"{fl} ÷ total revenue × 100", False)
+        if kind == "pctdiff":     # A% − B%
+            a, b = _num(rec.get(args[0])), _num(rec.get(args[1]))
+            v = f"{a-b:.2f}%" if (a is not None and b is not None) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": args[0], "val": _pct(a)},
+                            {"label": args[1], "val": _pct(b)}], f"{args[0]} − {args[1]}", False)
+        if kind == "yield":       # flow (annualized) ÷ avg balance × 100
+            nf, df_ = args; n = _num(rec.get(nf)); d = _avg(ci, df_)
+            v = f"{n*f/d*100:.2f}%" if (n is not None and d) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": nf + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(n*f)) + " ($000)" if n is not None else "—"},
+                            {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
+                           f"{nf} ÷ avg {df_} × 100", False)
+        if kind == "yield2":      # (A − B) annualized ÷ avg balance × 100
+            af_, bf_, df_ = args
+            a, b, d = _num(rec.get(af_)), _num(rec.get(bf_)), _avg(ci, df_)
+            v = f"{(a-b)*f/d*100:.2f}%" if (a is not None and b is not None and d) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": f"{af_} − {bf_}" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round((a-b)*f)) + " ($000)" if (a is not None and b is not None) else "—"},
+                            {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
+                           f"({af_} − {bf_}) ÷ avg {df_} × 100", False)
         return "—", None
 
     cells, rows_html, ri = {}, [], 0
@@ -152,7 +215,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             tds = [f'<td class="lbl">{label}</td>']
             for ci, rec in enumerate(recs_list):
                 try:
-                    v, c = cell(rec, kind, args, label)
+                    v, c = cell(ci, kind, args, label)
                 except Exception:
                     v, c = "—", None
                 cid = f"{ri}_{ci}"
@@ -256,15 +319,34 @@ _BALANCE = [
 ]
 
 _PERFORMANCE = [
-    ("Returns", [
+    ("Profitability Ratios (%)", [
         ("Return on avg assets (ROAA)", "pct", "ROA"),
         ("Return on avg equity (ROAE)", "pct", "ROE"),
+        ("Return on avg tangible common equity (ROATCE)", "roatce"),
+        ("Profit margin", "marginrev", "NETINC"),
     ]),
-    ("Margin & Efficiency", [
+    ("Margin & Spread (%)", [
         ("Net interest margin", "pct", "NIMY"),
-        ("Efficiency ratio", "pct", "EEFFR"),
+        ("Yield on earning assets", "pct", "INTINCY"),
+        ("Cost of funding earning assets", "pct", "INTEXPY"),
+        ("Net interest spread", "pctdiff", "INTINCY", "INTEXPY"),
+        ("Net interest income / avg assets", "yield2", "INTINC", "EINTEXP", "ASSET"),
     ]),
-    ("Asset Quality", [
+    ("Efficiency (%)", [
+        ("Efficiency ratio", "pct", "EEFFR"),
+        ("Overhead ratio (non-int exp / revenue)", "marginrev", "NONIX"),
+        ("Non-interest income / operating revenue", "marginrev", "NONII"),
+        ("Non-interest income / avg assets", "pct", "NONIIAY"),
+        ("Non-interest expense / avg assets", "pct", "NONIXAY"),
+    ]),
+    ("Yield / Cost Detail (%)", [
+        ("Yield: total loans", "yield", "ILNDOM", "LNLSGR"),
+        ("Yield: investment securities", "yield", "ISC", "SC"),
+        ("Yield: interest-earning assets", "pct", "INTINCY"),
+        ("Cost: total deposits", "yield", "EDEP", "DEP"),
+        ("Cost: funding (earning-asset basis)", "pct", "INTEXPY"),
+    ]),
+    ("Asset Quality (%)", [
         ("Non-current loans / loans", "pct", "NCLNLSR"),
         ("Net charge-offs / loans", "pct", "NTLNLSR"),
         ("Loan-loss reserves / loans", "pct", "LNATRESR"),
