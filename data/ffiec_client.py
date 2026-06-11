@@ -470,6 +470,79 @@ def get_loan_repricing(
     }
 
 
+def _lookup_riad(df: pd.DataFrame, code: str) -> float | None:
+    """Pull an income-statement (RIAD) concept from a Call Report DataFrame.
+    Like _lookup_concept but for the single RIAD prefix (income/expense items
+    don't have the RCFD/RCON consolidated-vs-domestic split)."""
+    if df is None or df.empty or "mdrm" not in df.columns:
+        return None
+    full = f"RIAD{code}".upper()
+    match = df[df["mdrm"].astype(str).str.upper() == full]
+    if match.empty:
+        return None
+    row = match.iloc[0]
+    dt = str(row.get("data_type", "")).lower()
+    v = row.get("float_data") if dt == "float" else row.get("int_data") if dt == "int" else None
+    try:
+        f = float(v)
+        return f if not pd.isna(f) else None
+    except (ValueError, TypeError):
+        return None
+
+
+# ── Deposit interest-by-type (Schedule RI 2.a) + balances (RC-E) ─────────────
+# CANDIDATE MDRM codes — these MUST be verified against the FFIEC MDRM
+# dictionary / a known bank's facsimile before the values are shown in the UI.
+# The Schedule RI deposit-interest decomposition has changed across form
+# versions (FFIEC 031 vs 041), so the split is intentionally NOT wired into
+# Performance Analysis until a deploy-time spot-check confirms each code.
+_DEP_COST_CODES = {
+    # Interest expense (RIAD, YTD $000)
+    "int_transaction": "4508",   # interest on transaction accounts
+    "int_savings": "0093",       # interest on savings deposits (incl MMDAs)
+    "int_time_le250": "HK03",    # interest on time deposits ≤ $250k
+    "int_time_gt250": "HK04",    # interest on time deposits > $250k
+    # Balances (RCON, $000) — Schedule RC-E
+    "bal_time_le250": "HK16",
+    "bal_time_gt250": "HK17",
+    "bal_total_deposits": "2200",
+}
+
+
+def get_deposit_cost_detail(
+    rssd_id: int,
+    reporting_period: str | None = None,
+    call_report_df: pd.DataFrame | None = None,
+) -> dict | None:
+    """
+    Cost of CDs (time deposits) vs. other (transaction + savings) deposits —
+    the SNL 'Int Cost: CDs' / 'Int Cost: Other Deposits' split that isn't in
+    the FDIC financials feed.
+
+    UNVERIFIED: the MDRM codes in _DEP_COST_CODES are candidates. Do not surface
+    these numbers in the UI until confirmed on deploy (FFIEC is JWT-gated and
+    cannot be exercised in local dev). Returns raw $000 components so a verifier
+    can sanity-check before ratios are computed downstream.
+    """
+    df = call_report_df
+    if df is None:
+        df = fetch_call_report(rssd_id, reporting_period)
+    if df is None or df.empty:
+        return None
+    c = _DEP_COST_CODES
+    int_time = (_lookup_riad(df, c["int_time_le250"]) or 0) + (_lookup_riad(df, c["int_time_gt250"]) or 0)
+    int_other = (_lookup_riad(df, c["int_transaction"]) or 0) + (_lookup_riad(df, c["int_savings"]) or 0)
+    bal_time = (_lookup_concept(df, c["bal_time_le250"]) or 0) + (_lookup_concept(df, c["bal_time_gt250"]) or 0)
+    return {
+        "reporting_period": reporting_period or latest_reporting_period(),
+        "rssd_id": int(rssd_id),
+        "int_time_deposits_000": int_time,
+        "int_other_deposits_000": int_other,
+        "bal_time_deposits_000": bal_time,
+        "_unverified": True,  # gate: do not display until codes confirmed
+    }
+
+
 def maturity_ladder_to_yearly_pace(ladder: dict) -> dict[int, float]:
     """
     Convert a 6-bucket maturity ladder to cumulative repricing fractions
