@@ -33,6 +33,39 @@ def _ordinal(n: int) -> str:
     return f"{n}{suf}"
 
 
+def _band_word(p: float) -> tuple[str, str]:
+    """Average percentile → plain-English read + colour."""
+    if p >= 75:
+        return "top-quartile", "#059669"
+    if p >= 50:
+        return "above peers", "#0891b2"
+    if p >= 25:
+        return "below peers", "#d97706"
+    return "bottom-quartile", "#dc2626"
+
+
+# Headline metrics grouped into the three reads an analyst forms first.
+_GROUPS = [
+    ("Profitability", ["roaa", "roatce_normalized", "nim", "efficiency_ratio"]),
+    ("Credit", ["npl_ratio", "nco_ratio"]),
+    ("Capital", ["cet1_ratio"]),
+]
+
+
+def _at_a_glance(ctx: dict) -> str:
+    """One-line synthesis of the percentile reads by category."""
+    parts = []
+    for name, keys in _GROUPS:
+        ps = [ctx[k]["percentile"] for k in keys if k in ctx]
+        if not ps:
+            continue
+        word, color = _band_word(sum(ps) / len(ps))
+        parts.append(f'{name}: <strong style="color:{color};">{word}</strong>')
+    if not parts:
+        return ""
+    return " &nbsp;·&nbsp; ".join(parts)
+
+
 def _pctile_color(p: float) -> str:
     """Goodness percentile → colour (higher already means better)."""
     if p >= 75:
@@ -96,9 +129,15 @@ def render_peer_context(ticker: str, self_metrics: dict | None = None) -> bool:
         )
 
     tier_txt = _html.escape(str(tier)) if tier else "peer"
+    glance = _at_a_glance(ctx)
+    glance_html = (
+        f'<div style="font-size:0.84rem;color:#0f172a;margin-bottom:5px;">'
+        f'<span style="color:#64748b;">At a glance vs peers — </span>{glance}</div>'
+    ) if glance else ""
     strip = (
         f'<div style="margin:2px 0 6px;">'
-        f'<div style="font-size:0.7rem;color:var(--text-secondary,#475569);margin-bottom:4px;">'
+        + glance_html
+        + f'<div style="font-size:0.7rem;color:var(--text-secondary,#475569);margin-bottom:4px;">'
         f'Percentile vs <strong>{n}</strong> {tier_txt} peers tracked '
         f'(higher = better; ranks invert for efficiency / NPL / NCO)</div>'
         f'<div style="display:flex;gap:6px;flex-wrap:wrap;">' + "".join(cells) + '</div>'
