@@ -3,16 +3,16 @@ Shared chart styling for dashboards — consistent heights, margins, colors, fon
 Premium dark theme matching the KSK design system.
 """
 
-# Standard chart dimensions
-CHART_HEIGHT_FULL = 300     # main charts (bigger, detailed)
-CHART_HEIGHT_COMPACT = 260  # secondary charts (bars, bar of one dim)
-CHART_HEIGHT_DENSE = 220    # very small inline charts
+# Standard chart dimensions — institutional density: small, high signal-per-pixel.
+CHART_HEIGHT_FULL = 230     # main charts
+CHART_HEIGHT_COMPACT = 180  # secondary charts (bars, single dimension)
+CHART_HEIGHT_DENSE = 150    # small inline / grid charts
 
-# Standard margins. Top leaves room for the title; the legend sits *below* the
-# plot (never overlapping the title), so a shown legend reserves extra bottom.
-CHART_MARGIN = dict(l=50, r=20, t=44, b=44)
-CHART_MARGIN_WIDE_LEFT = dict(l=65, r=20, t=44, b=44)
-_LEGEND_BOTTOM_PAD = 30
+# Standard margins — tight. Top leaves room for the title; the legend sits
+# *below* the plot (never overlapping the title), reserving extra bottom.
+CHART_MARGIN = dict(l=42, r=12, t=30, b=28)
+CHART_MARGIN_WIDE_LEFT = dict(l=54, r=12, t=30, b=28)
+_LEGEND_BOTTOM_PAD = 22
 
 # Design token colors (matched to light-theme styles.py)
 _BG_SURFACE = "#ffffff"

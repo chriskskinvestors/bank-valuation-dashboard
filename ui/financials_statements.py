@@ -335,7 +335,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
 
     head = ('<th class="lblh">($ in thousands unless noted)</th>'
             + "".join(f'<th class="colh">{lb}</th>' for lb in labels))
-    height = 150 + 29 * (ri + len(spec) + 1)
+    height = 96 + 23 * (ri + len(spec) + 1)
     sec_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K"
                 if cik else fdic_link)
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
@@ -343,7 +343,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     # Table on the left; fill the empty space to its right with trend charts
     # built from the same FDIC history.
     tr = _DEFAULT_TRENDS if trends is None else trends
-    _tbl_col, _chart_col = st.columns([2, 1])
+    _tbl_col, _chart_col = st.columns([1, 1])
     with _tbl_col:
         components.html(html, height=height, scrolling=False)
     with _chart_col:
@@ -359,16 +359,17 @@ def _render_statement_trends(hist, ticker, key_prefix, trends):
     except Exception:
         return
     h = hist.sort_values("REPDTE").tail(20)
-    st.markdown('<div style="font-size:0.7rem; text-transform:uppercase; '
-                'letter-spacing:0.04em; color:#64748b; font-weight:700; '
-                'margin:2px 0 2px;">Trends</div>', unsafe_allow_html=True)
-    for key, label in trends:
-        try:
-            st.plotly_chart(metrics_trend_chart(h, [key], label),
-                            use_container_width=True,
-                            key=f"{key_prefix}_tr_{ticker}_{key}")
-        except Exception:
-            pass
+    # 2×2 grid of compact charts, filling the column densely.
+    for r in range(0, len(trends), 2):
+        cols = st.columns(2)
+        for col, (key, label) in zip(cols, trends[r:r + 2]):
+            with col:
+                try:
+                    st.plotly_chart(metrics_trend_chart(h, [key], label),
+                                    use_container_width=True,
+                                    key=f"{key_prefix}_tr_{ticker}_{key}")
+                except Exception:
+                    pass
 
 
 # ── Statement specs ─────────────────────────────────────────────────────────

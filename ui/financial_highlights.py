@@ -621,12 +621,12 @@ def render_financial_highlights(ticker: str):
             + "".join(f'<th class="colh">{labels[k]}</th>' for k in keys))
 
     n_rows = ri + len(sections) + 1
-    height = 150 + 29 * n_rows
+    height = 96 + 23 * n_rows
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
 
-    # Table on the left; fill the empty space to its right with trend charts
-    # built from the same FDIC history (last ~20 quarters).
-    _tbl_col, _chart_col = st.columns([2, 1])
+    # Table left, trend charts right (2×2 grid) — balanced columns so the table
+    # fills its side and the charts fill theirs, with no dead gap between.
+    _tbl_col, _chart_col = st.columns([1, 1])
     with _tbl_col:
         components.html(html, height=height, scrolling=False)
     with _chart_col:
@@ -656,17 +656,18 @@ def _render_fh_trends(hist, ticker: str):
     except Exception:
         return
     h = hist.sort_values("REPDTE").tail(20)
-    st.markdown('<div style="font-size:0.7rem; text-transform:uppercase; '
-                'letter-spacing:0.04em; color:#64748b; font-weight:700; '
-                'margin:2px 0 2px;">Trends</div>', unsafe_allow_html=True)
-    for key, label in [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
-                       ("efficiency_ratio", "Efficiency Ratio"),
-                       ("cet1_ratio", "CET1 Ratio")]:
-        try:
-            st.plotly_chart(metrics_trend_chart(h, [key], label),
-                            use_container_width=True, key=f"fh_tr_{ticker}_{key}")
-        except Exception:
-            pass
+    items = [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
+             ("efficiency_ratio", "Efficiency Ratio"), ("cet1_ratio", "CET1 Ratio")]
+    # 2×2 grid of compact charts so the column fills densely (not 4 tall stacks).
+    for r in range(0, len(items), 2):
+        cols = st.columns(2)
+        for col, (key, label) in zip(cols, items[r:r + 2]):
+            with col:
+                try:
+                    st.plotly_chart(metrics_trend_chart(h, [key], label),
+                                    use_container_width=True, key=f"fh_tr_{ticker}_{key}")
+                except Exception:
+                    pass
 
 
 def _tce_ta_builder(recs, asof, fdic_link, P):
@@ -694,19 +695,19 @@ body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto
   color:#1e293b; background:transparent; }}
 /* width:auto + fixed column widths so the table sizes to its content (no
    stretching that throws a big empty gap between labels and values). */
-table {{ width:auto; max-width:100%; border-collapse:collapse; font-size:13px;
+table {{ width:auto; max-width:100%; border-collapse:collapse; font-size:12px;
   border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
-thead th {{ border-bottom:1px solid rgba(148,163,184,0.3); padding:6px 12px; }}
-.lblh {{ text-align:left; color:#64748b; font-weight:500; width:240px;
+thead th {{ border-bottom:1px solid rgba(148,163,184,0.3); padding:4px 10px; }}
+.lblh {{ text-align:left; color:#64748b; font-weight:500; width:190px;
   border-right:1px solid rgba(148,163,184,0.22); }}
-.colh {{ text-align:right; font-weight:600; color:#0f172a; width:104px; }}
-td.sec {{ padding:9px 10px 3px; font-weight:700; color:#1e3a8a; font-size:11px;
+.colh {{ text-align:right; font-weight:600; color:#0f172a; width:88px; }}
+td.sec {{ padding:6px 9px 2px; font-weight:700; color:#1e3a8a; font-size:10px;
   text-transform:uppercase; letter-spacing:0.04em; background:rgba(241,245,249,0.6); }}
 /* Label column: anchored with a right divider so the eye can run across a row. */
-td.lbl {{ text-align:left; padding:5px 10px; color:#475569;
+td.lbl {{ text-align:left; padding:2.5px 9px; color:#475569;
   border-right:1px solid rgba(148,163,184,0.22);
   border-bottom:1px solid rgba(148,163,184,0.10); }}
-td.val {{ text-align:right; padding:5px 12px; color:#1d4ed8; cursor:pointer;
+td.val {{ text-align:right; padding:2.5px 10px; color:#1d4ed8; cursor:pointer;
   position:relative; border-bottom:1px solid rgba(148,163,184,0.10);
   font-variant-numeric:tabular-nums; }}
 td.val.dead {{ color:#94a3b8; cursor:default; }}
