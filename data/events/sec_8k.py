@@ -33,17 +33,33 @@ SEC_HEADERS = {
 }
 
 ITEM_LABELS = {
-    "1.01": "Material Definitive Agreement",
-    "2.01": "Completion of Acquisition",
-    "2.02": "Earnings / Results of Operations",
-    "3.02": "Unregistered Sale of Equity",
-    "5.02": "Officer/Director Change",
+    "1.01": "Material Agreement",
+    "1.02": "Termination of Material Agreement",
+    "2.01": "Acquisition / Disposition Completed",
+    "2.02": "Earnings / Results",
+    "2.03": "New Financial Obligation",
+    "2.05": "Restructuring / Exit Costs",
+    "2.06": "Material Impairment",
+    "3.01": "Listing / Delisting Notice",
+    "3.02": "Unregistered Equity Sale",
+    "3.03": "Change to Securityholder Rights",
+    "4.01": "Change in Auditor",
+    "4.02": "Financial Restatement",
+    "5.01": "Change in Control",
+    "5.02": "Officer / Director Change",
     "5.03": "Bylaw / Charter Amendment",
-    "5.07": "Vote of Security Holders",
-    "7.01": "Regulation FD Disclosure",
-    "8.01": "Other Events",
+    "5.07": "Shareholder Vote Results",
+    "7.01": "Reg FD Disclosure",
+    "8.01": "Other Material Event",
     "9.01": "Financial Statements / Exhibits",
 }
+
+# Most material first — the headline leads with the highest-priority item present
+# (so a filing isn't headlined "Financial Statements / Exhibits", which is almost
+# always boilerplate attached to a more substantive item).
+_ITEM_PRIORITY = ["4.02", "5.01", "2.06", "2.01", "1.01", "5.02", "2.02", "3.01",
+                  "2.05", "2.03", "3.02", "5.03", "5.07", "1.02", "3.03", "4.01",
+                  "7.01", "8.01", "9.01"]
 
 
 def _classify_event_type(items: list[str], description: str) -> str:
@@ -62,11 +78,17 @@ def _classify_event_type(items: list[str], description: str) -> str:
 
 
 def _build_headline(items: list[str], desc: str) -> str:
-    """Build a human-readable headline from the item list + filing description."""
-    labels = [ITEM_LABELS.get(it, f"Item {it}") for it in items]
-    if desc and desc.strip().lower() not in ("", "8-k"):
-        return f"{', '.join(labels)} — {desc.strip()}"
-    return ", ".join(labels) if labels else "8-K filing"
+    """Build a human-readable headline, led by the most material 8-K item."""
+    has_desc = bool(desc and desc.strip().lower() not in ("", "8-k"))
+    if not items:
+        return desc.strip() if has_desc else "8-K filing"
+    ranked = sorted(items, key=lambda it: _ITEM_PRIORITY.index(it)
+                    if it in _ITEM_PRIORITY else 99)
+    lead = ITEM_LABELS.get(ranked[0], f"Item {ranked[0]}")
+    head = f"8-K · {lead}"
+    if has_desc:
+        head += f" — {desc.strip()}"
+    return head
 
 
 class SEC8KAdapter(SourceAdapter):
