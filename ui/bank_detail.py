@@ -238,46 +238,52 @@ def _render_snapshot(ticker, info, name, row):
         st.markdown(_kv_table("Company Profile", company), unsafe_allow_html=True)
 
 
-def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
-    """Render the full detail page for a single bank."""
+def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
+    """Overview ▸ Corporate Profile — identity snapshot, market + company data,
+    quick links, and the valuation/performance key-stat cards."""
     info = get_bank_info(ticker)
     name = info["name"] if info else ticker
 
     st.markdown(f"## {name} ({ticker})")
 
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
-    if not bank_row.empty:
-        row = bank_row.iloc[0]
-        # Capital-IQ-style snapshot: identity, quick links, market + company profile.
-        _render_snapshot(ticker, info, name, row)
-        st.markdown("---")
-        st.markdown("##### Valuation & Performance")
-        _render_keystat_grid(ticker, info, name, row)
-
-        # Click-through to the primary data sources for this bank.
-        cik = info.get("cik") if info else None
-        cert = info.get("fdic_cert") if info else None
-        links = []
-        if cik:
-            links.append(
-                f'<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany'
-                f'&CIK={cik}&type=10-K&dateb=&owner=include&count=40" target="_blank" '
-                'style="text-decoration:none;">📄 SEC filings (EDGAR)</a>')
-        if cert:
-            links.append(
-                f'<a href="https://banks.data.fdic.gov/bankfind-suite/bankfind/details/'
-                f'{cert}" target="_blank" style="text-decoration:none;">🏦 FDIC BankFind</a>')
-        # Price, change, market cap, P/E and the price chart come from FMP — credit it.
-        links.append('<span title="Price, change, market cap, P/E and the price chart">'
-                     '📈 FMP (market data)</span>')
-        if links:
-            st.markdown(
-                '<div style="margin-top:7px; font-size:0.8rem; color:#64748b;">'
-                'Sources: ' + " &nbsp;·&nbsp; ".join(links) + "</div>",
-                unsafe_allow_html=True,
-            )
-
+    if bank_row.empty:
+        st.info("No metrics available for this bank yet.")
+        return
+    row = bank_row.iloc[0]
+    # Capital-IQ-style snapshot: identity, quick links, market + company profile.
+    _render_snapshot(ticker, info, name, row)
     st.markdown("---")
+    st.markdown("##### Valuation & Performance")
+    _render_keystat_grid(ticker, info, name, row)
+
+    # Click-through to the primary data sources for this bank.
+    cik = info.get("cik") if info else None
+    cert = info.get("fdic_cert") if info else None
+    links = []
+    if cik:
+        links.append(
+            f'<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany'
+            f'&CIK={cik}&type=10-K&dateb=&owner=include&count=40" target="_blank" '
+            'style="text-decoration:none;">📄 SEC filings (EDGAR)</a>')
+    if cert:
+        links.append(
+            f'<a href="https://banks.data.fdic.gov/bankfind-suite/bankfind/details/'
+            f'{cert}" target="_blank" style="text-decoration:none;">🏦 FDIC BankFind</a>')
+    links.append('<span title="Price, change, market cap, P/E and the price chart">'
+                 '📈 FMP (market data)</span>')
+    if links:
+        st.markdown(
+            '<div style="margin-top:7px; font-size:0.8rem; color:#64748b;">'
+            'Sources: ' + " &nbsp;·&nbsp; ".join(links) + "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_price_trends(ticker: str, all_metrics_df: pd.DataFrame = None):
+    """Overview ▸ Price & Trends — price chart plus the FDIC metric and balance-
+    sheet trend charts."""
+    info = get_bank_info(ticker)
 
     # ── Price chart ──────────────────────────────────────────────────
     st.subheader("Price History")
@@ -350,6 +356,14 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
     with _gc3:
         st.plotly_chart(loans_deposits_chart(fdic_hist), use_container_width=True)
 
+
+
+def render_all_metrics_section(ticker: str, all_metrics_df: pd.DataFrame):
+    """Overview ▸ All Metrics — the full metric grid, peer-comparison radar, and
+    recent SEC filings list."""
+    info = get_bank_info(ticker)
+    bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
+
     # ── All metrics (compact grid + explanations) ───────────────────
     if not bank_row.empty:
         _render_all_metrics(bank_row.iloc[0])
@@ -377,6 +391,15 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
             st.info("No recent filings found.")
     else:
         st.info("SEC CIK not mapped for this bank.")
+
+
+def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
+    """Full single-bank detail — all Overview sections stacked. Kept for any
+    caller that wants the whole page; the company nav calls the sections directly."""
+    render_corporate_profile(ticker, all_metrics_df)
+    st.markdown("---")
+    render_price_trends(ticker, all_metrics_df)
+    render_all_metrics_section(ticker, all_metrics_df)
 
 
 # One-line explanation per metric category.

@@ -651,33 +651,57 @@ CUSTOM_CSS = """
         border-radius: var(--radius-sm);
     }
 
-    /* ── Company Analysis sub-tabs: render the radio as a clean tab bar ──
-       Scoped to the keyed container in app.py so it doesn't affect other
-       radios (Annual/Quarterly, price period, sidebar nav). The radio keeps
-       all its behaviour; only the look changes. */
-    .st-key-company_subtab_nav div[role="radiogroup"] {
+    /* ── Company Analysis two-level nav ──────────────────────────────────
+       Primary = sections (underline tab bar); secondary = sub-tabs (lighter
+       pills). Both scoped to keyed containers in app.py so they don't affect
+       other radios (Annual/Quarterly, price period, sidebar nav). */
+
+    /* Primary: section tab bar */
+    .st-key-company_section_nav div[role="radiogroup"] {
         display: flex; flex-wrap: wrap; gap: 2px 4px; align-items: flex-end;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.28);
-        margin-bottom: 2px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.28); margin-bottom: 2px;
     }
-    .st-key-company_subtab_nav div[role="radiogroup"] > label {
+    .st-key-company_section_nav div[role="radiogroup"] > label {
         margin: 0 !important; padding: 7px 14px; cursor: pointer;
         border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0;
         transition: background 0.12s, border-color 0.12s;
     }
+    .st-key-company_section_nav div[role="radiogroup"] > label:hover {
+        background: rgba(37, 99, 235, 0.06);
+    }
+    .st-key-company_section_nav div[role="radiogroup"] > label > div:first-of-type {
+        display: none !important;
+    }
+    .st-key-company_section_nav div[role="radiogroup"] > label p {
+        font-size: 0.95rem; color: var(--text-secondary); font-weight: 600;
+    }
+    .st-key-company_section_nav div[role="radiogroup"] > label:has(input:checked) {
+        border-bottom-color: #2563eb;
+    }
+    .st-key-company_section_nav div[role="radiogroup"] > label:has(input:checked) p {
+        color: #2563eb; font-weight: 700;
+    }
+
+    /* Secondary: sub-tab pills */
+    .st-key-company_subtab_nav div[role="radiogroup"] {
+        display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+        margin: 6px 0 2px;
+    }
+    .st-key-company_subtab_nav div[role="radiogroup"] > label {
+        margin: 0 !important; padding: 3px 11px; cursor: pointer;
+        border-radius: 14px; transition: background 0.12s;
+    }
     .st-key-company_subtab_nav div[role="radiogroup"] > label:hover {
         background: rgba(37, 99, 235, 0.06);
     }
-    /* hide the radio circle (first div inside each label) */
     .st-key-company_subtab_nav div[role="radiogroup"] > label > div:first-of-type {
         display: none !important;
     }
     .st-key-company_subtab_nav div[role="radiogroup"] > label p {
-        font-size: 0.92rem; color: var(--text-secondary); font-weight: 500;
+        font-size: 0.82rem; color: var(--text-secondary); font-weight: 500;
     }
-    /* active tab — underline + emphasis */
     .st-key-company_subtab_nav div[role="radiogroup"] > label:has(input:checked) {
-        border-bottom-color: #2563eb;
+        background: rgba(37, 99, 235, 0.12);
     }
     .st-key-company_subtab_nav div[role="radiogroup"] > label:has(input:checked) p {
         color: #2563eb; font-weight: 600;

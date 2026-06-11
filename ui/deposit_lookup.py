@@ -35,6 +35,16 @@ def render_deposits_for_ticker(ticker: str):
     _render_deposits_core(cert, name)
 
 
+def render_market_share_for_ticker(ticker: str):
+    """Deposit market share + branch map only — deposit trends/beta live under the
+    Market Analysis ▸ Deposit Trends sub-tab, so this avoids duplicating them."""
+    cert = get_fdic_cert(ticker)
+    if not cert:
+        st.warning(f"No FDIC cert found for {ticker}.")
+        return
+    _render_deposits_core(cert, get_name(ticker))
+
+
 def render_deposit_lookup():
     """Render the deposit market share & branch map page with search."""
 

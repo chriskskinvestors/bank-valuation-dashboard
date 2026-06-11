@@ -57,9 +57,20 @@ SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis"
 # Company Analysis sub-tabs. Rendered horizontally at the TOP of the main
 # content (under the bank picker), not in the sidebar. One shared template per
 # bank — every bank gets the same sub-tabs.
-COMPANY_TABS = ["Overview", "Financials", "Valuation", "Earnings", "Credit",
-                "Capital", "Deposits", "NIM Sensitivity", "Ownership", "Peer Rank",
-                "Activity", "Filings", "🔍 Data Quality"]
+# Two-level company navigation: top-level section → sub-tabs (Capital-IQ style).
+COMPANY_NAV = {
+    "Overview": ["Corporate Profile", "Price & Trends", "All Metrics", "Data Quality"],
+    "Financials": ["Highlights", "Credit Quality", "Capital", "Interest Rate Risk"],
+    "Valuation": ["Valuation Model", "Peer Rank"],
+    "Estimates / Earnings": ["Earnings"],
+    "News & Filings": ["Filings", "Activity"],
+    "Market Analysis": ["Deposit Trends", "Market Share & Branches"],
+    "Ownership": ["Institutional (13F)", "Insider Activity"],
+}
+# Flat list of every leaf sub-tab (for deep-link validation, etc.).
+COMPANY_LEAVES = [leaf for subs in COMPANY_NAV.values() for leaf in subs]
+# Which section a given leaf lives under.
+COMPANY_SECTION_OF = {leaf: sec for sec, subs in COMPANY_NAV.items() for leaf in subs}
 section = st.sidebar.radio("Navigate", SECTIONS, key="nav_section", label_visibility="collapsed")
 
 st.sidebar.markdown("---")
@@ -93,11 +104,15 @@ elif section == "🏦 Company Analysis":
         # Deep-link ?tab=<token> pre-selects the sub-tab. The sub-tab radio
         # itself renders in the MAIN content area (top of the page), so we only
         # pre-set its session_state value here; the widget reads it there.
-        _TAB_TOKENS = {"financials": "Financials", "valuation": "Valuation",
-                       "dataquality": "🔍 Data Quality", "filings": "Filings"}
+        _TAB_TOKENS = {"financials": "Highlights", "valuation": "Valuation Model",
+                       "dataquality": "Data Quality", "filings": "Filings",
+                       "peer": "Peer Rank", "ownership": "Institutional (13F)",
+                       "earnings": "Earnings", "deposits": "Deposit Trends"}
         _goto = _TAB_TOKENS.get((_qp.get("tab") or "").lower())
-        if _goto and _goto in COMPANY_TABS:
-            st.session_state["company_subtab"] = _goto
+        if _goto and _goto in COMPANY_SECTION_OF:
+            _sec = COMPANY_SECTION_OF[_goto]
+            st.session_state["company_section"] = _sec
+            st.session_state[f"company_subtab::{_sec}"] = _goto
         # Consume deep-link params so they don't persist on the next interaction.
         for _k in ("bank", "tab"):
             if _k in _qp:
@@ -712,44 +727,58 @@ elif section == "🏦 Company Analysis":
     if not company_ticker:
         st.info("👆 Type a ticker above to begin (your watchlist autocompletes; any ticker works).")
     else:
-        # Sub-tab navigation lives at the TOP of the page (under the picker),
-        # horizontal — same set for every bank. Wrapped in a keyed container so
-        # the CSS in ui/styles.py can render it as a clean tab bar (the radio
-        # keeps all the deep-link / session_state behaviour; only its look
-        # changes — see .st-key-company_subtab_nav styles).
-        with st.container(key="company_subtab_nav"):
-            company_subtab = st.radio(
-                "View", COMPANY_TABS, key="company_subtab",
+        # Two-level navigation at the TOP of the page (under the picker):
+        # a top row of sections, then that section's sub-tabs. Both are radios
+        # wrapped in keyed containers so the CSS in ui/styles.py styles them as
+        # tab bars (.st-key-company_section_nav = primary, .st-key-company_subtab_nav
+        # = lighter secondary). The sub-tab radio uses a per-section key so each
+        # section remembers its own active sub-tab.
+        with st.container(key="company_section_nav"):
+            company_section = st.radio(
+                "Section", list(COMPANY_NAV.keys()), key="company_section",
                 horizontal=True, label_visibility="collapsed",
             )
+        _subs = COMPANY_NAV[company_section]
+        if len(_subs) > 1:
+            with st.container(key="company_subtab_nav"):
+                company_subtab = st.radio(
+                    "View", _subs, key=f"company_subtab::{company_section}",
+                    horizontal=True, label_visibility="collapsed",
+                )
+        else:
+            company_subtab = _subs[0]
         st.markdown("<div style='margin-bottom:4px;'></div>", unsafe_allow_html=True)
 
     if not company_ticker:
         pass
 
-    elif company_subtab == "Overview":
-        # Use cached single-bank metrics for fast switching
-        single = load_single_bank_metrics_cached(company_ticker)
-        single_df = pd.DataFrame([single])
-        render_bank_detail(company_ticker, single_df)
+    # ── Overview section ────────────────────────────────────────────
+    elif company_subtab == "Corporate Profile":
+        from ui.bank_detail import render_corporate_profile
+        single_df = pd.DataFrame([load_single_bank_metrics_cached(company_ticker)])
+        render_corporate_profile(company_ticker, single_df)
 
-    elif company_subtab == "Activity":
-        from ui.recent_activity import render_recent_activity
-        render_recent_activity(company_ticker)
+    elif company_subtab == "Price & Trends":
+        from ui.bank_detail import render_price_trends
+        render_price_trends(company_ticker)
 
-    elif company_subtab == "Financials":
+    elif company_subtab == "All Metrics":
+        from ui.bank_detail import render_all_metrics_section
+        single_df = pd.DataFrame([load_single_bank_metrics_cached(company_ticker)])
+        render_all_metrics_section(company_ticker, single_df)
+
+    elif company_subtab == "Data Quality":
+        from ui.data_quality import render_data_quality
+        render_data_quality(company_ticker)
+
+    # ── Financials section ──────────────────────────────────────────
+    elif company_subtab == "Highlights":
         from ui.financial_highlights import render_financial_highlights
         render_financial_highlights(company_ticker)
         with st.expander("Trend charts", expanded=False):
             render_historicals(company_ticker)
 
-    elif company_subtab == "Filings":
-        render_filings_for_ticker(company_ticker)
-
-    elif company_subtab == "Deposits":
-        render_deposits_for_ticker(company_ticker)
-
-    elif company_subtab == "Credit":
+    elif company_subtab == "Credit Quality":
         from ui.credit_dynamics import render_credit_dynamics
         render_credit_dynamics(company_ticker, watchlist)
 
@@ -757,32 +786,49 @@ elif section == "🏦 Company Analysis":
         from ui.capital_dynamics import render_capital_dynamics
         render_capital_dynamics(company_ticker, watchlist)
 
-    elif company_subtab == "NIM Sensitivity":
+    elif company_subtab == "Interest Rate Risk":
         from ui.rate_sensitivity import render_rate_sensitivity
         render_rate_sensitivity(company_ticker)
 
-    elif company_subtab == "Valuation":
+    # ── Valuation section ───────────────────────────────────────────
+    elif company_subtab == "Valuation Model":
         from ui.valuation_model import render_valuation_model
         render_valuation_model(company_ticker)
 
-    elif company_subtab == "Ownership":
+    elif company_subtab == "Peer Rank":
+        from ui.peer_rank import render_peer_rank
+        render_peer_rank(company_ticker, all_metrics or get_watchlist_cohort())
+
+    # ── Estimates / Earnings section ────────────────────────────────
+    elif company_subtab == "Earnings":
+        ticker_metrics = load_single_bank_metrics_cached(company_ticker)
+        render_earnings_consensus(company_ticker, ticker_metrics)
+
+    # ── News & Filings section ──────────────────────────────────────
+    elif company_subtab == "Filings":
+        render_filings_for_ticker(company_ticker)
+
+    elif company_subtab == "Activity":
+        from ui.recent_activity import render_recent_activity
+        render_recent_activity(company_ticker)
+
+    # ── Market Analysis section (deposit-related) ───────────────────
+    elif company_subtab == "Deposit Trends":
+        from ui.deposit_dynamics import render_deposit_dynamics
+        render_deposit_dynamics(company_ticker)
+
+    elif company_subtab == "Market Share & Branches":
+        from ui.deposit_lookup import render_market_share_for_ticker
+        render_market_share_for_ticker(company_ticker)
+
+    # ── Ownership section ───────────────────────────────────────────
+    elif company_subtab == "Institutional (13F)":
         from ui.ownership import render_ownership
         render_ownership(company_ticker)
 
-    elif company_subtab == "Peer Rank":
-        from ui.peer_rank import render_peer_rank
-        # Peer ranking needs the watchlist cohort; the accessor loads it on first
-        # use so this view is always populated.
-        render_peer_rank(company_ticker, all_metrics or get_watchlist_cohort())
-
-    elif company_subtab == "🔍 Data Quality":
-        from ui.data_quality import render_data_quality
-        render_data_quality(company_ticker)
-
-    elif company_subtab == "Earnings":
-        # Use cached single-bank metrics — fast switching between banks
-        ticker_metrics = load_single_bank_metrics_cached(company_ticker)
-        render_earnings_consensus(company_ticker, ticker_metrics)
+    elif company_subtab == "Insider Activity":
+        from ui.insider_activity import render_insider_activity
+        render_insider_activity(company_ticker)
 
 elif section == "🌐 Macro":
     from ui.macro import render_macro_dashboard
