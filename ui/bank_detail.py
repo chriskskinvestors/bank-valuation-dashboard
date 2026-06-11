@@ -127,23 +127,9 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
     with _gc3:
         st.plotly_chart(loans_deposits_chart(fdic_hist), use_container_width=True)
 
-    # ── All metrics table ───────────────────────────────────────────
-    st.subheader("All Metrics")
+    # ── All metrics (compact grid + explanations) ───────────────────
     if not bank_row.empty:
-        row = bank_row.iloc[0]
-        for category in METRIC_CATEGORIES:
-            cat_metrics = [m for m in METRICS if m["category"] == category]
-            if not cat_metrics:
-                continue
-            st.markdown(f"**{category}**")
-            metric_cols = st.columns(min(4, len(cat_metrics)))
-            for i, m in enumerate(cat_metrics):
-                val = row.get(m["key"])
-                with metric_cols[i % len(metric_cols)]:
-                    st.metric(
-                        label=m["label"],
-                        value=format_value(val, m["format"], m.get("decimals", 2)),
-                    )
+        _render_all_metrics(bank_row.iloc[0])
 
     # ── Peer comparison radar ───────────────────────────────────────
     st.subheader("Peer Comparison")
@@ -168,6 +154,117 @@ def render_bank_detail(ticker: str, all_metrics_df: pd.DataFrame):
             st.info("No recent filings found.")
     else:
         st.info("SEC CIK not mapped for this bank.")
+
+
+# One-line explanation per metric category.
+_CATEGORY_DESC = {
+    "Market": "Live price and trading data (FMP).",
+    "Valuation": "What you pay per dollar of earnings and tangible book value.",
+    "Fair Value": "Model estimate of intrinsic value vs the current price.",
+    "Profitability": "Returns on assets/equity, margin, and cost efficiency.",
+    "Credit Quality": "Problem loans, charge-offs, and reserve coverage.",
+    "Capital": "Regulatory capital ratios — the loss-absorbing cushion.",
+    "Balance Sheet": "Size of the balance sheet — assets, loans, deposits, equity.",
+    "Loan Mix": "How the loan book is split across categories.",
+    "Loan Concentration": "Exposure to specific lending segments (e.g. CRE).",
+    "Deposits": "Deposit base size and composition.",
+    "Deposit Ratios": "Funding-quality ratios (non-interest, uninsured, brokered).",
+    "Capital Dynamics": "Capital generation and buyback capacity.",
+    "Capital Return": "Dividends and buybacks returned to shareholders.",
+    "Credit Dynamics": "Direction and alerts in credit quality.",
+    "Deposit Dynamics": "Deposit beta and cost-of-funds trends.",
+    "Securities": "Investment securities portfolio.",
+    "Composition": "Asset/liability composition shares.",
+    "Credit Detail": "Detailed credit and past-due breakdowns.",
+    "Income": "Income-statement lines.",
+    "Operational": "Operating and efficiency measures.",
+    "NIM Metrics": "Net interest margin drivers — asset yields and funding cost.",
+}
+
+# Short tooltip per metric key (hover the ⓘ). Only the ones worth explaining.
+_METRIC_DESC = {
+    "change_pct": "Price change vs the prior close.",
+    "volume": "Shares traded.",
+    "market_cap": "Shares outstanding × price.",
+    "eps": "Trailing-12-month diluted EPS (SEC).",
+    "pe_ratio": "Price ÷ TTM diluted EPS. Lower = cheaper on earnings.",
+    "tbvps": "Tangible book value per share = (equity − intangibles) ÷ shares.",
+    "ptbv_ratio": "Price ÷ tangible book value per share. 1.0× = trading at tangible book.",
+    "dividend_yield": "TTM dividends per share ÷ price.",
+    "roatce_blended": "Return on average tangible common equity, blended over trailing quarters.",
+    "roatce": "Net income ÷ tangible common equity (equity − intangibles).",
+    "roatce_normalized": "ROATCE with one-time items removed — the sustainable run-rate.",
+    "earnings_distorted": "Flag: a non-recurring item distorted the latest earnings.",
+    "fair_ptbv": "Warranted P/TBV = ROATCE ÷ cost of equity. The multiple the returns justify.",
+    "fair_price": "Model fair value per share (warranted P/TBV × TBV/share).",
+    "ptbv_discount": "How far the price sits below model fair value. Higher = cheaper.",
+    "roaa": "Annualized net income ÷ average assets.",
+    "roaa_4q": "Trailing-4-quarter ROAA (smoother).",
+    "roatce_sub": "ROATCE at the bank subsidiary (FDIC Call Report).",
+    "roatce_4q_sub": "Trailing-4-quarter bank-level ROATCE.",
+    "roatce_holdco": "ROATCE at the holding company (SEC).",
+    "nim": "Net interest income ÷ average earning assets.",
+    "nim_4q": "Trailing-4-quarter NIM.",
+    "efficiency_ratio": "Non-interest expense ÷ revenue. Lower = more efficient.",
+    "npl_ratio": "Non-current loans (90+ days / nonaccrual) ÷ total loans.",
+    "nco_ratio": "Annualized net charge-offs ÷ loans.",
+    "allowance_loans": "Loan-loss reserves ÷ total loans (coverage).",
+    "cet1_ratio": "Common equity tier 1 capital ÷ risk-weighted assets.",
+    "total_capital_ratio": "Total risk-based capital ÷ risk-weighted assets.",
+    "leverage_ratio": "Tier 1 capital ÷ average total assets.",
+    "total_assets": "Total assets (Call Report).",
+    "total_loans": "Net loans and leases.",
+    "total_deposits": "Total deposits.",
+    "total_equity": "Total bank equity capital.",
+    "securities": "Investment securities (HTM + AFS).",
+    "uninsured_dep_pct": "Uninsured deposits as a share of total — run-risk gauge.",
+    "nonint_dep_pct": "Non-interest-bearing deposits ÷ total — low-cost, sticky funding.",
+    "brokered_pct": "Brokered deposits ÷ total — flightier wholesale funding.",
+    "loans_deposits": "Net loans ÷ deposits — a liquidity/funding gauge.",
+}
+
+
+def _render_all_metrics(row):
+    """Compact metric grid grouped by category, with a one-line explanation per
+    section and a hover tooltip (ⓘ) on the metrics worth explaining."""
+    import pandas as _pd
+    st.subheader("All Metrics")
+    st.caption("Hover the ⓘ on a metric for its definition.")
+    st.markdown(
+        """<style>
+        .m-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+          gap:6px;margin:1px 0 14px;}
+        .m-card{background:rgba(148,163,184,0.05);border:1px solid rgba(148,163,184,0.16);
+          border-radius:8px;padding:6px 10px;}
+        .m-card .m-lbl{font-size:0.6rem;color:#64748b;font-weight:600;text-transform:uppercase;
+          letter-spacing:0.02em;}
+        .m-card .m-lbl .i{color:#b6c0cc;cursor:help;font-weight:400;}
+        .m-card .m-val{font-size:0.96rem;font-weight:700;color:#0f172a;line-height:1.3;}
+        .m-cat{font-weight:700;color:#1e3a8a;font-size:0.78rem;text-transform:uppercase;
+          letter-spacing:0.03em;margin-top:6px;}
+        .m-cat-desc{font-size:0.76rem;color:#64748b;margin:0 0 4px;}
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    for category in METRIC_CATEGORIES:
+        cat_metrics = [m for m in METRICS if m["category"] == category]
+        if not cat_metrics:
+            continue
+        cards = []
+        for m in cat_metrics:
+            val = row.get(m["key"])
+            disp = (format_value(val, m["format"], m.get("decimals", 2))
+                    if val is not None and not _pd.isna(val) else "—")
+            desc = _METRIC_DESC.get(m["key"], "")
+            tip = f' title="{desc}"' if desc else ""
+            ic = ' <span class="i">ⓘ</span>' if desc else ""
+            cards.append(
+                f'<div class="m-card"{tip}><div class="m-lbl">{m["label"]}{ic}</div>'
+                f'<div class="m-val">{disp}</div></div>')
+        cdesc = _CATEGORY_DESC.get(category, "")
+        cd = f'<div class="m-cat-desc">{cdesc}</div>' if cdesc else ""
+        st.markdown(f'<div class="m-cat">{category}</div>{cd}'
+                    f'<div class="m-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
 
 
 def _render_price_stats(hist_df):
