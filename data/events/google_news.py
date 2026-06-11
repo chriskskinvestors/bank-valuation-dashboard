@@ -8,11 +8,14 @@ bank* by name and keep only items where our shared name-matcher confirms the ban
 is the subject — so the firehose noise is filtered out and we catch press
 releases the per-wire adapters (Business Wire / PR Newswire / GlobeNewswire) miss.
 
-Per-ticker query → narrow adapter (watchlist only), like the Yahoo + IR adapters.
+Per-ticker query, but run across the FULL universe with a throttled thread pool
+(IR scraping can't scale to hundreds of bespoke sites; this can — one uniform
+query per bank, needs only the name we already have).
 """
 from __future__ import annotations
 import re
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 
 from data.bank_mapping import get_name
@@ -47,45 +50,55 @@ def _slug(headline: str) -> str:
 class GoogleNewsAdapter(SourceAdapter):
     name = "google_news"
     LOOKBACK_DAYS = 3
+    # Modest concurrency — fast enough for the full universe within one poll
+    # window, polite enough not to get soft-blocked by Google.
+    MAX_WORKERS = 8
+
+    def _fetch_ticker(self, ticker: str, cutoff: datetime) -> list[Event]:
+        name = get_name(ticker)
+        if not name:
+            return []
+        try:
+            items = fetch_rss(_query_url(name), user_agent=_GN_UA)
+        except Exception as e:
+            print(f"[google_news] {ticker} error: {type(e).__name__}: {e}")
+            return []
+        evs: list[Event] = []
+        seen: set[str] = set()
+        for item in items:
+            if item.published and item.published < cutoff:
+                continue
+            headline, src_name = _strip_source(item.title)
+            # Confirm this bank is actually the subject (reuse the wire
+            # name-matcher); drops tangential mentions Google returns.
+            if ticker not in match_tickers(headline):
+                continue
+            # Dedup by normalized headline so the same release syndicated by
+            # multiple outlets collapses to one event (stable across polls).
+            ext_id = f"{ticker}::{_slug(headline)}"
+            if ext_id in seen:
+                continue
+            seen.add(ext_id)
+            evs.append(Event(
+                ticker=ticker,
+                source=self.name,
+                event_type=classify_press_release(headline),
+                headline=headline,
+                published_at=item.published or datetime.now(timezone.utc),
+                url=item.link,
+                summary="",
+                external_id=ext_id,
+                raw={"via": src_name, "query": name},
+            ))
+        return evs
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
         cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        # Warm the shared name index once in this thread so the worker threads
+        # don't race to build it on first match_tickers() call.
+        match_tickers("")
         out: list[Event] = []
-        seen: set[str] = set()
-
-        for ticker in tickers:
-            name = get_name(ticker)
-            if not name:
-                continue
-            try:
-                items = fetch_rss(_query_url(name), user_agent=_GN_UA)
-            except Exception as e:
-                print(f"[google_news] {ticker} error: {type(e).__name__}: {e}")
-                continue
-
-            for item in items:
-                if item.published and item.published < cutoff:
-                    continue
-                headline, src_name = _strip_source(item.title)
-                # Confirm this bank is actually the subject (reuse the wire
-                # name-matcher); drops tangential mentions Google returns.
-                if ticker not in match_tickers(headline):
-                    continue
-                # Dedup by normalized headline so the same release syndicated by
-                # multiple outlets collapses to one event (stable across polls).
-                ext_id = f"{ticker}::{_slug(headline)}"
-                if ext_id in seen:
-                    continue
-                seen.add(ext_id)
-                out.append(Event(
-                    ticker=ticker,
-                    source=self.name,
-                    event_type=classify_press_release(headline),
-                    headline=headline,
-                    published_at=item.published or datetime.now(timezone.utc),
-                    url=item.link,
-                    summary="",
-                    external_id=ext_id,
-                    raw={"via": src_name, "query": name},
-                ))
+        with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as ex:
+            for evs in ex.map(lambda t: self._fetch_ticker(t, cutoff), tickers):
+                out.extend(evs)
         return out

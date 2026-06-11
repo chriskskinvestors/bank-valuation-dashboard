@@ -52,8 +52,11 @@ def main() -> int:
         BusinessWireAdapter(),
         PRNewswireAdapter(),
         GlobeNewswireAdapter(),
+        # Google News: per-ticker, but parallelized so it scales to the full
+        # universe (unlike IR scraping, which needs a bespoke scraper per site).
+        GoogleNewsAdapter(),
     ]
-    narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter(), GoogleNewsAdapter()]
+    narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
     adapters = broad_adapters + narrow_adapters
 
     print(f"▶ Polling — broad: {len(broad_adapters)} sources × {len(universe)} tickers, "
