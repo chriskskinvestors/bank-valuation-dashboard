@@ -801,13 +801,24 @@ def get_filing_info(cik: int, max_filings: int = 50) -> dict:
       form, date, report_date, description, items, accession,
       url (direct link), index_url, is_earnings, size
     """
+    import time as _t
     padded = _pad_cik(cik)
     url = SEC_SUBMISSIONS_URL.format(cik=padded)
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception:
+    # Retry transient SEC failures (429 rate-limit, timeouts) so the Filings page
+    # doesn't show "Failed to load" on a single hiccup.
+    data = None
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=15)
+            if resp.status_code == 429:
+                _t.sleep(float(resp.headers.get("Retry-After", 2)) + attempt)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception:
+            _t.sleep(1.0 + attempt)
+    if data is None:
         return {}
 
     raw_cik = int(data.get("cik", cik))
