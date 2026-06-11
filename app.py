@@ -59,8 +59,9 @@ SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis"
 # bank — every bank gets the same sub-tabs.
 # Two-level company navigation: top-level section → sub-tabs (Capital-IQ style).
 COMPANY_NAV = {
-    "Overview": ["Corporate Profile", "Price & Trends", "All Metrics", "Data Quality"],
-    "Financials": ["Highlights", "Credit Quality", "Capital", "Interest Rate Risk"],
+    "Overview": ["Corporate Profile"],
+    "Financials": ["Highlights", "Price & Trends", "All Metrics", "Credit Quality",
+                   "Capital", "Interest Rate Risk", "Data Quality"],
     "Valuation": ["Valuation Model", "Peer Rank"],
     "Estimates / Earnings": ["Earnings"],
     "News & Filings": ["Filings", "Activity"],
