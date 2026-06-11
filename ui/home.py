@@ -52,6 +52,32 @@ def _fred_points(series_id: str):
         return (None, None, None)
 
 
+def _prices_asof(tickers):
+    """(label, color) describing how fresh the warm price cache is for these
+    tickers — so stale data is never shown as if it were live. Returns the
+    freshest row's timestamp; flags ⚠ when the data is more than a day old
+    (i.e. the refresh-prices job has stalled)."""
+    try:
+        from data.price_cache_store import get_prices
+        rows = get_prices(list(tickers))
+        cand = [(r.get("age_seconds"), r.get("updated_at"))
+                for r in rows.values()
+                if r.get("updated_at") and r.get("age_seconds") is not None]
+        if not cand:
+            return "prices: unavailable", "#dc2626"
+        age, iso = min(cand, key=lambda x: x[0])
+        import datetime as dt
+        stamp = dt.datetime.fromisoformat(iso).strftime("%b %d, %H:%M UTC")
+        if age < 2 * 3600:
+            return f"prices live · {stamp}", "#059669"
+        if age < 30 * 3600:
+            return f"prices as of {stamp}", "#64748b"
+        days = age / 86400
+        return f"⚠ stale prices · {stamp} ({days:.0f}d old)", "#dc2626"
+    except Exception:
+        return "", "#94a3b8"
+
+
 def _market_status():
     """(label, color) for US equity market state in Eastern time."""
     try:
@@ -424,8 +450,12 @@ def _render_watchlist_movers(all_metrics: list[dict]):
     losers = [r for r in rows if r[2] < 0]
     losers = sorted(losers, key=lambda r: r[2])[:8]
 
-    _section_header("📊", "Watchlist Movers",
-                    f"prior session · {adv} up · {dec} down · {flat} flat")
+    _tkrs = [m.get("ticker") for m in all_metrics if m.get("ticker")]
+    _asof, _asof_col = _prices_asof(_tkrs)
+    _counts = f"{adv} up · {dec} down · {flat} flat"
+    _sub = (f'<span style="color:{_asof_col}; font-weight:600;">{_asof}</span> · {_counts}'
+            if _asof else _counts)
+    _section_header("📊", "Watchlist Movers", _sub)
 
     def _row(tk, price, chg):
         name = (get_name(tk) or "")[:24]

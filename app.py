@@ -299,13 +299,27 @@ def load_prices(tickers: list, max_wait: float = 3.0) -> dict:
 
     missing = [t for t in tickers if t not in out]
 
-    # 3. Live FMP for anything not warm-cached (local/dev, brand-new tickers,
-    #    or a cache that hasn't been warmed yet).
+    # Treat very stale warm rows as refresh candidates for watchlist-sized
+    # sets, so the Home never shows day-old moves as if they were live. The
+    # full-universe screen (~400 tickers) tolerates the warm cache to avoid a
+    # huge live fan-out; its freshness is the refresh-prices job's job.
+    if len(tickers) <= 120:
+        stale_after = 6 * 3600
+        stale = [t for t, q in out.items()
+                 if (q or {}).get("age_seconds") is not None
+                 and q["age_seconds"] > stale_after]
+        missing = list({*missing, *stale})
+
+    # 3. Live FMP for anything not warm-cached or gone stale. Only overwrite a
+    #    warm row when the live call actually returns a price — otherwise keep
+    #    the (stale-but-real) cached value rather than blanking it.
     if missing:
         try:
             from data.fmp_client import get_quote_batch, _has_key
             if _has_key():
-                out.update(get_quote_batch(missing))
+                fresh = get_quote_batch(missing)
+                out.update({t: q for t, q in fresh.items()
+                            if q and q.get("price") is not None})
         except Exception as e:
             print(f"[prices] FMP fallback failed: {type(e).__name__}: {e}")
 
