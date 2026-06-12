@@ -158,8 +158,40 @@ def main():
         for r in failed[:20]:
             print(f"  {r['ticker']:<6} {' | '.join(r['errors'][:3])[:200]}")
 
-    # Exit code reflects severity
-    return 0 if len(failed) < len(universe) * 0.05 else 1  # tolerate <5% failures
+    # Reconciliation growth gate: a bank that validated cleanly yesterday and
+    # fails today is a regression (new wrong-entity join, schema break, source
+    # outage) and must fail the job loudly — a stable exception list is
+    # tolerated, silent growth is not.
+    from data import cache
+    current = {r["ticker"]: r["errors"] for r in failed}
+    prev = {}
+    try:
+        prev = (cache.get("nightly_validation_lastrun") or {}).get("failed", {})
+    except Exception as e:
+        print(f"[warn] could not load previous validation run: {type(e).__name__}")
+    new_failures = sorted(set(current) - set(prev))
+    resolved = sorted(set(prev) - set(current))
+    if new_failures:
+        print(f"\nNEW failures vs previous run ({len(new_failures)}):")
+        for t in new_failures[:20]:
+            print(f"  {t:<6} {' | '.join(current[t][:3])[:200]}")
+    if resolved:
+        print(f"Resolved since previous run: {', '.join(resolved[:20])}")
+    try:
+        cache.put("nightly_validation_lastrun", {
+            "date": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "failed": current,
+            "warnings": warns,
+            "universe_size": len(universe),
+        })
+    except Exception as e:
+        print(f"[warn] could not persist validation run: {type(e).__name__}")
+
+    # Exit code reflects severity: new regressions or >5% failure rate fail
+    # the execution (visible in Cloud Run job history).
+    if new_failures:
+        return 1
+    return 0 if len(failed) < len(universe) * 0.05 else 1
 
 
 if __name__ == "__main__":
