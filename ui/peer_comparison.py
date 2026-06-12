@@ -167,9 +167,9 @@ def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfo
 
     # ── View tabs ──────────────────────────────────────────────────────
     view_tab, scatter_tab, radar_tab = st.tabs([
-        "📊 Metrics Table",
-        "📉 Scatter Plots",
-        "🕸 Radar Chart",
+        "Metrics Table",
+        "Scatter Plots",
+        "Radar Chart",
     ])
 
     with view_tab:
@@ -183,7 +183,7 @@ def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfo
 
     # ── Summary stats ──────────────────────────────────────────────────
     st.markdown("---")
-    with st.expander("📊 Peer group composition"):
+    with st.expander("Peer group composition"):
         comp_rows = []
         for m in selected_peers:
             # total_assets is always raw dollars (converted at the metrics

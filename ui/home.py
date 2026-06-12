@@ -74,7 +74,7 @@ def _fred_points(series_id: str):
 def _prices_asof(tickers):
     """(label, color) describing how fresh the warm price cache is for these
     tickers — so stale data is never shown as if it were live. Returns the
-    freshest row's timestamp; flags ⚠ when the data is more than a day old
+    freshest row's timestamp; flags when the data is more than a day old
     (i.e. the refresh-prices job has stalled)."""
     try:
         from data.price_cache_store import get_prices
@@ -331,7 +331,7 @@ def _render_etf_strip():
                     height=240, show_legend=False)
                 figh.update_yaxes(tickprefix="$")
                 st.plotly_chart(figh, use_container_width=True, key=f"bench_chart_{sel}")
-            if st.button("✕ close chart", key="bench_close"):
+            if st.button("× close chart", key="bench_close"):
                 del st.query_params["bench"]
                 st.rerun()
         except Exception:
@@ -524,7 +524,7 @@ def _render_watchlist_movers(all_metrics: list[dict]):
     _counts = f"{adv} up · {dec} down · {flat} flat"
     _sub = (f'<span style="color:{_asof_col}; font-weight:600;">{_asof}</span> · {_counts}'
             if _asof else _counts)
-    section_header("📊", "Market Movers", _sub)
+    section_header("", "Market Movers", _sub)
 
     def _row(tk, price, chg):
         col = ("var(--success)" if chg > 0
@@ -625,7 +625,7 @@ def _render_todays_calendar(watchlist: list[str]):
 def _render_coverage_leaderboard(all_metrics: list[dict]):
     """Ranked extremes across coverage — the value-screen lists you scan each
     morning: cheapest, highest-returning, best-yielding, widest discount."""
-    section_header("🏅", "Coverage Leaderboard", "ranked extremes across all covered banks")
+    section_header("", "Coverage Leaderboard", "ranked extremes across all covered banks")
     df = pd.DataFrame(all_metrics)
 
     def _list(title, col, ascending, fmt, color="var(--text-primary)"):
@@ -677,7 +677,7 @@ def _render_sector_ma(watchlist: list[str]):
     watchlist) — consolidation is the sector's biggest catalyst and deals at
     banks you don't own still move comps and signal where multiples are going."""
     import datetime as dt
-    section_header("🤝", "Sector M&A & Deals", "universe-wide · deals move the comps")
+    section_header("", "Sector M&A & Deals", "universe-wide · deals move the comps")
     try:
         from data.events import get_universe_recent
         from data.events.wire_base import is_safe_news_url
@@ -729,7 +729,7 @@ def _render_sector_ma(watchlist: list[str]):
             summ = summ[:197].rstrip() + "…"
         # Headline/summary are third-party feed text — news_card escapes them
         # before interpolating into unsafe_allow_html.
-        news_card(f'🤝 M&amp;A · {tkr} · {when}{external_link(a["url"])}',
+        news_card(f'M&amp;A · {tkr} · {when}{external_link(a["url"])}',
                   a["headline"], summ, severity="high")
 
 
@@ -745,7 +745,7 @@ def _render_industry_valuations(df: pd.DataFrame):
     """
     from analysis.peer_groups import asset_size_tier
 
-    section_header("🏦", "Industry Valuations", "median multiples by asset-size tier")
+    section_header("", "Industry Valuations", "median multiples by asset-size tier")
 
     if "total_assets" not in df.columns:
         df = df.copy()
@@ -858,7 +858,7 @@ def _render_alert_inbox(all_metrics: list[dict], watchlist: list[str]):
         st.info("Loading bank data...")
         return
 
-    section_header("🔔", "Alert Inbox", "news · earnings · dynamics · insider · value opps")
+    section_header("", "Alert Inbox", "news · earnings · dynamics · insider · value opps")
     st.caption("Prioritized across all covered banks. Click into any row to jump to the bank.")
 
     # Collect alerts from each source
@@ -870,11 +870,11 @@ def _render_alert_inbox(all_metrics: list[dict], watchlist: list[str]):
 
     # Important News is the main (first) tab.
     tab_news, tab1, tab2, tab3, tab4 = st.tabs([
-        f"📰 Important News ({len(news_alerts)})",
-        f"📅 Earnings ({len(earnings_alerts)})",
+        f"Important News ({len(news_alerts)})",
+        f"Earnings ({len(earnings_alerts)})",
         f"Dynamics Alerts ({len(dynamics_alerts)})",
-        f"👥 Insider Buys ({len(insider_alerts)})",
-        f"💰 Value Opps ({len(valuation_alerts)})",
+        f"Insider Buys ({len(insider_alerts)})",
+        f"Value Opps ({len(valuation_alerts)})",
     ])
 
     with tab_news:
@@ -907,12 +907,12 @@ def _relative_time(p) -> str:
     return f"{d}d ago" if d < 30 else (t.strftime("%b %d") if hasattr(t, "strftime") else "")
 
 
-# event_type → (emoji, label, weight). Weight + recency rank "important news".
+# event_type → (label, weight). Weight + recency rank "important news".
 _NEWS_TYPES = {
-    "earnings": ("📊", "Earnings", 5), "m_and_a": ("🤝", "M&A", 5),
-    "regulatory": ("🏛", "Regulatory", 4), "executive_change": ("👤", "Leadership", 3),
-    "shareholder_vote": ("🗳", "Shareholder vote", 2), "filing": ("📄", "Filing", 2),
-    "press_release": ("📰", "Press release", 1), "news": ("📰", "News", 1),
+    "earnings": ("Earnings", 5), "m_and_a": ("M&A", 5),
+    "regulatory": ("Regulatory", 4), "executive_change": ("Leadership", 3),
+    "shareholder_vote": ("Shareholder vote", 2), "filing": ("Filing", 2),
+    "press_release": ("Press release", 1), "news": ("News", 1),
 }
 
 
@@ -964,7 +964,7 @@ def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
             continue  # third-party mentions, structured notes, branch-hire trivia
         seen.add(key)
         et = r.get("event_type") or "news"
-        weight = _NEWS_TYPES.get(et, ("📰", "News", 1))[2]
+        weight = _NEWS_TYPES.get(et, ("News", 1))[1]
         # recency
         p = r.get("published_at")
         try:
@@ -990,7 +990,7 @@ def _render_news_tab(alerts: list[dict]):
                 "and real press releases appear here.)")
         return
     for a in alerts:
-        emoji, label, weight = _NEWS_TYPES.get(a["event_type"], ("📰", "News", 1))
+        label, weight = _NEWS_TYPES.get(a["event_type"], ("News", 1))
         tk = a["ticker"]; name = get_name(tk)[:34]
         when = _relative_time(a["published_at"])
         sev = "high" if weight >= 5 else ("medium" if weight >= 3 else "")
@@ -998,7 +998,7 @@ def _render_news_tab(alerts: list[dict]):
         if summ and len(summ) > 240:
             summ = summ[:237].rstrip() + "…"
         meta = (
-            f'{emoji} {label} &nbsp;·&nbsp; '
+            f'{label} &nbsp;·&nbsp; '
             f'<strong style="color:var(--text-primary);">{tk}</strong> '
             f'<span style="color:var(--text-secondary);">{_html.escape(name)}</span> '
             f'&nbsp;·&nbsp; {when}{external_link(a["url"])}'

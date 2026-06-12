@@ -117,7 +117,7 @@ def _metric_row(key: str, d: dict) -> str:
 def render_peer_rank(ticker: str, all_metrics: list[dict]):
     """Render the consolidated Peer Rank scorecard for a bank."""
     name = get_name(ticker)
-    st.subheader(f"🏅 Peer Rank — {name} ({ticker})")
+    st.subheader(f"Peer Rank — {name} ({ticker})")
 
     metrics = _ensure_self(_resolve_cohort(all_metrics), ticker)
 
@@ -228,7 +228,7 @@ def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str):
         bg = "background:rgba(37,99,235,0.10);" if is_self else (
             "background:rgba(148,163,184,0.04);" if i % 2 else "")
         weight = "700" if is_self else "500"
-        marker = "👉 " if is_self else ""
+        marker = "▸ " if is_self else ""
         nm = _html.escape((get_name(tk) or "")[:34])
         cells.append(
             f'<tr style="{bg}">'

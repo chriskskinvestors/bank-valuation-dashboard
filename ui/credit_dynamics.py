@@ -140,22 +140,21 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
         _render_by_loan_type(ticker, summary, timeline)
         return
 
-    st.subheader("🏦 Credit Quality Dynamics")
+    st.subheader("Credit Quality Dynamics")
 
     # ── Alerts ─────────────────────────────────────────────────────────
     alerts = summary["alerts"]
     if alerts:
         for a in alerts:
             style = _SEVERITY_STYLE.get(a["severity"], _SEVERITY_STYLE["medium"])
-            icon = "🚨" if a["severity"] == "high" else "⚠️"
             st.markdown(
-                f'<div style="{style}">{icon} <strong>{a["message"]}</strong></div>',
+                f'<div style="{style}"><strong>{a["message"]}</strong></div>',
                 unsafe_allow_html=True,
             )
         st.markdown("")
     else:
         st.markdown(
-            f'<div style="{_SEVERITY_STYLE["ok"]}">✅ <strong>No credit alerts — trends stable</strong></div>',
+            f'<div style="{_SEVERITY_STYLE["ok"]}"><strong>No credit alerts — trends stable</strong></div>',
             unsafe_allow_html=True,
         )
 
@@ -249,7 +248,7 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
     """Asset Quality by Loan Type — segment hotspots table + NPL trend per
     loan segment. Split out of the main credit view so the two nav tabs show
     distinct content."""
-    st.subheader("🎯 Asset Quality by Loan Type")
+    st.subheader("Asset Quality by Loan Type")
 
     hotspots = summary["hotspots"]
     _tbl, _chart = st.columns([1, 2])

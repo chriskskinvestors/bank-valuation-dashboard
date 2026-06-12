@@ -238,7 +238,7 @@ def _render_latest_activity(ticker, info):
     c_news, c_docs = st.columns(2)
     with c_news:
         st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
-                    'color:#1e3a8a;font-weight:700;margin:0 0 3px;">📰 Latest News</div>',
+                    'color:#1e3a8a;font-weight:700;margin:0 0 3px;">Latest News</div>',
                     unsafe_allow_html=True)
         if evs:
             rows = []
@@ -254,7 +254,7 @@ def _render_latest_activity(ticker, info):
             st.caption("No recent company news.")
     with c_docs:
         st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
-                    'color:#1e3a8a;font-weight:700;margin:0 0 3px;">📄 Recent Filings</div>',
+                    'color:#1e3a8a;font-weight:700;margin:0 0 3px;">Recent Filings</div>',
                     unsafe_allow_html=True)
         if docs:
             rows = []
@@ -814,12 +814,18 @@ def _render_price_stats(hist_df):
     hi = float(d["high"].max()) if ("high" in d.columns and d["high"].notna().any()) else float(close.max())
     lo = float(d["low"].min()) if ("low" in d.columns and d["low"].notna().any()) else float(close.min())
     chg = ((last - first) / first * 100) if first else 0.0
-    st.metric("Last", f"${last:,.2f}", delta=f"{chg:+.2f}% over period")
-    st.metric("Period High", f"${hi:,.2f}")
-    st.metric("Period Low", f"${lo:,.2f}")
-    st.metric("Range", f"{((hi - lo) / lo * 100):.1f}%" if lo else "—")
+    chg_color = "var(--success)" if chg >= 0 else "var(--danger)"
+    rows = [
+        ("Last", f"${last:,.2f}"),
+        ("Period change", f'<span style="color:{chg_color};">{chg:+.2f}%</span>'),
+        ("Period high", f"${hi:,.2f}"),
+        ("Period low", f"${lo:,.2f}"),
+        ("Range", f"{((hi - lo) / lo * 100):.1f}%" if lo else "—"),
+    ]
     if "volume" in d.columns and d["volume"].notna().any():
         avgv = float(d["volume"].mean())
-        st.metric("Avg Volume", f"{avgv/1e6:.2f}M" if avgv >= 1e6 else f"{avgv:,.0f}")
+        rows.append(("Avg volume", f"{avgv/1e6:.2f}M" if avgv >= 1e6 else f"{avgv:,.0f}"))
+    from ui.chrome import ledger
+    ledger("Period Stats", rows)
 
 

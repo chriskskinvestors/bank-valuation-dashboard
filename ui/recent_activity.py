@@ -130,7 +130,7 @@ def render_recent_activity(ticker: str, limit: int = 20,
         st.info("Pick a bank from the sidebar to see its recent activity.")
         return
 
-    st.subheader(f"📰 {title} — {ticker}")
+    st.subheader(f"{title} — {ticker}")
     st.caption(
         "SEC 8-K filings plus Business Wire, PR Newswire, GlobeNewswire and Yahoo "
         "News feeds. Refreshed automatically every 30 minutes during market hours."
@@ -165,7 +165,7 @@ def render_events_calendar(ticker: str, limit: int = 15):
         st.info("Pick a bank from the sidebar to see its events calendar.")
         return
 
-    st.subheader(f"🗓️ Events Calendar — {ticker}")
+    st.subheader(f"Events Calendar — {ticker}")
 
     # ── Upcoming: next earnings date ─────────────────────────────────────
     st.markdown("**Upcoming**")
@@ -218,7 +218,7 @@ def render_events_calendar(ticker: str, limit: int = 15):
 
 def render_activity_overview(limit: int = 50):
     """Universe-wide event feed (Home page or Activity tab)."""
-    st.subheader("📰 Recent Activity (Universe)")
+    st.subheader("Recent Activity (Universe)")
     st.caption(
         f"Most recent {limit} events across all banks in the universe — SEC 8-K "
         "filings plus Business Wire, PR Newswire, GlobeNewswire and Yahoo News."

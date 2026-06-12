@@ -22,7 +22,7 @@ from data.provenance import Source
 def render_data_quality(ticker: str):
     """Render the Data Quality panel for a bank."""
 
-    st.subheader("🔍 Data Quality & Provenance")
+    st.subheader("Data Quality & Provenance")
     st.caption(
         "Traceability for every number shown on this bank's pages. Every cell "
         "below links back to its primary SEC filing or FDIC Call Report. "
@@ -74,7 +74,7 @@ def render_data_quality(ticker: str):
             '<div style="background: rgba(5, 150, 105, 0.08); color: #065f46; '
             'border: 1px solid rgba(5, 150, 105, 0.22); border-left: 3px solid #059669; '
             'padding: 12px 16px; border-radius: 6px; font-size: 0.88rem;">'
-            "✅ <strong>All checks passed</strong> — no range violations or "
+            "<strong>All checks passed</strong> — no range violations or "
             "reconciliation issues detected."
             "</div>",
             unsafe_allow_html=True,
@@ -88,7 +88,7 @@ def render_data_quality(ticker: str):
             f'<div style="background: {bg}; color: {text_color}; '
             f'border: 1px solid {border}; border-left: 3px solid {color}; '
             f'padding: 12px 16px; border-radius: 6px; font-size: 0.88rem;">'
-            f"⚠️ <strong>{summary['errors']} errors, {summary['warnings']} warnings</strong> — "
+            f"<strong>{summary['errors']} errors, {summary['warnings']} warnings</strong> — "
             f"review the Findings table below."
             f"</div>",
             unsafe_allow_html=True,
@@ -97,8 +97,8 @@ def render_data_quality(ticker: str):
     st.markdown("---")
 
     tab_findings, tab_provenance = st.tabs([
-        f"⚠️ Validation Findings ({len(findings)})",
-        "📋 Source Traceability",
+        f"Validation Findings ({len(findings)})",
+        "Source Traceability",
     ])
 
     # ── Findings tab ───────────────────────────────────────────────────
@@ -108,9 +108,7 @@ def render_data_quality(ticker: str):
         else:
             rows = []
             for f in findings:
-                icon = {"error": "🔴", "warning": "🟡", "info": "🔵"}.get(f.severity, "—")
                 rows.append({
-                    "": icon,
                     "Severity": f.severity.title(),
                     "Field": f.field,
                     "Issue": f.message,
@@ -287,7 +285,7 @@ def _render_ffiec_status(cert):
         )
     elif days is not None and days < 14:
         st.error(
-            f"⚠️ FFIEC JWT expires in {days:.0f} days — rotate it now "
+            f"FFIEC JWT expires in {days:.0f} days — rotate it now "
             "(`gcloud secrets versions add ffiec-jwt-token`) or the next "
             "quarterly refresh will fail."
         )
@@ -297,9 +295,9 @@ def _render_ffiec_status(cert):
             "via Secret Manager (`ffiec-jwt-token`)."
         )
     elif days is not None:
-        st.caption(f"✅ FFIEC token healthy — {days:.0f} days until expiry.")
+        st.caption(f"FFIEC token healthy — {days:.0f} days until expiry.")
     else:
-        st.caption("✅ FFIEC token configured.")
+        st.caption("FFIEC token configured.")
 
     ladder = None
     if cert:

@@ -110,7 +110,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
     # ── Load branch data ─────────────────────────────────────────────────
     st.markdown("---")
-    st.subheader(f"📍 {selected_name}")
+    st.subheader(f"{selected_name}")
 
     with st.spinner("Loading branch data..."):
         branches_df = fetch_branches(selected_cert)

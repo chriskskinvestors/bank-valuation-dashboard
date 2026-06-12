@@ -12,6 +12,8 @@ Functions:
   get_quote_batch(tickers)       — bulk fetch for screening views
   get_eod_close_batch(tickers)   — bulk latest EOD close (quote fallback)
   get_history(ticker, period)    — historical price series (DataFrame)
+  Analyst/comp family (own section below): price-target consensus/summary,
+  grades, ratings snapshot, executive compensation, insider trading.
 
 Cache:
   Quotes are cached for 60 seconds in Postgres so a Streamlit page reload
@@ -22,6 +24,7 @@ Cache:
 from __future__ import annotations
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from typing import Iterable
@@ -47,6 +50,9 @@ QUOTE_TTL_SECONDS = 60
 HISTORY_TTL_SECONDS = 3600
 EOD_CLOSE_TTL_SECONDS = 3600  # EOD bars only change once a day
 FUNDAMENTALS_TTL_SECONDS = 21600  # 6h — TTM fundamentals change quarterly
+ANALYST_TTL_SECONDS = 86400  # 24h — targets/ratings/comp move slowly
+GRADES_TTL_SECONDS = 21600  # 6h — grade actions land intraday
+INSIDER_TTL_SECONDS = 21600  # 6h — Form 4s land intraday too
 
 
 def _cache_get(key: str, ttl: int) -> dict | None:
@@ -86,7 +92,11 @@ def _get(path: str, params: dict, timeout: int = 10) -> object | None:
         resp = get_with_retry(f"{FMP_BASE}/{path}", params=params, timeout=timeout)
         return resp.json() if resp is not None else None
     except Exception as e:
-        print(f"[FMP] {path} error: {type(e).__name__}: {e}")
+        # NEVER log the raw exception text: requests' HTTPError embeds the
+        # full URL including apikey=<secret>, which would leak the key into
+        # Cloud Run logs on every failed call (found live 2026-06-12).
+        msg = re.sub(r"apikey=[^&\s'\"]+", "apikey=***", str(e))
+        print(f"[FMP] {path} error: {type(e).__name__}: {msg}")
         return None
 
 
@@ -418,6 +428,306 @@ def get_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
     except Exception:
         pass
     return df
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Public API — analyst coverage & executive compensation
+# ──────────────────────────────────────────────────────────────────────────
+
+# All parsing is tolerant (.get() everything, never KeyError): FMP's field
+# names vary across endpoint generations, and a missing field must surface
+# as None — never a fabricated value. Failures return None/[] with one
+# [FMP] log line; failures are never cached (house pattern).
+#
+# Every record carries `source_url` (the UI's click-through-to-source rule):
+# the SEC filing link when FMP provides one (exec comp → DEF 14A, insider →
+# Form 4), else the key-free FMP endpoint URL. Cache keys carry :v2 where
+# the shape gained source_url — a 24h-cached pre-stamp record must never
+# serve into the UI contract.
+
+def _num(x) -> float | None:
+    try:
+        return float(x) if x is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _int(x) -> int | None:
+    try:
+        return int(x) if x is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick(row: dict, *keys):
+    """First non-None value among row[keys] — `or`-chains would swallow
+    legitimate 0 / "" values (comp rows really do have $0 bonuses)."""
+    for k in keys:
+        v = row.get(k)
+        if v is not None:
+            return v
+    return None
+
+
+def _first_row(data) -> dict | None:
+    """The single-record FMP shape: a one-element list of one dict."""
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0]
+    return None
+
+
+def _source_url(path: str, ticker: str) -> str:
+    """Key-free FMP endpoint URL — the source stamp for records whose
+    underlying source is FMP itself (no SEC filing link to point at)."""
+    return f"{FMP_BASE}/{path}?symbol={ticker}"
+
+
+def get_price_target_consensus(ticker: str) -> dict | None:
+    """Analyst price-target consensus: {consensus, high, low, median,
+    source_url} (floats or None per field), or None on failure / no
+    coverage."""
+    if not _has_key():
+        return None
+    ticker = ticker.upper()
+    cache_key = f"fmp_pt_consensus:v2:{ticker}"
+    cached = _cache_get(cache_key, ANALYST_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("price-target-consensus", {"symbol": ticker})
+    row = _first_row(data)
+    if row is None:
+        print(f"[FMP] price-target-consensus: no data for {ticker}")
+        return None
+    out = {
+        "consensus": _num(row.get("targetConsensus")),
+        "high": _num(row.get("targetHigh")),
+        "low": _num(row.get("targetLow")),
+        "median": _num(row.get("targetMedian")),
+        "source_url": _source_url("price-target-consensus", ticker),
+    }
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_price_target_summary(ticker: str) -> dict | None:
+    """Price-target summary by window: counts + average targets for last
+    month/quarter/year/all-time, plus the publisher list. None on failure.
+
+    FMP returns `publishers` as a JSON-encoded string ('["Benzinga", ...]');
+    normalized here to a real list ([] when absent/unparseable)."""
+    if not _has_key():
+        return None
+    ticker = ticker.upper()
+    cache_key = f"fmp_pt_summary:v2:{ticker}"
+    cached = _cache_get(cache_key, ANALYST_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("price-target-summary", {"symbol": ticker})
+    row = _first_row(data)
+    if row is None:
+        print(f"[FMP] price-target-summary: no data for {ticker}")
+        return None
+
+    publishers = row.get("publishers")
+    if isinstance(publishers, str):
+        try:
+            publishers = json.loads(publishers)
+        except (TypeError, ValueError):
+            publishers = None
+    if not isinstance(publishers, list):
+        publishers = []
+
+    out = {
+        "last_month_count": _int(row.get("lastMonthCount")),
+        "last_month_avg": _num(row.get("lastMonthAvgPriceTarget")),
+        "last_quarter_count": _int(row.get("lastQuarterCount")),
+        "last_quarter_avg": _num(row.get("lastQuarterAvgPriceTarget")),
+        "last_year_count": _int(row.get("lastYearCount")),
+        "last_year_avg": _num(row.get("lastYearAvgPriceTarget")),
+        "all_time_count": _int(row.get("allTimeCount")),
+        "all_time_avg": _num(row.get("allTimeAvgPriceTarget")),
+        "publishers": publishers,
+        "source_url": _source_url("price-target-summary", ticker),
+    }
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_analyst_grades(ticker: str, limit: int = 50) -> list[dict]:
+    """Recent analyst grade actions, newest first as FMP returns them:
+    [{date, firm, action, from_grade, to_grade, source_url}]. [] on
+    failure or no coverage (the steady state for most small banks).
+
+    Field names vary across FMP generations — tolerant mapping:
+    gradingCompany/company, previousGrade/fromGrade, newGrade/toGrade/grade.
+    """
+    if not _has_key():
+        return []
+    ticker = ticker.upper()
+    cache_key = f"fmp_grades:v2:{ticker}:{limit}"
+    cached = _cache_get(cache_key, GRADES_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("grades", {"symbol": ticker, "limit": limit})
+    if not isinstance(data, list) or not data:
+        print(f"[FMP] grades: no data for {ticker}")
+        return []
+    out = []
+    for r in data:
+        if not isinstance(r, dict):
+            continue
+        date = r.get("date")
+        out.append({
+            "date": str(date)[:10] if date else None,
+            "firm": _pick(r, "gradingCompany", "company", "analystCompany"),
+            "action": r.get("action"),
+            "from_grade": _pick(r, "previousGrade", "fromGrade"),
+            "to_grade": _pick(r, "newGrade", "toGrade", "grade"),
+            "source_url": _source_url("grades", ticker),
+        })
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_ratings_snapshot(ticker: str) -> dict | None:
+    """FMP's current composite rating + per-factor sub-scores:
+    {rating, overall_score, dcf_score, roe_score, roa_score,
+     debt_to_equity_score, pe_score, pb_score, source_url}.
+    None on failure."""
+    if not _has_key():
+        return None
+    ticker = ticker.upper()
+    cache_key = f"fmp_ratings:v2:{ticker}"
+    cached = _cache_get(cache_key, ANALYST_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("ratings-snapshot", {"symbol": ticker})
+    row = _first_row(data)
+    if row is None:
+        print(f"[FMP] ratings-snapshot: no data for {ticker}")
+        return None
+    out = {
+        "rating": row.get("rating"),
+        "overall_score": _int(row.get("overallScore")),
+        "dcf_score": _int(row.get("discountedCashFlowScore")),
+        "roe_score": _int(row.get("returnOnEquityScore")),
+        "roa_score": _int(row.get("returnOnAssetsScore")),
+        "debt_to_equity_score": _int(row.get("debtToEquityScore")),
+        "pe_score": _int(row.get("priceToEarningsScore")),
+        "pb_score": _int(row.get("priceToBookScore")),
+        "source_url": _source_url("ratings-snapshot", ticker),
+    }
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_executive_compensation(ticker: str) -> list[dict]:
+    """Named-executive compensation rows from DEF 14A proxies:
+    [{name, title, year, salary, bonus, stock_awards, incentive, other,
+      total, filing_url, source_url}]. [] on failure.
+
+    PLAN STATUS (live-probed 2026-06-12, WAL): NOT available on Starter —
+    stable/executive-compensation 404s, governance-executive-compensation
+    402s (premium), legacy v4 403s (sunset). Returns [] until either the
+    plan changes or the Compensation tab moves to DEF 14A parsing via
+    EDGAR directly (preferred: primary source).
+
+    `filing_url` is FMP's SEC archive link to the underlying proxy —
+    kept per the provenance rule (every displayed row links its DEF 14A);
+    `source_url` is the same link (endpoint URL only when FMP omits it).
+    FMP often returns name+title combined in `nameAndPosition`; mapping is
+    tolerant and `title` stays None when no separate field exists.
+    """
+    if not _has_key():
+        return []
+    ticker = ticker.upper()
+    cache_key = f"fmp_exec_comp:v2:{ticker}"
+    cached = _cache_get(cache_key, ANALYST_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("executive-compensation", {"symbol": ticker})
+    if not isinstance(data, list) or not data:
+        print(f"[FMP] executive-compensation: no data for {ticker}")
+        return []
+    out = []
+    for r in data:
+        if not isinstance(r, dict):
+            continue
+        filing = _pick(r, "link", "url", "filingUrl")
+        out.append({
+            "name": _pick(r, "name", "nameAndPosition"),
+            "title": _pick(r, "position", "title"),
+            "year": _int(r.get("year")),
+            "salary": _num(r.get("salary")),
+            "bonus": _num(r.get("bonus")),
+            "stock_awards": _num(_pick(r, "stockAward", "stockAwards")),
+            "incentive": _num(_pick(r, "incentivePlanCompensation",
+                                    "incentive")),
+            "other": _num(_pick(r, "allOtherCompensation", "other")),
+            "total": _num(r.get("total")),
+            "filing_url": filing,
+            "source_url": filing or _source_url("executive-compensation",
+                                                ticker),
+        })
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_insider_trading(ticker: str, limit: int = 50) -> list[dict]:
+    """Latest insider (Form 4) trades, newest first as FMP returns them:
+    [{filing_date, transaction_date, insider, relationship,
+      transaction_type, acquisition_or_disposition, shares, price,
+      shares_owned, security, form_type, source_url}]. [] on failure or
+    no recent filings.
+
+    `source_url` is the SEC EDGAR link to the underlying Form 4 when FMP
+    provides it (stable: `url`, legacy v4: `link`), else the endpoint URL.
+    The PRIMARY insider pipeline stays data/form4_client.py (EDGAR
+    direct); this is the independent FMP view for cross-checking.
+    """
+    if not _has_key():
+        return []
+    ticker = ticker.upper()
+    cache_key = f"fmp_insider:{ticker}:{limit}"
+    cached = _cache_get(cache_key, INSIDER_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("insider-trading/search",
+                {"symbol": ticker, "page": 0, "limit": limit})
+    if not isinstance(data, list) or not data:
+        print(f"[FMP] insider-trading: no data for {ticker}")
+        return []
+    out = []
+    for r in data:
+        if not isinstance(r, dict):
+            continue
+        f_date = r.get("filingDate")
+        t_date = r.get("transactionDate")
+        sec_link = _pick(r, "url", "link")
+        out.append({
+            "filing_date": str(f_date)[:10] if f_date else None,
+            "transaction_date": str(t_date)[:10] if t_date else None,
+            "insider": _pick(r, "reportingName", "name"),
+            "relationship": _pick(r, "typeOfOwner", "relationship"),
+            "transaction_type": r.get("transactionType"),
+            "acquisition_or_disposition":
+                r.get("acquisitionOrDisposition"),
+            "shares": _num(r.get("securitiesTransacted")),
+            "price": _num(r.get("price")),
+            "shares_owned": _num(r.get("securitiesOwned")),
+            "security": r.get("securityName"),
+            "form_type": r.get("formType"),
+            "source_url": sec_link or _source_url("insider-trading/search",
+                                                  ticker),
+        })
+    _cache_put(cache_key, out)
+    return out
 
 
 # ──────────────────────────────────────────────────────────────────────────

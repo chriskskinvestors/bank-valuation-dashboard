@@ -154,7 +154,7 @@ def render_rate_sensitivity(ticker: str):
 
     latest = hist[0]
 
-    st.subheader("📈 NIM Rate Sensitivity")
+    st.subheader("NIM Rate Sensitivity")
     st.caption(
         "Curve-based NIM scenarios: **3M rate** drives funding costs, "
         "**5Y rate** drives earning-asset yields. Steepening curve widens NIM; "
@@ -215,10 +215,10 @@ def render_rate_sensitivity(ticker: str):
     # showed two different "historical" betas. The phased/curve tabs are the
     # supported model.
     tab_phased, tab_named, tab_matrix, tab_backtest = st.tabs([
-        "📅 Multi-Year Impact (phased)",
-        "🎯 Named Curve Scenarios",
-        "🔥 Curve Matrix (3M × 5Y)",
-        "📊 Historical Fit",
+        "Multi-Year Impact (phased)",
+        "Named Curve Scenarios",
+        "Curve Matrix (3M × 5Y)",
+        "Historical Fit",
     ])
 
     with tab_phased:
@@ -234,7 +234,7 @@ def render_rate_sensitivity(ticker: str):
         _render_backtest(ticker, hist, mode_key, custom_beta)
 
     # ── Methodology ─────────────────────────────────────────────────────
-    with st.expander("📐 Methodology"):
+    with st.expander("Methodology"):
         st.markdown("""
         **Why 3M × 5Y?** Banks are structurally short-funded, long-invested:
         - **3M Treasury** ≈ cost of funds anchor (Fed funds, CD rates, money-market rates)
@@ -267,7 +267,7 @@ def render_rate_sensitivity(ticker: str):
 def _render_assumptions_panel(ticker, latest, hist, securities_ladder,
                               floating_share, cert=None, saved=None):
     """
-    "⚙️ My Assumptions" override panel: lets the analyst set their own
+    "My Assumptions" override panel: lets the analyst set their own
     subcategory deposit betas (NIB / IB-core / brokered) and asset durations
     (securities + fixed-loan), persisted per-bank in user_nim_assumptions.
 
@@ -309,7 +309,7 @@ def _render_assumptions_panel(ticker, latest, hist, securities_ladder,
     subcategory_betas = None
     asset_durations = None
 
-    with st.expander("⚙️ My Assumptions — override betas & durations",
+    with st.expander("My Assumptions — override betas & durations",
                      expanded=bool(saved)):
         use_overrides = st.checkbox(
             "Use my assumptions (override the deposit-beta selector above)",
@@ -392,7 +392,7 @@ def _render_assumptions_panel(ticker, latest, hist, securities_ladder,
 
         sv1, sv2, _sp = st.columns([1, 1, 3])
         with sv1:
-            if st.button("💾 Save assumptions", key=f"nim_save_{ticker}",
+            if st.button("Save assumptions", key=f"nim_save_{ticker}",
                          disabled=not cert, use_container_width=True):
                 try:
                     from data.nim_assumptions_store import upsert_assumptions
@@ -490,7 +490,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
         sec = None
 
     # Load any saved analyst overrides once, here, so both the floating-loan
-    # slider and the "⚙️ My Assumptions" panel below pre-fill consistently.
+    # slider and the "My Assumptions" panel below pre-fill consistently.
     cert = get_fdic_cert(ticker)
     saved_assumptions = None
     if cert:
@@ -562,13 +562,13 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
         ghist = compute_historical_growth_rates(hist) or {}
         ea_g = ghist.get("earning_assets_growth", 0.05) * 100
         st.caption(
-            f"📈 Historical YoY: loans **{ghist.get('loans_growth', 0)*100:+.1f}%** · "
+            f"Historical YoY: loans **{ghist.get('loans_growth', 0)*100:+.1f}%** · "
             f"deposits **{ghist.get('deposits_growth', 0)*100:+.1f}%** · "
             f"earning assets **{ea_g:+.1f}%** · "
             f"securities **{ghist.get('securities_growth', 0)*100:+.1f}%**"
         )
 
-    # ── ⚙️ My Assumptions: per-bank subcategory betas + asset durations ───
+    # ── My Assumptions: per-bank subcategory betas + asset durations ───
     # Lets the analyst inject their own deposit stickiness + asset-repricing
     # view (durations) instead of the noisy trailing-historical estimator.
     # When enabled, these override the beta selector at the top of the page.
@@ -592,7 +592,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
 
     if subcategory_betas:
         st.markdown(
-            ":violet-badge[⚙️ Using your saved assumptions] &middot; "
+            ":violet-badge[Using your saved assumptions] &middot; "
             f"blended IB beta **{result.get('beta_used', 0):.2f}** · "
             "subcategory betas + durations override the selector above."
         )

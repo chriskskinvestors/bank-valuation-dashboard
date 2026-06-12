@@ -14,7 +14,7 @@ def render_ownership(ticker: str):
     """Render 13F institutional holdings panel."""
     name = get_name(ticker)
 
-    st.subheader("🏛 Institutional Ownership (13F)")
+    st.subheader("Institutional Ownership (13F)")
     st.caption(
         "Top institutional holders from most recent 13F-HR filings (last ~90 days). "
         "Small banks may have limited 13F coverage."
@@ -77,10 +77,10 @@ def render_ownership(ticker: str):
     n_new = sum(1 for h in holders if h.get("change_status") == "New")
     n_unk = sum(1 for h in holders if h.get("change_status") == "Unknown")
     if n_added or n_trim or n_new or n_unk:
-        unk = f" · ❔ {n_unk} prior-quarter lookup failed" if n_unk else ""
+        unk = f" · {n_unk} prior-quarter lookup failed" if n_unk else ""
         st.caption(
-            f"**Vs prior quarter:** 🟢 {n_added} added · 🔴 {n_trim} trimmed · "
-            f"🆕 {n_new} new positions{unk} · click any **Filing ↗** for the source 13F-HR."
+            f"**Vs prior quarter:** {n_added} added · {n_trim} trimmed · "
+            f"{n_new} new positions{unk} · click any **Filing ↗** for the source 13F-HR."
         )
 
     # ── Holders table — each row links to its 13F-HR; change vs prior Q ──
@@ -88,7 +88,7 @@ def render_ownership(ticker: str):
         status = h.get("change_status")
         pct = h.get("change_pct")
         if status == "New":
-            return "🆕 New"
+            return "New"
         if status == "Unchanged":
             return "— Unch."
         if pct is None:

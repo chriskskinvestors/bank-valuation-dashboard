@@ -186,22 +186,21 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         st.info("Insufficient data for capital analysis.")
         return
 
-    st.subheader("💰 Capital Adequacy & Buyback Capacity")
+    st.subheader("Capital Adequacy & Buyback Capacity")
 
     # ── Alerts ─────────────────────────────────────────────────────────
     alerts = summary["alerts"]
     if alerts:
         for a in alerts:
             style = _SEVERITY_STYLE.get(a["severity"], _SEVERITY_STYLE["medium"])
-            icon = "🚨" if a["severity"] == "high" else "⚠️"
             st.markdown(
-                f'<div style="{style}">{icon} <strong>{a["message"]}</strong></div>',
+                f'<div style="{style}"><strong>{a["message"]}</strong></div>',
                 unsafe_allow_html=True,
             )
         st.markdown("")
     else:
         st.markdown(
-            f'<div style="{_SEVERITY_STYLE["ok"]}">✅ <strong>Capital position healthy — no alerts</strong></div>',
+            f'<div style="{_SEVERITY_STYLE["ok"]}"><strong>Capital position healthy — no alerts</strong></div>',
             unsafe_allow_html=True,
         )
 
@@ -427,14 +426,14 @@ def _render_capital_return_attribution(ticker: str):
     growth = result.get("growth", {})
     yld = result.get("yield", {})
 
-    st.subheader("💸 Capital Return Attribution")
+    st.subheader("Capital Return Attribution")
 
     div_source = result.get("dividend_source", "unknown")
     source_note = {
         "common-specific": "Common dividends (pure, excludes preferred).",
         "total minus preferred": "Common dividends (derived = total − preferred).",
-        "total (includes preferred)": "⚠️ Total dividends only (includes preferred; may overstate common by ~3-8% for banks with meaningful preferred stock).",
-        "unavailable": "⚠️ Dividend data not available in SEC filings.",
+        "total (includes preferred)": "Total dividends only (includes preferred; may overstate common by ~3-8% for banks with meaningful preferred stock).",
+        "unavailable": "Dividend data not available in SEC filings.",
     }.get(div_source, "")
 
     st.caption(
@@ -608,7 +607,7 @@ def _render_capital_return_attribution(ticker: str):
 
 
     # ── Quarterly detail table ─────────────────────────────────────────
-    with st.expander("📋 Quarterly detail (last 8 quarters)"):
+    with st.expander("Quarterly detail (last 8 quarters)"):
         df_disp = timeline.tail(8).copy()
 
         def _fmt_d(v):

@@ -216,7 +216,7 @@ def _render_filings_core(ticker: str):
 
     link_cols = st.columns(4)
     if ir_url:
-        link_cols[0].link_button("🌐 IR Page", ir_url)
+        link_cols[0].link_button("IR Page", ir_url)
     else:
         link_cols[0].caption("No IR page mapped")
 
@@ -224,14 +224,14 @@ def _render_filings_core(ticker: str):
         f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
         f"&CIK={cik}&type=&dateb=&owner=include&count=40"
     )
-    link_cols[1].link_button("📋 EDGAR Company Page", edgar_url)
+    link_cols[1].link_button("EDGAR Company Page", edgar_url)
 
     if cert:
         fdic_url = f"https://www.fdic.gov/analysis/bank-research/bankfind/index.html?CERT={cert}"
-        link_cols[2].link_button("🏦 FDIC BankFind", fdic_url)
+        link_cols[2].link_button("FDIC BankFind", fdic_url)
 
         ffiec_url = "https://cdr.ffiec.gov/public/ManageFacsimiles.aspx"
-        link_cols[3].link_button("📑 FFIEC Call Reports", ffiec_url)
+        link_cols[3].link_button("FFIEC Call Reports", ffiec_url)
     else:
         link_cols[2].caption("No FDIC cert")
         link_cols[3].caption("—")
@@ -277,7 +277,7 @@ def _render_filings_core(ticker: str):
         f"Press Releases ({len(press_releases)})",
         "Earnings Releases",
         "Annual & Quarterly",
-        "👥 Insider Activity",
+        "Insider Activity",
     ])
 
     with tab_all:
@@ -334,15 +334,15 @@ def _render_press_releases(press_releases: list[dict], ticker: str, cik: int):
         filing_url = pr.get("url", "")
 
         # Header with expandable detail
-        with st.expander(f"📰 {date} — {ticker} Earnings Release", expanded=(i == 0)):
+        with st.expander(f"{date} — {ticker} Earnings Release", expanded=(i == 0)):
             # Links row
             link_parts = []
             if pr_url:
-                link_parts.append(f"[📄 Press Release]({pr_url})")
+                link_parts.append(f"[Press Release]({pr_url})")
             if filing_url:
-                link_parts.append(f"[📋 8-K Filing]({filing_url})")
+                link_parts.append(f"[8-K Filing]({filing_url})")
             if pr.get("index_url"):
-                link_parts.append(f"[📁 All Documents]({pr['index_url']})")
+                link_parts.append(f"[All Documents]({pr['index_url']})")
 
             if link_parts:
                 st.markdown(" · ".join(link_parts))
@@ -517,8 +517,8 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
                 # Document links
                 links = []
                 if url:
-                    links.append(f"[📄 Filing]({url})")
+                    links.append(f"[Filing]({url})")
                 if f.get("index_url"):
-                    links.append(f"[📁 All Documents]({f['index_url']})")
+                    links.append(f"[All Documents]({f['index_url']})")
                 if links:
                     st.markdown(" · ".join(links))

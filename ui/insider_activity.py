@@ -20,7 +20,7 @@ def render_insider_activity(ticker: str):
         st.info("No SEC CIK available for this ticker.")
         return
 
-    st.subheader("👥 Insider Trading (Form 4)")
+    st.subheader("Insider Trading (Form 4)")
 
     with st.spinner("Fetching insider trades from SEC EDGAR..."):
         txs = fetch_insider_trades(cik, months_back=12)
@@ -141,7 +141,7 @@ def render_insider_activity(ticker: str):
 
     # ── Insider summary table ──────────────────────────────────────────
     if summary["insiders"]:
-        with st.expander(f"📋 Activity by insider ({len(summary['insiders'])} people)"):
+        with st.expander(f"Activity by insider ({len(summary['insiders'])} people)"):
             insider_rows = []
             for ins in summary["insiders"]:
                 net_ins = ins["buy_usd"] - ins["sell_usd"]

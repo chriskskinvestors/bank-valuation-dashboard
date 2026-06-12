@@ -148,22 +148,21 @@ def render_deposit_dynamics(ticker: str):
         return
 
     # ── Header ─────────────────────────────────────────────────────────
-    st.subheader("📊 Deposit Dynamics")
+    st.subheader("Deposit Dynamics")
 
     # ── Alerts ─────────────────────────────────────────────────────────
     alerts = summary["alerts"]
     if alerts:
         for a in alerts:
             style = _SEVERITY_STYLE.get(a["severity"], _SEVERITY_STYLE["medium"])
-            icon = "🚨" if a["severity"] == "high" else "⚠️"
             st.markdown(
-                f'<div style="{style}">{icon} <strong>{a["message"]}</strong></div>',
+                f'<div style="{style}"><strong>{a["message"]}</strong></div>',
                 unsafe_allow_html=True,
             )
         st.markdown("")
     else:
         st.markdown(
-            f'<div style="{_SEVERITY_STYLE["ok"]}">✅ <strong>Deposit profile stable — no alerts</strong></div>',
+            f'<div style="{_SEVERITY_STYLE["ok"]}"><strong>Deposit profile stable — no alerts</strong></div>',
             unsafe_allow_html=True,
         )
 

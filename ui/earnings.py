@@ -42,9 +42,9 @@ _MISS_STYLE = "background-color: rgba(220, 38, 38, 0.08); color: #dc2626; font-w
 _INLINE_STYLE = "background-color: rgba(217, 119, 6, 0.08); color: #d97706;"
 _NA_STYLE = "color: #999;"
 
-_BEAT_LABEL = "✅ Beat"
-_MISS_LABEL = "❌ Miss"
-_INLINE_LABEL = "➖ Inline"
+_BEAT_LABEL = "Beat"
+_MISS_LABEL = "Miss"
+_INLINE_LABEL = "Inline"
 _NA_LABEL = "—"
 
 
@@ -111,7 +111,7 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
     st.markdown("---")
 
     # ── Tabs for input methods ──────────────────────────────────────────
-    input_tab1, input_tab2 = st.tabs(["📝 Manual Input", "📄 Upload File"])
+    input_tab1, input_tab2 = st.tabs(["Manual Input", "Upload File"])
 
     with input_tab1:
         _render_manual_input(ticker)
@@ -209,7 +209,7 @@ def _render_auto_estimates(ticker: str, estimates: dict):
     if estimates.get("earnings_history"):
         past = [e for e in estimates["earnings_history"] if e.get("eps_estimate") is not None]
         if past:
-            with st.expander("📊 Past Earnings Surprises (from Yahoo Finance)"):
+            with st.expander("Past Earnings Surprises (from Yahoo Finance)"):
                 hist_rows = []
                 for e in past[:8]:
                     surprise = e.get("surprise_pct")
@@ -295,7 +295,7 @@ def _render_manual_input(ticker: str):
     with mc16:
         dps = st.number_input("Dividend/Share ($)", value=None, format="%.2f", key=f"m_dps_{ticker}", step=0.01)
 
-    if st.button("💾 Save Consensus", key=f"save_manual_{ticker}", type="primary"):
+    if st.button("Save Consensus", key=f"save_manual_{ticker}", type="primary"):
         if not period:
             st.error("Please enter a period (e.g. 2026Q1)")
         else:
@@ -488,7 +488,7 @@ def _render_comparison_table(comparison: list[dict]):
 def _render_key_metrics(ticker: str, actual_metrics: dict):
     """Show key reported metrics — every value click-to-source (same provenance
     as the Overview cards): FDIC ratios → Call Report, SEC per-share → 10-K/10-Q,
-    ROATCE → formula + inputs, with the one-time-item ⚠️ flag preserved."""
+    ROATCE → formula + inputs, with the one-time-item flag preserved."""
     st.markdown("---")
     st.subheader("Key Reported Metrics")
 
@@ -538,7 +538,7 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
         fdic_card("Efficiency", "EEFFR", "efficiency_ratio",
                   "Non-interest expense ÷ (net interest income + non-interest income)."),
         fdic_card("ROAA", "ROA", "roaa", "Annualized net income as a percent of average assets."),
-        {"label": ("ROATCE ⚠️" if (distorted and rn is not None) else "ROATCE"), "value": fmt("roatce_blended"),
+        {"label": ("ROATCE (one-time item)" if (distorted and rn is not None) else "ROATCE"), "value": fmt("roatce_blended"),
          "calc": make_calc("ROATCE", fmt("roatce_blended"), entity=entity, source="FDIC Call Report",
                            asof=asof, unit="%", ref="Computed from Call Report",
                            definition=("Blended trailing net income ÷ tangible common equity."
@@ -595,12 +595,12 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
 
     # ── Main tabs (reordered by usage priority) ─────────────────────────
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📅 Calendar",
-        "🌡 Surprise Heat-Map",
-        "📊 Beat / Miss",
-        "🎯 Biggest Surprises",
-        "📈 Sector Aggregates",
-        "📄 Upload / Input",
+        "Calendar",
+        "Surprise Heat-Map",
+        "Beat / Miss",
+        "Biggest Surprises",
+        "Sector Aggregates",
+        "Upload / Input",
     ])
 
     with tab1:
@@ -674,7 +674,7 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_
     with c1:
         st.metric(
             "Reporting This Week",
-            "⚠ n/a" if cal_failed else upcoming_7,
+            "n/a" if cal_failed else upcoming_7,
             delta="calendar feed unavailable" if cal_failed else f"{upcoming_14} in 14d",
             delta_color="off",
         )
@@ -1353,15 +1353,15 @@ def _render_upload_section(watchlist: list[str]):
 
     input_method = st.radio(
         "Input method",
-        ["📄 Bulk Upload (Multi-Bank)", "📝 Manual Entry (Single Bank)", "📄 Single File Upload"],
+        ["Bulk Upload (Multi-Bank)", "Manual Entry (Single Bank)", "Single File Upload"],
         key="overview_input_method",
         horizontal=True,
     )
 
-    if input_method == "📄 Bulk Upload (Multi-Bank)":
+    if input_method == "Bulk Upload (Multi-Bank)":
         _render_bulk_upload()
 
-    elif input_method == "📝 Manual Entry (Single Bank)":
+    elif input_method == "Manual Entry (Single Bank)":
         uc1, uc2 = st.columns([1, 1])
 
         with uc1:
@@ -1469,7 +1469,7 @@ def _render_bulk_upload():
         )
 
     if bulk_file and bulk_period:
-        if st.button("📥 Process Bulk Upload", type="primary", key="bulk_process"):
+        if st.button("Process Bulk Upload", type="primary", key="bulk_process"):
             file_bytes = bulk_file.read()
             filename = bulk_file.name.lower()
 
@@ -1487,7 +1487,7 @@ def _render_bulk_upload():
 
             if result["results"]:
                 st.success(
-                    f"✅ Loaded consensus for **{result['total_banks']} banks** "
+                    f"Loaded consensus for **{result['total_banks']} banks** "
                     f"({result['total_metrics']} total metrics) for period {bulk_period}"
                 )
 

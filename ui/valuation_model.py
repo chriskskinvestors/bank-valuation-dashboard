@@ -261,7 +261,7 @@ def render_valuation_model(ticker: str):
         st.warning("Limited SEC data — EPS/shares may be missing.")
 
     name = get_name(ticker)
-    st.subheader(f"💎 Valuation Model — {ticker}")
+    st.subheader(f"Valuation Model — {ticker}")
     st.caption(
         f"{name}. FCFE DCF + Warranted P/TBV with scenario sensitivity. "
         "Defaults are derived from trailing data; override any input."
@@ -270,7 +270,7 @@ def render_valuation_model(ticker: str):
     defaults = _derive_defaults(ticker, hist, sec)
 
     # ── Input: consensus override (upload) ─────────────────────────────
-    with st.expander("📂 Use uploaded consensus data"):
+    with st.expander("Use uploaded consensus data"):
         available = list_consensus(ticker)
         if not available:
             st.caption(
@@ -299,7 +299,7 @@ def render_valuation_model(ticker: str):
                             defaults["payout_ratio"] = min(0.95, float(m["value"]) * 4 / defaults["base_eps"])
 
     # ── Input controls ────────────────────────────────────────────────
-    with st.expander("⚙ Model inputs (click to edit)", expanded=False):
+    with st.expander("Model inputs (click to edit)", expanded=False):
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -450,11 +450,11 @@ def render_valuation_model(ticker: str):
 
     # ── Sensitivity Tabs ───────────────────────────────────────────────
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🔥 CoE × Terminal Growth",
-        "🔥 ROATCE × CoE (Warranted P/TBV)",
-        "🐂🐻 Bull / Base / Bear",
-        "🌪 Tornado + Implied IRR",
-        "🆚 Peer Warranted P/TBV",
+        "CoE × Terminal Growth",
+        "ROATCE × CoE (Warranted P/TBV)",
+        "Bull / Base / Bear",
+        "Tornado + Implied IRR",
+        "Peer Warranted P/TBV",
     ])
 
     with tab1:
@@ -608,7 +608,7 @@ def render_valuation_model(ticker: str):
     _render_consensus_vs_model(ticker, projected_eps, hist[0])
 
     # ── Notes ──────────────────────────────────────────────────────────
-    with st.expander("📐 Methodology"):
+    with st.expander("Methodology"):
         st.markdown("""
         **FCFE DCF (5-year explicit + Gordon terminal)**
         - FCFE per share = Projected EPS − (Δ loans per share × target CET1 ratio)
@@ -798,7 +798,7 @@ def _render_peer_warranted(ticker: str, coe_pct: float, terminal_g_pct: float):
         t = r["ticker"]
         is_self = (t == ticker)
         rows.append({
-            "": "👉" if is_self else "",
+            "": "▸" if is_self else "",
             "Ticker": t,
             "Bank": get_name(t)[:40],
             "ROATCE": f"{r['roatce']:.1f}%" if r["roatce"] else "—",
@@ -854,14 +854,14 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
 
     available = list_consensus(ticker)
     if not available:
-        st.markdown("##### 📋 Model vs Consensus")
+        st.markdown("##### Model vs Consensus")
         st.caption(
             "No consensus uploaded for this bank yet. Upload estimates in the "
             "Earnings tab to compare your model projection against street consensus."
         )
         return
 
-    st.markdown("##### 📋 Model vs Consensus")
+    st.markdown("##### Model vs Consensus")
 
     col_p, _ = st.columns([1, 3])
     with col_p:

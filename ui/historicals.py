@@ -145,7 +145,7 @@ def render_historicals(ticker: str):
     annual_df = _annualize(df)
 
     # Three sections
-    tab1, tab2, tab3 = st.tabs(["📈 Trend Charts", "📋 Quarterly Detail", "📊 Annual Summary"])
+    tab1, tab2, tab3 = st.tabs(["Trend Charts", "Quarterly Detail", "Annual Summary"])
 
     # ── TAB 1: Trend Charts ──────────────────────────────────────────────
     with tab1:
