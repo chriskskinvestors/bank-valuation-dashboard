@@ -385,9 +385,277 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             st.plotly_chart(fig4, use_container_width=True)
 
 
+    # ── RC-R Part I capital walk (SNL Capital Adequacy table) ──────────
+    st.markdown("---")
+    _render_rcr_capital_walk(ticker)
+
     # ── Capital Return Attribution (SEC-sourced) ────────────────────────
     st.markdown("---")
     _render_capital_return_attribution(ticker)
+
+
+def _render_rcr_capital_walk(ticker: str):
+    """
+    SNL-style regulatory-capital component walk from Schedule RC-R Part I
+    (stored call-report detail, data/call_report_store.get_stored_rcr_detail).
+
+    PROVENANCE: these are BANK SUBSIDIARY values — structurally different
+    from SNL's holdco (FR Y-9C) figures (e.g. TruPS/sub debt issued at the
+    holding company never appear in the bank's AT1; see the reconciliation
+    block above data/ffiec_client._RCR_CAPITAL_CODES). Every display carries
+    the "bank subsidiary (call report)" label.
+
+    Walk semantics (from get_rcr_capital_detail): values are $thousands as
+    filed; None = absent from the filing (rendered n/a), 0.0 = filed zero.
+    "Less" lines are filed as positive deduction amounts; the AOCI
+    adjustment is the items 9.a–9.e "LESS" lines negated, so positive =
+    capital added back. Ratios are computed (component ÷ RWA) and shown
+    only when both terms are present.
+    """
+    import streamlit.components.v1 as components
+    from datetime import datetime
+    from data.call_report_store import get_stored_rcr_detail
+    from data.bank_mapping import get_name
+    from ui.financial_highlights import _build_component, _fdic_doc
+    from utils.formatting import (num as _n, thou as _thou,
+                                  usd_compact_from_thousands as _usd)
+
+    st.subheader("Regulatory Capital Walk — bank subsidiary (call report)")
+
+    cert = get_fdic_cert(ticker)
+    details = get_stored_rcr_detail(cert, quarters=8) if cert else []
+    if not details:
+        st.info("RC-R capital walk unavailable — call report not yet ingested.")
+        return
+
+    st.caption(
+        "Schedule RC-R Part I of the FFIEC Call Report — BANK SUBSIDIARY "
+        "values, not holding-company: holdco figures (FR Y-9C / SEC) differ "
+        "structurally (e.g. TruPS or sub debt issued at the holding company "
+        "never appear in the bank's additional tier 1). Click any number for "
+        "its RC-R item / MDRM code or formula."
+    )
+
+    # Newest-first in the store → oldest-left / newest-right, matching the
+    # statement-tab column convention (ui/financials_statements).
+    details = list(reversed(details))
+
+    def _qlabel(p):
+        try:
+            m, _, y = str(p).split("/")
+            return f"Q{(int(m) - 1) // 3 + 1} '{y[2:]}"
+        except Exception:
+            return str(p)
+
+    def _doc(p):
+        try:
+            return _fdic_doc(cert, datetime.strptime(str(p), "%m/%d/%Y"))
+        except Exception:
+            return None
+
+    name = get_name(ticker) or ticker
+    entity = f"{name} ({ticker}) — bank subsidiary (call report)"
+    fdic_link = f"https://banks.data.fdic.gov/bankfind-suite/bankfind/details/{cert}"
+
+    def _calc(metric, v, asof, ref, terms, op, reported, doc):
+        return {"metric": metric, "entity": entity,
+                "source": "FFIEC Call Report — Schedule RC-R Part I",
+                "asof": asof, "unit": "", "ref": ref, "definition": "",
+                "terms": terms, "op": op, "reported": reported,
+                "link": (doc or {}).get("url") or fdic_link}
+
+    def _t(v):
+        """$000 term value; absent stays honest — never rendered as $0."""
+        return _thou(v) + " ($000)" if v is not None else "n/a — not in this filing"
+
+    # Row builders: each returns (display value, click-through calc dict).
+    # Item numbers are cited only where verified (RC-R Part I items 1–9, per
+    # the code map in data/ffiec_client); other lines cite the MDRM code.
+    def _rep(label, key, ref):
+        def b(det, asof, doc):
+            raw = _n(det.get(key))
+            v = _usd(raw)
+            return v, _calc(label, v, asof, ref,
+                            [{"label": label, "val": _t(raw), "doc": doc}],
+                            None, True, doc)
+        return b
+
+    def _intangibles(det, asof, doc):
+        label = "Less: intangibles (goodwill + other)"
+        total = _n(det.get("intangibles_deduction"))
+        gw = _n(det.get("goodwill_deduction"))
+        oth = _n(det.get("other_intangibles_deduction"))
+        v = _usd(total)
+        terms = [{"label": "Goodwill, net of DTLs (item 6, MDRM P841)",
+                  "val": _t(gw), "doc": doc},
+                 {"label": "Other intangibles ex-MSAs, net of DTLs (item 7, MDRM P842)",
+                  "val": _t(oth), "doc": doc}]
+        return v, _calc(label, v, asof, "Schedule RC-R Part I items 6 + 7",
+                        terms, "Goodwill deduction + other-intangibles deduction",
+                        False, doc)
+
+    def _aoci(det, asof, doc):
+        label = "AOCI adjustment (positive = added back)"
+        total = _n(det.get("aoci_adjustment"))
+        v = _usd(total)
+        comps = [("Unrealized gains (losses) on AFS (item 9.a, MDRM P844)",
+                  "aoci_adj_unrealized_afs"),
+                 ("Unrealized loss on AFS preferred/equity (item 9.b, MDRM P845)",
+                  "aoci_adj_afs_preferred"),
+                 ("Accumulated gains (losses) on CF hedges (item 9.c, MDRM P846)",
+                  "aoci_adj_cash_flow_hedges"),
+                 ("DB postretirement plan amounts (item 9.d, MDRM P847)",
+                  "aoci_adj_pension"),
+                 ("Unrealized gains (losses) on HTM (item 9.e, MDRM P848)",
+                  "aoci_adj_htm")]
+        terms = [{"label": lb, "val": _t(_n(det.get(k))), "doc": doc}
+                 for lb, k in comps]
+        return v, _calc(label, v, asof,
+                        "Schedule RC-R Part I items 9.a–9.e (AOCI opt-out banks)",
+                        terms,
+                        "−(sum of items 9.a–9.e \"LESS\" lines) — positive = "
+                        "unrealized losses removed from regulatory capital",
+                        False, doc)
+
+    def _other_adj(det, asof, doc):
+        label = "Other CET1 adjustments (residual)"
+        total = _n(det.get("other_cet1_adjustments"))
+        v = _usd(total)
+        terms = [{"label": "CET1 (MDRM P859)", "val": _t(_n(det.get("cet1"))), "doc": doc},
+                 {"label": "CET1 before adjustments (item 5, MDRM P840)",
+                  "val": _t(_n(det.get("cet1_before_adjustments"))), "doc": doc},
+                 {"label": "Intangibles deduction (items 6+7)",
+                  "val": _t(_n(det.get("intangibles_deduction")))},
+                 {"label": "DTA deduction (item 8, MDRM P843)",
+                  "val": _t(_n(det.get("dta_deduction"))), "doc": doc},
+                 {"label": "AOCI adjustment (items 9.a–9.e, negated)",
+                  "val": _t(_n(det.get("aoci_adjustment")))}]
+        return v, _calc(label, v, asof, "Residual — computed, not a filed line",
+                        terms,
+                        "CET1 − (CET1 before adj − intangibles − DTA + AOCI adj): "
+                        "residual catching threshold deductions and all other "
+                        "\"LESS\" items", False, doc)
+
+    def _t2_other(det, asof, doc):
+        label = "Other tier 2 components"
+        nq = _n(det.get("t2_nonqualifying_instruments"))
+        mi = _n(det.get("t2_minority_interest"))
+        res = _n(det.get("t2_other"))
+        present = [x for x in (nq, mi, res) if x is not None]
+        total = sum(present) if present else None
+        v = _usd(total)
+        terms = [{"label": "Non-qualifying capital instruments (MDRM P867)",
+                  "val": _t(nq), "doc": doc},
+                 {"label": "Total-capital minority interest (MDRM P868)",
+                  "val": _t(mi), "doc": doc},
+                 {"label": "Residual (Tier 2 − named components)", "val": _t(res)}]
+        return v, _calc(label, v, asof,
+                        "MDRM P867 + P868 + residual (computed)", terms,
+                        "Non-qualifying instruments + minority interest + "
+                        "residual, so instruments + allowance + other = Tier 2",
+                        False, doc)
+
+    def _ratio(label, num_key, num_label, num_code):
+        def b(det, asof, doc):
+            a, r = _n(det.get(num_key)), _n(det.get("rwa"))
+            v = f"{a / r * 100:.2f}%" if (a is not None and r) else "—"
+            terms = [{"label": f"{num_label} (MDRM {num_code})", "val": _t(a), "doc": doc},
+                     {"label": "Risk-weighted assets (MDRM A223)", "val": _t(r), "doc": doc}]
+            return v, _calc(label, v, asof, "Computed from Schedule RC-R Part I",
+                            terms, f"{num_label} ÷ risk-weighted assets × 100",
+                            False, doc)
+        return b
+
+    spec = [
+        ("Common Equity Tier 1", [
+            ("CET1 before adjustments & deductions",
+             _rep("CET1 before adjustments & deductions", "cet1_before_adjustments",
+                  "Schedule RC-R Part I item 5 (MDRM P840)")),
+            ("Less: intangibles (goodwill + other)", _intangibles),
+            ("Less: DTAs from carryforwards",
+             _rep("Less: DTAs from carryforwards", "dta_deduction",
+                  "Schedule RC-R Part I item 8 (MDRM P843)")),
+            ("AOCI adjustment (positive = added back)", _aoci),
+            ("Other CET1 adjustments (residual)", _other_adj),
+            ("Common equity tier 1 capital",
+             _rep("Common equity tier 1 capital", "cet1",
+                  "Schedule RC-R Part I (MDRM P859)")),
+        ]),
+        ("Tier 1", [
+            ("Additional tier 1 capital",
+             _rep("Additional tier 1 capital", "additional_tier1",
+                  "Schedule RC-R Part I (MDRM P865)")),
+            ("Tier 1 capital",
+             _rep("Tier 1 capital", "tier1",
+                  "Schedule RC-R Part I (MDRM 8274)")),
+        ]),
+        ("Tier 2 & Total Capital", [
+            ("Tier 2 instruments + surplus",
+             _rep("Tier 2 instruments + surplus", "t2_instruments",
+                  "Schedule RC-R Part I (MDRM P866)")),
+            ("Allowance includable in tier 2",
+             _rep("Allowance includable in tier 2", "t2_allowance",
+                  "Schedule RC-R Part I (MDRM 5310)")),
+            ("Other tier 2 components", _t2_other),
+            ("Tier 2 capital",
+             _rep("Tier 2 capital", "tier2",
+                  "Schedule RC-R Part I (MDRM 5311)")),
+            ("Total capital",
+             _rep("Total capital", "total_capital",
+                  "Schedule RC-R Part I (MDRM 3792)")),
+        ]),
+        ("Risk-Weighted Assets & Ratios", [
+            ("Total risk-weighted assets",
+             _rep("Total risk-weighted assets", "rwa",
+                  "Schedule RC-R Part I (MDRM A223)")),
+            ("CET1 ratio", _ratio("CET1 ratio", "cet1", "CET1 capital", "P859")),
+            ("Tier 1 ratio", _ratio("Tier 1 ratio", "tier1", "Tier 1 capital", "8274")),
+            ("Total capital ratio",
+             _ratio("Total capital ratio", "total_capital", "Total capital", "3792")),
+        ]),
+    ]
+
+    labels = [_qlabel(d.get("reporting_period")) for d in details]
+    asofs = [str(d.get("reporting_period")) for d in details]
+    docs = [_doc(d.get("reporting_period")) for d in details]
+
+    cells, rows_html, ri = {}, [], 0
+    cell_errors: list[str] = []
+    ncol = len(details)
+    for sec_name, rows in spec:
+        rows_html.append(f'<tr><td class="sec" colspan="{ncol + 1}">{sec_name}</td></tr>')
+        for label, builder in rows:
+            tds = [f'<td class="lbl">{label}</td>']
+            for ci, det in enumerate(details):
+                try:
+                    v, c = builder(det, asofs[ci], docs[ci])
+                except Exception as e:
+                    # A computation bug must not be indistinguishable from
+                    # "not reported" — collect and log once per render.
+                    cell_errors.append(f"{label}[{ci}]: {type(e).__name__}: {e}")
+                    v, c = "—", None
+                cid = f"rcr_{ri}_{ci}"
+                if c:
+                    cells[cid] = c
+                    tds.append(f'<td class="val" data-cid="{cid}">{v}</td>')
+                else:
+                    tds.append(f'<td class="val dead">{v}</td>')
+            zebra = ' class="zebra"' if ri % 2 == 1 else ""
+            rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
+            ri += 1
+
+    if cell_errors:
+        print(f"[capital walk] {ticker}: {len(cell_errors)} cell(s) failed "
+              f"to compute — {'; '.join(cell_errors[:5])}")
+
+    head = ('<th class="lblh">($ in thousands unless noted)</th>'
+            + "".join(f'<th class="colh">{lb}</th>' for lb in labels))
+    height = 96 + 23 * (ri + len(spec) + 1)
+    html = _build_component(head, "".join(rows_html), cells, entity,
+                            fdic_link, fdic_link)
+    components.html(html, height=height, scrolling=False)
+    st.caption(f"Latest: FFIEC Call Report {asofs[-1]} · stored RC-R Part I "
+               "detail (refreshed quarterly by the refresh-ffiec job).")
 
 
 def _render_capital_return_attribution(ticker: str):
