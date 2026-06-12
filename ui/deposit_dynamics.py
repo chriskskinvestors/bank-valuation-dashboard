@@ -19,7 +19,9 @@ from analysis.deposit_dynamics import summarize_bank_deposits
 from utils.formatting import fmt_dollars_from_thousands
 
 
-from utils.chart_style import ALERT_STYLE as _SEVERITY_STYLE
+from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
+                               COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY,
+                               COLOR_WARNING)
 
 
 def _fmt_quarter(ts) -> str:
@@ -200,13 +202,13 @@ def render_deposit_dynamics(ticker: str):
     fig1.add_trace(go.Scatter(
         x=timeline["date"], y=timeline["fed_funds"],
         name="Fed Funds", mode="lines+markers",
-        line=dict(color="#1a73e8", width=2, dash="dot"),
+        line=dict(color=COLOR_PRIMARY, width=2, dash="dot"),
         marker=dict(size=6),
     ))
     fig1.add_trace(go.Scatter(
         x=timeline["date"], y=timeline["cost_of_deposits"],
         name="Cost of Deposits", mode="lines+markers",
-        line=dict(color="#b71c1c", width=2.5),
+        line=dict(color=COLOR_DANGER, width=2.5),
         marker=dict(size=7),
     ))
     apply_standard_layout(
@@ -222,19 +224,19 @@ def render_deposit_dynamics(ticker: str):
         fig2.add_trace(go.Scatter(
             x=timeline["date"], y=timeline["nonint_dep_pct"],
             name="Non-Int Bearing", mode="lines+markers",
-            line=dict(color="#1b5e20", width=2.5),
+            line=dict(color=COLOR_SUCCESS, width=2.5),
         ))
         if "brokered_pct" in timeline.columns and timeline["brokered_pct"].notna().any():
             fig2.add_trace(go.Scatter(
                 x=timeline["date"], y=timeline["brokered_pct"],
                 name="Brokered", mode="lines+markers",
-                line=dict(color="#e65100", width=2),
+                line=dict(color=COLOR_WARNING, width=2),
             ))
         if "uninsured_pct" in timeline.columns and timeline["uninsured_pct"].notna().any():
             fig2.add_trace(go.Scatter(
                 x=timeline["date"], y=timeline["uninsured_pct"],
                 name="Uninsured", mode="lines+markers",
-                line=dict(color="#b71c1c", width=2, dash="dash"),
+                line=dict(color=COLOR_DANGER, width=2, dash="dash"),
             ))
         apply_standard_layout(
             fig2, title="Deposit Composition",
@@ -245,7 +247,7 @@ def render_deposit_dynamics(ticker: str):
     # Chart 3: QoQ Deposit Growth
     fig3 = go.Figure()
     colors = [
-        "#1b5e20" if (g is not None and g >= 0) else "#b71c1c"
+        COLOR_SUCCESS if (g is not None and g >= 0) else COLOR_DANGER
         for g in timeline["dep_qoq_growth"]
     ]
     fig3.add_trace(go.Bar(
@@ -253,7 +255,7 @@ def render_deposit_dynamics(ticker: str):
         marker_color=colors, name="QoQ Growth",
     ))
     fig3.add_hline(y=0, line_color="#666", line_width=1)
-    fig3.add_hline(y=-2, line_color="#b71c1c", line_width=1, line_dash="dash",
+    fig3.add_hline(y=-2, line_color=COLOR_DANGER, line_width=1, line_dash="dash",
                    annotation_text="Alert", annotation_position="bottom right",
                    annotation_font_size=10)
     apply_standard_layout(

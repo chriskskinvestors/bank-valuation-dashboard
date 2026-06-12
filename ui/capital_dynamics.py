@@ -16,7 +16,8 @@ from analysis.capital_dynamics import (
 from utils.formatting import fmt_dollars_from_thousands
 
 
-from utils.chart_style import ALERT_STYLE as _SEVERITY_STYLE
+from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
+                               COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER)
 
 
 def _pick_scale(max_abs_dollars: float) -> tuple[float, str]:
@@ -236,17 +237,17 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     fig1.add_trace(go.Scatter(
         x=timeline["date"], y=timeline["cet1_pct"],
         name="CET1", mode="lines+markers",
-        line=dict(color="#1a73e8", width=2.5),
+        line=dict(color=COLOR_PRIMARY, width=2.5),
         marker=dict(size=7),
     ))
-    fig1.add_hline(y=CET1_REG_MIN, line_color="#b71c1c", line_width=1, line_dash="dash",
+    fig1.add_hline(y=CET1_REG_MIN, line_color=COLOR_DANGER, line_width=1, line_dash="dash",
                     annotation_text=f"{CET1_REG_MIN}% reg min + buffer",
                     annotation_position="bottom right")
-    fig1.add_hline(y=CET1_BUFFER_FLOOR, line_color="#e65100", line_width=1, line_dash="dot",
+    fig1.add_hline(y=CET1_BUFFER_FLOOR, line_color=COLOR_WARNING, line_width=1, line_dash="dot",
                     annotation_text=f"{CET1_BUFFER_FLOOR}% comfort floor",
                     annotation_position="top right")
     if peer_cet1:
-        fig1.add_hline(y=peer_cet1, line_color="#1b5e20", line_width=1, line_dash="dashdot",
+        fig1.add_hline(y=peer_cet1, line_color=COLOR_SUCCESS, line_width=1, line_dash="dashdot",
                         annotation_text=f"Peer median {peer_cet1:.2f}%",
                         annotation_position="top left")
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
@@ -270,7 +271,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         fig2.add_trace(go.Scatter(
             x=timeline["date"], y=timeline["tbv_per_share"],
             name="TBV / Share", mode="lines+markers",
-            line=dict(color="#1b5e20", width=2.5),
+            line=dict(color=COLOR_SUCCESS, width=2.5),
             marker=dict(size=6),
         ))
         apply_standard_layout(
@@ -294,11 +295,11 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     fig3 = go.Figure()
     fig3.add_trace(go.Bar(
         x=timeline["date"], y=ni_scaled,
-        name="Net Income", marker_color="#1a73e8", opacity=0.85,
+        name="Net Income", marker_color=COLOR_PRIMARY, opacity=0.85,
     ))
     fig3.add_trace(go.Bar(
         x=timeline["date"], y=cr_scaled,
-        name="Capital Returned", marker_color="#b71c1c", opacity=0.85,
+        name="Capital Returned", marker_color=COLOR_DANGER, opacity=0.85,
     ))
     apply_standard_layout(
         fig3, title="Net Income vs Capital Returned",
@@ -344,9 +345,9 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             text=[f"${v:,.1f}{unit}" for v in wf_scaled],
             textposition="outside",
             connector={"line": {"color": "rgb(150,150,150)"}},
-            increasing={"marker": {"color": "#1b5e20"}},
-            decreasing={"marker": {"color": "#b71c1c"}},
-            totals={"marker": {"color": "#1a73e8"}},
+            increasing={"marker": {"color": COLOR_SUCCESS}},
+            decreasing={"marker": {"color": COLOR_DANGER}},
+            totals={"marker": {"color": COLOR_PRIMARY}},
         ))
         latest_ts = latest.get("date")
         if latest_ts is not None and hasattr(latest_ts, "month"):

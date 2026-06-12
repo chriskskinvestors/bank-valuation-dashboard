@@ -33,12 +33,13 @@ from data.estimates import (
     fetch_earnings_calendar,
     fetch_all_estimates,
 )
+from utils.chart_style import COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER
 
 
 # ── Beat/miss styling ───────────────────────────────────────────────────
-_BEAT_STYLE = "background-color: #e8f5e9; color: #1b5e20; font-weight: 600;"
-_MISS_STYLE = "background-color: #ffebee; color: #b71c1c; font-weight: 600;"
-_INLINE_STYLE = "background-color: #fff8e1; color: #e65100;"
+_BEAT_STYLE = "background-color: rgba(5, 150, 105, 0.08); color: #059669; font-weight: 600;"
+_MISS_STYLE = "background-color: rgba(220, 38, 38, 0.08); color: #dc2626; font-weight: 600;"
+_INLINE_STYLE = "background-color: rgba(217, 119, 6, 0.08); color: #d97706;"
 _NA_STYLE = "color: #999;"
 
 _BEAT_LABEL = "✅ Beat"
@@ -389,7 +390,7 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
     fig.add_trace(go.Bar(
         x=dates, y=actuals,
         name="Actual EPS",
-        marker_color=["#1b5e20" if s >= 0 else "#b71c1c" for s in surprises],
+        marker_color=[COLOR_SUCCESS if s >= 0 else COLOR_DANGER for s in surprises],
         opacity=0.7,
     ))
 
@@ -397,7 +398,7 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
         x=dates, y=estimates_vals,
         name="Consensus EPS",
         mode="lines+markers",
-        line=dict(color="#1a73e8", width=2, dash="dash"),
+        line=dict(color=COLOR_PRIMARY, width=2, dash="dash"),
         marker=dict(size=8),
     ))
 
@@ -408,7 +409,7 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
             text=f"{s:+.1f}%",
             showarrow=False,
             yshift=15,
-            font=dict(size=10, color="#1b5e20" if s >= 0 else "#b71c1c"),
+            font=dict(size=10, color=COLOR_SUCCESS if s >= 0 else COLOR_DANGER),
         )
 
     fig.update_layout(
@@ -835,8 +836,8 @@ def _render_surprise_heatmap(watchlist: list[str]):
         customdata=hover_matrix,
         hovertemplate="%{customdata}<extra></extra>",
         colorscale=[
-            [0, "#b71c1c"], [0.3, "#ef9a9a"], [0.5, "#fafafa"],
-            [0.7, "#a5d6a7"], [1, "#1b5e20"],
+            [0, COLOR_DANGER], [0.3, "#ef9a9a"], [0.5, "#fafafa"],
+            [0.7, "#a5d6a7"], [1, COLOR_SUCCESS],
         ],
         zmid=0,
         zmin=-20, zmax=20,
@@ -901,9 +902,9 @@ def _render_surprise_heatmap(watchlist: list[str]):
                 v = float(last_str.replace("%", "").replace("+", ""))
             except Exception:
                 return [""] * len(row)
-            if v > 5: return ["background-color: #e8f5e9;"] * len(row)
+            if v > 5: return ["background-color: rgba(5, 150, 105, 0.08);"] * len(row)
             if v > 1: return ["background-color: #f1f8e9;"] * len(row)
-            if v < -5: return ["background-color: #ffebee; color: #b71c1c;"] * len(row)
+            if v < -5: return ["background-color: rgba(220, 38, 38, 0.08); color: #dc2626;"] * len(row)
             if v < -1: return ["background-color: #fff3e0;"] * len(row)
             return [""] * len(row)
 
@@ -972,7 +973,7 @@ def _render_earnings_calendar(watchlist: list[str]):
             try:
                 d = int(days.replace("d", ""))
                 if d <= 7:
-                    return ["background-color: #fff8e1; color: #e65100;"] * len(row)
+                    return ["background-color: rgba(217, 119, 6, 0.08); color: #d97706;"] * len(row)
                 elif d <= 14:
                     return ["background-color: #f3f4f6;"] * len(row)
             except (ValueError, AttributeError):
@@ -1304,9 +1305,9 @@ def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watc
         # Beat/miss bar chart
         import plotly.graph_objects as go
         fig = go.Figure(data=[
-            go.Bar(name="Beat", x=["EPS"], y=[beats], marker_color="#1b5e20"),
-            go.Bar(name="Inline", x=["EPS"], y=[inlines], marker_color="#e65100"),
-            go.Bar(name="Miss", x=["EPS"], y=[misses], marker_color="#b71c1c"),
+            go.Bar(name="Beat", x=["EPS"], y=[beats], marker_color=COLOR_SUCCESS),
+            go.Bar(name="Inline", x=["EPS"], y=[inlines], marker_color=COLOR_WARNING),
+            go.Bar(name="Miss", x=["EPS"], y=[misses], marker_color=COLOR_DANGER),
         ])
         fig.update_layout(
             barmode="stack", height=200,

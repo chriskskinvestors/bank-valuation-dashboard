@@ -126,7 +126,8 @@ def peer_radar_chart(radar_data: dict) -> go.Figure:
         return fig
 
     fig = go.Figure()
-    colors = ["#64b5f6", "#00c853", "#ffd600", "#ff1744", "#ce93d8", "#4dd0e1"]
+    from utils.chart_style import CATEGORICAL_PALETTE
+    colors = CATEGORICAL_PALETTE
 
     for i, s in enumerate(series):
         values = s["values"] + [s["values"][0]]  # close the polygon
@@ -144,8 +145,11 @@ def peer_radar_chart(radar_data: dict) -> go.Figure:
         title="Peer Comparison (Percentile Rank)",
         polar=dict(
             bgcolor="rgba(0,0,0,0)",
-            radialaxis=dict(visible=True, range=[0, 100], gridcolor="rgba(255,255,255,0.1)"),
-            angularaxis=dict(gridcolor="rgba(255,255,255,0.1)"),
+            # Light-theme grid — the old white rgba gridlines were invisible
+            # on the app's white background.
+            radialaxis=dict(visible=True, range=[0, 100],
+                            gridcolor="rgba(15, 23, 42, 0.10)"),
+            angularaxis=dict(gridcolor="rgba(15, 23, 42, 0.10)"),
         ),
         **CHART_LAYOUT,
     )
@@ -169,9 +173,9 @@ def balance_sheet_chart(fdic_df: pd.DataFrame) -> go.Figure:
         return fig
     d = fdic_df.sort_values("REPDTE")
     fig = go.Figure()
-    for field, label, color in [("ASSET", "Total Assets", "#42a5f5"),
-                                ("LNLSNET", "Net Loans", "#26a69a"),
-                                ("DEP", "Total Deposits", "#ffb300")]:
+    for field, label, color in [("ASSET", "Total Assets", "#2563eb"),
+                                ("LNLSNET", "Net Loans", "#059669"),
+                                ("DEP", "Total Deposits", "#d97706")]:
         if field in d.columns:
             fig.add_trace(go.Scatter(
                 x=d["REPDTE"], y=d[field] / 1e6, mode="lines+markers", name=label,
@@ -217,7 +221,7 @@ def asset_composition_chart(fdic_df: pd.DataFrame) -> go.Figure:
     other = max(0.0, asset - loans - sec - cash)
     return _donut(["Net loans", "Securities", "Cash & balances", "Other"],
                   [loans, sec, cash, other], "Asset Composition (latest)",
-                  ["#1e88e5", "#26a69a", "#ffb300", "#b0bec5"])
+                  ["#2563eb", "#059669", "#d97706", "#94a3b8"])
 
 
 def loan_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
@@ -235,7 +239,7 @@ def loan_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
     return _donut(["1-4 Family residential", "CRE (income property)", "Construction",
                    "C&I", "Consumer", "Ag / other"],
                   [resi, cre, constr, ci, cons, ag + other], "Loan Mix (latest)",
-                  ["#42a5f5", "#5e35b1", "#ef6c00", "#2e7d32", "#00897b", "#b0bec5"])
+                  ["#2563eb", "#9333ea", "#ea580c", "#059669", "#0891b2", "#94a3b8"])
 
 
 def funding_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
@@ -249,7 +253,7 @@ def funding_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
     borrow = max(0.0, liab - dep)
     fig = _donut(["Non-int deposits", "Interest-bearing deposits", "Borrowings / other", "Equity"],
                  [nib, ib, borrow, equity], "Funding Mix (latest)",
-                 ["#43a047", "#1e88e5", "#fb8c00", "#8e24aa"])
+                 ["#059669", "#2563eb", "#d97706", "#9333ea"])
     unins = _b(r.get("DEPUNINS"))
     if dep and unins:
         fig.update_layout(title=f"Funding Mix (latest) · {unins/dep*100:.0f}% uninsured")
@@ -265,9 +269,9 @@ def growth_trend_chart(fdic_df: pd.DataFrame) -> go.Figure:
         return fig
     d = fdic_df.sort_values("REPDTE")
     fig = go.Figure()
-    for field, label, color in [("ASSET", "Assets", "#42a5f5"),
-                                ("LNLSNET", "Loans", "#26a69a"),
-                                ("DEP", "Deposits", "#ffb300")]:
+    for field, label, color in [("ASSET", "Assets", "#2563eb"),
+                                ("LNLSNET", "Loans", "#059669"),
+                                ("DEP", "Deposits", "#d97706")]:
         if field in d.columns and len(d) > 4:
             yoy = d[field].pct_change(4) * 100
             fig.add_trace(go.Scatter(
@@ -294,7 +298,7 @@ def loans_deposits_chart(fdic_df: pd.DataFrame) -> go.Figure:
     ld = (d["LNLSNET"] / d["DEP"] * 100)
     fig = go.Figure(go.Scatter(
         x=d["REPDTE"], y=ld, mode="lines+markers", name="Loans/Deposits",
-        line=dict(color="#00897b", width=2.5), marker=dict(size=4), fill="tozeroy",
+        line=dict(color="#0891b2", width=2.5), marker=dict(size=4), fill="tozeroy",
         fillcolor="rgba(0,137,123,0.06)",
         hovertemplate="%{x|%b %Y}<br>%{y:.1f}%<extra></extra>"))
     from utils.chart_style import tighten_yaxis, CHART_HEIGHT_COMPACT

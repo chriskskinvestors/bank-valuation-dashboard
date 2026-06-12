@@ -59,6 +59,17 @@ CUSTOM_CSS = """
         --radius-md: 10px;
         --radius-lg: 14px;
         --radius-xl: 20px;
+
+        /* Type scale — the ONLY font sizes inline HTML may use.
+           (The audit found 31 ad-hoc sizes between 0.55 and 1.2rem;
+           every new size must snap to one of these 7 steps.) */
+        --fs-2xs:  0.625rem;   /* 10px — pills, dense table captions */
+        --fs-xs:   0.6875rem;  /* 11px — captions, axis/meta labels */
+        --fs-sm:   0.75rem;    /* 12px — secondary text, table cells */
+        --fs-base: 0.875rem;   /* 14px — body */
+        --fs-md:   1rem;       /* 16px — emphasized body, card titles */
+        --fs-lg:   1.125rem;   /* 18px — section headings */
+        --fs-xl:   1.375rem;   /* 22px — page titles, hero numbers */
     }
 
     /* ═══════════════════════════════════════════════════════════════════

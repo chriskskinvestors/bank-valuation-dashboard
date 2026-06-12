@@ -19,24 +19,24 @@ from data.filing_summarizer import (
 
 # ── Color badges for form types ─────────────────────────────────────────
 FORM_COLORS = {
-    "10-K":     "#2e7d32",  # green
-    "10-K/A":   "#2e7d32",
-    "10-Q":     "#1565c0",  # blue
-    "10-Q/A":   "#1565c0",
+    "10-K":     "#059669",  # green
+    "10-K/A":   "#059669",
+    "10-Q":     "#2563eb",  # blue
+    "10-Q/A":   "#2563eb",
     "8-K":      "#616161",  # gray
     "8-K/A":    "#616161",
-    "DEF 14A":  "#6a1b9a",  # purple
-    "DEFA14A":  "#6a1b9a",
-    "S-1":      "#e65100",  # orange
-    "S-1/A":    "#e65100",
-    "S-3":      "#e65100",
-    "S-3/A":    "#e65100",
-    "4":        "#795548",  # brown
-    "3":        "#795548",
-    "SC 13D":   "#00695c",  # teal
-    "SC 13D/A": "#00695c",
-    "SC 13G":   "#00695c",
-    "SC 13G/A": "#00695c",
+    "DEF 14A":  "#9333ea",  # purple
+    "DEFA14A":  "#9333ea",
+    "S-1":      "#ea580c",  # orange
+    "S-1/A":    "#ea580c",
+    "S-3":      "#ea580c",
+    "S-3/A":    "#ea580c",
+    "4":        "#475569",  # brown
+    "3":        "#475569",
+    "SC 13D":   "#0891b2",  # teal
+    "SC 13D/A": "#0891b2",
+    "SC 13G":   "#0891b2",
+    "SC 13G/A": "#0891b2",
 }
 
 # 8-K item descriptions for human-readable labels

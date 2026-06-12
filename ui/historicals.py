@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 
 from data.bank_mapping import get_fdic_cert, get_name
 from data import fdic_client
+from utils.chart_style import COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING
 
 
 # Metrics to pull from FDIC for historical view
@@ -156,14 +157,14 @@ def render_historicals(ticker: str):
         nim = df["NIMY"].tolist()[::-1]
         ea_yield = df["INTINCY"].tolist()[::-1]
         cof = df["INTEXPY"].tolist()[::-1]
-        fig1.add_trace(go.Scatter(x=periods, y=nim, name="NIM", line=dict(color="#1a73e8", width=2)), row=1, col=1)
-        fig1.add_trace(go.Scatter(x=periods, y=ea_yield, name="EA Yield", line=dict(color="#2e7d32", width=1.5, dash="dot")), row=1, col=1)
-        fig1.add_trace(go.Scatter(x=periods, y=cof, name="Cost of Funds", line=dict(color="#c62828", width=1.5, dash="dot")), row=1, col=1)
+        fig1.add_trace(go.Scatter(x=periods, y=nim, name="NIM", line=dict(color=COLOR_PRIMARY, width=2)), row=1, col=1)
+        fig1.add_trace(go.Scatter(x=periods, y=ea_yield, name="EA Yield", line=dict(color=COLOR_SUCCESS, width=1.5, dash="dot")), row=1, col=1)
+        fig1.add_trace(go.Scatter(x=periods, y=cof, name="Cost of Funds", line=dict(color=COLOR_DANGER, width=1.5, dash="dot")), row=1, col=1)
 
         roa = df["ROA"].tolist()[::-1]
         eff = df["EEFFR"].tolist()[::-1]
-        fig1.add_trace(go.Scatter(x=periods, y=roa, name="ROAA", line=dict(color="#1a73e8", width=2)), row=1, col=2)
-        fig1.add_trace(go.Scatter(x=periods, y=eff, name="Efficiency", line=dict(color="#e65100", width=2)), row=1, col=2)
+        fig1.add_trace(go.Scatter(x=periods, y=roa, name="ROAA", line=dict(color=COLOR_PRIMARY, width=2)), row=1, col=2)
+        fig1.add_trace(go.Scatter(x=periods, y=eff, name="Efficiency", line=dict(color=COLOR_WARNING, width=2)), row=1, col=2)
 
         fig1.update_layout(height=230, margin=dict(t=32, b=24, l=40, r=14), font_size=11, showlegend=True, legend=dict(font_size=10))
         st.plotly_chart(fig1, use_container_width=True)
@@ -184,11 +185,11 @@ def render_historicals(ticker: str):
         deps = _scale("DEP")
         core = _scale("COREDEP") if "COREDEP" in df.columns else []
 
-        fig2.add_trace(go.Bar(x=periods, y=assets, name=f"Assets (${unit})", marker_color="#1a73e8", opacity=0.7), row=1, col=1)
-        fig2.add_trace(go.Bar(x=periods, y=loans, name=f"Loans (${unit})", marker_color="#2e7d32", opacity=0.7), row=1, col=1)
-        fig2.add_trace(go.Bar(x=periods, y=deps, name=f"Deposits (${unit})", marker_color="#1a73e8", opacity=0.7), row=1, col=2)
+        fig2.add_trace(go.Bar(x=periods, y=assets, name=f"Assets (${unit})", marker_color=COLOR_PRIMARY, opacity=0.7), row=1, col=1)
+        fig2.add_trace(go.Bar(x=periods, y=loans, name=f"Loans (${unit})", marker_color=COLOR_SUCCESS, opacity=0.7), row=1, col=1)
+        fig2.add_trace(go.Bar(x=periods, y=deps, name=f"Deposits (${unit})", marker_color=COLOR_PRIMARY, opacity=0.7), row=1, col=2)
         if core:
-            fig2.add_trace(go.Bar(x=periods, y=core, name=f"Core (${unit})", marker_color="#2e7d32", opacity=0.7), row=1, col=2)
+            fig2.add_trace(go.Bar(x=periods, y=core, name=f"Core (${unit})", marker_color=COLOR_SUCCESS, opacity=0.7), row=1, col=2)
 
         fig2.update_layout(height=210, margin=dict(t=32, b=24, l=40, r=14), font_size=11, barmode="group", showlegend=True, legend=dict(font_size=10))
         st.plotly_chart(fig2, use_container_width=True)
@@ -196,10 +197,10 @@ def render_historicals(ticker: str):
         # Chart 3: Credit Quality
         fig3 = go.Figure()
         npl = df["NCLNLSR"].tolist()[::-1]
-        fig3.add_trace(go.Scatter(x=periods, y=npl, name="NPL Ratio", fill="tozeroy", line=dict(color="#c62828", width=2), fillcolor="rgba(198,40,40,0.1)"))
+        fig3.add_trace(go.Scatter(x=periods, y=npl, name="NPL Ratio", fill="tozeroy", line=dict(color=COLOR_DANGER, width=2), fillcolor="rgba(198,40,40,0.1)"))
         if "IDT1CER" in df.columns:
             cet1 = df["IDT1CER"].tolist()[::-1]
-            fig3.add_trace(go.Scatter(x=periods, y=cet1, name="CET1 Ratio", line=dict(color="#2e7d32", width=2)))
+            fig3.add_trace(go.Scatter(x=periods, y=cet1, name="CET1 Ratio", line=dict(color=COLOR_SUCCESS, width=2)))
         fig3.update_layout(height=190, title="Credit Quality & Capital", margin=dict(t=32, b=24, l=40, r=14), font_size=11, legend=dict(font_size=10))
         st.plotly_chart(fig3, use_container_width=True)
 

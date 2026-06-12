@@ -124,11 +124,11 @@ def render_insider_activity(ticker: str):
         def _color_direction(row):
             d = row.get("Direction", "")
             if d == "Buy":
-                return ["background-color: #e8f5e9; color: #1b5e20;"] * len(row)
+                return ["background-color: rgba(5, 150, 105, 0.08); color: #059669;"] * len(row)
             elif d == "Sell":
-                return ["background-color: #ffebee; color: #b71c1c;"] * len(row)
+                return ["background-color: rgba(220, 38, 38, 0.08); color: #dc2626;"] * len(row)
             elif d == "Exercise":
-                return ["background-color: #fff8e1;"] * len(row)
+                return ["background-color: rgba(217, 119, 6, 0.08);"] * len(row)
             return [""] * len(row)
 
         styled = df.style.apply(_color_direction, axis=1).set_properties(
@@ -161,9 +161,9 @@ def render_insider_activity(ticker: str):
                     is_positive = net_str and not net_str.startswith("-")
                     is_nonzero = net_str not in ("$0", "—")
                     if is_positive and is_nonzero:
-                        return ["background-color: #e8f5e9;"] * len(row)
+                        return ["background-color: rgba(5, 150, 105, 0.08);"] * len(row)
                     elif not is_positive and is_nonzero:
-                        return ["background-color: #ffebee;"] * len(row)
+                        return ["background-color: rgba(220, 38, 38, 0.08);"] * len(row)
                 except Exception:
                     pass
                 return [""] * len(row)

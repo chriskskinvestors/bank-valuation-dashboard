@@ -389,7 +389,7 @@ def _render_peer_scatters(selected_peers: list[dict]):
 def _build_scatter(peers: list[dict], preset: dict, height: int = 320):
     """Build a single scatter plot from a preset config."""
     import plotly.graph_objects as go
-    from utils.chart_style import apply_standard_layout
+    from utils.chart_style import apply_standard_layout, COLOR_PRIMARY
 
     x_key = preset["x"]
     y_key = preset["y"]
@@ -433,7 +433,7 @@ def _build_scatter(peers: list[dict], preset: dict, height: int = 320):
         textfont=dict(size=10, color="#1a1a1a"),
         marker=dict(
             size=sizes,
-            color="#1a73e8",
+            color=COLOR_PRIMARY,
             opacity=0.65,
             line=dict(color="#0d47a1", width=1),
         ),

@@ -22,7 +22,10 @@ from analysis.rate_sensitivity import (
     DEFAULT_SCENARIOS_BPS, TEXTBOOK_INT_BEARING_BETA, NAMED_SCENARIOS,
 )
 from utils.formatting import fmt_dollars
-from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT
+from utils.chart_style import (
+    apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT,
+    COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING,
+)
 
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
@@ -33,13 +36,13 @@ def _nim_color(delta_bps: float | None) -> str:
     if delta_bps is None:
         return "#999"
     if delta_bps > 20:
-        return "#1b5e20"
+        return COLOR_SUCCESS
     if delta_bps > 0:
         return "#558b2f"
     if delta_bps < -20:
-        return "#b71c1c"
+        return COLOR_DANGER
     if delta_bps < 0:
-        return "#e65100"
+        return COLOR_WARNING
     return "#666"
 
 
@@ -896,14 +899,14 @@ def _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta):
         except Exception:
             return [""] * len(row)
         if bps > 25:
-            return ["background-color: #c8e6c9; color: #1b5e20;"] * len(row)
+            return ["background-color: #c8e6c9; color: #059669;"] * len(row)
         elif bps > 5:
-            return ["background-color: #e8f5e9;"] * len(row)
+            return ["background-color: rgba(5, 150, 105, 0.08);"] * len(row)
         elif bps < -25:
-            return ["background-color: #ffcdd2; color: #b71c1c;"] * len(row)
+            return ["background-color: rgba(220, 38, 38, 0.24); color: #dc2626;"] * len(row)
         elif bps < -5:
-            return ["background-color: #ffebee;"] * len(row)
-        return ["background-color: #f5f5f5;"] * len(row)
+            return ["background-color: rgba(220, 38, 38, 0.08);"] * len(row)
+        return ["background-color: #f1f5f9;"] * len(row)
 
     styled = df.style.apply(_style_row, axis=1).set_properties(
         **{"font-size": "0.82rem", "padding": "4px 8px"}
@@ -1068,14 +1071,14 @@ def _render_historical_nim_scatter(hist: list[dict]):
         fig.add_trace(go.Scatter(
             x=x_line, y=y_line,
             mode="lines",
-            line=dict(color="#b71c1c", width=2, dash="dash"),
+            line=dict(color=COLOR_DANGER, width=2, dash="dash"),
             name=f"Fit (β={slope_coef:+.2f}, R²={r_sq:.2f})",
         ))
 
     # Current slope marker (vertical line)
     if current_slope is not None:
         fig.add_vline(
-            x=current_slope, line_color="#1b5e20", line_width=2,
+            x=current_slope, line_color=COLOR_SUCCESS, line_width=2,
             annotation_text=f"Current slope: {current_slope:+.2f}pp",
             annotation_position="top right",
             annotation_font_size=11,
@@ -1150,14 +1153,14 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
 
     def _cell_color(val):
         if val is None or pd.isna(val):
-            return "background-color: #f5f5f5;"
+            return "background-color: #f1f5f9;"
         if val > 50: return "background-color: #66bb6a; color: white; font-weight: 600;"
         if val > 20: return "background-color: #a5d6a7;"
-        if val > 5: return "background-color: #e8f5e9;"
+        if val > 5: return "background-color: rgba(5, 150, 105, 0.08);"
         if val < -50: return "background-color: #ef5350; color: white; font-weight: 600;"
         if val < -20: return "background-color: #ef9a9a;"
-        if val < -5: return "background-color: #ffebee;"
-        return "background-color: #f5f5f5;"
+        if val < -5: return "background-color: rgba(220, 38, 38, 0.08);"
+        return "background-color: #f1f5f9;"
 
     st.markdown("##### Δ NIM Matrix (bps)")
     styled_nim = nim_df.style.map(_cell_color).format("{:+.0f}")
@@ -1179,17 +1182,17 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
 
     def _nii_cell_color(val):
         if val is None or pd.isna(val):
-            return "background-color: #f5f5f5;"
+            return "background-color: #f1f5f9;"
         # Scale thresholds proportionally to max
         if max_abs == 0: return ""
         ratio = val * nii_scale / max_abs if max_abs else 0
         if ratio > 0.5: return "background-color: #66bb6a; color: white; font-weight: 600;"
         if ratio > 0.2: return "background-color: #a5d6a7;"
-        if ratio > 0.05: return "background-color: #e8f5e9;"
+        if ratio > 0.05: return "background-color: rgba(5, 150, 105, 0.08);"
         if ratio < -0.5: return "background-color: #ef5350; color: white; font-weight: 600;"
         if ratio < -0.2: return "background-color: #ef9a9a;"
-        if ratio < -0.05: return "background-color: #ffebee;"
-        return "background-color: #f5f5f5;"
+        if ratio < -0.05: return "background-color: rgba(220, 38, 38, 0.08);"
+        return "background-color: #f1f5f9;"
 
     st.markdown(f"##### Δ NII Matrix (annualized, ${nii_unit})")
     styled_nii = nii_df.style.map(_nii_cell_color).format("${:+,.2f}")
@@ -1204,7 +1207,7 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
         text=[[f"{v:+.0f}" for v in row] for row in nim_mat],
         texttemplate="%{text}",
         textfont={"size": 11},
-        colorscale=[[0, "#b71c1c"], [0.5, "#f5f5f5"], [1, "#1b5e20"]],
+        colorscale=[[0, COLOR_DANGER], [0.5, "#f1f5f9"], [1, COLOR_SUCCESS]],
         zmid=0,
         hovertemplate="Δ3M %{y} bps<br>Δ5Y %{x} bps<br>ΔNIM: %{z:+.0f} bps<extra></extra>",
     ))

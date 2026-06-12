@@ -17,6 +17,7 @@ from analysis.dcf import (
 from analysis.deposit_dynamics import summarize_bank_deposits  # reuse helpers
 from data.consensus import list_consensus, load_consensus
 from utils.formatting import fmt_dollars
+from utils.chart_style import COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY
 
 
 # Shared loader (data/loaders); this tab keeps its lower history threshold
@@ -473,18 +474,18 @@ def render_valuation_model(ticker: str):
         # Format and color
         def _color_dcf(val):
             if val is None or pd.isna(val):
-                return "background-color: #f5f5f5; color: #999;"
+                return "background-color: #f1f5f9; color: #999;"
             if price is None:
                 return ""
             upside = (val / price - 1) * 100
             if upside > 20:
                 return "background-color: #c8e6c9;"
             elif upside > 5:
-                return "background-color: #e8f5e9;"
+                return "background-color: rgba(5, 150, 105, 0.08);"
             elif upside < -20:
-                return "background-color: #ffcdd2;"
+                return "background-color: rgba(220, 38, 38, 0.24);"
             elif upside < -5:
-                return "background-color: #ffebee;"
+                return "background-color: rgba(220, 38, 38, 0.08);"
             return "background-color: #fff3e0;"
 
         styled1 = grid_df.style.map(_color_dcf).format("${:.2f}", na_rep="—")
@@ -539,7 +540,7 @@ def render_valuation_model(ticker: str):
         scenarios = run_scenarios(base_params, bull_adj, bear_adj)
 
         scen_rows = []
-        for name, color in [("bull", "#1b5e20"), ("base", "#666"), ("bear", "#b71c1c")]:
+        for name, color in [("bull", COLOR_SUCCESS), ("base", "#666"), ("bear", COLOR_DANGER)]:
             s = scenarios[name]
             fv = s.get("fair_value_per_share")
             upside = ((fv / price - 1) * 100) if (fv and price) else None
@@ -556,10 +557,10 @@ def render_valuation_model(ticker: str):
         def _color_scen(row):
             label = row["Scenario"]
             if label == "Bull":
-                return ["background-color: #e8f5e9; color: #1b5e20;"] * len(row)
+                return ["background-color: rgba(5, 150, 105, 0.08); color: #059669;"] * len(row)
             elif label == "Bear":
-                return ["background-color: #ffebee; color: #b71c1c;"] * len(row)
-            return ["background-color: #f5f5f5;"] * len(row)
+                return ["background-color: rgba(220, 38, 38, 0.08); color: #dc2626;"] * len(row)
+            return ["background-color: #f1f5f9;"] * len(row)
 
         styled3 = scen_df.style.apply(_color_scen, axis=1)
         st.dataframe(styled3, use_container_width=True, hide_index=True)
@@ -571,7 +572,7 @@ def render_valuation_model(ticker: str):
         scen_fvs = [scenarios["bear"].get("fair_value_per_share") or 0,
                     scenarios["base"].get("fair_value_per_share") or 0,
                     scenarios["bull"].get("fair_value_per_share") or 0]
-        colors = ["#b71c1c", "#1a73e8", "#1b5e20"]
+        colors = [COLOR_DANGER, COLOR_PRIMARY, COLOR_SUCCESS]
         fig.add_trace(go.Bar(
             x=scen_names, y=scen_fvs,
             marker_color=colors,
@@ -662,13 +663,13 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
             gap = irr - base_params.get("cost_of_equity_pct", 10)
             if gap > 2:
                 label = "Undervalued"
-                color = "#1b5e20"
+                color = "var(--success)"
             elif gap < -2:
                 label = "Overvalued"
-                color = "#b71c1c"
+                color = "var(--danger)"
             else:
                 label = "Fair"
-                color = "#e65100"
+                color = "var(--warn)"
             st.markdown(
                 f"""<div style="padding:4px 0;">
                 <div style="font-size:0.85rem; color:#666;">IRR vs CoE</div>
@@ -711,14 +712,14 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=low_vals, y=labels, orientation="h",
-        marker_color="#b71c1c", name="Low adj",
+        marker_color=COLOR_DANGER, name="Low adj",
         base=base_fv,
         text=[f"${base_fv + v:.2f}" for v in low_vals],
         textposition="outside",
     ))
     fig.add_trace(go.Bar(
         x=high_vals, y=labels, orientation="h",
-        marker_color="#1b5e20", name="High adj",
+        marker_color=COLOR_SUCCESS, name="High adj",
         base=base_fv,
         text=[f"${base_fv + v:.2f}" for v in high_vals],
         textposition="outside",
@@ -726,7 +727,7 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
     fig.add_vline(x=base_fv, line_color="#000", line_width=2, line_dash="dash",
                   annotation_text=f"Base ${base_fv:.2f}", annotation_position="top")
     if price:
-        fig.add_vline(x=price, line_color="#1a73e8", line_width=2,
+        fig.add_vline(x=price, line_color=COLOR_PRIMARY, line_width=2,
                       annotation_text=f"Market ${price:.2f}",
                       annotation_position="bottom")
 
@@ -820,13 +821,13 @@ def _render_peer_warranted(ticker: str, coe_pct: float, terminal_g_pct: float):
         if row.get(""):  # highlight current bank
             base = ["background-color: #e3f2fd; font-weight: 600;"] * len(row)
         elif val > 20:
-            base = ["background-color: #c8e6c9; color: #1b5e20;"] * len(row)
+            base = ["background-color: #c8e6c9; color: #059669;"] * len(row)
         elif val > 5:
-            base = ["background-color: #e8f5e9;"] * len(row)
+            base = ["background-color: rgba(5, 150, 105, 0.08);"] * len(row)
         elif val < -20:
-            base = ["background-color: #ffcdd2; color: #b71c1c;"] * len(row)
+            base = ["background-color: rgba(220, 38, 38, 0.24); color: #dc2626;"] * len(row)
         elif val < -5:
-            base = ["background-color: #ffebee;"] * len(row)
+            base = ["background-color: rgba(220, 38, 38, 0.08);"] * len(row)
         return base
 
     styled = df.style.apply(_style_upside, axis=1).set_properties(
@@ -960,11 +961,11 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
     def _color(row):
         v = row["Verdict"]
         if v == "Above consensus":
-            return ["background-color: #e8f5e9; color: #1b5e20;"] * len(row)
+            return ["background-color: rgba(5, 150, 105, 0.08); color: #059669;"] * len(row)
         elif v == "Below consensus":
-            return ["background-color: #ffebee; color: #b71c1c;"] * len(row)
+            return ["background-color: rgba(220, 38, 38, 0.08); color: #dc2626;"] * len(row)
         elif v == "In line":
-            return ["background-color: #fff8e1;"] * len(row)
+            return ["background-color: rgba(217, 119, 6, 0.08);"] * len(row)
         return [""] * len(row)
 
     styled = df.style.apply(_color, axis=1).set_properties(

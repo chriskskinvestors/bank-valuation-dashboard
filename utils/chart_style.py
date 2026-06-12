@@ -97,7 +97,7 @@ def apply_standard_layout(fig, title: str = None, height: int = CHART_HEIGHT_FUL
     if show_legend:
         margin = dict(margin, b=margin["b"] + _LEGEND_BOTTOM_PAD)
     fig.update_layout(
-        title=dict(text=title, font=dict(size=13, color="#1a1a1a"),
+        title=dict(text=title, font=dict(size=13, color=_TEXT_PRIMARY),
                    x=0, xanchor="left", y=0.98, yanchor="top") if title else None,
         height=height,
         margin=margin,

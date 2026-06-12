@@ -15,7 +15,9 @@ from analysis.credit_dynamics import (
 )
 
 
-from utils.chart_style import ALERT_STYLE as _SEVERITY_STYLE
+from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
+                               COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY,
+                               COLOR_WARNING)
 
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
@@ -186,7 +188,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     fig2.add_trace(go.Scatter(
         x=timeline["date"], y=timeline["nco_ratio"],
         name="NCO Rate", mode="lines+markers",
-        line=dict(color="#b71c1c", width=2.5),
+        line=dict(color=COLOR_DANGER, width=2.5),
         marker=dict(size=6), fill="tozeroy",
         fillcolor="rgba(183,28,28,0.10)",
     ))
@@ -200,13 +202,13 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
         fig3.add_trace(go.Scatter(
             x=timeline["date"], y=timeline["past_due_30_89_pct"],
             name="30-89 Past Due", mode="lines+markers",
-            line=dict(color="#e65100", width=2),
+            line=dict(color=COLOR_WARNING, width=2),
         ))
     if "past_due_90_pct" in timeline.columns:
         fig3.add_trace(go.Scatter(
             x=timeline["date"], y=timeline["past_due_90_pct"],
             name="90+ Past Due", mode="lines+markers",
-            line=dict(color="#b71c1c", width=2),
+            line=dict(color=COLOR_DANGER, width=2),
         ))
     apply_standard_layout(fig3, title="Past Due Migration", height=CHART_HEIGHT_COMPACT,
                           yaxis_title="% of Loans", show_legend=True)
@@ -217,13 +219,13 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     fig4.add_trace(go.Scatter(
         x=timeline["date"], y=timeline["reserve_coverage"],
         name="Reserve / NPL", mode="lines+markers",
-        line=dict(color="#1b5e20", width=2.5),
+        line=dict(color=COLOR_SUCCESS, width=2.5),
         marker=dict(size=6),
     ))
-    fig4.add_hline(y=100, line_color="#b71c1c", line_width=1, line_dash="dash",
+    fig4.add_hline(y=100, line_color=COLOR_DANGER, line_width=1, line_dash="dash",
                     annotation_text="100% floor", annotation_position="bottom right")
     if peer_median:
-        fig4.add_hline(y=peer_median, line_color="#1a73e8", line_width=1, line_dash="dot",
+        fig4.add_hline(y=peer_median, line_color=COLOR_PRIMARY, line_width=1, line_dash="dot",
                         annotation_text=f"Peer median {peer_median:.0f}%", annotation_position="top right")
     apply_standard_layout(fig4, title="Reserve Coverage vs NPL", height=CHART_HEIGHT_COMPACT,
                           yaxis_title="Reserve / NPL", show_legend=False, hovermode="x")
@@ -273,11 +275,11 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
         fig = go.Figure()
         segments = [
             ("npl_ratio", "Total", "#0f172a", 3),
-            ("npl_cre", "CRE", "#b71c1c", 2),
-            ("npl_resi", "Residential", "#1a73e8", 2),
-            ("npl_multifam", "Multifamily", "#e65100", 2),
+            ("npl_cre", "CRE", COLOR_DANGER, 2),
+            ("npl_resi", "Residential", COLOR_PRIMARY, 2),
+            ("npl_multifam", "Multifamily", COLOR_WARNING, 2),
             ("npl_nres_re", "Non-Res RE", "#6a1b9a", 2),
-            ("npl_ci", "C&I", "#1b5e20", 2),
+            ("npl_ci", "C&I", COLOR_SUCCESS, 2),
             ("npl_consumer", "Consumer", "#ff6f00", 2),
         ]
         for key, label, color, width in segments:
