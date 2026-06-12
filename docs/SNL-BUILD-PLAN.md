@@ -198,8 +198,8 @@ SNL nav: Transactions Summary · Detailed M&A History · Detailed Offerings ·
 Private Equity Transactions · Comparable Deal Analysis.
 | Sub-tab | Source |
 |---|---|
-| Transactions Summary | roll-up of the others: counts, latest deals, capital actions |
-| Detailed M&A History | FDIC structure-change events per cert (mergers/absorptions — full history, public API) + Fed NIC transformations + our events-store M&A detections + 8-K/S-4 links |
+| Transactions Summary (CONFIRMED via screenshots) | Aggregate/Details toggle; transaction volume chart (count line + value bars, multi-decade); Top Transactions by Value table (announce/completion dates, target, buyer, type, $M); transaction-type pie (M&A / ECM / DCM / Shelf / Buyback counts); buyback announcement feed. ~~Top Advisers panels~~ SKIPPED (user X). Type classification = our own from filing type + PR text |
+| Detailed M&A History (CONFIRMED) | deal table: announce + completion dates, target, buyer, seller, value $M, acquisition vs sale, type (whole company / asset-or-branch), TARGET TOTAL ASSETS at announcement (computable from FDIC — incl. branch deals + terminated/withdrawn). Sources: FDIC structure events (completed) + events-store M&A detection + 8-K/S-4/PR (announcements, values, terminations) |
 | Detailed Offerings | EDGAR S-1/S-3/424B prospectuses + capital-raise 8-Ks (have filings ingestion) |
 | Private Equity Transactions | 13D/G + private-placement 8-Ks — public coverage is thin; honest sparse table |
 | Comparable Deal Analysis | COMPUTED deal comps: announced bank M&A (price from 8-K/PR) ÷ target financials at announcement (FDIC/SEC) → P/TBV paid, premium, deal-size multiples across our universe — a beat-SNL analytic |
@@ -226,6 +226,17 @@ Financials process) or a proposed layout confirmed before building.
 Rules: engine "computed kinds" for every derived row; n/a + flag for
 truly unsourceable lines (never imputed); every new field verified against
 BANR's actuals from these screenshots before shipping.
+
+**Universal linking rule (user, 2026-06-12): SNL-blue = navigable, ours
+too.** Every entity reference is a working link, not decoration:
+- bank/company names & tickers → their company page (?bank= deep link, HAVE)
+- filings/documents/exhibits → the EDGAR/FDIC/FFIEC document itself
+- deals/transactions → the source 8-K / press release / S-4
+- holders → holder detail view (cross-holdings filter at minimum)
+- branches/markets → the geographic view filtered to them
+- competitor/peer names in any report → their company page
+No dead blue text: if we can't link it yet, it renders as plain text until
+we can.
 
 **Provenance requirement (user, 2026-06-12): every number click-through like
 SNL** — (a) the formula popup showing the arithmetic WITH component values
