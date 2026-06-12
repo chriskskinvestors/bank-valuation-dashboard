@@ -13,6 +13,31 @@ Every change follows https://github.com/multica-ai/andrej-karpathy-skills/blob/m
 
 This platform runs real money. The cardinal rule: **never ship a plausible-wrong number** — when inputs violate preconditions, render n/a + flag, never a guess. The full audit and remediation log lives in `docs/AUDIT-2026-06-11.md`.
 
+## Go-live: ~2026-07-24 — operating rules until launch (user directive 2026-06-12)
+
+1. **Non-stop parallel throughput.** At all times: multiple background agents on
+   disjoint files + the main thread on judgment-heavy work (engine, math, layout
+   verification) + monitors on CI. Never idle while delegable work exists — the
+   plan docs (`docs/SNL-BUILD-PLAN.md`, `docs/HOME-MACRO-PLAN.md`, the audit doc)
+   ARE the queue; pull the next item the moment a thread frees, without being asked.
+2. **Perfect work — the bar never moves.** Every change: parse-checked, imported,
+   tested (hand-computed values for math), render-verified for UI, value-verified
+   against ground truth (filings/screenshots) for data, CI watched to green.
+   Deadline pressure changes the schedule, never the bar. If speed and correctness
+   conflict, correctness wins and the user is told the schedule cost.
+3. **No fake momentum.** Never report work as started or in-flight unless the tool
+   call actually ran. Status reports describe what is running, not what is intended.
+4. **Batch the serial parts.** Reviews, commits, and deploys batch; agents return
+   verified work; the main thread reviews before anything is committed.
+5. **Agents get specs, not vibes.** Every delegation names exact files, exact
+   verification commands, and "do NOT touch" boundaries — file overlap between
+   concurrent agents is forbidden.
+6. **Ask, don't assume.** When the user's intent isn't explicit — scope, layout,
+   what goes where, what something should contain — ask with concrete options
+   BEFORE building, not after. Inferences must be labeled as inferences and
+   confirmed before they become work. Plain, honest status communication: what
+   ran, what's running, what's waiting on whom — never optimistic paraphrase.
+
 ## Commands
 
 ```powershell
