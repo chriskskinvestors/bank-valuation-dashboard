@@ -110,6 +110,24 @@ per issuer (custom taxonomy extensions), so this needs a per-filing
 instance parse with a tolerant member matcher, NOT companyfacts. Distinct
 from tab 6 (regulatory composition, standardized categories, buildable now).
 
+## 10. Recent Documents (News & Filings → Filings upgrade)
+SNL's categorized document hub. Sources:
+| SNL panel | Source |
+|---|---|
+| Annuals/Interims (10-K/10-Q/AR + earnings releases) | EDGAR (have) + 8-K earnings exhibits |
+| Current Reports (8-K, press releases) | EDGAR (have) + wire feeds (have) |
+| Proxies (DEF/DEFA/PRE 14A) | EDGAR (have) |
+| Merger Documents (S-4, merger 8-Ks) | EDGAR (have) |
+| Prospectus (424B, S-1/S-3) | EDGAR (have) |
+| Key Exhibits (EX-21 subsidiaries, cap-stock descriptions, comp plans) | EDGAR filing-index exhibit parse (new) |
+| Transcripts & Presentations | FMP transcript endpoint (verify plan tier); investor decks via 8-K EX-99 |
+Layout (user, 2026-06-12): five SUB-TABS under News & Filings —
+"Filings & Reports", "Key Exhibits", "Press Releases", "Transcripts &
+Investor Presentations", "Events Calendar" — added via COMPANY_NAV +
+the renderer registry in ui/company_nav.py (structural test keeps them
+in sync). Existing Filings/Activity content folds into the new structure;
+keep the form-type filter inside Filings & Reports.
+
 ## Decisions (user, 2026-06-12)
 - **One tab END-TO-END at a time**, screenshot order: IS → BS → Capital →
   AQ Detail → AQ by Loan Type → Composition → IRR → FV → Loan Comp (As Rptd).
