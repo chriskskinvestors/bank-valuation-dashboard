@@ -3,7 +3,8 @@
 The visible redesign the audit's P3 plumbing was building toward. All
 decisions below are the user's; the bar: must not look like a Streamlit
 app, must read as an institutional terminal. Mockup sign-off REQUIRED
-before implementation ships.
+before implementation ships. **SIGNED OFF by user 2026-06-12** ("looks good"
+on the Income Statement mockup) — that mockup is the binding visual reference.
 
 ## Identity
 - **Theme:** refined light, sharpened. No dark mode for now.
