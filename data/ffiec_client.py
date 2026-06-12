@@ -776,6 +776,316 @@ def get_rcn_detail(
     return out
 
 
+# ── Schedule RC-R Part I regulatory-capital component walk ───────────────────
+# MDRM codes VERIFIED by value-matching Banner Bank's (RSSD 352772)
+# 12/31/2025 call report against the SNL FY-2025 Capital Adequacy screenshot
+# (docs/SNL-BUILD-PLAN.md tab 3). CAUTION on provenance: the SNL figures are
+# HOLDCO consolidated (FR Y-9C) while RC-R Part I is the bank subsidiary —
+# per-line reconciliation from that probe ($000, bank-sub vs SNL):
+#   • intangibles deduction  P841+P842 = 370,753+2,237 = 372,990 — EXACT match
+#   • AOCI add-back          −P844 = 213,012 vs 213,013 — $1k holdco rounding
+#   • T2 instruments         P866 = 0 vs 0 — EXACT match
+#   • cet1_before_adjustments 1,951,461 vs 1,946,297 — STRUCTURAL (holdco
+#     equity ≠ bank-sub equity)
+#   • dta_deduction          6,912 vs 7,151 — STRUCTURAL
+#   • other_cet1_adjustments 0 vs −5,002 — STRUCTURAL (holdco-only adj)
+#   • cet1                   1,784,571 vs 1,774,167 — STRUCTURAL
+#   • additional_tier1       0 vs 86,500 — STRUCTURAL (Banner's TruPS are
+#     issued at the holding company, never the bank subsidiary)
+#   • tier1                  1,784,571 vs 1,860,667 — STRUCTURAL
+#   • t2_allowance           173,048 vs 173,140 — STRUCTURAL (holdco ALLL)
+#   • tier2 / total capital  173,048 / 1,957,619 vs 173,140 / 2,033,807 — STRUCTURAL
+#   • rwa                    13,841,345 vs 13,848,813 — STRUCTURAL
+# The bank-sub walk reconciles INTERNALLY to the dollar:
+#   1,951,461 − 372,990 − 6,912 + 213,012 + 0 = 1,784,571 = P859 = 8274 (T1);
+#   0 + 173,048 = 5311 (T2); T1 + T2 = 3792 = 1,957,619. Label provenance
+#   "bank subsidiary (call report)" wherever these are displayed.
+#
+# RC-R Part I files on RCFA (FFIEC 031 consolidated) / RCOA (041/051
+# domestic) — plus RCFW/RCOW for advanced-approaches banks — NOT the
+# RCFD/RCON prefixes _lookup_concept knows. Handled locally by _lookup_rcr.
+_RCR_CAPITAL_CODES = {
+    # CET1 build-up (Part I items 1–5)
+    "common_stock_surplus": "P742",     # 1. common stock + surplus, net of treasury
+    "retained_earnings": "KW00",        # 2. retained earnings
+    "aoci": "B530",                     # 3. accumulated other comprehensive income
+    "cet1_minority_interest": "P839",   # 4. CET1 minority interest
+    "cet1_before_adjustments": "P840",  # 5. CET1 before adjustments & deductions
+    # CET1 deductions (items 6–8; filed as positive "LESS" amounts)
+    "goodwill_deduction": "P841",       # 6. goodwill net of associated DTLs
+    "other_intangibles_deduction": "P842",  # 7. intangibles other than goodwill/MSAs
+    "dta_deduction": "P843",            # 8. DTAs from NOL/tax-credit carryforwards
+    # AOCI-related adjustment components (items 9.a–9.e, AOCI opt-out banks;
+    # "LESS" items carrying their natural sign — Banner's P844 = −213,012
+    # unrealized AFS losses, so deducting it ADDS capital back)
+    "aoci_adj_unrealized_afs": "P844",  # 9.a net unrealized gains (losses) on AFS
+    "aoci_adj_afs_preferred": "P845",   # 9.b net unrealized loss on AFS preferred/equity
+    "aoci_adj_cash_flow_hedges": "P846",  # 9.c accumulated gains (losses) on CF hedges
+    "aoci_adj_pension": "P847",         # 9.d amounts attributed to DB postretirement
+    "aoci_adj_htm": "P848",             # 9.e net unrealized gains (losses) on HTM
+    # results
+    "cet1": "P859",                     # common equity tier 1 capital
+    "additional_tier1": "P865",         # additional tier 1 capital
+    "tier1": "8274",                    # tier 1 capital (CET1 + AT1)
+    # Tier 2 components
+    "t2_instruments": "P866",           # T2 capital instruments + surplus
+    "t2_nonqualifying_instruments": "P867",  # non-qualifying instruments in T2
+    "t2_minority_interest": "P868",     # total-capital minority interest
+    "t2_allowance": "5310",             # allowance includable in tier 2
+    "tier2": "5311",                    # tier 2 capital
+    "total_capital": "3792",            # total capital (T1 + T2)
+    "rwa": "A223",                      # total risk-weighted assets
+}
+
+# Consolidated before domestic; standardized (RCFA/RCOA) before
+# advanced-approaches (RCFW/RCOW); legacy RCFD/RCON as a fallback.
+_RCR_PREFIXES = ("RCFA", "RCOA", "RCFD", "RCON", "RCFW", "RCOW")
+
+
+def _lookup_rcr(df: pd.DataFrame, code: str) -> float | None:
+    """
+    Pull an RC-R Part I concept from a Call Report DataFrame.
+
+    Local to RC-R (does NOT change _lookup_concept's behavior for existing
+    callers): tries the RC-R prefix set in priority order and returns the
+    FIRST value found — never max() like _lookup_concept, because capital
+    items are legitimately negative (e.g. P844 unrealized AFS losses) and
+    max() would pick the wrong filer variant.
+    """
+    if df is None or df.empty or "mdrm" not in df.columns:
+        return None
+    mdrm_upper = df["mdrm"].astype(str).str.upper()
+    for prefix in _RCR_PREFIXES:
+        match = df[mdrm_upper == f"{prefix}{code}".upper()]
+        if match.empty:
+            continue
+        row = match.iloc[0]
+        dt = str(row.get("data_type", "")).lower()
+        v = (row.get("float_data") if dt == "float"
+             else row.get("int_data") if dt == "int" else None)
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (ValueError, TypeError):
+            continue
+        if not pd.isna(f):
+            return f
+    return None
+
+
+# Derived walk lines appended by get_rcr_capital_detail (scaled to *_usd too).
+_RCR_DERIVED_KEYS = (
+    "intangibles_deduction", "aoci_adjustment",
+    "other_cet1_adjustments", "t2_other",
+)
+
+
+def get_rcr_capital_detail(
+    rssd_id: int,
+    reporting_period: str | None = None,
+    call_report_df: pd.DataFrame | None = None,
+) -> dict | None:
+    """
+    Schedule RC-R Part I: the regulatory-capital component walk — the SNL
+    Capital Adequacy tab's T1 walk (intangibles / AOCI / DTA adjustments)
+    and T2 components that aren't in the FDIC financials feed (FDIC only
+    carries the capital TOTALS: RBCT1J/RBCT1/RBCT2/RBC/RWAJ).
+
+    Returns one key per _RCR_CAPITAL_CODES entry (raw $thousands as
+    reported) plus derived walk lines, each with a matching *_usd key
+    scaled by FFIEC_DOLLAR_SCALE:
+      • intangibles_deduction = goodwill + other intangibles (SNL "less
+        intangibles"; None unless at least one component was reported)
+      • aoci_adjustment = −(sum of items 9.a–9.e) — positive = capital
+        added back (the SNL "AOCI adjustments" line); None unless at least
+        one component was reported
+      • other_cet1_adjustments = cet1 − (cet1_before_adjustments
+        − intangibles − dta + aoci) — the residual catching threshold
+        deductions (MSAs/DTAs/investments above 25%), own-credit-risk Q258
+        and all other "LESS" items, exactly the SNL "other T1 adjustments"
+        plug; None when cet1 or cet1_before_adjustments is unreported
+      • t2_other = tier2 − named T2 components — same residual idea;
+        None when tier2 is unreported
+    Residuals treat absent named components as $0 (blank == $0 in the
+    filing), so the walk identities re-sum to the filed totals exactly:
+      cet1 = cet1_before − intangibles − dta + aoci + other_cet1_adjustments
+      tier2 = t2_instruments + t2_nonqualifying + t2_minority + t2_allowance + t2_other
+
+    A true $0 stays 0.0 — only codes absent from the filing map to None.
+    Returns None when the report has no RC-R Part I content at all (or in
+    local dev where FFIEC is unconfigured).
+    """
+    df = call_report_df
+    if df is None:
+        df = fetch_call_report(rssd_id, reporting_period)
+    if df is None or df.empty:
+        return None
+
+    vals = {key: _lookup_rcr(df, code)
+            for key, code in _RCR_CAPITAL_CODES.items()}
+
+    # Bank filed no RC-R Part I content (e.g. parse mismatch) — don't
+    # return a dict of all-Nones as if it were real data.
+    if all(v is None for v in vals.values()):
+        return None
+
+    out: dict = {
+        "reporting_period": reporting_period or latest_reporting_period(),
+        "rssd_id": int(rssd_id),
+        **vals,
+    }
+
+    def _sum_or_none(*keys: str) -> float | None:
+        """Sum components, but only when at least one was actually reported —
+        a true $0 must not be conflated with 'absent from the filing'."""
+        present = [vals[k] for k in keys if vals[k] is not None]
+        return sum(present) if present else None
+
+    # SNL "less intangibles" = goodwill + other intangibles deductions.
+    out["intangibles_deduction"] = _sum_or_none(
+        "goodwill_deduction", "other_intangibles_deduction")
+
+    # SNL "AOCI adjustments" = the items 9.a–9.e "LESS" lines negated, so
+    # positive = capital added back (unrealized losses removed from AOCI).
+    aoci_less = _sum_or_none(
+        "aoci_adj_unrealized_afs", "aoci_adj_afs_preferred",
+        "aoci_adj_cash_flow_hedges", "aoci_adj_pension", "aoci_adj_htm")
+    out["aoci_adjustment"] = -aoci_less if aoci_less is not None else None
+
+    # Residual "other T1 adjustments": filed CET1 minus the named walk
+    # lines (absent named lines are blank == $0 in the filing). Legitimately
+    # negative (threshold deductions); never forced.
+    if vals["cet1"] is not None and vals["cet1_before_adjustments"] is not None:
+        out["other_cet1_adjustments"] = vals["cet1"] - (
+            vals["cet1_before_adjustments"]
+            - (out["intangibles_deduction"] or 0.0)
+            - (vals["dta_deduction"] or 0.0)
+            + (out["aoci_adjustment"] or 0.0)
+        )
+    else:
+        out["other_cet1_adjustments"] = None
+
+    # Residual T2 component (e.g. P872 deductions, unrealized AFS-preferred
+    # gains includable) — filed tier 2 minus the named components.
+    if vals["tier2"] is not None:
+        named_t2 = sum(
+            v for k in ("t2_instruments", "t2_nonqualifying_instruments",
+                        "t2_minority_interest", "t2_allowance")
+            if (v := vals[k]) is not None)
+        out["t2_other"] = vals["tier2"] - named_t2
+    else:
+        out["t2_other"] = None
+
+    for key in list(_RCR_CAPITAL_CODES) + list(_RCR_DERIVED_KEYS):
+        v = out[key]
+        out[f"{key}_usd"] = v * FFIEC_DOLLAR_SCALE if v is not None else None
+    return out
+
+
+# ── Schedule RI-E: itemized other noninterest income/expense ────────────────
+# Codes verified against the Federal Reserve MDRM data dictionary
+# (apps/mdrm MDRM_CSV, pulled 2026-06-12) and live-probed on Banner Bank
+# (RSSD 352772, 12/31/2025): banks itemize a preprinted line only when it
+# crosses the reporting threshold, so most lines are legitimately absent —
+# Banner reports only data processing (C017 = 30,787) plus one labeled
+# income write-in (4461 = 2,186, TEXT4461 = "Merchant Fee Income"). Absent
+# lines render n/a, never $0 and never a fabricated split.
+_RI_E_EXPENSE_CODES = {
+    # Official MDRM item names in comments — labels shown in the UI.
+    "data_processing": "C017",        # DATA PROCESSING EXPENSES
+    "marketing_professional": "0497",  # MARKETING AND OTHER PROFESSIONAL SERVICES
+    "directors_fees": "4136",         # DIRECTORS' FEES
+    "printing_supplies": "C018",      # PRINTING; STATIONERY; AND SUPPLIES
+    "postage": "8403",                # OPERATING EXPENSES COMMUNICATIONS - POSTAGE
+    "legal": "4141",                  # LEGAL EXPENSE
+    "fdic_assessments": "4146",       # FEDERAL INSURANCE PREMIUM
+    "accounting_auditing": "F556",    # ACCOUNTING AND AUDITING EXPENSES
+    "consulting_advisory": "F557",    # CONSULTING AND ADVISORY EXPENSE
+    "atm_interchange": "F558",        # ATM AND INTERCHANGE EXPENSE
+    "telecommunications": "F559",     # TELECOMMUNICATIONS EXPENSE
+}
+
+# Free-text write-ins: amounts >10% of all-other noninterest income (4461-3)
+# / other noninterest expense (4464/4467/4468), each with a filed TEXT label.
+_RI_E_INCOME_WRITEINS = ("4461", "4462", "4463")
+_RI_E_EXPENSE_WRITEINS = ("4464", "4467", "4468")
+
+
+def _lookup_text(df: pd.DataFrame, code: str) -> str | None:
+    """Pull a filed free-text label (TEXTnnnn) from a Call Report DataFrame."""
+    if df is None or df.empty or "mdrm" not in df.columns:
+        return None
+    match = df[df["mdrm"].astype(str).str.upper() == f"TEXT{code}".upper()]
+    if match.empty:
+        return None
+    v = match.iloc[0].get("str_data")
+    s = str(v).strip() if v is not None and not pd.isna(v) else ""
+    return s or None
+
+
+def get_ri_e_detail(
+    rssd_id: int,
+    reporting_period: str | None = None,
+    call_report_df: pd.DataFrame | None = None,
+) -> dict | None:
+    """
+    Schedule RI-E: the itemized components of other noninterest income and
+    expense — the SNL IS-tab lines (marketing/professional, legal, FDIC
+    assessments, telecom, ...) plus the bank's own labeled write-ins.
+
+    Quarter semantics: RI-E is YTD like RI — callers needing discrete
+    quarters diff consecutive periods.
+
+    Returns:
+      • one key per _RI_E_EXPENSE_CODES entry (raw $thousands) + *_usd —
+        None when the line wasn't itemized (below threshold), 0.0 only for
+        a filed $0
+      • income_writeins / expense_writeins: [{label, value, value_usd}]
+        for the filed TEXT+amount pairs, in filing order, skipping pairs
+        with no amount
+    Returns None when the report carries no RI-E content at all (or in
+    local dev where FFIEC is unconfigured).
+    """
+    df = call_report_df
+    if df is None:
+        df = fetch_call_report(rssd_id, reporting_period)
+    if df is None or df.empty:
+        return None
+
+    out: dict = {
+        "reporting_period": reporting_period or latest_reporting_period(),
+        "rssd_id": int(rssd_id),
+    }
+    for key, code in _RI_E_EXPENSE_CODES.items():
+        out[key] = _lookup_riad(df, code)
+        out[f"{key}_usd"] = (out[key] * FFIEC_DOLLAR_SCALE
+                             if out[key] is not None else None)
+
+    def _writeins(codes: tuple) -> list[dict]:
+        rows = []
+        for code in codes:
+            v = _lookup_riad(df, code)
+            if v is None:
+                continue
+            rows.append({
+                "label": _lookup_text(df, code) or f"Write-in {code}",
+                "value": v,
+                "value_usd": v * FFIEC_DOLLAR_SCALE,
+            })
+        return rows
+
+    out["income_writeins"] = _writeins(_RI_E_INCOME_WRITEINS)
+    out["expense_writeins"] = _writeins(_RI_E_EXPENSE_WRITEINS)
+
+    # No preprinted line AND no write-in anywhere → the report carries no
+    # RI-E content; don't store an all-empty dict as if it were real data.
+    if (all(out[k] is None for k in _RI_E_EXPENSE_CODES)
+            and not out["income_writeins"] and not out["expense_writeins"]):
+        return None
+    return out
+
+
 def maturity_ladder_to_yearly_pace(ladder: dict) -> dict[int, float]:
     """
     Convert a 6-bucket maturity ladder to cumulative repricing fractions

@@ -366,12 +366,23 @@ class TestServedSnapshot(unittest.TestCase):
 
 def _ffiec_df(rows):
     """Build a synthetic Call Report DF in the ffiec-data-connect v3 long
-    form from (mdrm, value) pairs."""
-    return pd.DataFrame([{
-        "mdrm": m, "rssd": "999999", "quarter": "12/31/2025",
-        "data_type": "int", "int_data": v,
-        "float_data": None, "bool_data": None, "str_data": None,
-    } for m, v in rows])
+    form from (mdrm, value) pairs. TEXT* mnemonics become str rows (the
+    RI-E write-in labels); everything else is an int row."""
+    out = []
+    for m, v in rows:
+        if str(m).upper().startswith("TEXT"):
+            out.append({
+                "mdrm": m, "rssd": "999999", "quarter": "12/31/2025",
+                "data_type": "str", "int_data": None,
+                "float_data": None, "bool_data": None, "str_data": v,
+            })
+        else:
+            out.append({
+                "mdrm": m, "rssd": "999999", "quarter": "12/31/2025",
+                "data_type": "int", "int_data": v,
+                "float_data": None, "bool_data": None, "str_data": None,
+            })
+    return pd.DataFrame(out)
 
 
 class TestRiIncomeDetail(unittest.TestCase):
@@ -441,6 +452,107 @@ class TestCompanyNavRegistry(unittest.TestCase):
         from ui.company_nav import COMPANY_NAV
         all_leaves = [leaf for subs in COMPANY_NAV.values() for leaf in subs]
         self.assertEqual(len(all_leaves), len(set(all_leaves)))
+
+
+class TestRcrCapitalDetail(unittest.TestCase):
+    """Schedule RC-R Part I capital walk. Values are Banner Bank's filed
+    12/31/2025 call report (RSSD 352772, live-probed) — the walk identities
+    re-sum to the filed totals to the dollar:
+      1,951,461 − 372,990 − 6,912 + 213,012 + 0 = 1,784,571 (CET1)
+      0 + 173,048 + 0 = 173,048 (T2); total 1,957,619."""
+
+    BANNER = [
+        ("RCOAP840", 1_951_461),   # CET1 before adjustments
+        ("RCOAP841", 370_753),     # goodwill deduction
+        ("RCOAP842", 2_237),       # other intangibles deduction
+        ("RCOAP843", 6_912),       # DTA deduction
+        ("RCOAP844", -213_012),    # 9.a unrealized AFS losses (negative)
+        ("RCOAP859", 1_784_571),   # CET1
+        ("RCOAP865", 0),           # additional tier 1
+        ("RCOA8274", 1_784_571),   # tier 1
+        ("RCOAP866", 0),           # T2 instruments
+        ("RCOA5310", 173_048),     # T2 allowance
+        ("RCOA5311", 173_048),     # tier 2
+        ("RCOA3792", 1_957_619),   # total capital
+        ("RCOAA223", 13_841_345),  # RWA
+    ]
+
+    def _detail(self, rows):
+        from data.ffiec_client import get_rcr_capital_detail
+        return get_rcr_capital_detail(
+            999999, "12/31/2025", call_report_df=_ffiec_df(rows))
+
+    def test_banner_walk_identities(self):
+        d = self._detail(self.BANNER)
+        self.assertEqual(d["intangibles_deduction"], 372_990)
+        self.assertEqual(d["aoci_adjustment"], 213_012)  # losses added back
+        # Identity: cet1 = before − intangibles − dta + aoci + other
+        self.assertEqual(d["other_cet1_adjustments"], 0)
+        self.assertEqual(
+            d["cet1_before_adjustments"] - d["intangibles_deduction"]
+            - d["dta_deduction"] + d["aoci_adjustment"]
+            + d["other_cet1_adjustments"], d["cet1"])
+        # T2 residual: 173,048 − (0 + 173,048) = 0
+        self.assertEqual(d["t2_other"], 0)
+        self.assertEqual(d["total_capital"], 1_957_619)
+        self.assertEqual(d["rwa_usd"], 13_841_345_000)
+
+    def test_first_prefix_wins_not_max(self):
+        # Sign-safety: a negative RCOA value must beat a larger RCFW value
+        # (max() would pick the wrong filer variant for negative items).
+        rows = self.BANNER + [("RCFWP844", 999_999)]
+        d = self._detail(rows)
+        # RCOA comes before RCFW in priority — but RCFA comes FIRST: add one
+        rows2 = [("RCFAP844", -50_000)] + rows
+        d2 = self._detail(rows2)
+        self.assertEqual(d["aoci_adjustment"], 213_012)
+        self.assertEqual(d2["aoci_adjustment"], 50_000)
+
+    def test_no_rcr_content_returns_none(self):
+        d = self._detail([("RIAD4340", 123)])
+        self.assertIsNone(d)
+
+
+class TestRiEDetail(unittest.TestCase):
+    """Schedule RI-E itemizations. Banner Bank 12/31/2025 (live-probed):
+    only data processing crosses the threshold (C017 = 30,787) and one
+    labeled income write-in (4461 = 2,186 'Merchant Fee Income') — every
+    other preprinted line is None (below threshold), never $0."""
+
+    BANNER = [
+        ("RIADC017", 30_787),
+        ("RIAD4461", 2_186),
+        ("TEXT4461", "Merchant Fee Income"),
+    ]
+
+    def _detail(self, rows):
+        from data.ffiec_client import get_ri_e_detail
+        return get_ri_e_detail(
+            999999, "12/31/2025", call_report_df=_ffiec_df(rows))
+
+    def test_banner_itemization(self):
+        d = self._detail(self.BANNER)
+        self.assertEqual(d["data_processing"], 30_787)
+        self.assertEqual(d["data_processing_usd"], 30_787_000)
+        # Below-threshold preprinted lines are None — not $0
+        self.assertIsNone(d["marketing_professional"])
+        self.assertIsNone(d["fdic_assessments"])
+        self.assertEqual(d["income_writeins"], [{
+            "label": "Merchant Fee Income",
+            "value": 2_186, "value_usd": 2_186_000}])
+        self.assertEqual(d["expense_writeins"], [])
+
+    def test_filed_zero_stays_zero(self):
+        d = self._detail(self.BANNER + [("RIAD4141", 0)])
+        self.assertEqual(d["legal"], 0.0)
+        self.assertEqual(d["legal_usd"], 0.0)
+
+    def test_writein_without_text_gets_code_label(self):
+        d = self._detail([("RIAD4464", 5_000)])
+        self.assertEqual(d["expense_writeins"][0]["label"], "Write-in 4464")
+
+    def test_nothing_itemized_returns_none(self):
+        self.assertIsNone(self._detail([("RIAD4340", 123)]))
 
 
 if __name__ == "__main__":

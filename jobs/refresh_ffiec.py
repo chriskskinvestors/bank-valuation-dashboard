@@ -86,6 +86,40 @@ def _persist_rcn_detail(cert: int, rssd_id: int, period: str, df) -> str:
         return f"fail:{type(e).__name__}: {str(e)[:80]}"
 
 
+def _persist_rcr_detail(cert: int, rssd_id: int, period: str, df) -> str:
+    """Extract + store the Schedule RC-R Part I capital walk from an
+    already-fetched Call Report. 'ok' / 'no_data' / 'fail:<reason>';
+    never raises."""
+    from data.ffiec_client import get_rcr_capital_detail
+    from data.call_report_store import upsert_rcr_detail
+    try:
+        # get_rcr_capital_detail returns None (not all-Nones) when the
+        # report has no RC-R Part I content.
+        detail = get_rcr_capital_detail(rssd_id, period, call_report_df=df)
+        if detail is None:
+            return "no_data"
+        n = upsert_rcr_detail(cert, rssd_id, detail)
+        return "ok" if n else "fail:upsert_failed"
+    except Exception as e:
+        return f"fail:{type(e).__name__}: {str(e)[:80]}"
+
+
+def _persist_rie_detail(cert: int, rssd_id: int, period: str, df) -> str:
+    """Extract + store Schedule RI-E itemizations from an already-fetched
+    Call Report. 'ok' / 'no_data' / 'fail:<reason>'; never raises."""
+    from data.ffiec_client import get_ri_e_detail
+    from data.call_report_store import upsert_rie_detail
+    try:
+        # get_ri_e_detail returns None when no line was itemized at all.
+        detail = get_ri_e_detail(rssd_id, period, call_report_df=df)
+        if detail is None:
+            return "no_data"
+        n = upsert_rie_detail(cert, rssd_id, detail)
+        return "ok" if n else "fail:upsert_failed"
+    except Exception as e:
+        return f"fail:{type(e).__name__}: {str(e)[:80]}"
+
+
 def _refresh_one(
     cert: int, rssd_id: int, period: str,
 ) -> tuple[int, int, str, str, str]:
@@ -105,11 +139,17 @@ def _refresh_one(
     except Exception as e:
         return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", "no_data", "no_data"
 
-    # Schedule RI income detail and Schedule RC-N past-due/nonaccrual detail
-    # ride on the same fetched call report (never fetch twice) — persisted
-    # even when the bank has no RC-B securities ladder.
+    # Schedules RI, RC-N, RC-R Part I, and RI-E all ride on the same fetched
+    # call report (never fetch twice) — persisted even when the bank has no
+    # RC-B securities ladder. RC-R/RI-E statuses are logged per-bank below
+    # but don't widen the return tuple (callers track ri/rcn).
     ri_status = _persist_ri_detail(cert, rssd_id, period, df)
     rcn_status = _persist_rcn_detail(cert, rssd_id, period, df)
+    rcr_status = _persist_rcr_detail(cert, rssd_id, period, df)
+    rie_status = _persist_rie_detail(cert, rssd_id, period, df)
+    if rcr_status.startswith("fail") or rie_status.startswith("fail"):
+        print(f"  [warn] cert {cert}: rcr={rcr_status} rie={rie_status}",
+              flush=True)
 
     try:
         ladder = get_securities_maturity_ladder(rssd_id, period, call_report_df=df)

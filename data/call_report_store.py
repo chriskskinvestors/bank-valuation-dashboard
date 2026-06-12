@@ -41,6 +41,24 @@ Tables:
     PRIMARY KEY (cert, report_date)
   )
 
+  rcr_capital(
+    cert        INTEGER NOT NULL — FDIC certificate (joins bank)
+    rssd_id     INTEGER NOT NULL — Fed RSSD ID
+    report_date DATE NOT NULL    — quarter-end of the report
+    detail_json TEXT             — full get_rcr_capital_detail dict as JSON
+    ingested_at TIMESTAMP
+    PRIMARY KEY (cert, report_date)
+  )
+
+  rie_detail(
+    cert        INTEGER NOT NULL — FDIC certificate (joins bank)
+    rssd_id     INTEGER NOT NULL — Fed RSSD ID
+    report_date DATE NOT NULL    — quarter-end of the report (RI-E is YTD)
+    detail_json TEXT             — full get_ri_e_detail dict as JSON
+    ingested_at TIMESTAMP
+    PRIMARY KEY (cert, report_date)
+  )
+
 Public functions:
   • init_call_report_schema()                   — idempotent CREATE TABLE
   • upsert_securities_ladder(cert, rssd, ...)   — write one bank's data
@@ -50,6 +68,10 @@ Public functions:
   • get_stored_ri_detail(cert, quarters=8)      — read RI detail, newest-first
   • upsert_rcn_detail(cert, rssd, detail)       — write one bank-quarter's RC-N detail
   • get_stored_rcn_detail(cert, quarters=8)     — read RC-N detail, newest-first
+  • upsert_rcr_detail(cert, rssd, detail)       — write one bank-quarter's RC-R capital walk
+  • get_stored_rcr_detail(cert, quarters=8)     — read RC-R capital walk, newest-first
+  • upsert_rie_detail(cert, rssd, detail)       — write one bank-quarter's RI-E itemization
+  • get_stored_rie_detail(cert, quarters=8)     — read RI-E itemization, newest-first
 """
 
 from __future__ import annotations
@@ -143,6 +165,42 @@ def init_call_report_schema():
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_rcn_detail_date "
             "ON rcn_detail(report_date DESC)"
+        ))
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS rcr_capital (
+                cert        INTEGER NOT NULL,
+                rssd_id     INTEGER NOT NULL,
+                report_date DATE NOT NULL,
+                detail_json TEXT,
+                ingested_at {ts_default},
+                PRIMARY KEY (cert, report_date)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_rcr_capital_rssd "
+            "ON rcr_capital(rssd_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_rcr_capital_date "
+            "ON rcr_capital(report_date DESC)"
+        ))
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS rie_detail (
+                cert        INTEGER NOT NULL,
+                rssd_id     INTEGER NOT NULL,
+                report_date DATE NOT NULL,
+                detail_json TEXT,
+                ingested_at {ts_default},
+                PRIMARY KEY (cert, report_date)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_rie_detail_rssd "
+            "ON rie_detail(rssd_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_rie_detail_date "
+            "ON rie_detail(report_date DESC)"
         ))
 
 
@@ -385,6 +443,98 @@ def get_stored_ri_detail(cert: int, quarters: int = 8) -> list[dict]:
         detail["rssd_id"] = int(row.rssd_id or 0)
         out.append(detail)
     return out
+
+
+# Generic JSON-detail upsert/read used by the newer schedule tables
+# (rcr_capital, rie_detail). Third duplication of the ri/rcn pattern —
+# parametrized instead of copied; ri/rcn keep their tested originals.
+def _upsert_detail(table: str, cert: int, rssd_id: int, detail: dict) -> int:
+    from sqlalchemy import text
+    if not detail:
+        return 0
+    report_date = _parse_period(detail.get("reporting_period", ""))
+    if not report_date:
+        return 0
+    eng = _get_engine()
+    row = {"cert": int(cert), "rssd_id": int(rssd_id),
+           "report_date": report_date, "detail_json": json.dumps(detail)}
+    with eng.begin() as conn:
+        if _USE_POSTGRES:
+            sql = text(f"""
+                INSERT INTO {table}
+                  (cert, rssd_id, report_date, detail_json)
+                VALUES (:cert, :rssd_id, :report_date, :detail_json)
+                ON CONFLICT (cert, report_date) DO UPDATE SET
+                  rssd_id = EXCLUDED.rssd_id,
+                  detail_json = EXCLUDED.detail_json,
+                  ingested_at = NOW()
+            """)
+        else:
+            sql = text(f"""
+                INSERT OR REPLACE INTO {table}
+                  (cert, rssd_id, report_date, detail_json)
+                VALUES (:cert, :rssd_id, :report_date, :detail_json)
+            """)
+        conn.execute(sql, row)
+    return 1
+
+
+def _get_stored_detail(table: str, cert: int, quarters: int) -> list[dict]:
+    from sqlalchemy import text
+    eng = _get_engine()
+    with eng.begin() as conn:
+        rows = conn.execute(text(f"""
+            SELECT report_date, rssd_id, detail_json
+            FROM {table}
+            WHERE cert = :cert
+            ORDER BY report_date DESC
+            LIMIT :quarters
+        """), {"cert": int(cert), "quarters": int(quarters)}).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        try:
+            detail = json.loads(row.detail_json) if row.detail_json else None
+        except Exception as e:
+            print(f"[call_report_store] corrupted {table} JSON for cert "
+                  f"{cert}: {type(e).__name__}: {e}")
+            continue
+        if not detail:
+            continue
+        report_date = row.report_date
+        if hasattr(report_date, "strftime"):
+            detail["reporting_period"] = report_date.strftime("%m/%d/%Y")
+        else:
+            s = str(report_date)
+            try:
+                y, m, d = s[:10].split("-")
+                detail["reporting_period"] = f"{m}/{d}/{y}"
+            except Exception:
+                detail["reporting_period"] = s
+        detail["rssd_id"] = int(row.rssd_id or 0)
+        out.append(detail)
+    return out
+
+
+def upsert_rcr_detail(cert: int, rssd_id: int, detail: dict) -> int:
+    """Write one bank-quarter's RC-R capital walk
+    (ffiec_client.get_rcr_capital_detail dict). 1 on success, 0 otherwise."""
+    return _upsert_detail("rcr_capital", cert, rssd_id, detail)
+
+
+def get_stored_rcr_detail(cert: int, quarters: int = 8) -> list[dict]:
+    """Stored RC-R capital-walk dicts for a bank, newest-first."""
+    return _get_stored_detail("rcr_capital", cert, quarters)
+
+
+def upsert_rie_detail(cert: int, rssd_id: int, detail: dict) -> int:
+    """Write one bank-quarter's RI-E itemization
+    (ffiec_client.get_ri_e_detail dict). 1 on success, 0 otherwise."""
+    return _upsert_detail("rie_detail", cert, rssd_id, detail)
+
+
+def get_stored_rie_detail(cert: int, quarters: int = 8) -> list[dict]:
+    """Stored RI-E itemization dicts for a bank, newest-first."""
+    return _get_stored_detail("rie_detail", cert, quarters)
 
 
 def upsert_rcn_detail(cert: int, rssd_id: int, detail: dict) -> int:
