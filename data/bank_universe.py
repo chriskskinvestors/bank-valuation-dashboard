@@ -41,6 +41,18 @@ _SKIP_TICKERS = {
     "BNS",          # Bank of Nova Scotia (Canada)
     "ITUB",         # Itaú Unibanco (Brazil)
     "DB",           # Deutsche Bank (Germany) — covered above too via ETN dedup
+    "BAWAY", "BWAGF",  # BAWAG Group AG (Austria) — ADR + F-share, CIK 1968385
+}
+
+# US-domiciled only (explicit scope: US banks traded on exchanges or OTC).
+# SEC submissions mark incorporation with state codes; foreign issuers carry
+# country codes (BAWAG: "C4" = Austria). US states + DC + territories:
+_US_STATE_CODES = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",
+    "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN",
+    "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH",
+    "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA",
+    "WV", "WI", "WY", "PR", "GU", "VI", "AS", "MP",
 }
 
 
@@ -262,8 +274,15 @@ def _build_universe_live() -> dict[str, dict]:
             )
             if resp.status_code != 200:
                 continue
-            sic = resp.json().get("sic", "")
+            sub = resp.json()
+            sic = sub.get("sic", "")
             if sic not in BANK_SIC_CODES:
+                continue
+            # US-domiciled only: reject foreign-incorporated issuers (ADRs /
+            # F-shares like BAWAG, Austria) — they have no US-regulator data.
+            # Empty state codes are allowed (some US filers omit it).
+            state_inc = (sub.get("stateOfIncorporation") or "").strip().upper()
+            if state_inc and state_inc not in _US_STATE_CODES:
                 continue
 
             # Confirmed bank — try to find FDIC cert
