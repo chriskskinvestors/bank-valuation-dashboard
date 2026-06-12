@@ -25,6 +25,7 @@ from data.branches_store import (
     get_banks_by_state, get_banks_by_msa,
     get_branch_counts_by_ticker,
 )
+from ui.chrome import table_export
 
 
 def _fmt_dollars_k(thousands: float | int | None) -> str:
@@ -145,6 +146,9 @@ def render_geo_view():
                 })[["Ticker", "Bank", "Branches", "Deposits"]]
                 st.dataframe(table, use_container_width=True, hide_index=True,
                               height=min(500, 38 * (len(table) + 1) + 4))
+                # Underlying numeric frame (deposits in $K, unformatted)
+                table_export(banks_disp, f"banks_by_state_{state}",
+                             key=f"exp_banks_by_state_{state}")
 
             st.markdown(f"### Branch map — {len(branches_disp):,} branches")
             _render_map(branches_disp)
@@ -194,6 +198,9 @@ def render_geo_view():
                 })[["Ticker", "Bank", "Branches", "Deposits"]]
                 st.dataframe(table, use_container_width=True, hide_index=True,
                               height=min(500, 38 * (len(table) + 1) + 4))
+                # Underlying numeric frame (deposits in $K, unformatted)
+                table_export(banks_disp, f"banks_by_msa_{msa_code}",
+                             key=f"exp_banks_by_msa_{msa_code}")
 
             st.markdown(f"### Branch map — {len(branches_disp):,} branches")
             _render_map(branches_disp)
@@ -253,5 +260,7 @@ def render_geo_view():
             st.markdown(f"### Selected banks — combined {len(branches):,} branches")
             st.dataframe(agg, use_container_width=True, hide_index=True,
                           height=min(280, 38 * (len(agg) + 1) + 4))
+            table_export(agg, "selected_banks_branch_summary",
+                         key="exp_selected_banks_branch_summary")
 
         _render_map(branches)

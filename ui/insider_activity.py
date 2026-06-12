@@ -11,6 +11,7 @@ from data.bank_mapping import get_cik, get_name
 from data.form4_client import fetch_insider_trades, summarize_insider_activity
 from utils.formatting import fmt_dollars
 from utils.chart_style import apply_standard_layout, CHART_HEIGHT_COMPACT
+from ui.chrome import table_export
 
 
 def render_insider_activity(ticker: str):
@@ -138,6 +139,10 @@ def render_insider_activity(ticker: str):
             styled, use_container_width=True, hide_index=True,
             height=min(600, 50 + 30 * len(df)),
         )
+        # Underlying numeric transactions (unformatted shares/price/value)
+        table_export(pd.DataFrame(filtered[:limit]),
+                     f"insider_transactions_{ticker}",
+                     key=f"exp_insider_transactions_{ticker}")
 
     # ── Insider summary table ──────────────────────────────────────────
     if summary["insiders"]:
@@ -170,6 +175,10 @@ def render_insider_activity(ticker: str):
 
             styled = idf.style.apply(_color_net, axis=1)
             st.dataframe(styled, use_container_width=True, hide_index=True)
+            # Underlying numeric per-insider totals (unformatted USD)
+            table_export(pd.DataFrame(summary["insiders"]),
+                         f"insider_summary_{ticker}",
+                         key=f"exp_insider_summary_{ticker}")
 
     st.caption(
         "Form 4 trades filed with SEC EDGAR. Only non-derivative market trades (P=purchase, S=sale) "

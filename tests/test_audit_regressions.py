@@ -684,5 +684,94 @@ class TestDepositCostDetail(unittest.TestCase):
         self.assertIsNone(self._detail([("RIAD4340", 123)]))
 
 
+class TestDepositCostRateMath(unittest.TestCase):
+    """Deposit-cost rate math (ui/financials_statements._dep_quarterly_cost_rate
+    / _dep_annual_cost_rate): Schedule RI numerators are calendar-YTD while
+    RC-K denominators are single-quarter averages, so quarterly rates must
+    de-cumulate consecutive YTD flows and FY rates must average the four
+    quarterly balances. Hand-computed pins:
+      quarterly — YTD Q2 30,000, YTD Q1 14,000, avg_q2 1,520,000 ($000):
+        (30,000 − 14,000) ÷ 1,520,000 × 4 × 100 = 4.2105%;
+      annual — FY CD interest 54,368, quarterly avgs 1,500,000 / 1,520,000 /
+        1,540,000 / 1,539,845 → mean 1,524,961.25:
+        54,368 ÷ 1,524,961.25 × 100 = 3.5652% (displays 3.57%)."""
+
+    @classmethod
+    def setUpClass(cls):
+        # ui.financials_statements imports streamlit.components.v1 (via
+        # ui.financial_highlights); the module-level stub only registers
+        # the bare "streamlit" module.
+        comp_pkg = types.ModuleType("streamlit.components")
+        comp_v1 = types.ModuleType("streamlit.components.v1")
+        comp_v1.html = lambda *a, **k: None
+        comp_pkg.v1 = comp_v1
+        sys.modules.setdefault("streamlit.components", comp_pkg)
+        sys.modules.setdefault("streamlit.components.v1", comp_v1)
+        from ui.financials_statements import (_dep_quarterly_cost_rate,
+                                              _dep_annual_cost_rate,
+                                              _prior_quarter_end)
+        cls.qrate = staticmethod(_dep_quarterly_cost_rate)
+        cls.arate = staticmethod(_dep_annual_cost_rate)
+        cls.prior_qe = staticmethod(_prior_quarter_end)
+
+    def test_quarterly_decumulation_hand_check(self):
+        rate, reason = self.qrate(30_000, 14_000, 1_520_000, 2)
+        self.assertIsNone(reason)
+        self.assertAlmostEqual(rate, 16_000 / 1_520_000 * 4 * 100, places=9)
+        self.assertAlmostEqual(rate, 4.2105, places=4)
+        self.assertEqual(f"{rate:.2f}%", "4.21%")   # display rounding
+
+    def test_q1_uses_ytd_directly(self):
+        # Calendar YTD resets Jan 1 — Q1's YTD IS the discrete quarter.
+        rate, reason = self.qrate(14_000, None, 1_400_000, 1)
+        self.assertIsNone(reason)
+        self.assertAlmostEqual(rate, 14_000 / 1_400_000 * 4 * 100, places=9)
+
+    def test_missing_prior_is_na_never_raw_ytd(self):
+        # Raw YTD ÷ one quarter's average would overstate Q2 by ~2× — the
+        # function must refuse, not guess.
+        rate, reason = self.qrate(30_000, None, 1_520_000, 2)
+        self.assertIsNone(rate)
+        self.assertEqual(reason,
+                         "prior quarter not ingested — cannot de-cumulate YTD")
+
+    def test_quarterly_missing_inputs_are_na(self):
+        self.assertIsNone(self.qrate(None, 14_000, 1_520_000, 2)[0])
+        self.assertIsNone(self.qrate(30_000, 14_000, None, 2)[0])
+        self.assertIsNone(self.qrate(30_000, 14_000, 0, 2)[0])
+
+    def test_annual_hand_check(self):
+        avgs = [1_500_000, 1_520_000, 1_540_000, 1_539_845]
+        self.assertAlmostEqual(sum(avgs) / 4.0, 1_524_961.25, places=9)
+        rate, reason = self.arate(54_368, avgs)
+        self.assertIsNone(reason)
+        self.assertAlmostEqual(rate, 54_368 / 1_524_961.25 * 100, places=9)
+        self.assertAlmostEqual(rate, 3.5652, places=4)
+        self.assertEqual(f"{rate:.2f}%", "3.57%")   # display rounding
+
+    def test_annual_incomplete_avgs_is_na(self):
+        # Any missing quarterly average → n/a; never a 3-quarter mean (and
+        # NEVER FY interest ÷ the Q4-only average, which would be wrong).
+        rate, reason = self.arate(
+            54_368, [1_500_000, None, 1_540_000, 1_539_845])
+        self.assertIsNone(rate)
+        self.assertEqual(reason, "incomplete quarterly average history")
+        self.assertEqual(self.arate(54_368, [1_539_845])[1],
+                         "incomplete quarterly average history")
+
+    def test_annual_missing_interest_is_na(self):
+        rate, reason = self.arate(
+            None, [1_500_000, 1_520_000, 1_540_000, 1_539_845])
+        self.assertIsNone(rate)
+
+    def test_prior_quarter_end(self):
+        self.assertEqual(self.prior_qe(pd.Timestamp("2025-06-30")),
+                         pd.Timestamp("2025-03-31"))
+        self.assertEqual(self.prior_qe(pd.Timestamp("2026-03-31")),
+                         pd.Timestamp("2025-12-31"))
+        self.assertEqual(self.prior_qe(pd.Timestamp("2025-12-31")),
+                         pd.Timestamp("2025-09-30"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

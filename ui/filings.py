@@ -15,6 +15,7 @@ from data.filing_summarizer import (
     find_press_release_url,
     summarize_filing,
 )
+from ui.chrome import table_export
 
 
 # ── Color badges for form types ─────────────────────────────────────────
@@ -484,6 +485,9 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
     """
 
     st.markdown(table_html, unsafe_allow_html=True)
+    # Raw filing records (date, form, items, accession, urls)
+    table_export(pd.DataFrame(filings), f"filings_{key_prefix}_{ticker}",
+                 key=f"exp_filings_{key_prefix}_{ticker}")
     n_summ = sum(1 for f in filings if summaries.get((f.get("accession") or "").strip()))
     cap = f"Showing {len(filings)} filing{'s' if len(filings) != 1 else ''}"
     if n_summ:

@@ -354,5 +354,211 @@ class TestIncomeStatementRiRendersPopulated(unittest.TestCase):
         self.assertNotIn("$8.1M", h)
 
 
+class TestTableExports(unittest.TestCase):
+    """Design-system decision #12: every data table gets an Export action.
+    Pins the table_export contract (CSV bytes, .csv filename, widget key)
+    and exercises one of the new call sites (peer_rank leaderboard) with
+    populated data, asserting the exported CSV carries the UNFORMATTED
+    numeric values."""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_streamlit_stub()
+        import ui.chrome
+        cls.chrome = ui.chrome
+
+    def _capture_downloads(self):
+        """Patch download_button on the st module ui.chrome is bound to."""
+        calls = []
+        saved = self.chrome.st.download_button
+        self.chrome.st.download_button = (
+            lambda label, data, **k: calls.append((label, data, k)))
+        return calls, saved
+
+    def test_table_export_emits_csv_download(self):
+        import pandas as pd
+        calls, saved = self._capture_downloads()
+        try:
+            df = pd.DataFrame({"Ticker": ["BANR"], "NPL Ratio": [0.42]})
+            self.chrome.table_export(df, "peers_BANR", key="exp_peers_BANR")
+        finally:
+            self.chrome.st.download_button = saved
+        self.assertEqual(len(calls), 1, "table_export did not render a button")
+        label, data, kw = calls[0]
+        self.assertEqual(label, "Export")
+        self.assertEqual(kw["file_name"], "peers_BANR.csv")
+        self.assertEqual(kw["key"], "exp_peers_BANR")
+        self.assertEqual(kw["mime"], "text/csv")
+        self.assertIn("BANR", data)
+        self.assertIn("0.42", data)
+
+    def test_peer_rank_leaderboard_exports_numeric_csv(self):
+        import ui.peer_rank as pr
+        calls, saved = self._capture_downloads()
+        saved_grp, saved_name = pr.get_peer_group_for_bank, pr.get_name
+        try:
+            pr.get_peer_group_for_bank = lambda t, m, mode="size": m
+            pr.get_name = lambda t: f"{t} Bancorp"
+            cohort = [{"ticker": "BANR", "npl_ratio": 0.31},
+                      {"ticker": "EWBC", "npl_ratio": 0.55}]
+            pr._render_leaderboard("BANR", cohort, "npl_ratio", "size")
+        finally:
+            pr.get_peer_group_for_bank, pr.get_name = saved_grp, saved_name
+            self.chrome.st.download_button = saved
+        self.assertEqual(len(calls), 1, "leaderboard export was not rendered")
+        _label, data, kw = calls[0]
+        self.assertEqual(kw["file_name"], "peer_leaderboard_BANR_npl_ratio.csv")
+        self.assertEqual(kw["key"], "exp_peer_leaderboard_BANR_npl_ratio")
+        # npl_ratio is lower-is-better → BANR (0.31) ranks #1; values are the
+        # raw numerics, not display strings like "0.31%".
+        lines = data.strip().splitlines()
+        self.assertEqual(lines[0], "Rank,Ticker,Bank,Value")
+        self.assertEqual(lines[1], "1,BANR,BANR Bancorp,0.31")
+        self.assertEqual(lines[2], "2,EWBC,EWBC Bancorp,0.55")
+
+
+class TestPerformanceDepositCostRendersPopulated(unittest.TestCase):
+    """Performance Analysis deposit-cost split (Schedule RI 2.a / RC-K
+    stored detail) must render with POPULATED stored quarters — the
+    date-keyed join, YTD de-cumulation, FY quarterly-average mean and the
+    reconciliation gate actually execute. Hand-computed pins:
+      Q2 CD rate = (30,000 − 14,000) ÷ 1,520,000 × 4 × 100 = 4.21%;
+      FY CD rate = 54,368 ÷ mean(1,500,000; 1,520,000; 1,540,000;
+      1,539,845 = 1,524,961.25) × 100 = 3.5652% → 3.57%."""
+
+    STORED = [   # newest-first, the store's order
+        {"reporting_period": "12/31/2025", "rssd_id": 352772,
+         "int_cds": 54_368.0, "avg_cds": 1_539_845.0,
+         "int_other_ib": 148_172.0, "avg_other_ib": 7_897_276.0,
+         "reconciles": True},
+        {"reporting_period": "09/30/2025", "rssd_id": 352772,
+         "int_cds": 40_000.0, "avg_cds": 1_540_000.0,
+         "int_other_ib": 105_000.0, "avg_other_ib": 7_200_000.0,
+         "reconciles": True},
+        {"reporting_period": "06/30/2025", "rssd_id": 352772,
+         "int_cds": 30_000.0, "avg_cds": 1_520_000.0,
+         "int_other_ib": 65_000.0, "avg_other_ib": 7_100_000.0,
+         "reconciles": True},
+        {"reporting_period": "03/31/2025", "rssd_id": 352772,
+         "int_cds": 14_000.0, "avg_cds": 1_500_000.0,
+         "int_other_ib": 30_000.0, "avg_other_ib": 7_000_000.0,
+         "reconciles": True},
+    ]
+
+    HIST = [{"REPDTE": d} for d in
+            ("2025-03-31", "2025-06-30", "2025-09-30", "2025-12-31")]
+
+    @classmethod
+    def setUpClass(cls):
+        _install_streamlit_stub()
+        import ui.financials_statements
+        cls.fs = ui.financials_statements
+
+    def _render(self, hist_rows, stored, period="Annual"):
+        """Render Performance Analysis against fake FDIC history + stored
+        deposit-cost rows; returns captured iframe HTML list. Patches the
+        module objects ui.financials_statements is BOUND to (fs.components,
+        fs.st) — each _install_streamlit_stub() call rebuilds sys.modules
+        stubs, so the entries there can be newer objects than fs's."""
+        import pandas as pd
+        comp_v1 = self.fs.components   # `import streamlit.components.v1 as components`
+        st = self.fs.st
+        import data.call_report_store as crs
+        import data.fdic_client as fc
+        captured = []
+        saved = (comp_v1.html, st.radio, self.fs.get_bank_info,
+                 fc.get_historical_financials,
+                 crs.get_stored_deposit_cost_detail)
+        try:
+            comp_v1.html = lambda html, **k: captured.append(html)
+            st.radio = lambda label, options=None, **k: period
+            self.fs.get_bank_info = lambda t: {
+                "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
+            fc.get_historical_financials = (
+                lambda cert, quarters=36:
+                pd.DataFrame([dict(r) for r in hist_rows]))
+            crs.get_stored_deposit_cost_detail = (
+                lambda cert, quarters=8: [dict(r) for r in stored])
+            self.fs.render_performance_analysis("BANR")
+        finally:
+            (comp_v1.html, st.radio, self.fs.get_bank_info,
+             fc.get_historical_financials,
+             crs.get_stored_deposit_cost_detail) = saved
+        return captured
+
+    def test_quarterly_decumulation_renders_hand_checked_rates(self):
+        html = self._render(self.HIST, self.STORED, period="Quarterly")
+        self.assertEqual(len(html), 1, "statement iframe was not rendered")
+        h = html[0]
+        # Block + provenance labels.
+        self.assertIn("bank subsidiary (call report)", h)
+        self.assertIn("Cost of CDs (%)", h)
+        self.assertIn("Cost of other interest-bearing deposits (%)", h)
+        # Q2 CD rate (de-cumulated): (30,000 − 14,000) ÷ 1,520,000 × 400
+        # = 4.2105% → 4.21%. Q1 uses YTD directly: 14,000 ÷ 1,500,000 ×
+        # 400 = 3.73%; Q2 other-IB: 35,000 ÷ 7,100,000 × 400 = 1.97%.
+        self.assertIn("4.21%", h)
+        self.assertIn("3.73%", h)
+        self.assertIn("1.97%", h)
+        # Click-through: full de-cumulation formula + both code sets. The
+        # cells dict is embedded via json.dumps (ensure_ascii) — compare
+        # against the same escaped form.
+        import json as _json
+        formula = "(YTD_q − YTD_q−1) ÷ avg_q × 4 × 100"
+        self.assertIn(_json.dumps(formula)[1:-1], h)
+        self.assertIn("RIADHK03 + RIADHK04", h)
+        self.assertIn("RCONHK16 + RCONHK17", h)
+        self.assertIn("RIAD4508 + RIAD0093", h)
+        self.assertIn("RCON3485 + RCONB563", h)
+        # Component $ rows cite the schedules; filed $000 terms present.
+        self.assertIn("Schedule RI item 2.a", h)
+        self.assertIn("Schedule RC-K", h)
+        self.assertIn("54,368", h)
+        self.assertIn("1,539,845", h)
+        # CDR facsimile link (the house click-through doc pattern).
+        self.assertIn("cdr.ffiec.gov", h)
+
+    def test_annual_fy_rate_uses_mean_of_quarterly_averages(self):
+        html = self._render(self.HIST, self.STORED, period="Annual")
+        h = html[0]
+        # FY CD rate = 54,368 ÷ 1,524,961.25 × 100 = 3.5652% → 3.57% —
+        # NEVER 54,368 ÷ the Q4-only average (3.53%).
+        self.assertIn("3.57%", h)
+        self.assertNotIn("3.53%", h)
+        self.assertIn("1,524,961", h)   # the mean, in the click-through
+        self.assertIn("mean of the four quarterly RC-K averages", h)
+
+    def test_missing_prior_quarter_is_na_never_raw_ytd(self):
+        # Only Q3 stored: Q3 can't de-cumulate (no Q2 row) → n/a + reason;
+        # raw YTD ÷ avg (40,000 ÷ 1,540,000 × 400 = 10.39%) must NOT show.
+        hist = [{"REPDTE": "2025-06-30"}, {"REPDTE": "2025-09-30"}]
+        html = self._render(hist, [dict(self.STORED[1])], period="Quarterly")
+        h = html[0]
+        self.assertIn("prior quarter not ingested", h)
+        self.assertIn("cannot de-cumulate YTD", h)
+        self.assertNotIn("10.39%", h)
+
+    def test_annual_incomplete_quarters_is_na(self):
+        # Only Q4 stored → FY mean impossible → n/a + reason; never the
+        # Q4-only-average rate (3.53%).
+        html = self._render(self.HIST, [dict(self.STORED[0])],
+                            period="Annual")
+        h = html[0]
+        self.assertIn("incomplete quarterly average history", h)
+        self.assertNotIn("3.53%", h)
+
+    def test_reconciles_false_renders_na_split(self):
+        # A row whose components don't reconcile must never display ANY
+        # split number — rates and $ components all n/a with the reason.
+        bad = dict(self.STORED[0]); bad["reconciles"] = False
+        html = self._render([{"REPDTE": "2025-12-31"}], [bad],
+                            period="Quarterly")
+        h = html[0]
+        self.assertIn("components do not reconcile to total interest expense", h)
+        self.assertNotIn("54,368", h)
+        self.assertNotIn("1,539,845", h)
+        self.assertNotIn("3.53%", h)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -8,6 +8,7 @@ import streamlit as st
 from config import METRICS, METRICS_BY_KEY, METRIC_CATEGORIES, DEFAULT_TABLE_COLUMNS
 from data.bank_mapping import get_name
 from utils.formatting import format_value, get_bg_color
+from ui.chrome import table_export
 
 
 def render_column_selector():
@@ -126,6 +127,8 @@ def render_overview_table(metrics_data: list[dict], selected_columns: list[str])
         height=min(800, 40 + 35 * len(display_df)),
         hide_index=True,
     )
+    # renamed_df holds the raw numeric values (formatting is Styler-only)
+    table_export(renamed_df, "bank_screener", key="exp_bank_screener")
 
     # Return raw df for detail page navigation
     return df

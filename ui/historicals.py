@@ -10,6 +10,7 @@ from plotly.subplots import make_subplots
 from data.bank_mapping import get_fdic_cert, get_name
 from data import fdic_client
 from utils.chart_style import COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING
+from ui.chrome import table_export
 
 
 # Metrics to pull from FDIC for historical view
@@ -235,6 +236,9 @@ def render_historicals(ticker: str):
                 hide_index=True,
                 height=min(700, 32 + 24 * len(qtr_df)),
             )
+            # Underlying numeric FDIC frame ($K, unformatted)
+            table_export(df, f"historicals_quarterly_{ticker}",
+                         key=f"exp_historicals_quarterly_{ticker}")
 
     # ── TAB 3: Annual Summary ────────────────────────────────────────────
     with tab3:
@@ -270,3 +274,6 @@ def render_historicals(ticker: str):
                 hide_index=True,
                 height=min(700, 32 + 24 * len(ann_df_display)),
             )
+            # Underlying numeric annualized frame ($K, unformatted)
+            table_export(annual_df, f"historicals_annual_{ticker}",
+                         key=f"exp_historicals_annual_{ticker}")

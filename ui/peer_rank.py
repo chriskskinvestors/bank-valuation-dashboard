@@ -11,12 +11,14 @@ Peers = the banks the firm tracks (watchlist metrics) in the same asset-size tie
 from __future__ import annotations
 import html as _html
 
+import pandas as pd
 import streamlit as st
 
 from data.bank_mapping import get_name
 from analysis.peer_groups import (
     metric_percentile_context, get_peer_group_for_bank, _higher_is_better,
 )
+from ui.chrome import table_export
 
 
 # Metric groups for the scorecard. Missing metrics / thin cohorts auto-skip.
@@ -201,6 +203,14 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
         "Rank #1 = best in the peer set. Bars show the goodness percentile. "
         "Peer median is the same-tier median for context."
     )
+    # Underlying numeric scorecard (value / percentile / rank / median)
+    exp_df = pd.DataFrame([
+        {"Metric": _LABELS.get(k, k), "Value": ctx[k]["value"],
+         "Percentile": ctx[k]["percentile"], "Rank": ctx[k].get("rank"),
+         "Out of": ctx[k].get("out_of"), "Peer median": ctx[k]["median"]}
+        for k in _ALL_KEYS if k in ctx
+    ])
+    table_export(exp_df, f"peer_rank_{ticker}", key=f"exp_peer_rank_{ticker}")
 
     # ── Full leaderboard for a chosen metric ───────────────────────────
     st.markdown("---")
@@ -251,3 +261,10 @@ def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str):
         '</tr></thead><tbody>' + "".join(cells) + '</tbody></table>'
     )
     st.markdown(table, unsafe_allow_html=True)
+    # Underlying numeric leaderboard
+    exp_df = pd.DataFrame([
+        {"Rank": i, "Ticker": tk, "Bank": get_name(tk), "Value": v}
+        for i, (tk, v) in enumerate(rows, start=1)
+    ])
+    table_export(exp_df, f"peer_leaderboard_{ticker}_{key}",
+                 key=f"exp_peer_leaderboard_{ticker}_{key}")

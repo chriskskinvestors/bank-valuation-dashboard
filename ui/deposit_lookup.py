@@ -15,6 +15,7 @@ from data.sod_client import (
 )
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
+from ui.chrome import table_export
 
 
 def render_deposits_for_ticker(ticker: str):
@@ -174,6 +175,11 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
         hide_index=True,
         height=min(400, 40 + 35 * len(branch_display)),
     )
+    # Underlying numeric frame (deposits in $K, unformatted)
+    table_export(
+        branches_df[["NAMEBR", "CITYBR", "STALPBR", "CNTYNAMB", "DEPSUMBR"]],
+        f"branch_details_cert{selected_cert}",
+        key=f"exp_branch_details_cert{selected_cert}")
 
     # ── Market share by county ───────────────────────────────────────────
     st.markdown("---")
@@ -241,6 +247,12 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                         hide_index=True,
                         height=min(600, 40 + 35 * len(show_df)),
                     )
+                    # Underlying numeric frame (deposits $K / share %)
+                    table_export(
+                        display[["rank", "NAMEFULL", "branches",
+                                 "deposits", "market_share"]],
+                        f"county_market_share_{int(selected_county)}",
+                        key=f"exp_county_market_share_{int(selected_county)}")
                 else:
                     st.warning("Could not load market share data for this county.")
 
@@ -290,5 +302,11 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                         hide_index=True,
                         height=min(600, 40 + 35 * len(show_df)),
                     )
+                    # Underlying numeric frame (deposits $K / share %)
+                    table_export(
+                        display[["rank", "NAMEFULL", "branches",
+                                 "deposits", "market_share"]],
+                        f"msa_market_share_{int(selected_msa)}",
+                        key=f"exp_msa_market_share_{int(selected_msa)}")
                 else:
                     st.warning("Could not load market share data for this MSA.")

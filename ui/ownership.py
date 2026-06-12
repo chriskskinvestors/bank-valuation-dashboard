@@ -8,6 +8,7 @@ import pandas as pd
 from data.bank_mapping import get_name
 from data.form13f_client import fetch_institutional_holdings, summarize_holdings
 from utils.formatting import fmt_dollars
+from ui.chrome import table_export
 
 
 def render_ownership(ticker: str):
@@ -124,6 +125,9 @@ def render_ownership(ticker: str):
                 display_text="SEC ↗", width="small"),
         },
     )
+    # Underlying numeric holder records (unformatted shares / value_usd)
+    table_export(pd.DataFrame(holders), f"institutional_holders_{ticker}",
+                 key=f"exp_institutional_holders_{ticker}")
 
     st.caption(
         "13F filings are required for institutions managing >$100M, cover equity holdings "

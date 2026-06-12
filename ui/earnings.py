@@ -34,6 +34,7 @@ from data.estimates import (
     fetch_all_estimates,
 )
 from utils.chart_style import COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER
+from ui.chrome import table_export
 
 
 # ── Beat/miss styling ───────────────────────────────────────────────────
@@ -234,6 +235,10 @@ def _render_auto_estimates(ticker: str, estimates: dict):
                 if hist_rows:
                     df = pd.DataFrame(hist_rows)
                     st.dataframe(df, use_container_width=True, hide_index=True)
+                    # Underlying numeric history (unformatted EPS / surprise)
+                    table_export(pd.DataFrame(past[:8]),
+                                 f"earnings_surprises_{ticker}",
+                                 key=f"exp_earnings_surprises_{ticker}")
 
 
 def _render_manual_input(ticker: str):
@@ -470,6 +475,9 @@ def _render_comparison_table(comparison: list[dict]):
         hide_index=True,
         height=min(600, 40 + 35 * len(df)),
     )
+    # Underlying numeric comparison (unformatted consensus/actual/deltas)
+    table_export(pd.DataFrame(comparison), "consensus_vs_actual",
+                 key="exp_consensus_vs_actual")
 
     # Summary stats
     beats = sum(1 for c in comparison if c["beat_miss"] == "beat")
@@ -913,6 +921,9 @@ def _render_surprise_heatmap(watchlist: list[str]):
         )
         st.dataframe(styled, use_container_width=True, hide_index=True,
                       height=min(500, 50 + 32 * len(stats_df)))
+        # Display frame (formatted) — stats are built as strings here
+        table_export(stats_df, "earnings_consistency_metrics",
+                     key="exp_earnings_consistency_metrics")
 
 
 
@@ -985,6 +996,9 @@ def _render_earnings_calendar(watchlist: list[str]):
         )
         st.dataframe(styled, use_container_width=True, hide_index=True,
                       height=min(500, 40 + 35 * len(df)))
+        # Underlying numeric calendar records (unformatted estimates)
+        table_export(pd.DataFrame(upcoming), "earnings_calendar_upcoming",
+                     key="exp_earnings_calendar_upcoming")
 
         # Summary metrics
         within_7 = sum(1 for c in upcoming if _days_until(c.get("next_earnings_date")) <= 7)
@@ -1084,6 +1098,7 @@ def _render_beat_miss_summary(all_consensus: dict, metrics_by_ticker: dict):
             hide_index=True,
             height=min(600, 40 + 35 * len(df)),
         )
+        table_export(df, "beat_miss_summary", key="exp_beat_miss_summary")
     else:
         st.info("No consensus comparisons available yet.")
 
@@ -1202,6 +1217,9 @@ def _render_surprise_rankings(all_consensus: dict, metrics_by_ticker: dict, watc
 
         st.dataframe(styled, use_container_width=True, hide_index=True,
                       height=min(600, 40 + 35 * len(df)))
+        # Underlying numeric rows (unformatted Surprise %)
+        table_export(pd.DataFrame(filtered[:50]), "surprise_rankings",
+                     key="exp_surprise_rankings")
 
         # Top beats / top misses summary
         top_beats = [s for s in all_surprises if s["Result"] == "beat"][:5]
@@ -1341,6 +1359,8 @@ def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watc
         if rows:
             df = pd.DataFrame(rows)
             st.dataframe(df, use_container_width=True, hide_index=True)
+            table_export(df, "sector_metric_breakdown",
+                         key="exp_sector_metric_breakdown")
     elif not yf_eps_stats["total"]:
         st.info("No aggregate data available yet. Upload consensus estimates to see sector-level statistics.")
 

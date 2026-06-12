@@ -14,6 +14,7 @@ from analysis.peer_groups import (
     compute_peer_percentile,
 )
 from utils.formatting import format_value
+from ui.chrome import table_export
 
 
 # Curated metric sets per category (focused on what analysts actually look at).
@@ -198,6 +199,8 @@ def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfo
             })
         comp_df = pd.DataFrame(comp_rows)
         st.dataframe(comp_df, use_container_width=True, hide_index=True)
+        table_export(comp_df, "peer_group_composition",
+                     key="exp_peer_group_composition")
 
 
 def _render_metrics_table(selected_peers: list[dict], category: str):
@@ -274,6 +277,10 @@ def _render_metrics_table(selected_peers: list[dict], category: str):
         hide_index=True,
         height=min(800, 60 + 38 * len(df_display)),
     )
+    # Display frame (formatted values) — the raw per-metric values are not
+    # kept as a frame here.
+    fname = f"peer_metrics_{category.lower().replace(' ', '_')}"
+    table_export(df_display, fname, key=f"exp_{fname}")
 
     # ── Legend — built from the same scale that colors the cells ────────
     chips = "".join(

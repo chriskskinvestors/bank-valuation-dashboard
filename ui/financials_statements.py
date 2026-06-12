@@ -9,7 +9,6 @@ financial_highlights. Rows are data-driven specs: (label, kind, *fields).
         "ratio" (f1 ÷ f2 × 100) · "tce" (equity − intangibles, $000)
 """
 from __future__ import annotations
-from datetime import datetime
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -87,6 +86,92 @@ def _fte_adjustment(tax_exempt_loan, tax_exempt_sec, rate=_FTE_TAX_RATE):
     if not parts:
         return None
     return sum(parts) * rate / (1.0 - rate)
+
+
+# ── FFIEC deposit-cost split (Schedule RI item 2.a YTD interest + Schedule
+# RC-K single-quarter average balances; data/ffiec_client.get_deposit_cost_detail
+# semantics). The numerators are calendar-YTD and the denominators are
+# single-quarter averages, so a raw quotient is wrong for every quarter except
+# Q1 — the rate functions below de-cumulate / average first, and refuse
+# (None + reason) whenever an input that would keep the number honest is
+# missing. Reasons render as n/a in the click-through, never a guess.
+_DEP_PRIOR_MISSING = "prior quarter not ingested — cannot de-cumulate YTD"
+_DEP_FY_INCOMPLETE = "incomplete quarterly average history"
+_DEP_NO_RECONCILE = "components do not reconcile to total interest expense"
+
+# side → (RIAD YTD-interest codes, RCON quarterly-average codes)
+_DEP_SPLIT_CODES = {
+    "cds": ("RIADHK03 + RIADHK04", "RCONHK16 + RCONHK17"),
+    "other_ib": ("RIAD4508 + RIAD0093", "RCON3485 + RCONB563"),
+}
+
+
+def _dep_quarterly_cost_rate(ytd_q, ytd_prior, avg_q, quarter):
+    """Discrete-quarter annualized deposit cost (%) from a calendar-YTD
+    Schedule RI interest flow and a single-quarter RC-K average balance
+    ($000 in): (YTD_q − YTD_{q−1}) ÷ avg_q × 4 × 100. Q1 uses YTD_q
+    directly (calendar YTD resets Jan 1). Returns (rate, None) or
+    (None, reason) — raw YTD is NEVER divided by one quarter's average
+    for Q2–Q4 (that overstates the rate by the elapsed-quarter count).
+    Hand-check: YTD Q2 30,000, YTD Q1 14,000, avg_q2 1,520,000 →
+    (16,000 ÷ 1,520,000) × 4 × 100 = 4.2105%."""
+    if ytd_q is None:
+        return None, "interest expense not reported in this filing"
+    if avg_q is None or avg_q <= 0:
+        return None, "RC-K average balance not reported in this filing"
+    if quarter == 1:
+        return ytd_q / avg_q * 4.0 * 100.0, None
+    if ytd_prior is None:
+        return None, _DEP_PRIOR_MISSING
+    return (ytd_q - ytd_prior) / avg_q * 4.0 * 100.0, None
+
+
+def _dep_annual_cost_rate(fy_int, quarterly_avgs):
+    """Full-year deposit cost (%): FY interest (the Dec-31 calendar-YTD
+    flow) ÷ mean of the year's four single-quarter RC-K averages × 100
+    ($000 in). Any missing quarterly average → (None, reason): a
+    partial-year mean posing as the FY denominator is plausible-wrong.
+    Hand-check (synthetic FY, CD interest 54,368): mean(1,500,000;
+    1,520,000; 1,540,000; 1,539,845) = 1,524,961.25 →
+    54,368 ÷ 1,524,961.25 × 100 = 3.5652%."""
+    if fy_int is None:
+        return None, "interest expense not reported in this filing"
+    if len(quarterly_avgs) != 4 or any(a is None for a in quarterly_avgs):
+        return None, _DEP_FY_INCOMPLETE
+    mean = sum(quarterly_avgs) / 4.0
+    if mean <= 0:
+        return None, "RC-K average balances not positive"
+    return fy_int / mean * 100.0, None
+
+
+def _prior_quarter_end(dt):
+    """Calendar quarter-end immediately before dt (itself a quarter-end)."""
+    return (pd.Timestamp(dt).normalize() - pd.offsets.QuarterEnd(1))
+
+
+def _dep_cost_by_date(cert):
+    """{normalized report date → stored deposit-cost split dict}
+    (data/call_report_store, ffiec_client.get_deposit_cost_detail shape).
+    Keyed by DATE rather than column index because the rate math reaches
+    beyond the displayed columns: de-cumulating a quarter needs the PRIOR
+    quarter's YTD row, and an FY rate needs all four quarterly averages.
+    Empty dict when the store is unavailable (local dev) or nothing is
+    ingested; missing dates render dead, never imputed."""
+    try:
+        from data.call_report_store import get_stored_deposit_cost_detail
+        # 40 quarters ≥ the Annual view's 5-FY lookback.
+        rows = get_stored_deposit_cost_detail(cert, quarters=40)
+    except Exception as e:
+        print(f"[statements] deposit-cost store unavailable for cert {cert}: "
+              f"{type(e).__name__}: {e}")
+        return {}
+    out = {}
+    for d in rows:
+        try:
+            out[pd.to_datetime(d.get("reporting_period")).normalize()] = d
+        except Exception:
+            continue
+    return out
 
 
 def _ri_details_by_column(cert, recs_list):
@@ -196,7 +281,7 @@ def _spec_with_rie_rows(spec, rie_by_ci):
 
 def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                      trends: list | None = None, with_persh: bool = False,
-                     with_ri: bool = False):
+                     with_ri: bool = False, with_dep_cost: bool = False):
     info = get_bank_info(ticker)
     name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
@@ -237,6 +322,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     if with_ri:
         ri_by_ci, rie_by_ci = _ri_details_by_column(cert, recs_list)
         spec = _spec_with_rie_rows(spec, rie_by_ci)
+
+    # FFIEC deposit-cost split (Performance Analysis only) — keyed by report
+    # date, not column index: the rate math needs the prior quarter's row
+    # (de-cumulation) and all four quarterly averages (FY mean).
+    dep_by_date = _dep_cost_by_date(cert) if with_dep_cost else {}
 
     # Per-share data (SEC holding-company filings) — only loaded when a spec
     # needs it (Performance Analysis), keyed by column index.
@@ -504,6 +594,136 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 {"label": clean, "val": _thou(raw) + " ($000)"}],
                 None, True, source="FFIEC Call Report — Schedule RI-E",
                 link=doc_link)
+        # ── FFIEC deposit-cost split: CD vs other interest-bearing ───────
+        if kind in ("dep_rate", "dep_flow", "dep_avg"):
+            side = args[0]                       # "cds" | "other_ib"
+            riad, rcon = _DEP_SPLIT_CODES[side]
+            int_key, avg_key = f"int_{side}", f"avg_{side}"
+            dt = pd.to_datetime(rec.get("REPDTE")).normalize()
+            det = dep_by_date.get(dt)
+            if det is None:
+                return "—", None   # split not ingested for this period
+            doc_link = _ri_doc_link(rec)
+            src = "FFIEC Call Report — Schedule RI 2.a / RC-K"
+            ref = f"Schedule RI item 2.a ({riad}) / Schedule RC-K ({rcon})"
+            if det.get("reconciles") is not True:
+                # False = the components don't sum to RIAD4073 net of
+                # 4180/4185/4200 (the split is missing a piece); None =
+                # RIAD4073 absent (identity unverifiable). Either way no
+                # number from this row may be displayed as the split.
+                return "n/a", calc(label, "n/a", asof, ref, [
+                    {"label": label, "val": f"n/a — {_DEP_NO_RECONCILE}"}],
+                    None, True, source=src, link=doc_link)
+            annual = (period == "Annual")
+            q_ends = [pd.Timestamp(dt.year, m, d) for m, d in
+                      ((3, 31), (6, 30), (9, 30), (12, 31))]
+            if kind == "dep_flow":
+                raw = _num(det.get(int_key))
+                ref_f = f"Schedule RI item 2.a ({riad}) — calendar-YTD"
+                if raw is None:
+                    return "n/a", calc(label, "n/a", asof, ref_f, [
+                        {"label": label,
+                         "val": "n/a — not reported in this filing"}],
+                        None, True, source=src, link=doc_link)
+                v = _usd(raw)
+                return v, calc(label, v, asof, ref_f, [
+                    {"label": label + " (calendar-YTD, as filed)",
+                     "val": _thou(raw) + " ($000)"}],
+                    None, True, source=src, link=doc_link)
+            if kind == "dep_avg":
+                if not annual:
+                    raw = _num(det.get(avg_key))
+                    ref_a = f"Schedule RC-K ({rcon}) — single-quarter average"
+                    if raw is None:
+                        return "n/a", calc(label, "n/a", asof, ref_a, [
+                            {"label": label,
+                             "val": "n/a — not reported in this filing"}],
+                            None, True, source=src, link=doc_link)
+                    v = _usd(raw)
+                    return v, calc(label, v, asof, ref_a, [
+                        {"label": label + " (single-quarter average, as filed)",
+                         "val": _thou(raw) + " ($000)"}],
+                        None, True, source=src, link=doc_link)
+                # Annual column: RC-K averages are single-quarter, so the FY
+                # figure is the mean of the year's four quarterly averages —
+                # computed; n/a unless all four quarters are ingested. (The
+                # reconciles gate above applies to the RI interest split;
+                # RC-K balance averages join it here only as FY-mean inputs.)
+                avgs = [_num((dep_by_date.get(qe) or {}).get(avg_key))
+                        for qe in q_ends]
+                terms = [{"label": f"Q{i + 1} average ({rcon})",
+                          "val": _term000(a)} for i, a in enumerate(avgs)]
+                op = f"mean of the four quarterly RC-K averages ({rcon}) — computed"
+                if any(a is None for a in avgs):
+                    return "n/a", calc(label, "n/a", asof, ref, terms + [
+                        {"label": label, "val": f"n/a — {_DEP_FY_INCOMPLETE}"}],
+                        op, False, source=src, link=doc_link)
+                mean = sum(avgs) / 4.0
+                v = _usd(mean)
+                return v, calc(label, v, asof, ref, terms + [
+                    {"label": label + " (mean of quarterly averages)",
+                     "val": _thou(round(mean)) + " ($000)"}],
+                    op, False, source=src, link=doc_link)
+            # dep_rate — annualized cost (%), de-cumulated; computed.
+            ytd_q = _num(det.get(int_key))
+            if annual:
+                avgs = [_num((dep_by_date.get(qe) or {}).get(avg_key))
+                        for qe in q_ends]
+                rate, reason = _dep_annual_cost_rate(ytd_q, avgs)
+                op = (f"FY interest (calendar-YTD at Dec 31, {riad}) ÷ mean of "
+                      f"the four quarterly RC-K averages ({rcon}) × 100 — computed")
+                terms = [{"label": f"FY interest ({riad}, calendar-YTD)",
+                          "val": _term000(ytd_q)}]
+                terms += [{"label": f"Q{i + 1} average balance ({rcon})",
+                           "val": _term000(a)} for i, a in enumerate(avgs)]
+                if rate is None:
+                    return "n/a", calc(label, "n/a", asof, ref, terms + [
+                        {"label": label, "val": f"n/a — {reason}"}],
+                        op, False, source=src, link=doc_link)
+                terms.append({"label": "Mean of quarterly averages",
+                              "val": _thou(round(sum(avgs) / 4.0)) + " ($000)"})
+                v = f"{rate:.2f}%"
+                return v, calc(label, v, asof, ref, terms, op, False,
+                               source=src, link=doc_link)
+            q = (dt.month - 1) // 3 + 1
+            avg_q = _num(det.get(avg_key))
+            ytd_prior, prior_note = None, None
+            if q != 1:
+                pdet = dep_by_date.get(_prior_quarter_end(dt))
+                if pdet is None:
+                    pass   # canonical _DEP_PRIOR_MISSING from the rate fn
+                elif pdet.get("reconciles") is not True:
+                    prior_note = ("prior quarter components do not reconcile "
+                                  "— cannot de-cumulate YTD")
+                else:
+                    ytd_prior = _num(pdet.get(int_key))
+                    if ytd_prior is None:
+                        prior_note = ("prior quarter interest not reported "
+                                      "— cannot de-cumulate YTD")
+            rate, reason = _dep_quarterly_cost_rate(ytd_q, ytd_prior, avg_q, q)
+            if reason == _DEP_PRIOR_MISSING and prior_note:
+                reason = prior_note   # ingested-but-unusable beats "not ingested"
+            op = (f"(YTD_q − YTD_q−1) ÷ avg_q × 4 × 100, annualized; Q1 uses "
+                  f"YTD directly (calendar YTD resets) — interest {riad} "
+                  f"(calendar-YTD), average balance {rcon} (single-quarter) "
+                  f"— computed")
+            terms = [
+                {"label": f"Interest, calendar-YTD this quarter ({riad})",
+                 "val": _term000(ytd_q)},
+                {"label": f"Interest, calendar-YTD prior quarter ({riad})",
+                 "val": ("— (Q1: calendar YTD resets)" if q == 1 else
+                         _thou(ytd_prior) + " ($000)" if ytd_prior is not None
+                         else f"n/a — {prior_note or _DEP_PRIOR_MISSING}")},
+                {"label": f"Average balance this quarter ({rcon})",
+                 "val": _term000(avg_q)},
+            ]
+            if rate is None:
+                return "n/a", calc(label, "n/a", asof, ref, terms + [
+                    {"label": label, "val": f"n/a — {reason}"}],
+                    op, False, source=src, link=doc_link)
+            v = f"{rate:.2f}%"
+            return v, calc(label, v, asof, ref, terms, op, False,
+                           source=src, link=doc_link)
         # ── Per-share (SEC holding-company filings) ──────────────────────
         ps = ps_by_ci.get(ci, {})
         if kind == "ps":
@@ -745,6 +965,19 @@ _PERFORMANCE = [
         ("Cost: total deposits", "yield", "EDEP", "DEP"),
         ("Cost: funding (earning-asset basis)", "pct", "INTEXPY"),
     ]),
+    # FFIEC Schedule RI 2.a / RC-K stored split (data/call_report_store) —
+    # the SNL 'Int Cost: CDs' vs 'Int Cost: Other Deposits' rows the FDIC
+    # feed can't provide. Rates are de-cumulated from calendar-YTD interest
+    # (computed); columns without an ingested row render dead, and a row
+    # whose components don't reconcile to total interest expense renders n/a.
+    ("Deposit Cost Detail — bank subsidiary (call report)", [
+        ("Cost of CDs (%)", "dep_rate", "cds"),
+        ("Cost of other interest-bearing deposits (%)", "dep_rate", "other_ib"),
+        ("CD interest expense (calendar-YTD)", "dep_flow", "cds"),
+        ("Other interest-bearing deposit interest (calendar-YTD)", "dep_flow", "other_ib"),
+        ("Avg CD balances", "dep_avg", "cds"),
+        ("Avg other interest-bearing deposit balances", "dep_avg", "other_ib"),
+    ]),
     ("Asset Quality (%)", [
         ("Non-current loans / loans", "pct", "NCLNLSR"),
         ("Net charge-offs / loans", "pct", "NTLNLSR"),
@@ -810,7 +1043,8 @@ def render_balance_sheet(ticker):
 
 
 def render_performance_analysis(ticker):
-    render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE, with_persh=True)
+    render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE,
+                     with_persh=True, with_dep_cost=True)
 
 
 def render_fair_value(ticker):
