@@ -71,8 +71,132 @@ _DEFAULT_TRENDS = [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
                    ("efficiency_ratio", "Efficiency Ratio"), ("cet1_ratio", "CET1 Ratio")]
 
 
+# ── FFIEC Schedule RI / RI-E joins (stored call-report detail) ──────────────
+_FTE_TAX_RATE = 0.21   # federal statutory rate for the FTE gross-up
+
+
+def _fte_adjustment(tax_exempt_loan, tax_exempt_sec, rate=_FTE_TAX_RATE):
+    """Fully-taxable-equivalent gross-up of tax-exempt income:
+    (RIAD4313 + RIAD4507) × t ÷ (1 − t) with t = 0.21 (federal statutory
+    rate). $thousands in → $thousands out. None unless at least one
+    component is present (n/a, never a guessed $0); a filed $0 in both
+    components yields a true $0 adjustment.
+    Hand-check (Banner Bank 12/31/2025): (15,532 + 14,865) × 0.21/0.79
+    = 30,397 × 0.265823 = 8,080.2 ($000)."""
+    parts = [v for v in (tax_exempt_loan, tax_exempt_sec) if v is not None]
+    if not parts:
+        return None
+    return sum(parts) * rate / (1.0 - rate)
+
+
+def _ri_details_by_column(cert, recs_list):
+    """{column index → stored detail dict} for Schedule RI and Schedule RI-E
+    (data/call_report_store), joined on report date. RI and RI-E are YTD
+    within the calendar year — the SAME convention as the FDIC SDI income
+    fields this table already shows raw per column — so a date join is the
+    whole story: no diffing, no annualizing. Returns empty dicts when the
+    store is unavailable (local dev) or nothing is ingested; missing columns
+    render dead, never imputed."""
+    try:
+        from data.call_report_store import (get_stored_ri_detail,
+                                            get_stored_rie_detail)
+
+        def _by_date(rows):
+            out = {}
+            for d in rows:
+                try:
+                    out[pd.to_datetime(d.get("reporting_period")).normalize()] = d
+                except Exception:
+                    continue
+            return out
+
+        # 40 quarters ≥ the Annual view's 5-FY lookback.
+        ri = _by_date(get_stored_ri_detail(cert, quarters=40))
+        rie = _by_date(get_stored_rie_detail(cert, quarters=40))
+    except Exception as e:
+        print(f"[statements] RI/RI-E store unavailable for cert {cert}: "
+              f"{type(e).__name__}: {e}")
+        return {}, {}
+    ri_by_ci, rie_by_ci = {}, {}
+    for i, r in enumerate(recs_list):
+        try:
+            dt = pd.to_datetime(r.get("REPDTE")).normalize()
+        except Exception:
+            continue
+        if dt in ri:
+            ri_by_ci[i] = ri[dt]
+        if dt in rie:
+            rie_by_ci[i] = rie[dt]
+    return ri_by_ci, rie_by_ci
+
+
+# RI-E preprinted itemizations of "all other noninterest expense" — official
+# MDRM item names (data/ffiec_client._RI_E_EXPENSE_CODES), shown indented
+# under "Other non-interest expense". (key, RIAD code, label)
+_RIE_EXPENSE_ROWS = [
+    ("data_processing", "C017", "Data processing expenses"),
+    ("marketing_professional", "0497", "Marketing and other professional services"),
+    ("directors_fees", "4136", "Directors' fees"),
+    ("printing_supplies", "C018", "Printing, stationery, and supplies"),
+    ("postage", "8403", "Postage"),
+    ("legal", "4141", "Legal expense"),
+    ("fdic_assessments", "4146", "Federal insurance premium"),
+    ("accounting_auditing", "F556", "Accounting and auditing expenses"),
+    ("consulting_advisory", "F557", "Consulting and advisory expense"),
+    ("atm_interchange", "F558", "ATM and interchange expense"),
+    ("telecommunications", "F559", "Telecommunications expense"),
+]
+
+_RIE_INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;"
+
+
+def _spec_with_rie_rows(spec, rie_by_ci):
+    """Insert the RI-E sub-block: the preprinted itemized expense lines plus
+    the bank's labeled expense write-ins under "Other non-interest expense",
+    and its labeled income write-ins under "Other non-interest income".
+    A bank that itemized nothing in the displayed window gets no sub-block
+    (a wall of n/a is noise, not honesty); a bank with SOME itemized lines
+    shows every preprinted line — n/a marks below-threshold lines, with the
+    reason in the click-through."""
+    if not rie_by_ci:
+        return spec
+    import html as _html
+    details = list(rie_by_ci.values())
+
+    def _writein_rows(list_key):
+        seen, rows = set(), []
+        for det in details:
+            for w in det.get(list_key) or []:
+                lb = str(w.get("label") or "")
+                if not lb or lb in seen:
+                    continue
+                seen.add(lb)
+                # Filed free text goes into the table HTML — escape it.
+                rows.append((f"{_RIE_INDENT}Write-in: {_html.escape(lb)}",
+                             "rie_wi", list_key, lb))
+        return rows
+
+    expense_rows = [(f"{_RIE_INDENT}{lbl}", "rie", key, code, lbl)
+                    for key, code, lbl in _RIE_EXPENSE_ROWS]
+    expense_rows += _writein_rows("expense_writeins")
+    income_rows = _writein_rows("income_writeins")
+
+    out = []
+    for sec_name, rows in spec:
+        new_rows = []
+        for row in rows:
+            new_rows.append(row)
+            if row[0] == "Other non-interest expense":
+                new_rows.extend(expense_rows)
+            elif row[0] == "Other non-interest income" and income_rows:
+                new_rows.extend(income_rows)
+        out.append((sec_name, new_rows))
+    return out
+
+
 def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
-                     trends: list | None = None, with_persh: bool = False):
+                     trends: list | None = None, with_persh: bool = False,
+                     with_ri: bool = False):
     info = get_bank_info(ticker)
     name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
@@ -105,6 +229,14 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     if not recs_list:
         st.info("No periods available.")
         return
+
+    # FFIEC Schedule RI / RI-E stored detail (Income Statement only) — joined
+    # by report date; the RI-E itemized-expense sub-block is inserted only
+    # when the bank actually itemized something in the displayed window.
+    ri_by_ci, rie_by_ci = {}, {}
+    if with_ri:
+        ri_by_ci, rie_by_ci = _ri_details_by_column(cert, recs_list)
+        spec = _spec_with_rie_rows(spec, rie_by_ci)
 
     # Per-share data (SEC holding-company filings) — only loaded when a spec
     # needs it (Performance Analysis), keyed by column index.
@@ -149,6 +281,18 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     def _revenue(rec):
         ii, ie, noni = _num(rec.get("INTINC")), _num(rec.get("EINTEXP")), _num(rec.get("NONII"))
         return (ii - ie + noni) if None not in (ii, ie, noni) else None
+
+    def _ri_doc_link(rec):
+        """FFIEC CDR facsimile for this cert + quarter (RI / RI-E rows)."""
+        try:
+            from ui.financial_highlights import _fdic_doc
+            return _fdic_doc(cert, rec.get("REPDTE"))["url"]
+        except Exception:
+            return fdic_link
+
+    def _term000(v):
+        """$000 term value; absent stays honest — never rendered as $0."""
+        return _thou(v) + " ($000)" if v is not None else "n/a — not reported in this filing"
 
     def cell(ci, kind, args, label):
         rec = recs_list[ci]
@@ -260,6 +404,106 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                              "val": _thou(round((a-b)*f)) + " ($000)" if (a is not None and b is not None) else "—"},
                             {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
                            f"({af_} − {bf_}) ÷ avg {df_} × 100", False)
+        # ── FFIEC Schedule RI: FTE NII derivation (computed) ─────────────
+        if kind in ("fte_adj", "nii_fte"):
+            det = ri_by_ci.get(ci)
+            if det is None:
+                return "—", None   # RI detail not ingested for this period
+            tel = _num(det.get("tax_exempt_loan_income"))
+            tes = _num(det.get("tax_exempt_sec_income"))
+            fte = _fte_adjustment(tel, tes)
+            doc_link = _ri_doc_link(rec)
+            te_terms = [
+                {"label": "Tax-exempt income on loans (RIAD4313)",
+                 "val": _term000(tel)},
+                {"label": "Tax-exempt income on securities (RIAD4507)",
+                 "val": _term000(tes)},
+            ]
+            ref = "computed — statutory 21% federal rate"
+            if kind == "fte_adj":
+                op = ("(RIAD4313 + RIAD4507) × t ÷ (1 − t), t = 0.21 — "
+                      "computed — statutory 21% federal rate")
+                if fte is None:
+                    return "n/a", calc(label, "n/a", asof, ref, te_terms + [
+                        {"label": "FTE adjustment",
+                         "val": "n/a — tax-exempt income not reported"}],
+                        op, False, source="FFIEC Call Report — Schedule RI",
+                        link=doc_link)
+                v = _usd(fte)
+                return v, calc(label, v, asof, ref, te_terms + [
+                    {"label": "FTE adjustment = sum × 0.21 ÷ 0.79",
+                     "val": _thou(round(fte)) + " ($000)"}],
+                    op, False, source="FFIEC Call Report — Schedule RI",
+                    link=doc_link)
+            # nii_fte
+            ii, ie = _num(rec.get("INTINC")), _num(rec.get("EINTEXP"))
+            nii = ii - ie if None not in (ii, ie) else None
+            op = ("NII + (RIAD4313 + RIAD4507) × 0.21 ÷ (1 − 0.21) — "
+                  "computed — statutory 21% federal rate")
+            terms = [{"label": "Net interest income (INTINC − EINTEXP)",
+                      "val": _term000(nii)}] + te_terms + [
+                     {"label": "FTE adjustment = tax-exempt sum × 0.21 ÷ 0.79",
+                      "val": (_thou(round(fte)) + " ($000)") if fte is not None
+                             else "n/a — tax-exempt income not reported"}]
+            if fte is None or nii is None:
+                return "n/a", calc(label, "n/a", asof, ref, terms, op, False,
+                                   source="FFIEC Call Report — Schedule RI",
+                                   link=doc_link)
+            v = _usd(nii + fte)
+            return v, calc(label, v, asof, ref, terms, op, False,
+                           source="FFIEC Call Report — Schedule RI",
+                           link=doc_link)
+        # ── FFIEC Schedule RI-E: itemized other noninterest expense ──────
+        if kind == "rie":
+            key, code, clean = args
+            det = rie_by_ci.get(ci)
+            if det is None:
+                return "—", None   # RI-E not ingested for this period
+            doc_link = _ri_doc_link(rec)
+            ref = f"Schedule RI-E (MDRM RIAD{code})"
+            raw = _num(det.get(key))
+            if raw is None:
+                # None = below the itemization threshold — NOT a $0.
+                return "n/a", calc(clean, "n/a", asof, ref, [
+                    {"label": clean,
+                     "val": "n/a — below the RI-E itemization threshold "
+                            "(not itemized in this filing; a filed $0 "
+                            "would show $0)"}],
+                    None, True, source="FFIEC Call Report — Schedule RI-E",
+                    link=doc_link)
+            v = _usd(raw)
+            return v, calc(clean, v, asof, ref, [
+                {"label": clean, "val": _thou(raw) + " ($000)"}],
+                None, True, source="FFIEC Call Report — Schedule RI-E",
+                link=doc_link)
+        if kind == "rie_wi":
+            list_key, wlabel = args
+            det = rie_by_ci.get(ci)
+            if det is None:
+                return "—", None   # RI-E not ingested for this period
+            clean = f"Write-in: {wlabel}"
+            codes = ("RIAD4461/4462/4463" if list_key == "income_writeins"
+                     else "RIAD4464/4467/4468")
+            doc_link = _ri_doc_link(rec)
+            match = next((w for w in (det.get(list_key) or [])
+                          if str(w.get("label") or "") == wlabel), None)
+            raw = _num(match.get("value")) if match else None
+            if raw is None:
+                return "n/a", calc(clean, "n/a", asof,
+                                   f"Schedule RI-E write-in ({codes})", [
+                    {"label": clean,
+                     "val": "n/a — not filed as a write-in this period "
+                            "(only amounts above the itemization "
+                            "threshold are listed)"}],
+                    None, True, source="FFIEC Call Report — Schedule RI-E",
+                    link=doc_link)
+            v = _usd(raw)
+            return v, calc(clean, v, asof,
+                           f"Schedule RI-E write-in ({codes}) — bank's own "
+                           "filed label", [
+                {"label": clean, "val": _thou(raw) + " ($000)"}],
+                None, True, source="FFIEC Call Report — Schedule RI-E",
+                link=doc_link)
         # ── Per-share (SEC holding-company filings) ──────────────────────
         ps = ps_by_ci.get(ci, {})
         if kind == "ps":
@@ -398,9 +642,11 @@ def _render_statement_trends(hist, ticker, key_prefix, trends):
 # ── Statement specs ─────────────────────────────────────────────────────────
 # SNL-depth layout (docs/SNL-BUILD-PLAN.md tab 1). All values are the bank
 # subsidiary's Call Report — holdco SEC totals can differ slightly; the
-# click-through provenance names the entity. Rows whose source is FFIEC
-# Schedule RI / RI-E (gain on sale of loans, BOLI, FTE NII, expense detail)
-# join when the RI store lands — never imputed in the meantime.
+# click-through provenance names the entity. FFIEC Schedule RI / RI-E rows
+# (FTE NII, itemized expense detail, write-ins) join from the stored
+# call-report detail (data/call_report_store) by report date — columns
+# without ingested detail render dead, never imputed. Remaining RI rows
+# (gain on sale of loans, BOLI) are still to come.
 _INCOME = [
     ("Interest Income & Expense", [
         ("Interest & fees on loans", "dollar", "ILNDOM"),
@@ -409,6 +655,11 @@ _INCOME = [
         ("Interest on deposits", "dollar", "EDEP"),
         ("Total interest expense", "dollar", "EINTEXP"),
         ("Net interest income", "diff", "INTINC", "EINTEXP"),
+        # FTE derivation from Schedule RI tax-exempt income (RIAD4313/4507),
+        # computed at the 21% federal statutory rate; n/a when tax-exempt
+        # income isn't reported.
+        ("FTE adjustment", "fte_adj"),
+        ("Net interest income (FTE)", "nii_fte"),
     ]),
     ("Provision for Credit Losses", [
         ("Provision for credit losses", "dollar", "ELNATR"),
@@ -551,7 +802,7 @@ _CAPITAL_STRUCTURE = [
 
 
 def render_income_statement(ticker):
-    render_statement(ticker, "is", "Income Statement", _INCOME)
+    render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True)
 
 
 def render_balance_sheet(ticker):

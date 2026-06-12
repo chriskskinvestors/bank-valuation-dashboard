@@ -63,6 +63,7 @@ def _install_streamlit_stub():
                  "download_button", "toggle", "rerun", "html"):
         setattr(st, name, _noop)
     st.checkbox = lambda *a, **k: bool(k.get("value", False))
+    st.radio = lambda label, options=None, **k: (options[0] if options else None)
     st.subheader = _noop
     # streamlit.components.v1 — iframe tables (financials_statements,
     # capital walk) import it; html is replaced per-test to capture output.
@@ -228,6 +229,129 @@ class TestCapitalWalkRendersPopulated(unittest.TestCase):
         self.assertEqual(html, [], "must not render a table with no data")
         self.assertTrue(any("RC-R capital walk unavailable" in m for m in infos),
                         f"expected the honest-gap note, got: {infos}")
+
+
+class TestIncomeStatementRiRendersPopulated(unittest.TestCase):
+    """SNL Income Statement RI-E sub-block + FTE NII rows must render with
+    POPULATED stored detail — the spec augmentation, new cell kinds and FTE
+    math actually execute. Fixtures are Banner-shaped (cert 28489,
+    12/31/2025): Schedule RI tax-exempt income RIAD4313 = 15,532 /
+    RIAD4507 = 14,865 ($000) → FTE adjustment = 30,397 × 0.21/0.79 =
+    8,080.2 ($000, hand-computed); RI-E itemizes only data processing
+    (C017 = 30,787) plus one labeled income write-in ('Merchant Fee
+    Income', 2,186) — every other preprinted line below threshold (None)."""
+
+    BANNER_RI = {
+        "reporting_period": "12/31/2025", "rssd_id": 352772,
+        "tax_exempt_loan_income": 15_532.0,
+        "tax_exempt_loan_income_usd": 15_532_000.0,
+        "tax_exempt_sec_income": 14_865.0,
+        "tax_exempt_sec_income_usd": 14_865_000.0,
+    }
+
+    BANNER_RIE = {
+        "reporting_period": "12/31/2025", "rssd_id": 352772,
+        "data_processing": 30_787.0, "data_processing_usd": 30_787_000.0,
+        "marketing_professional": None, "directors_fees": None,
+        "printing_supplies": None, "postage": None, "legal": None,
+        "fdic_assessments": None, "accounting_auditing": None,
+        "consulting_advisory": None, "atm_interchange": None,
+        "telecommunications": None,
+        "income_writeins": [{"label": "Merchant Fee Income",
+                             "value": 2_186.0, "value_usd": 2_186_000.0}],
+        "expense_writeins": [],
+    }
+
+    # One FY2025 record; income fields are filed YTD (full year at Dec 31),
+    # matching the RI/RI-E YTD convention. NII = 700,000 − 200,000 = 500,000
+    # → NII (FTE) = 500,000 + 8,080.2 = 508,080.2 ($000) → $508.1M.
+    HIST_ROW = {
+        "REPDTE": "2025-12-31", "INTINC": 700_000, "EINTEXP": 200_000,
+        "NONII": 80_000, "NONIX": 300_000, "ESAL": 150_000,
+        "EOTHNINT": 60_000, "NETINC": 90_000,
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        _install_streamlit_stub()
+        import ui.financials_statements
+        cls.fs = ui.financials_statements
+
+    def _render(self, ri_rows, rie_rows):
+        """Render the income statement against fake FDIC history + RI store;
+        returns captured iframe HTML list."""
+        import pandas as pd
+        comp_v1 = sys.modules["streamlit.components.v1"]
+        import data.call_report_store as crs
+        import data.fdic_client as fc
+        captured = []
+        saved = (comp_v1.html, self.fs.get_bank_info,
+                 fc.get_historical_financials,
+                 crs.get_stored_ri_detail, crs.get_stored_rie_detail)
+        try:
+            comp_v1.html = lambda html, **k: captured.append(html)
+            self.fs.get_bank_info = lambda t: {
+                "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
+            fc.get_historical_financials = (
+                lambda cert, quarters=36: pd.DataFrame([dict(self.HIST_ROW)]))
+            crs.get_stored_ri_detail = lambda cert, quarters=8: list(ri_rows)
+            crs.get_stored_rie_detail = lambda cert, quarters=8: list(rie_rows)
+            self.fs.render_income_statement("BANR")
+        finally:
+            (comp_v1.html, self.fs.get_bank_info,
+             fc.get_historical_financials,
+             crs.get_stored_ri_detail, crs.get_stored_rie_detail) = saved
+        return captured
+
+    def test_rie_and_fte_render_banner_values(self):
+        html = self._render([dict(self.BANNER_RI)], [dict(self.BANNER_RIE)])
+        self.assertEqual(len(html), 1, "statement iframe was not rendered")
+        h = html[0]
+        # RI-E itemized line: data processing 30,787 ($000) → $30.8M cell +
+        # the $000 click-through term.
+        self.assertIn("Data processing expenses", h)
+        self.assertIn("$30.8M", h)
+        self.assertIn("30,787", h)
+        # Below-threshold preprinted lines render n/a with the reason — and
+        # appear at all because SOME line was itemized.
+        self.assertIn("Telecommunications expense", h)
+        self.assertIn(">n/a<", h)
+        self.assertIn("below the RI-E itemization threshold", h)
+        # Labeled income write-in (bank's own filed text).
+        self.assertIn("Merchant Fee Income", h)
+        self.assertIn("2,186", h)
+        # FTE adjustment: 30,397 × 0.21/0.79 = 8,080.2 → $8.1M cell, 8,080
+        # ($000) term, labeled with the statutory rate.
+        self.assertIn("FTE adjustment", h)
+        self.assertIn("$8.1M", h)
+        self.assertIn("8,080", h)
+        self.assertIn("statutory 21% federal rate", h)
+        # NII (FTE) = 500,000 + 8,080.2 = 508,080.2 → $508.1M.
+        self.assertIn("Net interest income (FTE)", h)
+        self.assertIn("$508.1M", h)
+        # Provenance names the schedules.
+        self.assertIn("Schedule RI-E", h)
+        self.assertIn("RIAD4313", h)
+        self.assertIn("RIAD4507", h)
+
+    def test_no_rie_stored_means_no_subblock(self):
+        # Bank itemized nothing → no wall of n/a; FTE rows stay (dead cells).
+        html = self._render([], [])
+        self.assertEqual(len(html), 1)
+        h = html[0]
+        self.assertNotIn("Data processing expenses", h)
+        self.assertNotIn("Merchant Fee Income", h)
+        self.assertIn("FTE adjustment", h)
+
+    def test_tax_exempt_not_reported_is_na_not_zero(self):
+        # RI detail present but both tax-exempt components absent → n/a with
+        # the reason, never a computed $0.
+        ri = {"reporting_period": "12/31/2025", "rssd_id": 352772,
+              "tax_exempt_loan_income": None, "tax_exempt_sec_income": None}
+        html = self._render([ri], [dict(self.BANNER_RIE)])
+        h = html[0]
+        self.assertIn("tax-exempt income not reported", h)
+        self.assertNotIn("$8.1M", h)
 
 
 if __name__ == "__main__":

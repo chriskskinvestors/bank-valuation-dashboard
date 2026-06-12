@@ -59,6 +59,15 @@ Tables:
     PRIMARY KEY (cert, report_date)
   )
 
+  deposit_cost_detail(
+    cert        INTEGER NOT NULL — FDIC certificate (joins bank)
+    rssd_id     INTEGER NOT NULL — Fed RSSD ID
+    report_date DATE NOT NULL    — quarter-end (int_* are YTD, avg_* one quarter)
+    detail_json TEXT             — full get_deposit_cost_detail dict as JSON
+    ingested_at TIMESTAMP
+    PRIMARY KEY (cert, report_date)
+  )
+
 Public functions:
   • init_call_report_schema()                   — idempotent CREATE TABLE
   • upsert_securities_ladder(cert, rssd, ...)   — write one bank's data
@@ -72,6 +81,8 @@ Public functions:
   • get_stored_rcr_detail(cert, quarters=8)     — read RC-R capital walk, newest-first
   • upsert_rie_detail(cert, rssd, detail)       — write one bank-quarter's RI-E itemization
   • get_stored_rie_detail(cert, quarters=8)     — read RI-E itemization, newest-first
+  • upsert_deposit_cost_detail(cert, rssd, detail) — write one bank-quarter's CD/other deposit-cost split
+  • get_stored_deposit_cost_detail(cert, quarters=8) — read deposit-cost split, newest-first
 """
 
 from __future__ import annotations
@@ -201,6 +212,24 @@ def init_call_report_schema():
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_rie_detail_date "
             "ON rie_detail(report_date DESC)"
+        ))
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS deposit_cost_detail (
+                cert        INTEGER NOT NULL,
+                rssd_id     INTEGER NOT NULL,
+                report_date DATE NOT NULL,
+                detail_json TEXT,
+                ingested_at {ts_default},
+                PRIMARY KEY (cert, report_date)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_deposit_cost_rssd "
+            "ON deposit_cost_detail(rssd_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_deposit_cost_date "
+            "ON deposit_cost_detail(report_date DESC)"
         ))
 
 
@@ -535,6 +564,18 @@ def upsert_rie_detail(cert: int, rssd_id: int, detail: dict) -> int:
 def get_stored_rie_detail(cert: int, quarters: int = 8) -> list[dict]:
     """Stored RI-E itemization dicts for a bank, newest-first."""
     return _get_stored_detail("rie_detail", cert, quarters)
+
+
+def upsert_deposit_cost_detail(cert: int, rssd_id: int, detail: dict) -> int:
+    """Write one bank-quarter's CD vs other-deposit cost split
+    (ffiec_client.get_deposit_cost_detail dict: YTD RI 2.a numerators +
+    single-quarter RC-K average balances). 1 on success, 0 otherwise."""
+    return _upsert_detail("deposit_cost_detail", cert, rssd_id, detail)
+
+
+def get_stored_deposit_cost_detail(cert: int, quarters: int = 8) -> list[dict]:
+    """Stored deposit-cost split dicts for a bank, newest-first."""
+    return _get_stored_detail("deposit_cost_detail", cert, quarters)
 
 
 def upsert_rcn_detail(cert: int, rssd_id: int, detail: dict) -> int:

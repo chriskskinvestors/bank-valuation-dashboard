@@ -8,10 +8,11 @@ Call Report from FFIEC, extract the securities maturity ladder, upsert
 into call_report_securities table. Bank-specific NIM repricing pace
 then reads from this table instead of using the generic ~29%/yr default.
 The same fetched call report also yields Schedule RI income detail
-(SNL Income Statement rows), upserted into ri_income_detail per
-bank-quarter, and Schedule RC-N past-due/nonaccrual loan detail
-(SNL Asset Quality by Loan Type matrix), upserted into rcn_detail —
-RI/RC-N failures are logged but never fatal to the job.
+(ri_income_detail), Schedule RC-N past-due/nonaccrual loan detail
+(rcn_detail), the RC-R Part I capital walk (rcr_capital), RI-E
+itemizations (rie_detail), and the RI 2.a + RC-K deposit-cost split
+(deposit_cost_detail) — per-schedule failures are logged and counted
+in the end-of-run summary but never fatal to the job.
 
 Auth: requires FFIEC_USERNAME + FFIEC_JWT_TOKEN env vars (mounted from
 Google Secret Manager). If missing, the job exits early with code 2.
@@ -36,6 +37,17 @@ sys.path.insert(0, str(REPO_ROOT))
 
 # Stay just below FFIEC's 2,500/hr cap to avoid 429s killing the long run.
 _HOURLY_REQUEST_BUDGET = 2400
+
+# Schedules persisted off the one fetched call report per bank. Keys index
+# the per-bank status dict _refresh_one returns and the summary counters.
+_SCHEDULES = ("ri", "rcn", "rcr", "rie", "deposit_cost")
+_SCHEDULE_LABELS = {
+    "ri": "RI detail",
+    "rcn": "RC-N detail",
+    "rcr": "RC-R capital",
+    "rie": "RI-E detail",
+    "deposit_cost": "Deposit cost",
+}
 
 
 def _persist_ri_detail(cert: int, rssd_id: int, period: str, df) -> str:
@@ -120,41 +132,67 @@ def _persist_rie_detail(cert: int, rssd_id: int, period: str, df) -> str:
         return f"fail:{type(e).__name__}: {str(e)[:80]}"
 
 
+def _persist_deposit_cost(cert: int, rssd_id: int, period: str, df) -> str:
+    """Extract + store the CD vs other-deposit cost split (Schedule RI 2.a
+    YTD numerators + RC-K quarterly average balances) from an already-fetched
+    Call Report. 'ok' / 'no_data' / 'fail:<reason>'; never raises."""
+    from data.ffiec_client import get_deposit_cost_detail
+    from data.call_report_store import upsert_deposit_cost_detail
+    try:
+        # get_deposit_cost_detail returns None when no split component
+        # (numerator or denominator) is present at all.
+        detail = get_deposit_cost_detail(rssd_id, period, call_report_df=df)
+        if detail is None:
+            return "no_data"
+        n = upsert_deposit_cost_detail(cert, rssd_id, detail)
+        return "ok" if n else "fail:upsert_failed"
+    except Exception as e:
+        return f"fail:{type(e).__name__}: {str(e)[:80]}"
+
+
 def _refresh_one(
     cert: int, rssd_id: int, period: str,
-) -> tuple[int, int, str, str, str]:
+) -> tuple[int, int, str, dict[str, str]]:
     """Fetch + store one bank.
-    Returns (cert, n_buckets_written, err, ri_status, rcn_status)."""
+    Returns (cert, n_buckets_written, err, schedule_statuses) where
+    schedule_statuses maps each _SCHEDULES key to 'ok' | 'no_data' |
+    'fail:<reason>'."""
     from data.ffiec_client import (
         fetch_call_report, get_securities_maturity_ladder, get_loan_repricing,
     )
     from data.call_report_store import upsert_securities_ladder
 
+    no_data = {s: "no_data" for s in _SCHEDULES}
     if not cert or not rssd_id:
-        return cert, 0, "missing_ids", "no_data", "no_data"
+        return cert, 0, "missing_ids", no_data
     try:
         df = fetch_call_report(rssd_id, period)
         if df is None or df.empty:
-            return cert, 0, "empty_call_report", "no_data", "no_data"
+            return cert, 0, "empty_call_report", no_data
     except Exception as e:
-        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", "no_data", "no_data"
+        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", no_data
 
-    # Schedules RI, RC-N, RC-R Part I, and RI-E all ride on the same fetched
-    # call report (never fetch twice) — persisted even when the bank has no
-    # RC-B securities ladder. RC-R/RI-E statuses are logged per-bank below
-    # but don't widen the return tuple (callers track ri/rcn).
-    ri_status = _persist_ri_detail(cert, rssd_id, period, df)
-    rcn_status = _persist_rcn_detail(cert, rssd_id, period, df)
-    rcr_status = _persist_rcr_detail(cert, rssd_id, period, df)
-    rie_status = _persist_rie_detail(cert, rssd_id, period, df)
-    if rcr_status.startswith("fail") or rie_status.startswith("fail"):
-        print(f"  [warn] cert {cert}: rcr={rcr_status} rie={rie_status}",
-              flush=True)
+    # Schedules RI, RC-N, RC-R Part I, RI-E, and the deposit-cost split all
+    # ride on the same fetched call report (never fetch twice) — persisted
+    # even when the bank has no RC-B securities ladder. RI/RC-N failures get
+    # end-of-run samples; the rest also warn per-bank for immediate signal.
+    statuses = {
+        "ri": _persist_ri_detail(cert, rssd_id, period, df),
+        "rcn": _persist_rcn_detail(cert, rssd_id, period, df),
+        "rcr": _persist_rcr_detail(cert, rssd_id, period, df),
+        "rie": _persist_rie_detail(cert, rssd_id, period, df),
+        "deposit_cost": _persist_deposit_cost(cert, rssd_id, period, df),
+    }
+    warn = {s: v for s, v in statuses.items()
+            if s in ("rcr", "rie", "deposit_cost") and v.startswith("fail")}
+    if warn:
+        print(f"  [warn] cert {cert}: "
+              + " ".join(f"{s}={v}" for s, v in warn.items()), flush=True)
 
     try:
         ladder = get_securities_maturity_ladder(rssd_id, period, call_report_df=df)
         if ladder is None:
-            return cert, 0, "no_securities_data", ri_status, rcn_status
+            return cert, 0, "no_securities_data", statuses
         # Derive floating-loan share from the same Call Report (RC-C Memo 2
         # loan repricing buckets) — no extra HTTP call. None if the bank
         # didn't report the loan-repricing memoranda.
@@ -163,9 +201,9 @@ def _refresh_one(
         n = upsert_securities_ladder(
             cert, rssd_id, ladder, floating_loan_share=floating_share)
         return (cert, len(ladder.get("buckets", {})),
-                "" if n else "upsert_failed", ri_status, rcn_status)
+                "" if n else "upsert_failed", statuses)
     except Exception as e:
-        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", ri_status, rcn_status
+        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", statuses
 
 
 def main() -> int:
@@ -250,12 +288,9 @@ def main() -> int:
     success = 0
     no_data = 0
     errors: list[tuple[int, str]] = []
-    ri_ok = 0
-    ri_no_data = 0
-    ri_failures: list[tuple[int, str]] = []
-    rcn_ok = 0
-    rcn_no_data = 0
-    rcn_failures: list[tuple[int, str]] = []
+    sched_ok = {s: 0 for s in _SCHEDULES}
+    sched_no_data = {s: 0 for s in _SCHEDULES}
+    sched_failures: dict[str, list[tuple[int, str]]] = {s: [] for s in _SCHEDULES}
     requests_in_window = 0
     window_start = time.time()
 
@@ -272,24 +307,19 @@ def main() -> int:
             requests_in_window = 0
             window_start = time.time()
 
-        cert, n_buckets, err, ri_status, rcn_status = _refresh_one(
+        cert, n_buckets, err, statuses = _refresh_one(
             int(i["cert"]), int(i["rssd_id"]), period,
         )
         requests_in_window += 1
 
-        if ri_status == "ok":
-            ri_ok += 1
-        elif ri_status == "no_data":
-            ri_no_data += 1
-        else:
-            ri_failures.append((cert, ri_status))
-
-        if rcn_status == "ok":
-            rcn_ok += 1
-        elif rcn_status == "no_data":
-            rcn_no_data += 1
-        else:
-            rcn_failures.append((cert, rcn_status))
+        for s in _SCHEDULES:
+            st = statuses[s]
+            if st == "ok":
+                sched_ok[s] += 1
+            elif st == "no_data":
+                sched_no_data[s] += 1
+            else:
+                sched_failures[s].append((cert, st))
 
         if err == "":
             if n_buckets > 0:
@@ -317,25 +347,21 @@ def main() -> int:
     print(f"  Ladders ingested:    {success}/{len(candidates)}")
     print(f"  Banks with no data:  {no_data}")
     print(f"  Errors:              {len(errors)}")
-    print(f"  RI detail stored:    ok={ri_ok} fail={len(ri_failures)} "
-          f"no_data={ri_no_data}")
-    print(f"  RC-N detail stored:  ok={rcn_ok} fail={len(rcn_failures)} "
-          f"no_data={rcn_no_data}")
+    for s in _SCHEDULES:
+        label = f"{_SCHEDULE_LABELS[s]} stored:"
+        print(f"  {label:<21}ok={sched_ok[s]} fail={len(sched_failures[s])} "
+              f"no_data={sched_no_data[s]}")
 
     if errors:
         print("\nError sample (first 10):")
         for cert, err in errors[:10]:
             print(f"  cert={cert} {err}")
 
-    if ri_failures:
-        print("\nRI detail failure sample (first 10):")
-        for cert, ri_err in ri_failures[:10]:
-            print(f"  cert={cert} {ri_err}")
-
-    if rcn_failures:
-        print("\nRC-N detail failure sample (first 10):")
-        for cert, rcn_err in rcn_failures[:10]:
-            print(f"  cert={cert} {rcn_err}")
+    for s in _SCHEDULES:
+        if sched_failures[s]:
+            print(f"\n{_SCHEDULE_LABELS[s]} failure sample (first 10):")
+            for cert, sched_err in sched_failures[s][:10]:
+                print(f"  cert={cert} {sched_err}")
 
     # Exit-code logic measures errors per attempt — banks with no
     # securities (legitimate empty RC-B Memo 2) are not failures.

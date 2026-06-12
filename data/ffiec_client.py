@@ -490,21 +490,46 @@ def _lookup_riad(df: pd.DataFrame, code: str) -> float | None:
         return None
 
 
-# ── Deposit interest-by-type (Schedule RI 2.a) ───────────────────────────────
-# MDRM codes confirmed against the FFIEC 031/041 Schedule RI instructions
-# (interest on deposits, item 2.a):
-#   RIAD4508 transaction accounts · RIAD0093 savings (incl MMDAs) ·
-#   RIADHK03 time deposits ≤ $250k · RIADHK04 time deposits > $250k.
-#   CDs = HK03 + HK04 ; other deposits = 4508 + 0093.
-# Time-deposit *balances* come from the FDIC feed (NTRTIME), so only the
-# interest numerator needs FFIEC. The FFIEC webservice is JWT-gated (server
-# side only); values populate through the refresh-ffiec pipeline, not local dev.
-_DEP_COST_CODES = {
-    "int_transaction": "4508",   # interest on transaction accounts
-    "int_savings": "0093",       # interest on savings deposits (incl MMDAs)
-    "int_time_le250": "HK03",    # interest on time deposits ≤ $250k
-    "int_time_gt250": "HK04",    # interest on time deposits > $250k
+# ── Deposit interest-by-type (Schedule RI 2.a + RC-K averages) ───────────────
+# MDRM codes VERIFIED live on Banner Bank (RSSD 352772, 12/31/2025) and
+# against the Fed MDRM dictionary (probe 2026-06-12):
+#   Numerators — Schedule RI item 2.a (RIAD, calendar-YTD $000):
+#     4508 transaction accounts 39,383 · 0093 savings incl MMDAs 108,789 ·
+#     HK03 time ≤ $250k 35,801 · HK04 time > $250k 18,567.
+#     CDs = HK03+HK04 = 54,368 ; other IB deposits = 4508+0093 = 148,172.
+#   Denominators — Schedule RC-K (RCON, single-quarter averages $000):
+#     3485 IB transaction 2,669,745 · B563 savings 5,227,531 ·
+#     HK16 time ≤ $250k 1,025,301 · HK17 time > $250k 514,544.
+#   Reconciliation identity (Banner exact, $0 residual):
+#     4508+0093+HK03+HK04 = 202,540 (= FDIC EDEP); + 4180 + 4185 + 4200
+#     = 212,113 = RIAD4073 total interest expense.
+# HK03/HK04/HK16/HK17 begin 3/31/2017 (earlier reports split at $100k) —
+# absent codes map to None. The FFIEC webservice is JWT-gated (server side
+# only); values populate through the refresh-ffiec pipeline, not local dev.
+_DEP_COST_RIAD_CODES = {
+    "int_transaction": "4508",        # interest on transaction accounts (YTD)
+    "int_savings": "0093",            # interest on savings deposits incl MMDAs (YTD)
+    "int_time_le250": "HK03",         # interest on time deposits ≤ $250k (YTD)
+    "int_time_gt250": "HK04",         # interest on time deposits > $250k (YTD)
+    "int_foreign_deposits": "4172",   # foreign-office deposit interest (031 filers)
+    "int_fed_funds": "4180",          # fed funds purchased / repo expense
+    "int_other_borrowed": "4185",     # trading liabilities + other borrowed money
+    "int_sub_debt": "4200",           # subordinated notes & debentures
+    "total_int_expense": "4073",      # total interest expense
 }
+_DEP_COST_RCK_CODES = {
+    "avg_transaction": "3485",        # avg IB transaction accounts (quarter)
+    "avg_savings": "B563",            # avg savings incl MMDAs (quarter)
+    "avg_time_le250": "HK16",         # avg time deposits ≤ $250k (quarter)
+    "avg_time_gt250": "HK17",         # avg time deposits > $250k (quarter)
+}
+# "No data" test below spans the split components only — the recon inputs
+# (4073/4180/4185/4200) alone don't make a deposit-cost row worth storing.
+_DEP_COST_COMPONENT_KEYS = (
+    "int_transaction", "int_savings", "int_time_le250", "int_time_gt250",
+    "int_foreign_deposits",
+    "avg_transaction", "avg_savings", "avg_time_le250", "avg_time_gt250",
+)
 
 
 def get_deposit_cost_detail(
@@ -513,13 +538,35 @@ def get_deposit_cost_detail(
     call_report_df: pd.DataFrame | None = None,
 ) -> dict | None:
     """
-    Cost of CDs (time deposits) vs. other (transaction + savings) deposits —
-    the SNL 'Int Cost: CDs' / 'Int Cost: Other Deposits' split that isn't in
-    the FDIC financials feed.
+    Cost of CDs (time deposits) vs. other interest-bearing deposits — the
+    SNL 'Int Cost: CDs' / 'Int Cost: Other Deposits' split that isn't in the
+    FDIC financials feed. Raw components only; see period semantics below.
 
-    Returns the YTD interest-expense components ($000). Combine with FDIC time-
-    deposit balances (NTRTIME) to get cost of CDs = interest on time deposits ÷
-    avg time-deposit balance. Returns None in local dev (FFIEC unconfigured);
+    PERIOD SEMANTICS — do NOT divide these fields directly:
+      • int_* numerators are Schedule RI calendar-YTD flows ($000): Q1 covers
+        3 months, Q4 the full year.
+      • avg_* denominators are Schedule RC-K SINGLE-QUARTER average balances
+        ($000) — never YTD.
+      A raw int/avg quotient is wrong for every quarter except Q1. This
+      client deliberately computes no rates: the UI/engine layer must diff
+      consecutive YTD numerators into discrete quarters and average the
+      quarterly balances across the window before displaying any rate.
+
+    FFIEC 031 filers (foreign offices): the four int components are
+    domestic-office only; foreign-office deposit interest is reported
+    separately as int_foreign_deposits (RIAD4172).
+
+    "reconciles" (bool|None): the four components + int_foreign_deposits
+    (blank == $0 in the filing) must equal total_int_expense (RIAD4073)
+    minus 4180/4185/4200 within $1k. False means the split is missing a
+    piece (e.g. pre-3/31/2017 reports using the old $100k split) — callers
+    must render n/a, never a partial number posing as the whole. None means
+    RIAD4073 itself is absent (identity unverifiable).
+
+    Returns raw $thousands as reported plus matching *_usd keys scaled by
+    FFIEC_DOLLAR_SCALE. A true $0 stays 0.0 — only codes absent from the
+    filing map to None. Returns None when no split component (numerator or
+    denominator) is present at all, and in local dev (FFIEC unconfigured);
     the data flows through the refresh-ffiec pipeline on the server.
     """
     df = call_report_df
@@ -527,22 +574,54 @@ def get_deposit_cost_detail(
         df = fetch_call_report(rssd_id, reporting_period)
     if df is None or df.empty:
         return None
-    c = _DEP_COST_CODES
 
-    def _sum_or_none(*codes):
-        """Sum the components, but only when at least one was actually
-        reported — a bank with a true $0 must not be conflated with
-        'field missing from the filing' (the old `or None` did exactly that)."""
-        vals = [_lookup_riad(df, code) for code in codes]
-        present = [v for v in vals if v is not None]
-        return sum(present) if present else None
-
-    return {
+    out: dict = {
         "reporting_period": reporting_period or latest_reporting_period(),
         "rssd_id": int(rssd_id),
-        "int_time_deposits_000": _sum_or_none(c["int_time_le250"], c["int_time_gt250"]),
-        "int_other_deposits_000": _sum_or_none(c["int_transaction"], c["int_savings"]),
     }
+    for key, code in _DEP_COST_RIAD_CODES.items():
+        out[key] = _lookup_riad(df, code)
+    for key, code in _DEP_COST_RCK_CODES.items():
+        out[key] = _lookup_concept(df, code)
+
+    # No split component at all (RC-K/RI 2.a absent from the parse) — don't
+    # return a row of recon-only fields as if it were deposit-cost data.
+    if all(out[k] is None for k in _DEP_COST_COMPONENT_KEYS):
+        return None
+
+    def _sum_or_none(*keys):
+        """Sum components, but only when at least one was actually reported —
+        a true $0 must not be conflated with 'absent from the filing'."""
+        present = [out[k] for k in keys if out[k] is not None]
+        return sum(present) if present else None
+
+    out["int_cds"] = _sum_or_none("int_time_le250", "int_time_gt250")
+    out["int_other_ib"] = _sum_or_none("int_transaction", "int_savings")
+    out["avg_cds"] = _sum_or_none("avg_time_le250", "avg_time_gt250")
+    out["avg_other_ib"] = _sum_or_none("avg_transaction", "avg_savings")
+
+    # Reconciliation guard: components (+ foreign) vs RIAD4073 net of the
+    # non-deposit interest-expense lines. Blank == $0 in the filing, so
+    # absent codes contribute nothing to either side.
+    total = out["total_int_expense"]
+    if total is None:
+        out["reconciles"] = None
+    else:
+        deposit_side = sum(
+            out[k] or 0.0
+            for k in ("int_transaction", "int_savings", "int_time_le250",
+                      "int_time_gt250", "int_foreign_deposits"))
+        non_deposit = sum(
+            out[k] or 0.0
+            for k in ("int_fed_funds", "int_other_borrowed", "int_sub_debt"))
+        out["reconciles"] = abs(deposit_side - (total - non_deposit)) <= 1.0
+
+    dollar_keys = (list(_DEP_COST_RIAD_CODES) + list(_DEP_COST_RCK_CODES)
+                   + ["int_cds", "int_other_ib", "avg_cds", "avg_other_ib"])
+    for key in dollar_keys:
+        v = out[key]
+        out[f"{key}_usd"] = v * FFIEC_DOLLAR_SCALE if v is not None else None
+    return out
 
 
 # ── Schedule RI income-statement detail ──────────────────────────────────────

@@ -555,5 +555,134 @@ class TestRiEDetail(unittest.TestCase):
         self.assertIsNone(self._detail([("RIAD4340", 123)]))
 
 
+class TestFteAdjustment(unittest.TestCase):
+    """FTE NII derivation (ui/financials_statements._fte_adjustment):
+    FTE adjustment = (RIAD4313 + RIAD4507) × t/(1−t), t = 0.21 federal
+    statutory rate. Hand-computed pin — Banner Bank 12/31/2025 filed
+    4313 = 15,532 and 4507 = 14,865 ($000):
+    30,397 × 0.21/0.79 = 638,337 ÷ 79 = 8,080.215 → rounds to 8,080."""
+
+    @classmethod
+    def setUpClass(cls):
+        # ui.financials_statements imports streamlit.components.v1 (via
+        # ui.financial_highlights); the module-level stub only registers
+        # the bare "streamlit" module.
+        comp_pkg = types.ModuleType("streamlit.components")
+        comp_v1 = types.ModuleType("streamlit.components.v1")
+        comp_v1.html = lambda *a, **k: None
+        comp_pkg.v1 = comp_v1
+        sys.modules.setdefault("streamlit.components", comp_pkg)
+        sys.modules.setdefault("streamlit.components.v1", comp_v1)
+        from ui.financials_statements import _fte_adjustment
+        cls.fte = staticmethod(_fte_adjustment)
+
+    def test_banner_hand_check(self):
+        v = self.fte(15_532, 14_865)
+        self.assertAlmostEqual(v, 30_397 * 0.21 / 0.79, places=9)
+        self.assertEqual(round(v), 8_080)
+
+    def test_no_components_is_none_not_zero(self):
+        # "Tax-exempt income not reported" must surface as n/a, never $0.
+        self.assertIsNone(self.fte(None, None))
+
+    def test_filed_zero_is_true_zero(self):
+        # A filed $0 in both components is a real $0 FTE adjustment.
+        self.assertEqual(self.fte(0.0, 0.0), 0.0)
+
+    def test_single_component_present_computes(self):
+        self.assertAlmostEqual(self.fte(15_532, None),
+                               15_532 * 0.21 / 0.79, places=9)
+        self.assertAlmostEqual(self.fte(None, 14_865),
+                               14_865 * 0.21 / 0.79, places=9)
+
+
+class TestDepositCostDetail(unittest.TestCase):
+    """CD vs other-deposit cost split (Schedule RI 2.a YTD numerators +
+    RC-K quarterly average balances). Values are Banner Bank's filed
+    12/31/2025 call report (RSSD 352772, live-probed) — the reconciliation
+    identity holds to the dollar:
+      4508+0093+HK03+HK04 = 202,540 (= FDIC EDEP);
+      + 4180 (3,799) + 4185 (5,774) + 4200 (0) = 212,113 = RIAD4073."""
+
+    BANNER = [
+        ("RIAD4508", 39_383),       # interest: transaction accounts (YTD)
+        ("RIAD0093", 108_789),      # interest: savings incl MMDAs (YTD)
+        ("RIADHK03", 35_801),       # interest: time ≤ $250k (YTD)
+        ("RIADHK04", 18_567),       # interest: time > $250k (YTD)
+        ("RCON3485", 2_669_745),    # avg IB transaction (quarter)
+        ("RCONB563", 5_227_531),    # avg savings (quarter)
+        ("RCONHK16", 1_025_301),    # avg time ≤ $250k (quarter)
+        ("RCONHK17", 514_544),      # avg time > $250k (quarter)
+        ("RIAD4180", 3_799),        # fed funds purchased / repo
+        ("RIAD4185", 5_774),        # other borrowed money
+        ("RIAD4200", 0),            # subordinated debt — true $0
+        ("RIAD4073", 212_113),      # total interest expense
+    ]
+
+    def _detail(self, rows):
+        from data.ffiec_client import get_deposit_cost_detail
+        return get_deposit_cost_detail(
+            999999, "12/31/2025", call_report_df=_ffiec_df(rows))
+
+    def test_banner_components_extract(self):
+        d = self._detail(self.BANNER)
+        self.assertEqual(d["int_transaction"], 39_383)
+        self.assertEqual(d["int_savings"], 108_789)
+        self.assertEqual(d["int_time_le250"], 35_801)
+        self.assertEqual(d["int_time_gt250"], 18_567)
+        self.assertEqual(d["avg_transaction"], 2_669_745)
+        self.assertEqual(d["avg_savings"], 5_227_531)
+        self.assertEqual(d["avg_time_le250"], 1_025_301)
+        self.assertEqual(d["avg_time_gt250"], 514_544)
+        # 041 filer: no foreign-office deposit interest reported → None
+        self.assertIsNone(d["int_foreign_deposits"])
+        # True $0 stays 0.0, never None
+        self.assertEqual(d["int_sub_debt"], 0.0)
+
+    def test_cd_and_other_ib_sums(self):
+        d = self._detail(self.BANNER)
+        self.assertEqual(d["int_cds"], 35_801 + 18_567)            # 54,368
+        self.assertEqual(d["int_other_ib"], 39_383 + 108_789)      # 148,172
+        self.assertEqual(d["avg_cds"], 1_025_301 + 514_544)        # 1,539,845
+        self.assertEqual(d["avg_other_ib"], 2_669_745 + 5_227_531)
+
+    def test_reconciles_true_on_full_banner_row(self):
+        # 202,540 deposit components = 212,113 − 3,799 − 5,774 − 0, $0 residual
+        self.assertIs(self._detail(self.BANNER)["reconciles"], True)
+
+    def test_tampered_component_flags_false(self):
+        rows = [("RIADHK03", 30_801) if r[0] == "RIADHK03" else r
+                for r in self.BANNER]
+        self.assertIs(self._detail(rows)["reconciles"], False)
+
+    def test_pre2017_absent_hk_codes_are_none(self):
+        # HK03/HK04/HK16/HK17 begin 3/31/2017 — an older report omits them.
+        rows = [r for r in self.BANNER
+                if r[0] not in ("RIADHK03", "RIADHK04", "RCONHK16", "RCONHK17")]
+        d = self._detail(rows)
+        for k in ("int_time_le250", "int_time_gt250", "int_cds", "int_cds_usd",
+                  "avg_time_le250", "avg_time_gt250", "avg_cds"):
+            self.assertIsNone(d[k])
+        # The split is missing the time-deposit piece — must flag, never
+        # let int_other_ib pose as the whole deposit cost.
+        self.assertIs(d["reconciles"], False)
+
+    def test_reconciles_none_when_total_absent(self):
+        rows = [r for r in self.BANNER if r[0] != "RIAD4073"]
+        self.assertIsNone(self._detail(rows)["reconciles"])
+
+    def test_usd_scaling(self):
+        d = self._detail(self.BANNER)
+        self.assertEqual(d["int_cds_usd"], 54_368_000)
+        self.assertEqual(d["int_other_ib_usd"], 148_172_000)
+        self.assertEqual(d["avg_savings_usd"], 5_227_531_000)
+        self.assertEqual(d["int_sub_debt_usd"], 0.0)
+
+    def test_no_split_component_returns_none(self):
+        # Recon-only fields present but no numerator/denominator → no row.
+        self.assertIsNone(self._detail([("RIAD4073", 212_113)]))
+        self.assertIsNone(self._detail([("RIAD4340", 123)]))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
