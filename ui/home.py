@@ -10,20 +10,17 @@ import pandas as pd
 
 from data.bank_mapping import get_name
 from data.bank_universe import get_universe_count_fast
-
-
-def _section_header(emoji: str, title: str, subtitle: str = ""):
-    """Consistent section divider so each block on the home page reads as its
-    own clearly-delineated section."""
-    sub = (f'<span style="font-size:0.78rem; color:#94a3b8; font-weight:500; '
-           f'margin-left:auto;">{subtitle}</span>') if subtitle else ""
-    st.markdown(
-        '<div style="display:flex; align-items:baseline; gap:9px; margin:22px 0 9px; '
-        'padding-bottom:6px; border-bottom:2px solid #e2e8f0;">'
-        f'<span style="font-size:1.0rem; font-weight:700; color:#0f172a; '
-        f'letter-spacing:-0.01em;">{emoji} {title}</span>{sub}</div>',
-        unsafe_allow_html=True,
-    )
+from ui.components import (
+    section_header,
+    delta_chip,
+    stat_pill,
+    pill_row,
+    bank_link_row,
+    list_column,
+    news_card,
+    alert_row,
+    external_link,
+)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -105,29 +102,6 @@ def _rates_asof():
         return "—"
 
 
-def _delta_html(change, unit, up_is_good=True):
-    """Small colored Δ chip. change in the unit's terms (bp or pt)."""
-    if change is None or abs(change) < (0.5 if unit == "bp" else 0.05):
-        return '<span style="font-size:0.55rem; color:#94a3b8; font-weight:600;">unch</span>'
-    good = (change > 0) == up_is_good
-    col = "#059669" if good else "#dc2626"
-    dp = 0 if unit == "bp" else 1
-    return (f'<span style="font-size:0.56rem; font-weight:700; color:{col};">'
-            f'{change:+.{dp}f} {unit}</span>')
-
-
-def _stat_pill(label, value_html, delta_html):
-    return (
-        '<span style="display:inline-flex; flex-direction:column; '
-        'padding:3px 11px; border-radius:7px; background:rgba(148,163,184,0.08); '
-        'border:1px solid rgba(148,163,184,0.18); line-height:1.22;">'
-        f'<span style="font-size:0.55rem; color:#94a3b8; font-weight:600; '
-        f'letter-spacing:0.04em;">{label}</span>'
-        f'<span style="font-size:0.84rem; font-weight:700; color:#0f172a; '
-        f'white-space:nowrap;">{value_html} {delta_html}</span></span>'
-    )
-
-
 def _curve_svg(points):
     """Mini yield-curve sparkline: today (blue) vs ~1 week ago (gray).
     points = [(label, today, weekago), ...]."""
@@ -199,7 +173,7 @@ def _render_markets_rates():
     status, status_col = _market_status()
     sub = (f'rates as of {_rates_asof()} · market '
            f'<span style="color:{status_col}; font-weight:700;">{status}</span>')
-    _section_header("📈", "Markets & Rates", sub)
+    section_header("📈", "Markets & Rates", sub)
 
     # ── Treasury curve: level + daily bps move ──────────────────────────
     td = {lab: _fred_points(sid) for lab, sid in _TENORS}
@@ -209,14 +183,14 @@ def _render_markets_rates():
         if level is None:
             val = "—"
         elif is_spread:
-            col = "#dc2626" if level < 0 else "#0f172a"
+            col = "var(--danger)" if level < 0 else "var(--text-primary)"
             val = f'<span style="color:{col};">{level:+.2f}</span>'
         else:
             val = f"{level:.2f}%"
         chg = (level - prior) * 100 if (level is not None and prior is not None) else None
-        return _stat_pill(label, val, _delta_html(chg, "bp"))
+        return stat_pill(label, val, delta_chip(chg, "bp"))
 
-    pills = [_stat_pill("FED FUNDS", f"{ff:.2f}%" if ff is not None else "—", "")]
+    pills = [stat_pill("FED FUNDS", f"{ff:.2f}%" if ff is not None else "—")]
     for lab, _ in _TENORS:
         lv, pr, _wk = td[lab]
         pills.append(_rate_pill(lab, lv, pr))
@@ -243,23 +217,19 @@ def _render_markets_rates():
     def _risk_pill(label, p, unit):
         lv, pr, _ = p
         if lv is None:
-            return _stat_pill(label, "—", "")
+            return stat_pill(label, "—")
         val = f"{lv:.2f}%" if unit == "bp" else f"{lv:.1f}"
         chg = (lv - pr) * (100 if unit == "bp" else 1) if pr is not None else None
-        return _stat_pill(label, val, _delta_html(chg, unit, up_is_good=False))
+        return stat_pill(label, val, delta_chip(chg, unit, up_is_good=False))
 
     risk = [_risk_pill("HY OAS", hy, "bp"), _risk_pill("IG OAS", ig, "bp"),
             _risk_pill("VIX", vix, "pt")]
 
-    row = "display:flex; gap:6px; flex-wrap:wrap;"
     c1, c2 = st.columns([4, 1])
     with c1:
         # All rate / spread / risk pills in one dense wrap — fills the width
         # instead of leaving the empty band that was here before.
-        st.markdown(
-            f'<div style="{row} margin:2px 0 0;">' + "".join(pills + sp_pills + risk) + "</div>",
-            unsafe_allow_html=True,
-        )
+        pill_row(pills + sp_pills + risk, margin="2px 0 0")
     with c2:
         if svg:
             st.markdown(
@@ -299,43 +269,29 @@ def _render_etf_strip():
         price = (q or {}).get("price")
         chg = (q or {}).get("change_pct")
         if price is None:
-            val, sub, sub_col = "—", "", "#94a3b8"
+            val, sub, sub_col = "—", "", "var(--text-muted)"
         else:
             val = f"${price:,.2f}"
-            sub_col = "#dc2626" if (chg is not None and chg < 0) else "#059669"
+            sub_col = ("var(--danger)" if (chg is not None and chg < 0)
+                       else "var(--success)")
             sub = f"{chg:+.2f}%" if chg is not None else ""
         c = ctx.get(t, {})
 
         def _ctx(lbl, v):
             if v is None:
                 return ""
-            cc = "#059669" if v >= 0 else "#dc2626"
-            return (f'<span style="color:#94a3b8;">{lbl}</span>'
+            cc = "var(--success)" if v >= 0 else "var(--danger)"
+            return (f'<span style="color:var(--text-muted);">{lbl}</span>'
                     f'<span style="color:{cc}; font-weight:600;"> {v:+.1f}%</span>')
         ctx_bits = " · ".join(b for b in [_ctx("1w", c.get("w1")),
                                           _ctx("ytd", c.get("ytd"))] if b)
-        ctx_html = (f'<span style="font-size:0.56rem; margin-top:1px;">{ctx_bits}</span>'
-                    if ctx_bits else "")
-        border = "#2563eb" if t == sel else "rgba(148,163,184,0.18)"
-        return (
-            f'<a href="?bench={t}" target="_self" title="{desc}" '
-            'style="text-decoration:none; color:inherit;">'
-            '<span style="display:inline-flex; flex-direction:column; '
-            'padding:3px 12px; border-radius:7px; background:rgba(148,163,184,0.08); '
-            f'border:1px solid {border}; line-height:1.25; cursor:pointer;">'
-            f'<span style="font-size:0.58rem; color:#94a3b8; font-weight:600; '
-            f'letter-spacing:0.04em;">{t}</span>'
-            f'<span style="font-size:0.86rem; font-weight:700;">{val}'
-            f'<span style="font-size:0.64rem; font-weight:600; margin-left:5px; '
-            f'color:{sub_col};">{sub}</span></span>{ctx_html}</span></a>'
-        )
+        value = (f'{val}<span style="font-size:var(--fs-2xs); font-weight:600; '
+                 f'margin-left:5px; color:{sub_col};">{sub}</span>')
+        return stat_pill(t, value, href=f"?bench={t}", hover_title=desc,
+                         selected=(t == sel), foot_html=ctx_bits)
 
     pills = [_pill_link(t, desc, quotes.get(t)) for t, desc in MARKET_BENCHMARKS]
-    st.markdown(
-        '<div style="display:flex; gap:6px; flex-wrap:wrap; margin:0 0 6px;">'
-        + "".join(pills) + "</div>",
-        unsafe_allow_html=True,
-    )
+    pill_row(pills)
 
     if sel and sel in bench_map:
         try:
@@ -453,38 +409,28 @@ def _render_watchlist_movers(all_metrics: list[dict]):
     _counts = f"{adv} up · {dec} down · {flat} flat"
     _sub = (f'<span style="color:{_asof_col}; font-weight:600;">{_asof}</span> · {_counts}'
             if _asof else _counts)
-    _section_header("📊", "Market Movers", _sub)
+    section_header("📊", "Market Movers", _sub)
 
     def _row(tk, price, chg):
-        name = (get_name(tk) or "")[:24]
-        col = "#059669" if chg > 0 else ("#dc2626" if chg < 0 else "#64748b")
+        col = ("var(--success)" if chg > 0
+               else ("var(--danger)" if chg < 0 else "var(--text-secondary)"))
         px = f"${price:,.2f}" if isinstance(price, (int, float)) else "—"
-        return (
-            f'<a href="?bank={tk}" target="_self" style="display:flex; '
-            'align-items:baseline; justify-content:space-between; gap:8px; '
-            'padding:5px 11px; border-radius:7px; text-decoration:none; '
-            'border:1px solid #eef2f7;">'
-            f'<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
-            f'<strong style="color:#0f172a;">{tk}</strong> '
-            f'<span style="color:#94a3b8; font-size:0.8rem;">{name}</span></span>'
-            f'<span style="white-space:nowrap; font-variant-numeric:tabular-nums;">'
-            f'<span style="color:#64748b; font-size:0.82rem; margin-right:8px;">{px}</span>'
-            f'<b style="color:{col};">{chg:+.2f}%</b></span></a>'
-        )
-
-    def _col(title, items, accent):
-        head = (f'<div style="font-size:0.66rem; font-weight:700; letter-spacing:0.05em; '
-                f'color:{accent}; margin:0 0 5px;">{title}</div>')
-        body = "".join(_row(*it) for it in items) or \
-            '<div style="color:#94a3b8; font-size:0.82rem; padding:5px 11px;">None</div>'
-        return ('<div style="display:flex; flex-direction:column; gap:4px;">'
-                + head + body + '</div>')
+        right = (f'<span style="color:var(--text-secondary); font-size:var(--fs-base); '
+                 f'margin-right:8px;">{px}</span>'
+                 f'<b style="color:{col};">{chg:+.2f}%</b>')
+        return bank_link_row(tk, (get_name(tk) or "")[:24], right)
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(_col("▲ TOP GAINERS", gainers, "#059669"), unsafe_allow_html=True)
+        st.markdown(
+            list_column("▲ TOP GAINERS", "".join(_row(*it) for it in gainers),
+                        accent="var(--success)", empty_text="None"),
+            unsafe_allow_html=True)
     with c2:
-        st.markdown(_col("▼ TOP LOSERS", losers, "#dc2626"), unsafe_allow_html=True)
+        st.markdown(
+            list_column("▼ TOP LOSERS", "".join(_row(*it) for it in losers),
+                        accent="var(--danger)", empty_text="None"),
+            unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -494,7 +440,7 @@ def _render_watchlist_movers(all_metrics: list[dict]):
 def _render_todays_calendar(watchlist: list[str]):
     """What's on the schedule — covered banks reporting earnings, grouped by
     urgency. (Macro releases / ex-div are the next add to this section.)"""
-    _section_header("🗓️", "Today's Calendar", "bank earnings — next 14 days")
+    section_header("🗓️", "Today's Calendar", "bank earnings — next 14 days")
     alerts = _collect_earnings_alerts(watchlist)
     if not alerts:
         st.caption("No covered-bank earnings in the next 14 days.")
@@ -511,30 +457,21 @@ def _render_todays_calendar(watchlist: list[str]):
             buckets[2][1].append(a)
 
     def _chip(a):
-        tk = a["ticker"]; name = (get_name(tk) or "")[:22]
+        tk = a["ticker"]
         eps = a.get("eps_est")
-        est = f' <span style="color:#94a3b8; font-size:0.78rem;">est ${eps:.2f}</span>' if eps is not None else ""
-        return (
-            f'<a href="?bank={tk}" target="_self" style="display:flex; '
-            'align-items:baseline; justify-content:space-between; gap:8px; '
-            'padding:5px 11px; border-radius:7px; text-decoration:none; border:1px solid #eef2f7;">'
-            f'<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
-            f'<strong style="color:#0f172a;">{tk}</strong> '
-            f'<span style="color:#94a3b8; font-size:0.8rem;">{name}</span></span>'
-            f'<span style="white-space:nowrap; color:#475569; font-size:0.8rem;">{a["date"]}{est}</span></a>'
-        )
+        est = (f' <span style="color:var(--text-muted); font-size:var(--fs-sm);">'
+               f'est ${eps:.2f}</span>') if eps is not None else ""
+        right = (f'<span style="color:var(--text-secondary); font-size:var(--fs-sm);">'
+                 f'{a["date"]}{est}</span>')
+        return bank_link_row(tk, (get_name(tk) or "")[:22], right)
 
     cols = st.columns(3)
     for col, (label, items) in zip(cols, buckets):
         with col:
-            accent = "#dc2626" if label == "Today" else "#475569"
+            accent = "var(--danger)" if label == "Today" else "var(--text-secondary)"
             st.markdown(
-                f'<div style="font-size:0.66rem; font-weight:700; letter-spacing:0.05em; '
-                f'color:{accent}; margin:0 0 5px;">{label.upper()} · {len(items)}</div>'
-                '<div style="display:flex; flex-direction:column; gap:4px;">'
-                + ("".join(_chip(a) for a in items) or
-                   '<div style="color:#cbd5e1; font-size:0.82rem; padding:5px 11px;">—</div>')
-                + "</div>",
+                list_column(f"{label.upper()} · {len(items)}",
+                            "".join(_chip(a) for a in items), accent=accent),
                 unsafe_allow_html=True,
             )
 
@@ -546,44 +483,32 @@ def _render_todays_calendar(watchlist: list[str]):
 def _render_coverage_leaderboard(all_metrics: list[dict]):
     """Ranked extremes across coverage — the value-screen lists you scan each
     morning: cheapest, highest-returning, best-yielding, widest discount."""
-    _section_header("🏅", "Coverage Leaderboard", "ranked extremes across all covered banks")
+    section_header("🏅", "Coverage Leaderboard", "ranked extremes across all covered banks")
     df = pd.DataFrame(all_metrics)
 
-    def _list(title, col, ascending, fmt, color="#0f172a"):
+    def _list(title, col, ascending, fmt, color="var(--text-primary)"):
         if col not in df.columns:
-            return f'<div style="font-size:0.66rem; font-weight:700; color:#94a3b8;">{title}</div>'
+            return list_column(title, "")
         sub = df[["ticker", col]].copy()
         sub[col] = pd.to_numeric(sub[col], errors="coerce")
         sub = sub.dropna(subset=[col]).sort_values(col, ascending=ascending).head(5)
-        rows = ""
-        for _, r in sub.iterrows():
-            tk = r["ticker"]; name = (get_name(tk) or "")[:20]
-            rows += (
-                f'<a href="?bank={tk}" target="_self" style="display:flex; '
-                'align-items:baseline; justify-content:space-between; gap:8px; '
-                'padding:4px 11px; border-radius:6px; text-decoration:none; border:1px solid #eef2f7;">'
-                f'<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">'
-                f'<strong style="color:#0f172a;">{tk}</strong> '
-                f'<span style="color:#94a3b8; font-size:0.78rem;">{name}</span></span>'
-                f'<b style="color:{color}; white-space:nowrap; font-variant-numeric:tabular-nums;">'
-                f'{fmt(r[col])}</b></a>'
-            )
-        if not rows:
-            rows = '<div style="color:#cbd5e1; font-size:0.82rem; padding:4px 11px;">—</div>'
-        return (f'<div style="font-size:0.66rem; font-weight:700; letter-spacing:0.05em; '
-                f'color:#64748b; margin:0 0 5px;">{title}</div>'
-                '<div style="display:flex; flex-direction:column; gap:3px;">' + rows + '</div>')
+        rows = "".join(
+            bank_link_row(r["ticker"], (get_name(r["ticker"]) or "")[:20],
+                          f'<b style="color:{color};">{fmt(r[col])}</b>')
+            for _, r in sub.iterrows()
+        )
+        return list_column(title, rows)
 
     lists = [
-        ("CHEAPEST · P/TBV", "ptbv_ratio", True, lambda v: f"{v:.2f}x", "#059669"),
-        ("WIDEST DISCOUNT TO FAIR", "ptbv_discount", False, lambda v: f"{v:+.0f}%", "#059669"),
+        ("CHEAPEST · P/TBV", "ptbv_ratio", True, lambda v: f"{v:.2f}x", "var(--success)"),
+        ("WIDEST DISCOUNT TO FAIR", "ptbv_discount", False, lambda v: f"{v:+.0f}%", "var(--success)"),
         ("HIGHEST ROATCE", "roatce_blended", False, lambda v: f"{v:.1f}%"),
         ("HIGHEST DIVIDEND YIELD", "dividend_yield", False, lambda v: f"{v:.1f}%"),
     ]
     cols = st.columns(2)
     for i, (title, col, asc, fmt, *c) in enumerate(lists):
         with cols[i % 2]:
-            st.markdown(_list(title, col, asc, fmt, *(c or ["#0f172a"])), unsafe_allow_html=True)
+            st.markdown(_list(title, col, asc, fmt, *(c or [])), unsafe_allow_html=True)
             st.markdown("")
 
 
@@ -610,7 +535,7 @@ def _render_sector_ma(watchlist: list[str]):
     watchlist) — consolidation is the sector's biggest catalyst and deals at
     banks you don't own still move comps and signal where multiples are going."""
     import datetime as dt
-    _section_header("🤝", "Sector M&A & Deals", "universe-wide · deals move the comps")
+    section_header("🤝", "Sector M&A & Deals", "universe-wide · deals move the comps")
     try:
         from data.events import get_universe_recent
         from data.events.wire_base import is_safe_news_url
@@ -654,27 +579,16 @@ def _render_sector_ma(watchlist: list[str]):
         tk = a["ticker"]; name = (get_name(tk) or "")[:30] if tk else ""
         when = _relative_time(a["published_at"])
         tkr = (f'<a href="?bank={tk}" target="_self" style="text-decoration:none;">'
-               f'<strong style="color:#0f172a;">{tk}</strong></a> '
-               f'<span style="color:#94a3b8;">{name}</span>') if tk else \
-              '<span style="color:#94a3b8;">Sector</span>'
-        link = (f' <a href="{a["url"]}" target="_blank" style="color:var(--brand-accent); '
-                f'text-decoration:none;">open ↗</a>') if a["url"] else ""
+               f'<strong style="color:var(--text-primary);">{tk}</strong></a> '
+               f'<span style="color:var(--text-muted);">{_html.escape(name)}</span>') if tk else \
+              '<span style="color:var(--text-muted);">Sector</span>'
         summ = a["summary"]
         if summ and len(summ) > 200:
             summ = summ[:197].rstrip() + "…"
-        # Headlines/summaries are third-party feed text — escape before
-        # interpolating into unsafe_allow_html (one stray '<' corrupts the page).
-        head_safe = _html.escape(a["headline"])
-        summ_safe = _html.escape(summ) if summ else ""
-        st.markdown(
-            '<div class="alert-row severity-high" style="display:block; padding:9px 14px;">'
-            f'<div style="font-size:0.78rem; color:var(--text-muted);">🤝 M&amp;A · {tkr} · {when}{link}</div>'
-            f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{head_safe}</div>'
-            + (f'<div style="color:var(--text-secondary); font-size:0.86rem; margin-top:2px; '
-               f'line-height:1.45;">{summ_safe}</div>' if summ else "")
-            + '</div>',
-            unsafe_allow_html=True,
-        )
+        # Headline/summary are third-party feed text — news_card escapes them
+        # before interpolating into unsafe_allow_html.
+        news_card(f'🤝 M&amp;A · {tkr} · {when}{external_link(a["url"])}',
+                  a["headline"], summ, severity="high")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -689,7 +603,7 @@ def _render_industry_valuations(df: pd.DataFrame):
     """
     from analysis.peer_groups import asset_size_tier
 
-    _section_header("🏦", "Industry Valuations", "median multiples by asset-size tier")
+    section_header("🏦", "Industry Valuations", "median multiples by asset-size tier")
 
     if "total_assets" not in df.columns:
         df = df.copy()
@@ -731,21 +645,8 @@ def _render_industry_valuations(df: pd.DataFrame):
         ("MEDIAN ROATCE", _pct(_med(df, "roatce_blended"))),
         ("BELOW FAIR VALUE", f"{n_cheap} / {n}"),
     ]
-    pills = "".join(
-        '<span style="display:inline-flex; flex-direction:column; padding:4px 13px; '
-        'border-radius:8px; background:rgba(37,99,235,0.05); '
-        'border:1px solid rgba(37,99,235,0.14); line-height:1.25;">'
-        f'<span style="font-size:0.55rem; color:#64748b; font-weight:700; '
-        f'letter-spacing:0.05em;">{lbl}</span>'
-        f'<span style="font-size:0.98rem; font-weight:700; color:#1e3a8a;">{val}</span>'
-        '</span>'
-        for lbl, val in head_items
-    )
-    st.markdown(
-        '<div style="display:flex; gap:7px; flex-wrap:wrap; margin:0 0 10px;">'
-        + pills + "</div>",
-        unsafe_allow_html=True,
-    )
+    pill_row([stat_pill(lbl, val, accent="brand") for lbl, val in head_items],
+             margin="0 0 10px", gap=7)
 
     # Tier table — order large → small, only tiers that have banks, then All.
     tier_order = [
@@ -815,7 +716,7 @@ def _render_alert_inbox(all_metrics: list[dict], watchlist: list[str]):
         st.info("Loading bank data...")
         return
 
-    _section_header("🔔", "Alert Inbox", "news · earnings · dynamics · insider · value opps")
+    section_header("🔔", "Alert Inbox", "news · earnings · dynamics · insider · value opps")
     st.caption("Prioritized across all covered banks. Click into any row to jump to the bank.")
 
     # Collect alerts from each source
@@ -954,22 +855,14 @@ def _render_news_tab(alerts: list[dict]):
         summ = a["summary"]
         if summ and len(summ) > 240:
             summ = summ[:237].rstrip() + "…"
-        link = (f' <a href="{a["url"]}" target="_blank" style="color:var(--brand-accent); '
-                f'text-decoration:none;">open ↗</a>') if a["url"] else ""
-        # Third-party feed text — escape before unsafe_allow_html.
-        head_safe = _html.escape(a["headline"])
-        summ_safe = _html.escape(summ) if summ else ""
-        body = (
-            f'<div class="alert-row severity-{sev}" style="display:block; padding:9px 14px;">'
-            f'<div style="font-size:0.78rem; color:var(--text-muted);">'
-            f'{emoji} {label} &nbsp;·&nbsp; <strong style="color:var(--text-primary);">{tk}</strong> '
-            f'<span style="color:var(--text-secondary);">{name}</span> &nbsp;·&nbsp; {when}{link}</div>'
-            f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{head_safe}</div>'
-            + (f'<div style="color:var(--text-secondary); font-size:0.86rem; margin-top:2px; '
-               f'line-height:1.45;">{summ_safe}</div>' if summ else "")
-            + '</div>'
+        meta = (
+            f'{emoji} {label} &nbsp;·&nbsp; '
+            f'<strong style="color:var(--text-primary);">{tk}</strong> '
+            f'<span style="color:var(--text-secondary);">{_html.escape(name)}</span> '
+            f'&nbsp;·&nbsp; {when}{external_link(a["url"])}'
         )
-        st.markdown(body, unsafe_allow_html=True)
+        # Headline/summary are third-party feed text — news_card escapes them.
+        news_card(meta, a["headline"], summ, severity=sev)
 
 
 def _collect_earnings_alerts(watchlist: list[str]) -> list[dict]:
@@ -1078,16 +971,6 @@ def _collect_valuation_alerts(all_metrics: list[dict]) -> list[dict]:
     return alerts[:15]
 
 
-def _alert_row(severity: str, left_html: str, right_html: str) -> str:
-    """Render a single alert row with the shared .alert-row style."""
-    return (
-        f'<div class="alert-row severity-{severity}">'
-        f'<span>{left_html}</span>'
-        f'<span style="color:var(--text-secondary);">{right_html}</span>'
-        f'</div>'
-    )
-
-
 def _render_earnings_tab(alerts: list[dict]):
     if not alerts:
         st.info("No earnings reports in the next 14 days.")
@@ -1126,13 +1009,13 @@ def _render_earnings_tab(alerts: list[dict]):
             f' <span style="color:var(--text-muted); font-size:0.8rem;">· {date_str}</span>'
         )
         right = " · ".join(extras) if extras else ""
-        st.markdown(_alert_row(sev, left, right), unsafe_allow_html=True)
+        st.markdown(alert_row(sev, left, right), unsafe_allow_html=True)
 
 
 def _render_dynamics_tab(alerts: list[dict]):
     if not alerts:
         st.markdown(
-            _alert_row("ok",
+            alert_row("ok",
                        "<strong>All clear</strong> — no deposit, credit, or capital alerts",
                        ""),
             unsafe_allow_html=True,
@@ -1155,7 +1038,7 @@ def _render_dynamics_tab(alerts: list[dict]):
             f'<span style="color:var(--text-secondary);">{name}</span>'
         )
         right = " · ".join(parts)
-        st.markdown(_alert_row(sev, left, right), unsafe_allow_html=True)
+        st.markdown(alert_row(sev, left, right), unsafe_allow_html=True)
 
     st.caption("Click into a bank from Company Analysis to review details.")
 
@@ -1184,7 +1067,7 @@ def _render_insider_tab(alerts: list[dict]):
             f'Sells <span style="color:var(--text-secondary);">${sells_m:.2f}M</span> · '
             f'Net <b>${net_m:+.2f}M</b>'
         )
-        st.markdown(_alert_row("ok" if net_m > 0 else "", left, right), unsafe_allow_html=True)
+        st.markdown(alert_row("ok" if net_m > 0 else "", left, right), unsafe_allow_html=True)
 
 
 def _render_valuation_tab(alerts: list[dict]):
@@ -1218,4 +1101,4 @@ def _render_valuation_tab(alerts: list[dict]):
             f' <span style="color:var(--success); font-weight:600; margin-left:8px;">{discount:.0f}% below fair</span>'
         )
         right = " · ".join(extras)
-        st.markdown(_alert_row(sev, left, right), unsafe_allow_html=True)
+        st.markdown(alert_row(sev, left, right), unsafe_allow_html=True)
