@@ -66,6 +66,10 @@ _US_STATE_CODES = {
     "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH",
     "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA",
     "WV", "WI", "WY", "PR", "GU", "VI", "AS", "MP",
+    # EDGAR code for "United States" without a specific state — used by
+    # federally chartered entities (e.g. ATLO / Ames National Corp, a
+    # national-bank holding company). NOT foreign.
+    "X1",
 }
 
 # Foreign-private-issuer forms. A US domestic issuer MUST file 10-K/10-Q;

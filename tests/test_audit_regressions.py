@@ -303,6 +303,22 @@ class TestUsDomicileFilter(unittest.TestCase):
             {"stateOfIncorporation": "",
              "filings": {"recent": {"form": ["10-Q", "8-K"]}}}))
 
+    def test_x1_united_states_code_passes(self):
+        from data.bank_universe import _is_us_domestic_filer
+        # ATLO (Ames National Corp): EDGAR codes federally chartered
+        # entities as "X1" = United States. Regression 2026-06-12: the
+        # filter treated X1 as foreign and dropped a real Iowa bank.
+        self.assertTrue(_is_us_domestic_filer(
+            {"stateOfIncorporation": "X1",
+             "filings": {"recent": {"form": ["10-K", "10-Q", "8-K"]}}}))
+
+    def test_x0_united_kingdom_still_rejected(self):
+        from data.bank_universe import _is_us_domestic_filer
+        # Barclays: "X0" = United Kingdom — the X prefix is NOT US-generic
+        self.assertFalse(_is_us_domestic_filer(
+            {"stateOfIncorporation": "X0",
+             "filings": {"recent": {"form": ["20-F", "6-K"]}}}))
+
 
 def _ffiec_df(rows):
     """Build a synthetic Call Report DF in the ffiec-data-connect v3 long
