@@ -162,5 +162,65 @@ class TestCalibratedConstantsPinned(unittest.TestCase):
         self.assertEqual(rs.TEXTBOOK_INT_BEARING_BETA, 0.50)
 
 
+class TestCurveScenarioBps(unittest.TestCase):
+    """Hand-computed basis-point values for apply_curve_scenario - the NIM
+    model was previously only shape/monotonicity-tested (audit section E gap).
+
+    Fixture bank: EA yield 5.00%, cost of IB liabilities 2.00%, NIM 3.50%,
+    $1B earning assets, deposits $1B split $600M IB / $400M NIB.
+    """
+
+    INPUTS = {
+        "earning_asset_yield_pct": 5.00,
+        "cost_of_int_bearing_pct": 2.00,
+        "current_nim_pct": 3.50,
+        "earning_assets_usd": 1_000_000_000,
+        "int_bearing_dep_usd": 600_000_000,
+        "non_int_dep_usd": 400_000_000,
+        "total_deposits_usd": 1_000_000_000,
+    }
+
+    def test_parallel_up_100(self):
+        from analysis.rate_sensitivity import apply_curve_scenario
+        # yield delta = +1.00pp; CoF delta = 0.6 x (1.00 x 0.40) = 0.24pp
+        # NIM delta = 1.00 - 0.24 = +0.76pp = +76.0 bps exactly
+        r = apply_curve_scenario(self.INPUTS, 100, 100,
+                                 deposit_beta_int_bearing=0.40)
+        self.assertAlmostEqual(r["nim_delta_bps"], 76.0, places=6)
+        self.assertAlmostEqual(r["nim_new_pct"], 4.26, places=6)
+        # NII delta = $1B x 0.76pp = $7.6M
+        self.assertAlmostEqual(r["nii_delta_usd"], 7_600_000, places=2)
+
+    def test_bear_flattener_nearly_flat_nim(self):
+        from analysis.rate_sensitivity import apply_curve_scenario
+        # short +100 / long +25: yield 0.25pp - CoF 0.24pp = +1.0 bp
+        r = apply_curve_scenario(self.INPUTS, 100, 25,
+                                 deposit_beta_int_bearing=0.40)
+        self.assertAlmostEqual(r["nim_delta_bps"], 1.0, places=6)
+
+    def test_nib_beta_drags_nim(self):
+        from analysis.rate_sensitivity import apply_curve_scenario
+        # NIB beta 0.10 adds 0.4 x (1.00 x 0.10) = 0.04pp to CoF -> 72.0 bps
+        r = apply_curve_scenario(self.INPUTS, 100, 100,
+                                 deposit_beta_int_bearing=0.40,
+                                 deposit_beta_non_int=0.10)
+        self.assertAlmostEqual(r["nim_delta_bps"], 72.0, places=6)
+
+    def test_asset_beta_scales_yield_side_only(self):
+        from analysis.rate_sensitivity import apply_curve_scenario
+        # asset_beta 0.5: yield 0.50pp - CoF 0.24pp = +26.0 bps
+        r = apply_curve_scenario(self.INPUTS, 100, 100,
+                                 deposit_beta_int_bearing=0.40,
+                                 asset_beta=0.5)
+        self.assertAlmostEqual(r["nim_delta_bps"], 26.0, places=6)
+
+    def test_cuts_compress_when_assets_reprice_faster(self):
+        from analysis.rate_sensitivity import apply_curve_scenario
+        # -100 both: yield -1.00pp - CoF -0.24pp = -0.76pp = -76 bps
+        r = apply_curve_scenario(self.INPUTS, -100, -100,
+                                 deposit_beta_int_bearing=0.40)
+        self.assertAlmostEqual(r["nim_delta_bps"], -76.0, places=6)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
