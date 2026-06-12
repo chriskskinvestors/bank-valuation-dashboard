@@ -252,7 +252,7 @@ def get_topic_news(category: str, hours: int = 24, limit: int = 50) -> list[dict
         rows = conn.execute(
             text("""
                 SELECT ticker, source, event_type, headline, summary, url,
-                       published_at, external_id
+                       published_at, external_id, raw_json
                 FROM events
                 WHERE source = :src AND ticker = :t AND published_at >= :cutoff
                 ORDER BY published_at DESC
@@ -265,6 +265,14 @@ def get_topic_news(category: str, hours: int = 24, limit: int = 50) -> list[dict
     for r in rows:
         d = dict(r)
         d["category"] = category.strip().lower()
+        # Surface the publisher (adapter stored it in raw.via) so the UI can
+        # show "Reuters", not the adapter name, and curation can whitelist.
+        raw = d.pop("raw_json", None)
+        if raw:
+            try:
+                d["source_name"] = (json.loads(raw).get("via") or "").strip()
+            except (TypeError, ValueError):
+                pass
         out.append(d)
     return out
 

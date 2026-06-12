@@ -356,19 +356,27 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
 
     from utils.timing import timed
 
-    # 1) Overnight & Breaking — categorized world context + bank alerts
+    # Order (user decision 2026-06-12): numbers first, narrative second.
+    # Thin always-on-top rates strip, then the full Markets & Rates
+    # section, THEN news — market data never below the fold again.
+
+    # 0) Compact strip — instant glance before anything else renders
+    with timed("home.rates_strip"):
+        _render_rates_strip()
+
+    # 1) Markets & Rates — full section at the top
+    with timed("home.markets_rates"):
+        _render_markets_rates()
+
+    # 2) Overnight & Breaking — curated world context + bank alerts
     with timed("home.overnight_breaking"):
         _render_overnight_breaking()
     with timed("home.alert_inbox"):
         _render_alert_inbox(all_metrics, watchlist)
 
-    # 2) Today's Agenda — earnings + macro prints, one day view
+    # 3) Today's Agenda — earnings + macro prints, one day view
     with timed("home.todays_calendar"):
         _render_todays_calendar(watchlist)
-
-    # 3) Markets & Rates
-    with timed("home.markets_rates"):
-        _render_markets_rates()
 
     # 4) Universe movers
     if all_metrics:
@@ -389,14 +397,56 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
             _render_sector_ma(watchlist)
 
 
+def _render_rates_strip():
+    """One thin pill row of the numbers a desk checks first — pinned above
+    everything (user decision 2026-06-12). All values come from the
+    persisted FRED bundle + warm price cache: zero live calls."""
+    ff = _fred_points("FEDFUNDS")
+    t10 = _fred_points("DGS10")
+    sp = _fred_points("T10Y2Y")
+    hy = _fred_points("BAMLH0A0HYM2")
+    vix = _fred_points("VIXCLS")
+
+    def _p(label, pts, fmt="{:.2f}%", spread=False):
+        lv, pr = pts[0], pts[1]
+        if lv is None:
+            return stat_pill(label, "—")
+        val = fmt.format(lv)
+        if spread and lv < 0:
+            val = f'<span style="color:var(--danger);">{val}</span>'
+        chg = (lv - pr) * 100 if pr is not None else None
+        return stat_pill(label, val, delta_chip(chg, "bp"))
+
+    pills = [_p("FF", ff), _p("10Y", t10),
+             _p("10Y−2Y", sp, "{:+.2f}", spread=True),
+             _p("HY OAS", hy), _p("VIX", vix, "{:.1f}")]
+    try:
+        from data.price_cache_store import get_prices
+        kre = (get_prices(["KRE"]) or {}).get("KRE") or {}
+        px, prev = kre.get("price"), kre.get("prev_close")
+        if px:
+            chg_pct = kre.get("change_pct")
+            if chg_pct is None and prev:
+                chg_pct = ((px / prev) - 1) * 100
+            pills.append(stat_pill(
+                "KRE", f"\\${px:,.2f}",
+                delta_chip(chg_pct, "%") if chg_pct is not None else ""))
+    except Exception:
+        pass
+    pill_row(pills, margin="0 0 2px")
+
+
 def _render_overnight_breaking():
     """Overnight & Breaking — the world since yesterday's close, categorized
     (HOME-MACRO-PLAN.md): Macro / Geopolitical / Domestic / Markets, fed by
-    the Google News topic poll. Bank/company alerts render right below."""
+    the Google News topic poll, curated to reputable sources + market
+    relevance (data/events/topic_curation.py). Bank alerts render below."""
     section_header("", "Overnight & Breaking",
-                   "macro · geopolitical · domestic · markets — last 24h")
+                   "macro · geopolitical · domestic · markets — last 24h · "
+                   "curated wires only")
     try:
         from data.events import get_topic_news
+        from data.events.topic_curation import curate_topic_news
     except Exception:
         st.caption("Topic feeds unavailable.")
         return
@@ -406,7 +456,8 @@ def _render_overnight_breaking():
     any_items = False
     for col, (cat, label) in zip(cols, cats):
         try:
-            items = get_topic_news(cat, hours=24, limit=6)
+            items = curate_topic_news(
+                get_topic_news(cat, hours=24, limit=40), cat, limit=5)
         except Exception:
             items = []
         rows = ""

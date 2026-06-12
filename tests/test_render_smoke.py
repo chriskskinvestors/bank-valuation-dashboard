@@ -67,10 +67,13 @@ def _install_streamlit_stub():
     return st
 
 
+# Must survive curation (reputable source + relevance keyword) so the
+# HTML-escaping row loop actually executes — that loop is the code that
+# crashed production on 2026-06-12.
 FAKE_NEWS = [{
-    "headline": 'Bank <b>"A&B"</b> beats — NII up 5% & guides higher',
+    "headline": 'Fed officials <b>"A&B"</b> signal rates & inflation outlook',
     "url": "https://example.com/a?x=1&y=2",
-    "source_name": "Reuters <wire>",
+    "source_name": "Reuters",
     "published_at": "2026-06-12T09:00:00",
 }]
 
@@ -99,6 +102,14 @@ class TestHomeRendersPopulated(unittest.TestCase):
 
     def test_overnight_breaking_with_items(self):
         self.home._render_overnight_breaking()
+
+    def test_rates_strip_with_values(self):
+        # Populated FRED points + KRE quote — no live calls
+        self.home._fred_points = lambda sid: (4.25, 4.23, 4.10)
+        import data.price_cache_store as pcs
+        pcs.get_prices = lambda tickers, max_age_s=None: {
+            "KRE": {"price": 73.10, "prev_close": 72.35, "change_pct": 1.04}}
+        self.home._render_rates_strip()
 
     def test_todays_calendar_with_prints(self):
         self.home._render_todays_calendar([])
