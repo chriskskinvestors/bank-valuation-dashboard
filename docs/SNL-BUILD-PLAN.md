@@ -221,6 +221,15 @@ Financials process) or a proposed layout confirmed before building.
   ASC-825 + As-Reported loan comp). "Nonrecurring" = our own one-time-item
   classification from the normalization engine, labeled as ours. Only
   filing-absent lines stay n/a.
+- **XBRL scope finding (verified live on BANR FY2025, 2026-06-12)**: the
+  tagged credit-quality footnote grades only the COMMERCIAL book (9 classes,
+  $6.98B of $11.72B; SM 81,101 / Substandard 135,640 — internally exact to
+  the dollar). SNL's whole-portfolio 82,060 / 193,077 comes from the
+  UNTAGGED MD&A "Loans by Grade" HTML table — structurally unreachable via
+  XBRL. AQ Detail must label the XBRL grades "commercial portfolio (graded
+  classes)" and NEVER present them as whole-portfolio; whole-portfolio
+  criticized stays n/a unless/until an MD&A table parser is built (queued,
+  separate decision — HTML scraping was previously ruled out for IRR).
 - Keep ALL existing graphics; tables added alongside.
 
 Rules: engine "computed kinds" for every derived row; n/a + flag for
