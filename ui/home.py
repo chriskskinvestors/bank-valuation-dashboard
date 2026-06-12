@@ -70,7 +70,7 @@ def _prices_asof(tickers):
         if age < 30 * 3600:
             return f"prices as of {stamp}", "#64748b"
         days = age / 86400
-        return f"⚠ stale prices · {stamp} ({days:.0f}d old)", "#dc2626"
+        return f"stale prices · {stamp} ({days:.0f}d old)", "#dc2626"
     except Exception:
         return "", "#94a3b8"
 
@@ -173,7 +173,7 @@ def _render_markets_rates():
     status, status_col = _market_status()
     sub = (f'rates as of {_rates_asof()} · market '
            f'<span style="color:{status_col}; font-weight:700;">{status}</span>')
-    section_header("📈", "Markets & Rates", sub)
+    section_header("", "Markets & Rates", sub)
 
     # ── Treasury curve: level + daily bps move ──────────────────────────
     td = {lab: _fred_points(sid) for lab, sid in _TENORS}
@@ -319,59 +319,86 @@ def _render_etf_strip():
 def render_home(all_metrics: list[dict], watchlist: list[str]):
     """Render the home/dashboard page."""
 
-    # ── Hero ──────────────────────────────────────────────────────────
-    st.markdown(
-        f"""
-        <div class="ksk-hero">
-            <div style="display:flex; align-items:center; gap:14px; margin-bottom:6px;">
-                <div style="
-                    width:42px; height:42px;
-                    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-                    border-radius: 11px;
-                    display:flex; align-items:center; justify-content:center;
-                    font-size:1.2rem; font-weight:700; color:#fff;
-                    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.24);
-                    letter-spacing:-0.02em;
-                ">K</div>
-                <div>
-                    <h1>KSK Investors</h1>
-                    <p class="ksk-hero-subtitle">Bank Valuation &amp; Analysis Platform</p>
-                </div>
-            </div>
-            <div class="ksk-hero-meta">
-                <span class="dot"></span>
-                <span>Live · FDIC · SEC EDGAR · FMP</span>
-                <span style="color:#cbd5e1;">—</span>
-                <span><strong style="color:#0f172a;">{get_universe_count_fast()}</strong> US banks covered (full universe)</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown("")
+    # ── Title bar (DESIGN-SYSTEM.md) + extras menu ────────────────────
+    from ui.chrome import title_bar
+    _tb, _ex = st.columns([6, 1], vertical_alignment="center")
+    with _tb:
+        title_bar("KSK Investors", "Home",
+                  f'<span class="ksk-dot ok"></span>Live · FDIC · SEC EDGAR · FMP · '
+                  f'{get_universe_count_fast()} US banks covered (full universe)')
+    with _ex:
+        with st.popover("Sections", use_container_width=True):
+            show_leaders = st.checkbox("Coverage leaderboard", value=True, key="home_show_leaders")
+            show_ma = st.checkbox("Sector M&A", value=True, key="home_show_ma")
+            show_vals = st.checkbox("Sector valuation snapshot", value=True, key="home_show_vals")
+
+    # 1) Overnight & Breaking — categorized world context + bank alerts
+    _render_overnight_breaking()
+    _render_alert_inbox(all_metrics, watchlist)
+
+    # 2) Today's Agenda — earnings + macro prints, one day view
+    _render_todays_calendar(watchlist)
+
+    # 3) Markets & Rates
     _render_markets_rates()
 
-    # Industry valuations sit with the market context up top (sector P/TBV, P/E
-    # by tier) — not buried at the bottom.
-    if all_metrics:
-        _render_industry_valuations(pd.DataFrame(all_metrics))
-
-    # ── WHAT MOVED IN MY BOOK ──────────────────────────────────────────
+    # 4) Universe movers
     if all_metrics:
         _render_watchlist_movers(all_metrics)
 
-    # ── ALERT INBOX ────────────────────────────────────────────────────
-    _render_alert_inbox(all_metrics, watchlist)
+    # 5) Sector valuation snapshot
+    if all_metrics and show_vals:
+        _render_industry_valuations(pd.DataFrame(all_metrics))
 
-    # ── COVERAGE LEADERBOARD (best / worst each way) ───────────────────
-    if all_metrics:
+    # 6) Extras-toggleable tail
+    if all_metrics and show_leaders:
         _render_coverage_leaderboard(all_metrics)
+    if show_ma:
+        _render_sector_ma(watchlist)
 
-    # ── TODAY'S CALENDAR ───────────────────────────────────────────────
-    _render_todays_calendar(watchlist)
 
-    # ── SECTOR M&A / DEALS ─────────────────────────────────────────────
-    _render_sector_ma(watchlist)
+def _render_overnight_breaking():
+    """Overnight & Breaking — the world since yesterday's close, categorized
+    (HOME-MACRO-PLAN.md): Macro / Geopolitical / Domestic / Markets, fed by
+    the Google News topic poll. Bank/company alerts render right below."""
+    section_header("", "Overnight & Breaking",
+                   "macro · geopolitical · domestic · markets — last 24h")
+    try:
+        from data.events import get_topic_news
+    except Exception:
+        st.caption("Topic feeds unavailable.")
+        return
+    cats = [("macro", "MACRO"), ("geopolitical", "GEOPOLITICAL"),
+            ("domestic", "DOMESTIC"), ("markets", "MARKETS (EX-BANKS)")]
+    cols = st.columns(4)
+    any_items = False
+    for col, (cat, label) in zip(cols, cats):
+        try:
+            items = get_topic_news(cat, hours=24, limit=6)
+        except Exception:
+            items = []
+        rows = ""
+        for it in items[:6]:
+            head = _esc((it.get("headline") or "")[:110])
+            url = _esc(it.get("url") or "")
+            src_n = _esc((it.get("source_name") or it.get("source") or "")[:24])
+            rows += (
+                '<div style="padding:3px 0;border-bottom:0.5px solid var(--border-subtle);'
+                'font-size:var(--fs-sm);line-height:1.35;">'
+                f'<a href="{url}" target="_blank" style="color:var(--text-primary);'
+                f'text-decoration:none;">{head}</a>'
+                f'<div style="color:var(--text-muted);font-size:var(--fs-2xs);">{src_n}</div></div>')
+        if rows:
+            any_items = True
+        empty = ('<div style="color:var(--text-muted);font-size:var(--fs-sm);'
+                 'padding:4px 0;">—</div>')
+        with col:
+            st.markdown(list_column(label, rows or empty,
+                                    accent="var(--text-secondary)"),
+                        unsafe_allow_html=True)
+    if not any_items:
+        st.caption("Topic feeds populate with the next news poll cycle "
+                   "(every 30 min in market hours).")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -438,12 +465,33 @@ def _render_watchlist_movers(all_metrics: list[dict]):
 # ══════════════════════════════════════════════════════════════════════
 
 def _render_todays_calendar(watchlist: list[str]):
-    """What's on the schedule — covered banks reporting earnings, grouped by
-    urgency. (Macro releases / ex-div are the next add to this section.)"""
-    section_header("🗓️", "Today's Calendar", "bank earnings — next 14 days")
+    """Today's Agenda — covered-bank earnings (next 14 days) merged with the
+    macro print calendar (next 7 days): one view of what matters today."""
+    section_header("", "Today's Agenda", "bank earnings · macro prints · FOMC")
     alerts = _collect_earnings_alerts(watchlist)
-    if not alerts:
-        st.caption("No covered-bank earnings in the next 14 days.")
+
+    # Macro prints column (data/macro_calendar: FRED release dates + FOMC).
+    prints_html = ""
+    try:
+        from data.macro_calendar import get_upcoming_prints
+        for pr in get_upcoming_prints(days=7)[:8]:
+            hot = pr.get("importance") == "high"
+            nm = _esc(pr.get("name") or "")
+            kd = (' <span style="color:var(--danger);font-weight:600;">FOMC</span>'
+                  if pr.get("kind") == "fomc" else "")
+            wt = "font-weight:600;" if hot else ""
+            prints_html += (
+                '<div style="display:flex;justify-content:space-between;gap:8px;'
+                'padding:3px 0;border-bottom:0.5px solid var(--border-subtle);'
+                f'font-size:var(--fs-sm);"><span style="{wt}">{nm}{kd}</span>'
+                f'<span style="color:var(--text-secondary);">{_esc(pr.get("date") or "")}'
+                '</span></div>')
+    except Exception:
+        prints_html = ""
+
+    if not alerts and not prints_html:
+        st.caption("No covered-bank earnings in the next 14 days and no "
+                   "tracked macro prints in the next 7.")
         return
 
     buckets = [("Today", []), ("This week", []), ("Next week", [])]
@@ -465,7 +513,7 @@ def _render_todays_calendar(watchlist: list[str]):
                  f'{a["date"]}{est}</span>')
         return bank_link_row(tk, (get_name(tk) or "")[:22], right)
 
-    cols = st.columns(3)
+    cols = st.columns(4)
     for col, (label, items) in zip(cols, buckets):
         with col:
             accent = "var(--danger)" if label == "Today" else "var(--text-secondary)"
@@ -474,6 +522,12 @@ def _render_todays_calendar(watchlist: list[str]):
                             "".join(_chip(a) for a in items), accent=accent),
                 unsafe_allow_html=True,
             )
+    _empty = ('<div style="color:var(--text-muted);font-size:var(--fs-sm);'
+              'padding:4px 0;">—</div>')
+    with cols[3]:
+        st.markdown(list_column("MACRO PRINTS · 7D", prints_html or _empty,
+                                accent="var(--brand-primary)"),
+                    unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -730,7 +784,7 @@ def _render_alert_inbox(all_metrics: list[dict], watchlist: list[str]):
     tab_news, tab1, tab2, tab3, tab4 = st.tabs([
         f"📰 Important News ({len(news_alerts)})",
         f"📅 Earnings ({len(earnings_alerts)})",
-        f"⚠️ Dynamics Alerts ({len(dynamics_alerts)})",
+        f"Dynamics Alerts ({len(dynamics_alerts)})",
         f"👥 Insider Buys ({len(insider_alerts)})",
         f"💰 Value Opps ({len(valuation_alerts)})",
     ])
@@ -1091,7 +1145,7 @@ def _render_valuation_tab(alerts: list[dict]):
         if roatce is not None:
             if a.get("distorted") and a.get("roatce_norm") is not None:
                 extras.append(
-                    f"ROATCE {roatce:.1f}% ⚠️ (adj {a['roatce_norm']:.1f}%)")
+                    f"ROATCE {roatce:.1f}% (adj {a['roatce_norm']:.1f}%)")
             else:
                 extras.append(f"ROATCE {roatce:.1f}%")
 
