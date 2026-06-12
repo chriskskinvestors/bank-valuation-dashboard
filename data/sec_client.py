@@ -215,13 +215,18 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
       • year-to-date  (Q1, H1, 9M, FY)
       • annual  (start..end ≈ 365 days)
 
-    For ROATCE / ROE / margin calculations we want **TTM**, not whichever
-    period happens to be most recently filed. This helper finds:
-      1. The 4 most recent quarterly entries and sums them, OR
-      2. If insufficient quarterlies exist, falls back to the latest
-         annual (~365-day) entry.
+    Most issuers never tag Q4 as a discrete 3-month fact — it exists only
+    inside the FY duration of the 10-K. Naively summing "the 4 most recent
+    quarterly entries" therefore drops Q4 and double-counts the year-ago
+    quarter right after a Q1/Q2/Q3 filing (a 5-quarter window). So:
+      1. Collect direct ~3-month facts.
+      2. Derive missing quarters from same-start YTD differences
+         (FY − 9M = Q4, 9M − H1 = Q3, H1 − Q1 = Q2).
+      3. Sum the latest 4 quarters ONLY if they are consecutive
+         (each gap ≈ 3 months).
+      4. Otherwise fall back to the latest annual (~365-day) entry.
 
-    Returns None if neither path yields a value.
+    Returns None if no path yields a value.
     """
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
     units = us_gaap.get(concept, {}).get("units", {})
@@ -229,45 +234,60 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
     from datetime import datetime, timedelta
     cutoff = (datetime.now() - timedelta(days=365 * max_age_years)).strftime("%Y-%m-%d")
 
-    quarterly: list[dict] = []
-    annual: list[dict] = []
-
+    # All durations within the lookback, de-duplicated by (start, end) with
+    # the latest filing winning (restatements overwrite originals).
+    durations: dict[tuple[str, str], dict] = {}
     for unit_type in ("USD", "USD/shares", "pure"):
         for e in units.get(unit_type, []):
             if e.get("form") not in ("10-K", "10-Q"):
                 continue
-            start, end = e.get("start"), e.get("end")
-            if not start or not end or end < cutoff:
+            start, end, val = e.get("start"), e.get("end"), e.get("val")
+            if not start or not end or end < cutoff or val is None:
                 continue
             try:
-                d_start = datetime.fromisoformat(start)
-                d_end = datetime.fromisoformat(end)
+                span = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days
             except ValueError:
                 continue
-            span = (d_end - d_start).days
-            if 80 <= span <= 100:
-                quarterly.append({"end": end, "val": e.get("val"), "filed": e.get("filed", "")})
-            elif 350 <= span <= 380:
-                annual.append({"end": end, "val": e.get("val"), "filed": e.get("filed", "")})
+            key = (start, end)
+            prev = durations.get(key)
+            if prev is None or e.get("filed", "") > prev["filed"]:
+                durations[key] = {"val": val, "filed": e.get("filed", ""), "span": span}
 
-    # Path 1: sum 4 most recent quarterly periods (de-duplicated by end-date)
-    if quarterly:
-        quarterly.sort(key=lambda x: (x["end"], x["filed"]), reverse=True)
-        seen_ends, latest_q = set(), []
-        for q in quarterly:
-            if q["end"] not in seen_ends:
-                seen_ends.add(q["end"])
-                latest_q.append(q)
-            if len(latest_q) == 4:
+    def _gap_days(a: str, b: str) -> int:
+        return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).days
+
+    # Direct ~3-month facts
+    quarters: dict[str, float] = {
+        end: d["val"] for (start, end), d in durations.items() if 80 <= d["span"] <= 100
+    }
+
+    # Derive missing quarters from same-start YTD pairs: a duration minus a
+    # ~3-months-shorter duration with the same start is the quarter between
+    # their end dates. Direct facts always beat derived ones.
+    for (s1, e1), d1 in durations.items():
+        if d1["span"] <= 100 or e1 in quarters:
+            continue
+        for (s2, e2), d2 in durations.items():
+            if s2 != s1 or e2 >= e1:
+                continue
+            if 80 <= _gap_days(e2, e1) <= 100:
+                quarters[e1] = d1["val"] - d2["val"]
                 break
-        if len(latest_q) == 4 and all(q["val"] is not None for q in latest_q):
-            return float(sum(q["val"] for q in latest_q))
+
+    # Path 1: latest 4 quarters, required consecutive (~3-month gaps)
+    if len(quarters) >= 4:
+        ends = sorted(quarters)[-4:]
+        if all(80 <= _gap_days(a, b) <= 100 for a, b in zip(ends, ends[1:])):
+            return float(sum(quarters[e] for e in ends))
 
     # Path 2: latest annual report
+    annual = [
+        {"end": end, "val": d["val"], "filed": d["filed"]}
+        for (start, end), d in durations.items() if 350 <= d["span"] <= 380
+    ]
     if annual:
         annual.sort(key=lambda x: (x["end"], x["filed"]), reverse=True)
-        if annual[0]["val"] is not None:
-            return float(annual[0]["val"])
+        return float(annual[0]["val"])
 
     return None
 

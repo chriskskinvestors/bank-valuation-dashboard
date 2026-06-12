@@ -17,7 +17,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 
 # Known-good values snapshot — refresh each quarter from primary-source
-# 10-K/10-Q filings on EDGAR. As-of period: filings dated 2026-03-31 (Q1 2026).
+# 10-K/10-Q filings on EDGAR. As-of period: Q1-2026 10-Qs (filed May 2026).
+# Re-pinned 2026-06-11 after hand-verifying raw companyfacts XBRL with
+# tools/golden_handcheck.py (independent requests pull, no pipeline imports).
+# Same date: fixed the 5-quarter TTM window in sec_client._extract_ttm_value
+# (Q4 was dropped / year-ago quarter double-counted for issuers that tag Q4
+# only inside the FY duration) — ROATCE baselines reflect the corrected TTM.
 #
 # When real-world data drifts (e.g. HBAN+Cadence merger closed Q1 2026,
 # nearly doubling share count), update this file rather than chasing the
@@ -37,14 +42,14 @@ sys.path.insert(0, str(REPO_ROOT))
 GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
     "JPM": {
         "shares":        {"expected": 2_696_200_000, "tol_pct": 1.0},
-        "ni_ttm_b":      {"expected": 56.92, "tol_pct": 3.0},
+        "ni_ttm_b":      {"expected": 58.90, "tol_pct": 3.0},
         "equity_b":      {"expected": 362.4, "tol_pct": 3.0},
         "tbvps":         {"expected": 114.87, "tol_pct": 2.0},
-        "roatce_holdco": {"expected": 18.4, "tol_abs": 1.0},
+        "roatce_holdco": {"expected": 19.0, "tol_abs": 1.0},
     },
     "BAC": {
         "shares":        {"expected": 7_212_000_000, "tol_pct": 2.0},
-        "ni_ttm_b":      {"expected": 30.51, "tol_pct": 3.0},
+        "ni_ttm_b":      {"expected": 31.73, "tol_pct": 3.0},
         "equity_b":      {"expected": 303.2, "tol_pct": 3.0},
         "tbvps":         {"expected": 32.23, "tol_pct": 2.0},
         "roatce_holdco": {"expected": 13.1, "tol_abs": 1.0},
@@ -76,21 +81,21 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # roatce uses sec_client.get_latest_fundamentals (NetIncomeLoss). The two
         # differ by preferred dividends, hence the slightly different ratio.
         "ni_ttm_b":      {"expected": 6.58, "tol_pct": 5.0},
-        "equity_b":      {"expected": 60.59, "tol_pct": 3.0},
+        "equity_b":      {"expected": 63.63, "tol_pct": 3.0},
         "tbvps":         {"expected": 123.03, "tol_pct": 3.0},
-        "roatce_holdco": {"expected": 12.19, "tol_abs": 1.0},
+        "roatce_holdco": {"expected": 13.61, "tol_abs": 1.0},
     },
     "HBAN": {  # Cadence acquisition closed Q1 2026 — share count + equity expanded
         "shares":        {"expected": 2_027_000_000, "tol_pct": 2.0},
         "equity_b":      {"expected": 32.53, "tol_pct": 3.0},
-        "tbvps":         {"expected": 11.35, "tol_pct": 3.0},
+        "tbvps":         {"expected": 10.87, "tol_pct": 3.0},
         "roatce_holdco": {"expected": 9.63, "tol_abs": 1.5},
     },
     "SFST": {
         "shares":        {"expected": 8_213_328, "tol_pct": 1.0},
         "equity_b":      {"expected": 0.369, "tol_pct": 3.0},
-        "tbvps":         {"expected": 44.88, "tol_pct": 2.0},
-        "roatce_holdco": {"expected": 6.75, "tol_abs": 1.0},
+        "tbvps":         {"expected": 46.00, "tol_pct": 2.0},
+        "roatce_holdco": {"expected": 9.22, "tol_abs": 1.0},
     },
 }
 

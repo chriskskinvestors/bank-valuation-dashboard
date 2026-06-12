@@ -133,5 +133,70 @@ class TestA19FedFunds(unittest.TestCase):
                 sys.modules.pop("data.fred_client", None)
 
 
+def _flow_facts(entries):
+    """Build a minimal companyfacts dict for NetIncomeLoss from
+    (start, end, val, form, filed) tuples."""
+    return {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [
+        {"start": s, "end": e, "val": v, "form": f, "filed": d}
+        for s, e, v, f, d in entries
+    ]}}}}}
+
+
+class TestTtmWindowIntegrity(unittest.TestCase):
+    """_extract_ttm_value must never span 5 quarters.
+
+    Most issuers tag Q4 only inside the 10-K's FY duration. The old code
+    summed 'the 4 most recent ~3-month facts', which right after a Q1
+    filing was Q1+Q2+Q3 of last year plus Q1 of this year — Q4 dropped,
+    year-ago Q1 double-counted. Verified live: JPM ROATCE printed 19.52%
+    (NI window 60.5B) vs the true filing-derived 19.00% (58.9B); SFST
+    8.01% vs 9.25%."""
+
+    # Discrete Q1-Q3, FY + 9M YTD in the 10-K, then the new-year Q1.
+    SFST_SHAPE = [
+        ("2025-01-01", "2025-03-31", 5.0, "10-Q", "2025-05-01"),
+        ("2025-04-01", "2025-06-30", 6.0, "10-Q", "2025-08-01"),
+        ("2025-07-01", "2025-09-30", 8.0, "10-Q", "2025-11-01"),
+        ("2025-01-01", "2025-09-30", 19.0, "10-Q", "2025-11-01"),   # 9M YTD
+        ("2025-01-01", "2025-12-31", 29.0, "10-K", "2026-02-20"),   # FY
+        ("2026-01-01", "2026-03-31", 9.0, "10-Q", "2026-05-01"),
+    ]
+
+    def test_q4_derived_from_fy_minus_9m(self):
+        from data.sec_client import _extract_ttm_value
+        ttm = _extract_ttm_value(_flow_facts(self.SFST_SHAPE), "NetIncomeLoss")
+        # Q4 = 29 − 19 = 10; TTM = 6 + 8 + 10 + 9 = 33.
+        # The old 5-quarter window returned 5 + 6 + 8 + 9 = 28.
+        self.assertEqual(ttm, 33.0)
+
+    def test_non_contiguous_quarters_fall_back_to_annual(self):
+        from data.sec_client import _extract_ttm_value
+        # No 9M YTD → Q4 underivable → the 4 newest quarters span 5
+        # calendar quarters and must be rejected in favor of the FY value.
+        entries = [r for r in self.SFST_SHAPE if r[:2] != ("2025-01-01", "2025-09-30")]
+        ttm = _extract_ttm_value(_flow_facts(entries), "NetIncomeLoss")
+        self.assertEqual(ttm, 29.0)
+
+    def test_four_discrete_consecutive_quarters_sum_directly(self):
+        from data.sec_client import _extract_ttm_value
+        entries = [
+            ("2025-04-01", "2025-06-30", 6.0, "10-Q", "2025-08-01"),
+            ("2025-07-01", "2025-09-30", 8.0, "10-Q", "2025-11-01"),
+            ("2025-10-01", "2025-12-31", 10.0, "10-K", "2026-02-20"),
+            ("2026-01-01", "2026-03-31", 9.0, "10-Q", "2026-05-01"),
+        ]
+        ttm = _extract_ttm_value(_flow_facts(entries), "NetIncomeLoss")
+        self.assertEqual(ttm, 33.0)
+
+    def test_restatement_latest_filing_wins(self):
+        from data.sec_client import _extract_ttm_value
+        entries = self.SFST_SHAPE + [
+            # Q2 restated from 6.0 → 6.5 in a later filing
+            ("2025-04-01", "2025-06-30", 6.5, "10-Q", "2026-05-01"),
+        ]
+        ttm = _extract_ttm_value(_flow_facts(entries), "NetIncomeLoss")
+        self.assertEqual(ttm, 33.5)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
