@@ -232,7 +232,12 @@ def main() -> int:
               flush=True)
 
     init_call_report_schema()
-    period = latest_reporting_period()
+    # FFIEC_PERIOD overrides the auto-detected latest quarter (MM/DD/YYYY) —
+    # used to backfill history for newly added schedules (RC-R/RI-E/deposit
+    # cost shipped 2026-06-12 with only the latest quarter ingested; the IS
+    # table's annual view joins on prior report dates and honestly hides
+    # sub-blocks until those quarters exist).
+    period = (os.environ.get("FFIEC_PERIOD") or "").strip() or latest_reporting_period()
     print(f"[{time.strftime('%H:%M:%S')}] Using reporting period: {period}",
           flush=True)
 
