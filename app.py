@@ -62,7 +62,10 @@ if st.query_params.get("bank") and st.session_state.get("nav_section") not in ("
 # Universe scope first — the nav bar's status chip shows live coverage.
 # (The watchlist concept is retired; the variable keeps its name because
 # ~30 downstream call sites take it as the scope parameter.)
-watchlist = sorted(get_universe_tickers())
+from utils.timing import timed
+
+with timed("app.universe_tickers"):
+    watchlist = sorted(get_universe_tickers())
 portfolio = []
 
 from ui.chrome import top_nav as _top_nav
@@ -425,7 +428,8 @@ elif _rv:
         pass
 
 if _NEEDS_WATCHLIST:
-    all_metrics = load_all_data_fast(watchlist)
+    with timed("app.load_all_data_fast"):
+        all_metrics = load_all_data_fast(watchlist)
     # Stash for cross-tab use (peer-relative valuation, home alerts, etc.)
     cache.put("watchlist_metrics_last", all_metrics)
 else:

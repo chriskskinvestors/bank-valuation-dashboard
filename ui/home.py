@@ -333,29 +333,39 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
             show_ma = st.checkbox("Sector M&A", value=True, key="home_show_ma")
             show_vals = st.checkbox("Sector valuation snapshot", value=True, key="home_show_vals")
 
+    from utils.timing import timed
+
     # 1) Overnight & Breaking — categorized world context + bank alerts
-    _render_overnight_breaking()
-    _render_alert_inbox(all_metrics, watchlist)
+    with timed("home.overnight_breaking"):
+        _render_overnight_breaking()
+    with timed("home.alert_inbox"):
+        _render_alert_inbox(all_metrics, watchlist)
 
     # 2) Today's Agenda — earnings + macro prints, one day view
-    _render_todays_calendar(watchlist)
+    with timed("home.todays_calendar"):
+        _render_todays_calendar(watchlist)
 
     # 3) Markets & Rates
-    _render_markets_rates()
+    with timed("home.markets_rates"):
+        _render_markets_rates()
 
     # 4) Universe movers
     if all_metrics:
-        _render_watchlist_movers(all_metrics)
+        with timed("home.movers"):
+            _render_watchlist_movers(all_metrics)
 
     # 5) Sector valuation snapshot
     if all_metrics and show_vals:
-        _render_industry_valuations(pd.DataFrame(all_metrics))
+        with timed("home.industry_valuations"):
+            _render_industry_valuations(pd.DataFrame(all_metrics))
 
     # 6) Extras-toggleable tail
     if all_metrics and show_leaders:
-        _render_coverage_leaderboard(all_metrics)
+        with timed("home.coverage_leaderboard"):
+            _render_coverage_leaderboard(all_metrics)
     if show_ma:
-        _render_sector_ma(watchlist)
+        with timed("home.sector_ma"):
+            _render_sector_ma(watchlist)
 
 
 def _render_overnight_breaking():
