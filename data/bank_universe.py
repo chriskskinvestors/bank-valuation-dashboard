@@ -42,6 +42,19 @@ _SKIP_TICKERS = {
     "ITUB",         # Itaú Unibanco (Brazil)
     "DB",           # Deutsche Bank (Germany) — covered above too via ETN dedup
     "BAWAY", "BWAGF",  # BAWAG Group AG (Austria) — ADR + F-share, CIK 1968385
+    # Foreign parents of US bank subsidiaries — matched FDIC holding-company
+    # names in phase 1 (HSBC Bank USA, City National/RBC, Santander Bank NA…)
+    # but are foreign-domiciled filers (6-K/20-F, no US-GAAP facts). Also
+    # excluded structurally by _is_us_domestic_filer; listed for intent.
+    "HSBC",  # HSBC Holdings (UK)
+    "RY",    # Royal Bank of Canada
+    "BMO",   # Bank of Montreal (Canada)
+    "SAN",   # Banco Santander (Spain)
+    "BCS",   # Barclays (UK)
+    "UBS",   # UBS Group (Switzerland)
+    "MFG",   # Mizuho Financial Group (Japan)
+    "WF",    # Woori Financial Group (Korea)
+    "SHG",   # Shinhan Financial Group (Korea)
 }
 
 # US-domiciled only (explicit scope: US banks traded on exchanges or OTC).
@@ -54,6 +67,27 @@ _US_STATE_CODES = {
     "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA",
     "WV", "WI", "WY", "PR", "GU", "VI", "AS", "MP",
 }
+
+# Foreign-private-issuer forms. A US domestic issuer MUST file 10-K/10-Q;
+# foreign issuers file these instead (and some, like HSBC, carry an EMPTY
+# stateOfIncorporation — so the state check alone is not sufficient).
+_FOREIGN_ISSUER_FORMS = {"20-F", "40-F", "6-K"}
+_DOMESTIC_FORMS = {"10-K", "10-Q"}
+
+
+def _is_us_domestic_filer(sub: dict) -> bool:
+    """US-domicile check from a SEC submissions JSON, using two signals:
+    (1) stateOfIncorporation is a US state/territory code when present;
+    (2) the recent filing forms include 10-K/10-Q (domestic) rather than
+    only 20-F/40-F/6-K (foreign private issuer). Empty state + domestic
+    forms passes (some US filers omit the state)."""
+    state = (sub.get("stateOfIncorporation") or "").strip().upper()
+    if state and state not in _US_STATE_CODES:
+        return False
+    forms = set(sub.get("filings", {}).get("recent", {}).get("form", []))
+    if forms & _FOREIGN_ISSUER_FORMS and not forms & _DOMESTIC_FORMS:
+        return False
+    return True
 
 
 def _clean(n: str) -> str:
@@ -243,6 +277,31 @@ def _build_universe_live() -> dict[str, dict]:
                         }
                         break
 
+    # ── Phase 1.5: US-domicile enforcement on name matches ──────────────
+    # Phase-1 matches on FDIC holding-company NAMES, which foreign parents
+    # of US bank subsidiaries also carry (HSBC Holdings ↔ HSBC Bank USA,
+    # Royal Bank of Canada ↔ City National, Santander ↔ Santander Bank NA).
+    # Those parents are foreign-domiciled filers (6-K/20-F, no US-GAAP
+    # facts) — out of scope ("US-domiciled banks on exchanges or OTC").
+    # ~1 fetch per phase-1 match (+~50s nightly), same source as phase 2.
+    for t in sorted(universe):
+        cik = universe[t].get("cik")
+        if not cik:
+            continue
+        try:
+            time.sleep(0.12)  # SEC rate limit: 10 req/sec
+            resp = requests.get(
+                f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json",
+                headers=SEC_HEADERS, timeout=8,
+            )
+            if resp.status_code != 200:
+                continue  # transient — keep; nightly rebuild retries tomorrow
+            if not _is_us_domestic_filer(resp.json()):
+                print(f"[universe] dropping {t}: foreign-domiciled filer")
+                del universe[t]
+        except requests.RequestException:
+            continue
+
     # ── Phase 2: SIC code verification for bank-named candidates ─────────
     candidates = []
     for row in sec_rows:
@@ -278,11 +337,7 @@ def _build_universe_live() -> dict[str, dict]:
             sic = sub.get("sic", "")
             if sic not in BANK_SIC_CODES:
                 continue
-            # US-domiciled only: reject foreign-incorporated issuers (ADRs /
-            # F-shares like BAWAG, Austria) — they have no US-regulator data.
-            # Empty state codes are allowed (some US filers omit it).
-            state_inc = (sub.get("stateOfIncorporation") or "").strip().upper()
-            if state_inc and state_inc not in _US_STATE_CODES:
+            if not _is_us_domestic_filer(sub):
                 continue
 
             # Confirmed bank — try to find FDIC cert

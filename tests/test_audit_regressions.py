@@ -275,5 +275,52 @@ class TestTtmOrNoneInvariant(unittest.TestCase):
         self.assertEqual(check_shares_cover({"shares_cover_divergence_pct": 2.0}), [])
 
 
+class TestUsDomicileFilter(unittest.TestCase):
+    """Universe scope is US-domiciled filers only. Two signals required
+    because foreign issuers can carry an EMPTY stateOfIncorporation (HSBC)."""
+
+    def test_foreign_state_code_rejected(self):
+        from data.bank_universe import _is_us_domestic_filer
+        # BAWAG: Austria ("C4"), SIC empty at discovery time
+        self.assertFalse(_is_us_domestic_filer(
+            {"stateOfIncorporation": "C4",
+             "filings": {"recent": {"form": ["20-F", "6-K"]}}}))
+
+    def test_empty_state_foreign_forms_rejected(self):
+        from data.bank_universe import _is_us_domestic_filer
+        # HSBC: empty state, files only 6-K — the state check alone misses it
+        self.assertFalse(_is_us_domestic_filer(
+            {"stateOfIncorporation": "",
+             "filings": {"recent": {"form": ["6-K", "6-K", "F-3"]}}}))
+
+    def test_us_bank_passes(self):
+        from data.bank_universe import _is_us_domestic_filer
+        self.assertTrue(_is_us_domestic_filer(
+            {"stateOfIncorporation": "DE",
+             "filings": {"recent": {"form": ["10-K", "10-Q", "8-K"]}}}))
+        # US filer with omitted state but domestic forms still passes
+        self.assertTrue(_is_us_domestic_filer(
+            {"stateOfIncorporation": "",
+             "filings": {"recent": {"form": ["10-Q", "8-K"]}}}))
+
+
+class TestCompanyNavRegistry(unittest.TestCase):
+    """Every COMPANY_NAV leaf has a renderer and vice versa (A17 class:
+    a nav entry silently rendering nothing, or dead renderers)."""
+
+    def test_nav_and_renderers_in_sync(self):
+        from ui.company_nav import COMPANY_NAV, _RENDERERS
+        leaves = {leaf for subs in COMPANY_NAV.values() for leaf in subs}
+        self.assertEqual(leaves - set(_RENDERERS), set(),
+                         "nav entries with no renderer (would render blank)")
+        self.assertEqual(set(_RENDERERS) - leaves, set(),
+                         "renderers with no nav entry (dead code)")
+
+    def test_no_duplicate_leaves_across_sections(self):
+        from ui.company_nav import COMPANY_NAV
+        all_leaves = [leaf for subs in COMPANY_NAV.values() for leaf in subs]
+        self.assertEqual(len(all_leaves), len(set(all_leaves)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
