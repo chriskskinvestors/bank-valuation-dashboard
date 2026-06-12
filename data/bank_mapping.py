@@ -242,14 +242,19 @@ def get_fdic_cert(ticker: str) -> int | None:
     Return FDIC cert number, in priority order:
       1. BANK_MAP (hand-curated overrides — wins even if value is None)
       2. _RESOLVED_FROM_JSON (auto-generated, committed file)
-      3. _RESOLVED_CACHE (this-session live resolver results)
-      4. resolve_ticker() (live SEC + FDIC lookup)
+      3. universe snapshot (discovery already verified CIK/cert — one cheap
+         DB read per process, no network; rebuilt nightly)
+      4. _RESOLVED_CACHE (this-session live resolver results)
+      5. resolve_ticker() (live SEC + FDIC lookup)
     """
     ticker = ticker.upper()
     if ticker in BANK_MAP:
         return BANK_MAP[ticker].get("fdic_cert")
     if ticker in _RESOLVED_FROM_JSON:
         return _RESOLVED_FROM_JSON[ticker].get("fdic_cert")
+    snap = _universe_snapshot_map()
+    if ticker in snap:
+        return snap[ticker].get("fdic_cert")
     if ticker in _RESOLVED_CACHE:
         return _RESOLVED_CACHE[ticker].get("fdic_cert")
     resolved = resolve_ticker(ticker)
@@ -263,10 +268,39 @@ def get_cik(ticker: str) -> int | None:
         return BANK_MAP[ticker].get("cik")
     if ticker in _RESOLVED_FROM_JSON:
         return _RESOLVED_FROM_JSON[ticker].get("cik")
+    snap = _universe_snapshot_map()
+    if ticker in snap:
+        return snap[ticker].get("cik")
     if ticker in _RESOLVED_CACHE:
         return _RESOLVED_CACHE[ticker].get("cik")
     resolved = resolve_ticker(ticker)
     return resolved.get("cik")
+
+
+# Universe-snapshot lookup tier. Discovery (data/bank_universe.py) verifies
+# every ticker's CIK (SEC SIC + US-domicile check) and FDIC cert before
+# persisting, so the snapshot is an authoritative resolved store for tickers
+# beyond the curated files. Without this tier, each newly discovered bank
+# triggered a live per-ticker SEC resolution in EVERY fresh process —
+# measured 174s for the universe list on a cold start. Read directly from
+# data.cache (not bank_universe) to avoid a circular import.
+_SNAPSHOT_MAP: dict[str, dict] | None = None
+
+
+def _universe_snapshot_map() -> dict[str, dict]:
+    global _SNAPSHOT_MAP
+    if _SNAPSHOT_MAP is None:
+        try:
+            from data import cache
+            snap = cache.get("bank_universe_lastgood") or {}
+            uni = snap.get("universe", snap)  # stamped or legacy format
+            _SNAPSHOT_MAP = {
+                t: v for t, v in (uni or {}).items() if isinstance(v, dict)
+            }
+        except Exception as e:
+            print(f"[bank_mapping] snapshot tier unavailable: {type(e).__name__}: {e}")
+            _SNAPSHOT_MAP = {}
+    return _SNAPSHOT_MAP
 
 
 # ── Runtime cache for dynamically resolved tickers ───────────────────────
