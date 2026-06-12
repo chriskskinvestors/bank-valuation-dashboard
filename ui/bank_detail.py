@@ -69,18 +69,11 @@ def _kv_table(title, pairs):
     if not rows:
         return ""
     body = "".join(
-        f'<tr style="border-bottom:1px solid rgba(148,163,184,0.10);">'
-        f'<td style="padding:2px 24px 2px 2px;color:#64748b;font-size:0.78rem;'
-        f'white-space:nowrap;">{l}</td>'
-        f'<td style="padding:2px 2px;text-align:right;font-weight:600;color:#0f172a;'
-        f'font-size:0.8rem;white-space:nowrap;">{v}</td></tr>'
+        f'<div class="lg-row"><span class="lg-label">{l}</span>'
+        f'<span class="lg-val">{v}</span></div>'
         for l, v in rows)
-    # width:100% to fill its (narrow, 1-of-4) column. In a quarter-width column
-    # the label→value gap is small, and four tables across use the whole width.
-    return (
-        f'<div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:.04em;'
-        f'color:#1e3a8a;font-weight:700;margin:0 0 2px;">{title}</div>'
-        f'<table style="width:100%;border-collapse:collapse;">{body}</table>')
+    # ksk-ledger (DESIGN-SYSTEM.md): boxless hairline rows, tokens only.
+    return f'<div class="ksk-ledger"><div class="lg-title">{title}</div>{body}</div>' 
 
 
 def _render_valuation_performance_tables(row, fdic_rec=None):
@@ -334,39 +327,27 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
         ident_bits.append(filing["sic_description"].title())
     if filing.get("hq_city") and filing.get("hq_state"):
         ident_bits.append(f"HQ: {filing['hq_city'].title()}, {filing['hq_state']}")
-    if ident_bits:
-        st.markdown(
-            '<div style="color:#64748b;font-size:0.9rem;margin:-4px 0 8px;">'
-            + " &nbsp;·&nbsp; ".join(ident_bits) + "</div>",
-            unsafe_allow_html=True,
-        )
+    # ── Identifier row for the SNL title bar (links, no emojis) ─────────
+    def _lnk(label, url):
+        return f'<a href="{url}" target="_blank">{label}</a>'
 
-    # ── Quick links ────────────────────────────────────────────────────
-    def _btn(label, url):
-        return (f'<a href="{url}" target="_blank" style="display:inline-block;'
-                f'padding:3px 10px;margin:0 6px 6px 0;border:1px solid rgba(148,163,184,0.35);'
-                f'border-radius:6px;font-size:0.78rem;color:#1e3a8a;text-decoration:none;'
-                f'background:rgba(241,245,249,0.6);">{label}</a>')
-
-    links = []
+    id_links = []
     tenk = next((f for f in filing.get("recent_filings", []) if f["form"].startswith("10-K")), None)
     tenq = next((f for f in filing.get("recent_filings", []) if f["form"].startswith("10-Q")), None)
     if tenk and tenk.get("url"):
-        links.append(_btn("📄 10-K", tenk["url"]))
+        id_links.append(_lnk("10-K", tenk["url"]))
     if tenq and tenq.get("url"):
-        links.append(_btn("📄 10-Q", tenq["url"]))
+        id_links.append(_lnk("10-Q", tenq["url"]))
     if cik:
-        links.append(_btn("📋 EDGAR", f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
-                                      f"&CIK={cik}&type=&dateb=&owner=include&count=40"))
+        id_links.append(_lnk(f"CIK {cik}", f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                                           f"&CIK={cik}&type=&dateb=&owner=include&count=40"))
+    if cert:
+        id_links.append(_lnk(f"FDIC {cert}", f"https://banks.data.fdic.gov/bankfind-suite/bankfind/details/{cert}"))
+        id_links.append(_lnk("FFIEC", "https://cdr.ffiec.gov/public/ManageFacsimiles.aspx"))
     ir = get_ir_url(ticker)
     if ir:
-        links.append(_btn("🌐 IR", ir))
-    if cert:
-        links.append(_btn("🏦 FDIC", f"https://banks.data.fdic.gov/bankfind-suite/bankfind/details/{cert}"))
-        links.append(_btn("📑 FFIEC", "https://cdr.ffiec.gov/public/ManageFacsimiles.aspx"))
-    if links:
-        st.markdown('<div style="margin:2px 0 10px;">' + "".join(links) + "</div>",
-                    unsafe_allow_html=True)
+        id_links.append(_lnk("IR", ir))
+    ids_html = " · ".join(ident_bits + id_links)
 
     # ── Market Data + Company Profile (two columns) ────────────────────
     price = _num(quote.get("price")) if quote.get("price") is not None else _num(row.get("price"))
@@ -427,9 +408,9 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
         ("FDIC Cert", str(cert) if cert else None),
     ]
 
-    # Return the two tables so the caller can pack them into a single 4-across
-    # row with Valuation + Performance (no half-width dead space).
-    return _kv_table("Market Data", market), _kv_table("Company Profile", company)
+    # Return the two ledgers + the title-bar identifier row so the caller can
+    # pack a single 4-across row with Valuation + Performance.
+    return _kv_table("Market Data", market), _kv_table("Company Profile", company), ids_html
 
 
 def _valuation_history_chart(ticker: str, info: dict):
@@ -530,8 +511,6 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     info = get_bank_info(ticker)
     name = info["name"] if info else ticker
 
-    st.markdown(f"## {name} ({ticker})")
-
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
     if bank_row.empty:
         st.info("No metrics available for this bank yet.")
@@ -549,7 +528,9 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
             fdic_rec = {}
     # Capital-IQ-style snapshot: identity + quick links, then four reference
     # tables packed across the full width (no half-width dead space).
-    mkt_html, co_html = _render_snapshot(ticker, info, name, row, fdic_rec)
+    mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec)
+    from ui.chrome import title_bar
+    title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
     val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
     _g = st.columns(4)
     for _col, _html in zip(_g, (mkt_html, val_html, perf_html, co_html)):
@@ -576,13 +557,13 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
         links.append(
             f'<a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany'
             f'&CIK={cik}&type=10-K&dateb=&owner=include&count=40" target="_blank" '
-            'style="text-decoration:none;">📄 SEC filings (EDGAR)</a>')
+            'style="text-decoration:none;">SEC filings (EDGAR)</a>')
     if cert:
         links.append(
             f'<a href="https://banks.data.fdic.gov/bankfind-suite/bankfind/details/'
-            f'{cert}" target="_blank" style="text-decoration:none;">🏦 FDIC BankFind</a>')
+            f'{cert}" target="_blank" style="text-decoration:none;">FDIC BankFind</a>')
     links.append('<span title="Price, change, market cap, P/E and the price chart">'
-                 '📈 FMP (market data)</span>')
+                 'FMP (market data)</span>')
     if links:
         st.markdown(
             '<div style="margin-top:7px; font-size:0.8rem; color:#64748b;">'
