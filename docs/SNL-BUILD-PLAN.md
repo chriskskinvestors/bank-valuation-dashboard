@@ -128,6 +128,21 @@ the renderer registry in ui/company_nav.py (structural test keeps them
 in sync). Existing Filings/Activity content folds into the new structure;
 keep the form-type filter inside Filings & Reports.
 
+## 11. Market Analysis section sub-tabs (user, 2026-06-12)
+SNL nav: Branch List · Branch & Mortgage Map · U.S. Branch Competitors ·
+U.S. Branch Proximity · U.S. Market Demographics · U.S. Deposit Market
+Share · Residential & Commercial Mortgage Analytics · HMDA Mortgages ·
+U.S. Branch Analytics (Merger Planning/HHI, Market Share, Market Overlap).
+| Sub-tab | Source |
+|---|---|
+| Branch List / Map / Competitors / Proximity | FDIC SOD store (HAVE: branches table + geographic view) — geoqueries |
+| Deposit Market Share | SOD (HAVE: market share view) — extend to county/MSA tables |
+| Merger Planning / HHI / Market Overlap | calc on SOD deposits (deposit HHI per market, pro-forma overlap) |
+| Market Demographics | Census API (new client) |
+| HMDA Mortgages / Mortgage Analytics | CFPB HMDA public API (new client) |
+Nav via COMPANY_NAV + registry. Existing "Market Share & Branches" content
+splits into the new sub-tabs.
+
 ## Decisions (user, 2026-06-12)
 - **One tab END-TO-END at a time**, screenshot order: IS → BS → Capital →
   AQ Detail → AQ by Loan Type → Composition → IRR → FV → Loan Comp (As Rptd).
