@@ -128,6 +128,24 @@ the renderer registry in ui/company_nav.py (structural test keeps them
 in sync). Existing Filings/Activity content folds into the new structure;
 keep the form-type filter inside Filings & Reports.
 
+## IS tab — MDRM codes CONFIRMED by value-matching Banner Bank 12/31/2025
+## call report against the SNL FY-2025 screenshot (tools/probe_ri_codes.py):
+- RIADC014 = BOLI income (exact holdco match 10,152)
+- RIAD4230 = provision: loans (11,637); RIADJJ33 = provision total (13,045);
+  unfunded split = JJ33 − 4230 = 1,408 exact
+- RIAD4080 = service charges (25,433); RIAD4135 = comp & benefits (243,487)
+- RIADC232 = amort intang & GW impair (1,567); RIADC216 = GW impair alone
+- RIADC887 = insurance rev (763); RIADC886 + RIADC888 = inv banking +
+  brokerage (732+1,101 = 1,833 exact)
+- RIAD5416 = gain on sale of loans — bank-sub 11,491 vs holdco 9,108:
+  STRUCTURAL holdco-vs-sub gap, label provenance accordingly
+- RIADC017 = data processing (30,787; SNL "tech & comms" 33,067 adds telecom)
+- Bank-sub totals (RIAD4107/4073/4340) differ from holdco top lines by
+  design — the table is regulatory (sub) with click-through provenance;
+  holdco totals available from SEC side.
+- FTE adjustment + RI-E write-ins (marketing/professional/foreclosure):
+  derive at build (RIAD4313/4507 tax-exempt income probed; formula TBD).
+
 ## 11. Market Analysis section sub-tabs (user, 2026-06-12)
 SNL nav: Branch List · Branch & Mortgage Map · U.S. Branch Competitors ·
 U.S. Branch Proximity · U.S. Market Demographics · U.S. Deposit Market
