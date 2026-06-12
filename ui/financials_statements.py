@@ -174,6 +174,40 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": f1, "val": _thou(a) + " ($000)"},
                             {"label": f2, "val": _thou(b) + " ($000)"}], f"{f1} ÷ {f2} × 100", False)
+        if kind == "noniother":
+            # Residual "other" noninterest income = NONII − the itemized rows
+            # shown above it (SNL semantics: their "other" is a remainder, not
+            # the narrow IOTHII field). args = the itemized FDIC fields; the
+            # residual shrinks honestly as more lines get itemized (RI rows).
+            total = _num(rec.get("NONII"))
+            parts = [(fl, _num(rec.get(fl)) or 0) for fl in args]
+            v = _usd(total - sum(p for _, p in parts)) if total is not None else "—"
+            terms = [{"label": "Total non-interest income (NONII)",
+                      "val": _thou(total) + " ($000)"}]
+            terms += [{"label": f"− {fl}", "val": _thou(p) + " ($000)"} for fl, p in parts]
+            return v, calc(label, v, asof, "Computed from Call Report", terms,
+                           "NONII − itemized non-interest income lines", False)
+        if kind == "ppnr":
+            # Pre-provision net revenue = NII + noninterest income − noninterest
+            # expense: operating earnings power before credit costs (SNL line).
+            ii, ie = _num(rec.get("INTINC")), _num(rec.get("EINTEXP"))
+            noni, nonx = _num(rec.get("NONII")), _num(rec.get("NONIX"))
+            ok = None not in (ii, ie, noni, nonx)
+            v = _usd(ii - ie + noni - nonx) if ok else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Net interest income (INTINC − EINTEXP)",
+                             "val": _thou(ii - ie) + " ($000)" if None not in (ii, ie) else "—"},
+                            {"label": "Noninterest income (NONII)", "val": _thou(noni) + " ($000)"},
+                            {"label": "Noninterest expense (NONIX)", "val": _thou(nonx) + " ($000)"}],
+                           "NII + noninterest income − noninterest expense", False)
+        if kind == "etr":
+            # Effective tax rate = income tax ÷ pre-tax income × 100
+            tax, ptx = _num(rec.get("ITAX")), _num(rec.get("PTAXNETINC"))
+            v = f"{tax/ptx*100:.2f}%" if (tax is not None and ptx) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Income tax (ITAX)", "val": _thou(tax) + " ($000)"},
+                            {"label": "Pre-tax net income (PTAXNETINC)", "val": _thou(ptx) + " ($000)"}],
+                           "ITAX ÷ PTAXNETINC × 100", False)
         if kind == "tce":
             # TCE = equity − TOTAL intangibles (INTAN, incl. goodwill) — the
             # standard convention, and the same field the roatce kind uses.
@@ -362,33 +396,48 @@ def _render_statement_trends(hist, ticker, key_prefix, trends):
 
 
 # ── Statement specs ─────────────────────────────────────────────────────────
+# SNL-depth layout (docs/SNL-BUILD-PLAN.md tab 1). All values are the bank
+# subsidiary's Call Report — holdco SEC totals can differ slightly; the
+# click-through provenance names the entity. Rows whose source is FFIEC
+# Schedule RI / RI-E (gain on sale of loans, BOLI, FTE NII, expense detail)
+# join when the RI store lands — never imputed in the meantime.
 _INCOME = [
-    ("Interest Income", [
+    ("Interest Income & Expense", [
         ("Interest & fees on loans", "dollar", "ILNDOM"),
         ("Income on investment securities", "dollar", "ISC"),
         ("Total interest income", "dollar", "INTINC"),
-    ]),
-    ("Interest Expense", [
         ("Interest on deposits", "dollar", "EDEP"),
         ("Total interest expense", "dollar", "EINTEXP"),
-    ]),
-    ("Net Interest Income", [
         ("Net interest income", "diff", "INTINC", "EINTEXP"),
+    ]),
+    ("Provision for Credit Losses", [
         ("Provision for credit losses", "dollar", "ELNATR"),
     ]),
     ("Non-Interest Income", [
+        ("Trading account income", "dollar", "TRADE"),
+        ("Trust / fiduciary revenue", "dollar", "IFIDUC"),
+        ("Service charges on deposits", "dollar", "ISERCHG"),
+        ("Insurance revenue", "dollar", "IINSOTH"),
+        ("Investment banking fees", "dollar", "IINVFEE"),
+        ("Other non-interest income", "noniother",
+         "TRADE", "IFIDUC", "ISERCHG", "IINSOTH", "IINVFEE"),
         ("Total non-interest income", "dollar", "NONII"),
+        ("Realized gain (loss) on securities", "dollar", "IGLSEC"),
     ]),
     ("Non-Interest Expense", [
-        ("Salaries & employee benefits", "dollar", "ESAL"),
-        ("Premises & equipment", "dollar", "EPREMAGG"),
+        ("Compensation & benefits", "dollar", "ESAL"),
+        ("Occupancy & equipment", "dollar", "EPREMAGG"),
         ("Amortization of intangibles", "dollar", "EAMINTAN"),
         ("Other non-interest expense", "dollar", "EOTHNINT"),
         ("Total non-interest expense", "dollar", "NONIX"),
     ]),
-    ("Pre-Tax & Net Income", [
+    ("Earnings", [
+        ("Pre-provision net revenue", "ppnr"),
         ("Pre-tax net income", "dollar", "PTAXNETINC"),
-        ("Income tax", "dollar", "ITAX"),
+        ("Provision for taxes", "dollar", "ITAX"),
+        ("Effective tax rate", "etr"),
+        ("Minority interest", "dollar", "NETIMIN"),
+        ("Extraordinary items", "dollar", "EXTRA"),
         ("Net income", "dollar", "NETINC"),
     ]),
 ]

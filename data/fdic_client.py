@@ -134,6 +134,14 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
         "IGLSEC", "EXTRA",
         # Interest-bearing deposit balance (for cost of IB deposits).
         "DEPIDOM",
+        # SNL-depth Income Statement detail (probed valid 2026-06-12 —
+        # docs/SNL-BUILD-PLAN.md): noninterest income split + minority int.
+        "TRADE", "IFIDUC", "ISERCHG", "IINSOTH", "IINVFEE", "IOTHII", "NETIMIN",
+        # SNL-depth Balance Sheet detail.
+        "SCAF", "ORE", "MSA", "INTANMSR", "BKPREM", "CHBALI", "FREPO",
+        "OTHBFHLB", "SUBND", "EQPP", "EQCS", "EQUPTOT",
+        # SNL-depth Capital Adequacy ($ amounts + ratios).
+        "RBCT1J", "RBCT1", "RBCT2", "RBC", "RWAJ", "RBC1RWAJ", "RBC1AAJ",
     }
     all_fields = sorted(base_fields | fields_needed)
 

@@ -545,6 +545,86 @@ def get_deposit_cost_detail(
     }
 
 
+# ── Schedule RI income-statement detail ──────────────────────────────────────
+# MDRM codes CONFIRMED by value-matching Banner Bank's 12/31/2025 call report
+# against the SNL FY-2025 screenshot (docs/SNL-BUILD-PLAN.md, "IS tab";
+# tools\probe_ri_codes.py). Notes from that probe:
+#   • RIAD5416 (gain on sale of loans) — STRUCTURAL holdco-vs-sub gap
+#     (bank-sub 11,491 vs holdco 9,108); label provenance accordingly.
+#   • RIAD4313/4507 (tax-exempt loan/securities income) probed at 15,532 /
+#     14,865 — direction still to be verified for the FTE adjustment.
+#   • RIADC232 = amortization of intangibles & GW impairment combined;
+#     RIADC216 = goodwill impairment alone.
+_RI_INCOME_CODES = {
+    "boli_income": "C014",            # earnings on bank-owned life insurance
+    "gain_on_sale_loans": "5416",     # net gains on sales of loans & leases
+    "provision_loans": "4230",        # provision for loan & lease losses
+    "provision_total": "JJ33",        # provision for credit losses, total
+    "inv_banking_fees": "C886",       # investment banking/advisory fees
+    "brokerage_fees": "C888",         # securities brokerage fees
+    "insurance_income": "C887",       # insurance commissions & fees
+    "service_charges": "4080",        # service charges on deposit accounts
+    "comp_benefits": "4135",          # salaries & employee benefits
+    "amort_intangibles": "C232",      # amortization of intangibles (incl GW impair)
+    "goodwill_impairment": "C216",    # goodwill impairment losses
+    "data_processing": "C017",        # data processing expense
+    "trading_revenue": "A220",        # trading revenue
+    "tax_exempt_loan_income": "4313", # tax-exempt income on loans (probed 15,532)
+    "tax_exempt_sec_income": "4507",  # tax-exempt income on securities (probed 14,865)
+    "occupancy": "4217",              # premises & fixed-asset expense
+    "other_opex": "4092",             # other noninterest expense
+    "total_int_income": "4107",       # total interest income
+    "total_int_expense": "4073",      # total interest expense
+    "net_income": "4340",             # net income
+}
+
+
+def get_ri_income_detail(
+    rssd_id: int,
+    reporting_period: str | None = None,
+    call_report_df: pd.DataFrame | None = None,
+) -> dict | None:
+    """
+    Schedule RI (income statement) detail lines that aren't in the FDIC
+    financials feed — the SNL IS-tab components (BOLI income, provision
+    split, fee income lines, opex breakdown, tax-exempt income).
+
+    Quarter semantics: RI is YTD within the calendar year — Q1 covers 3
+    months, Q4 the full year. Callers needing discrete quarters must diff
+    consecutive periods themselves.
+
+    Returns one key per _RI_INCOME_CODES entry (raw $thousands as reported)
+    plus a matching *_usd key scaled by FFIEC_DOLLAR_SCALE, and a derived
+    provision_unfunded = provision_total − provision_loans (None unless both
+    were reported). A true $0 stays 0.0 — only codes absent from the filing
+    map to None. Returns None in local dev (FFIEC unconfigured); the data
+    flows through the refresh-ffiec pipeline on the server.
+    """
+    df = call_report_df
+    if df is None:
+        df = fetch_call_report(rssd_id, reporting_period)
+    if df is None or df.empty:
+        return None
+
+    out: dict = {
+        "reporting_period": reporting_period or latest_reporting_period(),
+        "rssd_id": int(rssd_id),
+    }
+    for key, code in _RI_INCOME_CODES.items():
+        out[key] = _lookup_riad(df, code)
+
+    # Unfunded-commitment provision = total credit-loss provision minus the
+    # loan provision — only derivable when BOTH components were reported
+    # (a missing component must not silently read as $0).
+    pt, pl = out["provision_total"], out["provision_loans"]
+    out["provision_unfunded"] = pt - pl if (pt is not None and pl is not None) else None
+
+    for key in list(_RI_INCOME_CODES) + ["provision_unfunded"]:
+        v = out[key]
+        out[f"{key}_usd"] = v * FFIEC_DOLLAR_SCALE if v is not None else None
+    return out
+
+
 def maturity_ladder_to_yearly_pace(ladder: dict) -> dict[int, float]:
     """
     Convert a 6-bucket maturity ladder to cumulative repricing fractions

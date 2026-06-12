@@ -304,6 +304,67 @@ class TestUsDomicileFilter(unittest.TestCase):
              "filings": {"recent": {"form": ["10-Q", "8-K"]}}}))
 
 
+def _ffiec_df(rows):
+    """Build a synthetic Call Report DF in the ffiec-data-connect v3 long
+    form from (mdrm, value) pairs."""
+    return pd.DataFrame([{
+        "mdrm": m, "rssd": "999999", "quarter": "12/31/2025",
+        "data_type": "int", "int_data": v,
+        "float_data": None, "bool_data": None, "str_data": None,
+    } for m, v in rows])
+
+
+class TestRiIncomeDetail(unittest.TestCase):
+    """Schedule RI detail extraction: a true $0 stays 0.0, an absent code
+    is None (never conflated), provision_unfunded only derives when both
+    components were reported, *_usd scales ×1000."""
+
+    # Banner Bank 12/31/2025 values from docs/SNL-BUILD-PLAN.md
+    ROWS = [
+        ("RIADC014", 10_152),    # BOLI income
+        ("RIAD4230", 11_637),    # provision: loans
+        ("RIADJJ33", 13_045),    # provision: total
+        ("RIAD4080", 25_433),    # service charges
+        ("RIAD4135", 243_487),   # comp & benefits
+        ("RIADC216", 0),         # goodwill impairment — true $0
+    ]
+
+    def _detail(self, rows=None):
+        from data.ffiec_client import get_ri_income_detail
+        return get_ri_income_detail(
+            999999, reporting_period="12/31/2025",
+            call_report_df=_ffiec_df(self.ROWS if rows is None else rows))
+
+    def test_known_codes_extract(self):
+        d = self._detail()
+        self.assertEqual(d["boli_income"], 10_152.0)
+        self.assertEqual(d["service_charges"], 25_433.0)
+        self.assertEqual(d["comp_benefits"], 243_487.0)
+        self.assertEqual(d["reporting_period"], "12/31/2025")
+
+    def test_true_zero_stays_zero_not_none(self):
+        d = self._detail()
+        self.assertEqual(d["goodwill_impairment"], 0.0)
+        self.assertEqual(d["goodwill_impairment_usd"], 0.0)
+
+    def test_absent_code_is_none(self):
+        d = self._detail()
+        self.assertIsNone(d["trading_revenue"])
+        self.assertIsNone(d["trading_revenue_usd"])
+
+    def test_provision_unfunded_derivation(self):
+        d = self._detail()
+        self.assertEqual(d["provision_unfunded"], 13_045.0 - 11_637.0)  # 1,408
+        # One component missing → underivable, never imputed as $0
+        rows = [r for r in self.ROWS if r[0] != "RIADJJ33"]
+        self.assertIsNone(self._detail(rows)["provision_unfunded"])
+
+    def test_usd_scaling(self):
+        d = self._detail()
+        self.assertEqual(d["boli_income_usd"], 10_152_000.0)
+        self.assertEqual(d["provision_unfunded_usd"], 1_408_000.0)
+
+
 class TestCompanyNavRegistry(unittest.TestCase):
     """Every COMPANY_NAV leaf has a renderer and vice versa (A17 class:
     a nav entry silently rendering nothing, or dead renderers)."""
