@@ -161,6 +161,24 @@ U.S. Branch Analytics (Merger Planning/HHI, Market Share, Market Overlap).
 Nav via COMPANY_NAV + registry. Existing "Market Share & Branches" content
 splits into the new sub-tabs.
 
+## 12. Overview section sub-tabs (user, 2026-06-12)
+SNL nav: Corporate Profile · Stock Chart · Corporate Structure · ~~Long
+Business Description~~ (SKIP, user) · Corporate Governance · People
+Summary · Analyst Coverage · Compensation.
+| Sub-tab | Source / decision |
+|---|---|
+| Corporate Profile | our current Overview page re-homed unchanged |
+| Stock Chart | price chart + volume + peer overlays; KEEP BOTH (user): new here AND Price & Trends stays under Valuation |
+| Corporate Structure | Fed NIC bulk hierarchy CSVs (parent→subs, ownership %) + EX-21 cross-check |
+| Corporate Governance | state-law reference table from state of incorporation (deterministic) + charter/bylaw provisions EXTRACTED from proxies/charters via the summarizer, labeled + source-linked (user approved) |
+| People Summary | roster from Form 3/4 + DEF 14A (ages/tenure/independence); per-person bios extracted via summarizer pipeline (user approved) |
+| Analyst Coverage | consensus estimates (have) + FMP ratings/price-target endpoints pending plan-tier verification |
+| Compensation | CEO pay ratio + pay-versus-performance from proxy XBRL (ecd: namespace, 2023+); NEO summary-comp tables via proxy parse |
+
+Census client (data/census_client.py) built for tab 11 demographics —
+NEEDS CENSUS_API_KEY (free signup api.census.gov/data/key_signup.html;
+user action) in env + Secret Manager + deploy.yml secrets list.
+
 ## Decisions (user, 2026-06-12)
 - **One tab END-TO-END at a time**, screenshot order: IS → BS → Capital →
   AQ Detail → AQ by Loan Type → Composition → IRR → FV → Loan Comp (As Rptd).
