@@ -191,6 +191,23 @@ Ownership Crossholdings · Insider Activity.
 | Insider Activity | existing tab (moves in unchanged) |
 Plus 13D/G (5%+ holders) from EDGAR for the summary's activist panel.
 
+## 14. Transactions section (NEW top-level tab; user, 2026-06-12)
+SNL nav: Transactions Summary · Detailed M&A History · Detailed Offerings ·
+Private Equity Transactions · Comparable Deal Analysis.
+| Sub-tab | Source |
+|---|---|
+| Transactions Summary | roll-up of the others: counts, latest deals, capital actions |
+| Detailed M&A History | FDIC structure-change events per cert (mergers/absorptions — full history, public API) + Fed NIC transformations + our events-store M&A detections + 8-K/S-4 links |
+| Detailed Offerings | EDGAR S-1/S-3/424B prospectuses + capital-raise 8-Ks (have filings ingestion) |
+| Private Equity Transactions | 13D/G + private-placement 8-Ks — public coverage is thin; honest sparse table |
+| Comparable Deal Analysis | COMPUTED deal comps: announced bank M&A (price from 8-K/PR) ÷ target financials at announcement (FDIC/SEC) → P/TBV paid, premium, deal-size multiples across our universe — a beat-SNL analytic |
+
+**Process note (user question, 2026-06-12):** for sections where only nav
+NAMES were supplied (Ownership, parts of Overview/Transactions), page
+contents are INFERRED from SNL conventions — marked as assumptions. At
+build time each tab gets either a content screenshot from the user (the
+Financials process) or a proposed layout confirmed before building.
+
 ## Decisions (user, 2026-06-12)
 - **One tab END-TO-END at a time**, screenshot order: IS → BS → Capital →
   AQ Detail → AQ by Loan Type → Composition → IRR → FV → Loan Comp (As Rptd).
