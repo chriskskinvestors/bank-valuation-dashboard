@@ -47,7 +47,7 @@ def render_macro_dashboard():
     """Render the standalone Market & Macro section."""
     st.markdown(
         '<div class="dashboard-header">'
-        "<h1>🌐 Market & Macro</h1>"
+        "<h1>Market & Macro</h1>"
         "<p>Rates, curve, bank sector, funding, credit, economy & regime</p>"
         "</div>",
         unsafe_allow_html=True,
@@ -97,15 +97,15 @@ def _render_regime():
 
     if level == "high":
         style = ALERT_STYLE["high"]
-        icon = "🚨"
+        icon = '<span class="ksk-dot bad"></span>'
         label = f"Elevated recession risk ({score}/100)"
     elif level == "medium":
         style = ALERT_STYLE["medium"]
-        icon = "⚠️"
+        icon = '<span class="ksk-dot warn"></span>'
         label = f"Mixed recession signals ({score}/100)"
     else:
         style = ALERT_STYLE["ok"]
-        icon = "✅"
+        icon = '<span class="ksk-dot ok"></span>'
         label = f"Low recession signal ({score}/100)"
 
     factors_html = ""

@@ -80,7 +80,7 @@ def render_geo_view():
     """Main entry point — wired from app.py."""
     st.markdown(
         '<div class="dashboard-header">'
-        '<h1>🗺️ Geographic</h1>'
+        '<h1>Geographic</h1>'
         '<p>Multi-bank branch map + state/MSA deposit rankings</p>'
         '</div>',
         unsafe_allow_html=True,

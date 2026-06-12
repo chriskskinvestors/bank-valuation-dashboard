@@ -22,7 +22,8 @@ COMPANY_NAV = {
                    "Capital Structure Details"],
     "Valuation": ["Valuation Model", "Peer Rank", "Price & Trends"],
     "Estimates / Earnings": ["Earnings"],
-    "News & Filings": ["Filings", "Activity"],
+    "News & Filings": ["Filings & Reports", "Key Exhibits", "Press Releases",
+                       "Transcripts & Presentations", "Events Calendar"],
     "Market Analysis": ["Market Share & Branches"],
     "Ownership": ["Institutional (13F)", "Insider Activity"],
 }
@@ -129,9 +130,26 @@ def _filings(t, ctx):
     render_filings_for_ticker(t)
 
 
-def _activity(t, ctx):
+def _key_exhibits(t, ctx):
+    from ui.key_exhibits import render_key_exhibits
+    render_key_exhibits(t)
+
+
+def _press_releases(t, ctx):
+    # The events feed (SEC 8-K + wire services) largely IS press/wire items —
+    # the old "Activity" sub-tab content lives here now.
     from ui.recent_activity import render_recent_activity
-    render_recent_activity(t)
+    render_recent_activity(t, title="Press Releases & News")
+
+
+def _transcripts(t, ctx):
+    from ui.transcripts import render_transcripts
+    render_transcripts(t)
+
+
+def _events_calendar(t, ctx):
+    from ui.recent_activity import render_events_calendar
+    render_events_calendar(t)
 
 
 def _deposit_trends(t, ctx):
@@ -172,8 +190,11 @@ _RENDERERS = {
     "Valuation Model": _valuation_model,
     "Peer Rank": _peer_rank,
     "Earnings": _earnings,
-    "Filings": _filings,
-    "Activity": _activity,
+    "Filings & Reports": _filings,
+    "Key Exhibits": _key_exhibits,
+    "Press Releases": _press_releases,
+    "Transcripts & Presentations": _transcripts,
+    "Events Calendar": _events_calendar,
     "Deposit Trends": _deposit_trends,
     "Market Share & Branches": _market_share,
     "Institutional (13F)": _ownership_13f,

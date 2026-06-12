@@ -24,9 +24,9 @@ from ui.home import render_home
 # ── Page config ──────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Bank Valuation Dashboard",
-    page_icon="🏦",
+    page_icon=":material/account_balance:",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
@@ -36,17 +36,8 @@ if "ibkr_connected" not in st.session_state:
     st.session_state.ibkr_connected = False
 
 
-# ── Sidebar ──────────────────────────────────────────────────────────────
-st.sidebar.markdown(
-    '<div class="dashboard-header">'
-    "<h1>KSK Investors</h1>"
-    "<p>Bank Analysis Platform</p>"
-    "</div>",
-    unsafe_allow_html=True,
-)
-
-# ── Level 1 Navigation ──────────────────────────────────────────────────
-SECTIONS = ["🏠 Home", "🌐 Market & Macro", "📊 Screening", "🏦 Company Analysis", "🆚 Peer Comparison", "📈 Earnings Analysis", "📰 Activity", "🗺️ Geographic"]
+# ── Level 1 Navigation: top nav bar (DESIGN-SYSTEM.md — sidebar retired) ──
+SECTIONS = ["Home", "Market & Macro", "Screening", "Company", "Peers", "Earnings", "Activity", "Geographic"]
 # Company Analysis sub-tabs. Rendered horizontally at the TOP of the main
 # content (under the bank picker), not in the sidebar. One shared template per
 # bank — every bank gets the same sub-tabs.
@@ -60,19 +51,59 @@ from ui.company_nav import (
 # straight into Company Analysis. Set the section's session_state BEFORE the
 # radio instantiates so it opens on the right page; the bank itself is picked
 # up below from the same query param.
-if st.query_params.get("bank") and st.session_state.get("nav_section") != "🏦 Company Analysis":
-    st.session_state["nav_section"] = "🏦 Company Analysis"
-section = st.sidebar.radio("Navigate", SECTIONS, key="nav_section", label_visibility="collapsed")
+if st.query_params.get("bank") and st.session_state.get("nav_section") != "Company":
+    st.session_state["nav_section"] = "Company"
+# Universe scope first — the nav bar's status chip shows live coverage.
+# (The watchlist concept is retired; the variable keeps its name because
+# ~30 downstream call sites take it as the scope parameter.)
+watchlist = sorted(get_universe_tickers())
+portfolio = []
 
-st.sidebar.markdown("---")
+from ui.chrome import top_nav as _top_nav
+section, _nav_right = _top_nav(SECTIONS, key="nav_section")
+with _nav_right:
+    _u1, _u2 = st.columns([3, 1.2], vertical_alignment="center")
+    with _u1:
+        st.markdown(
+            f'<div style="text-align:right;font-size:var(--fs-2xs);color:var(--text-secondary);">'
+            f'<span class="ksk-dot ok"></span>{len(watchlist)} banks · FDIC live</div>',
+            unsafe_allow_html=True)
+    with _u2:
+        with st.popover("⋯", use_container_width=True):
+            if st.button("Refresh all data", use_container_width=True, key="refresh_all"):
+                st.cache_data.clear()
+                cache.clear_all()
+                st.rerun()
+            auto_refresh = st.checkbox("Auto-refresh prices", value=False, key="auto_refresh")
+            from data.ibkr_client import HAS_IBKR
+            if HAS_IBKR:
+                ibkr = get_ibkr_client()
+                if not st.session_state.ibkr_connected:
+                    if st.button("Connect to IBKR", key="ibkr_connect"):
+                        with st.spinner("Connecting..."):
+                            if ibkr.connect():
+                                st.session_state.ibkr_connected = True
+                                ibkr.start_event_loop()
+                                st.success("Connected")
+                            else:
+                                st.error("Connection failed.")
+                else:
+                    st.markdown('<span class="ksk-dot ok"></span> IBKR connected', unsafe_allow_html=True)
+                    if st.button("Disconnect", key="ibkr_disconnect"):
+                        ibkr.disconnect()
+                        st.session_state.ibkr_connected = False
+                        st.rerun()
+            else:
+                st.session_state.ibkr_connected = False
+auto_refresh = st.session_state.get("auto_refresh", False)
 
 # ── Level 2 Navigation (contextual) ─────────────────────────────────────
 screening_tab = None
 company_ticker = None
 company_subtab = None
 
-if section == "📊 Screening":
-    screening_tab_idx = st.sidebar.selectbox(
+if section == "Screening":
+    screening_tab_idx = st.selectbox(
         "Table",
         options=list(range(len(TABS))),
         format_func=lambda i: TAB_LABELS[i],
@@ -80,7 +111,7 @@ if section == "📊 Screening":
     )
     screening_tab = TABS[screening_tab_idx]
 
-elif section == "🏦 Company Analysis":
+elif section == "Company":
     # Deep-link support: a metric card can link to ?bank=X&tab=<token> to jump
     # straight to the tab that shows that figure (carries the bank so the deep
     # link survives a full page navigation).
@@ -112,57 +143,6 @@ elif section == "🏦 Company Analysis":
                 except Exception:
                     pass
 
-st.sidebar.markdown("---")
-
-# ── Refresh button ───────────────────────────────────────────────────────
-if st.sidebar.button("🔄 Refresh All Data", use_container_width=True):
-    st.cache_data.clear()
-    cache.clear_all()
-    st.rerun()
-
-# ── IBKR connection ──────────────────────────────────────────────────────
-# In cloud deployment ib_insync isn't installed (HAS_IBKR=False), so the
-# Connect button can't succeed. Hide the whole expander unless the local
-# install actually has IBKR support — keeps the sidebar uncluttered and
-# avoids "Connected" UI artifacts that confuse users.
-from data.ibkr_client import HAS_IBKR
-if HAS_IBKR:
-    with st.sidebar.expander("IBKR Connection"):
-        ibkr = get_ibkr_client()
-        if not st.session_state.ibkr_connected:
-            if st.button("Connect to IBKR", key="ibkr_connect"):
-                with st.spinner("Connecting..."):
-                    success = ibkr.connect()
-                    if success:
-                        st.session_state.ibkr_connected = True
-                        ibkr.start_event_loop()
-                        st.success("Connected!")
-                    else:
-                        st.error("Connection failed.")
-        else:
-            st.markdown('<span class="status-dot status-connected"></span> Connected', unsafe_allow_html=True)
-            if st.button("Disconnect", key="ibkr_disconnect"):
-                ibkr.disconnect()
-                st.session_state.ibkr_connected = False
-                st.rerun()
-else:
-    # Force-reset the flag so the rest of the app behaves as offline,
-    # regardless of any state inherited from another browser tab.
-    st.session_state.ibkr_connected = False
-
-# ── Coverage scope: the FULL universe ────────────────────────────────────
-# The platform operates on every covered US bank — the watchlist concept is
-# retired (per user direction 2026-06-11): no sidebar add/remove widget, and
-# every section (Home, Peer Comparison, Earnings, news) is universe-wide.
-# The variable keeps the name `watchlist` because ~30 downstream call sites
-# take it as the scope parameter; it now always holds the whole universe.
-# Caches are pre-warmed nightly for the full universe by jobs/refresh_universe.
-watchlist = sorted(get_universe_tickers())
-portfolio = []
-st.sidebar.caption(f"Coverage: **{len(watchlist)}** US banks (full universe)")
-
-# ── Auto-refresh toggle ──────────────────────────────────────────────────
-auto_refresh = st.sidebar.checkbox("Auto-refresh prices", value=False, key="auto_refresh")
 
 
 # ── Data loading ─────────────────────────────────────────────────────────
@@ -368,9 +348,9 @@ def get_watchlist_cohort() -> list[dict]:
 # or opening the Company Analysis page for a single bank.
 
 _NEEDS_WATCHLIST = (
-    section == "🏠 Home"  # Home shows top opportunities from watchlist
-    or (section == "📊 Screening" and screening_tab is not None)  # Screening default filter
-    or section == "🆚 Peer Comparison"  # Peer comparison needs all watchlist metrics
+    section == "Home"  # Home shows top opportunities from watchlist
+    or (section == "Screening" and screening_tab is not None)  # Screening default filter
+    or section == "Peers"  # Peer comparison needs all watchlist metrics
 )
 
 if _NEEDS_WATCHLIST:
@@ -385,10 +365,10 @@ else:
 # MAIN CONTENT AREA
 # ═══════════════════════════════════════════════════════════════════════════
 
-if section == "🏠 Home":
+if section == "Home":
     render_home(all_metrics, watchlist)
 
-elif section == "📊 Screening" and screening_tab:
+elif section == "Screening" and screening_tab:
     # ── SCREENING: Multi-bank comparison tables ─────────────────────────
     from data.saved_screens import (
         save_screen, load_screen, list_screens, delete_screen,
@@ -712,7 +692,7 @@ elif section == "📊 Screening" and screening_tab:
         display_metrics, display_cols_final, table_key=tab_key
     )
 
-elif section == "🏦 Company Analysis":
+elif section == "Company":
     # ── COMPANY ANALYSIS: Single-bank deep dive ─────────────────────────
 
     # Single search box over the ENTIRE universe — every covered US bank is
@@ -780,11 +760,11 @@ elif section == "🏦 Company Analysis":
                 "are out of sync."
             )
 
-elif section == "🌐 Market & Macro":
+elif section == "Market & Macro":
     from ui.macro import render_macro_dashboard
     render_macro_dashboard()
 
-elif section == "🆚 Peer Comparison":
+elif section == "Peers":
     # ── PEER COMPARISON: Side-by-side bank comparison ───────────────────
     from ui.peer_comparison import render_peer_comparison
     if not all_metrics:
@@ -792,19 +772,19 @@ elif section == "🆚 Peer Comparison":
         cache.put("watchlist_metrics_last", all_metrics)
     render_peer_comparison(all_metrics, watchlist, portfolio)
 
-elif section == "📈 Earnings Analysis":
+elif section == "Earnings":
     # ── EARNINGS ANALYSIS: Aggregate tracking ───────────────────────────
     if not all_metrics:
         all_metrics = load_all_data(watchlist)
         cache.put("watchlist_metrics_last", all_metrics)
     render_earnings_overview(watchlist, all_metrics)
 
-elif section == "📰 Activity":
+elif section == "Activity":
     # ── ACTIVITY: Universe-wide event feed ──────────────────────────────
     from ui.recent_activity import render_activity_overview
     render_activity_overview()
 
-elif section == "🗺️ Geographic":
+elif section == "Geographic":
     # ── GEOGRAPHIC: Multi-bank branch map + state/MSA deposit lookup ────
     from ui.geo_view import render_geo_view
     render_geo_view()

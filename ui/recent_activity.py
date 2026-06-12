@@ -123,13 +123,14 @@ def _render_feed(events: list[dict], show_ticker: bool = False):
     st.markdown(_FEED_CSS + f'<div class="ev-feed">{body}</div>', unsafe_allow_html=True)
 
 
-def render_recent_activity(ticker: str, limit: int = 20):
+def render_recent_activity(ticker: str, limit: int = 20,
+                           title: str = "Recent Activity"):
     """Single-bank event feed."""
     if not ticker:
         st.info("Pick a bank from the sidebar to see its recent activity.")
         return
 
-    st.subheader(f"📰 Recent Activity — {ticker}")
+    st.subheader(f"📰 {title} — {ticker}")
     st.caption(
         "SEC 8-K filings plus Business Wire, PR Newswire, GlobeNewswire and Yahoo "
         "News feeds. Refreshed automatically every 30 minutes during market hours."
@@ -145,6 +146,74 @@ def render_recent_activity(ticker: str, limit: int = 20):
         return
 
     _render_feed(events, show_ticker=False)
+
+
+def _fmt_date(ts) -> str:
+    """YYYY-MM-DD from a datetime or an ISO string (sqlite returns strings)."""
+    if ts is None:
+        return ""
+    if isinstance(ts, datetime):
+        return ts.strftime("%Y-%m-%d")
+    return str(ts)[:10]
+
+
+def render_events_calendar(ticker: str, limit: int = 15):
+    """Per-bank events calendar: the upcoming earnings date (analyst
+    consensus, market data) plus recent dated events from the events store.
+    Small and honest — renders only what the feeds actually have."""
+    if not ticker:
+        st.info("Pick a bank from the sidebar to see its events calendar.")
+        return
+
+    st.subheader(f"🗓️ Events Calendar — {ticker}")
+
+    # ── Upcoming: next earnings date ─────────────────────────────────────
+    st.markdown("**Upcoming**")
+    ned = None
+    try:
+        from data.estimates import fetch_estimates_cached
+        ned = (fetch_estimates_cached(ticker) or {}).get("next_earnings_date")
+    except Exception:
+        pass
+    if ned:
+        st.markdown(f"- {ned} — Earnings release (estimated)")
+        st.caption("Source: analyst consensus (market data) — date is an estimate "
+                   "until the company confirms.")
+    else:
+        st.caption(f"No upcoming earnings date available for {ticker} from the "
+                   "consensus feed.")
+
+    # ── Recent: dated events from the unified store ──────────────────────
+    st.markdown("**Recent events**")
+    events = get_recent_events(ticker, limit=limit)
+    from data.events.wire_base import is_safe_news_url
+    events = [e for e in events if is_safe_news_url(e.get("url"))]
+    if not events:
+        st.caption(
+            f"No events ingested yet for {ticker}. The dashboard polls SEC EDGAR "
+            "and the wire feeds every 30 minutes during market hours."
+        )
+        return
+
+    rows = []
+    for ev in events:
+        date = _fmt_date(ev.get("published_at"))
+        type_label = EVENT_TYPE_LABELS.get(ev["event_type"], ev["event_type"])
+        color = EVENT_TYPE_COLORS.get(ev["event_type"], "#6b7280")
+        headline = _html.escape(ev.get("headline") or "(no headline)")
+        url = ev.get("url")
+        link = (f' <a class="ev-src" href="{_html.escape(str(url))}" '
+                f'target="_blank">↗</a>') if url else ""
+        rows.append(
+            f'<div class="ev-row"><div class="ev-meta">'
+            f'<span class="ev-ago" style="margin-left:0;">{date}</span>'
+            f'<span class="ev-badge" style="color:{color};background:{color}14;">'
+            f'{_html.escape(type_label)}</span></div>'
+            f'<div class="ev-head">{headline}{link}</div></div>'
+        )
+    st.markdown(_FEED_CSS + f'<div class="ev-feed">{"".join(rows)}</div>',
+                unsafe_allow_html=True)
+    st.caption(f"Most recent {len(events)} dated events from the unified events store.")
 
 
 def render_activity_overview(limit: int = 50):

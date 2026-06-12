@@ -15,21 +15,22 @@ import streamlit as st
 
 
 def top_nav(sections: list[str], key: str = "nav_section",
-            status_html: str = "") -> str:
-    """The horizontal top navigation bar (replaces the sidebar).
-    Sections left, status/utilities right. Returns the selected section."""
-    left, right = st.columns([5, 2], vertical_alignment="bottom")
-    with left:
+            wordmark: str = "KSK INVESTORS"):
+    """The horizontal top navigation bar (replaces the sidebar):
+    wordmark | section tabs | utilities. Returns (section, right_column) —
+    the caller renders its status chip / refresh / settings into the
+    returned column so utilities stay in the bar."""
+    wm, nav, right = st.columns([1.1, 4.6, 1.8], vertical_alignment="center")
+    with wm:
+        st.markdown(
+            f'<div style="font-size:var(--fs-sm);font-weight:600;'
+            f'letter-spacing:0.08em;color:var(--brand-primary);">'
+            f'{_html.escape(wordmark)}</div>', unsafe_allow_html=True)
+    with nav:
         with st.container(key="topnav"):
             section = st.radio("Navigate", sections, key=key, horizontal=True,
                                label_visibility="collapsed")
-    with right:
-        if status_html:
-            st.markdown(
-                f'<div style="text-align:right;font-size:var(--fs-2xs);'
-                f'color:var(--text-secondary);padding-bottom:6px;">{status_html}</div>',
-                unsafe_allow_html=True)
-    return section
+    return section, right
 
 
 def title_bar(entity: str, page: str, ids_html: str = "") -> None:
