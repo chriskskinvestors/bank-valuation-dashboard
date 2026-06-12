@@ -63,11 +63,14 @@ _STOP_TOPICS = (
     "world cup", "olympic", "concert", "box office", "celebrity",
     "bachelor", "kardashian", "grammy", "oscars", "album",
 )
+# Word boundaries are load-bearing: plain substring matching rejects
+# every inflation headline via 'i-NFL-ation'.
+_STOP_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(w) for w in _STOP_TOPICS) + r")\b")
 
 
 def _stopped(headline: str) -> bool:
-    h = (headline or "").lower()
-    return any(w in h for w in _STOP_TOPICS)
+    return bool(_STOP_RE.search((headline or "").lower()))
 
 
 def _source_ok(source_name: str) -> bool:
