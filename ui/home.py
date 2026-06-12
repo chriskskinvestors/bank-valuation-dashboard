@@ -386,9 +386,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
                 <span class="dot"></span>
                 <span>Live · FDIC · SEC EDGAR · FMP</span>
                 <span style="color:#cbd5e1;">—</span>
-                <span><strong style="color:#0f172a;">{len(watchlist)}</strong> watchlist</span>
-                <span style="color:#cbd5e1;">·</span>
-                <span><strong style="color:#0f172a;">{get_universe_count_fast()}</strong> universe</span>
+                <span><strong style="color:#0f172a;">{get_universe_count_fast()}</strong> US banks covered (full universe)</span>
             </div>
         </div>
         """,
@@ -421,11 +419,11 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
 
 
 # ══════════════════════════════════════════════════════════════════════
-# Watchlist movers — what moved in my book
+# Market movers — biggest moves across coverage
 # ══════════════════════════════════════════════════════════════════════
 
 def _render_watchlist_movers(all_metrics: list[dict]):
-    """Biggest price moves across the watchlist — gainers and losers side by
+    """Biggest price moves across all covered banks — gainers and losers side by
     side, each row a deep-link into that bank. The 'what happened to my book'
     panel. Uses the latest session's close-to-close change."""
     rows = []
@@ -455,7 +453,7 @@ def _render_watchlist_movers(all_metrics: list[dict]):
     _counts = f"{adv} up · {dec} down · {flat} flat"
     _sub = (f'<span style="color:{_asof_col}; font-weight:600;">{_asof}</span> · {_counts}'
             if _asof else _counts)
-    _section_header("📊", "Watchlist Movers", _sub)
+    _section_header("📊", "Market Movers", _sub)
 
     def _row(tk, price, chg):
         name = (get_name(tk) or "")[:24]
@@ -494,12 +492,12 @@ def _render_watchlist_movers(all_metrics: list[dict]):
 # ══════════════════════════════════════════════════════════════════════
 
 def _render_todays_calendar(watchlist: list[str]):
-    """What's on the schedule — watchlist names reporting earnings, grouped by
+    """What's on the schedule — covered banks reporting earnings, grouped by
     urgency. (Macro releases / ex-div are the next add to this section.)"""
-    _section_header("🗓️", "Today's Calendar", "watchlist earnings — next 14 days")
+    _section_header("🗓️", "Today's Calendar", "bank earnings — next 14 days")
     alerts = _collect_earnings_alerts(watchlist)
     if not alerts:
-        st.caption("No watchlist earnings in the next 14 days.")
+        st.caption("No covered-bank earnings in the next 14 days.")
         return
 
     buckets = [("Today", []), ("This week", []), ("Next week", [])]
@@ -548,7 +546,7 @@ def _render_todays_calendar(watchlist: list[str]):
 def _render_coverage_leaderboard(all_metrics: list[dict]):
     """Ranked extremes across coverage — the value-screen lists you scan each
     morning: cheapest, highest-returning, best-yielding, widest discount."""
-    _section_header("🏅", "Coverage Leaderboard", "ranked extremes across your watchlist")
+    _section_header("🏅", "Coverage Leaderboard", "ranked extremes across all covered banks")
     df = pd.DataFrame(all_metrics)
 
     def _list(title, col, ascending, fmt, color="#0f172a"):
@@ -655,7 +653,6 @@ def _render_sector_ma(watchlist: list[str]):
     for a in out:
         tk = a["ticker"]; name = (get_name(tk) or "")[:30] if tk else ""
         when = _relative_time(a["published_at"])
-        owned = ' <span style="color:#2563eb; font-size:0.7rem; font-weight:700;">★ watchlist</span>' if tk in wl else ""
         tkr = (f'<a href="?bank={tk}" target="_self" style="text-decoration:none;">'
                f'<strong style="color:#0f172a;">{tk}</strong></a> '
                f'<span style="color:#94a3b8;">{name}</span>') if tk else \
@@ -671,7 +668,7 @@ def _render_sector_ma(watchlist: list[str]):
         summ_safe = _html.escape(summ) if summ else ""
         st.markdown(
             '<div class="alert-row severity-high" style="display:block; padding:9px 14px;">'
-            f'<div style="font-size:0.78rem; color:var(--text-muted);">🤝 M&amp;A · {tkr}{owned} · {when}{link}</div>'
+            f'<div style="font-size:0.78rem; color:var(--text-muted);">🤝 M&amp;A · {tkr} · {when}{link}</div>'
             f'<div style="color:var(--text-primary); font-weight:600; margin-top:2px;">{head_safe}</div>'
             + (f'<div style="color:var(--text-secondary); font-size:0.86rem; margin-top:2px; '
                f'line-height:1.45;">{summ_safe}</div>' if summ else "")
@@ -815,11 +812,11 @@ def _render_alert_inbox(all_metrics: list[dict], watchlist: list[str]):
       4. Valuation opportunities (wide discount to fair value)
     """
     if not all_metrics:
-        st.info("Loading watchlist data...")
+        st.info("Loading bank data...")
         return
 
     _section_header("🔔", "Alert Inbox", "news · earnings · dynamics · insider · value opps")
-    st.caption("Prioritized across your watchlist. Click into any row to jump to the bank.")
+    st.caption("Prioritized across all covered banks. Click into any row to jump to the bank.")
 
     # Collect alerts from each source
     news_alerts = _collect_news_alerts(watchlist)
@@ -892,7 +889,7 @@ _NEWS_SOURCES = ["sec_8k", "businesswire", "prnewswire", "globenewswire",
 
 
 def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
-    """Actionable news across the watchlist — SEC filings + real press releases
+    """Actionable news across all covered banks — SEC filings + real press releases
     (wires, plus IR-site for non-wire banks) — with their AI summaries."""
     import datetime as dt
     try:
@@ -945,7 +942,7 @@ def _collect_news_alerts(watchlist: list[str]) -> list[dict]:
 
 def _render_news_tab(alerts: list[dict]):
     if not alerts:
-        st.info("No recent SEC filings or press releases for your watchlist. "
+        st.info("No recent SEC filings or press releases for covered banks. "
                 "(News aggregator noise is intentionally excluded — only filings "
                 "and real press releases appear here.)")
         return

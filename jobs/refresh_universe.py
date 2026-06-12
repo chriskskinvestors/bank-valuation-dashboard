@@ -98,10 +98,17 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
 
 
 def main():
-    from data.bank_universe import get_universe_tickers
+    from data.bank_universe import refresh_universe_snapshot
     from config import DEFAULT_WATCHLIST
 
-    universe = sorted(set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
+    # Rebuild the universe snapshot FIRST (live SEC×FDIC fetch + match,
+    # ~6-7 min). Interactive processes serve this persisted snapshot — they
+    # never pay the live-build cost themselves.
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Rebuilding universe snapshot…", flush=True)
+    snapshot = refresh_universe_snapshot()
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Snapshot: {len(snapshot)} banks", flush=True)
+
+    universe = sorted(set(snapshot.keys()) | set(DEFAULT_WATCHLIST))
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Refreshing {len(universe)} banks", flush=True)
 
     # Batch-fetch real market prices so price-dependent metrics (P/E, P/TBV,

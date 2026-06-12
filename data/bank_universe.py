@@ -56,73 +56,51 @@ def _clean(n: str) -> str:
     return n.strip()
 
 
-def _repdte_candidates(n: int = 4) -> list[str]:
-    """Most recent completed quarter-ends, newest first (YYYYMMDD).
-
-    The FDIC publishes institution financials ~2 months after quarter end, so
-    the newest candidate may return no rows yet — callers try in order. This
-    replaces a hardcoded vintage that would have silently rotted."""
-    from datetime import date
-    d = date.today()
-    y, q = d.year, (d.month - 1) // 3  # last completed quarter index (0 = prior year Q4)
-    out = []
-    for _ in range(n):
-        if q == 0:
-            y -= 1
-            q = 4
-        mm_dd = {1: "0331", 2: "0630", 3: "0930", 4: "1231"}[q]
-        out.append(f"{y}{mm_dd}")
-        q -= 1
-    return out
-
-
 def _fetch_fdic_banks() -> dict[str, dict]:
-    """Fetch all FDIC institutions for the latest published quarter and build
-    the HC lookup.
+    """Fetch all ACTIVE FDIC institutions and build the HC lookup.
+
+    Filter is ACTIVE:1 — institution records are current-state, so no report
+    vintage is needed. (The original REPDTE:YYYYMMDD filter matched ZERO rows
+    from the day it was written: the institutions endpoint formats REPDTE as
+    MM/DD/YYYY. Combined with the old `except: break`, that meant this
+    function silently returned an empty lookup forever and the universe was
+    the curated map alone.)
 
     Raises on fetch failure or an empty result — a partial list must never be
-    silently used (the previous `except: break` could shrink the universe and
-    have the shrunken result cached for 24h)."""
+    silently used and cached for 24h."""
     fdic_banks: list[dict] = []
-    for repdte in _repdte_candidates():
-        fdic_banks = []
-        offset = 0
-        while True:
-            params = {
-                "filters": f"REPDTE:{repdte}",
-                "fields": "CERT,NAME,NAMEHCR,ASSET",
-                "sort_by": "ASSET",
-                "sort_order": "DESC",
-                "limit": 1000,
-                "offset": offset,
-            }
-            resp = requests.get(
-                "https://banks.data.fdic.gov/api/institutions",
-                params=params, timeout=20,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            rows = data.get("data", [])
-            if not rows:
-                break
-            for r in rows:
-                d = r["data"]
-                fdic_banks.append({
-                    "cert": int(d["CERT"]),
-                    "namehcr": d.get("NAMEHCR", ""),
-                    "asset": d.get("ASSET") or 0,
-                })
-            offset += len(rows)
-            if offset >= data.get("totals", {}).get("count", 0):
-                break
-            time.sleep(0.05)
-        if fdic_banks:
-            break  # newest published vintage found
-    if not fdic_banks:
-        raise RuntimeError(
-            "FDIC institutions endpoint returned no rows for any recent quarter "
-            f"(tried {', '.join(_repdte_candidates())})"
+    offset = 0
+    while True:
+        params = {
+            "filters": "ACTIVE:1",
+            "fields": "CERT,NAME,NAMEHCR,ASSET",
+            "sort_by": "ASSET",
+            "sort_order": "DESC",
+            "limit": 1000,
+            "offset": offset,
+        }
+        resp = requests.get(
+            "https://banks.data.fdic.gov/api/institutions",
+            params=params, timeout=20,
         )
+        resp.raise_for_status()
+        data = resp.json()
+        rows = data.get("data", [])
+        if not rows:
+            break
+        for r in rows:
+            d = r["data"]
+            fdic_banks.append({
+                "cert": int(d["CERT"]),
+                "namehcr": d.get("NAMEHCR", ""),
+                "asset": d.get("ASSET") or 0,
+            })
+        offset += len(rows)
+        if offset >= data.get("totals", {}).get("count", 0):
+            break
+        time.sleep(0.05)
+    if not fdic_banks:
+        raise RuntimeError("FDIC institutions endpoint returned no active institutions")
 
     # Deduplicate: HC name -> largest bank cert
     hc_lookup = {}
@@ -149,28 +127,67 @@ def _fetch_sec_companies() -> list[list]:
     return rows
 
 
-@st.cache_data(ttl=86400, show_spinner="Building bank universe...")
+def _load_lastgood() -> tuple[dict | None, bool]:
+    """(universe, is_fresh) from the persisted snapshot. Handles both the
+    stamped format ({cached_at, universe}) and the legacy bare-dict format
+    (treated as present-but-stale)."""
+    from data import cache as _cache
+    from data.freshness import is_fresh
+    snap = _cache.get("bank_universe_lastgood")
+    if not snap:
+        return None, False
+    if isinstance(snap, dict) and "universe" in snap:
+        return snap["universe"], is_fresh(snap, 26 * 3600)
+    return snap, False  # legacy format: usable as fallback, never "fresh"
+
+
+@st.cache_data(ttl=3600, show_spinner="Loading bank universe...")
 def build_universe() -> dict[str, dict]:
     """
-    Build the full universe of publicly traded US banks (~450-500 banks).
+    The full universe of publicly traded US banks (~470).
 
     Returns dict: ticker -> {name, cik, fdic_cert, exchange}
 
-    A transient source failure must not produce (and cache for 24h) a shrunken
-    universe — on failure we serve the last successful build, persisted in the
-    DB cache. Only if no last-good build exists does the failure surface.
+    Serving strategy: the LIVE build (full FDIC pagination + per-candidate SEC
+    SIC verification) takes ~6-7 minutes — far too slow for a user request —
+    so interactive processes serve the snapshot persisted by the nightly
+    jobs/refresh_universe run when it's fresh (<26h). A live build happens
+    here only when the snapshot is missing/stale, and a source failure falls
+    back to a stale snapshot rather than raising (a shrunken universe is never
+    silently built — _fetch_* raise on partial data).
     """
+    lastgood, fresh = _load_lastgood()
+    if lastgood and fresh:
+        return lastgood
     try:
-        sec_rows = _fetch_sec_companies()
-        hc_lookup = _fetch_fdic_banks()
+        return refresh_universe_snapshot()
     except Exception as e:
-        from data import cache as _cache
-        lastgood = _cache.get("bank_universe_lastgood")
         if lastgood:
             print(f"[universe] live build failed ({type(e).__name__}: {e}); "
-                  f"serving last-good universe ({len(lastgood)} banks)")
+                  f"serving stale last-good universe ({len(lastgood)} banks)")
             return lastgood
         raise
+
+
+def refresh_universe_snapshot() -> dict[str, dict]:
+    """Run the live build and persist it as the snapshot interactive
+    processes serve. Called nightly by jobs/refresh_universe."""
+    from datetime import datetime
+    universe = _build_universe_live()
+    try:
+        from data import cache as _cache
+        _cache.put("bank_universe_lastgood",
+                   {"cached_at": datetime.now().isoformat(), "universe": universe})
+    except Exception as e:
+        print(f"[universe] could not persist snapshot: {type(e).__name__}: {e}")
+    return universe
+
+
+def _build_universe_live() -> dict[str, dict]:
+    """The actual SEC×FDIC fetch + match. ~6-7 minutes; never call from an
+    interactive request path — use build_universe()."""
+    sec_rows = _fetch_sec_companies()
+    hc_lookup = _fetch_fdic_banks()
 
     universe = {}
 
@@ -287,25 +304,23 @@ def build_universe() -> dict[str, dict]:
         pass
     for ticker, info in curated.items():
         t = ticker.upper()
-        if t in universe or t in _SKIP_TICKERS or t in _NON_COVERABLE:
+        if t in _SKIP_TICKERS or t in _NON_COVERABLE:
             continue
         cik = info.get("cik")
         cert = info.get("fdic_cert")
         if not cik and not cert:
             continue
+        # Curated mappings are verified CIK+CERT pairs — they OVERWRITE any
+        # phase-1 fuzzy name-match for the same ticker (verified beats fuzzy;
+        # previously the fuzzy match would have shadowed the curated one).
+        # Keep the SEC-derived exchange when the curated entry lacks one.
+        existing = universe.get(t) or {}
         universe[t] = {
-            "name": info.get("name") or t,
+            "name": info.get("name") or existing.get("name") or t,
             "cik": int(cik) if cik else None,
             "fdic_cert": int(cert) if cert else None,
-            "exchange": info.get("exchange") or "OTC",
+            "exchange": info.get("exchange") or existing.get("exchange") or "OTC",
         }
-
-    # Persist last-known-good for the failure fallback above.
-    try:
-        from data import cache as _cache
-        _cache.put("bank_universe_lastgood", universe)
-    except Exception as e:
-        print(f"[universe] could not persist last-good build: {type(e).__name__}: {e}")
 
     return universe
 

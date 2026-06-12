@@ -18,7 +18,6 @@ from analysis.metrics import build_all_bank_metrics
 from ui.styles import CUSTOM_CSS
 from ui.generic_table import render_generic_table
 from ui.overview_table import render_data_freshness
-from ui.watchlist import render_watchlist_sidebar, load_watchlist, load_portfolio
 from ui.deposit_lookup import render_deposits_for_ticker
 from ui.filings import render_filings_for_ticker
 from ui.earnings import render_earnings_consensus, render_earnings_overview
@@ -166,8 +165,16 @@ else:
     # regardless of any state inherited from another browser tab.
     st.session_state.ibkr_connected = False
 
-# ── Watchlist + Portfolio management ─────────────────────────────────────
-watchlist, portfolio = render_watchlist_sidebar(st)
+# ── Coverage scope: the FULL universe ────────────────────────────────────
+# The platform operates on every covered US bank — the watchlist concept is
+# retired (per user direction 2026-06-11): no sidebar add/remove widget, and
+# every section (Home, Peer Comparison, Earnings, news) is universe-wide.
+# The variable keeps the name `watchlist` because ~30 downstream call sites
+# take it as the scope parameter; it now always holds the whole universe.
+# Caches are pre-warmed nightly for the full universe by jobs/refresh_universe.
+watchlist = sorted(get_universe_tickers())
+portfolio = []
+st.sidebar.caption(f"Coverage: **{len(watchlist)}** US banks (full universe)")
 
 # ── Auto-refresh toggle ──────────────────────────────────────────────────
 auto_refresh = st.sidebar.checkbox("Auto-refresh prices", value=False, key="auto_refresh")
@@ -723,10 +730,11 @@ elif section == "📊 Screening" and screening_tab:
 elif section == "🏦 Company Analysis":
     # ── COMPANY ANALYSIS: Single-bank deep dive ─────────────────────────
 
-    # Single search box: type a ticker. It autocompletes your watchlist and
-    # accepts any ticker not on it (accept_new_options) — one field, not two.
-    _wl = sorted(load_watchlist())
-    _opts = list(_wl)
+    # Single search box over the ENTIRE universe — every covered US bank is
+    # searchable by ticker or name (this box used to offer only the watchlist).
+    # accept_new_options still allows tickers we haven't mapped yet; those
+    # resolve dynamically via bank_mapping.
+    _opts = list(watchlist)  # = the full universe (see Coverage scope above)
     _cur = st.session_state.get("company_pick")
     if _cur and _cur not in _opts:
         _opts.append(_cur)  # keep the current/deep-linked selection selectable
