@@ -120,7 +120,7 @@ SNL's categorized document hub. Sources:
 | Merger Documents (S-4, merger 8-Ks) | EDGAR (have) |
 | Prospectus (424B, S-1/S-3) | EDGAR (have) |
 | Key Exhibits (EX-21 subsidiaries, cap-stock descriptions, comp plans) | EDGAR filing-index exhibit parse (new) |
-| Transcripts & Presentations | FMP transcript endpoint (verify plan tier); investor decks via 8-K EX-99 |
+| Transcripts & Presentations | DECIDED (user 2026-06-12): free sources for now — Presentations from 8-K EX-99 (have) + link-outs to free transcript sources per call; FMP transcripts verified to need Ultimate (+$127/mo) and deferred. Analyst Coverage + Compensation verified IN-PLAN on FMP Starter (price targets, grades, ratings, executive-compensation w/ DEF 14A links) — build on FMP now |
 Layout (user, 2026-06-12): five SUB-TABS under News & Filings —
 "Filings & Reports", "Key Exhibits", "Press Releases", "Transcripts &
 Investor Presentations", "Events Calendar" — added via COMPANY_NAV +
