@@ -210,6 +210,27 @@ def main():
         print(f"[warn] aggregate snapshot warm failed: {type(e).__name__}: {e}",
               flush=True)
 
+    # Pre-warm the earnings-calendar snapshot with the SAME ticker list the
+    # app guards on (len(get_universe_tickers())) so the first user of the
+    # day never pays the ~N/8s yfinance rebuild inline.
+    try:
+        from datetime import datetime
+        from data.bank_universe import get_universe_tickers
+        from data.estimates import _fetch_earnings_calendar_live
+        app_tickers = tuple(sorted(get_universe_tickers()))
+        cal = _fetch_earnings_calendar_live(app_tickers)
+        cache.put("earnings_calendar_snap", {
+            "cached_at": datetime.now().isoformat(),
+            "guard": len(app_tickers),
+            "value": cal,
+        })
+        print(f"[{time.strftime('%H:%M:%S')}] Earnings calendar snapshot "
+              f"warmed ({len(cal)} entries / {len(app_tickers)} tickers)",
+              flush=True)
+    except Exception as e:
+        print(f"[warn] earnings calendar warm failed: {type(e).__name__}: {e}",
+              flush=True)
+
     # Exit code reflects severity: new regressions or >5% failure rate fail
     # the execution (visible in Cloud Run job history).
     if new_failures:

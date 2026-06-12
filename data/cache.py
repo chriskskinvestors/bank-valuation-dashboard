@@ -104,6 +104,37 @@ def put(key: str, value: dict):
             )
 
 
+def served_snapshot(key: str, ttl_s: float, build, guard=None):
+    """Cross-instance persisted snapshot: serve the stored value when fresh
+    (and the guard matches), else build live and persist for every other
+    instance. This is THE pattern for read-time aggregates whose per-instance
+    @st.cache_data memo dies on each deploy (watchlist metrics, earnings
+    calendar, FRED rate bundle) — without it every cold instance pays the
+    full rebuild.
+
+    guard: optional invalidation token (e.g. ticker count) stored alongside;
+    a mismatch forces a rebuild. JSON round-trip applies: tuples come back
+    as lists.
+    """
+    from data.freshness import is_fresh
+    snap = None
+    try:
+        snap = get(key)
+    except Exception:
+        snap = None
+    if (snap and is_fresh(snap, ttl_s)
+            and (guard is None or snap.get("guard") == guard)):
+        return snap["value"]
+    value = build()
+    try:
+        from datetime import datetime
+        put(key, {"cached_at": datetime.now().isoformat(),
+                  "guard": guard, "value": value})
+    except Exception as e:
+        print(f"[cache] could not persist snapshot {key}: {type(e).__name__}")
+    return value
+
+
 def invalidate(key: str):
     """Remove a specific cache entry."""
     from sqlalchemy import text

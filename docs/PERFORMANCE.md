@@ -19,6 +19,13 @@ remaining levers, in priority order. The nightly shift may pick items.
 2. URL state — refresh restores the exact view (no Home bounce).
 3. Targeted "Refresh this view" — re-pull one page, never a global nuke.
 4. Universe/get_name snapshot tier — killed the 174s resolver cold start.
+5. Per-section timing logs (`utils/timing.py`, `[timing]` in Cloud Run
+   logs) — measured Home cold: alert_inbox 11.6s, markets_rates 3.6s,
+   universe_tickers 1.5s, everything else ~250ms.
+6. `data/cache.served_snapshot` — THE generic cross-instance snapshot
+   helper (fresh-serve / guard-mismatch-rebuild / persist-on-build).
+   Applied to the three measured costs: earnings calendar (6h, job-warmed
+   nightly), FRED home-rates bundle (30 min), insider alerts (30 min).
 
 ## Remaining levers (priority order)
 1. **st.fragment per heavy section** (Home sections, statement tables):

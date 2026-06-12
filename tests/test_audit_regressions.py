@@ -320,6 +320,50 @@ class TestUsDomicileFilter(unittest.TestCase):
              "filings": {"recent": {"form": ["20-F", "6-K"]}}}))
 
 
+class TestServedSnapshot(unittest.TestCase):
+    """Cross-instance snapshot serving (data/cache.served_snapshot) — the
+    pattern that keeps cold instances from rebuilding read-time aggregates
+    (Home metrics 60s, earnings calendar 11.6s, FRED bundle 3.6s)."""
+
+    def _patch(self, store):
+        import data.cache as cache
+        self._orig = (cache.get, cache.put)
+        cache.get = lambda k: store.get(k)
+        cache.put = lambda k, v: store.__setitem__(k, v)
+        self.addCleanup(lambda: (setattr(cache, "get", self._orig[0]),
+                                 setattr(cache, "put", self._orig[1])))
+
+    def test_fresh_snapshot_served_without_build(self):
+        from datetime import datetime
+        import data.cache as cache
+        store = {"k": {"cached_at": datetime.now().isoformat(),
+                       "guard": 3, "value": [1, 2]}}
+        self._patch(store)
+        self.assertEqual(
+            cache.served_snapshot(
+                "k", 3600, lambda: self.fail("build must not run"), guard=3),
+            [1, 2])
+
+    def test_stale_snapshot_rebuilds_and_persists(self):
+        import data.cache as cache
+        store = {"k": {"cached_at": "2020-01-01T00:00:00",
+                       "guard": 3, "value": [1, 2]}}
+        self._patch(store)
+        self.assertEqual(
+            cache.served_snapshot("k", 3600, lambda: [9], guard=3), [9])
+        self.assertEqual(store["k"]["value"], [9])
+
+    def test_guard_mismatch_rebuilds(self):
+        from datetime import datetime
+        import data.cache as cache
+        store = {"k": {"cached_at": datetime.now().isoformat(),
+                       "guard": 3, "value": [1, 2]}}
+        self._patch(store)
+        # universe grew 3 -> 4: fresh-but-mismatched snapshot must rebuild
+        self.assertEqual(
+            cache.served_snapshot("k", 3600, lambda: [9], guard=4), [9])
+
+
 def _ffiec_df(rows):
     """Build a synthetic Call Report DF in the ffiec-data-connect v3 long
     form from (mdrm, value) pairs."""

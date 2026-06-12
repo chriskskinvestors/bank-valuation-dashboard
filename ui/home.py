@@ -32,7 +32,15 @@ _TENORS = [("3M", "DGS3MO"), ("2Y", "DGS2"), ("5Y", "DGS5"),
            ("10Y", "DGS10"), ("30Y", "DGS30")]
 
 
-def _fred_points(series_id: str):
+# Every FRED series Markets & Rates renders. Fetched as ONE persisted
+# bundle (30-min TTL, cross-instance) — live per-series fetches cost a
+# measured 3.6s on each cold instance.
+_FRED_HOME_SERIES = ([sid for _, sid in _TENORS]
+                     + ["FEDFUNDS", "T10Y2Y", "BAMLH0A0HYM2",
+                        "BAMLC0A0CM", "VIXCLS"])
+
+
+def _fred_points_live(series_id: str):
     """Return (latest, prior_business_day, ~1-week-ago) for a FRED series."""
     try:
         from data.fred_client import fetch_series
@@ -48,6 +56,19 @@ def _fred_points(series_id: str):
         return (latest, prior, weekago)
     except Exception:
         return (None, None, None)
+
+
+def _fred_points(series_id: str):
+    """(latest, prior, ~1wk) from the persisted home-rates bundle.
+    JSON round-trip returns lists, not tuples — callers index/unpack only."""
+    from data.cache import served_snapshot
+    bundle = served_snapshot(
+        "home_rates_snap", 1800,
+        lambda: {sid: _fred_points_live(sid) for sid in _FRED_HOME_SERIES})
+    pts = bundle.get(series_id)
+    if pts is None:  # series outside the bundle — fetch live, don't hide it
+        return _fred_points_live(series_id)
+    return (pts[0], pts[1], pts[2])
 
 
 def _prices_asof(tickers):
@@ -983,7 +1004,17 @@ def _collect_dynamics_alerts(all_metrics: list[dict]) -> list[dict]:
 
 
 def _collect_insider_alerts(watchlist: list[str]) -> list[dict]:
-    """Banks with recent net-positive insider buying. Uses cache only — no fresh API calls."""
+    """Banks with recent net-positive insider buying. Cross-instance
+    snapshot (30 min) over the GCS-cached Form 4 data — the per-ticker GCS
+    reads cost seconds on a cold instance."""
+    from data.cache import served_snapshot
+    return served_snapshot(
+        "home_insider_alerts_snap", 1800,
+        lambda: _collect_insider_alerts_live(watchlist),
+        guard=len(watchlist))
+
+
+def _collect_insider_alerts_live(watchlist: list[str]) -> list[dict]:
     from data.bank_mapping import get_cik
     from data.cloud_storage import load_json
     from data.form4_client import summarize_insider_activity, _is_fresh, FORM4_CACHE_PREFIX

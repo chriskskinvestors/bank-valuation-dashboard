@@ -190,6 +190,20 @@ def fetch_estimates_cached(ticker: str) -> dict:
 
 @st.cache_data(ttl=21600, show_spinner="Loading earnings calendar...")
 def fetch_earnings_calendar(tickers: tuple) -> list[dict]:
+    """Earnings dates for many tickers, served from the cross-instance
+    snapshot when fresh. The per-instance @st.cache_data memo dies on every
+    deploy, and rebuilding live costs ~N/8s of yfinance calls per cold
+    instance (measured: 11.6s for 440 tickers on Home). The persisted
+    snapshot makes that a once-per-6h cost across ALL instances; the
+    nightly refresh-universe job pre-warms it."""
+    from data.cache import served_snapshot
+    return served_snapshot(
+        "earnings_calendar_snap", 21600,
+        lambda: _fetch_earnings_calendar_live(tickers),
+        guard=len(tickers))
+
+
+def _fetch_earnings_calendar_live(tickers: tuple) -> list[dict]:
     """Fetch earnings dates for multiple tickers IN PARALLEL."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
