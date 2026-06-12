@@ -22,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from data.cloud_storage import save_json, load_json
+from data.cloud_storage import save_json, load_json, list_files
 from config import SEC_USER_AGENT
 
 FORM13F_CACHE_PREFIX = "form13f_cache"
@@ -245,6 +245,109 @@ def _classify_change(current_shares, prior_shares) -> dict:
     return {"change_status": status, "change_pct": delta}
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Quarterly history retention (SNL-BUILD-PLAN §13, Ownership History tab)
+#
+# The latest-window store ({TICKER}.json) is overwritten on every refresh.
+# To build a holder × quarter matrix we ALSO persist each refresh into a
+# quarter-keyed snapshot ({TICKER}_{YYYYQn}.json) keyed by the calendar
+# quarter each filing covers. Quarter files are merged by filer CIK, never
+# overwritten wholesale — history accumulates going forward from when this
+# shipped. Backfilling older quarters from EDGAR is a separate later task.
+# ──────────────────────────────────────────────────────────────────────────
+
+_QUARTER_FILE_RE = re.compile(r"_(\d{4}Q[1-4])\.json$")
+
+
+def _report_quarter(date_filed: str) -> str | None:
+    """
+    Calendar quarter a 13F-HR covers, as "YYYYQn".
+
+    13Fs are filed up to 45 days AFTER quarter-end, so the report period is
+    the last quarter-end strictly before the filing date (filed 2026-05-15
+    → 2026Q1; filed 2026-02-10 → 2025Q4).
+    """
+    try:
+        d = datetime.strptime(str(date_filed)[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+    completed = (d.month - 1) // 3  # quarters fully ended this calendar year
+    if completed == 0:
+        return f"{d.year - 1}Q4"
+    return f"{d.year}Q{completed}"
+
+
+def _quarter_filename(ticker: str, quarter: str) -> str:
+    return f"{ticker.upper()}_{quarter}.json"
+
+
+def _save_quarter_snapshots(ticker: str, holders: list[dict]) -> None:
+    """
+    Persist holders into quarter-keyed snapshot files alongside the latest
+    window. Each holder lands in the quarter its own filing covers (a refresh
+    during a filing window can straddle two quarters). Merge is by filer CIK
+    with the fresh fetch winning per filer, so re-running the same refresh is
+    idempotent and a holder seen in an earlier refresh of the same quarter is
+    never dropped.
+    """
+    by_quarter: dict[str, list[dict]] = {}
+    for h in holders:
+        q = _report_quarter(h.get("date_filed") or "")
+        if q:
+            by_quarter.setdefault(q, []).append(h)
+
+    for quarter, fresh in by_quarter.items():
+        fname = _quarter_filename(ticker, quarter)
+        existing = load_json(FORM13F_CACHE_PREFIX, fname) or {}
+        merged = {h.get("filer_cik"): h
+                  for h in existing.get("holders", []) if h.get("filer_cik")}
+        for h in fresh:
+            if h.get("filer_cik"):
+                merged[h["filer_cik"]] = h
+        out = sorted(merged.values(),
+                     key=lambda h: h.get("value_usd") or 0, reverse=True)
+        save_json(FORM13F_CACHE_PREFIX, fname, {
+            "ticker": ticker.upper(),
+            "quarter": quarter,
+            "cached_at": datetime.now().isoformat(),
+            "holders": out,
+        })
+
+
+def get_holder_history(ticker: str, quarters: int = 20) -> dict[str, dict[str, dict]]:
+    """
+    Holder × quarter matrix assembled from stored quarterly snapshots.
+
+    Returns {holder_name: {quarter: {"shares": float, "value_usd": float}}}
+    with quarter keys like "2026Q1". Only quarters that have a stored
+    snapshot appear — history accumulates going forward from when quarterly
+    retention shipped; backfilling older quarters from EDGAR is a later
+    task. ``quarters`` caps the result to the N most recent stored quarters.
+    """
+    if not ticker or quarters <= 0:
+        return {}
+    t = ticker.upper()
+    found = set()
+    for name in list_files(FORM13F_CACHE_PREFIX, f"{t}_*.json"):
+        m = _QUARTER_FILE_RE.search(name)
+        if m and name == _quarter_filename(t, m.group(1)):
+            found.add(m.group(1))
+    recent = sorted(found, reverse=True)[:quarters]
+
+    history: dict[str, dict[str, dict]] = {}
+    for quarter in recent:
+        snap = load_json(FORM13F_CACHE_PREFIX, _quarter_filename(t, quarter)) or {}
+        for h in snap.get("holders", []):
+            holder_name = h.get("filer_name")
+            if not holder_name:
+                continue
+            history.setdefault(holder_name, {})[quarter] = {
+                "shares": h.get("shares"),
+                "value_usd": h.get("value_usd"),
+            }
+    return history
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def fetch_institutional_holdings(ticker: str, company_name: str = "",
                                    max_filers: int = 25,
@@ -351,6 +454,16 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
         })
     except Exception:
         pass
+
+    # Quarterly history retention: also persist this refresh under
+    # quarter-keyed entries so the Ownership History tab can build a
+    # holder × quarter matrix (see _save_quarter_snapshots).
+    if all_holders:
+        try:
+            _save_quarter_snapshots(ticker, all_holders)
+        except Exception as e:
+            print(f"[13F] quarter-snapshot write failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
 
     return all_holders
 

@@ -28,17 +28,69 @@ def _trend_arrow(df: pd.DataFrame, lookback_days: int = 30) -> str:
     return "→"
 
 
+# ── "Market & Macro" sections (docs/HOME-MACRO-PLAN.md, user-approved) ──
+# Sections-as-data, same principle as ui/company_nav.py: the list drives the
+# radio AND the dispatch. Sections marked pending render an honest note —
+# their contents are built part-by-part with the user (never placeholders
+# pretending to be data).
+MACRO_SECTIONS = [
+    "Rates & Curve",
+    "Bank Sector",
+    "Funding & Deposits",
+    "Credit & Spreads",
+    "Economy & Calendar",
+    "Regime",
+]
+
+
 def render_macro_dashboard():
-    """Render the standalone Macro section."""
+    """Render the standalone Market & Macro section."""
     st.markdown(
         '<div class="dashboard-header">'
-        "<h1>🌐 Macro Dashboard</h1>"
-        "<p>Fed funds, yield curve, credit spreads, unemployment</p>"
+        "<h1>🌐 Market & Macro</h1>"
+        "<p>Rates, curve, bank sector, funding, credit, economy & regime</p>"
         "</div>",
         unsafe_allow_html=True,
     )
 
-    # ── Recession indicator ────────────────────────────────────────────
+    with st.container(key="macro_section_nav"):
+        section = st.radio("Section", MACRO_SECTIONS, key="macro_section",
+                           horizontal=True, label_visibility="collapsed")
+
+    {
+        "Rates & Curve": _render_rates_curve,
+        "Bank Sector": _render_bank_sector,
+        "Funding & Deposits": _render_funding_deposits,
+        "Credit & Spreads": _render_credit_spreads,
+        "Economy & Calendar": _render_economy_calendar,
+        "Regime": _render_regime,
+    }[section]()
+
+
+def _pending(what: str, lands_with: str):
+    """Honest under-construction note — approved section, content pending the
+    user's part-by-part talk-through (HOME-MACRO-PLAN.md process)."""
+    st.info(f"**{what}** — section approved; contents being built out "
+            f"part-by-part. Data layer: {lands_with}.")
+
+
+def _render_bank_sector():
+    _pending("Bank Sector — KRE/KBE vs 2s10s, fed funds and HY OAS overlays",
+             "FMP ETF prices (live) + FRED series (live)")
+
+
+def _render_funding_deposits():
+    _pending("Funding & Deposits — FDIC weekly national deposit rates vs fed funds",
+             "data/national_rates.py (in build)")
+
+
+def _render_economy_calendar():
+    _pending("Economy & Calendar — FRED prints with upcoming-release calendar",
+             "data/macro_calendar.py (in build)")
+
+
+def _render_regime():
+    # ── Recession indicator (re-homed from the old single-page layout) ──
     rec = recession_probability()
     level = rec["level"]
     score = rec["score"]
@@ -64,12 +116,29 @@ def render_macro_dashboard():
 
     st.markdown(
         f'<div style="{style}">{icon} <strong>{label}</strong><br>'
-        f'<span style="font-weight:normal; font-size:0.82rem;">{factors_html}</span></div>',
+        f'<span style="font-weight:normal; font-size:var(--fs-sm);">{factors_html}</span></div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown("")
+    # Curve-shape state — labeled regime, not just a chart
+    snap = get_macro_snapshot()
+    s2 = snap.get("T10Y2Y", {}).get("value")
+    s3m = snap.get("T10Y3M", {}).get("value")
+    if s2 is not None and s3m is not None:
+        if s2 < 0 and s3m < 0:
+            shape = "Inverted (both 10Y−2Y and 10Y−3M below zero)"
+        elif s2 < 0 or s3m < 0:
+            shape = "Partially inverted"
+        elif s2 > 0.5:
+            shape = "Steep"
+        else:
+            shape = "Flat-to-normal"
+        st.markdown(f"**Curve shape:** {shape} · 10Y−2Y {s2:+.2f}pp · 10Y−3M {s3m:+.2f}pp")
+    _pending("Credit and Fed-path regime states",
+             "FRED series (live) — definitions per talk-through")
 
+
+def _render_rates_curve():
     # ── Key Macro KPIs ─────────────────────────────────────────────────
     snap = get_macro_snapshot()
     ff = snap.get("FEDFUNDS", {}).get("value")
@@ -188,9 +257,6 @@ def render_macro_dashboard():
     fig1.update_yaxes(ticksuffix="%")
     st.plotly_chart(fig1, use_container_width=True)
 
-    # ── Charts 3 & 4 side-by-side ──────────────────────────────────────
-    cc1, cc2 = st.columns(2)
-
     # Chart 3: curve spreads — 10Y-3M (the NY Fed recession indicator) is
     # emphasized, with the inverted (<0) zone shaded red and a live callout.
     fig2 = go.Figure()
@@ -225,10 +291,30 @@ def render_macro_dashboard():
     apply_standard_layout(fig2, title="Curve Spreads (5Y) — 10Y−3M is the recession signal",
                           height=CHART_HEIGHT_COMPACT, yaxis_title="Spread")
     fig2.update_yaxes(ticksuffix="pp")
-    with cc1:
-        st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True)
 
-    # Chart 4: unemployment + HY credit spread (dual axis)
+    st.markdown("---")
+    st.caption(
+        "Data from FRED (Federal Reserve Economic Data). Refreshed daily. "
+        "Recession score combines 10Y-2Y spread, 10Y-3M spread (NY Fed indicator), "
+        "and Sahm Rule proxy on unemployment."
+    )
+
+
+def _render_credit_spreads():
+    import plotly.graph_objects as go
+
+    snap = get_macro_snapshot()
+    hy_spread = snap.get("BAMLH0A0HYM2", {}).get("value")
+    unemp = snap.get("UNRATE", {}).get("value")
+    c1, c2, _ = st.columns(3)
+    with c1:
+        st.metric("HY Spread", f"{hy_spread:.2f}%" if hy_spread is not None else "—")
+    with c2:
+        st.metric("Unemployment", f"{unemp:.1f}%" if unemp is not None else "—")
+
+    # Unemployment + HY credit spread (dual axis) — re-homed from the old
+    # single-page layout.
     fig3 = go.Figure()
     unemp_df = fetch_series("UNRATE", years=5)
     hy_df = fetch_series("BAMLH0A0HYM2", years=5)
@@ -249,13 +335,6 @@ def render_macro_dashboard():
         yaxis2=dict(title="HY Spread %", overlaying="y", side="right",
                     ticksuffix="%", showgrid=False),
     )
-    with cc2:
-        st.plotly_chart(fig3, use_container_width=True)
-
-
-    st.markdown("---")
-    st.caption(
-        "Data from FRED (Federal Reserve Economic Data). Refreshed daily. "
-        "Recession score combines 10Y-2Y spread, 10Y-3M spread (NY Fed indicator), "
-        "and Sahm Rule proxy on unemployment."
-    )
+    st.plotly_chart(fig3, use_container_width=True)
+    _pending("Spread regime bands + IG/HY history",
+             "FRED series (live) — definitions per talk-through")

@@ -46,7 +46,7 @@ st.sidebar.markdown(
 )
 
 # ── Level 1 Navigation ──────────────────────────────────────────────────
-SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis", "🆚 Peer Comparison", "📈 Earnings Analysis", "📰 Activity", "🗺️ Geographic"]
+SECTIONS = ["🏠 Home", "🌐 Market & Macro", "📊 Screening", "🏦 Company Analysis", "🆚 Peer Comparison", "📈 Earnings Analysis", "📰 Activity", "🗺️ Geographic"]
 # Company Analysis sub-tabs. Rendered horizontally at the TOP of the main
 # content (under the bank picker), not in the sidebar. One shared template per
 # bank — every bank gets the same sub-tabs.
@@ -96,7 +96,7 @@ elif section == "🏦 Company Analysis":
         # itself renders in the MAIN content area (top of the page), so we only
         # pre-set its session_state value here; the widget reads it there.
         _TAB_TOKENS = {"financials": "Financial Highlights", "valuation": "Valuation Model",
-                       "filings": "Filings", "peer": "Peer Rank",
+                       "filings": "Filings & Reports", "peer": "Peer Rank",
                        "ownership": "Institutional (13F)", "earnings": "Earnings",
                        "deposits": "Deposit Trends"}
         _goto = _TAB_TOKENS.get((_qp.get("tab") or "").lower())
@@ -780,7 +780,7 @@ elif section == "🏦 Company Analysis":
                 "are out of sync."
             )
 
-elif section == "🌐 Macro":
+elif section == "🌐 Market & Macro":
     from ui.macro import render_macro_dashboard
     render_macro_dashboard()
 

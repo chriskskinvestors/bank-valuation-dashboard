@@ -7,6 +7,9 @@ quarter-end gives banks time to file). For each active bank: pull the
 Call Report from FFIEC, extract the securities maturity ladder, upsert
 into call_report_securities table. Bank-specific NIM repricing pace
 then reads from this table instead of using the generic ~29%/yr default.
+The same fetched call report also yields Schedule RI income detail
+(SNL Income Statement rows), upserted into ri_income_detail per
+bank-quarter — RI failures are logged but never fatal to the job.
 
 Auth: requires FFIEC_USERNAME + FFIEC_JWT_TOKEN env vars (mounted from
 Google Secret Manager). If missing, the job exits early with code 2.
@@ -33,24 +36,59 @@ sys.path.insert(0, str(REPO_ROOT))
 _HOURLY_REQUEST_BUDGET = 2400
 
 
+def _persist_ri_detail(cert: int, rssd_id: int, period: str, df) -> str:
+    """
+    Extract + store Schedule RI income detail from an already-fetched
+    Call Report (no extra HTTP call). Returns 'ok', 'no_data', or
+    'fail:<reason>' — never raises (RI failures must not affect the
+    ladder accounting or kill the job).
+    """
+    from data.ffiec_client import get_ri_income_detail
+    from data.call_report_store import upsert_ri_income_detail
+    try:
+        detail = get_ri_income_detail(rssd_id, period, call_report_df=df)
+        if detail is None:
+            return "no_data"
+        # Every RI code absent (even total interest income / net income,
+        # which every filer reports) means the parse produced nothing —
+        # don't store a row of all-Nones as if it were real data.
+        codes = [k for k in detail
+                 if k not in ("reporting_period", "rssd_id")
+                 and not k.endswith("_usd")]
+        if all(detail.get(k) is None for k in codes):
+            return "no_data"
+        n = upsert_ri_income_detail(cert, rssd_id, detail)
+        return "ok" if n else "fail:upsert_failed"
+    except Exception as e:
+        return f"fail:{type(e).__name__}: {str(e)[:80]}"
+
+
 def _refresh_one(
     cert: int, rssd_id: int, period: str,
-) -> tuple[int, int, str]:
-    """Fetch + store one bank. Returns (cert, n_buckets_written, err)."""
+) -> tuple[int, int, str, str]:
+    """Fetch + store one bank. Returns (cert, n_buckets_written, err, ri_status)."""
     from data.ffiec_client import (
         fetch_call_report, get_securities_maturity_ladder, get_loan_repricing,
     )
     from data.call_report_store import upsert_securities_ladder
 
     if not cert or not rssd_id:
-        return cert, 0, "missing_ids"
+        return cert, 0, "missing_ids", "no_data"
     try:
         df = fetch_call_report(rssd_id, period)
         if df is None or df.empty:
-            return cert, 0, "empty_call_report"
+            return cert, 0, "empty_call_report", "no_data"
+    except Exception as e:
+        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", "no_data"
+
+    # Schedule RI income detail rides on the same fetched call report —
+    # persisted even when the bank has no RC-B securities ladder.
+    ri_status = _persist_ri_detail(cert, rssd_id, period, df)
+
+    try:
         ladder = get_securities_maturity_ladder(rssd_id, period, call_report_df=df)
         if ladder is None:
-            return cert, 0, "no_securities_data"
+            return cert, 0, "no_securities_data", ri_status
         # Derive floating-loan share from the same Call Report (RC-C Memo 2
         # loan repricing buckets) — no extra HTTP call. None if the bank
         # didn't report the loan-repricing memoranda.
@@ -58,9 +96,10 @@ def _refresh_one(
         floating_share = loan_rp.get("floating_loan_share") if loan_rp else None
         n = upsert_securities_ladder(
             cert, rssd_id, ladder, floating_loan_share=floating_share)
-        return cert, len(ladder.get("buckets", {})), "" if n else "upsert_failed"
+        return (cert, len(ladder.get("buckets", {})),
+                "" if n else "upsert_failed", ri_status)
     except Exception as e:
-        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}"
+        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", ri_status
 
 
 def main() -> int:
@@ -145,6 +184,9 @@ def main() -> int:
     success = 0
     no_data = 0
     errors: list[tuple[int, str]] = []
+    ri_ok = 0
+    ri_no_data = 0
+    ri_failures: list[tuple[int, str]] = []
     requests_in_window = 0
     window_start = time.time()
 
@@ -161,10 +203,17 @@ def main() -> int:
             requests_in_window = 0
             window_start = time.time()
 
-        cert, n_buckets, err = _refresh_one(
+        cert, n_buckets, err, ri_status = _refresh_one(
             int(i["cert"]), int(i["rssd_id"]), period,
         )
         requests_in_window += 1
+
+        if ri_status == "ok":
+            ri_ok += 1
+        elif ri_status == "no_data":
+            ri_no_data += 1
+        else:
+            ri_failures.append((cert, ri_status))
 
         if err == "":
             if n_buckets > 0:
@@ -192,11 +241,18 @@ def main() -> int:
     print(f"  Ladders ingested:    {success}/{len(candidates)}")
     print(f"  Banks with no data:  {no_data}")
     print(f"  Errors:              {len(errors)}")
+    print(f"  RI detail stored:    ok={ri_ok} fail={len(ri_failures)} "
+          f"no_data={ri_no_data}")
 
     if errors:
         print("\nError sample (first 10):")
         for cert, err in errors[:10]:
             print(f"  cert={cert} {err}")
+
+    if ri_failures:
+        print("\nRI detail failure sample (first 10):")
+        for cert, ri_err in ri_failures[:10]:
+            print(f"  cert={cert} {ri_err}")
 
     # Exit-code logic measures errors per attempt — banks with no
     # securities (legitimate empty RC-B Memo 2) are not failures.
