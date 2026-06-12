@@ -4,6 +4,7 @@ recent filings, and navigation cards.
 """
 
 import html as _html
+from html import escape as _esc
 
 import streamlit as st
 import pandas as pd
