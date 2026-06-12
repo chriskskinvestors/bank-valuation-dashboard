@@ -342,6 +342,39 @@ def get_watchlist_cohort() -> list[dict]:
     return metrics
 
 
+# Cross-instance aggregate snapshot. The in-process @st.cache_data memo dies
+# with every deploy's new instance, and rebuilding the full-universe metrics
+# inline took 60s+ on each cold start — on a heavy deploy day that was nearly
+# every page load. Cold instances now serve the persisted snapshot instantly
+# and only rebuild when it's genuinely stale; per-section as-of badges (prices,
+# rates) keep the freshness honest on screen.
+_METRICS_SNAP_KEY = "watchlist_metrics_snap"
+_METRICS_SNAP_TTL_S = 6 * 3600
+
+
+def load_all_data_fast(tickers: list[str]) -> list[dict]:
+    from data.freshness import is_fresh
+    snap = None
+    try:
+        snap = cache.get(_METRICS_SNAP_KEY)
+    except Exception:
+        snap = None
+    if (snap and is_fresh(snap, _METRICS_SNAP_TTL_S)
+            and snap.get("n_tickers") == len(tickers)):
+        return snap["metrics"]
+    metrics = load_all_data(tickers)
+    try:
+        from datetime import datetime
+        cache.put(_METRICS_SNAP_KEY, {
+            "cached_at": datetime.now().isoformat(),
+            "n_tickers": len(tickers),
+            "metrics": metrics,
+        })
+    except Exception as e:
+        print(f"[app] could not persist metrics snapshot: {type(e).__name__}")
+    return metrics
+
+
 # ── Lazy data loading ─────────────────────────────────────────────────
 # Only load watchlist metrics if actually needed by the current view.
 # This avoids a 5-15 second wait when switching to "All Banks" screening
@@ -354,7 +387,7 @@ _NEEDS_WATCHLIST = (
 )
 
 if _NEEDS_WATCHLIST:
-    all_metrics = load_all_data(watchlist)
+    all_metrics = load_all_data_fast(watchlist)
     # Stash for cross-tab use (peer-relative valuation, home alerts, etc.)
     cache.put("watchlist_metrics_last", all_metrics)
 else:

@@ -187,6 +187,29 @@ def main():
     except Exception as e:
         print(f"[warn] could not persist validation run: {type(e).__name__}")
 
+    # Pre-warm the Home aggregate snapshot from the caches just refreshed so
+    # cold app instances paint instantly instead of rebuilding inline (60s+).
+    try:
+        from analysis.metrics import build_all_bank_metrics
+        from data.price_cache_store import get_prices
+        from datetime import datetime
+        fdic_all = {t: (cache.get_fdic(t) or {}) for t in universe}
+        sec_all = {t: (cache.get_sec(t) or {}) for t in universe}
+        hist_all = {t: (cache.get(f"fdic_hist:{t}") or []) for t in universe}
+        prices_all = get_prices(universe)
+        agg = build_all_bank_metrics(universe, fdic_all, sec_all, prices_all, hist_all)
+        cache.put("watchlist_metrics_snap", {
+            "cached_at": datetime.now().isoformat(),
+            "n_tickers": len(universe),
+            "metrics": agg,
+        })
+        cache.put("watchlist_metrics_last", agg)
+        print(f"[{time.strftime('%H:%M:%S')}] Home aggregate snapshot warmed "
+              f"({len(agg)} banks)", flush=True)
+    except Exception as e:
+        print(f"[warn] aggregate snapshot warm failed: {type(e).__name__}: {e}",
+              flush=True)
+
     # Exit code reflects severity: new regressions or >5% failure rate fail
     # the execution (visible in Cloud Run job history).
     if new_failures:
