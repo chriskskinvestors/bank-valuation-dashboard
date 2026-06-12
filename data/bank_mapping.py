@@ -217,21 +217,27 @@ def get_ir_url(ticker: str) -> str | None:
 
 
 def get_bank_info(ticker: str) -> dict | None:
-    """Return bank info dict for a ticker. Resolves dynamically if needed."""
+    """Return bank info dict for a ticker, same priority order as
+    get_fdic_cert(). Live resolution is the LAST resort — it makes network
+    calls and must never run for tickers the snapshot already covers."""
     ticker = ticker.upper()
-    info = BANK_MAP.get(ticker) or _RESOLVED_CACHE.get(ticker)
+    info = (BANK_MAP.get(ticker) or _RESOLVED_FROM_JSON.get(ticker)
+            or _universe_snapshot_map().get(ticker) or _RESOLVED_CACHE.get(ticker))
     if info:
         return info
-    # Trigger resolution
     resolved = resolve_ticker(ticker)
     return resolved if resolved.get("cik") or resolved.get("fdic_cert") else None
 
 
 def get_name(ticker: str) -> str:
-    """Return bank display name. Resolves dynamically if not in static map."""
+    """Return bank display name, same priority order as get_fdic_cert().
+    Called per option by the company picker's format_func — a live
+    resolution here ran 60+ network lookups per page run (measured: the
+    page hung for minutes in search_fdic_by_name)."""
     ticker = ticker.upper()
-    info = BANK_MAP.get(ticker) or _RESOLVED_CACHE.get(ticker)
-    if info:
+    info = (BANK_MAP.get(ticker) or _RESOLVED_FROM_JSON.get(ticker)
+            or _universe_snapshot_map().get(ticker) or _RESOLVED_CACHE.get(ticker))
+    if info and info.get("name"):
         return info["name"]
     resolved = resolve_ticker(ticker)
     return resolved.get("name", ticker)
