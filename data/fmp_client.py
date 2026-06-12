@@ -10,6 +10,7 @@ deprecated 2025-08-31. Auth via FMP_API_KEY env var.
 Functions:
   get_quote(ticker)              — single bank: {price, change, ...}
   get_quote_batch(tickers)       — bulk fetch for screening views
+  get_eod_close_batch(tickers)   — bulk latest EOD close (quote fallback)
   get_history(ticker, period)    — historical price series (DataFrame)
 
 Cache:
@@ -44,6 +45,7 @@ def _has_key() -> bool:
 
 QUOTE_TTL_SECONDS = 60
 HISTORY_TTL_SECONDS = 3600
+EOD_CLOSE_TTL_SECONDS = 3600  # EOD bars only change once a day
 FUNDAMENTALS_TTL_SECONDS = 21600  # 6h — TTM fundamentals change quarterly
 
 
@@ -177,6 +179,113 @@ def get_quote_batch(tickers: Iterable[str],
             except Exception as e:
                 print(f"[FMP] {t} batch error: {e}")
                 out[t] = _empty_quote()
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Public API — latest EOD close (quote-endpoint fallback)
+# ──────────────────────────────────────────────────────────────────────────
+
+# The FMP Starter plan DENIES the /quote endpoints (403) but allows the
+# chart/EOD history family. When quotes are plan-denied, the warm-price job
+# falls back to the most recent daily close from the same endpoint
+# get_history uses. The returned `date` is the REAL trading date of the
+# close — cache writers must stamp rows with it, never now(), so the
+# staleness badge stays honest (EOD data is yesterday's close).
+
+def _empty_eod() -> dict:
+    return {"price": None, "close": None, "date": None,
+            "change": None, "change_pct": None, "volume": None}
+
+
+def _get_eod_close(ticker: str) -> dict:
+    """Latest EOD bar for `ticker` via historical-price-eod/full.
+
+    Returns {price, close, date, change, change_pct, volume}: price = most
+    recent daily close, close = prior session's close (prev_close), date =
+    the trading date of `price` (YYYY-MM-DD). All-None shape on failure.
+    Window is 7 calendar days so weekends + Monday holidays still contain a
+    trading day and a prior session for the change calc.
+    """
+    if not _has_key():
+        return _empty_eod()
+    ticker = ticker.upper()
+    cache_key = f"fmp_eod_close:{ticker}"
+    cached = _cache_get(cache_key, EOD_CLOSE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    from_d = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+    to_d = datetime.utcnow().strftime("%Y-%m-%d")
+    data = _get("historical-price-eod/full",
+                {"symbol": ticker, "from": from_d, "to": to_d}, timeout=15)
+    if not data or not isinstance(data, list):
+        return _empty_eod()
+    rows = [r for r in data if isinstance(r, dict)
+            and r.get("close") is not None and r.get("date")]
+    if not rows:
+        return _empty_eod()
+    rows.sort(key=lambda r: str(r.get("date")))  # ISO dates sort lexically
+
+    last = rows[-1]
+    prev = rows[-2] if len(rows) >= 2 else None
+    price = last.get("close")
+    prev_close = prev.get("close") if prev else None
+    change = change_pct = None
+    try:
+        if price is not None and prev_close:
+            change = float(price) - float(prev_close)
+            change_pct = change / float(prev_close) * 100.0
+    except (TypeError, ValueError, ZeroDivisionError):
+        change = change_pct = None
+
+    out = {
+        "price": price,
+        "close": prev_close,
+        "date": str(last.get("date"))[:10],
+        "change": change,
+        "change_pct": change_pct,
+        "volume": last.get("volume"),
+    }
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_eod_close_batch(tickers: Iterable[str],
+                        max_per_min: int | None = 270) -> dict[str, dict]:
+    """
+    Bulk latest-EOD-close — the warm-price job's fallback when the plan
+    denies /quote. Same fan-out + pacing discipline as get_quote_batch
+    (one symbol per call, paced under FMP's ~300/min cap by default since
+    the only expected caller is the full-universe job).
+
+    Returns {ticker: {price, close, date, change, change_pct, volume}};
+    `date` is the real trading date of the close — stamp cache writes with
+    it, never now().
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    tickers = [t.upper() for t in tickers if t]
+    if not tickers:
+        return {}
+    if not _has_key():
+        return {t: _empty_eod() for t in tickers}
+
+    interval = (60.0 / max_per_min) if max_per_min else 0.0
+
+    out: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {}
+        for t in tickers:
+            futures[ex.submit(_get_eod_close, t)] = t
+            if interval:
+                time.sleep(interval)  # spread submissions under the rate cap
+        for fut in as_completed(futures):
+            t = futures[fut]
+            try:
+                out[t] = fut.result()
+            except Exception as e:
+                print(f"[FMP] {t} eod batch error: {e}")
+                out[t] = _empty_eod()
     return out
 
 
