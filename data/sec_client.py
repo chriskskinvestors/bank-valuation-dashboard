@@ -429,34 +429,29 @@ def get_latest_fundamentals(cik: int) -> dict:
         ni_ttm = _extract_ttm_value(facts, "NetIncomeLossAvailableToCommonStockholdersBasic")
     if ni_ttm is None:
         ni_ttm = _extract_ttm_value(facts, "ProfitLoss")
-    if ni_ttm is not None:
-        # Overwrite the single-period value with TTM. Keep the legacy field
-        # for callers that need the latest reported quarterly NI.
-        result["net_income_latest_period"] = result.get("net_income")
-        result["net_income"] = ni_ttm
-        result["net_income_ttm"] = ni_ttm
-    else:
-        # No TTM derivation possible — keep whatever fallback chain returned
-        if not result.get("net_income"):
-            result["net_income"] = _extract_latest_value(
-                facts, "NetIncomeLossAvailableToCommonStockholdersBasic", max_age_years=1,
-            )
-        if not result.get("net_income"):
-            result["net_income"] = _extract_latest_value(facts, "ProfitLoss", max_age_years=1)
+    # INVARIANT: net_income is a 12-month value or it is None. _extract_ttm_value
+    # already falls back to the latest annual internally, so None here means no
+    # honest TTM exists — serving the latest single-period value instead would
+    # understate ROATCE/ROE ~4× (a plausible-wrong number, worse than n/a).
+    # The raw latest-period value stays available under net_income_latest_period.
+    result["net_income_latest_period"] = result.get("net_income")
+    result["net_income"] = ni_ttm
+    result["net_income_ttm"] = ni_ttm
+    result["net_income_is_ttm"] = ni_ttm is not None
 
     # Same TTM treatment for EPS — quarterly Q1/Q2/Q3 filings would otherwise
     # give a single-period EPS, producing P/E values 4× too high.
     # (e.g. WAL Q1 EPS $1.65 → P/E = $79/$1.65 = 48x; real TTM EPS ≈ $7,
-    # P/E ≈ 11x.)
+    # P/E ≈ 11x.) Same invariant: TTM or None, never a single period.
     for concept, field in [
         ("EarningsPerShareDiluted", "eps"),
         ("EarningsPerShareBasic", "eps_basic"),
     ]:
         ttm_val = _extract_ttm_value(facts, concept)
-        if ttm_val is not None:
-            result[f"{field}_latest_period"] = result.get(field)
-            result[field] = ttm_val
-            result[f"{field}_ttm"] = ttm_val
+        result[f"{field}_latest_period"] = result.get(field)
+        result[field] = ttm_val
+        result[f"{field}_ttm"] = ttm_val
+        result[f"{field}_is_ttm"] = ttm_val is not None
 
     # Dividends per share: robust TTM anchored to the latest period (handles
     # cut/skipped quarters that would otherwise pull a stale 4-quarter window).
@@ -496,6 +491,20 @@ def get_latest_fundamentals(cik: int) -> dict:
         treasury = _extract_latest_value(facts, "TreasuryStockCommonShares", max_age_years=1) or 0
         if issued and issued > 0:
             result["shares_outstanding"] = issued - treasury
+
+    # Cross-check against the 10-Q/10-K cover-page count (dei namespace).
+    # Both are legitimate — balance-sheet date vs filing date — but a large
+    # gap usually means a post-quarter issuance or buyback (e.g. SFST's
+    # April-2026 raise: 8.25M at quarter-end vs 9.46M on the May cover).
+    # Recorded here so validation can surface it; never silently "fixed".
+    dei_node = facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding", {})
+    cover_rows = [r for u in dei_node.get("units", {}).values() for r in u]
+    cover = max(cover_rows, key=lambda r: (r.get("end", ""), r.get("filed", "")), default=None)
+    result["shares_outstanding_cover"] = cover.get("val") if cover else None
+    sh, cov = result.get("shares_outstanding"), result.get("shares_outstanding_cover")
+    result["shares_cover_divergence_pct"] = (
+        abs(sh - cov) / cov * 100 if sh and cov else None
+    )
 
     # Compute derived values
     equity = result.get("book_value_total")

@@ -198,5 +198,82 @@ class TestTtmWindowIntegrity(unittest.TestCase):
         self.assertEqual(ttm, 33.5)
 
 
+class TestTtmOrNoneInvariant(unittest.TestCase):
+    """net_income / eps are 12-month values or None — never a single quarter.
+
+    The old fallback served the latest single-period value when TTM
+    derivation failed, understating ROATCE/ROE ~4x and overstating P/E ~4x
+    (a plausible-wrong number, worse than an honest n/a)."""
+
+    @staticmethod
+    def _facts(ni_entries, eps_entries=(), dei_shares=None, shares_entries=()):
+        def rows(entries):
+            return [{"start": s, "end": e, "val": v, "form": f, "filed": d}
+                    for s, e, v, f, d in entries]
+        facts = {"facts": {"us-gaap": {
+            "NetIncomeLoss": {"units": {"USD": rows(ni_entries)}},
+            "EarningsPerShareDiluted": {"units": {"USD/shares": rows(eps_entries)}},
+        }, "dei": {}}}
+        if shares_entries:
+            facts["facts"]["us-gaap"]["CommonStockSharesOutstanding"] = {
+                "units": {"shares": [
+                    {"end": e, "val": v, "form": f, "filed": d}
+                    for e, v, f, d in shares_entries]}}
+        if dei_shares:
+            facts["facts"]["dei"]["EntityCommonStockSharesOutstanding"] = {
+                "units": {"shares": [
+                    {"end": e, "val": v, "form": f, "filed": d}
+                    for e, v, f, d in dei_shares]}}
+        return facts
+
+    # Two lone quarters: no contiguous window, no annual — no honest TTM.
+    ORPHAN_QUARTERS = [
+        ("2025-07-01", "2025-09-30", 8.0, "10-Q", "2025-11-01"),
+        ("2026-01-01", "2026-03-31", 9.0, "10-Q", "2026-05-01"),
+    ]
+
+    def test_no_ttm_means_none_not_single_quarter(self):
+        from unittest.mock import patch
+        from data import sec_client
+        facts = self._facts(self.ORPHAN_QUARTERS, eps_entries=[
+            ("2026-01-01", "2026-03-31", 1.65, "10-Q", "2026-05-01")])
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            result = sec_client.get_latest_fundamentals(1)
+        self.assertIsNone(result["net_income"])
+        self.assertFalse(result["net_income_is_ttm"])
+        self.assertEqual(result["net_income_latest_period"], 9.0)
+        self.assertIsNone(result["eps"])
+        self.assertFalse(result["eps_is_ttm"])
+        self.assertEqual(result["eps_latest_period"], 1.65)
+
+    def test_honest_ttm_flows_through(self):
+        from unittest.mock import patch
+        from data import sec_client
+        facts = self._facts(TestTtmWindowIntegrity.SFST_SHAPE)
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            result = sec_client.get_latest_fundamentals(1)
+        self.assertEqual(result["net_income"], 33.0)
+        self.assertTrue(result["net_income_is_ttm"])
+
+    def test_shares_cover_divergence_recorded_and_flagged(self):
+        from unittest.mock import patch
+        from data import sec_client
+        from data.validation import check_shares_cover
+        # SFST April-2026 raise: 8,247,665 at quarter-end vs 9,455,165 cover
+        facts = self._facts(
+            self.ORPHAN_QUARTERS,
+            dei_shares=[("2026-04-27", 9_455_165, "10-Q", "2026-05-01")],
+            shares_entries=[("2026-03-31", 8_247_665, "10-Q", "2026-05-01")])
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            result = sec_client.get_latest_fundamentals(1)
+        self.assertEqual(result["shares_outstanding_cover"], 9_455_165)
+        self.assertAlmostEqual(result["shares_cover_divergence_pct"], 12.77, places=1)
+        findings = check_shares_cover(result)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "warning")
+        # Small drift stays silent
+        self.assertEqual(check_shares_cover({"shares_cover_divergence_pct": 2.0}), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -192,6 +192,29 @@ def cross_check_net_income(sec_ni: float | None, fdic_ni_ytd: float | None,
     return findings
 
 
+def check_shares_cover(sec_data: dict) -> list[Finding]:
+    """
+    Pipeline share count (balance-sheet date) vs the 10-Q/10-K cover-page
+    count (filing date). Both are legitimate values for different dates, so
+    this never auto-corrects — but a large gap means shares changed between
+    quarter-end and filing (issuance/buyback), and per-share metrics deserve
+    a human look (e.g. SFST April 2026: 8.25M at quarter-end vs 9.46M on the
+    May cover — a 14.6% raise).
+    """
+    div = sec_data.get("shares_cover_divergence_pct")
+    if div is None or div <= 8:
+        return []
+    return [Finding(
+        severity="warning",
+        field="shares_outstanding",
+        message=(
+            f"Share count diverges {div:.1f}% from the latest filing cover page "
+            "— likely a post-quarter issuance/buyback; per-share metrics reflect "
+            "quarter-end."
+        ),
+    )]
+
+
 def cross_check_assets(sec_holdco_assets: float | None,
                         fdic_sub_assets: float | None) -> list[Finding]:
     """
@@ -422,6 +445,10 @@ def validate_bank_metrics(metrics: dict, sec_data: dict | None = None,
         if fdic_assets:
             fdic_assets = fdic_assets * 1000  # thousands to dollars
         findings.extend(cross_check_assets(sec_assets, fdic_assets))
+
+    # SEC-internal: share count vs the latest filing's cover-page count
+    if sec_data:
+        findings.extend(check_shares_cover(sec_data))
 
     # Internal consistency: loan & deposit composition must sum sensibly.
     # These run off raw FDIC fields (ratios, so scale-independent) and are
