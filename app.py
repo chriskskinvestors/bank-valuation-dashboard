@@ -18,10 +18,7 @@ from analysis.metrics import build_all_bank_metrics
 from ui.styles import CUSTOM_CSS
 from ui.generic_table import render_generic_table
 from ui.overview_table import render_data_freshness
-from ui.deposit_lookup import render_deposits_for_ticker
-from ui.filings import render_filings_for_ticker
-from ui.earnings import render_earnings_consensus, render_earnings_overview
-from ui.historicals import render_historicals
+from ui.earnings import render_earnings_overview
 from ui.home import render_home
 
 # ── Page config ──────────────────────────────────────────────────────────
@@ -53,24 +50,12 @@ SECTIONS = ["🏠 Home", "🌐 Macro", "📊 Screening", "🏦 Company Analysis"
 # Company Analysis sub-tabs. Rendered horizontally at the TOP of the main
 # content (under the bank picker), not in the sidebar. One shared template per
 # bank — every bank gets the same sub-tabs.
-# Two-level company navigation: top-level section → sub-tabs (Capital-IQ style).
-COMPANY_NAV = {
-    "Overview": ["Corporate Profile"],
-    "Financials": ["Financial Highlights", "Income Statement", "Balance Sheet",
-                   "Performance Analysis", "Capital Adequacy", "Asset Quality Detail",
-                   "Asset Quality by Loan Type", "Deposit/Loan Composition", "Deposit Trends",
-                   "Interest Rate Risk", "Fair Value Analysis", "Portfolio Analysis",
-                   "Capital Structure Details"],
-    "Valuation": ["Valuation Model", "Peer Rank", "Price & Trends"],
-    "Estimates / Earnings": ["Earnings"],
-    "News & Filings": ["Filings", "Activity"],
-    "Market Analysis": ["Market Share & Branches"],
-    "Ownership": ["Institutional (13F)", "Insider Activity"],
-}
-# Flat list of every leaf sub-tab (for deep-link validation, etc.).
-COMPANY_LEAVES = [leaf for subs in COMPANY_NAV.values() for leaf in subs]
-# Which section a given leaf lives under.
-COMPANY_SECTION_OF = {leaf: sec for sec, subs in COMPANY_NAV.items() for leaf in subs}
+# Two-level company navigation lives in ui/company_nav.py as data: the same
+# registry drives the nav radios AND the dispatch, so a sub-tab cannot exist
+# without a renderer (pinned by a test — the A17 bug class is impossible).
+from ui.company_nav import (
+    COMPANY_NAV, COMPANY_LEAVES, COMPANY_SECTION_OF, render_company_subtab,
+)
 # A ?bank=X deep-link (e.g. a click on a Home movers/news row) should jump
 # straight into Company Analysis. Set the section's session_state BEFORE the
 # radio instantiates so it opens on the right page; the bank itself is picked
@@ -782,108 +767,18 @@ elif section == "🏦 Company Analysis":
             company_subtab = _subs[0]
         st.markdown("<div style='margin-bottom:4px;'></div>", unsafe_allow_html=True)
 
-    if not company_ticker:
-        pass
-
-    # ── Overview section ────────────────────────────────────────────
-    elif company_subtab == "Corporate Profile":
-        from ui.bank_detail import render_corporate_profile
-        single_df = pd.DataFrame([load_single_bank_metrics_cached(company_ticker)])
-        render_corporate_profile(company_ticker, single_df)
-
-    elif company_subtab == "Price & Trends":
-        from ui.bank_detail import render_price_trends
-        render_price_trends(company_ticker)
-
-    # ── Financials section ──────────────────────────────────────────
-    elif company_subtab == "Financial Highlights":
-        from ui.financial_highlights import render_financial_highlights
-        render_financial_highlights(company_ticker)
-        with st.expander("Trend charts", expanded=False):
-            render_historicals(company_ticker)
-
-    elif company_subtab == "Capital Adequacy":
-        from ui.capital_dynamics import render_capital_dynamics
-        render_capital_dynamics(company_ticker, watchlist)
-
-    elif company_subtab == "Asset Quality Detail":
-        from ui.credit_dynamics import render_credit_dynamics
-        render_credit_dynamics(company_ticker, watchlist)
-
-    elif company_subtab == "Asset Quality by Loan Type":
-        from ui.credit_dynamics import render_credit_dynamics
-        render_credit_dynamics(company_ticker, watchlist, view="by_loan_type")
-
-    elif company_subtab == "Deposit/Loan Composition":
-        render_deposits_for_ticker(company_ticker)
-
-    elif company_subtab == "Interest Rate Risk":
-        from ui.rate_sensitivity import render_rate_sensitivity
-        render_rate_sensitivity(company_ticker)
-
-    elif company_subtab == "Income Statement":
-        from ui.financials_statements import render_income_statement
-        render_income_statement(company_ticker)
-
-    elif company_subtab == "Balance Sheet":
-        from ui.financials_statements import render_balance_sheet
-        render_balance_sheet(company_ticker)
-
-    elif company_subtab == "Performance Analysis":
-        from ui.financials_statements import render_performance_analysis
-        render_performance_analysis(company_ticker)
-
-    elif company_subtab == "Fair Value Analysis":
-        from ui.financials_statements import render_fair_value
-        render_fair_value(company_ticker)
-
-    elif company_subtab == "Portfolio Analysis":
-        from ui.financials_statements import render_portfolio
-        render_portfolio(company_ticker)
-
-    elif company_subtab == "Capital Structure Details":
-        from ui.financials_statements import render_capital_structure
-        render_capital_structure(company_ticker)
-
-    # ── Valuation section ───────────────────────────────────────────
-    elif company_subtab == "Valuation Model":
-        from ui.valuation_model import render_valuation_model
-        render_valuation_model(company_ticker)
-
-    elif company_subtab == "Peer Rank":
-        from ui.peer_rank import render_peer_rank
-        render_peer_rank(company_ticker, all_metrics or get_watchlist_cohort())
-
-    # ── Estimates / Earnings section ────────────────────────────────
-    elif company_subtab == "Earnings":
-        ticker_metrics = load_single_bank_metrics_cached(company_ticker)
-        render_earnings_consensus(company_ticker, ticker_metrics)
-
-    # ── News & Filings section ──────────────────────────────────────
-    elif company_subtab == "Filings":
-        render_filings_for_ticker(company_ticker)
-
-    elif company_subtab == "Activity":
-        from ui.recent_activity import render_recent_activity
-        render_recent_activity(company_ticker)
-
-    # ── Market Analysis section (deposit-related) ───────────────────
-    elif company_subtab == "Deposit Trends":
-        from ui.deposit_dynamics import render_deposit_dynamics
-        render_deposit_dynamics(company_ticker)
-
-    elif company_subtab == "Market Share & Branches":
-        from ui.deposit_lookup import render_market_share_for_ticker
-        render_market_share_for_ticker(company_ticker)
-
-    # ── Ownership section ───────────────────────────────────────────
-    elif company_subtab == "Institutional (13F)":
-        from ui.ownership import render_ownership
-        render_ownership(company_ticker)
-
-    elif company_subtab == "Insider Activity":
-        from ui.insider_activity import render_insider_activity
-        render_insider_activity(company_ticker)
+    if company_ticker:
+        rendered = render_company_subtab(company_subtab, company_ticker, {
+            "watchlist": watchlist,
+            "load_metrics": load_single_bank_metrics_cached,
+            "peer_cohort": lambda: all_metrics or get_watchlist_cohort(),
+        })
+        if not rendered:
+            st.error(
+                f"No renderer wired for sub-tab “{company_subtab}” — "
+                "COMPANY_NAV and the renderer registry in ui/company_nav.py "
+                "are out of sync."
+            )
 
 elif section == "🌐 Macro":
     from ui.macro import render_macro_dashboard
