@@ -75,7 +75,7 @@ source); **n/a** = honest gap, shown as such.
 | Nonaccrual / restructured / NPLs | FDIC NCLNLS, restructured (RSLNLTOT?) — verify field at build |
 | OREO (net) / NPAs / 90+PD accruing | FDIC ORE, calc, P9LNLS-equivalent (verify) |
 | LLR / NCOs / all the ratios | FDIC LNATRES, NTLNLS, calc ratios (engine has most) |
-| Criticized/classified (pass/SM/substandard/doubtful) | 10-K only (exam classifications are not public) — honest n/a rows |
+| Criticized/classified (pass/SM/substandard/doubtful) | 10-K/10-Q credit-quality footnote (FinancingReceivableCreditQualityIndicator dimensional XBRL) — see Decisions; the dimensional filing parser sources this |
 
 ## 5. Asset Quality by Loan Type  ← we BEAT SNL here
 30-89 PD, 90+ PD, Nonaccrual × loan category (1-4 fam, multifam, CRE, C&D,
@@ -126,3 +126,13 @@ from tab 6 (regulatory composition, standardized categories, buildable now).
 Rules: engine "computed kinds" for every derived row; n/a + flag for
 truly unsourceable lines (never imputed); every new field verified against
 BANR's actuals from these screenshots before shipping.
+
+**Provenance requirement (user, 2026-06-12): every number click-through like
+SNL** — (a) the formula popup showing the arithmetic WITH component values
+(e.g. SNL's ROATE: (Amrt of Intang × (100−21%) + NI) / Avg TCE × 100), and
+(b) source links to the underlying filing (FDIC SDI / FFIEC schedule /
+EDGAR). Smart per row: DIRECT fields open straight to their filing source;
+CALCULATED rows show the formula with each component value, and each
+component is itself click-sourced (SNL's "Int Cost: Total Deposits" =
+Int Exp / Avg Total Deposits x 100 pattern). The engine's row kinds decide
+which popup a row gets — no orphan numbers.
