@@ -110,14 +110,19 @@ per issuer (custom taxonomy extensions), so this needs a per-filing
 instance parse with a tolerant member matcher, NOT companyfacts. Distinct
 from tab 6 (regulatory composition, standardized categories, buildable now).
 
-## Build order (fast → slow)
-1. Deposit/Loan Composition + Asset Quality Detail (pure FDIC + calc)
-2. Income Statement + Balance Sheet (FDIC core; RI/RC gaps marked pending)
-3. Capital Adequacy highlights (FDIC) — RC-R walk pending parse
-4. FFIEC parses: RC-N (AQ by loan type), RI/RI-E (income/expense detail),
-   RC-R Part I (capital walk) — reuse ffiec_client downloader
-5. Interest Rate Risk per user decision
+## Decisions (user, 2026-06-12)
+- **One tab END-TO-END at a time**, screenshot order: IS → BS → Capital →
+  AQ Detail → AQ by Loan Type → Composition → IRR → FV → Loan Comp (As Rptd).
+- **IRR**: OUR phased-NIM model rendered in SNL's table layout, labeled
+  model-derived (10-K MD&A tables not scraped).
+- **Source missing data ourselves**: criticized/classified loans come from
+  10-K/10-Q credit-quality footnotes (FinancingReceivableCreditQualityIndicator
+  dimensional XBRL) — build the dimensional filing parser (also unlocks FV
+  ASC-825 + As-Reported loan comp). "Nonrecurring" = our own one-time-item
+  classification from the normalization engine, labeled as ours. Only
+  filing-absent lines stay n/a.
+- Keep ALL existing graphics; tables added alongside.
 
 Rules: engine "computed kinds" for every derived row; n/a + flag for
-no-source lines (never imputed); every new field verified against BANR's
-actuals from these screenshots before shipping.
+truly unsourceable lines (never imputed); every new field verified against
+BANR's actuals from these screenshots before shipping.
