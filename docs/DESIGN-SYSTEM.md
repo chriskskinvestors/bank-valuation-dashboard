@@ -51,3 +51,24 @@ on the Income Statement mockup) — that mockup is the binding visual reference.
 
 Verification: preview render per page against this spec + the user's eye
 before each batch ships. The SNL screenshots in chat are the reference.
+
+
+## Mockup-round refinements (v2-v8, user-approved 2026-06-12)
+- Density: "Both" — tighter internals AND content-hugging sections;
+  side-by-side is the default page pattern.
+- Statement tabs: WIDE table left (takes most of the width, horizontal
+  scroll for older periods, newest column first, sticky line-item column,
+  Annual/Quarterly toggle, Export button in the table header row) + SLIM
+  detail panel right (~200px): selected row's compact sparkline strip,
+  then FORMULA (components, each valued + click-sourced) or SOURCE
+  (FDIC/SEC field), then the filing link. Clicking any row updates it.
+- Landing pages (Corporate Profile pattern): one consistent grid — four
+  equal ledger columns (MARKET DATA / VALUATION / PERFORMANCE / COMPANY),
+  then two equal chart halves below, shared gutters, nothing off-axis.
+- Sub-tab row: chip style (bordered pills, active = navy fill, white text).
+  Section row: underline tabs (active = navy text + 2px underline).
+- Charts in production are the EXISTING Plotly system (tighten_yaxis,
+  labeled grid, hover) restyled tighter — mockup sparklines were
+  placeholders; never ship decorative charts.
+- First screen per bank = Overview → Corporate Profile.
+- Build checkpoint: real preview screenshots of migrated pages, not mockups.
