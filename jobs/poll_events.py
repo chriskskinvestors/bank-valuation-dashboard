@@ -36,7 +36,7 @@ def main() -> int:
     from data.events.globenewswire import GlobeNewswireAdapter
     from data.events.yfinance_news import YFinanceNewsAdapter
     from data.events.ir_site import IRSiteAdapter
-    from data.events.google_news import GoogleNewsAdapter
+    from data.events.google_news import GoogleNewsAdapter, GoogleNewsTopicAdapter
 
     init_schema()
 
@@ -55,6 +55,10 @@ def main() -> int:
         # Google News: per-ticker, but parallelized so it scales to the full
         # universe (unlike IR scraping, which needs a bespoke scraper per site).
         GoogleNewsAdapter(),
+        # Topic feeds for the Home page's categorized overnight news (Macro /
+        # Geopolitical / Domestic / Markets) — ONE query per topic per cycle,
+        # not per-bank; the tickers arg is ignored by this adapter.
+        GoogleNewsTopicAdapter(),
     ]
     narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
     adapters = broad_adapters + narrow_adapters
@@ -142,14 +146,18 @@ def _purge_junk_events() -> int:
     third-party mentions, foreign-ticker tags). Idempotent; reuses exactly the
     filters the adapters apply at ingest."""
     from sqlalchemy import text
-    from data.events.store import _get_engine
+    from data.events.store import _get_engine, TOPIC_SOURCE
     from data.events.wire_base import is_safe_news_url, is_junk_news
 
     eng = _get_engine()
     with eng.connect() as conn:
-        rows = conn.execute(text("SELECT id, ticker, url, headline FROM events")).mappings().all()
+        rows = conn.execute(text("SELECT id, ticker, source, url, headline FROM events")).mappings().all()
+    # Topic rows have a sentinel ticker ('TOPIC:MACRO'), so the foreign-
+    # paren-ticker check must not apply — pass ticker=None for those.
     bad = [r["id"] for r in rows
-           if (not is_safe_news_url(r["url"])) or is_junk_news(r["headline"], r["ticker"])]
+           if (not is_safe_news_url(r["url"]))
+           or is_junk_news(r["headline"],
+                           None if r["source"] == TOPIC_SOURCE else r["ticker"])]
     if not bad:
         return 0
     with eng.begin() as conn:

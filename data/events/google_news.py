@@ -20,6 +20,7 @@ from datetime import datetime, timezone, timedelta
 
 from data.bank_mapping import get_name
 from data.events.base import Event, SourceAdapter
+from data.events.store import TOPIC_SOURCE, topic_ticker
 from data.events.wire_base import (
     fetch_rss, match_tickers, classify_press_release, is_company_press_release,
     is_safe_news_url, is_junk_news,
@@ -30,10 +31,14 @@ _GN_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
           "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 
+def _search_url(query: str) -> str:
+    q = urllib.parse.quote(query)
+    return f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+
+
 def _query_url(name: str) -> str:
     # Quote the exact name so we get items about THIS bank, not loose token hits.
-    q = urllib.parse.quote(f'"{name}"')
-    return f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    return _search_url(f'"{name}"')
 
 
 def _strip_source(title: str) -> tuple[str, str]:
@@ -112,4 +117,85 @@ class GoogleNewsAdapter(SourceAdapter):
         with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as ex:
             for evs in ex.map(lambda t: self._fetch_ticker(t, cutoff), tickers):
                 out.extend(evs)
+        return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Topic feeds — Home page categorized overnight news (docs/HOME-MACRO-PLAN.md:
+# Macro · Geopolitical · Domestic · Large Markets Events Outside Banks).
+# One Google News search per TOPIC per poll cycle (not per-bank).
+# ──────────────────────────────────────────────────────────────────────────
+
+# Category label -> Google News RSS search query. Quoted phrases keep the
+# boolean parse unambiguous (bare multi-word terms next to OR are AND'd).
+TOPIC_QUERIES: dict[str, str] = {
+    "macro":        '"Federal Reserve" OR inflation OR CPI OR FOMC',
+    "geopolitical": 'sanctions OR "military conflict" OR "trade war"',
+    "domestic":     '"US economy" OR "Congress" OR "government shutdown"',
+    # Large NON-bank market events — index-level moves, not single names.
+    "markets":      '"stock market selloff" OR "stock market rally" OR "S&P 500"',
+}
+
+
+class GoogleNewsTopicAdapter(SourceAdapter):
+    """
+    General-news topic feeds for the Home page's categorized sections.
+
+    Each stored item is stamped with its category two ways, with NO schema
+    change (existing rows untouched): the sentinel ticker 'TOPIC:<CATEGORY>'
+    (store.topic_ticker) and raw['category']. Read back via
+    data.events.store.get_topic_news(category, hours).
+    """
+
+    name = TOPIC_SOURCE
+    LOOKBACK_HOURS = 48
+    MAX_PER_TOPIC = 15  # cap stored per topic per cycle
+
+    def _fetch_topic(self, category: str, query: str, cutoff: datetime) -> list[Event]:
+        try:
+            items = fetch_rss(_search_url(query), user_agent=_GN_UA)
+        except Exception as e:
+            print(f"[{self.name}] {category} error: {type(e).__name__}: {e}")
+            return []
+        evs: list[Event] = []
+        seen: set[str] = set()
+        for item in items:
+            if item.published and item.published < cutoff:
+                continue
+            headline, src_name = _strip_source(item.title)
+            if not headline:
+                continue
+            # General-news junk filter — no ticker arg: these aren't bank
+            # stories, so the foreign-paren-ticker check must not apply.
+            if is_junk_news(headline):
+                continue
+            if not is_safe_news_url(item.link):
+                continue
+            # Dedup by normalized headline within the category, stable across
+            # polls/outlets (store dedups on (source, external_id)).
+            ext_id = f"{category}::{_slug(headline)}"
+            if ext_id in seen:
+                continue
+            seen.add(ext_id)
+            evs.append(Event(
+                ticker=topic_ticker(category),
+                source=self.name,
+                event_type="topic_news",
+                headline=headline,
+                published_at=item.published or datetime.now(timezone.utc),
+                url=item.link,
+                summary="",
+                external_id=ext_id,
+                raw={"via": src_name, "category": category, "query": query},
+            ))
+        # Newest first; cap what we store per topic per cycle.
+        evs.sort(key=lambda e: e.published_at, reverse=True)
+        return evs[: self.MAX_PER_TOPIC]
+
+    def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
+        # `tickers` is ignored — topics aren't per-bank; one query per topic.
+        cutoff = since or (datetime.now(timezone.utc) - timedelta(hours=self.LOOKBACK_HOURS))
+        out: list[Event] = []
+        for category, query in TOPIC_QUERIES.items():
+            out.extend(self._fetch_topic(category, query, cutoff))
         return out

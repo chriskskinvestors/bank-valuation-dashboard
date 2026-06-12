@@ -24,10 +24,29 @@ Schema:
 
 from __future__ import annotations
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from data.events.base import Event
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Topic-feed rows (Home page categorized overnight news — Macro /
+# Geopolitical / Domestic / Markets). They share the events table but are
+# NOT bank events: source = TOPIC_SOURCE and ticker is the sentinel
+# 'TOPIC:<CATEGORY>' (fits the existing VARCHAR(20) column — no schema
+# change, existing rows untouched). The category is also stamped into
+# raw_json. Read back with get_topic_news(); excluded from the default
+# get_universe_recent() so bank-activity panels never see them.
+# ──────────────────────────────────────────────────────────────────────────
+
+TOPIC_SOURCE = "google_news_topic"
+_TOPIC_TICKER_PREFIX = "TOPIC:"
+
+
+def topic_ticker(category: str) -> str:
+    """Sentinel ticker for a topic category, e.g. 'macro' -> 'TOPIC:MACRO'."""
+    return f"{_TOPIC_TICKER_PREFIX}{category.strip().upper()}"
 
 
 from data.db import USE_POSTGRES as _USE_POSTGRES
@@ -202,18 +221,52 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
             for i, s in enumerate(sources):
                 params[f"s{i}"] = s
     else:
+        # Topic-feed rows aren't bank events — keep them out of the default
+        # "recent across the universe" view (per-bank activity panels).
         sql = """
             SELECT ticker, source, event_type, headline, summary, url,
                    published_at, external_id
             FROM events
+            WHERE source <> :topic_src
             ORDER BY published_at DESC
             LIMIT :n
         """
-        params = {"n": limit}
+        params = {"n": limit, "topic_src": TOPIC_SOURCE}
 
     with _get_engine().connect() as conn:
         rows = conn.execute(text(sql), params).mappings().all()
     return [dict(r) for r in rows]
+
+
+def get_topic_news(category: str, hours: int = 24, limit: int = 50) -> list[dict]:
+    """
+    Recent topic-feed headlines for one Home-page category ('macro',
+    'geopolitical', 'domestic', 'markets'), newest first, within the last
+    ``hours``. Each dict carries the store's usual event fields plus
+    ``category``. Unknown categories simply return [].
+    """
+    from sqlalchemy import text
+    eng = _get_engine()
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    with eng.connect() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT ticker, source, event_type, headline, summary, url,
+                       published_at, external_id
+                FROM events
+                WHERE source = :src AND ticker = :t AND published_at >= :cutoff
+                ORDER BY published_at DESC
+                LIMIT :n
+            """),
+            {"src": TOPIC_SOURCE, "t": topic_ticker(category),
+             "cutoff": cutoff, "n": limit},
+        ).mappings().all()
+    out: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        d["category"] = category.strip().lower()
+        out.append(d)
+    return out
 
 
 def last_seen_published(source: str, ticker: str | None = None) -> datetime | None:

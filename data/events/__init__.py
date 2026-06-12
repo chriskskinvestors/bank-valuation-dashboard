@@ -20,6 +20,7 @@ from data.events.store import (
     insert_events_returning_new,
     get_recent_events,
     get_universe_recent,
+    get_topic_news,
     last_seen_published,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "insert_events_returning_new",
     "get_recent_events",
     "get_universe_recent",
+    "get_topic_news",
     "last_seen_published",
 ]
