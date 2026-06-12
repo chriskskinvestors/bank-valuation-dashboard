@@ -625,6 +625,157 @@ def get_ri_income_detail(
     return out
 
 
+# ── Schedule RC-N past-due & nonaccrual loans by category ────────────────────
+# Column A = 30-89 days past due (still accruing), column B = 90+ days past
+# due (still accruing), column C = nonaccrual. Balance-sheet codes carry the
+# RCFD/RCON prefix split (_lookup_concept resolves it; domestic filers like
+# Banner report RCON only).
+#
+# MDRM codes VERIFIED by value-matching Banner Bank's (RSSD 352772)
+# 12/31/2025 call report against the SNL FY-2025 Asset Quality screenshot
+# (docs/SNL-BUILD-PLAN.md tab 5):
+#   • Item 9 totals RCON1406 / 1407 / 1403 = 26,767 / 4,114 / 41,525 ($000)
+#     — exact match to all three SNL totals.
+#   • The disjoint categories below + residual "other" reconcile to those
+#     totals to the dollar in every column (678 / 0 / 0 residual = loans to
+#     depository institutions + leases + all-other-loans net of agricultural).
+#   • Agricultural (1594/1597/1583) rides INSIDE "all other loans"
+#     (5459-series) on the FFIEC 041 — Banner's other-loans nonaccrual 1,491
+#     equals its agricultural 1,491 exactly. That double-count is why "other"
+#     is derived as a residual from the item-9 totals rather than summed from
+#     the 5459-series codes.
+#
+# Each category maps to (col A codes, col B codes, col C codes); multi-code
+# tuples are sub-items summed.
+_RCN_CATEGORIES: dict[str, tuple[tuple[str, ...], ...]] = {
+    # 1.a construction & land development = 1-4 family residential
+    # construction (F172/F174/F176) + other construction and all land
+    # development (F173/F175/F177)
+    "construction": (("F172", "F173"), ("F174", "F175"), ("F176", "F177")),
+    # 1.b secured by farmland
+    "farmland": (("3493",), ("3494",), ("3495",)),
+    # 1.c.(1) revolving open-end 1-4 family (home equity lines)
+    "heloc": (("5398",), ("5399",), ("5400",)),
+    # 1.c.(2) closed-end 1-4 family = first liens (C236/C237/C229)
+    # + junior liens (C238/C239/C230); HELOCs are their own row above
+    "resi_1to4": (("C236", "C238"), ("C237", "C239"), ("C229", "C230")),
+    # 1.d multifamily (5+) residential
+    "multifamily": (("3499",), ("3500",), ("3501",)),
+    # 1.e nonfarm nonresidential (CRE) = owner-occupied (F178/F180/F182)
+    # + other nonfarm nonresidential (F179/F181/F183)
+    "nonfarm_nonres": (("F178", "F179"), ("F180", "F181"), ("F182", "F183")),
+    # 4. commercial & industrial
+    "ci": (("1606",), ("1607",), ("1608",)),
+    # loans to finance agricultural production (see header note: subset of
+    # "all other loans" on the 041, hence excluded from the residual)
+    "agricultural": (("1594",), ("1597",), ("1583",)),
+    # 5.a credit cards
+    "credit_cards": (("B575",), ("B576",), ("B577",)),
+    # 5.b automobile (K213/K214/K215) + 5.c other consumer (K216/K217/K218)
+    "other_consumer": (("K213", "K216"), ("K214", "K217"), ("K215", "K218")),
+}
+
+# Schedule RC-N item 9 totals (columns A/B/C) — the SNL "Total" row.
+_RCN_TOTAL_CODES = {
+    "total_pd30_89": "1406",
+    "total_pd90_plus": "1407",
+    "total_nonaccrual": "1403",
+}
+
+# Column keys, in (A, B, C) order matching _RCN_CATEGORIES tuples.
+_RCN_COLS = ("pd30_89", "pd90_plus", "nonaccrual")
+
+
+def get_rcn_detail(
+    rssd_id: int,
+    reporting_period: str | None = None,
+    call_report_df: pd.DataFrame | None = None,
+) -> dict | None:
+    """
+    Schedule RC-N: past-due 30-89 / past-due 90+ / nonaccrual loans by loan
+    category — the full asset-quality matrix SNL shows as NA.
+
+    Returns ($000 as reported, *_usd scaled by FFIEC_DOLLAR_SCALE):
+      {
+        "reporting_period": "12/31/2025",
+        "rssd_id": 352772,
+        "categories": {cat: {"pd30_89": v, "pd90_plus": v, "nonaccrual": v}},
+        "categories_usd": {... same shape, scaled ...},
+        "total_pd30_89": v, "total_pd90_plus": v, "total_nonaccrual": v,
+        "total_pd30_89_usd": ..., ...
+      }
+
+    Categories are the disjoint _RCN_CATEGORIES plus a derived "other" =
+    item-9 total minus the sum of reported named categories (depository
+    institutions, leases, foreign governments, all-other net of agricultural).
+    "other" is None when the total is unreported, or when the residual goes
+    negative (a mapping violation must surface as n/a, never a plausible-wrong
+    number). A true $0 stays 0.0 — only codes absent from the filing map to
+    None. Returns None when the report has no RC-N content at all (or in
+    local dev where FFIEC is unconfigured).
+    """
+    df = call_report_df
+    if df is None:
+        df = fetch_call_report(rssd_id, reporting_period)
+    if df is None or df.empty:
+        return None
+
+    def _sum_or_none(codes: tuple[str, ...]) -> float | None:
+        """Sum sub-items, but only when at least one was actually reported —
+        a true $0 must not be conflated with 'absent from the filing'."""
+        vals = [_lookup_concept(df, c) for c in codes]
+        present = [v for v in vals if v is not None]
+        return sum(present) if present else None
+
+    categories: dict[str, dict[str, float | None]] = {}
+    for cat, col_codes in _RCN_CATEGORIES.items():
+        categories[cat] = {
+            col: _sum_or_none(codes)
+            for col, codes in zip(_RCN_COLS, col_codes)
+        }
+
+    totals = {key: _lookup_concept(df, code)
+              for key, code in _RCN_TOTAL_CODES.items()}
+
+    # Bank filed no RC-N content (e.g. a thrift filer or parse mismatch) —
+    # don't return a matrix of all-Nones as if it were real data.
+    if (all(v is None for cols in categories.values() for v in cols.values())
+            and all(v is None for v in totals.values())):
+        return None
+
+    # Residual "other": filed total minus the disjoint named categories.
+    # Absent categories contribute nothing to the filed total (blank == $0
+    # in the filing), so summing only the present values is exact.
+    other: dict[str, float | None] = {}
+    for col, total_key in zip(_RCN_COLS, _RCN_TOTAL_CODES):
+        total = totals[total_key]
+        if total is None:
+            other[col] = None
+            continue
+        named = sum(v for cols in categories.values()
+                    if (v := cols[col]) is not None)
+        residual = total - named
+        # Negative residual = the disjointness assumption broke for this
+        # filing — render n/a, never a negative balance.
+        other[col] = residual if residual >= 0 else None
+    categories["other"] = other
+
+    out: dict = {
+        "reporting_period": reporting_period or latest_reporting_period(),
+        "rssd_id": int(rssd_id),
+        "categories": categories,
+        "categories_usd": {
+            cat: {col: (v * FFIEC_DOLLAR_SCALE if v is not None else None)
+                  for col, v in cols.items()}
+            for cat, cols in categories.items()
+        },
+    }
+    for key, v in totals.items():
+        out[key] = v
+        out[f"{key}_usd"] = v * FFIEC_DOLLAR_SCALE if v is not None else None
+    return out
+
+
 def maturity_ladder_to_yearly_pace(ladder: dict) -> dict[int, float]:
     """
     Convert a 6-bucket maturity ladder to cumulative repricing fractions

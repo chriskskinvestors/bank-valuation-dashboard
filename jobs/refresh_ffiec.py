@@ -9,7 +9,9 @@ into call_report_securities table. Bank-specific NIM repricing pace
 then reads from this table instead of using the generic ~29%/yr default.
 The same fetched call report also yields Schedule RI income detail
 (SNL Income Statement rows), upserted into ri_income_detail per
-bank-quarter — RI failures are logged but never fatal to the job.
+bank-quarter, and Schedule RC-N past-due/nonaccrual loan detail
+(SNL Asset Quality by Loan Type matrix), upserted into rcn_detail —
+RI/RC-N failures are logged but never fatal to the job.
 
 Auth: requires FFIEC_USERNAME + FFIEC_JWT_TOKEN env vars (mounted from
 Google Secret Manager). If missing, the job exits early with code 2.
@@ -63,32 +65,56 @@ def _persist_ri_detail(cert: int, rssd_id: int, period: str, df) -> str:
         return f"fail:{type(e).__name__}: {str(e)[:80]}"
 
 
+def _persist_rcn_detail(cert: int, rssd_id: int, period: str, df) -> str:
+    """
+    Extract + store Schedule RC-N past-due/nonaccrual loan detail from an
+    already-fetched Call Report (no extra HTTP call). Returns 'ok',
+    'no_data', or 'fail:<reason>' — never raises (RC-N failures must not
+    affect the ladder accounting or kill the job).
+    """
+    from data.ffiec_client import get_rcn_detail
+    from data.call_report_store import upsert_rcn_detail
+    try:
+        # get_rcn_detail returns None (not an all-None matrix) when the
+        # report has no RC-N content, so no extra emptiness check here.
+        detail = get_rcn_detail(rssd_id, period, call_report_df=df)
+        if detail is None:
+            return "no_data"
+        n = upsert_rcn_detail(cert, rssd_id, detail)
+        return "ok" if n else "fail:upsert_failed"
+    except Exception as e:
+        return f"fail:{type(e).__name__}: {str(e)[:80]}"
+
+
 def _refresh_one(
     cert: int, rssd_id: int, period: str,
-) -> tuple[int, int, str, str]:
-    """Fetch + store one bank. Returns (cert, n_buckets_written, err, ri_status)."""
+) -> tuple[int, int, str, str, str]:
+    """Fetch + store one bank.
+    Returns (cert, n_buckets_written, err, ri_status, rcn_status)."""
     from data.ffiec_client import (
         fetch_call_report, get_securities_maturity_ladder, get_loan_repricing,
     )
     from data.call_report_store import upsert_securities_ladder
 
     if not cert or not rssd_id:
-        return cert, 0, "missing_ids", "no_data"
+        return cert, 0, "missing_ids", "no_data", "no_data"
     try:
         df = fetch_call_report(rssd_id, period)
         if df is None or df.empty:
-            return cert, 0, "empty_call_report", "no_data"
+            return cert, 0, "empty_call_report", "no_data", "no_data"
     except Exception as e:
-        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", "no_data"
+        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", "no_data", "no_data"
 
-    # Schedule RI income detail rides on the same fetched call report —
-    # persisted even when the bank has no RC-B securities ladder.
+    # Schedule RI income detail and Schedule RC-N past-due/nonaccrual detail
+    # ride on the same fetched call report (never fetch twice) — persisted
+    # even when the bank has no RC-B securities ladder.
     ri_status = _persist_ri_detail(cert, rssd_id, period, df)
+    rcn_status = _persist_rcn_detail(cert, rssd_id, period, df)
 
     try:
         ladder = get_securities_maturity_ladder(rssd_id, period, call_report_df=df)
         if ladder is None:
-            return cert, 0, "no_securities_data", ri_status
+            return cert, 0, "no_securities_data", ri_status, rcn_status
         # Derive floating-loan share from the same Call Report (RC-C Memo 2
         # loan repricing buckets) — no extra HTTP call. None if the bank
         # didn't report the loan-repricing memoranda.
@@ -97,9 +123,9 @@ def _refresh_one(
         n = upsert_securities_ladder(
             cert, rssd_id, ladder, floating_loan_share=floating_share)
         return (cert, len(ladder.get("buckets", {})),
-                "" if n else "upsert_failed", ri_status)
+                "" if n else "upsert_failed", ri_status, rcn_status)
     except Exception as e:
-        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", ri_status
+        return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", ri_status, rcn_status
 
 
 def main() -> int:
@@ -187,6 +213,9 @@ def main() -> int:
     ri_ok = 0
     ri_no_data = 0
     ri_failures: list[tuple[int, str]] = []
+    rcn_ok = 0
+    rcn_no_data = 0
+    rcn_failures: list[tuple[int, str]] = []
     requests_in_window = 0
     window_start = time.time()
 
@@ -203,7 +232,7 @@ def main() -> int:
             requests_in_window = 0
             window_start = time.time()
 
-        cert, n_buckets, err, ri_status = _refresh_one(
+        cert, n_buckets, err, ri_status, rcn_status = _refresh_one(
             int(i["cert"]), int(i["rssd_id"]), period,
         )
         requests_in_window += 1
@@ -214,6 +243,13 @@ def main() -> int:
             ri_no_data += 1
         else:
             ri_failures.append((cert, ri_status))
+
+        if rcn_status == "ok":
+            rcn_ok += 1
+        elif rcn_status == "no_data":
+            rcn_no_data += 1
+        else:
+            rcn_failures.append((cert, rcn_status))
 
         if err == "":
             if n_buckets > 0:
@@ -243,6 +279,8 @@ def main() -> int:
     print(f"  Errors:              {len(errors)}")
     print(f"  RI detail stored:    ok={ri_ok} fail={len(ri_failures)} "
           f"no_data={ri_no_data}")
+    print(f"  RC-N detail stored:  ok={rcn_ok} fail={len(rcn_failures)} "
+          f"no_data={rcn_no_data}")
 
     if errors:
         print("\nError sample (first 10):")
@@ -253,6 +291,11 @@ def main() -> int:
         print("\nRI detail failure sample (first 10):")
         for cert, ri_err in ri_failures[:10]:
             print(f"  cert={cert} {ri_err}")
+
+    if rcn_failures:
+        print("\nRC-N detail failure sample (first 10):")
+        for cert, rcn_err in rcn_failures[:10]:
+            print(f"  cert={cert} {rcn_err}")
 
     # Exit-code logic measures errors per attempt — banks with no
     # securities (legitimate empty RC-B Memo 2) are not failures.

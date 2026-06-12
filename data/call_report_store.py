@@ -32,6 +32,15 @@ Tables:
     PRIMARY KEY (cert, report_date)
   )
 
+  rcn_detail(
+    cert        INTEGER NOT NULL — FDIC certificate (joins bank)
+    rssd_id     INTEGER NOT NULL — Fed RSSD ID
+    report_date DATE NOT NULL    — quarter-end of the report
+    detail_json TEXT             — full get_rcn_detail dict as JSON
+    ingested_at TIMESTAMP
+    PRIMARY KEY (cert, report_date)
+  )
+
 Public functions:
   • init_call_report_schema()                   — idempotent CREATE TABLE
   • upsert_securities_ladder(cert, rssd, ...)   — write one bank's data
@@ -39,6 +48,8 @@ Public functions:
   • get_all_ladders()                           — bulk read for ranking
   • upsert_ri_income_detail(cert, rssd, detail) — write one bank-quarter's RI detail
   • get_stored_ri_detail(cert, quarters=8)      — read RI detail, newest-first
+  • upsert_rcn_detail(cert, rssd, detail)       — write one bank-quarter's RC-N detail
+  • get_stored_rcn_detail(cert, quarters=8)     — read RC-N detail, newest-first
 """
 
 from __future__ import annotations
@@ -114,6 +125,24 @@ def init_call_report_schema():
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_ri_detail_date "
             "ON ri_income_detail(report_date DESC)"
+        ))
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS rcn_detail (
+                cert        INTEGER NOT NULL,
+                rssd_id     INTEGER NOT NULL,
+                report_date DATE NOT NULL,
+                detail_json TEXT,
+                ingested_at {ts_default},
+                PRIMARY KEY (cert, report_date)
+            )
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_rcn_detail_rssd "
+            "ON rcn_detail(rssd_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_rcn_detail_date "
+            "ON rcn_detail(report_date DESC)"
         ))
 
 
@@ -336,6 +365,101 @@ def get_stored_ri_detail(cert: int, quarters: int = 8) -> list[dict]:
         except Exception as e:
             # A corrupted row must not pose as a valid (empty) quarter.
             print(f"[call_report_store] corrupted RI detail JSON for cert "
+                  f"{cert}: {type(e).__name__}: {e}")
+            continue
+        if not detail:
+            continue
+
+        # Normalize reporting_period from the date column (the JSON copy may
+        # be ISO or MM/DD/YYYY depending on what the client was handed).
+        report_date = row.report_date
+        if hasattr(report_date, "strftime"):
+            detail["reporting_period"] = report_date.strftime("%m/%d/%Y")
+        else:
+            s = str(report_date)
+            try:
+                y, m, d = s[:10].split("-")
+                detail["reporting_period"] = f"{m}/{d}/{y}"
+            except Exception:
+                detail["reporting_period"] = s
+        detail["rssd_id"] = int(row.rssd_id or 0)
+        out.append(detail)
+    return out
+
+
+def upsert_rcn_detail(cert: int, rssd_id: int, detail: dict) -> int:
+    """
+    Write one bank's Schedule RC-N past-due/nonaccrual detail for one
+    reporting period. Returns 1 on success, 0 otherwise.
+
+    detail is the dict returned by ffiec_client.get_rcn_detail (stored whole
+    as JSON so new RC-N categories need no migration).
+    """
+    from sqlalchemy import text
+
+    if not detail:
+        return 0
+
+    report_date = _parse_period(detail.get("reporting_period", ""))
+    if not report_date:
+        return 0
+
+    eng = _get_engine()
+    row = {
+        "cert": int(cert),
+        "rssd_id": int(rssd_id),
+        "report_date": report_date,
+        "detail_json": json.dumps(detail),
+    }
+
+    with eng.begin() as conn:
+        if _USE_POSTGRES:
+            sql = text("""
+                INSERT INTO rcn_detail
+                  (cert, rssd_id, report_date, detail_json)
+                VALUES
+                  (:cert, :rssd_id, :report_date, :detail_json)
+                ON CONFLICT (cert, report_date) DO UPDATE SET
+                  rssd_id = EXCLUDED.rssd_id,
+                  detail_json = EXCLUDED.detail_json,
+                  ingested_at = NOW()
+            """)
+        else:
+            sql = text("""
+                INSERT OR REPLACE INTO rcn_detail
+                  (cert, rssd_id, report_date, detail_json)
+                VALUES
+                  (:cert, :rssd_id, :report_date, :detail_json)
+            """)
+        conn.execute(sql, row)
+    return 1
+
+
+def get_stored_rcn_detail(cert: int, quarters: int = 8) -> list[dict]:
+    """
+    Return up to `quarters` stored RC-N detail dicts for a bank,
+    newest-first, each in the shape ffiec_client.get_rcn_detail returns
+    (reporting_period MM/DD/YYYY, rssd_id, categories matrix + totals).
+    Empty list when nothing is stored.
+    """
+    from sqlalchemy import text
+    eng = _get_engine()
+    with eng.begin() as conn:
+        rows = conn.execute(text("""
+            SELECT report_date, rssd_id, detail_json
+            FROM rcn_detail
+            WHERE cert = :cert
+            ORDER BY report_date DESC
+            LIMIT :quarters
+        """), {"cert": int(cert), "quarters": int(quarters)}).fetchall()
+
+    out: list[dict] = []
+    for row in rows:
+        try:
+            detail = json.loads(row.detail_json) if row.detail_json else None
+        except Exception as e:
+            # A corrupted row must not pose as a valid (empty) quarter.
+            print(f"[call_report_store] corrupted RC-N detail JSON for cert "
                   f"{cert}: {type(e).__name__}: {e}")
             continue
         if not detail:
