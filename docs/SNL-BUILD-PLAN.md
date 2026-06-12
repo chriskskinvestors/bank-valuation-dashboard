@@ -179,6 +179,18 @@ Census client (data/census_client.py) built for tab 11 demographics —
 NEEDS CENSUS_API_KEY (free signup api.census.gov/data/key_signup.html;
 user action) in env + Secret Manager + deploy.yml secrets list.
 
+## 13. Ownership section sub-tabs (user, 2026-06-12)
+SNL nav: Ownership Summary · Ownership Detailed · Ownership History ·
+Ownership Crossholdings · Insider Activity.
+| Sub-tab | Source |
+|---|---|
+| Ownership Summary | 13F aggregation (HAVE) + proxy beneficial-ownership table + insider % — institutional/insider/retail breakdown |
+| Ownership Detailed | full 13F holder list w/ shares, %, QoQ change (HAVE the data; richer table) |
+| Ownership History | 13F positions across quarters — needs history retention in the 13F store (currently latest-window) |
+| Ownership Crossholdings | computed cross-join of 13F across OUR universe: which banks this bank's holders also own — we can beat SNL with peer-overlap analytics |
+| Insider Activity | existing tab (moves in unchanged) |
+Plus 13D/G (5%+ holders) from EDGAR for the summary's activist panel.
+
 ## Decisions (user, 2026-06-12)
 - **One tab END-TO-END at a time**, screenshot order: IS → BS → Capital →
   AQ Detail → AQ by Loan Type → Composition → IRR → FV → Loan Comp (As Rptd).
