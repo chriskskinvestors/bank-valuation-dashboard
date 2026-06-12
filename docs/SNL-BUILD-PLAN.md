@@ -179,17 +179,19 @@ Census client (data/census_client.py) built for tab 11 demographics —
 NEEDS CENSUS_API_KEY (free signup api.census.gov/data/key_signup.html;
 user action) in env + Secret Manager + deploy.yml secrets list.
 
-## 13. Ownership section sub-tabs (user, 2026-06-12)
+## 13. Ownership section sub-tabs (CONFIRMED via BANR screenshots 2026-06-12)
 SNL nav: Ownership Summary · Ownership Detailed · Ownership History ·
-Ownership Crossholdings · Insider Activity.
-| Sub-tab | Source |
+Ownership Crossholdings (still name-only) · Insider Activity.
+| Page element | Source |
 |---|---|
-| Ownership Summary | 13F aggregation (HAVE) + proxy beneficial-ownership table + insider % — institutional/insider/retail breakdown |
-| Ownership Detailed | full 13F holder list w/ shares, %, QoQ change (HAVE the data; richer table) |
-| Ownership History | 13F positions across quarters — needs history retention in the 13F store (currently latest-window) |
-| Ownership Crossholdings | computed cross-join of 13F across OUR universe: which banks this bank's holders also own — we can beat SNL with peer-overlap analytics |
-| Insider Activity | existing tab (moves in unchanged) |
-Plus 13D/G (5%+ holders) from EDGAR for the summary's activist panel.
+| Summary: type breakdown (Institutions/Insiders/State/Public × shares, %CSO, mkt val) + pie | 13F agg (HAVE) + Form 3/4 insider holdings + calc residual |
+| Summary: Float Summary walk (insider + state + untraded → excluded → free float → float %) | calc from the above; click-through formula |
+| Summary view sub-tabs (Top Holders, Top MF Holders, Owner Type, Country, Style, Mkt Cap, Turnover, Top Buyers/Sellers, Activity) | 13F agg + holder-metadata analytics (below) |
+| Detailed: holder table (shares, %CSO, mkt val, Δshares/%, position date, source, turnover cat+%, orientation Active/Passive, equity assets, city/state, style, cap emphasis) — 370 holders | 13F (HAVE) + N-PORT mutual-fund agg (NEW ingest) + holder-book analytics: SNL computes style/turnover from each holder's FULL 13F book — phase 1: light versions from our-universe positions; phase 2: per-holder full-filing fetch |
+| History: holder × quarter matrix, 5y, expandable (shares, %CSO, mkt val, Δ, %Δ) | 13F store with QUARTERLY HISTORY RETENTION (store change) |
+| Insider Activity: volume/price graph w/ buy-sell markers, 3M/1Y/5Y aggregates (value bought/sold, buyers:sellers), full Form 4 table w/ filing links | Form 4 ingest (HAVE) + price store (HAVE) — computation + layout |
+Crossholdings remains inferred (cross-join of 13F across our universe).
+Plus 13D/G for activist panel.
 
 ## 14. Transactions section (NEW top-level tab; user, 2026-06-12)
 SNL nav: Transactions Summary · Detailed M&A History · Detailed Offerings ·
