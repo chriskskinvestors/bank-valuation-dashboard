@@ -51,7 +51,13 @@ from ui.company_nav import (
 # straight into Company Analysis. Set the section's session_state BEFORE the
 # radio instantiates so it opens on the right page; the bank itself is picked
 # up below from the same query param.
-if st.query_params.get("bank") and st.session_state.get("nav_section") != "Company":
+# Website-grade URL state: the address bar carries the view, so a browser
+# refresh (or a shared link) restores exactly where you were instead of
+# bouncing to Home. ?s=<section>; Company adds ?bank= and ?tab=.
+_qs = st.query_params.get("s")
+if "nav_section" not in st.session_state and _qs in SECTIONS:
+    st.session_state["nav_section"] = _qs
+if st.query_params.get("bank") and st.session_state.get("nav_section") not in ("Company",):
     st.session_state["nav_section"] = "Company"
 # Universe scope first — the nav bar's status chip shows live coverage.
 # (The watchlist concept is retired; the variable keeps its name because
@@ -70,6 +76,11 @@ with _nav_right:
             unsafe_allow_html=True)
     with _u2:
         with st.popover("⋯", use_container_width=True):
+            if st.button("Refresh this view", use_container_width=True, key="refresh_view"):
+                # Targeted refresh: flag it; the handler below the cache
+                # definitions clears just this page's data (no global nuke).
+                st.session_state["_refresh_view_pending"] = section
+                st.rerun()
             if st.button("Refresh all data", use_container_width=True, key="refresh_all"):
                 st.cache_data.clear()
                 cache.clear_all()
@@ -96,6 +107,17 @@ with _nav_right:
             else:
                 st.session_state.ibkr_connected = False
 auto_refresh = st.session_state.get("auto_refresh", False)
+
+# Keep the URL in sync with the current section (no-op when unchanged).
+if st.query_params.get("s") != section:
+    st.query_params["s"] = section
+if section != "Company":
+    for _k in ("bank", "tab"):
+        if _k in st.query_params:
+            try:
+                del st.query_params[_k]
+            except Exception:
+                pass
 
 # ── Level 2 Navigation (contextual) ─────────────────────────────────────
 screening_tab = None
@@ -130,18 +152,15 @@ elif section == "Company":
                        "filings": "Filings & Reports", "peer": "Peer Rank",
                        "ownership": "Institutional (13F)", "earnings": "Earnings",
                        "deposits": "Deposit Trends"}
-        _goto = _TAB_TOKENS.get((_qp.get("tab") or "").lower())
-        if _goto and _goto in COMPANY_SECTION_OF:
+        _raw_tab = _qp.get("tab") or ""
+        _goto = _TAB_TOKENS.get(_raw_tab.lower()) or (
+            _raw_tab if _raw_tab in COMPANY_SECTION_OF else None)
+        # Only pre-seed widget state on a fresh session (a reload/shared link);
+        # once the widgets exist they own the state and we sync URL <- widgets.
+        if _goto and "company_section" not in st.session_state:
             _sec = COMPANY_SECTION_OF[_goto]
             st.session_state["company_section"] = _sec
             st.session_state[f"company_subtab::{_sec}"] = _goto
-        # Consume deep-link params so they don't persist on the next interaction.
-        for _k in ("bank", "tab"):
-            if _k in _qp:
-                try:
-                    del st.query_params[_k]
-                except Exception:
-                    pass
 
 
 
@@ -385,6 +404,25 @@ _NEEDS_WATCHLIST = (
     or (section == "Screening" and screening_tab is not None)  # Screening default filter
     or section == "Peers"  # Peer comparison needs all watchlist metrics
 )
+
+# Deferred "Refresh this view" handler (set in the nav utilities popover,
+# processed here where the cached loaders exist).
+_rv = st.session_state.pop("_refresh_view_pending", None)
+if _rv == "Company":
+    _t = (st.session_state.get("company_pick") or "").strip().upper()
+    load_single_bank_metrics_cached.clear()
+    if _t:
+        for _ck in (f"sec:{_t}", f"fdic:{_t}", f"fdic_hist:{_t}"):
+            try:
+                cache.invalidate(_ck)
+            except Exception:
+                pass
+elif _rv:
+    _load_all_data_cached.clear()
+    try:
+        cache.invalidate(_METRICS_SNAP_KEY)
+    except Exception:
+        pass
 
 if _NEEDS_WATCHLIST:
     all_metrics = load_all_data_fast(watchlist)
@@ -779,6 +817,13 @@ elif section == "Company":
         else:
             company_subtab = _subs[0]
         st.markdown("<div style='margin-bottom:4px;'></div>", unsafe_allow_html=True)
+
+        # URL <- widgets: the address bar always names the exact view, so a
+        # browser refresh or shared link lands right back here.
+        for _k, _v in (("s", "Company"), ("bank", company_ticker),
+                       ("tab", company_subtab)):
+            if st.query_params.get(_k) != _v:
+                st.query_params[_k] = _v
 
     if company_ticker:
         rendered = render_company_subtab(company_subtab, company_ticker, {
