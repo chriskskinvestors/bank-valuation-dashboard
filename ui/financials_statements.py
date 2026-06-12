@@ -363,10 +363,10 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 if cik else fdic_link)
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
 
-    # Table on the left; fill the empty space to its right with trend charts
-    # built from the same FDIC history.
+    # Wide table left, slimmer trend column right (DESIGN-SYSTEM.md: the
+    # statement IS the page; charts support it).
     tr = _DEFAULT_TRENDS if trends is None else trends
-    _tbl_col, _chart_col = st.columns([1, 1])
+    _tbl_col, _chart_col = st.columns([3, 2])
     with _tbl_col:
         components.html(html, height=height, scrolling=False)
     with _chart_col:

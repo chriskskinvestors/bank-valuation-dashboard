@@ -677,30 +677,28 @@ body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto
 /* width:100% so the table fills its column instead of hugging the left and
    leaving a dead gap next to the charts. The label column is fixed; the period
    columns share the rest evenly. */
-table {{ width:100%; border-collapse:collapse; font-size:12px;
-  border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
-thead th {{ border-bottom:1px solid rgba(148,163,184,0.3); padding:4px 10px; }}
-.lblh {{ text-align:left; color:#64748b; font-weight:500; width:34%;
-  border-right:1px solid rgba(148,163,184,0.22); }}
-.colh {{ text-align:right; font-weight:600; color:#0f172a; }}
-td.sec {{ padding:6px 9px 2px; font-weight:700; color:#1e3a8a; font-size:10px;
-  text-transform:uppercase; letter-spacing:0.04em; background:rgba(241,245,249,0.6); }}
-/* Label column: anchored with a right divider so the eye can run across a row. */
-td.lbl {{ text-align:left; padding:2.5px 9px; color:#475569;
-  border-right:1px solid rgba(148,163,184,0.22);
-  border-bottom:1px solid rgba(148,163,184,0.10); }}
-td.val {{ text-align:right; padding:2.5px 10px; color:#1d4ed8; cursor:pointer;
-  position:relative; border-bottom:1px solid rgba(148,163,184,0.10);
+/* Full-grid terminal table (DESIGN-SYSTEM.md: SNL spreadsheet look,
+   terminal density, navy links, negatives as red parens). */
+table {{ width:100%; border-collapse:collapse; font-size:11px; }}
+thead th {{ border:0.5px solid #d6dae3; background:#f4f6f9; padding:2px 7px; }}
+.lblh {{ text-align:left; color:#64748b; font-weight:600; width:34%; }}
+.colh {{ text-align:right; font-weight:600; color:#334155; }}
+td.sec {{ padding:4px 7px 2px; font-weight:700; color:#1e3a8a; font-size:9px;
+  text-transform:uppercase; letter-spacing:0.06em; background:#f4f6f9;
+  border:0.5px solid #d6dae3; }}
+td.lbl {{ text-align:left; padding:2px 7px; color:#475569;
+  border:0.5px solid #e2e6ec; }}
+td.val {{ text-align:right; padding:2px 7px; color:#1e40af; cursor:pointer;
+  position:relative; border:0.5px solid #e2e6ec;
   font-variant-numeric:tabular-nums; }}
 td.val.dead {{ color:#94a3b8; cursor:default; }}
-/* Zebra striping (alternate metric rows) for static scannability. */
-tr.zebra td.lbl, tr.zebra td.val {{ background:rgba(148,163,184,0.055); }}
-/* Whole-row highlight on hover — trace label ↔ values across the row. */
-tbody tr:hover td.lbl, tbody tr:hover td.val {{ background:rgba(37,99,235,0.09); }}
+td.val.neg {{ color:#b91c1c; }}
+tr.zebra td.lbl, tr.zebra td.val {{ background:#fafbfc; }}
+tbody tr:hover td.lbl, tbody tr:hover td.val {{ background:rgba(30,64,175,0.07); }}
 tbody tr:hover td.lbl {{ color:#0f172a; font-weight:600; }}
-td.val:hover {{ background:rgba(37,99,235,0.16) !important; text-decoration:underline; }}
-.foot {{ margin-top:8px; font-size:12px; color:#64748b; }}
-.foot a {{ color:#2563eb; text-decoration:none; }}
+td.val:hover {{ background:rgba(30,64,175,0.14) !important; text-decoration:underline; }}
+.foot {{ margin-top:7px; font-size:11px; color:#64748b; }}
+.foot a {{ color:#1e40af; text-decoration:none; }}
 #ov {{ position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none;
   align-items:flex-start; justify-content:center; padding-top:40px; z-index:50; }}
 #card {{ width:min(440px,92%); background:#fff; border:1px solid rgba(148,163,184,0.3);
@@ -714,21 +712,21 @@ td.val:hover {{ background:rgba(37,99,235,0.16) !important; text-decoration:unde
 #card .meta {{ font-size:11.5px; color:#64748b; margin-top:2px; }}
 #card .def {{ font-size:12px; color:#475569; padding:10px 16px; line-height:1.5;
   border-bottom:1px solid rgba(148,163,184,0.15); }}
-#card .def b {{ color:#2563eb; font-weight:600; letter-spacing:0.03em; font-size:10.5px; }}
+#card .def b {{ color:#1e40af; font-weight:600; letter-spacing:0.03em; font-size:10.5px; }}
 #card .calc {{ padding:12px 16px; }}
 .bigrow {{ display:flex; justify-content:space-between; align-items:baseline;
   font-weight:700; color:#0f172a; font-size:15px; margin-bottom:8px; }}
 .term {{ display:flex; justify-content:space-between; padding:4px 0 4px 14px;
   font-size:12.5px; color:#334155; border-top:1px dashed rgba(148,163,184,0.25); }}
-.term .tv {{ color:#1d4ed8; font-variant-numeric:tabular-nums; }}
+.term .tv {{ color:#1e40af; font-variant-numeric:tabular-nums; }}
 .sub {{ font-size:11px; color:#94a3b8; padding:0 0 2px 14px; }}
 .doc {{ font-size:11px; color:#94a3b8; padding:0 0 5px 14px; }}
-.doc a {{ color:#2563eb; text-decoration:none; }}
+.doc a {{ color:#1e40af; text-decoration:none; }}
 .doc a:hover {{ text-decoration:underline; }}
 .op {{ font-size:12px; color:#64748b; text-align:center; padding:8px 0 2px;
   font-style:italic; }}
 .rep {{ font-size:11.5px; color:#475569; padding:8px 0 2px; }}
-.src {{ display:inline-block; margin-top:10px; font-size:12px; color:#2563eb;
+.src {{ display:inline-block; margin-top:10px; font-size:12px; color:#1e40af;
   text-decoration:none; }}
 </style></head><body>
 <table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>
@@ -763,6 +761,11 @@ function open(c){{
 function hide(){{ ov.style.display = "none"; }}
 ov.addEventListener("click", e => {{ if(e.target===ov) hide(); }});
 document.addEventListener("keydown", e => {{ if(e.key==="Escape") hide(); }});
+document.querySelectorAll("td.val").forEach(td => {{
+  const t = td.textContent.trim();
+  if (/^-[\\d$.,]/.test(t)) {{ td.textContent = "(" + t.slice(1) + ")"; td.classList.add("neg"); }}
+  else if (t.startsWith("(")) td.classList.add("neg");
+}});
 document.querySelectorAll("td.val[data-cid]").forEach(td =>
   td.addEventListener("click", () => {{ const c = CELLS[td.dataset.cid]; if(c) open(c); }}));
 </script></body></html>"""
