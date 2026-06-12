@@ -54,6 +54,22 @@ _RELEVANCE = {
 }
 
 
+# Hard stop-list: a relevance keyword inside a sports/entertainment story
+# still isn't desk news ("Paxton warns Big 12 of potential legal action
+# over any Texas Tech Sorsby sanctions" passed the 'sanction' keyword).
+_STOP_TOPICS = (
+    "nfl", "nba", "mlb", "nhl", "ncaa", "big 12", "big ten", "sec football",
+    "quarterback", "touchdown", "coach", "playoff", "super bowl",
+    "world cup", "olympic", "concert", "box office", "celebrity",
+    "bachelor", "kardashian", "grammy", "oscars", "album",
+)
+
+
+def _stopped(headline: str) -> bool:
+    h = (headline or "").lower()
+    return any(w in h for w in _STOP_TOPICS)
+
+
 def _source_ok(source_name: str) -> bool:
     s = (source_name or "").strip().lower()
     return bool(s) and any(w in s for w in REPUTABLE_SOURCES)
@@ -73,6 +89,8 @@ def curate_topic_news(items: list[dict], category: str,
     scored = []
     for i, it in enumerate(items):
         if not _source_ok(it.get("source_name") or ""):
+            continue
+        if _stopped(it.get("headline") or ""):
             continue
         hits = _relevance_hits(it.get("headline") or "", category)
         if hits < 1:

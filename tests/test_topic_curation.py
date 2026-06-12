@@ -80,6 +80,13 @@ class TestTopicCuration(unittest.TestCase):
         items = [{"headline": "Fed cuts rates", "url": "https://x.com"}]
         self.assertEqual(curate_topic_news(items, "macro"), [])
 
+    def test_sports_with_relevance_keyword_still_rejected(self):
+        # Live leak 2026-06-12: 'sanctions' keyword let a college-sports
+        # story onto GEOPOLITICAL. Stop-list must beat keyword hits.
+        items = [_item("Paxton warns Big 12 of potential legal action over "
+                       "any Texas Tech Sorsby sanctions", "The Hill")]
+        self.assertEqual(curate_topic_news(items, "geopolitical"), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

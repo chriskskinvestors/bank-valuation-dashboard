@@ -407,19 +407,22 @@ def _render_rates_strip():
     hy = _fred_points("BAMLH0A0HYM2")
     vix = _fred_points("VIXCLS")
 
-    def _p(label, pts, fmt="{:.2f}%", spread=False):
+    def _p(label, pts, fmt="{:.2f}%", spread=False, unit="bp"):
         lv, pr = pts[0], pts[1]
         if lv is None:
             return stat_pill(label, "—")
         val = fmt.format(lv)
         if spread and lv < 0:
             val = f'<span style="color:var(--danger);">{val}</span>'
-        chg = (lv - pr) * 100 if pr is not None else None
-        return stat_pill(label, val, delta_chip(chg, "bp"))
+        if pr is None:
+            chg = None
+        else:  # bp = rate delta ×100; pt = level delta as-is (VIX)
+            chg = (lv - pr) * 100 if unit == "bp" else (lv - pr)
+        return stat_pill(label, val, delta_chip(chg, unit))
 
     pills = [_p("FF", ff), _p("10Y", t10),
              _p("10Y−2Y", sp, "{:+.2f}", spread=True),
-             _p("HY OAS", hy), _p("VIX", vix, "{:.1f}")]
+             _p("HY OAS", hy), _p("VIX", vix, "{:.1f}", unit="pt")]
     try:
         from data.price_cache_store import get_prices
         kre = (get_prices(["KRE"]) or {}).get("KRE") or {}
@@ -428,8 +431,10 @@ def _render_rates_strip():
             chg_pct = kre.get("change_pct")
             if chg_pct is None and prev:
                 chg_pct = ((px / prev) - 1) * 100
+            # Single $ in the whole pill row — no LaTeX pairing risk, and
+            # the backslash escape renders literally inside the HTML pill.
             pills.append(stat_pill(
-                "KRE", f"\\${px:,.2f}",
+                "KRE", f"${px:,.2f}",
                 delta_chip(chg_pct, "%") if chg_pct is not None else ""))
     except Exception:
         pass
