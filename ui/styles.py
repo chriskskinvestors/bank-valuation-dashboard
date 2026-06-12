@@ -31,12 +31,13 @@ CUSTOM_CSS = """
         --text-muted:     #94a3b8;
         --text-inverse:   #ffffff;
 
-        /* Brand — refined blues */
-        --brand-primary:   #2563eb;
-        --brand-hover:     #1d4ed8;
-        --brand-accent:    #3b82f6;
-        --brand-soft:      rgba(37, 99, 235, 0.08);
-        --brand-border:    rgba(37, 99, 235, 0.24);
+        /* Brand — institutional navy (DESIGN-SYSTEM.md: deeper navy/steel
+           replaces the bright blue for links, active states, primary series) */
+        --brand-primary:   #1e40af;
+        --brand-hover:     #1e3a8a;
+        --brand-accent:    #2563eb;
+        --brand-soft:      rgba(30, 64, 175, 0.07);
+        --brand-border:    rgba(30, 64, 175, 0.24);
 
         /* Semantic */
         --success:        #059669;
@@ -70,7 +71,83 @@ CUSTOM_CSS = """
         --fs-md:   1rem;       /* 16px — emphasized body, card titles */
         --fs-lg:   1.125rem;   /* 18px — section headings */
         --fs-xl:   1.375rem;   /* 22px — page titles, hero numbers */
+
+        /* Terminal density (DESIGN-SYSTEM.md) */
+        --cell-pad-y: 2px;
+        --cell-pad-x: 7px;
+        --grid-line:  #e2e6ec;
+        --grid-head:  #d6dae3;
+        --grid-head-bg: #f4f6f9;
     }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       Chrome — top nav, title bar, ledgers, grid tables (DESIGN-SYSTEM.md)
+    ═══════════════════════════════════════════════════════════════════ */
+    /* Top nav: the section radio rendered as a horizontal nav bar. */
+    .st-key-topnav { border-bottom: 1px solid var(--grid-head); }
+    .st-key-topnav [role="radiogroup"] { display: flex; gap: 4px; flex-wrap: wrap; }
+    .st-key-topnav label {
+        border: none !important; background: transparent !important;
+        padding: 4px 10px !important; margin: 0 !important;
+        font-size: var(--fs-sm) !important; color: var(--text-secondary) !important;
+        border-radius: 0 !important; cursor: pointer;
+        border-bottom: 2px solid transparent !important;
+    }
+    .st-key-topnav label:has(input:checked) {
+        color: var(--brand-primary) !important; font-weight: 600 !important;
+        border-bottom: 2px solid var(--brand-primary) !important;
+        background: transparent !important;
+    }
+    .st-key-topnav label > div:first-child { display: none !important; } /* hide radio dot */
+
+    /* SNL-style title bar */
+    .ksk-titlebar { padding: 2px 0 0; }
+    .ksk-titlebar .tb-main { font-size: var(--fs-md); font-weight: 600; color: var(--text-primary); }
+    .ksk-titlebar .tb-page { font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0.06em; color: var(--text-secondary); }
+    .ksk-titlebar .tb-sep  { color: var(--text-muted); font-weight: 400; padding: 0 4px; }
+    .ksk-titlebar .tb-ids  { font-size: var(--fs-xs); color: var(--text-secondary); margin-top: 1px; }
+    .ksk-titlebar .tb-ids a { color: var(--brand-primary); text-decoration: none; }
+
+    /* Ledger rows (boxless KPI blocks) */
+    .ksk-ledger { font-size: var(--fs-sm); }
+    .ksk-ledger .lg-title {
+        font-size: var(--fs-2xs); letter-spacing: 0.08em; font-weight: 600;
+        color: var(--text-secondary); border-bottom: 1px solid var(--grid-head);
+        padding-bottom: 2px; margin-bottom: 3px; text-transform: uppercase;
+    }
+    .ksk-ledger .lg-row {
+        display: flex; justify-content: space-between; gap: 10px;
+        padding: var(--cell-pad-y) 0; border-bottom: 0.5px solid #eef1f5;
+    }
+    .ksk-ledger .lg-row:last-child { border-bottom: none; }
+    .ksk-ledger .lg-label { color: var(--text-secondary); }
+    .ksk-ledger .lg-val   { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+    /* Full-grid data tables (SNL spreadsheet look) */
+    .ksk-grid table, table.ksk-grid {
+        border-collapse: collapse; font-size: var(--fs-xs);
+        font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .ksk-grid th, .ksk-grid thead td, table.ksk-grid th {
+        border: 0.5px solid var(--grid-head); background: var(--grid-head-bg);
+        padding: var(--cell-pad-y) var(--cell-pad-x);
+        font-weight: 600; color: var(--text-secondary); text-align: right;
+    }
+    .ksk-grid td, table.ksk-grid td {
+        border: 0.5px solid var(--grid-line);
+        padding: var(--cell-pad-y) var(--cell-pad-x); text-align: right;
+    }
+    .ksk-grid th:first-child, .ksk-grid td:first-child { text-align: left; }
+    .ksk-grid .neg { color: var(--danger); }
+    .ksk-grid .lnk { color: var(--brand-primary); cursor: pointer; }
+    .ksk-grid .computed { border-bottom: 1px dotted var(--text-muted); }
+
+    /* Status dot */
+    .ksk-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+               margin-right: 4px; vertical-align: middle; }
+    .ksk-dot.ok { background: var(--success); }
+    .ksk-dot.warn { background: var(--warn); }
+    .ksk-dot.bad { background: var(--danger); }
 
     /* ═══════════════════════════════════════════════════════════════════
        Base

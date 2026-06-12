@@ -23,7 +23,7 @@ _TEXT_PRIMARY = "#0f172a"
 _TEXT_SECONDARY = "#475569"
 
 # Brand/semantic colors
-COLOR_PRIMARY = "#2563eb"          # refined blue
+COLOR_PRIMARY = "#1e40af"          # institutional navy (DESIGN-SYSTEM.md)
 COLOR_PRIMARY_LIGHT = "#3b82f6"    # accent blue
 COLOR_SUCCESS = "#059669"          # emerald
 COLOR_SUCCESS_LIGHT = "#10b981"
@@ -39,7 +39,7 @@ COLOR_FILL_DANGER = "rgba(220, 38, 38, 0.10)"
 
 # Categorical palette — refined for light mode (deeper tones)
 CATEGORICAL_PALETTE = [
-    "#2563eb",  # blue
+    "#1e40af",  # navy (brand primary)
     "#059669",  # emerald
     "#d97706",  # amber
     "#dc2626",  # red
