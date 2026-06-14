@@ -48,7 +48,9 @@ SLIM_USGAAP_CONCEPTS = {
     "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
     "CommonStockSharesOutstanding", "CommonStockSharesIssued",
     "TreasuryStockCommonShares", "WeightedAverageNumberOfSharesOutstandingBasic",
+    "WeightedAverageNumberOfDilutedSharesOutstanding",
     "EarningsPerShareDiluted", "EarningsPerShareBasic",
+    "AmortizationOfIntangibleAssets",
     "NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss",
     "Revenues", "CommonStockDividendsPerShareDeclared",
     "CashAndCashEquivalentsAtCarryingValue",
@@ -56,6 +58,14 @@ SLIM_USGAAP_CONCEPTS = {
     "Goodwill", "IntangibleAssetsNetExcludingGoodwill",
     "IntangibleAssetsNetIncludingGoodwill", "FiniteLivedIntangibleAssetsNet",
 }
+
+# Cache the slim projection under a key that embeds a hash of the kept-concept
+# set. When a concept is ADDED above, the hash changes, so blobs cached before
+# the addition are bypassed (re-fetched with the new concept) instead of
+# silently returning n/a for it — the 2026-06-14 avg-diluted-shares bug.
+import hashlib as _hashlib
+_SLIM_VER = _hashlib.md5(
+    ",".join(sorted(SLIM_USGAAP_CONCEPTS)).encode()).hexdigest()[:8]
 
 
 def _slim_facts(facts: dict) -> dict:
@@ -105,7 +115,7 @@ def fetch_company_facts(cik: int) -> dict:
     value) is preserved because we keep each kept concept's full unit arrays.
     """
     from data import cache
-    cache_key = f"sec_facts:{cik}"
+    cache_key = f"sec_facts:{_SLIM_VER}:{cik}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
