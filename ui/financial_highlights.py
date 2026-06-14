@@ -246,6 +246,14 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
         return {}
     eps_q = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="quarter")
     eps_a = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="annual")
+    epsb_q = _sec_map(facts, "EarningsPerShareBasic", instant=False, span="quarter")
+    epsb_a = _sec_map(facts, "EarningsPerShareBasic", instant=False, span="annual")
+    wad_q = _sec_map(facts, "WeightedAverageNumberOfDilutedSharesOutstanding",
+                     instant=False, span="quarter")
+    wad_a = _sec_map(facts, "WeightedAverageNumberOfDilutedSharesOutstanding",
+                     instant=False, span="annual")
+    amort_q = _sec_map(facts, "AmortizationOfIntangibleAssets", instant=False, span="quarter")
+    amort_a = _sec_map(facts, "AmortizationOfIntangibleAssets", instant=False, span="annual")
     dps_q = _sec_map(facts, "CommonStockDividendsPerShareDeclared", instant=False, span="quarter")
     dps_a = _sec_map(facts, "CommonStockDividendsPerShareDeclared", instant=False, span="annual")
     equity = _sec_map(facts, "StockholdersEquity", instant=True)
@@ -286,8 +294,20 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
         tbvps = ((eq - adj) / sh) if (eq and sh and adj is not None) else bvps
         eps, eps_note = _flow_for(d, eps_q, eps_a, quarterly)
         dps, dps_note = _flow_for(d, dps_q, dps_a, quarterly)
+        basic_eps, _ = _flow_for(d, epsb_q, epsb_a, quarterly)
+        avg_dil, _ = _flow_for(d, wad_q, wad_a, quarterly)
+        amort, _ = _flow_for(d, amort_q, amort_a, quarterly)
+        # Diluted EPS before intangible amortization: add back the after-tax
+        # intangible amortization per diluted share (21% statutory rate, flagged
+        # in the drill-down). n/a unless both amortization and the diluted share
+        # count are reported — never a fabricated add-back.
+        eps_before_amort = None
+        if eps is not None and amort and avg_dil:
+            eps_before_amort = round(eps + amort * (1 - 0.21) / avg_dil, 2)
         out[d] = {
             "eps": eps, "eps_note": eps_note, "dps": dps, "dps_note": dps_note,
+            "basic_eps": basic_eps, "avg_diluted_shares": avg_dil,
+            "eps_before_amort": eps_before_amort, "_amort": amort,
             "bvps": bvps, "tbvps": tbvps, "shares": sh,
             "_eq": eq, "_eq_date": eq_date, "_sh_date": sh_date,
             "_adj": adj, "_gw": gw, "_other": other, "_incl": incl.get(key),

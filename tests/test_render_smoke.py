@@ -576,6 +576,47 @@ class TestPerformanceComputedLines(unittest.TestCase):
         h = self._render([dict(self.PFD_Q1)])[0]
         self.assertIn("preferred dividends not in FDIC SDI feed", h)
 
+    def test_per_share_lines_wire_through(self):
+        # Pin the new SEC per-share spec wiring (a key typo would silently blank
+        # a line). The VALUES are verified separately against Regions' live SEC
+        # XBRL (Basic EPS 2.51, avg diluted 963,000,000 — exact to the filing);
+        # here we feed those known values and assert each line renders them.
+        import pandas as pd
+        import ui.financial_highlights as fh
+        PS = {"basic_eps": 2.51, "eps": 2.49, "eps_before_amort": 2.52,
+              "avg_diluted_shares": 963_000_000, "shares": 941_907_925,
+              "bvps": 17.89, "tbvps": 11.27, "dps": 0.65}
+        spec = [("PS", [
+            ("Basic EPS", "ps", "basic_eps"),
+            ("Diluted EPS before amortization", "ps", "eps_before_amort"),
+            ("Avg diluted shares (actual)", "shares", "avg_diluted_shares"),
+            ("Common shares outstanding (actual)", "shares", "shares"),
+        ])]
+        comp_v1 = self.fs.components
+        st = self.fs.st
+        import data.fdic_client as fc
+        captured = []
+        saved = (comp_v1.html, st.radio, self.fs.get_bank_info,
+                 fc.get_historical_financials, fh._per_share_for_ends)
+        try:
+            comp_v1.html = lambda html, **k: captured.append(html)
+            st.radio = lambda *a, **k: "Annual"
+            self.fs.get_bank_info = lambda t: {
+                "name": "Regions", "fdic_cert": 12368, "cik": "1281761"}
+            fc.get_historical_financials = (
+                lambda cert, quarters=36:
+                pd.DataFrame([{"REPDTE": "2025-12-31", "ASSET": 1}]))
+            fh._per_share_for_ends = lambda cik, ends, quarterly=False: {e: PS for e in ends}
+            self.fs.render_statement("RF", "psw", "PS", spec, with_persh=True)
+        finally:
+            (comp_v1.html, st.radio, self.fs.get_bank_info,
+             fc.get_historical_financials, fh._per_share_for_ends) = saved
+        h = captured[0]
+        self.assertIn("2.51", h)           # Basic EPS
+        self.assertIn("2.52", h)           # Diluted EPS before amortization
+        self.assertIn("963,000,000", h)    # Avg diluted shares
+        self.assertIn("941,907,925", h)    # Common shares outstanding
+
 
 class TestTableExports(unittest.TestCase):
     """Design-system decision #12: every data table gets an Export action.

@@ -304,7 +304,8 @@ def _spec_with_rie_rows(spec, rie_by_ci):
 
 def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                      trends: list | None = None, with_persh: bool = False,
-                     with_ri: bool = False, with_dep_cost: bool = False):
+                     with_ri: bool = False, with_dep_cost: bool = False,
+                     with_fte: bool = False):
     info = get_bank_info(ticker)
     name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
@@ -342,8 +343,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     # by report date; the RI-E itemized-expense sub-block is inserted only
     # when the bank actually itemized something in the displayed window.
     ri_by_ci, rie_by_ci = {}, {}
-    if with_ri:
+    if with_ri or with_fte:
+        # with_fte loads RI tax-exempt income for the FTE-NIM line WITHOUT the
+        # RI-E expense-row insertion (which only belongs on the Income tab).
         ri_by_ci, rie_by_ci = _ri_details_by_column(cert, recs_list)
+    if with_ri:
         spec = _spec_with_rie_rows(spec, rie_by_ci)
 
     # FFIEC deposit-cost split (Performance Analysis only) — keyed by report
@@ -683,6 +687,41 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             return v, calc(label, v, asof, ref, terms, op, False,
                            source="FFIEC Call Report — Schedule RI",
                            link=doc_link)
+        if kind == "ftenim":
+            # FTE net interest margin = reported NIM + the tax-equivalent gross-up
+            # of muni interest, expressed in bps of avg earning assets. n/a when
+            # Schedule RI tax-exempt income isn't ingested for this column — a
+            # bank without that detail shows reported NIM only, never a guess.
+            nim = _num(rec.get("NIMY")); ea = _avg(ci, "ERNAST")
+            det = ri_by_ci.get(ci)
+            op = "reported NIM + FTE adjustment ÷ avg earning assets × 100"
+            if det is None or nim is None or not ea:
+                return "n/a", calc(label, "n/a", asof,
+                                   "n/a — Schedule RI tax-exempt income not ingested",
+                                   [{"label": label,
+                                     "val": "n/a — needs FFIEC RI tax-exempt income"}],
+                                   op, False)
+            tel = _num(det.get("tax_exempt_loan_income"))
+            tes = _num(det.get("tax_exempt_sec_income"))
+            fte = _fte_adjustment(tel, tes)
+            doc_link = _ri_doc_link(rec)
+            if fte is None:
+                return "n/a", calc(label, "n/a", asof,
+                                   "computed — statutory 21% federal rate",
+                                   [{"label": "Reported NIM (NIMY)", "val": _pct(nim)},
+                                    {"label": "FTE adjustment",
+                                     "val": "n/a — tax-exempt income not reported"}],
+                                   op, False, source="FFIEC Call Report — Schedule RI",
+                                   link=doc_link)
+            v = f"{nim + fte * f / ea * 100:.2f}%"
+            return v, calc(label, v, asof, "computed — statutory 21% federal rate",
+                           [{"label": "Reported NIM (NIMY)", "val": _pct(nim)},
+                            {"label": "FTE adjustment" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(fte * f)) + " ($000)"},
+                            {"label": "Avg earning assets (ERNAST)",
+                             "val": _thou(round(ea)) + " ($000)"}],
+                           op, False, source="FFIEC Call Report — Schedule RI",
+                           link=doc_link)
         # ── FFIEC Schedule RI-E: itemized other noninterest expense ──────
         if kind == "rie":
             key, code, clean = args
@@ -986,7 +1025,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            [{"label": label, "val": v}], None, True,
                            source="SEC filing", link=sec_filing_link)
         if kind == "shares":
-            sh = _num(ps.get("shares"))
+            key = args[0] if args else "shares"
+            sh = _num(ps.get(key))
             v = f"{sh:,.0f}" if sh is not None else "—"
             return v, calc(label, v, asof, "SEC filing (holding company)",
                            [{"label": label, "val": v}], None, True,
@@ -1276,7 +1316,8 @@ _PERFORMANCE = [
         ("Profit margin", "marginrev", "NETINC"),
     ]),
     ("Margin & Spread (%)", [
-        ("Net interest margin", "pct", "NIMY"),
+        ("Net interest margin (FTE)", "ftenim"),
+        ("Net interest margin (reported)", "pct", "NIMY"),
         ("Yield on earning assets", "pct", "INTINCY"),
         ("Cost of funding earning assets", "pct", "INTEXPY"),
         ("Net interest spread", "pctdiff", "INTINCY", "INTEXPY"),
@@ -1327,15 +1368,18 @@ _PERFORMANCE = [
         ("Net nonrecurring income / pre-tax income", "nonrecur"),
     ]),
     ("Share & Per-Share Info (HoldCo, SEC)", [
+        ("Basic EPS", "ps", "basic_eps"),
         ("Diluted EPS", "ps", "eps"),
+        ("Diluted EPS before amortization", "ps", "eps_before_amort"),
         ("Book value / share", "ps", "bvps"),
         ("Tangible book value / share", "ps", "tbvps"),
         ("Dividends declared / share", "ps", "dps"),
         ("Dividend payout ratio", "payout"),
-        # FDIC/SEC "shares" here is the period-end common share count (cover-page
-        # / year-end), NOT a weighted-average diluted count — labelled to match.
-        # True avg-diluted shares + basic EPS need an SEC XBRL extension (later).
-        ("Common shares outstanding (actual)", "shares"),
+        # "shares" (dei cover-page / year-end) is the period-end common share
+        # count; "avg_diluted_shares" is the weighted-average diluted count from
+        # the EPS denominator — two different SNL lines, two different numbers.
+        ("Avg diluted shares (actual)", "shares", "avg_diluted_shares"),
+        ("Common shares outstanding (actual)", "shares", "shares"),
     ]),
 ]
 
@@ -1383,7 +1427,7 @@ def render_balance_sheet(ticker):
 
 def render_performance_analysis(ticker):
     render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE,
-                     with_persh=True, with_dep_cost=True)
+                     with_persh=True, with_dep_cost=True, with_fte=True)
 
 
 def render_fair_value(ticker):
