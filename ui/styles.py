@@ -98,19 +98,18 @@ CUSTOM_CSS = """
         border-bottom: 2px solid var(--brand-primary) !important;
         background: transparent !important;
     }
-    /* Hide the radio control ITSELF (the <input>), never a positional div.
-       The old `label > div:first-child { display:none }` rule blanked the
-       entire nav on Chrome 149 (2026-06-14): that browser's radio DOM made
-       first-child the LABEL TEXT, so the rule hid every tab's words.
-       Targeting the <input> can NEVER hide text, on any browser version, and
-       we force the label + its children to stay shown as a belt-and-suspenders. */
-    .st-key-topnav input { position: absolute !important; width: 1px !important;
-        height: 1px !important; opacity: 0 !important; margin: 0 !important;
-        pointer-events: none !important; }
-    .st-key-topnav label,
-    .st-key-topnav label * { display: revert !important; visibility: visible !important; }
+    /* Render the radio as clean text tabs: hide the circle (the label's
+       first-child wrapper) and the <input>, leaving just the label text.
+       VERIFIED LIVE on Chrome 149 (2026-06-14) by injecting + screenshotting
+       on the user's exact browser: first-child IS the 15px circle wrapper
+       there, hiding it leaves the <p> fully visible, tabs render clean.
+       (The nav-blank incident that day was a browser render glitch —
+       zoom/hardware-acceleration on a fresh Chrome 149 build — NOT this CSS;
+       the same rule renders perfectly on the identical browser version.) */
+    .st-key-topnav label > div:first-child { display: none !important; }
+    .st-key-topnav label > input { position: absolute !important; opacity: 0 !important;
+        width: 1px !important; height: 1px !important; margin: 0 !important; }
     .st-key-topnav label { display: inline-flex !important; align-items: center; }
-    .st-key-topnav [role="radiogroup"] { display: flex !important; flex-wrap: wrap; gap: 4px; }
 
     /* SNL-style title bar */
     .ksk-titlebar { padding: 2px 0 0; }
