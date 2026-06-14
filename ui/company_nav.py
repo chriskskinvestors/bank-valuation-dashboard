@@ -33,6 +33,26 @@ COMPANY_LEAVES = [leaf for subs in COMPANY_NAV.values() for leaf in subs]
 COMPANY_SECTION_OF = {leaf: sec for sec, subs in COMPANY_NAV.items() for leaf in subs}
 
 
+def resolve_url_bank(url_bank: str | None, applied: str | None) -> str | None:
+    """Decide whether the URL's ?bank= should override the bank picker.
+
+    Returns the bank to force into the picker, or None to leave the widget's
+    value untouched.
+
+    The URL wins ONLY on external navigation — a deep-link click, a shared
+    link, or a refresh — which we detect as "the URL names a different bank
+    than the one we last applied". On an ordinary widget-driven rerun the URL
+    is briefly stale (app.py syncs URL <- widget only AFTER the picker renders),
+    so forcing the picker to the URL value here would revert the user's fresh
+    selection on every rerun and freeze the dropdown (the 2026-06-14 "can't
+    change banks" bug). The caller MUST record the applied bank both here and
+    when the widget drives a new selection, so a stale URL never re-clobbers.
+    """
+    if url_bank and url_bank != applied:
+        return url_bank
+    return None
+
+
 # ── Renderers ────────────────────────────────────────────────────────────
 
 def _corporate_profile(t, ctx):

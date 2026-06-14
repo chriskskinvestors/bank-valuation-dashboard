@@ -46,6 +46,7 @@ SECTIONS = ["Home", "Market & Macro", "Screening", "Company", "Peers", "Earnings
 # without a renderer (pinned by a test — the A17 bug class is impossible).
 from ui.company_nav import (
     COMPANY_NAV, COMPANY_LEAVES, COMPANY_SECTION_OF, render_company_subtab,
+    resolve_url_bank,
 )
 # A ?bank=X deep-link (e.g. a click on a Home movers/news row) should jump
 # straight into Company Analysis. Set the section's session_state BEFORE the
@@ -151,8 +152,17 @@ elif section == "Company":
     # straight to the tab that shows that figure (carries the bank so the deep
     # link survives a full page navigation).
     _qp = st.query_params
-    if _qp.get("bank"):
-        st.session_state["company_pick"] = _qp.get("bank").upper()
+    # The URL's ?bank= overrides the picker ONLY on external navigation (a
+    # deep-link click, a shared link, a refresh) — detected as "URL names a
+    # bank other than the one we last applied". On a plain widget-driven rerun
+    # the URL is still the OLD bank (it's synced from the widget only after the
+    # picker renders, below), so forcing the picker to it here would revert the
+    # user's new pick every rerun and freeze the dropdown (2026-06-14 bug).
+    _url_bank = (_qp.get("bank") or "").strip().upper() or None
+    _force_bank = resolve_url_bank(_url_bank, st.session_state.get("_applied_url_bank"))
+    if _force_bank:
+        st.session_state["company_pick"] = _force_bank
+        st.session_state["_applied_url_bank"] = _force_bank
 
     # A single search box (rendered in the main content) holds the selection.
     company_ticker = (st.session_state.get("company_pick") or "").strip().upper() or None
@@ -838,6 +848,10 @@ elif section == "Company":
                        ("tab", company_subtab)):
             if st.query_params.get(_k) != _v:
                 st.query_params[_k] = _v
+        # The widget owns the selection now; remember it so the early-rerun
+        # guard treats the (about-to-be-synced) URL as "already applied" and
+        # never reverts a fresh pick back to the previous bank.
+        st.session_state["_applied_url_bank"] = company_ticker
 
     if company_ticker:
         rendered = render_company_subtab(company_subtab, company_ticker, {
