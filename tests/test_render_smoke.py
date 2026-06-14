@@ -554,8 +554,21 @@ class TestPerformanceComputedLines(unittest.TestCase):
         self.assertIn("1.98%", h)    # Net opex = (101,010-20,143)*4 / 16,338,071
         self.assertIn("1.33%", h)    # Cost of funds = 46,670*4 / (13,928,915+115,723)
         self.assertIn("2.54%", h)    # Cost of debt = (46,670-45,934)*4 / 115,723
-        self.assertIn("6.75%", h)    # Resid yield = (197,818-173,703-22,448)*4 / 98,729
-        self.assertIn("derived residual", h)   # the flag on the residual yield
+
+    def test_residual_yield_na_when_other_assets_immaterial(self):
+        # Banner's other earning assets are ~0.7% of earning assets, so the
+        # residual yield is a noisy artifact (would print double-digit "yields")
+        # — it must render n/a + flag, never a plausible-wrong number.
+        h = self._render([dict(self.BANR_Q1)])[0]
+        self.assertIn("residual yield not meaningful", h)
+
+    def test_residual_yield_shows_when_base_is_material(self):
+        # Shrink loans so "other earning assets" become material (~26% of
+        # earning assets) and the residual yield is in a sane band → it renders.
+        mat = dict(self.BANR_Q1, LNLSGR=8_000_000)
+        h = self._render([mat])[0]
+        # (197,818-173,703-22,448)*4 / (14,819,352-8,000,000-2,979,219) = 0.17%
+        self.assertIn("0.17%", h)
 
     def test_roace_na_when_preferred_outstanding(self):
         # With preferred equity, NI-to-common needs RI-A preferred dividends we

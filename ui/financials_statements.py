@@ -609,13 +609,23 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             othint = (ii - (il or 0) - (isc or 0)) if ii is not None else None
             ea = _avg(ci, "ERNAST")
             othbal = (ea - (_avg(ci, "LNLSGR") or 0) - (_avg(ci, "SC") or 0)) if ea else None
-            if othint is None or not othbal or othbal <= 0:
+            yld = (othint * f / othbal * 100) if (othint is not None and othbal and othbal > 0) else None
+            # A tiny residual base makes the rate meaningless — a few $M of
+            # interest over a sliver of "other earning assets" explodes into a
+            # double-digit "yield" that isn't real. Show ONLY when the base is
+            # material (≥2% of earning assets) AND the rate is in a plausible
+            # earning-asset band (0–12%); otherwise n/a + flag, never a wrong
+            # number on the face of the table.
+            if yld is None or not ea or othbal < 0.02 * ea or yld < 0 or yld > 12:
+                why = ("residual base not positive" if (yld is None) else
+                       "other earning assets immaterial — residual yield not meaningful")
                 return "n/a", calc(label, "n/a", asof,
                                    "Computed (residual) from Call Report",
-                                   [{"label": "Other earning assets (residual)",
-                                     "val": "n/a — residual base not positive"}],
+                                   [{"label": "Avg other earning assets (ERNAST − LNLSGR − SC)",
+                                     "val": _thou(round(othbal)) + " ($000)" if othbal else "n/a"},
+                                    {"label": label, "val": "n/a — " + why}],
                                    "(INTINC − loan int − sec int) ÷ (earning assets − loans − securities) × 100", False)
-            v = f"{othint*f/othbal*100:.2f}%"
+            v = f"{yld:.2f}%"
             return v, calc(label, v, asof, "Computed (residual) from Call Report — flagged",
                            [{"label": "Residual interest (INTINC − ILNDOM − ISC)" + (" (annualized)" if f != 1 else ""),
                              "val": _thou(round(othint*f)) + " ($000)"},
