@@ -188,19 +188,53 @@ def fetch_estimates_cached(ticker: str) -> dict:
     return fetch_estimates(ticker)
 
 
-@st.cache_data(ttl=21600, show_spinner="Loading earnings calendar...")
+@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_earnings_calendar(tickers: tuple) -> list[dict]:
-    """Earnings dates for many tickers, served from the cross-instance
-    snapshot when fresh. The per-instance @st.cache_data memo dies on every
-    deploy, and rebuilding live costs ~N/8s of yfinance calls per cold
-    instance (measured: 11.6s for 440 tickers on Home). The persisted
-    snapshot makes that a once-per-6h cost across ALL instances; the
-    nightly refresh-universe job pre-warms it."""
-    from data.cache import served_snapshot
-    return served_snapshot(
-        "earnings_calendar_snap", 21600,
-        lambda: _fetch_earnings_calendar_live(tickers),
-        guard=len(tickers))
+    """Upcoming earnings dates, served from the cross-instance snapshot and
+    NEVER rebuilt on the interactive path.
+
+    Regression 2026-06-13: the previous version rebuilt live whenever the
+    snapshot was stale (6h TTL warmed only by the 6am nightly job, so stale
+    every afternoon) or its ticker-count guard drifted (439<->440 from the
+    universe fix). That rebuild is ~440 yfinance calls which, under Yahoo
+    throttling, took *minutes* and blocked Home's Alert Inbox.
+
+    Fix: serve the persisted snapshot WHATEVER its age — next-14-day earnings
+    dates don't move intraday, so a morning copy is correct in the afternoon,
+    and count drift no longer matters because we don't gate serving on it.
+    When no snapshot exists yet, return [] (the inbox degrades to "no
+    upcoming earnings" rather than hanging). ALL rebuilds happen in the
+    background via refresh_earnings_calendar_snapshot(), called by the
+    nightly refresh-universe job. The 30-min @st.cache_data ttl just bounds
+    the per-instance Postgres round-trip; it never triggers a live build."""
+    from data import cache as _cache
+    try:
+        snap = _cache.get("earnings_calendar_snap")
+    except Exception:
+        snap = None
+    if snap and isinstance(snap.get("value"), list):
+        return snap["value"]
+    return []
+
+
+def refresh_earnings_calendar_snapshot(tickers: tuple) -> list[dict]:
+    """Build the earnings calendar live and persist the cross-instance
+    snapshot. Background-only (nightly refresh-universe job) — NEVER call
+    this on a user request: the live build is hundreds of yfinance calls
+    and can block for minutes under Yahoo throttling."""
+    from datetime import datetime
+    from data import cache as _cache
+    cal = _fetch_earnings_calendar_live(tickers)
+    try:
+        _cache.put("earnings_calendar_snap", {
+            "cached_at": datetime.now().isoformat(),
+            "guard": len(tickers),
+            "value": cal,
+        })
+    except Exception as e:
+        print("[estimates] could not persist earnings snapshot: "
+              f"{type(e).__name__}: {e}")
+    return cal
 
 
 def _fetch_earnings_calendar_live(tickers: tuple) -> list[dict]:
