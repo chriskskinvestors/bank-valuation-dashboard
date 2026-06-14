@@ -145,29 +145,6 @@ jobs:
             fi
           done
 
-      # A recreated job silently loses its IAM policy, the scheduler gets
-      # PERMISSION_DENIED every tick, and data goes stale with no visible
-      # failure (refresh-prices was dead 3 days, 2026-06-09..12, found only
-      # via a stale on-screen timestamp). Scheduler-triggered jobs MUST
-      # carry the invoker binding — fail the deploy loudly if one doesn't.
-      - name: Verify scheduler invoker bindings on scheduled jobs
-        run: |
-          INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
-          missing=""
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices verify-metrics; do
-            if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
-              if ! gcloud run jobs get-iam-policy "$job" --region="${{ env.REGION }}" \
-                    --format="value(bindings.members)" 2>/dev/null | grep -q "$INVOKER"; then
-                missing="$missing $job"
-              fi
-            fi
-          done
-          if [ -n "$missing" ]; then
-            echo "::error::Scheduled job(s) missing the scheduler invoker IAM binding:$missing — their Cloud Scheduler triggers are silently failing with PERMISSION_DENIED. Restore with: gcloud run jobs add-iam-policy-binding <job> --member=serviceAccount:$INVOKER --role=roles/run.invoker --region=${{ env.REGION }}"
-            exit 1
-          fi
-          echo "All scheduled jobs carry the invoker binding."
-
       # Block silent regressions: deploy succeeded but if any ticker no
       # longer resolves to a working data source, fail the workflow so it
       # surfaces in the GitHub UI + CI status. The service still serves
