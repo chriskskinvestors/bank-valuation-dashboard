@@ -98,7 +98,16 @@ CUSTOM_CSS = """
         border-bottom: 2px solid var(--brand-primary) !important;
         background: transparent !important;
     }
-    .st-key-topnav label > div:first-child { display: none !important; } /* hide radio dot */
+    /* Hide ONLY the radio-dot wrapper — the element that contains the
+       <input>. The old rule hid `label > div:first-child`, but a recent
+       Streamlit reordered the radio DOM so first-child became the LABEL
+       TEXT, which blanked every nav tab (2026-06-13 outage: nav row present
+       but all 8 labels invisible). `:has(> input)` targets the dot wherever
+       it sits and never matches the text, so tabs stay visible across
+       Streamlit versions. Belt-and-suspenders: also force the text node and
+       its container visible. */
+    .st-key-topnav label div:has(> input[type="radio"]) { display: none !important; }
+    .st-key-topnav label p { display: block !important; visibility: visible !important; }
 
     /* SNL-style title bar */
     .ksk-titlebar { padding: 2px 0 0; }
