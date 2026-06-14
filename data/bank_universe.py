@@ -207,16 +207,23 @@ def build_universe() -> dict[str, dict]:
     silently built — _fetch_* raise on partial data).
     """
     lastgood, fresh = _load_lastgood()
-    if lastgood and fresh:
+    # Serve the persisted snapshot WHATEVER its age on the interactive path.
+    # The live build (_build_universe_live) takes ~6.5 min; on a web request
+    # that either hangs the whole page or — worse — is killed by Cloud Run's
+    # request timeout BEFORE it can persist, so every cold load re-attempts it
+    # and dies (root cause of the 2026-06-13 multi-minute Home hang / blank
+    # page with no nav). The nightly refresh-universe JOB has no request
+    # timeout and owns all rebuilds; a stale list is a fine, honest fallback
+    # (at most a handful of banks off until the next nightly run).
+    if lastgood:
+        if not fresh:
+            print(f"[universe] serving STALE snapshot ({len(lastgood)} banks) "
+                  "— interactive path never live-builds; nightly job refreshes")
         return lastgood
-    try:
-        return refresh_universe_snapshot()
-    except Exception as e:
-        if lastgood:
-            print(f"[universe] live build failed ({type(e).__name__}: {e}); "
-                  f"serving stale last-good universe ({len(lastgood)} banks)")
-            return lastgood
-        raise
+    # No snapshot at all (fresh DB / first ever boot) — bootstrap once. This
+    # is the only request path that can be slow, and only until the first
+    # nightly run persists a snapshot.
+    return refresh_universe_snapshot()
 
 
 def refresh_universe_snapshot() -> dict[str, dict]:
@@ -416,6 +423,7 @@ def get_universe() -> dict[str, dict]:
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_universe_tickers() -> list[str]:
     """
     Return sorted list of all bank tickers in the universe — FILTERED to
