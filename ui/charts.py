@@ -115,6 +115,91 @@ def metrics_trend_chart(
     return fig
 
 
+# Map a metric's `format` to the y-axis family it belongs on. Metrics sharing a
+# family stack on one axis; a chart mixing two families gets a secondary axis.
+def _axis_family(fmt: str) -> str:
+    if fmt in ("billions", "millions"):
+        return "$B"      # dollar levels, scaled to $B below
+    if fmt == "pct":
+        return "%"
+    if fmt == "ratio":
+        return "x"
+    return "#"
+
+
+def grouped_trend_chart(
+    fdic_df: pd.DataFrame,
+    metric_keys: list[str],
+    title: str = "",
+) -> go.Figure:
+    """Multi-metric trend chart over time.
+
+    Metrics that share a unit family ($, %, x) plot on one y-axis; a group that
+    mixes dollar LEVELS with a RATIO (e.g. Loans & Deposits in $B alongside the
+    Loan/Deposit ratio in %) gets a secondary y-axis on the right, each axis
+    labelled with its unit. Dollar fields (FDIC $thousands) are scaled to $B so
+    a $16B level and a 1.6% ratio are both legible. Keys with no FDIC field, or
+    fields absent from this bank's history, are silently skipped — a chart that
+    can't source any series renders empty (never fabricated)."""
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_DENSE, CATEGORICAL_PALETTE)
+    fig = go.Figure()
+    if fdic_df is None or fdic_df.empty:
+        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_DENSE,
+                              show_legend=False)
+        return fig
+
+    # Resolve the plottable series (key has a field present in this history).
+    plot = []
+    for key in metric_keys:
+        m = METRICS_BY_KEY.get(key)
+        if not m:
+            continue
+        field = m.get("fdic_field")
+        if field and field in fdic_df.columns:
+            plot.append((m, field, _axis_family(m.get("format"))))
+    if not plot:
+        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_DENSE,
+                              show_legend=False)
+        return fig
+
+    # First family seen is primary; the first DIFFERING family is secondary.
+    families = []
+    for _, _, fam in plot:
+        if fam not in families:
+            families.append(fam)
+    primary = families[0]
+    secondary = families[1] if len(families) > 1 else None
+
+    primary_vals = []
+    for i, (m, field, fam) in enumerate(plot):
+        y = fdic_df[field]
+        if fam == "$B":
+            y = y / 1e6   # FDIC $thousands -> $B
+        on_secondary = secondary is not None and fam == secondary
+        if not on_secondary:
+            primary_vals.extend(v for v in y.tolist() if v is not None)
+        fig.add_trace(go.Scatter(
+            x=fdic_df["REPDTE"], y=y, mode="lines+markers", name=m["label"],
+            line=dict(color=CATEGORICAL_PALETTE[i % len(CATEGORICAL_PALETTE)], width=2),
+            marker=dict(size=4),
+            yaxis="y2" if on_secondary else "y",
+        ))
+
+    apply_standard_layout(fig, title=title, height=CHART_HEIGHT_DENSE,
+                          yaxis_title=primary, show_legend=len(fig.data) > 1,
+                          hovermode="x unified")
+    if secondary:
+        # Dual-axis: a tight zoom on one axis distorts the other, so leave both
+        # on auto-range; label the right axis with its unit.
+        fig.update_layout(yaxis2=dict(title=secondary, overlaying="y",
+                                      side="right", showgrid=False,
+                                      zeroline=False))
+    else:
+        tighten_yaxis(fig, values=primary_vals or None)
+    return fig
+
+
 def peer_radar_chart(radar_data: dict) -> go.Figure:
     """Create a radar/spider chart comparing banks across metrics."""
     categories = radar_data.get("categories", [])

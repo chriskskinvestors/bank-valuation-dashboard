@@ -66,8 +66,31 @@ def _core_income(rec):
     return ni - igl * (1 - t) - extra
 
 
-_DEFAULT_TRENDS = [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
-                   ("efficiency_ratio", "Efficiency Ratio"), ("cet1_ratio", "CET1 Ratio")]
+# Trend charts are GROUPED: each entry is (chart_title, [metric_keys]) and the
+# keys in a group plot together on one chart (grouped_trend_chart handles the
+# axes — a group mixing $ levels and % ratios gets a secondary axis). Keys come
+# from config.METRICS_BY_KEY; test_statement_trends pins that every key here
+# exists and carries an FDIC field, so a typo can't silently render a blank.
+_DEFAULT_TRENDS = [
+    ("Returns & Margin (%)", ["roaa", "nim"]),
+    ("Efficiency (%)", ["efficiency_ratio"]),
+    ("Capital Ratios (%)", ["cet1_ratio", "leverage_ratio", "total_capital_ratio"]),
+    ("Asset Quality (%)", ["npl_ratio", "nco_ratio", "reserve_to_loans"]),
+]
+
+# Balance Sheet — composition, mix, and funding trends (the table's own story).
+_BS_TRENDS = [
+    ("Balance Sheet Size ($B)", ["total_assets", "total_loans", "total_deposits", "total_equity"]),
+    ("Asset Mix ($B)", ["total_loans", "securities", "cash_balances", "trading_assets"]),
+    ("Loan Portfolio ($B)", ["ln_re_total", "ln_ci", "ln_consumer", "ln_ag"]),
+    ("CRE Detail ($B)", ["ln_re_nres_oo", "ln_re_nres_noo", "ln_re_multifam", "ln_re_construct"]),
+    ("Residential & Consumer ($B)", ["ln_re_residential", "ln_consumer", "ln_auto", "ln_credit_card"]),
+    ("Deposit Composition ($B)", ["total_deposits", "core_deposits", "brokered_deposits", "large_time_dep"]),
+    ("Insured vs Uninsured Deposits ($B)", ["insured_deposits", "uninsured_deposits"]),
+    ("Securities: AFS vs HTM ($B)", ["sec_afs", "sec_htm", "trading_assets"]),
+    ("Loans & Deposits ($B) vs L/D (%)", ["total_loans", "total_deposits", "loans_to_deposits"]),
+    ("Equity ($B) vs Capital Ratios (%)", ["total_equity", "cet1_ratio", "leverage_ratio"]),
+]
 
 
 # ── FFIEC Schedule RI / RI-E joins (stored call-report detail) ──────────────
@@ -941,34 +964,36 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 if cik else fdic_link)
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
 
-    # Wide table left, slimmer trend column right (DESIGN-SYSTEM.md: the
-    # statement IS the page; charts support it).
+    # The statement IS the page: table full-width on top (its many columns need
+    # the room), then a dense grid of grouped trend charts beneath it. The old
+    # narrow right-hand chart column couldn't fit the per-tab chart sets the
+    # tables now carry (user 2026-06-14: more charts, multi-metric, real axes).
     tr = _DEFAULT_TRENDS if trends is None else trends
-    _tbl_col, _chart_col = st.columns([3, 2])
-    with _tbl_col:
-        components.html(html, height=height, scrolling=False)
-    with _chart_col:
-        _render_statement_trends(hist, ticker, key_prefix, tr)
+    components.html(html, height=height, scrolling=False)
     st.caption(f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load.")
+    _render_statement_trends(hist, ticker, key_prefix, tr)
 
 
 def _render_statement_trends(hist, ticker, key_prefix, trends):
+    """Grouped trend charts below the statement table — two per row. `trends` is
+    a list of (chart_title, [metric_keys]); each entry is one multi-metric chart
+    (see ui.charts.grouped_trend_chart for the axis handling)."""
     if not trends:
         return
     try:
-        from ui.charts import metrics_trend_chart
+        from ui.charts import grouped_trend_chart
     except Exception:
         return
     h = hist.sort_values("REPDTE").tail(20)
-    # 2×2 grid of compact charts, filling the column densely.
+    st.markdown("##### Trends")
     for r in range(0, len(trends), 2):
         cols = st.columns(2)
-        for col, (key, label) in zip(cols, trends[r:r + 2]):
+        for j, (col, (title, keys)) in enumerate(zip(cols, trends[r:r + 2])):
             with col:
                 try:
-                    st.plotly_chart(metrics_trend_chart(h, [key], label),
+                    st.plotly_chart(grouped_trend_chart(h, keys, title),
                                     use_container_width=True,
-                                    key=f"{key_prefix}_tr_{ticker}_{key}")
+                                    key=f"{key_prefix}_tr_{ticker}_{r + j}")
                 except Exception:
                     pass
 
@@ -1227,7 +1252,7 @@ def render_income_statement(ticker):
 
 
 def render_balance_sheet(ticker):
-    render_statement(ticker, "bs", "Balance Sheet", _BALANCE)
+    render_statement(ticker, "bs", "Balance Sheet", _BALANCE, trends=_BS_TRENDS)
 
 
 def render_performance_analysis(ticker):
