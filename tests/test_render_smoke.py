@@ -513,7 +513,6 @@ class TestPerformanceComputedLines(unittest.TestCase):
         ("Net operating expense / avg assets", "netopex"),
         ("Cost of funds", "costfunds"),
         ("Cost: borrowings / debt", "costdebt"),
-        ("Yield: other earning assets (residual)", "yieldother"),
     ])]
 
     @classmethod
@@ -555,20 +554,13 @@ class TestPerformanceComputedLines(unittest.TestCase):
         self.assertIn("1.33%", h)    # Cost of funds = 46,670*4 / (13,928,915+115,723)
         self.assertIn("2.54%", h)    # Cost of debt = (46,670-45,934)*4 / 115,723
 
-    def test_residual_yield_na_when_other_assets_immaterial(self):
-        # Banner's other earning assets are ~0.7% of earning assets, so the
-        # residual yield is a noisy artifact (would print double-digit "yields")
-        # — it must render n/a + flag, never a plausible-wrong number.
-        h = self._render([dict(self.BANR_Q1)])[0]
-        self.assertIn("residual yield not meaningful", h)
-
-    def test_residual_yield_shows_when_base_is_material(self):
-        # Shrink loans so "other earning assets" become material (~26% of
-        # earning assets) and the residual yield is in a sane band → it renders.
-        mat = dict(self.BANR_Q1, LNLSGR=8_000_000)
-        h = self._render([mat])[0]
-        # (197,818-173,703-22,448)*4 / (14,819,352-8,000,000-2,979,219) = 0.17%
-        self.assertIn("0.17%", h)
+    def test_cost_of_debt_na_when_rate_implausible(self):
+        # Borrowings shrink to a sliver at period-end → the real interest figure
+        # over a tiny balance implies a double-digit "cost of debt" that isn't
+        # real. Outside the 0-8% band it must render n/a, not a wrong number.
+        bad = dict(self.BANR_Q1, FREPP=20_000)   # 736*4 / 20,000 = 14.7% > 8%
+        h = self._render([bad])[0]
+        self.assertIn("period-end borrowings make the rate unreliable", h)
 
     def test_roace_na_when_preferred_outstanding(self):
         # With preferred equity, NI-to-common needs RI-A preferred dividends we

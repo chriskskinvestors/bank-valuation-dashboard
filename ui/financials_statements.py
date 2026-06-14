@@ -580,7 +580,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "(NONIX − NONII) ÷ avg assets × 100", False)
         if kind == "costfunds":   # Cost of funds: int exp ÷ avg total funding
             ie = _num(rec.get("EINTEXP"))
-            fund = _avgsum(ci, ["DEP", "FREPP", "OTHBFHLB", "ESUBND"])
+            # SUBND is the sub-debt BALANCE (ESUBND is its interest expense —
+            # never mix an expense into a balance denominator).
+            fund = _avgsum(ci, ["DEP", "FREPP", "OTHBFHLB", "SUBND"])
             v = f"{ie*f/fund*100:.2f}%" if (ie is not None and fund) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Total interest expense (EINTEXP)" + (" (annualized)" if f != 1 else ""),
@@ -591,53 +593,28 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "costdebt":    # Cost of borrowings/debt
             ie, ed = _num(rec.get("EINTEXP")), _num(rec.get("EDEP"))
             borint = (ie - ed) if (ie is not None and ed is not None) else None
-            bor = _avgsum(ci, ["FREPP", "OTHBFHLB", "ESUBND"])
-            if not bor or bor < 1000:   # < ~$1M avg borrowings → not meaningful
+            # SUBND is the sub-debt BALANCE (not ESUBND, its interest expense).
+            bor = _avgsum(ci, ["FREPP", "OTHBFHLB", "SUBND"])
+            rate = (borint * f / bor * 100) if (borint is not None and bor and bor >= 1000) else None
+            # Borrowings swing intra-year while we only see the period-end
+            # balance, so a real interest figure over a shrunk year-end balance
+            # can overstate the rate. n/a outside a plausible band (0–8%) rather
+            # than print a double-digit "cost of debt" that isn't real.
+            if rate is None or rate <= 0 or rate > 8:
+                why = ("negligible borrowings" if (not bor or bor < 1000)
+                       else "period-end borrowings make the rate unreliable")
                 return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
-                                   [{"label": "Avg borrowings (FREPP + OTHBFHLB + ESUBND)",
+                                   [{"label": "Avg borrowings (FREPP + OTHBFHLB + SUBND)",
                                      "val": _thou(round(bor)) + " ($000)" if bor else "n/a"},
-                                    {"label": label, "val": "n/a — negligible borrowings"}],
+                                    {"label": label, "val": "n/a — " + why}],
                                    "(EINTEXP − EDEP) ÷ avg borrowings × 100", False)
-            v = f"{borint*f/bor*100:.2f}%" if borint is not None else "—"
+            v = f"{rate:.2f}%"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Borrowings interest (EINTEXP − EDEP)" + (" (annualized)" if f != 1 else ""),
                              "val": _thou(round(borint*f)) + " ($000)" if borint is not None else "—"},
-                            {"label": "Avg borrowings", "val": _thou(round(bor)) + " ($000)"}],
+                            {"label": "Avg borrowings (FREPP + OTHBFHLB + SUBND)",
+                             "val": _thou(round(bor)) + " ($000)"}],
                            "(EINTEXP − EDEP) ÷ avg borrowings × 100", False)
-        if kind == "yieldother":  # Residual yield on other earning assets
-            # FDIC doesn't break out interest on "other earning assets", so this
-            # is a derived residual: (total interest income − loan int − sec int)
-            # over (avg earning assets − avg gross loans − avg securities).
-            # Flagged as a residual; n/a when the residual base isn't positive.
-            ii = _num(rec.get("INTINC")); il = _num(rec.get("ILNDOM")); isc = _num(rec.get("ISC"))
-            othint = (ii - (il or 0) - (isc or 0)) if ii is not None else None
-            ea = _avg(ci, "ERNAST")
-            othbal = (ea - (_avg(ci, "LNLSGR") or 0) - (_avg(ci, "SC") or 0)) if ea else None
-            yld = (othint * f / othbal * 100) if (othint is not None and othbal and othbal > 0) else None
-            # A tiny residual base makes the rate meaningless — a few $M of
-            # interest over a sliver of "other earning assets" explodes into a
-            # double-digit "yield" that isn't real. Show ONLY when the base is
-            # material (≥2% of earning assets) AND the rate is in a plausible
-            # earning-asset band (0–12%); otherwise n/a + flag, never a wrong
-            # number on the face of the table.
-            if yld is None or not ea or othbal < 0.02 * ea or yld < 0 or yld > 12:
-                why = ("residual base not positive" if (yld is None) else
-                       "other earning assets immaterial — residual yield not meaningful")
-                return "n/a", calc(label, "n/a", asof,
-                                   "Computed (residual) from Call Report",
-                                   [{"label": "Avg other earning assets (ERNAST − LNLSGR − SC)",
-                                     "val": _thou(round(othbal)) + " ($000)" if othbal else "n/a"},
-                                    {"label": label, "val": "n/a — " + why}],
-                                   "(INTINC − loan int − sec int) ÷ (earning assets − loans − securities) × 100", False)
-            v = f"{yld:.2f}%"
-            return v, calc(label, v, asof, "Computed (residual) from Call Report — flagged",
-                           [{"label": "Residual interest (INTINC − ILNDOM − ISC)" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(othint*f)) + " ($000)"},
-                            {"label": "Avg other earning assets (ERNAST − LNLSGR − SC)",
-                             "val": _thou(round(othbal)) + " ($000)"},
-                            {"label": "Note",
-                             "val": "derived residual — FDIC has no direct 'other earning asset' interest line"}],
-                           "(INTINC − loan int − sec int) ÷ avg other earning assets × 100 — residual", False)
         # ── FFIEC Schedule RI: FTE NII derivation (computed) ─────────────
         if kind in ("fte_adj", "nii_fte"):
             det = ri_by_ci.get(ci)
@@ -1334,7 +1311,9 @@ _PERFORMANCE = [
     ("Yield / Cost Detail (%)", [
         ("Yield: total loans", "yield", "ILNDOM", "LNLSGR"),
         ("Yield: investment securities", "yield", "ISC", "SC"),
-        ("Yield: other earning assets (residual)", "yieldother"),
+        ("Yield: other earning assets", "na",
+         "not separable from the FDIC feed — interest income isn't broken out "
+         "for non-loan, non-securities earning assets"),
         ("Yield: interest-earning assets", "pct", "INTINCY"),
         ("Cost: interest-bearing deposits", "yield", "EDEP", "DEPIDOM"),
         ("Cost: total deposits", "yield", "EDEP", "DEP"),
