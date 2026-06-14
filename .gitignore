@@ -35,3 +35,6 @@ tests/live_audit_report.csv
 
 # Plan files
 .claude/plans/
+
+# Scratch/diagnostic outputs from tools/ (underscore-prefixed, regenerated)
+tools/_*.json
