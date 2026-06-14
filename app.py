@@ -59,17 +59,27 @@ if "nav_section" not in st.session_state and _qs in SECTIONS:
     st.session_state["nav_section"] = _qs
 if st.query_params.get("bank") and st.session_state.get("nav_section") not in ("Company",):
     st.session_state["nav_section"] = "Company"
-# Universe scope first — the nav bar's status chip shows live coverage.
-# (The watchlist concept is retired; the variable keeps its name because
-# ~30 downstream call sites take it as the scope parameter.)
 from utils.timing import timed
 
+# Render the top nav FIRST — it depends only on SECTIONS, never on data, so
+# it must ALWAYS paint immediately. (Regression 2026-06-13: get_universe_
+# tickers() below can do a multi-minute cold-start build / per-ticker FDIC
+# resolution; when it ran BEFORE the nav, the whole page — nav included —
+# blocked behind it, leaving users staring at a blank "Stop" page for
+# minutes with no way to navigate off Home. Streamlit streams widget deltas
+# as they're produced, so creating the nav before any slow data call means
+# the tabs appear within milliseconds regardless of load time below.)
+from ui.chrome import top_nav as _top_nav
+section, _nav_right = _top_nav(SECTIONS, key="nav_section")
+
+# Universe scope AFTER the nav. Even when this is slow on a cold instance,
+# the nav is already on screen. (The watchlist concept is retired; the
+# variable keeps its name because ~30 downstream call sites take it as the
+# scope parameter.)
 with timed("app.universe_tickers"):
     watchlist = sorted(get_universe_tickers())
 portfolio = []
 
-from ui.chrome import top_nav as _top_nav
-section, _nav_right = _top_nav(SECTIONS, key="nav_section")
 with _nav_right:
     _u1, _u2 = st.columns([3, 1.2], vertical_alignment="center")
     with _u1:
