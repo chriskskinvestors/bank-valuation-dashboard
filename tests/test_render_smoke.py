@@ -75,6 +75,16 @@ def _install_streamlit_stub():
     sys.modules["streamlit"] = st
     sys.modules["streamlit.components"] = comp_pkg
     sys.modules["streamlit.components.v1"] = comp_v1
+    # ui.financials_statements binds `st`/`components` at import time. Each call
+    # here builds FRESH stub module objects, so a render module imported under
+    # an earlier class's stub would stay pinned to it — and later classes' own
+    # per-test html capture (patched onto THIS stub) would never reach the
+    # render path, producing empty output. Reload it so its module-level
+    # streamlit bindings always track the current stub. (Makes the test classes
+    # order-independent regardless of which one imports the module first.)
+    if "ui.financials_statements" in sys.modules:
+        import importlib
+        importlib.reload(sys.modules["ui.financials_statements"])
     return st
 
 
@@ -352,6 +362,117 @@ class TestIncomeStatementRiRendersPopulated(unittest.TestCase):
         h = html[0]
         self.assertIn("tax-exempt income not reported", h)
         self.assertNotIn("$8.1M", h)
+
+
+class TestBalanceSheetRendersPopulated(unittest.TestCase):
+    """SNL Balance Sheet (_BALANCE) must render with POPULATED FDIC history
+    across multiple years — the new computed kinds (diff reserve, sum
+    subtotals, htm, otherint, residual Other Assets / Other Liabilities,
+    growth) and the n/a kind all execute. Fixtures are Banner-shaped
+    (cert 28489), two FY columns so the YoY growth rows compute. The newest
+    column is hand-checked below."""
+
+    # FY2025 (12/31/2025) Banner Bank call report, $000 (live-verified).
+    BANR_FY25 = {
+        "REPDTE": "2025-12-31",
+        "CHBAL": 422_640, "CHBALI": 239_868, "FREPO": 0, "TRADE": 0,
+        "SCAF": 2_016_261, "SCHA": 961_487, "SC": 2_977_863,
+        "LNLSGR": 11_764_589, "LNLSNET": 11_604_313, "LNATRESR": 1.3624,
+        "ORE": 5_578, "INTAN": 387_214, "INTANGW": 373_121, "INTANMSR": 11_498,
+        "MSA": 47_460, "BKPREM": 141_799, "ASSET": 16_347_870,
+        "DEP": 13_812_149, "OTHBFHLB": 150_000, "SUBND": 0, "LIAB": 14_396_409,
+        "EQPP": 0, "EQTOT": 1_951_461,
+    }
+    # FY2024 prior column (only the growth-rate fields need to be present).
+    BANR_FY24 = {
+        "REPDTE": "2024-12-31",
+        "CHBAL": 400_000, "CHBALI": 230_000, "FREPO": 0, "TRADE": 0,
+        "SCAF": 2_100_000, "SCHA": 1_000_000, "SC": 3_100_000,
+        "LNLSGR": 11_386_000, "LNLSNET": 11_230_000, "LNATRESR": 1.37,
+        "ORE": 6_000, "INTAN": 390_000, "INTANGW": 373_121, "INTANMSR": 12_000,
+        "MSA": 48_000, "BKPREM": 145_000, "ASSET": 16_210_000,
+        "DEP": 13_590_000, "OTHBFHLB": 100_000, "SUBND": 0, "LIAB": 14_260_000,
+        "EQPP": 0, "EQTOT": 1_950_000,
+    }
+
+    @classmethod
+    def setUpClass(cls):
+        _install_streamlit_stub()
+        import ui.financials_statements
+        cls.fs = ui.financials_statements
+
+    def _render(self, hist_rows):
+        import pandas as pd
+        comp_v1 = self.fs.components
+        st = self.fs.st
+        import data.fdic_client as fc
+        captured = []
+        saved = (comp_v1.html, st.radio, self.fs.get_bank_info,
+                 fc.get_historical_financials)
+        try:
+            comp_v1.html = lambda html, **k: captured.append(html)
+            st.radio = lambda label, options=None, **k: "Annual"
+            self.fs.get_bank_info = lambda t: {
+                "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
+            fc.get_historical_financials = (
+                lambda cert, quarters=36:
+                pd.DataFrame([dict(r) for r in hist_rows]))
+            self.fs.render_balance_sheet("BANR")
+        finally:
+            (comp_v1.html, st.radio, self.fs.get_bank_info,
+             fc.get_historical_financials) = saved
+        return captured
+
+    def test_balance_sheet_renders_banner_values(self):
+        html = self._render([dict(self.BANR_FY24), dict(self.BANR_FY25)])
+        self.assertEqual(len(html), 1, "balance-sheet iframe was not rendered")
+        h = html[0]
+        # Computed reserve = LNLSGR − LNLSNET = 11,764,589 − 11,604,313 =
+        # 160,276 ($000) → $160.3M.
+        self.assertIn("Loan Loss Reserve", h)
+        # Reserve = LNLSGR − LNLSNET = 11,764,589 − 11,604,313 = 160,276 ($000),
+        # rendered in the table's compact form (like the Income Statement tab).
+        self.assertIn("$160.3M", h)
+        # Computed Other Assets residual = ASSET − itemized displayed fields;
+        # FY2025 residual = $761.1M (positive). (The click-through carries the
+        # full formula; we assert the displayed value here — robust against the
+        # Unicode minus/÷ glyphs the popup formula uses.)
+        self.assertIn("Other Assets", h)
+        self.assertIn("$761.1M", h)
+        # HTM = filed SCHA (not the SC−SCAF−TRADE residual); the click-through
+        # carries the source field and its raw $000 value (961,487).
+        self.assertIn("Held to Maturity Securities", h)
+        self.assertIn("FDIC field SCHA", h)
+        self.assertIn("961,487", h)
+        # Subtotal sums render compact; FY2025 cash+securities = $3.40B.
+        self.assertIn("» Total Cash & Securities", h)
+        self.assertIn("$3.40B", h)
+        # Growth rows: first column n/a (no prior), newest column computed.
+        self.assertIn("Asset Growth", h)
+        self.assertIn("no prior period in view", h)
+        # Asset Growth = (16,347,870 / 16,210,000 − 1) × 100 = 0.85%.
+        self.assertIn("0.85%", h)
+        # n/a lines carry the reason (never a $0).
+        self.assertIn("Other Securities", h)
+        self.assertIn("not in the FDIC SDI feed", h)
+        self.assertIn("Tot Acc Other Comprehensive Inc", h)
+        self.assertIn("EQUPTOT is not AOCI", h)
+        # Average Balances (FFIEC RC-K) is deferred and NOT shown on this tab.
+        self.assertNotIn("Average Balances", h)
+        # Common equity = EQTOT − EQPP.
+        self.assertIn("Common Equity (incl. NCI)", h)
+
+    def test_negative_residual_is_na_not_negative_plug(self):
+        # Itemized asset lines forced to exceed ASSET → Other Assets must be
+        # n/a + flag, never a silent negative plug. The cell value reads "n/a";
+        # the click-through explains why ("itemized lines exceed total") and
+        # shows the would-be-negative magnitude only as the explanation — never
+        # as the displayed value.
+        bad = dict(self.BANR_FY25)
+        bad["ASSET"] = 1_000_000   # $1.0B — far below the ~$15.6B itemized sum
+        html = self._render([dict(self.BANR_FY24), bad])
+        h = html[0]
+        self.assertIn("itemized lines exceed total", h)
 
 
 class TestTableExports(unittest.TestCase):

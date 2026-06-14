@@ -724,6 +724,120 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             v = f"{rate:.2f}%"
             return v, calc(label, v, asof, ref, terms, op, False,
                            source=src, link=doc_link)
+        # ── Balance-sheet computed kinds ─────────────────────────────────
+        if kind == "na":
+            # Honest gap: a line SNL shows but the FDIC SDI feed cannot
+            # source. args[0] is the reason (e.g. "not separable in FDIC";
+            # "FFIEC RC-F — later phase"). Never a guessed $0.
+            reason = args[0] if args else "not available from this source"
+            return "n/a", calc(label, "n/a", asof, "n/a — " + reason,
+                               [{"label": label, "val": "n/a — " + reason}],
+                               None, True)
+        if kind == "sum":
+            # Computed subtotal = sum of the named FDIC fields that are
+            # present. Absent fields are skipped (a None component is "n/a",
+            # not $0); if NONE are present the subtotal is n/a, never $0.
+            present = [(fl, _num(rec.get(fl))) for fl in args]
+            vals = [(fl, v) for fl, v in present if v is not None]
+            if not vals:
+                return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
+                                   [{"label": fl, "val": "n/a — not reported"}
+                                    for fl in args],
+                                   " + ".join(args), False)
+            total = sum(v for _, v in vals)
+            terms = [{"label": fl, "val": _thou(v) + " ($000)"} for fl, v in vals]
+            return _usd(total), calc(label, _usd(total), asof,
+                                     "Computed from Call Report", terms,
+                                     " + ".join(args), False)
+        if kind == "htm":
+            # Held-to-maturity securities: the filed SCHA field when present,
+            # else the residual SC − SCAF − TRADE. Banner: SCHA 943,973 vs
+            # residual 944,198 (0.02% apart) — SCHA is the filed value, used.
+            scha = _num(rec.get("SCHA"))
+            if scha is not None:
+                return _usd(scha), calc(label, _usd(scha), asof,
+                                        "FDIC field SCHA",
+                                        [{"label": "Held-to-maturity securities (SCHA)",
+                                          "val": _thou(scha) + " ($000)"}], None, True)
+            sc, scaf = _num(rec.get("SC")), _num(rec.get("SCAF"))
+            tr = _num(rec.get("TRADE")) or 0
+            if sc is None or scaf is None:
+                return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
+                                   [{"label": "SCHA / SC / SCAF",
+                                     "val": "n/a — not reported"}],
+                                   "SC − SCAF − TRADE", False)
+            v = sc - scaf - tr
+            return _usd(v), calc(label, _usd(v), asof, "Computed from Call Report",
+                                 [{"label": "Total securities (SC)", "val": _thou(sc) + " ($000)"},
+                                  {"label": "− AFS securities (SCAF)", "val": _thou(scaf) + " ($000)"},
+                                  {"label": "− Trading (TRADE)", "val": _thou(tr) + " ($000)"}],
+                                 "SC − SCAF − TRADE", False)
+        if kind == "otherint":
+            # Other intangibles = INTAN − INTANGW − INTANMSR. A negative
+            # residual is a data problem → n/a + flag, never a negative plug.
+            intan, gw = _num(rec.get("INTAN")), _num(rec.get("INTANGW"))
+            msr = _num(rec.get("INTANMSR")) or 0
+            terms = [{"label": "Total intangibles (INTAN)", "val": _term000(intan)},
+                     {"label": "− Goodwill (INTANGW)", "val": _term000(gw)},
+                     {"label": "− Mortgage servicing intangible (INTANMSR)",
+                      "val": _thou(msr) + " ($000)"}]
+            if intan is None or gw is None:
+                return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
+                                   terms, "INTAN − INTANGW − INTANMSR", False)
+            v = intan - gw - msr
+            if v < 0:
+                return "n/a", calc(label, "n/a — negative residual (data problem)",
+                                   asof, "Computed from Call Report",
+                                   terms + [{"label": "Residual",
+                                             "val": f"n/a — negative ({_thou(v)}) — "
+                                                    "components exceed total"}],
+                                   "INTAN − INTANGW − INTANMSR", False)
+            return _usd(v), calc(label, _usd(v), asof, "Computed from Call Report",
+                                 terms, "INTAN − INTANGW − INTANMSR", False)
+        if kind == "residual":
+            # Residual plug = total − the named itemized lines (Other Assets =
+            # ASSET − itemized; Other Liabilities = LIAB − DEP − OTHBFHLB −
+            # SUBND). A None component is treated as 0 in the subtraction (it
+            # is shown n/a elsewhere); a NEGATIVE residual is a data problem →
+            # n/a + flag, never a silent negative plug.
+            total_fl, sub_fls = args[0], args[1:]
+            total = _num(rec.get(total_fl))
+            parts = [(fl, _num(rec.get(fl)) or 0) for fl in sub_fls]
+            terms = [{"label": total_fl, "val": _term000(total)}]
+            terms += [{"label": f"− {fl}", "val": _thou(p) + " ($000)"} for fl, p in parts]
+            op = f"{total_fl} − " + " − ".join(sub_fls)
+            if total is None:
+                return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
+                                   terms, op, False)
+            v = total - sum(p for _, p in parts)
+            if v < 0:
+                return "n/a", calc(label, "n/a — negative residual (data problem)",
+                                   asof, "Computed from Call Report",
+                                   terms + [{"label": "Residual",
+                                             "val": f"n/a — negative ({_thou(v)}) — "
+                                                    "itemized lines exceed total"}],
+                                   op, False)
+            return _usd(v), calc(label, _usd(v), asof, "Computed from Call Report",
+                                 terms, op, False)
+        if kind == "growth":
+            # Annualized YoY growth (%) of a $000 field from the prior column.
+            # First column has no prior year → n/a (not 0%).
+            fl = args[0]; cur = _num(rec.get(fl))
+            if ci == 0:
+                return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
+                                   [{"label": label,
+                                     "val": "n/a — no prior period in view"}],
+                                   f"({fl}_t ÷ {fl}_t−1 − 1) × 100", False)
+            prev = _num(recs_list[ci - 1].get(fl))
+            terms = [{"label": f"{fl} (current)", "val": _term000(cur)},
+                     {"label": f"{fl} (prior period)", "val": _term000(prev)}]
+            op = f"({fl}_t ÷ {fl}_t−1 − 1) × 100"
+            if cur is None or not prev:
+                return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
+                                   terms, op, False)
+            g = (cur / prev - 1.0) * 100.0
+            return f"{g:.2f}%", calc(label, f"{g:.2f}%", asof,
+                                     "Computed from Call Report", terms, op, False)
         # ── Per-share (SEC holding-company filings) ──────────────────────
         ps = ps_by_ci.get(ci, {})
         if kind == "ps":
@@ -913,27 +1027,95 @@ _INCOME = [
     ]),
 ]
 
+# SNL "Balance Sheet" layout (docs/SNL-BUILD-PLAN.md tab 2), every field
+# value-verified live against Banner Bank (BANR, cert 28489) 03/31/2026.
+# Subtotals: "sum" kinds are computed sums of their displayed components;
+# subtotal lines that map to a single filed FDIC total (Total Net Loans =
+# LNLSNET, Total Intangible Assets = INTAN, Total Assets/Liabilities/Equity)
+# use "dollar" so the click-through opens straight to the filed field.
+# Lines the FDIC SDI feed cannot source render n/a (kind "na") with the
+# reason — FFIEC RC-B/RC-F/RC-M and the As-Reported HFS split are later
+# phases. Live-verification deltas from the build spec:
+#   · SCEQ (other/equity securities) is NOT in the SDI feed → n/a.
+#   · HTM uses the filed SCHA (943,973) — the SC−SCAF−TRADE residual
+#     (944,198) is 0.02% apart; SCHA is the reported value.
+#   · "Loan Servicing Rights" = MSA (47,460), not INTANMSR (11,321) — MSA
+#     matches the SNL magnitude.
+#   · No AOCI field maps reliably in the SDI feed (EQUPTOT is undistributed
+#     net income / equity-cap component, NOT AOCI) → AOCI line n/a.
 _BALANCE = [
-    ("Assets", [
-        ("Cash & balances due", "dollar", "CHBAL"),
-        ("Investment securities", "dollar", "SC"),
-        ("Gross loans & leases", "dollar", "LNLSGR"),
-        ("Net loans & leases", "dollar", "LNLSNET"),
-        ("Total assets", "dollar", "ASSET"),
-    ]),
-    ("Liabilities", [
-        ("Total deposits", "dollar", "DEP"),
-        ("Non-interest-bearing deposits", "dollar", "DEPNIDOM"),
-        ("Total liabilities", "dollar", "LIAB"),
-    ]),
-    ("Equity", [
-        ("Total equity capital", "dollar", "EQTOT"),
-        ("Tangible common equity", "tce"),
-        # INTAN = total intangibles incl. goodwill (INTANGW is goodwill only —
-        # it was previously shown here under the "Intangible assets" label).
-        ("Intangible assets (incl. goodwill)", "dollar", "INTAN"),
+    ("Assets ($000)", [
+        ("Cash and Due from Banks", "diff", "CHBAL", "CHBALI"),
+        ("Fed Funds Sold & Resell (combined)", "dollar", "FREPO"),
+        ("Deposits at Financial Institutions", "dollar", "CHBALI"),
+        ("Other Cash & Cash Equivalents", "na", "not separable in the FDIC SDI feed"),
+        ("» Cash and Cash Equivalents", "sum", "CHBAL", "FREPO"),
+        ("Trading Account Securities", "dollar", "TRADE"),
+        ("Available for Sale Securities", "dollar", "SCAF"),
+        ("Held to Maturity Securities", "htm"),
+        ("Other Securities", "na", "equity/other securities (SCEQ) not in the FDIC SDI feed"),
+        # Subtotal = the DISPLAYED component fields (TRADE + SCAF + SCHA for
+        # securities), NOT SC: SC (2,979,219) exceeds SCAF + SCHA (2,978,994)
+        # by 225 ($000) for Banner because HTM here is the filed SCHA, and a
+        # subtotal must equal the sum of its shown components to the dollar.
+        ("» Total Cash & Securities", "sum", "CHBAL", "FREPO", "TRADE", "SCAF", "SCHA"),
+        ("Gross Loans Held for Investment", "dollar", "LNLSGR"),
+        ("Loan Loss Reserve", "diff", "LNLSGR", "LNLSNET"),
+        ("Loans Held for Sale", "na", "FFIEC RC item 5369 — later phase"),
+        ("» Total Net Loans", "dollar", "LNLSNET"),
+        ("Real Estate Owned", "dollar", "ORE"),
         ("Goodwill", "dollar", "INTANGW"),
+        ("Core Deposit Intangibles", "na", "FFIEC RC-M — later phase"),
+        ("Other Intangibles", "otherint"),
+        ("» Total Intangible Assets", "dollar", "INTAN"),
+        ("Loan Servicing Rights", "dollar", "MSA"),
+        ("Credit Card Rights", "na", "not reported in the FDIC SDI feed"),
+        ("Other Loan Servicing Rights", "na", "not reported in the FDIC SDI feed"),
+        ("Fixed Assets", "dollar", "BKPREM"),
+        ("Interest Receivable", "na", "FFIEC RC-F — later phase"),
+        ("Prepaid Expense", "na", "not reported in the FDIC SDI feed"),
+        ("Bank-owned Life Insurance", "na", "FFIEC RC-F — later phase"),
+        # Residual plug = ASSET − the DISPLAYED itemized asset lines so that
+        # (residual + every shown line) reconciles to ASSET to the dollar:
+        # Cash+Due (CHBAL−CHBALI) + Deposits-at-FIs (CHBALI) collapse to CHBAL;
+        # securities use the shown TRADE + SCAF + SCHA (not SC, which is 225
+        # higher); plus net loans, REO, total intangibles, MSA, fixed assets.
+        ("Other Assets", "residual", "ASSET",
+         "CHBAL", "FREPO", "TRADE", "SCAF", "SCHA", "LNLSNET", "ORE",
+         "INTAN", "MSA", "BKPREM"),
+        ("» Total Assets", "dollar", "ASSET"),
     ]),
+    ("Liabilities ($000)", [
+        ("Total Deposits", "dollar", "DEP"),
+        ("FHLB & Other Borrowings (combined)", "dollar", "OTHBFHLB"),
+        ("Senior Debt", "na", "FFIEC — later phase"),
+        ("Total Subordinated Debt", "dollar", "SUBND"),
+        ("» Total Debt", "sum", "OTHBFHLB", "SUBND"),
+        ("Total Other Liabilities", "residual", "LIAB", "DEP", "OTHBFHLB", "SUBND"),
+        ("» Total Liabilities", "dollar", "LIAB"),
+    ]),
+    ("Equity ($000)", [
+        ("Total Preferred Equity", "dollar", "EQPP"),
+        # NCI is not separable in the FDIC SDI feed; folded into common with
+        # the note below (the explicit NCI line renders n/a).
+        ("Common Equity (incl. NCI)", "diff", "EQTOT", "EQPP"),
+        ("Noncontrolling Interests", "na", "not separable in the FDIC SDI feed (folded into common equity)"),
+        ("Tot Acc Other Comprehensive Inc (AOCI)", "na", "no AOCI field maps reliably in the FDIC SDI feed (EQUPTOT is not AOCI)"),
+        ("» Total Equity", "dollar", "EQTOT"),
+    ]),
+    ("Balance Sheet Analysis (%)", [
+        ("Gross Loans HFI / Total Assets", "ratio", "LNLSGR", "ASSET"),
+        ("Loans / Deposits", "ratio", "LNLSGR", "DEP"),
+        ("Loan Loss Reserves / Gross Loans", "pct", "LNATRESR"),
+        ("FTE Employees (actual)", "na", "headcount not reported in the FDIC SDI feed"),
+    ]),
+    ("Annualized Growth Rates (%)", [
+        ("Asset Growth", "growth", "ASSET"),
+        ("Gross Loans HFI Growth", "growth", "LNLSGR"),
+        ("Deposit Growth", "growth", "DEP"),
+    ]),
+    # Average Balances (FFIEC Schedule RC-K) is deferred to a later phase
+    # (see docs/SNL-BUILD-PLAN.md) and intentionally NOT shown on this tab.
 ]
 
 _PERFORMANCE = [

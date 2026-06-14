@@ -773,5 +773,166 @@ class TestDepositCostRateMath(unittest.TestCase):
                          pd.Timestamp("2025-09-30"))
 
 
+class TestBalanceSheetComputedLines(unittest.TestCase):
+    """SNL Balance Sheet computed-line math (ui/financials_statements._BALANCE
+    + the new cell kinds), pinned to HAND-COMPUTED Banner Bank values from the
+    live FDIC call report (cert 28489, 03/31/2026; the figures the build spec
+    hand-checks). Drives the real render path with a streamlit stub and reads
+    the produced iframe HTML, so the closure's arithmetic actually runs.
+
+    Hand-computed pins ($000):
+      reserve        = LNLSGR − LNLSNET = 11,741,404 − 11,581,052 = 160,352
+      loans/deposits = 11,741,404 ÷ 13,928,915 × 100 = 84.30%
+      HTM            = filed SCHA = 943,973 (not the SC−SCAF−TRADE residual)
+      other-assets residual = ASSET − (CHBAL + FREPO + TRADE + SCAF + SCHA +
+        LNLSNET + ORE + INTAN + MSA + BKPREM) = 16,338,071 − 15,577,230 =
+        760,841  (displayed-field basis, so residual + every shown line ties
+        to ASSET to the dollar; uses SCAF + SCHA, not SC which is 225 higher)
+      » Total Cash & Securities = CHBAL + FREPO + TRADE + SCAF + SCHA =
+        439,239 + 0 + 0 + 2,035,021 + 943,973 = 3,418,233
+      common equity  = EQTOT − EQPP = 1,952,235 − 0 = 1,952,235
+    """
+
+    BANR_Q1_26 = {
+        "REPDTE": "2026-03-31",
+        "CHBAL": 439_239, "CHBALI": 259_081, "FREPO": 0, "TRADE": 0,
+        "SCAF": 2_035_021, "SCHA": 943_973, "SC": 2_979_219,
+        "LNLSGR": 11_741_404, "LNLSNET": 11_581_052, "LNATRESR": 1.3656969813831463,
+        "ORE": 6_248, "INTAN": 386_768, "INTANGW": 373_121, "INTANMSR": 11_321,
+        "MSA": 47_460, "BKPREM": 137_469, "ASSET": 16_338_071,
+        "DEP": 13_928_915, "OTHBFHLB": 0, "SUBND": 0, "LIAB": 14_385_836,
+        "EQPP": 0, "EQTOT": 1_952_235,
+    }
+    # Prior column so the YoY growth rows compute (only growth fields matter).
+    BANR_PRIOR = {
+        "REPDTE": "2025-12-31",
+        "ASSET": 16_347_870, "LNLSGR": 11_764_589, "DEP": 13_812_149,
+        "CHBAL": 422_640, "FREPO": 0, "SC": 2_977_863, "LNLSNET": 11_604_313,
+        "ORE": 5_578, "INTAN": 387_214, "INTANGW": 373_121, "INTANMSR": 11_498,
+        "MSA": 47_460, "BKPREM": 141_799, "SCAF": 2_016_261, "SCHA": 961_487,
+        "CHBALI": 239_868, "EQPP": 0, "EQTOT": 1_951_461, "LIAB": 14_396_409,
+        "OTHBFHLB": 150_000, "SUBND": 0, "LNATRESR": 1.3624,
+    }
+
+    def setUp(self):
+        # Pure-math hand-checks (independent of render), guarding the spec.
+        r = self.BANR_Q1_26
+        self.assertEqual(r["LNLSGR"] - r["LNLSNET"], 160_352)          # reserve
+        self.assertAlmostEqual(r["LNLSGR"] / r["DEP"] * 100, 84.2952, places=3)
+        # Other Assets residual + every displayed itemized line ties to ASSET
+        # exactly (displayed-field basis: SCAF + SCHA, not SC).
+        itemized = (r["CHBAL"] + r["FREPO"] + r["TRADE"] + r["SCAF"] +
+                    r["SCHA"] + r["LNLSNET"] + r["ORE"] + r["INTAN"] +
+                    r["MSA"] + r["BKPREM"])
+        self.assertEqual(r["ASSET"] - itemized, 760_841)             # other assets
+        self.assertEqual((r["ASSET"] - itemized) + itemized, r["ASSET"])
+        # » Total Cash & Securities = the displayed component fields, to the
+        # dollar. Cash+Due (CHBAL−CHBALI) + Deposits-at-FIs (CHBALI) collapse
+        # to CHBAL; securities are the shown TRADE + SCAF + SCHA. SCHA
+        # (943,973) vs the SC−SCAF−TRADE residual (944,198) differ by 225
+        # (0.02%) — the subtotal uses the filed SCHA that is displayed.
+        cash_due = r["CHBAL"] - r["CHBALI"]
+        components = (cash_due + r["CHBALI"] + r["FREPO"] + r["TRADE"] +
+                      r["SCAF"] + r["SCHA"])
+        self.assertEqual(components, 3_418_233)
+        self.assertEqual(r["EQTOT"] - r["EQPP"], 1_952_235)           # common equity
+
+    def _render(self, hist_rows):
+        # Drive the real render path against a streamlit stub and read the
+        # produced iframe HTML. The fixtures are a Dec year-end PRIOR + a
+        # 03/31 quarter, so the view MUST be Quarterly for the quarter column
+        # to render (Annual keeps only December periods).
+        #
+        # This temporarily swaps sys.modules["streamlit*"] and reloads
+        # ui.financials_statements, so it MUST restore both in finally —
+        # otherwise the stub leaks into later test classes (e.g. it errored
+        # TestUsDomicileFilter in the full-suite run before this fix).
+        import types as _t
+        st = _t.ModuleType("streamlit")
+
+        class _Ctx:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def __getattr__(self, n): return lambda *a, **k: None
+
+        st.columns = lambda spec, **k: [
+            _Ctx() for _ in range(spec if isinstance(spec, int) else len(spec))]
+        st.spinner = lambda *a, **k: _Ctx()
+        st.radio = lambda label, options=None, **k: "Quarterly"
+        for n in ("markdown", "caption", "write", "info", "warning", "error",
+                  "divider", "plotly_chart", "html"):
+            setattr(st, n, lambda *a, **k: None)
+        st.session_state = {}
+        comp_pkg = _t.ModuleType("streamlit.components")
+        comp_v1 = _t.ModuleType("streamlit.components.v1")
+        captured = []
+        comp_v1.html = lambda html, **k: captured.append(html)
+        comp_pkg.v1 = comp_v1
+        st.components = comp_pkg
+        import importlib
+        keys = ("streamlit", "streamlit.components", "streamlit.components.v1")
+        saved_mods = {k: sys.modules.get(k) for k in keys}
+        sys.modules["streamlit"] = st
+        sys.modules["streamlit.components"] = comp_pkg
+        sys.modules["streamlit.components.v1"] = comp_v1
+        import ui.financials_statements as fs
+        fs = importlib.reload(fs)
+        import data.fdic_client as fc
+        saved = (fs.get_bank_info, fc.get_historical_financials)
+        try:
+            fs.get_bank_info = lambda t: {
+                "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
+            fc.get_historical_financials = (
+                lambda cert, quarters=36: pd.DataFrame([dict(r) for r in hist_rows]))
+            fs.render_balance_sheet("BANR")
+        finally:
+            fs.get_bank_info, fc.get_historical_financials = saved
+            # Restore the module table and reload fs against the real streamlit
+            # so this test does not poison any class that runs after it.
+            for k in keys:
+                if saved_mods[k] is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = saved_mods[k]
+            importlib.reload(fs)
+        return captured[0] if captured else ""
+
+    def test_computed_lines_match_hand_values(self):
+        # The Q1-2026 column renders (Quarterly view). Values are asserted in
+        # the table's COMPACT form (the engine renders $thousands compact, same
+        # as the Income Statement tab); the raw $000 figures still appear in the
+        # click-through where the source field is shown verbatim (HTM/SCHA). We
+        # avoid asserting the popup formula op strings, which use Unicode glyphs
+        # (− U+2212, ÷, ×) and are encoding-fragile; the displayed value is what
+        # pins the math here, and setUp pins the arithmetic independently.
+        h = self._render([dict(self.BANR_PRIOR), dict(self.BANR_Q1_26)])
+        # reserve = LNLSGR − LNLSNET = 160,352 ($000) → $160.4M.
+        self.assertIn("Loan Loss Reserve", h)
+        self.assertIn("$160.4M", h)
+        # loans/deposits = LNLSGR ÷ DEP × 100 = 84.30%.
+        self.assertIn("Loans / Deposits", h)
+        self.assertIn("84.30%", h)
+        # HTM = filed SCHA 943,973 → $944.0M; source field + raw value in popup.
+        self.assertIn("FDIC field SCHA", h)
+        self.assertIn("943,973", h)
+        # Other Assets residual = 760,841 ($000) → $760.8M.
+        self.assertIn("Other Assets", h)
+        self.assertIn("$760.8M", h)
+        # » Total Cash & Securities = 3,418,233 ($000) → $3.42B.
+        self.assertIn("$3.42B", h)
+        # Asset Growth = (16,338,071 / 16,347,870 − 1) × 100 = −0.06%.
+        self.assertIn("-0.06%", h)
+        # n/a lines carry a reason (never $0).
+        self.assertIn("EQUPTOT is not AOCI", h)
+
+    def test_negative_residual_renders_na(self):
+        bad = dict(self.BANR_Q1_26)
+        bad["ASSET"] = 1_000_000   # $1.0B — below the ~$15.6B itemized sum
+        h = self._render([dict(self.BANR_PRIOR), bad])
+        # Negative residual → n/a + flag in the click-through, never a negative
+        # plug shown as the cell value.
+        self.assertIn("itemized lines exceed total", h)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
