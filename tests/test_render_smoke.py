@@ -486,6 +486,84 @@ class TestBalanceSheetRendersPopulated(unittest.TestCase):
         self.assertIn("itemized lines exceed total", h)
 
 
+class TestPerformanceComputedLines(unittest.TestCase):
+    """The Performance-Analysis computed kinds added 2026-06-14 (ROACE, ROATE,
+    net-opex/assets, cost of funds, cost of debt, residual other-asset yield).
+    Driven through the real render path with a single Q1 column whose fields
+    were probed LIVE from the FDIC SDI API (Banner cert 28489, 2026-03-31);
+    each ratio is hand-checked below and several cross-validate against FDIC's
+    own reported ratios (ROACE here == reported ROE since EQPP=0)."""
+
+    # Banner Q1-2026 call report ($000), fields probed live from FDIC SDI.
+    BANR_Q1 = {
+        "REPDTE": "2026-03-31",
+        "NETINC": 56_492, "EQTOT": 1_952_235, "EQPP": 0, "INTAN": 386_768,
+        "NONIX": 101_010, "NONII": 20_143, "ASSET": 16_338_071,
+        "EINTEXP": 46_670, "EDEP": 45_934, "INTINC": 197_818,
+        "ILNDOM": 173_703, "ISC": 22_448, "SC": 2_979_219, "LNLSGR": 11_741_404,
+        "DEP": 13_928_915, "FREPP": 115_723, "OTHBFHLB": 0, "ESUBND": 0,
+        "ERNAST": 14_819_352,
+    }
+    # A second bank WITH preferred stock — ROACE must be n/a (needs RI-A divs).
+    PFD_Q1 = dict(BANR_Q1, EQPP=200_000)
+
+    _SPEC = [("Perf", [
+        ("Return on avg common equity (ROACE)", "roace"),
+        ("Return on avg tangible equity (ROATE)", "roate"),
+        ("Net operating expense / avg assets", "netopex"),
+        ("Cost of funds", "costfunds"),
+        ("Cost: borrowings / debt", "costdebt"),
+        ("Yield: other earning assets (residual)", "yieldother"),
+    ])]
+
+    @classmethod
+    def setUpClass(cls):
+        _install_streamlit_stub()
+        import ui.financials_statements
+        cls.fs = ui.financials_statements
+
+    def _render(self, rows):
+        import pandas as pd
+        comp_v1 = self.fs.components
+        st = self.fs.st
+        import data.fdic_client as fc
+        captured = []
+        saved = (comp_v1.html, st.radio, self.fs.get_bank_info,
+                 fc.get_historical_financials)
+        try:
+            comp_v1.html = lambda html, **k: captured.append(html)
+            st.radio = lambda label, options=None, **k: "Quarterly"  # show Q1
+            self.fs.get_bank_info = lambda t: {
+                "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
+            fc.get_historical_financials = (
+                lambda cert, quarters=36: pd.DataFrame([dict(r) for r in rows]))
+            # Custom spec keeps the test to the new kinds (no SEC/FFIEC loads).
+            self.fs.render_statement("BANR", "perftest", "Perf", self._SPEC)
+        finally:
+            (comp_v1.html, st.radio, self.fs.get_bank_info,
+             fc.get_historical_financials) = saved
+        return captured
+
+    def test_computed_ratios_match_probed_values(self):
+        h = self._render([dict(self.BANR_Q1)])[0]
+        # Single Q1 column: avg balance = period-end, annualization factor = 4.
+        # (FDIC's reported ROE 11.58% uses period-AVERAGE equity; period-end
+        # here gives 11.57% — within a few bps, confirming the formula.)
+        self.assertIn("11.57%", h)   # ROACE = 56,492*4 / 1,952,235
+        self.assertIn("14.43%", h)   # ROATE = 56,492*4 / (1,952,235 - 386,768)
+        self.assertIn("1.98%", h)    # Net opex = (101,010-20,143)*4 / 16,338,071
+        self.assertIn("1.33%", h)    # Cost of funds = 46,670*4 / (13,928,915+115,723)
+        self.assertIn("2.54%", h)    # Cost of debt = (46,670-45,934)*4 / 115,723
+        self.assertIn("6.75%", h)    # Resid yield = (197,818-173,703-22,448)*4 / 98,729
+        self.assertIn("derived residual", h)   # the flag on the residual yield
+
+    def test_roace_na_when_preferred_outstanding(self):
+        # With preferred equity, NI-to-common needs RI-A preferred dividends we
+        # don't carry → n/a + flag, never NI/common-equity (which overstates).
+        h = self._render([dict(self.PFD_Q1)])[0]
+        self.assertIn("preferred dividends not in FDIC SDI feed", h)
+
+
 class TestTableExports(unittest.TestCase):
     """Design-system decision #12: every data table gets an Export action.
     Pins the table_export contract (CSV bytes, .csv filename, widget key)

@@ -391,6 +391,18 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return (cur + prev) / 2.0
         return cur
 
+    def _avgsum(ci, fields):
+        """Average of a SUM of balances (e.g. funding = deposits + borrowings).
+        Linear, so avg(A+B)=avg(A)+avg(B); a None component is treated as 0.
+        Returns None only if no component is present at all."""
+        tot, seen = 0.0, False
+        for fl in fields:
+            a = _avg(ci, fl)
+            if a is not None:
+                tot += a
+                seen = True
+        return tot if seen else None
+
     def _revenue(rec):
         ii, ie, noni = _num(rec.get("INTINC")), _num(rec.get("EINTEXP")), _num(rec.get("NONII"))
         return (ii - ie + noni) if None not in (ii, ie, noni) else None
@@ -517,6 +529,101 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                              "val": _thou(round((a-b)*f)) + " ($000)" if (a is not None and b is not None) else "—"},
                             {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
                            f"({af_} − {bf_}) ÷ avg {df_} × 100", False)
+        if kind == "roate":       # Return on avg tangible (total) equity
+            ni = _num(rec.get("NETINC")); eq = _num(rec.get("EQTOT"))
+            intan = _num(rec.get("INTAN")) or 0
+            te = (eq - intan) if eq is not None else None
+            v = f"{ni*f/te*100:.2f}%" if (ni is not None and te and te > 0) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(ni*f)) + " ($000)" if ni is not None else "—"},
+                            {"label": "Avg tangible equity (EQTOT − INTAN)",
+                             "val": _thou(round(te)) + " ($000)" if te is not None else "—"}],
+                           "Net income ÷ tangible equity × 100", False)
+        if kind == "roace":       # Return on avg COMMON equity
+            ni = _num(rec.get("NETINC")); eq = _num(rec.get("EQTOT"))
+            pfd = _num(rec.get("EQPP")) or 0
+            ce = (eq - pfd) if eq is not None else None
+            if pfd > 0:
+                # NI-to-common needs preferred dividends (FFIEC Schedule RI-A),
+                # which the FDIC SDI feed does not carry. Dividing total NI by
+                # common equity would OVERSTATE the return by the preferred
+                # dividend, so render n/a + flag rather than a wrong number.
+                return "n/a", calc(label, "n/a", asof,
+                                   "n/a — preferred dividends not in FDIC SDI feed",
+                                   [{"label": "Preferred equity (EQPP)",
+                                     "val": _thou(pfd) + " ($000)"},
+                                    {"label": label,
+                                     "val": "n/a — needs RI-A preferred dividends (later phase)"}],
+                                   "(Net income − preferred dividends) ÷ avg common equity × 100", False)
+            v = f"{ni*f/ce*100:.2f}%" if (ni is not None and ce and ce > 0) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(ni*f)) + " ($000)" if ni is not None else "—"},
+                            {"label": "Avg common equity (EQTOT − EQPP)",
+                             "val": _thou(round(ce)) + " ($000)" if ce is not None else "—"}],
+                           "Net income ÷ common equity × 100 (no preferred outstanding)", False)
+        if kind == "netopex":     # Net operating expense ÷ avg assets
+            nonx, noni = _num(rec.get("NONIX")), _num(rec.get("NONII"))
+            a = _avg(ci, "ASSET")
+            net = (nonx - noni) if (nonx is not None and noni is not None) else None
+            v = f"{net*f/a*100:.2f}%" if (net is not None and a) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Net op. expense (NONIX − NONII)" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(net*f)) + " ($000)" if net is not None else "—"},
+                            {"label": "Avg assets (ASSET)",
+                             "val": _thou(round(a)) + " ($000)" if a else "—"}],
+                           "(NONIX − NONII) ÷ avg assets × 100", False)
+        if kind == "costfunds":   # Cost of funds: int exp ÷ avg total funding
+            ie = _num(rec.get("EINTEXP"))
+            fund = _avgsum(ci, ["DEP", "FREPP", "OTHBFHLB", "ESUBND"])
+            v = f"{ie*f/fund*100:.2f}%" if (ie is not None and fund) else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Total interest expense (EINTEXP)" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(ie*f)) + " ($000)" if ie is not None else "—"},
+                            {"label": "Avg funding (deposits + borrowings)",
+                             "val": _thou(round(fund)) + " ($000)" if fund else "—"}],
+                           "Total interest expense ÷ avg (deposits + borrowings) × 100", False)
+        if kind == "costdebt":    # Cost of borrowings/debt
+            ie, ed = _num(rec.get("EINTEXP")), _num(rec.get("EDEP"))
+            borint = (ie - ed) if (ie is not None and ed is not None) else None
+            bor = _avgsum(ci, ["FREPP", "OTHBFHLB", "ESUBND"])
+            if not bor or bor < 1000:   # < ~$1M avg borrowings → not meaningful
+                return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
+                                   [{"label": "Avg borrowings (FREPP + OTHBFHLB + ESUBND)",
+                                     "val": _thou(round(bor)) + " ($000)" if bor else "n/a"},
+                                    {"label": label, "val": "n/a — negligible borrowings"}],
+                                   "(EINTEXP − EDEP) ÷ avg borrowings × 100", False)
+            v = f"{borint*f/bor*100:.2f}%" if borint is not None else "—"
+            return v, calc(label, v, asof, "Computed from Call Report",
+                           [{"label": "Borrowings interest (EINTEXP − EDEP)" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(borint*f)) + " ($000)" if borint is not None else "—"},
+                            {"label": "Avg borrowings", "val": _thou(round(bor)) + " ($000)"}],
+                           "(EINTEXP − EDEP) ÷ avg borrowings × 100", False)
+        if kind == "yieldother":  # Residual yield on other earning assets
+            # FDIC doesn't break out interest on "other earning assets", so this
+            # is a derived residual: (total interest income − loan int − sec int)
+            # over (avg earning assets − avg gross loans − avg securities).
+            # Flagged as a residual; n/a when the residual base isn't positive.
+            ii = _num(rec.get("INTINC")); il = _num(rec.get("ILNDOM")); isc = _num(rec.get("ISC"))
+            othint = (ii - (il or 0) - (isc or 0)) if ii is not None else None
+            ea = _avg(ci, "ERNAST")
+            othbal = (ea - (_avg(ci, "LNLSGR") or 0) - (_avg(ci, "SC") or 0)) if ea else None
+            if othint is None or not othbal or othbal <= 0:
+                return "n/a", calc(label, "n/a", asof,
+                                   "Computed (residual) from Call Report",
+                                   [{"label": "Other earning assets (residual)",
+                                     "val": "n/a — residual base not positive"}],
+                                   "(INTINC − loan int − sec int) ÷ (earning assets − loans − securities) × 100", False)
+            v = f"{othint*f/othbal*100:.2f}%"
+            return v, calc(label, v, asof, "Computed (residual) from Call Report — flagged",
+                           [{"label": "Residual interest (INTINC − ILNDOM − ISC)" + (" (annualized)" if f != 1 else ""),
+                             "val": _thou(round(othint*f)) + " ($000)"},
+                            {"label": "Avg other earning assets (ERNAST − LNLSGR − SC)",
+                             "val": _thou(round(othbal)) + " ($000)"},
+                            {"label": "Note",
+                             "val": "derived residual — FDIC has no direct 'other earning asset' interest line"}],
+                           "(INTINC − loan int − sec int) ÷ avg other earning assets × 100 — residual", False)
         # ── FFIEC Schedule RI: FTE NII derivation (computed) ─────────────
         if kind in ("fte_adj", "nii_fte"):
             det = ri_by_ci.get(ci)
@@ -1153,7 +1260,9 @@ _PERFORMANCE = [
     ("Profitability Ratios (%)", [
         ("Return on avg assets (ROAA)", "pct", "ROA"),
         ("Return on avg equity (ROAE)", "pct", "ROE"),
+        ("Return on avg common equity (ROACE)", "roace"),
         ("Return on avg tangible common equity (ROATCE)", "roatce"),
+        ("Return on avg tangible equity (ROATE)", "roate"),
         ("Profit margin", "marginrev", "NETINC"),
     ]),
     ("Margin & Spread (%)", [
@@ -1169,14 +1278,18 @@ _PERFORMANCE = [
         ("Non-interest income / operating revenue", "marginrev", "NONII"),
         ("Non-interest income / avg assets", "pct", "NONIIAY"),
         ("Non-interest expense / avg assets", "pct", "NONIXAY"),
+        ("Net operating expense / avg assets", "netopex"),
     ]),
     ("Yield / Cost Detail (%)", [
         ("Yield: total loans", "yield", "ILNDOM", "LNLSGR"),
         ("Yield: investment securities", "yield", "ISC", "SC"),
+        ("Yield: other earning assets (residual)", "yieldother"),
         ("Yield: interest-earning assets", "pct", "INTINCY"),
         ("Cost: interest-bearing deposits", "yield", "EDEP", "DEPIDOM"),
         ("Cost: total deposits", "yield", "EDEP", "DEP"),
+        ("Cost: borrowings / debt", "costdebt"),
         ("Cost: funding (earning-asset basis)", "pct", "INTEXPY"),
+        ("Cost of funds (all funding)", "costfunds"),
     ]),
     # FFIEC Schedule RI 2.a / RC-K stored split (data/call_report_store) —
     # the SNL 'Int Cost: CDs' vs 'Int Cost: Other Deposits' rows the FDIC
@@ -1209,7 +1322,10 @@ _PERFORMANCE = [
         ("Tangible book value / share", "ps", "tbvps"),
         ("Dividends declared / share", "ps", "dps"),
         ("Dividend payout ratio", "payout"),
-        ("Avg diluted shares (actual)", "shares"),
+        # FDIC/SEC "shares" here is the period-end common share count (cover-page
+        # / year-end), NOT a weighted-average diluted count — labelled to match.
+        # True avg-diluted shares + basic EPS need an SEC XBRL extension (later).
+        ("Common shares outstanding (actual)", "shares"),
     ]),
 ]
 
