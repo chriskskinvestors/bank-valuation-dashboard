@@ -934,7 +934,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         print(f"[statements] {ticker} {title}: {len(cell_errors)} cell(s) "
               f"failed to compute — {'; '.join(cell_errors[:5])}")
 
-    head = ('<th class="lblh">($ in thousands unless noted)</th>'
+    head = ('<th class="lblh">(figures in USD)</th>'
             + "".join(f'<th class="colh">{lb}</th>' for lb in labels))
     height = 96 + 23 * (ri + len(spec) + 1)
     sec_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K"
@@ -1066,6 +1066,12 @@ _BALANCE = [
         ("Real Estate Owned", "dollar", "ORE"),
         ("Goodwill", "dollar", "INTANGW"),
         ("Core Deposit Intangibles", "na", "FFIEC RC-M — later phase"),
+        # Mortgage-servicing intangible (INTANMSR) is the piece of INTAN that
+        # "Other Intangibles" nets out, so showing it as its own line lets the
+        # breakdown reconcile on the face of the table: Goodwill + CDI + MSR
+        # intangible + Other = » Total Intangible Assets (INTAN). Distinct from
+        # "Loan Servicing Rights" (MSA) below — a different, broader field.
+        ("Mortgage Servicing Intangible", "dollar", "INTANMSR"),
         ("Other Intangibles", "otherint"),
         ("» Total Intangible Assets", "dollar", "INTAN"),
         ("Loan Servicing Rights", "dollar", "MSA"),

@@ -39,7 +39,7 @@ def pct(v, dp: int = 2) -> str:
 
 
 def usd_compact_from_thousands(v_thousands) -> str:
-    """FDIC $thousands → compact $X.XXB / $X.XM / $N, or —."""
+    """FDIC $thousands → compact $X.XXB / $X.XM / $XK / $N, or —."""
     v = num(v_thousands)
     if v is None:
         return "—"
@@ -49,6 +49,11 @@ def usd_compact_from_thousands(v_thousands) -> str:
         return f"${d/1e9:,.2f}B"
     if a >= 1e6:
         return f"${d/1e6:,.1f}M"
+    # $1K–$999K compacts to $XK rather than spelling out the full figure
+    # (e.g. $843K, not $843,000) so a sub-$1M cell matches the rest of the
+    # column's compact convention. Below $1K shows the exact dollar amount.
+    if a >= 1e3:
+        return f"${d/1e3:,.0f}K"
     return f"${d:,.0f}"
 
 

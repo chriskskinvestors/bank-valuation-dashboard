@@ -461,6 +461,17 @@ class TestBalanceSheetRendersPopulated(unittest.TestCase):
         self.assertNotIn("Average Balances", h)
         # Common equity = EQTOT − EQPP.
         self.assertIn("Common Equity (incl. NCI)", h)
+        # Intangibles breakdown reconciles ON THE FACE of the table: the
+        # mortgage-servicing intangible (INTANMSR) gets its own line so
+        # Goodwill + CDI + MSR-intangible + Other = » Total Intangible Assets.
+        # FY2024 column: INTANGW 373,121 + INTANMSR 12,000 + Other (390,000−
+        # 373,121−12,000 = 4,879) = 390,000 = INTAN ($373.1M + $12.0M + $4.9M
+        # = $390.0M). FY2025 column carries INTANMSR 11,498 -> $11.5M.
+        self.assertIn("Mortgage Servicing Intangible", h)
+        self.assertIn("FDIC field INTANMSR", h)   # direct-field source link
+        self.assertIn("$12.0M", h)                # INTANMSR, FY2024 column
+        self.assertIn("$11.5M", h)                # INTANMSR, FY2025 column
+        self.assertIn("$390.0M", h)               # » Total Intangible Assets (INTAN), FY2024
 
     def test_negative_residual_is_na_not_negative_plug(self):
         # Itemized asset lines forced to exceed ASSET → Other Assets must be
