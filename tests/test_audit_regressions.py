@@ -18,6 +18,20 @@ _st = types.ModuleType("streamlit")
 _st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
 _st.cache_resource = _st.cache_data
 sys.modules.setdefault("streamlit", _st)
+# ui.financials_statements does `import streamlit.components.v1` at module load.
+# The balance-sheet render tests below reload that module and, in their finally
+# block, restore THIS module table before a final reload — so the table must
+# keep streamlit.components.v1 registered, or that reload (and running those
+# tests standalone) dies with "No module named 'streamlit.components'". Register
+# the components packages here so the restore target is always import-safe,
+# independent of whether another test class seeded a fuller stub first.
+_st_components = types.ModuleType("streamlit.components")
+_st_components_v1 = types.ModuleType("streamlit.components.v1")
+_st_components_v1.html = lambda *a, **k: None
+_st_components.v1 = _st_components_v1
+_st.components = _st_components
+sys.modules.setdefault("streamlit.components", _st_components)
+sys.modules.setdefault("streamlit.components.v1", _st_components_v1)
 
 
 class TestA1PeerTierUnits(unittest.TestCase):
