@@ -831,11 +831,25 @@ elif section == "Company":
                 "Section", list(COMPANY_NAV.keys()), key="company_section",
                 horizontal=True, label_visibility="collapsed",
             )
-        _subs = COMPANY_NAV[company_section]
+        # Financials carries a basis layer (Company Reported | Templated)
+        # between the section and its sub-tabs; other sections are a flat list.
+        _nav = COMPANY_NAV[company_section]
+        company_basis = None
+        if isinstance(_nav, dict):
+            with st.container(key="company_basis_nav"):
+                company_basis = st.radio(
+                    "Basis", list(_nav.keys()),
+                    key=f"company_basis::{company_section}",
+                    horizontal=True, label_visibility="collapsed",
+                )
+            _subs = _nav[company_basis]
+        else:
+            _subs = _nav
         if len(_subs) > 1:
             with st.container(key="company_subtab_nav"):
                 company_subtab = st.radio(
-                    "View", _subs, key=f"company_subtab::{company_section}",
+                    "View", _subs,
+                    key=f"company_subtab::{company_section}::{company_basis}",
                     horizontal=True, label_visibility="collapsed",
                 )
         else:
@@ -844,8 +858,11 @@ elif section == "Company":
 
         # URL <- widgets: the address bar always names the exact view, so a
         # browser refresh or shared link lands right back here.
-        for _k, _v in (("s", "Company"), ("bank", company_ticker),
-                       ("tab", company_subtab)):
+        _url_pairs = [("s", "Company"), ("bank", company_ticker),
+                      ("tab", company_subtab)]
+        if company_basis:
+            _url_pairs.append(("basis", company_basis))
+        for _k, _v in _url_pairs:
             if st.query_params.get(_k) != _v:
                 st.query_params[_k] = _v
         # The widget owns the selection now; remember it so the early-rerun
@@ -858,7 +875,7 @@ elif section == "Company":
             "watchlist": watchlist,
             "load_metrics": load_single_bank_metrics_cached,
             "peer_cohort": lambda: all_metrics or get_watchlist_cohort(),
-        })
+        }, basis=company_basis)
         if not rendered:
             st.error(
                 f"No renderer wired for sub-tab “{company_subtab}” — "

@@ -769,6 +769,32 @@ CUSTOM_CSS = """
         color: #2563eb; font-weight: 600;
     }
 
+    /* Basis: Company Reported | Templated (segmented control between the
+       section tab bar and the sub-tab pills) */
+    .st-key-company_basis_nav div[role="radiogroup"] {
+        display: inline-flex; gap: 0; margin: 6px 0 4px;
+        border: 1px solid rgba(148, 163, 184, 0.45); border-radius: 8px; overflow: hidden;
+    }
+    .st-key-company_basis_nav div[role="radiogroup"] > label {
+        margin: 0 !important; padding: 5px 18px; cursor: pointer;
+        border-radius: 0; transition: background 0.12s;
+    }
+    .st-key-company_basis_nav div[role="radiogroup"] > label:hover {
+        background: rgba(37, 99, 235, 0.06);
+    }
+    .st-key-company_basis_nav div[role="radiogroup"] > label > div:first-of-type {
+        display: none !important;
+    }
+    .st-key-company_basis_nav div[role="radiogroup"] > label p {
+        font-size: 0.85rem; color: var(--text-secondary); font-weight: 600;
+    }
+    .st-key-company_basis_nav div[role="radiogroup"] > label:has(input:checked) {
+        background: #2563eb;
+    }
+    .st-key-company_basis_nav div[role="radiogroup"] > label:has(input:checked) p {
+        color: #fff; font-weight: 700;
+    }
+
     /* ── Native traceable metric cards (ui/source_trace) ──────────────────
        Rendered as plain HTML (no iframe), so the grid sizes to its content —
        hover a card for the calculation, click ↗ for the source filing. */

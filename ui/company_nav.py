@@ -6,6 +6,12 @@ sub-tab cannot exist without a renderer (or a renderer without a nav entry)
 — the A17 bug class (two tabs silently rendering the same view, or a tab
 rendering nothing) is structurally impossible and pinned by a test.
 
+Financials is special: it has a basis layer — Company Reported (scraped from
+the company's own filings, exactly how they report it) vs Templated (FDIC call
+reports, uniform across banks). The SAME leaf name (e.g. "Income Statement")
+exists under both bases with DIFFERENT renderers, so Financials dispatch is
+basis-aware: Company Reported → _CR_RENDERERS, everything else → _RENDERERS.
+
 Renderer signature: fn(ticker, ctx). ctx carries the few app.py-scope
 dependencies (see render_company_subtab). All heavy imports stay lazy
 inside the renderers, matching the old inline-elif behavior — importing
@@ -15,11 +21,20 @@ from __future__ import annotations
 
 COMPANY_NAV = {
     "Overview": ["Corporate Profile"],
-    "Financials": ["Financial Highlights", "Income Statement", "Balance Sheet",
-                   "Performance Analysis", "Capital Adequacy", "Asset Quality Detail",
-                   "Asset Quality by Loan Type", "Deposit/Loan Composition", "Deposit Trends",
-                   "Interest Rate Risk", "Fair Value Analysis", "Portfolio Analysis",
-                   "Capital Structure Details"],
+    "Financials": {
+        # Scraped from the company's own filings — their labels, never n/a.
+        "Company Reported": ["Financial Highlights", "Income Statement", "Balance Sheet",
+                             "Performance Analysis", "Regulatory Capital",
+                             "Credit Quality / Allowance", "Loan Composition",
+                             "Deposit Composition", "Securities Portfolio", "Fair Value",
+                             "Segment Reporting", "Interest Rate Risk"],
+        # FDIC call-report fields — uniform across every bank.
+        "Templated": ["Financial Highlights", "Income Statement", "Balance Sheet",
+                      "Performance Analysis", "Capital Adequacy", "Asset Quality Detail",
+                      "Asset Quality by Loan Type", "Deposit/Loan Composition",
+                      "Deposit Trends", "Portfolio Analysis", "Capital Structure Details",
+                      "Interest Rate Risk"],
+    },
     "Valuation": ["Valuation Model", "Peer Rank", "Price & Trends"],
     "Estimates / Earnings": ["Earnings"],
     "News & Filings": ["Filings & Reports", "Key Exhibits", "Press Releases",
@@ -27,10 +42,21 @@ COMPANY_NAV = {
     "Market Analysis": ["Market Share & Branches"],
     "Ownership": ["Institutional (13F)", "Insider Activity"],
 }
-# Flat list of every leaf sub-tab (for deep-link validation, etc.).
-COMPANY_LEAVES = [leaf for subs in COMPANY_NAV.values() for leaf in subs]
-# Which section a given leaf lives under.
-COMPANY_SECTION_OF = {leaf: sec for sec, subs in COMPANY_NAV.items() for leaf in subs}
+
+
+def _all_leaves(val) -> list:
+    """Leaves of a section value, whether it's a flat list or a basis dict."""
+    if isinstance(val, dict):
+        return [leaf for sub in val.values() for leaf in sub]
+    return list(val)
+
+
+# Flat list of every leaf (for deep-link validation, etc.) — may repeat a name
+# that exists under both Financials bases; membership checks don't care.
+COMPANY_LEAVES = [leaf for val in COMPANY_NAV.values() for leaf in _all_leaves(val)]
+# Which section a leaf lives under (both Financials bases map to "Financials").
+COMPANY_SECTION_OF = {leaf: sec for sec, val in COMPANY_NAV.items()
+                      for leaf in _all_leaves(val)}
 
 
 def resolve_url_bank(url_bank: str | None, applied: str | None) -> str | None:
@@ -115,11 +141,6 @@ def _performance_analysis(t, ctx):
     render_performance_analysis(t)
 
 
-def _fair_value(t, ctx):
-    from ui.financials_statements import render_fair_value
-    render_fair_value(t)
-
-
 def _portfolio(t, ctx):
     from ui.financials_statements import render_portfolio
     render_portfolio(t)
@@ -192,6 +213,44 @@ def _insider_activity(t, ctx):
     render_insider_activity(t)
 
 
+# ── Company Reported renderers (Financials basis = "Company Reported") ──────
+# Scraped from the company's own latest filing. The built ones render real data;
+# the rest are placeholders until the company-reported pipeline lands. Each will
+# source every value to a company document (never n/a) and the sub-tab will be
+# hidden per-bank when the company doesn't disclose it.
+
+def _cr_income(t, ctx):
+    import streamlit as st
+    from ui.financials_statements import _render_as_reported_statement
+    st.subheader("Income Statement — Company Reported")
+    _render_as_reported_statement(t, "income")
+
+
+def _cr_balance(t, ctx):
+    import streamlit as st
+    from ui.financials_statements import _render_as_reported_statement
+    st.subheader("Balance Sheet — Company Reported")
+    _render_as_reported_statement(t, "balance")
+
+
+def _cr_fair_value(t, ctx):
+    from ui.financials_statements import _render_fair_value_hierarchy
+    _render_fair_value_hierarchy(t)
+
+
+def _cr_reg_capital(t, ctx):
+    from ui.capital_dynamics import _render_holdco_capital
+    _render_holdco_capital(t)
+
+
+def _cr_todo(label):
+    def _render(t, ctx):
+        import streamlit as st
+        st.info(f"**{label}** — Company-Reported view, sourced directly from the "
+                f"company's own filings. Building now.")
+    return _render
+
+
 _RENDERERS = {
     "Corporate Profile": _corporate_profile,
     "Price & Trends": _price_trends,
@@ -204,7 +263,6 @@ _RENDERERS = {
     "Income Statement": _income_statement,
     "Balance Sheet": _balance_sheet,
     "Performance Analysis": _performance_analysis,
-    "Fair Value Analysis": _fair_value,
     "Portfolio Analysis": _portfolio,
     "Capital Structure Details": _capital_structure,
     "Valuation Model": _valuation_model,
@@ -221,14 +279,34 @@ _RENDERERS = {
     "Insider Activity": _insider_activity,
 }
 
+# Financials → Company Reported basis. Keyed by the same leaf names as the
+# Templated list where they overlap, but pointing at the company-scrape views.
+_CR_RENDERERS = {
+    "Financial Highlights": _cr_todo("Financial Highlights"),
+    "Income Statement": _cr_income,
+    "Balance Sheet": _cr_balance,
+    "Performance Analysis": _cr_todo("Performance Analysis"),
+    "Regulatory Capital": _cr_reg_capital,
+    "Credit Quality / Allowance": _cr_todo("Credit Quality / Allowance"),
+    "Loan Composition": _cr_todo("Loan Composition"),
+    "Deposit Composition": _cr_todo("Deposit Composition"),
+    "Securities Portfolio": _cr_todo("Securities Portfolio"),
+    "Fair Value": _cr_fair_value,
+    "Segment Reporting": _cr_todo("Segment Reporting"),
+    "Interest Rate Risk": _cr_todo("Interest Rate Risk"),
+}
 
-def render_company_subtab(subtab: str, ticker: str, ctx: dict) -> bool:
+
+def render_company_subtab(subtab: str, ticker: str, ctx: dict, basis: str | None = None) -> bool:
     """Dispatch a sub-tab to its renderer. Returns False when no renderer is
     wired (app.py shows an explicit error — never a silent blank page).
 
-    ctx keys: watchlist (list[str]), load_metrics (ticker -> dict),
+    For Financials, `basis` is "Company Reported" or "Templated"; Company
+    Reported dispatches through _CR_RENDERERS, everything else through
+    _RENDERERS. ctx keys: watchlist (list[str]), load_metrics (ticker -> dict),
     peer_cohort (() -> list[dict])."""
-    renderer = _RENDERERS.get(subtab)
+    registry = _CR_RENDERERS if basis == "Company Reported" else _RENDERERS
+    renderer = registry.get(subtab)
     if renderer is None:
         return False
     renderer(ticker, ctx)

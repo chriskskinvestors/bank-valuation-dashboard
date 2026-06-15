@@ -455,17 +455,33 @@ class TestCompanyNavRegistry(unittest.TestCase):
     a nav entry silently rendering nothing, or dead renderers)."""
 
     def test_nav_and_renderers_in_sync(self):
-        from ui.company_nav import COMPANY_NAV, _RENDERERS
-        leaves = {leaf for subs in COMPANY_NAV.values() for leaf in subs}
-        self.assertEqual(leaves - set(_RENDERERS), set(),
-                         "nav entries with no renderer (would render blank)")
-        self.assertEqual(set(_RENDERERS) - leaves, set(),
-                         "renderers with no nav entry (dead code)")
+        from ui.company_nav import COMPANY_NAV, _RENDERERS, _CR_RENDERERS
+        # Flat sections + the Templated Financials basis dispatch via _RENDERERS;
+        # the Company Reported basis dispatches via _CR_RENDERERS.
+        flat = {leaf for v in COMPANY_NAV.values() if isinstance(v, list) for leaf in v}
+        templated = set(COMPANY_NAV["Financials"]["Templated"])
+        company = set(COMPANY_NAV["Financials"]["Company Reported"])
+        self.assertEqual(flat | templated, set(_RENDERERS),
+                         "flat + Templated nav entries must match _RENDERERS exactly")
+        self.assertEqual(company, set(_CR_RENDERERS),
+                         "Company Reported nav entries must match _CR_RENDERERS exactly")
 
-    def test_no_duplicate_leaves_across_sections(self):
+    def test_no_duplicate_leaves_within_a_list(self):
         from ui.company_nav import COMPANY_NAV
-        all_leaves = [leaf for subs in COMPANY_NAV.values() for leaf in subs]
-        self.assertEqual(len(all_leaves), len(set(all_leaves)))
+        for sec, v in COMPANY_NAV.items():
+            for lst in (v.values() if isinstance(v, dict) else [v]):
+                self.assertEqual(len(lst), len(set(lst)), f"duplicate leaf in {sec}")
+
+    def test_no_leaf_in_two_different_sections(self):
+        # A leaf may repeat across Financials bases (same section), but never
+        # across two DIFFERENT sections — that would make COMPANY_SECTION_OF
+        # ambiguous.
+        from ui.company_nav import COMPANY_NAV, _all_leaves
+        seen = {}
+        for sec, v in COMPANY_NAV.items():
+            for leaf in set(_all_leaves(v)):
+                self.assertNotIn(leaf, seen, f"{leaf} in {seen.get(leaf)} and {sec}")
+                seen[leaf] = sec
 
 
 class TestRcrCapitalDetail(unittest.TestCase):

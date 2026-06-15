@@ -1396,16 +1396,6 @@ _CAPITAL_STRUCTURE = [
 ]
 
 
-def _basis_toggle(key: str) -> str:
-    """SNL-style Templated | As-Reported switch shared by the statement views."""
-    return st.radio(
-        "Basis", ["Templated (FDIC)", "As-Reported (SEC filing)"],
-        horizontal=True, key=key, label_visibility="collapsed",
-        help="Templated = uniform FDIC call-report buckets, comparable across "
-             "banks. As-Reported = the company's own 10-K presentation — its "
-             "labels, order and lines, exactly as management reports them.")
-
-
 def _render_as_reported_statement(ticker: str, stype: str):
     """The company's own primary statement, parsed faithfully from its latest
     10-K's SEC-rendered R-file (data.sec_statements) — labels/order/lines are the
@@ -1457,19 +1447,11 @@ def _render_as_reported_statement(ticker: str, stype: str):
 
 
 def render_income_statement(ticker):
-    if _basis_toggle("basis_is").startswith("As-Reported"):
-        st.subheader("Income Statement — As-Reported (company filing)")
-        _render_as_reported_statement(ticker, "income")
-    else:
-        render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True)
+    render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True)
 
 
 def render_balance_sheet(ticker):
-    if _basis_toggle("basis_bs").startswith("As-Reported"):
-        st.subheader("Balance Sheet — As-Reported (company filing)")
-        _render_as_reported_statement(ticker, "balance")
-    else:
-        render_statement(ticker, "bs", "Balance Sheet", _BALANCE, trends=_BS_TRENDS)
+    render_statement(ticker, "bs", "Balance Sheet", _BALANCE, trends=_BS_TRENDS)
 
 
 def render_performance_analysis(ticker):
