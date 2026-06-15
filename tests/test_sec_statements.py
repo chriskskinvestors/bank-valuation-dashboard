@@ -95,7 +95,7 @@ class TestStitchIncome(unittest.TestCase):
                 "rows": [{"label": l, "header": h, "values": v} for l, h, v in rows]}
 
     def test_union_order_and_blanks(self):
-        from data.sec_statements import _stitch_income
+        from data.sec_statements import _stitch_statement as _stitch_income
         newer = self._filing(["Dec. 31, 2025", "Dec. 31, 2024"], [
             ("Income", True, []),
             ("Interest", False, [100.0, 90.0]),

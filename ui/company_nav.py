@@ -222,16 +222,16 @@ def _insider_activity(t, ctx):
 
 def _cr_income(t, ctx):
     import streamlit as st
-    from ui.financials_statements import _render_company_income
+    from ui.financials_statements import _render_company_statement
     st.subheader("Income Statement — Company Reported")
-    _render_company_income(t)
+    _render_company_statement(t, "income")
 
 
 def _cr_balance(t, ctx):
     import streamlit as st
-    from ui.financials_statements import _render_as_reported_statement
+    from ui.financials_statements import _render_company_statement
     st.subheader("Balance Sheet — Company Reported")
-    _render_as_reported_statement(t, "balance")
+    _render_company_statement(t, "balance")
 
 
 def _cr_fair_value(t, ctx):

@@ -231,9 +231,9 @@ def _merge_row_order(parsed: list) -> list:
     return merged
 
 
-def _stitch_income(parsed: list, n_years: int = 5) -> dict | None:
-    """Merge per-filing parsed income statements (newest first) into one
-    multi-year statement. Pure (no network) — unit-testable."""
+def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
+    """Merge per-filing parsed statements (newest first) into one multi-year
+    statement. Pure (no network) — unit-testable."""
     if not parsed:
         return None
     all_periods = sorted({p for f in parsed for p in f["periods"]},
@@ -256,18 +256,20 @@ def _stitch_income(parsed: list, n_years: int = 5) -> dict | None:
     return {"periods": all_periods, "rows": rows, "units_scale": parsed[0]["units_scale"]}
 
 
-def as_reported_income_multiyear(cik, n_years: int = 5) -> dict | None:
-    """Cached multi-year Company-Reported income statement, stitched from the
-    bank's recent 10-K income R-files. Cached by the latest 10-K accession (so it
-    refreshes when a new 10-K files). A transient fetch failure is never cached.
-    Returns {"meta", "filings", "statement"} or None."""
+def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5) -> dict | None:
+    """Cached multi-year Company-Reported statement (stype = "income" |
+    "balance" | "cashflow"), stitched from the bank's recent 10-K R-files. Cached
+    by the latest 10-K accession (refreshes when a new 10-K files); a transient
+    fetch failure is never cached. Returns {"meta", "filings", "statement"} or
+    None."""
     if not cik:
         return None
     from data import cache
-    metas = _recent_10k_metas(cik, 4)
+    # Balance sheets carry only 2 instant periods per 10-K, so reach back further.
+    metas = _recent_10k_metas(cik, 6 if stype == "balance" else 4)
     if not metas:
         return None
-    ckey = f"asreported_is_my:v1:{metas[0]['accession']}:{n_years}"
+    ckey = f"asreported_my:v1:{stype}:{metas[0]['accession']}:{n_years}"
     cached = cache.get(ckey)
     if cached is not None:
         return cached or None
@@ -275,10 +277,10 @@ def as_reported_income_multiyear(cik, n_years: int = 5) -> dict | None:
     for m in metas:
         base = _filing_base(m["cik"], m["accession"])
         try:
-            fn = _statement_rfiles(base).get("income")
+            fn = _statement_rfiles(base).get(stype)
             stmt = parse_rfile(_get(base + fn)) if fn else None
         except Exception as e:
-            print(f"[sec_statements] multiyear income failed for cik {cik}: "
+            print(f"[sec_statements] multiyear {stype} failed for cik {cik}: "
                   f"{type(e).__name__}: {e}")
             return None                         # transient — don't cache
         if stmt and stmt["periods"] and stmt["rows"]:
@@ -287,7 +289,7 @@ def as_reported_income_multiyear(cik, n_years: int = 5) -> dict | None:
         years = {_period_year(p) for f in parsed for p in f["periods"]}
         if len(years) >= n_years and len(parsed) >= 2:
             break
-    stitched = _stitch_income(parsed, n_years)
+    stitched = _stitch_statement(parsed, n_years)
     if not stitched:
         return None
     result = {"meta": metas[0], "filings": [f["_meta"] for f in parsed],

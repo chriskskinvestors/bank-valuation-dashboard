@@ -1446,11 +1446,11 @@ def _render_as_reported_statement(ticker: str, stype: str):
     st.markdown("\n".join(rows))
 
 
-def _render_company_income(ticker: str):
-    """Multi-year Company-Reported income statement, stitched from the bank's
-    recent 10-Ks (data.sec_statements.as_reported_income_multiyear). Faithful to
-    the company's own line items; blank where a line wasn't reported that year.
-    Per-share / weighted-share trailer omitted pending per-share unit handling."""
+def _render_company_statement(ticker: str, stype: str):
+    """Multi-year Company-Reported statement (stype = "income" | "balance"),
+    stitched from the bank's recent 10-Ks. Faithful to the company's own line
+    items; blank where a line wasn't reported that year. The income per-share /
+    weighted-share trailer is omitted pending per-share unit handling."""
     import re
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
@@ -1458,12 +1458,12 @@ def _render_company_income(ticker: str):
         st.info("No SEC filer mapping for this bank.")
         return
     try:
-        from data.sec_statements import as_reported_income_multiyear
-        res = as_reported_income_multiyear(cik, n_years=5)
+        from data.sec_statements import as_reported_statement_multiyear
+        res = as_reported_statement_multiyear(cik, stype, n_years=5)
     except Exception:
         res = None
     if not res:
-        st.caption("Company-reported income statement not available from this filer's 10-Ks — n/a.")
+        st.caption("Company-reported statement not available from this filer's 10-Ks — n/a.")
         return
     stmt, filings, latest = res["statement"], res["filings"], res["meta"]
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(latest['cik'])}/"
