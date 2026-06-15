@@ -218,20 +218,32 @@ def _recent_10k_metas(cik, n: int) -> list:
     return out
 
 
+def _norm_label(s: str) -> str:
+    """Match key for a line across filings: drop year-varying numeric detail
+    (allowance amounts, share counts, note numbers, dates) so the same line
+    doesn't fragment when a filing embeds changing numbers in its label —
+    e.g. 'AFS securities, net of allowance of $75 and $69'."""
+    s = re.sub(r"[\d,]+", "", s).replace("$", "").replace("—", "").replace("–", "")
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
 def _merge_row_order(parsed: list) -> list:
-    """Union of (label, header) rows across filings (newest first), preserving
-    each filing's internal order: a label new to the union is inserted right
-    after the previous label from its filing that's already placed."""
+    """Union of rows across filings (newest first), preserving each filing's
+    internal order. Rows are matched on the NORMALIZED label so a line whose
+    label carries changing numbers stays one row; the DISPLAY label is the newest
+    filing's. Returns [(norm_key, display_label, header), …]."""
     merged: list = []
+    keys: list = []                            # parallel norm keys for .index
     for f in parsed:
         prev = -1
         for r in f["rows"]:
-            key = (r["label"], r["header"])
-            if key in merged:
-                prev = merged.index(key)
+            k = (_norm_label(r["label"]), r["header"])
+            if k in keys:
+                prev = keys.index(k)
             else:
                 prev += 1
-                merged.insert(prev, key)
+                merged.insert(prev, (k, r["label"], r["header"]))
+                keys.insert(prev, k)
     return merged
 
 
@@ -242,21 +254,22 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
         return None
     all_periods = sorted({p for f in parsed for p in f["periods"]},
                          key=_period_year, reverse=True)[:n_years]
-    col: dict = {}                              # period -> {label: value}
+    col: dict = {}                              # period -> {norm_key: value}
     for period in all_periods:
         for f in parsed:                        # newest first wins
             if period in f["periods"]:
                 idx = f["periods"].index(period)
-                col[period] = {r["label"]: (r["values"][idx] if idx < len(r["values"]) else None)
+                col[period] = {(_norm_label(r["label"]), r["header"]):
+                               (r["values"][idx] if idx < len(r["values"]) else None)
                                for r in f["rows"] if not r["header"]}
                 break
     rows = []
-    for label, header in _merge_row_order(parsed):
+    for key, label, header in _merge_row_order(parsed):
         if header:
             rows.append({"label": label, "header": True, "values": []})
         else:
             rows.append({"label": label, "header": False,
-                         "values": [col.get(p, {}).get(label) for p in all_periods]})
+                         "values": [col.get(p, {}).get(key) for p in all_periods]})
     return {"periods": all_periods, "rows": rows, "units_scale": parsed[0]["units_scale"]}
 
 
@@ -273,7 +286,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     metas = _recent_10k_metas(cik, 6 if stype == "balance" else 4)
     if not metas:
         return None
-    ckey = f"asreported_my:v2:{stype}:{metas[0]['accession']}:{n_years}"
+    ckey = f"asreported_my:v3:{stype}:{metas[0]['accession']}:{n_years}"
     cached = cache.get(ckey)
     if cached is not None:
         return cached or None

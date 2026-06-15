@@ -140,6 +140,22 @@ class TestStitchIncome(unittest.TestCase):
         self.assertEqual(byl["Equipment finance"], [30.0, 20.0, None])
         self.assertEqual(byl["Net income"], [130.0, 110.0, 100.0])
 
+    def test_varying_numeric_labels_merge_to_one_row(self):
+        # A line whose label embeds changing numbers (allowance amounts) must
+        # stay ONE row across filings, not fragment — display the newest label.
+        from data.sec_statements import _stitch_statement
+        newer = self._filing(["Dec. 31, 2025", "Dec. 31, 2024"], [
+            ("AFS securities, net of allowance of $75 and $69", False, [2207.0, 1671.0]),
+        ])
+        older = self._filing(["Dec. 31, 2024", "Dec. 31, 2023"], [
+            ("AFS securities, net of allowance of $69 and $69", False, [1671.0, 1402.0]),
+        ])
+        out = _stitch_statement([newer, older], n_years=3)
+        afs = [r for r in out["rows"] if "AFS securities" in r["label"]]
+        self.assertEqual(len(afs), 1)                                  # not fragmented
+        self.assertEqual(afs[0]["label"], "AFS securities, net of allowance of $75 and $69")
+        self.assertEqual(afs[0]["values"], [2207.0, 1671.0, 1402.0])   # FY2025, FY2024, FY2023
+
 
 if __name__ == "__main__":
     unittest.main()
