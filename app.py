@@ -185,11 +185,13 @@ elif section == "Company":
             st.session_state["company_section"] = _sec
             _sec_nav = COMPANY_NAV[_sec]
             if isinstance(_sec_nav, dict):
-                # Financials carries a basis layer: pick the basis that contains
-                # the target leaf (default to the first basis) and seed the
-                # basis-qualified sub-tab key the radio actually reads.
-                _basis = next((b for b, leaves in _sec_nav.items() if _goto in leaves),
-                              next(iter(_sec_nav)))
+                # Financials carries a basis layer. Honor an explicit ?basis= when
+                # valid (shareable Company-Reported links); else pick the basis
+                # that contains the target leaf, defaulting to the first.
+                _url_basis = _qp.get("basis")
+                _basis = (_url_basis if _url_basis in _sec_nav else
+                          next((b for b, leaves in _sec_nav.items() if _goto in leaves),
+                               next(iter(_sec_nav))))
                 st.session_state[f"company_basis::{_sec}"] = _basis
                 st.session_state[f"company_subtab::{_sec}::{_basis}"] = _goto
             else:
