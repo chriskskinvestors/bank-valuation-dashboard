@@ -142,6 +142,13 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
             "header": is_header,
             "values": [] if is_header else (parsed + [None] * ncol)[:ncol],
         })
+    # SEC R-files append an XBRL element-definition footnote block below the
+    # statement (rows like "X", "- Definition…", "Name:", "Namespace Prefix:")
+    # that carry no period values. Truncate at the last row with a real number so
+    # the rendered statement stops where the company's statement ends.
+    last = max((i for i, r in enumerate(rows)
+                if any(v is not None for v in r["values"])), default=-1)
+    rows = rows[:last + 1]
     return {"title": title, "units_scale": scale, "periods": periods,
             "basis": basis, "rows": rows}
 

@@ -60,6 +60,20 @@ class TestParseRfile(unittest.TestCase):
         self.assertEqual(_units_scale("x $ in Billions"), 1e9)
         self.assertEqual(_units_scale("USD ($)"), 1.0)
 
+    def test_xbrl_definition_footnotes_truncated(self):
+        # SEC R-files append an element-definition footnote block after the
+        # statement (no period values) — it must be dropped, not rendered.
+        rf = (b'<table class="report">'
+              b'<tr><th class="tl">Statements of Income - USD ($) $ in Thousands</th>'
+              b'<th class="th">12 Months Ended</th></tr>'
+              b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+              b'<tr><td class="pl">Net income</td><td class="nump">2,500</td></tr>'
+              b'<tr><td class="pl">X</td><td class="text">x</td></tr>'
+              b'<tr><td class="pl">- Definition foo</td><td class="text">y</td></tr>'
+              b'<tr><td class="pl">Name:</td><td class="text">us-gaap:NetIncomeLoss</td></tr>'
+              b'</table>')
+        self.assertEqual([r["label"] for r in parse_rfile(rf)["rows"]], ["Net income"])
+
 
 class TestStatementMatching(unittest.TestCase):
     def test_matches_earnings_rejects_comprehensive_and_parenthetical(self):
