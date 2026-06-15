@@ -32,6 +32,9 @@ _STMT_PATTERNS = {
                  re.compile(r"parenthetical", re.I)),
 }
 _DATE = re.compile(r"[A-Z][a-z]{2}\.?\s+\d{1,2},\s+\d{4}")
+# Per-share amounts ($/share) and share counts are reported in their OWN units,
+# NOT the statement's "$ in Thousands/Millions" — so they must not be scaled.
+_PERSHARE = re.compile(r"per share|per common share|\(in shares\)|in shares", re.I)
 
 
 def _filing_base(cik, accession):
@@ -136,7 +139,8 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
             continue
         valcells = cells[1:]
         texts = [" ".join(c.text_content().split()) for c in valcells]
-        parsed = [_num(t, scale) for t in texts]
+        rscale = 1.0 if _PERSHARE.search(label) else scale
+        parsed = [_num(t, rscale) for t in texts]
         is_header = bool(texts) and all(t in ("", "\xa0") for t in texts)
         rows.append({
             "label": label,
@@ -269,7 +273,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     metas = _recent_10k_metas(cik, 6 if stype == "balance" else 4)
     if not metas:
         return None
-    ckey = f"asreported_my:v1:{stype}:{metas[0]['accession']}:{n_years}"
+    ckey = f"asreported_my:v2:{stype}:{metas[0]['accession']}:{n_years}"
     cached = cache.get(ckey)
     if cached is not None:
         return cached or None

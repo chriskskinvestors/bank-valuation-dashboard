@@ -60,6 +60,25 @@ class TestParseRfile(unittest.TestCase):
         self.assertEqual(_units_scale("x $ in Billions"), 1e9)
         self.assertEqual(_units_scale("USD ($)"), 1.0)
 
+    def test_per_share_rows_not_unit_scaled(self):
+        # EPS ($/share) and share counts are in their own units, not the
+        # statement's "$ in Thousands" — they must not be scaled.
+        rf = (b'<table class="report">'
+              b'<tr><th class="tl">Statements of Income - USD ($) $ in Thousands</th>'
+              b'<th class="th">12 Months Ended</th></tr>'
+              b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+              b'<tr><td class="pl">Net income</td><td class="nump">2,500</td></tr>'
+              b'<tr><td class="pl">Basic earnings per common share (in dollars per share)</td>'
+              b'<td class="nump">$ 6.02</td></tr>'
+              b'<tr><td class="pl">Basic (in shares)</td><td class="nump">68,448,812</td></tr>'
+              b'</table>')
+        vals = {r["label"]: r["values"][0]
+                for r in parse_rfile(rf)["rows"] if not r["header"]}
+        self.assertEqual(vals["Net income"], 2_500_000.0)          # x1000 (thousands)
+        self.assertAlmostEqual(
+            vals["Basic earnings per common share (in dollars per share)"], 6.02)
+        self.assertEqual(vals["Basic (in shares)"], 68_448_812.0)  # not scaled
+
     def test_xbrl_definition_footnotes_truncated(self):
         # SEC R-files append an element-definition footnote block after the
         # statement (no period values) — it must be dropped, not rendered.

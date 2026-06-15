@@ -1475,14 +1475,20 @@ def _render_company_statement(ticker: str, stype: str):
 
     st.caption(f"Source: company 10-K filings — latest [{latest['date']}]({src}); "
                f"{len(stmt['periods'])} fiscal years stitched from {len(filings)} filings. "
-               f"Values in millions of dollars; blank = not separately reported that year.")
+               f"Dollar lines in $ millions; EPS in $/share, shares in millions; "
+               f"blank = not separately reported that year.")
     periods = stmt["periods"][::-1]            # oldest → newest (matches Templated)
     cols = [f"FY{_yr(p)}" for p in periods]
-    drop = re.compile(r"per share|per common share|weighted average|in shares", re.I)
+    _eps = re.compile(r"per share|per common share", re.I)
+    _shares = re.compile(r"\(in shares\)|in shares", re.I)
 
-    def _m(v):
+    def _m(label, v):
         if v is None:
             return ""
+        if _eps.search(label):
+            return f"\\${v:,.2f}"
+        if _shares.search(label):
+            return f"{v / 1e6:,.1f}M"
         x = v / 1e6
         return f"({abs(x):,.1f})" if x < 0 else f"{x:,.1f}"
 
@@ -1491,14 +1497,12 @@ def _render_company_statement(ticker: str, stype: str):
 
     out = ["| | " + " | ".join(cols) + " |", "|---|" + "---|" * len(cols)]
     for r in stmt["rows"]:
-        if drop.search(r["label"]):
-            continue
         lab = _esc(r["label"])
         if r["header"]:
             out.append(f"| **{lab}** |" + " |" * len(cols))
         else:
             vals = r["values"][::-1]
-            out.append(f"| {lab} | " + " | ".join(_m(v) for v in vals) + " |")
+            out.append(f"| {lab} | " + " | ".join(_m(r["label"], v) for v in vals) + " |")
     st.markdown("\n".join(out))
 
 
