@@ -426,13 +426,16 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
             try:
                 html = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
                 cap = extract_holdco_capital(parse_inline_xbrl(html), anchor_cet1=anchor)
+                # Cache only a successful parse; a transient fetch/parse exception
+                # is never cached (else one SEC hiccup pins the bank to an older
+                # filing / n/a until the cache version bumps).
+                try:
+                    cache.put(ckey, cap)
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"[sec_scraper] holdco capital failed for cik {cik}: {type(e).__name__}: {e}")
                 cap = {}
-            try:
-                cache.put(ckey, cap)
-            except Exception:
-                pass
         if _has_capital(cap):
             return {"meta": meta, "capital": cap}
     return None
@@ -546,19 +549,23 @@ def fair_value_for(cik) -> dict | None:
         meta = latest_filing(cik, forms)
         if not meta:
             continue
-        ckey = f"fair_value:v1:{meta['accession']}"
+        # v2: cache only a SUCCESSFUL parse. A genuine empty (no rollup tagged) is
+        # a valid result and is cached; a fetch/parse EXCEPTION is transient and
+        # is NEVER cached, or one SEC hiccup would pin the company to an older
+        # filing (10-Q→10-K fallback) until the cache version bumps.
+        ckey = f"fair_value:v2:{meta['accession']}"
         fv = cache.get(ckey)
         if fv is None:
             try:
                 html = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
                 fv = extract_fair_value(parse_inline_xbrl(html))
+                try:
+                    cache.put(ckey, fv)
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"[sec_scraper] fair value failed for cik {cik}: {type(e).__name__}: {e}")
                 fv = {}
-            try:
-                cache.put(ckey, fv)
-            except Exception:
-                pass
         if fv:
             return {"meta": meta, "fair_value": fv}
     return None

@@ -10,6 +10,7 @@ The values it must reproduce are the ones verified LIVE against Regions' FY2025
 mechanics so a regression can't silently corrupt them.
 """
 import unittest
+from unittest import mock
 
 from data.sec_filing_scraper import (
     parse_inline_xbrl, extract_holdco_capital, extract_fair_value, Fact)
@@ -343,6 +344,40 @@ class TestFairValueHierarchy(unittest.TestCase):
         self.assertEqual(out["liabilities"]["total"], (168 + 2089 + 128) * self.M)
         self.assertIsNone(out["liabilities"]["grand"])
         self.assertTrue(out["liabilities"]["_reconciles"])
+
+
+class TestFairValueCaching(unittest.TestCase):
+    """A transient fetch/parse exception must NOT be cached as an empty result
+    (else one SEC hiccup pins the company to an older filing via the 10-Q→10-K
+    fallback). A successful parse — even a genuine empty — IS cached."""
+
+    def _run(self, get_side_effect):
+        import data.sec_filing_scraper as s
+        from data import cache
+        metas = {
+            ("10-Q",): {"accession": "Q", "doc": "q.htm", "cik": 1, "date": "d", "form": "10-Q"},
+            ("10-K",): {"accession": "K", "doc": "k.htm", "cik": 1, "date": "d", "form": "10-K"},
+        }
+        puts = []
+        with mock.patch.object(s, "latest_filing", side_effect=lambda cik, forms: metas[forms]), \
+             mock.patch.object(s, "_get", side_effect=get_side_effect), \
+             mock.patch.object(cache, "get", return_value=None), \
+             mock.patch.object(cache, "put", side_effect=lambda k, v: puts.append((k, v))):
+            res = s.fair_value_for(1)
+        return res, puts
+
+    def test_transient_fetch_exception_not_cached(self):
+        res, puts = self._run(OSError("boom"))
+        self.assertIsNone(res)            # no data from either form
+        self.assertEqual(puts, [])        # nothing cached → next load retries the 10-Q
+
+    def test_successful_empty_parse_is_cached(self):
+        # A successful fetch that yields no FV facts → extract {} → cached as the
+        # valid "no rollup tagged" result (won't be needlessly re-fetched).
+        res, puts = self._run(lambda url: b"<html></html>")
+        self.assertIsNone(res)
+        self.assertEqual([k for k, _ in puts], ["fair_value:v2:Q", "fair_value:v2:K"])
+        self.assertTrue(all(v == {} for _, v in puts))
 
 
 if __name__ == "__main__":
