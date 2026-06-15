@@ -22,18 +22,19 @@ from __future__ import annotations
 COMPANY_NAV = {
     "Overview": ["Corporate Profile"],
     "Financials": {
+        # FDIC call-report fields — uniform across every bank. Default basis (first):
+        # fully built + fast, while Company Reported is still being filled in.
+        "Templated": ["Financial Highlights", "Income Statement", "Balance Sheet",
+                      "Performance Analysis", "Capital Adequacy", "Asset Quality Detail",
+                      "Asset Quality by Loan Type", "Deposit/Loan Composition",
+                      "Deposit Trends", "Portfolio Analysis", "Capital Structure Details",
+                      "Interest Rate Risk"],
         # Scraped from the company's own filings — their labels, never n/a.
         "Company Reported": ["Financial Highlights", "Income Statement", "Balance Sheet",
                              "Performance Analysis", "Regulatory Capital",
                              "Credit Quality / Allowance", "Loan Composition",
                              "Deposit Composition", "Securities Portfolio", "Fair Value",
                              "Segment Reporting", "Interest Rate Risk"],
-        # FDIC call-report fields — uniform across every bank.
-        "Templated": ["Financial Highlights", "Income Statement", "Balance Sheet",
-                      "Performance Analysis", "Capital Adequacy", "Asset Quality Detail",
-                      "Asset Quality by Loan Type", "Deposit/Loan Composition",
-                      "Deposit Trends", "Portfolio Analysis", "Capital Structure Details",
-                      "Interest Rate Risk"],
     },
     "Valuation": ["Valuation Model", "Peer Rank", "Price & Trends"],
     "Estimates / Earnings": ["Earnings"],

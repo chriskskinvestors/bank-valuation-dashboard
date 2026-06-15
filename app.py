@@ -183,7 +183,17 @@ elif section == "Company":
         if _goto and "company_section" not in st.session_state:
             _sec = COMPANY_SECTION_OF[_goto]
             st.session_state["company_section"] = _sec
-            st.session_state[f"company_subtab::{_sec}"] = _goto
+            _sec_nav = COMPANY_NAV[_sec]
+            if isinstance(_sec_nav, dict):
+                # Financials carries a basis layer: pick the basis that contains
+                # the target leaf (default to the first basis) and seed the
+                # basis-qualified sub-tab key the radio actually reads.
+                _basis = next((b for b, leaves in _sec_nav.items() if _goto in leaves),
+                              next(iter(_sec_nav)))
+                st.session_state[f"company_basis::{_sec}"] = _basis
+                st.session_state[f"company_subtab::{_sec}::{_basis}"] = _goto
+            else:
+                st.session_state[f"company_subtab::{_sec}"] = _goto
 
 
 
