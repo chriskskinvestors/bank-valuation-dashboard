@@ -1475,7 +1475,7 @@ def _render_company_statement(ticker: str, stype: str):
 
     st.caption(f"Source: company 10-K filings — latest [{latest['date']}]({src}); "
                f"{len(stmt['periods'])} fiscal years stitched from {len(filings)} filings. "
-               f"Dollar lines in $ millions; EPS in $/share, shares in millions; "
+               f"Dollar lines in \\$ millions; EPS in \\$/share, shares in millions; "
                f"blank = not separately reported that year.")
     periods = stmt["periods"][::-1]            # oldest → newest (matches Templated)
     cols = [f"FY{_yr(p)}" for p in periods]
