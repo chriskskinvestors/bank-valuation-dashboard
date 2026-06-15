@@ -1396,12 +1396,80 @@ _CAPITAL_STRUCTURE = [
 ]
 
 
+def _basis_toggle(key: str) -> str:
+    """SNL-style Templated | As-Reported switch shared by the statement views."""
+    return st.radio(
+        "Basis", ["Templated (FDIC)", "As-Reported (SEC filing)"],
+        horizontal=True, key=key, label_visibility="collapsed",
+        help="Templated = uniform FDIC call-report buckets, comparable across "
+             "banks. As-Reported = the company's own 10-K presentation — its "
+             "labels, order and lines, exactly as management reports them.")
+
+
+def _render_as_reported_statement(ticker: str, stype: str):
+    """The company's own primary statement, parsed faithfully from its latest
+    10-K's SEC-rendered R-file (data.sec_statements) — labels/order/lines are the
+    company's; values are reproduced, never re-templated."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        st.info("No SEC filer mapping for this bank — As-Reported view unavailable.")
+        return
+    try:
+        from data.sec_statements import as_reported_statements_for
+        res = as_reported_statements_for(cik)
+    except Exception:
+        res = None
+    stmts = (res or {}).get("statements", {})
+    if stype not in stmts:
+        st.caption("As-Reported statement not available from this filer's latest 10-K — n/a.")
+        return
+    meta, stmt = res["meta"], stmts[stype]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
+           f"{meta['accession']}/{meta['doc']}")
+    basis = f" · {stmt['basis']}" if stmt["basis"] else ""
+    st.caption(f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — as the "
+               f"company reports it{basis}. Values in millions of dollars.")
+    periods = stmt["periods"] or [""]
+
+    def _m(v):
+        if v is None:
+            return ""
+        x = v / 1e6
+        return f"({abs(x):,.1f})" if x < 0 else f"{x:,.1f}"
+
+    def _esc(s):
+        # Labels can embed $ amounts (would render as LaTeX) and pipes (would
+        # break the markdown table) — escape both.
+        return s.replace("|", r"\|").replace("$", r"\$")
+
+    hdr = "| | " + " | ".join(periods) + " |"
+    sep = "|---|" + "---|" * len(periods)
+    rows = [hdr, sep]
+    for r in stmt["rows"]:
+        lab = _esc(r["label"])
+        if r["header"]:
+            rows.append(f"| **{lab}** |" + " |" * len(periods))
+        else:
+            vals = (r["values"] + [None] * len(periods))[:len(periods)]
+            rows.append(f"| {lab} | " + " | ".join(_m(v) for v in vals) + " |")
+    st.markdown("\n".join(rows))
+
+
 def render_income_statement(ticker):
-    render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True)
+    if _basis_toggle("basis_is").startswith("As-Reported"):
+        st.subheader("Income Statement — As-Reported (company filing)")
+        _render_as_reported_statement(ticker, "income")
+    else:
+        render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True)
 
 
 def render_balance_sheet(ticker):
-    render_statement(ticker, "bs", "Balance Sheet", _BALANCE, trends=_BS_TRENDS)
+    if _basis_toggle("basis_bs").startswith("As-Reported"):
+        st.subheader("Balance Sheet — As-Reported (company filing)")
+        _render_as_reported_statement(ticker, "balance")
+    else:
+        render_statement(ticker, "bs", "Balance Sheet", _BALANCE, trends=_BS_TRENDS)
 
 
 def render_performance_analysis(ticker):
