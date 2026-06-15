@@ -436,3 +436,129 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
         if _has_capital(cap):
             return {"meta": meta, "capital": cap}
     return None
+
+
+# ── Fair-value hierarchy (ASC 820) extraction ───────────────────────────────
+# The recurring fair-value hierarchy total is tagged Assets/Liabilities-
+# FairValueDisclosure, split across FairValueByFairValueHierarchyLevelAxis
+# (Level 1/2/3). The SAME concept also tags the NONRECURRING table (collateral-
+# dependent loans, OREO) and per-instrument sub-rows, which carry a Nonrecurring
+# frequency member or a FinancialInstrument/ValuationTechnique breakdown member.
+# So the clean recurring TOTAL is the fact whose only dimensional members are the
+# hierarchy level and (optionally) a Recurring frequency. Verified across 7
+# filers (tools/_probe_fairvalue.py): ABCB/FITB/CFG/WSFS reconcile L1+L2+L3 ==
+# grand exactly; a dealer (TFC) shows a derivative-netting delta surfaced as a
+# reconciling line; filers tagging only per-instrument sub-rows (RF) or omitting
+# the rollup (FFIN) yield n/a — never a guessed total.
+_FV_HIER_AXIS = "FairValueByFairValueHierarchyLevelAxis"
+_FV_FREQ_AXIS = "FairValueByMeasurementFrequencyAxis"
+# Concepts per side, highest priority first (an explicit ...Recurring concept
+# beats the base concept when a filer tags both — rare, but keep it deterministic).
+_FV_TOTAL_CONCEPTS = {
+    "assets": ("AssetsFairValueDisclosureRecurring", "AssetsFairValueDisclosure"),
+    "liabilities": ("LiabilitiesFairValueDisclosureRecurring", "LiabilitiesFairValueDisclosure"),
+}
+
+
+def _fv_level(members: dict) -> str | None:
+    """'L1'/'L2'/'L3' if the fact carries a fair-value hierarchy level member."""
+    for dim, mem in members.items():
+        if dim.split(":")[-1] == _FV_HIER_AXIS:
+            m = mem.split(":")[-1]
+            for n in ("1", "2", "3"):
+                if f"FairValueInputsLevel{n}" in m:
+                    return f"L{n}"
+    return None
+
+
+def _fv_clean_total(members: dict) -> bool:
+    """True for a clean recurring-table TOTAL row: the only members allowed are
+    the hierarchy-level axis and a Recurring frequency. A Nonrecurring frequency
+    or ANY other breakdown axis (FinancialInstrument, ValuationTechnique,
+    portfolio segment, …) marks a sub-detail / nonrecurring row — excluded."""
+    for dim, mem in members.items():
+        d, m = dim.split(":")[-1], mem.split(":")[-1]
+        if d == _FV_HIER_AXIS:
+            continue
+        if d == _FV_FREQ_AXIS:
+            if "Nonrecurring" in m:
+                return False
+            continue
+        return False
+    return True
+
+
+def extract_fair_value(facts: list[Fact]) -> dict:
+    """{period_end: {"assets": {...}, "liabilities": {...}}} — the recurring
+    ASC 820 fair-value hierarchy from a filing's iXBRL.
+
+    Each side carries l1/l2/l3 (as tagged), total (= sum of tagged levels), grand
+    (the filer's tagged grand total, if any), netting (grand − total, the
+    derivative/collateral reconciling item), l3_pct (L3 ÷ total) and _reconciles
+    (whether the level sum ties the tagged grand within tolerance). A side with no
+    clean level total is omitted (n/a) — never summed from components."""
+    prio = {c: (side, i)
+            for side, cs in _FV_TOTAL_CONCEPTS.items()
+            for i, c in enumerate(cs)}
+    # side -> period -> slot -> (priority, value); lowest priority wins.
+    grab: dict = {}
+    for f in facts:
+        hit = prio.get(f.concept.split(":")[-1])
+        if hit is None or not _fv_clean_total(f.members):
+            continue
+        side, p = hit
+        slot = _fv_level(f.members) or "grand"
+        cur = grab.setdefault(side, {}).setdefault(f.period_end, {}).get(slot)
+        if cur is None or p < cur[0]:
+            grab[side][f.period_end][slot] = (p, f.value)
+
+    out: dict = {}
+    for side, byperiod in grab.items():
+        for period, slots in byperiod.items():
+            levels = {lv: slots[lv][1] for lv in ("L1", "L2", "L3") if lv in slots}
+            if not levels:
+                continue
+            total = sum(levels.values())
+            grand = slots["grand"][1] if "grand" in slots else None
+            d = {
+                "l1": levels.get("L1"), "l2": levels.get("L2"), "l3": levels.get("L3"),
+                "total": total, "grand": grand,
+                "l3_pct": (levels.get("L3", 0.0) / total) if total else None,
+            }
+            if grand is None:
+                d["netting"], d["_reconciles"] = None, True
+            else:
+                d["netting"] = grand - total
+                d["_reconciles"] = abs(grand - total) <= max(abs(total) * 0.01, 5e6)
+            out.setdefault(period, {})[side] = d
+    return out
+
+
+def fair_value_for(cik) -> dict | None:
+    """Cached recurring fair-value hierarchy for a company from its own latest SEC
+    filing. Tries the timeliest 10-Q first, falls back to the 10-K. Cached by
+    accession + version (an empty parse is cached too). Returns
+    {"meta": {...}, "fair_value": {period: {...}}} or None."""
+    if not cik:
+        return None
+    from data import cache
+    for forms in (("10-Q",), ("10-K",)):
+        meta = latest_filing(cik, forms)
+        if not meta:
+            continue
+        ckey = f"fair_value:v1:{meta['accession']}"
+        fv = cache.get(ckey)
+        if fv is None:
+            try:
+                html = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
+                fv = extract_fair_value(parse_inline_xbrl(html))
+            except Exception as e:
+                print(f"[sec_scraper] fair value failed for cik {cik}: {type(e).__name__}: {e}")
+                fv = {}
+            try:
+                cache.put(ckey, fv)
+            except Exception:
+                pass
+        if fv:
+            return {"meta": meta, "fair_value": fv}
+    return None

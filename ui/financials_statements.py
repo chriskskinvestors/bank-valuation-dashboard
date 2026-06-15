@@ -1409,10 +1409,81 @@ def render_performance_analysis(ticker):
                      with_persh=True, with_dep_cost=True, with_fte=True)
 
 
+def _render_fair_value_hierarchy(ticker):
+    """Recurring ASC 820 fair-value hierarchy (Level 1/2/3) for the HOLDING
+    COMPANY, scraped from its own latest 10-K/10-Q inline XBRL. Level 3 is the
+    mark-to-model share. Renders only what reconciles: where the filer's tagged
+    grand total differs from the level sum (dealer derivative/collateral netting)
+    the difference is shown as an explicit reconciling line; filers that don't tag
+    a hierarchy rollup render n/a, never a component-summed guess."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        return
+    try:
+        from data.sec_filing_scraper import fair_value_for
+        res = fair_value_for(cik)
+    except Exception:
+        res = None
+    st.markdown("---")
+    st.subheader("Fair Value Hierarchy — recurring (ASC 820)")
+    if not res or not res.get("fair_value"):
+        st.caption("Fair-value hierarchy rollup not tagged in this filer's latest "
+                   "filing — n/a. (Per-instrument component extraction is planned.)")
+        return
+    meta, fv = res["meta"], res["fair_value"]
+    period = max(fv)
+    sides = fv[period]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{meta['accession']}/{meta['doc']}")
+    y, mo = period[:4], period[5:7]
+    plab = f"FY{y}" if mo == "12" else f"Q{(int(mo) - 1) // 3 + 1} '{y[2:]}"
+    st.caption(
+        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — assets & "
+        f"liabilities measured at fair value on a recurring basis, {plab}. Level 3 "
+        f"= mark-to-model (unobservable inputs). Updates as soon as the company files.")
+
+    def _b(v):
+        if v is None:
+            return "n/a"
+        return f"${v / 1e9:,.2f}B" if abs(v) >= 1e9 else f"${v / 1e6:,.0f}M"
+
+    a, lia = sides.get("assets"), sides.get("liabilities")
+    needs_netting = any(s and not s["_reconciles"] for s in (a, lia))
+
+    def _col(s, key, kind):
+        if not s or s.get(key) is None:
+            return "n/a"
+        v = s[key]
+        return f"{v * 100:.1f}%" if kind == "pct" else _b(v)
+
+    rows = [
+        ("Level 1 (quoted prices)", "l1", "usd"),
+        ("Level 2 (observable inputs)", "l2", "usd"),
+        ("Level 3 (unobservable inputs)", "l3", "usd"),
+        ("Total (sum of levels)", "total", "usd"),
+    ]
+    if needs_netting:
+        rows += [("Counterparty/collateral netting", "netting", "usd"),
+                 ("Total per filing", "grand", "usd")]
+    rows.append(("Level 3 % of total", "l3_pct", "pct"))
+
+    hdr = "| ($) | Assets | Liabilities |"
+    sep = "|---|---|---|"
+    body = [f"| {lab} | {_col(a, k, kind)} | {_col(lia, k, kind)} |"
+            for lab, k, kind in rows]
+    st.markdown("\n".join([hdr, sep] + body))
+    if needs_netting:
+        st.caption("Level totals are gross; the filer's grand total nets "
+                   "counterparty/collateral arrangements (shown as a reconciling line).")
+
+
 def render_fair_value(ticker):
     render_statement(ticker, "fv", "Fair Value Analysis", _FAIR_VALUE)
-    st.caption("Detailed AFS/HTM fair-value and unrealized gain/loss (AOCI) breakdown "
-               "from FFIEC Schedule RC-B is on the roadmap.")
+    _render_fair_value_hierarchy(ticker)
+    st.caption("AFS/HTM unrealized gain/loss (AOCI) detail from FFIEC Schedule RC-B, "
+               "and the ASC 825 fair-value-of-financial-instruments table (loans, "
+               "deposits, debt), are next on the roadmap.")
 
 
 def render_portfolio(ticker):

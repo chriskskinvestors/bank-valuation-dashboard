@@ -11,7 +11,8 @@ mechanics so a regression can't silently corrupt them.
 """
 import unittest
 
-from data.sec_filing_scraper import parse_inline_xbrl, extract_holdco_capital, Fact
+from data.sec_filing_scraper import (
+    parse_inline_xbrl, extract_holdco_capital, extract_fair_value, Fact)
 
 
 def _f(concept, val, members=None, period="2025-12-31"):
@@ -241,6 +242,107 @@ class TestInlineXbrlParser(unittest.TestCase):
     def test_accounting_sign_negative(self):
         f = self._one("OtherComprehensiveIncomeLoss", "ParentCompanyMember")
         self.assertEqual(f.value, -289 * 10**6)   # sign="-"
+
+
+class TestFairValueHierarchy(unittest.TestCase):
+    """The recurring ASC 820 fair-value hierarchy extraction (extract_fair_value).
+    Each case mirrors a real-filer tagging shape dumped by tools/_probe_fairvalue.py
+    (ABCB/CFG/TFC/RF), so a regression can't silently corrupt the level split,
+    the recurring-vs-nonrecurring filter, or the netting reconcile gate."""
+
+    _HIER = "us-gaap:FairValueByFairValueHierarchyLevelAxis"
+    _FREQ = "us-gaap:FairValueByMeasurementFrequencyAxis"
+    _REC = "us-gaap:FairValueMeasurementsRecurringMember"
+    _NONREC = "us-gaap:FairValueMeasurementsNonrecurringMember"
+    _INSTR = "us-gaap:FinancialInstrumentAxis"
+    M = 1e6
+
+    def _fv(self, concept, val_m, level=None, freq=None, extra=None):
+        m = {}
+        if level:
+            m[self._HIER] = f"us-gaap:FairValueInputsLevel{level}Member"
+        if freq:
+            m[self._FREQ] = freq
+        if extra:
+            m.update(extra)
+        return _f(concept, val_m * self.M, m)
+
+    def test_recurring_assets_reconcile(self):
+        # ABCB-shape: L1 661, L2 2179, L3 1, grand 2841 (recurring) → reconciles.
+        facts = [
+            self._fv("us-gaap:AssetsFairValueDisclosure", 661, "1", self._REC),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 2179, "2", self._REC),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 1, "3", self._REC),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 2841, None, self._REC),
+        ]
+        a = extract_fair_value(facts)["2025-12-31"]["assets"]
+        self.assertEqual(a["l1"], 661 * self.M)
+        self.assertEqual(a["l3"], 1 * self.M)
+        self.assertEqual(a["total"], 2841 * self.M)
+        self.assertEqual(a["grand"], 2841 * self.M)
+        self.assertTrue(a["_reconciles"])
+        self.assertAlmostEqual(a["l3_pct"], 1 / 2841)
+
+    def test_nonrecurring_and_instrument_rows_excluded(self):
+        # A recurring L3 plus a nonrecurring L3 and an instrument sub-row at L3 —
+        # only the clean recurring total counts.
+        facts = [
+            self._fv("us-gaap:AssetsFairValueDisclosure", 100, "3", self._REC),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 37, "3", self._NONREC),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 37, "3", self._NONREC,
+                     {self._INSTR: "x:ImpairedLoansMember"}),
+        ]
+        a = extract_fair_value(facts)["2025-12-31"]["assets"]
+        self.assertEqual(a["l3"], 100 * self.M)
+        self.assertEqual(a["total"], 100 * self.M)
+
+    def test_no_frequency_member_treated_as_recurring(self):
+        # CFG-shape: levels tagged with NO frequency member → still the table.
+        facts = [
+            self._fv("us-gaap:AssetsFairValueDisclosure", 3414, "1"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 35195, "2"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 1463, "3"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 40072, None),
+        ]
+        a = extract_fair_value(facts)["2025-12-31"]["assets"]
+        self.assertEqual(a["total"], 40072 * self.M)
+        self.assertTrue(a["_reconciles"])
+
+    def test_netting_delta_surfaced_when_grand_differs(self):
+        # TFC-shape: L1+L2+L3 = 79,941 but grand = 78,162 → netting −1,779, n/recon.
+        facts = [
+            self._fv("us-gaap:AssetsFairValueDisclosure", 2515, "1"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 73439, "2"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 3987, "3"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 78162, None),
+        ]
+        a = extract_fair_value(facts)["2025-12-31"]["assets"]
+        self.assertEqual(a["total"], 79941 * self.M)
+        self.assertFalse(a["_reconciles"])
+        self.assertAlmostEqual(a["netting"], (78162 - 79941) * self.M)
+
+    def test_instrument_only_rows_yield_na(self):
+        # RF-shape: tagged ONLY with instrument members (no clean level total) →
+        # no assets entry (n/a, never component-summed into a guessed total).
+        facts = [
+            self._fv("us-gaap:AssetsFairValueDisclosure", 970, "3", None,
+                     {self._INSTR: "us-gaap:ResidentialMortgageMember"}),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 93, "3", None,
+                     {self._INSTR: "us-gaap:CommercialRealEstateMember"}),
+        ]
+        self.assertEqual(extract_fair_value(facts), {})
+
+    def test_liabilities_side_independent(self):
+        facts = [
+            self._fv("us-gaap:LiabilitiesFairValueDisclosure", 168, "1", self._REC),
+            self._fv("us-gaap:LiabilitiesFairValueDisclosure", 2089, "2", self._REC),
+            self._fv("us-gaap:LiabilitiesFairValueDisclosure", 128, "3", self._REC),
+        ]
+        out = extract_fair_value(facts)["2025-12-31"]
+        self.assertNotIn("assets", out)
+        self.assertEqual(out["liabilities"]["total"], (168 + 2089 + 128) * self.M)
+        self.assertIsNone(out["liabilities"]["grand"])
+        self.assertTrue(out["liabilities"]["_reconciles"])
 
 
 if __name__ == "__main__":
