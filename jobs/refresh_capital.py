@@ -21,12 +21,55 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+# SEC fair-access is ~10 req/s; stay under 8/s with a safety margin so a
+# burst from the worker pool can never get the IP blocked (which would also
+# break the UI's live per-filing fallback).
+_SEC_MAX_RPS = 8
+
+
+class _SecThrottle:
+    """Thread-safe global rate limiter: reserves a time slot per call so all
+    worker threads combined never issue SEC requests faster than max_rps."""
+
+    def __init__(self, max_rps: int):
+        self._min_interval = 1.0 / max_rps
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            start = max(now, self._next)
+            self._next = start + self._min_interval
+        delay = start - now
+        if delay > 0:
+            time.sleep(delay)
+
+
+def _install_sec_rate_limit(max_rps: int = _SEC_MAX_RPS) -> None:
+    """Wrap data.sec_filing_scraper._get with a global throttle so the whole
+    pool stays under the SEC rate limit. Idempotent; only SEC fetches go
+    through _get (the FDIC anchor hits a different host and is left alone)."""
+    from data import sec_filing_scraper as s
+    if getattr(s._get, "_rate_limited", False):
+        return
+    throttle = _SecThrottle(max_rps)
+    orig = s._get
+
+    def _throttled(url):
+        throttle.wait()
+        return orig(url)
+
+    _throttled._rate_limited = True
+    s._get = _throttled
 
 
 def _warm_one(ticker: str, cik, cert) -> tuple[str, str]:
@@ -51,6 +94,7 @@ def main(limit: int | None = None):
     if limit:
         items = items[:limit]
     print(f"[refresh_capital] warming holdco-capital cache for {len(items)} banks…", flush=True)
+    _install_sec_rate_limit()
     t0 = time.time()
     counts: dict[str, int] = {"ok": 0, "cblr": 0, "miss": 0, "err": 0}
     with ThreadPoolExecutor(max_workers=4) as ex:
