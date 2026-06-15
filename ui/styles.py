@@ -175,10 +175,15 @@ CUSTOM_CSS = """
     /* Slightly smaller base so the whole dashboard shows more per screen. */
     html { font-size: 15px; }
 
-    /* Main container — dense: more usable width, tight top padding. */
+    /* Main container — dense: more usable width, tight top padding.
+       Top padding clears Streamlit's fixed/absolute header bar
+       ([data-testid="stHeader"], ~56px tall, opaque white, z-index 999990),
+       which otherwise overlaps and clips the top of the "KSK INVESTORS"
+       wordmark in the first content row. 1.8rem drops the wordmark ~11px
+       below the header bottom while staying dense. */
     .main > div.block-container,
     .block-container {
-        padding-top: 0.6rem !important;
+        padding-top: 1.8rem !important;
         padding-bottom: 1.25rem !important;
         padding-left: 1.25rem !important;
         padding-right: 1.25rem !important;
