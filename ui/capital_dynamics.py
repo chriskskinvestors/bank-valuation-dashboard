@@ -385,6 +385,10 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             st.plotly_chart(fig4, use_container_width=True)
 
 
+    # ── Holding-company regulatory capital (SEC 10-K/10-Q — SNL basis) ──
+    st.markdown("---")
+    _render_holdco_capital(ticker)
+
     # ── RC-R Part I capital walk (SNL Capital Adequacy table) ──────────
     st.markdown("---")
     _render_rcr_capital_walk(ticker)
@@ -392,6 +396,68 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     # ── Capital Return Attribution (SEC-sourced) ────────────────────────
     st.markdown("---")
     _render_capital_return_attribution(ticker)
+
+
+def _render_holdco_capital(ticker: str):
+    """SNL-basis Capital Adequacy highlights for the HOLDING COMPANY, sourced
+    from the company's own latest SEC 10-K/10-Q (timely; not delayed FR Y-9C).
+    Values are scraped from the filing's inline XBRL and anchored to the bank's
+    FDIC CET1; anything that can't be reconciled renders n/a. See
+    docs/DATA-SOURCING-ARCHITECTURE.md."""
+    cik = get_cik(ticker)
+    if not cik:
+        return
+    try:
+        from data.sec_filing_scraper import holdco_capital_for
+        res = holdco_capital_for(cik, get_fdic_cert(ticker))
+    except Exception:
+        res = None
+    if not res or not res.get("capital"):
+        return
+    meta, cap = res["meta"], res["capital"]
+    periods = sorted(cap, reverse=True)[:5]
+    if not periods:
+        return
+
+    def _plab(p):
+        y, m = p[:4], p[5:7]
+        return f"FY{y}" if m == "12" else f"Q{(int(m) - 1) // 3 + 1} '{y[2:]}"
+
+    st.subheader("Capital Adequacy — holding company (SEC filing)")
+    basis = cap[periods[0]].get("_basis")
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{meta['accession']}/{meta['doc']}")
+    note = (" · bank-subsidiary basis (holdco not separately disclosed)"
+            if basis == "bank" else "")
+    st.caption(
+        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — holding-company "
+        f"consolidated, anchored to the bank's FDIC CET1{note}. Updates as soon as "
+        f"the company files (not the delayed FR Y-9C).")
+
+    rows = [
+        ("Common Equity Tier 1 ratio", "cet1_ratio", "pct"),
+        ("Tier 1 capital ratio", "t1_ratio", "pct"),
+        ("Total capital ratio", "total_ratio", "pct"),
+        ("Tier 1 leverage ratio", "lev_ratio", "pct"),
+        ("Common Equity Tier 1 capital", "cet1_cap", "usd"),
+        ("Tier 1 capital", "t1_cap", "usd"),
+        ("Tier 2 capital", "tier2_cap", "usd"),
+        ("Total capital", "total_cap", "usd"),
+        ("Risk-weighted assets", "rwa", "usd"),
+    ]
+
+    def _cell(v, kind):
+        if v is None:
+            return "n/a"
+        return f"{v * 100:.2f}%" if kind == "pct" else f"${v / 1e9:,.2f}B"
+
+    hdr = "| ($) | " + " | ".join(_plab(p) for p in periods) + " |"
+    sep = "|---|" + "---|" * len(periods)
+    body = [f"| {lab} | " + " | ".join(_cell(cap[p].get(k), kind) for p in periods) + " |"
+            for lab, k, kind in rows]
+    st.markdown("\n".join([hdr, sep] + body))
+    st.caption("Liquidity Coverage Ratio · HQLA · Net cash outflows · Supplementary "
+               "leverage: large-bank disclosures (FR 2052a) — not in this filing (n/a).")
 
 
 def _render_rcr_capital_walk(ticker: str):

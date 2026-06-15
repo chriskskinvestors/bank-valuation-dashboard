@@ -284,3 +284,57 @@ def fetch_facts(cik, forms=("10-K",)) -> tuple[dict | None, list[Fact]]:
         return None, []
     html = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
     return meta, parse_inline_xbrl(html)
+
+
+def _fdic_cet1(cert) -> float | None:
+    """Latest FDIC bank-sub CET1 ratio (IDT1CER, %) — the holdco anchor."""
+    if not cert:
+        return None
+    url = (f"https://banks.data.fdic.gov/api/financials?filters=CERT:{cert}"
+           f"&fields=IDT1CER&sort_by=REPDTE&sort_order=DESC&limit=1&format=json")
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=_UA), timeout=15) as r:
+            d = json.load(r)["data"]
+        return d[0]["data"].get("IDT1CER") if d else None
+    except Exception:
+        return None
+
+
+def _has_capital(cap: dict) -> bool:
+    return bool(cap) and any("cet1_ratio" in d or d.get("_cblr") for d in cap.values())
+
+
+def holdco_capital_for(cik, cert=None) -> dict | None:
+    """Cached holdco regulatory capital for a company, from its own SEC filing.
+
+    Prefers the FRESHEST filing that actually carries the capital table: tries
+    the latest 10-Q first (timeliest), and falls back to the latest 10-K when
+    the 10-Q doesn't tag the full table (many banks tag capital only annually).
+    Scrapes the filing's inline XBRL and anchors to the bank's FDIC CET1. Cached
+    by accession — the ~7 MB fetch+parse runs once per filing, and an empty
+    result is cached too so a capital-less 10-Q isn't re-fetched. Returns
+    {"meta": {...}, "capital": {period: {...}}} or None."""
+    if not cik:
+        return None
+    anchor = _fdic_cet1(cert)
+    from data import cache
+    for forms in (("10-Q",), ("10-K",)):
+        meta = latest_filing(cik, forms)
+        if not meta:
+            continue
+        ckey = f"holdco_cap:{meta['accession']}"
+        cap = cache.get(ckey)
+        if cap is None:
+            try:
+                html = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
+                cap = extract_holdco_capital(parse_inline_xbrl(html), anchor_cet1=anchor)
+            except Exception as e:
+                print(f"[sec_scraper] holdco capital failed for cik {cik}: {type(e).__name__}: {e}")
+                cap = {}
+            try:
+                cache.put(ckey, cap)
+            except Exception:
+                pass
+        if _has_capital(cap):
+            return {"meta": meta, "capital": cap}
+    return None
