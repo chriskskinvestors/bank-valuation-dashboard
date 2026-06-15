@@ -241,6 +241,92 @@ class TestCapitalWalkRendersPopulated(unittest.TestCase):
                         f"expected the honest-gap note, got: {infos}")
 
 
+class TestHoldcoCapitalRendersPopulated(unittest.TestCase):
+    """The SEC-sourced holding-company capital block
+    (ui/capital_dynamics._render_holdco_capital) must render the $ capital
+    amounts alongside the four ratios, and the regulatory-capital WALK only
+    when the CET1 build reconciles. Values are Regions-shaped (FY2025 10-K):
+    CET1 $13.49B / 10.89%, Tier 1 $14.86B / 11.99%, Total $17.20B / 13.89%,
+    leverage 9.68%, RWA $123.9B."""
+
+    META = {"form": "10-K", "date": "2026-02-24", "accession": "acc", "doc": "rf.htm"}
+    # A reconciling walk: common 19.00B − intangibles (5.733+0.140) ≈ CET1
+    # band; AOCI retained (opt-in). Sub-debt 1.00B tagged.
+    CAP = {"2025-12-31": {
+        "cet1_ratio": 0.1089, "t1_ratio": 0.1199, "total_ratio": 0.1389,
+        "lev_ratio": 0.0968, "cet1_cap": 13.49e9, "t1_cap": 14.859e9,
+        "tier2_cap": 2.346e9, "total_cap": 17.205e9, "rwa": 123.9e9,
+        "_anchored": True, "_walk_reconciles": True,
+        "_walk": {"common_equity": 19.00e9, "goodwill": 5.733e9,
+                  "other_intangibles": 0.140e9, "aoci": -1.535e9,
+                  "subordinated_debt": 1.00e9, "intangibles": 5.873e9,
+                  "aoci_treatment": "included"}}}
+
+    @classmethod
+    def setUpClass(cls):
+        _install_streamlit_stub()
+        import ui.capital_dynamics
+        cls.cd = ui.capital_dynamics
+
+    def _render(self, res):
+        # Patch the streamlit module ui.capital_dynamics is BOUND to (cd.st) —
+        # not sys.modules["streamlit"], which may be a newer stub object after
+        # another test class reinstalled it (see _install_streamlit_stub).
+        st = self.cd.st
+        import data.sec_filing_scraper as sfs
+        md = []
+        saved = (st.markdown, st.caption, st.subheader,
+                 self.cd.get_cik, self.cd.get_fdic_cert, sfs.holdco_capital_for)
+        try:
+            st.markdown = lambda s, *a, **k: md.append(str(s))
+            st.caption = lambda s, *a, **k: md.append(str(s))
+            st.subheader = lambda s, *a, **k: md.append(str(s))
+            self.cd.get_cik = lambda t: 1281761
+            self.cd.get_fdic_cert = lambda t: 12368
+            sfs.holdco_capital_for = lambda cik, cert=None: res
+            self.cd._render_holdco_capital("RF")
+        finally:
+            (st.markdown, st.caption, st.subheader,
+             self.cd.get_cik, self.cd.get_fdic_cert,
+             sfs.holdco_capital_for) = saved
+        return "\n".join(md)
+
+    def test_amounts_and_ratios_render(self):
+        h = self._render({"meta": self.META, "capital": self.CAP})
+        # The four ratios.
+        self.assertIn("10.89%", h)
+        self.assertIn("11.99%", h)
+        self.assertIn("13.89%", h)
+        self.assertIn("9.68%", h)
+        # The $ capital amounts alongside the ratios (the TASK-1 confirmation).
+        self.assertIn("$13.49B", h)    # CET1 capital
+        self.assertIn("$14.86B", h)    # Tier 1 capital
+        self.assertIn("$2.35B", h)     # Tier 2 capital
+        self.assertIn("$17.20B", h)    # Total capital
+        self.assertIn("$123.90B", h)   # RWA
+
+    def test_walk_renders_when_reconciled(self):
+        h = self._render({"meta": self.META, "capital": self.CAP})
+        self.assertIn("Regulatory capital walk", h)
+        self.assertIn("Total common equity", h)
+        self.assertIn("$19.00B", h)                 # common equity
+        # Additional Tier 1 = t1 − cet1 = 14.859 − 13.49 = 1.369 → $1.37B.
+        self.assertIn("$1.37B", h)
+        # Other Tier 2 = tier2 − sub-debt = 2.346 − 1.00 = 1.346 → $1.35B.
+        self.assertIn("$1.35B", h)
+        # AOCI retained (opt-in) → no removal step.
+        self.assertIn("in CET1", h)
+
+    def test_walk_na_when_not_reconciled(self):
+        cap = {"2025-12-31": dict(self.CAP["2025-12-31"],
+                                  _walk_reconciles=False)}
+        h = self._render({"meta": self.META, "capital": cap})
+        # Ratios + amounts still render; the walk does not.
+        self.assertIn("$13.49B", h)
+        self.assertNotIn("Total common equity", h)
+        self.assertIn("does not tag a machine-readable", h)
+
+
 class TestIncomeStatementRiRendersPopulated(unittest.TestCase):
     """SNL Income Statement RI-E sub-block + FTE NII rows must render with
     POPULATED stored detail — the spec augmentation, new cell kinds and FTE

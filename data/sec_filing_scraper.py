@@ -272,7 +272,102 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
         # A bank with only a leverage ratio (no CET1) is on the Community Bank
         # Leverage Ratio election — CET1/RWA are legitimately not disclosed.
         d["_cblr"] = ("cet1_ratio" not in d and "lev_ratio" in d)
+
+    # Regulatory-capital WALK (SNL "Regulatory Capital ($000)" panel). Attempt
+    # the CET1 reconstruction per period from the filing's UNDIMENSIONED
+    # balance-sheet tags and reconcile it to the already-extracted (anchored)
+    # CET1 capital. The walk is attached ONLY where it reconciles — banks fold
+    # CECL-transition, DTA/MSR-threshold and AOCI opt-out adjustments into CET1
+    # that the filing doesn't tag separately, so n/a is the honest result for
+    # most filers (see _build_capital_walk). Bank-basis / CBLR periods skip it.
+    for period, d in out.items():
+        if d.get("_basis") == "bank" or d.get("_cblr"):
+            continue
+        walk, ok = _build_capital_walk(_undimensioned(facts, period),
+                                       d.get("cet1_cap"))
+        d["_walk"] = walk
+        d["_walk_reconciles"] = ok
     return out
+
+
+# ── Holdco regulatory-capital WALK reconstruction ───────────────────────────
+# The headline ratios/amounts are tagged inside the capital table; the WALK
+# (common equity → less intangibles → ± AOCI → CET1) usually is NOT tagged as a
+# machine-readable reconciliation. We rebuild it from the filing's UNDIMENSIONED
+# (consolidated) balance-sheet concepts and show it ONLY when the CET1 build
+# reconciles to the extracted CET1 capital — never via a plug. Each value is an
+# exact filing tag; the build either reconciles or the walk renders n/a.
+_WALK_CONCEPTS = {
+    "total_equity":      ("StockholdersEquity",),
+    "preferred":         ("PreferredStockValue",
+                          "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount"),
+    "goodwill":          ("Goodwill",),
+    "other_intangibles": ("IntangibleAssetsNetExcludingGoodwill",
+                          "FiniteLivedIntangibleAssetsNet"),
+    "aoci":              ("AccumulatedOtherComprehensiveIncomeLossNetOfTax",),
+    "subordinated_debt": ("SubordinatedDebt", "SubordinatedLongTermDebt",
+                          "SubordinatedBorrowings"),
+}
+
+
+def _undimensioned(facts: list[Fact], period: str) -> dict:
+    """{concept_local: value} for facts at `period` carrying NO dimensional
+    member — the consolidated, holdco balance-sheet total. First write wins, so
+    a dimensional breakdown (e.g. StockholdersEquity by PreferredStockMember)
+    can never be mistaken for the undimensioned total."""
+    out: dict[str, float] = {}
+    for f in facts:
+        if f.period_end != period or f.members:
+            continue
+        out.setdefault(f.concept.split(":")[-1], f.value)
+    return out
+
+
+def _build_capital_walk(undim: dict, cet1_cap: float | None) -> tuple[dict, bool]:
+    """Reconstruct the SNL regulatory-capital walk and reconcile its CET1 build
+    to the extracted CET1 capital.
+
+    walk maps each component to its tagged value (None if the filing doesn't tag
+    it). Returns (walk, reconciles); reconciles is True ONLY when common equity
+    and goodwill are tagged AND common equity − intangibles (with AOCI either
+    retained or removed) lands within 1% of cet1_cap — never via a residual
+    plug. 'aoci_treatment' records which election reconciled ('included' /
+    'excluded'), so the UI can show the AOCI step honestly."""
+    def pick(key):
+        for c in _WALK_CONCEPTS[key]:
+            if c in undim:
+                return undim[c]
+        return None
+
+    total_equity = pick("total_equity")
+    preferred = pick("preferred")
+    goodwill = pick("goodwill")
+    other_intang = pick("other_intangibles")
+    aoci = pick("aoci")
+
+    walk = {
+        "common_equity": None, "preferred": preferred,
+        "goodwill": goodwill, "other_intangibles": other_intang,
+        "aoci": aoci, "subordinated_debt": pick("subordinated_debt"),
+        "intangibles": None, "aoci_treatment": None,
+    }
+    if total_equity is None or goodwill is None or cet1_cap is None:
+        return walk, False
+
+    common_equity = total_equity - (preferred or 0.0)
+    intangibles = goodwill + (other_intang or 0.0)
+    walk["common_equity"] = common_equity
+    walk["intangibles"] = intangibles
+
+    # AOCI opt-in (retained in CET1) vs opt-out (removed) — the filing rarely
+    # tags the election, so try both and accept whichever reconciles.
+    base = common_equity - intangibles
+    tol = max(cet1_cap * 0.01, 5e6)
+    for treat, built in (("included", base), ("excluded", base - (aoci or 0.0))):
+        if abs(built - cet1_cap) <= tol:
+            walk["aoci_treatment"] = treat
+            return walk, True
+    return walk, False
 
 
 def fetch_facts(cik, forms=("10-K",)) -> tuple[dict | None, list[Fact]]:
@@ -322,7 +417,10 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
         meta = latest_filing(cik, forms)
         if not meta:
             continue
-        ckey = f"holdco_cap:{meta['accession']}"
+        # Version the key: bump when the extraction shape changes so old cache
+        # entries (e.g. pre-walk) are abandoned and re-extracted, never served
+        # stale. v2 = added the regulatory-capital walk (_walk/_walk_reconciles).
+        ckey = f"holdco_cap:v2:{meta['accession']}"
         cap = cache.get(ckey)
         if cap is None:
             try:

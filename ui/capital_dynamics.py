@@ -459,6 +459,99 @@ def _render_holdco_capital(ticker: str):
     st.caption("Liquidity Coverage Ratio · HQLA · Net cash outflows · Supplementary "
                "leverage: large-bank disclosures (FR 2052a) — not in this filing (n/a).")
 
+    _render_holdco_walk(cap, periods, _plab)
+
+
+def _render_holdco_walk(cap: dict, periods: list, _plab) -> None:
+    """SNL "Regulatory Capital ($000)" walk for the holding company. Each step
+    is sourced from the filing's inline XBRL and the section renders ONLY where
+    the CET1 build reconciles to the extracted CET1 capital — banks fold
+    CECL-transition, DTA/MSR-threshold and AOCI opt-out adjustments into CET1
+    that the filing doesn't tag separately, so n/a is the honest result for a
+    filing that doesn't disclose a reconcilable walk (see
+    data.sec_filing_scraper._build_capital_walk). Component steps are exact
+    filing tags; the bridge lines (= CET1/Tier 1/Tier 2/Total) reuse the
+    already-extracted, FDIC-anchored capital amounts."""
+    # Gate: only show the walk when the latest shown period actually reconciles
+    # — never an all-n/a walk, and never a non-reconciling one.
+    if not any(cap[p].get("_walk_reconciles") for p in periods):
+        st.caption("Regulatory-capital walk: this filing does not tag a "
+                   "machine-readable CET1 reconciliation that ties to the "
+                   "reported CET1 capital — shown as n/a rather than a guess.")
+        return
+
+    st.markdown("###### Regulatory capital walk — holding company")
+
+    def usd(v):
+        return "n/a" if v is None else f"${v / 1e9:,.2f}B"
+
+    def comp(p, key, negate=False):
+        """A WALK component cell — only for periods that reconcile."""
+        d = cap[p]
+        if not d.get("_walk_reconciles"):
+            return "n/a"
+        v = (d.get("_walk") or {}).get(key)
+        if v is None:
+            return "n/a"
+        return usd(-v if negate else v)
+
+    def aoci_removed(p):
+        d = cap[p]
+        if not d.get("_walk_reconciles"):
+            return "n/a"
+        w = d.get("_walk") or {}
+        # AOCI is a CET1 step only for opt-out (excluded) banks; for opt-in the
+        # AOCI already sits in CET1, so there's no walk adjustment.
+        if w.get("aoci_treatment") != "excluded":
+            return "— (in CET1)"
+        return usd(-(w.get("aoci") or 0.0))
+
+    def bridge(p, key):
+        """A bridge total from the extracted (anchored) capital amounts."""
+        return usd(cap[p].get(key))
+
+    def at1(p):
+        d = cap[p]
+        t1, cet1 = d.get("t1_cap"), d.get("cet1_cap")
+        return usd(t1 - cet1) if (t1 is not None and cet1 is not None) else "n/a"
+
+    def t2_other(p):
+        """Tier 2 ex-sub-debt (allowance + adjustments) = Tier 2 − sub-debt,
+        shown only when sub-debt is tagged for a reconciling period."""
+        d = cap[p]
+        if not d.get("_walk_reconciles"):
+            return "n/a"
+        sub = (d.get("_walk") or {}).get("subordinated_debt")
+        t2 = d.get("tier2_cap")
+        if sub is None or t2 is None:
+            return "n/a"
+        return usd(t2 - sub)
+
+    # (label, fn) — fn(period) -> formatted cell.
+    walk_rows = [
+        ("Total common equity", lambda p: comp(p, "common_equity")),
+        ("Less: goodwill", lambda p: comp(p, "goodwill", negate=True)),
+        ("Less: other intangibles", lambda p: comp(p, "other_intangibles", negate=True)),
+        ("Less: AOCI removed (opt-out)", aoci_removed),
+        ("**= Common Equity Tier 1 capital**", lambda p: bridge(p, "cet1_cap")),
+        ("Additional Tier 1 (qualifying preferred)", at1),
+        ("**= Tier 1 capital**", lambda p: bridge(p, "t1_cap")),
+        ("Subordinated debt & qualifying Tier 2", lambda p: comp(p, "subordinated_debt")),
+        ("Other Tier 2 (allowance & adjustments)", t2_other),
+        ("**= Tier 2 capital**", lambda p: bridge(p, "tier2_cap")),
+        ("**= Total capital**", lambda p: bridge(p, "total_cap")),
+    ]
+    hdr = "| Walk ($) | " + " | ".join(_plab(p) for p in periods) + " |"
+    sep = "|---|" + "---|" * len(periods)
+    body = [f"| {lab} | " + " | ".join(fn(p) for p in periods) + " |"
+            for lab, fn in walk_rows]
+    st.markdown("\n".join([hdr, sep] + body))
+    st.caption("CET1 = common equity − intangibles ± AOCI − deductions; "
+               "Tier 1 = CET1 + qualifying preferred; Tier 2 = sub-debt + "
+               "allowance; Total = Tier 1 + Tier 2. Component steps are inline-XBRL "
+               "tags; bridge totals are the FDIC-anchored extracted amounts. "
+               "A step the filing doesn't tag is n/a.")
+
 
 def _render_rcr_capital_walk(ticker: str):
     """

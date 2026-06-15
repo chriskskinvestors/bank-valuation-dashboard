@@ -104,6 +104,92 @@ class TestHoldcoExtraction(unittest.TestCase):
         self.assertAlmostEqual(out["2025-12-31"]["rwa"], 100_000_000_000.0)
 
 
+class TestCapitalWalk(unittest.TestCase):
+    """The holdco regulatory-capital WALK reconstruction + reconciliation gate
+    (extract_holdco_capital → _build_capital_walk). The walk is built from the
+    filing's UNDIMENSIONED balance-sheet tags and shown ONLY when the CET1 build
+    reconciles to the extracted (anchored) CET1 capital — never via a plug."""
+
+    def _walk_facts(self, equity, goodwill, cet1_cap, other_intang=None,
+                    aoci=None, preferred=None):
+        # Values passed in $millions; banks tag in actual dollars, so scale up
+        # (the reconciliation tolerance has a $5M floor for filing rounding).
+        M = 1e6
+        facts = [
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.10),
+            _f("us-gaap:CommonEquityTier1Capital", cet1_cap * M),
+            _f("us-gaap:StockholdersEquity", equity * M),
+            _f("us-gaap:Goodwill", goodwill * M),
+        ]
+        if other_intang is not None:
+            facts.append(_f("us-gaap:IntangibleAssetsNetExcludingGoodwill", other_intang * M))
+        if aoci is not None:
+            facts.append(_f("us-gaap:AccumulatedOtherComprehensiveIncomeLossNetOfTax", aoci * M))
+        if preferred is not None:
+            facts.append(_f("us-gaap:PreferredStockValue", preferred * M))
+        return facts
+
+    def test_walk_reconciles_aoci_included(self):
+        # common 1500 − intangibles (400+100) = 1000 == CET1 1000 (AOCI in CET1).
+        out = extract_holdco_capital(
+            self._walk_facts(1500.0, 400.0, 1000.0, other_intang=100.0))
+        d = out["2025-12-31"]
+        self.assertTrue(d["_walk_reconciles"])
+        self.assertEqual(d["_walk"]["aoci_treatment"], "included")
+        self.assertAlmostEqual(d["_walk"]["common_equity"], 1500e6)
+        self.assertAlmostEqual(d["_walk"]["intangibles"], 500e6)
+
+    def test_walk_reconciles_aoci_excluded(self):
+        # common 1500 − 500 = 1000; AOCI loss −50 removed → 1050 == CET1 1050.
+        out = extract_holdco_capital(
+            self._walk_facts(1500.0, 400.0, 1050.0, other_intang=100.0, aoci=-50.0))
+        d = out["2025-12-31"]
+        self.assertTrue(d["_walk_reconciles"])
+        self.assertEqual(d["_walk"]["aoci_treatment"], "excluded")
+
+    def test_walk_subtracts_tagged_preferred(self):
+        # total equity 1600 − preferred 100 = common 1500; build reconciles.
+        out = extract_holdco_capital(
+            self._walk_facts(1600.0, 400.0, 1000.0, other_intang=100.0, preferred=100.0))
+        d = out["2025-12-31"]
+        self.assertTrue(d["_walk_reconciles"])
+        self.assertAlmostEqual(d["_walk"]["common_equity"], 1500e6)
+        self.assertAlmostEqual(d["_walk"]["preferred"], 100e6)
+
+    def test_walk_na_when_build_does_not_reconcile(self):
+        # common 1500 − goodwill 400 = 1100, ~10% off CET1 1000 → NOT shown.
+        out = extract_holdco_capital(self._walk_facts(1500.0, 400.0, 1000.0))
+        d = out["2025-12-31"]
+        self.assertFalse(d["_walk_reconciles"])
+        # Components are still recorded (the UI renders them only when reconciled).
+        self.assertAlmostEqual(d["_walk"]["common_equity"], 1500e6)
+
+    def test_walk_na_when_goodwill_untagged(self):
+        facts = [
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.10),
+            _f("us-gaap:CommonEquityTier1Capital", 1000.0),
+            _f("us-gaap:StockholdersEquity", 1500.0),
+        ]
+        out = extract_holdco_capital(facts)
+        d = out["2025-12-31"]
+        self.assertFalse(d["_walk_reconciles"])
+        self.assertIsNone(d["_walk"]["goodwill"])
+
+    def test_walk_ignores_dimensional_breakdown_for_total(self):
+        # A StockholdersEquity broken out by PreferredStockMember must NOT be
+        # mistaken for the undimensioned total — first (undimensioned) wins.
+        facts = self._walk_facts(1500.0, 400.0, 1000.0, other_intang=100.0)
+        facts.append(_f("us-gaap:StockholdersEquity", 369.0,
+                        {"us-gaap:StatementEquityComponentsAxis": "us-gaap:PreferredStockMember"}))
+        out = extract_holdco_capital(facts)
+        self.assertAlmostEqual(out["2025-12-31"]["_walk"]["common_equity"], 1500e6)
+
+    def test_no_walk_on_cblr_period(self):
+        out = extract_holdco_capital(
+            [_f("us-gaap:TierOneLeverageCapitalToAverageAssets", 0.092)])
+        self.assertNotIn("_walk", out["2025-12-31"])
+
+
 _IXBRL = b"""<html><body>
 <ix:header><ix:resources>
   <xbrli:context id="cP">
