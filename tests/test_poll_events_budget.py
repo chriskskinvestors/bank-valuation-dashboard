@@ -31,13 +31,17 @@ sys.modules.setdefault("streamlit", _st)
 
 
 class _FakeAdapter:
-    def __init__(self, name, on_poll=None):
+    def __init__(self, name, on_poll=None, sleep=0.0):
         self.name = name
         self._on_poll = on_poll
+        self._sleep = sleep
         self.polled = False
 
     def poll(self, scope, since=None):
         self.polled = True
+        if self._sleep:
+            import time as _t
+            _t.sleep(self._sleep)
         if self._on_poll:
             self._on_poll()
         return []
@@ -103,19 +107,32 @@ class TestPollEventsUniverse(unittest.TestCase):
         self.assertTrue(all(f.polled for f in fakes))
 
     def test_budget_stops_polling_new_sources(self):
-        # First adapter overruns the soft budget → remaining sources are
-        # skipped (committed-as-we-go), never the hard 900s task kill.
+        # Once the overall task budget is spent, remaining sources are skipped
+        # (committed-as-we-go), never the hard 900s task kill.
         import jobs.poll_events as pe
         fakes = [_FakeAdapter(f"a{i}") for i in range(8)]
-        # time.time() calls: t0, then one check before each adapter, then final.
-        # Make the check before adapter #2 jump past the budget.
-        over = pe._RUN_BUDGET_S + 100
+        # time.time() calls: t0, then the remaining-budget check before each
+        # adapter, then the final elapsed. Make the check before adapter #2
+        # land past the budget so the loop breaks.
+        over = pe._TASK_BUDGET_S + 100
         times = [1000.0, 1000.0, 1000.0 + over] + [1000.0 + over] * 20
         with ExitStack() as stack:
             rc, _ = _run_main(stack, fakes, time_values=times)
         self.assertEqual(rc, 0)
         self.assertTrue(fakes[0].polled, "first adapter should run")
         self.assertFalse(fakes[1].polled, "second adapter should be skipped past budget")
+
+    def test_slow_adapter_is_abandoned_not_fatal(self):
+        # A single adapter that overruns its per-adapter cap is abandoned (hard
+        # timeout) and the rest still run — the run finishes 0, never the 900s
+        # task kill. Pin with a tiny cap and a first adapter that sleeps past it.
+        import jobs.poll_events as pe
+        fakes = [_FakeAdapter("slow", sleep=0.3)] + [_FakeAdapter(f"a{i}") for i in range(7)]
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(pe, "_PER_ADAPTER_S", 0.05))
+            rc, _ = _run_main(stack, fakes)   # real clock; tiny cap trips timeout
+        self.assertEqual(rc, 0, "a slow source is a non-fatal timeout, not a crash")
+        self.assertTrue(fakes[1].polled, "later adapters still run after a timeout")
 
 
 if __name__ == "__main__":

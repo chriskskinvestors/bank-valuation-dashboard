@@ -23,14 +23,48 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-# Soft per-run wall-clock budget for the adapter loop. The Cloud Run task cap
-# is 900s; we stop polling new sources past this and let the run finish
-# (summarize/purge/commit) so a slow source can never trip the hard kill.
-_RUN_BUDGET_S = 600
+# Wall-clock budgets under the 900s Cloud Run task cap. _TASK_BUDGET_S is the
+# overall ceiling for polling; _PER_ADAPTER_S caps any single source so one slow
+# adapter (e.g. Google News over the full ~440-ticker universe) can't run past
+# the kill — it's abandoned and we commit what completed. Tuned to leave room
+# for the post-loop summarize/purge and still finish well under 900s.
+_TASK_BUDGET_S = 780
+_PER_ADAPTER_S = 240
+
+
+def _run_with_timeout(label: str, fn, timeout_s: float):
+    """Run fn() in a daemon worker and return its value, raising TimeoutError if
+    it overruns timeout_s. The worker can't be force-killed (a blocking network
+    call owns the thread), but being a daemon it never blocks process exit — so
+    abandoning it lets the job finish and commit the rest. Re-raises fn's own
+    exception."""
+    import threading
+    box: dict = {}
+
+    def _work():
+        try:
+            box["value"] = fn()
+        except Exception as e:  # noqa: BLE001 — surfaced to the caller below
+            box["error"] = e
+
+    t = threading.Thread(target=_work, daemon=True)
+    t.start()
+    t.join(timeout_s)
+    if t.is_alive():
+        raise TimeoutError(f"{label} exceeded {timeout_s:.0f}s")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
 
 
 def main() -> int:
     import warnings; warnings.filterwarnings("ignore")
+    # Line-buffer stdout so progress logs survive a hard task kill (block
+    # buffering loses them) — this is why earlier timeouts showed no progress.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
 
     from data.bank_universe import get_universe
     from config import DEFAULT_WATCHLIST
@@ -57,18 +91,22 @@ def main() -> int:
     # call covers all banks via name-matching).
     # YFinance news runs against watchlist only: it's per-ticker, so 50
     # API calls (manageable) instead of 370 (Yahoo would rate-limit).
+    # Order matters: cheap, high-visibility sources FIRST so they always fit in
+    # budget. The single-feed adapters (8-K, wires) cover the full universe via
+    # name-matching in one call; the topic feed (Overnight & Breaking) is a few
+    # queries. Google News is per-ticker over the full universe — the expensive
+    # one — so it goes LAST among broad, where the per-adapter cap can abandon it
+    # without starving the rest.
     broad_adapters = [
         SEC8KAdapter(),
         BusinessWireAdapter(),
         PRNewswireAdapter(),
         GlobeNewswireAdapter(),
-        # Google News: per-ticker, but parallelized so it scales to the full
-        # universe (unlike IR scraping, which needs a bespoke scraper per site).
-        GoogleNewsAdapter(),
         # Topic feeds for the Home page's categorized overnight news (Macro /
-        # Geopolitical / Domestic / Markets) — ONE query per topic per cycle,
-        # not per-bank; the tickers arg is ignored by this adapter.
+        # Geopolitical / Domestic / Markets) — ONE query per topic, not per-bank.
         GoogleNewsTopicAdapter(),
+        # Google News: per-ticker, parallelized; the slow one at full universe.
+        GoogleNewsAdapter(),
     ]
     narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
     adapters = broad_adapters + narrow_adapters
@@ -77,28 +115,37 @@ def main() -> int:
           f"narrow: {len(narrow_adapters)} sources × {len(watchlist)} tickers")
     t0 = time.time()
     crashes = 0
+    timeouts = 0
     total_new = 0
     new_events = []
 
     for adapter in adapters:
-        # Soft wall-clock budget: commit what we have and stop before the hard
-        # 900s Cloud Run task kill, so one slow/hanging source can never starve
-        # the rest (events commit per-adapter, so skipped sources just catch up
-        # next cycle). Generous headroom under the cap.
-        if time.time() - t0 > _RUN_BUDGET_S:
-            print(f"  [budget] {_RUN_BUDGET_S}s reached — skipping {adapter.name} "
+        # Overall wall-clock budget: stop polling new sources before the hard
+        # 900s task kill so we always reach the commit/summarize tail. Events
+        # commit per-adapter, so skipped sources just catch up next cycle.
+        remaining = _TASK_BUDGET_S - (time.time() - t0)
+        if remaining <= 0:
+            print(f"  [budget] task budget reached — skipping {adapter.name} "
                   "and any remaining sources (caught up next cycle)")
             break
+        # Narrow adapters (per-ticker APIs) only run against the watchlist.
+        scope = watchlist if adapter in narrow_adapters else universe
+        since = last_seen_published(adapter.name)
+        cap = min(_PER_ADAPTER_S, remaining)
+        print(f"  [{adapter.name}] scope={len(scope)} tickers since={since} cap={cap:.0f}s")
         try:
-            # Narrow adapters (per-ticker APIs) only run against watchlist
-            scope = watchlist if adapter in narrow_adapters else universe
-            since = last_seen_published(adapter.name)
-            print(f"  [{adapter.name}] scope={len(scope)} tickers since={since}")
-            events = adapter.poll(scope, since=since)
+            # Hard per-adapter cap: one slow/hanging source (e.g. Google News at
+            # full universe) is abandoned, never blocking past the task kill.
+            events = _run_with_timeout(
+                adapter.name, lambda: adapter.poll(scope, since=since), cap)
             newly = insert_events_returning_new(events)
             new_events.extend(newly)
             total_new += len(newly)
             print(f"  [{adapter.name}] {len(events)} fetched, {len(newly)} new")
+        except TimeoutError:
+            timeouts += 1
+            print(f"  [{adapter.name}] TIMEOUT after {cap:.0f}s — abandoned, "
+                  "committing the rest (catches up next cycle)")
         except Exception as e:
             crashes += 1
             print(f"  [{adapter.name}] CRASH {type(e).__name__}: {e}")
@@ -119,16 +166,30 @@ def main() -> int:
     except Exception as e:
         print(f"  [purge] failed: {type(e).__name__}: {e}")
 
-    # Optional: LLM-summarize any events with empty summaries (most recent first).
+    # Optional: LLM-summarize events with empty summaries (most recent first),
+    # but only with budget left — and under a hard cap so the summarize pass
+    # can't push the run past the 900s task kill on its own.
     if os.environ.get("ANTHROPIC_API_KEY"):
-        try:
-            n_summarized = _summarize_recent_events(limit=40)
-            print(f"▶ Summarized {n_summarized} recent events via Claude")
-        except Exception as e:
-            print(f"  [summarizer] failed: {type(e).__name__}: {e}")
+        sum_budget = _TASK_BUDGET_S + 60 - (time.time() - t0)
+        if sum_budget < 30:
+            print(f"  [summarizer] skipped — only {sum_budget:.0f}s left in budget")
+        else:
+            try:
+                n_summarized = _run_with_timeout(
+                    "summarizer", lambda: _summarize_recent_events(limit=40),
+                    sum_budget)
+                print(f"▶ Summarized {n_summarized} recent events via Claude")
+            except TimeoutError:
+                print(f"  [summarizer] hit {sum_budget:.0f}s cap — stopped "
+                      "(remaining events summarize next cycle)")
+            except Exception as e:
+                print(f"  [summarizer] failed: {type(e).__name__}: {e}")
 
     elapsed = time.time() - t0
-    print(f"✓ Done in {elapsed:.1f}s — {total_new} new events, {crashes} adapter crashes")
+    print(f"✓ Done in {elapsed:.1f}s — {total_new} new events, "
+          f"{crashes} crashes, {timeouts} timeouts")
+    # Success unless every adapter hard-crashed (a timeout is an expected,
+    # non-fatal skip of a slow source, not a failure).
     return 0 if crashes < len(adapters) else 1
 
 
