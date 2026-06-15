@@ -23,11 +23,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+# Soft per-run wall-clock budget for the adapter loop. The Cloud Run task cap
+# is 900s; we stop polling new sources past this and let the run finish
+# (summarize/purge/commit) so a slow source can never trip the hard kill.
+_RUN_BUDGET_S = 600
+
 
 def main() -> int:
     import warnings; warnings.filterwarnings("ignore")
 
-    from data.bank_universe import get_universe_tickers
+    from data.bank_universe import get_universe
     from config import DEFAULT_WATCHLIST
     from data.events import init_schema, insert_events_returning_new, last_seen_published
     from data.events.sec_8k import SEC8KAdapter
@@ -41,7 +46,12 @@ def main() -> int:
     init_schema()
 
     watchlist = sorted(set(DEFAULT_WATCHLIST))
-    universe = sorted(set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
+    # File-based universe (no per-ticker FDIC calls). get_universe_tickers()
+    # fires a live, rate-limited cert_is_active per ticker; on a cold job FDIC
+    # throttles the burst and the build alone blew the 900s task timeout before
+    # any adapter ran (news froze 2026-06-12). The broad adapters name-match, so
+    # the unfiltered superset is correct — same fix refresh_prices already uses.
+    universe = sorted(set(get_universe().keys()) | set(DEFAULT_WATCHLIST))
 
     # SEC 8-K + wire feeds run against the full universe (cheap: one feed
     # call covers all banks via name-matching).
@@ -71,6 +81,14 @@ def main() -> int:
     new_events = []
 
     for adapter in adapters:
+        # Soft wall-clock budget: commit what we have and stop before the hard
+        # 900s Cloud Run task kill, so one slow/hanging source can never starve
+        # the rest (events commit per-adapter, so skipped sources just catch up
+        # next cycle). Generous headroom under the cap.
+        if time.time() - t0 > _RUN_BUDGET_S:
+            print(f"  [budget] {_RUN_BUDGET_S}s reached — skipping {adapter.name} "
+                  "and any remaining sources (caught up next cycle)")
+            break
         try:
             # Narrow adapters (per-ticker APIs) only run against watchlist
             scope = watchlist if adapter in narrow_adapters else universe
