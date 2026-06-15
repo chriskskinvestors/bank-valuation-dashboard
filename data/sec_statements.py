@@ -13,6 +13,7 @@ design in docs/DATA-SOURCING-ARCHITECTURE.md.
 """
 from __future__ import annotations
 
+import json
 import re
 
 from lxml import etree, html as lhtml
@@ -183,3 +184,116 @@ def as_reported_statements_for(cik) -> dict | None:
     except Exception:
         pass
     return {"meta": meta, "statements": stmts} if stmts else None
+
+
+# ── Multi-year stitching (Company Reported income statement) ────────────────
+# One 10-K carries ~3 fiscal years; SNL-style depth is ~5. We stitch successive
+# 10-Ks: union of the company's own line labels (each filing's order preserved),
+# each (line, year) cell taken from the NEWEST filing that reported that year,
+# and BLANK where a line wasn't broken out that year (the company's own absence,
+# not a guess — matches the "never n/a" rule for Company Reported).
+
+def _period_year(p: str) -> int:
+    m = re.search(r"\d{4}", p or "")
+    return int(m.group()) if m else 0
+
+
+def _recent_10k_metas(cik, n: int) -> list:
+    """Up to n most-recent 10-K filings {accession, doc, date, cik}, newest first."""
+    cik10 = str(int(cik)).zfill(10)
+    data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
+    rec = data.get("filings", {}).get("recent", {})
+    out = []
+    for i, form in enumerate(rec.get("form", [])):
+        if form == "10-K":
+            out.append({"accession": rec["accessionNumber"][i].replace("-", ""),
+                        "doc": rec["primaryDocument"][i],
+                        "date": rec["filingDate"][i], "cik": int(cik)})
+            if len(out) >= n:
+                break
+    return out
+
+
+def _merge_row_order(parsed: list) -> list:
+    """Union of (label, header) rows across filings (newest first), preserving
+    each filing's internal order: a label new to the union is inserted right
+    after the previous label from its filing that's already placed."""
+    merged: list = []
+    for f in parsed:
+        prev = -1
+        for r in f["rows"]:
+            key = (r["label"], r["header"])
+            if key in merged:
+                prev = merged.index(key)
+            else:
+                prev += 1
+                merged.insert(prev, key)
+    return merged
+
+
+def _stitch_income(parsed: list, n_years: int = 5) -> dict | None:
+    """Merge per-filing parsed income statements (newest first) into one
+    multi-year statement. Pure (no network) — unit-testable."""
+    if not parsed:
+        return None
+    all_periods = sorted({p for f in parsed for p in f["periods"]},
+                         key=_period_year, reverse=True)[:n_years]
+    col: dict = {}                              # period -> {label: value}
+    for period in all_periods:
+        for f in parsed:                        # newest first wins
+            if period in f["periods"]:
+                idx = f["periods"].index(period)
+                col[period] = {r["label"]: (r["values"][idx] if idx < len(r["values"]) else None)
+                               for r in f["rows"] if not r["header"]}
+                break
+    rows = []
+    for label, header in _merge_row_order(parsed):
+        if header:
+            rows.append({"label": label, "header": True, "values": []})
+        else:
+            rows.append({"label": label, "header": False,
+                         "values": [col.get(p, {}).get(label) for p in all_periods]})
+    return {"periods": all_periods, "rows": rows, "units_scale": parsed[0]["units_scale"]}
+
+
+def as_reported_income_multiyear(cik, n_years: int = 5) -> dict | None:
+    """Cached multi-year Company-Reported income statement, stitched from the
+    bank's recent 10-K income R-files. Cached by the latest 10-K accession (so it
+    refreshes when a new 10-K files). A transient fetch failure is never cached.
+    Returns {"meta", "filings", "statement"} or None."""
+    if not cik:
+        return None
+    from data import cache
+    metas = _recent_10k_metas(cik, 4)
+    if not metas:
+        return None
+    ckey = f"asreported_is_my:v1:{metas[0]['accession']}:{n_years}"
+    cached = cache.get(ckey)
+    if cached is not None:
+        return cached or None
+    parsed = []
+    for m in metas:
+        base = _filing_base(m["cik"], m["accession"])
+        try:
+            fn = _statement_rfiles(base).get("income")
+            stmt = parse_rfile(_get(base + fn)) if fn else None
+        except Exception as e:
+            print(f"[sec_statements] multiyear income failed for cik {cik}: "
+                  f"{type(e).__name__}: {e}")
+            return None                         # transient — don't cache
+        if stmt and stmt["periods"] and stmt["rows"]:
+            stmt["_meta"] = m
+            parsed.append(stmt)
+        years = {_period_year(p) for f in parsed for p in f["periods"]}
+        if len(years) >= n_years and len(parsed) >= 2:
+            break
+    stitched = _stitch_income(parsed, n_years)
+    if not stitched:
+        return None
+    result = {"meta": metas[0], "filings": [f["_meta"] for f in parsed],
+              "statement": stitched}
+    try:
+        cache.put(ckey, result)
+    except Exception:
+        pass
+    return result

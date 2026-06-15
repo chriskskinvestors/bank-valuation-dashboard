@@ -1446,6 +1446,62 @@ def _render_as_reported_statement(ticker: str, stype: str):
     st.markdown("\n".join(rows))
 
 
+def _render_company_income(ticker: str):
+    """Multi-year Company-Reported income statement, stitched from the bank's
+    recent 10-Ks (data.sec_statements.as_reported_income_multiyear). Faithful to
+    the company's own line items; blank where a line wasn't reported that year.
+    Per-share / weighted-share trailer omitted pending per-share unit handling."""
+    import re
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        st.info("No SEC filer mapping for this bank.")
+        return
+    try:
+        from data.sec_statements import as_reported_income_multiyear
+        res = as_reported_income_multiyear(cik, n_years=5)
+    except Exception:
+        res = None
+    if not res:
+        st.caption("Company-reported income statement not available from this filer's 10-Ks — n/a.")
+        return
+    stmt, filings, latest = res["statement"], res["filings"], res["meta"]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(latest['cik'])}/"
+           f"{latest['accession']}/{latest['doc']}")
+
+    def _yr(p):
+        m = re.search(r"\d{4}", p or "")
+        return m.group() if m else (p or "")
+
+    st.caption(f"Source: company 10-K filings — latest [{latest['date']}]({src}); "
+               f"{len(stmt['periods'])} fiscal years stitched from {len(filings)} filings. "
+               f"Values in millions of dollars; blank = not separately reported that year.")
+    periods = stmt["periods"][::-1]            # oldest → newest (matches Templated)
+    cols = [f"FY{_yr(p)}" for p in periods]
+    drop = re.compile(r"per share|per common share|weighted average|in shares", re.I)
+
+    def _m(v):
+        if v is None:
+            return ""
+        x = v / 1e6
+        return f"({abs(x):,.1f})" if x < 0 else f"{x:,.1f}"
+
+    def _esc(s):
+        return s.replace("|", r"\|").replace("$", r"\$")
+
+    out = ["| | " + " | ".join(cols) + " |", "|---|" + "---|" * len(cols)]
+    for r in stmt["rows"]:
+        if drop.search(r["label"]):
+            continue
+        lab = _esc(r["label"])
+        if r["header"]:
+            out.append(f"| **{lab}** |" + " |" * len(cols))
+        else:
+            vals = r["values"][::-1]
+            out.append(f"| {lab} | " + " | ".join(_m(v) for v in vals) + " |")
+    st.markdown("\n".join(out))
+
+
 def render_income_statement(ticker):
     render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True)
 

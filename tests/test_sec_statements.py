@@ -85,5 +85,42 @@ class TestStatementMatching(unittest.TestCase):
         self.assertNotIn("cashflow", out)
 
 
+class TestStitchIncome(unittest.TestCase):
+    """Multi-year stitch (data.sec_statements._stitch_income): union of labels
+    with each filing's order preserved, each year sourced from the NEWEST filing
+    that reported it, and blank where a line wasn't reported that year."""
+
+    def _filing(self, periods, rows):
+        return {"periods": periods, "units_scale": 1e3,
+                "rows": [{"label": l, "header": h, "values": v} for l, h, v in rows]}
+
+    def test_union_order_and_blanks(self):
+        from data.sec_statements import _stitch_income
+        newer = self._filing(["Dec. 31, 2025", "Dec. 31, 2024"], [
+            ("Income", True, []),
+            ("Interest", False, [100.0, 90.0]),
+            ("Equipment finance", False, [30.0, 20.0]),
+            ("Net income", False, [130.0, 110.0]),
+        ])
+        older = self._filing(["Dec. 31, 2024", "Dec. 31, 2023"], [
+            ("Income", True, []),
+            ("Interest", False, [90.0, 80.0]),
+            ("SBA gain", False, [5.0, 4.0]),
+            ("Net income", False, [110.0, 100.0]),
+        ])
+        out = _stitch_income([newer, older], n_years=3)
+        self.assertEqual(out["periods"],
+                         ["Dec. 31, 2025", "Dec. 31, 2024", "Dec. 31, 2023"])
+        order = [(r["label"], r["header"]) for r in out["rows"]]
+        self.assertEqual(order, [("Income", True), ("Interest", False),
+                                 ("SBA gain", False), ("Equipment finance", False),
+                                 ("Net income", False)])
+        byl = {r["label"]: r["values"] for r in out["rows"] if not r["header"]}
+        self.assertEqual(byl["Interest"], [100.0, 90.0, 80.0])
+        self.assertEqual(byl["SBA gain"], [None, None, 4.0])
+        self.assertEqual(byl["Equipment finance"], [30.0, 20.0, None])
+        self.assertEqual(byl["Net income"], [130.0, 110.0, 100.0])
+
+
 if __name__ == "__main__":
     unittest.main()
