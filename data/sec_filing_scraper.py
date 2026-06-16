@@ -754,8 +754,12 @@ _SEC_CONCEPTS = {
                "DebtSecuritiesAvailableForSaleAmortizedCostExcludingAccruedInterestBeforeAllowanceForCreditLoss",
                "AvailableForSaleDebtSecuritiesAmortizedCostBasis",
                "DebtSecuritiesAvailableForSaleAmortizedCostIncludingPortfolioLevelBasisAdjustments",
+               "DebtSecuritiesAvailableForSaleAmortizedCostAfterAllowanceForCreditLoss",
+               "DebtSecuritiesAvailableForSaleAmortizedCostExcludingAccruedInterest",
+               "AvailableForSaleDebtAndEquitySecuritiesAmortizedCostBasis",
                "DebtSecuritiesAvailableForSaleAmortizedCost",
-               "AvailableForSaleSecuritiesAmortizedCost"),
+               "AvailableForSaleSecuritiesAmortizedCost",
+               "AvailableForSaleSecuritiesAmortizedCosts"),
         "fv": ("DebtSecuritiesAvailableForSaleExcludingAccruedInterest",
                "DebtSecuritiesAvailableForSale",
                "AvailableForSaleSecuritiesDebtSecurities",
@@ -902,15 +906,29 @@ _CQ_CONCEPTS = {
     "acl": ("FinancingReceivableAllowanceForCreditLossExcludingAccruedInterest",
             "FinancingReceivableAndNetInvestmentInLeaseAllowanceForCreditLossExcludingAccruedInterest",
             "FinancingReceivableAllowanceForCreditLosses",
+            "LoansReceivableAllowanceForLoanLosses",
             "LoansAndLeasesReceivableAllowance",
             "AllowanceForLoanAndLeaseLossesRealEstate"),
     "loans_gross": ("FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss",
+                    "FinancingReceivableAndNetInvestmentInLeaseExcludingAccruedInterestBeforeAllowanceForCreditLoss",
+                    "FinancingReceivableCoveredAndNotCoveredBeforeAllowanceForCreditLoss",
+                    "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLossFeeAndLoanInProcess",
+                    "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLossFeeAfterLoanInProcess",
+                    "FinancingReceivableBeforeAllowanceForCreditLossAndFee",
                     "FinancingReceivableBeforeAllowanceForCreditLoss",
+                    "LoansAndLeasesReceivableBeforeFeeGross",
                     "NotesReceivableGross",
-                    "LoansAndLeasesReceivableGrossCarryingAmount"),
+                    "LoansReceivableGrossCarryingAmount",
+                    "LoansAndLeasesReceivableGrossCarryingAmount",
+                    "LoansAndLeasesReceivableGrossCarryingAmount1"),
     "loans_net": ("FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss",
+                  "FinancingReceivableAndNetInvestmentInLeaseExcludingAccruedInterestAfterAllowanceForCreditLoss",
+                  "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLossFeeAndLoanInProcess",
+                  "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLossFeeAfterLoanInProcess",
+                  "FinancingReceivableAfterAllowanceForCreditLossAndFee",
                   "FinancingReceivableAfterAllowanceForCreditLoss",
                   "LoansAndLeasesReceivableNetReportedAmount",
+                  "LoansAndLeasesReceivableNetOfDeferredFees",
                   "NotesReceivableNet"),
     "nonaccrual": ("FinancingReceivableExcludingAccruedInterestNonaccrual",
                    "FinancingReceivableRecordedInvestmentNonaccrualStatus"),
@@ -1057,7 +1075,17 @@ def extract_performance(facts: list[Fact]) -> dict:
         return None
 
     nii = ann(("InterestIncomeExpenseNet",))
-    nonint_inc = ann(("NoninterestIncome",))
+    if nii is None:
+        # Many filers tag gross interest income and interest expense separately
+        # rather than the net (ACNB/ALLY/AROW/CPBI…) — net interest income is their
+        # difference (faithful, the bank's own components).
+        int_inc = ann(("InterestAndDividendIncomeOperating",
+                       "InterestAndDividendIncomeSecuritiesAndOtherEarningAssetsOperating",
+                       "InterestAndFeeIncomeLoansAndLeases"))
+        int_exp = ann(("InterestExpense",))
+        if int_inc is not None and int_exp is not None:
+            nii = int_inc - int_exp
+    nonint_inc = ann(("NoninterestIncome", "NoninterestIncomeLoss"))
     nonint_exp = ann(("NoninterestExpense",))
     net_income = ann(NI)
     if None in (nii, nonint_inc, nonint_exp, net_income):
