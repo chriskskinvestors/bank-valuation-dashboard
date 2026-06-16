@@ -16,6 +16,7 @@ import json
 import re
 import urllib.request
 from dataclasses import dataclass
+from datetime import date
 
 _UA = {"User-Agent": "KSK Investors research chris@kskinvestors.com"}
 
@@ -999,4 +1000,139 @@ def credit_quality_for(cik) -> dict | None:
                 cq = {}
         if cq:
             return {"meta": meta, "credit_quality": cq}
+    return None
+
+
+# ── Performance analysis (as-reported profitability) ─────────────────────────
+def _days(start: str, end: str) -> int:
+    try:
+        return (date.fromisoformat(end) - date.fromisoformat(start)).days
+    except Exception:
+        return -1
+
+
+def _prior_year_end(iso: str) -> str | None:
+    try:
+        d = date.fromisoformat(iso)
+        return d.replace(year=d.year - 1).isoformat()
+    except Exception:
+        return None
+
+
+def extract_performance(facts: list[Fact]) -> dict:
+    """{fiscal_year_end: {...}} — the as-reported full-year profitability summary
+    from a filing's iXBRL: net interest income, noninterest income, total revenue,
+    noninterest expense, pre-provision net revenue, provision, net income, EPS, and
+    the efficiency ratio plus ROA/ROE.
+
+    Every figure is a directly tagged full-year (≈12-month) income-statement line or
+    a transparent combination of them (revenue = NII + noninterest income; PPNR =
+    revenue − noninterest expense; efficiency = noninterest expense ÷ revenue).
+    ROA/ROE use average assets/equity — the bank's tagged average when present, else
+    the (beginning + ending) ÷ 2 of the balance-sheet comparatives, flagged
+    `_avg_computed`. A confidence flag `_reconciles` records whether the income
+    walk (NII + noninterest income − noninterest expense − provision − tax) ties net
+    income. n/a unless the core lines (NII, noninterest income/expense, net income)
+    are all tagged for the latest fiscal year."""
+    NI = ("NetIncomeLoss", "ProfitLoss")
+    fy_end = None
+    for f in facts:
+        if (f.concept.split(":")[-1] in NI and not f.members
+                and f.period_start and 330 <= _days(f.period_start, f.period_end) <= 400):
+            if fy_end is None or f.period_end > fy_end:
+                fy_end = f.period_end
+    if fy_end is None:
+        return {}
+
+    def ann(concepts):
+        by_c: dict = {}
+        for f in facts:
+            c = f.concept.split(":")[-1]
+            if (c in concepts and not f.members and f.period_end == fy_end
+                    and f.period_start and 330 <= _days(f.period_start, fy_end) <= 400):
+                by_c.setdefault(c, f.value)
+        for c in concepts:
+            if c in by_c:
+                return by_c[c]
+        return None
+
+    nii = ann(("InterestIncomeExpenseNet",))
+    nonint_inc = ann(("NoninterestIncome",))
+    nonint_exp = ann(("NoninterestExpense",))
+    net_income = ann(NI)
+    if None in (nii, nonint_inc, nonint_exp, net_income):
+        return {}
+    provision = ann(_CQ_CONCEPTS["provision"])
+    tax = ann(("IncomeTaxExpenseBenefit",))
+    eps = ann(("EarningsPerShareDiluted",
+               "IncomeLossFromContinuingOperationsPerDilutedShare"))
+    revenue = nii + nonint_inc
+    ppnr = revenue - nonint_exp
+    reconciles = (provision is not None and tax is not None
+                  and abs((nii + nonint_inc - nonint_exp - provision - tax) - net_income)
+                  <= max(abs(net_income) * 0.02, 5e6))
+
+    # Average balances: prefer a tagged average, else (beginning + ending) ÷ 2.
+    def _instant(concept, when):
+        for f in facts:
+            if (f.concept.split(":")[-1] == concept and not f.members
+                    and f.period_start is None and f.period_end == when):
+                return f.value
+        return None
+
+    def avg(tagged_avg_concepts, instant_concept):
+        for c in tagged_avg_concepts:
+            v = ann((c,))
+            if v is not None:
+                return v, False
+        cur = _instant(instant_concept, fy_end)
+        py = _prior_year_end(fy_end)
+        prior = _instant(instant_concept, py) if py else None
+        if cur is not None and prior is not None:
+            return (cur + prior) / 2.0, True
+        return (cur, True) if cur is not None else (None, True)
+
+    avg_assets, a_comp = avg(("AssetsAverageOutstanding",), "Assets")
+    avg_equity, e_comp = avg(("StockholdersEquityAverageOutstanding",), "StockholdersEquity")
+    roa = (net_income / avg_assets) if avg_assets else None
+    roe = (net_income / avg_equity) if avg_equity else None
+    return {fy_end: {
+        "nii": nii, "noninterest_income": nonint_inc, "revenue": revenue,
+        "noninterest_expense": nonint_exp, "ppnr": ppnr, "provision": provision,
+        "net_income": net_income, "eps_diluted": eps,
+        # Efficiency = expense ÷ revenue, meaningful only with positive revenue. In a
+        # securities-repositioning loss year noninterest income can swamp NII and
+        # drive revenue ≤ 0 (e.g. HBNC FY25 NII $229M, noninterest income −$256M),
+        # where a ratio is nonsensical → n/a. The faithfully-tagged lines still show.
+        "efficiency": (nonint_exp / revenue) if revenue and revenue > 0 else None,
+        "roa": roa, "roe": roe,
+        "_avg_computed": bool(a_comp or e_comp),
+        "_reconciles": reconciles,
+    }}
+
+
+def performance_for(cik) -> dict | None:
+    """Cached as-reported full-year profitability summary for a company from its own
+    latest 10-K (annual figures). Returns {"meta": {...}, "performance": {...}} or
+    None."""
+    if not cik:
+        return None
+    from data import cache
+    meta = latest_filing(cik, ("10-K",))
+    if not meta:
+        return None
+    ckey = f"performance:v1:{meta['accession']}"
+    perf = cache.get(ckey)
+    if perf is None:
+        try:
+            perf = extract_performance(instance_facts(meta))
+            try:
+                cache.put(ckey, perf)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[sec_scraper] performance failed for cik {cik}: {type(e).__name__}: {e}")
+            perf = {}
+    if perf:
+        return {"meta": meta, "performance": perf}
     return None

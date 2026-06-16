@@ -1786,6 +1786,69 @@ def _render_credit_quality(ticker):
     st.markdown("\n".join([hdr, sep] + body))
 
 
+def _render_performance(ticker):
+    """As-reported full-year profitability, scraped from the HOLDING COMPANY's own
+    latest 10-K inline XBRL: revenue, NII, PPNR, net income, EPS, and the
+    efficiency ratio / ROA / ROE. Every figure is a directly tagged income-statement
+    line or a transparent combination; ROA/ROE use average balances. n/a when the
+    core income lines aren't tagged for the latest fiscal year."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        return
+    try:
+        from data.sec_filing_scraper import performance_for
+        res = performance_for(cik)
+    except Exception:
+        res = None
+    st.markdown("---")
+    st.subheader("Performance Analysis — Company Reported")
+    if not res or not res.get("performance"):
+        st.caption("Full-year income-statement lines not tagged in this filer's "
+                   "latest 10-K — n/a.")
+        return
+    meta, perf = res["meta"], res["performance"]
+    period = max(perf)
+    d = perf[period]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{meta['accession']}/{meta['doc']}")
+    note = (" Average balances for ROA/ROE are the mean of beginning and ending "
+            "balance-sheet amounts." if d.get("_avg_computed") else "")
+    st.caption(
+        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — full year "
+        f"FY{period[:4]}. Efficiency = noninterest expense ÷ revenue; PPNR = revenue "
+        f"− noninterest expense.{note} Updates as the company files.")
+
+    def _b(v):
+        if v is None:
+            return "n/a"
+        return f"${v / 1e9:,.2f}B" if abs(v) >= 1e9 else f"${v / 1e6:,.0f}M"
+
+    def _pct(v):
+        return "n/a" if v is None else f"{v * 100:.1f}%"
+
+    def _eps(v):
+        return "n/a" if v is None else f"${v:,.2f}"
+
+    rows = [
+        ("Total revenue", _b(d["revenue"])),
+        ("Net interest income", _b(d["nii"])),
+        ("Noninterest income", _b(d["noninterest_income"])),
+        ("Noninterest expense", _b(d["noninterest_expense"])),
+        ("Pre-provision net revenue (PPNR)", _b(d["ppnr"])),
+        ("Provision for credit losses", _b(d["provision"])),
+        ("Net income", _b(d["net_income"])),
+        ("Diluted EPS", _eps(d["eps_diluted"])),
+        ("Efficiency ratio", _pct(d["efficiency"])),
+        ("Return on average assets (ROA)", _pct(d["roa"])),
+        ("Return on average equity (ROE)", _pct(d["roe"])),
+    ]
+    hdr = f"| Performance (FY{period[:4]}) | Value |"
+    sep = "|---|---|"
+    body = [f"| {lab} | {val} |" for lab, val in rows]
+    st.markdown("\n".join([hdr, sep] + body))
+
+
 def render_portfolio(ticker):
     render_statement(ticker, "port", "Portfolio Analysis", _PORTFOLIO)
 

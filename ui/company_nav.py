@@ -263,6 +263,11 @@ def _cr_credit(t, ctx):
     _render_credit_quality(t)
 
 
+def _cr_performance(t, ctx):
+    from ui.financials_statements import _render_performance
+    _render_performance(t)
+
+
 def _cr_reg_capital(t, ctx):
     from ui.capital_dynamics import _render_holdco_capital
     _render_holdco_capital(t)
@@ -310,7 +315,7 @@ _CR_RENDERERS = {
     "Financial Highlights": _cr_todo("Financial Highlights"),
     "Income Statement": _cr_income,
     "Balance Sheet": _cr_balance,
-    "Performance Analysis": _cr_todo("Performance Analysis"),
+    "Performance Analysis": _cr_performance,
     "Regulatory Capital": _cr_reg_capital,
     "Credit Quality / Allowance": _cr_credit,
     "Loan Composition": _cr_loan,

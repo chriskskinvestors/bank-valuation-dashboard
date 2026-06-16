@@ -14,7 +14,7 @@ from unittest import mock
 
 from data.sec_filing_scraper import (
     parse_inline_xbrl, extract_holdco_capital, extract_fair_value,
-    extract_securities, extract_credit_quality, Fact)
+    extract_securities, extract_credit_quality, extract_performance, Fact)
 
 
 def _f(concept, val, members=None, period="2025-12-31"):
@@ -589,6 +589,56 @@ class TestCreditQuality(unittest.TestCase):
 
     def test_missing_gross_loans_yields_na(self):
         self.assertEqual(extract_credit_quality([_f(self.ACL, 2000 * self.M)]), {})
+
+
+class TestPerformance(unittest.TestCase):
+    """The as-reported full-year profitability summary (extract_performance). Pins
+    the revenue/PPNR/efficiency combinations, the income-walk reconcile flag, the
+    (begin+end)/2 average for ROA/ROE, and the annual-only period rule."""
+
+    Y0, Y1, PY = "2025-01-01", "2025-12-31", "2024-12-31"
+    M = 1e6
+
+    def _dur(self, concept, val):
+        return Fact(concept, val, self.Y1, self.Y0, {}, "usd")
+
+    def _inst(self, concept, val, end):
+        return Fact(concept, val, end, None, {}, "usd")
+
+    def test_full_year_profitability(self):
+        # FITB FY2025 shape — the income walk ties net income exactly.
+        facts = [
+            self._dur("us-gaap:InterestIncomeExpenseNet", 5982 * self.M),
+            self._dur("us-gaap:NoninterestIncome", 3035 * self.M),
+            self._dur("us-gaap:NoninterestExpense", 5144 * self.M),
+            self._dur("us-gaap:ProvisionForLoanLeaseAndOtherLosses", 662 * self.M),
+            self._dur("us-gaap:IncomeTaxExpenseBenefit", 689 * self.M),
+            self._dur("us-gaap:NetIncomeLoss", 2522 * self.M),
+            self._dur("us-gaap:EarningsPerShareDiluted", 3.53),
+            self._inst("us-gaap:Assets", 210000 * self.M, self.Y1),
+            self._inst("us-gaap:Assets", 200000 * self.M, self.PY),
+            self._inst("us-gaap:StockholdersEquity", 21000 * self.M, self.Y1),
+            self._inst("us-gaap:StockholdersEquity", 20000 * self.M, self.PY),
+        ]
+        d = extract_performance(facts)["2025-12-31"]
+        self.assertAlmostEqual(d["revenue"], (5982 + 3035) * self.M)
+        self.assertAlmostEqual(d["ppnr"], (5982 + 3035 - 5144) * self.M)
+        self.assertAlmostEqual(d["efficiency"], 5144 / (5982 + 3035), places=5)
+        self.assertTrue(d["_reconciles"])
+        self.assertAlmostEqual(d["roa"], 2522 / 205000, places=6)   # avg(210k,200k)
+        self.assertAlmostEqual(d["roe"], 2522 / 20500, places=6)
+        self.assertTrue(d["_avg_computed"])
+
+    def test_quarterly_only_yields_na(self):
+        # Only a 3-month period tagged → no full year → n/a.
+        facts = [Fact("us-gaap:NetIncomeLoss", 600 * self.M, "2025-03-31", "2025-01-01", {}, "usd"),
+                 Fact("us-gaap:InterestIncomeExpenseNet", 1500 * self.M, "2025-03-31", "2025-01-01", {}, "usd")]
+        self.assertEqual(extract_performance(facts), {})
+
+    def test_missing_core_line_yields_na(self):
+        facts = [self._dur("us-gaap:NetIncomeLoss", 2522 * self.M),
+                 self._dur("us-gaap:InterestIncomeExpenseNet", 5982 * self.M)]
+        self.assertEqual(extract_performance(facts), {})
 
 
 class TestFairValueCaching(unittest.TestCase):
