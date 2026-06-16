@@ -46,8 +46,34 @@ MACRO_SECTIONS = [
 ]
 
 
+# Macro nav styling — mirrors the Company two-level nav in ui/styles.py:
+# the section row renders as an underline tab bar, the sub-selectors (ETF /
+# window) as pills (active = navy). Scoped to the macro keyed widgets and
+# injected here (rather than styles.py) to keep macro styling self-contained.
+# A plain st.markdown <style> (not components.html), so CSS var() tokens work.
+_MACRO_NAV_CSS = """
+<style>
+.st-key-macro_section_nav div[role="radiogroup"]{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:flex-end;border-bottom:1px solid rgba(148,163,184,0.28);margin-bottom:8px;}
+.st-key-macro_section_nav div[role="radiogroup"]>label{margin:0!important;padding:7px 14px;cursor:pointer;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;transition:background .12s,border-color .12s;}
+.st-key-macro_section_nav div[role="radiogroup"]>label:hover{background:rgba(37,99,235,0.06);}
+.st-key-macro_section_nav div[role="radiogroup"]>label>div:first-of-type{display:none!important;}
+.st-key-macro_section_nav div[role="radiogroup"]>label p{font-size:0.95rem;color:var(--text-secondary);font-weight:600;}
+.st-key-macro_section_nav div[role="radiogroup"]>label:has(input:checked){border-bottom-color:#2563eb;}
+.st-key-macro_section_nav div[role="radiogroup"]>label:has(input:checked) p{color:#2563eb;font-weight:700;}
+.st-key-bank_sector_etf div[role="radiogroup"],.st-key-bank_sector_period div[role="radiogroup"],.st-key-macro_cal_window div[role="radiogroup"]{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:2px 0;}
+.st-key-bank_sector_etf div[role="radiogroup"]>label,.st-key-bank_sector_period div[role="radiogroup"]>label,.st-key-macro_cal_window div[role="radiogroup"]>label{margin:0!important;padding:3px 12px;cursor:pointer;border-radius:14px;border:1px solid rgba(148,163,184,0.30);transition:background .12s,border-color .12s;}
+.st-key-bank_sector_etf div[role="radiogroup"]>label:hover,.st-key-bank_sector_period div[role="radiogroup"]>label:hover,.st-key-macro_cal_window div[role="radiogroup"]>label:hover{background:rgba(37,99,235,0.06);}
+.st-key-bank_sector_etf div[role="radiogroup"]>label>div:first-of-type,.st-key-bank_sector_period div[role="radiogroup"]>label>div:first-of-type,.st-key-macro_cal_window div[role="radiogroup"]>label>div:first-of-type{display:none!important;}
+.st-key-bank_sector_etf div[role="radiogroup"]>label p,.st-key-bank_sector_period div[role="radiogroup"]>label p,.st-key-macro_cal_window div[role="radiogroup"]>label p{font-size:0.82rem;color:var(--text-secondary);font-weight:500;}
+.st-key-bank_sector_etf div[role="radiogroup"]>label:has(input:checked),.st-key-bank_sector_period div[role="radiogroup"]>label:has(input:checked),.st-key-macro_cal_window div[role="radiogroup"]>label:has(input:checked){background:#2563eb;border-color:#2563eb;}
+.st-key-bank_sector_etf div[role="radiogroup"]>label:has(input:checked) p,.st-key-bank_sector_period div[role="radiogroup"]>label:has(input:checked) p,.st-key-macro_cal_window div[role="radiogroup"]>label:has(input:checked) p{color:#fff;font-weight:700;}
+</style>
+"""
+
+
 def render_macro_dashboard():
     """Render the standalone Market & Macro section."""
+    st.markdown(_MACRO_NAV_CSS, unsafe_allow_html=True)
     st.markdown(
         '<div class="dashboard-header">'
         "<h1>Market & Macro</h1>"
