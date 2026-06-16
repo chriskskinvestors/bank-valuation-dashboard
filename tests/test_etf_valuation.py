@@ -75,6 +75,47 @@ class TestBlendValuation(unittest.TestCase):
         self.assertIsNone(b["pe"])
 
 
+class TestSanityBands(unittest.TestCase):
+    def test_crater_and_rich_ptbv_excluded(self):
+        # A 0.11x crater (bad data) and a 4.86x asset-manager name are both
+        # dropped from P/TBV; only the in-band bank counts.
+        holdings = [("GOOD", 50.0), ("CRATER", 25.0), ("RICH", 25.0)]
+        metrics = {
+            "GOOD":   {"pe_ratio": 12.0, "pb_ratio": 2.0, "bvps": 10.0, "tbvps": 8.0, "dividend_yield": 3.0},   # ptbv 2.5
+            "CRATER": {"pe_ratio": 12.0, "pb_ratio": 0.11, "bvps": 10.0, "tbvps": 10.0, "dividend_yield": 3.0}, # ptbv 0.11
+            "RICH":   {"pe_ratio": 12.0, "pb_ratio": 4.86, "bvps": 10.0, "tbvps": 10.0, "dividend_yield": 3.0}, # ptbv 4.86
+        }
+        b = blend_valuation(holdings, metrics)
+        self.assertAlmostEqual(b["ptbv"], 2.5, places=6)
+        self.assertEqual(b["n_ptbv"], 1)
+
+    def test_pe_band_excludes_lossmaker_and_extreme(self):
+        holdings = [("A", 50.0), ("LOSS", 20.0), ("RKT", 30.0)]
+        metrics = {
+            "A":    {"pe_ratio": 10.0, "pb_ratio": 1.0, "bvps": 5, "tbvps": 5, "dividend_yield": 2.0},
+            "LOSS": {"pe_ratio": -5.0, "pb_ratio": 1.0, "bvps": 5, "tbvps": 5, "dividend_yield": 2.0},
+            "RKT":  {"pe_ratio": 167.0, "pb_ratio": 1.0, "bvps": 5, "tbvps": 5, "dividend_yield": 2.0},
+        }
+        b = blend_valuation(holdings, metrics)
+        self.assertAlmostEqual(b["pe"], 10.0, places=6)
+        self.assertEqual(b["n_pe"], 1)
+
+    def test_pe_band_boundaries_inclusive(self):
+        mk = lambda pe: {"X": {"pe_ratio": pe, "pb_ratio": 1.0, "bvps": 5, "tbvps": 5, "dividend_yield": 1.0}}
+        self.assertEqual(blend_valuation([("X", 1.0)], mk(4.0))["n_pe"], 1)
+        self.assertEqual(blend_valuation([("X", 1.0)], mk(35.0))["n_pe"], 1)
+        self.assertEqual(blend_valuation([("X", 1.0)], mk(3.9))["n_pe"], 0)
+        self.assertEqual(blend_valuation([("X", 1.0)], mk(35.1))["n_pe"], 0)
+
+    def test_garbage_yield_excluded(self):
+        b = blend_valuation([("A", 50.0), ("B", 50.0)], {
+            "A": {"pe_ratio": 10, "pb_ratio": 1, "bvps": 5, "tbvps": 5, "dividend_yield": 2.0},
+            "B": {"pe_ratio": 10, "pb_ratio": 1, "bvps": 5, "tbvps": 5, "dividend_yield": 50.0},
+        })
+        self.assertAlmostEqual(b["dividend_yield"], 2.0, places=6)
+        self.assertEqual(b["n_dy"], 1)
+
+
 class TestParseHoldings(unittest.TestCase):
     # Real shapes seen across issuers (SSGA, Invesco, First Trust).
     ROWS = [
