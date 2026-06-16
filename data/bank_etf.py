@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data.fmp_client import get_history
+from data.fmp_client import get_history, _get
 
 # Sector ETFs offered in the deep-dive selector. KRE is the default — the
 # most-watched regional-bank proxy.
@@ -78,6 +78,48 @@ def get_etf_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
         return d
     cutoff = window_cutoff(period, d["date"].iloc[-1])
     return d[d["date"] >= cutoff].reset_index(drop=True)
+
+
+# Field map for the live market-data panel, verified against the FMP Premium
+# feed 2026-06-16 (KRE): /quote and /etf/info field names below are the real
+# response keys, not guesses.
+def parse_market_data(quote_row: dict | None, info_row: dict | None) -> dict:
+    """Map an FMP /quote row (+ optional /etf/info row) to the market-data
+    panel fields. Pure / unit-tested — every field defaults to None (n/a),
+    never a guess. `change_pct` is already a percent (e.g. 0.159 = +0.16%)."""
+    out = {k: None for k in (
+        "price", "change", "change_pct", "prev_close", "open", "day_low",
+        "day_high", "year_low", "year_high", "volume", "market_cap",
+        "aum", "nav", "expense_ratio", "avg_volume")}
+    r = quote_row or {}
+    out.update(
+        price=r.get("price"), change=r.get("change"),
+        change_pct=r.get("changePercentage"), prev_close=r.get("previousClose"),
+        open=r.get("open"), day_low=r.get("dayLow"), day_high=r.get("dayHigh"),
+        year_low=r.get("yearLow"), year_high=r.get("yearHigh"),
+        volume=r.get("volume"), market_cap=r.get("marketCap"),
+    )
+    i = info_row or {}
+    out.update(
+        aum=i.get("assetsUnderManagement"), nav=i.get("nav"),
+        expense_ratio=i.get("expenseRatio"), avg_volume=i.get("avgVolume"),
+    )
+    return out
+
+
+def _first_row(data) -> dict | None:
+    return data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else None
+
+
+def get_etf_market_data(ticker: str) -> dict:
+    """Live market-data snapshot for `ticker` (FMP Premium): /quote for the
+    price block + /etf/info for fund fields (AUM, NAV, expense ratio, avg
+    volume). All-None shape when FMP has no key or the calls fail — the
+    renderer then shows n/a, never a fabricated quote."""
+    t = ticker.upper()
+    quote_row = _first_row(_get("quote", {"symbol": t}))
+    info_row = _first_row(_get("etf/info", {"symbol": t}))
+    return parse_market_data(quote_row, info_row)
 
 
 def compute_stats(df: pd.DataFrame) -> dict:

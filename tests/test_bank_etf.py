@@ -12,7 +12,7 @@ import unittest
 
 import pandas as pd
 
-from data.bank_etf import compute_stats, window_cutoff
+from data.bank_etf import compute_stats, window_cutoff, parse_market_data
 
 
 def _ohlcv(closes, volumes=None):
@@ -64,6 +64,45 @@ class TestWindowCutoff(unittest.TestCase):
 
     def test_unknown_falls_back_to_1y(self):
         self.assertEqual(window_cutoff("ZZ", self.LAST), pd.Timestamp("2025-06-16"))
+
+
+class TestParseMarketData(unittest.TestCase):
+    # Real FMP Premium response shapes captured live for KRE (2026-06-16).
+    QUOTE = {"symbol": "KRE", "price": 72.345, "changePercentage": 0.15921,
+             "change": 0.115, "volume": 6515280, "dayLow": 72.26, "dayHigh": 73.285,
+             "yearHigh": 74.27, "yearLow": 55.55, "marketCap": 3743573703,
+             "open": 72.78, "previousClose": 72.23}
+    INFO = {"symbol": "KRE", "expenseRatio": 0.35, "assetsUnderManagement": 4295660000,
+            "avgVolume": 15540381.8, "nav": 73.43, "holdingsCount": 147}
+
+    def test_maps_quote_and_info_fields(self):
+        m = parse_market_data(self.QUOTE, self.INFO)
+        self.assertAlmostEqual(m["price"], 72.345)
+        self.assertAlmostEqual(m["change"], 0.115)
+        self.assertAlmostEqual(m["change_pct"], 0.15921)  # already a percent
+        self.assertAlmostEqual(m["prev_close"], 72.23)
+        self.assertAlmostEqual(m["open"], 72.78)
+        self.assertAlmostEqual(m["day_low"], 72.26)
+        self.assertAlmostEqual(m["day_high"], 73.285)
+        self.assertAlmostEqual(m["year_low"], 55.55)
+        self.assertAlmostEqual(m["year_high"], 74.27)
+        self.assertEqual(m["volume"], 6515280)
+        self.assertEqual(m["market_cap"], 3743573703)
+        self.assertEqual(m["aum"], 4295660000)
+        self.assertAlmostEqual(m["nav"], 73.43)
+        self.assertAlmostEqual(m["expense_ratio"], 0.35)
+        self.assertAlmostEqual(m["avg_volume"], 15540381.8)
+
+    def test_missing_info_leaves_fund_fields_none(self):
+        m = parse_market_data(self.QUOTE, None)
+        self.assertAlmostEqual(m["price"], 72.345)
+        self.assertIsNone(m["aum"])
+        self.assertIsNone(m["nav"])
+        self.assertIsNone(m["expense_ratio"])
+
+    def test_both_none(self):
+        m = parse_market_data(None, None)
+        self.assertTrue(all(v is None for v in m.values()))
 
 
 if __name__ == "__main__":

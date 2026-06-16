@@ -81,17 +81,41 @@ def _fmt_vol(v) -> str:
     return f"{v:,.0f}"
 
 
-def _fmt_signed_pct(v) -> str:
-    """Signed % colored green (up) / red (down) — standard price convention."""
+_NA_HTML = '<span style="color:var(--text-muted);">n/a</span>'
+
+
+def _fmt_usd(v) -> str:
+    return f"${v:,.2f}" if v is not None else _NA_HTML
+
+
+def _fmt_money(v) -> str:
+    """Large dollar amount (AUM / market cap) in B/M, or n/a."""
     if v is None:
-        return '<span style="color:var(--text-muted);">n/a</span>'
-    color = "var(--success)" if v > 0 else ("var(--danger)" if v < 0 else "var(--text-secondary)")
-    return f'<span style="color:{color};">{v:+.1f}%</span>'
+        return _NA_HTML
+    if v >= 1e9:
+        return f"${v / 1e9:.2f}B"
+    if v >= 1e6:
+        return f"${v / 1e6:.0f}M"
+    return f"${v:,.0f}"
+
+
+def _fmt_change(change, change_pct) -> str:
+    """Signed absolute change + percent, colored — e.g. +0.12 (+0.16%)."""
+    if change is None:
+        return _NA_HTML
+    color = ("var(--success)" if change > 0 else
+             "var(--danger)" if change < 0 else "var(--text-secondary)")
+    pct = f" ({change_pct:+.2f}%)" if change_pct is not None else ""
+    return f'<span style="color:{color};">{change:+.2f}{pct}</span>'
+
+
+def _fmt_range(lo, hi) -> str:
+    return f"${lo:,.2f} – ${hi:,.2f}" if (lo is not None and hi is not None) else _NA_HTML
 
 
 def _render_bank_sector():
     import plotly.graph_objects as go
-    from data.bank_etf import get_etf_history, compute_stats, ETFS, PERIODS
+    from data.bank_etf import get_etf_history, get_etf_market_data, compute_stats, ETFS, PERIODS
     from ui.chrome import ledger
 
     names = {e["ticker"]: e["name"] for e in ETFS}
@@ -118,9 +142,7 @@ def _render_bank_sector():
         return
 
     stats = compute_stats(df)
-
-    def _date(ts):
-        return ts.strftime("%b %d, %Y").replace(" 0", " ") if ts is not None else "—"
+    md = get_etf_market_data(ticker)  # live quote + ETF fund fields (Premium)
 
     # ── Compact price panel (~1/3 width, taller) with volume stacked
     # under it; the Price/Range stats sit tight to its right (narrow column,
@@ -140,7 +162,9 @@ def _render_bank_sector():
                            annotation_text=f"period high ${stats['period_high']:,.2f}",
                            annotation_position="top left",
                            annotation_font=dict(size=10, color="#64748b"))
-        apply_standard_layout(figp, title=f"{ticker} — price ({period})",
+        ret = stats["period_return_pct"]
+        ret_txt = f" · {ret:+.1f}%" if ret is not None else ""
+        apply_standard_layout(figp, title=f"{ticker} — price ({period}){ret_txt}",
                               height=CHART_HEIGHT_HERO, yaxis_title="Close",
                               show_legend=False)
         tighten_yaxis(figp, df["close"].tolist(), tickprefix="$")
@@ -157,21 +181,30 @@ def _render_bank_sector():
         st.plotly_chart(figv, use_container_width=True)
 
     with c_stats:
-        ledger("Price", [
-            ("Last close", f'${stats["last"]:,.2f}' if stats["last"] is not None else "n/a"),
-            (f"Return ({period})", _fmt_signed_pct(stats["period_return_pct"])),
-            ("Avg daily volume", _fmt_vol(stats["avg_volume"])),
-        ])
-        hi = f'${stats["period_high"]:,.2f}' if stats["period_high"] is not None else "n/a"
-        lo = f'${stats["period_low"]:,.2f}' if stats["period_low"] is not None else "n/a"
-        ledger("Range", [
-            (f"High ({_date(stats['period_high_date'])})", hi),
-            ("Low", lo),
-            ("Drawdown from high", _fmt_signed_pct(stats["drawdown_from_high_pct"])),
-        ])
+        rows = [
+            ("Last Price", _fmt_usd(md["price"])),
+            ("Change", _fmt_change(md["change"], md["change_pct"])),
+            ("Previous Close", _fmt_usd(md["prev_close"])),
+            ("Open", _fmt_usd(md["open"])),
+            ("Day Range", _fmt_range(md["day_low"], md["day_high"])),
+            ("52-Week Range", _fmt_range(md["year_low"], md["year_high"])),
+            ("Volume", _fmt_vol(md["volume"])),
+        ]
+        if md["avg_volume"] is not None:
+            rows.append(("Avg Volume", _fmt_vol(md["avg_volume"])))
+        # Fund size: net assets (AUM) for an ETF; fall back to market cap.
+        if md["aum"] is not None:
+            rows.append(("Net Assets", _fmt_money(md["aum"])))
+        elif md["market_cap"] is not None:
+            rows.append(("Market Cap", _fmt_money(md["market_cap"])))
+        if md["nav"] is not None:
+            rows.append(("NAV", _fmt_usd(md["nav"])))
+        if md["expense_ratio"] is not None:
+            rows.append(("Expense Ratio", f'{md["expense_ratio"]:.2f}%'))
+        ledger("Market Data", rows)
 
-    st.caption("Source: FMP end-of-day prices. Drawdown from high = % below the "
-               "highest close within the window.")
+    st.caption("Live market data via FMP (quote + ETF info); price line is "
+               "end-of-day. Net Assets = assets under management.")
 
 
 # Display order + labels for the FDIC national-rate products.
