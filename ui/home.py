@@ -171,7 +171,6 @@ _AF_TF_TAIL = {"1W": 5, "1M": 21, "3M": 63, "6M": 126, "1Y": 252, "2Y": 504}
 _AF_CSS = r"""
 <style>
 .afwrap{--mono:'SFMono-Regular','SF Mono','JetBrains Mono',ui-monospace,'Roboto Mono',Menlo,Consolas,monospace;color:#111827;}
-.afwrap .kg{display:grid;grid-template-columns:1fr 1fr 1fr;grid-auto-rows:244px;gap:14px;}
 .afwrap .pane{background:#fff;border:1px solid #dde3ec;border-radius:3px;display:flex;flex-direction:column;overflow:hidden;}
 .afwrap .hd{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;padding:9px 14px 7px;border-bottom:1px solid #eceff4;}
 .afwrap .hd .t{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#1e293b;}
@@ -189,7 +188,8 @@ _AF_CSS = r"""
 .afwrap .erow.r2{grid-template-columns:1.55fr 1fr .8fr .85fr;}
 .afwrap .erow.m5{grid-template-columns:1.5fr .62fr 1fr .8fr;}
 .afwrap .erow.a4{grid-template-columns:.62fr 2fr .72fr;}
-.afwrap .erow.e1{grid-template-columns:16px 1.3fr .58fr .95fr .85fr .62fr .62fr .62fr .62fr .8fr;column-gap:4px;padding:0 10px;}
+.afwrap .erow.e1{grid-template-columns:1.3fr .58fr .95fr .85fr .62fr .62fr .62fr .62fr .8fr;column-gap:4px;padding:0 10px;}
+.afwrap .erow.selrow{background:#f3f7ff;}
 .afwrap .erow.e1 .num{font-size:10px;}
 .afwrap .erow.m1{grid-template-columns:1.3fr .55fr .9fr .8fr .58fr .58fr .58fr .72fr;column-gap:4px;padding:0 12px;}
 .afwrap .erow.m1 .num{font-size:10px;}
@@ -213,7 +213,7 @@ _AF_CSS = r"""
 .afwrap .seg a.on{background:#1e3a8a;color:#fff;}
 .afwrap .cdiv{width:1px;height:10px;background:#e2e8f0;margin:0 3px;}
 .afwrap .seglbl{font-size:7.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#aab4c2;}
-.afwrap .dd{position:relative;font-size:8px;}
+.afwrap .dd{position:relative;font-size:8px;overflow:visible!important;}
 .afwrap .dd summary{list-style:none;cursor:pointer;font-family:var(--mono);font-size:8px!important;line-height:1.5!important;font-weight:700;color:#7c8a9c;background:#f1f4f8;border:none;border-radius:3px;padding:2px 6px!important;min-height:0!important;display:inline-block;}
 .afwrap .dd summary::-webkit-details-marker{display:none;}
 .afwrap .dd .menu{position:absolute;z-index:6;top:115%;left:0;background:#fff;border:1px solid #d8dee8;border-radius:4px;box-shadow:0 4px 12px rgba(15,23,42,.12);min-width:128px;padding:3px;}
@@ -234,33 +234,34 @@ _AF_CSS = r"""
 .afwrap .leg span{display:flex;align-items:center;gap:4px;font-size:9.5px;font-weight:600;color:#475569;font-variant-numeric:tabular-nums;}
 .afwrap .chart{flex:1 1 auto;min-height:0;padding:0 6px 4px;}
 .afwrap .chart svg{width:100%;height:100%;display:block;}
+/* ── Native-widget panes (st.container cards) — compaction + alignment ──
+   Streamlit 1.58 testids: segmented control = stButtonGroup, its buttons =
+   stBaseButton-segmented_control[ Active]; dropdown = stSelectbox. */
+div[class*="st-key-afpane"]{border:1px solid #dde3ec!important;border-radius:4px!important;background:#fff!important;padding:0 0 5px!important;margin-bottom:14px;}
+div[class*="st-key-afpane"] [data-testid="stVerticalBlock"]{gap:.3rem!important;}
+div[class*="st-key-afpane"] [data-testid="stElementContainer"]{padding:0!important;}
+div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"]{padding:3px 10px 0!important;gap:.35rem!important;}
+/* control widgets that sit directly in the pane (overlay tickers / timeframe)
+   get the same 10px side inset as the table; the same widgets inside a
+   columns row inherit the row's inset instead (override to 0). */
+div[class*="st-key-afpane"] [data-testid="stElementContainer"]:has(>[data-testid="stButtonGroup"]),
+div[class*="st-key-afpane"] [data-testid="stElementContainer"]:has(>div>[data-testid="stSelectbox"]){padding:3px 10px 0!important;}
+div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"] [data-testid="stElementContainer"]{padding:0!important;}
+div[class*="st-key-afpane"] [data-testid="stButtonGroup"]{gap:2px!important;}
+div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"]{min-height:0!important;height:22px!important;padding:0 9px!important;border-radius:3px!important;}
+div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"] p{font-size:10px!important;line-height:1!important;font-weight:600!important;}
+div[class*="st-key-afpane"] [data-baseweb="select"]>div{min-height:26px!important;}
+div[class*="st-key-afpane"] [data-baseweb="select"] *{font-size:10.5px!important;}
 </style>
 """
 
 
-def _af_state() -> dict:
-    qp = st.query_params
-    oc = qp.get("oc")
-    overlay = tuple(t for t in oc.split(",") if t) if oc else _AF_DEFAULT_OVERLAY
-    return {"overlay": overlay, "tf": qp.get("tf") or "3M",
-            "mv": qp.get("mv") or "g", "mh": qp.get("mh") or "d",
-            "msz": qp.get("msz") or "all", "vsz": qp.get("vsz") or "all",
-            "vp": qp.get("vp") or "1d"}
-
-
-def _af_href(**changes) -> str:
-    """Same-tab href preserving current params (so section=Home + the other
-    selectors survive a click), with the given keys overridden."""
-    from urllib.parse import urlencode
-    params = {k: v for k, v in st.query_params.items()}
-    params["s"] = "Home"
-    params.pop("bank", None)
-    for k, v in changes.items():
-        if v is None:
-            params.pop(k, None)
-        else:
-            params[k] = v
-    return "?" + urlencode(params)
+def _af_hd(title: str, status_html: str = "") -> str:
+    """Pane header row (title + optional right-aligned status). The selector
+    controls are now native Streamlit widgets (see _af_grid), so panes no
+    longer carry query-param links; this just builds the .afwrap header."""
+    return (f'<div class="hd"><span class="t">{title}</span>'
+            f'<span class="s">{status_html}</span></div>')
 
 
 def _af_n(v, dp=2):
@@ -305,22 +306,9 @@ def _af_dollar_vol(price, volume):
     return f"${v/1e3:.0f}K"
 
 
-def _af_seg(key: str, cur: str, opts: list) -> str:
-    return ('<span class="seg">' + "".join(
-        f'<a class="{"on" if cur == v else ""}" href="{_af_href(**{key: v})}" target="_self">{lbl}</a>'
-        for v, lbl in opts) + "</span>")
-
-
-def _af_size_dropdown(cur: str, key: str = "msz") -> str:
-    label = dict(_AF_TIERS).get(cur, "All")
-    menu = "".join(
-        f'<a class="{"on" if cur == k else ""}" href="{_af_href(**{key: k})}" target="_self">{lbl}</a>'
-        for k, lbl in _AF_TIERS)
-    return (f'<span class="seglbl">Size</span><details class="dd">'
-            f'<summary>{label} ▾</summary><div class="menu">{menu}</div></details>')
-
-
-def _af_etf_pane(state: dict) -> str:
+def _af_etf_table() -> str:
+    """Markets·ETFs quote table (HTML). The overlay selection lives in the
+    Overlay pane's native multi-select now; selected ETFs get a row tint."""
     syms = [t for t, _ in _AF_ETFS]
     try:
         from data.price_cache_store import get_prices
@@ -337,8 +325,8 @@ def _af_etf_pane(state: dict) -> str:
     except Exception:
         aftq = {}
     from data import fmp_client as _fc
-    sel = set(state["overlay"])
-    rows = ('<div class="erow e1 eh"><span></span><span class="h">Name</span>'
+    sel = set(st.session_state.get("af_overlay") or _AF_DEFAULT_OVERLAY)
+    rows = ('<div class="erow e1 eh"><span class="h">Name</span>'
             '<span class="h">Tkr</span><span class="num h">Last</span>'
             '<span class="num h">Chg</span><span class="num h">%</span>'
             '<span class="num h">Aft</span><span class="num h">1W</span>'
@@ -358,12 +346,9 @@ def _af_etf_pane(state: dict) -> str:
         ytd_t, ytd_c = (_af_signed(c.get("ytd"), dp=1) if c.get("ytd") is not None
                         else ("—", "mut"))
         vol = _af_vol(q.get("volume"))
-        on = "" if t in sel else " off"
-        new_sel = (sorted(sel - {t}) if t in sel else sorted(sel | {t}))
-        href = _af_href(oc=",".join(new_sel) or None)
+        sel_cls = " selrow" if t in sel else ""
         rows += (
-            f'<a class="crow" href="{href}" target="_self"><div class="erow e1 ed">'
-            f'<span class="cbx{on}"></span>'
+            f'<div class="erow e1 ed{sel_cls}">'
             f'<span class="nm">{name}</span><span class="tk">{t}</span>'
             f'<span class="num">{last}</span>'
             f'<span class="num {chg_c}">{chg_t}</span>'
@@ -371,14 +356,12 @@ def _af_etf_pane(state: dict) -> str:
             f'<span class="num {aft_c}">{aft_t}</span>'
             f'<span class="num {w1_c}">{w1_t}</span>'
             f'<span class="num {ytd_c}">{ytd_t}</span>'
-            f'<span class="num">{vol}</span></div></a>')
-    return ('<div class="pane" style="grid-column:1;grid-row:1;">'
-            '<div class="hd"><span class="t">Markets · ETFs</span>'
-            '<span class="s"><span class="live"></span>Live</span></div>'
-            f'<div class="body"><div class="etf">{rows}</div></div></div>')
+            f'<span class="num">{vol}</span></div>')
+    return (_af_hd("Markets · ETFs", '<span class="live"></span>Live')
+            + f'<div class="body"><div class="etf">{rows}</div></div>')
 
 
-def _af_rates_pane() -> str:
+def _af_rates_table() -> str:
     """Live intraday yields (yfinance) for 3M/2Y/5Y/10Y/30Y + a live 10Y−2Y
     spread; FRED daily for 6M/1Y/Fed Funds + the credit OAS. Live rows carry
     a green marker; a failed live tenor falls back to FRED (never a guess)."""
@@ -425,15 +408,12 @@ def _af_rates_pane() -> str:
         rows += (f'<div class="erow r2 ed"><span class="nm">{dot}{label}</span>{lvl}'
                  f'<span class="num {d1_c}">{d1_t}</span>'
                  f'<span class="num {d1w_c}">{d1w_t}</span></div>')
-    return ('<div class="pane" style="grid-column:1;grid-row:3;">'
-            '<div class="hd"><span class="t">Rates · Credit</span>'
-            '<span class="s"><span class="live"></span>live · FRED daily</span></div>'
-            f'<div class="body"><div class="etf">{rows}</div></div></div>')
+    return (_af_hd("Rates · Credit", '<span class="live"></span>live · FRED daily')
+            + f'<div class="body"><div class="etf">{rows}</div></div>')
 
 
-def _af_movers_pane(all_metrics: list[dict], state: dict) -> str:
+def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str:
     from analysis.peer_groups import asset_size_tier
-    mv, mh, msz = state["mv"], state["mh"], state["msz"]
     want = _AF_TIER_NAME.get(msz)
     # Warm cache holds the derived columns (chg_1w/chg_ytd/volume) + the
     # week sort field — one read for the whole universe.
@@ -467,10 +447,6 @@ def _af_movers_pane(all_metrics: list[dict], state: dict) -> str:
     data = [d for d in data if (d["sort"] < 0 if asc else d["sort"] > 0)]
     data.sort(key=lambda d: d["sort"], reverse=not asc)
     data = data[:12]
-    ctl = ('<div class="ctl">' + _af_seg("mv", mv, [("g", "Gainers"), ("l", "Losers")])
-           + '<span class="cdiv"></span>'
-           + _af_seg("mh", mh, [("d", "Day"), ("w", "Week")])
-           + '<span class="cdiv"></span>' + _af_size_dropdown(msz) + '</div>')
     if not data:
         note = ("Week movers populate with the nightly history job."
                 if mh == "w" else "No movers match this filter.")
@@ -500,13 +476,10 @@ def _af_movers_pane(all_metrics: list[dict], state: dict) -> str:
                 f'<span class="num {ytd_c}">{ytd_t}</span>'
                 f'<span class="num">{_af_vol(d["vol"])}</span></div></a>')
         body = f'<div class="etf">{rows}</div>'
-    return ('<div class="pane" style="grid-column:2;grid-row:1;">'
-            '<div class="hd"><span class="t">Movers</span>'
-            '<span class="s">All coverage</span></div>'
-            f'{ctl}<div class="body">{body}</div></div>')
+    return f'<div class="body">{body}</div>'
 
 
-def _af_calendar_pane(watchlist: list[str]) -> str:
+def _af_calendar_table(watchlist: list[str]) -> str:
     import datetime as dt
     items = []
     # Earnings — wider window than the old 14d inbox so the calendar isn't
@@ -564,11 +537,10 @@ def _af_calendar_pane(watchlist: list[str]) -> str:
                 f'<span class="nm"{wstyle}>{when}</span>{ev}'
                 f'<span class="num mut">{i["detail"] or "—"}</span></div></a>')
         body = f'<div class="etf">{rows}</div>'
-    return ('<div class="pane" style="grid-column:2;grid-row:3;">'
-            '<div class="hd"><span class="t">Calendar</span>'
-            '<span class="s"><span class="dotc" style="background:#1e3a8a;"></span>earnings'
-            '&nbsp;<span class="dotc" style="background:#b45309;"></span>macro</span></div>'
-            f'<div class="body">{body}</div></div>')
+    return (_af_hd("Calendar",
+                   '<span class="dotc" style="background:#1e3a8a;"></span>earnings'
+                   '&nbsp;<span class="dotc" style="background:#b45309;"></span>macro')
+            + f'<div class="body">{body}</div>')
 
 
 def _af_feed_items(watchlist: list[str]) -> list[dict]:
@@ -638,7 +610,7 @@ def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
     return out[:40]
 
 
-def _af_feed_pane(watchlist: list[str]) -> str:
+def _af_feed_table(watchlist: list[str]) -> str:
     items = _af_feed_items(watchlist)
     if not items:
         body = '<div class="pend">Feed populates with the next poll / insider job.</div>'
@@ -654,10 +626,8 @@ def _af_feed_pane(watchlist: list[str]) -> str:
                 f'<span class="ftag {it["cls"]}">{_esc(it["tag"])}</span>'
                 f'<span class="fhl">{_esc(it["head"][:90])}{sym}</span>'
                 f'<span class="fwhen">{when}</span></a>')
-    return ('<div class="pane" style="grid-column:3;grid-row:1 / span 3;">'
-            '<div class="hd"><span class="t">Bank News Feed</span>'
-            '<span class="s">universe</span></div>'
-            f'<div class="body" style="overflow:auto;">{body}</div></div>')
+    return (_af_hd("Bank News Feed", "universe")
+            + f'<div class="body">{body}</div>')
 
 
 def _af_overlay_series(sel, tf):
@@ -732,9 +702,9 @@ def _af_overlay_svg(series) -> str:
     return ('<svg viewBox="0 0 460 150" preserveAspectRatio="xMidYMid meet">' + "".join(parts) + "</svg>")
 
 
-def _af_overlay_pane(state: dict) -> str:
-    sel = list(state["overlay"])
-    tf = state["tf"]
+def _af_overlay_table(sel: list, tf: str) -> str:
+    """Normalized %-change chart + legend (HTML). The ticker multi-select and
+    timeframe control are native widgets rendered above this by _af_grid."""
     series = [] if (not sel or tf == "1D") else _af_overlay_series(sel, tf)
     last_by = {tk: pcts[-1] for tk, _c, pcts, _d in series}
     color_by = {tk: c for tk, c, _p, _d in series}
@@ -744,29 +714,19 @@ def _af_overlay_pane(state: dict) -> str:
         tail = (f' {last_by[tk]:+.1f}%' if tk in last_by else "")
         leg += (f'<span><span class="dotc" style="background:{c};"></span>{tk}{tail}</span>')
     leg += "</div>"
-    cbar = (f'<div class="cbar">{leg}'
-            + _af_seg("tf", tf, [(x, x) for x in _AF_TF_OPTS]) + "</div>")
     if not sel:
-        body = '<div class="pend">Check ETFs in the Markets pane to overlay them here.</div>'
+        body = '<div class="pend">Pick ETFs above to overlay them here.</div>'
     elif tf == "1D":
         body = '<div class="pend">1D intraday goes live once the Premium key deploys.</div>'
     elif not series:
         body = '<div class="pend">No history available for the selection.</div>'
     else:
         body = f'<div class="chart">{_af_overlay_svg(series)}</div>'
-    return ('<div class="pane" style="grid-column:1;grid-row:2;">'
-            '<div class="hd"><span class="t">Overlay · Selected</span>'
-            f'<span class="s">{len(sel)} of 11</span></div>'
-            f'{cbar}{body}</div>')
+    return f'<div class="cbar">{leg}</div>{body}'
 
 
-def _af_volume_pane(all_metrics: list[dict], state: dict) -> str:
+def _af_volume_table(all_metrics: list[dict], vsz: str, vp: str) -> str:
     from analysis.peer_groups import asset_size_tier
-    vp, vsz = state["vp"], state["vsz"]
-    ctl = ('<div class="ctl">' + _af_size_dropdown(vsz, key="vsz")
-           + '<span class="cdiv"></span>'
-           + _af_seg("vp", vp, [("1d", "1D"), ("1w", "1W"), ("1m", "1M"), ("6m", "6M")])
-           + '</div>')
     relfield = {"1d": "rel_volume", "1w": "relvol_1w",
                 "1m": "relvol_1m", "6m": "relvol_6m"}.get(vp, "rel_volume")
     try:
@@ -811,38 +771,111 @@ def _af_volume_pane(all_metrics: list[dict], state: dict) -> str:
                 f'<span class="num">{d["rv"]:.1f}×</span>'
                 f'<span class="num">{d["dvol"]}</span></div></a>')
         body = f'<div class="etf">{rows}</div>'
-    return ('<div class="pane" style="grid-column:2;grid-row:2;">'
-            '<div class="hd"><span class="t">Unusual Volume</span>'
-            '<span class="s">All coverage</span></div>'
-            f'{ctl}<div class="body">{body}</div></div>')
+    return f'<div class="body">{body}</div>'
 
 
-def _af_safe(fn, title, col, row, *args):
-    try:
-        return fn(*args)
-    except Exception as e:  # noqa: BLE001
-        print(f"[home.af] pane {title!r} failed: {type(e).__name__}: {e}")
-        return (f'<div class="pane ph" style="grid-column:{col};grid-row:{row};">'
-                f'<div><div class="hd" style="border:none;">'
-                f'<span class="t">{_esc(title)}</span></div>'
-                'temporarily unavailable</div></div>')
+def _md(html: str):
+    """Emit a pane fragment of HTML, scoped to the .afwrap style namespace."""
+    st.markdown(f'<div class="afwrap">{html}</div>', unsafe_allow_html=True)
+
+
+def _af_seg_single(label, options, default, key):
+    """Compact native single-select; coerce a deselect back to the default so
+    a pane never renders with an empty control."""
+    return st.segmented_control(label, options, default=default, key=key,
+                                label_visibility="collapsed") or default
+
+
+def _af_card(render_fn, key, title, *args):
+    """Render one pane inside a bordered card, isolating failures so a slow or
+    failing data source degrades to its own 'unavailable' card rather than
+    taking the page down. The afpane key class is the CSS compaction hook."""
+    with st.container(border=True, key=f"afpane_{key}"):
+        try:
+            render_fn(*args)
+        except Exception as e:  # noqa: BLE001
+            print(f"[home.af] pane {title!r} failed: {type(e).__name__}: {e}")
+            _md(_af_hd(title) + '<div class="pend">temporarily unavailable</div>')
+
+
+# ── Pane render functions: native selector widgets (soft rerun, NO page
+#    reload) above the dense HTML table. Each runs inside an _af_card().
+def _af_pane_etf(_all_metrics):
+    _md(_af_etf_table())
+
+
+def _af_pane_rates(_all_metrics):
+    _md(_af_rates_table())
+
+
+def _af_pane_calendar(watchlist):
+    _md(_af_calendar_table(watchlist))
+
+
+def _af_pane_feed(watchlist):
+    _md(_af_feed_table(watchlist))
+
+
+def _af_pane_overlay(_all_metrics):
+    syms = [t for t, _ in _AF_ETFS]
+    sel0 = st.session_state.get("af_overlay") or list(_AF_DEFAULT_OVERLAY)
+    _md(_af_hd("Overlay · Selected", f"{len(sel0)} of 11"))
+    sel = st.segmented_control(
+        "Overlay tickers", syms, selection_mode="multi",
+        default=list(_AF_DEFAULT_OVERLAY), key="af_overlay",
+        label_visibility="collapsed")
+    tf = _af_seg_single("Timeframe", _AF_TF_OPTS, "3M", "af_tf")
+    _md(_af_overlay_table(list(sel or []), tf))
+
+
+def _af_pane_movers(all_metrics):
+    _md(_af_hd("Movers", "All coverage"))
+    c1, c2 = st.columns(2)
+    with c1:
+        mv = _af_seg_single("Direction", ["Gainers", "Losers"], "Gainers", "af_mv")
+    with c2:
+        mh = _af_seg_single("Window", ["Day", "Week"], "Day", "af_mh")
+    szlbl = st.selectbox("Size", [lbl for _, lbl in _AF_TIERS], key="af_msz",
+                         label_visibility="collapsed")
+    szkey = {lbl: k for k, lbl in _AF_TIERS}.get(szlbl, "all")
+    _md(_af_movers_table(all_metrics, "l" if mv == "Losers" else "g",
+                         "w" if mh == "Week" else "d", szkey))
+
+
+def _af_pane_volume(all_metrics):
+    _md(_af_hd("Unusual Volume", "All coverage"))
+    c1, c2 = st.columns([1, 1.4])
+    with c1:
+        szlbl = st.selectbox("Size", [lbl for _, lbl in _AF_TIERS], key="af_vsz",
+                             label_visibility="collapsed")
+    with c2:
+        vp = _af_seg_single("Period", ["1D", "1W", "1M", "6M"], "1D", "af_vp")
+    szkey = {lbl: k for k, lbl in _AF_TIERS}.get(szlbl, "all")
+    _md(_af_volume_table(all_metrics, szkey, vp.lower()))
+
+
+@st.fragment
+def _af_grid(all_metrics: list[dict], watchlist: list[str]):
+    """Owner-locked above-the-fold, rendered as a fragment so a selector change
+    re-runs ONLY this grid — instant, no full-page reload, no scroll jump.
+    Layout: col1 Markets/Overlay/Rates · col2 Movers/Volume/Calendar · col3
+    the full-height news feed."""
+    st.markdown(_AF_CSS, unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3, gap="small")
+    with c1:
+        _af_card(_af_pane_etf, "etf", "Markets · ETFs", all_metrics)
+        _af_card(_af_pane_overlay, "overlay", "Overlay · Selected", all_metrics)
+        _af_card(_af_pane_rates, "rates", "Rates · Credit", all_metrics)
+    with c2:
+        _af_card(_af_pane_movers, "movers", "Movers", all_metrics)
+        _af_card(_af_pane_volume, "volume", "Unusual Volume", all_metrics)
+        _af_card(_af_pane_calendar, "calendar", "Calendar", watchlist)
+    with c3:
+        _af_card(_af_pane_feed, "feed", "Bank News Feed", watchlist)
 
 
 def _render_above_fold(all_metrics: list[dict], watchlist: list[str]):
-    """Render the locked above-the-fold grid as one HTML blob; each pane is
-    isolated so a slow/failing source degrades to its own error state."""
-    state = _af_state()
-    panes = [
-        _af_safe(_af_etf_pane, "Markets · ETFs", 1, "1", state),
-        _af_safe(_af_movers_pane, "Movers", 2, "1", all_metrics, state),
-        _af_safe(_af_feed_pane, "Bank News Feed", 3, "1 / span 3", watchlist),
-        _af_safe(_af_overlay_pane, "Overlay · Selected", 1, "2", state),
-        _af_safe(_af_volume_pane, "Unusual Volume", 2, "2", all_metrics, state),
-        _af_safe(_af_rates_pane, "Rates · Credit", 1, "3"),
-        _af_safe(_af_calendar_pane, "Calendar", 2, "3", watchlist),
-    ]
-    st.markdown(_AF_CSS + '<div class="afwrap"><div class="kg">'
-                + "".join(panes) + "</div></div>", unsafe_allow_html=True)
+    _af_grid(all_metrics, watchlist)
 
 
 def render_home(all_metrics: list[dict], watchlist: list[str]):

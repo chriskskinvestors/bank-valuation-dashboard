@@ -64,6 +64,13 @@ def _install_streamlit_stub():
         setattr(st, name, _noop)
     st.checkbox = lambda *a, **k: bool(k.get("value", False))
     st.radio = lambda label, options=None, **k: (options[0] if options else None)
+    # Above-the-fold native selector widgets (segmented_control / selectbox)
+    # and the @st.fragment decorator the redesigned Home grid uses.
+    st.segmented_control = lambda label, options=None, **k: (
+        k["default"] if k.get("default") is not None
+        else (options[0] if options else None))
+    st.selectbox = lambda label, options=None, **k: (options[0] if options else None)
+    st.fragment = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
     st.subheader = _noop
     # streamlit.components.v1 — iframe tables (financials_statements,
     # capital walk) import it; html is replaced per-test to capture output.
@@ -89,7 +96,7 @@ def _install_streamlit_stub():
 
 
 # Populated above-the-fold feed rows with HTML-hostile content so the
-# _esc()-escaping loop in _af_feed_pane actually executes — that loop is the
+# _esc()-escaping loop in _af_feed_table actually executes — that loop is the
 # exact code shape that crashed production on 2026-06-12 (NameError: _esc
 # used without import; local checks only ever hit the empty branch).
 FAKE_FEED = [
@@ -114,7 +121,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
     """The above-the-fold panes must survive real-shaped, HTML-hostile
     content. Pins the 2026-06-12 production crash: home called _esc() without
     importing it, and local verification only hit the empty branch. The
-    redesign's _af_feed_pane has the same shape — it _esc()-escapes every
+    redesign's _af_feed_table has the same shape — it _esc()-escapes every
     populated row — so we drive it with hostile items and demand the NameError
     when the import is removed. The pin calls the pane DIRECTLY: the page entry
     _render_above_fold wraps panes in _af_safe's try/except, which would
@@ -129,7 +136,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
 
     def test_feed_pane_escapes_populated_content(self):
         self.home._af_feed_items = lambda w: list(FAKE_FEED)
-        h = self.home._af_feed_pane(["BANR"])
+        h = self.home._af_feed_table(["BANR"])
         self.assertIn("&amp;", h)            # & escaped
         self.assertIn("&lt;b&gt;", h)        # <b> escaped, not interpreted
         self.assertNotIn("<b>", h)
@@ -142,7 +149,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
         try:
             est.fetch_earnings_calendar = lambda w: []
             mc.get_upcoming_prints = lambda days=7: list(FAKE_PRINTS)
-            h = self.home._af_calendar_pane([])
+            h = self.home._af_calendar_table([])
         finally:
             est.fetch_earnings_calendar, mc.get_upcoming_prints = saved
         self.assertIn("8:30 ET", h)          # redesign's scheduled-time column
@@ -174,7 +181,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
         try:
             del self.home._esc
             with self.assertRaises(NameError):
-                self.home._af_feed_pane(["BANR"])
+                self.home._af_feed_table(["BANR"])
         finally:
             self.home._esc = saved
 
