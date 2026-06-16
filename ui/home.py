@@ -601,12 +601,23 @@ def _af_rates_pane() -> str:
 def _af_movers_pane(all_metrics: list[dict], state: dict) -> str:
     from analysis.peer_groups import asset_size_tier
     mv, mh, msz = state["mv"], state["mh"], state["msz"]
-    field = "change_pct" if mh == "d" else "chg_1w"
     want = _AF_TIER_NAME.get(msz)
+    wk = {}
+    if mh == "w":  # chg_1w lives in the warm cache (nightly job), not all_metrics
+        try:
+            from data.price_cache_store import get_prices
+            wk = get_prices([m.get("ticker") for m in (all_metrics or [])
+                             if m.get("ticker")])
+        except Exception:
+            wk = {}
     data = []
     for m in (all_metrics or []):
-        tk, v = m.get("ticker"), m.get(field)
-        if not tk or v is None:
+        tk = m.get("ticker")
+        if not tk:
+            continue
+        v = ((wk.get(tk) or {}).get("chg_1w") if mh == "w"
+             else m.get("change_pct"))
+        if v is None:
             continue
         if want and asset_size_tier(m.get("total_assets")) != want:
             continue
@@ -887,44 +898,42 @@ def _af_volume_pane(all_metrics: list[dict], state: dict) -> str:
            + '<span class="cdiv"></span>'
            + _af_seg("vp", vp, [("1d", "1D"), ("1w", "1W"), ("1m", "1M"), ("6m", "6M")])
            + '</div>')
-    if vp != "1d":
-        body = ('<div class="pend">1W / 1M / 6M unusual-volume windows '
-                'populate with the nightly history job.</div>')
+    relfield = {"1d": "rel_volume", "1w": "relvol_1w",
+                "1m": "relvol_1m", "6m": "relvol_6m"}.get(vp, "rel_volume")
+    try:
+        from data.price_cache_store import get_prices
+        warm = get_prices([m.get("ticker") for m in (all_metrics or [])
+                           if m.get("ticker")])
+    except Exception:
+        warm = {}
+    want = _AF_TIER_NAME.get(vsz)
+    data = []
+    for m in (all_metrics or []):
+        tk = m.get("ticker")
+        rv = (warm.get(tk) or {}).get(relfield)
+        if not tk or rv is None:
+            continue
+        if want and asset_size_tier(m.get("total_assets")) != want:
+            continue
+        data.append((tk, rv, m.get("change_pct")))
+    data.sort(key=lambda d: d[1], reverse=True)
+    data = data[:12]
+    if not data:
+        body = ('<div class="pend">Unusual volume populates once the '
+                'nightly history job has run.</div>')
     else:
-        try:
-            from data.price_cache_store import get_prices
-            warm = get_prices([m.get("ticker") for m in (all_metrics or [])
-                               if m.get("ticker")])
-        except Exception:
-            warm = {}
-        want = _AF_TIER_NAME.get(vsz)
-        data = []
-        for m in (all_metrics or []):
-            tk = m.get("ticker")
-            rv = (warm.get(tk) or {}).get("rel_volume")
-            if not tk or rv is None:
-                continue
-            if want and asset_size_tier(m.get("total_assets")) != want:
-                continue
-            data.append((tk, rv, m.get("change_pct")))
-        data.sort(key=lambda d: d[1], reverse=True)
-        data = data[:12]
-        if not data:
-            body = ('<div class="pend">Unusual volume populates once the '
-                    'nightly avg-volume job has run.</div>')
-        else:
-            rows = ('<div class="erow m5 eh"><span class="h">Name</span>'
-                    '<span class="h">Tkr</span><span class="num h">Vol ×avg</span>'
-                    '<span class="num h">%</span></div>')
-            for tk, rv, pct in data:
-                pct_t, pct_c = _af_signed(pct)
-                rows += (
-                    f'<a class="crow" href="?s=Home&bank={tk}" target="_self">'
-                    f'<div class="erow m5 ed"><span class="nm">{_esc((get_name(tk) or "")[:22])}</span>'
-                    f'<span class="tk">{tk}</span>'
-                    f'<span class="num">{rv:.1f}×</span>'
-                    f'<span class="num {pct_c}">{pct_t}</span></div></a>')
-            body = f'<div class="etf">{rows}</div>'
+        rows = ('<div class="erow m5 eh"><span class="h">Name</span>'
+                '<span class="h">Tkr</span><span class="num h">Vol ×avg</span>'
+                '<span class="num h">%</span></div>')
+        for tk, rv, pct in data:
+            pct_t, pct_c = _af_signed(pct)
+            rows += (
+                f'<a class="crow" href="?s=Home&bank={tk}" target="_self">'
+                f'<div class="erow m5 ed"><span class="nm">{_esc((get_name(tk) or "")[:22])}</span>'
+                f'<span class="tk">{tk}</span>'
+                f'<span class="num">{rv:.1f}×</span>'
+                f'<span class="num {pct_c}">{pct_t}</span></div></a>')
+        body = f'<div class="etf">{rows}</div>'
     return ('<div class="pane" style="grid-column:2;grid-row:2;">'
             '<div class="hd"><span class="t">Unusual Volume</span>'
             '<span class="s">All coverage</span></div>'

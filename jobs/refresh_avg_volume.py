@@ -27,18 +27,37 @@ sys.path.insert(0, str(REPO_ROOT))
 AVG_WINDOW = 63  # ~3 trading months, matching ui/bank_detail.py's convention
 
 
-def _avg_volume(ticker: str) -> float | None:
-    """63-day mean daily volume from FMP history, or None if unavailable."""
+def _derived(ticker: str) -> dict | None:
+    """All nightly history-derived fields from ONE FMP history fetch:
+      avg_volume  — AVG_WINDOW (63d) mean daily volume
+      chg_1w      — price % change over the last 5 trading days
+      relvol_1w/1m/6m — window mean volume ÷ the 63d avg (unusual-volume
+                        over that lookback, for the Volume-pane periods)
+    Returns only the fields that have enough data; None if no usable history."""
     from data import fmp_client
     try:
         h = fmp_client.get_history(ticker, period="1Y")
-        if h is None or h.empty or "volume" not in h:
+        if h is None or h.empty:
             return None
-        vols = h["volume"].dropna()
-        if vols.empty:
-            return None
-        v = float(vols.tail(AVG_WINDOW).mean())
-        return v if v > 0 else None
+        h = h.sort_values("date")
+        out: dict = {}
+        if "volume" in h:
+            vols = h["volume"].dropna()
+            if not vols.empty:
+                avg = float(vols.tail(AVG_WINDOW).mean())
+                if avg > 0:
+                    out["avg_volume"] = avg
+                    for col, win in (("relvol_1w", 5), ("relvol_1m", 21),
+                                     ("relvol_6m", 126)):
+                        w = vols.tail(win)
+                        if len(w) >= max(2, win // 2):
+                            out[col] = float(w.mean()) / avg
+        if "close" in h:
+            closes = h["close"].dropna()
+            if len(closes) >= 6 and closes.iloc[-6]:
+                out["chg_1w"] = (float(closes.iloc[-1]) /
+                                 float(closes.iloc[-6]) - 1.0) * 100.0
+        return out or None
     except Exception:
         return None
 
@@ -49,7 +68,7 @@ def main() -> int:
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from data import fmp_client
-    from data.price_cache_store import upsert_avg_volumes, init_price_cache_schema
+    from data.price_cache_store import upsert_derived_metrics, init_price_cache_schema
     from data.bank_universe import get_universe
     from config import DEFAULT_WATCHLIST, MARKET_BENCHMARKS
 
@@ -66,12 +85,12 @@ def main() -> int:
 
     # Pace submission under FMP's ~300/min cap, same discipline as the price job.
     interval = 60.0 / 270
-    out: dict[str, float] = {}
+    out: dict = {}
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=8) as ex:
         futures = {}
         for t in tickers:
-            futures[ex.submit(_avg_volume, t)] = t
+            futures[ex.submit(_derived, t)] = t
             time.sleep(interval)
         for fut in as_completed(futures):
             t = futures[fut]
@@ -79,10 +98,10 @@ def main() -> int:
                 v = fut.result()
             except Exception:
                 v = None
-            if v is not None:
+            if v:
                 out[t] = v
 
-    n_written = upsert_avg_volumes(out)
+    n_written = upsert_derived_metrics(out)
     elapsed = time.time() - t0
     computed = len(out)
     print(f"[{time.strftime('%H:%M:%S')}] done in {elapsed:.0f}s — computed "

@@ -98,22 +98,47 @@ class TestAvgVolumeStore(_DbCase):
         self.assertEqual(after["updated_at"], before)   # stamp untouched
 
 
-class TestAvgVolumeCompute(unittest.TestCase):
+class TestDerivedStore(_DbCase):
 
-    def test_mean_of_last_63(self):
+    def test_derived_metrics_upsert_and_read(self):
+        """upsert_derived_metrics writes the allow-listed derived columns and
+        get_prices exposes them; UPDATE-only (skips a ticker with no row)."""
+        store = self._store
+        store.upsert_prices({"AAA": {"price": 10.0, "volume": 3000}})
+        n = store.upsert_derived_metrics({
+            "AAA": {"avg_volume": 1000.0, "chg_1w": 2.4, "relvol_1w": 1.8,
+                    "relvol_1m": 1.3, "relvol_6m": 1.1},
+            "ZZZ": {"chg_1w": 9.9}})           # ZZZ has no price row → skipped
+        self.assertEqual(n, 1)
+        row = store.get_prices(["AAA"])["AAA"]
+        self.assertAlmostEqual(row["chg_1w"], 2.4)
+        self.assertAlmostEqual(row["relvol_1w"], 1.8)
+        self.assertAlmostEqual(row["rel_volume"], 3.0)   # 3000 / 1000
+        self.assertNotIn("ZZZ", store.get_prices(["ZZZ"]))
+
+
+class TestDerivedCompute(unittest.TestCase):
+
+    def test_derived_from_history(self):
         import pandas as pd
         from jobs import refresh_avg_volume as job
-        # 100 days: last 63 are all 1000 → mean 1000; earlier days differ.
+        # 100 days: last 63 vol all 1000 → avg 1000; closes 100→~111 over window.
         vols = [9999] * 37 + [1000] * 63
-        df = pd.DataFrame({"volume": vols})
+        closes = [100.0 + i * 0.1 for i in range(100)]
+        df = pd.DataFrame({"date": pd.date_range("2026-01-01", periods=100),
+                           "volume": vols, "close": closes})
         with patch("data.fmp_client.get_history", return_value=df):
-            self.assertAlmostEqual(job._avg_volume("AAA"), 1000.0)
+            d = job._derived("AAA")
+        self.assertAlmostEqual(d["avg_volume"], 1000.0)
+        self.assertAlmostEqual(d["relvol_1w"], 1.0)        # last 5 all 1000
+        self.assertIn("chg_1w", d)                          # 5-day price change
+        self.assertGreater(d["chg_1w"], 0)
 
     def test_empty_history_returns_none(self):
         import pandas as pd
         from jobs import refresh_avg_volume as job
         with patch("data.fmp_client.get_history", return_value=pd.DataFrame()):
-            self.assertIsNone(job._avg_volume("AAA"))
+            self.assertIsNone(job._derived("AAA"))
 
 
 class TestAvgVolumeJob(_DbCase):
@@ -121,18 +146,21 @@ class TestAvgVolumeJob(_DbCase):
     def test_main_writes_and_exits_zero(self):
         from jobs import refresh_avg_volume as job
         universe = {t: {} for t in ("AAA", "BBB", "CCC", "DDD", "EEE")}
-        # Pre-create price rows so the UPDATE-only write lands.
         self._store.upsert_prices(
             {t: {"price": 10.0, "volume": 2000} for t in universe})
         with patch("data.fmp_client._has_key", return_value=True), \
-             patch("jobs.refresh_avg_volume._avg_volume", return_value=1500.0), \
+             patch("jobs.refresh_avg_volume._derived",
+                   return_value={"avg_volume": 1500.0, "chg_1w": 2.0,
+                                 "relvol_1w": 1.2}), \
              patch("data.bank_universe.get_universe", return_value=universe), \
              patch("config.DEFAULT_WATCHLIST", []), \
              patch("config.MARKET_BENCHMARKS", []), \
              patch("time.sleep"):
             code = job.main()
         self.assertEqual(code, 0)
-        self.assertEqual(self._store.get_prices(["AAA"])["AAA"]["avg_volume"], 1500.0)
+        row = self._store.get_prices(["AAA"])["AAA"]
+        self.assertEqual(row["avg_volume"], 1500.0)
+        self.assertEqual(row["chg_1w"], 2.0)
 
 
 if __name__ == "__main__":

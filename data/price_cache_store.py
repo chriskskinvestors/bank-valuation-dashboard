@@ -70,6 +70,10 @@ def init_price_cache_schema():
                 volume         DOUBLE PRECISION,
                 dividend_yield DOUBLE PRECISION,
                 avg_volume     DOUBLE PRECISION,
+                chg_1w         DOUBLE PRECISION,
+                relvol_1w      DOUBLE PRECISION,
+                relvol_1m      DOUBLE PRECISION,
+                relvol_6m      DOUBLE PRECISION,
                 updated_at     {ts_default}
             )
         """))
@@ -106,6 +110,22 @@ def init_price_cache_schema():
                         "avg_volume DOUBLE PRECISION"))
         except Exception:
             pass
+        # Derived history metrics (nightly refresh_avg_volume job): weekly
+        # price change + window relative-volumes for Movers-Week / Volume periods.
+        for _col in ("chg_1w", "relvol_1w", "relvol_1m", "relvol_6m"):
+            try:
+                if _USE_POSTGRES:
+                    conn.execute(text(
+                        f"ALTER TABLE price_cache ADD COLUMN IF NOT EXISTS "
+                        f"{_col} DOUBLE PRECISION"))
+                else:
+                    cols = [row[1] for row in conn.execute(
+                        text("PRAGMA table_info(price_cache)")).fetchall()]
+                    if _col not in cols:
+                        conn.execute(text(
+                            f"ALTER TABLE price_cache ADD COLUMN {_col} DOUBLE PRECISION"))
+            except Exception:
+                pass
 
 
 def _coerce(v):
@@ -203,6 +223,33 @@ def upsert_avg_volumes(avg_vols: dict[str, float]) -> int:
     return n
 
 
+_DERIVED_COLS = ("avg_volume", "chg_1w", "relvol_1w", "relvol_1m", "relvol_6m")
+
+
+def upsert_derived_metrics(rows: dict) -> int:
+    """Write nightly history-derived fields {ticker: {col: val, ...}} for
+    the allowed columns (avg_volume / chg_1w / relvol_1w/1m/6m). UPDATE-only
+    (never INSERT, never touches price/updated_at — no fabricated freshness);
+    only the provided, numeric, allow-listed columns are written per ticker.
+    Returns rows touched."""
+    from sqlalchemy import text
+    eng = _get_engine()
+    n = 0
+    with eng.begin() as conn:
+        for ticker, d in (rows or {}).items():
+            sets = {c: _coerce(v) for c, v in (d or {}).items()
+                    if c in _DERIVED_COLS and _coerce(v) is not None}
+            if not sets:
+                continue
+            assignments = ", ".join(f"{c} = :{c}" for c in sets)
+            params = dict(sets)
+            params["t"] = ticker.upper()
+            res = conn.execute(text(
+                f"UPDATE price_cache SET {assignments} WHERE ticker = :t"), params)
+            n += res.rowcount or 0
+    return n
+
+
 def _parse_ts(v) -> datetime | None:
     if v is None:
         return None
@@ -236,7 +283,8 @@ def get_prices(tickers: list[str], max_age_s: int | None = None) -> dict[str, di
             placeholders = ", ".join(f":t{j}" for j in range(len(chunk)))
             rows = conn.execute(text(
                 f"SELECT ticker, price, prev_close, change, change_pct, volume, "
-                f"dividend_yield, avg_volume, updated_at FROM price_cache "
+                f"dividend_yield, avg_volume, chg_1w, relvol_1w, relvol_1m, "
+                f"relvol_6m, updated_at FROM price_cache "
                 f"WHERE ticker IN ({placeholders})"
             ), params).fetchall()
             for r in rows:
@@ -255,6 +303,9 @@ def get_prices(tickers: list[str], max_age_s: int | None = None) -> dict[str, di
                     "avg_volume": r.avg_volume,
                     "rel_volume": (r.volume / r.avg_volume
                                    if r.volume and r.avg_volume else None),
+                    "chg_1w": r.chg_1w,
+                    "relvol_1w": r.relvol_1w, "relvol_1m": r.relvol_1m,
+                    "relvol_6m": r.relvol_6m,
                     "updated_at": ts.isoformat() if ts else None,
                     "age_seconds": age,
                 }
@@ -270,7 +321,8 @@ def get_all_prices(max_age_s: int | None = None) -> dict[str, dict]:
     with eng.begin() as conn:
         rows = conn.execute(text(
             "SELECT ticker, price, prev_close, change, change_pct, volume, "
-            "dividend_yield, avg_volume, updated_at FROM price_cache"
+            "dividend_yield, avg_volume, chg_1w, relvol_1w, relvol_1m, "
+            "relvol_6m, updated_at FROM price_cache"
         )).fetchall()
     for r in rows:
         ts = _parse_ts(r.updated_at)
@@ -283,6 +335,8 @@ def get_all_prices(max_age_s: int | None = None) -> dict[str, dict]:
             "dividend_yield": r.dividend_yield, "avg_volume": r.avg_volume,
             "rel_volume": (r.volume / r.avg_volume
                            if r.volume and r.avg_volume else None),
+            "chg_1w": r.chg_1w, "relvol_1w": r.relvol_1w,
+            "relvol_1m": r.relvol_1m, "relvol_6m": r.relvol_6m,
             "updated_at": ts.isoformat() if ts else None, "age_seconds": age,
         }
     return out
