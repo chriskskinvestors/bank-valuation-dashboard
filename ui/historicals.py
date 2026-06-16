@@ -9,8 +9,11 @@ from plotly.subplots import make_subplots
 
 from data.bank_mapping import get_fdic_cert, get_name
 from data import fdic_client
-from utils.chart_style import COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING
-from ui.chrome import table_export
+from utils.chart_style import (
+    COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING,
+    COLOR_FILL_DANGER, apply_standard_layout,
+)
+from ui.chrome import table_export, title_bar
 
 
 # Metrics to pull from FDIC for historical view
@@ -125,13 +128,7 @@ def render_historicals(ticker: str):
     bank_name = get_name(ticker)
     cert = get_fdic_cert(ticker)
 
-    st.markdown(
-        f'<div class="dashboard-header">'
-        f"<h1>{ticker} — Historical Financials</h1>"
-        f"<p>{bank_name}</p>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    title_bar(f"{bank_name} ({ticker})", "Historical Financials")
 
     if not cert:
         st.warning(f"No FDIC data available for {ticker}.")
@@ -167,7 +164,7 @@ def render_historicals(ticker: str):
         fig1.add_trace(go.Scatter(x=periods, y=roa, name="ROAA", line=dict(color=COLOR_PRIMARY, width=2)), row=1, col=2)
         fig1.add_trace(go.Scatter(x=periods, y=eff, name="Efficiency", line=dict(color=COLOR_WARNING, width=2)), row=1, col=2)
 
-        fig1.update_layout(height=230, margin=dict(t=32, b=24, l=40, r=14), font_size=11, showlegend=True, legend=dict(font_size=10))
+        apply_standard_layout(fig1, height=230, show_legend=True)
         st.plotly_chart(fig1, use_container_width=True)
 
         # Chart 2: Balance Sheet Growth — auto-scale to B or T
@@ -192,17 +189,18 @@ def render_historicals(ticker: str):
         if core:
             fig2.add_trace(go.Bar(x=periods, y=core, name=f"Core (${unit})", marker_color=COLOR_SUCCESS, opacity=0.7), row=1, col=2)
 
-        fig2.update_layout(height=210, margin=dict(t=32, b=24, l=40, r=14), font_size=11, barmode="group", showlegend=True, legend=dict(font_size=10))
+        apply_standard_layout(fig2, height=210, show_legend=True)
+        fig2.update_layout(barmode="group")
         st.plotly_chart(fig2, use_container_width=True)
 
         # Chart 3: Credit Quality
         fig3 = go.Figure()
         npl = df["NCLNLSR"].tolist()[::-1]
-        fig3.add_trace(go.Scatter(x=periods, y=npl, name="NPL Ratio", fill="tozeroy", line=dict(color=COLOR_DANGER, width=2), fillcolor="rgba(198,40,40,0.1)"))
+        fig3.add_trace(go.Scatter(x=periods, y=npl, name="NPL Ratio", fill="tozeroy", line=dict(color=COLOR_DANGER, width=2), fillcolor=COLOR_FILL_DANGER))
         if "IDT1CER" in df.columns:
             cet1 = df["IDT1CER"].tolist()[::-1]
             fig3.add_trace(go.Scatter(x=periods, y=cet1, name="CET1 Ratio", line=dict(color=COLOR_SUCCESS, width=2)))
-        fig3.update_layout(height=190, title="Credit Quality & Capital", margin=dict(t=32, b=24, l=40, r=14), font_size=11, legend=dict(font_size=10))
+        apply_standard_layout(fig3, title="Credit Quality & Capital", height=190, show_legend=True)
         st.plotly_chart(fig3, use_container_width=True)
 
     # ── TAB 2: Quarterly Detail ──────────────────────────────────────────

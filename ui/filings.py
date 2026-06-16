@@ -15,26 +15,26 @@ from data.filing_summarizer import (
     find_press_release_url,
     summarize_filing,
 )
-from ui.chrome import table_export
+from ui.chrome import table_export, title_bar
 
 
 # ── Color badges for form types ─────────────────────────────────────────
 FORM_COLORS = {
-    "10-K":     "#059669",  # green
-    "10-K/A":   "#059669",
-    "10-Q":     "#2563eb",  # blue
-    "10-Q/A":   "#2563eb",
-    "8-K":      "#616161",  # gray
+    "10-K":     "var(--success)",       # green
+    "10-K/A":   "var(--success)",
+    "10-Q":     "var(--brand-accent)",  # blue
+    "10-Q/A":   "var(--brand-accent)",
+    "8-K":      "#616161",  # gray — no :root token match (flagged)
     "8-K/A":    "#616161",
-    "DEF 14A":  "#9333ea",  # purple
+    "DEF 14A":  "#9333ea",  # purple — no :root token match (flagged)
     "DEFA14A":  "#9333ea",
-    "S-1":      "#ea580c",  # orange
+    "S-1":      "#ea580c",  # orange — no :root token match (flagged)
     "S-1/A":    "#ea580c",
     "S-3":      "#ea580c",
     "S-3/A":    "#ea580c",
-    "4":        "#475569",  # brown
-    "3":        "#475569",
-    "SC 13D":   "#0891b2",  # teal
+    "4":        "var(--text-secondary)",  # slate
+    "3":        "var(--text-secondary)",
+    "SC 13D":   "#0891b2",  # teal — no :root token match (flagged)
     "SC 13D/A": "#0891b2",
     "SC 13G":   "#0891b2",
     "SC 13G/A": "#0891b2",
@@ -72,14 +72,14 @@ ITEM_DESCRIPTIONS = {
 
 def _form_badge(form: str, is_earnings: bool = False) -> str:
     """Return an HTML badge for the form type."""
-    color = FORM_COLORS.get(form, "#757575")
+    color = FORM_COLORS.get(form, "#757575")  # default grey — no :root token match (flagged)
     badge = (
-        f'<span style="background:{color};color:white;padding:2px 8px;'
+        f'<span style="background:{color};color:var(--text-inverse);padding:2px 8px;'
         f'border-radius:4px;font-size:0.8em;font-weight:600;">{form}</span>'
     )
     if is_earnings:
         badge += (
-            ' <span style="background:#ff6f00;color:white;padding:2px 6px;'
+            ' <span style="background:#ff6f00;color:var(--text-inverse);padding:2px 6px;'
             'border-radius:4px;font-size:0.75em;">EARNINGS</span>'
         )
     return badge
@@ -156,13 +156,7 @@ def render_filings_for_ticker(ticker: str):
 def render_filings(watchlist: list[str]):
     """Render the SEC & FDIC filings page with bank selector."""
 
-    st.markdown(
-        '<div class="dashboard-header">'
-        "<h1>SEC & FDIC Filings</h1>"
-        "<p>Browse filings, earnings releases, press releases & regulatory documents</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    title_bar("KSK Investors", "Filings")
 
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -433,33 +427,33 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
         summ = summaries.get(acc, "")
         if summ and len(summ) > 220:
             summ = summ[:217].rstrip() + "…"
-        summ_html = (f'<div style="color:#475569;font-size:0.86em;margin-top:2px;'
+        summ_html = (f'<div style="color:var(--text-secondary);font-size:0.86em;margin-top:2px;'
                      f'line-height:1.4;">{summ}</div>') if summ else ""
         # Item chips as faint supporting detail (8-Ks only).
         chips_html = ""
         if items and f["form"] in ("8-K", "8-K/A"):
             chips = _items_description(items)
             if chips:
-                chips_html = (f'<div style="color:#94a3b8;font-size:0.74em;'
+                chips_html = (f'<div style="color:var(--text-muted);font-size:0.74em;'
                               f'margin-top:2px;">{chips}</div>')
 
         link_html = ""
         if url:
             link_html = (f'<a href="{url}" target="_blank" '
-                         f'style="color:#2563eb;text-decoration:none;">View</a>')
+                         f'style="color:var(--brand-accent);text-decoration:none;">View</a>')
             if index_url:
                 link_html += (f' · <a href="{index_url}" target="_blank" '
-                              f'style="color:#64748b;text-decoration:none;">Index</a>')
+                              f'style="color:var(--text-secondary);text-decoration:none;">Index</a>')
 
         zebra = "background:rgba(148,163,184,0.045);" if i % 2 else ""
         rows_html.append(
             f"<tr style='{zebra}'>"
-            f"<td style='padding:8px 10px;white-space:nowrap;color:#64748b;vertical-align:top;'>{date}</td>"
+            f"<td style='padding:8px 10px;white-space:nowrap;color:var(--text-secondary);vertical-align:top;'>{date}</td>"
             f"<td style='padding:8px 10px;vertical-align:top;'>{form_badge}</td>"
             f"<td style='padding:8px 10px;'>"
-            f"<div style='color:#0f172a;font-weight:600;font-size:0.9em;'>{primary}</div>"
+            f"<div style='color:var(--text-primary);font-weight:600;font-size:0.9em;'>{primary}</div>"
             f"{summ_html}{chips_html}</td>"
-            f"<td style='padding:8px 10px;white-space:nowrap;color:#64748b;vertical-align:top;'>{report_date}</td>"
+            f"<td style='padding:8px 10px;white-space:nowrap;color:var(--text-secondary);vertical-align:top;'>{report_date}</td>"
             f"<td style='padding:8px 10px;white-space:nowrap;vertical-align:top;'>{link_html}</td>"
             f"</tr>"
         )
@@ -468,7 +462,7 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
     <style>
     .filings-tbl {{ width:100%; border-collapse:collapse; font-size:13px;
       border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
-    .filings-tbl thead th {{ padding:8px 10px; text-align:left; color:#0f172a;
+    .filings-tbl thead th {{ padding:8px 10px; text-align:left; color:var(--text-primary);
       font-weight:600; border-bottom:1px solid rgba(148,163,184,0.3);
       background:rgba(241,245,249,0.6); }}
     .filings-tbl tbody tr {{ border-bottom:1px solid rgba(148,163,184,0.12); }}

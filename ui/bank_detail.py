@@ -98,7 +98,7 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
     chg = _num(row.get("change_pct"))
     chg_html = None
     if chg is not None:
-        c = "#059669" if chg >= 0 else "#dc2626"
+        c = "var(--success)" if chg >= 0 else "var(--danger)"
         chg_html = f'<span style="color:{c};">{chg:+.2f}%</span>'
 
     valuation = [
@@ -200,17 +200,17 @@ def _render_financial_highlights_table(ticker, info):
     body = "".join(
         f'<tr style="border-bottom:1px solid rgba(148,163,184,0.10);">'
         f'<td style="padding:3px 2px;color:#334155;font-size:0.82rem;">{lbl}</td>'
-        f'<td style="padding:3px 8px;text-align:right;color:#64748b;font-size:0.82rem;">{pv}</td>'
-        f'<td style="padding:3px 2px;text-align:right;font-weight:600;color:#0f172a;'
+        f'<td style="padding:3px 8px;text-align:right;color:var(--text-secondary);font-size:0.82rem;">{pv}</td>'
+        f'<td style="padding:3px 2px;text-align:right;font-weight:600;color:var(--text-primary);'
         f'font-size:0.82rem;">{lv}</td></tr>'
         for lbl, pv, lv in rows)
     st.markdown(
         '<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
-        'color:#1e3a8a;font-weight:700;margin:0 0 3px;">Financial Highlights</div>'
+        'color:var(--brand-hover);font-weight:700;margin:0 0 3px;">Financial Highlights</div>'
         '<table style="width:100%;border-collapse:collapse;">'
         f'<thead><tr><th></th>'
-        f'<th style="text-align:right;padding:2px 8px;color:#94a3b8;font-size:0.72rem;font-weight:600;">{p_lbl}</th>'
-        f'<th style="text-align:right;padding:2px 2px;color:#1e3a8a;font-size:0.72rem;font-weight:700;">{l_lbl}</th>'
+        f'<th style="text-align:right;padding:2px 8px;color:var(--text-muted);font-size:0.72rem;font-weight:600;">{p_lbl}</th>'
+        f'<th style="text-align:right;padding:2px 2px;color:var(--brand-hover);font-size:0.72rem;font-weight:700;">{l_lbl}</th>'
         f'</tr></thead><tbody>{body}</tbody></table>',
         unsafe_allow_html=True)
 
@@ -238,7 +238,7 @@ def _render_latest_activity(ticker, info):
     c_news, c_docs = st.columns(2)
     with c_news:
         st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
-                    'color:#1e3a8a;font-weight:700;margin:0 0 3px;">Latest News</div>',
+                    'color:var(--brand-hover);font-weight:700;margin:0 0 3px;">Latest News</div>',
                     unsafe_allow_html=True)
         if evs:
             rows = []
@@ -246,7 +246,7 @@ def _render_latest_activity(ticker, info):
                 h = _html.escape((e.get("headline") or "")[:90])
                 url = e.get("url")
                 link = (f'<a href="{_html.escape(str(url))}" target="_blank" '
-                        f'style="color:#0f172a;text-decoration:none;">{h}</a>') if url else h
+                        f'style="color:var(--text-primary);text-decoration:none;">{h}</a>') if url else h
                 rows.append(f'<div style="padding:3px 0;border-bottom:1px solid rgba(148,163,184,0.10);'
                             f'font-size:0.82rem;line-height:1.3;">{link}</div>')
             st.markdown("".join(rows), unsafe_allow_html=True)
@@ -254,7 +254,7 @@ def _render_latest_activity(ticker, info):
             st.caption("No recent company news.")
     with c_docs:
         st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
-                    'color:#1e3a8a;font-weight:700;margin:0 0 3px;">Recent Filings</div>',
+                    'color:var(--brand-hover);font-weight:700;margin:0 0 3px;">Recent Filings</div>',
                     unsafe_allow_html=True)
         if docs:
             rows = []
@@ -263,7 +263,7 @@ def _render_latest_activity(ticker, info):
                 url = f.get("url") or (f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}" if acc else "")
                 label = f"{f.get('form','')} — {f.get('date','')}"
                 link = (f'<a href="{_html.escape(str(url))}" target="_blank" '
-                        f'style="color:#0f172a;text-decoration:none;">{_html.escape(label)}</a>') if url else _html.escape(label)
+                        f'style="color:var(--text-primary);text-decoration:none;">{_html.escape(label)}</a>') if url else _html.escape(label)
                 rows.append(f'<div style="padding:3px 0;border-bottom:1px solid rgba(148,163,184,0.10);'
                             f'font-size:0.82rem;">{link}</div>')
             st.markdown("".join(rows), unsafe_allow_html=True)
@@ -363,10 +363,10 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
 
     chg_html = None
     if chg is not None and chg_pct is not None:
-        c = "#059669" if chg >= 0 else "#dc2626"
+        c = "var(--success)" if chg >= 0 else "var(--danger)"
         chg_html = f'<span style="color:{c};">{chg:+.2f} ({chg_pct:+.2f}%)</span>'
     elif chg_pct is not None:
-        c = "#059669" if chg_pct >= 0 else "#dc2626"
+        c = "var(--success)" if chg_pct >= 0 else "var(--danger)"
         chg_html = f'<span style="color:{c};">{chg_pct:+.2f}%</span>'
 
     market = [
@@ -386,7 +386,7 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
     web = filing.get("website") or ""
     if web and not web.startswith("http"):
         web = "https://" + web
-    web_html = (f'<a href="{web}" target="_blank" style="color:#1e3a8a;">'
+    web_html = (f'<a href="{web}" target="_blank" style="color:var(--brand-hover);">'
                 f'{filing["website"]}</a>') if web else None
     hq = None
     if filing.get("hq_city") and filing.get("hq_state"):
@@ -418,7 +418,7 @@ def _valuation_history_chart(ticker: str, info: dict):
     market history ÷ per-share book/earnings from SEC filings."""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-    from utils.chart_style import apply_standard_layout
+    from utils.chart_style import apply_standard_layout, COLOR_PRIMARY, COLOR_WARNING
     cert = info.get("fdic_cert") if info else None
     cik = info.get("cik") if info else None
     if not cik:
@@ -466,11 +466,11 @@ def _valuation_history_chart(ticker: str, info: dict):
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(
         x=dates, y=ptbvs, name="P/TBV", mode="lines+markers",
-        connectgaps=True, line=dict(color="#2563eb", width=2), marker=dict(size=5),
+        connectgaps=True, line=dict(color=COLOR_PRIMARY, width=2), marker=dict(size=5),
         hovertemplate="%{x|%b %Y}<br>P/TBV %{y:.2f}x<extra></extra>"), secondary_y=False)
     fig.add_trace(go.Scatter(
         x=dates, y=pes, name="P/E", mode="lines+markers",
-        connectgaps=True, line=dict(color="#d97706", width=2), marker=dict(size=5),
+        connectgaps=True, line=dict(color=COLOR_WARNING, width=2), marker=dict(size=5),
         hovertemplate="%{x|%b %Y}<br>P/E %{y:.1f}x<extra></extra>"), secondary_y=True)
     apply_standard_layout(fig, title="P/TBV & P/E — quarter-end", height=420,
                           show_legend=True, hovermode="x unified")
@@ -536,7 +536,7 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     for _col, _html in zip(_g, (mkt_html, val_html, perf_html, co_html)):
         _col.markdown(_html, unsafe_allow_html=True)
     st.markdown(
-        '<div style="margin-top:5px; font-size:0.75rem; color:#64748b;">'
+        '<div style="margin-top:5px; font-size:0.75rem; color:var(--text-secondary);">'
         'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
         'FMP (market data)</div>', unsafe_allow_html=True)
     _render_overview_charts(ticker, info)
@@ -566,7 +566,7 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
                  'FMP (market data)</span>')
     if links:
         st.markdown(
-            '<div style="margin-top:7px; font-size:0.8rem; color:#64748b;">'
+            '<div style="margin-top:7px; font-size:0.8rem; color:var(--text-secondary);">'
             'Sources: ' + " &nbsp;·&nbsp; ".join(links) + "</div>",
             unsafe_allow_html=True,
         )
@@ -773,13 +773,13 @@ def _render_all_metrics(row):
           gap:6px;margin:1px 0 14px;}
         .m-card{background:rgba(148,163,184,0.05);border:1px solid rgba(148,163,184,0.16);
           border-radius:8px;padding:6px 10px;}
-        .m-card .m-lbl{font-size:0.6rem;color:#64748b;font-weight:600;text-transform:uppercase;
+        .m-card .m-lbl{font-size:0.6rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;
           letter-spacing:0.02em;}
         .m-card .m-lbl .i{color:#b6c0cc;cursor:help;font-weight:400;}
-        .m-card .m-val{font-size:0.96rem;font-weight:700;color:#0f172a;line-height:1.3;}
-        .m-cat{font-weight:700;color:#1e3a8a;font-size:0.78rem;text-transform:uppercase;
+        .m-card .m-val{font-size:0.96rem;font-weight:700;color:var(--text-primary);line-height:1.3;}
+        .m-cat{font-weight:700;color:var(--brand-hover);font-size:0.78rem;text-transform:uppercase;
           letter-spacing:0.03em;margin-top:6px;}
-        .m-cat-desc{font-size:0.76rem;color:#64748b;margin:0 0 4px;}
+        .m-cat-desc{font-size:0.76rem;color:var(--text-secondary);margin:0 0 4px;}
         </style>""",
         unsafe_allow_html=True,
     )

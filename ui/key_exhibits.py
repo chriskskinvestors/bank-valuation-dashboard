@@ -130,11 +130,11 @@ def _exhibit_table(rows: list[dict]) -> str:
         zebra = "background:rgba(148,163,184,0.045);" if i % 2 else ""
         body.append(
             f"<tr style='{zebra}'>"
-            f"<td style='padding:7px 10px;white-space:nowrap;color:#64748b;'>{r['filed']}</td>"
-            f"<td style='padding:7px 10px;white-space:nowrap;color:#0f172a;'>{r['form']}</td>"
+            f"<td style='padding:7px 10px;white-space:nowrap;color:var(--text-secondary);'>{r['filed']}</td>"
+            f"<td style='padding:7px 10px;white-space:nowrap;color:var(--text-primary);'>{r['form']}</td>"
             f"<td style='padding:7px 10px;'>{badge}</td>"
             f"<td style='padding:7px 10px;'>{fam}</td>"
-            f"<td style='padding:7px 10px;color:#0f172a;'>{_html.escape(r['description'])}</td>"
+            f"<td style='padding:7px 10px;color:var(--text-primary);'>{_html.escape(r['description'])}</td>"
             f"<td style='padding:7px 10px;white-space:nowrap;'>{link}</td>"
             f"</tr>"
         )
@@ -142,7 +142,7 @@ def _exhibit_table(rows: list[dict]) -> str:
     <style>
     .exhibits-tbl {{ width:100%; border-collapse:collapse; font-size:13px;
       border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
-    .exhibits-tbl thead th {{ padding:8px 10px; text-align:left; color:#0f172a;
+    .exhibits-tbl thead th {{ padding:8px 10px; text-align:left; color:var(--text-primary);
       font-weight:600; border-bottom:1px solid rgba(148,163,184,0.3);
       background:rgba(241,245,249,0.6); }}
     .exhibits-tbl tbody tr {{ border-bottom:1px solid rgba(148,163,184,0.12); }}
