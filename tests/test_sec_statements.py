@@ -224,5 +224,96 @@ class TestNoteRfileFinder(unittest.TestCase):
         self.assertFalse(_is_maturity_table(comp))
 
 
+_LOAN_SUMMARY = b"""<?xml version="1.0"?>
+<FilingSummary><MyReports>
+<Report><ShortName>Loans and Allowance for Credit Losses - Composition of Loan Portfolio (Details)</ShortName><HtmlFileName>R68.htm</HtmlFileName></Report>
+<Report><ShortName>Loans and Allowance for Credit Losses - Activity in Allowance for Credit Losses (Details)</ShortName><HtmlFileName>R70.htm</HtmlFileName></Report>
+<Report><ShortName>Loans and Allowance for Credit Losses - Loans by Portfolio Class, Including Delinquency Status (Details)</ShortName><HtmlFileName>R72.htm</HtmlFileName></Report>
+<Report><ShortName>Loans and Allowance for Credit Losses - Loans by Portfolio Class and Internal Credit Quality Rating (Details)</ShortName><HtmlFileName>R73.htm</HtmlFileName></Report>
+<Report><ShortName>Loans and Allowance for Credit Losses (Tables)</ShortName><HtmlFileName>R39.htm</HtmlFileName></Report>
+</MyReports></FilingSummary>"""
+
+# A filer (PNFP) whose loan "(Details)" are all credit-quality/allowance grab-bags
+# with no by-type composition table — must resolve to None (n/a), not a wrong table.
+_LOAN_GRABBAG = b"""<?xml version="1.0"?>
+<FilingSummary><MyReports>
+<Report><ShortName>Loans and Allowance for Loan Losses (Details)</ShortName><HtmlFileName>R59.htm</HtmlFileName></Report>
+<Report><ShortName>Loans and Allowance for Loan Losses, Allowance (Details)</ShortName><HtmlFileName>R62.htm</HtmlFileName></Report>
+<Report><ShortName>Loans and Allowance for Loan Losses Loan Classification by Risk Rating Category (Details)</ShortName><HtmlFileName>R60.htm</HtmlFileName></Report>
+</MyReports></FilingSummary>"""
+
+
+class TestLoanComposition(unittest.TestCase):
+    """Loan composition: the finder must match prefer/reject on the table-specific
+    SUFFIX (so the parent 'Loans and Allowance for Credit Losses' name doesn't
+    reject the composition), and the dimensional collapse must turn XBRL
+    member-header + generic 'Loans' value rows into one labeled row per class."""
+
+    def _find(self, summary):
+        import data.sec_statements as s
+        with mock.patch.object(s, "_get", return_value=summary):
+            return s._note_rfile("base/", s._NOTE_SPECS["loan_composition"])
+
+    def test_specific_suffix_extraction(self):
+        from data.sec_statements import _specific
+        self.assertEqual(
+            _specific("Loans and Allowance for Credit Losses - Composition of Loan Portfolio (Details)"),
+            "Composition of Loan Portfolio")
+        self.assertEqual(_specific("Deposits (Details)"), "Deposits")
+
+    def test_picks_composition_despite_allowance_in_parent_name(self):
+        # Every sibling's full name contains 'Allowance'; matching on the suffix
+        # is what lets the composition table survive while the others are rejected.
+        self.assertEqual(self._find(_LOAN_SUMMARY), "R68.htm")
+
+    def test_grabbag_filer_resolves_to_none(self):
+        self.assertIsNone(self._find(_LOAN_GRABBAG))
+
+    def test_fhlb_advances_not_matched_as_loans(self):
+        # 'Federal Home Loan Bank Advances' contains 'loan' (Home Loan Bank) and
+        # matched `want`, then collapsed an FHLB advance into a fake 'Total loans'
+        # for PNFP — it must be rejected, not treated as a loan composition.
+        summary = (b'<?xml version="1.0"?><FilingSummary><MyReports>'
+                   b'<Report><ShortName>Federal Home Loan Bank Advances (Details)</ShortName>'
+                   b'<HtmlFileName>R70.htm</HtmlFileName></Report>'
+                   b'</MyReports></FilingSummary>')
+        self.assertIsNone(self._find(summary))
+
+    def test_collapse_dimensional_members_to_labeled_rows(self):
+        from data.sec_statements import _collapse_dimensional
+        # USB-style: 'Axis | Member' headers, amounts in generic 'Loans' rows,
+        # XBRL [Abstract] noise rows interleaved.
+        dim = {"title": "Composition of Loan Portfolio", "units_scale": 1e6,
+               "periods": ["Dec. 31, 2025", "Dec. 31, 2024"], "rows": [
+            {"label": "Accounts, Notes, Loans and Financing Receivable [Abstract]", "header": True, "values": []},
+            {"label": "Loans", "header": False, "values": [391335.0, 379832.0]},
+            {"label": "Commercial | Total commercial", "header": True, "values": []},
+            {"label": "Accounts, Notes, Loans and Financing Receivable [Abstract]", "header": True, "values": []},
+            {"label": "Loans", "header": False, "values": [153958.0, 139484.0]},
+            {"label": "Commercial | Lease financing", "header": True, "values": []},
+            {"label": "Loans", "header": False, "values": [4436.0, 4230.0]},
+        ]}
+        out = _collapse_dimensional(dim)
+        byl = {r["label"]: r["values"] for r in out["rows"]}
+        self.assertEqual([r["label"] for r in out["rows"]],
+                         ["Total loans", "Total commercial", "Lease financing"])
+        self.assertEqual(byl["Total loans"], [391335.0, 379832.0])      # no-dimension default
+        self.assertEqual(byl["Total commercial"], [153958.0, 139484.0])  # axis prefix stripped
+        self.assertEqual(byl["Lease financing"], [4436.0, 4230.0])
+
+    def test_collapse_handles_members_without_axis_prefix(self):
+        from data.sec_statements import _collapse_dimensional
+        # CFR-style: member headers carry no 'Axis | ' prefix.
+        dim = {"units_scale": 1e3, "periods": ["Dec. 31, 2025"], "rows": [
+            {"label": "Financing Receivable, Credit Quality Indicator [Line Items]", "header": True, "values": []},
+            {"label": "Loans", "header": False, "values": [13791.7]},
+            {"label": "Commercial and industrial loans", "header": True, "values": []},
+            {"label": "Loans", "header": False, "values": [4478.3]},
+        ]}
+        out = _collapse_dimensional(dim)
+        self.assertEqual([r["label"] for r in out["rows"]],
+                         ["Total loans", "Commercial and industrial loans"])
+
+
 if __name__ == "__main__":
     unittest.main()

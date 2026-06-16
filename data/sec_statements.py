@@ -50,6 +50,22 @@ _NOTE_SPECS = {
         "reject": re.compile(r"maturit|narrative|additional|contractual|insured|"
                              r"uninsured|pledged|interest expense|roll[- ]?forward", re.I),
     },
+    "loan_composition": {
+        # The loan note is named "Loans and Allowance for Credit Losses", so
+        # 'allowance' is in EVERY sibling's full ShortName — prefer/reject must
+        # match the table-specific suffix (after the last ' - '), not the whole
+        # name, or every candidate is wrongly rejected. (Handled in _note_rfile.)
+        "want": re.compile(r"\bloan", re.I),
+        "prefer": re.compile(r"composition of loan|loan portfolio|portfolio by|by loan class", re.I),
+        # 'Federal Home Loan Bank Advances' contains 'loan' and would otherwise
+        # match `want` — reject it (and other non-composition siblings) explicitly.
+        "reject": re.compile(r"federal home loan|fhlb|home loan bank|advance|"
+                             r"allowance|past due|delinquen|credit quality|risk rating|"
+                             r"impaired|modif|nonaccrual|non-accrual|charge|narrative|"
+                             r"additional|collateral|servic|commitment|industry|"
+                             r"classification|held[- ]for[- ]sale|maturit|defaulted|"
+                             r"off-balance|activity|aging|nonperform|non-perform", re.I),
+    },
 }
 # A note whose ShortName is generic ("Deposits (Details)") can actually be a
 # MATURITY ladder (rows are fiscal years / "Thereafter"), not a by-type
@@ -88,18 +104,33 @@ def _statement_rfiles(base: str) -> dict:
     return out
 
 
+def _specific(short: str) -> str:
+    """The table-specific part of a note ShortName: the text after the LAST ' - '
+    (the parent note name precedes it), with a trailing '(Details)' removed. Falls
+    back to the whole name when there's no ' - '. prefer/reject match THIS, not the
+    full name — the parent note name (e.g. 'Loans and Allowance for Credit Losses')
+    carries words like 'allowance' that would otherwise reject every sibling."""
+    s = re.sub(r"\s*\(details\)\s*$", "", short, flags=re.I)
+    return s.split(" - ")[-1].strip() if " - " in s else s
+
+
 def _note_rfile(base: str, spec: dict) -> str | None:
-    """Best note '(Details)' R-file for a spec, by ShortName ranking. Restricted
-    to Details reports matching `want` and not `reject`; prefers the `prefer`
-    (composition/schedule) variant over a generic sibling. Returns None if the
-    filer discloses no matching note."""
-    cands = [(s, f) for s, f in _iter_reports(base)
-             if "(details)" in s.lower()
-             and spec["want"].search(s) and not spec["reject"].search(s)]
+    """Best note '(Details)' R-file for a spec. `want` matches the full ShortName
+    (the note topic); `prefer`/`reject` match the table-specific suffix (the
+    sub-table). Prefers the composition/schedule variant over a generic sibling.
+    Returns None when the filer discloses no matching composition table."""
+    cands = []
+    for s, f in _iter_reports(base):
+        if "(details)" not in s.lower() or not spec["want"].search(s):
+            continue
+        suffix = _specific(s)
+        if spec["reject"].search(suffix):
+            continue
+        cands.append((f, suffix))
     if not cands:
         return None
-    preferred = [(s, f) for s, f in cands if spec["prefer"].search(s)]
-    return (preferred or cands)[0][1]
+    preferred = [f for f, suffix in cands if spec["prefer"].search(suffix)]
+    return preferred[0] if preferred else cands[0][0]
 
 
 def _is_maturity_table(parsed: dict) -> bool:
@@ -112,6 +143,39 @@ def _is_maturity_table(parsed: dict) -> bool:
         return False
     hits = sum(1 for l in labels if _MATURITY_LABEL.match(l))
     return hits >= max(2, len(labels) // 2)
+
+
+# XBRL concept/abstract rows that carry no economic line — dropped when
+# collapsing a dimension-member table (the loan-composition rendering).
+_DIM_NOISE = re.compile(r"\[(abstract|line items|member|roll ?forward|domain|table|axis)\]|"
+                        r"financing receivable, credit quality indicator|"
+                        r"accounts, notes, loans and financing receivable", re.I)
+
+
+def _collapse_dimensional(parsed: dict) -> dict:
+    """Loan-composition R-files render each loan class as an XBRL dimension-member
+    HEADER row, with the balance in a following generic value row (label 'Loans').
+    Collapse to one labeled data row per class: label = the member header (an
+    'Axis | Member' prefix stripped to Member), values = the next value row's.
+    XBRL concept/abstract noise rows are dropped; the leading no-dimension value
+    is the grand total ('Total loans')."""
+    rows = []
+    pending = "Total loans"                     # the default (no-dimension) member
+    for r in parsed["rows"]:
+        if r["header"]:
+            if _DIM_NOISE.search(r["label"]):
+                continue
+            pending = r["label"].split(" | ")[-1].strip()
+        elif pending is not None:
+            rows.append({"label": pending, "header": False, "values": r["values"]})
+            pending = None
+    return {"title": parsed.get("title", ""), "units_scale": parsed.get("units_scale", 1.0),
+            "periods": parsed["periods"], "rows": rows}
+
+
+# Notes whose R-file needs a shape transform before stitching (loan composition is
+# rendered as XBRL dimension members; deposit composition is already row-labeled).
+_NOTE_TRANSFORM = {"loan_composition": _collapse_dimensional}
 
 
 def _rfile_for(base: str, stype: str) -> str | None:
@@ -345,7 +409,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     metas = _recent_10k_metas(cik, 6 if (stype == "balance" or stype in _NOTE_SPECS) else 4)
     if not metas:
         return None
-    ckey = f"asreported_my:v3:{stype}:{metas[0]['accession']}:{n_years}"
+    ckey = f"asreported_my:v4:{stype}:{metas[0]['accession']}:{n_years}"
     cached = cache.get(ckey)
     if cached is not None:
         return cached or None
@@ -355,12 +419,17 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
         try:
             fn = _rfile_for(base, stype)
             stmt = parse_rfile(_get(base + fn)) if fn else None
+            if stmt and stype in _NOTE_TRANSFORM:
+                stmt = _NOTE_TRANSFORM[stype](stmt)   # e.g. collapse loan dimensions
         except Exception as e:
             print(f"[sec_statements] multiyear {stype} failed for cik {cik}: "
                   f"{type(e).__name__}: {e}")
             return None                         # transient — don't cache
         if stmt and stype in _NOTE_SPECS and _is_maturity_table(stmt):
             stmt = None                         # a maturity ladder, not the composition note
+        if stmt and stype in _NOTE_SPECS and \
+                sum(1 for r in stmt["rows"] if not r["header"]) < 3:
+            stmt = None                         # too few line items to be a real composition
         if stmt and stmt["periods"] and stmt["rows"]:
             stmt["_meta"] = m
             parsed.append(stmt)
