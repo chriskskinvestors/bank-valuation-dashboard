@@ -4,16 +4,18 @@ replacement for the dead Business Wire direct feed.
 
 Invariants:
   • subject confirmation — FMP's symbol index is polluted for short/ambiguous
-    tickers (symbols=CMA returns "...CMA Fest" / a mining "CMA Underground",
-    neither about Comerica). The adapter requires the bank's NAME in the
-    title/body, so those are dropped — no wrong-company mis-tagging.
-  • junk discipline — the single is_junk_news filter still drops structured-note
-    / ETN-coupon filler FMP carries; is_safe_news_url drops spam links.
+    tickers (symbols=CMA -> "...CMA Fest"; symbols=CHCO -> "Kansas City" stories,
+    none about the bank). The DETERMINISTIC _is_subject guard (resolved-name
+    phrase core OR curated brand alias) drops those — no wrong-company mis-tag —
+    while keeping real releases that use the brand form ("Eastern Bank" for legal
+    "Eastern Bankshares", "UMB" for "UMB Financial").
+  • junk discipline — the single is_junk_news filter drops structured-note /
+    ETN-coupon filler; is_safe_news_url drops spam links.
   • dedup — the same release collapses across polls (stable external_id).
   • primary source — the emitted url is the BW/PRN/IR link, never an FMP url.
   • no key — returns [] cleanly (dev / unconfigured).
 
-FMP is mocked; no network or key.
+FMP / get_name are mocked; no network or key.
 """
 import sys
 import types
@@ -29,7 +31,9 @@ sys.modules.setdefault("streamlit", _st)
 
 import data.fmp_client as fmp  # noqa: E402
 import data.bank_mapping as bank_mapping  # noqa: E402
-from data.events.fmp_news import FMPPressReleaseAdapter, _is_subject  # noqa: E402
+from data.events.fmp_news import (  # noqa: E402
+    FMPPressReleaseAdapter, _is_subject, _subject_phrase,
+)
 
 NOW = datetime.now(timezone.utc)
 
@@ -73,17 +77,14 @@ class TestSubjectConfirmation(unittest.TestCase):
 
 
 class TestIsSubjectGuard(unittest.TestCase):
-    """The (a) index OR (b) resolved-legal-name confirmation, isolated."""
+    """The deterministic resolved-name-phrase OR brand-alias confirmation."""
 
-    def test_kept_via_resolved_name_when_index_misses_bank(self):
-        # ABCB/CFBK aren't in the universe-snapshot index, but get_name resolves
-        # them — the (b) path must keep their real releases (the live over-drop).
+    def test_kept_via_resolved_name(self):
         with patch.object(bank_mapping, "get_name", return_value="Ameris Bancorp"):
             self.assertTrue(_is_subject(
                 "ABCB", "Ameris Bancorp Announces First Quarter 2026 Financial Results."))
 
     def test_wrong_company_dropped_even_with_resolved_name(self):
-        # symbols=CMA pollution: name resolves to Comerica, absent from the text.
         with patch.object(bank_mapping, "get_name", return_value="Comerica Incorporated"):
             self.assertFalse(_is_subject(
                 "CMA", "Tractor Supply Celebrates Country Music's Rising Stars at CMA Fest."))
@@ -95,6 +96,54 @@ class TestIsSubjectGuard(unittest.TestCase):
         with patch.object(bank_mapping, "get_name", return_value="CMA"):
             self.assertFalse(_is_subject(
                 "CMA", "Tractor Supply Celebrates Rising Stars at CMA Fest."))
+
+    def test_phrase_strips_state_suffix(self):
+        # SEC "/MS/" state suffix must not leak into the phrase (a recall bug).
+        self.assertNotIn("MS", _subject_phrase("PEOPLES FINANCIAL CORP /MS/").split())
+        with patch.object(bank_mapping, "get_name",
+                          return_value="PEOPLES FINANCIAL CORP /MS/"):
+            self.assertTrue(_is_subject(
+                "PFBX", "Peoples Financial Corporation Announces a Cash Dividend."))
+
+    def test_ampersand_canonicalized_to_and(self):
+        # Name uses "&"; the wire headline uses "AND" — must still match.
+        self.assertEqual(_subject_phrase("Farmers & Merchants Bancshares, Inc."),
+                         "FARMERS AND MERCHANTS")
+        with patch.object(bank_mapping, "get_name",
+                          return_value="Farmers & Merchants Bancshares, Inc."):
+            self.assertTrue(_is_subject(
+                "FMFG", "FARMERS AND MERCHANTS BANCSHARES, INC. Increases Its Dividend."))
+
+    def test_brand_core_matches_short_entity_variant(self):
+        # Legal name vs the brand used in headlines differ only in the trailing
+        # entity word; the core must match both (the big recall recovery).
+        for legal, ticker, headline in [
+            ("Eastern Bankshares, Inc.", "EBC", "Eastern Bank Announces Leadership Appointment."),
+            ("UMB FINANCIAL CORP", "UMBF", "UMB Institutional Custody Business Grows to $250B."),
+            ("FNB Corp.", "FNB", "FNB Invests in Future Talent and Welcomes Interns."),
+            ("FIRST CITIZENS BANCSHARES INC /DE/", "FCNCA", "First Citizens Bank to Expand Commercial Solutions."),
+            ("Independent Bank Corp. (MI)", "IBCP", "Independent Bank Corporation Announces Quarterly Dividend."),
+        ]:
+            with self.subTest(ticker=ticker):
+                with patch.object(bank_mapping, "get_name", return_value=legal):
+                    self.assertTrue(_is_subject(ticker, headline),
+                                    f"{ticker}: {_subject_phrase(legal, ticker)!r} should match")
+
+    def test_short_core_kept_only_when_ticker_related(self):
+        # "UMB" (ticker UMBF) is a trustworthy short core; "CITY" (vs CHCO) is not.
+        self.assertEqual(_subject_phrase("UMB FINANCIAL CORP", "UMBF"), "UMB")
+        self.assertEqual(_subject_phrase("CITY HOLDING CO", "CHCO"), "CITY HOLDING")
+
+    def test_common_word_name_not_overstripped(self):
+        # "CITY HOLDING CO" must stay "CITY HOLDING" — never collapse to "CITY",
+        # which FMP mis-tags onto "Kansas City"/"Québec City" stories.
+        with patch.object(bank_mapping, "get_name", return_value="CITY HOLDING CO"):
+            self.assertFalse(_is_subject(
+                "CHCO", "Kansas City Current, BofA Announce Multi-Year Partnership."))
+            self.assertFalse(_is_subject(
+                "CHCO", "Edible Garden Advances Development of Prairie Hills Facility."))
+            self.assertTrue(_is_subject(
+                "CHCO", "City Holding Company Reports First Quarter 2026 Results."))
 
 
 class TestJunkAndDedup(unittest.TestCase):
