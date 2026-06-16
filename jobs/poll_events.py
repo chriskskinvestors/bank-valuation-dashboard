@@ -31,6 +31,25 @@ sys.path.insert(0, str(REPO_ROOT))
 _TASK_BUDGET_S = 780
 _PER_ADAPTER_S = 240
 
+# High-signal 8-K items whose headlines are opaque AND material — these benefit
+# most from an LLM summary, so they jump the summarizer queue when budget is
+# tight (M&A 1.01/2.01, officer change 5.02, restatement 4.02, impairment 2.06,
+# control change 5.01, and the catch-all "Other Material Event" 8.01 which is
+# opaque by definition). Earnings (2.02) are deprioritized: their numbers are
+# already in the wire/FMP press release that accompanies them.
+_HIGH_SIGNAL_8K_ITEMS = {"1.01", "2.01", "8.01", "5.02", "4.02", "2.06", "5.01"}
+
+
+def _is_high_signal_8k(raw_json) -> bool:
+    """True if a stored 8-K event's items include a high-signal type — used to
+    prioritize the summarizer queue. Tolerant of missing/garbled raw_json."""
+    import json
+    try:
+        items = json.loads(raw_json or "{}").get("items") or []
+    except (TypeError, ValueError):
+        return False
+    return bool(set(items) & _HIGH_SIGNAL_8K_ITEMS)
+
 
 def _run_with_timeout(label: str, fn, timeout_s: float):
     """Run fn() in a daemon worker and return its value, raising TimeoutError if
@@ -266,15 +285,22 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
 
     eng = _get_engine()
     with eng.connect() as conn:
+        # Pull a window of the most recent unsummarized 8-Ks, then re-rank so the
+        # material-but-opaque ones get summarized first within the per-run cap.
         rows = conn.execute(text("""
-            SELECT id, ticker, source, headline, url
+            SELECT id, ticker, source, headline, url, raw_json
             FROM events
             WHERE (summary IS NULL OR summary = '') AND source = 'sec_8k'
             ORDER BY published_at DESC
-            LIMIT :n
-        """), {"n": limit}).mappings().all()
+            LIMIT :w
+        """), {"w": max(limit * 3, limit)}).mappings().all()
     if not rows:
         return 0
+
+    # Stable sort keeps the existing newest-first order within each tier, so
+    # material-but-opaque filings (M&A, officer, regulatory) jump the queue.
+    rows = sorted(rows, key=lambda r: 0 if _is_high_signal_8k(r["raw_json"]) else 1)
+    rows = rows[:limit]
 
     try:
         import anthropic

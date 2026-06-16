@@ -180,6 +180,14 @@ class SEC8KAdapter(SourceAdapter):
             item_str = items_list[i] if i < len(items_list) else ""
             items = [it.strip() for it in re.split(r"[,;]", item_str) if it.strip()]
 
+            # Skip pure-boilerplate filings: an 8-K whose ONLY item is 9.01
+            # (Financial Statements / Exhibits) is just an exhibit attachment
+            # with no substantive event — it would surface as the opaque
+            # "8-K · Financial Statements / Exhibits". Material filings always
+            # carry a real item alongside 9.01, so nothing substantive is lost.
+            if set(items) == {"9.01"}:
+                continue
+
             # Build the URL to the filing index page on EDGAR
             acc_nodash = accession.replace("-", "")
             filing_url = (
