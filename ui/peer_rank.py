@@ -141,7 +141,7 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
     if not ctx or n < 6:
         st.info(
             f"Not enough **{mode_label.lower()}** peers loaded to rank this bank yet. "
-            "Open **Home**, **Screening**, or **Peer Comparison** once to load the "
+            "Open **Home** or **Screen & Compare** once to load the "
             "watchlist, then return — or this peer set has too few tracked banks for "
             "a meaningful ranking (try the other peer set)."
         )

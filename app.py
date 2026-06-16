@@ -37,10 +37,13 @@ if "ibkr_connected" not in st.session_state:
 
 
 # ── Level 1 Navigation: top nav bar (DESIGN-SYSTEM.md — sidebar retired) ──
-SECTIONS = ["Home", "Market & Macro", "Screening", "Company", "Peers", "Earnings", "News & Research", "Geographic"]
+SECTIONS = ["Home", "Market & Macro", "Screen & Compare", "Company", "Earnings", "News & Research", "Geographic"]
 # Backward-compat for the old ?s= section key (renamed 2026-06-15). Old
-# bookmarks/links to ?s=Activity should still land on the renamed section.
-_SECTION_ALIASES = {"Activity": "News & Research"}
+# bookmarks/links to ?s=Activity should still land on the renamed section;
+# the former top-level "Screening" and "Peers" are now sub-sections of
+# "Screen & Compare", so their old deep-links resolve there too.
+_SECTION_ALIASES = {"Activity": "News & Research",
+                    "Screening": "Screen & Compare", "Peers": "Screen & Compare"}
 # Company Analysis sub-tabs. Rendered horizontally at the TOP of the main
 # content (under the bank picker), not in the sidebar. One shared template per
 # bank — every bank gets the same sub-tabs.
@@ -141,8 +144,17 @@ if section != "Company":
 screening_tab = None
 company_ticker = None
 company_subtab = None
+sc_sub = None
 
-if section == "Screening":
+# "Screen & Compare" hosts two sub-sections: Screen (the screening tables,
+# formerly the top-level "Screening") and Compare (peer comparison, formerly
+# "Peers"). A horizontal sub-nav picks between them; everything downstream keys
+# off (section, sc_sub) so each page keeps its existing behavior.
+if section == "Screen & Compare":
+    sc_sub = st.radio("View", ["Screen", "Compare"], key="sc_sub",
+                      horizontal=True, label_visibility="collapsed")
+
+if section == "Screen & Compare" and sc_sub == "Screen":
     screening_tab_idx = st.selectbox(
         "Table",
         options=list(range(len(TABS))),
@@ -440,8 +452,8 @@ def load_all_data_fast(tickers: list[str]) -> list[dict]:
 
 _NEEDS_WATCHLIST = (
     section == "Home"  # Home shows top opportunities from watchlist
-    or (section == "Screening" and screening_tab is not None)  # Screening default filter
-    or section == "Peers"  # Peer comparison needs all watchlist metrics
+    or (section == "Screen & Compare" and sc_sub == "Screen" and screening_tab is not None)
+    or (section == "Screen & Compare" and sc_sub == "Compare")  # peer comparison needs all metrics
 )
 
 # Deferred "Refresh this view" handler (set in the nav utilities popover,
@@ -479,8 +491,8 @@ else:
 if section == "Home":
     render_home(all_metrics, watchlist)
 
-elif section == "Screening" and screening_tab:
-    # ── SCREENING: Multi-bank comparison tables ─────────────────────────
+elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
+    # ── SCREEN: Multi-bank comparison tables ────────────────────────────
     from data.saved_screens import (
         save_screen, load_screen, list_screens, delete_screen,
     )
@@ -903,8 +915,8 @@ elif section == "Market & Macro":
     from ui.macro import render_macro_dashboard
     render_macro_dashboard()
 
-elif section == "Peers":
-    # ── PEER COMPARISON: Side-by-side bank comparison ───────────────────
+elif section == "Screen & Compare" and sc_sub == "Compare":
+    # ── COMPARE: Side-by-side bank comparison (peers) ───────────────────
     from ui.peer_comparison import render_peer_comparison
     if not all_metrics:
         all_metrics = load_all_data(watchlist)

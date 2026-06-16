@@ -770,7 +770,7 @@ def _render_peer_warranted(ticker: str, coe_pct: float, terminal_g_pct: float):
         watchlist_metrics_cached = cache_get("watchlist_metrics_last")
         if not watchlist_metrics_cached:
             st.info(
-                "Peer data not available. Visit the Screening or Peer Comparison section "
+                "Peer data not available. Visit the Screen & Compare section "
                 "first to load watchlist data, then return here."
             )
             return
