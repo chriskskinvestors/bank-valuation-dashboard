@@ -80,6 +80,17 @@ class TestHoldcoExtraction(unittest.TestCase):
         out = extract_holdco_capital(facts)["2025-12-31"]
         self.assertAlmostEqual(out["cet1_ratio"], 0.1229)   # holdco, not bank 0.1198
 
+    def test_percent_tagged_ratio_normalized(self):
+        # Some filers (NBHC/UBSI) tag the ratio as the PERCENTAGE number ('14.9')
+        # not the decimal (0.149) — normalize so it isn't read as 1490% and so the
+        # RWA reconstruction stays correct.
+        out = extract_holdco_capital([
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 14.9),
+            _f("us-gaap:CommonEquityTierOneCapital", 1.1e9),
+        ])["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.149)
+        self.assertAlmostEqual(out["rwa"], 1.1e9 / 0.149, delta=1e6)
+
     def test_ratio_suffix_variant_and_derived_cet1(self):
         # WSBC tags ratios as '...ToRiskWeightedAssetsRatio' (trailing 'Ratio')
         # and tags CET1 *capital* but no CET1 *ratio*. Match the spelling, and

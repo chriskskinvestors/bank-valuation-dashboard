@@ -231,7 +231,14 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
         if not line:
             continue
         basis, conf = _classify(f.members)
-        cand.setdefault((f.period_end, line), []).append((basis, conf, f.members, f.value))
+        value = f.value
+        # Some filers tag a ratio as the PERCENTAGE number (NBHC/UBSI: CET1 "14.9")
+        # instead of the decimal (0.149). A real CET1/Tier-1/Total/leverage ratio
+        # as a fraction never exceeds ~1.0, so a ratio value > 1 is percent-tagged —
+        # normalize to a decimal so the anchor check + RWA reconstruction are right.
+        if line.endswith("_ratio") and value and abs(value) > 1.0:
+            value /= 100.0
+        cand.setdefault((f.period_end, line), []).append((basis, conf, f.members, value))
 
     # Banks on the Advanced Approaches report each risk-based ratio/amount under
     # BOTH a Standardized and an Advanced methodology member. The Standardized
