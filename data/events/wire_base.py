@@ -409,7 +409,8 @@ _NOISE_RE = re.compile(
     r"principal\s+at\s+risk|callable\s+\w*\s*notes?|step[\s-]?up\s+notes?|"
     r"range\s+accrual|phoenix\s+notes?|buffer\s+notes?|return\s+notes?|"
     r"index[\s-]?linked\s+notes?|notes?\s+linked\s+to|notes?\s+tied\s+to|"
-    r"structured\s+notes?|fixed\s+to\s+floating)\b",
+    r"structured\s+notes?|fixed\s+to\s+floating|exchange[\s-]?traded\s+notes?|"
+    r"\betns?\b)\b",
     re.IGNORECASE,
 )
 

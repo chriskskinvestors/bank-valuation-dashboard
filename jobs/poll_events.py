@@ -75,6 +75,7 @@ def main() -> int:
     from data.events.globenewswire import GlobeNewswireAdapter
     from data.events.yfinance_news import YFinanceNewsAdapter
     from data.events.ir_site import IRSiteAdapter
+    from data.events.fmp_news import FMPPressReleaseAdapter
     from data.events.google_news import GoogleNewsAdapter, GoogleNewsTopicAdapter
 
     init_schema()
@@ -108,7 +109,10 @@ def main() -> int:
         # Google News: per-ticker, parallelized; the slow one at full universe.
         GoogleNewsAdapter(),
     ]
-    narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
+    # FMP press releases first among narrow sources: per-ticker, pre-indexed
+    # (no name-matching/mis-tag risk), and the primary replacement for the dead
+    # Business Wire direct feed — so it gets budget priority over Yahoo/IR.
+    narrow_adapters = [FMPPressReleaseAdapter(), YFinanceNewsAdapter(), IRSiteAdapter()]
     adapters = broad_adapters + narrow_adapters
 
     print(f"▶ Polling — broad: {len(broad_adapters)} sources × {len(universe)} tickers, "

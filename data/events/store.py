@@ -45,7 +45,8 @@ from data.events.base import Event
 # falsely collapse two distinct filings; it already dedups on accession),
 # ir_site (raw IR titles, lower volume), and the topic feed (not bank events).
 _CONTENT_DEDUP_SOURCES = {
-    "businesswire", "prnewswire", "globenewswire", "google_news", "yfinance_news",
+    "businesswire", "prnewswire", "globenewswire", "google_news",
+    "yfinance_news", "fmp_news",
 }
 _CONTENT_DEDUP_WINDOW_DAYS = 5
 

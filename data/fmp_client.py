@@ -758,6 +758,57 @@ def get_insider_trading(ticker: str, limit: int = 50) -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Public API — company press releases (news/events feed)
+# ──────────────────────────────────────────────────────────────────────────
+
+PRESS_RELEASE_TTL_SECONDS = 1800  # 30m — matches the poll cadence; a release's
+#                                   text never changes once published.
+
+
+def get_press_releases(ticker: str, limit: int = 25) -> list[dict]:
+    """Recent FIRST-PARTY company press releases for `ticker` from FMP's
+    press-release index (which aggregates Business Wire / PR Newswire / etc.),
+    newest first:
+        [{published_at, title, publisher, url, text}]
+
+    `url` is the PRIMARY source (businesswire.com / prnewswire.com / the IR
+    site) — FMP is only the discovery index here, never the displayed source,
+    so this stays consistent with the primary-sources rule. `published_at` is
+    the raw FMP timestamp string ('YYYY-MM-DD HH:MM:SS'); the caller parses it.
+
+    [] on failure / no key (failures never cached — house pattern). Uses the
+    shared _get() so the apikey is redacted from any error log.
+    """
+    if not _has_key():
+        return []
+    ticker = ticker.upper()
+    cache_key = f"fmp_press:{ticker}:{limit}"
+    cached = _cache_get(cache_key, PRESS_RELEASE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("news/press-releases", {"symbols": ticker, "limit": limit})
+    if not isinstance(data, list) or not data:
+        return []
+    out: list[dict] = []
+    for r in data:
+        if not isinstance(r, dict):
+            continue
+        title = (r.get("title") or "").strip()
+        if not title:
+            continue
+        out.append({
+            "title": title,
+            "publisher": (r.get("publisher") or r.get("site") or "").strip(),
+            "url": (r.get("url") or "").strip(),
+            "published_at": str(r.get("publishedDate") or "").strip(),
+            "text": (r.get("text") or "").strip(),
+        })
+    _cache_put(cache_key, out)
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Diagnostic
 # ──────────────────────────────────────────────────────────────────────────
 
