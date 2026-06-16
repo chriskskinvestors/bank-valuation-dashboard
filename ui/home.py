@@ -337,63 +337,644 @@ def _render_etf_strip():
             pass
 
 
+# ══════════════════════════════════════════════════════════════════════
+# ABOVE-THE-FOLD GRID (redesign, owner-locked 2026-06-16)
+# 3 equal columns × 3 rows + a full-height feed rail (col 3). One dense
+# table system; every row deep-links. Rendered as a single st.markdown
+# HTML blob so the CSS grid holds the exact approved geometry; selectors
+# use the codebase's ?param= deep-link pattern (state-preserving hrefs).
+# See memory home-above-fold-spec + _scratch_abovefold.py for the spec.
+# ══════════════════════════════════════════════════════════════════════
+
+_AF_ETFS = [
+    ("SPY", "S&P 500"), ("QQQ", "Nasdaq 100"), ("DIA", "Dow Jones"),
+    ("IWM", "Russell 2000"), ("IWO", "R2000 Growth"), ("IWN", "R2000 Value"),
+    ("IJR", "S&P SmallCap"), ("KRE", "Regional Banks"), ("KBE", "S&P Banks"),
+    ("XLF", "Financials"), ("KBWB", "KBW Banks"),
+]
+_AF_DEFAULT_OVERLAY = ("SPY", "QQQ", "KRE")
+
+# (label, source, key, kind). source: live (yfinance intraday), fred (daily),
+# spread (computed from live 10Y−2Y, FRED fallback). kind drives unit fmt.
+_AF_RATES = [
+    ("Fed Funds", "fred", "FEDFUNDS", "pct"),
+    ("3M", "live", "3M", "pct"),
+    ("6M", "fred", "DGS6MO", "pct"),
+    ("1Y", "fred", "DGS1", "pct"),
+    ("2Y", "live", "2Y", "pct"),
+    ("5Y", "live", "5Y", "pct"),
+    ("10Y", "live", "10Y", "pct"),
+    ("30Y", "live", "30Y", "pct"),
+    ("10Y − 2Y", "spread", None, "spread"),
+    ("HY OAS", "fred", "BAMLH0A0HYM2", "pct"),
+    ("IG OAS", "fred", "BAMLC0A0CM", "pct"),
+]
+_AF_LIVE_FALLBACK = {"3M": "DGS3MO", "2Y": "DGS2", "5Y": "DGS5",
+                     "10Y": "DGS10", "30Y": "DGS30"}
+
+_AF_TIERS = [("all", "All"), ("mc", "Money-Center"), ("lg", "Large Regional"),
+             ("reg", "Regional"), ("comm", "Community")]
+_AF_TIER_NAME = {"mc": "Money-Center (>$1T)", "lg": "Large Regional ($100B-$1T)",
+                 "reg": "Regional ($10-100B)", "comm": "Community (<$10B)"}
+
+_AF_OVERLAY_COLORS = ["#1e3a8a", "#0e7490", "#b45309", "#6d28d9", "#047857",
+                      "#be185d", "#0369a1", "#a16207"]
+_AF_TF_OPTS = ["1D", "1W", "1M", "3M", "6M", "YTD", "1Y", "2Y"]
+_AF_TF_FETCH = {"1W": "1M", "1M": "3M", "3M": "6M", "6M": "1Y",
+                "YTD": "1Y", "1Y": "1Y", "2Y": "2Y"}
+_AF_TF_TAIL = {"1W": 5, "1M": 21, "3M": 63, "6M": 126, "1Y": 252, "2Y": 504}
+
+_AF_CSS = r"""
+<style>
+.afwrap{--mono:'SFMono-Regular','SF Mono','JetBrains Mono',ui-monospace,'Roboto Mono',Menlo,Consolas,monospace;color:#111827;}
+.afwrap .kg{display:grid;grid-template-columns:1fr 1fr 1fr;grid-auto-rows:244px;gap:14px;}
+.afwrap .pane{background:#fff;border:1px solid #dde3ec;border-radius:3px;display:flex;flex-direction:column;overflow:hidden;}
+.afwrap .hd{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;padding:9px 14px 7px;border-bottom:1px solid #eceff4;}
+.afwrap .hd .t{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#1e293b;}
+.afwrap .hd .s{font-size:9px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#94a3b8;display:flex;align-items:center;gap:5px;}
+.afwrap .live{width:6px;height:6px;border-radius:50%;background:#059669;display:inline-block;}
+.afwrap .body{flex:1 1 auto;overflow:hidden;}
+.afwrap .etf{display:flex;flex-direction:column;height:100%;}
+.afwrap .erow{display:grid;align-items:center;column-gap:6px;padding:0 14px;border-bottom:1px solid #f6f8fa;grid-template-columns:20px 1.5fr .7fr 1fr 1fr .75fr .85fr;}
+.afwrap .erow:last-child{border-bottom:none;}
+.afwrap .erow.eh{flex:0 0 22px;border-bottom:1px solid #eceff4;}
+.afwrap .erow.ed{flex:1 1 0;min-height:0;}
+.afwrap .erow.r2{grid-template-columns:1.55fr 1fr .8fr .85fr;}
+.afwrap .erow.m5{grid-template-columns:1.5fr .62fr 1fr .8fr;}
+.afwrap .erow.a4{grid-template-columns:.62fr 2fr .72fr;}
+.afwrap .h{font-size:8.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9aa6b4;}
+.afwrap .num{text-align:right;font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:#1f2937;}
+.afwrap .num.h{font-family:inherit;}
+.afwrap .nm{font-size:11px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.afwrap .tk{font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#1e3a8a;text-decoration:none;}
+.afwrap .up{color:#047857;}.afwrap .dn{color:#b91c1c;}.afwrap .mut{color:#aab4c2;}
+.afwrap a.crow{text-decoration:none;color:inherit;display:contents;}
+.afwrap .cbx{width:11px;height:11px;border:1px solid #1e3a8a;border-radius:2px;background:#1e3a8a;position:relative;display:inline-block;}
+.afwrap .cbx.off{background:#fff;}
+.afwrap .cbx:not(.off):after{content:"";position:absolute;left:3px;top:1px;width:2.5px;height:5.5px;border:solid #fff;border-width:0 1.4px 1.4px 0;transform:rotate(45deg);}
+.afwrap .ph{display:flex;align-items:center;justify-content:center;color:#aab4c2;font-size:11px;font-style:italic;}
+.afwrap .pend{padding:7px 14px;color:#aab4c2;font-size:10px;font-style:italic;}
+.afwrap .ctl{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:6px 12px 5px;border-bottom:1px solid #f4f6f9;flex-wrap:wrap;}
+.afwrap .seg{display:flex;gap:2px;}
+.afwrap .seg a{font-family:var(--mono);font-size:8px;font-weight:700;padding:2px 5px;border-radius:3px;color:#7c8a9c;background:#f1f4f8;text-decoration:none;}
+.afwrap .seg a.on{background:#1e3a8a;color:#fff;}
+.afwrap .cdiv{width:1px;height:10px;background:#e2e8f0;margin:0 3px;}
+.afwrap .seglbl{font-size:7.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#aab4c2;}
+.afwrap .dd{position:relative;font-size:8.5px;}
+.afwrap .dd summary{list-style:none;cursor:pointer;font-weight:600;color:#334155;background:#fff;border:1px solid #d8dee8;border-radius:3px;padding:2px 6px;}
+.afwrap .dd summary::-webkit-details-marker{display:none;}
+.afwrap .dd .menu{position:absolute;z-index:6;top:115%;left:0;background:#fff;border:1px solid #d8dee8;border-radius:4px;box-shadow:0 4px 12px rgba(15,23,42,.12);min-width:128px;padding:3px;}
+.afwrap .dd .menu a{display:block;padding:3px 8px;font-size:9px;color:#334155;text-decoration:none;border-radius:3px;white-space:nowrap;}
+.afwrap .dd .menu a.on{background:#eef2fb;color:#1e3a8a;font-weight:600;}
+.afwrap .dotc{width:7px;height:7px;border-radius:50%;display:inline-block;flex:0 0 auto;}
+.afwrap .evt{font-size:11px;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.afwrap .evt .sym{color:#64748b;font-weight:700;}
+.afwrap .fitem{display:grid;grid-template-columns:34px 1fr auto;align-items:center;column-gap:8px;height:19px;padding:0 12px;border-bottom:1px solid #f6f8fa;white-space:nowrap;text-decoration:none;}
+.afwrap a.fitem:hover{background:#f7f9fc;}
+.afwrap .ftag{font-family:var(--mono);font-size:8px;font-weight:700;}
+.afwrap .ftag.ma{color:#1e3a8a;}.afwrap .ftag.k,.afwrap .ftag.pr,.afwrap .ftag.ex,.afwrap .ftag.tr{color:#9aa6b4;}
+.afwrap .fhl{font-size:10.5px;color:#1e3a8a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.afwrap .fhl .sym{color:#64748b;font-weight:700;}
+.afwrap .fwhen{font-family:var(--mono);font-size:8.5px;color:#aab4c2;font-variant-numeric:tabular-nums;text-align:right;}
+.afwrap .cbar{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 12px 3px;}
+.afwrap .leg{display:flex;gap:10px;flex-wrap:wrap;}
+.afwrap .leg span{display:flex;align-items:center;gap:4px;font-size:9.5px;font-weight:600;color:#475569;font-variant-numeric:tabular-nums;}
+.afwrap .chart{flex:1 1 auto;min-height:0;padding:0 6px 4px;}
+.afwrap .chart svg{width:100%;height:100%;display:block;}
+</style>
+"""
+
+
+def _af_state() -> dict:
+    qp = st.query_params
+    oc = qp.get("oc")
+    overlay = tuple(t for t in oc.split(",") if t) if oc else _AF_DEFAULT_OVERLAY
+    return {"overlay": overlay, "tf": qp.get("tf") or "3M",
+            "mv": qp.get("mv") or "g", "mh": qp.get("mh") or "d",
+            "msz": qp.get("msz") or "all", "vsz": qp.get("vsz") or "all",
+            "vp": qp.get("vp") or "1d"}
+
+
+def _af_href(**changes) -> str:
+    """Same-tab href preserving current params (so section=Home + the other
+    selectors survive a click), with the given keys overridden."""
+    from urllib.parse import urlencode
+    params = {k: v for k, v in st.query_params.items()}
+    params["s"] = "Home"
+    params.pop("bank", None)
+    for k, v in changes.items():
+        if v is None:
+            params.pop(k, None)
+        else:
+            params[k] = v
+    return "?" + urlencode(params)
+
+
+def _af_n(v, dp=2):
+    try:
+        return f"{float(v):,.{dp}f}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _af_signed(v, dp=2, suffix=""):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return ("—", "mut")
+    cls = "up" if f > 0 else ("dn" if f < 0 else "mut")
+    return (f"{f:+,.{dp}f}{suffix}", cls)
+
+
+def _af_seg(key: str, cur: str, opts: list) -> str:
+    return ('<span class="seg">' + "".join(
+        f'<a class="{"on" if cur == v else ""}" href="{_af_href(**{key: v})}">{lbl}</a>'
+        for v, lbl in opts) + "</span>")
+
+
+def _af_size_dropdown(cur: str, key: str = "msz") -> str:
+    label = dict(_AF_TIERS).get(cur, "All")
+    menu = "".join(
+        f'<a class="{"on" if cur == k else ""}" href="{_af_href(**{key: k})}">{lbl}</a>'
+        for k, lbl in _AF_TIERS)
+    return (f'<span class="seglbl">Size</span><details class="dd">'
+            f'<summary>{label} ▾</summary><div class="menu">{menu}</div></details>')
+
+
+def _af_etf_pane(state: dict) -> str:
+    syms = [t for t, _ in _AF_ETFS]
+    try:
+        from data.price_cache_store import get_prices
+        warm = get_prices(syms)
+    except Exception:
+        warm = {}
+    try:
+        from data import fmp_client
+        aftq = fmp_client.get_aftermarket_quote_batch(syms)
+    except Exception:
+        aftq = {}
+    from data import fmp_client as _fc
+    sel = set(state["overlay"])
+    rows = ('<div class="erow eh"><span></span><span class="h">Name</span>'
+            '<span class="h">Tkr</span><span class="num h">Last</span>'
+            '<span class="num h">Chg</span><span class="num h">%</span>'
+            '<span class="num h">Aft</span></div>')
+    for t, name in _AF_ETFS:
+        q = warm.get(t) or {}
+        price = q.get("price")
+        last = _af_n(price) or "—"
+        chg_t, chg_c = _af_signed(q.get("change"))
+        pct_t, pct_c = _af_signed(q.get("change_pct"))
+        aq = aftq.get(t) or {}
+        aft = _fc.aftermarket_move(aq.get("bid"), aq.get("ask"), price)
+        aft_t, aft_c = _af_signed(aft) if aft is not None else ("—", "mut")
+        on = "" if t in sel else " off"
+        new_sel = (sorted(sel - {t}) if t in sel else sorted(sel | {t}))
+        href = _af_href(oc=",".join(new_sel) or None)
+        rows += (
+            f'<a class="crow" href="{href}" target="_self"><div class="erow ed">'
+            f'<span class="cbx{on}"></span>'
+            f'<span class="nm">{name}</span><span class="tk">{t}</span>'
+            f'<span class="num">{last}</span>'
+            f'<span class="num {chg_c}">{chg_t}</span>'
+            f'<span class="num {pct_c}">{pct_t}</span>'
+            f'<span class="num {aft_c}">{aft_t}</span></div></a>')
+    return ('<div class="pane" style="grid-column:1;grid-row:1;">'
+            '<div class="hd"><span class="t">Markets · ETFs</span>'
+            '<span class="s"><span class="live"></span>Live</span></div>'
+            f'<div class="body"><div class="etf">{rows}</div></div></div>')
+
+
+def _af_rates_pane() -> str:
+    """Live intraday yields (yfinance) for 3M/2Y/5Y/10Y/30Y + a live 10Y−2Y
+    spread; FRED daily for 6M/1Y/Fed Funds + the credit OAS. Live rows carry
+    a green marker; a failed live tenor falls back to FRED (never a guess)."""
+    try:
+        from data.live_rates import live_yields
+        ly = live_yields() or {}
+    except Exception:
+        ly = {}
+
+    def pts(source, key):
+        if source == "live":
+            v = ly.get(key)
+            if v and v[0] is not None:
+                return (v[0], v[1], v[2], True)
+            lv, pr, wk = _fred_points(_AF_LIVE_FALLBACK[key])
+            return (lv, pr, wk, False)
+        if source == "spread":
+            t10, t2 = ly.get("10Y"), ly.get("2Y")
+            if t10 and t2 and t10[0] is not None and t2[0] is not None:
+                pr = (t10[1] - t2[1]) if (t10[1] is not None and t2[1] is not None) else None
+                wk = (t10[2] - t2[2]) if (t10[2] is not None and t2[2] is not None) else None
+                return (t10[0] - t2[0], pr, wk, True)
+            lv, pr, wk = _fred_points("T10Y2Y")
+            return (lv, pr, wk, False)
+        lv, pr, wk = _fred_points(key)
+        return (lv, pr, wk, False)
+
+    rows = ('<div class="erow r2 eh"><span class="h">Instrument</span>'
+            '<span class="num h">Level</span><span class="num h">1D bp</span>'
+            '<span class="num h">1W bp</span></div>')
+    for label, source, key, kind in _AF_RATES:
+        lv, pr, wk, is_live = pts(source, key)
+        dot = ('<span class="dotc" style="background:#059669;margin-right:5px;" '
+               'title="live ~15m"></span>') if is_live else ""
+        if lv is None:
+            rows += (f'<div class="erow r2 ed"><span class="nm">{dot}{label}</span>'
+                     '<span class="num mut">—</span><span class="num mut">—</span>'
+                     '<span class="num mut">—</span></div>')
+            continue
+        lvl = (f'<span class="num">{lv:+.2f}</span>' if kind == "spread"
+               else f'<span class="num">{lv:.2f}</span>')
+        d1_t, d1_c = _af_signed((lv - pr) * 100, dp=0) if pr is not None else ("—", "mut")
+        d1w_t, d1w_c = _af_signed((lv - wk) * 100, dp=0) if wk is not None else ("—", "mut")
+        rows += (f'<div class="erow r2 ed"><span class="nm">{dot}{label}</span>{lvl}'
+                 f'<span class="num {d1_c}">{d1_t}</span>'
+                 f'<span class="num {d1w_c}">{d1w_t}</span></div>')
+    return ('<div class="pane" style="grid-column:1;grid-row:3;">'
+            '<div class="hd"><span class="t">Rates · Credit</span>'
+            '<span class="s"><span class="live"></span>live · FRED daily</span></div>'
+            f'<div class="body"><div class="etf">{rows}</div></div></div>')
+
+
+def _af_movers_pane(all_metrics: list[dict], state: dict) -> str:
+    from analysis.peer_groups import asset_size_tier
+    mv, mh, msz = state["mv"], state["mh"], state["msz"]
+    field = "change_pct" if mh == "d" else "chg_1w"
+    want = _AF_TIER_NAME.get(msz)
+    data = []
+    for m in (all_metrics or []):
+        tk, v = m.get("ticker"), m.get(field)
+        if not tk or v is None:
+            continue
+        if want and asset_size_tier(m.get("total_assets")) != want:
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        data.append((tk, m.get("price"), v))
+    asc = (mv == "l")
+    data = [d for d in data if (d[2] < 0 if asc else d[2] > 0)]
+    data.sort(key=lambda d: d[2], reverse=not asc)
+    data = data[:12]
+    ctl = ('<div class="ctl">' + _af_seg("mv", mv, [("g", "Gainers"), ("l", "Losers")])
+           + '<span class="cdiv"></span>'
+           + _af_seg("mh", mh, [("d", "Day"), ("w", "Week")])
+           + '<span class="cdiv"></span>' + _af_size_dropdown(msz) + '</div>')
+    if not data:
+        note = ("Week movers populate with the nightly history job."
+                if mh == "w" else "No movers match this filter.")
+        body = f'<div class="pend">{note}</div>'
+    else:
+        rows = ('<div class="erow m5 eh"><span class="h">Name</span>'
+                '<span class="h">Tkr</span><span class="num h">Last</span>'
+                '<span class="num h">%</span></div>')
+        for tk, price, v in data:
+            pct_t, pct_c = _af_signed(v)
+            last = _af_n(price) or "—"
+            rows += (
+                f'<a class="crow" href="?s=Home&bank={tk}" target="_self">'
+                f'<div class="erow m5 ed"><span class="nm">{_esc((get_name(tk) or "")[:22])}</span>'
+                f'<span class="tk">{tk}</span><span class="num">{last}</span>'
+                f'<span class="num {pct_c}">{pct_t}</span></div></a>')
+        body = f'<div class="etf">{rows}</div>'
+    return ('<div class="pane" style="grid-column:2;grid-row:1;">'
+            '<div class="hd"><span class="t">Movers</span>'
+            '<span class="s">All coverage</span></div>'
+            f'{ctl}<div class="body">{body}</div></div>')
+
+
+def _af_calendar_pane(watchlist: list[str]) -> str:
+    import datetime as dt
+    items = []
+    for a in _collect_earnings_alerts(watchlist):
+        eps = a.get("eps_est")
+        items.append({"kind": "earn", "date": a["date"], "ticker": a["ticker"],
+                      "name": get_name(a["ticker"]) or a["ticker"],
+                      "detail": (f"${eps:.2f}e" if eps is not None else "")})
+    try:
+        from data.macro_calendar import get_upcoming_prints
+        for p in get_upcoming_prints(days=7):
+            items.append({"kind": "macro", "date": p.get("date"),
+                          "ticker": None, "name": p.get("name") or "",
+                          "detail": ("FOMC" if p.get("kind") == "fomc" else "")})
+    except Exception:
+        pass
+    items = [i for i in items if i.get("date")]
+    items.sort(key=lambda i: i["date"])
+    items = items[:14]
+    if not items:
+        body = '<div class="pend">No earnings or macro prints in the window.</div>'
+    else:
+        today = dt.date.today().isoformat()
+        rows = ('<div class="erow a4 eh"><span class="h">When</span>'
+                '<span class="h">Event</span><span class="num h">Est./Time</span></div>')
+        for i in items:
+            is_today = i["date"] == today
+            try:
+                when = "Today" if is_today else dt.datetime.strptime(
+                    i["date"], "%Y-%m-%d").strftime("%b %d")
+            except Exception:
+                when = i["date"]
+            wstyle = ' style="color:#1e3a8a;font-weight:700;"' if is_today else ""
+            dot = "#1e3a8a" if i["kind"] == "earn" else "#b45309"
+            sym = (f' <span class="sym">&gt;{i["ticker"]}</span>' if i["ticker"] else "")
+            ev = (f'<span class="evt"><span class="dotc" style="background:{dot};'
+                  f'margin-right:7px;"></span>{_esc(i["name"][:30])}{sym}</span>')
+            href = (f'?s=Home&bank={i["ticker"]}' if i["ticker"] else "?s=Home")
+            rows += (
+                f'<a class="crow" href="{href}" target="_self"><div class="erow a4 ed">'
+                f'<span class="nm"{wstyle}>{when}</span>{ev}'
+                f'<span class="num mut">{i["detail"] or "—"}</span></div></a>')
+        body = f'<div class="etf">{rows}</div>'
+    return ('<div class="pane" style="grid-column:2;grid-row:3;">'
+            '<div class="hd"><span class="t">Calendar</span>'
+            '<span class="s"><span class="dotc" style="background:#1e3a8a;"></span>earnings'
+            '&nbsp;<span class="dotc" style="background:#b45309;"></span>macro</span></div>'
+            f'<div class="body">{body}</div></div>')
+
+
+def _af_feed_items(watchlist: list[str]) -> list[dict]:
+    from data.cache import served_snapshot
+    return served_snapshot("home_af_feed_snap", 1800,
+                           lambda: _af_feed_items_live(watchlist),
+                           guard=len(watchlist or []))
+
+
+def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
+    import datetime as dt
+    out = []
+    try:
+        from data.events import get_universe_recent
+        from data.events.wire_base import is_safe_news_url, is_junk_news
+        for r in get_universe_recent(limit=150, sources=_NEWS_SOURCES):
+            if not is_safe_news_url(r.get("url")):
+                continue
+            head = (r.get("headline") or "").strip()
+            tk = r.get("ticker")
+            if not head or is_junk_news(head, tk):
+                continue
+            et = r.get("event_type") or ""
+            if et == "m_and_a" or _is_ma_headline(head):
+                tag, cls = "M&A", "ma"
+            elif r.get("source") == "sec_8k":
+                tag, cls = "8-K", "k"
+            elif et == "executive_change":
+                tag, cls = "EXEC", "ex"
+            else:
+                tag, cls = "PR", "pr"
+            out.append({"tag": tag, "cls": cls, "tk": tk, "head": head,
+                        "ts": r.get("published_at")})
+    except Exception:
+        pass
+    try:
+        from data.form4_client import recent_open_market_transactions
+        from data.bank_mapping import get_cik
+        ciks = {t: get_cik(t) for t in (watchlist or [])}
+        for tx in recent_open_market_transactions(ciks, days=14, limit=40):
+            buy = tx.get("direction") == "Buy"
+            sh = tx.get("shares")
+            verb = "buys" if buy else "sells"
+            who = (tx.get("role") or "Insider").split(",")[0]
+            nm = get_name(tx["ticker"]) or tx["ticker"]
+            qty = f"{int(sh):,} of " if sh else ""
+            out.append({"tag": "BUY" if buy else "SELL", "cls": "tr",
+                        "tk": tx["ticker"],
+                        "head": f"{who} {verb} {qty}{nm}", "ts": tx.get("date")})
+    except Exception:
+        pass
+
+    def _k(o):
+        p = o.get("ts")
+        try:
+            t = p if hasattr(p, "year") else dt.datetime.fromisoformat(
+                str(p).replace("Z", "+00:00"))
+            return t.timestamp()
+        except Exception:
+            return 0.0
+    out.sort(key=_k, reverse=True)
+    return out[:40]
+
+
+def _af_feed_pane(watchlist: list[str]) -> str:
+    items = _af_feed_items(watchlist)
+    if not items:
+        body = '<div class="pend">Feed populates with the next poll / insider job.</div>'
+    else:
+        body = ""
+        for it in items:
+            tk = it.get("tk")
+            sym = f' <span class="sym">&gt;{tk}</span>' if tk else ""
+            when = _relative_time(it.get("ts"))
+            href = (f'?s=Home&bank={tk}' if tk else "?s=Home")
+            body += (
+                f'<a class="fitem" href="{href}" target="_self">'
+                f'<span class="ftag {it["cls"]}">{_esc(it["tag"])}</span>'
+                f'<span class="fhl">{_esc(it["head"][:90])}{sym}</span>'
+                f'<span class="fwhen">{when}</span></a>')
+    return ('<div class="pane" style="grid-column:3;grid-row:1 / span 3;">'
+            '<div class="hd"><span class="t">Bank News Feed</span>'
+            '<span class="s">universe</span></div>'
+            f'<div class="body" style="overflow:auto;">{body}</div></div>')
+
+
+def _af_overlay_series(sel, tf):
+    from data import fmp_client
+    out = []
+    for i, tk in enumerate(sel[:8]):
+        try:
+            h = fmp_client.get_history(tk, period=_AF_TF_FETCH.get(tf, "1Y"))
+            if h is None or h.empty or "close" not in h:
+                continue
+            h = h.dropna(subset=["close"]).sort_values("date")
+            if tf == "YTD":
+                yr = h["date"].iloc[-1].year
+                h = h[h["date"].dt.year == yr]
+            else:
+                h = h.tail(_AF_TF_TAIL.get(tf, 252))
+            closes = h["close"].tolist()
+            dates = h["date"].tolist()
+            if len(closes) < 2 or not closes[0]:
+                continue
+            base = closes[0]
+            pcts = [(c / base - 1.0) * 100.0 for c in closes]
+            out.append((tk, _AF_OVERLAY_COLORS[i % len(_AF_OVERLAY_COLORS)], pcts, dates))
+        except Exception:
+            continue
+    return out
+
+
+def _af_overlay_svg(series) -> str:
+    allp = [p for _, _, pcts, _ in series for p in pcts]
+    if not allp:
+        return ""
+    ymin, ymax = min(allp), max(allp)
+    if ymax - ymin < 0.5:
+        ymin -= 0.5; ymax += 0.5
+    pad = (ymax - ymin) * 0.12
+    ymin -= pad; ymax += pad
+    L, R, T, B = 30, 412, 12, 126
+
+    def Y(v):
+        return T + (1 - (v - ymin) / (ymax - ymin)) * (B - T)
+
+    def X(i, n):
+        return L + (i / (n - 1)) * (R - L) if n > 1 else L
+    parts = []
+    for k in range(4):
+        v = ymin + (k / 3) * (ymax - ymin)
+        y = Y(v)
+        parts.append(f'<line x1="{L}" y1="{y:.1f}" x2="{R}" y2="{y:.1f}" stroke="#f1f5f9" stroke-width="1"/>')
+        parts.append(f'<text x="{L-3}" y="{y+3:.1f}" font-family="monospace" font-size="8" fill="#aab4c2" text-anchor="end">{v:+.1f}%</text>')
+    if ymin < 0 < ymax:
+        y0 = Y(0)
+        parts.append(f'<line x1="{L}" y1="{y0:.1f}" x2="{R}" y2="{y0:.1f}" stroke="#cbd5e1" stroke-width="1"/>')
+    longest = max(series, key=lambda s: len(s[3]))[3]
+    n = len(longest)
+    if n >= 2:
+        for frac, anchor in [(0.0, "start"), (1/3, "middle"), (2/3, "middle"), (1.0, "end")]:
+            idx = min(n - 1, int(frac * (n - 1)))
+            d = longest[idx]
+            try:
+                lbl = d.strftime("%b %d")
+            except Exception:
+                lbl = str(d)[:6]
+            parts.append(f'<text x="{X(idx,n):.1f}" y="140" font-family="monospace" font-size="8" fill="#aab4c2" text-anchor="{anchor}">{lbl}</text>')
+    for tk, color, pcts, _d in series:
+        n = len(pcts)
+        pts = " ".join(f"{X(i,n):.1f},{Y(v):.1f}" for i, v in enumerate(pcts))
+        last = pcts[-1]
+        parts.append(f'<polyline fill="none" stroke="{color}" stroke-width="1.7" stroke-linejoin="round" points="{pts}"/>')
+        parts.append(f'<circle cx="{X(n-1,n):.1f}" cy="{Y(last):.1f}" r="2.2" fill="{color}"/>')
+        parts.append(f'<text x="{R+3}" y="{Y(last)+2.5:.1f}" font-family="monospace" font-size="8.5" font-weight="700" fill="{color}">{last:+.1f}</text>')
+    return ('<svg viewBox="0 0 460 150" preserveAspectRatio="xMidYMid meet">' + "".join(parts) + "</svg>")
+
+
+def _af_overlay_pane(state: dict) -> str:
+    sel = list(state["overlay"])
+    tf = state["tf"]
+    series = [] if (not sel or tf == "1D") else _af_overlay_series(sel, tf)
+    last_by = {tk: pcts[-1] for tk, _c, pcts, _d in series}
+    color_by = {tk: c for tk, c, _p, _d in series}
+    leg = '<div class="leg">'
+    for i, tk in enumerate(sel[:8]):
+        c = color_by.get(tk, _AF_OVERLAY_COLORS[i % len(_AF_OVERLAY_COLORS)])
+        tail = (f' {last_by[tk]:+.1f}%' if tk in last_by else "")
+        leg += (f'<span><span class="dotc" style="background:{c};"></span>{tk}{tail}</span>')
+    leg += "</div>"
+    cbar = (f'<div class="cbar">{leg}'
+            + _af_seg("tf", tf, [(x, x) for x in _AF_TF_OPTS]) + "</div>")
+    if not sel:
+        body = '<div class="pend">Check ETFs in the Markets pane to overlay them here.</div>'
+    elif tf == "1D":
+        body = '<div class="pend">1D intraday goes live once the Premium key deploys.</div>'
+    elif not series:
+        body = '<div class="pend">No history available for the selection.</div>'
+    else:
+        body = f'<div class="chart">{_af_overlay_svg(series)}</div>'
+    return ('<div class="pane" style="grid-column:1;grid-row:2;">'
+            '<div class="hd"><span class="t">Overlay · Selected</span>'
+            f'<span class="s">{len(sel)} of 11</span></div>'
+            f'{cbar}{body}</div>')
+
+
+def _af_volume_pane(all_metrics: list[dict], state: dict) -> str:
+    from analysis.peer_groups import asset_size_tier
+    vp, vsz = state["vp"], state["vsz"]
+    ctl = ('<div class="ctl">' + _af_size_dropdown(vsz, key="vsz")
+           + '<span class="cdiv"></span>'
+           + _af_seg("vp", vp, [("1d", "1D"), ("1w", "1W"), ("1m", "1M"), ("6m", "6M")])
+           + '</div>')
+    if vp != "1d":
+        body = ('<div class="pend">1W / 1M / 6M unusual-volume windows '
+                'populate with the nightly history job.</div>')
+    else:
+        try:
+            from data.price_cache_store import get_prices
+            warm = get_prices([m.get("ticker") for m in (all_metrics or [])
+                               if m.get("ticker")])
+        except Exception:
+            warm = {}
+        want = _AF_TIER_NAME.get(vsz)
+        data = []
+        for m in (all_metrics or []):
+            tk = m.get("ticker")
+            rv = (warm.get(tk) or {}).get("rel_volume")
+            if not tk or rv is None:
+                continue
+            if want and asset_size_tier(m.get("total_assets")) != want:
+                continue
+            data.append((tk, rv, m.get("change_pct")))
+        data.sort(key=lambda d: d[1], reverse=True)
+        data = data[:12]
+        if not data:
+            body = ('<div class="pend">Unusual volume populates once the '
+                    'nightly avg-volume job has run.</div>')
+        else:
+            rows = ('<div class="erow m5 eh"><span class="h">Name</span>'
+                    '<span class="h">Tkr</span><span class="num h">Vol ×avg</span>'
+                    '<span class="num h">%</span></div>')
+            for tk, rv, pct in data:
+                pct_t, pct_c = _af_signed(pct)
+                rows += (
+                    f'<a class="crow" href="?s=Home&bank={tk}" target="_self">'
+                    f'<div class="erow m5 ed"><span class="nm">{_esc((get_name(tk) or "")[:22])}</span>'
+                    f'<span class="tk">{tk}</span>'
+                    f'<span class="num">{rv:.1f}×</span>'
+                    f'<span class="num {pct_c}">{pct_t}</span></div></a>')
+            body = f'<div class="etf">{rows}</div>'
+    return ('<div class="pane" style="grid-column:2;grid-row:2;">'
+            '<div class="hd"><span class="t">Unusual Volume</span>'
+            '<span class="s">All coverage</span></div>'
+            f'{ctl}<div class="body">{body}</div></div>')
+
+
+def _af_safe(fn, title, col, row, *args):
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001
+        print(f"[home.af] pane {title!r} failed: {type(e).__name__}: {e}")
+        return (f'<div class="pane ph" style="grid-column:{col};grid-row:{row};">'
+                f'<div><div class="hd" style="border:none;">'
+                f'<span class="t">{_esc(title)}</span></div>'
+                'temporarily unavailable</div></div>')
+
+
+def _render_above_fold(all_metrics: list[dict], watchlist: list[str]):
+    """Render the locked above-the-fold grid as one HTML blob; each pane is
+    isolated so a slow/failing source degrades to its own error state."""
+    state = _af_state()
+    panes = [
+        _af_safe(_af_etf_pane, "Markets · ETFs", 1, "1", state),
+        _af_safe(_af_movers_pane, "Movers", 2, "1", all_metrics, state),
+        _af_safe(_af_feed_pane, "Bank News Feed", 3, "1 / span 3", watchlist),
+        _af_safe(_af_overlay_pane, "Overlay · Selected", 1, "2", state),
+        _af_safe(_af_volume_pane, "Unusual Volume", 2, "2", all_metrics, state),
+        _af_safe(_af_rates_pane, "Rates · Credit", 1, "3"),
+        _af_safe(_af_calendar_pane, "Calendar", 2, "3", watchlist),
+    ]
+    st.markdown(_AF_CSS + '<div class="afwrap"><div class="kg">'
+                + "".join(panes) + "</div></div>", unsafe_allow_html=True)
+
+
 def render_home(all_metrics: list[dict], watchlist: list[str]):
     """Render the home/dashboard page."""
 
-    # ── Title bar (DESIGN-SYSTEM.md) + extras menu ────────────────────
+    # ── Title bar (DESIGN-SYSTEM.md) ──────────────────────────────────
     from ui.chrome import title_bar
-    _tb, _ex = st.columns([6, 1], vertical_alignment="center")
-    with _tb:
-        title_bar("KSK Investors", "Home",
-                  f'<span class="ksk-dot ok"></span>Live · FDIC · SEC EDGAR · FMP · '
-                  f'{len(watchlist)} US banks covered')
-    with _ex:
-        with st.popover("Sections", use_container_width=True):
-            show_leaders = st.checkbox("Coverage leaderboard", value=True, key="home_show_leaders")
-            show_ma = st.checkbox("Sector M&A", value=True, key="home_show_ma")
-            show_vals = st.checkbox("Sector valuation snapshot", value=True, key="home_show_vals")
+    title_bar("KSK Investors", "Home",
+              f'<span class="ksk-dot ok"></span>Live · FDIC · SEC EDGAR · FMP · '
+              f'{len(watchlist)} US banks covered')
 
     from utils.timing import timed
 
-    # Order (user decision 2026-06-12): numbers first, narrative second.
-    # Thin always-on-top rates strip, then the full Markets & Rates
-    # section, THEN news — market data never below the fold again.
-
-    # 0) Compact strip — instant glance before anything else renders
-    with timed("home.rates_strip"):
-        _render_rates_strip()
-
-    # 1) Markets & Rates — full section at the top
-    with timed("home.markets_rates"):
-        _render_markets_rates()
-
-    # 2) Overnight & Breaking — curated world context + bank alerts
-    with timed("home.overnight_breaking"):
-        _render_overnight_breaking()
-    with timed("home.alert_inbox"):
-        _render_alert_inbox(all_metrics, watchlist)
-
-    # 3) Today's Agenda — earnings + macro prints, one day view
-    with timed("home.todays_calendar"):
-        _render_todays_calendar(watchlist)
-
-    # 4) Universe movers
-    if all_metrics:
-        with timed("home.movers"):
-            _render_watchlist_movers(all_metrics)
-
-    # 5) Sector valuation snapshot
-    if all_metrics and show_vals:
-        with timed("home.industry_valuations"):
-            _render_industry_valuations(pd.DataFrame(all_metrics))
-
-    # 6) Extras-toggleable tail
-    if all_metrics and show_leaders:
-        with timed("home.coverage_leaderboard"):
-            _render_coverage_leaderboard(all_metrics)
-    if show_ma:
-        with timed("home.sector_ma"):
-            _render_sector_ma(watchlist)
+    # Above-the-fold redesign (owner-locked 2026-06-16): one dense 3×3 grid
+    # + full-height feed. Replaces the old stacked sections; the old
+    # _render_* helpers remain below for reference until the cleanup pass.
+    with timed("home.above_fold"):
+        _render_above_fold(all_metrics, watchlist)
 
 
 def _render_rates_strip():
