@@ -917,16 +917,19 @@ _CQ_CONCEPTS = {
                     "FinancingReceivableBeforeAllowanceForCreditLossAndFee",
                     "FinancingReceivableBeforeAllowanceForCreditLoss",
                     "LoansAndLeasesReceivableBeforeFeeGross",
+                    "LoansReceivableHeldForInvestmentBeforeAllowanceForLoanLossesAndDeferredFeesAndPremiums",
                     "NotesReceivableGross",
                     "LoansReceivableGrossCarryingAmount",
                     "LoansAndLeasesReceivableGrossCarryingAmount",
-                    "LoansAndLeasesReceivableGrossCarryingAmount1"),
+                    "LoansAndLeasesReceivableGrossCarryingAmount1",
+                    "LoansAndLeasesReceivablesGross"),
     "loans_net": ("FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss",
                   "FinancingReceivableAndNetInvestmentInLeaseExcludingAccruedInterestAfterAllowanceForCreditLoss",
                   "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLossFeeAndLoanInProcess",
                   "FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLossFeeAfterLoanInProcess",
                   "FinancingReceivableAfterAllowanceForCreditLossAndFee",
                   "FinancingReceivableAfterAllowanceForCreditLoss",
+                  "LoansReceivableHeldForInvestmentNet",
                   "LoansAndLeasesReceivableNetReportedAmount",
                   "LoansAndLeasesReceivableNetOfDeferredFees",
                   "NotesReceivableNet"),
@@ -968,6 +971,15 @@ def extract_credit_quality(facts: list[Fact]) -> dict:
     if periods:
         period = max(periods)
         acl = _sec_pick(facts, _CQ_CONCEPTS["acl"], period)
+        if acl is None:
+            # Some filers (FFIN) tag no single ACL total, only the CECL split —
+            # collectively + individually evaluated = total allowance (faithful sum).
+            coll = _sec_pick(facts, ("LoansAndLeasesReceivableCollectivelyEvaluatedForAllowance",
+                                     "FinancingReceivableAllowanceForCreditLossesCollectivelyEvaluatedForImpairment"), period)
+            indiv = _sec_pick(facts, ("LoansAndLeasesReceivableIndividuallyEvaluatedForAllowance",
+                                      "FinancingReceivableAllowanceForCreditLossesIndividuallyEvaluatedForImpairment1"), period)
+            if coll is not None and indiv is not None:
+                acl = coll + indiv
         gross = _sec_pick(facts, _CQ_CONCEPTS["loans_gross"], period)
         net = _sec_pick(facts, _CQ_CONCEPTS["loans_net"], period)
         # Render only with ACL AND gross loans at the current date, and (when a net
