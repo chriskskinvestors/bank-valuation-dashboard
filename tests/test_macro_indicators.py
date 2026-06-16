@@ -13,7 +13,8 @@ import unittest
 import pandas as pd
 
 from data.macro_indicators import (
-    compute_row, to_yoy, to_mom_change, credit_regime, curve_regime, fed_path,
+    compute_row, to_yoy, to_mom_change, to_mom_pct, basis_series, zscore_latest,
+    credit_regime, curve_regime, fed_path,
 )
 
 
@@ -105,6 +106,37 @@ class TestChartHelpers(unittest.TestCase):
     def test_to_mom_change(self):
         out = to_mom_change(_mseries("2026-01-01", [100, 105, 103]))
         self.assertEqual(list(out["value"]), [5.0, -2.0])
+
+
+class TestNewBasesAndZScore(unittest.TestCase):
+    def test_level_k_raw_and_idx(self):
+        r = compute_row(_mseries("2026-01-01", [1413, 1177]), "level_k_raw")
+        self.assertAlmostEqual(r["latest"], 1177.0)
+        self.assertAlmostEqual(r["prior"], 1413.0)
+        self.assertAlmostEqual(r["delta"], -236.0)
+        ri = compute_row(_mseries("2026-01-01", [50.2, 49.8]), "level_idx")
+        self.assertAlmostEqual(ri["latest"], 49.8)
+        self.assertAlmostEqual(ri["delta"], -0.4, places=6)
+
+    def test_to_mom_pct(self):
+        out = to_mom_pct(_mseries("2026-01-01", [100, 110, 99]))
+        self.assertAlmostEqual(out["value"].iloc[0], 10.0, places=6)
+        self.assertAlmostEqual(out["value"].iloc[1], (99 / 110 - 1) * 100, places=6)
+
+    def test_zscore_latest_level(self):
+        # 12 monthly values 1..12 (basis level_idx → the levels themselves).
+        # mean 6.5, sample std 3.605551, z of last (12) = 5.5/3.605551 = 1.52542
+        df = _mseries("2025-01-01", list(range(1, 13)))
+        z = zscore_latest(df, "level_idx", years=10)
+        self.assertAlmostEqual(z, 5.5 / 3.605551275, places=4)
+
+    def test_zscore_needs_history(self):
+        self.assertIsNone(zscore_latest(_mseries("2026-01-01", [1, 2, 3]), "level_idx"))
+        self.assertIsNone(zscore_latest(pd.DataFrame(columns=["date", "value"]), "level_pct"))
+
+    def test_basis_series_dispatch(self):
+        self.assertEqual(len(basis_series(_mseries("2026-01-01", [100, 105, 103]), "mom_pct")), 2)
+        self.assertEqual(len(basis_series(_mseries("2026-01-01", [5, 6, 7]), "level_pct")), 3)
 
 
 class TestCreditRegime(unittest.TestCase):

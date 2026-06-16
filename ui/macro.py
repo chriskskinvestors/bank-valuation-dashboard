@@ -377,9 +377,9 @@ def _fmt_level(v, basis: str) -> str:
         return f"{v:.1f}%"
     if basis == "mom_chg_k":
         return f"{v:+,.0f}K"
-    if basis == "level_k":
+    if basis in ("level_k", "level_k_raw"):
         return f"{v:,.0f}K"
-    return f"{v:.1f}"
+    return f"{v:.1f}"  # level_idx and fallback
 
 
 def _fmt_delta(row: dict) -> str:
@@ -389,13 +389,27 @@ def _fmt_delta(row: dict) -> str:
     if d is None:
         return '<span style="color:var(--text-muted);">n/a</span>'
     basis = row["basis"]
-    txt = f"{d:+.1f}pp" if basis in _PCT_BASES else f"{d:+,.0f}K"
+    if basis in _PCT_BASES:
+        txt = f"{d:+.1f}pp"
+    elif basis == "level_idx":
+        txt = f"{d:+.1f}"
+    else:
+        txt = f"{d:+,.0f}K"
     if abs(d) < 1e-9:
         color = "var(--text-secondary)"
     else:
         good = (d < 0) if row["favorable"] == "down" else (d > 0)
         color = "var(--success)" if good else "var(--danger)"
     return f'<span style="color:{color};">{txt}</span>'
+
+
+def _fmt_z(z) -> str:
+    """Historical context: z-score of the latest reading vs ~10y of its own
+    history, as ±Nσ (bold when |z| ≥ 2, i.e. an unusual reading)."""
+    if z is None:
+        return '<span style="color:var(--text-muted);">—</span>'
+    weight = "font-weight:600;" if abs(z) >= 2 else ""
+    return f'<span style="color:var(--text-secondary);{weight}">{z:+.1f}σ</span>'
 
 
 def _fmt_as_of(ts, freq: str) -> str:
@@ -500,40 +514,52 @@ def _render_economy_calendar():
     # ── Key indicators (FRED) ──────────────────────────────────────────
     st.markdown("**Key indicators**")
     rows = get_print_board()
-    body = ""
+    _basis_tag = {"yoy_pct": "YoY", "mom_pct": "MoM", "mom_chg_k": "MoM chg",
+                  "level_pct": "level", "level_k": "level", "level_k_raw": "level",
+                  "level_idx": "index"}
+    themes = []
     for r in rows:
-        basis_tag = {"yoy_pct": "YoY", "mom_pct": "MoM", "mom_chg_k": "MoM chg",
-                     "level_pct": "level", "level_k": "level"}.get(r["basis"], "")
-        body += (
-            "<tr>"
-            f'<td>{_html.escape(r["label"])}'
-            f' <span style="color:var(--text-muted);font-size:var(--fs-2xs);">{basis_tag}</span></td>'
-            f'<td>{_fmt_level(r["latest"], r["basis"])}</td>'
-            f'<td>{_fmt_level(r["prior"], r["basis"])}</td>'
-            f'<td>{_fmt_delta(r)}</td>'
-            f'<td style="text-align:right;color:var(--text-secondary);">'
-            f'{_fmt_as_of(r["as_of"], r["freq"])}</td>'
-            "</tr>"
-        )
+        if r["theme"] not in themes:
+            themes.append(r["theme"])
+    body = ""
+    for theme in themes:
+        body += ('<tr><td colspan="6" style="text-align:left;background:var(--grid-head-bg);'
+                 'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
+                 f'font-size:var(--fs-2xs);letter-spacing:0.06em;">{_html.escape(theme)}</td></tr>')
+        for r in (x for x in rows if x["theme"] == theme):
+            body += (
+                "<tr>"
+                f'<td>{_html.escape(r["label"])}'
+                f' <span style="color:var(--text-muted);font-size:var(--fs-2xs);">{_basis_tag.get(r["basis"], "")}</span></td>'
+                f'<td>{_fmt_level(r["latest"], r["basis"])}</td>'
+                f'<td>{_fmt_level(r["prior"], r["basis"])}</td>'
+                f'<td>{_fmt_delta(r)}</td>'
+                f'<td>{_fmt_z(r.get("zscore"))}</td>'
+                f'<td style="text-align:right;color:var(--text-secondary);">'
+                f'{_fmt_as_of(r["as_of"], r["freq"])}</td>'
+                "</tr>"
+            )
     st.markdown(
         '<div class="ksk-grid"><table style="width:100%;">'
         "<thead><tr>"
         "<th>Indicator</th><th>Latest</th><th>Prior</th>"
-        "<th>Δ vs prior</th><th>As of</th>"
+        "<th>Δ vs prior</th><th>vs hist</th><th>As of</th>"
         "</tr></thead><tbody>" + body + "</tbody></table></div>",
         unsafe_allow_html=True,
     )
     st.caption(
-        "Latest published reading per series. YoY = year-over-year, "
+        "Latest reading per series, grouped by theme. YoY = year-over-year, "
         "MoM = month-over-month, QoQ SAAR = quarter-over-quarter annualized. "
         "Δ colored by favorable direction (inflation lower / activity higher = green). "
+        "vs hist = z-score of the latest vs ~10y of its own history (±σ; bold if |z|≥2). "
         "Source: FRED."
     )
 
     # Export of the print board.
     export_df = pd.DataFrame([{
-        "indicator": r["label"], "basis": r["basis"],
+        "theme": r["theme"], "indicator": r["label"], "basis": r["basis"],
         "latest": r["latest"], "prior": r["prior"], "delta": r["delta"],
+        "zscore": r.get("zscore"),
         "as_of": r["as_of"].strftime("%Y-%m-%d") if r["as_of"] is not None else None,
         "series_id": r["series_id"],
     } for r in rows])

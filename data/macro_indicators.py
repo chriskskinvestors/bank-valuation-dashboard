@@ -37,27 +37,51 @@ from data.fred_client import fetch_series
 
 # Indicator spec — order is the display order of the print board.
 # freq drives the "as of" period label (M=month, Q=quarter, W=week).
+# `theme` groups the board; `basis` drives the displayed value + its history
+# series for the z-score. Bases: yoy_pct / mom_pct (% change), mom_chg_k
+# (level-in-thousands MoM change), level_pct (a rate, shown %), level_idx (an
+# index/diffusion number), level_k_raw (a level already in thousands → "K"),
+# level_k (a level in persons → /1000 → "K").
 INDICATORS = [
+    # ── Inflation ──
     {"key": "cpi",        "label": "CPI",               "series_id": "CPIAUCSL",
-     "basis": "yoy_pct",   "freq": "M", "importance": "high",   "favorable": "down"},
+     "basis": "yoy_pct",   "freq": "M", "theme": "Inflation", "favorable": "down"},
     {"key": "core_cpi",   "label": "Core CPI",          "series_id": "CPILFESL",
-     "basis": "yoy_pct",   "freq": "M", "importance": "high",   "favorable": "down"},
+     "basis": "yoy_pct",   "freq": "M", "theme": "Inflation", "favorable": "down"},
     {"key": "pce",        "label": "PCE",               "series_id": "PCEPI",
-     "basis": "yoy_pct",   "freq": "M", "importance": "high",   "favorable": "down"},
+     "basis": "yoy_pct",   "freq": "M", "theme": "Inflation", "favorable": "down"},
     {"key": "core_pce",   "label": "Core PCE",          "series_id": "PCEPILFE",
-     "basis": "yoy_pct",   "freq": "M", "importance": "high",   "favorable": "down"},
-    {"key": "nfp",        "label": "Nonfarm Payrolls",  "series_id": "PAYEMS",
-     "basis": "mom_chg_k", "freq": "M", "importance": "high",   "favorable": "up"},
-    {"key": "unrate",     "label": "Unemployment Rate", "series_id": "UNRATE",
-     "basis": "level_pct", "freq": "M", "importance": "high",   "favorable": "down"},
-    {"key": "gdp",        "label": "Real GDP (QoQ SAAR)", "series_id": "A191RL1Q225SBEA",
-     "basis": "level_pct", "freq": "Q", "importance": "high",   "favorable": "up"},
-    {"key": "retail",     "label": "Retail Sales",      "series_id": "RSAFS",
-     "basis": "mom_pct",   "freq": "M", "importance": "medium", "favorable": "up"},
+     "basis": "yoy_pct",   "freq": "M", "theme": "Inflation", "favorable": "down"},
     {"key": "ppi",        "label": "PPI (Final Demand)", "series_id": "PPIFIS",
-     "basis": "yoy_pct",   "freq": "M", "importance": "medium", "favorable": "down"},
+     "basis": "yoy_pct",   "freq": "M", "theme": "Inflation", "favorable": "down"},
+    # ── Labor ──
+    {"key": "nfp",        "label": "Nonfarm Payrolls",  "series_id": "PAYEMS",
+     "basis": "mom_chg_k", "freq": "M", "theme": "Labor", "favorable": "up"},
+    {"key": "unrate",     "label": "Unemployment Rate", "series_id": "UNRATE",
+     "basis": "level_pct", "freq": "M", "theme": "Labor", "favorable": "down"},
+    {"key": "ahe",        "label": "Avg Hourly Earnings", "series_id": "CES0500000003",
+     "basis": "yoy_pct",   "freq": "M", "theme": "Labor", "favorable": "up"},
     {"key": "claims",     "label": "Initial Jobless Claims", "series_id": "ICSA",
-     "basis": "level_k",   "freq": "W", "importance": "medium", "favorable": "down"},
+     "basis": "level_k",   "freq": "W", "theme": "Labor", "favorable": "down"},
+    # ── Growth & Activity ──
+    {"key": "gdp",        "label": "Real GDP (QoQ SAAR)", "series_id": "A191RL1Q225SBEA",
+     "basis": "level_pct", "freq": "Q", "theme": "Growth & Activity", "favorable": "up"},
+    {"key": "retail",     "label": "Retail Sales",      "series_id": "RSAFS",
+     "basis": "mom_pct",   "freq": "M", "theme": "Growth & Activity", "favorable": "up"},
+    {"key": "indpro",     "label": "Industrial Production", "series_id": "INDPRO",
+     "basis": "yoy_pct",   "freq": "M", "theme": "Growth & Activity", "favorable": "up"},
+    # ── Housing ──
+    {"key": "starts",     "label": "Housing Starts",    "series_id": "HOUST",
+     "basis": "level_k_raw", "freq": "M", "theme": "Housing", "favorable": "up"},
+    {"key": "permits",    "label": "Building Permits",  "series_id": "PERMIT",
+     "basis": "level_k_raw", "freq": "M", "theme": "Housing", "favorable": "up"},
+    {"key": "home_prices", "label": "Home Prices (Case-Shiller)", "series_id": "CSUSHPISA",
+     "basis": "yoy_pct",   "freq": "M", "theme": "Housing", "favorable": "up"},
+    # ── Sentiment & Money ──
+    {"key": "sentiment",  "label": "Consumer Sentiment (UMich)", "series_id": "UMCSENT",
+     "basis": "level_idx", "freq": "M", "theme": "Sentiment & Money", "favorable": "up"},
+    {"key": "m2",         "label": "M2 Money Supply",   "series_id": "M2SL",
+     "basis": "yoy_pct",   "freq": "M", "theme": "Sentiment & Money", "favorable": "up"},
 ]
 
 
@@ -113,7 +137,7 @@ def compute_row(df: pd.DataFrame, basis: str) -> dict:
             return out
         latest = float(d["value"].iloc[-1]) - float(d["value"].iloc[-2])
         prior = (float(d["value"].iloc[-2]) - float(d["value"].iloc[-3])) if n >= 3 else None
-    elif basis == "level_pct":
+    elif basis in ("level_pct", "level_idx", "level_k_raw"):
         latest = float(d["value"].iloc[-1])
         prior = float(d["value"].iloc[-2]) if n >= 2 else None
     elif basis == "level_k":
@@ -129,15 +153,61 @@ def compute_row(df: pd.DataFrame, basis: str) -> dict:
     return out
 
 
+def to_mom_pct(df: pd.DataFrame) -> pd.DataFrame:
+    """(date, value) level series → month-over-month % change series."""
+    d = _clean(df)
+    if d.empty:
+        return d
+    d = d.copy()
+    d["value"] = d["value"].pct_change() * 100.0
+    return d.dropna(subset=["value"]).reset_index(drop=True)
+
+
+def basis_series(df: pd.DataFrame, basis: str) -> pd.DataFrame:
+    """The (date, value) history of the *displayed* metric for a basis — used
+    to z-score the latest reading against its own history."""
+    if basis == "yoy_pct":
+        return to_yoy(df)
+    if basis == "mom_pct":
+        return to_mom_pct(df)
+    if basis == "mom_chg_k":
+        return to_mom_change(df)
+    if basis == "level_k":
+        d = _clean(df).copy()
+        if not d.empty:
+            d["value"] = d["value"] / 1000.0
+        return d
+    return _clean(df)  # level_pct / level_idx / level_k_raw
+
+
+def zscore_latest(df: pd.DataFrame, basis: str, years: int = 10) -> float | None:
+    """Z-score of the latest basis value vs its trailing `years` of history
+    (≥12 obs required; falls back to all history). None when undefined."""
+    s = basis_series(df, basis)
+    if s is None or s.empty:
+        return None
+    cutoff = s["date"].iloc[-1] - pd.DateOffset(years=years)
+    w = s[s["date"] >= cutoff]["value"].dropna()
+    if len(w) < 12:
+        w = s["value"].dropna()
+    if len(w) < 12:
+        return None
+    sd = float(w.std())
+    if sd == 0 or sd != sd:
+        return None
+    return (float(w.iloc[-1]) - float(w.mean())) / sd
+
+
 def get_print_board() -> list[dict]:
-    """The full print board: one row per indicator in INDICATORS, each merging
-    the spec with computed {latest, prior, delta, as_of}. Rows whose series
-    failed to load carry None numerics (renderer shows n/a)."""
+    """The full print board: one row per indicator in INDICATORS, merging the
+    spec with computed {latest, prior, delta, as_of} and a `zscore` (latest vs
+    ~10y of its own history). Rows whose series failed carry None numerics."""
     rows = []
     for spec in INDICATORS:
-        df = fetch_series(spec["series_id"], years=6)
+        df = fetch_series(spec["series_id"], years=11)
         computed = compute_row(df, spec["basis"])
-        rows.append({**spec, **computed})
+        z = zscore_latest(df, spec["basis"], years=10)
+        rows.append({**spec, **computed, "zscore": z})
     return rows
 
 
