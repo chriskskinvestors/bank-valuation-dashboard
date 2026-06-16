@@ -407,6 +407,18 @@ def _build_universe_live() -> dict[str, dict]:
             "exchange": info.get("exchange") or existing.get("exchange") or "OTC",
         }
 
+    # ── Share-class classification ───────────────────────────────────────
+    # Tag each ticker common/preferred so non-common classes (preferred series,
+    # baby bonds, redundant second common classes) are dropped from valuation
+    # screens — a preferred ticker's ~$25 price against the registrant's common
+    # TBVPS produces a garbage ~0.01x P/TBV. FMP verifies the structural pick.
+    try:
+        from data.share_class import annotate_share_classes
+        from data.fmp_client import get_company_name
+        annotate_share_classes(universe, name_lookup=get_company_name)
+    except Exception as e:
+        print(f"[universe] share-class annotation skipped: {type(e).__name__}: {e}")
+
     return universe
 
 
@@ -437,8 +449,16 @@ def get_universe_tickers() -> list[str]:
     """
     from data.bank_mapping import get_cik, get_fdic_cert
     from data.fdic_client import cert_is_active
+    from data.share_class import noncommon_tickers
 
-    all_tickers = sorted(get_universe().keys())
+    universe = get_universe()
+    all_tickers = sorted(universe.keys())
+
+    # Non-common share classes (preferred series, baby bonds, redundant second
+    # common classes) resolve to data but share their registrant's CIK/cert, so
+    # they'd carry the common's TBVPS against their own ~$25 price — a garbage
+    # P/TBV. Drop them here, the single scope feeding screens + leaderboard.
+    noncommon = noncommon_tickers(universe)
 
     def _resolves(t: str) -> bool:
         cik = get_cik(t)
@@ -449,8 +469,13 @@ def get_universe_tickers() -> list[str]:
             return False
         return cert_is_active(cert)  # Drop acquired/closed institutions
 
-    resolved = [t for t in all_tickers if _resolves(t)]
-    dropped = set(all_tickers) - set(resolved)
+    resolved = [t for t in all_tickers if t not in noncommon and _resolves(t)]
+    dropped_nc = noncommon & set(all_tickers)
+    if dropped_nc:
+        print(f"[universe] Excluded {len(dropped_nc)} non-common share classes: "
+              f"{', '.join(sorted(dropped_nc)[:12])}"
+              f"{'...' if len(dropped_nc) > 12 else ''}")
+    dropped = set(all_tickers) - set(resolved) - dropped_nc
     if dropped:
         print(f"[universe] Dropped {len(dropped)} unresolvable/inactive tickers: "
               f"{', '.join(sorted(dropped)[:10])}"

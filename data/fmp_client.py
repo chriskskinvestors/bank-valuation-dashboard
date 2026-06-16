@@ -368,6 +368,33 @@ def get_fundamentals_batch(tickers: Iterable[str],
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Public API — security profile (share-class classification)
+# ──────────────────────────────────────────────────────────────────────────
+
+PROFILE_TTL_SECONDS = 604800  # 7d — a security's name/type effectively never changes
+
+
+def get_company_name(ticker: str) -> str | None:
+    """The FMP `profile` security name (e.g. 'Customers Bancorp, Inc 5.375% S'
+    for a preferred vs 'Customers Bancorp, Inc.' for the common). Used by
+    data.share_class to VERIFY the structural common/preferred split — never as
+    the sole classifier (FMP omits the marker for most preferreds). None when
+    FMP is unconfigured or the lookup fails."""
+    if not _has_key():
+        return None
+    ticker = ticker.upper()
+    cache_key = f"fmp_profile_name:{ticker}"
+    cached = _cache_get(cache_key, PROFILE_TTL_SECONDS)
+    if cached is not None:
+        return cached or None
+    data = _get("profile", {"symbol": ticker})
+    row = _first_row(data)
+    name = (row.get("companyName") if row else None) or ""
+    _cache_put(cache_key, name)
+    return name or None
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Public API — historical price chart
 # ──────────────────────────────────────────────────────────────────────────
 
