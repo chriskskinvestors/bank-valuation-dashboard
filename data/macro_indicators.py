@@ -207,7 +207,10 @@ def get_print_board() -> list[dict]:
         df = fetch_series(spec["series_id"], years=11)
         computed = compute_row(df, spec["basis"])
         z = zscore_latest(df, spec["basis"], years=10)
-        rows.append({**spec, **computed, "zscore": z})
+        bs = basis_series(df, spec["basis"])
+        spark = ([float(v) for v in bs["value"].tail(36).tolist() if v == v]
+                 if bs is not None and not bs.empty else [])
+        rows.append({**spec, **computed, "zscore": z, "spark": spark})
     return rows
 
 

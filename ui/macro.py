@@ -403,6 +403,27 @@ def _fmt_delta(row: dict) -> str:
     return f'<span style="color:{color};">{txt}</span>'
 
 
+def _sparkline_svg(values, width: int = 92, height: int = 22) -> str:
+    """Tiny inline-SVG trend line of a real series (last ~3y of the indicator's
+    displayed metric) — a lightweight micro-visual, not a decorative placeholder."""
+    vals = [float(v) for v in (values or []) if v is not None and v == v]
+    if len(vals) < 2:
+        return '<span style="color:var(--text-muted);">—</span>'
+    lo, hi = min(vals), max(vals)
+    rng = (hi - lo) or 1.0
+    n, pad = len(vals), 2.0
+    pts = []
+    for i, v in enumerate(vals):
+        x = pad + i / (n - 1) * (width - 2 * pad)
+        y = pad + (1 - (v - lo) / rng) * (height - 2 * pad)
+        pts.append(f"{x:.1f},{y:.1f}")
+    lx, ly = pts[-1].split(",")
+    return (f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+            f'style="vertical-align:middle;display:inline-block;">'
+            f'<polyline points="{" ".join(pts)}" fill="none" stroke="#1e40af" stroke-width="1.4"/>'
+            f'<circle cx="{lx}" cy="{ly}" r="1.7" fill="#1e40af"/></svg>')
+
+
 def _fmt_z(z) -> str:
     """Historical context: z-score of the latest reading vs ~10y of its own
     history, as ±Nσ (bold when |z| ≥ 2, i.e. an unusual reading)."""
@@ -554,7 +575,7 @@ def _render_economy_calendar():
             themes.append(r["theme"])
     body = ""
     for theme in themes:
-        body += ('<tr><td colspan="6" style="text-align:left;background:var(--grid-head-bg);'
+        body += ('<tr><td colspan="7" style="text-align:left;background:var(--grid-head-bg);'
                  'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
                  f'font-size:var(--fs-2xs);letter-spacing:0.06em;">{_html.escape(theme)}</td></tr>')
         for r in (x for x in rows if x["theme"] == theme):
@@ -566,6 +587,7 @@ def _render_economy_calendar():
                 f'<td>{_fmt_level(r["prior"], r["basis"])}</td>'
                 f'<td>{_fmt_delta(r)}</td>'
                 f'<td>{_fmt_z(r.get("zscore"))}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(r.get("spark"))}</td>'
                 f'<td style="text-align:right;color:var(--text-secondary);">'
                 f'{_fmt_as_of(r["as_of"], r["freq"])}</td>'
                 "</tr>"
@@ -574,7 +596,7 @@ def _render_economy_calendar():
         '<div class="ksk-grid"><table style="width:100%;">'
         "<thead><tr>"
         "<th>Indicator</th><th>Latest</th><th>Prior</th>"
-        "<th>Δ vs prior</th><th>vs hist</th><th>As of</th>"
+        '<th>Δ vs prior</th><th>vs hist</th><th>Trend (3y)</th><th>As of</th>'
         "</tr></thead><tbody>" + body + "</tbody></table></div>",
         unsafe_allow_html=True,
     )
