@@ -193,6 +193,86 @@ def get_quote_batch(tickers: Iterable[str],
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Public API — pre/post-market (aftermarket) quote
+# ──────────────────────────────────────────────────────────────────────────
+
+# Aftermarket bid/ask, for the Home ETF table's "Aft" column. On plan-denial
+# (401/403) or any failure it returns the empty shape, and callers MUST treat
+# missing data as "no print" (render —), never a guess — so the feature
+# degrades to EOD cleanly if the key tier ever lacks it.
+def _empty_aftermarket() -> dict:
+    return {"bid": None, "ask": None, "volume": None, "timestamp": None}
+
+
+def get_aftermarket_quote(ticker: str) -> dict:
+    """Pre/post-market bid/ask via FMP's stable `aftermarket-quote`.
+    Returns {bid, ask, volume, timestamp}; empty shape on denial/failure."""
+    if not _has_key():
+        return _empty_aftermarket()
+    ticker = ticker.upper()
+    cache_key = f"fmp_aq:{ticker}"
+    cached = _cache_get(cache_key, QUOTE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+    data = _get("aftermarket-quote", {"symbol": ticker})
+    if not data or not isinstance(data, list) or not data:
+        return _empty_aftermarket()
+    row = data[0]
+    out = {
+        "bid": row.get("bidPrice"),
+        "ask": row.get("askPrice"),
+        "volume": row.get("volume"),
+        "timestamp": row.get("timestamp"),
+    }
+    _cache_put(cache_key, out)
+    return out
+
+
+def get_aftermarket_quote_batch(tickers: Iterable[str],
+                                max_per_min: int | None = None) -> dict[str, dict]:
+    """Bulk aftermarket quotes — single-symbol fan-out + pacing, same shape
+    discipline as get_quote_batch. Returns {ticker: aftermarket_dict}."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    tickers = [t.upper() for t in tickers if t]
+    if not tickers:
+        return {}
+    if not _has_key():
+        return {t: _empty_aftermarket() for t in tickers}
+    interval = (60.0 / max_per_min) if max_per_min else 0.0
+    out: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {}
+        for t in tickers:
+            futures[ex.submit(get_aftermarket_quote, t)] = t
+            if interval:
+                time.sleep(interval)
+        for fut in as_completed(futures):
+            t = futures[fut]
+            try:
+                out[t] = fut.result()
+            except Exception:
+                out[t] = _empty_aftermarket()
+    return out
+
+
+def aftermarket_move(bid, ask, last, max_rel_spread: float = 0.012):
+    """Post-market % move from the regular-session `last` to the bid/ask
+    MID — only when the spread is tight enough to be a real print (default
+    ≤1.2% of mid). Wide / one-sided / non-positive / unparseable quotes
+    return None so the UI shows '—' instead of a fabricated move."""
+    try:
+        bid = float(bid); ask = float(ask); last = float(last)
+    except (TypeError, ValueError):
+        return None
+    if bid <= 0 or ask <= 0 or last <= 0 or ask < bid:
+        return None
+    mid = (bid + ask) / 2.0
+    if mid <= 0 or (ask - bid) / mid > max_rel_spread:
+        return None
+    return (mid / last - 1.0) * 100.0
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Public API — latest EOD close (quote-endpoint fallback)
 # ──────────────────────────────────────────────────────────────────────────
 

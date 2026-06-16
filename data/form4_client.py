@@ -272,6 +272,50 @@ def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
     return all_transactions
 
 
+def recent_open_market_transactions(ticker_ciks: dict, days: int = 30,
+                                     limit: int = 60) -> list[dict]:
+    """Recent OPEN-MARKET insider trades (codes P/S only) across the given
+    {ticker: cik} map, for the Home news feed's BUY/SELL rows.
+
+    Reads ONLY the already-cached Form 4 JSON (never triggers a live SEC
+    fetch — far too slow for a feed render; the nightly refresh_insider job
+    populates the cache). Excludes grants/awards/option-exercises/tax — only
+    real market buys and sells, the SNL "VP sells N shares" convention.
+
+    Returns rows newest-first:
+      {ticker, cik, insider, role, direction ('Buy'|'Sell'), code ('P'|'S'),
+       shares, value_usd, date}
+    """
+    cutoff = (datetime.now() - timedelta(days=days)).date()
+    out: list[dict] = []
+    for ticker, cik in (ticker_ciks or {}).items():
+        if not cik:
+            continue
+        cached = load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
+        if not cached:
+            continue
+        for tx in cached.get("transactions", []):
+            if tx.get("form_type") != "non-derivative":
+                continue
+            if tx.get("code") not in ("P", "S"):
+                continue
+            try:
+                d = datetime.strptime(tx.get("date"), "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+            if d < cutoff:
+                continue
+            out.append({
+                "ticker": ticker, "cik": cik,
+                "insider": tx.get("insider"), "role": tx.get("role"),
+                "direction": tx.get("direction"), "code": tx.get("code"),
+                "shares": tx.get("shares"), "value_usd": tx.get("value_usd"),
+                "date": tx.get("date"),
+            })
+    out.sort(key=lambda r: r["date"], reverse=True)
+    return out[:limit]
+
+
 def summarize_insider_activity(transactions: list[dict]) -> dict:
     """Compute summary stats: 6M buy/sell totals, net $ flow, by-insider summary."""
     if not transactions:

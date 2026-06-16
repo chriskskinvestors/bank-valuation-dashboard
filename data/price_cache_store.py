@@ -69,6 +69,7 @@ def init_price_cache_schema():
                 change_pct     DOUBLE PRECISION,
                 volume         DOUBLE PRECISION,
                 dividend_yield DOUBLE PRECISION,
+                avg_volume     DOUBLE PRECISION,
                 updated_at     {ts_default}
             )
         """))
@@ -87,6 +88,22 @@ def init_price_cache_schema():
                     conn.execute(text(
                         "ALTER TABLE price_cache ADD COLUMN "
                         "dividend_yield DOUBLE PRECISION"))
+        except Exception:
+            pass
+        # avg_volume (63-day mean daily volume) — written by the nightly
+        # refresh_avg_volume job, not by upsert_prices (quotes carry no avg).
+        try:
+            if _USE_POSTGRES:
+                conn.execute(text(
+                    "ALTER TABLE price_cache ADD COLUMN IF NOT EXISTS "
+                    "avg_volume DOUBLE PRECISION"))
+            else:
+                cols = [row[1] for row in conn.execute(
+                    text("PRAGMA table_info(price_cache)")).fetchall()]
+                if "avg_volume" not in cols:
+                    conn.execute(text(
+                        "ALTER TABLE price_cache ADD COLUMN "
+                        "avg_volume DOUBLE PRECISION"))
         except Exception:
             pass
 
@@ -162,6 +179,30 @@ def upsert_prices(quotes: dict[str, dict]) -> int:
     return len(rows)
 
 
+def upsert_avg_volumes(avg_vols: dict[str, float]) -> int:
+    """Write {ticker: avg_daily_volume} — the nightly 63-day mean.
+
+    UPDATE-only (never INSERT): a row exists once the price job has priced
+    the ticker, and we must not touch `price`/`updated_at` here (that would
+    fabricate price freshness from a volume-only refresh). Tickers without a
+    price row yet are simply skipped. Returns rows updated.
+    """
+    from sqlalchemy import text
+    rows = [(t.upper(), _coerce(v)) for t, v in (avg_vols or {}).items()]
+    rows = [(t, v) for t, v in rows if v is not None and v > 0]
+    if not rows:
+        return 0
+    eng = _get_engine()
+    n = 0
+    with eng.begin() as conn:
+        for ticker, v in rows:
+            res = conn.execute(text(
+                "UPDATE price_cache SET avg_volume = :v WHERE ticker = :t"),
+                {"v": v, "t": ticker})
+            n += res.rowcount or 0
+    return n
+
+
 def _parse_ts(v) -> datetime | None:
     if v is None:
         return None
@@ -195,7 +236,7 @@ def get_prices(tickers: list[str], max_age_s: int | None = None) -> dict[str, di
             placeholders = ", ".join(f":t{j}" for j in range(len(chunk)))
             rows = conn.execute(text(
                 f"SELECT ticker, price, prev_close, change, change_pct, volume, "
-                f"dividend_yield, updated_at FROM price_cache "
+                f"dividend_yield, avg_volume, updated_at FROM price_cache "
                 f"WHERE ticker IN ({placeholders})"
             ), params).fetchall()
             for r in rows:
@@ -211,6 +252,9 @@ def get_prices(tickers: list[str], max_age_s: int | None = None) -> dict[str, di
                     "change_pct": r.change_pct,
                     "volume": r.volume,
                     "dividend_yield": r.dividend_yield,
+                    "avg_volume": r.avg_volume,
+                    "rel_volume": (r.volume / r.avg_volume
+                                   if r.volume and r.avg_volume else None),
                     "updated_at": ts.isoformat() if ts else None,
                     "age_seconds": age,
                 }
@@ -226,7 +270,7 @@ def get_all_prices(max_age_s: int | None = None) -> dict[str, dict]:
     with eng.begin() as conn:
         rows = conn.execute(text(
             "SELECT ticker, price, prev_close, change, change_pct, volume, "
-            "dividend_yield, updated_at FROM price_cache"
+            "dividend_yield, avg_volume, updated_at FROM price_cache"
         )).fetchall()
     for r in rows:
         ts = _parse_ts(r.updated_at)
@@ -236,7 +280,9 @@ def get_all_prices(max_age_s: int | None = None) -> dict[str, dict]:
         out[r.ticker] = {
             "price": r.price, "close": r.prev_close, "prev_close": r.prev_close,
             "change": r.change, "change_pct": r.change_pct, "volume": r.volume,
-            "dividend_yield": r.dividend_yield,
+            "dividend_yield": r.dividend_yield, "avg_volume": r.avg_volume,
+            "rel_volume": (r.volume / r.avg_volume
+                           if r.volume and r.avg_volume else None),
             "updated_at": ts.isoformat() if ts else None, "age_seconds": age,
         }
     return out
