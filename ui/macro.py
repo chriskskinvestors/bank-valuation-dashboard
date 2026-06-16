@@ -620,6 +620,42 @@ def _render_economy_calendar():
         )
         st.plotly_chart(figl, use_container_width=True)
 
+    # ── Growth (Real GDP bars) + Activity (Industrial Production & Retail) ──
+    c3, c4 = st.columns(2)
+    with c3:
+        figg = go.Figure()
+        gdp = fetch_series("A191RL1Q225SBEA", years=6)
+        if not gdp.empty:
+            g = gdp.dropna(subset=["value"]).sort_values("date")
+            cutoff = g["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+            g = g[g["date"] >= cutoff]
+            gcolors = ["#dc2626" if v < 0 else "#1e40af" for v in g["value"]]
+            figg.add_trace(go.Bar(x=g["date"], y=g["value"], name="Real GDP QoQ SAAR",
+                                  marker_color=gcolors))
+        apply_standard_layout(figg, title="Growth — Real GDP (QoQ SAAR, 5Y)",
+                              height=CHART_HEIGHT_FULL, yaxis_title="QoQ SAAR",
+                              show_legend=False)
+        figg.update_yaxes(ticksuffix="%")
+        st.plotly_chart(figg, use_container_width=True)
+
+    with c4:
+        figa = go.Figure()
+        for sid, label, color in [
+            ("INDPRO", "Industrial Production", "#1e40af"),
+            ("RSAFS", "Retail Sales", "#d97706"),
+        ]:
+            s = to_yoy(fetch_series(sid, years=6))
+            if not s.empty:
+                cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+                s = s[s["date"] >= cutoff]
+                figa.add_trace(go.Scatter(
+                    x=s["date"], y=s["value"], name=label, mode="lines",
+                    line=dict(color=color, width=2)))
+        apply_standard_layout(figa, title="Activity — Industrial Production & Retail (YoY, 5Y)",
+                              height=CHART_HEIGHT_FULL, yaxis_title="YoY")
+        figa.update_yaxes(ticksuffix="%")
+        st.plotly_chart(figa, use_container_width=True)
+
     st.markdown("---")
 
     # ── Upcoming releases (FMP economic calendar) ─────────────────────
