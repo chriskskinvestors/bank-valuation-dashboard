@@ -95,12 +95,13 @@ def _render_bank_sector():
     from ui.chrome import ledger
 
     names = {e["ticker"]: e["name"] for e in ETFS}
-    c_sel, c_per = st.columns([3, 2], vertical_alignment="center")
-    with c_sel:
+    # Selectors kept tight on the left (not spread across the page).
+    c_etf, c_win, _ = st.columns([1, 1.2, 1.8], vertical_alignment="center")
+    with c_etf:
         ticker = st.radio("ETF", [e["ticker"] for e in ETFS], index=0, horizontal=True,
                           format_func=lambda t: t, key="bank_sector_etf",
                           label_visibility="collapsed")
-    with c_per:
+    with c_win:
         period = st.radio("Window", PERIODS, index=PERIODS.index("1Y"), horizontal=True,
                           format_func=lambda p: p, key="bank_sector_period",
                           label_visibility="collapsed")
@@ -122,8 +123,10 @@ def _render_bank_sector():
         return ts.strftime("%b %d, %Y").replace(" 0", " ") if ts is not None else "—"
 
     # ── Compact price panel (~1/3 width, taller) with volume stacked
-    # under it, and the stat ledgers filling the rest of the row. ─────
-    c_chart, c_price, c_range = st.columns([1, 1, 1])
+    # under it; the Price/Range stats sit tight to its right (narrow column,
+    # so no big label→value gaps), with the rest of the row left as
+    # whitespace rather than pushing stats to the far edge. ─────────────
+    c_chart, c_stats, _ = st.columns([1, 0.7, 1.3])
     with c_chart:
         figp = go.Figure()
         figp.add_trace(go.Scatter(
@@ -153,13 +156,12 @@ def _render_bank_sector():
                               yaxis_title="Shares", show_legend=False)
         st.plotly_chart(figv, use_container_width=True)
 
-    with c_price:
+    with c_stats:
         ledger("Price", [
             ("Last close", f'${stats["last"]:,.2f}' if stats["last"] is not None else "n/a"),
             (f"Return ({period})", _fmt_signed_pct(stats["period_return_pct"])),
             ("Avg daily volume", _fmt_vol(stats["avg_volume"])),
         ])
-    with c_range:
         hi = f'${stats["period_high"]:,.2f}' if stats["period_high"] is not None else "n/a"
         lo = f'${stats["period_low"]:,.2f}' if stats["period_low"] is not None else "n/a"
         ledger("Range", [
