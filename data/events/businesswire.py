@@ -14,17 +14,25 @@ from datetime import datetime, timezone, timedelta
 from data.events.base import Event, SourceAdapter
 from data.events.wire_base import (
     fetch_rss, match_tickers, classify_press_release, is_routine_noise,
-    is_safe_news_url,
+    is_safe_news_url, is_junk_news,
 )
 
 
-# Business Wire's banking + financial-services RSS feeds
-BW_FEEDS = [
-    # Banking - all
-    "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeGVtRWA==",
-    # Financial Services - all
-    "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeGVtVUw==",
-]
+# Business Wire's banking + financial-services RSS feeds.
+#
+# DISABLED 2026-06-15: the two tokens below were verified WRONG against the live
+# endpoint — `...GVtRWA==` returns Business Wire's *Technology: Networks* feed
+# (which mis-tagged an AI-startup funding release to MS as an investor mention),
+# and `...GVtVUw==` is dead ("RSS channel ID is not available"). BW's feed tokens
+# are server-generated and obfuscated, so guessing a replacement would risk
+# shipping a wrong feed (CLAUDE.md: never ship plausible-wrong / primary sources
+# only). Banking releases distributed via Business Wire are still captured —
+# they syndicate into Google News within minutes (data/events/google_news.py),
+# and PR Newswire / GlobeNewswire / SEC 8-K cover the same material events.
+#
+# OWNER ACTION NEEDED: supply the correct Banking and Financial-Services feed
+# tokens from businesswire.com/portal feed builder, then re-populate BW_FEEDS.
+BW_FEEDS: list[str] = []
 
 
 class BusinessWireAdapter(SourceAdapter):
@@ -48,14 +56,20 @@ class BusinessWireAdapter(SourceAdapter):
 
                 if is_routine_noise(item.title) or not is_safe_news_url(item.link):
                     continue
-                text = f"{item.title}. {item.summary}"
-                matched = match_tickers(text)
-                # Keep only matches that are in the user's universe
-                matched = [t for t in matched if t in in_universe]
+                # Match on the TITLE only — not title+summary. A bank named in
+                # the body as an underwriter / investor / advisor (e.g. a startup
+                # "Raises $60M" release that credits a bank) is NOT the subject;
+                # summary-matching mis-tagged exactly those to the bank. A
+                # company's own release always names it in the headline.
+                matched = [t for t in match_tickers(item.title) if t in in_universe]
                 if not matched:
                     continue
 
                 for ticker in matched:
+                    # Per-ticker junk gate (the single filter) — also rejects a
+                    # headline carrying a DIFFERENT company's $TICKER/(NYSE:XXX).
+                    if is_junk_news(item.title, ticker):
+                        continue
                     out.append(Event(
                         ticker=ticker,
                         source=self.name,

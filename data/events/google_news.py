@@ -23,7 +23,7 @@ from data.events.base import Event, SourceAdapter
 from data.events.store import TOPIC_SOURCE, topic_ticker
 from data.events.wire_base import (
     fetch_rss, match_tickers, classify_press_release, is_company_press_release,
-    is_safe_news_url, is_junk_news,
+    is_safe_news_url, is_junk_news, is_material_regulatory,
 )
 
 # A browser UA — Google News returns an empty/blocked feed to obvious bots.
@@ -81,9 +81,16 @@ class GoogleNewsAdapter(SourceAdapter):
             # name-matcher); drops tangential mentions Google returns.
             if ticker not in match_tickers(headline):
                 continue
-            # Keep only the company's OWN releases — drop third-party articles,
-            # analyst notes, structured notes, foreign-ticker mentions (junk).
-            if not is_company_press_release(headline) or is_junk_news(headline, ticker):
+            # Keep the company's OWN releases AND material regulatory/enforcement
+            # events (consent orders, fines, written agreements) — the latter are
+            # reported by the regulator/press, never carry a company PR verb, and
+            # were silently dropped by the first-party-only gate. Then drop
+            # third-party articles, analyst notes, structured notes, and
+            # foreign-ticker/junk mentions.
+            if not (is_company_press_release(headline)
+                    or is_material_regulatory(headline)):
+                continue
+            if is_junk_news(headline, ticker):
                 continue
             # Reject content-farm/spam links (messaging, social, shorteners) —
             # a real release links to a wire / IR / outlet, never WhatsApp et al.

@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from data.events.base import Event, SourceAdapter
 from data.events.wire_base import (
     fetch_rss, match_tickers, classify_press_release, is_routine_noise,
-    is_safe_news_url,
+    is_safe_news_url, is_junk_news,
 )
 
 
@@ -45,12 +45,15 @@ class GlobeNewswireAdapter(SourceAdapter):
 
                 if is_routine_noise(item.title) or not is_safe_news_url(item.link):
                     continue
-                text = f"{item.title}. {item.summary}"
-                matched = [t for t in match_tickers(text) if t in in_universe]
+                # Title-only matching — a bank named only in the body (as an
+                # underwriter / investor / advisor) is not the story's subject.
+                matched = [t for t in match_tickers(item.title) if t in in_universe]
                 if not matched:
                     continue
 
                 for ticker in matched:
+                    if is_junk_news(item.title, ticker):
+                        continue
                     out.append(Event(
                         ticker=ticker,
                         source=self.name,
