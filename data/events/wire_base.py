@@ -411,38 +411,119 @@ def is_routine_noise(headline: str) -> bool:
 
 
 # Headlines that mention a bank but aren't ABOUT it — third-party SEO/
-# aggregator spam (broker forecasts, shares-sold-by articles), funding stories
-# about someone else, and non-material branch/staffing trivia. These slip past
-# name-matching because the bank's name appears in another company's story.
-# (Structured-note issuance is covered by _NOISE_RE above.)
+# aggregator spam (broker forecasts, funding stories about someone else, and
+# non-material branch/staffing trivia). These slip past name-matching because
+# the bank's name appears in another company's story.
+# (Structured-note issuance is covered by _NOISE_RE above; 13F-ownership and
+# insider-trivia spam by the dedicated regexes below.)
 _THIRD_PARTY_RE = re.compile(
-    r"\b(issues?\s+(optimistic|pessimistic|bullish|bearish)\s+forecast|"
-    r"price\s+target|forecast\s+for|target\s+price|"
-    r"shares?\s+(sold|bought|purchased|acquired)\s+by|"
-    r"(funding|investment)\s+from|to\s+(buy|sell)\s+\$?\d|"
-    r"office\s+leader|branch\s+manager|relationship\s+manager|"
-    r"new\s+\w+\s+(branch|location|office))\b",
+    # NOTE: 'price\s+targets?' (plural) — the old pattern's trailing word-
+    # boundary missed "Price Targets" (the live MS/JEF headline). Each branch
+    # carries its own boundaries so a plural 's' can't defeat the group's \b.
+    r"\bissues?\s+(optimistic|pessimistic|bullish|bearish)\s+forecast\b"
+    r"|\bprice\s+targets?\b|\btarget\s+price\b|\bforecast\s+for\b"
+    r"|\b(funding|investment)\s+from\b|\bto\s+(buy|sell)\s+\$?\d"
+    r"|\boffice\s+leader\b|\bbranch\s+manager\b|\brelationship\s+manager\b"
+    r"|\bnew\s+\w+\s+(branch|location|office)\b",
     re.IGNORECASE,
 )
+
+# 13F / institutional-ownership SEO spam. Stock-ownership churn — "X Acquires N
+# Shares of Y", "N Shares of Y Acquired by X", "X Boosts Holdings in Y", "X Has
+# $N Position in Y", "New Stake in Y" — is not material company news. It's
+# auto-generated filler from MarketBeat / ETF-Daily-News-style content farms and
+# was the single biggest junk source in the live feed (2026-06-15). It also
+# mis-tags: "...Shares of Target Corporation $TGT ... by State Street" landed
+# under STT because the holder's name matched. Examples this catches:
+#   "66,617 Shares in SoFi Technologies, Inc. $SOFI Acquired by Blue Jean ... LLC"
+#   "State Street Corp Acquires 394,198 Shares of The Goldman Sachs Group $GS"
+#   "JPMorgan Chase & Co. Has $2.1 Billion Position in Apple Inc."
+#   "Bank of America Boosts Holdings in Tesla" / "New Stake in Zions ... by Vanguard"
+_INSTITUTIONAL_RE = re.compile(
+    r"\d[\d,]*\s+shares?\s+(in|of)\b"
+    r"|\bshares?\s+(in|of)\s+\d"
+    # "<Holder> Acquires/Sells/Trims/Boosts ... N shares / its holdings /
+    # its position". 'take\w+ stake' is deliberately NOT here — a bank *taking
+    # a stake* in a fintech is real news; only the "takes position in" content-
+    # farm phrasing (handled below) is junk.
+    r"|\b(acquir\w+|sells?|sold|buys?|bought|purchas\w+|trim\w+|boost\w+|"
+    r"lower\w+|reduc\w+|divest\w+)\s+"
+    r"(its\s+|a\s+|new\s+)?(stake|position|holding|shares?|\$?\d)"
+    # broker/13F "Has $N (million|billion) Position/Holdings/Stake in <Co>"
+    r"|\bhas\s+(a\s+)?\$[\d.,]+\s*(million|billion|thousand)?\s*"
+    r"(stock\s+|equities?\s+)?(position|holding|stake)"
+    # content-farm ownership openers
+    r"|\bnew\s+(stake|position)\s+in\b"
+    r"|\btakes?\s+(a\s+)?position\s+in\b"
+    r"|\b(boost\w+|trim\w+|lower\w+|reduc\w+|grow\w+|grew|cut\w+|rais\w+|"
+    r"increas\w+|lift\w+)\s+(its\s+|a\s+)?(stake|holdings?|position)\s+in\b"
+    r"|\bshares?\s+(sold|bought|purchased|acquired)\s+by\b",
+    re.IGNORECASE,
+)
+
+# Form-4 / insider micro-events auto-posted by content farms — tax-withholding
+# share events and "N-share" vesting/award trivia. Non-material.
+# Examples: "CF Bankshares (NASDAQ: CFBK) CEO reports 1,932-share tax
+# withholding event"; "EVP sells 4,000 shares".
+_INSIDER_TRIVIA_RE = re.compile(
+    r"\btax[\s-]?withholding\b"
+    r"|\d[\d,]*[\s-]share\s+(tax|withholding|vesting|forfeiture|award|grant|"
+    r"disposition|acquisition)\b"
+    r"|\b(ceo|cfo|director|evp|svp|president|insider)\s+sells?\s+\d"
+    r"|\bsells?\s+\d[\d,]*\s+shares?\b"
+    r"|\bshares?\s+sold\s+by\s+(insider|ceo|cfo|director|evp|svp|president)\b",
+    re.IGNORECASE,
+)
+
+# Content-farm editorializing tacked onto an earnings-shaped headline.
+# Example: "...Q1 2026 Earnings: EPS Falls Short ... - Earnings Manipulation Risk"
+_FARM_RE = re.compile(
+    r"\bearnings\s+manipulation\s+risk\b"
+    r"|\b(you\s+)?should\s+you?\s+buy\b|\bis\s+it\s+a\s+buy\b"
+    r"|\bhere'?s\s+(why|what)\b",
+    re.IGNORECASE,
+)
+
 # A parenthetical exchange tag like (NYSE:CHWY) — if it's NOT this bank's
-# ticker, the story is about another company.
+# ticker, the story is about another company. The bare "$TGT" form (no exchange
+# prefix) is the dominant style in 13F-spam headlines, so we check both.
 _PAREN_TICKER_RE = re.compile(
     r"\((?:NYSE|NASDAQ|NYSEAMERICAN|NYSEARCA|AMEX|OTC|CBOE)[:\s]+([A-Z.]{1,6})\)",
     re.IGNORECASE,
 )
+# Bare cashtag like "$TGT" / "$GS". Upper-case only (so "$500" or "$2.1" can't
+# match) and 2–6 letters (skips single-letter false hits).
+_CASHTAG_RE = re.compile(r"\$([A-Z]{2,6})\b")
 
 
 def is_junk_news(headline: str, ticker: str | None = None) -> bool:
-    """ONE junk filter for ingest AND display: third-party mentions, routine
-    structured-note issuance, and (when ``ticker`` is given) headlines tagged
-    with a different company's exchange ticker. This logic previously lived
-    split between here and ui/home.py, where the two regexes drifted."""
+    """ONE junk filter for ingest AND display. Rejects:
+      • third-party broker forecasts / branch-hire trivia (_THIRD_PARTY_RE)
+      • 13F institutional-ownership churn (_INSTITUTIONAL_RE) — the biggest junk
+        source in the live feed: "X Acquires N Shares of Y", "Y Has $N Position
+        in Z", "New Stake in W"
+      • Form-4 / insider tax-withholding & vesting micro-events (_INSIDER_TRIVIA_RE)
+      • content-farm editorializing (_FARM_RE)
+      • structured-note issuance (is_routine_noise)
+      • (when ``ticker`` is given) headlines tagged with a DIFFERENT company's
+        exchange ticker, both "(NYSE:XXX)" and bare "$XXX" cashtag forms.
+
+    Conservative by construction: every rule targets a documented junk phrasing
+    and the test suite pins legitimate press releases (dividends, M&A, earnings,
+    buybacks, officer changes) as must-pass. This logic previously lived split
+    between here and ui/home.py, where the two regexes drifted."""
     h = headline or ""
-    if _THIRD_PARTY_RE.search(h) or is_routine_noise(h):
+    if (_THIRD_PARTY_RE.search(h) or _INSTITUTIONAL_RE.search(h)
+            or _INSIDER_TRIVIA_RE.search(h) or _FARM_RE.search(h)
+            or is_routine_noise(h)):
         return True
     if ticker:
+        t = ticker.upper()
         for other in _PAREN_TICKER_RE.findall(h):
-            if other.upper() != ticker.upper():
+            if other.upper() != t:
+                return True
+        for other in _CASHTAG_RE.findall(h):
+            if other.upper() != t:
                 return True
     return False
 

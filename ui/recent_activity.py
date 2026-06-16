@@ -115,10 +115,15 @@ def _event_row(ev: dict, show_ticker: bool) -> str:
 
 def _render_feed(events: list[dict], show_ticker: bool = False):
     """Render the whole feed as a single dense HTML block (no inter-element gaps)."""
-    from data.events.wire_base import is_safe_news_url
+    from data.events.wire_base import is_safe_news_url, is_junk_news
     # Defensive: never render an event whose link is a messaging/social/spam URL
-    # (e.g. a content-farm "earnings" article linking to a WhatsApp group).
-    events = [e for e in events if is_safe_news_url(e.get("url"))]
+    # (e.g. a content-farm "earnings" article linking to a WhatsApp group), and
+    # apply the SAME junk filter the Home Alert Inbox uses so 13F-ownership churn
+    # and insider-trivia spam don't leak into per-bank feeds (the Home page
+    # filtered these but this surface didn't — a documented gap, 2026-06-15).
+    events = [e for e in events
+              if is_safe_news_url(e.get("url"))
+              and not is_junk_news(e.get("headline") or "", e.get("ticker"))]
     body = "".join(_event_row(e, show_ticker) for e in events)
     st.markdown(_FEED_CSS + f'<div class="ev-feed">{body}</div>', unsafe_allow_html=True)
 
@@ -186,8 +191,10 @@ def render_events_calendar(ticker: str, limit: int = 15):
     # ── Recent: dated events from the unified store ──────────────────────
     st.markdown("**Recent events**")
     events = get_recent_events(ticker, limit=limit)
-    from data.events.wire_base import is_safe_news_url
-    events = [e for e in events if is_safe_news_url(e.get("url"))]
+    from data.events.wire_base import is_safe_news_url, is_junk_news
+    events = [e for e in events
+              if is_safe_news_url(e.get("url"))
+              and not is_junk_news(e.get("headline") or "", e.get("ticker"))]
     if not events:
         st.caption(
             f"No events ingested yet for {ticker}. The dashboard polls SEC EDGAR "
