@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 class TestNavRendersFunctional(unittest.TestCase):
     SECTIONS = ["Home", "Market & Macro", "Screening", "Company",
-                "Peers", "Earnings", "Activity", "Geographic"]
+                "Peers", "Earnings", "News & Research", "Geographic"]
 
     def test_section_radio_has_all_sections(self):
         try:

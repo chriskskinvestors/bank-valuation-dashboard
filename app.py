@@ -37,7 +37,10 @@ if "ibkr_connected" not in st.session_state:
 
 
 # ── Level 1 Navigation: top nav bar (DESIGN-SYSTEM.md — sidebar retired) ──
-SECTIONS = ["Home", "Market & Macro", "Screening", "Company", "Peers", "Earnings", "Activity", "Geographic"]
+SECTIONS = ["Home", "Market & Macro", "Screening", "Company", "Peers", "Earnings", "News & Research", "Geographic"]
+# Backward-compat for the old ?s= section key (renamed 2026-06-15). Old
+# bookmarks/links to ?s=Activity should still land on the renamed section.
+_SECTION_ALIASES = {"Activity": "News & Research"}
 # Company Analysis sub-tabs. Rendered horizontally at the TOP of the main
 # content (under the bank picker), not in the sidebar. One shared template per
 # bank — every bank gets the same sub-tabs.
@@ -56,6 +59,7 @@ from ui.company_nav import (
 # refresh (or a shared link) restores exactly where you were instead of
 # bouncing to Home. ?s=<section>; Company adds ?bank= and ?tab=.
 _qs = st.query_params.get("s")
+_qs = _SECTION_ALIASES.get(_qs, _qs)
 if "nav_section" not in st.session_state and _qs in SECTIONS:
     st.session_state["nav_section"] = _qs
 if st.query_params.get("bank") and st.session_state.get("nav_section") not in ("Company",):
@@ -914,8 +918,8 @@ elif section == "Earnings":
         cache.put("watchlist_metrics_last", all_metrics)
     render_earnings_overview(watchlist, all_metrics)
 
-elif section == "Activity":
-    # ── ACTIVITY: Universe-wide event feed ──────────────────────────────
+elif section == "News & Research":
+    # ── NEWS & RESEARCH: Universe-wide event feed ───────────────────────
     from ui.recent_activity import render_activity_overview
     render_activity_overview()
 
