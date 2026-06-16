@@ -949,7 +949,34 @@ _CQ_CONCEPTS = {
 }
 
 
-def extract_credit_quality(facts: list[Fact]) -> dict:
+def _cecl_acl_sum(facts: list[Fact], period: str):
+    """Total ACL from the per-segment CECL split (collectively + individually
+    evaluated), summed over leaf segments (members==1) at `period`. None when not
+    tagged this way. Within each component a value-aggregate is dropped — a member
+    equal to the sum of the others is a domain/parent total, not a leaf — so a
+    parent double-count can't inflate the sum."""
+    coll_c = ("LoansAndLeasesReceivableCollectivelyEvaluatedForAllowance",
+              "FinancingReceivableAllowanceForCreditLossesCollectivelyEvaluatedForImpairment")
+    indiv_c = ("LoansAndLeasesReceivableIndividuallyEvaluatedForAllowance",
+               "FinancingReceivableAllowanceForCreditLossesIndividuallyEvaluatedForImpairment1")
+
+    def _leaf_sum(concepts):
+        vals = sorted((f.value for f in facts
+                       if f.concept.split(":")[-1] in concepts
+                       and len(f.members) == 1 and f.period_end == period),
+                      key=abs, reverse=True)
+        if len(vals) >= 3 and abs(vals[0] - sum(vals[1:])) <= max(abs(vals[0]) * 0.02, 1e5):
+            vals = vals[1:]                      # largest == Σ rest → a parent total
+        return vals
+
+    coll, indiv = _leaf_sum(coll_c), _leaf_sum(indiv_c)
+    if not coll and not indiv:
+        return None
+    total = sum(coll) + sum(indiv)
+    return total if total > 0 else None
+
+
+def extract_credit_quality(facts: list[Fact], comp_loan_total=None) -> dict:
     """{period_end: {...}} — the as-reported CECL allowance & asset-quality summary
     from a filing's iXBRL: allowance for credit losses (ACL), gross/net loans,
     nonaccrual loans, net charge-offs (writeoff − recovery, or the directly tagged
@@ -959,7 +986,12 @@ def extract_credit_quality(facts: list[Fact]) -> dict:
     Reconcile-gated: a period renders only with a tagged ACL AND gross loans; when
     net loans are also tagged, net + ACL must tie gross within 1% or the trio is
     rejected (n/a). NCO uses the tagged net writeoff-after-recovery, else
-    writeoff − recovery when both are present, else None."""
+    writeoff − recovery when both are present, else None.
+
+    `comp_loan_total` (the reconcile-gated composition loan total from
+    data.sec_composition) stands in for the gross loans of a filer that tags loans
+    ONLY by segment with no undimensioned total (FFIN); the ACL then comes from the
+    per-segment CECL split and the ratio is plausibility-gated."""
     # Use ONLY the filing's current (latest) loan-footnote date — never fall back
     # to a prior-year comparative, which would surface stale figures as current.
     periods: set = set()
@@ -967,25 +999,45 @@ def extract_credit_quality(facts: list[Fact]) -> dict:
     for f in facts:
         if f.concept.split(":")[-1] in anchors and not f.members:
             periods.add(f.period_end)
+    # Anchor the period on the COMPOSITION-derived gross loans too (some filers tag
+    # no undimensioned loan total, only a by-segment breakdown → the period set
+    # above can be empty even though the dimensional data is all there).
+    if not periods and comp_loan_total:
+        for f in facts:
+            if f.concept.split(":")[-1] == "Assets" and not f.members and f.period_start is None:
+                periods.add(f.period_end)
     out: dict = {}
     if periods:
         period = max(periods)
         acl = _sec_pick(facts, _CQ_CONCEPTS["acl"], period)
         if acl is None:
             # Some filers (FFIN) tag no single ACL total, only the CECL split —
-            # collectively + individually evaluated = total allowance (faithful sum).
+            # collectively + individually evaluated = total allowance. Take the
+            # undimensioned pair if tagged, else sum the per-segment leaves.
             coll = _sec_pick(facts, ("LoansAndLeasesReceivableCollectivelyEvaluatedForAllowance",
                                      "FinancingReceivableAllowanceForCreditLossesCollectivelyEvaluatedForImpairment"), period)
             indiv = _sec_pick(facts, ("LoansAndLeasesReceivableIndividuallyEvaluatedForAllowance",
                                       "FinancingReceivableAllowanceForCreditLossesIndividuallyEvaluatedForImpairment1"), period)
-            if coll is not None and indiv is not None:
-                acl = coll + indiv
+            acl = (coll + indiv) if (coll is not None and indiv is not None) else _cecl_acl_sum(facts, period)
         gross = _sec_pick(facts, _CQ_CONCEPTS["loans_gross"], period)
+        # Dimensional fallback: the reconcile-gated composition total stands in for an
+        # untagged undimensioned gross (a filer that reports loans only by segment).
+        if gross in (None, 0) and comp_loan_total:
+            gross = comp_loan_total
         net = _sec_pick(facts, _CQ_CONCEPTS["loans_net"], period)
-        # Render only with ACL AND gross loans at the current date, and (when a net
-        # loan figure is tagged) net + ACL tying gross — else n/a.
-        if (acl is not None and gross not in (None, 0)
-                and not (net is not None and abs((net + acl) - gross) > max(abs(gross) * 0.01, 5e6))):
+        # A tagged net far from gross is a wrong-concept match (FFIN's tiny
+        # NotesReceivableNet $56M vs $8.2B gross) — ignore it rather than reject.
+        if net is not None and gross and not (0.80 * gross <= net <= 1.02 * gross):
+            net = None
+        # Render only with ACL AND gross loans at the current date. With a valid net
+        # it must tie gross − ACL; without one (dimensional / net untagged) the
+        # ACL/loans ratio must be plausible [0.2%, 6%] — guarding a bad sum.
+        ok = acl is not None and gross not in (None, 0)
+        if ok and net is not None:
+            ok = abs((net + acl) - gross) <= max(abs(gross) * 0.01, 5e6)
+        elif ok:
+            ok = 0.002 <= acl / gross <= 0.06
+        if ok:
             nonaccrual = _sec_pick(facts, _CQ_CONCEPTS["nonaccrual"], period)
             nco = _sec_pick(facts, _CQ_CONCEPTS["nco"], period)
             if nco is None:
@@ -1016,11 +1068,24 @@ def credit_quality_for(cik) -> dict | None:
         meta = latest_filing(cik, forms)
         if not meta:
             continue
-        ckey = f"credit_quality:v1:{meta['accession']}"
+        ckey = f"credit_quality:v2:{meta['accession']}"
         cq = cache.get(ckey)
         if cq is None:
             try:
-                cq = extract_credit_quality(instance_facts(meta))
+                facts = instance_facts(meta)
+                cq = extract_credit_quality(facts)
+                if not cq:
+                    # Dimensional fallback: stand in the reconcile-gated composition
+                    # loan total for a filer that tags loans only by segment (FFIN).
+                    try:
+                        from data.sec_composition import compositions_for
+                        comp = compositions_for(cik)
+                        loan = comp.get("loan") if comp else None
+                        total = loan[max(loan)]["total"] if loan else None
+                    except Exception:
+                        total = None
+                    if total:
+                        cq = extract_credit_quality(facts, comp_loan_total=total)
                 try:
                     cache.put(ckey, cq)
                 except Exception:

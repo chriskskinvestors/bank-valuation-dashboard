@@ -591,6 +591,43 @@ class TestCreditQuality(unittest.TestCase):
     def test_missing_gross_loans_yields_na(self):
         self.assertEqual(extract_credit_quality([_f(self.ACL, 2000 * self.M)]), {})
 
+    def test_cecl_split_acl_and_bad_net_ignored(self):
+        # FFIN-shape: no undimensioned ACL (only the per-segment CECL split), gross
+        # tagged undimensioned, plus a tiny wrong-concept "net" ($56M vs $8.2B) that
+        # must be ignored rather than reject the bank. ACL = Σ split leaves.
+        SEG = "us-gaap:FinancingReceivablePortfolioSegmentAxis"
+        COLL = "us-gaap:LoansAndLeasesReceivableCollectivelyEvaluatedForAllowance"
+        INDIV = "us-gaap:LoansAndLeasesReceivableIndividuallyEvaluatedForAllowance"
+
+        def seg(concept, val, mem):
+            return Fact(concept, val, "2025-12-31", None, {SEG: mem}, "usd")
+        facts = [
+            _f(self.GROSS, 8158 * self.M),
+            seg(COLL, 50 * self.M, "x:CommercialMember"),
+            seg(COLL, 30 * self.M, "x:ConsumerMember"),
+            seg(INDIV, 26 * self.M, "x:CommercialMember"),
+            _f("us-gaap:NotesReceivableNet", 56 * self.M),
+        ]
+        d = extract_credit_quality(facts)["2025-12-31"]
+        self.assertAlmostEqual(d["acl"], 106 * self.M)          # 50 + 30 + 26
+        self.assertAlmostEqual(d["loans_gross"], 8158 * self.M)
+        self.assertAlmostEqual(d["acl_to_loans"], 106 / 8158, places=4)
+        self.assertFalse(d["_reconciles"])
+
+    def test_dimensional_gross_from_composition_total(self):
+        # A filer tagging loans only by segment (no undimensioned gross) renders via
+        # the reconcile-gated composition total passed as comp_loan_total.
+        SEG = "us-gaap:FinancingReceivablePortfolioSegmentAxis"
+        COLL = "us-gaap:LoansAndLeasesReceivableCollectivelyEvaluatedForAllowance"
+        facts = [
+            _f("us-gaap:Assets", 10000 * self.M),
+            Fact(COLL, 80 * self.M, "2025-12-31", None, {SEG: "x:CommercialMember"}, "usd"),
+            Fact(COLL, 26 * self.M, "2025-12-31", None, {SEG: "x:ConsumerMember"}, "usd"),
+        ]
+        d = extract_credit_quality(facts, comp_loan_total=8158 * self.M)["2025-12-31"]
+        self.assertAlmostEqual(d["loans_gross"], 8158 * self.M)
+        self.assertAlmostEqual(d["acl"], 106 * self.M)
+
 
 class TestPerformance(unittest.TestCase):
     """The as-reported full-year profitability summary (extract_performance). Pins
