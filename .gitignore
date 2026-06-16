@@ -38,3 +38,6 @@ tests/live_audit_report.csv
 
 # Scratch/diagnostic outputs from tools/ (underscore-prefixed, regenerated)
 tools/_*.json
+tools/_*.jsonl
+tools/_*.md
+tools/_*.log
