@@ -167,6 +167,45 @@ def credit_regime(hy_oas_pct: float | None) -> dict:
     return {"level": "bad", "label": "Stressed", "oas_pct": hy_oas_pct}
 
 
+def curve_regime(spread_2y, spread_3m, spread_2y_prior=None) -> dict:
+    """Labeled yield-curve state for the Regime panel.
+
+    shape from the 10Y−2Y / 10Y−3M spreads; direction (steepening/flattening)
+    from the 2s10s vs its prior reading. Returns {level, shape, direction}.
+    None inputs → 'n/a'."""
+    if spread_2y is None or spread_3m is None:
+        return {"level": "na", "shape": "n/a", "direction": ""}
+    if spread_2y < 0 and spread_3m < 0:
+        shape, level = "Inverted", "bad"
+    elif spread_2y < 0 or spread_3m < 0:
+        shape, level = "Partially inverted", "warn"
+    elif spread_2y > 0.5:
+        shape, level = "Steep", "ok"
+    else:
+        shape, level = "Flat-to-normal", "ok"
+
+    direction = ""
+    if spread_2y_prior is not None:
+        d = spread_2y - spread_2y_prior
+        direction = "steepening" if d > 0.05 else ("flattening" if d < -0.05 else "stable")
+    return {"level": level, "shape": shape, "direction": direction}
+
+
+def fed_path(ff_now, ff_prior) -> dict:
+    """Fed policy direction from the change in the effective funds rate over
+    the lookback. Returns {level, direction, change}. None now → 'n/a'."""
+    if ff_now is None:
+        return {"level": "na", "direction": "n/a", "change": None}
+    if ff_prior is None:
+        return {"level": "ok", "direction": "—", "change": None}
+    change = ff_now - ff_prior
+    if change < -0.10:
+        return {"level": "ok", "direction": "Easing", "change": change}
+    if change > 0.10:
+        return {"level": "warn", "direction": "Tightening", "change": change}
+    return {"level": "ok", "direction": "On hold", "change": change}
+
+
 def to_yoy(df: pd.DataFrame) -> pd.DataFrame:
     """(date, value) index series → (date, value) YoY-% series, date-aligned.
     Used by the inflation chart. Empty frame in → empty frame out."""

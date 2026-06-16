@@ -70,13 +70,6 @@ def render_macro_dashboard():
     }[section]()
 
 
-def _pending(what: str, lands_with: str):
-    """Honest under-construction note — approved section, content pending the
-    user's part-by-part talk-through (HOME-MACRO-PLAN.md process)."""
-    st.info(f"**{what}** — section approved; contents being built out "
-            f"part-by-part. Data layer: {lands_with}.")
-
-
 def _fmt_vol(v) -> str:
     """Average daily volume in human units, or n/a."""
     if v is None:
@@ -535,22 +528,74 @@ def _render_regime():
         unsafe_allow_html=True,
     )
 
-    # Curve-shape state — labeled regime, not just a chart
-    snap = get_macro_snapshot()
-    s2 = snap.get("T10Y2Y", {}).get("value")
-    s3m = snap.get("T10Y3M", {}).get("value")
-    if s2 is not None and s3m is not None:
-        if s2 < 0 and s3m < 0:
-            shape = "Inverted (both 10Y−2Y and 10Y−3M below zero)"
-        elif s2 < 0 or s3m < 0:
-            shape = "Partially inverted"
-        elif s2 > 0.5:
-            shape = "Steep"
-        else:
-            shape = "Flat-to-normal"
-        st.markdown(f"**Curve shape:** {shape} · 10Y−2Y {s2:+.2f}pp · 10Y−3M {s3m:+.2f}pp")
-    _pending("Credit and Fed-path regime states",
-             "FRED series (live) — definitions per talk-through")
+    # ── One-glance regime panel: curve · credit · Fed path ─────────────
+    from data.macro_indicators import curve_regime, credit_regime, fed_path
+
+    def _value_days_ago(series_id: str, days: int):
+        df = fetch_series(series_id, years=2)
+        if df is None or df.empty:
+            return None
+        d = df.dropna(subset=["value"]).sort_values("date")
+        if d.empty:
+            return None
+        cutoff = d["date"].iloc[-1] - pd.Timedelta(days=days)
+        prior = d[d["date"] <= cutoff]
+        return float(prior["value"].iloc[-1]) if not prior.empty else None
+
+    # Use latest_value (the keyless fetch_series path the recession score uses)
+    # rather than the macro snapshot, which intermittently returns None for
+    # individual curve series and would flash the curve regime to n/a.
+    s2 = latest_value("T10Y2Y")
+    s3m = latest_value("T10Y3M")
+    s2_prior = _value_days_ago("T10Y2Y", 90)
+    hy = latest_value("BAMLH0A0HYM2")
+    ff = latest_value("FEDFUNDS")
+    ff_prior = _value_days_ago("FEDFUNDS", 180)
+
+    curve = curve_regime(s2, s3m, s2_prior)
+    credit = credit_regime(hy)
+    path = fed_path(ff, ff_prior)
+
+    def _dot(level: str) -> str:
+        return f'<span class="ksk-dot {level if level in ("ok", "warn", "bad") else "warn"}"></span>'
+
+    curve_state = curve["shape"] + (f", {curve['direction']}" if curve["direction"] else "")
+    curve_detail = (f"10Y−2Y {s2:+.2f}pp · 10Y−3M {s3m:+.2f}pp"
+                    if (s2 is not None and s3m is not None) else "n/a")
+    credit_detail = f"HY OAS {hy * 100:.0f} bps" if hy is not None else "n/a"
+    if path["change"] is not None and ff is not None:
+        path_detail = f"Fed Funds {ff:.2f}% · {path['change']:+.2f}pp / 6mo"
+    elif ff is not None:
+        path_detail = f"Fed Funds {ff:.2f}%"
+    else:
+        path_detail = "n/a"
+
+    panel = [
+        ("Yield Curve", curve["level"], curve_state, curve_detail),
+        ("Credit", credit["level"], credit["label"], credit_detail),
+        ("Fed Path", path["level"], path["direction"], path_detail),
+    ]
+    body = "".join(
+        "<tr>"
+        f'<td>{dim}</td>'
+        f'<td style="text-align:left;">{_dot(level)}{state}</td>'
+        f'<td style="text-align:left;color:var(--text-secondary);">{detail}</td>'
+        "</tr>"
+        for dim, level, state, detail in panel
+    )
+    st.markdown(
+        '<div class="ksk-grid"><table style="width:100%;">'
+        '<thead><tr><th style="text-align:left;">Dimension</th>'
+        '<th style="text-align:left;">State</th>'
+        '<th style="text-align:left;">Detail</th></tr></thead>'
+        f"<tbody>{body}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Curve: 10Y−2Y / 10Y−3M shape + 3-month direction. Credit: HY OAS band "
+        "(Tight <350 · Normal 350–500 · Elevated 500–800 · Stressed ≥800 bps). "
+        "Fed Path: change in the effective funds rate over 6 months. Source: FRED."
+    )
 
 
 def _render_rates_curve():

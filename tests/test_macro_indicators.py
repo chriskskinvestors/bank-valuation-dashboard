@@ -12,7 +12,9 @@ import unittest
 
 import pandas as pd
 
-from data.macro_indicators import compute_row, to_yoy, to_mom_change, credit_regime
+from data.macro_indicators import (
+    compute_row, to_yoy, to_mom_change, credit_regime, curve_regime, fed_path,
+)
 
 
 def _mseries(start: str, values: list[float]) -> pd.DataFrame:
@@ -126,6 +128,45 @@ class TestCreditRegime(unittest.TestCase):
     def test_na(self):
         self.assertEqual(credit_regime(None)["level"], "na")
         self.assertEqual(credit_regime(float("nan"))["level"], "na")
+
+
+class TestCurveRegime(unittest.TestCase):
+    def test_shapes(self):
+        self.assertEqual(curve_regime(-0.3, -0.2)["shape"], "Inverted")
+        self.assertEqual(curve_regime(-0.1, 0.2)["shape"], "Partially inverted")
+        self.assertEqual(curve_regime(0.8, 0.9)["shape"], "Steep")
+        self.assertEqual(curve_regime(0.2, 0.3)["shape"], "Flat-to-normal")
+
+    def test_levels(self):
+        self.assertEqual(curve_regime(-0.3, -0.2)["level"], "bad")
+        self.assertEqual(curve_regime(-0.1, 0.2)["level"], "warn")
+        self.assertEqual(curve_regime(0.8, 0.9)["level"], "ok")
+
+    def test_direction(self):
+        self.assertEqual(curve_regime(0.5, 0.6, spread_2y_prior=0.3)["direction"], "steepening")
+        self.assertEqual(curve_regime(0.3, 0.4, spread_2y_prior=0.5)["direction"], "flattening")
+        self.assertEqual(curve_regime(0.5, 0.6, spread_2y_prior=0.5)["direction"], "stable")
+        self.assertEqual(curve_regime(0.5, 0.6)["direction"], "")  # no prior
+
+    def test_na(self):
+        self.assertEqual(curve_regime(None, 0.2)["level"], "na")
+
+
+class TestFedPath(unittest.TestCase):
+    def test_directions(self):
+        self.assertEqual(fed_path(3.6, 4.5)["direction"], "Easing")
+        self.assertEqual(fed_path(5.0, 4.0)["direction"], "Tightening")
+        self.assertEqual(fed_path(4.0, 4.05)["direction"], "On hold")
+
+    def test_change_value_and_levels(self):
+        r = fed_path(3.6, 4.5)
+        self.assertAlmostEqual(r["change"], -0.9, places=6)
+        self.assertEqual(r["level"], "ok")
+        self.assertEqual(fed_path(5.0, 4.0)["level"], "warn")
+
+    def test_na_and_no_prior(self):
+        self.assertEqual(fed_path(None, 4.0)["direction"], "n/a")
+        self.assertEqual(fed_path(4.0, None)["direction"], "—")
 
 
 if __name__ == "__main__":
