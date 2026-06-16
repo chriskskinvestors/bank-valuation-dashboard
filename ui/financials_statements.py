@@ -1786,6 +1786,68 @@ def _render_credit_quality(ticker):
     st.markdown("\n".join([hdr, sep] + body))
 
 
+def _render_financial_highlights(ticker):
+    """One-page Company-Reported snapshot from the latest 10-K: balance-sheet
+    totals, profitability headline, CET1 and asset-quality — each value sourced
+    from the same reconcile-gated extractors behind the detailed tabs."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        return
+    anchor = None
+    try:
+        from data.sec_filing_scraper import financial_highlights_for, _fdic_cet1
+        from data.bank_mapping import get_fdic_cert
+        try:
+            anchor = _fdic_cet1(get_fdic_cert(ticker))
+        except Exception:
+            anchor = None
+        res = financial_highlights_for(cik, anchor_cet1=anchor)
+    except Exception:
+        res = None
+    st.markdown("---")
+    st.subheader("Financial Highlights — Company Reported")
+    if not res or not res.get("highlights"):
+        st.caption("Headline figures not tagged in this filer's latest 10-K — n/a.")
+        return
+    meta, h = res["meta"], res["highlights"]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{meta['accession']}/{meta['doc']}")
+    fy = h.get("fy")
+    st.caption(
+        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — balance sheet at "
+        f"{h['period']}" + (f", income for FY{fy[:4]}" if fy else "") +
+        ". Each figure comes from the detailed Company-Reported tab of the same name.")
+
+    def _hb(v):
+        if v is None:
+            return "n/a"
+        return f"${v / 1e9:,.1f}B" if abs(v) >= 1e9 else f"${v / 1e6:,.0f}M"
+
+    def _hpct(v):
+        return "n/a" if v is None else f"{v * 100:.1f}%"
+
+    def _heps(v):
+        return "n/a" if v is None else f"${v:,.2f}"
+
+    rows = [
+        ("Total assets", _hb(h["assets"])), ("Total loans (gross)", _hb(h["loans"])),
+        ("Total deposits", _hb(h["deposits"])), ("Total equity", _hb(h["equity"])),
+        ("Net income (FY)", _hb(h["net_income"])), ("Total revenue (FY)", _hb(h["revenue"])),
+        ("Diluted EPS (FY)", _heps(h["eps_diluted"])),
+        ("Return on average assets", _hpct(h["roa"])),
+        ("Return on average equity", _hpct(h["roe"])),
+        ("Efficiency ratio", _hpct(h["efficiency"])),
+        ("CET1 ratio", _hpct(h["cet1"])),
+        ("ACL / total loans", _hpct(h["acl_to_loans"])),
+        ("Nonaccrual / total loans", _hpct(h["nonaccrual_to_loans"])),
+    ]
+    hdr = "| Financial highlights | Value |"
+    sep = "|---|---|"
+    body = [f"| {lab} | {val} |" for lab, val in rows]
+    st.markdown("\n".join([hdr, sep] + body))
+
+
 def _render_performance(ticker):
     """As-reported full-year profitability, scraped from the HOLDING COMPANY's own
     latest 10-K inline XBRL: revenue, NII, PPNR, net income, EPS, and the

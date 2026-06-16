@@ -14,7 +14,8 @@ from unittest import mock
 
 from data.sec_filing_scraper import (
     parse_inline_xbrl, extract_holdco_capital, extract_fair_value,
-    extract_securities, extract_credit_quality, extract_performance, Fact)
+    extract_securities, extract_credit_quality, extract_performance,
+    extract_financial_highlights, Fact)
 
 
 def _f(concept, val, members=None, period="2025-12-31"):
@@ -639,6 +640,48 @@ class TestPerformance(unittest.TestCase):
         facts = [self._dur("us-gaap:NetIncomeLoss", 2522 * self.M),
                  self._dur("us-gaap:InterestIncomeExpenseNet", 5982 * self.M)]
         self.assertEqual(extract_performance(facts), {})
+
+
+class TestFinancialHighlights(unittest.TestCase):
+    """The one-page snapshot (extract_financial_highlights) composes the balance-
+    sheet totals with the already-tested profitability/credit extractors. Pins the
+    composition and the assets-required n/a rule."""
+
+    Y0, Y1, PY = "2025-01-01", "2025-12-31", "2024-12-31"
+    M = 1e6
+
+    def _dur(self, c, v):
+        return Fact(c, v, self.Y1, self.Y0, {}, "usd")
+
+    def _inst(self, c, v, end):
+        return Fact(c, v, end, None, {}, "usd")
+
+    def test_highlights_compose(self):
+        facts = [
+            self._inst("us-gaap:Assets", 210000 * self.M, self.Y1),
+            self._inst("us-gaap:Assets", 200000 * self.M, self.PY),
+            self._inst("us-gaap:Deposits", 170000 * self.M, self.Y1),
+            self._inst("us-gaap:StockholdersEquity", 21000 * self.M, self.Y1),
+            self._inst("us-gaap:StockholdersEquity", 20000 * self.M, self.PY),
+            self._dur("us-gaap:InterestIncomeExpenseNet", 5982 * self.M),
+            self._dur("us-gaap:NoninterestIncome", 3035 * self.M),
+            self._dur("us-gaap:NoninterestExpense", 5144 * self.M),
+            self._dur("us-gaap:NetIncomeLoss", 2522 * self.M),
+            self._dur("us-gaap:EarningsPerShareDiluted", 3.53),
+            self._inst("us-gaap:FinancingReceivableAllowanceForCreditLossExcludingAccruedInterest", 2253 * self.M, self.Y1),
+            self._inst("us-gaap:FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss", 122651 * self.M, self.Y1),
+        ]
+        h = extract_financial_highlights(facts)
+        self.assertAlmostEqual(h["assets"], 210000 * self.M)
+        self.assertAlmostEqual(h["deposits"], 170000 * self.M)
+        self.assertAlmostEqual(h["loans"], 122651 * self.M)
+        self.assertAlmostEqual(h["net_income"], 2522 * self.M)
+        self.assertAlmostEqual(h["acl_to_loans"], 2253 / 122651, places=5)
+        self.assertAlmostEqual(h["roa"], 2522 / 205000, places=6)
+
+    def test_no_assets_yields_na(self):
+        self.assertEqual(
+            extract_financial_highlights([self._dur("us-gaap:NetIncomeLoss", 100 * self.M)]), {})
 
 
 class TestFairValueCaching(unittest.TestCase):

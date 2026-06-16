@@ -268,6 +268,11 @@ def _cr_performance(t, ctx):
     _render_performance(t)
 
 
+def _cr_highlights(t, ctx):
+    from ui.financials_statements import _render_financial_highlights
+    _render_financial_highlights(t)
+
+
 def _cr_reg_capital(t, ctx):
     from ui.capital_dynamics import _render_holdco_capital
     _render_holdco_capital(t)
@@ -312,7 +317,7 @@ _RENDERERS = {
 # Financials → Company Reported basis. Keyed by the same leaf names as the
 # Templated list where they overlap, but pointing at the company-scrape views.
 _CR_RENDERERS = {
-    "Financial Highlights": _cr_todo("Financial Highlights"),
+    "Financial Highlights": _cr_highlights,
     "Income Statement": _cr_income,
     "Balance Sheet": _cr_balance,
     "Performance Analysis": _cr_performance,

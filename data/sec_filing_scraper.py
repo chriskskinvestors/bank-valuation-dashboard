@@ -1136,3 +1136,72 @@ def performance_for(cik) -> dict | None:
     if perf:
         return {"meta": meta, "performance": perf}
     return None
+
+
+# ── Financial highlights (one-page snapshot) ─────────────────────────────────
+def extract_financial_highlights(facts: list[Fact], anchor_cet1=None) -> dict:
+    """A one-page snapshot composed from a single 10-K's facts: balance-sheet
+    totals (assets, loans, deposits, equity), the full-year profitability headline
+    (net income, revenue, diluted EPS, ROA, ROE, efficiency), the headline CET1
+    ratio and the allowance/asset-quality headline (ACL ÷ loans, nonaccrual ÷
+    loans). Every value is sourced from the same already-built reconcile-gated
+    extractors or a directly tagged balance-sheet total — nothing new is guessed.
+    n/a-per-field; returns {} only when total assets aren't tagged."""
+    # Latest balance-sheet date = newest period_end carrying undimensioned Assets.
+    bs_period = None
+    for f in facts:
+        if (f.concept.split(":")[-1] == "Assets" and not f.members
+                and f.period_start is None):
+            if bs_period is None or f.period_end > bs_period:
+                bs_period = f.period_end
+    if bs_period is None:
+        return {}
+    assets = _undimensioned_total(facts, "Assets", bs_period)
+    deposits = _undimensioned_total(facts, "Deposits", bs_period)
+    equity = _undimensioned_total(facts, "StockholdersEquity", bs_period)
+
+    perf = extract_performance(facts)
+    p = perf[max(perf)] if perf else {}
+    cq = extract_credit_quality(facts)
+    c = cq[max(cq)] if cq else {}
+    cap = extract_holdco_capital(facts, anchor_cet1=anchor_cet1)
+    cp = cap[max(cap)] if cap else {}
+
+    return {
+        "period": bs_period,
+        "assets": assets, "loans": c.get("loans_gross"),
+        "deposits": deposits, "equity": equity,
+        "net_income": p.get("net_income"), "revenue": p.get("revenue"),
+        "eps_diluted": p.get("eps_diluted"),
+        "roa": p.get("roa"), "roe": p.get("roe"), "efficiency": p.get("efficiency"),
+        "cet1": cp.get("cet1_ratio"),
+        "acl_to_loans": c.get("acl_to_loans"),
+        "nonaccrual_to_loans": c.get("nonaccrual_to_loans"),
+        "fy": max(perf) if perf else None,
+    }
+
+
+def financial_highlights_for(cik, anchor_cet1=None) -> dict | None:
+    """Cached one-page financial-highlights snapshot for a company from its own
+    latest 10-K. Returns {"meta": {...}, "highlights": {...}} or None."""
+    if not cik:
+        return None
+    from data import cache
+    meta = latest_filing(cik, ("10-K",))
+    if not meta:
+        return None
+    ckey = f"highlights:v1:{meta['accession']}:{anchor_cet1}"
+    hi = cache.get(ckey)
+    if hi is None:
+        try:
+            hi = extract_financial_highlights(instance_facts(meta), anchor_cet1=anchor_cet1)
+            try:
+                cache.put(ckey, hi)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[sec_scraper] highlights failed for cik {cik}: {type(e).__name__}: {e}")
+            hi = {}
+    if hi:
+        return {"meta": meta, "highlights": hi}
+    return None
