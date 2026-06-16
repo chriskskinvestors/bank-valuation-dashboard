@@ -523,14 +523,14 @@ def _af_dollar_vol(price, volume):
 
 def _af_seg(key: str, cur: str, opts: list) -> str:
     return ('<span class="seg">' + "".join(
-        f'<a class="{"on" if cur == v else ""}" href="{_af_href(**{key: v})}">{lbl}</a>'
+        f'<a class="{"on" if cur == v else ""}" href="{_af_href(**{key: v})}" target="_self">{lbl}</a>'
         for v, lbl in opts) + "</span>")
 
 
 def _af_size_dropdown(cur: str, key: str = "msz") -> str:
     label = dict(_AF_TIERS).get(cur, "All")
     menu = "".join(
-        f'<a class="{"on" if cur == k else ""}" href="{_af_href(**{key: k})}">{lbl}</a>'
+        f'<a class="{"on" if cur == k else ""}" href="{_af_href(**{key: k})}" target="_self">{lbl}</a>'
         for k, lbl in _AF_TIERS)
     return (f'<span class="seglbl">Size</span><details class="dd">'
             f'<summary>{label} ▾</summary><div class="menu">{menu}</div></details>')
