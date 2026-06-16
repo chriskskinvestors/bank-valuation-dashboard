@@ -725,17 +725,32 @@ def _af_movers_pane(all_metrics: list[dict], state: dict) -> str:
 def _af_calendar_pane(watchlist: list[str]) -> str:
     import datetime as dt
     items = []
-    for a in _collect_earnings_alerts(watchlist):
-        eps = a.get("eps_est")
-        items.append({"kind": "earn", "date": a["date"], "ticker": a["ticker"],
-                      "name": get_name(a["ticker"]) or a["ticker"],
-                      "detail": (f"${eps:.2f}e" if eps is not None else "")})
+    # Earnings — wider window than the old 14d inbox so the calendar isn't
+    # empty between reporting seasons (bank Q2 starts ~mid-July); we show the
+    # soonest events overall, however far out.
+    try:
+        from data.estimates import fetch_earnings_calendar
+        _td = dt.date.today()
+        for e in fetch_earnings_calendar(tuple(watchlist)):
+            ds = e.get("next_earnings_date")
+            try:
+                d = dt.datetime.strptime(ds, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+            if not (0 <= (d - _td).days <= 60):
+                continue
+            eps = e.get("eps_estimate")
+            items.append({"kind": "earn", "date": ds, "ticker": e["ticker"],
+                          "name": get_name(e["ticker"]) or e["ticker"],
+                          "detail": (f"${eps:.2f}e" if eps is not None else "")})
+    except Exception:
+        pass
     try:
         from data.macro_calendar import get_upcoming_prints
-        for p in get_upcoming_prints(days=7):
+        for p in get_upcoming_prints(days=30):
             items.append({"kind": "macro", "date": p.get("date"),
                           "ticker": None, "name": p.get("name") or "",
-                          "detail": ("FOMC" if p.get("kind") == "fomc" else "")})
+                          "detail": p.get("time") or "—"})
     except Exception:
         pass
     items = [i for i in items if i.get("date")]

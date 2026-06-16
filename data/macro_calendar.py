@@ -175,6 +175,9 @@ def _entries_in_window(start: date, end: date) -> list[dict] | None:
                     "release_id": spec["release_id"],
                     "kind": "print",
                     "importance": spec["importance"],
+                    # Every tracked FRED release (BLS/BEA/Census) drops at
+                    # 8:30 AM ET. A known scheduled time, not a guessed value.
+                    "time": "8:30 ET",
                 })
     for raw in FOMC_DECISION_DATES:
         d = _parse_date(raw)
@@ -185,6 +188,7 @@ def _entries_in_window(start: date, end: date) -> list[dict] | None:
                 "release_id": None,
                 "kind": "fomc",
                 "importance": "high",
+                "time": "2:00 ET",  # FOMC statement
             })
 
     entries.sort(key=lambda e: (e["date"],
