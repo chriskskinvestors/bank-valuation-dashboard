@@ -25,10 +25,11 @@ def render_deposits_for_ticker(ticker: str):
         st.warning(f"No FDIC cert found for {ticker}.")
         return
     name = get_name(ticker)
+    title_bar(f"{name} ({ticker})", "Deposit/Loan Composition")
 
     # ── Deposit Dynamics (beta, alerts, trends) ──
     from ui.deposit_dynamics import render_deposit_dynamics
-    render_deposit_dynamics(ticker)
+    render_deposit_dynamics(ticker, show_title=False)
 
     st.markdown("---")
 
@@ -43,6 +44,7 @@ def render_market_share_for_ticker(ticker: str):
     if not cert:
         st.warning(f"No FDIC cert found for {ticker}.")
         return
+    title_bar(f"{get_name(ticker)} ({ticker})", "Market Share & Branches")
     _render_deposits_core(cert, get_name(ticker))
 
 

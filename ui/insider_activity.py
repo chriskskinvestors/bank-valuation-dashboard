@@ -11,16 +11,22 @@ from data.bank_mapping import get_cik, get_name
 from data.form4_client import fetch_insider_trades, summarize_insider_activity
 from utils.formatting import fmt_dollars
 from utils.chart_style import apply_standard_layout, CHART_HEIGHT_COMPACT
-from ui.chrome import table_export, ledger
+from ui.chrome import table_export, ledger, title_bar
 
 
-def render_insider_activity(ticker: str):
-    """Render insider-trading panel for a bank."""
+def render_insider_activity(ticker: str, show_title: bool = True):
+    """Render insider-trading panel for a bank.
+
+    show_title=False when embedded as a sub-panel under another page (e.g. the
+    Filings tab), so the SNL title bar is not repeated mid-page.
+    """
     cik = get_cik(ticker)
     if not cik:
         st.info("No SEC CIK available for this ticker.")
         return
 
+    if show_title:
+        title_bar(f"{get_name(ticker)} ({ticker})", "Insider Activity")
     st.subheader("Insider Trading (Form 4)")
 
     with st.spinner("Fetching insider trades from SEC EDGAR..."):

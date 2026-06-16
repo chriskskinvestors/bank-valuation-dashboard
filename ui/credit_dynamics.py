@@ -7,6 +7,7 @@ import streamlit as st
 import pandas as pd
 
 from data.bank_mapping import get_fdic_cert, get_name
+from ui.chrome import title_bar
 from data.cache import get as cache_get, put as cache_put
 from data import fdic_client
 from analysis.credit_dynamics import (
@@ -135,6 +136,9 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     if timeline.empty:
         st.info("Insufficient data for credit analysis.")
         return
+
+    _page = "Asset Quality by Loan Type" if view == "by_loan_type" else "Asset Quality Detail"
+    title_bar(f"{get_name(ticker)} ({ticker})", _page)
 
     if view == "by_loan_type":
         _render_by_loan_type(ticker, summary, timeline)

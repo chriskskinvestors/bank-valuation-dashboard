@@ -18,7 +18,7 @@ from analysis.deposit_dynamics import summarize_bank_deposits  # reuse helpers
 from data.consensus import list_consensus, load_consensus
 from utils.formatting import fmt_dollars
 from utils.chart_style import COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY
-from ui.chrome import ledger
+from ui.chrome import ledger, title_bar
 
 
 # Shared loader (data/loaders); this tab keeps its lower history threshold
@@ -262,7 +262,7 @@ def render_valuation_model(ticker: str):
         st.warning("Limited SEC data — EPS/shares may be missing.")
 
     name = get_name(ticker)
-    st.subheader(f"Valuation Model — {ticker}")
+    title_bar(f"{name} ({ticker})", "Valuation Model")
     st.caption(
         f"{name}. FCFE DCF + Warranted P/TBV with scenario sensitivity. "
         "Defaults are derived from trailing data; override any input."

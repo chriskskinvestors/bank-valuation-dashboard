@@ -119,7 +119,7 @@ def _metric_row(key: str, d: dict) -> str:
 def render_peer_rank(ticker: str, all_metrics: list[dict]):
     """Render the consolidated Peer Rank scorecard for a bank."""
     name = get_name(ticker)
-    st.subheader(f"Peer Rank — {name} ({ticker})")
+    title_bar(f"{name} ({ticker})", "Peer Rank")
 
     metrics = _ensure_self(_resolve_cohort(all_metrics), ticker)
 

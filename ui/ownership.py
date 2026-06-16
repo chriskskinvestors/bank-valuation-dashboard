@@ -8,13 +8,14 @@ import pandas as pd
 from data.bank_mapping import get_name
 from data.form13f_client import fetch_institutional_holdings, summarize_holdings
 from utils.formatting import fmt_dollars
-from ui.chrome import table_export
+from ui.chrome import table_export, title_bar
 
 
 def render_ownership(ticker: str):
     """Render 13F institutional holdings panel."""
     name = get_name(ticker)
 
+    title_bar(f"{name} ({ticker})", "Institutional (13F)")
     st.subheader("Institutional Ownership (13F)")
     st.caption(
         "Top institutional holders from most recent 13F-HR filings (last ~90 days). "

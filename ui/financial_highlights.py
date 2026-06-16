@@ -22,6 +22,7 @@ import streamlit.components.v1 as components
 import pandas as pd
 
 from data.bank_mapping import get_bank_info
+from ui.chrome import title_bar
 from data import fdic_client, sec_client
 
 
@@ -363,7 +364,7 @@ def render_financial_highlights(ticker: str):
     cert = info.get("fdic_cert") if info else None
     cik = info.get("cik") if info else None
 
-    st.markdown(f"### {name} ({ticker}) — Financial Highlights")
+    title_bar(f"{name} ({ticker})", "Financial Highlights")
     period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
                       key=f"fh_period_{ticker}", label_visibility="collapsed")
     st.caption("Fiscal figures from FDIC Call Reports; per-share from SEC filings "

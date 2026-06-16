@@ -13,6 +13,7 @@ from __future__ import annotations
 import streamlit as st
 
 from data.bank_mapping import get_cik, get_name
+from ui.chrome import title_bar
 
 
 def render_transcripts(ticker: str):
@@ -22,8 +23,7 @@ def render_transcripts(ticker: str):
                    "This bank may not file with the SEC.")
         return
 
-    st.markdown(f"**Transcripts & Presentations — {get_name(ticker) or ticker}** "
-                f"({ticker})")
+    title_bar(f"{get_name(ticker) or ticker} ({ticker})", "Transcripts & Presentations")
 
     # ── Investor presentations: 8-K EX-99 exhibits ───────────────────────
     st.markdown("#### Investor Presentations (8-K · EX-99)")

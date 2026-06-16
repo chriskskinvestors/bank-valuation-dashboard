@@ -6,7 +6,7 @@ in the Company Analysis > Capital tab.
 import streamlit as st
 import pandas as pd
 
-from data.bank_mapping import get_fdic_cert, get_cik
+from data.bank_mapping import get_fdic_cert, get_cik, get_name
 from data.cache import get as cache_get, put as cache_put
 from data import fdic_client, sec_client
 from analysis.capital_dynamics import (
@@ -19,7 +19,7 @@ from utils.formatting import fmt_dollars_from_thousands
 from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
                                COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER,
                                CATEGORICAL_PALETTE)
-from ui.chrome import ledger
+from ui.chrome import ledger, title_bar
 
 
 def _pick_scale(max_abs_dollars: float) -> tuple[float, str]:
@@ -188,6 +188,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         st.info("Insufficient data for capital analysis.")
         return
 
+    title_bar(f"{get_name(ticker)} ({ticker})", "Capital Adequacy")
     st.subheader("Capital Adequacy & Buyback Capacity")
 
     # ── Alerts ─────────────────────────────────────────────────────────

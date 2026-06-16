@@ -13,7 +13,7 @@ from utils.chart_style import (
     COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING,
     COLOR_FILL_DANGER, apply_standard_layout,
 )
-from ui.chrome import table_export, title_bar
+from ui.chrome import table_export
 
 
 # Metrics to pull from FDIC for historical view
@@ -127,8 +127,6 @@ def render_historicals(ticker: str):
 
     bank_name = get_name(ticker)
     cert = get_fdic_cert(ticker)
-
-    title_bar(f"{bank_name} ({ticker})", "Historical Financials")
 
     if not cert:
         st.warning(f"No FDIC data available for {ticker}.")

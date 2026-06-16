@@ -24,6 +24,7 @@ import streamlit as st
 
 from data.bank_mapping import get_cik, get_name
 from data.sec_client import HEADERS, get_filing_info
+from ui.chrome import title_bar
 
 # (regex on the exhibit type, human label, badge color)
 _EXHIBIT_FAMILIES = [
@@ -166,7 +167,7 @@ def render_key_exhibits(ticker: str):
                    "This bank may not file with the SEC.")
         return
 
-    st.markdown(f"**Key Exhibits — {get_name(ticker) or ticker}** ({ticker})")
+    title_bar(f"{get_name(ticker) or ticker} ({ticker})", "Key Exhibits")
     st.caption(
         "Notable exhibits parsed from the index pages of the most recent "
         "10-K / 10-Q / 8-K / DEF 14A filings on EDGAR: EX-21 subsidiaries, "

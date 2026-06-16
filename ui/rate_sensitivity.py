@@ -15,7 +15,7 @@ import html
 import streamlit as st
 import pandas as pd
 
-from data.bank_mapping import get_fdic_cert
+from data.bank_mapping import get_fdic_cert, get_name
 from data.cache import get as cache_get, put as cache_put
 from data import fdic_client
 from analysis.rate_sensitivity import (
@@ -28,7 +28,7 @@ from utils.chart_style import (
     apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT,
     COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING, COLOR_PRIMARY,
 )
-from ui.chrome import ledger
+from ui.chrome import ledger, title_bar
 
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
@@ -157,6 +157,7 @@ def render_rate_sensitivity(ticker: str):
 
     latest = hist[0]
 
+    title_bar(f"{get_name(ticker)} ({ticker})", "Interest Rate Risk")
     st.subheader("NIM Rate Sensitivity")
     st.caption(
         "Curve-based NIM scenarios: **3M rate** drives funding costs, "

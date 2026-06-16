@@ -14,6 +14,7 @@ import pandas as pd
 
 from data.bank_mapping import get_fdic_cert, get_name
 from data.cache import get as cache_get
+from ui.chrome import title_bar
 from data import fdic_client
 from analysis.deposit_dynamics import summarize_bank_deposits
 from utils.formatting import fmt_dollars_from_thousands
@@ -133,8 +134,12 @@ def _render_deposit_headline(ticker, hist, summary, timeline):
     render_traceable_cards(cards, key=f"deposits_{ticker}", columns=5)
 
 
-def render_deposit_dynamics(ticker: str):
-    """Render the Deposit Dynamics analysis panel for a specific bank."""
+def render_deposit_dynamics(ticker: str, show_title: bool = True):
+    """Render the Deposit Dynamics analysis panel for a specific bank.
+
+    show_title=False when embedded under another page (e.g. the Deposit/Loan
+    Composition tab) so the SNL title bar is not repeated mid-page.
+    """
     hist = _load_hist(ticker)
     if not hist:
         st.info("No FDIC history available for deposit dynamics analysis.")
@@ -148,6 +153,8 @@ def render_deposit_dynamics(ticker: str):
         return
 
     # ── Header ─────────────────────────────────────────────────────────
+    if show_title:
+        title_bar(f"{get_name(ticker)} ({ticker})", "Deposit Trends")
     st.subheader("Deposit Dynamics")
 
     # ── Alerts ─────────────────────────────────────────────────────────

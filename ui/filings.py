@@ -150,6 +150,7 @@ def _event_summaries(ticker: str) -> dict:
 
 def render_filings_for_ticker(ticker: str):
     """Render filings for a specific ticker (no bank selector UI)."""
+    title_bar(f"{get_name(ticker)} ({ticker})", "Filings & Reports")
     _render_filings_core(ticker)
 
 
@@ -284,7 +285,7 @@ def _render_filings_core(ticker: str):
 
     with tab_insider:
         from ui.insider_activity import render_insider_activity
-        render_insider_activity(ticker)
+        render_insider_activity(ticker, show_title=False)
 
     with tab_earnings:
         earnings = [f for f in filings if f.get("is_earnings")]
