@@ -85,7 +85,15 @@ def get_us_calendar(back_days: int = 10, fwd_days: int = 14) -> list[dict]:
     today = date.today()
     params = {"from": (today - timedelta(days=back_days)).isoformat(),
               "to": (today + timedelta(days=fwd_days)).isoformat()}
-    raw = _get("economics-calendar", params, timeout=20)
+    # FMP's stable REST path is "economic-calendar" (singular); the docs page
+    # slug / MCP name is "economics-calendar". Try the real path first and fall
+    # back, so a naming change on either side can't silently break this.
+    raw = None
+    for path in ("economic-calendar", "economics-calendar"):
+        resp = _get(path, params, timeout=20)
+        if isinstance(resp, list) and resp:
+            raw = resp
+            break
     if not isinstance(raw, list):
         return []
     events = [pe for e in raw if e.get("country") == "US"
