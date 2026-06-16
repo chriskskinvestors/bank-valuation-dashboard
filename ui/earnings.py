@@ -33,8 +33,16 @@ from data.estimates import (
     fetch_earnings_calendar,
     fetch_all_estimates,
 )
-from utils.chart_style import COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER
-from ui.chrome import table_export
+from utils.chart_style import (
+    COLOR_PRIMARY,
+    COLOR_SUCCESS,
+    COLOR_WARNING,
+    COLOR_DANGER,
+    apply_standard_layout,
+    CHART_HEIGHT_FULL,
+    CHART_HEIGHT_COMPACT,
+)
+from ui.chrome import table_export, title_bar, ledger
 
 
 # ── Beat/miss styling ───────────────────────────────────────────────────
@@ -94,13 +102,7 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
     """Render the earnings vs consensus comparison for a single bank."""
 
     bank_name = get_name(ticker)
-    st.markdown(
-        f'<div class="dashboard-header">'
-        f"<h1>{ticker} — Earnings vs Consensus</h1>"
-        f"<p>{bank_name}</p>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    title_bar(f"{bank_name} ({ticker})", "Earnings vs Consensus", ids_html="")
 
     # ── Auto-populated estimates from yfinance ──────────────────────────
     with st.spinner("Loading analyst estimates..."):
@@ -417,14 +419,7 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
             font=dict(size=10, color=COLOR_SUCCESS if s >= 0 else COLOR_DANGER),
         )
 
-    fig.update_layout(
-        height=220,
-        margin=dict(l=40, r=14, t=26, b=30),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        yaxis_title="EPS ($)",
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-    )
+    apply_standard_layout(fig, height=CHART_HEIGHT_FULL, yaxis_title="EPS ($)")
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -486,11 +481,12 @@ def _render_comparison_table(comparison: list[dict]):
     total = beats + misses + inlines
 
     if total > 0:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Metrics", total)
-        c2.metric("Beats", beats, delta=f"{beats/total*100:.0f}%")
-        c3.metric("Misses", misses, delta=f"-{misses/total*100:.0f}%")
-        c4.metric("Inline", inlines)
+        ledger("Consensus Summary", [
+            ("Total Metrics", str(total)),
+            ("Beats", f'{beats} <span style="color:var(--success);font-size:var(--fs-xs)">{beats/total*100:.0f}%</span>'),
+            ("Misses", f'{misses} <span style="color:var(--danger);font-size:var(--fs-xs)">{misses/total*100:.0f}%</span>'),
+            ("Inline", str(inlines)),
+        ])
 
 
 def _render_key_metrics(ticker: str, actual_metrics: dict):
@@ -585,13 +581,7 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
 def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
     """Render the full earnings analysis section with all features."""
 
-    st.markdown(
-        '<div class="dashboard-header">'
-        "<h1>Earnings Analysis</h1>"
-        "<p>Consensus tracking, earnings calendar & surprise history</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    title_bar("KSK Investors", "Earnings Analysis")
 
     metrics_by_ticker = {m["ticker"]: m for m in all_metrics}
     all_consensus = list_all_consensus()
@@ -678,51 +668,39 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_
     total_cmp = total_beats + total_misses + total_inlines
     beat_pct = (total_beats / total_cmp * 100) if total_cmp else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        st.metric(
-            "Reporting This Week",
-            "n/a" if cal_failed else upcoming_7,
-            delta="calendar feed unavailable" if cal_failed else f"{upcoming_14} in 14d",
-            delta_color="off",
-        )
-    with c2:
-        st.metric("Banks w/ Consensus", banks_with_consensus)
-    with c3:
-        st.metric(
-            "Total Metrics Compared", total_cmp,
-            delta=f"{banks_with_consensus} banks" if banks_with_consensus else None,
-            delta_color="off",
-        )
-    with c4:
-        st.metric(
-            "Beat Rate",
-            f"{beat_pct:.0f}%" if total_cmp else "—",
-            delta=f"{total_beats}B / {total_misses}M / {total_inlines}I" if total_cmp else None,
-            delta_color="off",
-        )
-    with c5:
-        avg_surprise = None
-        try:
-            # Compute avg EPS surprise from yfinance history
-            from data.estimates import fetch_all_estimates
-            estimates = fetch_all_estimates(tuple(watchlist[:30]))
-            surprises = []
-            for t, est in estimates.items():
-                for e in est.get("earnings_history", [])[:1]:
-                    sp = e.get("surprise_pct")
-                    if sp is not None:
-                        surprises.append(sp)
-            if surprises:
-                avg_surprise = sum(surprises) / len(surprises)
-        except Exception as e:
-            # Renders "—" below, which is honest; log so the failure is visible.
-            print(f"[earnings] surprise fetch failed: {type(e).__name__}: {e}")
-        st.metric(
-            "Last Qtr Avg Surprise",
-            f"{avg_surprise:+.1f}%" if avg_surprise is not None else "—",
-            delta="EPS vs consensus", delta_color="off",
-        )
+    avg_surprise = None
+    try:
+        # Compute avg EPS surprise from yfinance history
+        from data.estimates import fetch_all_estimates
+        estimates = fetch_all_estimates(tuple(watchlist[:30]))
+        surprises = []
+        for t, est in estimates.items():
+            for e in est.get("earnings_history", [])[:1]:
+                sp = e.get("surprise_pct")
+                if sp is not None:
+                    surprises.append(sp)
+        if surprises:
+            avg_surprise = sum(surprises) / len(surprises)
+    except Exception as e:
+        # Renders "—" below, which is honest; log so the failure is visible.
+        print(f"[earnings] surprise fetch failed: {type(e).__name__}: {e}")
+
+    _m = "color:var(--text-muted);font-size:var(--fs-xs)"
+    ledger("Earnings Summary", [
+        ("Reporting This Week",
+         (f'n/a <span style="{_m}">calendar feed unavailable</span>' if cal_failed
+          else f'{upcoming_7} <span style="{_m}">{upcoming_14} in 14d</span>')),
+        ("Banks w/ Consensus", str(banks_with_consensus)),
+        ("Total Metrics Compared",
+         f'{total_cmp}' + (f' <span style="{_m}">{banks_with_consensus} banks</span>'
+                           if banks_with_consensus else "")),
+        ("Beat Rate",
+         (f'{beat_pct:.0f}% <span style="{_m}">{total_beats}B / {total_misses}M / {total_inlines}I</span>'
+          if total_cmp else "—")),
+        ("Last Qtr Avg Surprise",
+         (f'{avg_surprise:+.1f}% <span style="{_m}">EPS vs consensus</span>'
+          if avg_surprise is not None else "—")),
+    ])
 
 
 # ── Surprise Heat-Map ──────────────────────────────────────────────────
@@ -1003,10 +981,11 @@ def _render_earnings_calendar(watchlist: list[str]):
         # Summary metrics
         within_7 = sum(1 for c in upcoming if _days_until(c.get("next_earnings_date")) <= 7)
         within_30 = sum(1 for c in upcoming if _days_until(c.get("next_earnings_date")) <= 30)
-        cols = st.columns(3)
-        cols[0].metric("Total Upcoming", len(upcoming))
-        cols[1].metric("This Week", within_7)
-        cols[2].metric("This Month", within_30)
+        ledger("Upcoming Reports", [
+            ("Total Upcoming", str(len(upcoming))),
+            ("This Week", str(within_7)),
+            ("This Month", str(within_30)),
+        ])
     else:
         st.info("No upcoming earnings dates found.")
 
@@ -1312,13 +1291,14 @@ def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watc
         misses = yf_eps_stats["misses"]
         inlines = yf_eps_stats["inlines"]
 
-        mc1, mc2, mc3, mc4, mc5 = st.columns(5)
-        mc1.metric("Banks Reporting", total)
-        mc2.metric("Beat %", f"{beats/total*100:.0f}%" if total else "—")
-        mc3.metric("Miss %", f"{misses/total*100:.0f}%" if total else "—")
-        mc4.metric("Inline %", f"{inlines/total*100:.0f}%" if total else "—")
         avg_s = sum(yf_eps_stats["surprises"]) / len(yf_eps_stats["surprises"]) if yf_eps_stats["surprises"] else 0
-        mc5.metric("Avg Surprise", f"{avg_s:+.1f}%")
+        ledger("EPS Surprises — Latest Quarter", [
+            ("Banks Reporting", str(total)),
+            ("Beat %", f"{beats/total*100:.0f}%" if total else "—"),
+            ("Miss %", f"{misses/total*100:.0f}%" if total else "—"),
+            ("Inline %", f"{inlines/total*100:.0f}%" if total else "—"),
+            ("Avg Surprise", f"{avg_s:+.1f}%"),
+        ])
 
         # Beat/miss bar chart
         import plotly.graph_objects as go
@@ -1327,12 +1307,8 @@ def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watc
             go.Bar(name="Inline", x=["EPS"], y=[inlines], marker_color=COLOR_WARNING),
             go.Bar(name="Miss", x=["EPS"], y=[misses], marker_color=COLOR_DANGER),
         ])
-        fig.update_layout(
-            barmode="stack", height=200,
-            margin=dict(l=40, r=20, t=20, b=30),
-            plot_bgcolor="white", paper_bgcolor="white",
-            legend=dict(orientation="h"),
-        )
+        apply_standard_layout(fig, height=CHART_HEIGHT_COMPACT, show_legend=True)
+        fig.update_layout(barmode="stack")
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")

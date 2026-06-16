@@ -18,6 +18,7 @@ from analysis.deposit_dynamics import summarize_bank_deposits  # reuse helpers
 from data.consensus import list_consensus, load_consensus
 from utils.formatting import fmt_dollars
 from utils.chart_style import COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY
+from ui.chrome import ledger
 
 
 # Shared loader (data/loaders); this tab keeps its lower history threshold
@@ -138,8 +139,8 @@ def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
     def vs_price(val_str, fv):
         if fv and price:
             up = (fv / price - 1) * 100
-            col = "#059669" if up >= 0 else "#dc2626"
-            return (f"{val_str} <span style='font-size:0.72rem; color:{col}; "
+            col = "var(--success)" if up >= 0 else "var(--danger)"
+            return (f"{val_str} <span style='font-size:var(--fs-xs); color:{col}; "
                     f"font-weight:600;'>{up:+.0f}%</span>")
         return val_str
 
@@ -437,14 +438,12 @@ def render_valuation_model(ticker: str):
     df_cf = pd.DataFrame(rows)
     st.dataframe(df_cf, hide_index=True, use_container_width=True)
 
-    c_pv1, c_pv2, c_pv3 = st.columns(3)
-    with c_pv1:
-        st.metric("PV of 5-Year FCFE", f"${pv_explicit:.2f}" if pv_explicit else "—")
-    with c_pv2:
-        st.metric("PV of Terminal Value", f"${pv_terminal:.2f}" if pv_terminal else "—")
-    with c_pv3:
-        tv_pct = (pv_terminal / dcf_fv * 100) if (pv_terminal and dcf_fv) else None
-        st.metric("Terminal / Total %", f"{tv_pct:.0f}%" if tv_pct else "—")
+    tv_pct = (pv_terminal / dcf_fv * 100) if (pv_terminal and dcf_fv) else None
+    ledger("Present Value", [
+        ("PV of 5-Year FCFE", f"${pv_explicit:.2f}" if pv_explicit else "—"),
+        ("PV of Terminal Value", f"${pv_terminal:.2f}" if pv_terminal else "—"),
+        ("Terminal / Total %", f"{tv_pct:.0f}%" if tv_pct else "—"),
+    ])
 
     st.markdown("---")
 
@@ -648,38 +647,34 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
     # Implied IRR
     irr = implied_irr(price, base_params) if price else None
 
-    ic1, ic2, ic3 = st.columns(3)
-    with ic1:
-        st.metric(
-            "Implied IRR at current price",
-            f"{irr:.2f}%" if irr is not None else "—",
-            delta="What you earn if assumptions hold",
-            delta_color="off",
+    _m = "color:var(--text-muted);font-size:var(--fs-xs)"
+    ledger("Implied IRR", [
+        ("Implied IRR at current price",
+         (f"{irr:.2f}%" if irr is not None else "—")
+         + f' <span style="{_m}">What you earn if assumptions hold</span>'),
+        ("Current CoE Assumption", f"{base_params.get('cost_of_equity_pct', 10):.2f}%"),
+    ])
+    if irr is not None:
+        gap = irr - base_params.get("cost_of_equity_pct", 10)
+        if gap > 2:
+            label = "Undervalued"
+            color = "var(--success)"
+        elif gap < -2:
+            label = "Overvalued"
+            color = "var(--danger)"
+        else:
+            label = "Fair"
+            color = "var(--warn)"
+        st.markdown(
+            f"""<div style="padding:4px 0;">
+            <div style="font-size:var(--fs-sm); color:var(--text-secondary);">IRR vs CoE</div>
+            <div style="font-size:var(--fs-xl); font-weight:600; color:{color};">
+                {gap:+.2f}pp → {label}
+            </div>
+            <div style="font-size:var(--fs-xs); color:var(--text-muted);">Excess return vs required</div>
+            </div>""",
+            unsafe_allow_html=True,
         )
-    with ic2:
-        st.metric("Current CoE Assumption", f"{base_params.get('cost_of_equity_pct', 10):.2f}%")
-    with ic3:
-        if irr is not None:
-            gap = irr - base_params.get("cost_of_equity_pct", 10)
-            if gap > 2:
-                label = "Undervalued"
-                color = "var(--success)"
-            elif gap < -2:
-                label = "Overvalued"
-                color = "var(--danger)"
-            else:
-                label = "Fair"
-                color = "var(--warn)"
-            st.markdown(
-                f"""<div style="padding:4px 0;">
-                <div style="font-size:0.85rem; color:#666;">IRR vs CoE</div>
-                <div style="font-size:1.75rem; font-weight:600; color:{color};">
-                    {gap:+.2f}pp → {label}
-                </div>
-                <div style="font-size:0.75rem; color:#999;">Excess return vs required</div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
 
     st.markdown("---")
 

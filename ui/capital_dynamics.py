@@ -17,7 +17,9 @@ from utils.formatting import fmt_dollars_from_thousands
 
 
 from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
-                               COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER)
+                               COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER,
+                               CATEGORICAL_PALETTE)
+from ui.chrome import ledger
 
 
 def _pick_scale(max_abs_dollars: float) -> tuple[float, str]:
@@ -103,8 +105,8 @@ def _render_capital_headline(ticker, hist, summary, timeline, peer_cet1):
 
     cet1_disp = pct(cet1)
     if cet1_qoq is not None:
-        col = "#059669" if cet1_qoq >= 0 else "#dc2626"
-        cet1_disp += (f" <span style='font-size:0.68rem; color:{col}; "
+        col = "var(--success)" if cet1_qoq >= 0 else "var(--danger)"
+        cet1_disp += (f" <span style='font-size:var(--fs-xs); color:{col}; "
                       f"font-weight:600;'>{cet1_qoq:+.2f}pp</span>")
 
     retention_4q = timeline["retention_ratio"].tail(4).dropna() if "retention_ratio" in timeline else []
@@ -870,75 +872,47 @@ def _render_capital_return_attribution(ticker: str):
     )
 
     # Headline row: Total Return Ratio, Payout Ratio, Buyback Ratio, Share Reduction, Shareholder Yield
-    c1, c2, c3, c4, c5 = st.columns(5)
+    _m = "color:var(--text-muted);font-size:var(--fs-xs)"
 
-    with c1:
-        tr_ratio = (ttm.get("total_return_ratio_ttm") or 0) * 100
-        st.metric(
-            "Total Return Ratio",
-            f"{tr_ratio:.0f}%" if ttm.get("total_return_ratio_ttm") is not None else "—",
-            delta="of TTM net income", delta_color="off",
-        )
-    with c2:
-        p_ratio = (ttm.get("payout_ratio_ttm") or 0) * 100
-        st.metric(
-            "Dividend Payout",
-            f"{p_ratio:.0f}%" if ttm.get("payout_ratio_ttm") is not None else "—",
-            delta=fmt_dollars(ttm.get("dividends_ttm"), 2) + " TTM" if ttm.get("dividends_ttm") else None,
-            delta_color="off",
-        )
-    with c3:
-        bb_ratio = (ttm.get("buyback_ratio_ttm") or 0) * 100
-        st.metric(
-            "Buyback Ratio",
-            f"{bb_ratio:.0f}%" if ttm.get("buyback_ratio_ttm") is not None else "—",
-            delta=fmt_dollars(ttm.get("buybacks_ttm"), 2) + " TTM" if ttm.get("buybacks_ttm") else None,
-            delta_color="off",
-        )
-    with c4:
-        sc_change = ttm.get("share_change_pct_ttm")
-        st.metric(
-            "Share Reduction",
-            f"{sc_change:+.2f}%" if sc_change is not None else "—",
-            delta="TTM" if sc_change is not None else None,
-            delta_color="off",
-        )
-    with c5:
-        sy = yld.get("total_shareholder_yield_pct")
-        st.metric(
-            "Shareholder Yield",
-            f"{sy:.2f}%" if sy is not None else "—",
-            delta=(
-                f"{yld.get('dividend_yield_pct',0):.1f}% div + {yld.get('buyback_yield_pct',0):.1f}% bb"
-                if sy is not None else None
-            ),
-            delta_color="off",
-        )
+    def _mut(s):
+        return f' <span style="{_m}">{s}</span>' if s else ""
+
+    tr_ratio = (ttm.get("total_return_ratio_ttm") or 0) * 100
+    p_ratio = (ttm.get("payout_ratio_ttm") or 0) * 100
+    bb_ratio = (ttm.get("buyback_ratio_ttm") or 0) * 100
+    sc_change = ttm.get("share_change_pct_ttm")
+    sy = yld.get("total_shareholder_yield_pct")
+    ledger("Capital Return — TTM", [
+        ("Total Return Ratio",
+         (f"{tr_ratio:.0f}%" if ttm.get("total_return_ratio_ttm") is not None else "—")
+         + _mut("of TTM net income")),
+        ("Dividend Payout",
+         (f"{p_ratio:.0f}%" if ttm.get("payout_ratio_ttm") is not None else "—")
+         + _mut((fmt_dollars(ttm.get("dividends_ttm"), 2) + " TTM") if ttm.get("dividends_ttm") else "")),
+        ("Buyback Ratio",
+         (f"{bb_ratio:.0f}%" if ttm.get("buyback_ratio_ttm") is not None else "—")
+         + _mut((fmt_dollars(ttm.get("buybacks_ttm"), 2) + " TTM") if ttm.get("buybacks_ttm") else "")),
+        ("Share Reduction",
+         (f"{sc_change:+.2f}%" if sc_change is not None else "—")
+         + _mut("TTM" if sc_change is not None else "")),
+        ("Shareholder Yield",
+         (f"{sy:.2f}%" if sy is not None else "—")
+         + _mut((f"{yld.get('dividend_yield_pct',0):.1f}% div + {yld.get('buyback_yield_pct',0):.1f}% bb")
+                if sy is not None else "")),
+    ])
 
     # ── Growth row ─────────────────────────────────────────────────────
     if any(growth.get(k) is not None for k in ["dividends_yoy_pct", "buybacks_yoy_pct", "dps_yoy_pct"]):
-        st.markdown("")
-        g1, g2, g3, g4 = st.columns(4)
-        with g1:
-            dps_g = growth.get("dps_yoy_pct")
-            st.metric("DPS YoY Growth",
-                      f"{dps_g:+.1f}%" if dps_g is not None else "—",
-                      delta="$/share declared", delta_color="off")
-        with g2:
-            dg = growth.get("dividends_yoy_pct")
-            st.metric("Dividends YoY",
-                      f"{dg:+.1f}%" if dg is not None else "—",
-                      delta="$ paid", delta_color="off")
-        with g3:
-            bg = growth.get("buybacks_yoy_pct")
-            st.metric("Buybacks YoY",
-                      f"{bg:+.1f}%" if bg is not None else "—",
-                      delta="$ paid", delta_color="off")
-        with g4:
-            tg = growth.get("total_return_yoy_pct")
-            st.metric("Total Return YoY",
-                      f"{tg:+.1f}%" if tg is not None else "—",
-                      delta="combined", delta_color="off")
+        dps_g = growth.get("dps_yoy_pct")
+        dg = growth.get("dividends_yoy_pct")
+        bg = growth.get("buybacks_yoy_pct")
+        tg = growth.get("total_return_yoy_pct")
+        ledger("Year-over-Year Growth", [
+            ("DPS YoY Growth", (f"{dps_g:+.1f}%" if dps_g is not None else "—") + _mut("$/share declared")),
+            ("Dividends YoY", (f"{dg:+.1f}%" if dg is not None else "—") + _mut("$ paid")),
+            ("Buybacks YoY", (f"{bg:+.1f}%" if bg is not None else "—") + _mut("$ paid")),
+            ("Total Return YoY", (f"{tg:+.1f}%" if tg is not None else "—") + _mut("combined")),
+        ])
 
     # ── Quarterly trend chart ──────────────────────────────────────────
     import plotly.graph_objects as go

@@ -11,7 +11,7 @@ from data.bank_mapping import get_cik, get_name
 from data.form4_client import fetch_insider_trades, summarize_insider_activity
 from utils.formatting import fmt_dollars
 from utils.chart_style import apply_standard_layout, CHART_HEIGHT_COMPACT
-from ui.chrome import table_export
+from ui.chrome import table_export, ledger
 
 
 def render_insider_activity(ticker: str):
@@ -31,40 +31,30 @@ def render_insider_activity(ticker: str):
         st.info("No Form 4 filings found in the last 12 months.")
         return
 
-    # ── Headline metrics ───────────────────────────────────────────────
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    with c1:
-        st.metric("Total Txns (12M)", summary["total_transactions"])
-    with c2:
-        st.metric(
-            "6M Buys",
-            fmt_dollars(summary["buys_6m_usd"], 2),
-            delta=f"{summary['buyer_count_6m']} insiders" if summary["buyer_count_6m"] else None,
-            delta_color="off",
-        )
-    with c3:
-        st.metric(
-            "6M Sells",
-            fmt_dollars(summary["sells_6m_usd"], 2),
-            delta=f"{summary['seller_count_6m']} insiders" if summary["seller_count_6m"] else None,
-            delta_color="off",
-        )
-    with c4:
-        net = summary["net_flow_6m_usd"]
-        st.metric(
-            "Net Flow (6M)",
-            fmt_dollars(net, 2),
-            delta="Bullish" if net > 0 else ("Bearish" if net < 0 else "Neutral"),
-            delta_color="normal" if net > 0 else "inverse",
-        )
-    with c5:
-        # Buy/sell ratio
-        if summary["sells_6m_usd"] > 0:
-            ratio = summary["buys_6m_usd"] / summary["sells_6m_usd"]
-            st.metric("Buy/Sell Ratio", f"{ratio:.2f}x")
-        else:
-            st.metric("Buy/Sell Ratio", "∞" if summary["buys_6m_usd"] > 0 else "—")
+    # ── Headline metrics (boxless ledger) ───────────────────────────────
+    _m = "color:var(--text-muted);font-size:var(--fs-xs)"
+    net = summary["net_flow_6m_usd"]
+    if net > 0:
+        _net_val = f'{fmt_dollars(net, 2)} <span style="color:var(--success);font-size:var(--fs-xs)">Bullish</span>'
+    elif net < 0:
+        _net_val = f'{fmt_dollars(net, 2)} <span style="color:var(--danger);font-size:var(--fs-xs)">Bearish</span>'
+    else:
+        _net_val = f'{fmt_dollars(net, 2)} <span style="{_m}">Neutral</span>'
+    if summary["sells_6m_usd"] > 0:
+        _ratio_val = f'{summary["buys_6m_usd"] / summary["sells_6m_usd"]:.2f}x'
+    else:
+        _ratio_val = "∞" if summary["buys_6m_usd"] > 0 else "—"
+    ledger("Summary", [
+        ("Total Txns (12M)", str(summary["total_transactions"])),
+        ("6M Buys", fmt_dollars(summary["buys_6m_usd"], 2)
+         + (f' <span style="{_m}">{summary["buyer_count_6m"]} insiders</span>'
+            if summary["buyer_count_6m"] else "")),
+        ("6M Sells", fmt_dollars(summary["sells_6m_usd"], 2)
+         + (f' <span style="{_m}">{summary["seller_count_6m"]} insiders</span>'
+            if summary["seller_count_6m"] else "")),
+        ("Net Flow (6M)", _net_val),
+        ("Buy/Sell Ratio", _ratio_val),
+    ])
 
     st.markdown("---")
 

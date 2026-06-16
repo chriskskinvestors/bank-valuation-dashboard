@@ -42,11 +42,18 @@ _GENERIC_WORDS = {
 # tokens that match these. Using token-level matching avoids stripping
 # "CORP" out of the middle of "BANCORP" (which would leave "BAN").
 _SUFFIX_TOKENS = {
-    "INC", "INC.", "CORP", "CORP.", "CORPORATION", "CO", "CO.",
+    "INC", "INC.", "INCORPORATED", "CORP", "CORP.", "CORPORATION",
+    "BANCORPORATION", "CO", "CO.",
     "LTD", "LTD.", "LLC", "LP", "LLP",
     "N.A.", "NA", "HOLDINGS", "HOLDING", "GROUP", "COMPANY",
     "&", "AND",  # trailing connectors left over after "& Co." stripped
 }
+# Note: full-word "INCORPORATED" and "BANCORPORATION" are stripped here so the
+# SEC legal name matches the common brand used in headlines ("Comerica
+# Incorporated"→"Comerica", "Zions Bancorporation"→"Zions"). "BANCORP" is
+# deliberately NOT stripped — it shortens too many names to a single generic
+# token ("First Bancorp"→"First") and needs prod name-matching verification
+# before it's safe to broaden (owner follow-up).
 
 # State-suffix tokens like "/MD", "/PA" attached by SEC after company name
 _STATE_SUFFIX = re.compile(r"/[A-Z]{2,3}/?$")
@@ -93,7 +100,10 @@ def _is_too_generic(name: str) -> bool:
 # Only add aliases that are >= 3 chars and unambiguous in financial context.
 _BRAND_ALIASES: dict[str, list[str]] = {
     "C":    ["Citi"],                       # not Citigroup
-    "JPM":  ["JPMorgan", "Chase Bank"],     # "Chase" alone is too generic
+    # "JPMorganChase" (one word) is the post-2024 brand BW/Reuters use; it
+    # tokenizes as a single word so "JPMorgan Chase" (two words) never matched
+    # it — its press releases were silently dropped (live-feed audit 2026-06-15).
+    "JPM":  ["JPMorgan", "Chase Bank", "JPMorganChase"],
     "BAC":  ["BofA"],                       # Bank of America abbreviation
     "WFC":  ["Wells Fargo Bank"],           # disambiguates Wells Fargo Bank vs Co
     "USB":  ["US Bank", "U.S. Bank"],       # "USB" the ticker is rarely in PR text
@@ -484,6 +494,90 @@ _FARM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Promotional / listicle / SEO-spam headlines — "Top 5 Bank Stocks", "3 Reasons
+# to Buy", "Best Dividend Stocks to Buy Now", "... Should Be On Your Radar",
+# "Stock Moves -1.1%: What You Should Know", plus content-farm publisher tags
+# that only ever wrap aggregator chaff. These mention a bank but sell clicks,
+# not news. (Earnings/M&A/dividend releases never read this way.)
+# Branches stay narrow on purpose: the bare "<N> <noun>" form only fires on
+# listicle nouns (best/top/reasons/cheap/undervalued), never on "bank"/"stocks"/
+# "dividend" (which appear with leading numbers in legit M&A/earnings headlines —
+# "$2.4 Billion Community Bank", "Dividend by 6%"). The real "N stocks" listicle
+# still gets caught by the "stocks to buy/watch" branch.
+_PROMO_RE = re.compile(
+    r"\b(top|best|worst)\s+\d+\b"
+    r"|\b\d+\s+(best|top|worst|reasons?|cheap|undervalued|high[\s-]?yield)\b"
+    r"|\bstocks?\s+to\s+(buy|watch|sell|avoid|consider)\b"
+    r"|\b(buy|watch|sell)\s+(now|today)\b"
+    r"|\bshould\s+be\s+on\s+your\s+(radar|watchlist|list)\b"
+    r"|\bwhat\s+you\s+should\s+know\b"
+    r"|\bstock\s+moves?\s+[+-]?\d"
+    r"|\b(premarket|pre-market|midday|mid-day|after[\s-]?hours)\s+(movers|"
+    r"gainers|losers|trading)\b"
+    r"|\bbiggest\s+(movers|gainers|losers)\b"
+    r"|\btrending\s+stocks?\b"
+    r"|\b52[\s-]?week\s+(high|low)\b"
+    r"|\bmoving\s+average\b"
+    r"|\bheavy\s+(trading\s+)?volume\b"
+    r"|\b(motley\s+fool|zacks|insider\s+monkey|simply\s+wall)\b",
+    re.IGNORECASE,
+)
+
+# Structured-product prospectus / boilerplate auto-posts (StockTitan / Street-
+# Insider firehose). 424B* prospectus supplements, pricing/free-writing
+# prospectuses, and "Guarantor:" stubs are filings plumbing, not company news.
+# (Distinct from _NOISE_RE, which catches the note PRODUCTS by name.)
+_PROSPECTUS_RE = re.compile(
+    r"\b424b\d?\b"
+    r"|\bfree\s+writing\s+prospectus\b"
+    r"|\b(prospectus|pricing|prospectus\s+supplement)\s+supplement\b"
+    r"|\bform\s+(fwp|424b\d?)\b"
+    r"|^\s*guarantor\s*:",
+    re.IGNORECASE,
+)
+
+# Dividend-CALENDAR filler — "X to Trade Ex-Dividend", "Ex-Dividend Reminder",
+# "Upcoming Dividend Calendar". Auto-generated scheduling chaff. Must NOT catch
+# the real corporate action "<Bank> Declares/Increases ... Dividend".
+_DIV_CALENDAR_RE = re.compile(
+    r"\bex[\s-]?dividend\b"
+    r"|\bdividend\s+(calendar|reminder|schedule)\b"
+    r"|\bupcoming\s+dividend\b"
+    r"|\bto\s+go\s+ex[\s-]?dividend\b",
+    re.IGNORECASE,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Coverage: material third-party-voiced events the first-party PR gate would
+# otherwise drop. Regulatory/enforcement actions against a bank are reported BY
+# the regulator/press, not the bank, so they never carry a company PR verb —
+# yet they're highly material. Let them through the Google/Yahoo first-party
+# gate (still subject to is_junk_news + name-matching).
+# ──────────────────────────────────────────────────────────────────────────
+_REGULATORY_RE = re.compile(
+    r"\b(consent\s+order|cease[\s-]and[\s-]desist|enforcement\s+action|"
+    r"civil\s+money\s+penalt\w+|deferred\s+prosecution|"
+    r"matter\s+requiring\s+attention|"
+    r"\bmra\b|written\s+agreement\s+with\s+(the\s+)?(fed|occ|fdic)|"
+    r"\b(fined|fines|penaliz\w+|sanction\w+|charg\w+|sued|lawsuit|settl\w+|"
+    r"indict\w+|prob\w+)\s+\w*\s*(by\s+)?(the\s+)?"
+    r"(occ|fdic|federal\s+reserve|cfpb|\bsec\b|doj|justice\s+department|"
+    r"regulators?|prosecutors?))\b"
+    r"|\b(occ|fdic|federal\s+reserve|cfpb|doj)\s+(fines?|orders?|charges?|"
+    r"sanctions?|penaliz\w+|sues?|issues?\s+\w+\s+order)\b",
+    re.IGNORECASE,
+)
+
+
+def is_material_regulatory(headline: str) -> bool:
+    """True for regulatory/enforcement events (consent orders, fines, written
+    agreements, lawsuits by a regulator). Material but third-party-voiced, so
+    the first-party PR gate drops them — this lets them back in. Still gated by
+    is_junk_news + name-matching downstream, so spam can't ride in on it."""
+    return bool(_REGULATORY_RE.search(headline or ""))
+
+
 # A parenthetical exchange tag like (NYSE:CHWY) — if it's NOT this bank's
 # ticker, the story is about another company. The bare "$TGT" form (no exchange
 # prefix) is the dominant style in 13F-spam headlines, so we check both.
@@ -504,6 +598,13 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
         in Z", "New Stake in W"
       • Form-4 / insider tax-withholding & vesting micro-events (_INSIDER_TRIVIA_RE)
       • content-farm editorializing (_FARM_RE)
+      • promotional / listicle / SEO-spam + market-roundup/movers (_PROMO_RE) —
+        "Top 5 Bank Stocks", "3 Reasons to Buy", "Stock Moves -1%: What You
+        Should Know", "Midday Movers"
+      • structured-product prospectus boilerplate (_PROSPECTUS_RE) — 424B*
+        supplements, free-writing prospectuses, "Guarantor:" stubs
+      • dividend-CALENDAR filler (_DIV_CALENDAR_RE) — ex-dividend reminders /
+        upcoming-dividend schedules (NOT real "Declares Dividend" actions)
       • structured-note issuance (is_routine_noise)
       • (when ``ticker`` is given) headlines tagged with a DIFFERENT company's
         exchange ticker, both "(NYSE:XXX)" and bare "$XXX" cashtag forms.
@@ -515,7 +616,8 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
     h = headline or ""
     if (_THIRD_PARTY_RE.search(h) or _INSTITUTIONAL_RE.search(h)
             or _INSIDER_TRIVIA_RE.search(h) or _FARM_RE.search(h)
-            or is_routine_noise(h)):
+            or _PROMO_RE.search(h) or _PROSPECTUS_RE.search(h)
+            or _DIV_CALENDAR_RE.search(h) or is_routine_noise(h)):
         return True
     if ticker:
         t = ticker.upper()

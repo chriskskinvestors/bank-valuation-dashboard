@@ -10,6 +10,8 @@ removed — it used a deposit-beta convention the phased model documents as
 wrong (divided the cycle beta by ib_weight, ~1.4× inflated).
 """
 
+import html
+
 import streamlit as st
 import pandas as pd
 
@@ -24,8 +26,9 @@ from analysis.rate_sensitivity import (
 from utils.formatting import fmt_dollars
 from utils.chart_style import (
     apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT,
-    COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING,
+    COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING, COLOR_PRIMARY,
 )
+from ui.chrome import ledger
 
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
@@ -760,34 +763,33 @@ def _render_backtest(ticker, hist, mode_key, custom_beta):
                    "or missing FedFunds data.")
         return
 
-    # ── Metric strip ──────────────────────────────────────────────────
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        st.metric("Quarters tested", f"{bt['n_quarters']}")
-    with c2:
-        r2 = bt.get("r_squared")
-        st.metric("Levels R²", f"{r2:.2f}" if r2 is not None else "—",
-                  help="1.0 = perfect fit to NIM levels. Negative = model "
-                       "fits worse than just predicting the mean. Levels are "
-                       "hard to predict because balance-sheet evolution isn't "
-                       "modeled — look at the directional metrics for cleaner "
-                       "model-skill signal.")
-    with c3:
-        st.metric("RMSE", f"{bt['rmse_bps']:.0f} bps",
-                  help="Root mean squared error in NIM level (basis points). "
-                       "Lower = better.")
-    with c4:
-        st.metric("Bias", f"{bt['bias_bps']:+.0f} bps",
-                  help="Mean (predicted − actual). Positive = model "
-                       "systematically over-predicts NIM. Near zero is good.")
-    with c5:
-        dc = bt.get("directional_corr")
-        st.metric("Directional corr.",
-                  f"{dc:+.2f}" if dc is not None else "—",
-                  help="Correlation between quarter-over-quarter ΔPredicted "
-                       "and ΔActual. +1 = perfect direction tracking. "
-                       "0 = no signal. The cleanest measure of whether the "
-                       "model gets rate-driven NIM moves right.")
+    # ── Metric strip (boxless ledger; hover help preserved as tooltips) ──
+    def _tip(val, tip):
+        return f'<span title="{html.escape(tip)}">{val}</span>'
+
+    r2 = bt.get("r_squared")
+    dc = bt.get("directional_corr")
+    ledger("Backtest Fit", [
+        ("Quarters tested", f"{bt['n_quarters']}"),
+        ("Levels R²", _tip(
+            f"{r2:.2f}" if r2 is not None else "—",
+            "1.0 = perfect fit to NIM levels. Negative = model fits worse than "
+            "just predicting the mean. Levels are hard to predict because "
+            "balance-sheet evolution isn't modeled — look at the directional "
+            "metrics for cleaner model-skill signal.")),
+        ("RMSE", _tip(
+            f"{bt['rmse_bps']:.0f} bps",
+            "Root mean squared error in NIM level (basis points). Lower = better.")),
+        ("Bias", _tip(
+            f"{bt['bias_bps']:+.0f} bps",
+            "Mean (predicted − actual). Positive = model systematically "
+            "over-predicts NIM. Near zero is good.")),
+        ("Directional corr.", _tip(
+            f"{dc:+.2f}" if dc is not None else "—",
+            "Correlation between quarter-over-quarter ΔPredicted and ΔActual. "
+            "+1 = perfect direction tracking. 0 = no signal. The cleanest "
+            "measure of whether the model gets rate-driven NIM moves right.")),
+    ])
 
     hr = bt.get("directional_hit_rate")
     if hr is not None:
@@ -803,19 +805,17 @@ def _render_backtest(ticker, hist, mode_key, custom_beta):
     fig.add_trace(go.Scatter(
         x=bt["quarters"], y=bt["actual_nim_pct"],
         mode="lines+markers", name="Actual NIM",
-        line=dict(width=3, color="#1f77b4"),
+        line=dict(width=3, color=COLOR_PRIMARY),
     ))
     fig.add_trace(go.Scatter(
         x=bt["quarters"], y=bt["predicted_nim_pct"],
         mode="lines+markers", name="Model prediction",
-        line=dict(width=2, color="#ff7f0e", dash="dash"),
+        line=dict(width=2, color=COLOR_WARNING, dash="dash"),
     ))
-    fig.update_layout(
-        title=f"{ticker} — predicted vs actual NIM, 1-year forward from each baseline",
-        xaxis_title="Quarter", yaxis_title="NIM (%)",
-        hovermode="x unified",
+    apply_standard_layout(
+        fig, title=f"{ticker} — predicted vs actual NIM, 1-year forward from each baseline",
+        height=CHART_HEIGHT_FULL, xaxis_title="Quarter", yaxis_title="NIM (%)",
     )
-    apply_standard_layout(fig, height=CHART_HEIGHT_FULL)
     fig.update_yaxes(ticksuffix="%")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -861,22 +861,16 @@ def _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta):
     scenarios = result["scenarios"]
     inputs = result["inputs"]
 
-    # Headline row
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric(
-            "Current NIM",
-            f"{inputs.get('current_nim_pct'):.2f}%" if inputs.get('current_nim_pct') else "—",
-        )
-    with c2:
-        st.metric("Earning Assets", fmt_dollars(inputs.get("earning_assets_usd"), 2))
-    with c3:
-        st.metric(
-            "Deposit Beta",
-            f"{result['beta_used']:.2f}",
-            delta=result["beta_mode"].replace("_", " ").title(),
-            delta_color="off",
-        )
+    # Headline row (boxless ledger)
+    _m = "color:var(--text-muted);font-size:var(--fs-xs)"
+    ledger("Scenario Inputs", [
+        ("Current NIM",
+         f"{inputs.get('current_nim_pct'):.2f}%" if inputs.get('current_nim_pct') else "—"),
+        ("Earning Assets", fmt_dollars(inputs.get("earning_assets_usd"), 2)),
+        ("Deposit Beta",
+         f"{result['beta_used']:.2f}"
+         + f' <span style="{_m}">{result["beta_mode"].replace("_", " ").title()}</span>'),
+    ])
 
     # Scenario table
     rows = []

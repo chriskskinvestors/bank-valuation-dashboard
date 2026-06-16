@@ -31,6 +31,7 @@ sys.modules.setdefault("streamlit", _st)
 
 from data.events.wire_base import (  # noqa: E402
     is_junk_news, is_company_press_release, is_routine_noise, is_safe_news_url,
+    is_material_regulatory,
 )
 
 
@@ -62,6 +63,21 @@ KNOWN_JUNK = [
      "Estimates Amid Challenging Environment - Earnings Manipulation Risk", "PROV"),
     # ── structured-note issuance (is_routine_noise) ──
     ("JPMorgan Chase Issues Buffered Return Enhanced Notes Linked to the S&P 500", "JPM"),
+    # ── promotional / listicle / SEO-spam (_PROMO_RE) ──
+    ("Top 5 Bank Stocks to Buy in 2026", "JPM"),
+    ("3 Reasons to Buy Bank of America Now", "BAC"),
+    ("7 Best Dividend Stocks for 2026", "WFC"),
+    ("5 Cheap Bank Stocks to Watch", "RF"),
+    ("Zions Bancorporation Stock: Should Be On Your Radar", "ZION"),
+    ("JPMorgan Chase & Co. (JPM) Stock Moves -1.12%: What You Should Know", "JPM"),
+    ("Bank Stocks: Midday Movers", "JPM"),
+    ("Wells Fargo Hits New 52-Week High", "WFC"),
+    # ── structured-product prospectus boilerplate (_PROSPECTUS_RE) ──
+    ("[424B2] JPMORGAN CHASE & CO Prospectus Supplement", "JPM"),
+    ("Guarantor: JPMorgan Chase & Co.", "JPM"),
+    # ── dividend-CALENDAR filler (_DIV_CALENDAR_RE) — NOT a real dividend action ──
+    ("Comerica to Trade Ex-Dividend Beginning June 14th", "CMA"),
+    ("Ex-Dividend Reminder: Citizens Financial Group", "CFG"),
 ]
 
 # Wrong-company ticker tags — story is about another company; must be junk when
@@ -96,6 +112,22 @@ KNOWN_GOOD = [
     # confused with "Takes Position in" 13F-spam.
     ("Webster Financial Takes Stake in Digital Banking Startup", "WBS"),
     ("Comerica Announces New Position of Chief Digital Officer", "CMA"),
+    # Real corporate dividend actions must survive the ex-dividend CALENDAR
+    # filter (which only targets scheduling chaff, not declarations).
+    ("Truist Declares Quarterly Cash Dividend", "TFC"),
+    ("Regions Financial Increases Quarterly Dividend", "RF"),
+]
+
+# Material regulatory / enforcement events — third-party-voiced (the regulator
+# or press writes them, so no company PR verb). They must be recognized as
+# material (so the Google/Yahoo first-party gate lets them through) AND must NOT
+# be flagged as junk.
+KNOWN_REGULATORY = [
+    "OCC fines Wells Fargo $250 million over compliance failures",
+    "CFPB orders Citizens Financial to pay penalty over overdraft practices",
+    "Bank of America charged by SEC over disclosure failures",
+    "Zions enters written agreement with the Fed",
+    "Federal Reserve issues consent order against Comerica",
 ]
 
 
@@ -139,6 +171,30 @@ class TestIsJunkNews(unittest.TestCase):
         self.assertTrue(is_junk_news(
             "Hedge Fund Boosts Holdings in Some Company"))
         self.assertFalse(is_junk_news("Fed holds rates steady"))
+
+
+class TestRegulatoryCoverage(unittest.TestCase):
+    def test_material_regulatory_recognized(self):
+        for headline in KNOWN_REGULATORY:
+            with self.subTest(headline=headline):
+                self.assertTrue(
+                    is_material_regulatory(headline),
+                    f"regulatory event not recognized as material: {headline!r}")
+
+    def test_regulatory_not_flagged_junk(self):
+        for headline in KNOWN_REGULATORY:
+            with self.subTest(headline=headline):
+                self.assertFalse(
+                    is_junk_news(headline),
+                    f"regulatory event wrongly dropped as junk: {headline!r}")
+
+    def test_ordinary_press_release_is_not_regulatory(self):
+        # The regulatory branch must be tight — a routine dividend/earnings
+        # release must NOT be misclassified as a regulatory event.
+        for headline in ("Truist Declares Quarterly Cash Dividend",
+                         "Ameris Bancorp Reports Second Quarter 2026 Results"):
+            with self.subTest(headline=headline):
+                self.assertFalse(is_material_regulatory(headline))
 
 
 class TestSupportingFilters(unittest.TestCase):
