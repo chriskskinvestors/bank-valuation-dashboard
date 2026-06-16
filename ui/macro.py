@@ -37,11 +37,11 @@ def _trend_arrow(df: pd.DataFrame, lookback_days: int = 30) -> str:
 # their contents are built part-by-part with the user (never placeholders
 # pretending to be data).
 MACRO_SECTIONS = [
+    "Economic Data",
     "Rates & Curve",
     "Bank Sector",
     "Funding & Deposits",
     "Credit & Spreads",
-    "Economic Data",
     "Regime",
 ]
 
@@ -87,11 +87,11 @@ def render_macro_dashboard():
                            horizontal=True, label_visibility="collapsed")
 
     {
+        "Economic Data": _render_economy_calendar,
         "Rates & Curve": _render_rates_curve,
         "Bank Sector": _render_bank_sector,
         "Funding & Deposits": _render_funding_deposits,
         "Credit & Spreads": _render_credit_spreads,
-        "Economic Data": _render_economy_calendar,
         "Regime": _render_regime,
     }[section]()
 
