@@ -10,7 +10,10 @@ import pandas as pd
 from data.fred_client import (
     fetch_series, latest_value, get_macro_snapshot, recession_probability, SERIES,
 )
-from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT, ALERT_STYLE
+from utils.chart_style import (
+    apply_standard_layout, tighten_yaxis,
+    CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT, ALERT_STYLE,
+)
 
 
 def _trend_arrow(df: pd.DataFrame, lookback_days: int = 30) -> str:
@@ -74,9 +77,123 @@ def _pending(what: str, lands_with: str):
             f"part-by-part. Data layer: {lands_with}.")
 
 
+def _fmt_vol(v) -> str:
+    """Average daily volume in human units, or n/a."""
+    if v is None:
+        return '<span style="color:var(--text-muted);">n/a</span>'
+    if v >= 1e6:
+        return f"{v / 1e6:.1f}M"
+    if v >= 1e3:
+        return f"{v / 1e3:.0f}K"
+    return f"{v:,.0f}"
+
+
+def _fmt_signed_pct(v) -> str:
+    """Signed % colored green (up) / red (down) — standard price convention."""
+    if v is None:
+        return '<span style="color:var(--text-muted);">n/a</span>'
+    color = "var(--success)" if v > 0 else ("var(--danger)" if v < 0 else "var(--text-secondary)")
+    return f'<span style="color:{color};">{v:+.1f}%</span>'
+
+
 def _render_bank_sector():
-    _pending("Bank Sector — KRE/KBE vs 2s10s, fed funds and HY OAS overlays",
-             "FMP ETF prices (live) + FRED series (live)")
+    import plotly.graph_objects as go
+    from data.bank_etf import get_etf_history, compute_stats, drawdown_series, ETFS, PERIODS
+    from ui.chrome import ledger
+
+    names = {e["ticker"]: e["name"] for e in ETFS}
+    c_sel, c_per = st.columns([3, 2], vertical_alignment="center")
+    with c_sel:
+        ticker = st.radio("ETF", [e["ticker"] for e in ETFS], index=0, horizontal=True,
+                          format_func=lambda t: t, key="bank_sector_etf",
+                          label_visibility="collapsed")
+    with c_per:
+        period = st.radio("Window", PERIODS, index=1, horizontal=True,
+                          format_func=lambda p: p, key="bank_sector_period",
+                          label_visibility="collapsed")
+
+    st.caption(f"**{ticker}** — {names.get(ticker, '')} · {period} · EOD closes")
+
+    df = get_etf_history(ticker, period=period)
+    if df.empty:
+        st.info(
+            f"Price history for {ticker} comes from FMP end-of-day data "
+            "(needs FMP_API_KEY, mounted in production). Unavailable in this "
+            "environment, or the fetch returned no rows for the window."
+        )
+        return
+
+    stats = compute_stats(df)
+
+    def _date(ts):
+        return ts.strftime("%b %d, %Y").replace(" 0", " ") if ts is not None else "—"
+
+    # ── Stat ledgers ───────────────────────────────────────────────────
+    lc1, lc2 = st.columns(2)
+    with lc1:
+        ledger("Price", [
+            ("Last close", f'${stats["last"]:,.2f}' if stats["last"] is not None else "n/a"),
+            (f"Return ({period})", _fmt_signed_pct(stats["period_return_pct"])),
+            ("Avg daily volume", _fmt_vol(stats["avg_volume"])),
+        ])
+    with lc2:
+        hi = f'${stats["period_high"]:,.2f}' if stats["period_high"] is not None else "n/a"
+        lo = f'${stats["period_low"]:,.2f}' if stats["period_low"] is not None else "n/a"
+        ledger("Range", [
+            (f"High ({_date(stats['period_high_date'])})", hi),
+            ("Low", lo),
+            ("Drawdown from high", _fmt_signed_pct(stats["drawdown_from_high_pct"])),
+        ])
+
+    # ── Price (close) over the window, with the period-high watermark ──
+    figp = go.Figure()
+    figp.add_trace(go.Scatter(
+        x=df["date"], y=df["close"], name=ticker, mode="lines",
+        line=dict(color="#1e40af", width=2), fill="tozeroy",
+        fillcolor="rgba(37, 99, 235, 0.06)",
+    ))
+    if stats["period_high"] is not None:
+        figp.add_hline(y=stats["period_high"], line_color="#94a3b8", line_width=1,
+                       line_dash="dash",
+                       annotation_text=f"period high ${stats['period_high']:,.2f}",
+                       annotation_position="top left",
+                       annotation_font=dict(size=10, color="#64748b"))
+    apply_standard_layout(figp, title=f"{ticker} — price ({period})",
+                          height=CHART_HEIGHT_FULL, yaxis_title="Close",
+                          show_legend=False)
+    figp.update_yaxes(tickprefix="$")
+    tighten_yaxis(figp, df["close"].tolist(), tickprefix="$")
+    st.plotly_chart(figp, use_container_width=True)
+
+    # ── Drawdown (underwater) + volume ─────────────────────────────────
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        dd = drawdown_series(df)
+        figd = go.Figure()
+        if not dd.empty:
+            figd.add_trace(go.Scatter(
+                x=dd["date"], y=dd["value"], name="Drawdown", mode="lines",
+                line=dict(color="#dc2626", width=1.5), fill="tozeroy",
+                fillcolor="rgba(220, 38, 38, 0.08)",
+            ))
+        apply_standard_layout(figd, title="Drawdown from running high",
+                              height=CHART_HEIGHT_COMPACT, yaxis_title="% below peak",
+                              show_legend=False)
+        figd.update_yaxes(ticksuffix="%")
+        st.plotly_chart(figd, use_container_width=True)
+    with dc2:
+        figv = go.Figure()
+        if "volume" in df.columns and df["volume"].notna().any():
+            figv.add_trace(go.Bar(
+                x=df["date"], y=df["volume"], name="Volume",
+                marker_color="#93c5fd",
+            ))
+        apply_standard_layout(figv, title="Volume", height=CHART_HEIGHT_COMPACT,
+                              yaxis_title="Shares", show_legend=False)
+        st.plotly_chart(figv, use_container_width=True)
+
+    st.caption("Source: FMP end-of-day prices. Drawdown = % below the highest "
+               "close reached so far within the window.")
 
 
 def _render_funding_deposits():
