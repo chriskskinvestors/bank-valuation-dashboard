@@ -199,7 +199,8 @@ def _classify(members: dict) -> tuple[str, str | None]:
     ('bank',   None)      — a bank/trust/NA subsidiary member."""
     for dim, mem in members.items():
         d, m = dim.split(":")[-1], mem.split(":")[-1]
-        if d in ("ConsolidatedEntitiesAxis", "LegalEntityAxis"):
+        if d in ("ConsolidatedEntitiesAxis", "LegalEntityAxis",
+                 "RegulatoryCapitalRequirementsForBanksAxis"):
             if _HOLDCO_MEMBER_HINT.search(m):
                 return ("holdco", "parent")
             if _BANK_MEMBER_HINT.search(m):
@@ -310,8 +311,15 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
     # Derive what the filing didn't tag directly (exact identities):
     #   RWA = CET1 capital ÷ CET1 ratio;  Tier 2 = Total capital − Tier 1.
     for d in out.values():
-        if "rwa" not in d and d.get("cet1_ratio") and d.get("cet1_cap"):
-            d["rwa"] = d["cet1_cap"] / d["cet1_ratio"]
+        cr, cc = d.get("cet1_ratio"), d.get("cet1_cap")
+        if cr and cc:
+            implied = cc / cr
+            # A separately-tagged RWA that disagrees with CET1-cap ÷ CET1-ratio is
+            # a wrong tag (a sub-component / wrong period — GBNY tagged $40M vs the
+            # $306M implied, MCHB $2.1B vs $13B). Trust the implied RWA, which is
+            # internally consistent with the (anchored) CET1 capital and ratio.
+            if "rwa" not in d or abs(d["rwa"] - implied) > 0.02 * implied:
+                d["rwa"] = implied
         if "tier2_cap" not in d and d.get("total_cap") and d.get("t1_cap"):
             d["tier2_cap"] = d["total_cap"] - d["t1_cap"]
         # A bank with only a leverage ratio (no CET1) is on the Community Bank

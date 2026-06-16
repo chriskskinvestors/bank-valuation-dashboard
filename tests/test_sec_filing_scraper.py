@@ -58,6 +58,28 @@ class TestHoldcoExtraction(unittest.TestCase):
         self.assertAlmostEqual(out["cet1_ratio"], 0.1061)   # binding, not 0.1235
         self.assertAlmostEqual(out["t1_ratio"], 0.1186)     # same methodology
 
+    def test_inconsistent_tagged_rwa_overridden_by_implied(self):
+        # A filer can tag a sub-component as RWA (GBNY tagged $40M vs the $306M
+        # implied by CET1-cap / ratio). Trust the implied, internally-consistent RWA.
+        facts = [
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.1283),
+            _f("us-gaap:CommonEquityTier1Capital", 39.3e6),
+            _f("us-gaap:RiskWeightedAssets", 40e6),   # wrong tag (~1/8th of real)
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["rwa"], 39.3e6 / 0.1283, delta=1e3)
+
+    def test_regulatory_capital_axis_parent_is_holdco(self):
+        # PEBO splits CET1 on RegulatoryCapitalRequirementsForBanksAxis
+        # (ParentCompany = holdco vs Bank = subsidiary) — pick the holdco ratio.
+        AX = "us-gaap:RegulatoryCapitalRequirementsForBanksAxis"
+        facts = [
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.1229, {AX: "us-gaap:ParentCompanyMember"}),
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.1198, {AX: "us-gaap:BankMember"}),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.1229)   # holdco, not bank 0.1198
+
     def test_holdco_preferred_over_bank(self):
         facts = [
             _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.108, {_AX: "us-gaap:ParentCompanyMember"}),
