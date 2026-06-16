@@ -43,7 +43,7 @@ import json
 import re
 from collections import defaultdict
 
-from data.sec_filing_scraper import _get, latest_filing, filing_url, parse_inline_xbrl
+from data.sec_filing_scraper import _get, latest_filing, instance_facts
 
 # ── LOAN patterns ────────────────────────────────────────────────────────────
 # The loan axis carrying the by-category breakdown. "PortfolioSegment" (BCML,
@@ -62,7 +62,12 @@ _LOANISH = re.compile(r"FinancingReceivable|LoansAndLeases|NotesReceivable|Loans
 _BAD_CONCEPT = re.compile(
     r"ChargeOff|Charged|Recover|PastDue|Nonaccrual|Provision|Impair|Modific|"
     r"Delinquen|InterestIncome|Yield|Vintage|Originated|CurrentFiscalYear|"
-    r"WriteOff|Writeoff|FeesAndLoanInProcess|CreditLossExpense", re.I)
+    r"WriteOff|Writeoff|FeesAndLoanInProcess|CreditLossExpense|"
+    # flow / commitment / held-for-sale / average concepts are NOT the period-end
+    # loan balance (WFC tags a $4.6B held-for-sale reclassification line and a
+    # $839B commitments line that are loan-ish but not the book).
+    r"Commitment|HeldForSale|Reclassif|Average|Purchase|Proceeds|Payments|Sale|Sold|"
+    r"Percentage", re.I)
 # The STOCK allowance concept ("FinancingReceivableAllowanceForCreditLoss…") is
 # not a loan balance and must not masquerade as a composition. The loan-balance
 # concepts carry "BeforeAllowanceForCreditLoss" (gross) or "AfterAllowanceFor
@@ -371,10 +376,19 @@ def extract_loan_composition(facts, labels: dict, children: dict) -> dict | None
         axis_ok=lambda a: bool(_LOAN_AXIS.search(a)))
 
 
+# A rendered composition must cover at least this fraction of the LARGEST clean
+# loan-balance total disclosed in the filing. Guards against a giant filer (WFC's
+# $986B book doesn't cleanly partition, but a $4.6B sub-line does) shipping a tiny
+# slice as if it were the whole composition.
+_BOOK_COVERAGE_MIN = 0.5
+
+
 def _extract_member_composition(facts, labels, children, concept_ok, axis_ok) -> dict | None:
     """Shared member-axis composition extractor (loans). Picks the largest
-    reconciling candidate across concepts/periods/axes; ties break to more rows."""
+    reconciling candidate across concepts/periods/axes; ties break to more rows.
+    Rejects a candidate that reconciles only a small slice of the disclosed book."""
     best = None  # (total, n_rows, period, rows)
+    book_max = 0.0  # largest clean undimensioned loan-balance total in the filing
     for concept, fs in _facts_by_concept(facts).items():
         if not concept_ok(concept):
             continue
@@ -392,6 +406,7 @@ def _extract_member_composition(facts, labels, children, concept_ok, axis_ok) ->
             if not d["totals"]:
                 continue
             total = max(d["totals"], key=abs)
+            book_max = max(book_max, abs(total))
             for _axis, allrows in d["axes"].items():
                 rows = _resolve_rows(allrows, total, labels, children)
                 if not rows:
@@ -399,8 +414,8 @@ def _extract_member_composition(facts, labels, children, concept_ok, axis_ok) ->
                 cand = (total, len(rows), period, rows)
                 if best is None or cand[0] > best[0] or (cand[0] == best[0] and cand[1] > best[1]):
                     best = cand
-    if not best:
-        return None
+    if not best or abs(best[0]) < _BOOK_COVERAGE_MIN * book_max:
+        return None                       # nothing reconciled, or only a sub-slice
     total, _n, period, rows = best
     ordered = sorted(rows.items(), key=lambda kv: -kv[1])
     return {period: {"total": total,
@@ -485,8 +500,8 @@ def _fetch(cik):
     if not meta:
         return None
     base = _filing_dir(meta["cik"], meta["accession"])
-    facts = parse_inline_xbrl(_get(filing_url(meta["cik"], meta["accession"], meta["doc"])))
-    if not facts:                      # e.g. multi-document iXBRL (USB): n/a
+    facts = instance_facts(meta)       # multi-document aware (USB/WFC/TFC/…)
+    if not facts:
         return None
     ml = _metalinks(base)
     labels = _member_labels(ml)

@@ -174,6 +174,25 @@ class TestLoanComposition(unittest.TestCase):
         labels = {"CommercialRealEstateMember": "CRE", "ConsumerPortfolioSegmentMember": "Consumer"}
         self.assertIsNone(extract_loan_composition(facts, labels, {}))
 
+    def test_subslice_rejected_by_book_coverage(self):
+        """A giant filer whose full book doesn't partition, but a small sub-line
+        does (INDB tags only $2.1B revolving of an $18.5B book), must render n/a —
+        never a sub-slice masquerading as the whole composition."""
+        gross = "us-gaap:FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss"
+        revolving = "us-gaap:FinancingReceivableRevolving"
+        facts = [
+            # the real $10B book — members do NOT reconcile to it (multi-membered)
+            total_fact(gross, 10000 * M),
+            member_fact(gross, 6000 * M, "us-gaap:CommercialRealEstateMember"),
+            member_fact(gross, 1000 * M, "us-gaap:ConsumerPortfolioSegmentMember"),
+            # a clean $2B revolving sub-table that DOES reconcile
+            total_fact(revolving, 2000 * M),
+            member_fact(revolving, 1200 * M, "us-gaap:CommercialRealEstateMember"),
+            member_fact(revolving, 800 * M, "us-gaap:ConsumerPortfolioSegmentMember"),
+        ]
+        labels = {"CommercialRealEstateMember": "CRE", "ConsumerPortfolioSegmentMember": "Consumer"}
+        self.assertIsNone(extract_loan_composition(facts, labels, {}))
+
     def test_largest_reconciling_candidate_wins(self):
         """Gross (before-allowance) and net (after-allowance) both reconcile; the
         larger gross book is preferred."""
@@ -236,6 +255,43 @@ class TestDepositComposition(unittest.TestCase):
             total_fact("us-gaap:TimeDeposits", 1000 * M),
         ]
         self.assertIsNone(extract_deposit_composition(facts, self._labels(), {}))
+
+
+class TestMultiDocParse(unittest.TestCase):
+    """The multi-document iXBRL fix: large filers (USB/WFC/…) put the financial
+    statements in a secondary document while the <xbrli:context> blocks stay in
+    the primary, so the secondary's facts only resolve against the primary's
+    contexts. parse_inline_xbrl_documentset must merge contexts across docs."""
+
+    CONTEXT_DOC = (b'<html><body><div style="display:none">'
+                   b'<ix:header><ix:resources>'
+                   b'<xbrli:context id="c1"><xbrli:entity><xbrli:identifier>x'
+                   b'</xbrli:identifier></xbrli:entity><xbrli:period>'
+                   b'<xbrli:instant>2025-12-31</xbrli:instant></xbrli:period>'
+                   b'</xbrli:context></ix:resources></ix:header></div></body></html>')
+    FACT_DOC = (b'<html><body>'
+                b'<ix:nonfraction name="us-gaap:Deposits" contextref="c1" scale="3" '
+                b'unitref="usd">1,000</ix:nonfraction></body></html>')
+
+    def test_facts_resolve_against_other_documents_contexts(self):
+        from data.sec_filing_scraper import parse_inline_xbrl, parse_inline_xbrl_documentset
+        # the fact document alone yields nothing (its context lives elsewhere)
+        self.assertEqual(parse_inline_xbrl(self.FACT_DOC), [])
+        # the document SET resolves the fact against the primary's context
+        facts = parse_inline_xbrl_documentset([self.CONTEXT_DOC, self.FACT_DOC])
+        self.assertEqual(len(facts), 1)
+        f = facts[0]
+        self.assertEqual(f.concept, "us-gaap:Deposits")
+        self.assertEqual(f.value, 1000 * 10 ** 3)   # scale="3"
+        self.assertEqual(f.period_end, "2025-12-31")
+
+    def test_single_document_unchanged(self):
+        from data.sec_filing_scraper import parse_inline_xbrl, parse_inline_xbrl_documentset
+        one = self.CONTEXT_DOC[:-len(b"</body></html>")] + (
+            b'<ix:nonfraction name="us-gaap:Deposits" contextref="c1" unitref="usd">'
+            b'500</ix:nonfraction></body></html>')
+        self.assertEqual([(f.concept, f.value) for f in parse_inline_xbrl(one)],
+                         [(f.concept, f.value) for f in parse_inline_xbrl_documentset([one])])
 
 
 if __name__ == "__main__":

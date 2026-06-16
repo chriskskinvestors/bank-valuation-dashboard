@@ -67,11 +67,12 @@ def parse_inline_xbrl(html_bytes: bytes) -> list[Fact]:
     'ix:nonfraction'), so we match on the local name. A negative value can be
     signalled by sign="-" OR by accounting parentheses in the text.
     """
-    from lxml import html as lhtml
-    root = lhtml.fromstring(html_bytes)
+    return parse_inline_xbrl_documentset([html_bytes])
 
-    # 1. contexts: id -> (start, end, {dimension: member})
-    contexts: dict[str, tuple] = {}
+
+def _collect_contexts(root, contexts: dict) -> None:
+    """Populate `contexts` (id -> (start, end, {dimension: member})) from one
+    parsed document root. Merges in place so a document SET can share one pool."""
     for el in root.iter():
         if _local(el.tag) != "context":
             continue
@@ -92,8 +93,11 @@ def parse_inline_xbrl(html_bytes: bytes) -> list[Fact]:
                     members[dim] = (sub.text or "").strip()
         contexts[cid] = (start, end, members)
 
-    # 2. numeric facts
-    facts: list[Fact] = []
+
+def _collect_facts(root, contexts: dict, facts: list) -> None:
+    """Append the numeric iXBRL facts in one document root, resolving each
+    contextRef against the shared `contexts` pool (which may have been populated
+    from a DIFFERENT document -- large filers split contexts and facts apart)."""
     for el in root.iter():
         if _local(el.tag) != "nonfraction":
             continue
@@ -105,7 +109,7 @@ def parse_inline_xbrl(html_bytes: bytes) -> list[Fact]:
         if not raw:
             continue
         neg = raw.startswith("(") or el.get("sign") == "-"
-        raw = raw.strip("()").replace(",", "").replace(" ", "").strip()
+        raw = raw.strip("()").replace(",", "").replace(" ", "").strip()
         if not re.match(r"^-?\d", raw):
             continue
         try:
@@ -122,6 +126,26 @@ def parse_inline_xbrl(html_bytes: bytes) -> list[Fact]:
             val = -abs(val)
         start, end, members = contexts[cref]
         facts.append(Fact(name, val, end, start, members, el.get("unitref")))
+
+
+def parse_inline_xbrl_documentset(docs: list[bytes]) -> list[Fact]:
+    """Parse iXBRL facts across a multi-document instance (a "document set").
+
+    Large filers (USB, WFC, TFC) split the financial statements into a secondary
+    document (e.g. usb-20251231_d2.htm) while the <xbrli:context> blocks stay in
+    the primary document, so neither doc parses standalone -- the secondary's
+    ~4,600 facts reference contexts defined in the primary. Collect ALL contexts
+    first, then resolve EVERY document's facts against that shared pool. For a
+    single-element list this is identical to the old single-doc parse (same root,
+    same context ids, same fact order)."""
+    from lxml import html as lhtml
+    roots = [lhtml.fromstring(b) for b in docs if b]
+    contexts: dict[str, tuple] = {}
+    for root in roots:
+        _collect_contexts(root, contexts)
+    facts: list[Fact] = []
+    for root in roots:
+        _collect_facts(root, contexts, facts)
     return facts
 
 
@@ -370,15 +394,58 @@ def _build_capital_walk(undim: dict, cet1_cap: float | None) -> tuple[dict, bool
     return walk, False
 
 
+# Below this many facts in the primary document, the filing is treated as a
+# possible multi-document instance and the companion docs are consulted. A real
+# 10-K/10-Q tags hundreds–thousands of facts, so a single-document filing never
+# trips this; only split filers (USB: 2 facts in the primary) do.
+_MULTIDOC_FACT_THRESHOLD = 50
+
+
+def _filing_base(cik, accession) -> str:
+    return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/"
+
+
+def _instance_documents(base: str) -> list[str]:
+    """The htm document(s) of the iXBRL instance, from the MetaLinks 'instance'
+    key — a space-joined doc list ('usb-20251231.htm usb-20251231_d2.htm'). One
+    entry for a normal single-document filing."""
+    try:
+        ml = json.loads(_get(base + "MetaLinks.json"))
+        key = next(iter(ml.get("instance", {})), "")
+        return [d for d in key.split() if d.endswith((".htm", ".html"))]
+    except Exception:
+        return []
+
+
+def instance_facts(meta: dict) -> list[Fact]:
+    """All iXBRL facts for a filing, transparently handling the multi-document
+    case. Parses the primary document (the fast common path); if it yields almost
+    no facts the filing is a document SET whose statements live in a secondary
+    document (USB/WFC/TFC/BK/…) while the contexts stay in the primary, so we
+    fetch every instance document and parse them together. Single-document filings
+    — the overwhelming majority — never take the fallback and parse exactly as
+    before, so capital / fair-value / composition extraction is unchanged for them
+    and simply gains the previously-unparseable large filers."""
+    primary = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
+    facts = parse_inline_xbrl(primary)
+    if len(facts) >= _MULTIDOC_FACT_THRESHOLD:
+        return facts
+    base = _filing_base(meta["cik"], meta["accession"])
+    docs = _instance_documents(base)
+    if len(docs) <= 1:
+        return facts                       # genuinely single-document; nothing more
+    blobs = [primary if d == meta["doc"] else _get(base + d) for d in docs]
+    return parse_inline_xbrl_documentset(blobs)
+
+
 def fetch_facts(cik, forms=("10-K",)) -> tuple[dict | None, list[Fact]]:
-    """Locate the latest filing among `forms`, fetch it, and parse its iXBRL.
-    Returns (filing_meta, facts); ([], []) shape on failure is avoided —
-    filing_meta is None when nothing is found."""
+    """Locate the latest filing among `forms`, fetch it, and parse its iXBRL
+    (multi-document aware). Returns (filing_meta, facts); filing_meta is None when
+    nothing is found."""
     meta = latest_filing(cik, forms)
     if not meta:
         return None, []
-    html = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
-    return meta, parse_inline_xbrl(html)
+    return meta, instance_facts(meta)
 
 
 def _fdic_cet1(cert) -> float | None:
@@ -424,8 +491,7 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
         cap = cache.get(ckey)
         if cap is None:
             try:
-                html = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
-                cap = extract_holdco_capital(parse_inline_xbrl(html), anchor_cet1=anchor)
+                cap = extract_holdco_capital(instance_facts(meta), anchor_cet1=anchor)
                 # Cache only a successful parse; a transient fetch/parse exception
                 # is never cached (else one SEC hiccup pins the bank to an older
                 # filing / n/a until the cache version bumps).
@@ -557,8 +623,7 @@ def fair_value_for(cik) -> dict | None:
         fv = cache.get(ckey)
         if fv is None:
             try:
-                html = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
-                fv = extract_fair_value(parse_inline_xbrl(html))
+                fv = extract_fair_value(instance_facts(meta))
                 try:
                     cache.put(ckey, fv)
                 except Exception:
