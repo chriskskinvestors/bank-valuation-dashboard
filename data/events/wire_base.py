@@ -452,6 +452,11 @@ _THIRD_PARTY_RE = re.compile(
 _INSTITUTIONAL_RE = re.compile(
     r"\d[\d,]*\s+shares?\s+(in|of)\b"
     r"|\bshares?\s+(in|of)\s+\d"
+    # "<Holder> reports 3.42M-share stake in <Bank>" — compact 13F-stake form
+    # the live feed surfaced under the bank's OWN ticker (so the cross-ticker
+    # guard can't catch it). Distinct from "Takes Stake in a fintech" (no
+    # leading share-count → not matched).
+    r"|\b\d[\d.,]*\s*[mkb]?[\s-]?shares?\s+(stake|position|holding|interest)\b"
     # "<Holder> Acquires/Sells/Trims/Boosts ... N shares / its holdings /
     # its position". 'take\w+ stake' is deliberately NOT here — a bank *taking
     # a stake* in a fintech is real news; only the "takes position in" content-

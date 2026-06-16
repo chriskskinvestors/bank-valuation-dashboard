@@ -49,6 +49,10 @@ KNOWN_JUNK = [
     ("JPMorgan Chase & Co. Has $2.1 Billion Position in Apple Inc.", "JPM"),
     ("Hedge Fund Trims Position in Wells Fargo", "WFC"),
     ("Bank of America Boosts Holdings in Tesla", "BAC"),
+    # Compact "N-share stake" form, tagged to the bank's OWN ticker (cross-ticker
+    # guard can't catch it) — pulled from the live ABCB feed 2026-06-15.
+    ("North Reef Capital reports 3.42M-share stake in Ameris Bancorp (ABCB)", "ABCB"),
+    ("Vanguard reports 1,250,000-share position in Zions Bancorporation", "ZION"),
     ("Blue Jean Financial LLC Takes Position in SoFi Technologies", "SOFI"),
     ("New Stake in Zions Bancorporation Established by Vanguard", "ZION"),
     ("State Street Sells 50,000 Shares of CVS Health Corporation", "STT"),
