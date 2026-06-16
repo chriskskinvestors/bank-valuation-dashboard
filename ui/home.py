@@ -407,6 +407,10 @@ _AF_CSS = r"""
 .afwrap .erow.a4{grid-template-columns:.62fr 2fr .72fr;}
 .afwrap .erow.e1{grid-template-columns:16px 1.3fr .58fr .95fr .85fr .62fr .62fr .62fr .62fr .8fr;column-gap:4px;padding:0 10px;}
 .afwrap .erow.e1 .num{font-size:10px;}
+.afwrap .erow.m1{grid-template-columns:1.3fr .55fr .9fr .8fr .58fr .58fr .58fr .72fr;column-gap:4px;padding:0 12px;}
+.afwrap .erow.m1 .num{font-size:10px;}
+.afwrap .erow.v1{grid-template-columns:1.45fr .58fr .95fr .66fr .72fr .98fr;column-gap:5px;padding:0 12px;}
+.afwrap .erow.v1 .num{font-size:10px;}
 .afwrap .h{font-size:8.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9aa6b4;}
 .afwrap .num{text-align:right;font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:#1f2937;}
 .afwrap .num.h{font-family:inherit;}
@@ -502,6 +506,19 @@ def _af_vol(v):
     if v >= 1e3:
         return f"{v/1e3:.0f}K"
     return f"{v:.0f}"
+
+
+def _af_dollar_vol(price, volume):
+    """Dollar volume (price × shares) as $1.2B / $340M / $5M / —."""
+    try:
+        v = float(price) * float(volume)
+    except (TypeError, ValueError):
+        return "—"
+    if v >= 1e9:
+        return f"${v/1e9:.1f}B"
+    if v >= 1e6:
+        return f"${v/1e6:.0f}M"
+    return f"${v/1e3:.0f}K"
 
 
 def _af_seg(key: str, cur: str, opts: list) -> str:
@@ -634,33 +651,37 @@ def _af_movers_pane(all_metrics: list[dict], state: dict) -> str:
     from analysis.peer_groups import asset_size_tier
     mv, mh, msz = state["mv"], state["mh"], state["msz"]
     want = _AF_TIER_NAME.get(msz)
-    wk = {}
-    if mh == "w":  # chg_1w lives in the warm cache (nightly job), not all_metrics
-        try:
-            from data.price_cache_store import get_prices
-            wk = get_prices([m.get("ticker") for m in (all_metrics or [])
-                             if m.get("ticker")])
-        except Exception:
-            wk = {}
+    # Warm cache holds the derived columns (chg_1w/chg_ytd/volume) + the
+    # week sort field — one read for the whole universe.
+    try:
+        from data.price_cache_store import get_prices
+        warm = get_prices([m.get("ticker") for m in (all_metrics or [])
+                           if m.get("ticker")])
+    except Exception:
+        warm = {}
     data = []
     for m in (all_metrics or []):
         tk = m.get("ticker")
         if not tk:
             continue
-        v = ((wk.get(tk) or {}).get("chg_1w") if mh == "w"
-             else m.get("change_pct"))
-        if v is None:
-            continue
         if want and asset_size_tier(m.get("total_assets")) != want:
             continue
+        w = warm.get(tk) or {}
+        sortval = m.get("change_pct") if mh == "d" else w.get("chg_1w")
+        if sortval is None:
+            continue
         try:
-            v = float(v)
+            sortval = float(sortval)
         except (TypeError, ValueError):
             continue
-        data.append((tk, m.get("price"), v))
+        data.append({"tk": tk, "price": m.get("price"), "chg": m.get("change"),
+                     "pct": m.get("change_pct"), "w1": w.get("chg_1w"),
+                     "ytd": w.get("chg_ytd"),
+                     "vol": w.get("volume") if w.get("volume") is not None
+                     else m.get("volume"), "sort": sortval})
     asc = (mv == "l")
-    data = [d for d in data if (d[2] < 0 if asc else d[2] > 0)]
-    data.sort(key=lambda d: d[2], reverse=not asc)
+    data = [d for d in data if (d["sort"] < 0 if asc else d["sort"] > 0)]
+    data.sort(key=lambda d: d["sort"], reverse=not asc)
     data = data[:12]
     ctl = ('<div class="ctl">' + _af_seg("mv", mv, [("g", "Gainers"), ("l", "Losers")])
            + '<span class="cdiv"></span>'
@@ -671,17 +692,29 @@ def _af_movers_pane(all_metrics: list[dict], state: dict) -> str:
                 if mh == "w" else "No movers match this filter.")
         body = f'<div class="pend">{note}</div>'
     else:
-        rows = ('<div class="erow m5 eh"><span class="h">Name</span>'
+        rows = ('<div class="erow m1 eh"><span class="h">Name</span>'
                 '<span class="h">Tkr</span><span class="num h">Last</span>'
-                '<span class="num h">%</span></div>')
-        for tk, price, v in data:
-            pct_t, pct_c = _af_signed(v)
-            last = _af_n(price) or "—"
+                '<span class="num h">Chg</span><span class="num h">%</span>'
+                '<span class="num h">1W</span><span class="num h">YTD</span>'
+                '<span class="num h">Vol</span></div>')
+        for d in data:
+            last = _af_n(d["price"]) or "—"
+            chg_t, chg_c = _af_signed(d["chg"])
+            pct_t, pct_c = _af_signed(d["pct"])
+            w1_t, w1_c = (_af_signed(d["w1"], dp=1) if d["w1"] is not None
+                          else ("—", "mut"))
+            ytd_t, ytd_c = (_af_signed(d["ytd"], dp=1) if d["ytd"] is not None
+                            else ("—", "mut"))
             rows += (
-                f'<a class="crow" href="?s=Home&bank={tk}" target="_self">'
-                f'<div class="erow m5 ed"><span class="nm">{_esc((get_name(tk) or "")[:22])}</span>'
-                f'<span class="tk">{tk}</span><span class="num">{last}</span>'
-                f'<span class="num {pct_c}">{pct_t}</span></div></a>')
+                f'<a class="crow" href="?s=Home&bank={d["tk"]}" target="_self">'
+                f'<div class="erow m1 ed"><span class="nm">{_esc((get_name(d["tk"]) or "")[:20])}</span>'
+                f'<span class="tk">{d["tk"]}</span>'
+                f'<span class="num">{last}</span>'
+                f'<span class="num {chg_c}">{chg_t}</span>'
+                f'<span class="num {pct_c}">{pct_t}</span>'
+                f'<span class="num {w1_c}">{w1_t}</span>'
+                f'<span class="num {ytd_c}">{ytd_t}</span>'
+                f'<span class="num">{_af_vol(d["vol"])}</span></div></a>')
         body = f'<div class="etf">{rows}</div>'
     return ('<div class="pane" style="grid-column:2;grid-row:1;">'
             '<div class="hd"><span class="t">Movers</span>'
@@ -947,29 +980,37 @@ def _af_volume_pane(all_metrics: list[dict], state: dict) -> str:
     data = []
     for m in (all_metrics or []):
         tk = m.get("ticker")
-        rv = (warm.get(tk) or {}).get(relfield)
+        w = warm.get(tk) or {}
+        rv = w.get(relfield)
         if not tk or rv is None:
             continue
         if want and asset_size_tier(m.get("total_assets")) != want:
             continue
-        data.append((tk, rv, m.get("change_pct")))
-    data.sort(key=lambda d: d[1], reverse=True)
+        price = m.get("price")
+        vol = w.get("volume") if w.get("volume") is not None else m.get("volume")
+        data.append({"tk": tk, "price": price, "pct": m.get("change_pct"),
+                     "rv": rv, "dvol": _af_dollar_vol(price, vol)})
+    data.sort(key=lambda d: d["rv"], reverse=True)
     data = data[:12]
     if not data:
         body = ('<div class="pend">Unusual volume populates once the '
                 'nightly history job has run.</div>')
     else:
-        rows = ('<div class="erow m5 eh"><span class="h">Name</span>'
-                '<span class="h">Tkr</span><span class="num h">Vol ×avg</span>'
-                '<span class="num h">%</span></div>')
-        for tk, rv, pct in data:
-            pct_t, pct_c = _af_signed(pct)
+        rows = ('<div class="erow v1 eh"><span class="h">Name</span>'
+                '<span class="h">Tkr</span><span class="num h">Last</span>'
+                '<span class="num h">%</span><span class="num h">×avg</span>'
+                '<span class="num h">$Vol</span></div>')
+        for d in data:
+            pct_t, pct_c = _af_signed(d["pct"])
+            last = _af_n(d["price"]) or "—"
             rows += (
-                f'<a class="crow" href="?s=Home&bank={tk}" target="_self">'
-                f'<div class="erow m5 ed"><span class="nm">{_esc((get_name(tk) or "")[:22])}</span>'
-                f'<span class="tk">{tk}</span>'
-                f'<span class="num">{rv:.1f}×</span>'
-                f'<span class="num {pct_c}">{pct_t}</span></div></a>')
+                f'<a class="crow" href="?s=Home&bank={d["tk"]}" target="_self">'
+                f'<div class="erow v1 ed"><span class="nm">{_esc((get_name(d["tk"]) or "")[:20])}</span>'
+                f'<span class="tk">{d["tk"]}</span>'
+                f'<span class="num">{last}</span>'
+                f'<span class="num {pct_c}">{pct_t}</span>'
+                f'<span class="num">{d["rv"]:.1f}×</span>'
+                f'<span class="num">{d["dvol"]}</span></div></a>')
         body = f'<div class="etf">{rows}</div>'
     return ('<div class="pane" style="grid-column:2;grid-row:2;">'
             '<div class="hd"><span class="t">Unusual Volume</span>'

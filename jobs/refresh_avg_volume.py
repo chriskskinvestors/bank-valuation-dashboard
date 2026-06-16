@@ -57,6 +57,15 @@ def _derived(ticker: str) -> dict | None:
             if len(closes) >= 6 and closes.iloc[-6]:
                 out["chg_1w"] = (float(closes.iloc[-1]) /
                                  float(closes.iloc[-6]) - 1.0) * 100.0
+            # YTD: latest close vs the first close of the current year.
+            if "date" in h and not closes.empty:
+                try:
+                    yr = h[h["date"].dt.year == h["date"].iloc[-1].year]["close"].dropna()
+                    if not yr.empty and float(yr.iloc[0]):
+                        out["chg_ytd"] = (float(closes.iloc[-1]) /
+                                          float(yr.iloc[0]) - 1.0) * 100.0
+                except Exception:
+                    pass
         return out or None
     except Exception:
         return None

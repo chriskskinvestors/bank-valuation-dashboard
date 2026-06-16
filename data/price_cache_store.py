@@ -71,6 +71,7 @@ def init_price_cache_schema():
                 dividend_yield DOUBLE PRECISION,
                 avg_volume     DOUBLE PRECISION,
                 chg_1w         DOUBLE PRECISION,
+                chg_ytd        DOUBLE PRECISION,
                 relvol_1w      DOUBLE PRECISION,
                 relvol_1m      DOUBLE PRECISION,
                 relvol_6m      DOUBLE PRECISION,
@@ -112,7 +113,7 @@ def init_price_cache_schema():
             pass
         # Derived history metrics (nightly refresh_avg_volume job): weekly
         # price change + window relative-volumes for Movers-Week / Volume periods.
-        for _col in ("chg_1w", "relvol_1w", "relvol_1m", "relvol_6m"):
+        for _col in ("chg_1w", "chg_ytd", "relvol_1w", "relvol_1m", "relvol_6m"):
             try:
                 if _USE_POSTGRES:
                     conn.execute(text(
@@ -223,7 +224,8 @@ def upsert_avg_volumes(avg_vols: dict[str, float]) -> int:
     return n
 
 
-_DERIVED_COLS = ("avg_volume", "chg_1w", "relvol_1w", "relvol_1m", "relvol_6m")
+_DERIVED_COLS = ("avg_volume", "chg_1w", "chg_ytd",
+                 "relvol_1w", "relvol_1m", "relvol_6m")
 
 
 def upsert_derived_metrics(rows: dict) -> int:
@@ -283,8 +285,8 @@ def get_prices(tickers: list[str], max_age_s: int | None = None) -> dict[str, di
             placeholders = ", ".join(f":t{j}" for j in range(len(chunk)))
             rows = conn.execute(text(
                 f"SELECT ticker, price, prev_close, change, change_pct, volume, "
-                f"dividend_yield, avg_volume, chg_1w, relvol_1w, relvol_1m, "
-                f"relvol_6m, updated_at FROM price_cache "
+                f"dividend_yield, avg_volume, chg_1w, chg_ytd, relvol_1w, "
+                f"relvol_1m, relvol_6m, updated_at FROM price_cache "
                 f"WHERE ticker IN ({placeholders})"
             ), params).fetchall()
             for r in rows:
@@ -303,7 +305,7 @@ def get_prices(tickers: list[str], max_age_s: int | None = None) -> dict[str, di
                     "avg_volume": r.avg_volume,
                     "rel_volume": (r.volume / r.avg_volume
                                    if r.volume and r.avg_volume else None),
-                    "chg_1w": r.chg_1w,
+                    "chg_1w": r.chg_1w, "chg_ytd": r.chg_ytd,
                     "relvol_1w": r.relvol_1w, "relvol_1m": r.relvol_1m,
                     "relvol_6m": r.relvol_6m,
                     "updated_at": ts.isoformat() if ts else None,
@@ -321,7 +323,7 @@ def get_all_prices(max_age_s: int | None = None) -> dict[str, dict]:
     with eng.begin() as conn:
         rows = conn.execute(text(
             "SELECT ticker, price, prev_close, change, change_pct, volume, "
-            "dividend_yield, avg_volume, chg_1w, relvol_1w, relvol_1m, "
+            "dividend_yield, avg_volume, chg_1w, chg_ytd, relvol_1w, relvol_1m, "
             "relvol_6m, updated_at FROM price_cache"
         )).fetchall()
     for r in rows:
@@ -335,7 +337,7 @@ def get_all_prices(max_age_s: int | None = None) -> dict[str, dict]:
             "dividend_yield": r.dividend_yield, "avg_volume": r.avg_volume,
             "rel_volume": (r.volume / r.avg_volume
                            if r.volume and r.avg_volume else None),
-            "chg_1w": r.chg_1w, "relvol_1w": r.relvol_1w,
+            "chg_1w": r.chg_1w, "chg_ytd": r.chg_ytd, "relvol_1w": r.relvol_1w,
             "relvol_1m": r.relvol_1m, "relvol_6m": r.relvol_6m,
             "updated_at": ts.isoformat() if ts else None, "age_seconds": age,
         }

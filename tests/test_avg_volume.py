@@ -133,6 +133,8 @@ class TestDerivedCompute(unittest.TestCase):
         self.assertAlmostEqual(d["relvol_1w"], 1.0)        # last 5 all 1000
         self.assertIn("chg_1w", d)                          # 5-day price change
         self.assertGreater(d["chg_1w"], 0)
+        self.assertIn("chg_ytd", d)                         # vs first close of year
+        self.assertGreater(d["chg_ytd"], 0)
 
     def test_empty_history_returns_none(self):
         import pandas as pd
