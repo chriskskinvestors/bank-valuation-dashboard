@@ -168,5 +168,57 @@ class TestUniverseTickerFilter(unittest.TestCase):
             self.assertNotIn(pref, tickers)
 
 
+class TestDisplaySurfaces(unittest.TestCase):
+    """Honest count + cleaner search: non-common classes are hidden from the
+    covered count and from browse/prefix/name search, but get_universe() stays
+    the raw resolution store and exact-ticker lookup still works."""
+
+    def _stub_universe(self):
+        st = types.ModuleType("streamlit")
+        st.cache_data = lambda *a, **k: (
+            a[0] if a and callable(a[0]) else (lambda f: f))
+        st.cache_resource = st.cache_data
+        sys.modules.setdefault("streamlit", st)
+        import data.bank_universe as bu
+        uni = {t: {**v, "name": "First Citizens BancShares"}
+               for t, v in FCNC.items()}
+        uni["JPM"] = {"cik": 19617, "fdic_cert": 628, "name": "JPMorgan Chase"}
+        bu._UNIVERSE_CACHE = uni
+        bu._NONCOMMON_CACHE = None  # force recompute against the stub
+        return bu, uni
+
+    def test_count_excludes_non_common(self):
+        bu, uni = self._stub_universe()
+        try:
+            # 6 raw tickers (5 FCNC + JPM); 4 non-common (FCNCB/N/O/P) → 2 covered
+            self.assertEqual(bu.get_universe_count(), 2)
+            self.assertEqual(bu.get_universe_count_fast(), "2")
+        finally:
+            bu._UNIVERSE_CACHE = None
+            bu._NONCOMMON_CACHE = None
+
+    def test_search_hides_non_common_from_discovery(self):
+        bu, uni = self._stub_universe()
+        try:
+            hits = {r["ticker"] for r in bu.search_universe("FCNC")}
+            self.assertIn("FCNCA", hits)
+            self.assertFalse(hits & {"FCNCB", "FCNCN", "FCNCO", "FCNCP"})
+            # Name search likewise excludes the preferred series.
+            name_hits = {r["ticker"] for r in bu.search_universe("First Citizens")}
+            self.assertEqual(name_hits, {"FCNCA"})
+        finally:
+            bu._UNIVERSE_CACHE = None
+            bu._NONCOMMON_CACHE = None
+
+    def test_search_exact_lookup_of_preferred_still_resolves(self):
+        bu, uni = self._stub_universe()
+        try:
+            hits = bu.search_universe("FCNCP")
+            self.assertEqual([r["ticker"] for r in hits], ["FCNCP"])
+        finally:
+            bu._UNIVERSE_CACHE = None
+            bu._NONCOMMON_CACHE = None
+
+
 if __name__ == "__main__":
     unittest.main()

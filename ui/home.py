@@ -10,7 +10,6 @@ import streamlit as st
 import pandas as pd
 
 from data.bank_mapping import get_name
-from data.bank_universe import get_universe_count_fast
 from ui.components import (
     section_header,
     delta_chip,
@@ -347,7 +346,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     with _tb:
         title_bar("KSK Investors", "Home",
                   f'<span class="ksk-dot ok"></span>Live · FDIC · SEC EDGAR · FMP · '
-                  f'{get_universe_count_fast()} US banks covered (full universe)')
+                  f'{len(watchlist)} US banks covered')
     with _ex:
         with st.popover("Sections", use_container_width=True):
             show_leaders = st.checkbox("Coverage leaderboard", value=True, key="home_show_leaders")

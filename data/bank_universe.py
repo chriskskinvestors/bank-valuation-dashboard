@@ -246,6 +246,14 @@ def _build_universe_live() -> dict[str, dict]:
     sec_rows = _fetch_sec_companies()
     hc_lookup = _fetch_fdic_banks()
 
+    # Authoritative ticker -> exchange from SEC, used as the reconcile fallback
+    # below: a curated BANK_MAP entry carries no exchange, and defaulting it to
+    # "OTC" mislabels NYSE/NASDAQ banks (e.g. FNB, FFWM), which then breaks any
+    # OTC-based logic. SEC's listing is the source of truth.
+    sec_exchange = {
+        str(t).upper(): e for (_cik, _n, t, e) in sec_rows if t and e
+    }
+
     universe = {}
 
     # ── Phase 1: Strong name matching ────────────────────────────────────
@@ -404,7 +412,8 @@ def _build_universe_live() -> dict[str, dict]:
             "name": info.get("name") or existing.get("name") or t,
             "cik": int(cik) if cik else None,
             "fdic_cert": int(cert) if cert else None,
-            "exchange": info.get("exchange") or existing.get("exchange") or "OTC",
+            "exchange": (info.get("exchange") or existing.get("exchange")
+                         or sec_exchange.get(t) or "OTC"),
         }
 
     # ── Share-class classification ───────────────────────────────────────
@@ -427,11 +436,33 @@ _UNIVERSE_CACHE: dict | None = None
 
 
 def get_universe() -> dict[str, dict]:
-    """Get the universe dict, cached at module level for maximum speed."""
+    """Get the universe dict, cached at module level for maximum speed.
+
+    This is the RAW discovered set (~439) — it keeps every ticker, including
+    non-common share classes, because jobs and data.bank_mapping resolve CIK/
+    cert against it (a preferred ticker must still resolve). User-facing
+    surfaces use the covered set instead (see get_noncommon_tickers,
+    search_universe, get_universe_count)."""
     global _UNIVERSE_CACHE
     if _UNIVERSE_CACHE is None:
         _UNIVERSE_CACHE = build_universe()
     return _UNIVERSE_CACHE
+
+
+# Memoized non-common set (preferred series, baby bonds, redundant/stale dup
+# listings). Cheap to compute but recomputed nowhere — pinned to the universe.
+_NONCOMMON_CACHE: set[str] | None = None
+
+
+def get_noncommon_tickers() -> set[str]:
+    """Universe tickers that are NOT a registrant's primary common stock, so
+    they carry no valid per-common metrics. Hidden from search + the covered
+    count and excluded from the valuation scope. See data/share_class.py."""
+    global _NONCOMMON_CACHE
+    if _NONCOMMON_CACHE is None:
+        from data.share_class import noncommon_tickers
+        _NONCOMMON_CACHE = noncommon_tickers(get_universe())
+    return _NONCOMMON_CACHE
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -449,7 +480,6 @@ def get_universe_tickers() -> list[str]:
     """
     from data.bank_mapping import get_cik, get_fdic_cert
     from data.fdic_client import cert_is_active
-    from data.share_class import noncommon_tickers
 
     universe = get_universe()
     all_tickers = sorted(universe.keys())
@@ -458,7 +488,7 @@ def get_universe_tickers() -> list[str]:
     # common classes) resolve to data but share their registrant's CIK/cert, so
     # they'd carry the common's TBVPS against their own ~$25 price — a garbage
     # P/TBV. Drop them here, the single scope feeding screens + leaderboard.
-    noncommon = noncommon_tickers(universe)
+    noncommon = get_noncommon_tickers()
 
     def _resolves(t: str) -> bool:
         cik = get_cik(t)
@@ -484,20 +514,21 @@ def get_universe_tickers() -> list[str]:
 
 
 def get_universe_count() -> int:
-    """Return the number of banks in the universe."""
-    return len(get_universe())
+    """Number of banks we COVER = raw universe minus non-common share classes
+    (a registrant is counted once, by its common stock — not once per preferred
+    series)."""
+    return len(get_universe()) - len(get_noncommon_tickers())
 
 
 def get_universe_count_fast() -> str:
     """
-    Return the universe size for the header WITHOUT forcing an expensive build.
-
-    Prefers the real built count when the universe is already cached this
-    process; otherwise falls back to the curated mapping count (cheap, static).
-    Never returns a hardcoded guess.
+    Return the covered universe size for the header WITHOUT forcing an expensive
+    build. Prefers the real built count (minus non-common share classes) when
+    the universe is already cached this process; otherwise falls back to the
+    curated mapping count (cheap, static). Never returns a hardcoded guess.
     """
     if _UNIVERSE_CACHE is not None:
-        return str(len(_UNIVERSE_CACHE))
+        return str(len(_UNIVERSE_CACHE) - len(get_noncommon_tickers()))
     try:
         from data.bank_mapping import BANK_MAP
         certs = set(BANK_MAP)
@@ -522,22 +553,27 @@ def search_universe(query: str, limit: int = 25) -> list[dict]:
     if not query_upper:
         return []
 
-    # Exact ticker match
+    # Exact ticker match — honored even for a non-common class (explicit lookup
+    # of, say, FCNCP), but those are hidden from browse/prefix/name discovery
+    # below so they don't clutter results.
     if query_upper in universe:
         return [{"ticker": query_upper, **universe[query_upper]}]
 
+    noncommon = get_noncommon_tickers()
     results = []
     seen_tickers = set()
 
     # Ticker prefix match first
     for ticker, info in universe.items():
+        if ticker in noncommon:
+            continue
         if ticker.startswith(query_upper):
             results.append({"ticker": ticker, **info})
             seen_tickers.add(ticker)
 
     # Then name match (O(1) lookup via set instead of O(n) list scan)
     for ticker, info in universe.items():
-        if ticker in seen_tickers:
+        if ticker in seen_tickers or ticker in noncommon:
             continue
         if query_upper in info["name"].upper():
             results.append({"ticker": ticker, **info})
