@@ -17,6 +17,10 @@ None so the caller falls back to FRED daily — never a guessed yield.
 """
 from __future__ import annotations
 
+import time
+
+_SNAP_KEY = "home_live_yields_snap"
+
 # tenor → yfinance symbol (all yield-quoted, in percent)
 LIVE_YIELD_SYMBOLS = {
     "3M": "^IRX", "2Y": "2YY=F", "5Y": "^FVX", "10Y": "^TNX", "30Y": "^TYX",
@@ -57,9 +61,29 @@ def _build() -> dict:
     return {ten: _fetch_one(sym) for ten, sym in LIVE_YIELD_SYMBOLS.items()}
 
 
-def live_yields() -> dict:
-    """{tenor: (level, prior_close, ~1wk_close)} from a 120s cross-instance
-    snapshot (warmed by jobs/refresh_live_yields). Values may be None per
-    tenor — callers fall back to FRED daily. JSON round-trip yields lists."""
-    from data.cache import served_snapshot
-    return served_snapshot("home_live_yields_snap", 120, _build)
+def live_yields(max_age_s: int = 600) -> dict:
+    """{tenor: [level, prior_close, ~1wk_close]} from the job-warmed snapshot.
+
+    READ-ONLY — never builds at render time (a cold yfinance fetch would
+    block the whole Home grid; same trap as the FRED bundle). The
+    refresh_live_yields job populates it during market hours; if it's
+    absent or older than max_age_s, returns {} so the rates pane falls back
+    to FRED daily (never a stale yield shown as live). JSON round-trip turns
+    the tuples into lists — callers index, don't unpack."""
+    from data import cache
+    snap = cache.get(_SNAP_KEY)
+    if not snap:
+        return {}
+    ts = snap.get("_ts")
+    if not ts or (time.time() - float(ts)) > max_age_s:
+        return {}
+    return snap.get("_v") or {}
+
+
+def refresh() -> dict:
+    """Build the live curve from yfinance and persist it (called by the
+    refresh_live_yields job — the ONLY place the network fetch happens)."""
+    from data import cache
+    data = _build()
+    cache.put(_SNAP_KEY, {"_ts": time.time(), "_v": data})
+    return data
