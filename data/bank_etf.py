@@ -80,19 +80,6 @@ def get_etf_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
     return d[d["date"] >= cutoff].reset_index(drop=True)
 
 
-def drawdown_series(df: pd.DataFrame) -> pd.DataFrame:
-    """(date, value) underwater series: % below the running peak close, ≤ 0.
-    Empty in → empty out. Pure — no network."""
-    if df is None or df.empty or "close" not in df.columns:
-        return pd.DataFrame(columns=["date", "value"])
-    d = df.dropna(subset=["close"]).sort_values("date")
-    if d.empty:
-        return pd.DataFrame(columns=["date", "value"])
-    peak = d["close"].cummax()
-    dd = (d["close"] / peak - 1.0) * 100.0
-    return pd.DataFrame({"date": d["date"].values, "value": dd.values})
-
-
 def compute_stats(df: pd.DataFrame) -> dict:
     """Headline deep-dive stats over the window. All None when unusable.
 

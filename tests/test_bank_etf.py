@@ -12,7 +12,7 @@ import unittest
 
 import pandas as pd
 
-from data.bank_etf import compute_stats, drawdown_series, window_cutoff
+from data.bank_etf import compute_stats, window_cutoff
 
 
 def _ohlcv(closes, volumes=None):
@@ -46,22 +46,6 @@ class TestComputeStats(unittest.TestCase):
         self.assertIsNone(compute_stats(pd.DataFrame())["last"])
         self.assertIsNone(compute_stats(pd.DataFrame({"date": [1], "x": [2]}))["last"])
         self.assertIsNone(compute_stats(None)["last"])
-
-
-class TestDrawdownSeries(unittest.TestCase):
-    def test_underwater_values(self):
-        closes = [100, 110, 99, 121]
-        dd = drawdown_series(_ohlcv(closes))
-        # running peak: 100,110,110,121 → dd: 0, 0, 99/110-1, 0
-        self.assertAlmostEqual(dd["value"].iloc[0], 0.0, places=9)
-        self.assertAlmostEqual(dd["value"].iloc[1], 0.0, places=9)
-        self.assertAlmostEqual(dd["value"].iloc[2], (99 / 110 - 1) * 100, places=6)
-        self.assertAlmostEqual(dd["value"].iloc[3], 0.0, places=9)
-        self.assertTrue((dd["value"] <= 1e-9).all())  # never positive
-
-    def test_empty(self):
-        self.assertTrue(drawdown_series(pd.DataFrame()).empty)
-        self.assertTrue(drawdown_series(None).empty)
 
 
 class TestWindowCutoff(unittest.TestCase):

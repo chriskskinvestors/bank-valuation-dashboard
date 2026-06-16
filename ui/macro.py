@@ -12,7 +12,7 @@ from data.fred_client import (
 )
 from utils.chart_style import (
     apply_standard_layout, tighten_yaxis,
-    CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT, ALERT_STYLE,
+    CHART_HEIGHT_HERO, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT, ALERT_STYLE,
 )
 
 
@@ -91,7 +91,7 @@ def _fmt_signed_pct(v) -> str:
 
 def _render_bank_sector():
     import plotly.graph_objects as go
-    from data.bank_etf import get_etf_history, compute_stats, drawdown_series, ETFS, PERIODS
+    from data.bank_etf import get_etf_history, compute_stats, ETFS, PERIODS
     from ui.chrome import ledger
 
     names = {e["ticker"]: e["name"] for e in ETFS}
@@ -121,11 +121,10 @@ def _render_bank_sector():
     def _date(ts):
         return ts.strftime("%b %d, %Y").replace(" 0", " ") if ts is not None else "—"
 
-    # ── Price chart (left) + stat ledgers beside it (right) ───────────
-    # Narrowing the hero chart into a column (vs full-bleed) keeps the line
-    # legible; tighten_yaxis fills the vertical so small moves read.
-    main_l, main_r = st.columns([3, 2])
-    with main_l:
+    # ── Compact price panel (~1/3 width, taller) with volume stacked
+    # under it, and the stat ledgers filling the rest of the row. ─────
+    c_chart, c_price, c_range = st.columns([1, 1, 1])
+    with c_chart:
         figp = go.Figure()
         figp.add_trace(go.Scatter(
             x=df["date"], y=df["close"], name=ticker, mode="lines",
@@ -139,41 +138,11 @@ def _render_bank_sector():
                            annotation_position="top left",
                            annotation_font=dict(size=10, color="#64748b"))
         apply_standard_layout(figp, title=f"{ticker} — price ({period})",
-                              height=CHART_HEIGHT_FULL, yaxis_title="Close",
+                              height=CHART_HEIGHT_HERO, yaxis_title="Close",
                               show_legend=False)
         tighten_yaxis(figp, df["close"].tolist(), tickprefix="$")
         st.plotly_chart(figp, use_container_width=True)
-    with main_r:
-        ledger("Price", [
-            ("Last close", f'${stats["last"]:,.2f}' if stats["last"] is not None else "n/a"),
-            (f"Return ({period})", _fmt_signed_pct(stats["period_return_pct"])),
-            ("Avg daily volume", _fmt_vol(stats["avg_volume"])),
-        ])
-        hi = f'${stats["period_high"]:,.2f}' if stats["period_high"] is not None else "n/a"
-        lo = f'${stats["period_low"]:,.2f}' if stats["period_low"] is not None else "n/a"
-        ledger("Range", [
-            (f"High ({_date(stats['period_high_date'])})", hi),
-            ("Low", lo),
-            ("Drawdown from high", _fmt_signed_pct(stats["drawdown_from_high_pct"])),
-        ])
 
-    # ── Drawdown (underwater) + volume ─────────────────────────────────
-    dc1, dc2 = st.columns(2)
-    with dc1:
-        dd = drawdown_series(df)
-        figd = go.Figure()
-        if not dd.empty:
-            figd.add_trace(go.Scatter(
-                x=dd["date"], y=dd["value"], name="Drawdown", mode="lines",
-                line=dict(color="#dc2626", width=1.5), fill="tozeroy",
-                fillcolor="rgba(220, 38, 38, 0.08)",
-            ))
-        apply_standard_layout(figd, title="Drawdown from running high",
-                              height=CHART_HEIGHT_COMPACT, yaxis_title="% below peak",
-                              show_legend=False)
-        figd.update_yaxes(ticksuffix="%")
-        st.plotly_chart(figd, use_container_width=True)
-    with dc2:
         figv = go.Figure()
         if "volume" in df.columns and df["volume"].notna().any():
             figv.add_trace(go.Bar(
@@ -184,8 +153,23 @@ def _render_bank_sector():
                               yaxis_title="Shares", show_legend=False)
         st.plotly_chart(figv, use_container_width=True)
 
-    st.caption("Source: FMP end-of-day prices. Drawdown = % below the highest "
-               "close reached so far within the window.")
+    with c_price:
+        ledger("Price", [
+            ("Last close", f'${stats["last"]:,.2f}' if stats["last"] is not None else "n/a"),
+            (f"Return ({period})", _fmt_signed_pct(stats["period_return_pct"])),
+            ("Avg daily volume", _fmt_vol(stats["avg_volume"])),
+        ])
+    with c_range:
+        hi = f'${stats["period_high"]:,.2f}' if stats["period_high"] is not None else "n/a"
+        lo = f'${stats["period_low"]:,.2f}' if stats["period_low"] is not None else "n/a"
+        ledger("Range", [
+            (f"High ({_date(stats['period_high_date'])})", hi),
+            ("Low", lo),
+            ("Drawdown from high", _fmt_signed_pct(stats["drawdown_from_high_pct"])),
+        ])
+
+    st.caption("Source: FMP end-of-day prices. Drawdown from high = % below the "
+               "highest close within the window.")
 
 
 # Display order + labels for the FDIC national-rate products.

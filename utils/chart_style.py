@@ -4,6 +4,7 @@ Premium dark theme matching the KSK design system.
 """
 
 # Standard chart dimensions — institutional density: small, high signal-per-pixel.
+CHART_HEIGHT_HERO = 360     # focal single chart shown in a narrow column (squarer aspect)
 CHART_HEIGHT_FULL = 230     # main charts
 CHART_HEIGHT_COMPACT = 180  # secondary charts (bars, single dimension)
 CHART_HEIGHT_DENSE = 150    # small inline / grid charts
