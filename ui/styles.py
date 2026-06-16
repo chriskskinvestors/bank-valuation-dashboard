@@ -175,15 +175,26 @@ CUSTOM_CSS = """
     /* Slightly smaller base so the whole dashboard shows more per screen. */
     html { font-size: 15px; }
 
-    /* Main container — dense: more usable width, tight top padding.
-       Top padding clears Streamlit's fixed/absolute header bar
-       ([data-testid="stHeader"], ~56px tall, opaque white, z-index 999990),
-       which otherwise overlaps and clips the top of the "KSK INVESTORS"
-       wordmark in the first content row. 1.8rem drops the wordmark ~11px
-       below the header bottom while staying dense. */
+    /* This app ships its own top navigation (ui/chrome.top_nav), so Streamlit's
+       default fixed header is pure overhead: an opaque ~56px white bar
+       (z-index 999990) that paints over the first content row — clipping the
+       "KSK INVESTORS" wordmark — while its toolbar (menu / Deploy / status)
+       collides with our utilities cluster at the top-right. Neutralize it:
+       transparent + zero-height so content sits at the very top, and drop the
+       toolbar/decoration entirely. With the header gone there is nothing to
+       clear, so the top padding stays tight (no dead band above the nav). */
+    [data-testid="stHeader"] {
+        background: transparent !important;
+        height: 0 !important;
+        min-height: 0 !important;
+    }
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"] { display: none !important; }
+
+    /* Main container — dense: full usable width, tight top padding. */
     .main > div.block-container,
     .block-container {
-        padding-top: 1.8rem !important;
+        padding-top: 0.6rem !important;
         padding-bottom: 1.25rem !important;
         padding-left: 1.25rem !important;
         padding-right: 1.25rem !important;
