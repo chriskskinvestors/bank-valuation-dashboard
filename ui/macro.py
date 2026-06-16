@@ -116,6 +116,7 @@ def _fmt_range(lo, hi) -> str:
 def _render_bank_sector():
     import plotly.graph_objects as go
     from data.bank_etf import get_etf_history, get_etf_market_data, compute_stats, ETFS, PERIODS
+    from data.etf_valuation import get_etf_valuation
     from ui.chrome import ledger
 
     names = {e["ticker"]: e["name"] for e in ETFS}
@@ -203,8 +204,26 @@ def _render_bank_sector():
             rows.append(("Expense Ratio", f'{md["expense_ratio"]:.2f}%'))
         ledger("Market Data", rows)
 
+        # Look-through valuation (blended from holdings; FMP Ultimate).
+        with st.spinner("Computing look-through valuation…"):
+            val = get_etf_valuation(ticker)
+        if any(val[k] is not None for k in ("pe", "ptbv", "dividend_yield")):
+            ledger("Valuation (look-through)", [
+                ("Weighted P/E",
+                 f'{val["pe"]:.1f}x' if val["pe"] is not None else _NA_HTML),
+                ("Weighted P/TBV",
+                 f'{val["ptbv"]:.2f}x' if val["ptbv"] is not None else _NA_HTML),
+                ("Dividend Yield",
+                 f'{val["dividend_yield"]:.2f}%' if val["dividend_yield"] is not None else _NA_HTML),
+            ])
+
+    cov = ""
+    if val.get("n_holdings"):
+        cov = (f" Valuation is a look-through blend across {val['n_pe']} of "
+               f"{val['n_holdings']} holdings — harmonic P/E & P/TBV, "
+               f"weighted-average dividend yield.")
     st.caption("Live market data via FMP (quote + ETF info); price line is "
-               "end-of-day. Net Assets = assets under management.")
+               "end-of-day. Net Assets = assets under management." + cov)
 
 
 # Display order + labels for the FDIC national-rate products.
