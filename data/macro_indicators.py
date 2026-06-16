@@ -141,6 +141,32 @@ def get_print_board() -> list[dict]:
     return rows
 
 
+# Credit-regime thresholds on the ICE BofA US High Yield OAS (percent, i.e.
+# bps/100). Bands are conventional risk-condition zones, not a forecast:
+# tight spreads = easy conditions (ok), widening = stress (warn/bad). Shared
+# by the Credit & Spreads chart shading and the Regime one-glance panel.
+CREDIT_REGIME_BANDS = [
+    (3.5, "ok",   "Tight"),      # < 350 bps
+    (5.0, "ok",   "Normal"),     # 350–500 bps
+    (8.0, "warn", "Elevated"),   # 500–800 bps
+    (float("inf"), "bad", "Stressed"),  # ≥ 800 bps
+]
+
+
+def credit_regime(hy_oas_pct: float | None) -> dict:
+    """Classify the HY OAS level into a labeled credit regime.
+
+    Returns {level: 'ok'|'warn'|'bad'|'na', label, oas_pct}. level drives the
+    status dot; label is the band name. None/NaN → 'na' (never a guess)."""
+    if hy_oas_pct is None or hy_oas_pct != hy_oas_pct:
+        return {"level": "na", "label": "n/a", "oas_pct": None}
+    for upper, level, label in CREDIT_REGIME_BANDS:
+        if hy_oas_pct < upper:
+            return {"level": level, "label": label, "oas_pct": hy_oas_pct}
+    # unreachable (last band is inf), kept for total-function clarity
+    return {"level": "bad", "label": "Stressed", "oas_pct": hy_oas_pct}
+
+
 def to_yoy(df: pd.DataFrame) -> pd.DataFrame:
     """(date, value) index series → (date, value) YoY-% series, date-aligned.
     Used by the inflation chart. Empty frame in → empty frame out."""

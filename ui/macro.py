@@ -718,38 +718,88 @@ def _render_rates_curve():
 
 def _render_credit_spreads():
     import plotly.graph_objects as go
+    from data.macro_indicators import credit_regime
+    from data.fred_client import latest_date
+    from ui.chrome import ledger
 
-    snap = get_macro_snapshot()
-    hy_spread = snap.get("BAMLH0A0HYM2", {}).get("value")
-    unemp = snap.get("UNRATE", {}).get("value")
-    c1, c2, _ = st.columns(3)
-    with c1:
-        st.metric("HY Spread", f"{hy_spread:.2f}%" if hy_spread is not None else "—")
-    with c2:
-        st.metric("Unemployment", f"{unemp:.1f}%" if unemp is not None else "—")
+    # ICE BofA OAS series (percent / bps-over-treasuries).
+    hy = latest_value("BAMLH0A0HYM2")     # US High Yield
+    ig = latest_value("BAMLC0A0CM")       # US Corporate (investment grade)
+    bbb = latest_value("BAMLC0A4CBBB")    # BBB
+    ccc = latest_value("BAMLH0A3HYC")     # CCC & lower
+    asof = latest_date("BAMLH0A0HYM2")
+    asof_txt = asof.strftime("%b %d, %Y").replace(" 0", " ") if asof is not None else "—"
 
-    # Unemployment + HY credit spread (dual axis) — re-homed from the old
-    # single-page layout.
-    fig3 = go.Figure()
-    unemp_df = fetch_series("UNRATE", years=5)
-    hy_df = fetch_series("BAMLH0A0HYM2", years=5)
-    if not unemp_df.empty:
-        fig3.add_trace(go.Scatter(
-            x=unemp_df["date"], y=unemp_df["value"], name="Unemployment",
-            mode="lines", line=dict(color="#0891b2", width=2), yaxis="y",
-        ))
-    if not hy_df.empty:
-        fig3.add_trace(go.Scatter(
-            x=hy_df["date"], y=hy_df["value"], name="HY Credit Spread",
-            mode="lines", line=dict(color="#d97706", width=2), yaxis="y2",
-        ))
-    apply_standard_layout(fig3, title="Labor & Credit (5Y)", height=CHART_HEIGHT_COMPACT,
-                          yaxis_title="Unemployment %")
-    fig3.update_layout(
-        yaxis=dict(ticksuffix="%"),
-        yaxis2=dict(title="HY Spread %", overlaying="y", side="right",
-                    ticksuffix="%", showgrid=False),
+    # ── Credit regime banner (shared classifier, also used by Regime) ──
+    reg = credit_regime(hy)
+    dot = {"ok": "ok", "warn": "warn", "bad": "bad", "na": "warn"}[reg["level"]]
+    style = ALERT_STYLE.get({"ok": "ok", "warn": "medium", "bad": "high", "na": "medium"}[reg["level"]],
+                            ALERT_STYLE["medium"])
+    hy_bps = f"{hy * 100:.0f} bps" if hy is not None else "n/a"
+    st.markdown(
+        f'<div style="{style}"><span class="ksk-dot {dot}"></span> '
+        f'<strong>Credit regime: {reg["label"]}</strong> · HY OAS {hy_bps}'
+        f'<br><span style="font-weight:normal; font-size:var(--fs-sm);">'
+        f'Bands on the High Yield OAS: Tight &lt;350 · Normal 350–500 · '
+        f'Elevated 500–800 · Stressed ≥800 bps. As of {asof_txt}.</span></div>',
+        unsafe_allow_html=True,
     )
-    st.plotly_chart(fig3, use_container_width=True)
-    _pending("Spread regime bands + IG/HY history",
-             "FRED series (live) — definitions per talk-through")
+
+    lc, cc = st.columns([1, 2])
+    with lc:
+        def _bps(v):
+            return f"{v * 100:.0f} bps" if v is not None else '<span style="color:var(--text-muted);">n/a</span>'
+        diff = (hy - ig) if (hy is not None and ig is not None) else None
+        ledger("Option-adjusted spreads", [
+            ("High Yield (HY)", _bps(hy)),
+            ("Investment Grade (IG)", _bps(ig)),
+            ("BBB", _bps(bbb)),
+            ("CCC & lower", _bps(ccc)),
+            ("HY − IG differential", _bps(diff)),
+        ])
+
+    with cc:
+        fig = go.Figure()
+        last_hy = last_hy_date = None
+        data_max = 0.0
+        for sid, label, color, width in [
+            ("BAMLC0A0CM", "IG OAS", "#1e40af", 1.8),
+            ("BAMLH0A0HYM2", "HY OAS", "#dc2626", 2.6),
+        ]:
+            df = fetch_series(sid, years=5)
+            if not df.empty:
+                fig.add_trace(go.Scatter(
+                    x=df["date"], y=df["value"], name=label, mode="lines",
+                    line=dict(color=color, width=width),
+                ))
+                vmax = df["value"].dropna().max()
+                if vmax == vmax:  # not NaN
+                    data_max = max(data_max, float(vmax))
+                if sid == "BAMLH0A0HYM2":
+                    dd = df.dropna(subset=["value"]).sort_values("date")
+                    if not dd.empty:
+                        last_hy = float(dd["value"].iloc[-1])
+                        last_hy_date = dd["date"].iloc[-1]
+        # Y-axis top: enough to show the Elevated band, but never let the
+        # regime shading blow out the scale and flatten the spread lines.
+        top = max(9.0, data_max * 1.15)
+        # Regime band shading (only the risk-alert zones, to avoid clutter),
+        # clipped to the visible range.
+        fig.add_hrect(y0=5.0, y1=8.0, fillcolor="rgba(217,119,6,0.06)", line_width=0, layer="below")
+        fig.add_hrect(y0=8.0, y1=top, fillcolor="rgba(220,38,38,0.07)", line_width=0, layer="below")
+        fig.update_yaxes(range=[0, top])
+        if last_hy is not None:
+            fig.add_annotation(
+                x=last_hy_date, y=last_hy,
+                text=f"HY {last_hy * 100:.0f} bps · {reg['label'].lower()}",
+                showarrow=True, arrowhead=0, ax=-66, ay=-24,
+                font=dict(size=10, color="#dc2626"),
+                bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3,
+            )
+        apply_standard_layout(fig, title="Credit spreads (5Y) — HY & IG OAS with regime bands",
+                              height=CHART_HEIGHT_FULL, yaxis_title="OAS")
+        fig.update_yaxes(ticksuffix="%")
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA indices via FRED). "
+               "Shaded zones mark Elevated (500–800 bps) and Stressed (≥800 bps) HY regimes.")

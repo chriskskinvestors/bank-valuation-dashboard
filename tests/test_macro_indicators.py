@@ -12,7 +12,7 @@ import unittest
 
 import pandas as pd
 
-from data.macro_indicators import compute_row, to_yoy, to_mom_change
+from data.macro_indicators import compute_row, to_yoy, to_mom_change, credit_regime
 
 
 def _mseries(start: str, values: list[float]) -> pd.DataFrame:
@@ -103,6 +103,29 @@ class TestChartHelpers(unittest.TestCase):
     def test_to_mom_change(self):
         out = to_mom_change(_mseries("2026-01-01", [100, 105, 103]))
         self.assertEqual(list(out["value"]), [5.0, -2.0])
+
+
+class TestCreditRegime(unittest.TestCase):
+    def test_bands(self):
+        self.assertEqual(credit_regime(2.71)["label"], "Tight")     # 271 bps
+        self.assertEqual(credit_regime(4.2)["label"], "Normal")     # 420 bps
+        self.assertEqual(credit_regime(6.5)["label"], "Elevated")   # 650 bps
+        self.assertEqual(credit_regime(9.5)["label"], "Stressed")   # 950 bps
+
+    def test_levels_for_status_dot(self):
+        self.assertEqual(credit_regime(2.71)["level"], "ok")
+        self.assertEqual(credit_regime(6.5)["level"], "warn")
+        self.assertEqual(credit_regime(9.5)["level"], "bad")
+
+    def test_boundaries_are_exclusive_upper(self):
+        # exactly 3.5 (350 bps) is no longer "Tight" — it's "Normal".
+        self.assertEqual(credit_regime(3.5)["label"], "Normal")
+        self.assertEqual(credit_regime(5.0)["label"], "Elevated")
+        self.assertEqual(credit_regime(8.0)["label"], "Stressed")
+
+    def test_na(self):
+        self.assertEqual(credit_regime(None)["level"], "na")
+        self.assertEqual(credit_regime(float("nan"))["level"], "na")
 
 
 if __name__ == "__main__":
