@@ -88,61 +88,93 @@ def _install_streamlit_stub():
     return st
 
 
-# Must survive curation (reputable source + relevance keyword) so the
-# HTML-escaping row loop actually executes — that loop is the code that
-# crashed production on 2026-06-12.
-FAKE_NEWS = [{
-    "headline": 'Fed officials <b>"A&B"</b> signal rates & inflation outlook',
-    "url": "https://example.com/a?x=1&y=2",
-    "source_name": "Reuters",
-    "published_at": "2026-06-12T09:00:00",
-}]
+# Populated above-the-fold feed rows with HTML-hostile content so the
+# _esc()-escaping loop in _af_feed_pane actually executes — that loop is the
+# exact code shape that crashed production on 2026-06-12 (NameError: _esc
+# used without import; local checks only ever hit the empty branch).
+FAKE_FEED = [
+    {"tag": "M&A", "cls": "ma", "tk": "BANR",
+     "head": 'Acme <b>"A&B"</b> to acquire rival & expand footprint',
+     "ts": "2026-06-15T09:00:00"},
+    {"tag": "8-K", "cls": "k", "tk": None,
+     "head": "Q2 results <released> & 2026 outlook raised", "ts": None},
+]
 
+# Macro prints for the Calendar pane: name is HTML-hostile and each carries
+# the scheduled time the redesign added (8:30 ET prints / 2:00 ET FOMC).
 FAKE_PRINTS = [
+    {"date": "2026-06-17", "name": "FOMC Decision <hawkish>", "kind": "fomc",
+     "importance": "high", "time": "2:00 ET"},
     {"date": "2026-06-13", "name": "CPI <YoY> & Core", "kind": "print",
-     "importance": "high"},
-    {"date": "2026-06-17", "name": "FOMC Decision", "kind": "fomc",
-     "importance": "high"},
+     "importance": "high", "time": "8:30 ET"},
 ]
 
 
 class TestHomeRendersPopulated(unittest.TestCase):
-    """Home sections must survive real-shaped, HTML-hostile content."""
+    """The above-the-fold panes must survive real-shaped, HTML-hostile
+    content. Pins the 2026-06-12 production crash: home called _esc() without
+    importing it, and local verification only hit the empty branch. The
+    redesign's _af_feed_pane has the same shape — it _esc()-escapes every
+    populated row — so we drive it with hostile items and demand the NameError
+    when the import is removed. The pin calls the pane DIRECTLY: the page entry
+    _render_above_fold wraps panes in _af_safe's try/except, which would
+    otherwise swallow the very NameError this test exists to catch."""
 
     @classmethod
     def setUpClass(cls):
         _install_streamlit_stub()
-        import data.events as ev
-        ev.get_topic_news = lambda cat, hours=24, limit=6: list(FAKE_NEWS)
-        import data.macro_calendar as mc
-        mc.get_upcoming_prints = lambda days=7: list(FAKE_PRINTS)
         import importlib
         import ui.home
         cls.home = importlib.reload(ui.home)
-        cls.home._collect_earnings_alerts = lambda w: []
 
-    def test_overnight_breaking_with_items(self):
-        self.home._render_overnight_breaking()
+    def test_feed_pane_escapes_populated_content(self):
+        self.home._af_feed_items = lambda w: list(FAKE_FEED)
+        h = self.home._af_feed_pane(["BANR"])
+        self.assertIn("&amp;", h)            # & escaped
+        self.assertIn("&lt;b&gt;", h)        # <b> escaped, not interpreted
+        self.assertNotIn("<b>", h)
+        self.assertIn("acquire rival", h)    # both rows rendered
 
-    def test_rates_strip_with_values(self):
-        # Populated FRED points + KRE quote — no live calls
-        self.home._fred_points = lambda sid: (4.25, 4.23, 4.10)
-        import data.price_cache_store as pcs
-        pcs.get_prices = lambda tickers, max_age_s=None: {
-            "KRE": {"price": 73.10, "prev_close": 72.35, "change_pct": 1.04}}
-        self.home._render_rates_strip()
+    def test_calendar_pane_with_prints(self):
+        import data.estimates as est
+        import data.macro_calendar as mc
+        saved = (est.fetch_earnings_calendar, mc.get_upcoming_prints)
+        try:
+            est.fetch_earnings_calendar = lambda w: []
+            mc.get_upcoming_prints = lambda days=7: list(FAKE_PRINTS)
+            h = self.home._af_calendar_pane([])
+        finally:
+            est.fetch_earnings_calendar, mc.get_upcoming_prints = saved
+        self.assertIn("8:30 ET", h)          # redesign's scheduled-time column
+        self.assertIn("2:00 ET", h)
+        self.assertIn("&lt;YoY&gt;", h)      # macro name HTML-escaped
+        self.assertNotIn("<YoY>", h)
 
-    def test_todays_calendar_with_prints(self):
-        self.home._render_todays_calendar([])
+    def test_above_fold_integration_renders(self):
+        # End-to-end grid assembly. Network sources are mocked off; every
+        # other pane reads local cache/snapshots, and _af_safe isolates any
+        # failure into its own error pane — the call itself must not raise.
+        import data.fmp_client as fmp
+        self.home._af_feed_items = lambda w: list(FAKE_FEED)
+        self.home._etf_context = lambda syms: {}
+        self.home._fred_points = lambda sid: (None, None, None)
+        saved = (fmp.get_history, fmp.get_quote_batch)
+        try:
+            fmp.get_history = lambda *a, **k: None
+            fmp.get_quote_batch = lambda *a, **k: {}
+            self.home._render_above_fold([], ["BANR"])
+        finally:
+            fmp.get_history, fmp.get_quote_batch = saved
 
     def test_pins_the_esc_regression(self):
-        # Removing the _esc import must reproduce the production crash —
-        # proves this test actually exercises the failing lines.
+        # Removing the _esc import must reproduce the production crash on a
+        # POPULATED feed pane — proves the escaping lines actually execute.
+        self.home._af_feed_items = lambda w: list(FAKE_FEED)
         saved = self.home._esc
         try:
             del self.home._esc
             with self.assertRaises(NameError):
-                self.home._render_overnight_breaking()
+                self.home._af_feed_pane(["BANR"])
         finally:
             self.home._esc = saved
 

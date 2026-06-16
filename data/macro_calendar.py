@@ -34,7 +34,7 @@ hardcoded below (see FOMC_DECISION_DATES) and merged in with
 kind="fomc".
 
 Entry shape (shared by both public functions, designed to merge with
-ui/home._render_todays_calendar's earnings entries which also carry an
+ui/home._af_calendar_pane's earnings entries which also carry an
 ISO "date"):
 
   {date: "YYYY-MM-DD", name: str, release_id: int | None,
