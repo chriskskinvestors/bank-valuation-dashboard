@@ -30,7 +30,7 @@ from ui.chrome import title_bar
 _EXHIBIT_FAMILIES = [
     (re.compile(r"^EX-21(\.|$)"), "Subsidiaries",                "#059669"),
     (re.compile(r"^EX-3(\.|$)"),  "Charter / Bylaws",            "#9333ea"),
-    (re.compile(r"^EX-4(\.|$)"),  "Capital Stock / Debt",        "#2563eb"),
+    (re.compile(r"^EX-4(\.|$)"),  "Capital Stock / Debt",        "var(--brand-accent)"),
     (re.compile(r"^EX-10(\.|$)"), "Material Agreement",          "#d97706"),
     (re.compile(r"^EX-99(\.|$)"), "Press Release / Presentation", "#0891b2"),
 ]
@@ -127,7 +127,7 @@ def _exhibit_table(rows: list[dict]) -> str:
         fam = (f'<span style="color:{r["color"]};font-size:0.8em;'
                f'font-weight:600;white-space:nowrap;">{r["family"]}</span>')
         link = (f'<a href="{_html.escape(r["url"])}" target="_blank" '
-                f'style="color:#2563eb;text-decoration:none;">View</a>')
+                f'style="color:var(--brand-accent);text-decoration:none;">View</a>')
         zebra = "background:rgba(148,163,184,0.045);" if i % 2 else ""
         body.append(
             f"<tr style='{zebra}'>"

@@ -38,7 +38,7 @@ EVENT_TYPE_LABELS = {
 }
 
 EVENT_TYPE_COLORS = {
-    "earnings": "#2563eb",       # blue
+    "earnings": "#2563eb",       # blue — categorical; consumed via {color}14 hex-alpha, must stay hex
     "press_release": "#059669",  # green
     "m_and_a": "#7c3aed",        # purple
     "executive_change": "#d97706",
@@ -75,7 +75,7 @@ _FEED_CSS = """
             background: rgba(107,114,128,0.12); color: #6b7280; white-space: nowrap; }
 .ev-ago { color: var(--text-muted); font-size: 0.72rem; margin-left: auto; white-space: nowrap; }
 .ev-head { font-size: 0.88rem; font-weight: 600; color: var(--text-primary); line-height: 1.3; margin-top: 1px; }
-.ev-head a.ev-src { color: #2563eb; text-decoration: none; font-weight: 400; }
+.ev-head a.ev-src { color: var(--brand-accent); text-decoration: none; font-weight: 400; }
 .ev-sum { font-size: 0.79rem; color: var(--text-secondary); line-height: 1.38; margin-top: 1px;
           display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 </style>

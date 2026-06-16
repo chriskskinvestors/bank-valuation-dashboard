@@ -945,16 +945,16 @@ def _render_capital_return_attribution(ticker: str):
         fig1 = go.Figure()
         fig1.add_trace(go.Bar(
             x=df["date"], y=df["net_income_q"] / scale,
-            name="Net Income", marker_color="#2563eb",
+            name="Net Income", marker_color=COLOR_PRIMARY,
             opacity=0.45,
         ))
         fig1.add_trace(go.Bar(
             x=df["date"], y=df["dividends_q"].fillna(0) / scale,
-            name="Dividends", marker_color="#059669",
+            name="Dividends", marker_color=COLOR_SUCCESS,
         ))
         fig1.add_trace(go.Bar(
             x=df["date"], y=df["buybacks_q"].fillna(0) / scale,
-            name="Buybacks", marker_color="#d97706",
+            name="Buybacks", marker_color=COLOR_WARNING,
         ))
         apply_standard_layout(
             fig1, title="Net Income vs Capital Returned (Quarterly)",
@@ -972,11 +972,11 @@ def _render_capital_return_attribution(ticker: str):
         fig2.add_trace(go.Scatter(
             x=df["date"], y=ratio_pct,
             mode="lines+markers",
-            line=dict(color="#2563eb", width=2.5),
+            line=dict(color=COLOR_PRIMARY, width=2.5),
             marker=dict(size=6),
             name="Total Return Ratio",
         ))
-        fig2.add_hline(y=100, line_color="#dc2626", line_width=1, line_dash="dash",
+        fig2.add_hline(y=100, line_color=COLOR_DANGER, line_width=1, line_dash="dash",
                        annotation_text="100% (returning all NI)",
                        annotation_position="top right", annotation_font_size=10)
         apply_standard_layout(
@@ -994,7 +994,7 @@ def _render_capital_return_attribution(ticker: str):
             fig3.add_trace(go.Scatter(
                 x=df["date"], y=df["shares_outstanding"] / 1e6,
                 mode="lines+markers",
-                line=dict(color="#9333ea", width=2.5),
+                line=dict(color=CATEGORICAL_PALETTE[4], width=2.5),
                 marker=dict(size=6),
                 fill="tozeroy",
                 fillcolor="rgba(147, 51, 234, 0.08)",
