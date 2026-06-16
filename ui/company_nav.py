@@ -234,6 +234,13 @@ def _cr_balance(t, ctx):
     _render_company_statement(t, "balance")
 
 
+def _cr_deposit(t, ctx):
+    import streamlit as st
+    from ui.financials_statements import _render_company_statement
+    st.subheader("Deposit Composition — Company Reported")
+    _render_company_statement(t, "deposit_composition")
+
+
 def _cr_fair_value(t, ctx):
     from ui.financials_statements import _render_fair_value_hierarchy
     _render_fair_value_hierarchy(t)
@@ -290,7 +297,7 @@ _CR_RENDERERS = {
     "Regulatory Capital": _cr_reg_capital,
     "Credit Quality / Allowance": _cr_todo("Credit Quality / Allowance"),
     "Loan Composition": _cr_todo("Loan Composition"),
-    "Deposit Composition": _cr_todo("Deposit Composition"),
+    "Deposit Composition": _cr_deposit,
     "Securities Portfolio": _cr_todo("Securities Portfolio"),
     "Fair Value": _cr_fair_value,
     "Segment Reporting": _cr_todo("Segment Reporting"),

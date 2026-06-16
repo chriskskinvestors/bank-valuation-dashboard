@@ -157,5 +157,72 @@ class TestStitchIncome(unittest.TestCase):
         self.assertEqual(afs[0]["values"], [2207.0, 1671.0, 1402.0])   # FY2025, FY2024, FY2023
 
 
+_DEP_SUMMARY = b"""<?xml version="1.0"?>
+<FilingSummary><MyReports>
+<Report><ShortName>Deposits - Composition of Deposits (Details)</ShortName><HtmlFileName>R95.htm</HtmlFileName></Report>
+<Report><ShortName>Deposits - Maturities of Time Deposits Outstanding (Details)</ShortName><HtmlFileName>R96.htm</HtmlFileName></Report>
+<Report><ShortName>Deposits - Narrative (Details)</ShortName><HtmlFileName>R97.htm</HtmlFileName></Report>
+<Report><ShortName>Deposits (Tables)</ShortName><HtmlFileName>R45.htm</HtmlFileName></Report>
+<Report><ShortName>Deposits</ShortName><HtmlFileName>R19.htm</HtmlFileName></Report>
+</MyReports></FilingSummary>"""
+
+# A filer (e.g. PNFP) whose only deposit "(Details)" is generically named but is
+# actually a time-deposit MATURITY ladder — the ShortName alone can't tell.
+_DEP_GENERIC_SUMMARY = b"""<?xml version="1.0"?>
+<FilingSummary><MyReports>
+<Report><ShortName>Deposits (Details)</ShortName><HtmlFileName>R69.htm</HtmlFileName></Report>
+<Report><ShortName>Deposits (Tables)</ShortName><HtmlFileName>R40.htm</HtmlFileName></Report>
+</MyReports></FilingSummary>"""
+
+
+class TestNoteRfileFinder(unittest.TestCase):
+    """The as-reported NOTE finder (data.sec_statements._note_rfile / _NOTE_SPECS)
+    must pick the by-type composition table and reject sibling tables that share
+    the topic word (maturities, narrative) — and the content guard must catch a
+    generically-named note whose body is a maturity ladder."""
+
+    def _find(self, summary):
+        import data.sec_statements as s
+        with mock.patch.object(s, "_get", return_value=summary):
+            return s._note_rfile("base/", s._NOTE_SPECS["deposit_composition"])
+
+    def test_prefers_composition_rejects_maturity_and_narrative(self):
+        self.assertEqual(self._find(_DEP_SUMMARY), "R95.htm")
+
+    def test_generic_details_is_still_picked_by_name(self):
+        # ShortName can't reject it (no 'maturit'/'narrative' in the name) — the
+        # name-level finder returns it; the content guard is what rejects it.
+        self.assertEqual(self._find(_DEP_GENERIC_SUMMARY), "R69.htm")
+
+    def test_none_when_no_deposit_note(self):
+        empty = (b'<?xml version="1.0"?><FilingSummary><MyReports>'
+                 b'<Report><ShortName>Securities (Details)</ShortName>'
+                 b'<HtmlFileName>R55.htm</HtmlFileName></Report>'
+                 b'</MyReports></FilingSummary>')
+        self.assertIsNone(self._find(empty))
+
+    def test_maturity_table_detected_by_content(self):
+        from data.sec_statements import _is_maturity_table
+        mat = {"rows": [
+            {"label": "2025", "header": False, "values": [1.0]},
+            {"label": "2026", "header": False, "values": [2.0]},
+            {"label": "2027", "header": False, "values": [3.0]},
+            {"label": "Thereafter", "header": False, "values": [4.0]},
+            {"label": "Time deposits, Total", "header": False, "values": [10.0]},
+        ]}
+        self.assertTrue(_is_maturity_table(mat))   # 4 of 5 rows are years/thereafter
+
+    def test_composition_table_not_flagged_as_maturity(self):
+        from data.sec_statements import _is_maturity_table
+        comp = {"rows": [
+            {"label": "Noninterest-bearing deposits", "header": False, "values": [1.0]},
+            {"label": "Interest checking", "header": False, "values": [2.0]},
+            {"label": "Savings accounts", "header": False, "values": [3.0]},
+            {"label": "Time deposits", "header": False, "values": [4.0]},
+            {"label": "Total deposits", "header": False, "values": [10.0]},
+        ]}
+        self.assertFalse(_is_maturity_table(comp))
+
+
 if __name__ == "__main__":
     unittest.main()

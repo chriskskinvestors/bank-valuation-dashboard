@@ -1473,14 +1473,17 @@ def _render_company_statement(ticker: str, stype: str):
         m = re.search(r"\d{4}", p or "")
         return m.group() if m else (p or "")
 
+    _eps = re.compile(r"per share|per common share", re.I)
+    _shares = re.compile(r"\(in shares\)|in shares", re.I)
+    _has_persh = any(_eps.search(r["label"]) or _shares.search(r["label"])
+                     for r in stmt["rows"] if not r["header"])
+    _persh_note = " EPS in \\$/share, shares in millions;" if _has_persh else ""
     st.caption(f"Source: company 10-K filings — latest [{latest['date']}]({src}); "
                f"{len(stmt['periods'])} fiscal years stitched from {len(filings)} filings. "
-               f"Dollar lines in \\$ millions; EPS in \\$/share, shares in millions; "
+               f"Dollar lines in \\$ millions;{_persh_note} "
                f"blank = not separately reported that year.")
     periods = stmt["periods"][::-1]            # oldest → newest (matches Templated)
     cols = [f"FY{_yr(p)}" for p in periods]
-    _eps = re.compile(r"per share|per common share", re.I)
-    _shares = re.compile(r"\(in shares\)|in shares", re.I)
 
     def _m(label, v):
         if v is None:

@@ -36,15 +36,34 @@ _DATE = re.compile(r"[A-Z][a-z]{2}\.?\s+\d{1,2},\s+\d{4}")
 # NOT the statement's "$ in Thousands/Millions" — so they must not be scaled.
 _PERSHARE = re.compile(r"per share|per common share|\(in shares\)|in shares", re.I)
 
+# As-reported NOTE tables (the SNL-depth disclosures past the primary statements).
+# Notes are rendered as their own "(Details)" R-files; we pick the by-type
+# composition table and reject sibling tables (maturities, narrative, rollforward)
+# whose ShortName matches the same topic. ShortName conventions vary by filer
+# (e.g. "Deposits (Details)" vs "Deposits - Composition of Deposits (Details)" vs
+# "DEPOSITS - Schedule of Deposits (Details)"), so 'prefer' ranks the composition
+# variant and 'reject' drops the wrong siblings.
+_NOTE_SPECS = {
+    "deposit_composition": {
+        "want": re.compile(r"deposit", re.I),
+        "prefer": re.compile(r"composition|schedule of deposits|by type|classification", re.I),
+        "reject": re.compile(r"maturit|narrative|additional|contractual|insured|"
+                             r"uninsured|pledged|interest expense|roll[- ]?forward", re.I),
+    },
+}
+# A note whose ShortName is generic ("Deposits (Details)") can actually be a
+# MATURITY ladder (rows are fiscal years / "Thereafter"), not a by-type
+# composition — so guard on content, not just the ShortName.
+_MATURITY_LABEL = re.compile(r"^((19|20)\d{2}|thereafter|due\b|within\b|after \d)", re.I)
+
 
 def _filing_base(cik, accession):
     return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/"
 
 
-def _statement_rfiles(base: str) -> dict:
-    """statement_type -> R-file name, from FilingSummary.xml (first match wins)."""
+def _iter_reports(base: str):
+    """Yield (ShortName, HtmlFileName) for every Report in FilingSummary.xml."""
     root = etree.fromstring(_get(base + "FilingSummary.xml"))
-    out: dict = {}
     for r in root.iter():
         if r.tag.split("}")[-1] != "Report":
             continue
@@ -55,12 +74,52 @@ def _statement_rfiles(base: str) -> dict:
                 short = (c.text or "").strip()
             elif tag == "HtmlFileName":
                 fn = (c.text or "").strip()
-        if not (short and fn):
-            continue
+        if short and fn:
+            yield short, fn
+
+
+def _statement_rfiles(base: str) -> dict:
+    """statement_type -> R-file name, from FilingSummary.xml (first match wins)."""
+    out: dict = {}
+    for short, fn in _iter_reports(base):
         for stype, (want, reject) in _STMT_PATTERNS.items():
             if stype not in out and want.search(short) and not reject.search(short):
                 out[stype] = fn
     return out
+
+
+def _note_rfile(base: str, spec: dict) -> str | None:
+    """Best note '(Details)' R-file for a spec, by ShortName ranking. Restricted
+    to Details reports matching `want` and not `reject`; prefers the `prefer`
+    (composition/schedule) variant over a generic sibling. Returns None if the
+    filer discloses no matching note."""
+    cands = [(s, f) for s, f in _iter_reports(base)
+             if "(details)" in s.lower()
+             and spec["want"].search(s) and not spec["reject"].search(s)]
+    if not cands:
+        return None
+    preferred = [(s, f) for s, f in cands if spec["prefer"].search(s)]
+    return (preferred or cands)[0][1]
+
+
+def _is_maturity_table(parsed: dict) -> bool:
+    """True when a parsed note R-file is actually a maturity ladder (most data
+    rows are fiscal years / 'Thereafter') rather than a by-type composition —
+    used to reject a note whose ShortName is generic (e.g. 'Deposits (Details)')
+    but whose content is a maturity schedule."""
+    labels = [r["label"].strip() for r in parsed.get("rows", []) if not r["header"]]
+    if len(labels) < 3:
+        return False
+    hits = sum(1 for l in labels if _MATURITY_LABEL.match(l))
+    return hits >= max(2, len(labels) // 2)
+
+
+def _rfile_for(base: str, stype: str) -> str | None:
+    """R-file name for a primary statement (income/balance/cashflow) or a note
+    (a key in _NOTE_SPECS), from this filing's FilingSummary."""
+    if stype in _NOTE_SPECS:
+        return _note_rfile(base, _NOTE_SPECS[stype])
+    return _statement_rfiles(base).get(stype)
 
 
 def _units_scale(title: str) -> float:
@@ -282,8 +341,8 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     if not cik:
         return None
     from data import cache
-    # Balance sheets carry only 2 instant periods per 10-K, so reach back further.
-    metas = _recent_10k_metas(cik, 6 if stype == "balance" else 4)
+    # Balance sheets and note tables carry only ~2 periods per 10-K, so reach back further.
+    metas = _recent_10k_metas(cik, 6 if (stype == "balance" or stype in _NOTE_SPECS) else 4)
     if not metas:
         return None
     ckey = f"asreported_my:v3:{stype}:{metas[0]['accession']}:{n_years}"
@@ -294,12 +353,14 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     for m in metas:
         base = _filing_base(m["cik"], m["accession"])
         try:
-            fn = _statement_rfiles(base).get(stype)
+            fn = _rfile_for(base, stype)
             stmt = parse_rfile(_get(base + fn)) if fn else None
         except Exception as e:
             print(f"[sec_statements] multiyear {stype} failed for cik {cik}: "
                   f"{type(e).__name__}: {e}")
             return None                         # transient — don't cache
+        if stmt and stype in _NOTE_SPECS and _is_maturity_table(stmt):
+            stmt = None                         # a maturity ladder, not the composition note
         if stmt and stmt["periods"] and stmt["rows"]:
             stmt["_meta"] = m
             parsed.append(stmt)
