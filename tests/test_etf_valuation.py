@@ -9,7 +9,7 @@ distorting the blend).
 """
 import unittest
 
-from data.etf_valuation import blend_valuation
+from data.etf_valuation import blend_valuation, parse_holdings
 
 
 class TestBlendValuation(unittest.TestCase):
@@ -73,6 +73,33 @@ class TestBlendValuation(unittest.TestCase):
         b = blend_valuation([], {})
         self.assertEqual(b["n_holdings"], 0)
         self.assertIsNone(b["pe"])
+
+
+class TestParseHoldings(unittest.TestCase):
+    # Real shapes seen across issuers (SSGA, Invesco, First Trust).
+    ROWS = [
+        {"asset": "EWBC", "isin": "US27579R1041", "securityCusip": "27579R104",
+         "weightPercentage": 1.65},
+        {"asset": "AGPXX", "isin": "US8252528851", "securityCusip": "825252885",
+         "weightPercentage": 0.078},  # money-market fund — has ISIN, survives
+        {"asset": "", "isin": "", "securityCusip": "",
+         "weightPercentage": 0.19},   # index future — blank ticker, dropped
+        {"asset": "$USD", "isin": "", "securityCusip": "",
+         "weightPercentage": 0.33},   # First Trust cash — no ident, dropped
+        {"asset": "", "isin": "", "securityCusip": "924QSGII3",
+         "weightPercentage": 0.18},   # SSGA money-market — blank ticker, dropped
+    ]
+
+    def test_keeps_real_securities_only(self):
+        out = parse_holdings(self.ROWS)
+        tickers = [t for t, _ in out]
+        self.assertEqual(tickers, ["EWBC", "AGPXX"])  # future / $USD / blank dropped
+        self.assertAlmostEqual(dict(out)["EWBC"], 1.65)
+
+    def test_empty_and_garbage(self):
+        self.assertEqual(parse_holdings([]), [])
+        self.assertEqual(parse_holdings(None), [])
+        self.assertEqual(parse_holdings(["x", 5, {"asset": "AAA"}]), [])  # no ident/weight
 
 
 if __name__ == "__main__":
