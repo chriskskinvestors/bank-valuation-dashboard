@@ -429,8 +429,8 @@ _AF_CSS = r"""
 .afwrap .seg a.on{background:#1e3a8a;color:#fff;}
 .afwrap .cdiv{width:1px;height:10px;background:#e2e8f0;margin:0 3px;}
 .afwrap .seglbl{font-size:7.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#aab4c2;}
-.afwrap .dd{position:relative;font-size:8.5px;}
-.afwrap .dd summary{list-style:none;cursor:pointer;font-weight:600;color:#334155;background:#fff;border:1px solid #d8dee8;border-radius:3px;padding:2px 6px;}
+.afwrap .dd{position:relative;font-size:8px;}
+.afwrap .dd summary{list-style:none;cursor:pointer;font-family:var(--mono);font-size:8px;font-weight:700;color:#7c8a9c;background:#f1f4f8;border:none;border-radius:3px;padding:2px 6px;}
 .afwrap .dd summary::-webkit-details-marker{display:none;}
 .afwrap .dd .menu{position:absolute;z-index:6;top:115%;left:0;background:#fff;border:1px solid #d8dee8;border-radius:4px;box-shadow:0 4px 12px rgba(15,23,42,.12);min-width:128px;padding:3px;}
 .afwrap .dd .menu a{display:block;padding:3px 8px;font-size:9px;color:#334155;text-decoration:none;border-radius:3px;white-space:nowrap;}
