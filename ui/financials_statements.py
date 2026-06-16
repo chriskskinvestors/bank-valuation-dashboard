@@ -1958,6 +1958,67 @@ def _render_segments(ticker):
     st.markdown("\n".join([hdr, sep] + body))
 
 
+def _render_rate_risk(ticker):
+    """Embedded interest-rate risk: the AFS + HTM unrealized loss already on the
+    securities book, against equity and CET1 capital (the post-2023 'underwater
+    securities erode capital' story), composed from the same reconcile-gated
+    securities/capital extractors. Forward NII/EVE rate-shock sensitivity lives in
+    the bank's Item 7A and isn't standardized XBRL, so it is linked, not scraped."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        return
+    anchor = None
+    try:
+        from data.sec_filing_scraper import rate_risk_for, _fdic_cet1
+        from data.bank_mapping import get_fdic_cert
+        try:
+            anchor = _fdic_cet1(get_fdic_cert(ticker))
+        except Exception:
+            anchor = None
+        res = rate_risk_for(cik, anchor_cet1=anchor)
+    except Exception:
+        res = None
+    st.markdown("---")
+    st.subheader("Interest Rate Risk — embedded securities marks (Company Reported)")
+    if not res or not res.get("rate_risk"):
+        st.caption("AFS/HTM unrealized marks not tagged in this filer's latest filing "
+                   "— n/a. Forward rate-shock (NII/EVE) sensitivity is disclosed in "
+                   "Item 7A of the 10-K.")
+        return
+    meta, rr = res["meta"], res["rate_risk"]
+    period = max(rr)
+    d = rr[period]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{meta['accession']}/{meta['doc']}")
+    st.caption(
+        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — unrealized "
+        f"gain/(loss) on AFS + HTM debt securities at {period}, vs equity and CET1 "
+        f"capital. This is the rate risk ALREADY on the books; forward NII/EVE "
+        f"rate-shock sensitivity is narrative in Item 7A (not standardized XBRL).")
+
+    def _b(v):
+        if v is None:
+            return "n/a"
+        return f"${v / 1e9:+,.2f}B" if abs(v) >= 1e9 else f"${v / 1e6:+,.0f}M"
+
+    def _pct(v):
+        return "n/a" if v is None else f"{v * 100:+.1f}%"
+
+    rows = [
+        ("AFS unrealized gain / (loss)", _b(d["afs_unrealized"])),
+        ("HTM unrealized gain / (loss)", _b(d["htm_unrealized"])),
+        ("Total unrealized gain / (loss)", _b(d["total_unrealized"])),
+        ("Total equity", _b(d["equity"])),
+        ("Unrealized as % of equity", _pct(d["unrealized_to_equity"])),
+        ("Unrealized as % of CET1 capital", _pct(d["unrealized_to_cet1"])),
+    ]
+    hdr = "| Embedded rate risk | Value |"
+    sep = "|---|---|"
+    body = [f"| {lab} | {val} |" for lab, val in rows]
+    st.markdown("\n".join([hdr, sep] + body))
+
+
 def render_portfolio(ticker):
     render_statement(ticker, "port", "Portfolio Analysis", _PORTFOLIO)
 

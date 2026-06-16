@@ -1343,3 +1343,67 @@ def segments_for(cik) -> dict | None:
     if seg:
         return {"meta": meta, "segments": seg}
     return None
+
+
+# ── Interest-rate risk (embedded, from securities marks vs capital) ───────────
+# Forward NII/EVE rate-shock sensitivity is narrative Item 7A MD&A with company-
+# specific (often untagged) extension elements — not standardised iXBRL, so it
+# can't be extracted reliably. What IS reliable and reconcile-gated is the
+# REALISED rate risk already on the books: the AFS + HTM unrealised loss measured
+# against equity and CET1 capital (the post-2023 "underwater securities erode
+# tangible capital" story). Composed from the audited securities and capital
+# extractors plus the tagged equity total.
+def extract_rate_risk(facts: list[Fact], anchor_cet1=None) -> dict:
+    """{period: {...}} — embedded interest-rate risk: AFS/HTM net unrealised gain
+    (loss), the total, and that total as a share of equity and of CET1 capital.
+    n/a unless at least one securities portfolio and total equity are tagged."""
+    sec = extract_securities(facts)
+    if not sec:
+        return {}
+    period = max(sec)
+    afs = sec[period].get("afs")
+    htm = sec[period].get("htm")
+    afs_net = afs["net_unrealized"] if afs else None
+    htm_net = htm["net_unrealized"] if htm else None
+    if afs_net is None and htm_net is None:
+        return {}
+    total = (afs_net or 0.0) + (htm_net or 0.0)
+    equity = _undimensioned_total(facts, "StockholdersEquity", period)
+    if equity is None or equity == 0:
+        return {}
+    cap = extract_holdco_capital(facts, anchor_cet1=anchor_cet1)
+    cet1_cap = cap[max(cap)].get("cet1_cap") if cap else None
+    return {period: {
+        "afs_unrealized": afs_net, "htm_unrealized": htm_net,
+        "total_unrealized": total, "equity": equity, "cet1_capital": cet1_cap,
+        "unrealized_to_equity": total / equity,
+        "unrealized_to_cet1": (total / cet1_cap) if cet1_cap else None,
+    }}
+
+
+def rate_risk_for(cik, anchor_cet1=None) -> dict | None:
+    """Cached embedded interest-rate-risk snapshot for a company from its own latest
+    filing (timeliest 10-Q, then 10-K). Returns {"meta": {...}, "rate_risk": {...}}
+    or None."""
+    if not cik:
+        return None
+    from data import cache
+    for forms in (("10-Q",), ("10-K",)):
+        meta = latest_filing(cik, forms)
+        if not meta:
+            continue
+        ckey = f"rate_risk:v1:{meta['accession']}:{anchor_cet1}"
+        rr = cache.get(ckey)
+        if rr is None:
+            try:
+                rr = extract_rate_risk(instance_facts(meta), anchor_cet1=anchor_cet1)
+                try:
+                    cache.put(ckey, rr)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"[sec_scraper] rate risk failed for cik {cik}: {type(e).__name__}: {e}")
+                rr = {}
+        if rr:
+            return {"meta": meta, "rate_risk": rr}
+    return None

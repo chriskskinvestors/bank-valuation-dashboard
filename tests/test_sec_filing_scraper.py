@@ -15,7 +15,7 @@ from unittest import mock
 from data.sec_filing_scraper import (
     parse_inline_xbrl, extract_holdco_capital, extract_fair_value,
     extract_securities, extract_credit_quality, extract_performance,
-    extract_financial_highlights, extract_segments, Fact)
+    extract_financial_highlights, extract_segments, extract_rate_risk, Fact)
 
 
 def _f(concept, val, members=None, period="2025-12-31"):
@@ -738,6 +738,31 @@ class TestSegments(unittest.TestCase):
                  self._seg("us-gaap:NetIncomeLoss", 100 * self.M, "x:CommunityBankingMember", self.OPSEG),
                  self._seg("us-gaap:NetIncomeLoss", 98 * self.M, "x:CorporateMember", self.OPSEG)]
         self.assertEqual(extract_segments(facts), {})
+
+
+class TestRateRisk(unittest.TestCase):
+    """Embedded interest-rate risk (extract_rate_risk): AFS/HTM unrealized marks vs
+    equity, composed from the securities extractor. Pins the equity ratio and the
+    equity-required n/a rule."""
+
+    AC_A = "us-gaap:DebtSecuritiesAvailableForSaleAmortizedCostExcludingAccruedInterestAfterAllowanceForCreditLoss"
+    FV_A = "us-gaap:DebtSecuritiesAvailableForSaleExcludingAccruedInterest"
+    AC_H = "us-gaap:DebtSecuritiesHeldToMaturityExcludingAccruedInterestAfterAllowanceForCreditLoss"
+    FV_H = "us-gaap:HeldToMaturitySecuritiesFairValue"
+    B = 1e9
+
+    def test_embedded_rate_risk(self):
+        # WFC-ish: AFS net −3.5B, HTM net −32.8B, equity 178B.
+        facts = [_f(self.AC_A, 230 * self.B), _f(self.FV_A, 226.5 * self.B),
+                 _f(self.AC_H, 204 * self.B), _f(self.FV_H, 171.2 * self.B),
+                 _f("us-gaap:StockholdersEquity", 178 * self.B)]
+        d = extract_rate_risk(facts)["2025-12-31"]
+        self.assertAlmostEqual(d["total_unrealized"], (-3.5 - 32.8) * self.B, delta=1e7)
+        self.assertAlmostEqual(d["unrealized_to_equity"], (-3.5 - 32.8) / 178, places=4)
+
+    def test_no_equity_yields_na(self):
+        facts = [_f(self.AC_A, 230 * self.B), _f(self.FV_A, 226.5 * self.B)]
+        self.assertEqual(extract_rate_risk(facts), {})
 
 
 class TestFairValueCaching(unittest.TestCase):

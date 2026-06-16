@@ -278,6 +278,11 @@ def _cr_segments(t, ctx):
     _render_segments(t)
 
 
+def _cr_rate_risk(t, ctx):
+    from ui.financials_statements import _render_rate_risk
+    _render_rate_risk(t)
+
+
 def _cr_reg_capital(t, ctx):
     from ui.capital_dynamics import _render_holdco_capital
     _render_holdco_capital(t)
@@ -333,7 +338,7 @@ _CR_RENDERERS = {
     "Securities Portfolio": _cr_securities,
     "Fair Value": _cr_fair_value,
     "Segment Reporting": _cr_segments,
-    "Interest Rate Risk": _cr_todo("Interest Rate Risk"),
+    "Interest Rate Risk": _cr_rate_risk,
 }
 
 
