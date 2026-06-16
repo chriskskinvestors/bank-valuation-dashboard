@@ -28,14 +28,43 @@ ETFS = [
     {"ticker": "QABA", "name": "First Trust NASDAQ ABA Community Bank ETF"},
 ]
 
-# Windows that map to FMP's historical-price-eod/full (plan-allowed).
-PERIODS = ["3M", "1Y", "5Y"]
+# Selectable windows. All are served from EOD daily bars (sliced client-side
+# from one fetch) so none depends on FMP's intraday historical-chart
+# endpoints, which the Starter plan denies (see the FMP-Starter memory).
+PERIODS = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
+
+
+def window_cutoff(period: str, last_date) -> pd.Timestamp:
+    """Start date for `period` ending at `last_date`. Pure / unit-tested —
+    DateOffset months/years (calendar-correct), YTD = Jan 1 of the latest
+    observation's year. Unknown period falls back to 1Y."""
+    ld = pd.Timestamp(last_date)
+    if period == "1M":
+        return ld - pd.DateOffset(months=1)
+    if period == "3M":
+        return ld - pd.DateOffset(months=3)
+    if period == "6M":
+        return ld - pd.DateOffset(months=6)
+    if period == "YTD":
+        return pd.Timestamp(year=ld.year, month=1, day=1)
+    if period == "3Y":
+        return ld - pd.DateOffset(years=3)
+    if period == "5Y":
+        return ld - pd.DateOffset(years=5)
+    return ld - pd.DateOffset(years=1)  # "1Y" + fallback
 
 
 def get_etf_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
-    """Cleaned (date, close, volume) EOD frame for `ticker` over `period`,
-    ascending by date. Empty frame when FMP has no key or the fetch fails."""
-    df = get_history(ticker, period=period)
+    """Cleaned (date, close, volume) EOD frame for `ticker`, sliced to
+    `period`, ascending by date. Empty frame when FMP has no key or the
+    fetch fails.
+
+    One EOD fetch serves every window: pull 5Y for the long windows and 1Y
+    for the rest (1Y is the proven-working EOD call), then slice by date —
+    so adding short windows never touches the plan-denied intraday endpoints.
+    """
+    base = "5Y" if period in ("3Y", "5Y") else "1Y"
+    df = get_history(ticker, period=base)
     if df is None or df.empty or "close" not in df.columns:
         return pd.DataFrame(columns=["date", "close", "volume"])
     cols = ["date", "close"] + (["volume"] if "volume" in df.columns else [])
@@ -45,7 +74,10 @@ def get_etf_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
     if "volume" in d.columns:
         d["volume"] = pd.to_numeric(d["volume"], errors="coerce")
     d = d.dropna(subset=["date", "close"]).sort_values("date").reset_index(drop=True)
-    return d
+    if d.empty:
+        return d
+    cutoff = window_cutoff(period, d["date"].iloc[-1])
+    return d[d["date"] >= cutoff].reset_index(drop=True)
 
 
 def drawdown_series(df: pd.DataFrame) -> pd.DataFrame:

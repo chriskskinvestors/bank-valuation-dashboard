@@ -101,7 +101,7 @@ def _render_bank_sector():
                           format_func=lambda t: t, key="bank_sector_etf",
                           label_visibility="collapsed")
     with c_per:
-        period = st.radio("Window", PERIODS, index=1, horizontal=True,
+        period = st.radio("Window", PERIODS, index=PERIODS.index("1Y"), horizontal=True,
                           format_func=lambda p: p, key="bank_sector_period",
                           label_visibility="collapsed")
 
@@ -121,15 +121,34 @@ def _render_bank_sector():
     def _date(ts):
         return ts.strftime("%b %d, %Y").replace(" 0", " ") if ts is not None else "—"
 
-    # ── Stat ledgers ───────────────────────────────────────────────────
-    lc1, lc2 = st.columns(2)
-    with lc1:
+    # ── Price chart (left) + stat ledgers beside it (right) ───────────
+    # Narrowing the hero chart into a column (vs full-bleed) keeps the line
+    # legible; tighten_yaxis fills the vertical so small moves read.
+    main_l, main_r = st.columns([3, 2])
+    with main_l:
+        figp = go.Figure()
+        figp.add_trace(go.Scatter(
+            x=df["date"], y=df["close"], name=ticker, mode="lines",
+            line=dict(color="#1e40af", width=2), fill="tozeroy",
+            fillcolor="rgba(37, 99, 235, 0.06)",
+        ))
+        if stats["period_high"] is not None:
+            figp.add_hline(y=stats["period_high"], line_color="#94a3b8", line_width=1,
+                           line_dash="dash",
+                           annotation_text=f"period high ${stats['period_high']:,.2f}",
+                           annotation_position="top left",
+                           annotation_font=dict(size=10, color="#64748b"))
+        apply_standard_layout(figp, title=f"{ticker} — price ({period})",
+                              height=CHART_HEIGHT_FULL, yaxis_title="Close",
+                              show_legend=False)
+        tighten_yaxis(figp, df["close"].tolist(), tickprefix="$")
+        st.plotly_chart(figp, use_container_width=True)
+    with main_r:
         ledger("Price", [
             ("Last close", f'${stats["last"]:,.2f}' if stats["last"] is not None else "n/a"),
             (f"Return ({period})", _fmt_signed_pct(stats["period_return_pct"])),
             ("Avg daily volume", _fmt_vol(stats["avg_volume"])),
         ])
-    with lc2:
         hi = f'${stats["period_high"]:,.2f}' if stats["period_high"] is not None else "n/a"
         lo = f'${stats["period_low"]:,.2f}' if stats["period_low"] is not None else "n/a"
         ledger("Range", [
@@ -137,26 +156,6 @@ def _render_bank_sector():
             ("Low", lo),
             ("Drawdown from high", _fmt_signed_pct(stats["drawdown_from_high_pct"])),
         ])
-
-    # ── Price (close) over the window, with the period-high watermark ──
-    figp = go.Figure()
-    figp.add_trace(go.Scatter(
-        x=df["date"], y=df["close"], name=ticker, mode="lines",
-        line=dict(color="#1e40af", width=2), fill="tozeroy",
-        fillcolor="rgba(37, 99, 235, 0.06)",
-    ))
-    if stats["period_high"] is not None:
-        figp.add_hline(y=stats["period_high"], line_color="#94a3b8", line_width=1,
-                       line_dash="dash",
-                       annotation_text=f"period high ${stats['period_high']:,.2f}",
-                       annotation_position="top left",
-                       annotation_font=dict(size=10, color="#64748b"))
-    apply_standard_layout(figp, title=f"{ticker} — price ({period})",
-                          height=CHART_HEIGHT_FULL, yaxis_title="Close",
-                          show_legend=False)
-    figp.update_yaxes(tickprefix="$")
-    tighten_yaxis(figp, df["close"].tolist(), tickprefix="$")
-    st.plotly_chart(figp, use_container_width=True)
 
     # ── Drawdown (underwater) + volume ─────────────────────────────────
     dc1, dc2 = st.columns(2)

@@ -12,7 +12,7 @@ import unittest
 
 import pandas as pd
 
-from data.bank_etf import compute_stats, drawdown_series
+from data.bank_etf import compute_stats, drawdown_series, window_cutoff
 
 
 def _ohlcv(closes, volumes=None):
@@ -62,6 +62,24 @@ class TestDrawdownSeries(unittest.TestCase):
     def test_empty(self):
         self.assertTrue(drawdown_series(pd.DataFrame()).empty)
         self.assertTrue(drawdown_series(None).empty)
+
+
+class TestWindowCutoff(unittest.TestCase):
+    LAST = pd.Timestamp("2026-06-16")
+
+    def test_calendar_offsets(self):
+        self.assertEqual(window_cutoff("1M", self.LAST), pd.Timestamp("2026-05-16"))
+        self.assertEqual(window_cutoff("3M", self.LAST), pd.Timestamp("2026-03-16"))
+        self.assertEqual(window_cutoff("6M", self.LAST), pd.Timestamp("2025-12-16"))
+        self.assertEqual(window_cutoff("1Y", self.LAST), pd.Timestamp("2025-06-16"))
+        self.assertEqual(window_cutoff("3Y", self.LAST), pd.Timestamp("2023-06-16"))
+        self.assertEqual(window_cutoff("5Y", self.LAST), pd.Timestamp("2021-06-16"))
+
+    def test_ytd_is_jan_first_of_latest_year(self):
+        self.assertEqual(window_cutoff("YTD", self.LAST), pd.Timestamp("2026-01-01"))
+
+    def test_unknown_falls_back_to_1y(self):
+        self.assertEqual(window_cutoff("ZZ", self.LAST), pd.Timestamp("2025-06-16"))
 
 
 if __name__ == "__main__":
