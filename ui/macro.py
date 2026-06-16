@@ -493,7 +493,7 @@ def _render_economy_calendar():
     import html as _html
     import plotly.graph_objects as go
     from datetime import date as _date, datetime as _dt
-    from data.macro_indicators import get_print_board, to_yoy, to_mom_change
+    from data.macro_indicators import get_print_board, to_yoy, to_mom_change, recession_periods
     from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
 
@@ -753,6 +753,45 @@ def _render_economy_calendar():
                         ticksuffix="%", showgrid=False),
         )
         st.plotly_chart(figm, use_container_width=True)
+
+    # ── Recession & leading signals ────────────────────────────────────
+    st.markdown("---")
+    st.markdown("**Recession & leading signals**")
+    rc1, rc2 = st.columns([1, 2])
+    with rc1:
+        rec = recession_probability()
+        lvl = rec["level"]
+        style = ALERT_STYLE["high"] if lvl == "high" else (
+            ALERT_STYLE["medium"] if lvl == "medium" else ALERT_STYLE["ok"])
+        dot = "bad" if lvl == "high" else ("warn" if lvl == "medium" else "ok")
+        label = {"high": "Elevated recession risk", "medium": "Mixed recession signals"}.get(
+            lvl, "Low recession signal")
+        factors = "<br>".join("• " + _html.escape(f) for f in rec["factors"]) or \
+            "No recession signals triggered"
+        st.markdown(
+            f'<div style="{style}"><span class="ksk-dot {dot}"></span> '
+            f'<strong>{label} ({rec["score"]}/100)</strong>'
+            f'<br><span style="font-weight:normal;font-size:var(--fs-sm);">{factors}</span></div>',
+            unsafe_allow_html=True,
+        )
+    with rc2:
+        figr = go.Figure()
+        for s, e in recession_periods(fetch_series("USREC", years=15)):
+            figr.add_vrect(x0=s, x1=e, fillcolor="rgba(15,23,42,0.07)",
+                           line_width=0, layer="below")
+        sig = fetch_series("T10Y3M", years=15)
+        if not sig.empty:
+            d = sig.dropna(subset=["value"]).sort_values("date")
+            figr.add_trace(go.Scatter(
+                x=d["date"], y=d["value"], name="10Y−3M", mode="lines",
+                line=dict(color="#dc2626", width=1.8)))
+        figr.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+        apply_standard_layout(figr, title="Recession signal — 10Y−3M spread w/ NBER recessions (15Y)",
+                              height=CHART_HEIGHT_FULL, yaxis_title="Spread", show_legend=False)
+        figr.update_yaxes(ticksuffix="pp")
+        st.plotly_chart(figr, use_container_width=True)
+    st.caption("Recession score blends the 10Y−2Y & 10Y−3M curve spreads and a Sahm-rule "
+               "proxy on unemployment. Shaded bands = NBER recessions (FRED USREC). Source: FRED.")
 
 
 def _render_regime():

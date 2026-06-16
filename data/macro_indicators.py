@@ -180,6 +180,26 @@ def basis_series(df: pd.DataFrame, basis: str) -> pd.DataFrame:
     return _clean(df)  # level_pct / level_idx / level_k_raw
 
 
+def recession_periods(df: pd.DataFrame) -> list[tuple]:
+    """Contiguous (start, end) date runs where a 0/1 recession-dummy series
+    (FRED USREC) equals 1 — for shading NBER recessions behind a chart.
+    Pure / unit-tested."""
+    d = _clean(df)
+    if d.empty:
+        return []
+    out, start, prev = [], None, None
+    for dt, v in zip(d["date"], d["value"]):
+        if v == 1 and start is None:
+            start = dt
+        elif v != 1 and start is not None:
+            out.append((start, prev))
+            start = None
+        prev = dt
+    if start is not None:
+        out.append((start, prev))
+    return out
+
+
 def zscore_latest(df: pd.DataFrame, basis: str, years: int = 10) -> float | None:
     """Z-score of the latest basis value vs its trailing `years` of history
     (≥12 obs required; falls back to all history). None when undefined."""

@@ -14,7 +14,7 @@ import pandas as pd
 
 from data.macro_indicators import (
     compute_row, to_yoy, to_mom_change, to_mom_pct, basis_series, zscore_latest,
-    credit_regime, curve_regime, fed_path,
+    recession_periods, credit_regime, curve_regime, fed_path,
 )
 
 
@@ -137,6 +137,27 @@ class TestNewBasesAndZScore(unittest.TestCase):
     def test_basis_series_dispatch(self):
         self.assertEqual(len(basis_series(_mseries("2026-01-01", [100, 105, 103]), "mom_pct")), 2)
         self.assertEqual(len(basis_series(_mseries("2026-01-01", [5, 6, 7]), "level_pct")), 3)
+
+
+class TestRecessionPeriods(unittest.TestCase):
+    def test_runs(self):
+        # months: 0,1,1,0,0,1,1,1,0 → two recession runs
+        vals = [0, 1, 1, 0, 0, 1, 1, 1, 0]
+        df = _mseries("2024-01-01", vals)
+        p = recession_periods(df)
+        self.assertEqual(len(p), 2)
+        self.assertEqual(p[0], (pd.Timestamp("2024-02-01"), pd.Timestamp("2024-03-01")))
+        self.assertEqual(p[1], (pd.Timestamp("2024-06-01"), pd.Timestamp("2024-08-01")))
+
+    def test_open_ended_run(self):
+        # ends in recession → run closes at the last observation
+        df = _mseries("2026-01-01", [0, 0, 1, 1])
+        p = recession_periods(df)
+        self.assertEqual(p, [(pd.Timestamp("2026-03-01"), pd.Timestamp("2026-04-01"))])
+
+    def test_empty(self):
+        self.assertEqual(recession_periods(pd.DataFrame(columns=["date", "value"])), [])
+        self.assertEqual(recession_periods(_mseries("2026-01-01", [0, 0, 0])), [])
 
 
 class TestCreditRegime(unittest.TestCase):
