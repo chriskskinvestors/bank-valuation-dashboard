@@ -146,16 +146,18 @@ def _render_bank_sector():
     from ui.chrome import ledger
 
     names = {e["ticker"]: e["name"] for e in ETFS}
-    # Selectors kept tight on the left (not spread across the page).
-    c_etf, c_win, _ = st.columns([1, 1.2, 1.8], vertical_alignment="center")
+    # ETF selector on its own row (top-left); the timeframe selector lives
+    # directly above the chart it controls (rendered inside c_chart below).
+    c_etf, _ = st.columns([1, 3])
     with c_etf:
         ticker = st.radio("ETF", [e["ticker"] for e in ETFS], index=0, horizontal=True,
                           format_func=lambda t: t, key="bank_sector_etf",
                           label_visibility="collapsed")
-    with c_win:
-        period = st.radio("Window", PERIODS, index=PERIODS.index("1Y"), horizontal=True,
-                          format_func=lambda p: p, key="bank_sector_period",
-                          label_visibility="collapsed")
+
+    # The timeframe radio renders above the chart (below), so read the current
+    # selection from session state here to drive the EOD fetch.
+    st.session_state.setdefault("bank_sector_period", "1Y")
+    period = st.session_state["bank_sector_period"]
 
     st.caption(f"**{ticker}** — {names.get(ticker, '')} · {period} · EOD closes")
 
@@ -171,12 +173,13 @@ def _render_bank_sector():
     stats = compute_stats(df)
     md = get_etf_market_data(ticker)  # live quote + ETF fund fields (Premium)
 
-    # ── Compact price panel (~1/3 width, taller) with volume stacked
-    # under it; the Price/Range stats sit tight to its right (narrow column,
-    # so no big label→value gaps), with the rest of the row left as
-    # whitespace rather than pushing stats to the far edge. ─────────────
+    # ── Compact price panel (~1/3 width, taller): timeframe tabs directly
+    # above the price chart, volume below; the Price/Range/Valuation stats
+    # sit tight to its right. ──────────────────────────────────────────
     c_chart, c_stats, _ = st.columns([1, 0.7, 1.3])
     with c_chart:
+        st.radio("Window", PERIODS, key="bank_sector_period", horizontal=True,
+                 format_func=lambda p: p, label_visibility="collapsed")
         figp = go.Figure()
         figp.add_trace(go.Scatter(
             x=df["date"], y=df["close"], name=ticker, mode="lines",
