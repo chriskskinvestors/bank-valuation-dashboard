@@ -887,3 +887,116 @@ def securities_for(cik) -> dict | None:
         if sec:
             return {"meta": meta, "securities": sec}
     return None
+
+
+# ── Credit quality / allowance (ACL) ─────────────────────────────────────────
+# The CECL allowance and asset-quality figures the loan footnote tags
+# undimensioned: allowance for credit losses on loans, gross/net loans, nonaccrual
+# loans, the charge-off / recovery flows and the provision. Reconcile-gated:
+# net loans + allowance must tie gross loans, or the loans/ACL pairing is rejected
+# (n/a, never a guessed ratio). The loan-only ACL is preferred over the combined
+# "...AndOffBalanceSheetCreditLossLiability..." (which folds in the unfunded-
+# commitment reserve) so the coverage ratio is allowance-on-loans ÷ loans.
+_CQ_CONCEPTS = {
+    "acl": ("FinancingReceivableAllowanceForCreditLossExcludingAccruedInterest",
+            "FinancingReceivableAndNetInvestmentInLeaseAllowanceForCreditLossExcludingAccruedInterest",
+            "FinancingReceivableAllowanceForCreditLosses",
+            "LoansAndLeasesReceivableAllowance",
+            "AllowanceForLoanAndLeaseLossesRealEstate"),
+    "loans_gross": ("FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss",
+                    "FinancingReceivableBeforeAllowanceForCreditLoss",
+                    "NotesReceivableGross",
+                    "LoansAndLeasesReceivableGrossCarryingAmount"),
+    "loans_net": ("FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss",
+                  "FinancingReceivableAfterAllowanceForCreditLoss",
+                  "LoansAndLeasesReceivableNetReportedAmount",
+                  "NotesReceivableNet"),
+    "nonaccrual": ("FinancingReceivableExcludingAccruedInterestNonaccrual",
+                   "FinancingReceivableRecordedInvestmentNonaccrualStatus"),
+    "writeoff": ("FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoff",
+                 "FinancingReceivableAllowanceForCreditLossesWriteoff",
+                 "AllowanceForLoanAndLeaseLossesWriteOffs"),
+    "recovery": ("FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossRecovery",
+                 "FinancingReceivableAllowanceForCreditLossesRecovery",
+                 "AllowanceForLoanAndLeaseLossRecoveries"),
+    "nco": ("FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoffAfterRecovery",),
+    "provision": ("ProvisionForLoanLeaseAndOtherLosses",
+                  "ProvisionForLoanAndLeaseLosses",
+                  "ProvisionForCreditLossExpenseReversal",
+                  "ProvisionForCreditLosses"),
+}
+
+
+def extract_credit_quality(facts: list[Fact]) -> dict:
+    """{period_end: {...}} — the as-reported CECL allowance & asset-quality summary
+    from a filing's iXBRL: allowance for credit losses (ACL), gross/net loans,
+    nonaccrual loans, net charge-offs (writeoff − recovery, or the directly tagged
+    net), provision, and the derived ratios (ACL ÷ loans, nonaccrual ÷ loans, ACL
+    coverage of nonaccruals, NCO ÷ loans).
+
+    Reconcile-gated: a period renders only with a tagged ACL AND gross loans; when
+    net loans are also tagged, net + ACL must tie gross within 1% or the trio is
+    rejected (n/a). NCO uses the tagged net writeoff-after-recovery, else
+    writeoff − recovery when both are present, else None."""
+    # Use ONLY the filing's current (latest) loan-footnote date — never fall back
+    # to a prior-year comparative, which would surface stale figures as current.
+    periods: set = set()
+    anchors = set(_CQ_CONCEPTS["acl"]) | set(_CQ_CONCEPTS["loans_gross"])
+    for f in facts:
+        if f.concept.split(":")[-1] in anchors and not f.members:
+            periods.add(f.period_end)
+    out: dict = {}
+    if periods:
+        period = max(periods)
+        acl = _sec_pick(facts, _CQ_CONCEPTS["acl"], period)
+        gross = _sec_pick(facts, _CQ_CONCEPTS["loans_gross"], period)
+        net = _sec_pick(facts, _CQ_CONCEPTS["loans_net"], period)
+        # Render only with ACL AND gross loans at the current date, and (when a net
+        # loan figure is tagged) net + ACL tying gross — else n/a.
+        if (acl is not None and gross not in (None, 0)
+                and not (net is not None and abs((net + acl) - gross) > max(abs(gross) * 0.01, 5e6))):
+            nonaccrual = _sec_pick(facts, _CQ_CONCEPTS["nonaccrual"], period)
+            nco = _sec_pick(facts, _CQ_CONCEPTS["nco"], period)
+            if nco is None:
+                wo = _sec_pick(facts, _CQ_CONCEPTS["writeoff"], period)
+                rec = _sec_pick(facts, _CQ_CONCEPTS["recovery"], period)
+                nco = (wo - rec) if (wo is not None and rec is not None) else None
+            provision = _sec_pick(facts, _CQ_CONCEPTS["provision"], period)
+            out[period] = {
+                "acl": acl, "loans_gross": gross, "loans_net": net,
+                "nonaccrual": nonaccrual, "nco": nco, "provision": provision,
+                "acl_to_loans": acl / gross,
+                "nonaccrual_to_loans": (nonaccrual / gross) if nonaccrual is not None else None,
+                "nco_to_loans": (nco / gross) if nco is not None else None,
+                "acl_coverage_nonaccrual": (acl / nonaccrual) if nonaccrual else None,
+                "_reconciles": net is not None,
+            }
+    return out
+
+
+def credit_quality_for(cik) -> dict | None:
+    """Cached CECL allowance & asset-quality summary for a company from its own
+    latest SEC filing (timeliest 10-Q, then 10-K). Returns
+    {"meta": {...}, "credit_quality": {period: {...}}} or None."""
+    if not cik:
+        return None
+    from data import cache
+    for forms in (("10-Q",), ("10-K",)):
+        meta = latest_filing(cik, forms)
+        if not meta:
+            continue
+        ckey = f"credit_quality:v1:{meta['accession']}"
+        cq = cache.get(ckey)
+        if cq is None:
+            try:
+                cq = extract_credit_quality(instance_facts(meta))
+                try:
+                    cache.put(ckey, cq)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"[sec_scraper] credit quality failed for cik {cik}: {type(e).__name__}: {e}")
+                cq = {}
+        if cq:
+            return {"meta": meta, "credit_quality": cq}
+    return None

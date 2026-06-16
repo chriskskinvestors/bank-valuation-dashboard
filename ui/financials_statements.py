@@ -1725,6 +1725,67 @@ def render_fair_value(ticker):
                "deposits, debt), are next on the roadmap.")
 
 
+def _render_credit_quality(ticker):
+    """As-reported CECL allowance & asset-quality summary, scraped from the HOLDING
+    COMPANY's own latest 10-Q/10-K inline XBRL: allowance for credit losses, the
+    ACL coverage ratio, nonaccrual loans, net charge-offs and provision. n/a when
+    the filer doesn't tag a reconciling allowance + gross-loans pair (never a
+    guessed ratio)."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        return
+    try:
+        from data.sec_filing_scraper import credit_quality_for
+        res = credit_quality_for(cik)
+    except Exception:
+        res = None
+    st.markdown("---")
+    st.subheader("Credit Quality / Allowance — Company Reported")
+    if not res or not res.get("credit_quality"):
+        st.caption("Allowance / loan asset-quality figures not tagged as a reconciling "
+                   "pair in this filer's latest filing — n/a.")
+        return
+    meta, cq = res["meta"], res["credit_quality"]
+    period = max(cq)
+    d = cq[period]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{meta['accession']}/{meta['doc']}")
+    y, mo = period[:4], period[5:7]
+    plab = f"FY{y}" if mo == "12" else f"Q{(int(mo) - 1) // 3 + 1} '{y[2:]}"
+    st.caption(
+        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — allowance for "
+        f"credit losses (CECL) and asset quality at {plab}. Ratios are against "
+        f"period-end gross loans. Updates as the company files.")
+
+    def _b(v):
+        if v is None:
+            return "n/a"
+        return f"${v / 1e9:,.2f}B" if abs(v) >= 1e9 else f"${v / 1e6:,.0f}M"
+
+    def _pct(v):
+        return "n/a" if v is None else f"{v * 100:.2f}%"
+
+    def _x(v):
+        return "n/a" if v is None else f"{v * 100:.0f}%"
+
+    rows = [
+        ("Total loans (gross)", _b(d["loans_gross"])),
+        ("Allowance for credit losses (ACL)", _b(d["acl"])),
+        ("ACL / total loans", _pct(d["acl_to_loans"])),
+        ("Nonaccrual loans", _b(d["nonaccrual"])),
+        ("Nonaccrual / total loans", _pct(d["nonaccrual_to_loans"])),
+        ("ACL coverage of nonaccruals", _x(d["acl_coverage_nonaccrual"])),
+        ("Net charge-offs (period)", _b(d["nco"])),
+        ("Net charge-offs / loans", _pct(d["nco_to_loans"])),
+        ("Provision for credit losses (period)", _b(d["provision"])),
+    ]
+    hdr = "| Credit quality | Value |"
+    sep = "|---|---|"
+    body = [f"| {lab} | {val} |" for lab, val in rows]
+    st.markdown("\n".join([hdr, sep] + body))
+
+
 def render_portfolio(ticker):
     render_statement(ticker, "port", "Portfolio Analysis", _PORTFOLIO)
 

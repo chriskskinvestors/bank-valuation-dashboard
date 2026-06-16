@@ -258,6 +258,11 @@ def _cr_securities(t, ctx):
     _render_securities_portfolio(t)
 
 
+def _cr_credit(t, ctx):
+    from ui.financials_statements import _render_credit_quality
+    _render_credit_quality(t)
+
+
 def _cr_reg_capital(t, ctx):
     from ui.capital_dynamics import _render_holdco_capital
     _render_holdco_capital(t)
@@ -307,7 +312,7 @@ _CR_RENDERERS = {
     "Balance Sheet": _cr_balance,
     "Performance Analysis": _cr_todo("Performance Analysis"),
     "Regulatory Capital": _cr_reg_capital,
-    "Credit Quality / Allowance": _cr_todo("Credit Quality / Allowance"),
+    "Credit Quality / Allowance": _cr_credit,
     "Loan Composition": _cr_loan,
     "Deposit Composition": _cr_deposit,
     "Securities Portfolio": _cr_securities,

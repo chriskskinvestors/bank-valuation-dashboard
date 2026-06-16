@@ -14,7 +14,7 @@ from unittest import mock
 
 from data.sec_filing_scraper import (
     parse_inline_xbrl, extract_holdco_capital, extract_fair_value,
-    extract_securities, Fact)
+    extract_securities, extract_credit_quality, Fact)
 
 
 def _f(concept, val, members=None, period="2025-12-31"):
@@ -541,6 +541,54 @@ class TestSecuritiesPortfolio(unittest.TestCase):
         # no gain/loss split to validate it → n/a, never the wrong number.
         facts = [_f(self.HTM_AC, 1.0e6), _f(self.HTM_FV, 1.7e6)]
         self.assertEqual(extract_securities(facts), {})
+
+
+class TestCreditQuality(unittest.TestCase):
+    """The CECL allowance & asset-quality summary (extract_credit_quality). Pins the
+    loans/ACL reconcile gate, the net-charge-off derivation, and — critically —
+    that only the filing's CURRENT period is used (no stale prior-year fallback)."""
+
+    ACL = "us-gaap:FinancingReceivableAllowanceForCreditLossExcludingAccruedInterest"
+    GROSS = "us-gaap:FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss"
+    NET = "us-gaap:FinancingReceivableExcludingAccruedInterestAfterAllowanceForCreditLoss"
+    NACC = "us-gaap:FinancingReceivableExcludingAccruedInterestNonaccrual"
+    WO = "us-gaap:FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoff"
+    RECOV = "us-gaap:FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossRecovery"
+    M = 1e6
+
+    def test_reconciling_acl_and_loans(self):
+        # FITB-shape: ACL 2253, gross 122651, net 120398 (net+ACL ties gross),
+        # nonaccrual 797 → ratios + coverage.
+        facts = [_f(self.ACL, 2253 * self.M), _f(self.GROSS, 122651 * self.M),
+                 _f(self.NET, 120398 * self.M), _f(self.NACC, 797 * self.M)]
+        d = extract_credit_quality(facts)["2025-12-31"]
+        self.assertAlmostEqual(d["acl"], 2253 * self.M)
+        self.assertAlmostEqual(d["acl_to_loans"], 2253 / 122651, places=5)
+        self.assertAlmostEqual(d["acl_coverage_nonaccrual"], 2253 / 797, places=4)
+        self.assertTrue(d["_reconciles"])
+
+    def test_mismatched_net_rejects_trio(self):
+        # net + ACL doesn't tie gross → a wrong concept in the trio → n/a.
+        facts = [_f(self.ACL, 2000 * self.M), _f(self.GROSS, 120000 * self.M),
+                 _f(self.NET, 100000 * self.M)]  # 100000 + 2000 ≠ 120000
+        self.assertEqual(extract_credit_quality(facts), {})
+
+    def test_nco_from_writeoff_minus_recovery(self):
+        facts = [_f(self.ACL, 2253 * self.M), _f(self.GROSS, 122651 * self.M),
+                 _f(self.WO, 925 * self.M), _f(self.RECOV, 187 * self.M)]
+        d = extract_credit_quality(facts)["2025-12-31"]
+        self.assertAlmostEqual(d["nco"], (925 - 187) * self.M)
+
+    def test_only_current_period_no_stale_fallback(self):
+        # ACL+gross fully tagged at an OLD period but only ACL at the current (max)
+        # period → n/a, never the stale prior-period figures (the JPM-2023 bug).
+        facts = [_f(self.ACL, 2000 * self.M, period="2023-12-31"),
+                 _f(self.GROSS, 100000 * self.M, period="2023-12-31"),
+                 _f(self.ACL, 2300 * self.M, period="2025-12-31")]  # current: no gross
+        self.assertEqual(extract_credit_quality(facts), {})
+
+    def test_missing_gross_loans_yields_na(self):
+        self.assertEqual(extract_credit_quality([_f(self.ACL, 2000 * self.M)]), {})
 
 
 class TestFairValueCaching(unittest.TestCase):
