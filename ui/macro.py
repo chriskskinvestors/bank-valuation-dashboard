@@ -208,7 +208,7 @@ def _render_bank_sector():
         with st.spinner("Computing look-through valuation…"):
             val = get_etf_valuation(ticker)
         if any(val[k] is not None for k in ("pe", "ptbv", "dividend_yield")):
-            st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+            st.markdown('<div style="height:22px"></div>', unsafe_allow_html=True)
             ledger("Valuation (look-through)", [
                 ("Weighted P/E",
                  f'{val["pe"]:.1f}x' if val["pe"] is not None else _NA_HTML),
