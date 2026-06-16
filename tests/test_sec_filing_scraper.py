@@ -40,6 +40,24 @@ class TestHoldcoExtraction(unittest.TestCase):
             out = extract_holdco_capital([_f("us-gaap:" + c, 0.105)])
             self.assertAlmostEqual(out["2025-12-31"]["cet1_ratio"], 0.105, msg=c)
 
+    def test_prefers_standardized_over_advanced_methodology(self):
+        # Advanced-approach banks (WFC/BK/…) tag each ratio under BOTH a
+        # Standardized and an Advanced methodology member. Standardized is the
+        # binding, reported figure — and the FDIC CET1 anchor, which for these
+        # names sits closer to the Advanced ratio, must NOT override that choice.
+        MX = "us-gaap:RiskWeightedAssetsCalculationMethodologyAxis"
+        std, adv = "us-gaap:StandardizedApproachMember", "us-gaap:AdvancedApproachMember"
+        facts = [
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.1061, {MX: std}),
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.1235, {MX: adv}),
+            _f("us-gaap:Tier1RiskBasedCapitalToRiskWeightedAssets", 0.1186, {MX: std}),
+            _f("us-gaap:Tier1RiskBasedCapitalToRiskWeightedAssets", 0.1380, {MX: adv}),
+        ]
+        # anchor 12.5 is nearer the Advanced 12.35 than the Standardized 10.61
+        out = extract_holdco_capital(facts, anchor_cet1=12.5)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.1061)   # binding, not 0.1235
+        self.assertAlmostEqual(out["t1_ratio"], 0.1186)     # same methodology
+
     def test_holdco_preferred_over_bank(self):
         facts = [
             _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.108, {_AX: "us-gaap:ParentCompanyMember"}),

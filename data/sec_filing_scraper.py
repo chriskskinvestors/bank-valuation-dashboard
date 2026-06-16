@@ -232,6 +232,27 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
         basis, conf = _classify(f.members)
         cand.setdefault((f.period_end, line), []).append((basis, conf, f.members, f.value))
 
+    # Banks on the Advanced Approaches report each risk-based ratio/amount under
+    # BOTH a Standardized and an Advanced methodology member. The Standardized
+    # figure is the binding, headline-reported one (what FDIC/SNL show); Advanced
+    # is supplemental. Drop the Advanced members wherever a Standardized one exists
+    # for the same (period, line), so every capital line — ratio, capital, RWA —
+    # comes from ONE consistent methodology. Without this, the FDIC CET1 anchor —
+    # which for these names sits closer to the Advanced ratio (WFC: bank-sub 12.58%
+    # vs Standardized 10.61% / Advanced 12.35%) — mis-selects the Advanced ratio.
+    def _methodology(members):
+        for v in members.values():
+            m = v.split(":")[-1]
+            if m == "StandardizedApproachMember":
+                return "std"
+            if m == "AdvancedApproachMember":
+                return "adv"
+        return None
+
+    for key, lst in cand.items():
+        if any(_methodology(c[2]) == "std" for c in lst):
+            cand[key] = [c for c in lst if _methodology(c[2]) != "adv"]
+
     def _score(c):
         _b, conf, mems, _v = c
         meth = next((v for k, v in mems.items() if "Methodology" in k), "")
