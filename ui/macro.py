@@ -41,7 +41,7 @@ MACRO_SECTIONS = [
     "Bank Sector",
     "Funding & Deposits",
     "Credit & Spreads",
-    "Economy & Calendar",
+    "Economic Data",
     "Regime",
 ]
 
@@ -91,7 +91,7 @@ def render_macro_dashboard():
         "Bank Sector": _render_bank_sector,
         "Funding & Deposits": _render_funding_deposits,
         "Credit & Spreads": _render_credit_spreads,
-        "Economy & Calendar": _render_economy_calendar,
+        "Economic Data": _render_economy_calendar,
         "Regime": _render_regime,
     }[section]()
 
@@ -364,7 +364,7 @@ def _render_funding_deposits():
                      key="fdic_rates_export")
 
 
-# ── Economy & Calendar formatting helpers ──────────────────────────────────
+# ── Economic Data formatting helpers ──────────────────────────────────
 # Bases that report as a percentage (pp deltas); the rest carry "K" units.
 _PCT_BASES = {"yoy_pct", "mom_pct", "level_pct"}
 
