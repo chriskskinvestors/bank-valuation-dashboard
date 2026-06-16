@@ -62,16 +62,16 @@ def _render_deposit_headline(ticker, hist, summary, timeline):
 
     tot_disp = fmt_dollars_from_thousands(total)
     if qoq is not None:
-        col = "#059669" if qoq >= 0 else "#dc2626"
-        tot_disp += (f" <span style='font-size:0.68rem; color:{col}; "
+        col = "var(--success)" if qoq >= 0 else "var(--danger)"
+        tot_disp += (f" <span style='font-size:var(--fs-xs); color:{col}; "
                      f"font-weight:600;'>{qoq:+.1f}%</span>")
     cod_disp = f"{cod:.2f}%" if cod is not None else "—"
     if len(timeline) >= 2 and cod is not None:
         prev = timeline["cost_of_deposits"].iloc[-2]
         if prev is not None and not pd.isna(prev):
             chg = (cod - prev) * 100
-            col = "#dc2626" if chg >= 0 else "#059669"  # rising cost = bad
-            cod_disp += (f" <span style='font-size:0.68rem; color:{col}; "
+            col = "var(--danger)" if chg >= 0 else "var(--success)"  # rising cost = bad
+            cod_disp += (f" <span style='font-size:var(--fs-xs); color:{col}; "
                          f"font-weight:600;'>{chg:+.0f}bps</span>")
 
     cb = cycle_beta.get("beta"); rb = rolling_beta.get("beta")
@@ -179,12 +179,12 @@ def render_deposit_dynamics(ticker: str):
         ff_change = cycle_beta.get("ff_change")
         cod_change = cycle_beta.get("cod_change")
         direction = cycle_beta.get("cycle_direction", "")
-        arrow = "↑" if direction == "up" else "↓"
+        moved = "rose" if direction == "up" else "fell"
         start_str = _fmt_quarter(start)
         end_str = _fmt_quarter(end)
         caption = (
             f"**Cycle beta** tracks {direction} cycle from {start_str} to {end_str}. "
-            f"Fed funds {arrow} {abs(ff_change):.2f}pp → Cost of deposits {cod_change:+.2f}pp. "
+            f"Fed funds {moved} {abs(ff_change):.2f}pp → Cost of deposits {cod_change:+.2f}pp. "
             f"Beta <0.30 = sticky (green), >0.50 = rate-sensitive (red)."
         )
         st.caption(caption)

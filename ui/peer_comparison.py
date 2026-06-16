@@ -14,7 +14,7 @@ from analysis.peer_groups import (
     compute_peer_percentile,
 )
 from utils.formatting import format_value
-from ui.chrome import table_export
+from ui.chrome import table_export, title_bar
 
 
 # Curated metric sets per category (focused on what analysts actually look at).
@@ -81,13 +81,7 @@ def _percentile_color(pct: float | None, higher_better: bool = True) -> str:
 
 def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfolio: list[str]):
     """Render the Peer Comparison top-level page."""
-    st.markdown(
-        '<div class="dashboard-header">'
-        "<h1>Peer Comparison</h1>"
-        "<p>Side-by-side comparison with percentile color-coding</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    title_bar("KSK Investors", "Peer Comparison", ids_html="")
 
     if not all_metrics:
         st.warning("No bank data loaded. Check your watchlist.")
@@ -396,7 +390,9 @@ def _render_peer_scatters(selected_peers: list[dict]):
 def _build_scatter(peers: list[dict], preset: dict, height: int = 320):
     """Build a single scatter plot from a preset config."""
     import plotly.graph_objects as go
-    from utils.chart_style import apply_standard_layout, COLOR_PRIMARY
+    from utils.chart_style import (
+        apply_standard_layout, COLOR_PRIMARY, COLOR_NEUTRAL, COLOR_GREY_LIGHT,
+    )
 
     x_key = preset["x"]
     y_key = preset["y"]
@@ -437,12 +433,12 @@ def _build_scatter(peers: list[dict], preset: dict, height: int = 320):
         mode="markers+text",
         text=[pt["ticker"] for pt in points],
         textposition="top center",
-        textfont=dict(size=10, color="#1a1a1a"),
+        textfont=dict(size=10, color=COLOR_NEUTRAL),
         marker=dict(
             size=sizes,
             color=COLOR_PRIMARY,
             opacity=0.65,
-            line=dict(color="#0d47a1", width=1),
+            line=dict(color=COLOR_PRIMARY, width=1),
         ),
         customdata=[[pt["name"], pt["x"], pt["y"]] for pt in points],
         hovertemplate=(
@@ -455,8 +451,8 @@ def _build_scatter(peers: list[dict], preset: dict, height: int = 320):
     # Median crosshairs
     x_med = pd.Series(x_vals).median()
     y_med = pd.Series(y_vals).median()
-    fig.add_vline(x=x_med, line_color="#666", line_width=1, line_dash="dot")
-    fig.add_hline(y=y_med, line_color="#666", line_width=1, line_dash="dot")
+    fig.add_vline(x=x_med, line_color=COLOR_GREY_LIGHT, line_width=1, line_dash="dot")
+    fig.add_hline(y=y_med, line_color=COLOR_GREY_LIGHT, line_width=1, line_dash="dot")
 
     # Invert x-axis if lower-is-better
     apply_standard_layout(
@@ -491,7 +487,10 @@ _RADAR_METRICS = [
 def _render_peer_radar(selected_peers: list[dict]):
     """Render a radar chart comparing banks on 8 key metrics by percentile rank."""
     import plotly.graph_objects as go
-    from utils.chart_style import apply_standard_layout
+    from utils.chart_style import (
+        apply_standard_layout, CATEGORICAL_PALETTE, CHART_HEIGHT_FULL,
+        COLOR_NEUTRAL, _GRID_COLOR, _AXIS_COLOR, _BG_SURFACE,
+    )
 
     if len(selected_peers) < 2:
         st.info("Need at least 2 banks for radar comparison.")
@@ -532,14 +531,14 @@ def _render_peer_radar(selected_peers: list[dict]):
     categories = [m["label"] for m in metric_data]
 
     fig = go.Figure()
-    colors = ["#2563eb", "#059669", "#d97706", "#dc2626", "#9333ea"]
-    fill_colors = [
-        "rgba(37, 99, 235, 0.14)",
-        "rgba(5, 150, 105, 0.14)",
-        "rgba(217, 119, 6, 0.14)",
-        "rgba(220, 38, 38, 0.14)",
-        "rgba(147, 51, 234, 0.14)",
-    ]
+    # Series colors come from the shared categorical palette; the translucent
+    # fill is derived from each palette hex (no ad-hoc series hexes).
+    colors = CATEGORICAL_PALETTE
+    def _fill(hex_color: str, alpha: float = 0.14) -> str:
+        h = hex_color.lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        return f"rgba({r}, {g}, {b}, {alpha})"
+    fill_colors = [_fill(c) for c in colors]
 
     for i, ticker in enumerate(picked):
         bank = next((p for p in selected_peers if p["ticker"] == ticker), None)
@@ -575,35 +574,28 @@ def _render_peer_radar(selected_peers: list[dict]):
             opacity=0.9,
         ))
 
+    # Standard chrome (bg / font / legend-below / tight margins / title);
+    # the polar block (which apply_standard_layout doesn't model) is layered
+    # on after, using the shared chart tokens.
+    apply_standard_layout(
+        fig, title="Peer Radar — Percentile Rank (0–100)",
+        height=CHART_HEIGHT_FULL, show_legend=True, hovermode="closest",
+    )
     fig.update_layout(
-        title=dict(
-            text="Peer Radar — Percentile Rank (0–100)",
-            font=dict(color="#0f172a", size=13),
-        ),
         polar=dict(
             radialaxis=dict(
                 visible=True, range=[0, 100],
-                tickfont=dict(size=10, color="#475569"),
-                gridcolor="rgba(15,23,42,0.08)",
-                linecolor="rgba(15,23,42,0.14)",
+                tickfont=dict(size=10, color=COLOR_NEUTRAL),
+                gridcolor=_GRID_COLOR,
+                linecolor=_AXIS_COLOR,
             ),
             angularaxis=dict(
-                tickfont=dict(size=11, color="#475569"),
-                gridcolor="rgba(15,23,42,0.06)",
-                linecolor="rgba(15,23,42,0.12)",
+                tickfont=dict(size=11, color=COLOR_NEUTRAL),
+                gridcolor=_GRID_COLOR,
+                linecolor=_AXIS_COLOR,
             ),
-            bgcolor="#f8fafc",
+            bgcolor=_BG_SURFACE,
         ),
-        height=520,
-        margin=dict(l=40, r=40, t=60, b=40),
-        legend=dict(
-            orientation="h", yanchor="bottom", y=-0.08,
-            font=dict(color="#0f172a"),
-        ),
-        paper_bgcolor="#ffffff",
-        plot_bgcolor="#ffffff",
-        font=dict(family="Inter, system-ui, sans-serif", color="#0f172a"),
-        showlegend=True,
     )
     st.plotly_chart(fig, use_container_width=True)
 

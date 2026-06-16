@@ -62,8 +62,8 @@ def _render_credit_headline(ticker, hist, summary, peer_median):
         if q is None:
             return val
         bad = (q >= 0) if worse_up else (q < 0)
-        col = "#dc2626" if bad else "#059669"
-        return f"{val} <span style='font-size:0.68rem; color:{col}; font-weight:600;'>{fmt(q)}</span>"
+        col = "var(--danger)" if bad else "var(--success)"
+        return f"{val} <span style='font-size:var(--fs-xs); color:{col}; font-weight:600;'>{fmt(q)}</span>"
 
     npl = latest.get("npl_ratio"); nco = latest.get("nco_ratio")
     rc = latest.get("reserve_coverage"); pd89 = latest.get("past_due_30_89_pct")
@@ -180,7 +180,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     # ── Charts (bank-level) ────────────────────────────────────────────
     import plotly.graph_objects as go
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                   CHART_HEIGHT_COMPACT)
+                                   CHART_HEIGHT_COMPACT, COLOR_FILL_DANGER)
 
     # Chart 2: NCO trend
     fig2 = go.Figure()
@@ -189,7 +189,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
         name="NCO Rate", mode="lines+markers",
         line=dict(color=COLOR_DANGER, width=2.5),
         marker=dict(size=6), fill="tozeroy",
-        fillcolor="rgba(183,28,28,0.10)",
+        fillcolor=COLOR_FILL_DANGER,
     ))
     apply_standard_layout(fig2, title="Net Charge-Off Rate", height=CHART_HEIGHT_COMPACT,
                           yaxis_title="NCO %", show_legend=False, hovermode="x")
@@ -254,8 +254,8 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
     _tbl, _chart = st.columns([1, 2])
     with _tbl:
         if hotspots:
-            st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;'
-                        'letter-spacing:.04em;color:#1e3a8a;font-weight:700;'
+            st.markdown('<div style="font-size:var(--fs-xs);text-transform:uppercase;'
+                        'letter-spacing:.04em;color:var(--brand-hover);font-weight:700;'
                         'margin:0 0 3px;">Segment Hotspots — NPL vs bank total</div>',
                         unsafe_allow_html=True)
             hs_df = pd.DataFrame([{
@@ -270,16 +270,16 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
     with _chart:
         import plotly.graph_objects as go
         from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                       CHART_HEIGHT_FULL)
+                                       CHART_HEIGHT_FULL, CATEGORICAL_PALETTE)
         fig = go.Figure()
         segments = [
             ("npl_ratio", "Total", "#0f172a", 3),
             ("npl_cre", "CRE", COLOR_DANGER, 2),
             ("npl_resi", "Residential", COLOR_PRIMARY, 2),
             ("npl_multifam", "Multifamily", COLOR_WARNING, 2),
-            ("npl_nres_re", "Non-Res RE", "#6a1b9a", 2),
+            ("npl_nres_re", "Non-Res RE", CATEGORICAL_PALETTE[4], 2),
             ("npl_ci", "C&I", COLOR_SUCCESS, 2),
-            ("npl_consumer", "Consumer", "#ff6f00", 2),
+            ("npl_consumer", "Consumer", CATEGORICAL_PALETTE[6], 2),
         ]
         for key, label, color, width in segments:
             if key in timeline.columns and timeline[key].notna().any():

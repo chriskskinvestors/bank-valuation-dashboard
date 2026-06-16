@@ -94,8 +94,7 @@ def render_ownership(ticker: str):
             return "— Unch."
         if pct is None:
             return "—"
-        arrow = "▲" if pct > 0 else "▼"
-        return f"{arrow} {pct:+.0f}%"
+        return f"{pct:+.0f}%"
 
     rows = []
     total_val = summary["total_value_usd"] or 1

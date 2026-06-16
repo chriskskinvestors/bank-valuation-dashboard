@@ -15,7 +15,7 @@ from data.sod_client import (
 )
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
-from ui.chrome import table_export
+from ui.chrome import ledger, table_export, title_bar
 
 
 def render_deposits_for_ticker(ticker: str):
@@ -49,13 +49,7 @@ def render_market_share_for_ticker(ticker: str):
 def render_deposit_lookup():
     """Render the deposit market share & branch map page with search."""
 
-    st.markdown(
-        '<div class="dashboard-header">'
-        "<h1>Deposit Market Share & Branch Map</h1>"
-        "<p>Look up any FDIC-insured bank</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    title_bar("KSK Investors", "Deposit Market Share & Branch Map", ids_html="")
 
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -126,13 +120,14 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     states = branches_df["STALPBR"].nunique()
     counties = branches_df["STCNTYBR"].nunique()
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Branches", f"{num_branches}")
     # FDIC SOD deposits are in thousands; auto-scale T / B / M
     from utils.formatting import fmt_dollars_from_thousands
-    c2.metric("Total Deposits", fmt_dollars_from_thousands(total_deposits, 2))
-    c3.metric("States", f"{states}")
-    c4.metric("Counties", f"{counties}")
+    ledger("SUMMARY", [
+        ("Branches", f"{num_branches}"),
+        ("Total Deposits", fmt_dollars_from_thousands(total_deposits, 2)),
+        ("States", f"{states}"),
+        ("Counties", f"{counties}"),
+    ])
 
     # ── Branch map ───────────────────────────────────────────────────────
     st.subheader("Branch Map")
