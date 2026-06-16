@@ -18,7 +18,7 @@ from data.bank_mapping import get_name
 from analysis.peer_groups import (
     metric_percentile_context, get_peer_group_for_bank, _higher_is_better,
 )
-from ui.chrome import table_export
+from ui.chrome import table_export, title_bar
 
 
 # Metric groups for the scorecard. Missing metrics / thin cohorts auto-skip.
