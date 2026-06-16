@@ -602,6 +602,33 @@ def _fv_clean_total(members: dict) -> bool:
     return True
 
 
+def _fv_same(a: float, b: float) -> bool:
+    """Two candidate values are the SAME measurement (rounding/restatement jitter),
+    not two different table rows."""
+    return abs(a - b) <= max(abs(a), abs(b)) * 0.01 + 1e5
+
+
+def _fv_distinct(vals: list[float]) -> list[float]:
+    """Collapse near-equal candidates (the same number tagged twice) to the
+    materially-distinct set. >1 entry means two different tables tagged the slot."""
+    out: list[float] = []
+    for v in vals:
+        if not any(_fv_same(v, u) for u in out):
+            out.append(v)
+    return out
+
+
+def _undimensioned_total(facts: list[Fact], concept: str, period: str) -> float | None:
+    """The balance-sheet total (us-gaap:<concept> with NO dimensional members) at
+    `period` — the denominator for the disclosure-table sanity check."""
+    val = None
+    for f in facts:
+        if (f.concept.split(":")[-1] == concept and not f.members
+                and f.period_end == period):
+            val = f.value
+    return val
+
+
 def extract_fair_value(facts: list[Fact]) -> dict:
     """{period_end: {"assets": {...}, "liabilities": {...}}} — the recurring
     ASC 820 fair-value hierarchy from a filing's iXBRL.
@@ -610,11 +637,23 @@ def extract_fair_value(facts: list[Fact]) -> dict:
     (the filer's tagged grand total, if any), netting (grand − total, the
     derivative/collateral reconciling item), l3_pct (L3 ÷ total) and _reconciles
     (whether the level sum ties the tagged grand within tolerance). A side with no
-    clean level total is omitted (n/a) — never summed from components."""
+    clean level total is omitted (n/a) — never summed from components.
+
+    GUARDS against the ASC 825 fair-value-OF-financial-instruments disclosure
+    table, which many filers tag under the SAME concept + hierarchy axis as the
+    ASC 820 recurring table (so it passes _fv_clean_total) but whose Level 3 is the
+    LOAN book — billions, e.g. HWBK $1.5B, NWBI $12.5B — which must never surface
+    as recurring mark-to-model. A side is rendered n/a when: (1) a level slot has
+    materially-different duplicate facts (two tables under one concept, can't
+    disambiguate); (2) a tagged grand sits far below the level sum (not recurring
+    netting but a different table); or (3) the FV total approaches the whole
+    balance sheet (the disclosure table spans loans+deposits)."""
     prio = {c: (side, i)
             for side, cs in _FV_TOTAL_CONCEPTS.items()
             for i, c in enumerate(cs)}
-    # side -> period -> slot -> (priority, value); lowest priority wins.
+    # side -> period -> slot -> [(priority, value)] — keep ALL candidates so a
+    # two-table conflation under one concept is visible (duplicate values), not
+    # silently collapsed.
     grab: dict = {}
     for f in facts:
         hit = prio.get(f.concept.split(":")[-1])
@@ -622,18 +661,34 @@ def extract_fair_value(facts: list[Fact]) -> dict:
             continue
         side, p = hit
         slot = _fv_level(f.members) or "grand"
-        cur = grab.setdefault(side, {}).setdefault(f.period_end, {}).get(slot)
-        if cur is None or p < cur[0]:
-            grab[side][f.period_end][slot] = (p, f.value)
+        grab.setdefault(side, {}).setdefault(f.period_end, {}).setdefault(slot, []).append((p, f.value))
 
+    _bs = {"assets": "Assets", "liabilities": "Liabilities"}
     out: dict = {}
     for side, byperiod in grab.items():
         for period, slots in byperiod.items():
-            levels = {lv: slots[lv][1] for lv in ("L1", "L2", "L3") if lv in slots}
+            def _pick(slot):  # noqa: B023 — bound per-iteration below
+                cs = slots.get(slot, [])
+                if not cs:
+                    return []
+                best_p = min(p for p, _ in cs)            # prefer ...Recurring concept
+                return _fv_distinct([v for p, v in cs if p == best_p])
+
+            lv = {s: _pick(s) for s in ("L1", "L2", "L3")}
+            if any(len(v) > 1 for v in lv.values()):
+                continue                                  # (1) two tables, one concept → n/a
+            levels = {s: v[0] for s, v in lv.items() if v}
             if not levels:
                 continue
             total = sum(levels.values())
-            grand = slots["grand"][1] if "grand" in slots else None
+            gs = _pick("grand")
+            grand = gs[0] if len(gs) == 1 else (
+                min(gs, key=lambda g: abs(g - total)) if gs else None)
+            if grand is not None and abs(total) > 5e7 and abs(grand) < 0.35 * abs(total):
+                continue                                  # (2) grand ≪ levels → not recurring netting
+            bs = _undimensioned_total(facts, _bs[side], period)
+            if bs and abs(total) > 0.85 * abs(bs):
+                continue                                  # (3) ≈ whole balance sheet → disclosure table
             d = {
                 "l1": levels.get("L1"), "l2": levels.get("L2"), "l3": levels.get("L3"),
                 "total": total, "grand": grand,

@@ -411,6 +411,62 @@ class TestFairValueHierarchy(unittest.TestCase):
         self.assertIsNone(out["liabilities"]["grand"])
         self.assertTrue(out["liabilities"]["_reconciles"])
 
+    def test_two_table_conflation_under_one_concept_yields_na(self):
+        # HWBK-shape: the SAME concept tags BOTH the ASC 820 recurring table
+        # (L1 5, L2 200, grand 205) AND the ASC 825 fair-value-of-financial-
+        # instruments disclosure table (L1 111, L2 6, L3 1462 = the loan book).
+        # Both pass _fv_clean_total, producing materially-different duplicate
+        # level facts the engine can't disambiguate → n/a, never the $1.5B "L3".
+        facts = [
+            self._fv("us-gaap:AssetsFairValueDisclosure", 5, "1"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 200, "2"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 205, None),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 111, "1"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 6, "2"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 1462, "3"),
+        ]
+        self.assertEqual(extract_fair_value(facts), {})
+
+    def test_grand_far_below_level_sum_yields_na(self):
+        # Single candidate per level but the tagged grand (205) is a fraction of
+        # the level sum (1667) — not recurring netting, a different table tagged
+        # under one concept → n/a (guard 2).
+        facts = [
+            self._fv("us-gaap:AssetsFairValueDisclosure", 5, "1"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 200, "2"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 1462, "3"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 205, None),
+        ]
+        self.assertEqual(extract_fair_value(facts), {})
+
+    def test_disclosure_table_near_balance_sheet_yields_na(self):
+        # NWBI-liab-shape: levels sum to ~14,835 (deposits/debt at fair value) with
+        # NO grand — but total Liabilities is 12,700, so the FV "total" exceeds the
+        # whole balance sheet → the ASC 825 disclosure table, not recurring → n/a.
+        facts = [
+            self._fv("us-gaap:LiabilitiesFairValueDisclosure", 11598, "1"),
+            self._fv("us-gaap:LiabilitiesFairValueDisclosure", 139, "2"),
+            self._fv("us-gaap:LiabilitiesFairValueDisclosure", 3098, "3"),
+            _f("us-gaap:Liabilities", 12700 * self.M),
+        ]
+        self.assertEqual(extract_fair_value(facts), {})
+
+    def test_near_equal_duplicate_level_collapses_and_renders(self):
+        # JPM-shape: the recurring L3 is tagged twice within rounding jitter
+        # (28,043 and 28,000) — the SAME measurement, not a second table. It
+        # collapses to one value and the side still renders with netting.
+        facts = [
+            self._fv("us-gaap:AssetsFairValueDisclosure", 100, "1"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 200, "2"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 28043, "3"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 28000, "3"),
+            self._fv("us-gaap:AssetsFairValueDisclosure", 28300, None),
+        ]
+        a = extract_fair_value(facts)["2025-12-31"]["assets"]
+        self.assertAlmostEqual(a["l3"], 28043 * self.M)
+        self.assertAlmostEqual(a["total"], (100 + 200 + 28043) * self.M)
+        self.assertTrue(a["_reconciles"])
+
 
 class TestFairValueCaching(unittest.TestCase):
     """A transient fetch/parse exception must NOT be cached as an empty result
