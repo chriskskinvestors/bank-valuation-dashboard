@@ -476,38 +476,69 @@ def _render_economy_calendar():
     from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
 
-    # ── Latest releases & surprises (FMP economic calendar) ────────────
-    st.markdown("**Latest releases & surprises**")
-    recent = get_recent_releases(days=10, limit=14)
-    if recent:
-        srows = ""
-        for e in recent:
-            d = _dt.strptime(e["date"], "%Y-%m-%d").date().strftime("%b %d").replace(" 0", " ")
-            srows += (
-                "<tr>"
-                f'<td style="white-space:nowrap;">{d}</td>'
-                f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
-                f'<td><strong>{_fmt_econ_val(e["actual"], e["unit"])}</strong></td>'
-                f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
-                f'<td>{_econ_surprise_html(e)}</td>'
-                f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["previous"], e["unit"])}</td>'
-                f'<td>{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
-                "</tr>"
+    # ── Calendars side by side: recent surprises | upcoming releases ──
+    cal_l, cal_r = st.columns(2)
+    with cal_l:
+        st.markdown("**Latest releases & surprises**")
+        recent = get_recent_releases(days=10, limit=16)
+        if recent:
+            srows = ""
+            for e in recent:
+                d = _dt.strptime(e["date"], "%Y-%m-%d").date().strftime("%b %d").replace(" 0", " ")
+                srows += (
+                    "<tr>"
+                    f'<td style="white-space:nowrap;">{d}</td>'
+                    f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
+                    f'<td><strong>{_fmt_econ_val(e["actual"], e["unit"])}</strong></td>'
+                    f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
+                    f'<td>{_econ_surprise_html(e)}</td>'
+                    f'<td>{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
+                    "</tr>"
+                )
+            st.markdown(
+                '<div class="ksk-grid"><table style="width:100%;">'
+                "<thead><tr>"
+                '<th style="text-align:left;">Date</th><th style="text-align:left;">Release</th>'
+                "<th>Actual</th><th>Cons.</th><th>Surprise</th><th>Impact</th>"
+                "</tr></thead><tbody>" + srows + "</tbody></table></div>",
+                unsafe_allow_html=True,
             )
-        st.markdown(
-            '<div class="ksk-grid"><table style="width:100%;">'
-            "<thead><tr>"
-            '<th style="text-align:left;">Date</th><th style="text-align:left;">Release</th>'
-            "<th>Actual</th><th>Consensus</th><th>Surprise</th><th>Prior</th><th>Impact</th>"
-            "</tr></thead><tbody>" + srows + "</tbody></table></div>",
-            unsafe_allow_html=True,
-        )
-        st.caption("Recent US releases: actual vs consensus. Surprise = actual − consensus, "
-                   "colored by deviation above/below consensus (not good/bad). "
-                   "Source: FMP economic calendar.")
-    else:
-        st.info("Latest-release surprises use FMP's economic calendar (Premium key, "
-                "mounted in production). Unavailable in this environment.")
+            st.caption("Actual vs consensus; surprise colored by deviation (not good/bad). "
+                       "Source: FMP economic calendar.")
+        else:
+            st.info("Latest-release surprises use FMP's economic calendar (Premium key, "
+                    "mounted in production). Unavailable in this environment.")
+    with cal_r:
+        st.markdown("**Upcoming releases**")
+        up = get_upcoming_releases(days=14, limit=20)
+        if not up:
+            st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
+                    "mounted in production). Unavailable in this environment.")
+        else:
+            today_iso = _date.today().isoformat()
+            urows = ""
+            for e in up:
+                d = _dt.strptime(e["date"], "%Y-%m-%d").date()
+                row_bg = ' style="background:rgba(30,64,175,0.04);"' if e["date"] == today_iso else ""
+                urows += (
+                    f"<tr{row_bg}>"
+                    f'<td style="white-space:nowrap;">{d.strftime("%b %d").replace(" 0", " ")}</td>'
+                    f'<td style="text-align:left;color:var(--text-secondary);white-space:nowrap;">{_et_time(e["datetime"])}</td>'
+                    f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
+                    f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
+                    f'<td>{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
+                    "</tr>"
+                )
+            st.markdown(
+                '<div class="ksk-grid"><table style="width:100%;">'
+                "<thead><tr>"
+                '<th style="text-align:left;">Date</th><th style="text-align:left;">Time</th>'
+                '<th style="text-align:left;">Release</th><th>Cons.</th><th>Impact</th>'
+                "</tr></thead><tbody>" + urows + "</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+            st.caption("Scheduled US releases · consensus · impact · ET times. "
+                       "Source: FMP economic calendar.")
 
     st.markdown("---")
 
@@ -655,44 +686,6 @@ def _render_economy_calendar():
                               height=CHART_HEIGHT_FULL, yaxis_title="YoY")
         figa.update_yaxes(ticksuffix="%")
         st.plotly_chart(figa, use_container_width=True)
-
-    st.markdown("---")
-
-    # ── Upcoming releases (FMP economic calendar) ─────────────────────
-    st.markdown("**Upcoming releases**")
-    up = get_upcoming_releases(days=14, limit=20)
-    if not up:
-        st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
-                "mounted in production). Unavailable in this environment.")
-    else:
-        today_iso = _date.today().isoformat()
-        urows = ""
-        for e in up:
-            d = _dt.strptime(e["date"], "%Y-%m-%d").date()
-            when = "today" if e["date"] == today_iso else f"in {(d - _date.today()).days}d"
-            row_bg = ' style="background:rgba(30,64,175,0.04);"' if e["date"] == today_iso else ""
-            urows += (
-                f"<tr{row_bg}>"
-                f'<td style="white-space:nowrap;">{d.strftime("%b %d").replace(" 0", " ")}</td>'
-                f'<td style="text-align:left;color:var(--text-secondary);white-space:nowrap;">{_et_time(e["datetime"])}</td>'
-                f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
-                f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
-                f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["previous"], e["unit"])}</td>'
-                f'<td>{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
-                f'<td style="color:var(--text-muted);">{when}</td>'
-                "</tr>"
-            )
-        st.markdown(
-            '<div class="ksk-grid"><table style="width:100%;">'
-            "<thead><tr>"
-            '<th style="text-align:left;">Date</th><th style="text-align:left;">Time</th>'
-            '<th style="text-align:left;">Release</th><th>Consensus</th><th>Prior</th>'
-            "<th>Impact</th><th>When</th>"
-            "</tr></thead><tbody>" + urows + "</tbody></table></div>",
-            unsafe_allow_html=True,
-        )
-        st.caption("Scheduled US releases with consensus, prior, and impact tier. "
-                   "Times in ET. Source: FMP economic calendar.")
 
 
 def _render_regime():
