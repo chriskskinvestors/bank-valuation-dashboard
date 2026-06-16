@@ -37,25 +37,37 @@ CACHE_KEY = "etf_lookthrough_valuation"
 CACHE_TTL_SECONDS = 21600  # 6h
 
 
-def get_holdings(ticker: str) -> list[tuple[str, float]]:
-    """[(constituent_ticker, weight_percent), ...] for an ETF via FMP
-    /etf/holdings. Cash / money-market rows (no `asset` ticker) are dropped.
-    Empty list when the endpoint is denied (non-Ultimate), keyless, or fails."""
-    data = _get("etf/holdings", {"symbol": ticker.upper()})
-    if not isinstance(data, list):
-        return []
+def parse_holdings(rows) -> list[tuple[str, float]]:
+    """[(constituent_ticker, weight_percent), ...] from FMP /etf/holdings rows.
+
+    Keeps only rows that are real securities: a non-empty `asset` ticker AND a
+    real identifier (ISIN or CUSIP). This drops the non-equity rows issuers
+    carry — index futures, cash collateral, and cash sleeves (SSGA labels cash
+    with a blank ticker, First Trust labels it `$USD` with no ISIN/CUSIP) — so
+    they don't pad the holdings count. A money-market fund that does carry an
+    ISIN (e.g. Invesco's AGPXX) survives the filter but contributes nothing to
+    the blend (it has no equity ratios). Pure / unit-tested."""
     out: list[tuple[str, float]] = []
-    for r in data:
+    for r in rows or []:
         if not isinstance(r, dict):
             continue
         asset = (r.get("asset") or "").strip().upper()
+        ident = (r.get("isin") or "").strip() or (r.get("securityCusip") or "").strip()
         w = r.get("weightPercentage")
-        if asset and w is not None:
+        if asset and ident and w is not None:
             try:
                 out.append((asset, float(w)))
             except (TypeError, ValueError):
                 continue
     return out
+
+
+def get_holdings(ticker: str) -> list[tuple[str, float]]:
+    """[(constituent_ticker, weight_percent), ...] for an ETF via FMP
+    /etf/holdings. Empty list when the endpoint is denied (non-Ultimate),
+    keyless, or fails."""
+    data = _get("etf/holdings", {"symbol": ticker.upper()})
+    return parse_holdings(data if isinstance(data, list) else [])
 
 
 def blend_valuation(holdings: list[tuple[str, float]], metrics: dict) -> dict:
