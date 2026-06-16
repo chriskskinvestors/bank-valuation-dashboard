@@ -80,6 +80,21 @@ class TestHoldcoExtraction(unittest.TestCase):
         out = extract_holdco_capital(facts)["2025-12-31"]
         self.assertAlmostEqual(out["cet1_ratio"], 0.1229)   # holdco, not bank 0.1198
 
+    def test_ratio_suffix_variant_and_derived_cet1(self):
+        # WSBC tags ratios as '...ToRiskWeightedAssetsRatio' (trailing 'Ratio')
+        # and tags CET1 *capital* but no CET1 *ratio*. Match the spelling, and
+        # reconstruct the CET1 ratio from CET1-cap / (T1-cap / T1-ratio).
+        facts = [
+            _f("us-gaap:CommonEquityTierOneCapital", 2219.2e6),
+            _f("us-gaap:TierOneRiskBasedCapital", 2443.4e6),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssetsRatio", 0.1142),
+            _f("us-gaap:CapitalToRiskWeightedAssetsRatio", 0.1392),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["t1_ratio"], 0.1142)       # '...Ratio' spelling matched
+        self.assertAlmostEqual(out["total_ratio"], 0.1392)
+        self.assertAlmostEqual(out["cet1_ratio"], 2219.2e6 / (2443.4e6 / 0.1142), places=4)
+
     def test_holdco_preferred_over_bank(self):
         facts = [
             _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.108, {_AX: "us-gaap:ParentCompanyMember"}),

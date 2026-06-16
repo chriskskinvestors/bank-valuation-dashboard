@@ -162,11 +162,11 @@ def parse_inline_xbrl_documentset(docs: list[bytes]) -> list[Fact]:
 _CET1 = r"(CommonEquityTier(One|1|I)(RiskBased)?Capital|Cet1Capital)"
 _CAP_LINE_PATTERNS = {
     "cet1_cap":    re.compile(rf"^{_CET1}$", re.I),
-    "cet1_ratio":  re.compile(rf"^{_CET1}(Ratio|ToRiskWeightedAssets)$", re.I),
+    "cet1_ratio":  re.compile(rf"^{_CET1}(Ratio|ToRiskWeightedAssets(Ratio)?)$", re.I),
     "t1_cap":      re.compile(r"^Tier(One|1)RiskBasedCapital$", re.I),
-    "t1_ratio":    re.compile(r"^Tier(One|1)RiskBasedCapital(Ratio|ToRiskWeightedAssets)$", re.I),
+    "t1_ratio":    re.compile(r"^Tier(One|1)RiskBasedCapital(Ratio|ToRiskWeightedAssets(Ratio)?)$", re.I),
     "total_cap":   re.compile(r"^Capital$", re.I),
-    "total_ratio": re.compile(r"^CapitalToRiskWeightedAssets$", re.I),
+    "total_ratio": re.compile(r"^CapitalToRiskWeightedAssets(Ratio)?$", re.I),
     "rwa":         re.compile(r"^RiskWeightedAssets$", re.I),
     "lev_cap":     re.compile(r"^Tier(One|1)LeverageCapital$", re.I),
     "lev_ratio":   re.compile(r"^Tier(One|1)LeverageCapitalToAverageAssets$", re.I),
@@ -308,18 +308,27 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
         if d:
             out[period] = d
 
-    # Derive what the filing didn't tag directly (exact identities):
-    #   RWA = CET1 capital ÷ CET1 ratio;  Tier 2 = Total capital − Tier 1.
+    # Reconstruct each bank's capital table from ITS OWN reported components.
+    # Every risk-based ratio shares one RWA (capital ÷ ratio), so derive RWA from
+    # any tagged (capital, ratio) pair (they must agree), override a tagged RWA
+    # that's an inconsistent sub-component (GBNY tagged $40M vs $306M implied,
+    # MCHB $2.1B vs $13B), then fill any ratio/capital the filer reported only via
+    # the others — exact identities, not guesses. WSBC tags CET1 capital + the
+    # Tier-1/Total ratios but no CET1 ratio; this derives it rather than n/a.
+    _PAIRS = (("cet1_cap", "cet1_ratio"), ("t1_cap", "t1_ratio"),
+              ("total_cap", "total_ratio"))
     for d in out.values():
-        cr, cc = d.get("cet1_ratio"), d.get("cet1_cap")
-        if cr and cc:
-            implied = cc / cr
-            # A separately-tagged RWA that disagrees with CET1-cap ÷ CET1-ratio is
-            # a wrong tag (a sub-component / wrong period — GBNY tagged $40M vs the
-            # $306M implied, MCHB $2.1B vs $13B). Trust the implied RWA, which is
-            # internally consistent with the (anchored) CET1 capital and ratio.
-            if "rwa" not in d or abs(d["rwa"] - implied) > 0.02 * implied:
-                d["rwa"] = implied
+        implied = [d[c] / d[r] for c, r in _PAIRS if d.get(c) and d.get(r)]
+        if implied and (max(implied) - min(implied) <= 0.01 * max(implied)):
+            rwa = sum(implied) / len(implied)            # the agreed, reliable RWA
+            if "rwa" not in d or abs(d["rwa"] - rwa) > 0.02 * rwa:
+                d["rwa"] = rwa
+        if d.get("rwa"):
+            for c, r in _PAIRS:                          # fill gaps by exact identity
+                if d.get(c) and not d.get(r):
+                    d[r] = d[c] / d["rwa"]
+                elif d.get(r) and not d.get(c):
+                    d[c] = d[r] * d["rwa"]
         if "tier2_cap" not in d and d.get("total_cap") and d.get("t1_cap"):
             d["tier2_cap"] = d["total_cap"] - d["t1_cap"]
         # A bank with only a leverage ratio (no CET1) is on the Community Bank
