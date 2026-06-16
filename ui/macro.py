@@ -84,9 +84,204 @@ def _render_funding_deposits():
              "data/national_rates.py (in build)")
 
 
+# ── Economy & Calendar formatting helpers ──────────────────────────────────
+# Bases that report as a percentage (pp deltas); the rest carry "K" units.
+_PCT_BASES = {"yoy_pct", "mom_pct", "level_pct"}
+
+
+def _fmt_level(v, basis: str) -> str:
+    """Latest/prior value in the indicator's natural unit, or n/a."""
+    if v is None:
+        return '<span style="color:var(--text-muted);">n/a</span>'
+    if basis in _PCT_BASES:
+        return f"{v:.1f}%"
+    if basis == "mom_chg_k":
+        return f"{v:+,.0f}K"
+    if basis == "level_k":
+        return f"{v:,.0f}K"
+    return f"{v:.1f}"
+
+
+def _fmt_delta(row: dict) -> str:
+    """Signed change vs the prior period, colored by whether the move is
+    favorable for this indicator (inflation down = good, jobs up = good, …)."""
+    d = row.get("delta")
+    if d is None:
+        return '<span style="color:var(--text-muted);">n/a</span>'
+    basis = row["basis"]
+    txt = f"{d:+.1f}pp" if basis in _PCT_BASES else f"{d:+,.0f}K"
+    if abs(d) < 1e-9:
+        color = "var(--text-secondary)"
+    else:
+        good = (d < 0) if row["favorable"] == "down" else (d > 0)
+        color = "var(--success)" if good else "var(--danger)"
+    return f'<span style="color:{color};">{txt}</span>'
+
+
+def _fmt_as_of(ts, freq: str) -> str:
+    """Period label for the latest reading, by series frequency."""
+    if ts is None:
+        return "—"
+    if freq == "Q":
+        return f"Q{(ts.month - 1) // 3 + 1} {ts.year}"
+    if freq == "W":
+        return ts.strftime("%b %d, %Y").replace(" 0", " ")
+    return ts.strftime("%b %Y")
+
+
+_IMPORTANCE_TAG = {
+    "high":   '<span style="color:var(--brand-primary);font-weight:600;">HIGH</span>',
+    "medium": '<span style="color:var(--text-muted);">MED</span>',
+}
+
+
 def _render_economy_calendar():
-    _pending("Economy & Calendar — FRED prints with upcoming-release calendar",
-             "data/macro_calendar.py (in build)")
+    import html as _html
+    import plotly.graph_objects as go
+    from datetime import date as _date, datetime as _dt
+    from data.macro_indicators import get_print_board, to_yoy, to_mom_change
+    from data.macro_calendar import get_upcoming_prints
+    from ui.chrome import table_export
+
+    # ── Latest print board ─────────────────────────────────────────────
+    rows = get_print_board()
+    body = ""
+    for r in rows:
+        basis_tag = {"yoy_pct": "YoY", "mom_pct": "MoM", "mom_chg_k": "MoM chg",
+                     "level_pct": "level", "level_k": "level"}.get(r["basis"], "")
+        body += (
+            "<tr>"
+            f'<td>{_html.escape(r["label"])}'
+            f' <span style="color:var(--text-muted);font-size:var(--fs-2xs);">{basis_tag}</span></td>'
+            f'<td>{_fmt_level(r["latest"], r["basis"])}</td>'
+            f'<td>{_fmt_level(r["prior"], r["basis"])}</td>'
+            f'<td>{_fmt_delta(r)}</td>'
+            f'<td style="text-align:right;color:var(--text-secondary);">'
+            f'{_fmt_as_of(r["as_of"], r["freq"])}</td>'
+            "</tr>"
+        )
+    st.markdown(
+        '<div class="ksk-grid"><table style="width:100%;">'
+        "<thead><tr>"
+        "<th>Indicator</th><th>Latest</th><th>Prior</th>"
+        "<th>Δ vs prior</th><th>As of</th>"
+        "</tr></thead><tbody>" + body + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Latest published reading per series. YoY = year-over-year, "
+        "MoM = month-over-month, QoQ SAAR = quarter-over-quarter annualized. "
+        "Δ colored by favorable direction (inflation lower / activity higher = green). "
+        "Source: FRED."
+    )
+
+    # Export of the print board.
+    export_df = pd.DataFrame([{
+        "indicator": r["label"], "basis": r["basis"],
+        "latest": r["latest"], "prior": r["prior"], "delta": r["delta"],
+        "as_of": r["as_of"].strftime("%Y-%m-%d") if r["as_of"] is not None else None,
+        "series_id": r["series_id"],
+    } for r in rows])
+    table_export(export_df, "macro_print_board", key="macro_print_board_export")
+
+    st.markdown("---")
+
+    # ── Inflation: CPI / Core CPI / Core PCE YoY vs the Fed's 2% target ──
+    c1, c2 = st.columns(2)
+    with c1:
+        figi = go.Figure()
+        for sid, label, color in [
+            ("CPIAUCSL", "CPI", "#1e40af"),
+            ("CPILFESL", "Core CPI", "#3b82f6"),
+            ("PCEPILFE", "Core PCE", "#d97706"),
+        ]:
+            s = to_yoy(fetch_series(sid, years=6))
+            if not s.empty:
+                cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+                s = s[s["date"] >= cutoff]
+                figi.add_trace(go.Scatter(
+                    x=s["date"], y=s["value"], name=label, mode="lines",
+                    line=dict(color=color, width=2),
+                ))
+        figi.add_hline(y=2.0, line_color="#059669", line_width=1, line_dash="dash",
+                       annotation_text="Fed 2% target", annotation_position="top left",
+                       annotation_font=dict(size=10, color="#059669"))
+        apply_standard_layout(figi, title="Inflation — YoY % (5Y)",
+                              height=CHART_HEIGHT_FULL, yaxis_title="YoY")
+        figi.update_yaxes(ticksuffix="%")
+        st.plotly_chart(figi, use_container_width=True)
+
+    # ── Labor: payrolls MoM change (bars) + unemployment rate (line) ────
+    with c2:
+        figl = go.Figure()
+        nfp = to_mom_change(fetch_series("PAYEMS", years=6))
+        if not nfp.empty:
+            cutoff = nfp["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+            nfp = nfp[nfp["date"] >= cutoff]
+            bar_colors = ["#dc2626" if v < 0 else "#3b82f6" for v in nfp["value"]]
+            figl.add_trace(go.Bar(
+                x=nfp["date"], y=nfp["value"], name="Payrolls Δ (000s)",
+                marker_color=bar_colors, yaxis="y",
+            ))
+        unr = fetch_series("UNRATE", years=6)
+        if not unr.empty:
+            cutoff = unr["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+            unr = unr[unr["date"] >= cutoff]
+            figl.add_trace(go.Scatter(
+                x=unr["date"], y=unr["value"], name="Unemployment %",
+                mode="lines", line=dict(color="#0f172a", width=2), yaxis="y2",
+            ))
+        apply_standard_layout(figl, title="Labor — payrolls Δ & unemployment (5Y)",
+                              height=CHART_HEIGHT_FULL, yaxis_title="Jobs Δ (000s)")
+        figl.update_layout(
+            yaxis2=dict(title="Unemp %", overlaying="y", side="right",
+                        ticksuffix="%", showgrid=False),
+        )
+        st.plotly_chart(figl, use_container_width=True)
+
+    st.markdown("---")
+
+    # ── Upcoming release calendar ──────────────────────────────────────
+    st.markdown("**Upcoming releases**")
+    window = st.radio("Window", [7, 14, 30, 60], index=2, horizontal=True,
+                      format_func=lambda d: f"{d}d", key="macro_cal_window",
+                      label_visibility="collapsed")
+    prints = get_upcoming_prints(days=window)
+    if not prints:
+        st.info("Upcoming-release calendar uses the FRED releases API "
+                "(needs FRED_API_KEY, set in production). Unavailable in this "
+                "environment or no releases scheduled in the window.")
+    else:
+        today_iso = _date.today().isoformat()
+        crows = ""
+        for e in prints:
+            d = _dt.strptime(e["date"], "%Y-%m-%d").date()
+            dow = d.strftime("%a")
+            when = "today" if e["date"] == today_iso else f"in {(d - _date.today()).days}d"
+            is_fomc = e["kind"] == "fomc"
+            name_html = _html.escape(e["name"])
+            if is_fomc:
+                name_html = f'<strong style="color:var(--brand-primary);">{name_html}</strong>'
+            row_bg = ' style="background:rgba(30,64,175,0.04);"' if e["date"] == today_iso else ""
+            crows += (
+                f"<tr{row_bg}>"
+                f'<td>{d.strftime("%b %d").replace(" 0", " ")}</td>'
+                f'<td style="text-align:left;color:var(--text-secondary);">{dow}</td>'
+                f'<td style="text-align:left;">{name_html}</td>'
+                f'<td>{_IMPORTANCE_TAG.get(e["importance"], "")}</td>'
+                f'<td style="color:var(--text-muted);">{when}</td>'
+                "</tr>"
+            )
+        st.markdown(
+            '<div class="ksk-grid"><table style="width:100%;">'
+            "<thead><tr>"
+            '<th style="text-align:left;">Date</th><th style="text-align:left;">Day</th>'
+            '<th style="text-align:left;">Release</th><th>Importance</th><th>When</th>'
+            "</tr></thead><tbody>" + crows + "</tbody></table></div>",
+            unsafe_allow_html=True,
+        )
+        st.caption("FRED-scheduled release dates + FOMC decision days. "
+                   "Source: FRED releases API · Federal Reserve FOMC calendar.")
 
 
 def _render_regime():
