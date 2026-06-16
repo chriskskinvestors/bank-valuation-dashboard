@@ -393,12 +393,15 @@ _AF_CSS = r"""
 .afwrap .hd .t{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#1e293b;}
 .afwrap .hd .s{font-size:9px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#94a3b8;display:flex;align-items:center;gap:5px;}
 .afwrap .live{width:6px;height:6px;border-radius:50%;background:#059669;display:inline-block;}
-.afwrap .body{flex:1 1 auto;overflow:hidden;}
-.afwrap .etf{display:flex;flex-direction:column;height:100%;}
+.afwrap .body{flex:1 1 auto;overflow:auto;}
+.afwrap .etf{display:flex;flex-direction:column;}
 .afwrap .erow{display:grid;align-items:center;column-gap:6px;padding:0 14px;border-bottom:1px solid #f6f8fa;grid-template-columns:20px 1.5fr .7fr 1fr 1fr .75fr .85fr;}
 .afwrap .erow:last-child{border-bottom:none;}
-.afwrap .erow.eh{flex:0 0 22px;border-bottom:1px solid #eceff4;}
-.afwrap .erow.ed{flex:1 1 0;min-height:0;}
+.afwrap .erow.eh{flex:0 0 auto;height:21px;border-bottom:1px solid #eceff4;}
+/* Fixed, tight row height (top-aligned) so density is uniform across panes —
+   sparse panes (e.g. Calendar) get whitespace at the bottom, never stretched
+   rows; full panes (11 ETFs) still fit without a scroll. */
+.afwrap .erow.ed{flex:0 0 auto;height:16px;}
 .afwrap .erow.r2{grid-template-columns:1.55fr 1fr .8fr .85fr;}
 .afwrap .erow.m5{grid-template-columns:1.5fr .62fr 1fr .8fr;}
 .afwrap .erow.a4{grid-template-columns:.62fr 2fr .72fr;}
@@ -720,7 +723,12 @@ def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
     try:
         from data.events import get_universe_recent
         from data.events.wire_base import is_safe_news_url, is_junk_news
-        for r in get_universe_recent(limit=150, sources=_NEWS_SOURCES):
+        # Disclosures only — NO google_news (it floods the feed with
+        # third-party/analyst mentions, e.g. "Morgan Stanley lowers Brent
+        # forecast" tagged >MS). SEC 8-K + the PR wires + IR-site only.
+        _feed_sources = ["sec_8k", "businesswire", "prnewswire",
+                         "globenewswire", "ir_site"]
+        for r in get_universe_recent(limit=150, sources=_feed_sources):
             if not is_safe_news_url(r.get("url")):
                 continue
             head = (r.get("headline") or "").strip()
@@ -970,6 +978,10 @@ def _render_above_fold(all_metrics: list[dict], watchlist: list[str]):
 
 def render_home(all_metrics: list[dict], watchlist: list[str]):
     """Render the home/dashboard page."""
+
+    # Drop the page a touch below the top nav so the title bar + data-source
+    # freshness strip ("Live · FDIC …") clear the nav and aren't clipped.
+    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
 
     # ── Title bar (DESIGN-SYSTEM.md) ──────────────────────────────────
     from ui.chrome import title_bar
