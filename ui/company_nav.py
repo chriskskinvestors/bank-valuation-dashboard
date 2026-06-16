@@ -236,16 +236,16 @@ def _cr_balance(t, ctx):
 
 def _cr_deposit(t, ctx):
     import streamlit as st
-    from ui.financials_statements import _render_company_statement
+    from ui.financials_statements import _render_company_composition
     st.subheader("Deposit Composition — Company Reported")
-    _render_company_statement(t, "deposit_composition")
+    _render_company_composition(t, "deposit")
 
 
 def _cr_loan(t, ctx):
     import streamlit as st
-    from ui.financials_statements import _render_company_statement
+    from ui.financials_statements import _render_company_composition
     st.subheader("Loan Composition — Company Reported")
-    _render_company_statement(t, "loan_composition")
+    _render_company_composition(t, "loan")
 
 
 def _cr_fair_value(t, ctx):

@@ -1509,6 +1509,66 @@ def _render_company_statement(ticker: str, stype: str):
     st.markdown("\n".join(out))
 
 
+def _compositions_cached(cik):
+    """compositions_for(cik) cached by the latest 10-K accession — the ~7 MB
+    fetch+parse runs once per filing and serves BOTH the loan and deposit tabs."""
+    if not cik:
+        return None
+    from data import cache
+    from data.sec_filing_scraper import latest_filing
+    meta = latest_filing(cik, ("10-K",))
+    if not meta:
+        return None
+    ckey = f"compositions:v1:{meta['accession']}"
+    cached = cache.get(ckey)
+    if cached is not None:
+        return cached or None
+    from data.sec_composition import compositions_for
+    res = compositions_for(cik)
+    try:
+        cache.put(ckey, res or {})       # cache n/a too, so it isn't re-fetched
+    except Exception:
+        pass
+    return res or None
+
+
+def _render_company_composition(ticker, kind):
+    """As-reported loan/deposit composition (kind = "loan" | "deposit") from the
+    bank's OWN 10-K inline XBRL — each line the filer's own category label, the set
+    reconciled to the disclosed total (data/sec_composition). n/a when the bank
+    doesn't disclose a clean, reconciling composition (never a forced number)."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        st.info("No SEC filer mapping for this bank.")
+        return
+    try:
+        res = _compositions_cached(cik)
+    except Exception:
+        res = None
+    comp = (res or {}).get(kind)
+    if not comp:
+        st.caption(f"Company-reported {kind} composition is not disclosed in a "
+                   f"clean, reconciling table in this filer's latest 10-K — n/a.")
+        return
+    meta = res["meta"]
+    period, d = next(iter(comp.items()))
+    total = d["total"]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
+           f"{meta['accession']}/{meta['doc']}")
+    st.caption(f"Source: company 10-K [{meta['date']}]({src}) — as reported at "
+               f"{period}. Each line is the company's own category; the lines "
+               f"reconcile to the disclosed total of \\${total / 1e6:,.0f}M.")
+    out = ["| Category | $ millions | % of total |", "|---|--:|--:|"]
+    for row in d["rows"]:
+        label, v = row[0], row[1]
+        lab = str(label).replace("|", r"\|").replace("$", r"\$")
+        pct = (v / total * 100) if total else 0.0
+        out.append(f"| {lab} | {v / 1e6:,.0f} | {pct:.1f}% |")
+    out.append(f"| **Total** | **{total / 1e6:,.0f}** | **100.0%** |")
+    st.markdown("\n".join(out))
+
+
 def render_income_statement(ticker):
     render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True)
 
