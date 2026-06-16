@@ -1651,6 +1651,72 @@ def _render_fair_value_hierarchy(ticker):
                    "counterparty/collateral arrangements (shown as a reconciling line).")
 
 
+def _render_securities_portfolio(ticker):
+    """As-reported AFS / HTM debt-securities amortized-cost → fair-value bridge,
+    scraped from the HOLDING COMPANY's own latest 10-Q/10-K inline XBRL. The HTM
+    unrealized loss never touches the balance sheet or AOCI — this is the
+    'underwater bonds' picture. n/a when the filer doesn't tag a reconciling
+    amortized-cost + fair-value pair (never a guessed total)."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        return
+    try:
+        from data.sec_filing_scraper import securities_for
+        res = securities_for(cik)
+    except Exception:
+        res = None
+    st.markdown("---")
+    st.subheader("Investment Securities — AFS / HTM (Company Reported)")
+    if not res or not res.get("securities"):
+        st.caption("AFS/HTM amortized-cost → fair-value bridge not tagged in this "
+                   "filer's latest filing — n/a.")
+        return
+    meta, sec = res["meta"], res["securities"]
+    period = max(sec)
+    pdat = sec[period]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{meta['accession']}/{meta['doc']}")
+    y, mo = period[:4], period[5:7]
+    plab = f"FY{y}" if mo == "12" else f"Q{(int(mo) - 1) // 3 + 1} '{y[2:]}"
+    st.caption(
+        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — debt securities "
+        f"at {plab}. Net unrealized = fair value − amortized cost; HTM losses are "
+        f"NOT reflected on the balance sheet or in AOCI. Updates as the company files.")
+
+    afs, htm = pdat.get("afs"), pdat.get("htm")
+
+    def _b(v):
+        if v is None:
+            return "n/a"
+        return f"${v / 1e9:,.2f}B" if abs(v) >= 1e9 else f"${v / 1e6:,.0f}M"
+
+    def _pct(v):
+        return "n/a" if v is None else f"{v * 100:+.1f}%"
+
+    def _col(s, key, fmt):
+        if not s or s.get(key) is None:
+            return "n/a"
+        return fmt(s[key])
+
+    rows = [
+        ("Amortized cost", "amortized_cost", _b),
+        ("Gross unrealized gain", "unrealized_gain", _b),
+        ("Gross unrealized loss", "unrealized_loss", _b),
+        ("Fair value", "fair_value", _b),
+        ("Net unrealized gain / (loss)", "net_unrealized", _b),
+        ("Net unrealized, % of amortized cost", "underwater_pct", _pct),
+    ]
+    hdr = "| Debt securities | Available-for-sale | Held-to-maturity |"
+    sep = "|---|---|---|"
+    body = [f"| {lab} | {_col(afs, k, fmt)} | {_col(htm, k, fmt)} |"
+            for lab, k, fmt in rows]
+    st.markdown("\n".join([hdr, sep] + body))
+    if (afs and not afs.get("_reconciles")) or (htm and not htm.get("_reconciles")):
+        st.caption("Gross gain/loss split shown only where it ties the amortized-cost "
+                   "→ fair-value bridge; otherwise only the (directly tagged) net is shown.")
+
+
 def render_fair_value(ticker):
     render_statement(ticker, "fv", "Fair Value Analysis", _FAIR_VALUE)
     _render_fair_value_hierarchy(ticker)

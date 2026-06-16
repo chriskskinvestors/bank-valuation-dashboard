@@ -253,6 +253,11 @@ def _cr_fair_value(t, ctx):
     _render_fair_value_hierarchy(t)
 
 
+def _cr_securities(t, ctx):
+    from ui.financials_statements import _render_securities_portfolio
+    _render_securities_portfolio(t)
+
+
 def _cr_reg_capital(t, ctx):
     from ui.capital_dynamics import _render_holdco_capital
     _render_holdco_capital(t)
@@ -305,7 +310,7 @@ _CR_RENDERERS = {
     "Credit Quality / Allowance": _cr_todo("Credit Quality / Allowance"),
     "Loan Composition": _cr_loan,
     "Deposit Composition": _cr_deposit,
-    "Securities Portfolio": _cr_todo("Securities Portfolio"),
+    "Securities Portfolio": _cr_securities,
     "Fair Value": _cr_fair_value,
     "Segment Reporting": _cr_todo("Segment Reporting"),
     "Interest Rate Risk": _cr_todo("Interest Rate Risk"),

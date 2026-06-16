@@ -734,3 +734,156 @@ def fair_value_for(cik) -> dict | None:
         if fv:
             return {"meta": meta, "fair_value": fv}
     return None
+
+
+# ── AFS / HTM debt-securities summary ────────────────────────────────────────
+# The investment-securities footnote tags, undimensioned, an amortized-cost →
+# fair-value bridge for each portfolio: amortized cost + gross unrealized/
+# unrecognized gain − loss = fair value. This is the AOCI / "underwater bonds"
+# story (HTM unrealized losses never hit the balance sheet). Concept names vary,
+# so each slot has a priority list (first tagged wins). A portfolio renders only
+# when amortized cost AND fair value are both tagged; the gain/loss SPLIT is shown
+# only when it reconciles the bridge (else just the net, = fair value − amortized
+# cost, which is an identity and always safe).
+_SEC_CONCEPTS = {
+    "afs": {
+        "ac": ("DebtSecuritiesAvailableForSaleAmortizedCostExcludingAccruedInterestAfterAllowanceForCreditLoss",
+               "DebtSecuritiesAvailableForSaleAmortizedCostExcludingAccruedInterestIncludingPortfolioLevelBasisAdjustmentsAfterAllowanceForCreditLoss",
+               "DebtSecuritiesAvailableForSaleAmortizedCostExcludingAccruedInterestAndPortfolioLevelBasisAdjustmentsAfterAllowanceForCreditLoss",
+               "DebtSecuritiesAvailableForSaleAmortizedCostExcludingAccruedInterestBeforeAllowanceForCreditLoss",
+               "AvailableForSaleDebtSecuritiesAmortizedCostBasis",
+               "DebtSecuritiesAvailableForSaleAmortizedCostIncludingPortfolioLevelBasisAdjustments",
+               "DebtSecuritiesAvailableForSaleAmortizedCost",
+               "AvailableForSaleSecuritiesAmortizedCost"),
+        "fv": ("DebtSecuritiesAvailableForSaleExcludingAccruedInterest",
+               "DebtSecuritiesAvailableForSale",
+               "AvailableForSaleSecuritiesDebtSecurities",
+               "AvailableForSaleSecurities"),
+        "ug": ("AvailableForSaleDebtSecuritiesAccumulatedGrossUnrealizedGainBeforeTax",
+               "AvailableForSaleSecuritiesGrossUnrealizedGains",
+               "AvailableForSaleSecuritiesAccumulatedGrossUnrealizedGainBeforeTax"),
+        "ul": ("AvailableForSaleDebtSecuritiesAccumulatedGrossUnrealizedLossBeforeTax",
+               "AvailableForSaleSecuritiesGrossUnrealizedLosses",
+               "AvailableForSaleSecuritiesAccumulatedGrossUnrealizedLossBeforeTax"),
+    },
+    "htm": {
+        "ac": ("DebtSecuritiesHeldToMaturityExcludingAccruedInterestAfterAllowanceForCreditLoss",
+               "DebtSecuritiesHeldToMaturityAmortizedCostAfterAllowanceForCreditLoss",
+               "HeldToMaturitySecurities"),
+        "fv": ("HeldToMaturitySecuritiesFairValue",
+               "DebtSecuritiesHeldToMaturityFairValue"),
+        "ug": ("HeldToMaturitySecuritiesAccumulatedUnrecognizedHoldingGain",
+               "DebtSecuritiesHeldToMaturityAccumulatedUnrecognizedGainBeforeTax"),
+        "ul": ("HeldToMaturitySecuritiesAccumulatedUnrecognizedHoldingLoss",
+               "DebtSecuritiesHeldToMaturityAccumulatedUnrecognizedLossBeforeTax"),
+    },
+}
+
+
+def _sec_pick(facts: list[Fact], concepts: tuple, period: str):
+    """First undimensioned fact at `period` whose concept matches the priority
+    list (earlier = preferred). None if none tagged."""
+    by_concept: dict = {}
+    for f in facts:
+        c = f.concept.split(":")[-1]
+        if c in concepts and not f.members and f.period_end == period:
+            by_concept.setdefault(c, f.value)
+    for c in concepts:
+        if c in by_concept:
+            return by_concept[c]
+    return None
+
+
+def _sec_candidates(facts: list[Fact], concepts: tuple, period: str) -> list:
+    """All undimensioned (priority_index, value) for the concept list at `period`,
+    so the amortized-cost slot can reject a higher-priority concept that tags a
+    FRAGMENT (e.g. FMCB tags ...AmortizedCostAfterAllowanceForCreditLoss = $69M
+    while the real held-to-maturity book is $708M) in favour of one that actually
+    bridges to fair value."""
+    out = []
+    for f in facts:
+        c = f.concept.split(":")[-1]
+        if c in concepts and not f.members and f.period_end == period:
+            out.append((concepts.index(c), f.value))
+    return sorted(out)
+
+
+def extract_securities(facts: list[Fact]) -> dict:
+    """{period_end: {"afs": {...}, "htm": {...}}} — the as-reported debt-securities
+    amortized-cost → fair-value bridge from a filing's iXBRL.
+
+    Each portfolio carries amortized_cost, fair_value, net_unrealized (fair_value −
+    amortized_cost, the identity), unrealized_gain / unrealized_loss (only when the
+    tagged split reconciles the bridge within 1% — else None), underwater_pct
+    (net_unrealized ÷ amortized_cost; negative = below cost) and _reconciles. A
+    portfolio with no tagged amortized cost OR no fair value is omitted (n/a),
+    never a guessed total."""
+    # Collect the candidate periods from any AFS/HTM amortized-cost or fair-value tag.
+    periods: set = set()
+    wanted = {c for port in _SEC_CONCEPTS.values()
+              for slot in ("ac", "fv") for c in port[slot]}
+    for f in facts:
+        if f.concept.split(":")[-1] in wanted and not f.members:
+            periods.add(f.period_end)
+    out: dict = {}
+    for period in periods:
+        for port, slots in _SEC_CONCEPTS.items():
+            fv = _sec_pick(facts, slots["fv"], period)
+            if fv is None:
+                continue
+            ug = _sec_pick(facts, slots["ug"], period)
+            ul = _sec_pick(facts, slots["ul"], period)
+            # Pick the highest-priority amortized-cost candidate that either bridges
+            # to fair value (gross gain/loss ties) OR sits within a plausible net
+            # band — rejecting a fragment that yields a nonsensical bridge.
+            ac = None
+            for _, v in _sec_candidates(facts, slots["ac"], period):
+                if not v:
+                    continue
+                bridge = (ug is not None and ul is not None
+                          and abs((v + ug - ul) - fv) <= max(abs(fv) * 0.01, 5e6))
+                if bridge or (-0.50 <= (fv - v) / v <= 0.20):
+                    ac = v
+                    break
+            if ac is None:
+                continue
+            net = fv - ac
+            reconciles = (ug is not None and ul is not None
+                          and abs((ac + ug - ul) - fv) <= max(abs(fv) * 0.01, 5e6))
+            d = {
+                "amortized_cost": ac, "fair_value": fv, "net_unrealized": net,
+                "unrealized_gain": ug if reconciles else None,
+                "unrealized_loss": ul if reconciles else None,
+                "underwater_pct": (net / ac) if ac else None,
+                "_reconciles": reconciles,
+            }
+            out.setdefault(period, {})[port] = d
+    return out
+
+
+def securities_for(cik) -> dict | None:
+    """Cached AFS/HTM debt-securities summary for a company from its own latest SEC
+    filing (timeliest 10-Q, then 10-K). Returns
+    {"meta": {...}, "securities": {period: {...}}} or None."""
+    if not cik:
+        return None
+    from data import cache
+    for forms in (("10-Q",), ("10-K",)):
+        meta = latest_filing(cik, forms)
+        if not meta:
+            continue
+        ckey = f"securities:v1:{meta['accession']}"
+        sec = cache.get(ckey)
+        if sec is None:
+            try:
+                sec = extract_securities(instance_facts(meta))
+                try:
+                    cache.put(ckey, sec)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"[sec_scraper] securities failed for cik {cik}: {type(e).__name__}: {e}")
+                sec = {}
+        if sec:
+            return {"meta": meta, "securities": sec}
+    return None

@@ -13,7 +13,8 @@ import unittest
 from unittest import mock
 
 from data.sec_filing_scraper import (
-    parse_inline_xbrl, extract_holdco_capital, extract_fair_value, Fact)
+    parse_inline_xbrl, extract_holdco_capital, extract_fair_value,
+    extract_securities, Fact)
 
 
 def _f(concept, val, members=None, period="2025-12-31"):
@@ -466,6 +467,80 @@ class TestFairValueHierarchy(unittest.TestCase):
         self.assertAlmostEqual(a["l3"], 28043 * self.M)
         self.assertAlmostEqual(a["total"], (100 + 200 + 28043) * self.M)
         self.assertTrue(a["_reconciles"])
+
+
+class TestSecuritiesPortfolio(unittest.TestCase):
+    """The AFS/HTM debt-securities amortized-cost → fair-value bridge
+    (extract_securities). Each case mirrors a real-filer shape (FITB/WFC/TFC):
+    the gross gain/loss split renders only when it ties the bridge, the net is
+    always the directly-tagged fair value − amortized cost, and a missing
+    amortized cost or fair value yields n/a, never a guessed number."""
+
+    AFS_AC = "us-gaap:DebtSecuritiesAvailableForSaleAmortizedCostExcludingAccruedInterestAfterAllowanceForCreditLoss"
+    AFS_FV = "us-gaap:DebtSecuritiesAvailableForSaleExcludingAccruedInterest"
+    AFS_UG = "us-gaap:AvailableForSaleDebtSecuritiesAccumulatedGrossUnrealizedGainBeforeTax"
+    AFS_UL = "us-gaap:AvailableForSaleDebtSecuritiesAccumulatedGrossUnrealizedLossBeforeTax"
+    HTM_AC = "us-gaap:DebtSecuritiesHeldToMaturityExcludingAccruedInterestAfterAllowanceForCreditLoss"
+    HTM_FV = "us-gaap:HeldToMaturitySecuritiesFairValue"
+    B = 1e9
+
+    def test_afs_bridge_reconciles_split_shown(self):
+        # FITB-shape: AC 39.11, UG 0.03, UL 2.97 → FV 36.17 (bridge ties).
+        facts = [
+            _f(self.AFS_AC, 39.11 * self.B), _f(self.AFS_UG, 0.03 * self.B),
+            _f(self.AFS_UL, 2.97 * self.B), _f(self.AFS_FV, 36.17 * self.B),
+        ]
+        a = extract_securities(facts)["2025-12-31"]["afs"]
+        self.assertAlmostEqual(a["amortized_cost"], 39.11 * self.B)
+        self.assertAlmostEqual(a["fair_value"], 36.17 * self.B)
+        self.assertAlmostEqual(a["net_unrealized"], (36.17 - 39.11) * self.B, places=2)
+        self.assertAlmostEqual(a["unrealized_gain"], 0.03 * self.B)
+        self.assertAlmostEqual(a["unrealized_loss"], 2.97 * self.B)
+        self.assertTrue(a["_reconciles"])
+        self.assertAlmostEqual(a["underwater_pct"], (36.17 - 39.11) / 39.11, places=4)
+
+    def test_split_suppressed_when_bridge_does_not_tie(self):
+        # AC 70.0, FV 65.4 (net −4.6) but tagged UG/UL don't tie the bridge →
+        # gain/loss dropped, net (directly tagged FV − AC) still shown.
+        facts = [
+            _f(self.AFS_AC, 70.0 * self.B), _f(self.AFS_FV, 65.4 * self.B),
+            _f(self.AFS_UG, 0.1 * self.B), _f(self.AFS_UL, 1.0 * self.B),  # 70+0.1-1=69.1 ≠ 65.4
+        ]
+        a = extract_securities(facts)["2025-12-31"]["afs"]
+        self.assertIsNone(a["unrealized_gain"])
+        self.assertIsNone(a["unrealized_loss"])
+        self.assertAlmostEqual(a["net_unrealized"], (65.4 - 70.0) * self.B, places=2)
+        self.assertFalse(a["_reconciles"])
+
+    def test_missing_fair_value_yields_na(self):
+        # Amortized cost tagged but no fair value → no AFS entry (can't compute net).
+        facts = [_f(self.AFS_AC, 50.0 * self.B)]
+        self.assertEqual(extract_securities(facts), {})
+
+    def test_htm_underwater_net_only(self):
+        # WFC-shape HTM: AC 204.1, FV 171.3, no gain/loss split tagged → net only.
+        facts = [_f(self.HTM_AC, 204.1 * self.B), _f(self.HTM_FV, 171.3 * self.B)]
+        h = extract_securities(facts)["2025-12-31"]["htm"]
+        self.assertAlmostEqual(h["net_unrealized"], (171.3 - 204.1) * self.B, places=2)
+        self.assertIsNone(h["unrealized_gain"])
+        self.assertLess(h["underwater_pct"], -0.15)
+
+    def test_amortized_cost_fragment_rejected_for_bridging_candidate(self):
+        # FMCB-shape: a higher-priority HTM amortized-cost concept tags a FRAGMENT
+        # ($69.5M, +737% bridge) while the real book (HeldToMaturitySecurities
+        # $708.3M) bridges to FV $581.5M at −18%. The fragment is rejected.
+        AC_FRAG = "us-gaap:DebtSecuritiesHeldToMaturityAmortizedCostAfterAllowanceForCreditLoss"
+        AC_REAL = "us-gaap:HeldToMaturitySecurities"
+        facts = [_f(AC_FRAG, 69.5e6), _f(AC_REAL, 708.3e6), _f(self.HTM_FV, 581.5e6)]
+        h = extract_securities(facts)["2025-12-31"]["htm"]
+        self.assertAlmostEqual(h["amortized_cost"], 708.3e6)
+        self.assertAlmostEqual(h["underwater_pct"], (581.5 - 708.3) / 708.3, places=3)
+
+    def test_no_plausible_amortized_cost_yields_na(self):
+        # TFIN-shape: the only amortized cost gives an implausible +70% bridge with
+        # no gain/loss split to validate it → n/a, never the wrong number.
+        facts = [_f(self.HTM_AC, 1.0e6), _f(self.HTM_FV, 1.7e6)]
+        self.assertEqual(extract_securities(facts), {})
 
 
 class TestFairValueCaching(unittest.TestCase):
