@@ -464,7 +464,7 @@ def _render_economy_calendar():
 
     # ── Latest releases & surprises (FMP economic calendar) ────────────
     st.markdown("**Latest releases & surprises**")
-    recent = get_recent_releases(days=10, min_impact="Medium", limit=14)
+    recent = get_recent_releases(days=10, limit=14)
     if recent:
         srows = ""
         for e in recent:
@@ -598,7 +598,7 @@ def _render_economy_calendar():
 
     # ── Upcoming releases (FMP economic calendar) ─────────────────────
     st.markdown("**Upcoming releases**")
-    up = get_upcoming_releases(days=14, min_impact="Medium", limit=20)
+    up = get_upcoming_releases(days=14, limit=20)
     if not up:
         st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
                 "mounted in production). Unavailable in this environment.")

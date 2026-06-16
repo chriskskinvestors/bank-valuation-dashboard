@@ -72,6 +72,40 @@ def _impact_ok(ev: dict, min_impact: str) -> bool:
     return _IMPACT_RANK.get(ev["impact"], 9) <= _IMPACT_RANK.get(min_impact, 1)
 
 
+# Marquee US macro releases (owner: focus the panels on core economic data,
+# not commodity inventories, CFTC positioning, auctions, or nowcasts).
+# An event qualifies if its name contains a MARQUEE term and no EXCLUDE term.
+_MARQUEE_TERMS = (
+    "cpi", "pce", "ppi",
+    "nonfarm payroll", "non-farm payroll", "non farm payroll", "unemployment rate",
+    "jobless claims", "adp employment", "jolts", "job openings", "hourly earnings",
+    "gdp", "retail sales", "personal income", "personal spending", "durable goods",
+    "factory orders", "industrial production", "capacity utilization",
+    "ism ", "pmi", "empire state", "philadelphia fed", "philly fed", "chicago pmi",
+    "dallas fed", "richmond fed", "kansas city fed",
+    "housing starts", "building permits", "new home sales", "existing home sales",
+    "pending home", "case-shiller", "case shiller", "house price", "nahb",
+    "construction spending",
+    "consumer confidence", "consumer sentiment", "michigan",
+    "interest rate decision", "fomc", "fed interest rate", "fed press conference",
+    "fed economic projection", "trade balance", "goods trade",
+)
+_EXCLUDE_TERMS = (
+    "cftc", "api ", "crude oil", "eia ", "auction", "redbook", "gdpnow",
+    "rig count", "baker hughes", "mba mortgage", "money supply",
+    "import prices", "export prices", "fed balance sheet", "speculative net positions",
+)
+
+
+def is_marquee(event_name: str) -> bool:
+    """True for core US macroeconomic releases; False for positioning,
+    commodity inventories, auctions, nowcasts, etc. Pure / unit-tested."""
+    n = (event_name or "").lower()
+    if not n or any(x in n for x in _EXCLUDE_TERMS):
+        return False
+    return any(t in n for t in _MARQUEE_TERMS)
+
+
 def get_us_calendar(back_days: int = 10, fwd_days: int = 14) -> list[dict]:
     """Parsed US economic events in [today-back, today+fwd], 1h-cached.
     Empty list on no key / denial / failure."""
@@ -102,23 +136,23 @@ def get_us_calendar(back_days: int = 10, fwd_days: int = 14) -> list[dict]:
     return events
 
 
-def get_recent_releases(days: int = 7, min_impact: str = "Medium", limit: int = 14) -> list[dict]:
-    """Recently-released US prints (actual present) within the lookback, at or
-    above `min_impact`, newest first."""
+def get_recent_releases(days: int = 10, limit: int = 14) -> list[dict]:
+    """Recently-released marquee US macro prints (actual present) within the
+    lookback, newest first."""
     today = date.today()
     floor = (today - timedelta(days=days)).isoformat()
     rows = [e for e in get_us_calendar()
-            if e["released"] and e["date"] >= floor and e["date"] <= today.isoformat()
-            and _impact_ok(e, min_impact)]
+            if e["released"] and floor <= e["date"] <= today.isoformat()
+            and is_marquee(e["event"])]
     rows.sort(key=lambda e: e["datetime"], reverse=True)
     return rows[:limit]
 
 
-def get_upcoming_releases(days: int = 10, min_impact: str = "Medium", limit: int = 20) -> list[dict]:
-    """Upcoming US releases (no actual yet) within the forward window, at or
-    above `min_impact`, soonest first."""
+def get_upcoming_releases(days: int = 14, limit: int = 20) -> list[dict]:
+    """Upcoming marquee US macro releases (no actual yet) within the forward
+    window, soonest first."""
     today = date.today().isoformat()
     rows = [e for e in get_us_calendar()
-            if not e["released"] and e["date"] >= today and _impact_ok(e, min_impact)]
+            if not e["released"] and e["date"] >= today and is_marquee(e["event"])]
     rows.sort(key=lambda e: e["datetime"])
     return rows[:limit]

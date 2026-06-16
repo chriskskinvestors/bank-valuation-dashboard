@@ -9,7 +9,7 @@ Permits, Housing Starts MoM).
 """
 import unittest
 
-from data.econ_calendar import parse_event, _impact_ok
+from data.econ_calendar import parse_event, _impact_ok, is_marquee
 
 
 class TestParseEvent(unittest.TestCase):
@@ -67,6 +67,32 @@ class TestImpactFilter(unittest.TestCase):
         self.assertFalse(_impact_ok(lo, "Medium"))
         self.assertTrue(_impact_ok(lo, "Low"))
         self.assertFalse(_impact_ok(med, "High"))
+
+
+class TestIsMarquee(unittest.TestCase):
+    def test_includes_core_releases(self):
+        for name in [
+            "Core CPI YoY (May)", "PCE Price Index MoM", "Nonfarm Payrolls (May)",
+            "Unemployment Rate (May)", "Initial Jobless Claims (Jun/06)", "GDP Growth Rate QoQ",
+            "Retail Sales MoM (May)", "ISM Manufacturing PMI", "S&P Global Services PMI",
+            "Housing Starts (May)", "Building Permits (May)", "NAHB Housing Market Index (Jun)",
+            "Industrial Production MoM (May)", "NY Empire State Manufacturing Index (Jun)",
+            "Michigan Consumer Sentiment Prel (Jun)", "Fed Interest Rate Decision",
+        ]:
+            self.assertTrue(is_marquee(name), name)
+
+    def test_excludes_noise(self):
+        for name in [
+            "API Crude Oil Stock Change (Jun/12)", "Atlanta Fed GDPNow (Q2)",
+            "20-Year Bond Auction", "CFTC S&P 500 speculative net positions",
+            "Redbook YoY (Jun/13)", "Import Prices YoY (May)", "Export Prices MoM (May)",
+            "EIA Crude Oil Stocks Change", "MBA Mortgage Applications", "Baker Hughes Oil Rig Count",
+        ]:
+            self.assertFalse(is_marquee(name), name)
+
+    def test_empty(self):
+        self.assertFalse(is_marquee(""))
+        self.assertFalse(is_marquee(None))
 
 
 if __name__ == "__main__":
