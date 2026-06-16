@@ -33,7 +33,7 @@ from datetime import datetime
 
 from data.fmp_client import _get, get_fundamentals_batch
 
-CACHE_KEY = "etf_lookthrough_valuation"
+CACHE_KEY = "etf_lookthrough_valuation:v2"  # v2: winsorized blend (bands)
 CACHE_TTL_SECONDS = 21600  # 6h
 
 
@@ -70,13 +70,27 @@ def get_holdings(ticker: str) -> list[tuple[str, float]]:
     return parse_holdings(data if isinstance(data, list) else [])
 
 
+# Sanity bands (winsorization). A bank ETF holds the odd non-bank financial
+# (insurers, asset managers, mortgage cos) and FMP occasionally misreports a
+# share count — both produce ratios that are loss-making, astronomical, or a
+# near-zero P/B that craters the harmonic mean (a 0.11x P/TBV bug seen live on
+# KBE). Only blend a constituent's value when it falls in a plausible-bank
+# range; everything else is dropped from THAT metric (and reflected in the
+# coverage count), never silently averaged in.
+PE_BAND = (4.0, 35.0)      # below = loss-maker/garbage; above = non-bank multiple
+PTBV_BAND = (0.3, 4.5)     # below = data error/crater; above = asset-manager-style
+DIV_YIELD_MAX = 15.0       # a real bank yield is ~0-7%; higher = bad data
+
+
 def blend_valuation(holdings: list[tuple[str, float]], metrics: dict) -> dict:
     """Blend constituent ratios into look-through P/E, P/TBV, dividend yield.
 
     holdings: [(ticker, weight%)]. metrics: {ticker: {pe_ratio, pb_ratio, bvps,
     tbvps, dividend_yield}} (dividend_yield in percent, per get_fundamentals).
+    Each metric is winsorized to a plausible-bank band (see PE_BAND etc.) so
+    non-bank / bad-data outliers can't pollute or crater the harmonic blend.
     Pure / unit-tested. Returns blended values (None when no holding carries the
-    metric) plus coverage counts.
+    metric in-band) plus coverage counts.
     """
     pe_num = pe_den = 0.0
     ptbv_num = ptbv_den = 0.0
@@ -89,7 +103,7 @@ def blend_valuation(holdings: list[tuple[str, float]], metrics: dict) -> dict:
         m = metrics.get(tk) or metrics.get(tk.upper()) or {}
 
         pe = m.get("pe_ratio")
-        if pe is not None and pe > 0:
+        if pe is not None and PE_BAND[0] <= pe <= PE_BAND[1]:
             pe_num += w
             pe_den += w / pe
             n_pe += 1
@@ -97,13 +111,13 @@ def blend_valuation(holdings: list[tuple[str, float]], metrics: dict) -> dict:
         pb, bvps, tbvps = m.get("pb_ratio"), m.get("bvps"), m.get("tbvps")
         if pb is not None and pb > 0 and bvps and tbvps and tbvps > 0:
             ptbv = pb * bvps / tbvps
-            if ptbv > 0:
+            if PTBV_BAND[0] <= ptbv <= PTBV_BAND[1]:
                 ptbv_num += w
                 ptbv_den += w / ptbv
                 n_ptbv += 1
 
         dy = m.get("dividend_yield")
-        if dy is not None:
+        if dy is not None and 0 <= dy <= DIV_YIELD_MAX:
             dy_num += w * dy
             dy_den += w
             n_dy += 1
