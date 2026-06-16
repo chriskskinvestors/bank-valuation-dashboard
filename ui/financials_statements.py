@@ -1911,6 +1911,53 @@ def _render_performance(ticker):
     st.markdown("\n".join([hdr, sep] + body))
 
 
+def _render_segments(ticker):
+    """As-reported business-segment net income (with revenue/assets), scraped from
+    the HOLDING COMPANY's own latest 10-K. Each segment's figures are directly
+    tagged; a 'Corporate / other & reconciling items' residual (consolidated − Σ
+    reportable) ties them to the consolidated total, exactly as the segment
+    footnote presents it. n/a when the filer tags fewer than two reportable
+    segments."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        return
+    try:
+        from data.sec_filing_scraper import segments_for
+        res = segments_for(cik)
+    except Exception:
+        res = None
+    st.markdown("---")
+    st.subheader("Segment Reporting — Company Reported")
+    if not res or not res.get("segments"):
+        st.caption("Reportable business segments not tagged in this filer's latest "
+                   "10-K — n/a. (Single-segment banks report no segment breakdown.)")
+        return
+    m, seg_data = res["meta"], res["segments"]
+    period = max(seg_data)
+    d = seg_data[period]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{m['accession']}/{m['doc']}")
+    st.caption(
+        f"Source: SEC [{m['form']} filed {m['date']}]({src}) — reportable segments, "
+        f"FY{period[:4]}. Segment net income is the {d['ni_measure']} measure; the "
+        f"residual reconciles reportable segments to the consolidated total.")
+
+    def _b(v):
+        if v is None:
+            return "n/a"
+        return f"${v / 1e9:,.2f}B" if abs(v) >= 1e9 else f"${v / 1e6:,.0f}M"
+
+    rows = [(s["label"], _b(s["net_income"]), _b(s["revenue"]), _b(s["assets"]))
+            for s in d["segments"]]
+    rows.append(("Corporate / other & reconciling items", _b(d["reconciling_residual"]), "", ""))
+    rows.append(("**Consolidated net income**", f"**{_b(d['consolidated_net_income'])}**", "", ""))
+    hdr = f"| Segment (FY{period[:4]}) | Net income | Revenue | Assets |"
+    sep = "|---|---|---|---|"
+    body = [f"| {a} | {b} | {c} | {e} |" for a, b, c, e in rows]
+    st.markdown("\n".join([hdr, sep] + body))
+
+
 def render_portfolio(ticker):
     render_statement(ticker, "port", "Portfolio Analysis", _PORTFOLIO)
 

@@ -15,7 +15,7 @@ from unittest import mock
 from data.sec_filing_scraper import (
     parse_inline_xbrl, extract_holdco_capital, extract_fair_value,
     extract_securities, extract_credit_quality, extract_performance,
-    extract_financial_highlights, Fact)
+    extract_financial_highlights, extract_segments, Fact)
 
 
 def _f(concept, val, members=None, period="2025-12-31"):
@@ -682,6 +682,62 @@ class TestFinancialHighlights(unittest.TestCase):
     def test_no_assets_yields_na(self):
         self.assertEqual(
             extract_financial_highlights([self._dur("us-gaap:NetIncomeLoss", 100 * self.M)]), {})
+
+
+class TestSegments(unittest.TestCase):
+    """Business-segment reconstruction (extract_segments). Pins the OperatingSegments
+    member filter (eliminations/totals excluded), the consolidated reconciling
+    residual, and the ≥2-segment rule."""
+
+    Y0, Y1, M = "2025-01-01", "2025-12-31", 1e6
+    SEG = "us-gaap:StatementBusinessSegmentsAxis"
+    CON = "us-gaap:ConsolidationItemsAxis"
+    OPSEG = "us-gaap:OperatingSegmentsMember"
+    ELIM = "us-gaap:IntersegmentEliminationMember"
+
+    def _seg(self, concept, val, segmem, consol=None):
+        mem = {self.SEG: segmem}
+        if consol:
+            mem[self.CON] = consol
+        return Fact(concept, val, self.Y1, self.Y0, mem, "usd")
+
+    def _cons(self, concept, val):
+        return Fact(concept, val, self.Y1, self.Y0, {}, "usd")
+
+    def test_two_segments_with_residual(self):
+        facts = [
+            self._cons("us-gaap:NetIncomeLoss", 7000 * self.M),
+            self._seg("us-gaap:NetIncomeLoss", 5000 * self.M, "x:RetailBankingSegmentMember", self.OPSEG),
+            self._seg("us-gaap:NetIncomeLoss", 4000 * self.M, "x:CorporateBankingSegmentMember", self.OPSEG),
+        ]
+        d = extract_segments(facts)["2025-12-31"]
+        self.assertEqual(len(d["segments"]), 2)
+        self.assertAlmostEqual(d["consolidated_net_income"], 7000 * self.M)
+        self.assertAlmostEqual(d["reconciling_residual"], (7000 - 9000) * self.M)
+        self.assertIn("Retail Banking", {s["label"] for s in d["segments"]})
+
+    def test_eliminations_excluded(self):
+        facts = [
+            self._cons("us-gaap:NetIncomeLoss", 7000 * self.M),
+            self._seg("us-gaap:NetIncomeLoss", 5000 * self.M, "x:RetailBankingSegmentMember", self.OPSEG),
+            self._seg("us-gaap:NetIncomeLoss", 4000 * self.M, "x:CorporateBankingSegmentMember", self.OPSEG),
+            self._seg("us-gaap:NetIncomeLoss", -100 * self.M, "x:RetailBankingSegmentMember", self.ELIM),
+        ]
+        d = extract_segments(facts)["2025-12-31"]
+        self.assertEqual(len(d["segments"]), 2)
+
+    def test_single_segment_yields_na(self):
+        facts = [self._cons("us-gaap:NetIncomeLoss", 7000 * self.M),
+                 self._seg("us-gaap:NetIncomeLoss", 7000 * self.M, "x:RetailBankingSegmentMember", self.OPSEG)]
+        self.assertEqual(extract_segments(facts), {})
+
+    def test_large_residual_rejected(self):
+        # CTBI shape: a "Corporate" segment equal to the consolidated total
+        # double-counts → residual (−100) exceeds consolidated (98) → n/a.
+        facts = [self._cons("us-gaap:NetIncomeLoss", 98 * self.M),
+                 self._seg("us-gaap:NetIncomeLoss", 100 * self.M, "x:CommunityBankingMember", self.OPSEG),
+                 self._seg("us-gaap:NetIncomeLoss", 98 * self.M, "x:CorporateMember", self.OPSEG)]
+        self.assertEqual(extract_segments(facts), {})
 
 
 class TestFairValueCaching(unittest.TestCase):

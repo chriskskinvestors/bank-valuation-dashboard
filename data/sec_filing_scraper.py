@@ -1205,3 +1205,141 @@ def financial_highlights_for(cik, anchor_cet1=None) -> dict | None:
     if hi:
         return {"meta": meta, "highlights": hi}
     return None
+
+
+# ── Business segment reporting ───────────────────────────────────────────────
+_SEG_AXIS = "StatementBusinessSegmentsAxis"
+_CONSOL_AXIS = "ConsolidationItemsAxis"
+
+
+def _seg_of(members: dict) -> str | None:
+    """Segment member qname for a CLEAN per-reportable-segment fact: exactly one
+    member on the business-segments axis, and any consolidation-items member must
+    be OperatingSegments (so totals / intersegment eliminations / reconciling
+    columns are excluded). None otherwise."""
+    seg = None
+    for dim, mem in members.items():
+        d, m = dim.split(":")[-1], mem.split(":")[-1]
+        if d == _SEG_AXIS:
+            if seg is not None:
+                return None
+            seg = m
+        elif d == _CONSOL_AXIS:
+            if "OperatingSegments" not in m:
+                return None
+        else:
+            return None
+    return seg
+
+
+def _seg_label(qname: str) -> str:
+    """Readable segment name from the member qname (RetailBankingSegmentMember →
+    'Retail Banking')."""
+    s = qname
+    for suf in ("SegmentMember", "SegmentsMember", "Member", "Segment"):
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+            break
+    s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", s)
+    s = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", s)
+    return s.strip() or qname
+
+
+def extract_segments(facts: list[Fact]) -> dict:
+    """{fiscal_year_end: {"segments": [...], ...}} — the as-reported business-segment
+    net income (with revenue and assets when tagged) reconstructed from a filing's
+    iXBRL, presented GAAP-style: each reportable segment's directly tagged figures
+    plus an explicit 'Corporate / other & reconciling items' residual (consolidated
+    − Σ reportable) so the segments tie the consolidated total. The net-income
+    measure (NetIncomeLoss or ProfitLoss) is chosen to match the consolidated tag.
+    n/a unless ≥2 reportable segments and a consolidated total are tagged for the
+    latest fiscal year."""
+    fy_end = None
+    for f in facts:
+        if (f.concept.split(":")[-1] in ("NetIncomeLoss", "ProfitLoss") and not f.members
+                and f.period_start and 330 <= _days(f.period_start, f.period_end) <= 400):
+            if fy_end is None or f.period_end > fy_end:
+                fy_end = f.period_end
+    if fy_end is None:
+        return {}
+
+    def _annual(f):
+        return f.period_start and f.period_end == fy_end and 330 <= _days(f.period_start, fy_end) <= 400
+
+    # Choose the NI concept that the consolidated total uses, then read segments
+    # with the SAME concept so the residual is consistent.
+    for ni_concept in ("NetIncomeLoss", "ProfitLoss"):
+        consol = None
+        for f in facts:
+            if f.concept.split(":")[-1] == ni_concept and not f.members and _annual(f):
+                consol = f.value
+                break
+        if consol is None:
+            continue
+        seg_ni: dict = {}
+        for f in facts:
+            if f.concept.split(":")[-1] == ni_concept and _annual(f):
+                seg = _seg_of(f.members)
+                if seg:
+                    seg_ni.setdefault(seg, f.value)
+        if len(seg_ni) < 2:
+            continue
+        # Optional per-segment revenue and assets (same segment marker).
+        seg_rev: dict = {}
+        seg_assets: dict = {}
+        for f in facts:
+            seg = _seg_of(f.members)
+            if not seg or seg not in seg_ni:
+                continue
+            c = f.concept.split(":")[-1]
+            if c in ("Revenues", "RevenuesNetOfInterestExpense") and _annual(f):
+                seg_rev.setdefault(seg, f.value)
+            elif c == "Assets" and f.period_start is None and f.period_end == fy_end:
+                seg_assets.setdefault(seg, f.value)
+            elif c == "AssetsAverageOutstanding" and _annual(f):
+                seg_assets.setdefault(seg, f.value)
+        segments = [{
+            "label": _seg_label(s), "net_income": v,
+            "revenue": seg_rev.get(s), "assets": seg_assets.get(s),
+        } for s, v in seg_ni.items()]
+        segments.sort(key=lambda x: -(x["net_income"] if x["net_income"] is not None else 0))
+        residual = consol - sum(seg_ni.values())
+        # A clean decomposition has a corporate/other residual SMALLER than the
+        # consolidated total. A residual exceeding it means the segment set is
+        # unreliable — typically a member that is itself the total/parent
+        # double-counted (CTBI tags a "Corporate" segment = consolidated NI; BOTJ
+        # an "All Other" = consolidated) → reject (try the other measure, else n/a),
+        # never a misleading breakdown.
+        if consol and abs(residual) > abs(consol):
+            continue
+        return {fy_end: {
+            "segments": segments, "consolidated_net_income": consol,
+            "reconciling_residual": residual, "ni_measure": ni_concept,
+        }}
+    return {}
+
+
+def segments_for(cik) -> dict | None:
+    """Cached business-segment summary for a company from its own latest 10-K.
+    Returns {"meta": {...}, "segments": {...}} or None."""
+    if not cik:
+        return None
+    from data import cache
+    meta = latest_filing(cik, ("10-K",))
+    if not meta:
+        return None
+    ckey = f"segments:v1:{meta['accession']}"
+    seg = cache.get(ckey)
+    if seg is None:
+        try:
+            seg = extract_segments(instance_facts(meta))
+            try:
+                cache.put(ckey, seg)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[sec_scraper] segments failed for cik {cik}: {type(e).__name__}: {e}")
+            seg = {}
+    if seg:
+        return {"meta": meta, "segments": seg}
+    return None

@@ -273,6 +273,11 @@ def _cr_highlights(t, ctx):
     _render_financial_highlights(t)
 
 
+def _cr_segments(t, ctx):
+    from ui.financials_statements import _render_segments
+    _render_segments(t)
+
+
 def _cr_reg_capital(t, ctx):
     from ui.capital_dynamics import _render_holdco_capital
     _render_holdco_capital(t)
@@ -327,7 +332,7 @@ _CR_RENDERERS = {
     "Deposit Composition": _cr_deposit,
     "Securities Portfolio": _cr_securities,
     "Fair Value": _cr_fair_value,
-    "Segment Reporting": _cr_todo("Segment Reporting"),
+    "Segment Reporting": _cr_segments,
     "Interest Rate Risk": _cr_todo("Interest Rate Risk"),
 }
 
