@@ -24,10 +24,39 @@ Schema:
 
 from __future__ import annotations
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from data.events.base import Event
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Cross-source dedup
+# ──────────────────────────────────────────────────────────────────────────
+# The (source, external_id) UNIQUE constraint only collapses duplicates WITHIN a
+# source. But the SAME press release is syndicated across wires + Google News +
+# Yahoo, so "Ameris Bancorp Reports Q2 Results" lands once per source — three
+# near-identical rows in the feed. We additionally collapse these by a
+# normalized-headline content key, scoped to the ticker + a recent window, so a
+# release already ingested from one wire isn't re-added from another.
+#
+# Excluded: sec_8k (generic headlines like "8-K · Earnings / Results" would
+# falsely collapse two distinct filings; it already dedups on accession),
+# ir_site (raw IR titles, lower volume), and the topic feed (not bank events).
+_CONTENT_DEDUP_SOURCES = {
+    "businesswire", "prnewswire", "globenewswire", "google_news", "yfinance_news",
+}
+_CONTENT_DEDUP_WINDOW_DAYS = 5
+
+
+def _content_key(ticker: str, headline: str) -> str:
+    """Normalized (ticker, headline) key for cross-source dedup: lower-cased,
+    punctuation→space, whitespace collapsed. The same release worded identically
+    by two outlets maps to one key."""
+    h = re.sub(r"[^a-z0-9]+", " ", (headline or "").lower()).strip()
+    h = re.sub(r"\s+", " ", h)
+    return f"{(ticker or '').upper()}|{h}"
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -114,6 +143,47 @@ def init_schema():
         ))
 
 
+def _existing_content_keys(eng, events: list[Event]) -> set[str]:
+    """Content keys already in the store for this batch's tickers (dedup-eligible
+    sources, within the recent window). Used to collapse the same release
+    syndicated across multiple sources."""
+    from sqlalchemy import text
+
+    dedup_events = [e for e in events
+                    if e.source in _CONTENT_DEDUP_SOURCES and e.ticker]
+    if not dedup_events:
+        return set()
+
+    tickers = sorted({e.ticker.upper() for e in dedup_events})
+    src_list = sorted(_CONTENT_DEDUP_SOURCES)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_CONTENT_DEDUP_WINDOW_DAYS)
+
+    if _USE_POSTGRES:
+        sql = text("""
+            SELECT ticker, headline FROM events
+            WHERE ticker = ANY(:tickers) AND source = ANY(:srcs)
+              AND published_at >= :cutoff
+        """)
+        params = {"tickers": tickers, "srcs": src_list, "cutoff": cutoff}
+    else:
+        t_ph = ",".join(f":t{i}" for i in range(len(tickers)))
+        s_ph = ",".join(f":s{i}" for i in range(len(src_list)))
+        sql = text(f"""
+            SELECT ticker, headline FROM events
+            WHERE ticker IN ({t_ph}) AND source IN ({s_ph})
+              AND published_at >= :cutoff
+        """)
+        params = {"cutoff": cutoff}
+        params.update({f"t{i}": t for i, t in enumerate(tickers)})
+        params.update({f"s{i}": s for i, s in enumerate(src_list)})
+
+    keys: set[str] = set()
+    with eng.connect() as conn:
+        for r in conn.execute(sql, params).mappings().all():
+            keys.add(_content_key(r["ticker"], r["headline"]))
+    return keys
+
+
 def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
     """
     Insert events idempotently. Returns the list of events that were ACTUALLY
@@ -127,6 +197,13 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
         return []
 
     eng = _get_engine()
+
+    # Cross-source dedup: load content keys already present for the tickers in
+    # this batch (eligible sources only, recent window), so a release already
+    # ingested from one wire/aggregator isn't duplicated from another. Keys seen
+    # earlier in THIS batch are added as we go.
+    seen_content_keys = _existing_content_keys(eng, events)
+
     new: list[Event] = []
     with eng.begin() as conn:
         for e in events:
@@ -134,6 +211,11 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
                 # Without an external_id we can't dedupe, so don't insert.
                 # Adapters should always provide one.
                 continue
+            if e.source in _CONTENT_DEDUP_SOURCES:
+                ck = _content_key(e.ticker, e.headline)
+                if ck in seen_content_keys:
+                    continue  # same release already present from another source
+                seen_content_keys.add(ck)
             params = {
                 "ticker": e.ticker.upper(),
                 "source": e.source,
