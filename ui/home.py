@@ -405,6 +405,8 @@ _AF_CSS = r"""
 .afwrap .erow.r2{grid-template-columns:1.55fr 1fr .8fr .85fr;}
 .afwrap .erow.m5{grid-template-columns:1.5fr .62fr 1fr .8fr;}
 .afwrap .erow.a4{grid-template-columns:.62fr 2fr .72fr;}
+.afwrap .erow.e1{grid-template-columns:16px 1.3fr .58fr .95fr .85fr .62fr .62fr .62fr .62fr .8fr;column-gap:4px;padding:0 10px;}
+.afwrap .erow.e1 .num{font-size:10px;}
 .afwrap .h{font-size:8.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9aa6b4;}
 .afwrap .num{text-align:right;font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:#1f2937;}
 .afwrap .num.h{font-family:inherit;}
@@ -489,6 +491,19 @@ def _af_signed(v, dp=2, suffix=""):
     return (f"{f:+,.{dp}f}{suffix}", cls)
 
 
+def _af_vol(v):
+    """Compact share-volume label (45.1M / 820K / —)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if v >= 1e6:
+        return f"{v/1e6:.1f}M"
+    if v >= 1e3:
+        return f"{v/1e3:.0f}K"
+    return f"{v:.0f}"
+
+
 def _af_seg(key: str, cur: str, opts: list) -> str:
     return ('<span class="seg">' + "".join(
         f'<a class="{"on" if cur == v else ""}" href="{_af_href(**{key: v})}">{lbl}</a>'
@@ -512,16 +527,21 @@ def _af_etf_pane(state: dict) -> str:
     except Exception:
         warm = {}
     try:
+        ctx = _etf_context(tuple(syms))
+    except Exception:
+        ctx = {}
+    try:
         from data import fmp_client
         aftq = fmp_client.get_aftermarket_quote_batch(syms)
     except Exception:
         aftq = {}
     from data import fmp_client as _fc
     sel = set(state["overlay"])
-    rows = ('<div class="erow eh"><span></span><span class="h">Name</span>'
+    rows = ('<div class="erow e1 eh"><span></span><span class="h">Name</span>'
             '<span class="h">Tkr</span><span class="num h">Last</span>'
             '<span class="num h">Chg</span><span class="num h">%</span>'
-            '<span class="num h">Aft</span></div>')
+            '<span class="num h">Aft</span><span class="num h">1W</span>'
+            '<span class="num h">YTD</span><span class="num h">Vol</span></div>')
     for t, name in _AF_ETFS:
         q = warm.get(t) or {}
         price = q.get("price")
@@ -531,17 +551,26 @@ def _af_etf_pane(state: dict) -> str:
         aq = aftq.get(t) or {}
         aft = _fc.aftermarket_move(aq.get("bid"), aq.get("ask"), price)
         aft_t, aft_c = _af_signed(aft) if aft is not None else ("—", "mut")
+        c = ctx.get(t) or {}
+        w1_t, w1_c = (_af_signed(c.get("w1"), dp=1) if c.get("w1") is not None
+                      else ("—", "mut"))
+        ytd_t, ytd_c = (_af_signed(c.get("ytd"), dp=1) if c.get("ytd") is not None
+                        else ("—", "mut"))
+        vol = _af_vol(q.get("volume"))
         on = "" if t in sel else " off"
         new_sel = (sorted(sel - {t}) if t in sel else sorted(sel | {t}))
         href = _af_href(oc=",".join(new_sel) or None)
         rows += (
-            f'<a class="crow" href="{href}" target="_self"><div class="erow ed">'
+            f'<a class="crow" href="{href}" target="_self"><div class="erow e1 ed">'
             f'<span class="cbx{on}"></span>'
             f'<span class="nm">{name}</span><span class="tk">{t}</span>'
             f'<span class="num">{last}</span>'
             f'<span class="num {chg_c}">{chg_t}</span>'
             f'<span class="num {pct_c}">{pct_t}</span>'
-            f'<span class="num {aft_c}">{aft_t}</span></div></a>')
+            f'<span class="num {aft_c}">{aft_t}</span>'
+            f'<span class="num {w1_c}">{w1_t}</span>'
+            f'<span class="num {ytd_c}">{ytd_t}</span>'
+            f'<span class="num">{vol}</span></div></a>')
     return ('<div class="pane" style="grid-column:1;grid-row:1;">'
             '<div class="hd"><span class="t">Markets · ETFs</span>'
             '<span class="s"><span class="live"></span>Live</span></div>'
