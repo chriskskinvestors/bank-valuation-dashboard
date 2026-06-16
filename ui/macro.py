@@ -409,10 +409,49 @@ def _fmt_as_of(ts, freq: str) -> str:
     return ts.strftime("%b %Y")
 
 
-_IMPORTANCE_TAG = {
-    "high":   '<span style="color:var(--brand-primary);font-weight:600;">HIGH</span>',
-    "medium": '<span style="color:var(--text-muted);">MED</span>',
+# Impact tags for the FMP economic calendar (High/Medium/Low).
+_ECON_IMPACT_TAG = {
+    "High":   '<span style="color:var(--brand-primary);font-weight:700;">High</span>',
+    "Medium": '<span style="color:var(--text-secondary);font-weight:600;">Med</span>',
+    "Low":    '<span style="color:var(--text-muted);">Low</span>',
 }
+
+
+def _fmt_econ_val(v, unit) -> str:
+    """An econ-calendar value with its unit (%, M, K, B, bps…), or em-dash."""
+    if v is None:
+        return '<span style="color:var(--text-muted);">—</span>'
+    u = (unit or "").strip()
+    if u in ("%", "M", "K", "B"):
+        return f"{v:g}{u}"
+    return f"{v:g}{(' ' + u) if u else ''}"
+
+
+def _econ_surprise_html(ev: dict) -> str:
+    """Signed actual−consensus surprise, colored by deviation (above consensus
+    green / below red) — direction vs expectations, not good/bad."""
+    s = ev.get("surprise")
+    if s is None:
+        return '<span style="color:var(--text-muted);">—</span>'
+    color = ("var(--success)" if s > 0 else
+             "var(--danger)" if s < 0 else "var(--text-secondary)")
+    return f'<span style="color:{color};">{s:+g}</span>'
+
+
+def _et_time(dt_str: str) -> str:
+    """FMP UTC datetime string → US/Eastern 'h:mm AM/PM ET' (blank for
+    midnight placeholders or parse failure)."""
+    from datetime import datetime as _dt2
+    try:
+        from zoneinfo import ZoneInfo
+        utc = _dt2.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
+    except Exception:
+        return ""
+    if utc.hour == 0 and utc.minute == 0:
+        return ""  # FMP's no-scheduled-time placeholder (00:00 UTC)
+    d = utc.astimezone(ZoneInfo("America/New_York"))
+    h = d.hour % 12 or 12
+    return f"{h}:{d.minute:02d} {'AM' if d.hour < 12 else 'PM'} ET"
 
 
 def _render_economy_calendar():
@@ -420,10 +459,46 @@ def _render_economy_calendar():
     import plotly.graph_objects as go
     from datetime import date as _date, datetime as _dt
     from data.macro_indicators import get_print_board, to_yoy, to_mom_change
-    from data.macro_calendar import get_upcoming_prints
+    from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
 
-    # ── Latest print board ─────────────────────────────────────────────
+    # ── Latest releases & surprises (FMP economic calendar) ────────────
+    st.markdown("**Latest releases & surprises**")
+    recent = get_recent_releases(days=10, min_impact="Medium", limit=14)
+    if recent:
+        srows = ""
+        for e in recent:
+            d = _dt.strptime(e["date"], "%Y-%m-%d").date().strftime("%b %d").replace(" 0", " ")
+            srows += (
+                "<tr>"
+                f'<td style="white-space:nowrap;">{d}</td>'
+                f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
+                f'<td><strong>{_fmt_econ_val(e["actual"], e["unit"])}</strong></td>'
+                f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
+                f'<td>{_econ_surprise_html(e)}</td>'
+                f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["previous"], e["unit"])}</td>'
+                f'<td>{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
+                "</tr>"
+            )
+        st.markdown(
+            '<div class="ksk-grid"><table style="width:100%;">'
+            "<thead><tr>"
+            '<th style="text-align:left;">Date</th><th style="text-align:left;">Release</th>'
+            "<th>Actual</th><th>Consensus</th><th>Surprise</th><th>Prior</th><th>Impact</th>"
+            "</tr></thead><tbody>" + srows + "</tbody></table></div>",
+            unsafe_allow_html=True,
+        )
+        st.caption("Recent US releases: actual vs consensus. Surprise = actual − consensus, "
+                   "colored by deviation above/below consensus (not good/bad). "
+                   "Source: FMP economic calendar.")
+    else:
+        st.info("Latest-release surprises use FMP's economic calendar (Premium key, "
+                "mounted in production). Unavailable in this environment.")
+
+    st.markdown("---")
+
+    # ── Key indicators (FRED) ──────────────────────────────────────────
+    st.markdown("**Key indicators**")
     rows = get_print_board()
     body = ""
     for r in rows:
@@ -521,47 +596,41 @@ def _render_economy_calendar():
 
     st.markdown("---")
 
-    # ── Upcoming release calendar ──────────────────────────────────────
+    # ── Upcoming releases (FMP economic calendar) ─────────────────────
     st.markdown("**Upcoming releases**")
-    window = st.radio("Window", [7, 14, 30, 60], index=2, horizontal=True,
-                      format_func=lambda d: f"{d}d", key="macro_cal_window",
-                      label_visibility="collapsed")
-    prints = get_upcoming_prints(days=window)
-    if not prints:
-        st.info("Upcoming-release calendar uses the FRED releases API "
-                "(needs FRED_API_KEY, set in production). Unavailable in this "
-                "environment or no releases scheduled in the window.")
+    up = get_upcoming_releases(days=14, min_impact="Medium", limit=20)
+    if not up:
+        st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
+                "mounted in production). Unavailable in this environment.")
     else:
         today_iso = _date.today().isoformat()
-        crows = ""
-        for e in prints:
+        urows = ""
+        for e in up:
             d = _dt.strptime(e["date"], "%Y-%m-%d").date()
-            dow = d.strftime("%a")
             when = "today" if e["date"] == today_iso else f"in {(d - _date.today()).days}d"
-            is_fomc = e["kind"] == "fomc"
-            name_html = _html.escape(e["name"])
-            if is_fomc:
-                name_html = f'<strong style="color:var(--brand-primary);">{name_html}</strong>'
             row_bg = ' style="background:rgba(30,64,175,0.04);"' if e["date"] == today_iso else ""
-            crows += (
+            urows += (
                 f"<tr{row_bg}>"
-                f'<td>{d.strftime("%b %d").replace(" 0", " ")}</td>'
-                f'<td style="text-align:left;color:var(--text-secondary);">{dow}</td>'
-                f'<td style="text-align:left;">{name_html}</td>'
-                f'<td>{_IMPORTANCE_TAG.get(e["importance"], "")}</td>'
+                f'<td style="white-space:nowrap;">{d.strftime("%b %d").replace(" 0", " ")}</td>'
+                f'<td style="text-align:left;color:var(--text-secondary);white-space:nowrap;">{_et_time(e["datetime"])}</td>'
+                f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
+                f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
+                f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["previous"], e["unit"])}</td>'
+                f'<td>{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
                 f'<td style="color:var(--text-muted);">{when}</td>'
                 "</tr>"
             )
         st.markdown(
             '<div class="ksk-grid"><table style="width:100%;">'
             "<thead><tr>"
-            '<th style="text-align:left;">Date</th><th style="text-align:left;">Day</th>'
-            '<th style="text-align:left;">Release</th><th>Importance</th><th>When</th>'
-            "</tr></thead><tbody>" + crows + "</tbody></table></div>",
+            '<th style="text-align:left;">Date</th><th style="text-align:left;">Time</th>'
+            '<th style="text-align:left;">Release</th><th>Consensus</th><th>Prior</th>'
+            "<th>Impact</th><th>When</th>"
+            "</tr></thead><tbody>" + urows + "</tbody></table></div>",
             unsafe_allow_html=True,
         )
-        st.caption("FRED-scheduled release dates + FOMC decision days. "
-                   "Source: FRED releases API · Federal Reserve FOMC calendar.")
+        st.caption("Scheduled US releases with consensus, prior, and impact tier. "
+                   "Times in ET. Source: FMP economic calendar.")
 
 
 def _render_regime():
