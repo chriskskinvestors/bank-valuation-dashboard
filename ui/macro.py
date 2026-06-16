@@ -687,6 +687,51 @@ def _render_economy_calendar():
         figa.update_yaxes(ticksuffix="%")
         st.plotly_chart(figa, use_container_width=True)
 
+    # ── Housing (starts & permits) + Sentiment & Money (UMich & M2) ──────
+    c5, c6 = st.columns(2)
+    with c5:
+        figh = go.Figure()
+        for sid, label, color in [
+            ("HOUST", "Housing Starts", "#1e40af"),
+            ("PERMIT", "Building Permits", "#d97706"),
+        ]:
+            s = fetch_series(sid, years=6)
+            if not s.empty:
+                d = s.dropna(subset=["value"]).sort_values("date")
+                cutoff = d["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+                d = d[d["date"] >= cutoff]
+                figh.add_trace(go.Scatter(
+                    x=d["date"], y=d["value"], name=label, mode="lines",
+                    line=dict(color=color, width=2)))
+        apply_standard_layout(figh, title="Housing — Starts & Permits (000s SAAR, 5Y)",
+                              height=CHART_HEIGHT_FULL, yaxis_title="000s")
+        st.plotly_chart(figh, use_container_width=True)
+
+    with c6:
+        figm = go.Figure()
+        sent = fetch_series("UMCSENT", years=6)
+        if not sent.empty:
+            d = sent.dropna(subset=["value"]).sort_values("date")
+            cutoff = d["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+            d = d[d["date"] >= cutoff]
+            figm.add_trace(go.Scatter(
+                x=d["date"], y=d["value"], name="UMich Sentiment",
+                mode="lines", line=dict(color="#1e40af", width=2), yaxis="y"))
+        m2 = to_yoy(fetch_series("M2SL", years=6))
+        if not m2.empty:
+            cutoff = m2["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+            m2 = m2[m2["date"] >= cutoff]
+            figm.add_trace(go.Scatter(
+                x=m2["date"], y=m2["value"], name="M2 YoY", mode="lines",
+                line=dict(color="#d97706", width=2), yaxis="y2"))
+        apply_standard_layout(figm, title="Sentiment & Money — UMich & M2 YoY (5Y)",
+                              height=CHART_HEIGHT_FULL, yaxis_title="Sentiment")
+        figm.update_layout(
+            yaxis2=dict(title="M2 YoY %", overlaying="y", side="right",
+                        ticksuffix="%", showgrid=False),
+        )
+        st.plotly_chart(figm, use_container_width=True)
+
 
 def _render_regime():
     # ── Recession indicator (re-homed from the old single-page layout) ──
