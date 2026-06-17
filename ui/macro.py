@@ -711,6 +711,43 @@ def _render_fed_panel(full: bool = True):
             st.caption("Fed/Powell headlines populate from the macro news feed in production.")
 
 
+def _shade_recessions(fig, years: int = 5):
+    """Light NBER recession bands behind a time-series macro chart (polish)."""
+    from data.macro_indicators import recession_periods
+    from data.fred_client import fetch_series
+    for x0, x1 in recession_periods(fetch_series("USREC", years=years)):
+        fig.add_vrect(x0=x0, x1=x1, fillcolor="rgba(15,23,42,0.06)",
+                      line_width=0, layer="below")
+
+
+def _macro_trend_fig(spec: dict, years: int = 8):
+    """Polished single-indicator trend for the explorer: the indicator's
+    displayed metric over `years`, NBER recessions shaded, latest value called
+    out. Well-proportioned (HERO height in a 3-up grid)."""
+    import plotly.graph_objects as go
+    from data.macro_indicators import basis_series
+    from data.fred_client import fetch_series
+    pct = spec["basis"] in ("yoy_pct", "mom_pct", "level_pct")
+    df = fetch_series(spec["series_id"], years=years)
+    s = basis_series(df, spec["basis"]) if df is not None else None
+    fig = go.Figure()
+    if s is not None and not s.empty:
+        _shade_recessions(fig, years=years)
+        fig.add_trace(go.Scatter(x=s["date"], y=s["value"], mode="lines",
+                                 line=dict(color="#1e40af", width=2)))
+        lx, ly = s["date"].iloc[-1], float(s["value"].iloc[-1])
+        lbl = f"{ly:,.1f}%" if pct else f"{ly:,.0f}"
+        fig.add_trace(go.Scatter(
+            x=[lx], y=[ly], mode="markers+text", marker=dict(color="#1e3a8a", size=7),
+            text=["  " + lbl], textposition="middle right",
+            textfont=dict(size=11, color="#1e3a8a"), showlegend=False, hoverinfo="skip"))
+    apply_standard_layout(fig, title=f'{spec["label"]} ({_BASIS_TAG.get(spec["basis"], "")})',
+                          height=CHART_HEIGHT_HERO, show_legend=False)
+    if pct:
+        fig.update_yaxes(ticksuffix="%")
+    return fig
+
+
 def _render_surprise_summary(recent):
     """Compact tally of how recent releases printed vs consensus — direction vs
     expectations (above/below), NOT good/bad. Fills the freed column beside the
@@ -906,8 +943,9 @@ def _render_economy_calendar():
 
     st.markdown("---")
 
-    # ── Inflation: CPI / Core CPI / Core PCE YoY vs the Fed's 2% target ──
-    c1, c2 = st.columns(2)
+    # ── Trend charts — 3-up at a taller aspect, NBER recessions shaded ──
+    st.markdown("**Trend charts**")
+    c1, c2, c3 = st.columns(3)
     with c1:
         figi = go.Figure()
         for sid, label, color in [
@@ -923,15 +961,15 @@ def _render_economy_calendar():
                     x=s["date"], y=s["value"], name=label, mode="lines",
                     line=dict(color=color, width=2),
                 ))
+        _shade_recessions(figi)
         figi.add_hline(y=2.0, line_color="#059669", line_width=1, line_dash="dash",
                        annotation_text="Fed 2% target", annotation_position="top left",
                        annotation_font=dict(size=10, color="#059669"))
         apply_standard_layout(figi, title="Inflation — YoY % (5Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="YoY")
+                              height=CHART_HEIGHT_HERO, yaxis_title="YoY")
         figi.update_yaxes(ticksuffix="%")
         st.plotly_chart(figi, use_container_width=True)
 
-    # ── Labor: payrolls MoM change (bars) + unemployment rate (line) ────
     with c2:
         figl = go.Figure()
         nfp = to_mom_change(fetch_series("PAYEMS", years=6))
@@ -951,16 +989,15 @@ def _render_economy_calendar():
                 x=unr["date"], y=unr["value"], name="Unemployment %",
                 mode="lines", line=dict(color="#0f172a", width=2), yaxis="y2",
             ))
+        _shade_recessions(figl)
         apply_standard_layout(figl, title="Labor — payrolls Δ & unemployment (5Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="Jobs Δ (000s)")
+                              height=CHART_HEIGHT_HERO, yaxis_title="Jobs Δ (000s)")
         figl.update_layout(
             yaxis2=dict(title="Unemp %", overlaying="y", side="right",
                         ticksuffix="%", showgrid=False),
         )
         st.plotly_chart(figl, use_container_width=True)
 
-    # ── Growth (Real GDP bars) + Activity (Industrial Production & Retail) ──
-    c3, c4 = st.columns(2)
     with c3:
         figg = go.Figure()
         gdp = fetch_series("A191RL1Q225SBEA", years=6)
@@ -971,12 +1008,14 @@ def _render_economy_calendar():
             gcolors = ["#dc2626" if v < 0 else "#1e40af" for v in g["value"]]
             figg.add_trace(go.Bar(x=g["date"], y=g["value"], name="Real GDP QoQ SAAR",
                                   marker_color=gcolors))
+        _shade_recessions(figg)
         apply_standard_layout(figg, title="Growth — Real GDP (QoQ SAAR, 5Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="QoQ SAAR",
+                              height=CHART_HEIGHT_HERO, yaxis_title="QoQ SAAR",
                               show_legend=False)
         figg.update_yaxes(ticksuffix="%")
         st.plotly_chart(figg, use_container_width=True)
 
+    c4, c5, c6 = st.columns(3)
     with c4:
         figa = go.Figure()
         for sid, label, color in [
@@ -990,13 +1029,12 @@ def _render_economy_calendar():
                 figa.add_trace(go.Scatter(
                     x=s["date"], y=s["value"], name=label, mode="lines",
                     line=dict(color=color, width=2)))
+        _shade_recessions(figa)
         apply_standard_layout(figa, title="Activity — Industrial Production & Retail (YoY, 5Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="YoY")
+                              height=CHART_HEIGHT_HERO, yaxis_title="YoY")
         figa.update_yaxes(ticksuffix="%")
         st.plotly_chart(figa, use_container_width=True)
 
-    # ── Housing (starts & permits) + Sentiment & Money (UMich & M2) ──────
-    c5, c6 = st.columns(2)
     with c5:
         figh = go.Figure()
         for sid, label, color in [
@@ -1011,8 +1049,9 @@ def _render_economy_calendar():
                 figh.add_trace(go.Scatter(
                     x=d["date"], y=d["value"], name=label, mode="lines",
                     line=dict(color=color, width=2)))
+        _shade_recessions(figh)
         apply_standard_layout(figh, title="Housing — Starts & Permits (000s SAAR, 5Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="000s")
+                              height=CHART_HEIGHT_HERO, yaxis_title="000s")
         st.plotly_chart(figh, use_container_width=True)
 
     with c6:
@@ -1032,13 +1071,33 @@ def _render_economy_calendar():
             figm.add_trace(go.Scatter(
                 x=m2["date"], y=m2["value"], name="M2 YoY", mode="lines",
                 line=dict(color="#d97706", width=2), yaxis="y2"))
+        _shade_recessions(figm)
         apply_standard_layout(figm, title="Sentiment & Money — UMich & M2 YoY (5Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="Sentiment")
+                              height=CHART_HEIGHT_HERO, yaxis_title="Sentiment")
         figm.update_layout(
             yaxis2=dict(title="M2 YoY %", overlaying="y", side="right",
                         ticksuffix="%", showgrid=False),
         )
         st.plotly_chart(figm, use_container_width=True)
+
+    # ── Explore any indicator (interactive; charts any of the 27 on demand) ──
+    st.markdown("---")
+    st.markdown("**Explore any indicator**")
+    from data.macro_indicators import INDICATORS
+    by_label = {s["label"]: s for s in INDICATORS}
+    _defaults = [d for d in ("CPI", "Nonfarm Payrolls", "Real GDP (QoQ SAAR)")
+                 if d in by_label]
+    picks = st.multiselect("Indicators", list(by_label.keys()), default=_defaults,
+                           key="macro_explore", label_visibility="collapsed")
+    if picks:
+        ecols = st.columns(3)
+        for i, lbl in enumerate(picks):
+            with ecols[i % 3]:
+                st.plotly_chart(_macro_trend_fig(by_label[lbl]), use_container_width=True)
+        st.caption("Indicator's displayed metric over ~8y; NBER recessions shaded; latest value "
+                   "labeled. Source: FRED.")
+    else:
+        st.caption("Pick one or more indicators to chart their history.")
 
 
 
