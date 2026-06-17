@@ -41,11 +41,12 @@ PROXY_PORT = int(os.environ.get("SMOKE_PROXY_PORT", "8899"))
 HYDRATE_TIMEOUT_S = int(os.environ.get("SMOKE_HYDRATE_TIMEOUT_S", "150"))
 _ADDON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_iap_proxy_addon.py")
 
-# Sidebar/top-nav section labels that must be present once the app has rendered —
-# proves the nav built, not just that an HTML shell loaded. Loose (any one is
-# enough) so a label rename doesn't false-fail the smoke.
-EXPECTED_ANY = ["Markets & Rates", "Market & Macro", "Company Analysis",
-                "Home", "Bank Sector", "Economic Data", "Screen & Compare"]
+# Top-nav section labels (app.py SECTIONS). Hydration is proven STRUCTURALLY
+# (the rendered nav radio, below) — these labels are only used to report which
+# sections painted, so they're kept in sync with the live nav for a meaningful
+# log line rather than driving the pass/fail decision.
+EXPECTED_ANY = ["Home", "Market & Macro", "Screen & Compare", "Company",
+                "Earnings", "News & Research", "Geographic"]
 
 
 def _port_open(port: int) -> bool:
@@ -132,13 +133,18 @@ def main() -> int:
                 return 1
 
             # Hydration: with the proxy authenticating the WS upgrade, the app
-            # should hydrate and render a nav section. This is the check that
-            # makes render-time failures visible.
+            # should hydrate and render the top nav. Wait on the rendered nav
+            # radio STRUCTURALLY rather than on `text=<label>`: the nav is a
+            # keyed st.radio painted BEFORE any data call (app.py renders it
+            # first, by design, so it appears within ms regardless of cold-start
+            # data latency below it). That makes the radiogroup the earliest and
+            # most reliable positive-render signal — a section rename can't
+            # false-fail it, and it sidesteps the fragile comma-joined
+            # multi-engine text selector (which Playwright doesn't OR reliably).
             hydrated = False
             try:
-                page.wait_for_selector(
-                    " , ".join(f"text={lbl}" for lbl in EXPECTED_ANY),
-                    timeout=HYDRATE_TIMEOUT_S * 1000)
+                page.wait_for_selector('[data-testid="stRadio"]',
+                                       timeout=HYDRATE_TIMEOUT_S * 1000)
                 hydrated = True
                 page.wait_for_timeout(2_000)  # let the rest of the run settle
             except Exception:
