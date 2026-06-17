@@ -489,6 +489,47 @@ def _et_time(dt_str: str) -> str:
     return f"{h}:{d.minute:02d} {'AM' if d.hour < 12 else 'PM'} ET"
 
 
+_BASIS_TAG = {"yoy_pct": "YoY", "mom_pct": "MoM", "mom_chg_k": "MoM chg",
+              "level_pct": "level", "level_k": "level", "level_k_raw": "level",
+              "level_idx": "index"}
+
+
+def _board_table(rows: list[dict]) -> str:
+    """Dense, fixed-layout HTML table for a subset of indicator rows (one
+    half of the split board). Fixed column proportions so columns fill the
+    width instead of dumping slack into inter-column gaps."""
+    import html as _h
+    themes = []
+    for r in rows:
+        if r["theme"] not in themes:
+            themes.append(r["theme"])
+    body = ""
+    for theme in themes:
+        body += ('<tr><td colspan="6" style="text-align:left;background:var(--grid-head-bg);'
+                 'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
+                 f'font-size:var(--fs-2xs);letter-spacing:0.06em;">{_h.escape(theme)}</td></tr>')
+        for r in (x for x in rows if x["theme"] == theme):
+            body += (
+                "<tr>"
+                f'<td>{_h.escape(r["label"])} '
+                f'<span style="color:var(--text-muted);font-size:var(--fs-2xs);">{_BASIS_TAG.get(r["basis"], "")}</span></td>'
+                f'<td>{_fmt_level(r["latest"], r["basis"])}</td>'
+                f'<td>{_fmt_delta(r)}</td>'
+                f'<td>{_fmt_z(r.get("zscore"))}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(r.get("spark"))}</td>'
+                f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_as_of(r["as_of"], r["freq"])}</td>'
+                "</tr>"
+            )
+    return (
+        '<div class="ksk-grid"><table style="width:100%;table-layout:fixed;">'
+        '<colgroup><col style="width:30%"><col style="width:13%"><col style="width:14%">'
+        '<col style="width:11%"><col style="width:20%"><col style="width:12%"></colgroup>'
+        "<thead><tr><th>Indicator</th><th>Latest</th><th>Δ vs prior</th>"
+        "<th>vs hist</th><th>Trend</th><th>As of</th></tr></thead>"
+        "<tbody>" + body + "</tbody></table></div>"
+    )
+
+
 def _render_economy_calendar():
     import html as _html
     import plotly.graph_objects as go
@@ -517,7 +558,9 @@ def _render_economy_calendar():
                     "</tr>"
                 )
             st.markdown(
-                '<div class="ksk-grid"><table style="width:100%;">'
+                '<div class="ksk-grid"><table style="width:100%;table-layout:fixed;">'
+                '<colgroup><col style="width:12%"><col style="width:40%"><col style="width:13%">'
+                '<col style="width:13%"><col style="width:12%"><col style="width:10%"></colgroup>'
                 "<thead><tr>"
                 '<th style="text-align:left;">Date</th><th style="text-align:left;">Release</th>'
                 "<th>Actual</th><th>Cons.</th><th>Surprise</th><th>Impact</th>"
@@ -551,7 +594,9 @@ def _render_economy_calendar():
                     "</tr>"
                 )
             st.markdown(
-                '<div class="ksk-grid"><table style="width:100%;">'
+                '<div class="ksk-grid"><table style="width:100%;table-layout:fixed;">'
+                '<colgroup><col style="width:12%"><col style="width:16%"><col style="width:46%">'
+                '<col style="width:14%"><col style="width:12%"></colgroup>'
                 "<thead><tr>"
                 '<th style="text-align:left;">Date</th><th style="text-align:left;">Time</th>'
                 '<th style="text-align:left;">Release</th><th>Cons.</th><th>Impact</th>'
@@ -566,40 +611,17 @@ def _render_economy_calendar():
     # ── Key indicators (FRED) ──────────────────────────────────────────
     st.markdown("**Key indicators**")
     rows = get_print_board()
-    _basis_tag = {"yoy_pct": "YoY", "mom_pct": "MoM", "mom_chg_k": "MoM chg",
-                  "level_pct": "level", "level_k": "level", "level_k_raw": "level",
-                  "level_idx": "index"}
-    themes = []
-    for r in rows:
-        if r["theme"] not in themes:
-            themes.append(r["theme"])
-    body = ""
-    for theme in themes:
-        body += ('<tr><td colspan="7" style="text-align:left;background:var(--grid-head-bg);'
-                 'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
-                 f'font-size:var(--fs-2xs);letter-spacing:0.06em;">{_html.escape(theme)}</td></tr>')
-        for r in (x for x in rows if x["theme"] == theme):
-            body += (
-                "<tr>"
-                f'<td>{_html.escape(r["label"])}'
-                f' <span style="color:var(--text-muted);font-size:var(--fs-2xs);">{_basis_tag.get(r["basis"], "")}</span></td>'
-                f'<td>{_fmt_level(r["latest"], r["basis"])}</td>'
-                f'<td>{_fmt_level(r["prior"], r["basis"])}</td>'
-                f'<td>{_fmt_delta(r)}</td>'
-                f'<td>{_fmt_z(r.get("zscore"))}</td>'
-                f'<td style="text-align:center;">{_sparkline_svg(r.get("spark"))}</td>'
-                f'<td style="text-align:right;color:var(--text-secondary);">'
-                f'{_fmt_as_of(r["as_of"], r["freq"])}</td>'
-                "</tr>"
-            )
-    st.markdown(
-        '<div class="ksk-grid"><table style="width:100%;">'
-        "<thead><tr>"
-        "<th>Indicator</th><th>Latest</th><th>Prior</th>"
-        '<th>Δ vs prior</th><th>vs hist</th><th>Trend (3y)</th><th>As of</th>'
-        "</tr></thead><tbody>" + body + "</tbody></table></div>",
-        unsafe_allow_html=True,
-    )
+    # Split into two dense side-by-side tables so the board uses the page
+    # width instead of one sparse full-width table.
+    _LEFT = ("Inflation", "Labor")
+    _RIGHT = ("Growth & Activity", "Housing", "Sentiment & Money")
+    bc1, bc2 = st.columns(2)
+    with bc1:
+        st.markdown(_board_table([r for r in rows if r["theme"] in _LEFT]),
+                    unsafe_allow_html=True)
+    with bc2:
+        st.markdown(_board_table([r for r in rows if r["theme"] in _RIGHT]),
+                    unsafe_allow_html=True)
     st.caption(
         "Latest reading per series, grouped by theme. YoY = year-over-year, "
         "MoM = month-over-month, QoQ SAAR = quarter-over-quarter annualized. "
