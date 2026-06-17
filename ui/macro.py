@@ -809,7 +809,7 @@ def _render_economy_calendar():
     rows = get_print_board()
     _LEFT = ("Inflation", "Labor")
     _RIGHT = ("Growth & Activity", "Housing", "Sentiment & Money")
-    cal_col, board_col = st.columns([1, 1])
+    cal_col, rec_col, board_col = st.columns([1, 1, 1])
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
@@ -900,13 +900,8 @@ def _render_economy_calendar():
             "series_id": r["series_id"],
         } for r in rows])
         table_export(export_df, "macro_print_board", key="macro_print_board_export")
-
-    st.markdown("---")
-
-    # ── Recession & leading signals (full width) ──
-    st.markdown("**Recession & leading signals**")
-    rc1, rc2 = st.columns([1, 2])
-    with rc1:
+    with rec_col:
+        st.markdown("**Recession & leading signals**")
         rec = recession_probability()
         lvl = rec["level"]
         style = ALERT_STYLE["high"] if lvl == "high" else (
@@ -922,7 +917,6 @@ def _render_economy_calendar():
             f'<br><span style="font-weight:normal;font-size:var(--fs-sm);">{factors}</span></div>',
             unsafe_allow_html=True,
         )
-    with rc2:
         figr = go.Figure()
         for s, e in recession_periods(fetch_series("USREC", years=15)):
             figr.add_vrect(x0=s, x1=e, fillcolor="rgba(15,23,42,0.07)",
@@ -934,12 +928,12 @@ def _render_economy_calendar():
                 x=d["date"], y=d["value"], name="10Y−3M", mode="lines",
                 line=dict(color="#dc2626", width=1.8)))
         figr.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
-        apply_standard_layout(figr, title="Recession signal — 10Y−3M spread w/ NBER recessions (15Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="Spread", show_legend=False)
+        apply_standard_layout(figr, title="10Y−3M spread w/ NBER recessions (15Y)",
+                              height=CHART_HEIGHT_HERO, yaxis_title="Spread", show_legend=False)
         figr.update_yaxes(ticksuffix="pp")
         st.plotly_chart(figr, use_container_width=True)
-    st.caption("Recession score blends the 10Y−2Y & 10Y−3M curve spreads and a Sahm-rule "
-               "proxy on unemployment. Shaded bands = NBER recessions (FRED USREC). Source: FRED.")
+        st.caption("Score blends the 10Y−2Y & 10Y−3M curve spreads and a Sahm-rule proxy. "
+                   "Shaded = NBER recessions (FRED USREC).")
 
     st.markdown("---")
 
