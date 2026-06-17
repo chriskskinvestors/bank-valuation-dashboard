@@ -224,6 +224,18 @@ jobs:
         env:
           APP_URL: ${{ vars.APP_URL }}
           IAP_CLIENT_ID: ${{ secrets.IAP_CLIENT_ID }}
+          SA: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
         run: |
-          IAP_TOKEN="$(gcloud auth print-identity-token --audiences="$IAP_CLIENT_ID")"
+          # Under Workload Identity Federation the active credential isn't a SA key,
+          # so `gcloud auth print-identity-token --audiences` is rejected. Mint the
+          # IAP-audience OIDC token via the IAM Credentials API instead (the SA holds
+          # roles/iam.serviceAccountOpenIdTokenCreator on itself).
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          IAP_TOKEN="$(curl -s -X POST \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"audience\":\"${IAP_CLIENT_ID}\",\"includeEmail\":true}" \
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${SA}:generateIdToken" \
+            | python -c 'import sys,json; print(json.load(sys.stdin)["token"])')"
+          if [ -z "$IAP_TOKEN" ]; then echo "::error::failed to mint IAP token"; exit 1; fi
           IAP_TOKEN="$IAP_TOKEN" APP_URL="$APP_URL" python tests/smoke_live.py
