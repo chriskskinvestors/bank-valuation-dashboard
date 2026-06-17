@@ -18,6 +18,7 @@ network wrapper that feeds it live EDGAR JSON.
 """
 from __future__ import annotations
 
+import html as _h
 import json
 import re
 
@@ -100,6 +101,97 @@ def _pick_ex99(items: list[dict]) -> str | None:
         if "ex99" in low or "ex-99" in low or "exhibit99" in low:
             return name
     return None
+
+
+# ── Capital-ratio extraction (increment 5b) ───────────────────────────────
+# Earnings releases carry no inline XBRL, so values come from text — but the
+# release states its CAPITAL RATIOS in two independent places: a multi-quarter
+# table (newest column first) AND a prose restatement ("CET1 capital ratio of
+# 9.96%"). We extract the current-period (leftmost) value from the labelled table
+# row and CONFIRM it against the prose figure. CET1 is the anchor: if the table's
+# leftmost CET1 matches the narrated CET1, the table is correctly aligned (right
+# column, right rows) and the sibling ratios from that same column are trusted;
+# if CET1 can't be confirmed, the whole set returns n/a. This in-document
+# cross-check needs no external ground truth and makes any column/row mis-pick
+# fail SAFE to n/a rather than surface a plausible-wrong number (cardinal rule).
+
+_RATIO_BANDS = {
+    "cet1_ratio": (4.0, 30.0),
+    "t1_ratio": (5.0, 32.0),
+    "total_ratio": (7.0, 35.0),
+    "lev_ratio": (3.0, 20.0),
+}
+
+# Table-row label anchors (matched at the START of a row's text).
+_ROW_LABELS = {
+    "cet1_ratio": r"(?:common equity tier 1|cet1)",
+    "t1_ratio": r"tier 1 (?:risk-based )?capital",
+    "total_ratio": r"total (?:risk-based )?capital",
+    "lev_ratio": r"(?:tier 1 )?leverage",
+}
+_PCT = re.compile(r"(\d{1,2}(?:\.\d{1,2})?)\s*%")
+# Prose restatement: "<CET1 label> ... ratio of/was/at 9.96%".
+_CET1_PROSE = re.compile(
+    r"(?:common equity tier 1|cet1)[^%]{0,40}?(?:ratio\s+)?(?:of|was|at|:)\s*"
+    r"(\d{1,2}(?:\.\d{1,2})?)\s*%", re.I)
+
+
+def _rows_text(html: str) -> list[str]:
+    """HTML -> one collapsed-text line per table row (so a row's label and its
+    cells stay together, columns left-to-right)."""
+    t = re.sub(r"(?is)<(script|style).*?</\1>", " ", html)
+    t = re.sub(r"(?is)</tr\s*>", "\n", t)
+    t = re.sub(r"(?s)<[^>]+>", " ", t)
+    return [re.sub(r"\s+", " ", _h.unescape(ln)).strip() for ln in t.split("\n")]
+
+
+def _row_current_pct(rows: list[str], label_re: str) -> float | None:
+    """First percent value (the current/leftmost column) in the first row whose
+    text STARTS with the label and carries a `%`. None if no such row."""
+    pat = re.compile(r"^\s*" + label_re, re.I)
+    for ln in rows:
+        if "%" in ln and pat.match(ln):
+            m = _PCT.search(ln)
+            if m:
+                return float(m.group(1))
+    return None
+
+
+def extract_capital_ratios(html: str) -> dict:
+    """Current-period capital ratios from an earnings release, or None each.
+
+    Strategy (cardinal-rule safe): pull the leftmost % from each labelled ratio
+    row, then require the table's CET1 to MATCH the prose-restated CET1 (the
+    headline figure every release narrates). Agreement proves the table is
+    aligned; the sibling ratios from the same column are then trusted, subject to
+    band + CET1<=T1<=Total ordering checks. If CET1 can't be confirmed, return
+    all-None — never a guessed value.
+    """
+    none = {k: None for k in _RATIO_BANDS}
+    rows = _rows_text(html)
+    table = {}
+    for key, lab in _ROW_LABELS.items():
+        v = _row_current_pct(rows, lab)
+        lo, hi = _RATIO_BANDS[key]
+        table[key] = v if (v is not None and lo <= v <= hi) else None
+
+    text = re.sub(r"\s+", " ", _h.unescape(re.sub(r"(?s)<[^>]+>", " ", html)))
+    pm = _CET1_PROSE.search(text)
+    prose_cet1 = float(pm.group(1)) if pm else None
+
+    # CET1 anchor: table and prose must agree (to 1bp) or we trust nothing.
+    if table["cet1_ratio"] is None or prose_cet1 is None:
+        return none
+    if abs(table["cet1_ratio"] - prose_cet1) > 0.011:
+        return none
+    out = dict(table)
+    # Ordering guard on the confirmed column: CET1 <= Tier 1 <= Total.
+    c, t1, tot = out["cet1_ratio"], out["t1_ratio"], out["total_ratio"]
+    if t1 is not None and c > t1 + 0.011:
+        return none  # misaligned row pick — refuse the whole set
+    if t1 is not None and tot is not None and t1 > tot + 0.011:
+        return none
+    return out
 
 
 def latest_earnings_release(cik) -> dict | None:

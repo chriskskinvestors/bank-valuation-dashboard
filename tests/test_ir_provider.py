@@ -8,6 +8,7 @@ import unittest
 
 from data.ir_provider import (
     _latest_earnings_8k, _pick_ex99, _parse_index_html, _dash_accession,
+    extract_capital_ratios,
 )
 
 
@@ -116,6 +117,48 @@ class TestParseIndexHtml(unittest.TestCase):
     def test_no_ex99_rows_returns_empty(self):
         html = '<tr><td><a href="/x/jpm-10q.htm">jpm-10q.htm</a></td><td>10-Q</td></tr>'
         self.assertEqual(_parse_index_html(html), [])
+
+
+class TestExtractCapitalRatios(unittest.TestCase):
+    # FITB-shaped: a multi-quarter ratios table (newest column first) plus the
+    # prose restatement of CET1 the cross-check anchors on.
+    _FITB = """
+    <table>
+      <tr><td>CET1 capital</td><td>9.96 %</td><td>10.81 %</td><td>10.43 %</td></tr>
+      <tr><td>Tier 1 risk-based capital</td><td>10.86 %</td><td>11.87 %</td></tr>
+      <tr><td>Total risk-based capital</td><td>12.56 %</td><td>13.50 %</td></tr>
+      <tr><td>Leverage</td><td>10.20 %</td><td>9.80 %</td></tr>
+    </table>
+    <p>CET1 capital ratio of 9.96% decreased 85 bps sequentially.</p>"""
+
+    def test_confirmed_set_extracted_current_column(self):
+        r = extract_capital_ratios(self._FITB)
+        self.assertEqual(r["cet1_ratio"], 9.96)   # leftmost = current quarter
+        self.assertEqual(r["t1_ratio"], 10.86)
+        self.assertEqual(r["total_ratio"], 12.56)
+        self.assertEqual(r["lev_ratio"], 10.20)
+
+    def test_prose_table_mismatch_returns_all_none(self):
+        # Table CET1 9.96 but prose says 10.50 → unconfirmed → refuse everything.
+        html = self._FITB.replace("ratio of 9.96%", "ratio of 10.50%")
+        self.assertTrue(all(v is None for v in extract_capital_ratios(html).values()))
+
+    def test_no_prose_returns_all_none(self):
+        html = self._FITB.replace(
+            "<p>CET1 capital ratio of 9.96% decreased 85 bps sequentially.</p>", "")
+        self.assertTrue(all(v is None for v in extract_capital_ratios(html).values()))
+
+    def test_ordering_violation_refuses_set(self):
+        # CET1 (9.96) confirmed, but a mis-picked Tier 1 row below CET1 is
+        # impossible → refuse the whole set rather than show it.
+        html = self._FITB.replace(
+            "<td>Tier 1 risk-based capital</td><td>10.86 %</td><td>11.87 %</td>",
+            "<td>Tier 1 risk-based capital</td><td>8.50 %</td><td>9.00 %</td>")
+        self.assertTrue(all(v is None for v in extract_capital_ratios(html).values()))
+
+    def test_out_of_band_cet1_unconfirmed(self):
+        html = "<table><tr><td>CET1 capital</td><td>95.0 %</td></tr></table><p>CET1 ratio of 95.0%</p>"
+        self.assertIsNone(extract_capital_ratios(html)["cet1_ratio"])
 
 
 class TestDashAccession(unittest.TestCase):
