@@ -495,9 +495,10 @@ _BASIS_TAG = {"yoy_pct": "YoY", "mom_pct": "MoM", "mom_chg_k": "MoM chg",
 
 
 def _board_table(rows: list[dict]) -> str:
-    """Dense, fixed-layout HTML table for a subset of indicator rows (one
-    half of the split board). Fixed column proportions so columns fill the
-    width instead of dumping slack into inter-column gaps."""
+    """Dense, auto-layout HTML table for a subset of indicator rows (one half
+    of the split board). The Indicator column gets width:100% so it absorbs
+    all slack; every other column is white-space:nowrap so it hugs its content
+    exactly — no empty inter-column bands."""
     import html as _h
     themes = []
     for r in rows:
@@ -511,21 +512,23 @@ def _board_table(rows: list[dict]) -> str:
         for r in (x for x in rows if x["theme"] == theme):
             body += (
                 "<tr>"
-                f'<td>{_h.escape(r["label"])} '
+                f'<td style="width:100%;text-align:left;">{_h.escape(r["label"])} '
                 f'<span style="color:var(--text-muted);font-size:var(--fs-2xs);">{_BASIS_TAG.get(r["basis"], "")}</span></td>'
-                f'<td>{_fmt_level(r["latest"], r["basis"])}</td>'
-                f'<td>{_fmt_delta(r)}</td>'
-                f'<td>{_fmt_z(r.get("zscore"))}</td>'
-                f'<td style="text-align:center;">{_sparkline_svg(r.get("spark"))}</td>'
-                f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_as_of(r["as_of"], r["freq"])}</td>'
+                f'<td style="white-space:nowrap;text-align:right;">{_fmt_level(r["latest"], r["basis"])}</td>'
+                f'<td style="white-space:nowrap;text-align:right;">{_fmt_delta(r)}</td>'
+                f'<td style="white-space:nowrap;text-align:right;">{_fmt_z(r.get("zscore"))}</td>'
+                f'<td style="white-space:nowrap;text-align:center;">{_sparkline_svg(r.get("spark"))}</td>'
+                f'<td style="white-space:nowrap;text-align:right;color:var(--text-secondary);">{_fmt_as_of(r["as_of"], r["freq"])}</td>'
                 "</tr>"
             )
     return (
-        '<div class="ksk-grid"><table style="width:100%;table-layout:fixed;">'
-        '<colgroup><col style="width:30%"><col style="width:13%"><col style="width:14%">'
-        '<col style="width:11%"><col style="width:20%"><col style="width:12%"></colgroup>'
-        "<thead><tr><th>Indicator</th><th>Latest</th><th>Δ vs prior</th>"
-        "<th>vs hist</th><th>Trend</th><th>As of</th></tr></thead>"
+        '<div class="ksk-grid"><table style="width:100%;">'
+        '<thead><tr><th style="width:100%;text-align:left;">Indicator</th>'
+        '<th style="white-space:nowrap;text-align:right;">Latest</th>'
+        '<th style="white-space:nowrap;text-align:right;">Δ vs prior</th>'
+        '<th style="white-space:nowrap;text-align:right;">vs hist</th>'
+        '<th style="white-space:nowrap;text-align:center;">Trend</th>'
+        '<th style="white-space:nowrap;text-align:right;">As of</th></tr></thead>'
         "<tbody>" + body + "</tbody></table></div>"
     )
 
@@ -550,20 +553,22 @@ def _render_economy_calendar():
                 srows += (
                     "<tr>"
                     f'<td style="white-space:nowrap;">{d}</td>'
-                    f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
-                    f'<td><strong>{_fmt_econ_val(e["actual"], e["unit"])}</strong></td>'
-                    f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
-                    f'<td>{_econ_surprise_html(e)}</td>'
-                    f'<td>{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
+                    f'<td style="width:100%;text-align:left;">{_html.escape(e["event"])}</td>'
+                    f'<td style="white-space:nowrap;text-align:right;"><strong>{_fmt_econ_val(e["actual"], e["unit"])}</strong></td>'
+                    f'<td style="white-space:nowrap;text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
+                    f'<td style="white-space:nowrap;text-align:right;">{_econ_surprise_html(e)}</td>'
+                    f'<td style="white-space:nowrap;text-align:right;">{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
                     "</tr>"
                 )
             st.markdown(
-                '<div class="ksk-grid"><table style="width:100%;table-layout:fixed;">'
-                '<colgroup><col style="width:12%"><col style="width:40%"><col style="width:13%">'
-                '<col style="width:13%"><col style="width:12%"><col style="width:10%"></colgroup>'
+                '<div class="ksk-grid"><table style="width:100%;">'
                 "<thead><tr>"
-                '<th style="text-align:left;">Date</th><th style="text-align:left;">Release</th>'
-                "<th>Actual</th><th>Cons.</th><th>Surprise</th><th>Impact</th>"
+                '<th style="white-space:nowrap;text-align:left;">Date</th>'
+                '<th style="width:100%;text-align:left;">Release</th>'
+                '<th style="white-space:nowrap;text-align:right;">Actual</th>'
+                '<th style="white-space:nowrap;text-align:right;">Cons.</th>'
+                '<th style="white-space:nowrap;text-align:right;">Surprise</th>'
+                '<th style="white-space:nowrap;text-align:right;">Impact</th>'
                 "</tr></thead><tbody>" + srows + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
@@ -588,18 +593,19 @@ def _render_economy_calendar():
                     f"<tr{row_bg}>"
                     f'<td style="white-space:nowrap;">{d.strftime("%b %d").replace(" 0", " ")}</td>'
                     f'<td style="text-align:left;color:var(--text-secondary);white-space:nowrap;">{_et_time(e["datetime"])}</td>'
-                    f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
-                    f'<td style="color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
-                    f'<td>{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
+                    f'<td style="width:100%;text-align:left;">{_html.escape(e["event"])}</td>'
+                    f'<td style="white-space:nowrap;text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
+                    f'<td style="white-space:nowrap;text-align:right;">{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
                     "</tr>"
                 )
             st.markdown(
-                '<div class="ksk-grid"><table style="width:100%;table-layout:fixed;">'
-                '<colgroup><col style="width:12%"><col style="width:16%"><col style="width:46%">'
-                '<col style="width:14%"><col style="width:12%"></colgroup>'
+                '<div class="ksk-grid"><table style="width:100%;">'
                 "<thead><tr>"
-                '<th style="text-align:left;">Date</th><th style="text-align:left;">Time</th>'
-                '<th style="text-align:left;">Release</th><th>Cons.</th><th>Impact</th>'
+                '<th style="white-space:nowrap;text-align:left;">Date</th>'
+                '<th style="white-space:nowrap;text-align:left;">Time</th>'
+                '<th style="width:100%;text-align:left;">Release</th>'
+                '<th style="white-space:nowrap;text-align:right;">Cons.</th>'
+                '<th style="white-space:nowrap;text-align:right;">Impact</th>'
                 "</tr></thead><tbody>" + urows + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
