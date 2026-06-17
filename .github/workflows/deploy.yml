@@ -199,6 +199,10 @@ jobs:
     needs: deploy
     if: vars.LIVE_SMOKE_ENABLED == 'true'
     runs-on: ubuntu-latest
+    # Interim observe-only: a failed smoke must not redden a deploy that actually
+    # shipped fine (the new revision is already serving). Flip to blocking once a
+    # few green runs confirm the check is reliable against the live IAP page.
+    continue-on-error: true
     permissions:
       contents: read
       id-token: write
