@@ -766,15 +766,14 @@ def _render_economy_calendar():
     from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
 
-    # ── Fed policy banner (compact) — placement requested on Economic Data ──
-    _render_fed_panel(full=False)
-    st.markdown("---")
-
-    # ── Calendars + surprise tracker (3-up; uses the freed horizontal room) ──
+    # ── Calendars stacked (left) · Key indicators board (right) ──
     recent = get_recent_releases(days=10, limit=16)
     up = get_upcoming_releases(days=14, limit=20)
-    cal_l, cal_r, cal_s = st.columns([1.15, 1.15, 0.7])
-    with cal_l:
+    rows = get_print_board()
+    _LEFT = ("Inflation", "Labor")
+    _RIGHT = ("Growth & Activity", "Housing", "Sentiment & Money")
+    cal_col, board_col = st.columns([1, 1])
+    with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
             srows = ""
@@ -809,7 +808,6 @@ def _render_economy_calendar():
         else:
             st.info("Latest-release surprises use FMP's economic calendar (Premium key, "
                     "mounted in production). Unavailable in this environment.")
-    with cal_r:
         st.markdown("**Upcoming releases**")
         if not up:
             st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
@@ -844,26 +842,12 @@ def _render_economy_calendar():
             )
             st.caption("Scheduled US releases · consensus · impact · ET times. "
                        "Source: FMP economic calendar.")
-    with cal_s:
-        _render_surprise_summary(recent)
-
-    st.markdown("---")
-
-    # ── Key indicators (board) with the recession panel beside it, so the
-    #    freed horizontal room next to the content-width board is used. ──
-    st.markdown("**Key indicators**")
-    rows = get_print_board()
-    _LEFT = ("Inflation", "Labor")
-    _RIGHT = ("Growth & Activity", "Housing", "Sentiment & Money")
-    board_col, rec_col = st.columns([2, 1])
     with board_col:
-        bc1, bc2 = st.columns(2)
-        with bc1:
-            st.markdown(_board_table([r for r in rows if r["theme"] in _LEFT]),
-                        unsafe_allow_html=True)
-        with bc2:
-            st.markdown(_board_table([r for r in rows if r["theme"] in _RIGHT]),
-                        unsafe_allow_html=True)
+        st.markdown("**Key indicators**")
+        st.markdown(_board_table([r for r in rows if r["theme"] in _LEFT]),
+                    unsafe_allow_html=True)
+        st.markdown(_board_table([r for r in rows if r["theme"] in _RIGHT]),
+                    unsafe_allow_html=True)
         st.caption(
             "Latest reading per series, grouped by theme. YoY = year-over-year, "
             "MoM = month-over-month, QoQ SAAR = quarter-over-quarter annualized. "
@@ -879,8 +863,13 @@ def _render_economy_calendar():
             "series_id": r["series_id"],
         } for r in rows])
         table_export(export_df, "macro_print_board", key="macro_print_board_export")
-    with rec_col:
-        st.markdown("**Recession & leading signals**")
+
+    st.markdown("---")
+
+    # ── Recession & leading signals (full width) ──
+    st.markdown("**Recession & leading signals**")
+    rc1, rc2 = st.columns([1, 2])
+    with rc1:
         rec = recession_probability()
         lvl = rec["level"]
         style = ALERT_STYLE["high"] if lvl == "high" else (
@@ -896,6 +885,7 @@ def _render_economy_calendar():
             f'<br><span style="font-weight:normal;font-size:var(--fs-sm);">{factors}</span></div>',
             unsafe_allow_html=True,
         )
+    with rc2:
         figr = go.Figure()
         for s, e in recession_periods(fetch_series("USREC", years=15)):
             figr.add_vrect(x0=s, x1=e, fillcolor="rgba(15,23,42,0.07)",
@@ -907,12 +897,12 @@ def _render_economy_calendar():
                 x=d["date"], y=d["value"], name="10Y−3M", mode="lines",
                 line=dict(color="#dc2626", width=1.8)))
         figr.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
-        apply_standard_layout(figr, title="10Y−3M spread w/ NBER recessions (15Y)",
+        apply_standard_layout(figr, title="Recession signal — 10Y−3M spread w/ NBER recessions (15Y)",
                               height=CHART_HEIGHT_FULL, yaxis_title="Spread", show_legend=False)
         figr.update_yaxes(ticksuffix="pp")
         st.plotly_chart(figr, use_container_width=True)
-        st.caption("Score blends the 10Y−2Y & 10Y−3M curve spreads and a Sahm-rule proxy. "
-                   "Shaded = NBER recessions (FRED USREC).")
+    st.caption("Recession score blends the 10Y−2Y & 10Y−3M curve spreads and a Sahm-rule "
+               "proxy on unemployment. Shaded bands = NBER recessions (FRED USREC). Source: FRED.")
 
     st.markdown("---")
 
