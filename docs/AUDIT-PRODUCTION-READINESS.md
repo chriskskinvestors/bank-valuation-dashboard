@@ -91,15 +91,24 @@ deps. **Done:** pinned by digest
 (multi-arch manifest list, verified to resolve + include amd64). Re-pin
 deliberately when upgrading — see the Dockerfile comment for the command.
 
-### Gap C (P1) — Evaluate the pandas 3.0 / numpy 2.4 majors
-The lock froze the stack at `pandas==3.0.3` because that's what prod was
-running — but the code was written for pandas 2.x, and pandas 3.0 has
-breaking changes (copy-on-write default, dtype changes) that could silently
-alter computed values. **Action (daytime, tested):** stand up a clean
-env, run the full test suite + golden dataset on `pandas==2.2.x`, compare
-golden outputs to the dollar, and either (a) deliberately downgrade the pin
-to 2.2.x, or (b) confirm 3.0 is value-identical and keep it. Do NOT do this
-untested.
+### Gap C (P1) — Evaluate the pandas 3.0 / numpy 2.4 majors — ✅ RESOLVED 2026-06-17 (KEEP 3.0.3)
+The lock froze the stack at `pandas==3.0.3`; the concern was that pandas 3.0's
+breaking changes (copy-on-write default, dtype changes) could silently alter
+computed values vs the pandas 2.x the code was written for. **Decision: keep
+`pandas==3.0.3` (option b).** Verified by GROUND TRUTH rather than a 2.x diff —
+a stronger guarantee, since the expectations are independent hand math, not
+another pandas version's output:
+- **80** hand-computed value tests (`tests.test_audit_regressions` +
+  `tests.test_dcf_and_models`) pass on 3.0.3.
+- `tests/test_metric_formulas.py` (ROATCE 4Q, fair-value chain) passes on 3.0.3.
+- **Golden dataset 38/38 pass** on 3.0.3 — the full pipeline (shares, equity,
+  TBVPS, NI-TTM, ROATCE × 8 banks) ties the hand-verified EDGAR pins.
+- **Zero** silent-drift risk patterns in `data/` + `analysis/`: no chained
+  assignment (`df[..][..] =`), no `inplace=True`, no chained `.loc`. The only
+  `["x"]["y"] =` hits are dict assignments, not DataFrames.
+So pandas 3.0 computes every covered value correctly; no downgrade. (numpy: pin
+`==2.4.6`, both are 2.4.x patches — immaterial.) Re-run this verification before
+any future pandas major bump.
 
 ### Gap D (P2) — Deploy health alerting
 No alert fires when a deploy regresses or an instance crash-loops; discovery
