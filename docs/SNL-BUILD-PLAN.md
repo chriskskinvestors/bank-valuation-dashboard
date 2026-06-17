@@ -11,6 +11,28 @@ cert 28489); **calc** = computed in the statement engine (computed kinds);
 schedule parser needed); **10-K** = company-disclosure only (no regulatory
 source); **n/a** = honest gap, shown as such.
 
+> **STATUS RECONCILED 2026-06-17 (supersedes the "one tab at a time" framing below).**
+> The original plan tracked a single FDIC-sourced "Templated" build, ~1 of 9 tabs done.
+> Reality: the Financials section now ships **two parallel bases** for nearly every tab —
+> **Templated** (FDIC/FFIEC regulatory) and **Company Reported** (faithful per-bank SEC
+> 10-K/10-Q iXBRL extraction, reconcile-gated). Verified against `ui/company_nav.py`
+> (renderer registry) + `data/sec_filing_scraper.py` / `data/sec_composition.py`:
+> - **BUILT (both bases):** Income Statement, Balance Sheet, Performance Analysis,
+>   Capital Adequacy (Templated) / Regulatory Capital holdco walk (Company Reported),
+>   Asset Quality Detail, Deposit/Loan Composition, Interest Rate Risk.
+> - **BUILT (Templated-only or Company-Reported-only by design):** Asset Quality by
+>   Loan Type (FDIC RC-N), Fair Value Analysis (Company Reported, ASC 820 L1/L2/L3 with
+>   ASC 825-disclosure guard), Securities Portfolio, Segment Reporting.
+> - **GENUINELY OPEN:** (a) whole-portfolio criticized/classified from 10-K **MD&A HTML**
+>   (XBRL commercial-grade version ships; MD&A parser deferred — needs a user decision on
+>   scope); (b) Interest Rate Risk source choice — phased-NIM model vs 10-K MD&A scrape
+>   (**user decision**); (c) expanded **Overview** (only Corporate Profile built),
+>   expanded **Market Analysis** (only Market Share & Branches), expanded **Ownership**
+>   (13F + Insider only), and a top-level **Transactions** tab (not in nav) — all deferred;
+>   (d) **Census client** needs `CENSUS_API_KEY` (user signup). The per-tab line-item
+>   tables below remain the reference for field mapping; treat their build status as
+>   "shipped unless listed under GENUINELY OPEN."
+
 ## 1. Income Statement
 | SNL line | Source |
 |---|---|
