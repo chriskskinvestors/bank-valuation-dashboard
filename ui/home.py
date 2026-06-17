@@ -176,7 +176,7 @@ _AF_CSS = r"""
 .afwrap .hd .t{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#1e293b;}
 .afwrap .hd .s{font-size:9px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#94a3b8;display:flex;align-items:center;gap:5px;}
 .afwrap .live{width:6px;height:6px;border-radius:50%;background:#059669;display:inline-block;}
-.afwrap .body{flex:1 1 auto;overflow:auto;}
+.afwrap .body{flex:0 0 auto;overflow:visible;}
 .afwrap .etf{display:flex;flex-direction:column;}
 .afwrap .erow{display:grid;align-items:center;column-gap:6px;padding:0 14px;border-bottom:1px solid #f6f8fa;grid-template-columns:20px 1.5fr .7fr 1fr 1fr .75fr .85fr;box-sizing:border-box;}
 .afwrap .erow:last-child{border-bottom:none;}
@@ -241,7 +241,18 @@ _AF_CSS = r"""
 /* ── Native-widget panes (st.container cards) — compaction + alignment ──
    Streamlit 1.58 testids: segmented control = stButtonGroup, its buttons =
    stBaseButton-segmented_control[ Active]; dropdown = stSelectbox. */
-div[class*="st-key-afpane"]{border:1px solid #dde3ec!important;border-radius:4px!important;background:#fff!important;padding:0 0 5px!important;margin-bottom:14px;overflow:hidden!important;}
+/* Each pane card sizes to its OWN content. Streamlit otherwise pins nested
+   vertical blocks to a flex-distributed height (the panes in a column split the
+   column height equally), squeezing the 11-row ETF/Rates panes and clipping
+   their last row. Force content height + visible overflow down the wrapper chain
+   (card → stVerticalBlock/ElementContainer/Markdown → .afwrap/.body/.etf). */
+div[class*="st-key-afpane"]{border:1px solid #dde3ec!important;border-radius:4px!important;background:#fff!important;padding:0 0 5px!important;margin-bottom:14px;flex:0 0 auto!important;align-self:flex-start!important;display:block!important;height:auto!important;}
+div[class*="st-key-afpane"] [data-testid="stVerticalBlock"],
+div[class*="st-key-afpane"] [data-testid="stMarkdown"]>div{display:block!important;height:auto!important;overflow:visible!important;}
+div[class*="st-key-afpane"] [data-testid="stElementContainer"],
+div[class*="st-key-afpane"] [data-testid="stMarkdown"],
+div[class*="st-key-afpane"] [data-testid="stMarkdownContainer"]{height:auto!important;min-height:0!important;overflow:visible!important;margin-bottom:0!important;}
+div[class*="st-key-afpane"] .afwrap,div[class*="st-key-afpane"] .body,div[class*="st-key-afpane"] .etf{height:auto!important;overflow:visible!important;}
 div[class*="st-key-afpane"] [data-testid="stVerticalBlock"]{gap:.3rem!important;}
 div[class*="st-key-afpane"] [data-testid="stElementContainer"]{padding:0!important;}
 div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"]{padding:3px 10px 0!important;gap:.35rem!important;}
