@@ -39,10 +39,13 @@ hardening.
    nav had been fine on streamlit 1.58 all day.
    → **Fixed:** reverted to the known-good rule; added an AppTest nav guard.
 
-4. **No way to verify a deploy except "the user opens it" (P0 — OPEN).**
+4. **No way to verify a deploy except "the user opens it" (P0 — FIXED 2026-06-17).**
    Every failure on 2026-06-13 was discovered by the user, not by us. CI
-   checks Python imports and headless renders, but nothing loads the *real*
-   deployed page and asserts it's not visually broken. See Gap A.
+   checked Python imports and headless renders, but nothing loaded the *real*
+   deployed page and asserted it's not visually broken.
+   → **Fixed:** the live post-deploy smoke (Gap A) now drives the deployed IAP
+   page through a header-injecting proxy, asserts the nav actually rendered, and
+   **blocks** the deploy on failure. See Gap A.
 
 5. **No rollback runbook (P1 — FIXED via this doc).** When prod was down
    there was no documented one-command rollback to the last-good revision;
@@ -73,19 +76,26 @@ hardening.
 
 ## Open gaps (must close before go-live)
 
-### Gap A (P0) — Post-deploy live smoke check — 🔧 BUILT 2026-06-17, needs one-time IAP config
-`tests/smoke_live.py` (Playwright) + a gated `smoke` job in `.github/workflows/deploy.yml`
-(`needs: deploy`) drive the deployed IAP page and assert a nav section renders with
-no `Traceback` in the DOM. The service is `--ingress=internal-and-cloud-load-balancing`
+### Gap A (P0) — Post-deploy live smoke check — ✅ DONE 2026-06-17 (live + blocking)
+`tests/smoke_live.py` (Playwright) + a `smoke` job in `.github/workflows/deploy.yml`
+(`needs: deploy`) drive the deployed IAP page and assert it actually renders, with no
+`Traceback` in the DOM. The service is `--ingress=internal-and-cloud-load-balancing`
 so the runner can't hit run.app directly — the smoke goes through the IAP LB with an
-OIDC token minted as github-deployer. **STAYS OFF (skips) until enabled**, so it can
-never break a deploy prematurely. **To turn it on (operator, one time):**
-1. Repo → Settings → Variables: `LIVE_SMOKE_ENABLED=true`, `APP_URL=<the IAP dashboard URL>`.
-2. Repo → Settings → Secrets: `IAP_CLIENT_ID=<the IAP OAuth client ID>`.
-3. Grant the deployer SA IAP access + ID-token minting (commands are in the deploy.yml
-   `smoke:` job comment).
-Then push a trivial commit and confirm the `smoke` job goes green. Until verified live,
-treat it as built-not-proven.
+OIDC token minted as github-deployer. **Configured + enabled + verified live:**
+- Repo vars `LIVE_SMOKE_ENABLED=true`, `APP_URL` set; secret `IAP_CLIENT_ID` set; the
+  deployer SA holds IAP access + `serviceAccountOpenIdTokenCreator` on itself.
+- IAP token is minted via the IAM `generateIdToken` API (WIF rejects
+  `gcloud auth print-identity-token --audiences`).
+- Streamlit hydrates over a WebSocket whose upgrade Chromium won't attach
+  `extra_http_headers` to; a local **mitmdump** proxy injects the bearer on every
+  connection incl. the WS upgrade, so the app authenticates and hydrates.
+- The pass assertion is **structural and positive**: it waits on the rendered nav
+  radio (`[data-testid="stRadio"]`), proving the app painted — not just that the WS
+  connected. The diagnostic log lists the rendered sections (HTML-unescaped).
+- **Flipped from observe-only → BLOCKING** after consecutive green runs; a render
+  failure now reddens the deploy (the prior revision keeps serving until re-push).
+Verified green + blocking on run `27721939946` (`Home, Market & Macro, Screen &
+Compare, Company, Earnings, News & Research, Geographic` all rendered).
 
 ### Gap B (P1) — Pin the Docker base image — ✅ FIXED 2026-06-17
 `Dockerfile` used `python:3.11-slim` (floating tag). A base-image refresh can
@@ -114,13 +124,15 @@ So pandas 3.0 computes every covered value correctly; no downgrade. (numpy: pin
 `==2.4.6`, both are 2.4.x patches — immaterial.) Re-run this verification before
 any future pandas major bump.
 
-### Gap D (P2) — Deploy health alerting — 🔧 SCRIPT READY 2026-06-17, run once to activate
-`ops/setup_monitoring_alerts.sh` creates an email notification channel + two Cloud
+### Gap D (P2) — Deploy health alerting — ✅ DONE 2026-06-17 (alerts live)
+`ops/setup_monitoring_alerts.sh` created an email notification channel + two Cloud
 Monitoring alert policies on the service — a sustained 5xx-rate spike, and a
 "no 2xx requests for 15 min" liveness signal (a dead/crash-looping revision on a
-min-instances=1 service) — routed to email. Authoring is done; **run it once from an
-authenticated terminal** (CI can't mint the tokens):
-`bash ops/setup_monitoring_alerts.sh you@kskinvestors.com`. Pairs with Gap A.
+min-instances=1 service) — routed to email. **Activated:** notification channel
+`5112386644170620096` (chris@kskinvestors.com); 5xx-rate policy `…184737`; liveness
+policy `…850385`. Pairs with Gap A. To re-create or add recipients, re-run
+`bash ops/setup_monitoring_alerts.sh you@kskinvestors.com` from an authenticated
+terminal (CI can't mint the tokens).
 
 ### Gap E (P2) — Dependency update policy — ✅ DONE 2026-06-17
 `.github/dependabot.yml` opens a grouped pip-bump PR (and a github-actions PR) each
