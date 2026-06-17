@@ -17,10 +17,12 @@ import streamlit as st
 def top_nav(sections: list[str], key: str = "nav_section",
             wordmark: str = "KSK INVESTORS"):
     """The horizontal top navigation bar (replaces the sidebar):
-    wordmark | section tabs | utilities. Returns (section, right_column) —
-    the caller renders its status chip / refresh / settings into the
-    returned column so utilities stay in the bar."""
-    wm, nav, right = st.columns([1.1, 4.6, 1.8], vertical_alignment="center")
+    wordmark | section tabs | bank search | utilities. Returns
+    (section, search_column, right_column) — the caller renders the global
+    bank-search box into search_column and its status chip / refresh / settings
+    into right_column so both stay in the bar."""
+    wm, nav, search, right = st.columns([0.85, 4.0, 1.55, 1.1],
+                                        vertical_alignment="center")
     with wm:
         st.markdown(
             f'<div style="font-size:var(--fs-sm);font-weight:600;'
@@ -30,7 +32,7 @@ def top_nav(sections: list[str], key: str = "nav_section",
         with st.container(key="topnav"):
             section = st.radio("Navigate", sections, key=key, horizontal=True,
                                label_visibility="collapsed")
-    return section, right
+    return section, search, right
 
 
 def title_bar(entity: str, page: str, ids_html: str = "") -> None:

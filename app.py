@@ -79,7 +79,7 @@ from utils.timing import timed
 # as they're produced, so creating the nav before any slow data call means
 # the tabs appear within milliseconds regardless of load time below.)
 from ui.chrome import top_nav as _top_nav
-section, _nav_right = _top_nav(SECTIONS, key="nav_section")
+section, _nav_search, _nav_right = _top_nav(SECTIONS, key="nav_section")
 
 # Universe scope AFTER the nav. Even when this is slow on a cold instance,
 # the nav is already on screen. (The watchlist concept is retired; the
@@ -129,6 +129,33 @@ with _nav_right:
             else:
                 st.session_state.ibkr_connected = False
 auto_refresh = st.session_state.get("auto_refresh", False)
+
+# ── Global bank search (nav bar) ─────────────────────────────────────────
+# Jump to any covered bank's Company page by ticker OR name, from any section.
+# Rendered into the nav's search column but AFTER `watchlist` loads, so the nav
+# tabs still paint instantly on a cold instance. Reuses the Company page's
+# company_pick mechanism (a distinct widget key avoids a collision with the
+# in-page picker); on a pick it switches to Company and reruns. The
+# _nav_search_last guard stops it re-navigating on every rerun once selected.
+with _nav_search:
+    _bank_labels = {}
+    for _t in watchlist:
+        _nm = get_name(_t)
+        _bank_labels[_t] = f"{_t} — {_nm}" if (_nm and _nm != _t) else _t
+    _picked = st.selectbox(
+        "Find a bank", options=watchlist, index=None,
+        format_func=lambda t: _bank_labels.get(t, t),
+        placeholder="Search ticker or name…",
+        label_visibility="collapsed", key="nav_bank_search")
+    if _picked and _picked != st.session_state.get("_nav_search_last"):
+        # Navigate via the URL (NOT st.session_state["nav_section"], which can't
+        # be set after the nav radio is instantiated): the ?bank= handler near
+        # the top of this script switches to Company and sets company_pick on the
+        # rerun — the same path a Movers/feed row click uses.
+        st.session_state["_nav_search_last"] = _picked
+        st.query_params["s"] = "Company"
+        st.query_params["bank"] = _picked
+        st.rerun()
 
 # Keep the URL in sync with the current section (no-op when unchanged).
 if st.query_params.get("s") != section:
