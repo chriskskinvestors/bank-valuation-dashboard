@@ -224,10 +224,12 @@ jobs:
     needs: deploy
     if: vars.LIVE_SMOKE_ENABLED == 'true'
     runs-on: ubuntu-latest
-    # Interim observe-only: a failed smoke must not redden a deploy that actually
-    # shipped fine (the new revision is already serving). Flip to blocking once a
-    # few green runs confirm the check is reliable against the live IAP page.
-    continue-on-error: true
+    # Blocking gate (flipped from observe-only 2026-06-17 after consecutive green
+    # runs on the deterministic assertion). The check is now race-free: it
+    # authenticates the WebSocket upgrade through IAP (mitmdump injects the bearer)
+    # and waits on the rendered nav radio STRUCTURALLY — so a real failure means
+    # the deployed revision genuinely did not render, which SHOULD redden the run.
+    # The previous revision keeps serving until the operator fixes + re-pushes.
     permissions:
       contents: read
       id-token: write
