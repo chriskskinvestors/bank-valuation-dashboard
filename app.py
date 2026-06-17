@@ -9,7 +9,8 @@ import time
 import streamlit as st
 import pandas as pd
 
-from config import PRICE_REFRESH_SECONDS, TABS, TAB_LABELS, METRICS, METRICS_BY_KEY
+from config import (PRICE_REFRESH_SECONDS, TABS, METRICS, METRICS_BY_KEY,
+                    TAB_META, THEME_ORDER)
 from data.bank_mapping import get_fdic_cert, get_cik, get_name
 from data.bank_universe import get_universe_tickers
 from data import fdic_client, sec_client, cache
@@ -155,13 +156,31 @@ if section == "Screen & Compare":
                       horizontal=True, label_visibility="collapsed")
 
 if section == "Screen & Compare" and sc_sub == "Screen":
-    screening_tab_idx = st.selectbox(
-        "Table",
-        options=list(range(len(TABS))),
-        format_func=lambda i: TAB_LABELS[i],
-        key="screening_tab",
-    )
+    # Two-step picker: theme → table. The (otherwise flat) tables are grouped by
+    # what an analyst is actually looking for, with the chosen table's one-line
+    # description shown beneath. The table selectbox is keyed per-theme so
+    # switching theme lands on that theme's first table (no stale cross-theme idx).
+    _by_theme: dict[str, list] = {}
+    for _i, _t in enumerate(TABS):
+        _theme, _desc = TAB_META.get(_t["key"], ("Other", ""))
+        _by_theme.setdefault(_theme, []).append((_i, _t["label"], _desc))
+    _themes = ([th for th in THEME_ORDER if th in _by_theme]
+               + [th for th in _by_theme if th not in THEME_ORDER])
+    _tcol1, _tcol2 = st.columns([1, 2])
+    with _tcol1:
+        _theme_pick = st.selectbox("Theme", _themes, key="screen_theme")
+    _members = _by_theme.get(_theme_pick, [])
+    with _tcol2:
+        _idx_in_theme = st.selectbox(
+            "Table",
+            options=list(range(len(_members))),
+            format_func=lambda j, _m=_members: _m[j][1],
+            key=f"screen_table_{_theme_pick}",
+        )
+    screening_tab_idx, _, _tab_desc = _members[_idx_in_theme]
     screening_tab = TABS[screening_tab_idx]
+    if _tab_desc:
+        st.caption(_tab_desc)
 
 elif section == "Company":
     # Deep-link support: a metric card can link to ?bank=X&tab=<token> to jump
@@ -500,7 +519,25 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     tab_key = screening_tab["key"]
     tab_columns = screening_tab["columns"]
 
+    from ui.bank_scope import render_scope_selector
+    from data.bank_groups import save_group
+
+    # Filterable metrics span the ENTIRE metric set (not just this table's
+    # columns) so you can screen on, say, CET1 and P/TBV from any table. Built
+    # once here because it no longer depends on the active tab.
+    _FILT_FORMATS = ("pct", "ratio", "currency", "number", "millions",
+                     "billions", "dollars_auto")
+    filterable = sorted(
+        [(m["key"], m["label"]) for m in METRICS if m.get("format") in _FILT_FORMATS],
+        key=lambda x: x[1],
+    )
+    filter_labels = ["—"] + [lbl for _, lbl in filterable]
+    filter_keys = [None] + [k for k, _ in filterable]
+    filter_key_to_idx = {k: i + 1 for i, (k, _) in enumerate(filterable)}
+
     # ── Saved Screens bar ──────────────────────────────────────────────
+    # Saved Screens capture the *how* (filters / sort / columns); the *who*
+    # (bank scope) is chosen live and persisted separately as a Bank Group.
     with st.expander("💾 Saved Screens", expanded=False):
         saved = list_screens()
         saved_for_tab = [s for s in saved if s.get("tab") == tab_key]
@@ -518,26 +555,31 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 if st.button(f"📂 Load '{load_choice}'", key=f"load_btn_{tab_key}"):
                     cfg = load_screen(load_choice)
                     if cfg:
-                        # Apply saved config to session_state
                         ss = st.session_state
-                        if cfg.get("bank_filter"):
-                            ss[f"filter_{tab_key}"] = cfg["bank_filter"]
                         if cfg.get("sort_idx") is not None:
                             ss[f"sort_{tab_key}"] = cfg["sort_idx"]
                         if cfg.get("sort_order"):
                             ss[f"order_{tab_key}"] = cfg["sort_order"]
-                        if cfg.get("num_filters"):
-                            ss[f"num_filters_{tab_key}"] = cfg["num_filters"]
-                        for i, flt in enumerate(cfg.get("filters", [])):
-                            ss[f"filt_metric_{tab_key}_{i}"] = flt["metric_idx"]
-                            ss[f"filt_op_{tab_key}_{i}"] = flt["op"]
-                            ss[f"filt_val_{tab_key}_{i}"] = flt["value"]
+                        # Restore filters by metric KEY (stable across tables). An
+                        # old index-only save, or a key not in the current metric
+                        # set, is skipped — never restored to the wrong metric.
+                        restored = 0
+                        for flt in cfg.get("filters", []):
+                            mk = flt.get("metric_key")
+                            if mk not in filter_key_to_idx:
+                                continue
+                            ss[f"filt_metric_{tab_key}_{restored}"] = filter_key_to_idx[mk]
+                            ss[f"filt_op_{tab_key}_{restored}"] = flt.get("op", "<")
+                            ss[f"filt_val_{tab_key}_{restored}"] = flt.get("value", 0.0)
+                            restored += 1
+                        if restored:
+                            ss[f"num_filters_{tab_key}"] = min(restored, 4)
                         ss[f"custom_cols_{tab_key}"] = cfg.get("columns") or tab_columns
                         st.rerun()
 
         with del_col:
             if load_choice != "— select —":
-                if st.button(f"🗑 Delete", key=f"del_btn_{tab_key}"):
+                if st.button("🗑 Delete", key=f"del_btn_{tab_key}"):
                     delete_screen(load_choice)
                     st.success(f"Deleted '{load_choice}'")
                     st.rerun()
@@ -548,18 +590,21 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                                           placeholder="e.g. Value CRE Overweight",
                                           key=f"new_screen_name_{tab_key}")
                 if st.form_submit_button("💾 Save Screen") and new_name:
-                    # Collect current state
                     ss = st.session_state
                     num_filt = ss.get(f"num_filters_{tab_key}", 1)
                     filters = []
                     for i in range(num_filt):
                         mi = ss.get(f"filt_metric_{tab_key}_{i}", 0)
-                        op = ss.get(f"filt_op_{tab_key}_{i}", "<")
-                        val = ss.get(f"filt_val_{tab_key}_{i}", 0.0)
-                        filters.append({"metric_idx": mi, "op": op, "value": val})
+                        mk = filter_keys[mi] if 0 < mi < len(filter_keys) else None
+                        if mk is None:
+                            continue
+                        filters.append({
+                            "metric_key": mk,
+                            "op": ss.get(f"filt_op_{tab_key}_{i}", "<"),
+                            "value": ss.get(f"filt_val_{tab_key}_{i}", 0.0),
+                        })
                     cfg = {
                         "tab_key": tab_key,
-                        "bank_filter": ss.get(f"filter_{tab_key}", "Watchlist"),
                         "sort_idx": ss.get(f"sort_{tab_key}", 0),
                         "sort_order": ss.get(f"order_{tab_key}", "Desc"),
                         "num_filters": num_filt,
@@ -570,15 +615,15 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     st.success(f"Saved '{new_name}'")
                     st.rerun()
 
-    # Filter & sort controls
+    # ── Scope + sort controls ──────────────────────────────────────────
+    # Scope is the shared Bank-Groups selector (All banks / asset-size tier /
+    # business mix / saved group / manual), sliced from the single full-universe
+    # snapshot — one load path, one freshness for every scope.
     f_col1, f_col2, f_col3 = st.columns([2, 2, 1])
 
     with f_col1:
-        bank_filter = st.selectbox(
-            "Banks",
-            options=["Watchlist", "Portfolio", "All Banks"],
-            key=f"filter_{tab_key}",
-        )
+        display_metrics, display_tickers, scope_label = render_scope_selector(
+            all_metrics, key_prefix=f"screen_{tab_key}")
 
     sort_labels = ["Default"]
     sort_keys = [None]
@@ -603,25 +648,17 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             key=f"order_{tab_key}",
         )
 
-    # ── Metric filters ──────────────────────────────────────────────────
-    # Build filterable metrics from this tab's columns (only numeric ones)
-    filterable = []
-    for col_key in tab_columns:
-        m = METRICS_BY_KEY.get(col_key)
-        if m and m.get("format") in ("pct", "ratio", "currency", "number", "millions", "billions"):
-            filterable.append((col_key, m["label"], m.get("format", "")))
-
+    # ── Metric filters (any metric; AND-combined) ──────────────────────
     active_filters = []
     with st.expander("🔍 Metric Filters", expanded=False):
-        # Up to 4 filters in a row
+        st.caption("Filter on any metric. A bank with no value for a filtered "
+                   "metric is reported as excluded (no data), never silently "
+                   "counted as failing the screen.")
         num_filters = st.selectbox(
             "Number of filters",
             options=[1, 2, 3, 4],
-            key=f"num_filters_{screening_tab['key']}",
+            key=f"num_filters_{tab_key}",
         )
-
-        filter_labels = ["—"] + [f[1] for f in filterable]
-        filter_keys = [None] + [f[0] for f in filterable]
 
         for fi in range(num_filters):
             fc1, fc2, fc3 = st.columns([3, 1, 2])
@@ -630,14 +667,14 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     "Metric",
                     options=list(range(len(filter_labels))),
                     format_func=lambda i, fl=filter_labels: fl[i],
-                    key=f"filt_metric_{screening_tab['key']}_{fi}",
+                    key=f"filt_metric_{tab_key}_{fi}",
                     label_visibility="collapsed" if fi > 0 else "visible",
                 )
             with fc2:
                 filt_op = st.selectbox(
                     "Op",
                     options=["<", "≤", ">", "≥", "="],
-                    key=f"filt_op_{screening_tab['key']}_{fi}",
+                    key=f"filt_op_{tab_key}_{fi}",
                     label_visibility="collapsed" if fi > 0 else "visible",
                 )
             with fc3:
@@ -646,7 +683,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     value=0.0,
                     step=0.1,
                     format="%.2f",
-                    key=f"filt_val_{screening_tab['key']}_{fi}",
+                    key=f"filt_val_{tab_key}_{fi}",
                     label_visibility="collapsed" if fi > 0 else "visible",
                 )
 
@@ -654,53 +691,42 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             if filt_key is not None:
                 active_filters.append((filt_key, filt_op, filt_val))
 
-    # Resolve which banks to show
-    if bank_filter == "Portfolio":
-        display_tickers = portfolio
-        display_metrics = None
-    elif bank_filter == "All Banks":
-        display_tickers = get_universe_tickers()
-        display_metrics = None
-    else:
-        display_tickers = watchlist
-        display_metrics = all_metrics
-
-    if display_metrics is None:
-        if display_tickers:
-            display_metrics = load_all_data(display_tickers)
-        else:
-            display_metrics = []
-
-    # Apply metric filters
+    # Apply metric filters. A bank missing a filtered metric is EXCLUDED as
+    # "no data" and counted separately — never silently scored as a failure
+    # (cardinal rule: no-data is not the same as fails-the-screen).
+    n_excluded_nodata = 0
     if active_filters and display_metrics:
-        filtered = []
+        kept = []
         for m in display_metrics:
-            passes = True
+            missing = False
+            fails = False
             for fk, fop, fv in active_filters:
                 val = m.get(fk)
                 if val is None:
-                    passes = False
+                    missing = True
                     break
                 try:
                     val = float(val)
                 except (TypeError, ValueError):
-                    passes = False
+                    missing = True
                     break
                 if fop == "<" and not (val < fv):
-                    passes = False
+                    fails = True
                 elif fop == "≤" and not (val <= fv):
-                    passes = False
+                    fails = True
                 elif fop == ">" and not (val > fv):
-                    passes = False
+                    fails = True
                 elif fop == "≥" and not (val >= fv):
-                    passes = False
+                    fails = True
                 elif fop == "=" and not (abs(val - fv) < 0.005):
-                    passes = False
-                if not passes:
+                    fails = True
+                if fails:
                     break
-            if passes:
-                filtered.append(m)
-        display_metrics = filtered
+            if missing:
+                n_excluded_nodata += 1
+            elif not fails:
+                kept.append(m)
+        display_metrics = kept
 
     # Apply sorting
     sort_key = sort_keys[sort_idx] if sort_idx > 0 else None
@@ -712,15 +738,24 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             reverse=not ascending,
         )
 
-    # Header
-    filter_note = f" · {len(active_filters)} filter{'s' if len(active_filters) != 1 else ''}" if active_filters else ""
-    total_before = len(display_tickers) if not active_filters else "filtered"
+    # Customized columns (computed here so the header's column count matches
+    # what actually renders below).
+    display_cols_final = st.session_state.get(f"custom_cols_{tab_key}") or tab_columns
+    if not display_cols_final:
+        display_cols_final = tab_columns
+    scope_slug = ("".join(c if c.isalnum() else "_"
+                          for c in scope_label.lower())[:30].strip("_") or "scope")
+
+    # Header — provenance is FDIC + SEC fundamentals (NOT a price feed); the old
+    # "IBKR/FMP" label was wrong for these tables. No-data exclusions are shown.
+    filter_note = (f" · {len(active_filters)} filter"
+                   f"{'s' if len(active_filters) != 1 else ''}") if active_filters else ""
+    nodata_note = f" · {n_excluded_nodata} excluded (no data)" if n_excluded_nodata else ""
     st.markdown(
         '<div class="dashboard-header">'
         f"<h1>{screening_tab['title']}</h1>"
-        f"<p>{len(display_metrics)} banks ({bank_filter}{filter_note}) | "
-        f"{'IBKR Live' if st.session_state.ibkr_connected else 'FMP'} | "
-        f"{len(screening_tab['columns'])} columns</p>"
+        f"<p>{len(display_metrics)} banks · {scope_label}{filter_note}{nodata_note} · "
+        f"FDIC + SEC fundamentals · {len(display_cols_final)} columns</p>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -728,6 +763,30 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
     sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
     render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
+
+    # ── Save the current result set as a reusable Bank Group ───────────
+    with st.expander(f"➕ Save these {len(display_metrics)} banks as a group",
+                     expanded=False):
+        st.caption("Persist the current (filtered) result set as a named group, "
+                   "then reuse it as a scope here or in Compare.")
+        sg1, sg2 = st.columns([3, 1])
+        with sg1:
+            grp_name = st.text_input("Group name",
+                                     placeholder="e.g. CRE-heavy Southeast",
+                                     key=f"save_grp_name_{tab_key}",
+                                     label_visibility="collapsed")
+        with sg2:
+            if st.button(f"💾 Save {len(display_metrics)} banks",
+                         key=f"save_grp_btn_{tab_key}", use_container_width=True):
+                grp_tickers = [m["ticker"] for m in display_metrics if m.get("ticker")]
+                if not grp_name.strip():
+                    st.warning("Enter a group name first.")
+                elif not grp_tickers:
+                    st.warning("No banks to save.")
+                elif save_group(grp_name, grp_tickers):
+                    st.success(f"Saved '{grp_name.strip()}' ({len(grp_tickers)} banks).")
+                else:
+                    st.error("Could not save (empty name or storage error).")
 
     # ── Column picker + Excel export ──────────────────────────────────
     with st.expander("🧰 Customize columns & export", expanded=False):
@@ -771,7 +830,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 st.download_button(
                     "📄 CSV",
                     csv_bytes,
-                    file_name=f"{tab_key}_{bank_filter.lower().replace(' ','_')}.csv",
+                    file_name=f"{tab_key}_{scope_slug}.csv",
                     mime="text/csv",
                     use_container_width=True,
                     key=f"csv_{tab_key}",
@@ -796,7 +855,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     st.download_button(
                         "📊 Excel",
                         buf.getvalue(),
-                        file_name=f"{tab_key}_{bank_filter.lower().replace(' ','_')}.xlsx",
+                        file_name=f"{tab_key}_{scope_slug}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True,
                         key=f"xlsx_{tab_key}",
@@ -806,13 +865,8 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
 
     st.markdown("")
 
-    # Use customized columns if set, else tab defaults
-    display_cols_final = st.session_state.get(f"custom_cols_{tab_key}") or tab_columns
-    if not display_cols_final:
-        display_cols_final = tab_columns
-
     render_generic_table(
-        display_metrics, display_cols_final, table_key=tab_key
+        display_metrics, display_cols_final, table_key=tab_key, show_legend=True,
     )
 
 elif section == "Company":

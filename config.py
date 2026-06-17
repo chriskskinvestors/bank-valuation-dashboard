@@ -1173,5 +1173,28 @@ TABS = [
 
 TAB_LABELS = [t["label"] for t in TABS]
 
+# Screen table grouping — theme + one-line description per table, so the picker
+# groups the (otherwise flat) tables by what an analyst is actually looking for.
+# Keyed by tab "key"; THEME_ORDER fixes the display order of the theme groups.
+THEME_ORDER = ["Overview", "Balance Sheet", "Loans", "Deposits",
+               "Securities", "Credit", "Capital", "Earnings"]
+TAB_META = {
+    "valuation":          ("Overview", "Price, multiples, fair-value P/TBV and headline returns in one view."),
+    "balance_sheet":      ("Balance Sheet", "Assets, funding, equity and the key balance-sheet ratios."),
+    "loan_mix":           ("Loans", "Loan book broken out by category, in dollars."),
+    "loan_concentration": ("Loans", "Loan categories as a % of total loans, plus CRE-to-capital."),
+    "deposits":           ("Deposits", "Deposit base by type, in dollars."),
+    "deposit_ratios":     ("Deposits", "Funding quality: uninsured, core, brokered, non-interest."),
+    "deposit_dynamics":   ("Deposits", "Deposit growth, cost-of-deposit trend, beta and funding alerts."),
+    "securities":         ("Securities", "AFS/HTM portfolio, sector mix and unrealized gains/losses."),
+    "credit_detail":      ("Credit", "Non-performing loans, charge-offs and reserves by segment."),
+    "credit_dynamics":    ("Credit", "Credit trend: NPL/NCO direction, migration and alerts."),
+    "capital":            ("Capital", "Regulatory capital ratios and equity-to-assets."),
+    "capital_dynamics":   ("Capital", "CET1 trend, TBV growth, payout and buyback capacity."),
+    "capital_return":     ("Capital", "Dividends, buybacks and total shareholder yield (TTM)."),
+    "income":             ("Earnings", "Income statement: revenue, expense, provisions and productivity."),
+    "nim_metrics":        ("Earnings", "Margin detail: asset yields, funding costs and spreads."),
+}
+
 # Legacy aliases
 DEFAULT_TABLE_COLUMNS = TABS[0]["columns"]

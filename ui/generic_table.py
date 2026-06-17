@@ -56,10 +56,21 @@ def _apply_row_colors(row, renamed_cols, rename_map):
     return styles
 
 
+def _render_legend():
+    """One-line caption explaining get_bg_color's 3-band cell shading
+    (utils/formatting). Native st.caption + color squares — no hand-rolled
+    markup; the colored-swatch atom would belong in ui/components.py."""
+    st.caption(
+        "Cell shading — 🟩 good (at/above target) · 🟨 caution (near the line) · "
+        "🟥 poor (past the warn level) · unshaded = no threshold defined or n/a."
+    )
+
+
 def render_generic_table(
     metrics_data: list[dict],
     columns: list[str],
     table_key: str = "default",
+    show_legend: bool = False,
 ):
     """
     Render a screening table for any tab.
@@ -67,10 +78,14 @@ def render_generic_table(
     metrics_data: list of dicts from build_all_bank_metrics()
     columns: list of metric keys to display
     table_key: unique key for Streamlit widget state
+    show_legend: render the conditional-formatting color legend above the table
     """
     if not metrics_data:
-        st.warning("No bank data available. Check your watchlist and data connections.")
+        st.warning("No banks match the current scope and filters.")
         return None
+
+    if show_legend:
+        _render_legend()
 
     df = pd.DataFrame(metrics_data)
     df.insert(0, "Bank", _fast_name_lookup(df["ticker"]))
@@ -101,7 +116,7 @@ def render_generic_table(
     st.dataframe(
         renamed_df.style.apply(
             lambda row: _apply_row_colors(row, renamed_cols, rename), axis=1
-        ).format(format_dict)
+        ).format(format_dict, na_rep="—")
         .set_properties(**{"font-size": "0.6rem", "padding": "1px 3px", "line-height": "1.1"}),
         use_container_width=True,
         height=min(1000, 26 + 22 * len(display_df)),
