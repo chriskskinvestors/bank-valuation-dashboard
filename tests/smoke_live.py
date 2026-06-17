@@ -40,6 +40,13 @@ URL = os.environ.get("APP_URL", "").rstrip("/")
 TOKEN = os.environ.get("IAP_TOKEN", "").strip()
 PROXY_PORT = int(os.environ.get("SMOKE_PROXY_PORT", "8899"))
 HYDRATE_TIMEOUT_S = int(os.environ.get("SMOKE_HYDRATE_TIMEOUT_S", "150"))
+# Post-deploy warm-up mode (`--warm`): drive a full Home render against the
+# freshly-deployed cold revision and STAY connected until it finishes, so the
+# 60s+ metrics build runs and watchlist_metrics_snap is persisted before any
+# real user arrives. Without this, the first user pays that cold render (the
+# page paints but native controls aren't wired until the WS session is live).
+WARM = "--warm" in sys.argv
+WARM_TIMEOUT_S = int(os.environ.get("SMOKE_WARM_TIMEOUT_S", "180"))
 _ADDON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_iap_proxy_addon.py")
 
 # Top-nav section labels (app.py SECTIONS). Hydration is proven STRUCTURALLY
@@ -132,6 +139,23 @@ def main() -> int:
                       "(IAP auth or server problem)", file=sys.stderr)
                 print(page.content()[:1500], file=sys.stderr)
                 return 1
+
+            if WARM:
+                # Stay connected until the Movers table populates — that needs
+                # all_metrics, so it proves the cold revision finished its 60s+
+                # render AND persisted watchlist_metrics_snap. The next real user
+                # then hits a hot instance + fresh snapshot, not a cold rebuild.
+                try:
+                    page.wait_for_selector(".afwrap .erow.m1 .tk",
+                                           timeout=WARM_TIMEOUT_S * 1000)
+                    print("smoke_live: WARM OK — Home fully rendered; metrics "
+                          "snapshot built + persisted on the new revision")
+                except Exception:
+                    print(f"smoke_live: WARM — Home did not fully populate within "
+                          f"{WARM_TIMEOUT_S}s, but the instance was exercised",
+                          file=sys.stderr)
+                browser.close()
+                return 0
 
             # Hydration: with the proxy authenticating the WS upgrade, the app
             # should hydrate and render the top nav. Wait on the rendered nav
