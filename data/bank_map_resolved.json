@@ -9,7 +9,7 @@
   "cik": 715579,
   "fdic_cert": 7506,
   "fdic_score": 1.0,
-  "name": "ACNB"
+  "name": "ACNB Corp"
  },
  "AFBI": {
   "cik": 1823406,
@@ -1017,7 +1017,7 @@
   "cik": 37808,
   "fdic_cert": 3305,
   "fdic_score": 1.0,
-  "name": "FNB"
+  "name": "FNB Corp"
  },
  "FNFI": {
   "cik": null,
@@ -1413,7 +1413,7 @@
   "cik": 1074902,
   "fdic_cert": 6623,
   "fdic_score": 1.0,
-  "name": "LCNB"
+  "name": "LCNB Corp"
  },
  "LKFN": {
   "cik": 721994,
