@@ -73,15 +73,19 @@ hardening.
 
 ## Open gaps (must close before go-live)
 
-### Gap A (P0) — Post-deploy live smoke check
-Nothing today loads the *deployed* page and confirms it's healthy, so a
-broken deploy reaches the user. **Action:** add a post-deploy job that drives
-the live URL with a headless browser (Playwright) and asserts: page reaches
-"Markets & Rates", the 8 nav tabs are present AND have visible text (non-zero
-box), no Python traceback in the DOM. Fail the deploy (and alert) if not.
-This is the single highest-value gap — it turns "the user finds it" into "CI
-finds it." Lighter interim: a script that opens the URL post-deploy and
-checks the rendered DOM for the nav tabs + absence of `Traceback`.
+### Gap A (P0) — Post-deploy live smoke check — 🔧 BUILT 2026-06-17, needs one-time IAP config
+`tests/smoke_live.py` (Playwright) + a gated `smoke` job in `.github/workflows/deploy.yml`
+(`needs: deploy`) drive the deployed IAP page and assert a nav section renders with
+no `Traceback` in the DOM. The service is `--ingress=internal-and-cloud-load-balancing`
+so the runner can't hit run.app directly — the smoke goes through the IAP LB with an
+OIDC token minted as github-deployer. **STAYS OFF (skips) until enabled**, so it can
+never break a deploy prematurely. **To turn it on (operator, one time):**
+1. Repo → Settings → Variables: `LIVE_SMOKE_ENABLED=true`, `APP_URL=<the IAP dashboard URL>`.
+2. Repo → Settings → Secrets: `IAP_CLIENT_ID=<the IAP OAuth client ID>`.
+3. Grant the deployer SA IAP access + ID-token minting (commands are in the deploy.yml
+   `smoke:` job comment).
+Then push a trivial commit and confirm the `smoke` job goes green. Until verified live,
+treat it as built-not-proven.
 
 ### Gap B (P1) — Pin the Docker base image — ✅ FIXED 2026-06-17
 `Dockerfile` used `python:3.11-slim` (floating tag). A base-image refresh can
@@ -110,15 +114,22 @@ So pandas 3.0 computes every covered value correctly; no downgrade. (numpy: pin
 `==2.4.6`, both are 2.4.x patches — immaterial.) Re-run this verification before
 any future pandas major bump.
 
-### Gap D (P2) — Deploy health alerting
-No alert fires when a deploy regresses or an instance crash-loops; discovery
-is manual. **Action:** Cloud Monitoring alert on the service's 5xx rate and
-on revision health, routed to email. Pairs with Gap A.
+### Gap D (P2) — Deploy health alerting — 🔧 SCRIPT READY 2026-06-17, run once to activate
+`ops/setup_monitoring_alerts.sh` creates an email notification channel + two Cloud
+Monitoring alert policies on the service — a sustained 5xx-rate spike, and a
+"no 2xx requests for 15 min" liveness signal (a dead/crash-looping revision on a
+min-instances=1 service) — routed to email. Authoring is done; **run it once from an
+authenticated terminal** (CI can't mint the tokens):
+`bash ops/setup_monitoring_alerts.sh you@kskinvestors.com`. Pairs with Gap A.
 
-### Gap E (P2) — Dependency update policy
-With pins, deps go stale (security). **Action:** a scheduled monthly job that
-opens a PR bumping pins, which then must pass the full suite + Gap A smoke
-before merge. Updates become deliberate and tested, never silent.
+### Gap E (P2) — Dependency update policy — ✅ DONE 2026-06-17
+`.github/dependabot.yml` opens a grouped pip-bump PR (and a github-actions PR) each
+month; `.github/workflows/ci.yml` is a new PR-triggered workflow that runs the same
+offline gates as the deploy (pyflakes + render smoke) plus the hand-computed value
+suites (audit-regressions, DCF, sec-filing-scraper, nav-renders, metric-formulas), so
+every bump PR — and every PR generally, which previously ran NO checks — must pass
+before merge. Updates become deliberate and tested, never silent. CI suite verified
+green locally before commit.
 
 ---
 

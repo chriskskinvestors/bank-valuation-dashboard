@@ -1,0 +1,29 @@
+# Gap E (production-readiness audit) — dependency update policy.
+# requirements.txt is an exact-pin LOCK; pins go stale (security) if never bumped.
+# Dependabot opens a PR each month bumping the pins, which must then pass the CI
+# test workflow (.github/workflows/ci.yml) before it can merge — so updates become
+# deliberate and tested, never silent. Grouped to keep the PR count sane.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+    groups:
+      python-deps:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"

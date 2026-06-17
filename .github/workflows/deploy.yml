@@ -177,3 +177,53 @@ jobs:
         run: |
           python -m pip install --quiet -r requirements.txt
           python tests/test_universe_coverage.py
+
+  # Gap A (production-readiness audit) — post-deploy LIVE smoke check.
+  # Drives the deployed IAP-gated page with a headless browser and asserts it
+  # actually renders (no traceback in the DOM) — catching render failures the
+  # health probe can't see. STAYS OFF until configured, so it can never break a
+  # deploy prematurely. To enable, set these on the repo:
+  #   - variable  LIVE_SMOKE_ENABLED = true
+  #   - variable  APP_URL            = https://<the IAP/public dashboard URL>
+  #   - secret    IAP_CLIENT_ID      = the IAP OAuth 2.0 client ID
+  # and grant the deployer SA IAP access + ID-token minting (one time):
+  #   gcloud iap web add-iam-policy-binding \
+  #     --resource-type=backend-services --service=<backend-service> \
+  #     --member=serviceAccount:github-deployer@ace-beanbag-486220-a8.iam.gserviceaccount.com \
+  #     --role=roles/iap.httpsResourceAccessor
+  #   gcloud iam service-accounts add-iam-policy-binding \
+  #     github-deployer@ace-beanbag-486220-a8.iam.gserviceaccount.com \
+  #     --member=serviceAccount:github-deployer@ace-beanbag-486220-a8.iam.gserviceaccount.com \
+  #     --role=roles/iam.serviceAccountOpenIdTokenCreator
+  smoke:
+    needs: deploy
+    if: vars.LIVE_SMOKE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+      - name: Install Playwright (chromium)
+        run: |
+          python -m pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+      - name: Live smoke through IAP
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          IAP_CLIENT_ID: ${{ secrets.IAP_CLIENT_ID }}
+        run: |
+          IAP_TOKEN="$(gcloud auth print-identity-token --audiences="$IAP_CLIENT_ID")"
+          IAP_TOKEN="$IAP_TOKEN" APP_URL="$APP_URL" python tests/smoke_live.py
