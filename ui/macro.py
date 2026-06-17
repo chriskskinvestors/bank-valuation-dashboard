@@ -668,6 +668,53 @@ def _render_fed_panel(full: bool = True):
                f"machine-readably — band/range conveys the spread. Source: FRED (SEP {sep_txt}).")
 
 
+def _render_surprise_summary(recent):
+    """Compact tally of how recent releases printed vs consensus — direction vs
+    expectations (above/below), NOT good/bad. Fills the freed column beside the
+    calendars."""
+    import html as _h
+    items = [e for e in (recent or []) if e.get("surprise") is not None]
+    if not items:
+        st.markdown("**Surprise tracker**")
+        st.caption("No released surprises in the window.")
+        return
+    beats = sum(1 for e in items if e["surprise"] > 0)
+    misses = sum(1 for e in items if e["surprise"] < 0)
+    inline = len(items) - beats - misses
+    if beats > misses:
+        tilt, color = "Above consensus", "var(--success)"
+    elif misses > beats:
+        tilt, color = "Below consensus", "var(--danger)"
+    else:
+        tilt, color = "In line", "var(--text-secondary)"
+    ranked = sorted(items, key=lambda e: abs(e["surprise"]), reverse=True)[:3]
+    big = "".join(
+        f'<tr><td style="text-align:left;">{_h.escape(e["event"])}</td>'
+        f'<td style="text-align:right;">{_econ_surprise_html(e)}</td></tr>'
+        for e in ranked)
+    st.markdown("**Surprise tracker**")
+    st.markdown(
+        '<div class="ksk-grid"><table><tbody>'
+        f'<tr><td style="text-align:left;">Above cons.</td><td style="text-align:right;color:var(--success);font-weight:700;">{beats}</td></tr>'
+        f'<tr><td style="text-align:left;">Below cons.</td><td style="text-align:right;color:var(--danger);font-weight:700;">{misses}</td></tr>'
+        f'<tr><td style="text-align:left;">In line</td><td style="text-align:right;">{inline}</td></tr>'
+        '</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="margin-top:4px;font-size:var(--fs-sm);">Net tilt: '
+        f'<span style="color:{color};font-weight:700;">{tilt}</span> '
+        f'<span style="color:var(--text-muted);">· {len(items)} releases</span></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="margin-top:6px;font-size:var(--fs-2xs);color:var(--text-muted);'
+        'letter-spacing:0.06em;">BIGGEST SURPRISES</div>'
+        f'<div class="ksk-grid"><table><tbody>{big}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_economy_calendar():
     import html as _html
     import plotly.graph_objects as go
@@ -680,11 +727,12 @@ def _render_economy_calendar():
     _render_fed_panel(full=False)
     st.markdown("---")
 
-    # ── Calendars side by side: recent surprises | upcoming releases ──
-    cal_l, cal_r = st.columns(2)
+    # ── Calendars + surprise tracker (3-up; uses the freed horizontal room) ──
+    recent = get_recent_releases(days=10, limit=16)
+    up = get_upcoming_releases(days=14, limit=20)
+    cal_l, cal_r, cal_s = st.columns([1.15, 1.15, 0.7])
     with cal_l:
         st.markdown("**Latest releases & surprises**")
-        recent = get_recent_releases(days=10, limit=16)
         if recent:
             srows = ""
             for e in recent:
@@ -720,7 +768,6 @@ def _render_economy_calendar():
                     "mounted in production). Unavailable in this environment.")
     with cal_r:
         st.markdown("**Upcoming releases**")
-        up = get_upcoming_releases(days=14, limit=20)
         if not up:
             st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
                     "mounted in production). Unavailable in this environment.")
@@ -754,40 +801,75 @@ def _render_economy_calendar():
             )
             st.caption("Scheduled US releases · consensus · impact · ET times. "
                        "Source: FMP economic calendar.")
+    with cal_s:
+        _render_surprise_summary(recent)
 
     st.markdown("---")
 
-    # ── Key indicators (FRED) ──────────────────────────────────────────
+    # ── Key indicators (board) with the recession panel beside it, so the
+    #    freed horizontal room next to the content-width board is used. ──
     st.markdown("**Key indicators**")
     rows = get_print_board()
-    # Split into two dense side-by-side tables so the board uses the page
-    # width instead of one sparse full-width table.
     _LEFT = ("Inflation", "Labor")
     _RIGHT = ("Growth & Activity", "Housing", "Sentiment & Money")
-    bc1, bc2 = st.columns(2)
-    with bc1:
-        st.markdown(_board_table([r for r in rows if r["theme"] in _LEFT]),
-                    unsafe_allow_html=True)
-    with bc2:
-        st.markdown(_board_table([r for r in rows if r["theme"] in _RIGHT]),
-                    unsafe_allow_html=True)
-    st.caption(
-        "Latest reading per series, grouped by theme. YoY = year-over-year, "
-        "MoM = month-over-month, QoQ SAAR = quarter-over-quarter annualized. "
-        "Δ colored by favorable direction (inflation lower / activity higher = green). "
-        "vs hist = z-score of the latest vs ~10y of its own history (±σ; bold if |z|≥2). "
-        "Source: FRED."
-    )
-
-    # Export of the print board.
-    export_df = pd.DataFrame([{
-        "theme": r["theme"], "indicator": r["label"], "basis": r["basis"],
-        "latest": r["latest"], "prior": r["prior"], "delta": r["delta"],
-        "zscore": r.get("zscore"),
-        "as_of": r["as_of"].strftime("%Y-%m-%d") if r["as_of"] is not None else None,
-        "series_id": r["series_id"],
-    } for r in rows])
-    table_export(export_df, "macro_print_board", key="macro_print_board_export")
+    board_col, rec_col = st.columns([2, 1])
+    with board_col:
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            st.markdown(_board_table([r for r in rows if r["theme"] in _LEFT]),
+                        unsafe_allow_html=True)
+        with bc2:
+            st.markdown(_board_table([r for r in rows if r["theme"] in _RIGHT]),
+                        unsafe_allow_html=True)
+        st.caption(
+            "Latest reading per series, grouped by theme. YoY = year-over-year, "
+            "MoM = month-over-month, QoQ SAAR = quarter-over-quarter annualized. "
+            "Δ colored by favorable direction (inflation lower / activity higher = green). "
+            "vs hist = z-score of the latest vs ~10y of its own history (±σ; bold if |z|≥2). "
+            "Source: FRED."
+        )
+        export_df = pd.DataFrame([{
+            "theme": r["theme"], "indicator": r["label"], "basis": r["basis"],
+            "latest": r["latest"], "prior": r["prior"], "delta": r["delta"],
+            "zscore": r.get("zscore"),
+            "as_of": r["as_of"].strftime("%Y-%m-%d") if r["as_of"] is not None else None,
+            "series_id": r["series_id"],
+        } for r in rows])
+        table_export(export_df, "macro_print_board", key="macro_print_board_export")
+    with rec_col:
+        st.markdown("**Recession & leading signals**")
+        rec = recession_probability()
+        lvl = rec["level"]
+        style = ALERT_STYLE["high"] if lvl == "high" else (
+            ALERT_STYLE["medium"] if lvl == "medium" else ALERT_STYLE["ok"])
+        dot = "bad" if lvl == "high" else ("warn" if lvl == "medium" else "ok")
+        label = {"high": "Elevated recession risk", "medium": "Mixed recession signals"}.get(
+            lvl, "Low recession signal")
+        factors = "<br>".join("• " + _html.escape(f) for f in rec["factors"]) or \
+            "No recession signals triggered"
+        st.markdown(
+            f'<div style="{style}"><span class="ksk-dot {dot}"></span> '
+            f'<strong>{label} ({rec["score"]}/100)</strong>'
+            f'<br><span style="font-weight:normal;font-size:var(--fs-sm);">{factors}</span></div>',
+            unsafe_allow_html=True,
+        )
+        figr = go.Figure()
+        for s, e in recession_periods(fetch_series("USREC", years=15)):
+            figr.add_vrect(x0=s, x1=e, fillcolor="rgba(15,23,42,0.07)",
+                           line_width=0, layer="below")
+        sig = fetch_series("T10Y3M", years=15)
+        if not sig.empty:
+            d = sig.dropna(subset=["value"]).sort_values("date")
+            figr.add_trace(go.Scatter(
+                x=d["date"], y=d["value"], name="10Y−3M", mode="lines",
+                line=dict(color="#dc2626", width=1.8)))
+        figr.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+        apply_standard_layout(figr, title="10Y−3M spread w/ NBER recessions (15Y)",
+                              height=CHART_HEIGHT_FULL, yaxis_title="Spread", show_legend=False)
+        figr.update_yaxes(ticksuffix="pp")
+        st.plotly_chart(figr, use_container_width=True)
+        st.caption("Score blends the 10Y−2Y & 10Y−3M curve spreads and a Sahm-rule proxy. "
+                   "Shaded = NBER recessions (FRED USREC).")
 
     st.markdown("---")
 
@@ -925,44 +1007,6 @@ def _render_economy_calendar():
         )
         st.plotly_chart(figm, use_container_width=True)
 
-    # ── Recession & leading signals ────────────────────────────────────
-    st.markdown("---")
-    st.markdown("**Recession & leading signals**")
-    rc1, rc2 = st.columns([1, 2])
-    with rc1:
-        rec = recession_probability()
-        lvl = rec["level"]
-        style = ALERT_STYLE["high"] if lvl == "high" else (
-            ALERT_STYLE["medium"] if lvl == "medium" else ALERT_STYLE["ok"])
-        dot = "bad" if lvl == "high" else ("warn" if lvl == "medium" else "ok")
-        label = {"high": "Elevated recession risk", "medium": "Mixed recession signals"}.get(
-            lvl, "Low recession signal")
-        factors = "<br>".join("• " + _html.escape(f) for f in rec["factors"]) or \
-            "No recession signals triggered"
-        st.markdown(
-            f'<div style="{style}"><span class="ksk-dot {dot}"></span> '
-            f'<strong>{label} ({rec["score"]}/100)</strong>'
-            f'<br><span style="font-weight:normal;font-size:var(--fs-sm);">{factors}</span></div>',
-            unsafe_allow_html=True,
-        )
-    with rc2:
-        figr = go.Figure()
-        for s, e in recession_periods(fetch_series("USREC", years=15)):
-            figr.add_vrect(x0=s, x1=e, fillcolor="rgba(15,23,42,0.07)",
-                           line_width=0, layer="below")
-        sig = fetch_series("T10Y3M", years=15)
-        if not sig.empty:
-            d = sig.dropna(subset=["value"]).sort_values("date")
-            figr.add_trace(go.Scatter(
-                x=d["date"], y=d["value"], name="10Y−3M", mode="lines",
-                line=dict(color="#dc2626", width=1.8)))
-        figr.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
-        apply_standard_layout(figr, title="Recession signal — 10Y−3M spread w/ NBER recessions (15Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="Spread", show_legend=False)
-        figr.update_yaxes(ticksuffix="pp")
-        st.plotly_chart(figr, use_container_width=True)
-    st.caption("Recession score blends the 10Y−2Y & 10Y−3M curve spreads and a Sahm-rule "
-               "proxy on unemployment. Shaded bands = NBER recessions (FRED USREC). Source: FRED.")
 
 
 def _render_regime():
