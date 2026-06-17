@@ -577,8 +577,15 @@ def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
                 tag, cls = "EXEC", "ex"
             else:
                 tag, cls = "PR", "pr"
-            out.append({"tag": tag, "cls": cls, "tk": tk, "head": head,
-                        "ts": r.get("published_at")})
+            # 8-K headlines are the bare SEC item category ("8-K · Other Material
+            # Event"); a descriptive LLM summary (when the poll-events summarizer
+            # ran) says what the filing is actually about. Wire headlines are
+            # already specific, so keep them as-is.
+            disp = head
+            if r.get("source") == "sec_8k":
+                disp = (r.get("summary") or "").strip() or head
+            out.append({"tag": tag, "cls": cls, "tk": tk, "head": disp,
+                        "url": r.get("url"), "ts": r.get("published_at")})
     except Exception:
         pass
     try:
@@ -592,8 +599,11 @@ def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
             who = (tx.get("role") or "Insider").split(",")[0]
             nm = get_name(tx["ticker"]) or tx["ticker"]
             qty = f"{int(sh):,} of " if sh else ""
+            cik = ciks.get(tx["ticker"])
+            edgar = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+                     f"&CIK={cik}&type=4&dateb=&owner=include&count=40") if cik else None
             out.append({"tag": "BUY" if buy else "SELL", "cls": "tr",
-                        "tk": tx["ticker"],
+                        "tk": tx["ticker"], "url": tx.get("url") or edgar,
                         "head": f"{who} {verb} {qty}{nm}", "ts": tx.get("date")})
     except Exception:
         pass
@@ -620,9 +630,16 @@ def _af_feed_table(watchlist: list[str]) -> str:
             tk = it.get("tk")
             sym = f' <span class="sym">&gt;{tk}</span>' if tk else ""
             when = _relative_time(it.get("ts"))
-            href = (f'?s=Home&bank={tk}' if tk else "?s=Home")
+            # Link to the actual story / SEC filing (new tab); fall back to the
+            # in-app company page only when no source URL is available.
+            url = it.get("url")
+            if url:
+                href, target, rel = _esc(url), "_blank", ' rel="noopener noreferrer"'
+            else:
+                href = f'?s=Home&bank={tk}' if tk else "?s=Home"
+                target, rel = "_self", ""
             body += (
-                f'<a class="fitem" href="{href}" target="_self">'
+                f'<a class="fitem" href="{href}" target="{target}"{rel}>'
                 f'<span class="ftag {it["cls"]}">{_esc(it["tag"])}</span>'
                 f'<span class="fhl">{_esc(it["head"][:90])}{sym}</span>'
                 f'<span class="fwhen">{when}</span></a>')

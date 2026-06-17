@@ -82,6 +82,22 @@ KNOWN_JUNK = [
     # ── dividend-CALENDAR filler (_DIV_CALENDAR_RE) — NOT a real dividend action ──
     ("Comerica to Trade Ex-Dividend Beginning June 14th", "CMA"),
     ("Ex-Dividend Reminder: Citizens Financial Group", "CFG"),
+    # ── off-subject / marketing (_OFFSUBJECT_RE) — bank named only peripherally,
+    #    or sponsorship/sports/"study finds" fluff. From the live Home feed
+    #    2026-06-17 (owner-flagged): a transparency filing that names BAC as
+    #    custodian, a stock offering where GS is just the underwriter, a UFC
+    #    sponsorship PR, and a BofA marketing study. ──
+    ("Umicore - Transparency notification by Bank of America Corporation", "BAC"),
+    ("Macerich Announces Commencement of Public Offering of Common Stock; "
+     "BofA Securities and Goldman Sachs Acting as Joint Book-Running Managers", "GS"),
+    ("Acme Corp Prices $1.2 Billion Notes Offering; J.P. Morgan Acting as "
+     "Sole Book-Running Manager", "JPM"),
+    ("Monster Energy's Justin Gaethje Defeats Ilia Topuria to Claim UFC "
+     "Lightweight Championship", "GS"),
+    ("Bank of America Study Finds Longevity and Accelerating Wealth Transfer "
+     "Are Reshaping Family Finances", "BAC"),
+    ("Citizens Financial Group Named Exclusive Financial Advisor to Acme on "
+     "Its $900 Million Sale", "CFG"),
 ]
 
 # Wrong-company ticker tags — story is about another company; must be junk when

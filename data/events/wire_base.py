@@ -595,6 +595,32 @@ _PAREN_TICKER_RE = re.compile(
 # match) and 2–6 letters (skips single-letter false hits).
 _CASHTAG_RE = re.compile(r"\$([A-Z]{2,6})\b")
 
+# Bank named only PERIPHERALLY (it isn't the subject) or marketing/sponsorship
+# fluff. The bank's name matched the headline, but the STORY is someone else's:
+#   • underwriter / placement-agent / advisor on another company's deal —
+#     "Macerich ... Public Offering ... Goldman Sachs acting as underwriter"
+#   • custodian/holder on an EU transparency filing — "Umicore - Transparency
+#     notification by Bank of America Corporation"
+#   • sponsorship / sports / sweepstakes — "Monster Energy's ... UFC ..."
+#   • content-marketing "study/survey finds" pieces — "BofA Study Finds ..."
+# Narrow on purpose: real dividend/M&A/earnings/buyback/officer headlines never
+# read this way (pinned in tests/test_news_junk_filter.py).
+_OFFSUBJECT_RE = re.compile(
+    r"\bunderwrit"                                       # underwriter/-ing
+    r"|\bbook-?runn|\bbookrunner\b"
+    r"|\b(joint|sole|lead|co-?)\s*(?:book|lead\s+manager|bookrunner|manager)\b"
+    r"|\bplacement\s+agent\b|\bsales\s+agent\b"
+    r"|\bacting\s+as\b|\bas\s+(?:lead|sole|joint|exclusive)\b"
+    r"|\b(?:financial|exclusive|legal)\s+advisor\b|\badvisor\s+to\b"
+    r"|\btransparency\s+notification\b|\bshareholding\s+notification\b"
+    r"|\bnotification\s+of\s+major\b|\bvoting\s+rights\b"
+    r"|\bUFC\b|\bchampionship\b|\bdefeats\b|\btitle\s+fight\b"
+    r"|\bgrand\s+prix\b|\btournament\b|\bsweepstakes\b"
+    r"|\b(?:study|survey|poll|report|index)\s+(?:finds|reveals|shows)\b"
+    r"|\bsurvey\s+of\b",
+    re.IGNORECASE,
+)
+
 
 def is_junk_news(headline: str, ticker: str | None = None) -> bool:
     """ONE junk filter for ingest AND display. Rejects:
@@ -611,6 +637,9 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
         supplements, free-writing prospectuses, "Guarantor:" stubs
       • dividend-CALENDAR filler (_DIV_CALENDAR_RE) — ex-dividend reminders /
         upcoming-dividend schedules (NOT real "Declares Dividend" actions)
+      • off-subject / marketing (_OFFSUBJECT_RE) — bank named only as
+        underwriter/advisor/custodian on someone else's deal, EU transparency
+        notifications, sponsorship/sports fluff, "study finds" content-marketing
       • structured-note issuance (is_routine_noise)
       • (when ``ticker`` is given) headlines tagged with a DIFFERENT company's
         exchange ticker, both "(NYSE:XXX)" and bare "$XXX" cashtag forms.
@@ -623,7 +652,8 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
     if (_THIRD_PARTY_RE.search(h) or _INSTITUTIONAL_RE.search(h)
             or _INSIDER_TRIVIA_RE.search(h) or _FARM_RE.search(h)
             or _PROMO_RE.search(h) or _PROSPECTUS_RE.search(h)
-            or _DIV_CALENDAR_RE.search(h) or is_routine_noise(h)):
+            or _DIV_CALENDAR_RE.search(h) or _OFFSUBJECT_RE.search(h)
+            or is_routine_noise(h)):
         return True
     if ticker:
         t = ticker.upper()
