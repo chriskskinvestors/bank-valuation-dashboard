@@ -596,8 +596,16 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                             if mk not in filter_key_to_idx:
                                 continue
                             ss[f"filt_metric_{tab_key}_{restored}"] = filter_key_to_idx[mk]
-                            ss[f"filt_op_{tab_key}_{restored}"] = flt.get("op", "<")
-                            ss[f"filt_val_{tab_key}_{restored}"] = flt.get("value", 0.0)
+                            # kind defaults to absolute so pre-kind saves restore
+                            # as threshold filters.
+                            if flt.get("kind") == "peer_relative":
+                                ss[f"filt_kind_{tab_key}_{restored}"] = "Peer-relative"
+                                ss[f"filt_band_{tab_key}_{restored}"] = flt.get("band", "Top")
+                                ss[f"filt_pct_{tab_key}_{restored}"] = float(flt.get("pct", 25.0))
+                            else:
+                                ss[f"filt_kind_{tab_key}_{restored}"] = "Absolute"
+                                ss[f"filt_op_{tab_key}_{restored}"] = flt.get("op", "<")
+                                ss[f"filt_val_{tab_key}_{restored}"] = flt.get("value", 0.0)
                             restored += 1
                         if restored:
                             ss[f"num_filters_{tab_key}"] = min(restored, 4)
@@ -625,11 +633,18 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                         mk = filter_keys[mi] if 0 < mi < len(filter_keys) else None
                         if mk is None:
                             continue
-                        filters.append({
-                            "metric_key": mk,
-                            "op": ss.get(f"filt_op_{tab_key}_{i}", "<"),
-                            "value": ss.get(f"filt_val_{tab_key}_{i}", 0.0),
-                        })
+                        if ss.get(f"filt_kind_{tab_key}_{i}") == "Peer-relative":
+                            filters.append({
+                                "kind": "peer_relative", "metric_key": mk,
+                                "band": ss.get(f"filt_band_{tab_key}_{i}", "Top"),
+                                "pct": ss.get(f"filt_pct_{tab_key}_{i}", 25.0),
+                            })
+                        else:
+                            filters.append({
+                                "kind": "absolute", "metric_key": mk,
+                                "op": ss.get(f"filt_op_{tab_key}_{i}", "<"),
+                                "value": ss.get(f"filt_val_{tab_key}_{i}", 0.0),
+                            })
                     cfg = {
                         "tab_key": tab_key,
                         "sort_idx": ss.get(f"sort_{tab_key}", 0),
@@ -676,11 +691,13 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         )
 
     # ── Metric filters (any metric; AND-combined) ──────────────────────
-    active_filters = []
+    from analysis.screen_engine import evaluate as _evaluate_screen
+    filter_specs = []
     with st.expander("🔍 Metric Filters", expanded=False):
-        st.caption("Filter on any metric. A bank with no value for a filtered "
-                   "metric is reported as excluded (no data), never silently "
-                   "counted as failing the screen.")
+        st.caption("Filter on any metric, AND-combined. **Absolute** compares the value "
+                   "to a threshold; **Peer-relative** ranks within the current scope "
+                   "(Top/Bottom % by value). A bank with no value for a filtered metric "
+                   "is reported as excluded (no data), never counted as failing.")
         num_filters = st.selectbox(
             "Number of filters",
             options=[1, 2, 3, 4],
@@ -688,8 +705,14 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         )
 
         for fi in range(num_filters):
-            fc1, fc2, fc3 = st.columns([3, 1, 2])
-            with fc1:
+            kc, mc, oc, vc = st.columns([1.5, 3, 1.4, 1.6])
+            with kc:
+                fkind = st.selectbox(
+                    "Type", ["Absolute", "Peer-relative"],
+                    key=f"filt_kind_{tab_key}_{fi}",
+                    label_visibility="collapsed" if fi > 0 else "visible",
+                )
+            with mc:
                 filt_idx = st.selectbox(
                     "Metric",
                     options=list(range(len(filter_labels))),
@@ -697,63 +720,47 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     key=f"filt_metric_{tab_key}_{fi}",
                     label_visibility="collapsed" if fi > 0 else "visible",
                 )
-            with fc2:
-                filt_op = st.selectbox(
-                    "Op",
-                    options=["<", "≤", ">", "≥", "="],
-                    key=f"filt_op_{tab_key}_{fi}",
-                    label_visibility="collapsed" if fi > 0 else "visible",
-                )
-            with fc3:
-                filt_val = st.number_input(
-                    "Value",
-                    value=0.0,
-                    step=0.1,
-                    format="%.2f",
-                    key=f"filt_val_{tab_key}_{fi}",
-                    label_visibility="collapsed" if fi > 0 else "visible",
-                )
-
             filt_key = filter_keys[filt_idx] if filt_idx > 0 else None
-            if filt_key is not None:
-                active_filters.append((filt_key, filt_op, filt_val))
 
-    # Apply metric filters. A bank missing a filtered metric is EXCLUDED as
-    # "no data" and counted separately — never silently scored as a failure
-    # (cardinal rule: no-data is not the same as fails-the-screen).
+            if fkind == "Peer-relative":
+                with oc:
+                    fband = st.selectbox(
+                        "Band", ["Top", "Bottom"],
+                        key=f"filt_band_{tab_key}_{fi}",
+                        label_visibility="collapsed" if fi > 0 else "visible",
+                    )
+                with vc:
+                    fpct = st.number_input(
+                        "Pct %", value=25.0, min_value=1.0, max_value=99.0,
+                        step=5.0, format="%.0f",
+                        key=f"filt_pct_{tab_key}_{fi}",
+                        label_visibility="collapsed" if fi > 0 else "visible",
+                    )
+                if filt_key is not None:
+                    filter_specs.append({"kind": "peer_relative", "metric": filt_key,
+                                         "band": fband, "pct": fpct})
+            else:
+                with oc:
+                    fop = st.selectbox(
+                        "Op", ["<", "≤", ">", "≥", "="],
+                        key=f"filt_op_{tab_key}_{fi}",
+                        label_visibility="collapsed" if fi > 0 else "visible",
+                    )
+                with vc:
+                    fval = st.number_input(
+                        "Value", value=0.0, step=0.1, format="%.2f",
+                        key=f"filt_val_{tab_key}_{fi}",
+                        label_visibility="collapsed" if fi > 0 else "visible",
+                    )
+                if filt_key is not None:
+                    filter_specs.append({"kind": "absolute", "metric": filt_key,
+                                         "op": fop, "value": fval})
+
+    # Apply via the screening engine — it excludes no-data banks (counted) rather
+    # than silently scoring them as failures (cardinal rule).
     n_excluded_nodata = 0
-    if active_filters and display_metrics:
-        kept = []
-        for m in display_metrics:
-            missing = False
-            fails = False
-            for fk, fop, fv in active_filters:
-                val = m.get(fk)
-                if val is None:
-                    missing = True
-                    break
-                try:
-                    val = float(val)
-                except (TypeError, ValueError):
-                    missing = True
-                    break
-                if fop == "<" and not (val < fv):
-                    fails = True
-                elif fop == "≤" and not (val <= fv):
-                    fails = True
-                elif fop == ">" and not (val > fv):
-                    fails = True
-                elif fop == "≥" and not (val >= fv):
-                    fails = True
-                elif fop == "=" and not (abs(val - fv) < 0.005):
-                    fails = True
-                if fails:
-                    break
-            if missing:
-                n_excluded_nodata += 1
-            elif not fails:
-                kept.append(m)
-        display_metrics = kept
+    if filter_specs and display_metrics:
+        display_metrics, n_excluded_nodata = _evaluate_screen(display_metrics, filter_specs)
 
     # Apply sorting
     sort_key = sort_keys[sort_idx] if sort_idx > 0 else None
@@ -775,8 +782,8 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
 
     # Header — provenance is FDIC + SEC fundamentals (NOT a price feed); the old
     # "IBKR/FMP" label was wrong for these tables. No-data exclusions are shown.
-    filter_note = (f" · {len(active_filters)} filter"
-                   f"{'s' if len(active_filters) != 1 else ''}") if active_filters else ""
+    filter_note = (f" · {len(filter_specs)} filter"
+                   f"{'s' if len(filter_specs) != 1 else ''}") if filter_specs else ""
     nodata_note = f" · {n_excluded_nodata} excluded (no data)" if n_excluded_nodata else ""
     st.markdown(
         '<div class="dashboard-header">'

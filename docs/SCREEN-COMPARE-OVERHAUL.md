@@ -49,6 +49,39 @@ block); Compare lives in `ui/peer_comparison.py`. Findings that drove this plan:
   existing Asset/Business/Manual; Screen→Compare "compare this group" handoff.
 - **B4 — cleanup:** retire `portfolio = []`, remove orphaned code, final render-verify.
 
+## Screening engine — SNL-grade primitives (user guidance 2026-06-17)
+
+Confirmed: build all four filter primitives; defer point-in-time reconstruction to a
+separate backend track; saved-screen **versioning only** this pass (alerts later).
+
+Filter primitives (composable, AND-combined) — `analysis/screen_engine.py`:
+1. **Absolute threshold** — SHIPPED (B2). `metric op value`.
+2. **Peer-relative** — percentile/rank within the ACTIVE scope/group (e.g. efficiency
+   in worst quartile). Uses `peer_groups.compute_peer_percentile`. No new data.
+3. **Change / growth** — QoQ / YoY on any metric. Common cases already filterable via
+   precomputed deltas (`dep_qoq_growth`, `npl_trend_bps`, `cet1_qoq_pp`, …); the generic
+   version recomputes prior-quarter values through the REAL engine
+   (`build_bank_metrics` per quarter, FDIC-sourced) — never a reimplementation.
+4. **Trend / persistence** — N consecutive quarters of a direction; needs per-metric
+   quarterly history in the evaluator (same engine path).
+
+Peer groups gain a **geography (state)** dimension. HQ state = FDIC `STALP`, available
+only on the institutions endpoint → add a cached ticker→state resolver
+(`data/bank_geography.py`); MSA/county deferred (extra fetch).
+
+**Deferred — point-in-time universe reconstruction** (separate track): the M&A/failure
+event data EXISTS (`data/fdic_structure.py`, effective dates + OUT/ACQ roles); as-of-
+quarter membership + historical financials for defunct entities is a substantial build.
+Screen the CURRENT universe meanwhile, labeled "as of latest". Spec doc TBD.
+
+Build order (each its own verified, shippable batch):
+- **B3** — peer-relative primitive (engine + UI). No new data.
+- **B4** — state geography groups (ticker→state resolver + scope dimension).
+- **B5** — generic change/growth + trend/persistence (history engine; correctness-gated).
+- **B6** — Compare rebuild (shared scope selector + Screen→Compare handoff) +
+  saved-screen versioning.
+- **B7** — retire `portfolio = []`, point-in-time spec doc, cleanup.
+
 ## Do-not-touch (other lanes)
 
 Market & Macro + `docs/HOME-MACRO-PLAN.md`; `tests/smoke_live.py` + the deploy smoke job;
