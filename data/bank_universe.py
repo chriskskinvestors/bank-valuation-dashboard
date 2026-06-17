@@ -575,17 +575,22 @@ def search_universe(query: str, limit: int = 25) -> list[dict]:
     Search the bank universe by ticker or company name.
     Returns list of {ticker, name, cik, fdic_cert, exchange}.
     """
+    from utils.formatting import format_bank_name
     universe = get_universe()
     query_upper = query.upper().strip()
 
     if not query_upper:
         return []
 
+    def _row(ticker, info):
+        return {"ticker": ticker, **info,
+                "name": format_bank_name(info.get("name") or ticker, ticker)}
+
     # Exact ticker match — honored even for a non-common class (explicit lookup
     # of, say, FCNCP), but those are hidden from browse/prefix/name discovery
     # below so they don't clutter results.
     if query_upper in universe:
-        return [{"ticker": query_upper, **universe[query_upper]}]
+        return [_row(query_upper, universe[query_upper])]
 
     excluded = coverage_excluded()
     results = []
@@ -596,15 +601,16 @@ def search_universe(query: str, limit: int = 25) -> list[dict]:
         if ticker in excluded:
             continue
         if ticker.startswith(query_upper):
-            results.append({"ticker": ticker, **info})
+            results.append(_row(ticker, info))
             seen_tickers.add(ticker)
 
-    # Then name match (O(1) lookup via set instead of O(n) list scan)
+    # Then name match — match against the raw stored name (broadest), display
+    # the normalized one.
     for ticker, info in universe.items():
         if ticker in seen_tickers or ticker in excluded:
             continue
         if query_upper in info["name"].upper():
-            results.append({"ticker": ticker, **info})
+            results.append(_row(ticker, info))
 
     return results[:limit]
 
@@ -614,15 +620,18 @@ def get_universe_bank(ticker: str) -> dict | None:
     Look up a single bank in the universe.
     Falls back to dynamic resolution if not in prebuilt universe.
     """
+    from utils.formatting import format_bank_name
     ticker = ticker.upper()
     universe = get_universe()
     info = universe.get(ticker)
     if info:
-        return {"ticker": ticker, **info}
+        return {"ticker": ticker, **info,
+                "name": format_bank_name(info.get("name") or ticker, ticker)}
 
     # Fallback to dynamic resolution
     from data.bank_mapping import resolve_ticker
     resolved = resolve_ticker(ticker)
     if resolved.get("cik") or resolved.get("fdic_cert"):
-        return resolved
+        return {**resolved,
+                "name": format_bank_name(resolved.get("name") or ticker, ticker)}
     return None

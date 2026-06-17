@@ -7,6 +7,77 @@ B/M/K convention, instead of spelling out the full figure ($843,000).
 import unittest
 
 from utils.formatting import usd_compact_from_thousands as usd
+from utils.formatting import format_bank_name as fbn
+
+
+class TestFormatBankName(unittest.TestCase):
+    """Names reach the UI from sources with inconsistent casing (ALL-CAPS SEC
+    EDGAR vs curated Title Case) and EDGAR /XX/ suffixes; format_bank_name
+    normalizes them all to one Title-Case, suffix-dropped style."""
+
+    def test_allcaps_sources_titlecased_suffix_dropped(self):
+        self.assertEqual(fbn("PATRIOT NATIONAL BANCORP INC"),
+                         "Patriot National Bancorp")
+        self.assertEqual(fbn("CARVER BANCORP INC"), "Carver Bancorp")
+        self.assertEqual(fbn("GREENE COUNTY BANCORP INC"), "Greene County Bancorp")
+        self.assertEqual(fbn("HAWTHORN BANCSHARES, INC."), "Hawthorn Bancshares")
+
+    def test_state_suffix_stripped(self):
+        self.assertEqual(fbn("CONSUMERS BANCORP INC /OH/"), "Consumers Bancorp")
+        self.assertEqual(fbn("Redwood Financial Inc /MN/"), "Redwood Financial")
+        self.assertEqual(fbn("Citizens Holding Co /Ms/"), "Citizens Holding")
+
+    def test_minor_words_lowercased(self):
+        self.assertEqual(fbn("BANK OF SOUTH CAROLINA CORP"),
+                         "Bank of South Carolina")
+
+    def test_acronyms_and_ampersands_preserved(self):
+        self.assertEqual(fbn("F&M BANK CORP"), "F&M Bank")
+        self.assertEqual(fbn("C&F FINANCIAL CORP"), "C&F Financial")
+        self.assertEqual(fbn("Generations Bancorp NY, Inc."),
+                         "Generations Bancorp NY")
+
+    def test_mixed_case_camelcase_preserved(self):
+        # Already-good names keep their intentional casing; only suffix dropped.
+        self.assertEqual(fbn("HomeTrust Bancshares"), "HomeTrust Bancshares")
+        self.assertEqual(fbn("BancFirst Corporation"), "BancFirst")
+        self.assertEqual(fbn("InsCorp, Inc."), "InsCorp")
+        self.assertEqual(fbn("HBT Financial, Inc."), "HBT Financial")
+
+    def test_and_co_and_national_association(self):
+        self.assertEqual(fbn("JPMorgan Chase & Co."), "JPMorgan Chase")
+        self.assertEqual(fbn("Wells Fargo & Co."), "Wells Fargo")
+        self.assertEqual(fbn("Zions Bancorporation, National Association"),
+                         "Zions Bancorporation")
+
+    def test_ticker_acronym_kept_uppercase(self):
+        # A name word that IS the ticker is the company's acronym → uppercase;
+        # a real word whose ticker differs still title-cases.
+        self.assertEqual(fbn("ACNB CORP", "ACNB"), "ACNB")
+        self.assertEqual(fbn("ESSA BANCORP INC", "ESSA"), "ESSA Bancorp")
+        self.assertEqual(fbn("AMES NATIONAL CORP", "ATLO"), "Ames National")
+        self.assertEqual(fbn("ARROW FINANCIAL CORP", "AROW"), "Arrow Financial")
+
+    def test_edgar_registration_suffix_variants(self):
+        # Fully-enclosed "/NEW/", trailing 2-letter "/MN", dangling slash —
+        # but an INTERNAL slash (Cullen/Frost) must be preserved.
+        self.assertEqual(fbn("KEYCORP /NEW/", "KEY"), "Keycorp")
+        self.assertEqual(fbn("WELLS FARGO & COMPANY/MN", "WFC"), "Wells Fargo")
+        self.assertEqual(fbn("TRICO BANCSHARES /", "TCBK"), "Trico Bancshares")
+        self.assertEqual(fbn("CULLEN/FROST BANKERS, INC.", "CFR"),
+                         "Cullen/Frost Bankers")
+        # Hyphenated "Banc-Corp" is part of the name, not a droppable suffix.
+        self.assertEqual(fbn("ASSOCIATED BANC-CORP", "ASB"),
+                         "Associated Banc-Corp")
+
+    def test_idempotent(self):
+        for raw in ("PATRIOT NATIONAL BANCORP INC", "JPMorgan Chase & Co.",
+                    "CONSUMERS BANCORP INC /OH/", "HomeTrust Bancshares"):
+            self.assertEqual(fbn(fbn(raw)), fbn(raw))
+
+    def test_empty_and_none(self):
+        self.assertEqual(fbn(""), "")
+        self.assertEqual(fbn(None), "")
 
 
 class TestUsdCompactFromThousands(unittest.TestCase):

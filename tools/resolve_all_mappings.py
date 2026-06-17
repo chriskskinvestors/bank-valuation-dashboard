@@ -290,13 +290,17 @@ def main():
     print(f"At least one:   {has_either}/{len(results)}")
     print(f"Neither:        {has_neither}/{len(results)}")
 
-    # Sort results by ticker, write JSON
+    # Sort results by ticker, write JSON. Names go through the shared display
+    # formatter so the stored data is already normalized (Title Case, EDGAR
+    # /XX/ suffixes + corporate-form tokens dropped, ticker acronyms kept).
+    from utils.formatting import format_bank_name
     results.sort(key=lambda r: r["ticker"])
     out_path = REPO_ROOT / "data" / "bank_map_resolved.json"
     payload = {r["ticker"]: {"cik": r["cik"], "fdic_cert": r["cert"],
-                              "name": r["name"], "fdic_score": r["fdic_score"]}
+                              "name": format_bank_name(r["name"], r["ticker"]),
+                              "fdic_score": r["fdic_score"]}
                for r in results}
-    out_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    out_path.write_text(json.dumps(payload, indent=1, sort_keys=True))
     print(f"\nWrote {out_path}")
 
     # Print residual no-data tickers (will help curate manual overrides)

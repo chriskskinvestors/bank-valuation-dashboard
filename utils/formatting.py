@@ -7,8 +7,112 @@ from __future__ import annotations  # Lazy-evaluate all type hints (PEP 563).
                                      # isn't always importable at module-load time
                                      # under older pandas / pinned Python versions.
 
+import re
+
 import pandas as pd
 from config import METRICS_BY_KEY
+
+
+# ── Bank name display formatter ──────────────────────────────────────────
+# Names reach the UI from heterogeneous sources with inconsistent casing:
+# SEC EDGAR's entityName is ALL CAPS ("PATRIOT NATIONAL BANCORP INC"), the
+# curated BANK_MAP is Title Case ("Carter Bankshares Inc."), and FDIC/snapshot
+# names carry "/DE/"-style state codes. Routing every name through this one
+# formatter (see data.bank_mapping.get_name) makes the whole dashboard
+# consistent without a data migration. The function is idempotent.
+
+# Registration suffix EDGAR appends at the END, two forms:
+#   • fully slash-enclosed marker: "… /DE/", "KEYCORP /NEW/"
+#   • trailing 2-letter state, no closing slash: "WELLS FARGO & COMPANY/MN"
+# A 2-letter cap on the unenclosed form keeps an internal slash safe — it must
+# never strip "/Frost" from "CULLEN/FROST BANKERS".
+_STATE_SUFFIX_RE = re.compile(r"(\s*/[A-Za-z0-9.]{1,9}/|\s*/[A-Za-z]{2})\s*$")
+
+# Minor words kept lowercase unless first.
+_MINOR_WORDS = {"of", "and", "the", "for", "in", "on", "at", "to", "a", "an"}
+
+# Roman numerals (suffixes like "Capital Trust II") kept uppercase.
+_ROMAN = {"ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"}
+
+# Acronyms containing a vowel that must NOT be down-cased when the source is
+# ALL CAPS (the no-vowel heuristic below catches HBT, FNB, SB, NBT, … already).
+_ACRONYM_WHITELIST = {"USA", "US", "NA", "NY", "BOK", "UMB", "OZK", "ESB", "ESSA"}
+
+# Trailing corporate-form tokens to drop entirely (longest phrases first so
+# "& co" / "national association" win before "co"/"na"). Display only — the
+# meaningful "Bancorp/Bancshares/Financial/Holdings/Group" stay.
+_DROP_SUFFIXES = [
+    "national association", "& company", "& co",
+    "incorporated", "corporation", "company",
+    "inc", "corp", "co", "ltd", "limited", "llc", "plc", "lp",
+    "n.a.", "na",
+]
+
+
+def _title_word(word: str, is_first: bool, ticker: str | None) -> str:
+    low = word.lower()
+    if not is_first and low in _MINOR_WORDS:
+        return low
+    if low in _ROMAN:
+        return word.upper()
+    if word.upper() in _ACRONYM_WHITELIST:
+        return word.upper()
+    # A word equal to the ticker is the company's own acronym — keep it
+    # uppercase (ACNB, ESSA, HBT), while real words whose ticker differs
+    # (AMES/ATLO, ARROW/AROW) still title-case normally.
+    if ticker and word.upper() == ticker.upper():
+        return word.upper()
+    # No-vowel short token ⇒ acronym (FNB, SB, NBT, WSFS, C&F, F&M).
+    letters = re.sub(r"[^a-z]", "", low)
+    if letters and len(letters) <= 5 and not re.search(r"[aeiou]", letters):
+        return word.upper()
+    # Default: capitalize each alphabetic run (handles hyphens, "&").
+    return re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(), word)
+
+
+def _drop_corporate_suffix(name: str) -> str:
+    """Strip trailing corporate-form tokens repeatedly, but never reduce a
+    name to empty (a name that IS only a suffix is left untouched)."""
+    while True:
+        base = name.rstrip(" ,.")
+        low = base.lower()
+        for phrase in _DROP_SUFFIXES:
+            if low == phrase:
+                return name  # whole name is the suffix — keep as-is
+            if (low.endswith(" " + phrase) or low.endswith("," + phrase)
+                    or low.endswith(", " + phrase)):
+                name = base[: len(base) - len(phrase)].rstrip(" ,&")
+                break
+        else:
+            return base
+
+
+def format_bank_name(raw: str | None, ticker: str | None = None,
+                     *, drop_suffix: bool = True) -> str:
+    """Normalize a bank's display name: strip EDGAR state suffixes, Title-Case
+    ALL-CAPS sources (preserving acronyms, minor words, roman numerals), and
+    drop trailing corporate-form tokens (Inc./Corp./Co./& Co/National
+    Association). Already-mixed-case names keep their casing (so intentional
+    camel-case like "HomeTrust"/"BancFirst"/"InsCorp" survives). Passing the
+    ticker keeps a name that IS the ticker acronym uppercase (ACNB, ESSA).
+    Idempotent."""
+    if not raw:
+        return raw or ""
+    name = str(raw).strip()
+    while True:  # strip stacked markers, e.g. "… /CA/ /NEW/"
+        stripped = _STATE_SUFFIX_RE.sub("", name).strip()
+        if stripped == name:
+            break
+        name = stripped
+    # Only re-case when the source is shouting; otherwise trust its casing.
+    letters = re.sub(r"[^A-Za-z]", "", name)
+    if letters and name == name.upper():
+        words = name.split()
+        name = " ".join(_title_word(w, i == 0, ticker)
+                        for i, w in enumerate(words))
+    if drop_suffix:
+        name = _drop_corporate_suffix(name)
+    return re.sub(r"\s+", " ", name).strip(" ,.&-/")
 
 
 # ── Shared numeric primitives ────────────────────────────────────────────

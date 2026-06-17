@@ -233,14 +233,19 @@ def get_name(ticker: str) -> str:
     """Return bank display name, same priority order as get_fdic_cert().
     Called per option by the company picker's format_func — a live
     resolution here ran 60+ network lookups per page run (measured: the
-    page hung for minutes in search_fdic_by_name)."""
+    page hung for minutes in search_fdic_by_name).
+
+    Every name is normalized through utils.formatting.format_bank_name so the
+    whole dashboard is consistent regardless of which source (ALL-CAPS SEC
+    EDGAR, curated Title Case, FDIC with /XX/ suffixes) supplied it."""
+    from utils.formatting import format_bank_name  # lazy: keep cold-start light
     ticker = ticker.upper()
     info = (BANK_MAP.get(ticker) or _RESOLVED_FROM_JSON.get(ticker)
             or _universe_snapshot_map().get(ticker) or _RESOLVED_CACHE.get(ticker))
     if info and info.get("name"):
-        return info["name"]
+        return format_bank_name(info["name"], ticker)
     resolved = resolve_ticker(ticker)
-    return resolved.get("name", ticker)
+    return format_bank_name(resolved.get("name", ticker), ticker)
 
 
 def get_fdic_cert(ticker: str) -> int | None:
