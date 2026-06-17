@@ -61,9 +61,11 @@ CUSTOM_CSS = """
         --radius-lg: 14px;
         --radius-xl: 20px;
 
-        /* Type scale — the ONLY font sizes inline HTML may use.
-           (The audit found 31 ad-hoc sizes between 0.55 and 1.2rem;
-           every new size must snap to one of these 7 steps.) */
+        /* Type scale — the font sizes inline HTML may use for chrome/body.
+           (The audit found 31 ad-hoc sizes between 0.55 and 1.2rem; every new
+           chrome/body size must snap to one of these 7 steps. The one sanctioned
+           exception is the dense terminal-grid ramp below, for the owner-locked
+           Home above-the-fold grid, whose density sits below this scale.) */
         --fs-2xs:  0.625rem;   /* 10px — pills, dense table captions */
         --fs-xs:   0.6875rem;  /* 11px — captions, axis/meta labels */
         --fs-sm:   0.75rem;    /* 12px — secondary text, table cells */
@@ -71,6 +73,21 @@ CUSTOM_CSS = """
         --fs-md:   1rem;       /* 16px — emphasized body, card titles */
         --fs-lg:   1.125rem;   /* 18px — section headings */
         --fs-xl:   1.375rem;   /* 22px — page titles, hero numbers */
+
+        /* Dense terminal-grid micro-scale — the Home above-the-fold 7-pane grid
+           (owner-locked). These sub-body sizes fall below the --fs-* t-shirt
+           scale; defined as a self-contained ramp so the grid's density is
+           tunable in one place without perturbing the body scale. Values are
+           exact px (1rem = 16px) — changing one RESCALES the locked grid, so do
+           it deliberately. */
+        --fs-grid-7_5:  0.46875rem; /* 7.5px  */
+        --fs-grid-8:    0.5rem;     /* 8px    */
+        --fs-grid-8_5:  0.53125rem; /* 8.5px  */
+        --fs-grid-9:    0.5625rem;  /* 9px    */
+        --fs-grid-9_5:  0.59375rem; /* 9.5px  */
+        --fs-grid-10:   0.625rem;   /* 10px   */
+        --fs-grid-10_5: 0.65625rem; /* 10.5px */
+        --fs-grid-11:   0.6875rem;  /* 11px   */
 
         /* Terminal density (DESIGN-SYSTEM.md) */
         --cell-pad-y: 2px;
