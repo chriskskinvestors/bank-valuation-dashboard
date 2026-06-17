@@ -2,6 +2,13 @@
 Canonical HTML atoms for the dashboard (P3 design system,
 docs/AUDIT-2026-06-11.md §D).
 
+These were first extracted to de-duplicate the home page. The home page has
+since been rebuilt as the bespoke dense `_AF` above-the-fold grid (ui/home.py),
+which has its own self-contained markup, so it no longer calls these atoms.
+They remain the CANONICAL atom library for every OTHER page (Screen & Compare,
+detail blocks, etc.) — reach for these instead of hand-rolling a pill / card /
+deep-link row, so the design system stays in one place.
+
 One implementation per visual atom; variants come from parameters
 (label, value, accent, href) — never from copies. Rules:
 
