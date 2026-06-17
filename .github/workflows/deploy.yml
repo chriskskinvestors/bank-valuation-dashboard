@@ -220,10 +220,14 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.PROJECT_ID }}
-      - name: Install Playwright (chromium)
+      - name: Install Playwright (chromium) + mitmproxy
         run: |
-          python -m pip install --quiet playwright
+          python -m pip install --quiet playwright mitmproxy
           python -m playwright install --with-deps chromium
+          # Pre-generate mitmproxy's CA so the first proxied request isn't racing
+          # CA creation (smoke_live.py routes the browser through mitmdump to
+          # attach the IAP token to the WebSocket upgrade Chromium won't header).
+          timeout 10 mitmdump -q -p 8898 >/dev/null 2>&1 || true
       - name: Live smoke through IAP
         env:
           APP_URL: ${{ vars.APP_URL }}
