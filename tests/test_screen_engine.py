@@ -121,5 +121,78 @@ class TestCombined(unittest.TestCase):
         self.assertEqual(nodata, 1)
 
 
+class TestChangeTrend(unittest.TestCase):
+    def _provider(self, series_by_ticker):
+        return lambda tk: series_by_ticker.get(tk)
+
+    def test_change_qoq(self):
+        m = _banks(tickers=["A"], nco_ratio=[0.50])
+        prov = self._provider({"A": {"nco_ratio": [0.50, 0.20]}})  # QoQ Δ = +0.30
+        kept, nd = evaluate(m, [{"kind": "change", "metric": "nco_ratio",
+                                 "basis": "QoQ", "op": ">", "value": 0.25}], prov)
+        self.assertEqual([b["ticker"] for b in kept], ["A"])
+        self.assertEqual(nd, 0)
+
+    def test_change_qoq_fails(self):
+        m = _banks(tickers=["A"], nco_ratio=[0.50])
+        prov = self._provider({"A": {"nco_ratio": [0.50, 0.40]}})  # Δ = +0.10
+        kept, nd = evaluate(m, [{"kind": "change", "metric": "nco_ratio",
+                                 "basis": "QoQ", "op": ">", "value": 0.25}], prov)
+        self.assertEqual(kept, [])
+        self.assertEqual(nd, 0)        # a clean fail is NOT no-data
+
+    def test_change_yoy(self):
+        m = _banks(tickers=["A"], nim=[2.0])
+        prov = self._provider({"A": {"nim": [2.0, 1.9, 1.8, 1.7, 1.5]}})  # YoY Δ = +0.5
+        kept, _ = evaluate(m, [{"kind": "change", "metric": "nim",
+                                "basis": "YoY", "op": ">", "value": 0.4}], prov)
+        self.assertEqual([b["ticker"] for b in kept], ["A"])
+
+    def test_change_short_history_is_nodata(self):
+        m = _banks(tickers=["A"], nim=[2.0])
+        prov = self._provider({"A": {"nim": [2.0]}})  # no q-1 → can't compute QoQ
+        kept, nd = evaluate(m, [{"kind": "change", "metric": "nim",
+                                 "basis": "QoQ", "op": ">", "value": 0}], prov)
+        self.assertEqual(kept, [])
+        self.assertEqual(nd, 1)
+
+    def test_trend_declining(self):
+        m = _banks(tickers=["A"], reserve_coverage_pct=[1.0])
+        # latest 1.0 < 2.0 < 3.0 < 4.0 (older) → down 3 straight quarters
+        prov = self._provider({"A": {"reserve_coverage_pct": [1.0, 2.0, 3.0, 4.0]}})
+        kept, _ = evaluate(m, [{"kind": "trend", "metric": "reserve_coverage_pct",
+                                "direction": "down", "quarters": 3}], prov)
+        self.assertEqual([b["ticker"] for b in kept], ["A"])
+
+    def test_trend_not_monotonic_fails(self):
+        m = _banks(tickers=["A"], x=[1.0])
+        prov = self._provider({"A": {"x": [1.0, 2.0, 1.5, 4.0]}})  # 1<2 ok, 2<1.5 no
+        kept, _ = evaluate(m, [{"kind": "trend", "metric": "x",
+                                "direction": "down", "quarters": 3}], prov)
+        self.assertEqual(kept, [])
+
+    def test_trend_rising(self):
+        m = _banks(tickers=["A"], x=[4.0])
+        prov = self._provider({"A": {"x": [4.0, 3.0, 2.0, 1.0]}})  # rising 3 straight
+        kept, _ = evaluate(m, [{"kind": "trend", "metric": "x",
+                                "direction": "up", "quarters": 3}], prov)
+        self.assertEqual([b["ticker"] for b in kept], ["A"])
+
+    def test_history_lazy_shortcircuit(self):
+        # A bank failing a cheap filter placed first must not trigger history.
+        m = _banks(tickers=["A"], cet1_ratio=[8.0], x=[1.0])
+
+        def prov(tk):
+            raise AssertionError("history_provider should not be called")
+
+        specs = [
+            {"kind": "absolute", "metric": "cet1_ratio", "op": ">", "value": 10},  # A fails (8<10)
+            {"kind": "trend", "metric": "x", "direction": "down", "quarters": 2},
+        ]
+        kept, nd = evaluate(m, specs, prov)
+        self.assertEqual(kept, [])
+        self.assertEqual(nd, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -445,6 +445,15 @@ def load_single_bank_metrics_cached(ticker: str) -> dict:
     return metrics[0] if metrics else {"ticker": ticker}
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _screen_metric_series(ticker: str, metric_keys: tuple, n_quarters: int) -> dict:
+    """Cached per-quarter metric history for the change/trend screen primitives
+    (one entry per bank). Recomputed through the real engine — see
+    analysis/metric_history.py."""
+    from analysis.metric_history import metric_series
+    return metric_series(ticker, list(metric_keys), n_quarters)
+
+
 def get_watchlist_cohort() -> list[dict]:
     """Peer cohort = watchlist metrics. Returns the cached set, loading it on
     first use so peer ranking (the Peer Rank tab) is reliably available even if
@@ -598,10 +607,21 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                             ss[f"filt_metric_{tab_key}_{restored}"] = filter_key_to_idx[mk]
                             # kind defaults to absolute so pre-kind saves restore
                             # as threshold filters.
-                            if flt.get("kind") == "peer_relative":
+                            kind = flt.get("kind", "absolute")
+                            if kind == "peer_relative":
                                 ss[f"filt_kind_{tab_key}_{restored}"] = "Peer-relative"
                                 ss[f"filt_band_{tab_key}_{restored}"] = flt.get("band", "Top")
                                 ss[f"filt_pct_{tab_key}_{restored}"] = float(flt.get("pct", 25.0))
+                            elif kind == "change":
+                                ss[f"filt_kind_{tab_key}_{restored}"] = "Change"
+                                ss[f"filt_basis_{tab_key}_{restored}"] = flt.get("basis", "QoQ")
+                                ss[f"filt_chop_{tab_key}_{restored}"] = flt.get("op", ">")
+                                ss[f"filt_chval_{tab_key}_{restored}"] = flt.get("value", 0.0)
+                            elif kind == "trend":
+                                ss[f"filt_kind_{tab_key}_{restored}"] = "Trend"
+                                ss[f"filt_dir_{tab_key}_{restored}"] = (
+                                    "Declining" if flt.get("direction") == "down" else "Rising")
+                                ss[f"filt_q_{tab_key}_{restored}"] = int(flt.get("quarters", 3))
                             else:
                                 ss[f"filt_kind_{tab_key}_{restored}"] = "Absolute"
                                 ss[f"filt_op_{tab_key}_{restored}"] = flt.get("op", "<")
@@ -633,11 +653,26 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                         mk = filter_keys[mi] if 0 < mi < len(filter_keys) else None
                         if mk is None:
                             continue
-                        if ss.get(f"filt_kind_{tab_key}_{i}") == "Peer-relative":
+                        fkind_s = ss.get(f"filt_kind_{tab_key}_{i}", "Absolute")
+                        if fkind_s == "Peer-relative":
                             filters.append({
                                 "kind": "peer_relative", "metric_key": mk,
                                 "band": ss.get(f"filt_band_{tab_key}_{i}", "Top"),
                                 "pct": ss.get(f"filt_pct_{tab_key}_{i}", 25.0),
+                            })
+                        elif fkind_s == "Change":
+                            filters.append({
+                                "kind": "change", "metric_key": mk,
+                                "basis": ss.get(f"filt_basis_{tab_key}_{i}", "QoQ"),
+                                "op": ss.get(f"filt_chop_{tab_key}_{i}", ">"),
+                                "value": ss.get(f"filt_chval_{tab_key}_{i}", 0.0),
+                            })
+                        elif fkind_s == "Trend":
+                            filters.append({
+                                "kind": "trend", "metric_key": mk,
+                                "direction": ("down" if ss.get(f"filt_dir_{tab_key}_{i}") == "Declining"
+                                              else "up"),
+                                "quarters": ss.get(f"filt_q_{tab_key}_{i}", 3),
                             })
                         else:
                             filters.append({
@@ -694,10 +729,11 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     from analysis.screen_engine import evaluate as _evaluate_screen
     filter_specs = []
     with st.expander("🔍 Metric Filters", expanded=False):
-        st.caption("Filter on any metric, AND-combined. **Absolute** compares the value "
-                   "to a threshold; **Peer-relative** ranks within the current scope "
-                   "(Top/Bottom % by value). A bank with no value for a filtered metric "
-                   "is reported as excluded (no data), never counted as failing.")
+        st.caption("Filter on any metric, AND-combined. **Absolute** = value vs a "
+                   "threshold · **Peer-relative** = Top/Bottom % by value within the "
+                   "current scope · **Change** = QoQ/YoY move · **Trend** = N consecutive "
+                   "quarters one way. A bank with no value (or too little history) for a "
+                   "filter is excluded as no-data, never counted as failing.")
         num_filters = st.selectbox(
             "Number of filters",
             options=[1, 2, 3, 4],
@@ -705,62 +741,89 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         )
 
         for fi in range(num_filters):
-            kc, mc, oc, vc = st.columns([1.5, 3, 1.4, 1.6])
+            kc, mc, c3, c4, c5 = st.columns([1.5, 2.6, 1.3, 1.3, 1.3])
+            lblvis = "collapsed" if fi > 0 else "visible"
             with kc:
                 fkind = st.selectbox(
-                    "Type", ["Absolute", "Peer-relative"],
-                    key=f"filt_kind_{tab_key}_{fi}",
-                    label_visibility="collapsed" if fi > 0 else "visible",
+                    "Type", ["Absolute", "Peer-relative", "Change", "Trend"],
+                    key=f"filt_kind_{tab_key}_{fi}", label_visibility=lblvis,
                 )
             with mc:
                 filt_idx = st.selectbox(
                     "Metric",
                     options=list(range(len(filter_labels))),
                     format_func=lambda i, fl=filter_labels: fl[i],
-                    key=f"filt_metric_{tab_key}_{fi}",
-                    label_visibility="collapsed" if fi > 0 else "visible",
+                    key=f"filt_metric_{tab_key}_{fi}", label_visibility=lblvis,
                 )
             filt_key = filter_keys[filt_idx] if filt_idx > 0 else None
 
             if fkind == "Peer-relative":
-                with oc:
-                    fband = st.selectbox(
-                        "Band", ["Top", "Bottom"],
-                        key=f"filt_band_{tab_key}_{fi}",
-                        label_visibility="collapsed" if fi > 0 else "visible",
-                    )
-                with vc:
-                    fpct = st.number_input(
-                        "Pct %", value=25.0, min_value=1.0, max_value=99.0,
-                        step=5.0, format="%.0f",
-                        key=f"filt_pct_{tab_key}_{fi}",
-                        label_visibility="collapsed" if fi > 0 else "visible",
-                    )
+                with c3:
+                    fband = st.selectbox("Band", ["Top", "Bottom"],
+                        key=f"filt_band_{tab_key}_{fi}", label_visibility=lblvis)
+                with c4:
+                    fpct = st.number_input("Pct %", value=25.0, min_value=1.0,
+                        max_value=99.0, step=5.0, format="%.0f",
+                        key=f"filt_pct_{tab_key}_{fi}", label_visibility=lblvis)
                 if filt_key is not None:
                     filter_specs.append({"kind": "peer_relative", "metric": filt_key,
                                          "band": fband, "pct": fpct})
-            else:
-                with oc:
-                    fop = st.selectbox(
-                        "Op", ["<", "≤", ">", "≥", "="],
-                        key=f"filt_op_{tab_key}_{fi}",
-                        label_visibility="collapsed" if fi > 0 else "visible",
-                    )
-                with vc:
-                    fval = st.number_input(
-                        "Value", value=0.0, step=0.1, format="%.2f",
-                        key=f"filt_val_{tab_key}_{fi}",
-                        label_visibility="collapsed" if fi > 0 else "visible",
-                    )
+            elif fkind == "Change":
+                with c3:
+                    fbasis = st.selectbox("Basis", ["QoQ", "YoY"],
+                        key=f"filt_basis_{tab_key}_{fi}", label_visibility=lblvis)
+                with c4:
+                    fchop = st.selectbox("Op", ["<", "≤", ">", "≥", "="],
+                        key=f"filt_chop_{tab_key}_{fi}", label_visibility=lblvis)
+                with c5:
+                    fchval = st.number_input("Δ", value=0.0, step=0.1, format="%.2f",
+                        key=f"filt_chval_{tab_key}_{fi}", label_visibility=lblvis)
+                if filt_key is not None:
+                    filter_specs.append({"kind": "change", "metric": filt_key,
+                                         "basis": fbasis, "op": fchop, "value": fchval})
+            elif fkind == "Trend":
+                with c3:
+                    fdir = st.selectbox("Direction", ["Declining", "Rising"],
+                        key=f"filt_dir_{tab_key}_{fi}", label_visibility=lblvis)
+                with c4:
+                    fq = st.selectbox("Quarters", [2, 3, 4],
+                        key=f"filt_q_{tab_key}_{fi}", label_visibility=lblvis)
+                if filt_key is not None:
+                    filter_specs.append({"kind": "trend", "metric": filt_key,
+                                         "direction": "down" if fdir == "Declining" else "up",
+                                         "quarters": fq})
+            else:  # Absolute
+                with c3:
+                    fop = st.selectbox("Op", ["<", "≤", ">", "≥", "="],
+                        key=f"filt_op_{tab_key}_{fi}", label_visibility=lblvis)
+                with c4:
+                    fval = st.number_input("Value", value=0.0, step=0.1, format="%.2f",
+                        key=f"filt_val_{tab_key}_{fi}", label_visibility=lblvis)
                 if filt_key is not None:
                     filter_specs.append({"kind": "absolute", "metric": filt_key,
                                          "op": fop, "value": fval})
 
     # Apply via the screening engine — it excludes no-data banks (counted) rather
-    # than silently scoring them as failures (cardinal rule).
+    # than silently scoring them as failures (cardinal rule). Change/trend specs
+    # need per-quarter history, computed lazily per bank and cached.
     n_excluded_nodata = 0
     if filter_specs and display_metrics:
-        display_metrics, n_excluded_nodata = _evaluate_screen(display_metrics, filter_specs)
+        ct_specs = [s for s in filter_specs if s["kind"] in ("change", "trend")]
+        if ct_specs:
+            ct_metrics = tuple(sorted({s["metric"] for s in ct_specs}))
+            max_lb = max(
+                [4 if s.get("basis") == "YoY" else 1 for s in ct_specs if s["kind"] == "change"]
+                + [int(s.get("quarters", 3)) for s in ct_specs if s["kind"] == "trend"] + [1])
+
+            def _hist_provider(tk, _m=ct_metrics, _n=max_lb):
+                return _screen_metric_series(tk, _m, _n)
+
+            with st.spinner("Computing quarterly history for change/trend filters…"):
+                display_metrics, n_excluded_nodata = _evaluate_screen(
+                    display_metrics, filter_specs, _hist_provider)
+        else:
+            display_metrics, n_excluded_nodata = _evaluate_screen(
+                display_metrics, filter_specs)
 
     # Apply sorting
     sort_key = sort_keys[sort_idx] if sort_idx > 0 else None

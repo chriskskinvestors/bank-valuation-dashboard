@@ -75,6 +75,38 @@ def _passes(bank: dict, spec: dict, pct_lookup: dict) -> bool | None:
     return None
 
 
+def _passes_history(spec: dict, series: dict) -> bool | None:
+    """Verdict for change / trend specs against a per-quarter metric series
+    ({metric_key: [v_latest, v_t-1, …]}). None when history is missing/short."""
+    vals = series.get(spec.get("metric")) if series else None
+    if not vals:
+        return None
+    kind = spec.get("kind")
+
+    if kind == "change":
+        # QoQ = vs 1 quarter ago, YoY = vs 4 quarters ago.
+        k = 1 if spec.get("basis") == "QoQ" else 4
+        if len(vals) <= k:
+            return None
+        cur, prior = _as_float(vals[0]), _as_float(vals[k])
+        if cur is None or prior is None:
+            return None
+        return _cmp(cur - prior, spec.get("op", ">"), float(spec.get("value", 0.0)))
+
+    if kind == "trend":
+        n = int(spec.get("quarters", 3))
+        if len(vals) <= n:
+            return None
+        seq = [_as_float(v) for v in vals[:n + 1]]   # index 0 = latest
+        if any(v is None for v in seq):
+            return None
+        if spec.get("direction") == "down":
+            return all(seq[i] < seq[i + 1] for i in range(n))   # each newer < older
+        return all(seq[i] > seq[i + 1] for i in range(n))       # each newer > older
+
+    return None
+
+
 def _peer_percentiles(metrics: list[dict], metric_keys: set) -> dict:
     """For each peer-relative metric, the percentile rank of every bank's raw
     value within the active scope. {metric_key: {ticker: percentile|None}}."""
@@ -89,13 +121,19 @@ def _peer_percentiles(metrics: list[dict], metric_keys: set) -> dict:
     return out
 
 
-def evaluate(metrics: list[dict], specs: list[dict]) -> tuple[list[dict], int]:
+def evaluate(metrics: list[dict], specs: list[dict],
+             history_provider=None) -> tuple[list[dict], int]:
     """Apply AND-combined filter specs to the active scope.
 
     Returns (kept, n_excluded_nodata). A bank missing data for ANY active spec's
     metric is excluded as no-data and counted — never scored as a failure.
     Peer-relative percentiles resolve against `metrics` (the active scope) — peer
     membership IS the scope the caller passed in.
+
+    ``history_provider(ticker) -> {metric_key: [v_latest, …]}`` supplies the
+    per-quarter series for change/trend specs; it is called LAZILY (once per bank,
+    only when a change/trend spec is reached) so cheap filters placed first can
+    short-circuit before any history is computed.
     """
     if not specs:
         return list(metrics), 0
@@ -106,10 +144,16 @@ def evaluate(metrics: list[dict], specs: list[dict]) -> tuple[list[dict], int]:
     kept: list[dict] = []
     n_excluded_nodata = 0
     for m in metrics:
+        series = None  # computed on first change/trend spec for this bank
         missing = False
         fails = False
         for s in specs:
-            verdict = _passes(m, s, pct_lookup)
+            if s.get("kind") in ("change", "trend"):
+                if series is None:
+                    series = (history_provider(m.get("ticker")) if history_provider else {}) or {}
+                verdict = _passes_history(s, series)
+            else:
+                verdict = _passes(m, s, pct_lookup)
             if verdict is None:
                 missing = True
                 break
