@@ -228,5 +228,145 @@ class TestMedianHelper(unittest.TestCase):
         self.assertEqual(fomc._median([1.0, 2.0, 3.0, 4.0]), 2.5)
 
 
+class TestStatementDate(unittest.TestCase):
+    def test_picks_latest_on_or_before_today(self):
+        # Day after a meeting → that meeting's date.
+        self.assertEqual(fomc._statement_date(date(2026, 6, 20)), date(2026, 6, 17))
+        # On a meeting day → that day (<= is inclusive).
+        self.assertEqual(fomc._statement_date(date(2026, 6, 17)), date(2026, 6, 17))
+        # Between meetings → the most recent prior one.
+        self.assertEqual(fomc._statement_date(date(2026, 4, 28)), date(2026, 3, 18))
+        # Late in the year → the December meeting.
+        self.assertEqual(fomc._statement_date(date(2026, 12, 31)), date(2026, 12, 9))
+
+    def test_before_first_meeting_is_none(self):
+        self.assertIsNone(fomc._statement_date(date(2026, 1, 1)))
+        self.assertIsNone(fomc._statement_date(date(2026, 1, 27)))
+
+
+_CANNED_STATEMENT_HTML = """
+<html><body>
+  <div class="col-md-8 col-xs-12">
+    <p>Recent indicators suggest that economic activity has continued to expand.</p>
+    <p>The Committee decided to lower the target range for the federal funds
+       rate to 3-1/2 to 3-3/4 percent.</p>
+    <p>In assessing the appropriate stance of monetary policy, the Committee
+       will continue to monitor incoming information.</p>
+    <p>Voting for the monetary policy action were: Jerome H. Powell, Chair;
+       John C. Williams, Vice Chair; and Michael S. Barr.</p>
+    <p>Voting against the action was: Christopher J. Waller.</p>
+    <p>Implementation Note issued June 17, 2026</p>
+    <p>Last Update: June 17, 2026</p>
+    <p>Share</p>
+  </div>
+</body></html>
+"""
+
+
+class TestParseStatementHtml(unittest.TestCase):
+    def setUp(self):
+        self.dt = date(2026, 6, 17)
+        self.url = fomc._statement_url(self.dt)
+        self.out = fomc._parse_statement_html(_CANNED_STATEMENT_HTML, self.url, self.dt)
+
+    def test_returns_dict_shape(self):
+        self.assertIsNotNone(self.out)
+        self.assertEqual(self.out["date"], self.dt)
+        self.assertEqual(self.out["url"], self.url)
+
+    def test_substantive_paragraphs_kept_in_order(self):
+        paras = self.out["paragraphs"]
+        self.assertEqual(len(paras), 3)
+        self.assertTrue(paras[0].startswith("Recent indicators"))
+        self.assertIn("3-1/2 to 3-3/4 percent", paras[1])
+        self.assertTrue(paras[2].startswith("In assessing"))
+
+    def test_boilerplate_excluded(self):
+        joined = " ".join(self.out["paragraphs"])
+        self.assertNotIn("Last Update", joined)
+        self.assertNotIn("Implementation Note", joined)
+        self.assertNotEqual(self.out["paragraphs"][-1], "Share")
+
+    def test_vote_captured(self):
+        self.assertIsNotNone(self.out["vote"])
+        self.assertTrue(self.out["vote"].startswith("Voting for the monetary policy action were"))
+        # The "Voting against" line is appended to the same string.
+        self.assertIn("Voting against", self.out["vote"])
+        self.assertIn("Christopher J. Waller", self.out["vote"])
+        # Vote lines must not leak into the prose list.
+        self.assertFalse(any("Voting for" in p for p in self.out["paragraphs"]))
+
+    def test_article_id_fallback_div(self):
+        html = '<div id="article"><p>The Committee held the target range steady.</p></div>'
+        out = fomc._parse_statement_html(html, self.url, self.dt)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["paragraphs"], ["The Committee held the target range steady."])
+        self.assertIsNone(out["vote"])
+
+    def test_empty_html_is_none(self):
+        self.assertIsNone(fomc._parse_statement_html("", self.url, self.dt))
+
+    def test_garbage_html_is_none(self):
+        # No article container at all → None.
+        self.assertIsNone(
+            fomc._parse_statement_html("<html><body><p>hi</p></body></html>", self.url, self.dt)
+        )
+
+    def test_article_with_no_substantive_paragraphs_is_none(self):
+        html = '<div id="article"><p>Share</p><p>Last Update: x</p></div>'
+        self.assertIsNone(fomc._parse_statement_html(html, self.url, self.dt))
+
+    def test_date_header_excluded(self):
+        # A bare "Month D, YYYY" header (and "... Share" variant) is dropped.
+        joined = " ".join(self.out["paragraphs"])
+        self.assertNotIn("June 17, 2026", joined)
+
+
+class TestVoteTallyFallback(unittest.TestCase):
+    """The 'approved ... by an N-0 vote' page format (no roster line)."""
+
+    def setUp(self):
+        self.dt = date(2026, 6, 17)
+        self.url = fomc._statement_url(self.dt)
+        # Mirrors the live June 2026 page: date header, release line, a vote
+        # tally sentence, and substantive prose — no "Voting for ... were" line.
+        html = """
+        <div id="article">
+          <p>June 17, 2026</p>
+          <p>For release at 2:00 p.m. EDT Share</p>
+          <p>The Federal Open Market Committee approved the following statement
+             for release by a 12-0 vote:</p>
+          <p>The Committee decided to maintain the target range for the federal
+             funds rate at 3-1/2 to 3-3/4 percent.</p>
+          <p>Implementation Note issued June 17, 2026</p>
+        </div>
+        """
+        self.out = fomc._parse_statement_html(html, self.url, self.dt)
+
+    def test_vote_tally_captured_as_vote(self):
+        self.assertIsNotNone(self.out["vote"])
+        self.assertIn("12-0 vote", self.out["vote"])
+
+    def test_vote_tally_stays_in_prose(self):
+        # The tally sentence is genuine prose → also present in paragraphs.
+        self.assertTrue(any("12-0 vote" in p for p in self.out["paragraphs"]))
+
+    def test_header_and_release_and_impl_note_excluded(self):
+        joined = " ".join(self.out["paragraphs"])
+        self.assertNotIn("June 17, 2026", joined)
+        self.assertNotIn("For release at", joined)
+        self.assertNotIn("Implementation Note", joined)
+
+    def test_mojibake_dash_still_matches(self):
+        # En-dash that arrived mojibake'd ("12 \xe2 0") must still be detected.
+        html = (
+            '<div id="article"><p>The FOMC approved the following statement for '
+            'release by a 12 â 0 vote:</p><p>Body prose paragraph here.</p></div>'
+        )
+        out = fomc._parse_statement_html(html, self.url, self.dt)
+        self.assertIsNotNone(out["vote"])
+        self.assertIn("vote", out["vote"].lower())
+
+
 if __name__ == "__main__":
     unittest.main()

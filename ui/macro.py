@@ -564,7 +564,7 @@ def _render_fed_panel(full: bool = True):
     SEP dots aren't published machine-readably, so the median + central-tendency
     band + full range convey the distribution (see data/fomc.py)."""
     import html as _h
-    from data.fomc import fed_policy_snapshot, sep_projections
+    from data.fomc import fed_policy_snapshot, sep_projections, fetch_fomc_statement
 
     snap = fed_policy_snapshot()
     nm = snap.get("next_meeting")
@@ -666,6 +666,49 @@ def _render_fed_panel(full: bool = True):
     st.caption("FOMC median projections by horizon; fed funds shown with central-tendency band "
                "+ full range in the chart above. Individual participant dots aren't published "
                f"machine-readably — band/range conveys the spread. Source: FRED (SEP {sep_txt}).")
+
+    # ── Statement & commentary: the FOMC's own words + recent Fed headlines ──
+    st.markdown("---")
+    sc1, sc2 = st.columns([1.4, 1])
+    with sc1:
+        st.markdown("**Latest FOMC statement**")
+        stmt = fetch_fomc_statement()
+        if stmt and stmt.get("paragraphs"):
+            sdt = stmt["date"].strftime("%b %d, %Y").replace(" 0", " ")
+            paras = "".join(f'<p style="margin:0 0 6px;">{_h.escape(p)}</p>'
+                            for p in stmt["paragraphs"])
+            st.markdown(
+                '<div style="border-left:3px solid var(--brand-primary);padding:4px 12px;'
+                'background:var(--bg-surface);font-size:var(--fs-sm);line-height:1.45;">'
+                f'{paras}</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(f"FOMC statement · {sdt} · [full release]({stmt['url']}) · "
+                       "Source: Federal Reserve.")
+        else:
+            st.caption("FOMC statement unavailable (federalreserve.gov fetch failed).")
+    with sc2:
+        st.markdown("**Fed headlines**")
+        try:
+            from data.events.store import get_topic_news
+            from data.events.topic_curation import curate_topic_news
+            news = curate_topic_news(
+                get_topic_news("macro", hours=120, limit=60), "macro")[:6]
+        except Exception:
+            news = []
+        if news:
+            lis = "".join(
+                '<li style="margin:0 0 4px;">'
+                f'<a href="{_h.escape(n.get("url", ""))}" target="_blank" '
+                f'style="color:var(--brand-primary);">{_h.escape(n.get("headline", ""))}</a>'
+                ' <span style="color:var(--text-muted);font-size:var(--fs-2xs);">'
+                f'{_h.escape(n.get("source_name") or "")}</span></li>'
+                for n in news)
+            st.markdown(
+                f'<ul style="margin:0;padding-left:16px;font-size:var(--fs-sm);">{lis}</ul>',
+                unsafe_allow_html=True)
+        else:
+            st.caption("Fed/Powell headlines populate from the macro news feed in production.")
 
 
 def _render_surprise_summary(recent):

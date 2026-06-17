@@ -20,11 +20,15 @@ observations dated on/after the current calendar year. Longer-run series carry
 one observation per meeting; we take the latest.
 """
 
+import re
 from datetime import date
 
 import pandas as pd
+import streamlit as st
+from bs4 import BeautifulSoup
 
 from data.fred_client import fetch_series
+from data.http import get_with_retry
 
 
 # Verified 2026 FOMC decision days (second/decision day of each meeting).
@@ -291,10 +295,141 @@ def _median(values: list[float]) -> float:
     return float((s[mid - 1] + s[mid]) / 2.0)
 
 
+# ---------------------------------------------------------------------------
+# 4) latest FOMC policy statement (scraped from federalreserve.gov)
+# ---------------------------------------------------------------------------
+# Boilerplate fragments that appear as their own <p> in the press release shell
+# but are not part of the substantive policy statement.
+_STATEMENT_BOILERPLATE = (
+    "last update",
+    "implementation note",
+    "for media inquiries",
+    "for release at",
+)
+
+# A bare date header line, e.g. "June 17, 2026" (optionally trailed by "Share").
+_DATE_HEADER_RE = re.compile(
+    r"^[A-Z][a-z]+ \d{1,2}, \d{4}(?:\s+Share)?$"
+)
+
+# A vote tally on the "approved ... by a 12-0 vote" page format. The separator
+# is some dash/space variant (en-dash often arrives mojibake'd), so match any
+# non-digit run between the two counts.
+_VOTE_TALLY_RE = re.compile(r"by an?\s+\d+\D{1,6}\d+\s+vote", re.IGNORECASE)
+
+
+def _statement_date(today: date | None = None) -> date | None:
+    """
+    Latest FOMC decision day on/before `today` (defaults to today). Returns None
+    if `today` precedes the first 2026 meeting.
+    """
+    if today is None:
+        today = date.today()
+    past = [d for d in FOMC_2026_DECISION_DAYS if d <= today]
+    return max(past) if past else None
+
+
+def _statement_url(dt: date) -> str:
+    """Federal Reserve press-release URL for a given statement date."""
+    return (
+        "https://www.federalreserve.gov/newsevents/pressreleases/"
+        f"monetary{dt.strftime('%Y%m%d')}a.htm"
+    )
+
+
+def _is_boilerplate(text: str) -> bool:
+    stripped = text.strip()
+    if stripped.lower() == "share":
+        return True
+    if _DATE_HEADER_RE.match(stripped):
+        return True
+    low = stripped.lower()
+    return any(frag in low for frag in _STATEMENT_BOILERPLATE)
+
+
+def _parse_statement_html(html: str, url: str, dt: date) -> dict | None:
+    """
+    Pure parse of a Fed press-release page into the statement dict, or None if
+    no substantive paragraphs are found. No network — testable in isolation.
+    """
+    if not html:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+
+    # The statement body lives in the main article column. Prefer an explicit
+    # #article div; fall back to the Bootstrap content column.
+    article = soup.find(id="article")
+    if article is None:
+        for cls in ("col-md-8", "col-xs-12"):
+            article = soup.find("div", class_=lambda c: c and cls in c)
+            if article is not None:
+                break
+    if article is None:
+        return None
+
+    paragraphs: list[str] = []
+    vote: str | None = None
+    vote_is_roster = False  # the canonical "Voting for ... were" roster wins
+    for p in article.find_all("p"):
+        text = p.get_text(" ", strip=True)
+        if not text:
+            continue
+        if _is_boilerplate(text):
+            continue
+        low = text.lower()
+        # Canonical voting roster (Implementation Note style): capture it and
+        # keep it out of the prose list.
+        if low.startswith("voting for the monetary policy action were"):
+            vote = text
+            vote_is_roster = True
+            continue
+        if vote_is_roster and low.startswith("voting against"):
+            vote = f"{vote} {text}"
+            continue
+        # Fallback vote line on the "approved ... by an N-0 vote" page format.
+        # This sentence is genuine statement prose, so it stays in `paragraphs`
+        # AND is surfaced as the vote string when no roster line is present.
+        if not vote_is_roster and _VOTE_TALLY_RE.search(text):
+            vote = text
+        paragraphs.append(text)
+
+    if not paragraphs:
+        return None
+
+    return {"date": dt, "url": url, "paragraphs": paragraphs, "vote": vote}
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_fomc_statement(today: date | None = None) -> dict | None:
+    """
+    The latest FOMC policy statement (prose paragraphs + vote line), scraped
+    from federalreserve.gov. Returns None on any failure or if no statement
+    has been issued yet this year.
+
+    Statements are immutable once published, so a 6h cache is ample.
+    """
+    dt = _statement_date(today)
+    if dt is None:
+        return None
+    url = _statement_url(dt)
+    try:
+        resp = get_with_retry(url, timeout=15)
+    except Exception:
+        return None
+    if resp is None:
+        return None
+    # Fed pages are UTF-8; requests can mis-guess to ISO-8859-1 when the header
+    # omits a charset, mojibake'ing en-dashes. Prefer the apparent encoding.
+    if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
+        resp.encoding = resp.apparent_encoding or "utf-8"
+    return _parse_statement_html(resp.text, url, dt)
+
+
 __all__ = [
     "fed_policy_snapshot",
     "sep_projections",
     "sep_dots",
     "next_meeting",
+    "fetch_fomc_statement",
     "FOMC_2026_DECISION_DAYS",
 ]
