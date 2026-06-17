@@ -83,12 +83,13 @@ This is the single highest-value gap — it turns "the user finds it" into "CI
 finds it." Lighter interim: a script that opens the URL post-deploy and
 checks the rendered DOM for the nav tabs + absence of `Traceback`.
 
-### Gap B (P1) — Pin the Docker base image
-`Dockerfile` uses `python:3.11-slim` (floating tag). A base-image refresh can
+### Gap B (P1) — Pin the Docker base image — ✅ FIXED 2026-06-17
+`Dockerfile` used `python:3.11-slim` (floating tag). A base-image refresh can
 change the Python patch and OS libs under us — the same class of drift as the
-deps. **Action:** pin by digest: `FROM python:3.11-slim@sha256:<digest>`
-(get the digest from the deploy build log or `docker buildx imagetools
-inspect python:3.11-slim`). Re-pin deliberately when upgrading.
+deps. **Done:** pinned by digest
+`python:3.11-slim@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839de7a4b983e7ca`
+(multi-arch manifest list, verified to resolve + include amd64). Re-pin
+deliberately when upgrading — see the Dockerfile comment for the command.
 
 ### Gap C (P1) — Evaluate the pandas 3.0 / numpy 2.4 majors
 The lock froze the stack at `pandas==3.0.3` because that's what prod was

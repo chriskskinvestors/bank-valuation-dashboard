@@ -1,4 +1,9 @@
-FROM python:3.11-slim
+# Base image pinned by digest (Gap B, production-readiness audit) so a base-image
+# refresh can't change the Python patch / OS libs under us — same drift class as
+# the dependency lock. Re-pin DELIBERATELY when upgrading:
+#   docker buildx imagetools inspect python:3.11-slim   (or the Docker Hub manifest)
+# python:3.11-slim, digest fetched 2026-06-17.
+FROM python:3.11-slim@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839de7a4b983e7ca
 
 WORKDIR /app
 
