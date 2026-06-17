@@ -27,6 +27,7 @@ Env:
 Exit 0 = healthy; non-zero (with a message) = broken deploy.
 """
 import contextlib
+import html
 import os
 import socket
 import subprocess
@@ -159,7 +160,12 @@ def main() -> int:
                 return 1
 
             if hydrated:
-                present = [lbl for lbl in EXPECTED_ANY if lbl in body]
+                # Match against HTML-unescaped content: labels with '&' render
+                # as '&amp;' in page.content(), so a raw substring check would
+                # silently drop Market & Macro / Screen & Compare / News &
+                # Research from the log and read as if they hadn't rendered.
+                text = html.unescape(body)
+                present = [lbl for lbl in EXPECTED_ANY if lbl in text]
                 print(f"smoke_live: OK — live page hydrated and rendered "
                       f"(nav sections: {present})")
                 return 0
