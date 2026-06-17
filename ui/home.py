@@ -178,8 +178,12 @@ _AF_CSS = r"""
 .afwrap .live{width:6px;height:6px;border-radius:50%;background:#059669;display:inline-block;}
 .afwrap .body{flex:1 1 auto;overflow:auto;}
 .afwrap .etf{display:flex;flex-direction:column;}
-.afwrap .erow{display:grid;align-items:center;column-gap:6px;padding:0 14px;border-bottom:1px solid #f6f8fa;grid-template-columns:20px 1.5fr .7fr 1fr 1fr .75fr .85fr;}
+.afwrap .erow{display:grid;align-items:center;column-gap:6px;padding:0 14px;border-bottom:1px solid #f6f8fa;grid-template-columns:20px 1.5fr .7fr 1fr 1fr .75fr .85fr;box-sizing:border-box;}
 .afwrap .erow:last-child{border-bottom:none;}
+/* Let grid cells shrink below their content's intrinsic width so a long
+   (nowrap) bank name ellipsizes instead of forcing its track wide and
+   spilling the row past the card. Canonical grid/flex overflow fix. */
+.afwrap .erow>*,.afwrap .fitem>*{min-width:0;}
 .afwrap .erow.eh{flex:0 0 auto;height:21px;border-bottom:1px solid #eceff4;}
 /* Fixed, tight row height (top-aligned) so density is uniform across panes —
    sparse panes (e.g. Calendar) get whitespace at the bottom, never stretched
@@ -237,7 +241,7 @@ _AF_CSS = r"""
 /* ── Native-widget panes (st.container cards) — compaction + alignment ──
    Streamlit 1.58 testids: segmented control = stButtonGroup, its buttons =
    stBaseButton-segmented_control[ Active]; dropdown = stSelectbox. */
-div[class*="st-key-afpane"]{border:1px solid #dde3ec!important;border-radius:4px!important;background:#fff!important;padding:0 0 5px!important;margin-bottom:14px;}
+div[class*="st-key-afpane"]{border:1px solid #dde3ec!important;border-radius:4px!important;background:#fff!important;padding:0 0 5px!important;margin-bottom:14px;overflow:hidden!important;}
 div[class*="st-key-afpane"] [data-testid="stVerticalBlock"]{gap:.3rem!important;}
 div[class*="st-key-afpane"] [data-testid="stElementContainer"]{padding:0!important;}
 div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"]{padding:3px 10px 0!important;gap:.35rem!important;}
@@ -545,7 +549,10 @@ def _af_calendar_table(watchlist: list[str]) -> str:
 
 def _af_feed_items(watchlist: list[str]) -> list[dict]:
     from data.cache import served_snapshot
-    return served_snapshot("home_af_feed_snap", 1800,
+    # Key bumped to _v2 (2026-06-17) so the relevance-filter + source-link +
+    # 8-K-summary changes take effect on this deploy's first render instead of
+    # waiting out the 30-min TTL on the pre-existing snapshot.
+    return served_snapshot("home_af_feed_snap_v2", 1800,
                            lambda: _af_feed_items_live(watchlist),
                            guard=len(watchlist or []))
 
