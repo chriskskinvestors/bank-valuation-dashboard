@@ -220,5 +220,49 @@ class TestDisplaySurfaces(unittest.TestCase):
             bu._NONCOMMON_CACHE = None
 
 
+class TestForeignTwinExclusion(unittest.TestCase):
+    """A skipped foreign ADR (MFG) leaves its OTC ordinary twin (MZHOF) alone
+    under one CIK, so the share-class CIK rule sees a lone 'common'. The skip
+    list must be enforced at runtime so MZHOF is dropped from screens, search,
+    and the count without waiting for a snapshot rebuild."""
+
+    def _stub(self):
+        st = types.ModuleType("streamlit")
+        st.cache_data = lambda *a, **k: (
+            a[0] if a and callable(a[0]) else (lambda f: f))
+        st.cache_resource = st.cache_data
+        sys.modules.setdefault("streamlit", st)
+        import data.bank_universe as bu
+        import data.bank_mapping as bm
+        uni = {
+            "JPM":   {"cik": 19617, "fdic_cert": 628, "name": "JPMorgan Chase"},
+            "MZHOF": {"cik": 1335730, "fdic_cert": 21843,
+                      "name": "MIZUHO FINANCIAL GROUP INC", "exchange": "OTC"},
+        }
+        bu._UNIVERSE_CACHE = uni
+        bu._NONCOMMON_CACHE = None
+        return bu, bm, uni
+
+    def test_mzhof_in_skip_list(self):
+        import data.bank_universe as bu
+        self.assertIn("MZHOF", bu._SKIP_TICKERS)
+
+    def test_mzhof_excluded_everywhere(self):
+        bu, bm, uni = self._stub()
+        orig = bm.get_cik
+        bm.get_cik = lambda t: uni.get(t, {}).get("cik")
+        try:
+            self.assertIn("MZHOF", bu.coverage_excluded())
+            self.assertNotIn("MZHOF", bu.get_universe_tickers())
+            self.assertIn("JPM", bu.get_universe_tickers())
+            self.assertEqual(bu.get_universe_count(), 1)  # only JPM covered
+            hits = {r["ticker"] for r in bu.search_universe("MIZUHO")}
+            self.assertNotIn("MZHOF", hits)
+        finally:
+            bm.get_cik = orig
+            bu._UNIVERSE_CACHE = None
+            bu._NONCOMMON_CACHE = None
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -52,7 +52,11 @@ _SKIP_TICKERS = {
     "SAN",   # Banco Santander (Spain)
     "BCS",   # Barclays (UK)
     "UBS",   # UBS Group (Switzerland)
-    "MFG",   # Mizuho Financial Group (Japan)
+    "MFG",   # Mizuho Financial Group (Japan) — NYSE ADR
+    "MZHOF", # Mizuho Financial Group (Japan) — OTC ordinary twin of MFG.
+             # MFG (the ADR) is skipped, which leaves MZHOF alone under CIK
+             # 1335730, so it slips past the share-class CIK rule as a lone
+             # "common". List both twins, as with BBD/BBDO and BAWAY/BWAGF.
     "WF",    # Woori Financial Group (Korea)
     "SHG",   # Shinhan Financial Group (Korea)
 
@@ -476,6 +480,18 @@ def get_noncommon_tickers() -> set[str]:
     return _NONCOMMON_CACHE
 
 
+def coverage_excluded() -> set[str]:
+    """Tickers hidden from every covered/display surface (screens, leaderboard,
+    search, count):
+      • non-common share classes (preferred series, baby bonds, dup listings), +
+      • explicitly skipped foreign ADRs / ETNs that leaked into the raw snapshot
+        (e.g. MZHOF, the OTC twin of the skipped ADR MFG).
+    Runtime enforcement of _SKIP_TICKERS here means a skip-list addition takes
+    effect on the served snapshot immediately, without waiting for a rebuild."""
+    universe = get_universe()
+    return get_noncommon_tickers() | (set(universe) & _SKIP_TICKERS)
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_universe_tickers() -> list[str]:
@@ -498,8 +514,9 @@ def get_universe_tickers() -> list[str]:
     # Non-common share classes (preferred series, baby bonds, redundant second
     # common classes) resolve to data but share their registrant's CIK/cert, so
     # they'd carry the common's TBVPS against their own ~$25 price — a garbage
-    # P/TBV. Drop them here, the single scope feeding screens + leaderboard.
-    noncommon = get_noncommon_tickers()
+    # P/TBV. Plus skipped foreign ADRs/ETNs that leaked into the snapshot. Drop
+    # both here, the single scope feeding screens + leaderboard.
+    excluded = coverage_excluded()
 
     def _resolves(t: str) -> bool:
         cik = get_cik(t)
@@ -510,11 +527,11 @@ def get_universe_tickers() -> list[str]:
             return False
         return cert_is_active(cert)  # Drop acquired/closed institutions
 
-    resolved = [t for t in all_tickers if t not in noncommon and _resolves(t)]
-    dropped_nc = noncommon & set(all_tickers)
+    resolved = [t for t in all_tickers if t not in excluded and _resolves(t)]
+    dropped_nc = excluded & set(all_tickers)
     if dropped_nc:
-        print(f"[universe] Excluded {len(dropped_nc)} non-common share classes: "
-              f"{', '.join(sorted(dropped_nc)[:12])}"
+        print(f"[universe] Excluded {len(dropped_nc)} non-common / out-of-scope "
+              f"tickers: {', '.join(sorted(dropped_nc)[:12])}"
               f"{'...' if len(dropped_nc) > 12 else ''}")
     dropped = set(all_tickers) - set(resolved) - dropped_nc
     if dropped:
@@ -526,9 +543,9 @@ def get_universe_tickers() -> list[str]:
 
 def get_universe_count() -> int:
     """Number of banks we COVER = raw universe minus non-common share classes
-    (a registrant is counted once, by its common stock — not once per preferred
-    series)."""
-    return len(get_universe()) - len(get_noncommon_tickers())
+    and out-of-scope tickers (a registrant is counted once, by its common stock
+    — not once per preferred series)."""
+    return len(get_universe()) - len(coverage_excluded())
 
 
 def get_universe_count_fast() -> str:
@@ -539,7 +556,7 @@ def get_universe_count_fast() -> str:
     curated mapping count (cheap, static). Never returns a hardcoded guess.
     """
     if _UNIVERSE_CACHE is not None:
-        return str(len(_UNIVERSE_CACHE) - len(get_noncommon_tickers()))
+        return str(len(_UNIVERSE_CACHE) - len(coverage_excluded()))
     try:
         from data.bank_mapping import BANK_MAP
         certs = set(BANK_MAP)
@@ -570,13 +587,13 @@ def search_universe(query: str, limit: int = 25) -> list[dict]:
     if query_upper in universe:
         return [{"ticker": query_upper, **universe[query_upper]}]
 
-    noncommon = get_noncommon_tickers()
+    excluded = coverage_excluded()
     results = []
     seen_tickers = set()
 
     # Ticker prefix match first
     for ticker, info in universe.items():
-        if ticker in noncommon:
+        if ticker in excluded:
             continue
         if ticker.startswith(query_upper):
             results.append({"ticker": ticker, **info})
@@ -584,7 +601,7 @@ def search_universe(query: str, limit: int = 25) -> list[dict]:
 
     # Then name match (O(1) lookup via set instead of O(n) list scan)
     for ticker, info in universe.items():
-        if ticker in seen_tickers or ticker in noncommon:
+        if ticker in seen_tickers or ticker in excluded:
             continue
         if query_upper in info["name"].upper():
             results.append({"ticker": ticker, **info})
