@@ -54,6 +54,10 @@ INDICATORS = [
      "basis": "yoy_pct",   "freq": "M", "theme": "Inflation", "favorable": "down"},
     {"key": "ppi",        "label": "PPI (Final Demand)", "series_id": "PPIFIS",
      "basis": "yoy_pct",   "freq": "M", "theme": "Inflation", "favorable": "down"},
+    {"key": "core_ppi",   "label": "Core PPI",          "series_id": "PPIFES",
+     "basis": "yoy_pct",   "freq": "M", "theme": "Inflation", "favorable": "down"},
+    {"key": "trimmed_pce", "label": "Trimmed Mean PCE", "series_id": "PCETRIM12M159SFRBDAL",
+     "basis": "level_pct", "freq": "M", "theme": "Inflation", "favorable": "down"},
     # ── Labor ──
     {"key": "nfp",        "label": "Nonfarm Payrolls",  "series_id": "PAYEMS",
      "basis": "mom_chg_k", "freq": "M", "theme": "Labor", "favorable": "up"},
@@ -63,6 +67,10 @@ INDICATORS = [
      "basis": "yoy_pct",   "freq": "M", "theme": "Labor", "favorable": "up"},
     {"key": "claims",     "label": "Initial Jobless Claims", "series_id": "ICSA",
      "basis": "level_k",   "freq": "W", "theme": "Labor", "favorable": "down"},
+    {"key": "jolts",      "label": "Job Openings (JOLTS)", "series_id": "JTSJOL",
+     "basis": "level_k_raw", "freq": "M", "theme": "Labor", "favorable": "up"},
+    {"key": "partic",     "label": "Labor Force Participation", "series_id": "CIVPART",
+     "basis": "level_pct", "freq": "M", "theme": "Labor", "favorable": "up"},
     # ── Growth & Activity ──
     {"key": "gdp",        "label": "Real GDP (QoQ SAAR)", "series_id": "A191RL1Q225SBEA",
      "basis": "level_pct", "freq": "Q", "theme": "Growth & Activity", "favorable": "up"},
@@ -70,6 +78,12 @@ INDICATORS = [
      "basis": "mom_pct",   "freq": "M", "theme": "Growth & Activity", "favorable": "up"},
     {"key": "indpro",     "label": "Industrial Production", "series_id": "INDPRO",
      "basis": "yoy_pct",   "freq": "M", "theme": "Growth & Activity", "favorable": "up"},
+    {"key": "real_pce",   "label": "Real Consumer Spending", "series_id": "PCEC96",
+     "basis": "yoy_pct",   "freq": "M", "theme": "Growth & Activity", "favorable": "up"},
+    {"key": "caputil",    "label": "Capacity Utilization", "series_id": "TCU",
+     "basis": "level_pct", "freq": "M", "theme": "Growth & Activity", "favorable": "up"},
+    {"key": "durables",   "label": "Durable Goods Orders", "series_id": "DGORDER",
+     "basis": "mom_pct",   "freq": "M", "theme": "Growth & Activity", "favorable": "up"},
     # ── Housing ──
     {"key": "starts",     "label": "Housing Starts",    "series_id": "HOUST",
      "basis": "level_k_raw", "freq": "M", "theme": "Housing", "favorable": "up"},
@@ -77,11 +91,17 @@ INDICATORS = [
      "basis": "level_k_raw", "freq": "M", "theme": "Housing", "favorable": "up"},
     {"key": "home_prices", "label": "Home Prices (Case-Shiller)", "series_id": "CSUSHPISA",
      "basis": "yoy_pct",   "freq": "M", "theme": "Housing", "favorable": "up"},
+    {"key": "new_home_sales", "label": "New Home Sales", "series_id": "HSN1F",
+     "basis": "level_k_raw", "freq": "M", "theme": "Housing", "favorable": "up"},
+    {"key": "existing_home_sales", "label": "Existing Home Sales", "series_id": "EXHOSLUSM495S",
+     "basis": "level_k",   "freq": "M", "theme": "Housing", "favorable": "up"},
     # ── Sentiment & Money ──
     {"key": "sentiment",  "label": "Consumer Sentiment (UMich)", "series_id": "UMCSENT",
      "basis": "level_idx", "freq": "M", "theme": "Sentiment & Money", "favorable": "up"},
     {"key": "m2",         "label": "M2 Money Supply",   "series_id": "M2SL",
      "basis": "yoy_pct",   "freq": "M", "theme": "Sentiment & Money", "favorable": "up"},
+    {"key": "nfci",       "label": "Financial Conditions (NFCI)", "series_id": "NFCI",
+     "basis": "level_idx", "freq": "W", "theme": "Sentiment & Money", "favorable": "down"},
 ]
 
 

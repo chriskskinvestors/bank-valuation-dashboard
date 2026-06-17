@@ -535,6 +535,139 @@ def _board_table(rows: list[dict]) -> str:
     )
 
 
+def _fmt_fed_range(lo, hi) -> str:
+    return f"{lo:.2f}–{hi:.2f}%" if (lo is not None and hi is not None) else _NA_HTML
+
+
+def _fmt_last_move(mv: dict) -> str:
+    """Most recent policy move, e.g. '−25 bps cut · Dec 11, 2025', or 'Hold'."""
+    d = mv.get("date")
+    when = d.strftime("%b %d, %Y").replace(" 0", " ") if d is not None else ""
+    direction = mv.get("direction")
+    if direction == "hold" or not mv.get("bps"):
+        return "Hold" + (f" · since {when}" if when else "")
+    bps = abs(int(mv.get("bps") or 0))
+    color = "var(--success)" if direction == "cut" else "var(--danger)"
+    arrow = "−" if direction == "cut" else "+"
+    return (f'<span style="color:{color};">{arrow}{bps} bps {direction}</span>'
+            + (f' · {when}' if when else ""))
+
+
+def _sep_cell(v, suffix: str = "%") -> str:
+    return f"{v:.2f}{suffix}" if v is not None else _NA_HTML
+
+
+def _render_fed_panel(full: bool = True):
+    """Fed policy snapshot + SEP projections, shared by Rates & Curve (full:
+    policy strip + dot-plot chart + macro-medians table) and Economic Data
+    (compact: policy strip + median funds path). FRED-sourced; the individual
+    SEP dots aren't published machine-readably, so the median + central-tendency
+    band + full range convey the distribution (see data/fomc.py)."""
+    import html as _h
+    from data.fomc import fed_policy_snapshot, sep_projections
+
+    snap = fed_policy_snapshot()
+    nm = snap.get("next_meeting")
+    nm_txt = nm.strftime("%b %d, %Y").replace(" 0", " ") if nm is not None else "—"
+    ao = snap.get("as_of")
+    ao_txt = ao.strftime("%b %d, %Y").replace(" 0", " ") if ao is not None else "—"
+
+    st.markdown("**Federal Reserve — policy & projections**")
+    st.markdown(
+        '<div class="ksk-grid"><table><thead><tr>'
+        '<th style="text-align:left;">Target range</th>'
+        '<th style="text-align:right;">Effective</th>'
+        '<th style="text-align:left;">Last move</th>'
+        '<th style="text-align:left;">Next meeting</th>'
+        '<th style="text-align:right;">As of</th>'
+        '</tr></thead><tbody><tr>'
+        f'<td style="text-align:left;font-weight:700;">{_fmt_fed_range(snap.get("target_lower"), snap.get("target_upper"))}</td>'
+        f'<td style="text-align:right;">{_sep_cell(snap.get("effective"))}</td>'
+        f'<td style="text-align:left;">{_fmt_last_move(snap.get("last_move") or {})}</td>'
+        f'<td style="text-align:left;">{_h.escape(nm_txt)}</td>'
+        f'<td style="text-align:right;color:var(--text-secondary);">{_h.escape(ao_txt)}</td>'
+        "</tr></tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+    proj = sep_projections()
+    funds = proj.get("funds") or []
+    sep_asof = proj.get("as_of")
+    sep_txt = sep_asof.strftime("%b %Y") if sep_asof is not None else "—"
+    if not funds:
+        st.caption("FOMC Summary of Economic Projections unavailable.")
+        return
+
+    if not full:
+        path = " → ".join(f'{f["horizon"]}: {f["median"]:.2f}%'
+                          for f in funds if f.get("median") is not None)
+        st.caption(f"SEP median fed funds path — {path}. Source: FRED (SEP {sep_txt}).")
+        return
+
+    # Dot-plot-style chart: median (diamond) · central-tendency band (thick) ·
+    # full range (thin whisker), per horizon.
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    allvals = []
+    for f in funds:
+        x = f["horizon"]
+        rl, rh, cl, ch, md = (f.get("range_low"), f.get("range_high"),
+                              f.get("ct_low"), f.get("ct_high"), f.get("median"))
+        if rl is not None and rh is not None:
+            fig.add_trace(go.Scatter(x=[x, x], y=[rl, rh], mode="lines",
+                line=dict(color="#cbd5e1", width=2), showlegend=False, hoverinfo="skip"))
+            allvals += [rl, rh]
+        if cl is not None and ch is not None:
+            fig.add_trace(go.Scatter(x=[x, x], y=[cl, ch], mode="lines",
+                line=dict(color="#93c5fd", width=11), showlegend=False, hoverinfo="skip"))
+            allvals += [cl, ch]
+        if md is not None:
+            fig.add_trace(go.Scatter(x=[x], y=[md], mode="markers",
+                marker=dict(symbol="diamond", color="#1e3a8a", size=12), showlegend=False,
+                hovertemplate=f"{x}<br>median %{{y:.2f}}%<extra></extra>"))
+            allvals.append(md)
+    apply_standard_layout(
+        fig, title=f"FOMC fed funds projections — median · central tendency · range (SEP {sep_txt})",
+        height=300, yaxis_title="%", show_legend=False)
+    if allvals:
+        tighten_yaxis(fig, allvals, ticksuffix="%")
+    st.plotly_chart(fig, use_container_width=True)
+
+    macro = proj.get("macro") or {}
+    horizons = [f["horizon"] for f in funds]
+
+    def _mm(key):
+        return {m["horizon"]: m.get("median") for m in (macro.get(key) or [])}
+    gdp, ur, pce, cpce = _mm("gdp"), _mm("unemployment"), _mm("pce"), _mm("core_pce")
+    fundmed = {f["horizon"]: f.get("median") for f in funds}
+    body = ""
+    for hz in horizons:
+        body += (
+            "<tr>"
+            f'<td style="text-align:left;">{_h.escape(str(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(fundmed.get(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(gdp.get(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(ur.get(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(pce.get(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(cpce.get(hz))}</td>'
+            "</tr>"
+        )
+    st.markdown(
+        '<div class="ksk-grid"><table><thead><tr>'
+        '<th style="text-align:left;">Horizon</th>'
+        '<th style="text-align:right;">Fed funds</th>'
+        '<th style="text-align:right;">Real GDP</th>'
+        '<th style="text-align:right;">Unemployment</th>'
+        '<th style="text-align:right;">PCE</th>'
+        '<th style="text-align:right;">Core PCE</th>'
+        "</tr></thead><tbody>" + body + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("FOMC median projections by horizon; fed funds shown with central-tendency band "
+               "+ full range in the chart above. Individual participant dots aren't published "
+               f"machine-readably — band/range conveys the spread. Source: FRED (SEP {sep_txt}).")
+
+
 def _render_economy_calendar():
     import html as _html
     import plotly.graph_objects as go
@@ -542,6 +675,10 @@ def _render_economy_calendar():
     from data.macro_indicators import get_print_board, to_yoy, to_mom_change, recession_periods
     from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
+
+    # ── Fed policy banner (compact) — placement requested on Economic Data ──
+    _render_fed_panel(full=False)
+    st.markdown("---")
 
     # ── Calendars side by side: recent surprises | upcoming releases ──
     cal_l, cal_r = st.columns(2)
@@ -930,6 +1067,10 @@ def _render_regime():
 
 
 def _render_rates_curve():
+    # ── Federal Reserve / FOMC (full: policy + dot-plot + projections) ──
+    _render_fed_panel(full=True)
+    st.markdown("---")
+
     # ── Key Macro KPIs ─────────────────────────────────────────────────
     snap = get_macro_snapshot()
     ff = snap.get("FEDFUNDS", {}).get("value")

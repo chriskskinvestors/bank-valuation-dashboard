@@ -5,7 +5,11 @@ Uses the free `fredapi`-equivalent CSV endpoint. If FRED_API_KEY is set,
 uses the JSON API for better error handling + metadata. Falls back to
 scraping the public CSV download (no auth required).
 
-Data is cached locally + in GCS (if configured) for 24 hours.
+Data is cached locally + in GCS (if configured) for 1 hour, matching the FMP
+economic-calendar TTL: a release that prints intraday shows on the calendar
+(FMP) and is reflected in the board/rates (FRED) within ~1h, not up to a day
+later. FRED series update at most daily, so the only cost of the short TTL is
+an occasional re-fetch of unchanged data (keyless CSV, cheap).
 """
 
 import os
@@ -22,7 +26,8 @@ from data.cloud_storage import save_json, load_json
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "").strip()
 FRED_CACHE_PREFIX = "macro_cache"
-CACHE_TTL_SECONDS = 86400  # 24 hours
+CACHE_TTL_SECONDS = 3600  # 1 hour — match the FMP calendar so a release shows
+#                           on the board within ~1h of FRED posting it, not 24h
 
 
 # Curated FRED series IDs
