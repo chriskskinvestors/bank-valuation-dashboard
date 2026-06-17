@@ -34,6 +34,14 @@ NEW_JOBS = [
     # Universe Form 4 insider cache — nightly (heavy ~20m), weekdays.
     ("refresh-insider", "jobs.refresh_insider",
      ("30 4 * * 1-5", "America/New_York")),
+    # Home metrics snapshot (watchlist_metrics_snap) — keep it warm so cold
+    # instances never pay the 60s+ inline rebuild (the symptom: page paints but
+    # native controls aren't wired yet) and Movers stay fresh. Every 15 min ≈
+    # ~$7/mo of compute; tune the cron for snappier Movers (*/5 ≈ ~$20/mo,
+    # */2 ≈ ~$50/mo). Reads the warm caches the other jobs already fill, so
+    # frequency scales COMPUTE, not external API load.
+    ("refresh-home-snapshot", "jobs.refresh_home_snapshot",
+     ("*/15 * * * *", "America/New_York")),
 ]
 
 
