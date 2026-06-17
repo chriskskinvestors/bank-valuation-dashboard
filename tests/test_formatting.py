@@ -52,8 +52,9 @@ class TestFormatBankName(unittest.TestCase):
 
     def test_ticker_acronym_kept_uppercase(self):
         # A name word that IS the ticker is the company's acronym → uppercase;
-        # a real word whose ticker differs still title-cases.
-        self.assertEqual(fbn("ACNB CORP", "ACNB"), "ACNB")
+        # a real word whose ticker differs still title-cases. (ACNB keeps its
+        # "Corp" via the collapse-guard — see the dedicated test below.)
+        self.assertEqual(fbn("ACNB CORP", "ACNB"), "ACNB Corp")
         self.assertEqual(fbn("ESSA BANCORP INC", "ESSA"), "ESSA Bancorp")
         self.assertEqual(fbn("AMES NATIONAL CORP", "ATLO"), "Ames National")
         self.assertEqual(fbn("ARROW FINANCIAL CORP", "AROW"), "Arrow Financial")
@@ -69,6 +70,16 @@ class TestFormatBankName(unittest.TestCase):
         # Hyphenated "Banc-Corp" is part of the name, not a droppable suffix.
         self.assertEqual(fbn("ASSOCIATED BANC-CORP", "ASB"),
                          "Associated Banc-Corp")
+
+    def test_suffix_drop_never_collapses_to_bare_ticker(self):
+        # When the name IS the ticker acronym + a corporate form, keep the form
+        # so the picker shows a real name instead of a bare ticker.
+        self.assertEqual(fbn("ACNB CORP", "ACNB"), "ACNB Corp")
+        self.assertEqual(fbn("FNB CORP/PA/", "FNB"), "FNB Corp")
+        self.assertEqual(fbn("LCNB CORP", "LCNB"), "LCNB Corp")
+        self.assertEqual(fbn("FNB Corp.", "FNB"), "FNB Corp")
+        # But a descriptive name still drops the suffix normally.
+        self.assertEqual(fbn("DELHI BANK CORP", "DWNX"), "Delhi Bank")
 
     def test_idempotent(self):
         for raw in ("PATRIOT NATIONAL BANCORP INC", "JPMorgan Chase & Co.",

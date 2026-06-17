@@ -94,8 +94,9 @@ def format_bank_name(raw: str | None, ticker: str | None = None,
     drop trailing corporate-form tokens (Inc./Corp./Co./& Co/National
     Association). Already-mixed-case names keep their casing (so intentional
     camel-case like "HomeTrust"/"BancFirst"/"InsCorp" survives). Passing the
-    ticker keeps a name that IS the ticker acronym uppercase (ACNB, ESSA).
-    Idempotent."""
+    ticker keeps a name that IS the ticker acronym uppercase (ACNB, ESSA), and
+    keeps the corporate-form word when dropping it would leave only the bare
+    ticker (so "ACNB CORP" stays "ACNB Corp", not "ACNB"). Idempotent."""
     if not raw:
         return raw or ""
     name = str(raw).strip()
@@ -110,9 +111,19 @@ def format_bank_name(raw: str | None, ticker: str | None = None,
         words = name.split()
         name = " ".join(_title_word(w, i == 0, ticker)
                         for i, w in enumerate(words))
-    if drop_suffix:
-        name = _drop_corporate_suffix(name)
-    return re.sub(r"\s+", " ", name).strip(" ,.&-/")
+
+    def _tidy(s: str) -> str:
+        return re.sub(r"\s+", " ", s).strip(" ,.&-/")
+
+    kept = _tidy(name)  # suffix retained
+    if not drop_suffix:
+        return kept
+    dropped = _tidy(_drop_corporate_suffix(name))
+    # Dropping the corporate form must not collapse the name to its ticker —
+    # "ACNB CORP" → "ACNB Corp", not a name-less "ACNB".
+    if ticker and dropped.upper() == ticker.upper():
+        return kept
+    return dropped
 
 
 # ── Shared numeric primitives ────────────────────────────────────────────
