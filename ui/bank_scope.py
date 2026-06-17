@@ -19,10 +19,11 @@ from __future__ import annotations
 import streamlit as st
 
 from analysis.peer_groups import group_banks
-from data import bank_groups
+from data import bank_groups, bank_geography
 from data.bank_mapping import get_name
 
-SCOPE_TYPES = ["All banks", "Asset-size tier", "Business mix", "Saved group", "Manual"]
+SCOPE_TYPES = ["All banks", "Asset-size tier", "Business mix",
+               "State", "Region", "Saved group", "Manual"]
 
 
 def _subset(all_metrics: list[dict], tickers) -> list[dict]:
@@ -69,6 +70,31 @@ def render_scope_selector(
         picked = st.selectbox(scope_type, options, key=f"{key_prefix}_cohort")
         subset = bucket.get(picked, [])
         return subset, [m.get("ticker") for m in subset], picked
+
+    if scope_type in ("State", "Region"):
+        # HQ state of the FDIC bank subsidiary (authoritative; unknowns bucket
+        # under "Unknown" rather than being guessed into a state).
+        states = bank_geography.get_states_for(
+            [m.get("ticker") for m in all_metrics if m.get("ticker")])
+        buckets: dict[str, list] = {}
+        for m in all_metrics:
+            st_code = states.get(m.get("ticker"), "")
+            if scope_type == "State":
+                key = st_code or "Unknown"
+            else:
+                key = bank_geography.region_for_state(st_code)
+            buckets.setdefault(key, []).append(m)
+        options = sorted(buckets, key=lambda k: (k in ("Unknown", "Other"), k))
+        if not options:
+            st.info("No geography resolved yet.")
+            return [], [], scope_type
+        picked = st.selectbox(
+            scope_type, options,
+            format_func=lambda k: f"{k} ({len(buckets[k])})",
+            key=f"{key_prefix}_geo_{scope_type}",
+        )
+        subset = buckets.get(picked, [])
+        return subset, [m.get("ticker") for m in subset], f"{scope_type}: {picked}"
 
     if scope_type == "Saved group":
         glist = bank_groups.list_groups()
