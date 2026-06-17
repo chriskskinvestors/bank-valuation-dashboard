@@ -446,15 +446,23 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
         if want and asset_size_tier(m.get("total_assets")) != want:
             continue
         w = warm.get(tk) or {}
-        sortval = m.get("change_pct") if mh == "d" else w.get("chg_1w")
+        # Day move from the LIVE warm price cache (~2 min, refreshed by
+        # jobs/refresh_prices) — fall back to the 15-min metrics snapshot only
+        # for a bank that isn't warm-cached. Week uses the nightly chg_1w.
+        day_pct = w.get("change_pct")
+        if day_pct is None:
+            day_pct = m.get("change_pct")
+        sortval = day_pct if mh == "d" else w.get("chg_1w")
         if sortval is None:
             continue
         try:
             sortval = float(sortval)
         except (TypeError, ValueError):
             continue
-        data.append({"tk": tk, "price": m.get("price"), "chg": m.get("change"),
-                     "pct": m.get("change_pct"), "w1": w.get("chg_1w"),
+        price = w.get("price") if w.get("price") is not None else m.get("price")
+        chg = w.get("change") if w.get("change") is not None else m.get("change")
+        data.append({"tk": tk, "price": price, "chg": chg,
+                     "pct": day_pct, "w1": w.get("chg_1w"),
                      "ytd": w.get("chg_ytd"),
                      "vol": w.get("volume") if w.get("volume") is not None
                      else m.get("volume"), "sort": sortval})
@@ -780,9 +788,11 @@ def _af_volume_table(all_metrics: list[dict], vsz: str, vp: str) -> str:
             continue
         if want and asset_size_tier(m.get("total_assets")) != want:
             continue
-        price = m.get("price")
+        # Price/% from the LIVE warm cache (~2 min); snapshot only as fallback.
+        price = w.get("price") if w.get("price") is not None else m.get("price")
+        pct = w.get("change_pct") if w.get("change_pct") is not None else m.get("change_pct")
         vol = w.get("volume") if w.get("volume") is not None else m.get("volume")
-        data.append({"tk": tk, "price": price, "pct": m.get("change_pct"),
+        data.append({"tk": tk, "price": price, "pct": pct,
                      "rv": rv, "dvol": _af_dollar_vol(price, vol)})
     data.sort(key=lambda d: d["rv"], reverse=True)
     data = data[:12]
