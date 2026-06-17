@@ -55,6 +55,17 @@ _SKIP_TICKERS = {
     "MFG",   # Mizuho Financial Group (Japan)
     "WF",    # Woori Financial Group (Korea)
     "SHG",   # Shinhan Financial Group (Korea)
+
+    # Credit-card / consumer-finance issuers — excluded by business scope (owner
+    # directive 2026-06-16). They hold bank charters but are card/consumer-lending
+    # companies, not deposit-taking banks in spirit; out of place in a bank
+    # dashboard. Card identity over charter.
+    "AXP",   # American Express
+    "COF",   # Capital One
+    "DFS",   # Discover Financial Services
+    "SYF",   # Synchrony Financial
+    "BFH",   # Bread Financial (Comenity)
+    "ALLY",  # Ally Financial (auto lender)
 }
 
 # US-domiciled only (explicit scope: US banks traded on exchanges or OTC).
