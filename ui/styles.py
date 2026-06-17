@@ -128,6 +128,39 @@ CUSTOM_CSS = """
         width: 1px !important; height: 1px !important; margin: 0 !important; }
     .st-key-topnav label { display: inline-flex !important; align-items: center; }
 
+    /* Global bank search in the nav bar — compact + professional so it reads as
+       part of the nav, not the default chunky Streamlit selectbox. Matched to
+       the tab font (--fs-sm) and the design-system border/text tokens. */
+    .st-key-nav_bank_search { margin: 0 !important; }
+    .st-key-nav_bank_search [data-baseweb="select"] > div:first-child {
+        min-height: 30px !important; height: 30px !important;
+        padding-top: 0 !important; padding-bottom: 0 !important;
+        border: 1px solid var(--border-default) !important;
+        border-radius: 4px !important;
+        background: #fff !important;
+        box-shadow: none !important;
+    }
+    /* the value/placeholder container also carries vertical padding → zero it
+       so the control collapses to the 30px nav height. */
+    .st-key-nav_bank_search [data-baseweb="select"] > div:first-child > div {
+        padding-top: 0 !important; padding-bottom: 0 !important;
+    }
+    .st-key-nav_bank_search [data-baseweb="select"] > div:first-child:hover {
+        border-color: var(--border-strong) !important;
+    }
+    /* value text, placeholder and the typed input — nav-sized + muted */
+    .st-key-nav_bank_search [data-baseweb="select"] div,
+    .st-key-nav_bank_search [data-baseweb="select"] input {
+        font-size: var(--fs-sm) !important;
+        color: var(--text-secondary) !important;
+    }
+    .st-key-nav_bank_search [data-baseweb="select"] [class*="placeholder"] {
+        color: var(--text-muted) !important; font-size: var(--fs-sm) !important;
+    }
+    /* tighten the value padding + shrink the dropdown / clear icons */
+    .st-key-nav_bank_search [data-baseweb="select"] [data-baseweb="input"] { padding: 0 !important; }
+    .st-key-nav_bank_search [data-baseweb="select"] svg { width: 15px !important; height: 15px !important; }
+
     /* SNL-style title bar */
     .ksk-titlebar { padding: 2px 0 0; }
     .ksk-titlebar .tb-main { font-size: var(--fs-md); font-weight: 600; color: var(--text-primary); }
