@@ -6,6 +6,7 @@ cache.db
 *.db
 .streamlit/secrets.toml
 watchlist.json
+bank_groups/
 .venv/
 venv/
 
