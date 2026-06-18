@@ -47,10 +47,10 @@ class _FakeAdapter:
         return []
 
 
-def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB")):
+def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=None):
     """Drive poll_events.main with every adapter + network/DB call mocked.
-    `adapters` are the 8 fakes in main()'s construction order. Returns
-    (exit_code, cert_is_active_mock)."""
+    `adapters` are the 8 fakes in main()'s construction order. `env` sets extra
+    os.environ keys (e.g. POLL_PROFILE). Returns (exit_code, cert_is_active_mock)."""
     import jobs.poll_events as pe
     import data.events as ev
     import data.bank_universe as bu
@@ -85,6 +85,8 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB")):
     if "ANTHROPIC_API_KEY" in __import__("os").environ:
         stack.enter_context(mock.patch.dict("os.environ",
                                             {"ANTHROPIC_API_KEY": ""}, clear=False))
+    if env:
+        stack.enter_context(mock.patch.dict("os.environ", env, clear=False))
     if time_values is not None:
         stack.enter_context(mock.patch.object(pe.time, "time",
                                               side_effect=list(time_values)))
@@ -133,6 +135,23 @@ class TestPollEventsUniverse(unittest.TestCase):
             rc, _ = _run_main(stack, fakes)   # real clock; tiny cap trips timeout
         self.assertEqual(rc, 0, "a slow source is a non-fatal timeout, not a crash")
         self.assertTrue(fakes[1].polled, "later adapters still run after a timeout")
+
+
+class TestFastProfile(unittest.TestCase):
+    def test_fast_profile_runs_only_lightweight_sources(self):
+        # POLL_PROFILE=fast must run ONLY SEC 8-K + the two cheap wire feeds +
+        # FMP, skipping the slow full-universe Google News / Yahoo / IR scrape so
+        # the job stays sub-minute and safe at a 1–5 min cadence.
+        fakes = [_FakeAdapter(f"a{i}") for i in range(8)]
+        with ExitStack() as stack:
+            rc, _ = _run_main(stack, fakes, env={"POLL_PROFILE": "fast"})
+        self.assertEqual(rc, 0)
+        # Construction order in fast mode: FMP (real/unpatched), then SEC8K,
+        # PRNewswire, GlobeNewswire — so fakes 0,1,2 are those three and poll.
+        self.assertTrue(fakes[0].polled and fakes[1].polled and fakes[2].polled,
+                        "8-K + the two wire feeds must run in fast mode")
+        self.assertFalse(any(f.polled for f in fakes[3:]),
+                         "Google News / Yahoo / IR must NOT run in fast mode")
 
 
 if __name__ == "__main__":

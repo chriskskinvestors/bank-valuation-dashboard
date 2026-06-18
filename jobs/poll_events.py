@@ -107,34 +107,47 @@ def main() -> int:
     # the unfiltered superset is correct — same fix refresh_prices already uses.
     universe = sorted(set(get_universe().keys()) | set(DEFAULT_WATCHLIST))
 
-    # SEC 8-K + wire feeds run against the full universe (cheap: one feed
-    # call covers all banks via name-matching).
-    # YFinance news runs against watchlist only: it's per-ticker, so 50
-    # API calls (manageable) instead of 370 (Yahoo would rate-limit).
-    # Order matters: cheap, high-visibility sources FIRST so they always fit in
-    # budget. The single-feed adapters (8-K, wires) cover the full universe via
-    # name-matching in one call; the topic feed (Overnight & Breaking) is a few
-    # queries. Google News is per-ticker over the full universe — the expensive
-    # one — so it goes LAST among broad, where the per-adapter cap can abandon it
-    # without starving the rest.
-    broad_adapters = [
-        SEC8KAdapter(),
-        BusinessWireAdapter(),
-        PRNewswireAdapter(),
-        GlobeNewswireAdapter(),
-        # Topic feeds for the Home page's categorized overnight news (Macro /
-        # Geopolitical / Domestic / Markets) — ONE query per topic, not per-bank.
-        GoogleNewsTopicAdapter(),
-        # Google News: per-ticker, parallelized; the slow one at full universe.
-        GoogleNewsAdapter(),
-    ]
-    # FMP press releases first among narrow sources: per-ticker, pre-indexed
-    # (no name-matching/mis-tag risk), and the primary replacement for the dead
-    # Business Wire direct feed — so it gets budget priority over Yahoo/IR.
-    narrow_adapters = [FMPPressReleaseAdapter(), YFinanceNewsAdapter(), IRSiteAdapter()]
+    # POLL_PROFILE selects the source mix so a single job image can serve two
+    # very different cadences (Cloud Scheduler passes the env override):
+    #   • "fast" — sub-minute, WATCHLIST-scoped, high-signal low-latency sources
+    #     only (SEC 8-K + the cheap single-feed wires + FMP press releases). It
+    #     skips the slow full-universe Google News / Yahoo / IR scrape, so it's
+    #     safe to schedule every 1–5 min without piling up overlapping runs.
+    #   • "full" (default) — every source over the full universe; the heavy run
+    #     that catches the long tail, scheduled less often (~30 min).
+    profile = (os.environ.get("POLL_PROFILE") or "full").strip().lower()
+
+    if profile == "fast":
+        # Watchlist only — the actively-tracked banks get near-real-time news;
+        # the full profile sweeps the rest. SEC 8-K over ~60 CIKs + two wire
+        # feeds + FMP finishes well under a minute.
+        universe = watchlist
+        narrow_adapters = [FMPPressReleaseAdapter()]
+        broad_adapters = [SEC8KAdapter(), PRNewswireAdapter(), GlobeNewswireAdapter()]
+    else:
+        # Order matters: cheap, high-visibility sources FIRST so they always fit
+        # in budget. Google News is per-ticker over the full universe — the
+        # expensive one — so it goes LAST among broad, where the per-adapter cap
+        # can abandon it without starving the rest.
+        broad_adapters = [
+            SEC8KAdapter(),
+            BusinessWireAdapter(),
+            PRNewswireAdapter(),
+            GlobeNewswireAdapter(),
+            # Topic feeds for the Home page's categorized overnight news (Macro /
+            # Geopolitical / Domestic / Markets) — ONE query per topic, not per-bank.
+            GoogleNewsTopicAdapter(),
+            # Google News: per-ticker, parallelized; the slow one at full universe.
+            GoogleNewsAdapter(),
+        ]
+        # FMP press releases first among narrow sources: per-ticker, pre-indexed
+        # (no name-matching/mis-tag risk), and the primary replacement for the
+        # dead Business Wire direct feed — so it gets budget priority over Yahoo/IR.
+        narrow_adapters = [FMPPressReleaseAdapter(), YFinanceNewsAdapter(), IRSiteAdapter()]
+
     adapters = broad_adapters + narrow_adapters
 
-    print(f"▶ Polling — broad: {len(broad_adapters)} sources × {len(universe)} tickers, "
+    print(f"▶ Polling [{profile}] — broad: {len(broad_adapters)} sources × {len(universe)} tickers, "
           f"narrow: {len(narrow_adapters)} sources × {len(watchlist)} tickers")
     t0 = time.time()
     crashes = 0
