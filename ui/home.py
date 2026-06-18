@@ -57,36 +57,6 @@ def _fred_points(series_id: str):
     return (pts[0], pts[1], pts[2])
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _etf_context(symbols: tuple) -> dict:
-    """1-week and YTD % change per ETF (cached hourly). EOD history works on
-    the FMP Starter plan; quote endpoints don't, so this is a separate call."""
-    out = {}
-    try:
-        from data import fmp_client
-        for s in symbols:
-            try:
-                h = fmp_client.get_history(s, "1Y")
-                if h is None or h.empty or "close" not in h:
-                    continue
-                h = h.dropna(subset=["close"]).sort_values("date")
-                if h.empty:
-                    continue
-                last = float(h["close"].iloc[-1])
-                w = float(h["close"].iloc[-6]) if len(h) >= 6 else None
-                yr = h[h["date"].dt.year == h["date"].iloc[-1].year]
-                ytd0 = float(yr["close"].iloc[0]) if not yr.empty else None
-                out[s] = {
-                    "w1": (last / w - 1) * 100 if w else None,
-                    "ytd": (last / ytd0 - 1) * 100 if ytd0 else None,
-                }
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return out
-
-
 # ── Feed helpers (shared by the above-the-fold news rail) ─────────────
 
 def _relative_time(p) -> str:
@@ -331,10 +301,6 @@ def _af_etf_table() -> str:
     except Exception:
         warm = {}
     try:
-        ctx = _etf_context(tuple(syms))
-    except Exception:
-        ctx = {}
-    try:
         from data import fmp_client
         aftq = fmp_client.get_aftermarket_quote_batch(syms)
     except Exception:
@@ -355,10 +321,12 @@ def _af_etf_table() -> str:
         aq = aftq.get(t) or {}
         aft = _fc.aftermarket_move(aq.get("bid"), aq.get("ask"), price)
         aft_t, aft_c = _af_signed(aft) if aft is not None else ("—", "mut")
-        c = ctx.get(t) or {}
-        w1_t, w1_c = (_af_signed(c.get("w1"), dp=1) if c.get("w1") is not None
+        # 1W / YTD from the same warm cache the Movers pane reads — populated by
+        # the nightly refresh_avg_volume job (chg_1w EOD-derived, chg_ytd from
+        # FMP's year-anchored field). One source for all 1W/YTD on this page.
+        w1_t, w1_c = (_af_signed(q.get("chg_1w"), dp=1) if q.get("chg_1w") is not None
                       else ("—", "mut"))
-        ytd_t, ytd_c = (_af_signed(c.get("ytd"), dp=1) if c.get("ytd") is not None
+        ytd_t, ytd_c = (_af_signed(q.get("chg_ytd"), dp=1) if q.get("chg_ytd") is not None
                         else ("—", "mut"))
         vol = _af_vol(q.get("volume"))
         sel_cls = " selrow" if t in sel else ""

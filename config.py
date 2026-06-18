@@ -41,6 +41,12 @@ MARKET_BENCHMARKS = [
     ("SPY", "S&P 500"),
     ("QQQ", "Nasdaq 100"),
     ("XLF", "Financials"),
+    # Home ETF pane also displays these — keep them in the priced/derived set so
+    # refresh_prices (Last/Chg/Vol) and refresh_avg_volume (1W/YTD) cover them.
+    ("DIA", "Dow Jones"),
+    ("IWO", "R2000 Growth"),
+    ("IWN", "R2000 Value"),
+    ("IJR", "S&P SmallCap"),
 ]
 
 

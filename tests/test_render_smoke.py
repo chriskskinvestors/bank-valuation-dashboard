@@ -163,7 +163,6 @@ class TestHomeRendersPopulated(unittest.TestCase):
         # failure into its own error pane — the call itself must not raise.
         import data.fmp_client as fmp
         self.home._af_feed_items = lambda w: list(FAKE_FEED)
-        self.home._etf_context = lambda syms: {}
         self.home._fred_points = lambda sid: (None, None, None)
         saved = (fmp.get_history, fmp.get_quote_batch)
         try:
