@@ -245,11 +245,12 @@ _EPS_EXCLUDE = re.compile(
     r"pre-?tax|after-?tax|cash|reduc\w*|increas\w*|impact\w*|benefit\w*|charge\w*|"
     r"accret\w*|dividends?|compared\s+to|versus|vs\.?|year[- ]ago|prior[- ]year)\b",
     re.I)
-# A qualifier RIGHT AFTER the value also marks it non-GAAP: "diluted EPS of $0.59,
-# excluding the charge" (the GAAP figure that quarter was a loss, stated as
-# "diluted LOSS per share" which our patterns don't match).
+# A qualifier in the SAME CLAUSE right after the value marks it non-GAAP: "diluted
+# EPS of $0.59, excluding the charge". Only whitespace/comma/paren may sit between
+# — NOT a ';' or '.', which start a NEW clause (e.g. "$0.58 per diluted share;
+# adjusted net income was …" is a separate statement, so $0.58 stays GAAP).
 _EPS_TRAIL = re.compile(
-    r"^[\s,;(]*(?:excluding|adjusted|as adjusted|non-?gaap|core|operating)", re.I)
+    r"^[\s,(]*(?:excluding|adjusted|as adjusted|non-?gaap|core|operating)", re.I)
 _EPS_BAND = (-5.0, 50.0)       # diluted EPS per share
 
 

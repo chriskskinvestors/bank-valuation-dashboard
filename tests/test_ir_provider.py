@@ -251,6 +251,19 @@ class TestExtractPnl(unittest.TestCase):
                "$0.59, excluding the goodwill charge)")
         self.assertIsNone(extract_pnl(txt)["diluted_eps"])
 
+    def test_trailing_qualifier_only_same_clause(self):
+        # GAAP $0.58 followed by "; adjusted net income …" is a NEW clause, so
+        # $0.58 stays GAAP (not excluded). With a prior-year $0.41 also present,
+        # the two disagree → n/a (BWB) — but the GAAP value is correctly kept,
+        # not wrongly dropped by the trailing check.
+        txt = ("net income, or $0.58 per diluted common share; adjusted net income "
+               "was higher. Prior year was $0.41 per diluted common share.")
+        self.assertIsNone(extract_pnl(txt)["diluted_eps"])   # disagree → n/a
+        # …but a clean $0.58 alone (with the ';adjusted' clause) IS surfaced:
+        self.assertEqual(
+            extract_pnl("$0.58 per diluted common share; adjusted net income was higher"
+                        )["diluted_eps"], 0.58)
+
 
 if __name__ == "__main__":
     unittest.main()
