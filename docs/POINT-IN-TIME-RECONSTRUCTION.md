@@ -27,13 +27,30 @@ cohort (chunked OR filters, ~1.5s/quarter) so the window is ~20 fast calls, ≈7
 load then cached. Verified: SVB Q4-2022 ROATCE-adj 13.5% (was a 1-quarter-distorted
 53%), NIM 4Q 2.21% vs single 2.23%, deposit QoQ −1.96%.
 
+## Lineage expansion + defunct deep-links — DONE (2026-06-18)
+
+The candidate set now expands beyond today's public banks + tracked failures to include
+**lineage predecessors**: banks that were independent at Q but have since been absorbed by
+a current public bank. `entity_graph.lineage_predecessors(base_certs, since)` runs the
+global FDIC 810-absorption query, filters to absorptions whose survivor is one of our
+current banks, and returns the since-exited targets (cached 1 day). They screen at Q on
+their own FDIC point-in-time filing alongside the survivors.
+
+Every as-of row deep-links correctly. `as_of_quarter_metrics` tags `_fdic_cert` on each
+row; `app.py` captures the set of current-company certs **before** seeding failures and
+lineage, then marks `_defunct = cert not in company-certs`. `ui/generic_table.py` branches
+the ticker cell: covered companies → `?bank=TICKER` (`_self`, Company page); since-exited
+banks → their FDIC BankFind profile (`banks.data.fdic.gov/.../details/{cert}`, new tab).
+
+Verified live (As-of Q4 2024): 403 banks incl. 78 since-exited; ABCB/WFC → `?bank=`,
+Republic First Bank (cert 35095), Heritage Bank of Commerce et al. → FDIC profile.
+
 ## Remaining limitations (labeled, not wrong)
 
-- Candidate set = today's public banks + tracked failures. **Lineage** (a target
-  absorbed by a current bank after Q, shown separately at Q) is NOT yet expanded in the
-  UI — the surviving acquirer shows its own correct Q filing, but the absorbed target is
-  absent. `entity_graph.public_universe_as_of(..., with_lineage=True)` is the hook.
-- Defunct banks have no Company page, so their ticker cell does not deep-link.
+- Defunct/since-exited banks have **no SEC/price data** — every market and SEC-derived
+  metric is n/a for them at Q (FDIC fundamentals only), as designed.
+- Lineage currently covers absorptions (CHANGECODE 810) into *current public* survivors;
+  multi-hop chains (A→B→C where B itself later exited) resolve to the surviving leaf only.
 
 ## Original spec (retained)
 
