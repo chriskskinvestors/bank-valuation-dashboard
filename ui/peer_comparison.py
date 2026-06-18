@@ -10,8 +10,7 @@ import pandas as pd
 from config import METRICS, METRICS_BY_KEY
 from data.bank_mapping import get_name
 from analysis.peer_groups import (
-    group_banks, asset_size_tier, business_mix_tier,
-    compute_peer_percentile,
+    asset_size_tier, business_mix_tier, compute_peer_percentile,
 )
 from utils.formatting import format_value
 from ui.chrome import table_export, title_bar
@@ -87,78 +86,50 @@ def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfo
         st.warning("No bank data loaded. Check your watchlist.")
         return
 
-    # ── Peer group selector ────────────────────────────────────────────
-    c1, c2, c3 = st.columns([2, 2, 1])
+    # ── Scope (the shared Bank-Groups selector) + display picker ───────
+    from ui.bank_scope import render_scope_selector
 
+    # Screen → Compare handoff: a "Compare these banks" click on a screen stashes
+    # the result set; pre-seed Manual scope with them on arrival, then consume it.
+    handoff = st.session_state.pop("_compare_handoff_tickers", None)
+    if handoff:
+        st.session_state["compare_scope_type"] = "Manual"
+        st.session_state["compare_manual"] = list(handoff)
+
+    c1, c2 = st.columns([3, 1])
     with c1:
-        group_mode = st.radio(
-            "Group by",
-            ["Asset Size", "Business Mix", "Manual Selection"],
-            horizontal=True,
-            key="peer_group_mode",
-        )
-
-    # Compute groups
-    groups = group_banks(all_metrics)
-
-    selected_peers: list[dict] = []
-    peer_label = ""
-
-    if group_mode == "Asset Size":
-        with c2:
-            tier_options = list(groups["by_size"].keys())
-            if tier_options:
-                selected_tier = st.selectbox(
-                    "Asset-size tier",
-                    tier_options,
-                    key="peer_size_tier",
-                )
-                selected_peers = groups["by_size"].get(selected_tier, [])
-                peer_label = selected_tier
-            else:
-                st.info("No asset-size groups computed yet — load more banks.")
-
-    elif group_mode == "Business Mix":
-        with c2:
-            mix_options = list(groups["by_mix"].keys())
-            if mix_options:
-                selected_mix = st.selectbox(
-                    "Business-mix group",
-                    mix_options,
-                    key="peer_mix_group",
-                )
-                selected_peers = groups["by_mix"].get(selected_mix, [])
-                peer_label = selected_mix
-
-    else:  # Manual
-        with c2:
-            available = sorted({m["ticker"] for m in all_metrics})
-            default_selection = available[:5] if len(available) >= 5 else available
-            picked = st.multiselect(
-                "Select banks to compare (2-10)",
-                available,
-                default=default_selection[:5],
-                key="peer_manual_pick",
-                max_selections=10,
-            )
-            selected_peers = [m for m in all_metrics if m.get("ticker") in picked]
-            peer_label = f"Manual ({len(picked)} banks)"
-
-    with c3:
+        cohort, _cohort_tk, peer_label = render_scope_selector(
+            all_metrics, key_prefix="compare", include_manual=True)
+    with c2:
         category = st.selectbox(
             "Metric category",
             list(CATEGORY_METRICS.keys()),
             key="peer_category",
         )
 
-    if not selected_peers:
-        st.info("No peers selected. Pick a group above.")
+    if not cohort:
+        st.info("Pick a scope above to compare — a saved group, a tier, a state, or a manual set.")
         return
 
-    if len(selected_peers) < 2:
-        st.warning(f"Only {len(selected_peers)} bank in this group — add more banks to your watchlist for comparison.")
+    if len(cohort) < 2:
+        st.warning(f"Only {len(cohort)} bank in this scope — widen it to compare.")
 
-    st.caption(f"**Peer group:** {peer_label} · {len(selected_peers)} banks · Category: **{category}**")
+    # The side-by-side table puts banks in COLUMNS, so it caps at a readable
+    # number; percentiles and the median still resolve against the FULL cohort.
+    # Scatter and radar use the whole cohort.
+    TABLE_CAP = 12
+    cohort_tickers = [m["ticker"] for m in cohort]
+    if len(cohort) > TABLE_CAP:
+        disp_tickers = st.multiselect(
+            f"Banks to tabulate (of {len(cohort)} in scope; percentiles vs the full scope)",
+            cohort_tickers, default=cohort_tickers[:TABLE_CAP],
+            max_selections=TABLE_CAP, key="compare_display",
+        )
+        display_peers = [m for m in cohort if m["ticker"] in disp_tickers] or cohort[:TABLE_CAP]
+    else:
+        display_peers = cohort
+
+    st.caption(f"**Scope:** {peer_label} · {len(cohort)} banks · Category: **{category}**")
 
     # ── View tabs ──────────────────────────────────────────────────────
     view_tab, scatter_tab, radar_tab = st.tabs([
@@ -168,19 +139,19 @@ def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfo
     ])
 
     with view_tab:
-        _render_metrics_table(selected_peers, category)
+        _render_metrics_table(cohort, display_peers, category)
 
     with scatter_tab:
-        _render_peer_scatters(selected_peers)
+        _render_peer_scatters(cohort)
 
     with radar_tab:
-        _render_peer_radar(selected_peers)
+        _render_peer_radar(cohort)
 
     # ── Summary stats ──────────────────────────────────────────────────
     st.markdown("---")
     with st.expander("Peer group composition"):
         comp_rows = []
-        for m in selected_peers:
+        for m in cohort:
             # total_assets is always raw dollars (converted at the metrics
             # boundary) — no unit guessing.
             assets = m.get("total_assets")
@@ -197,12 +168,13 @@ def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfo
                      key="exp_peer_group_composition")
 
 
-def _render_metrics_table(selected_peers: list[dict], category: str):
-    """Extract the existing metrics table into a dedicated function for the tab."""
+def _render_metrics_table(cohort: list[dict], display_peers: list[dict], category: str):
+    """Metrics table — banks (the display subset) in columns, metrics in rows.
+    Percentile color and the Peer Median resolve against the FULL ``cohort``, so
+    a focused display still ranks each bank within its whole peer group."""
     metric_keys = CATEGORY_METRICS.get(category, [])
 
-    # Rows: metrics, Columns: banks + statistics
-    tickers = [m["ticker"] for m in selected_peers]
+    tickers = [m["ticker"] for m in display_peers]   # columns
     rows = []
     style_map = {}  # (metric_key, ticker) → color
 
@@ -211,13 +183,12 @@ def _render_metrics_table(selected_peers: list[dict], category: str):
         if not m_def:
             continue
 
-        # Raw values
-        values = [b.get(mkey) for b in selected_peers]
-        numeric = [v for v in values if isinstance(v, (int, float)) and v is not None]
+        # Percentile basis = the full cohort, not just the displayed banks.
+        cohort_values = [b.get(mkey) for b in cohort]
+        numeric = [v for v in cohort_values if isinstance(v, (int, float)) and v is not None]
         if not numeric:
             continue
 
-        # Peer median (for color-coding)
         peer_median = pd.Series(numeric).median()
         higher_better = m_def.get("color_rule") == "higher_better"
         lower_better = m_def.get("color_rule") == "lower_better"
@@ -226,10 +197,11 @@ def _render_metrics_table(selected_peers: list[dict], category: str):
         fmt = m_def.get("format", "number")
         dec = m_def.get("decimals", 2)
 
-        for t, v in zip(tickers, values):
+        for d in display_peers:
+            t = d["ticker"]
+            v = d.get(mkey)
             row[t] = format_value(v, fmt, dec) if v is not None else "—"
-            # Compute percentile vs peer group
-            pct = compute_peer_percentile(v, numeric)
+            pct = compute_peer_percentile(v, numeric)   # vs full cohort
             if higher_better:
                 style_map[(mkey, t)] = _percentile_color(pct, True)
             elif lower_better:
@@ -237,7 +209,6 @@ def _render_metrics_table(selected_peers: list[dict], category: str):
             else:
                 style_map[(mkey, t)] = ""
 
-        # Add peer median column
         row["Peer Median"] = format_value(peer_median, fmt, dec)
 
         row["_mkey"] = mkey

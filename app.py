@@ -179,6 +179,11 @@ sc_sub = None
 # "Peers"). A horizontal sub-nav picks between them; everything downstream keys
 # off (section, sc_sub) so each page keeps its existing behavior.
 if section == "Screen & Compare":
+    # A "Compare these banks" click on a screen flags the switch; apply it here,
+    # BEFORE the radio instantiates (a widget's session_state can't be written
+    # once it exists).
+    if st.session_state.pop("_goto_compare", False):
+        st.session_state["sc_sub"] = "Compare"
     sc_sub = st.radio("View", ["Screen", "Compare"], key="sc_sub",
                       horizontal=True, label_visibility="collapsed")
 
@@ -884,6 +889,19 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     st.success(f"Saved '{grp_name.strip()}' ({len(grp_tickers)} banks).")
                 else:
                     st.error("Could not save (empty name or storage error).")
+
+    # Screen → Compare handoff: send the current result set straight into the
+    # side-by-side Compare view (it arrives as a Manual scope there).
+    if display_metrics and st.button(
+            f"🔬 Compare these {len(display_metrics)} banks →",
+            key=f"compare_handoff_{tab_key}"):
+        st.session_state["_compare_handoff_tickers"] = [
+            m["ticker"] for m in display_metrics if m.get("ticker")]
+        # sc_sub is a widget already instantiated above; flag the switch and let
+        # the pre-radio handler set it on the next run (can't write a widget's
+        # session_state after it's created).
+        st.session_state["_goto_compare"] = True
+        st.rerun()
 
     # ── Column picker + Excel export ──────────────────────────────────
     with st.expander("🧰 Customize columns & export", expanded=False):
