@@ -234,13 +234,17 @@ _EPS_PROSE = [
                + r"(\d+\.\d{2})", re.I),
     re.compile(r"\$\s?(\d+\.\d{2})\s+per diluted (?:common )?share", re.I),
 ]
-# A diluted-EPS value is rejected when one of these immediately precedes the
-# label: non-GAAP variants and per-share change/impact figures, plus prior-period
-# comparisons. (The actual GAAP figure, if stated elsewhere unqualified, still
-# qualifies — and if two clean values disagree the result is n/a anyway.)
+# A diluted-EPS value is rejected when one of these qualifiers appears in the text
+# just before it: non-GAAP variants (adjusted/core/…), per-share IMPACT/ITEM
+# figures ("reduction in EPS of $X", "reduced earnings by $X per share",
+# "preferred dividends of $X per share"), and prior-period comparisons. The
+# actual GAAP figure, if stated unqualified elsewhere, still qualifies — and if
+# two clean values disagree the result is n/a anyway.
 _EPS_EXCLUDE = re.compile(
-    r"(?:adjusted|core|operating|non-?gaap|normalized|underlying|tangible book|"
-    r"pre-?tax|cash|compared\s+to|versus|\bvs\.?|year[- ]ago|prior[- ]year)\s*$", re.I)
+    r"\b(?:adjusted|core|operating|non-?gaap|normalized|underlying|tangible book|"
+    r"pre-?tax|after-?tax|cash|reduc\w*|increas\w*|impact\w*|benefit\w*|charge\w*|"
+    r"accret\w*|dividends?|compared\s+to|versus|vs\.?|year[- ]ago|prior[- ]year)\b",
+    re.I)
 _EPS_BAND = (-5.0, 50.0)       # diluted EPS per share
 
 

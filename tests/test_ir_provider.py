@@ -229,6 +229,20 @@ class TestExtractPnl(unittest.TestCase):
         txt = "Diluted EPS of $1.13. ... Diluted earnings per share $1.13"
         self.assertEqual(extract_pnl(txt)["diluted_eps"], 1.13)
 
+    def test_eps_reduction_impact_excluded(self):
+        # "reduction in diluted EPS of $0.02" is an impact, not the level (GS).
+        self.assertIsNone(extract_pnl("this was a reduction in diluted EPS of $0.02")["diluted_eps"])
+
+    def test_per_share_impact_excluded(self):
+        # "reduced earnings by $0.13 per diluted share" is an impact (LCNB).
+        self.assertIsNone(
+            extract_pnl("reduced after-tax earnings by $0.13 per diluted share")["diluted_eps"])
+
+    def test_preferred_dividend_per_share_excluded(self):
+        # "preferred dividends of $0.09 per diluted common share" is not EPS (BYFC).
+        self.assertIsNone(
+            extract_pnl("preferred dividends of $0.09 per diluted common share")["diluted_eps"])
+
 
 if __name__ == "__main__":
     unittest.main()
