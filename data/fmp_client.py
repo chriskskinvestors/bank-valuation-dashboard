@@ -537,6 +537,23 @@ def get_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
     return df
 
 
+def get_price_change(ticker: str) -> dict | None:
+    """Period price-change percentages from stable/stock-price-change
+    (1D / 5D / 1M / 3M / 6M / ytd / 1Y / ...). Returns the symbol's dict, or
+    None on failure / no data.
+
+    FMP computes the year-anchored `ytd` figure directly, so the Home Movers
+    YTD column reads it from here rather than re-deriving from EOD history
+    (which mishandles the Jan-1 anchor when history is short or gapped).
+    """
+    if not _has_key():
+        return None
+    data = _get("stock-price-change", {"symbol": ticker.upper()})
+    if isinstance(data, list) and data:
+        return data[0] if isinstance(data[0], dict) else None
+    return data if isinstance(data, dict) else None
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Public API — analyst coverage & executive compensation
 # ──────────────────────────────────────────────────────────────────────────

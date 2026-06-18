@@ -127,14 +127,16 @@ class TestDerivedCompute(unittest.TestCase):
         closes = [100.0 + i * 0.1 for i in range(100)]
         df = pd.DataFrame({"date": pd.date_range("2026-01-01", periods=100),
                            "volume": vols, "close": closes})
-        with patch("data.fmp_client.get_history", return_value=df):
+        with patch("data.fmp_client.get_history", return_value=df), \
+             patch("data.fmp_client.get_price_change",
+                   return_value={"symbol": "AAA", "ytd": 8.5}):
             d = job._derived("AAA")
         self.assertAlmostEqual(d["avg_volume"], 1000.0)
         self.assertAlmostEqual(d["relvol_1w"], 1.0)        # last 5 all 1000
         self.assertIn("chg_1w", d)                          # 5-day price change
         self.assertGreater(d["chg_1w"], 0)
-        self.assertIn("chg_ytd", d)                         # vs first close of year
-        self.assertGreater(d["chg_ytd"], 0)
+        # chg_ytd is read straight from FMP's year-anchored field, not derived.
+        self.assertAlmostEqual(d["chg_ytd"], 8.5)
 
     def test_empty_history_returns_none(self):
         import pandas as pd

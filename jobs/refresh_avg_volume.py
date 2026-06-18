@@ -28,11 +28,14 @@ AVG_WINDOW = 63  # ~3 trading months, matching ui/bank_detail.py's convention
 
 
 def _derived(ticker: str) -> dict | None:
-    """All nightly history-derived fields from ONE FMP history fetch:
-      avg_volume  — AVG_WINDOW (63d) mean daily volume
-      chg_1w      — price % change over the last 5 trading days
-      relvol_1w/1m/6m — window mean volume ÷ the 63d avg (unusual-volume
-                        over that lookback, for the Volume-pane periods)
+    """Nightly history-derived fields, from two FMP calls:
+      get_history (EOD):
+        avg_volume  — AVG_WINDOW (63d) mean daily volume
+        chg_1w      — price % change over the last 5 trading days
+        relvol_1w/1m/6m — window mean volume ÷ the 63d avg (unusual-volume
+                          over that lookback, for the Volume-pane periods)
+      stock-price-change:
+        chg_ytd     — FMP's year-anchored % change (read directly)
     Returns only the fields that have enough data; None if no usable history."""
     from data import fmp_client
     try:
@@ -57,15 +60,15 @@ def _derived(ticker: str) -> dict | None:
             if len(closes) >= 6 and closes.iloc[-6]:
                 out["chg_1w"] = (float(closes.iloc[-1]) /
                                  float(closes.iloc[-6]) - 1.0) * 100.0
-            # YTD: latest close vs the first close of the current year.
-            if "date" in h and not closes.empty:
-                try:
-                    yr = h[h["date"].dt.year == h["date"].iloc[-1].year]["close"].dropna()
-                    if not yr.empty and float(yr.iloc[0]):
-                        out["chg_ytd"] = (float(closes.iloc[-1]) /
-                                          float(yr.iloc[0]) - 1.0) * 100.0
-                except Exception:
-                    pass
+        # YTD: read FMP's year-anchored figure directly (stock-price-change),
+        # not re-derived from EOD history. FMP anchors to the first trading day
+        # of the year correctly even when our 1Y window is short or gapped.
+        try:
+            pc = fmp_client.get_price_change(ticker)
+            if pc and pc.get("ytd") is not None:
+                out["chg_ytd"] = float(pc["ytd"])
+        except (TypeError, ValueError):
+            pass
         return out or None
     except Exception:
         return None
@@ -93,7 +96,9 @@ def main() -> int:
           f"for {len(tickers)} tickers...", flush=True)
 
     # Pace submission under FMP's ~300/min cap, same discipline as the price job.
-    interval = 60.0 / 270
+    # _derived now makes TWO FMP calls per ticker (history + stock-price-change),
+    # so halve the submission rate to keep total requests under the cap.
+    interval = 60.0 / 135
     out: dict = {}
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=8) as ex:
