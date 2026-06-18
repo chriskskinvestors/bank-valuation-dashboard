@@ -120,45 +120,60 @@ class TestParseIndexHtml(unittest.TestCase):
 
 
 class TestExtractCapitalRatios(unittest.TestCase):
-    # FITB-shaped: a multi-quarter ratios table (newest column first) plus the
-    # prose restatement of CET1 the cross-check anchors on.
-    _FITB = """
+    # A ratios table (newest column first) PLUS prose restating each headline
+    # (Standardized) ratio — the prose value is what gets surfaced, corroborated
+    # by a matching table cell.
+    _DOC = """
     <table>
       <tr><td>CET1 capital</td><td>9.96 %</td><td>10.81 %</td><td>10.43 %</td></tr>
       <tr><td>Tier 1 risk-based capital</td><td>10.86 %</td><td>11.87 %</td></tr>
       <tr><td>Total risk-based capital</td><td>12.56 %</td><td>13.50 %</td></tr>
-      <tr><td>Leverage</td><td>10.20 %</td><td>9.80 %</td></tr>
+      <tr><td>Tier 1 leverage</td><td>10.20 %</td><td>9.80 %</td></tr>
     </table>
-    <p>CET1 capital ratio of 9.96% decreased 85 bps sequentially.</p>"""
+    <p>CET1 capital ratio of 9.96%; Tier 1 capital ratio was 10.86%; total
+    capital ratio of 12.56%; Tier 1 leverage ratio of 10.20%.</p>"""
 
-    def test_confirmed_set_extracted_current_column(self):
-        r = extract_capital_ratios(self._FITB)
-        self.assertEqual(r["cet1_ratio"], 9.96)   # leftmost = current quarter
+    def test_all_four_prose_confirmed(self):
+        r = extract_capital_ratios(self._DOC)
+        self.assertEqual(r["cet1_ratio"], 9.96)
         self.assertEqual(r["t1_ratio"], 10.86)
         self.assertEqual(r["total_ratio"], 12.56)
         self.assertEqual(r["lev_ratio"], 10.20)
 
-    def test_prose_table_mismatch_returns_all_none(self):
-        # Table CET1 9.96 but prose says 10.50 → unconfirmed → refuse everything.
-        html = self._FITB.replace("ratio of 9.96%", "ratio of 10.50%")
-        self.assertTrue(all(v is None for v in extract_capital_ratios(html).values()))
+    def test_picks_standardized_via_prose_when_table_has_two_approaches(self):
+        # Advanced T1 row (16.8) listed BEFORE Standardized (16.9); prose narrates
+        # the Standardized 16.9, so that's what surfaces — not the first row.
+        doc = """
+        <table>
+          <tr><td>CET1 capital</td><td>15.1 %</td></tr>
+          <tr><td>Tier 1 capital - Advanced</td><td>16.8 %</td></tr>
+          <tr><td>Tier 1 capital - Standardized</td><td>16.9 %</td></tr>
+        </table>
+        <p>CET1 capital ratio was 15.1% and the Tier 1 capital ratio was 16.9%.</p>"""
+        r = extract_capital_ratios(doc)
+        self.assertEqual(r["cet1_ratio"], 15.1)
+        self.assertEqual(r["t1_ratio"], 16.9)   # Standardized, from prose
 
-    def test_no_prose_returns_all_none(self):
-        html = self._FITB.replace(
-            "<p>CET1 capital ratio of 9.96% decreased 85 bps sequentially.</p>", "")
-        self.assertTrue(all(v is None for v in extract_capital_ratios(html).values()))
+    def test_prose_value_not_in_table_is_dropped(self):
+        # Prose says T1 11.50 but no table cell corroborates → T1 n/a (CET1 kept).
+        doc = self._DOC.replace("Tier 1 capital ratio was 10.86%",
+                                "Tier 1 capital ratio was 11.50%")
+        r = extract_capital_ratios(doc)
+        self.assertEqual(r["cet1_ratio"], 9.96)
+        self.assertIsNone(r["t1_ratio"])
 
-    def test_ordering_violation_refuses_set(self):
-        # CET1 (9.96) confirmed, but a mis-picked Tier 1 row below CET1 is
-        # impossible → refuse the whole set rather than show it.
-        html = self._FITB.replace(
-            "<td>Tier 1 risk-based capital</td><td>10.86 %</td><td>11.87 %</td>",
-            "<td>Tier 1 risk-based capital</td><td>8.50 %</td><td>9.00 %</td>")
-        self.assertTrue(all(v is None for v in extract_capital_ratios(html).values()))
+    def test_metric_only_in_table_not_prose_is_na(self):
+        # Total is in the table but NOT narrated → n/a (we don't guess approach).
+        doc = self._DOC.replace("total\n    capital ratio of 12.56%; ", "")
+        self.assertIsNone(extract_capital_ratios(doc)["total_ratio"])
+
+    def test_no_cet1_returns_all_none(self):
+        doc = self._DOC.replace("CET1 capital ratio of 9.96%; ", "")
+        self.assertTrue(all(v is None for v in extract_capital_ratios(doc).values()))
 
     def test_out_of_band_cet1_unconfirmed(self):
-        html = "<table><tr><td>CET1 capital</td><td>95.0 %</td></tr></table><p>CET1 ratio of 95.0%</p>"
-        self.assertIsNone(extract_capital_ratios(html)["cet1_ratio"])
+        doc = "<table><tr><td>CET1 capital</td><td>95.0 %</td></tr></table><p>CET1 ratio of 95.0%</p>"
+        self.assertIsNone(extract_capital_ratios(doc)["cet1_ratio"])
 
 
 class TestDashAccession(unittest.TestCase):

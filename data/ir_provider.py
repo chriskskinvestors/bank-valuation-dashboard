@@ -104,16 +104,17 @@ def _pick_ex99(items: list[dict]) -> str | None:
 
 
 # ── Capital-ratio extraction (increment 5b) ───────────────────────────────
-# Earnings releases carry no inline XBRL, so values come from text — but the
-# release states its CAPITAL RATIOS in two independent places: a multi-quarter
-# table (newest column first) AND a prose restatement ("CET1 capital ratio of
-# 9.96%"). We extract the current-period (leftmost) value from the labelled table
-# row and CONFIRM it against the prose figure. CET1 is the anchor: if the table's
-# leftmost CET1 matches the narrated CET1, the table is correctly aligned (right
-# column, right rows) and the sibling ratios from that same column are trusted;
-# if CET1 can't be confirmed, the whole set returns n/a. This in-document
-# cross-check needs no external ground truth and makes any column/row mis-pick
-# fail SAFE to n/a rather than surface a plausible-wrong number (cardinal rule).
+# Earnings releases carry no inline XBRL, so values come from text — and large
+# (advanced-approaches) banks report EACH ratio twice, under the Standardized and
+# Advanced methodologies (they differ ~10bp). The binding, headline-reported ones
+# (what the filing / FDIC / SNL show) are the STANDARDIZED ratios, and those are
+# exactly what the release NARRATES ("Tier 1 capital ratio was 16.9%"). So we lead
+# with the PROSE value for every ratio — that resolves the approach ambiguity to
+# Standardized — and CORROBORATE it against a matching cell in the structured
+# table. A ratio is surfaced only when prose and a table cell AGREE (to ~5bp):
+# double-confirmed in the bank's own document, methodology-consistent with the
+# filing it will supersede. Anything not corroborated returns n/a — never a guess
+# (cardinal rule). This makes a row/column/approach mis-pick fail SAFE.
 
 _RATIO_BANDS = {
     "cet1_ratio": (4.0, 30.0),
@@ -129,67 +130,82 @@ _ROW_LABELS = {
     "total_ratio": r"total (?:risk-based )?capital",
     "lev_ratio": r"(?:tier 1 )?leverage",
 }
+# Prose restatement: "<label> … ratio … of/was/at/to/ended at 16.9%". The verb set
+# is generous; the trailing % and the band check keep it precise.
+_VERB = r"(?:ratio\s+)?(?:of|was|were|at|to|:|ended (?:the quarter )?at|" \
+        r"(?:in|de)creased to)\s*"
+_PROSE = {
+    "cet1_ratio": re.compile(r"(?:common equity tier 1|cet1)[^%]{0,45}?" + _VERB
+                             + r"(\d{1,2}(?:\.\d{1,2})?)\s*%", re.I),
+    "t1_ratio": re.compile(r"tier 1 (?:risk-based )?capital ratio[^%]{0,30}?" + _VERB
+                           + r"(\d{1,2}(?:\.\d{1,2})?)\s*%", re.I),
+    "total_ratio": re.compile(r"total (?:risk-based )?capital ratio[^%]{0,30}?" + _VERB
+                              + r"(\d{1,2}(?:\.\d{1,2})?)\s*%", re.I),
+    "lev_ratio": re.compile(r"tier 1 leverage[^%]{0,45}?" + _VERB
+                            + r"(\d{1,2}(?:\.\d{1,2})?)\s*%", re.I),
+}
 _PCT = re.compile(r"(\d{1,2}(?:\.\d{1,2})?)\s*%")
-# Prose restatement: "<CET1 label> ... ratio of/was/at 9.96%".
-_CET1_PROSE = re.compile(
-    r"(?:common equity tier 1|cet1)[^%]{0,40}?(?:ratio\s+)?(?:of|was|at|:)\s*"
-    r"(\d{1,2}(?:\.\d{1,2})?)\s*%", re.I)
+_CORROBORATE_TOL = 0.051  # prose vs table cell, allowing 1-decimal rounding
 
 
 def _rows_text(html: str) -> list[str]:
-    """HTML -> one collapsed-text line per table row (so a row's label and its
-    cells stay together, columns left-to-right)."""
+    """HTML -> one collapsed-text line per table row (label + cells together)."""
     t = re.sub(r"(?is)<(script|style).*?</\1>", " ", html)
     t = re.sub(r"(?is)</tr\s*>", "\n", t)
     t = re.sub(r"(?s)<[^>]+>", " ", t)
     return [re.sub(r"\s+", " ", _h.unescape(ln)).strip() for ln in t.split("\n")]
 
 
-def _row_current_pct(rows: list[str], label_re: str) -> float | None:
-    """First percent value (the current/leftmost column) in the first row whose
-    text STARTS with the label and carries a `%`. None if no such row."""
-    pat = re.compile(r"^\s*" + label_re, re.I)
+def _row_pcts(rows: list[str], label_re: str) -> list[float]:
+    """Every percent value across ALL rows whose text starts with the label —
+    used only to CORROBORATE a prose figure (does this number appear in the
+    table?), so we don't have to guess which approach/column a row is."""
+    pat = re.compile(r"^\s*" + label_re + r"\b", re.I)
+    out = []
     for ln in rows:
         if "%" in ln and pat.match(ln):
-            m = _PCT.search(ln)
-            if m:
-                return float(m.group(1))
-    return None
+            out += [float(x) for x in _PCT.findall(ln)]
+    return out
+
+
+def _prose_val(text: str, key: str) -> float | None:
+    m = _PROSE[key].search(text)
+    if not m:
+        return None
+    v = float(m.group(1))
+    lo, hi = _RATIO_BANDS[key]
+    return v if lo <= v <= hi else None
 
 
 def extract_capital_ratios(html: str) -> dict:
-    """Current-period capital ratios from an earnings release, or None each.
+    """Current-period STANDARDIZED capital ratios from an earnings release, each
+    value double-confirmed (narrated AND present in the table) or None.
 
-    Strategy (cardinal-rule safe): pull the leftmost % from each labelled ratio
-    row, then require the table's CET1 to MATCH the prose-restated CET1 (the
-    headline figure every release narrates). Agreement proves the table is
-    aligned; the sibling ratios from the same column are then trusted, subject to
-    band + CET1<=T1<=Total ordering checks. If CET1 can't be confirmed, return
-    all-None — never a guessed value.
+    For each ratio: take the prose-narrated figure (the binding Standardized one)
+    and keep it only if a table cell in that ratio's row(s) corroborates it to
+    ~5bp. CET1 must be confirmed AND must order CET1<=T1<=Total — otherwise the
+    whole set is refused. Nothing unconfirmed is ever returned.
     """
     none = {k: None for k in _RATIO_BANDS}
     rows = _rows_text(html)
-    table = {}
-    for key, lab in _ROW_LABELS.items():
-        v = _row_current_pct(rows, lab)
-        lo, hi = _RATIO_BANDS[key]
-        table[key] = v if (v is not None and lo <= v <= hi) else None
-
     text = re.sub(r"\s+", " ", _h.unescape(re.sub(r"(?s)<[^>]+>", " ", html)))
-    pm = _CET1_PROSE.search(text)
-    prose_cet1 = float(pm.group(1)) if pm else None
 
-    # CET1 anchor: table and prose must agree (to 1bp) or we trust nothing.
-    if table["cet1_ratio"] is None or prose_cet1 is None:
-        return none
-    if abs(table["cet1_ratio"] - prose_cet1) > 0.011:
-        return none
-    out = dict(table)
-    # Ordering guard on the confirmed column: CET1 <= Tier 1 <= Total.
+    out = {}
+    for key in _RATIO_BANDS:
+        pv = _prose_val(text, key)
+        if pv is None:
+            out[key] = None
+            continue
+        cells = _row_pcts(rows, _ROW_LABELS[key])
+        out[key] = pv if any(abs(pv - c) <= _CORROBORATE_TOL for c in cells) else None
+
+    # CET1 is the required anchor; without a confirmed CET1 we surface nothing.
     c, t1, tot = out["cet1_ratio"], out["t1_ratio"], out["total_ratio"]
-    if t1 is not None and c > t1 + 0.011:
-        return none  # misaligned row pick — refuse the whole set
-    if t1 is not None and tot is not None and t1 > tot + 0.011:
+    if c is None:
+        return none
+    if t1 is not None and c > t1 + 0.051:
+        return none
+    if t1 is not None and tot is not None and t1 > tot + 0.051:
         return none
     return out
 
