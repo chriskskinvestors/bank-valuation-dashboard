@@ -88,7 +88,7 @@ def main() -> int:
     from data.bank_universe import get_universe
     from config import DEFAULT_WATCHLIST
     from data.events import init_schema, insert_events_returning_new, last_seen_published
-    from data.events.sec_8k import SEC8KAdapter
+    from data.events.sec_8k import SEC8KAdapter, SEC8KRecentAdapter
     from data.events.businesswire import BusinessWireAdapter
     from data.events.prnewswire import PRNewswireAdapter
     from data.events.globenewswire import GlobeNewswireAdapter
@@ -118,12 +118,14 @@ def main() -> int:
     profile = (os.environ.get("POLL_PROFILE") or "full").strip().lower()
 
     if profile == "fast":
-        # Watchlist only — the actively-tracked banks get near-real-time news;
-        # the full profile sweeps the rest. SEC 8-K over ~60 CIKs + two wire
-        # feeds + FMP finishes well under a minute.
-        universe = watchlist
+        # FULL-universe coverage, still sub-minute. SEC 8-K comes from EDGAR's
+        # recent-filings feed (SEC8KRecentAdapter) — ONE call returns every
+        # bank's latest 8-Ks (the per-CIK SEC8KAdapter would loop ~440 times) —
+        # plus the cheap single-feed wires. Only FMP stays watchlist-scoped
+        # (it's per-ticker and can't collapse to one call); the full profile
+        # backfills FMP/Yahoo/IR + per-CIK 8-K for the rest.
         narrow_adapters = [FMPPressReleaseAdapter()]
-        broad_adapters = [SEC8KAdapter(), PRNewswireAdapter(), GlobeNewswireAdapter()]
+        broad_adapters = [SEC8KRecentAdapter(), PRNewswireAdapter(), GlobeNewswireAdapter()]
     else:
         # Order matters: cheap, high-visibility sources FIRST so they always fit
         # in budget. Google News is per-ticker over the full universe — the

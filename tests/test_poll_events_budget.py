@@ -60,6 +60,7 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=No
     # Patch each adapter class to hand back the next fake in order.
     for modpath, clsname in [
         ("data.events.sec_8k", "SEC8KAdapter"),
+        ("data.events.sec_8k", "SEC8KRecentAdapter"),
         ("data.events.businesswire", "BusinessWireAdapter"),
         ("data.events.prnewswire", "PRNewswireAdapter"),
         ("data.events.globenewswire", "GlobeNewswireAdapter"),

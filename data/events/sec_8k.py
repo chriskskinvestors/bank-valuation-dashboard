@@ -215,3 +215,103 @@ class SEC8KAdapter(SourceAdapter):
                 },
             ))
         return events
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Recent-filings feed adapter (FAST poll) — every bank's 8-Ks in ONE call
+# ──────────────────────────────────────────────────────────────────────────
+
+# EDGAR's "current filings" Atom feed lists the latest 8-Ks across EVERY filer
+# in a single request — and the entry carries the CIK (in the title), the
+# accession (in the <id>), the filing time, AND the item codes right in the
+# summary ("Item 2.02: ...", "Item 5.02: ..."). So the FAST poll can cover the
+# whole universe's material filings in one call, staying sub-minute, instead of
+# looping per-CIK. Same source name + accession external_id as SEC8KAdapter, so
+# the two dedup. The per-CIK SEC8KAdapter stays the FULL-poll backstop: the feed
+# only holds the latest ~100 filings, so it could miss across a long off-hours
+# gap — the 30-min/6-h full poll re-pulls per-CIK and can't miss.
+
+_GETCURRENT_8K_URL = (
+    "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K"
+    "&company=&dateb=&owner=include&count=100&output=atom"
+)
+_TITLE_CIK_RE = re.compile(r"\((\d{4,10})\)\s*\(Filer\)", re.IGNORECASE)
+_FEED_ITEM_RE = re.compile(r"Item\s+(\d+\.\d+)")
+_FEED_ACC_RE = re.compile(r"accession-number=([\d-]+)")
+_FEED_ACC_SUM_RE = re.compile(r"AccNo:\s*([\d-]+)", re.IGNORECASE)
+
+
+class SEC8KRecentAdapter(SourceAdapter):
+    """All-banks 8-K via EDGAR's recent-filings Atom feed (one call). Used by the
+    FAST poll profile; dedups with SEC8KAdapter on (source, accession)."""
+
+    name = "sec_8k"
+    LOOKBACK_DAYS = 7
+
+    def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
+        from data.events.wire_base import fetch_rss
+        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+
+        # CIK -> ticker for the banks we track (get_cik is a local lookup).
+        cik_map: dict[int, str] = {}
+        for t in tickers:
+            c = get_cik(t)
+            if not c:
+                continue
+            try:
+                cik_map[int(c)] = t.upper()
+            except (TypeError, ValueError):
+                continue
+        if not cik_map:
+            return []
+
+        try:
+            feed = fetch_rss(_GETCURRENT_8K_URL,
+                             user_agent="BankValuationDashboard chris@kskinvestors.com")
+        except Exception as e:
+            print(f"[sec_8k_recent] feed error: {type(e).__name__}: {e}")
+            return []
+
+        out: list[Event] = []
+        seen: set[str] = set()
+        for it in feed:
+            m = _TITLE_CIK_RE.search(it.title or "")
+            if not m:
+                continue
+            try:
+                cik = int(m.group(1))
+            except ValueError:
+                continue
+            ticker = cik_map.get(cik)
+            if not ticker:
+                continue
+
+            item_codes = _FEED_ITEM_RE.findall(it.summary or "")
+            # Drop pure-boilerplate (exhibits-only) filings, same as SEC8KAdapter.
+            if set(item_codes) == {"9.01"}:
+                continue
+
+            pub = it.published or datetime.now(timezone.utc)
+            if pub < cutoff:
+                continue
+
+            am = (_FEED_ACC_RE.search(it.guid or "")
+                  or _FEED_ACC_SUM_RE.search(it.summary or ""))
+            accession = am.group(1) if am else ""
+            if not accession or accession in seen:
+                continue
+            seen.add(accession)
+
+            out.append(Event(
+                ticker=ticker,
+                source=self.name,
+                event_type=_classify_event_type(item_codes, ""),
+                headline=_build_headline(item_codes, ""),
+                published_at=pub,
+                url=it.link or "",
+                summary="",
+                external_id=accession,
+                raw={"cik": cik, "form": "8-K", "items": item_codes,
+                     "source_feed": "getcurrent"},
+            ))
+        return out
