@@ -8,7 +8,7 @@ import unittest
 
 from data.ir_provider import (
     _latest_earnings_8k, _pick_ex99, _parse_index_html, _dash_accession,
-    extract_capital_ratios,
+    extract_capital_ratios, extract_pnl,
 )
 
 
@@ -182,6 +182,44 @@ class TestDashAccession(unittest.TestCase):
 
     def test_short_input_unchanged(self):
         self.assertEqual(_dash_accession("123"), "123")
+
+
+class TestExtractPnl(unittest.TestCase):
+    def test_net_income_billion(self):
+        self.assertEqual(extract_pnl("Net Income of $16.5 billion.")["net_income"], 16.5e9)
+
+    def test_net_income_million(self):
+        self.assertEqual(extract_pnl("Net income of $517 million")["net_income"], 517e6)
+
+    def test_net_income_totaled(self):
+        self.assertEqual(extract_pnl("net income totaled $189.2 million")["net_income"], 189.2e6)
+
+    def test_available_to_common_excluded(self):
+        # "available to common" is after-preferred — NOT total net income.
+        r = extract_pnl("net income available to common shareholders of $128 million")
+        self.assertIsNone(r["net_income"])
+
+    def test_net_income_out_of_band(self):
+        self.assertIsNone(extract_pnl("net income of $0.2 million")["net_income"])
+
+    def test_diluted_eps_leading(self):
+        self.assertEqual(extract_pnl("Diluted earnings per common share $1.65")["diluted_eps"], 1.65)
+
+    def test_diluted_eps_trailing(self):
+        # JPM/PNC house style: "Earnings per share - diluted $5.94".
+        self.assertEqual(extract_pnl("Earnings per share - diluted $ 5.94")["diluted_eps"], 5.94)
+
+    def test_diluted_eps_per_share_phrase(self):
+        self.assertEqual(extract_pnl("$4.32 per diluted share")["diluted_eps"], 4.32)
+
+    def test_basic_eps_not_grabbed(self):
+        # No "diluted" anywhere → diluted EPS must be None (don't show basic).
+        self.assertIsNone(extract_pnl("Earnings per common share: Basic $1.61")["diluted_eps"])
+
+    def test_both_present(self):
+        r = extract_pnl("Net Income of $1.8 billion, or Diluted EPS $4.32")
+        self.assertEqual(r["net_income"], 1.8e9)
+        self.assertEqual(r["diluted_eps"], 4.32)
 
 
 if __name__ == "__main__":

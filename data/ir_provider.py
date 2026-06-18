@@ -210,6 +210,69 @@ def extract_capital_ratios(html: str) -> dict:
     return out
 
 
+# ── P&L extraction (increment 5e) ──────────────────────────────────────────
+# The freshest-source layer earns its keep on FAST-MOVING numbers the release
+# HEADLINES: total net income and diluted EPS (capital ratios barely move, so
+# their 3-week lead is marginal — and they're already covered cleanly by the
+# 10-Q iXBRL in Company Reported). Both here are stated prominently in prose;
+# the guards below avoid the look-alike variants (net income AVAILABLE TO COMMON
+# ≠ total; BASIC EPS ≠ diluted). Values are display-grade only after the
+# ground-truth audit (vs the filed NetIncomeLoss / EarningsPerShareDiluted
+# facts) confirms them — never a guess (cardinal rule).
+
+# "net income of/was/totaled $X million|billion" — but NOT "net income available
+# /applicable to common …" (that's after-preferred, a different line). Requiring
+# the verb right after "net income" excludes those variants.
+_NI_PROSE = re.compile(
+    r"net income\s+(?:of|was|were|total(?:ed|led)|totaling)\s+\$?\s?"
+    r"([\d]+(?:\.\d+)?)\s*(million|billion)", re.I)
+# Diluted EPS — require the word "diluted" so BASIC EPS can't be grabbed. Targets
+# the GAAP diluted figure (the line that matches the filing's
+# EarningsPerShareDiluted), NOT a non-GAAP "adjusted EPS" headline.
+_EPS_PROSE = [
+    re.compile(r"diluted\s+(?:earnings per (?:common )?share|eps)[^.$]{0,18}?"
+               r"\$\s?(\d+\.\d{2})", re.I),
+    re.compile(r"earnings per (?:common )?diluted share[^.$]{0,12}?\$\s?(\d+\.\d{2})", re.I),
+    # "Earnings per share - diluted $5.94" / "earnings per share, diluted": the
+    # word "diluted" trails the label (JPM/PNC house style).
+    re.compile(r"earnings per (?:common )?share\s*[-,–:]\s*diluted[^.$]{0,8}?"
+               r"\$\s?(\d+\.\d{2})", re.I),
+    re.compile(r"\$\s?(\d+\.\d{2})\s+per diluted (?:common )?share", re.I),
+]
+_NI_BAND = (1e6, 2.5e10)       # quarterly net income for a bank holding co
+_EPS_BAND = (-5.0, 50.0)       # diluted EPS per share
+
+
+def extract_pnl(html: str) -> dict:
+    """Current-quarter headline P&L from an earnings release: {net_income (in
+    dollars), diluted_eps (per share)} or None each. Prose-led with variant
+    guards (total net income, not available-to-common; diluted EPS, not basic).
+    CANDIDATES only — display is gated on the ground-truth audit."""
+    text = re.sub(r"\s+", " ", _h.unescape(re.sub(r"(?s)<[^>]+>", " ", html)))
+    out = {"net_income": None, "diluted_eps": None}
+
+    m = _NI_PROSE.search(text)
+    if m:
+        try:
+            val = float(m.group(1)) * (1e9 if m.group(2).lower() == "billion" else 1e6)
+        except ValueError:
+            val = None
+        if val is not None and _NI_BAND[0] <= val <= _NI_BAND[1]:
+            out["net_income"] = val
+
+    for pat in _EPS_PROSE:
+        m = pat.search(text)
+        if m:
+            try:
+                v = float(m.group(1))
+            except ValueError:
+                continue
+            if _EPS_BAND[0] <= v <= _EPS_BAND[1]:
+                out["diluted_eps"] = v
+                break
+    return out
+
+
 def latest_earnings_release(cik) -> dict | None:
     """I/O: locate + fetch the latest 8-K Item 2.02 EX-99.1 earnings release for a
     CIK. Returns {url, html, filed_date, accession, form} or None. Any network or
