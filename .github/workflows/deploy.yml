@@ -5,14 +5,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Serialize deploys. Several sessions push to main within seconds; without this,
-# two `gcloud run deploy`s race the same Cloud Run service and one ABORTs with a
-# version conflict (a red "deploy failed" email on a change that was actually
-# fine). cancel-in-progress: false queues them so each commit deploys + smokes
-# in order, one at a time.
+# Deploy only the latest push to main. Several sessions push within seconds;
+# without coordination two `gcloud run deploy`s race the same Cloud Run service
+# and one ABORTs with a version conflict (a red "deploy failed" email on a
+# change that was actually fine). cancel-in-progress: true cancels older
+# in-flight runs so the service is never updated by two deploys at once, and a
+# rapid burst collapses to one deploy of the newest commit instead of a queue.
+# Trade-off vs serialize (false): intermediate commits in a burst don't get
+# their own deploy/smoke — only the newest does.
 concurrency:
   group: deploy-cloud-run
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   PROJECT_ID: ace-beanbag-486220-a8
