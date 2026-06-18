@@ -713,18 +713,29 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     st.success(f"Saved '{new_name}' (v{_v})")
                     st.rerun()
 
-    # ── As-of point-in-time (optional) ─────────────────────────────────
-    # Reconstruct the universe as it FILED at a past quarter-end (FDIC
-    # point-in-time): includes since-failed/acquired banks for the quarters they
-    # filed (e.g. SVB shows in Q4-2022). Market & SEC metrics are n/a in this
-    # mode (FDIC-only); never guessed.
+    # ── Controls row: As of · Scope · Sort · Order ─────────────────────
+    # One dense control row (was a stacked As-of band ABOVE a separate
+    # Scope/Sort/Order row). As-of reconstructs the universe as it FILED at a
+    # past quarter-end (FDIC point-in-time: includes since-failed/acquired banks
+    # for the quarters they filed, e.g. SVB in Q4-2022; market & SEC metrics are
+    # n/a then, never guessed) and feeds the scope selector. The rest are
+    # independent. Sort options are built before the row so c_sort can use them.
     from data.as_of_metrics import (recent_quarter_ends, quarter_label,
                                      as_of_quarter_metrics)
     from data.entity_graph import KNOWN_PUBLIC_FAILURES, lineage_predecessors
     _qs_list = recent_quarter_ends(20)   # ~5 years, enough to reach the 2023 failures
     _asof_opts = ["Latest (live)"] + [quarter_label(q) for q in _qs_list]
-    _ac, _ = st.columns([2, 3])
-    with _ac:
+
+    sort_labels = ["Default"]
+    sort_keys = [None]
+    for col_key in tab_columns:
+        m = METRICS_BY_KEY.get(col_key)
+        if m:
+            sort_labels.append(m["label"])
+            sort_keys.append(col_key)
+
+    c_asof, c_scope, c_sort, c_order = st.columns([2, 3, 2, 1])
+    with c_asof:
         _asof_pick = st.selectbox(
             "As of", _asof_opts, key=f"asof_{tab_key}",
             help="Screen the universe as it filed at a past quarter-end (FDIC "
@@ -753,33 +764,19 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     else:
         screen_metrics = all_metrics
 
-    # ── Scope + sort controls ──────────────────────────────────────────
-    # Scope is the shared Bank-Groups selector (All banks / asset-size tier /
-    # business mix / saved group / manual), sliced from the active metrics set
-    # (live snapshot, or the as-of reconstruction).
-    f_col1, f_col2, f_col3 = st.columns([2, 2, 1])
-
-    with f_col1:
+    # Scope = shared Bank-Groups selector (All banks / asset-size tier / business
+    # mix / state / region / saved group / manual), sliced from the active set.
+    with c_scope:
         display_metrics, display_tickers, scope_label = render_scope_selector(
             screen_metrics, key_prefix=f"screen_{tab_key}")
-
-    sort_labels = ["Default"]
-    sort_keys = [None]
-    for col_key in tab_columns:
-        m = METRICS_BY_KEY.get(col_key)
-        if m:
-            sort_labels.append(m["label"])
-            sort_keys.append(col_key)
-
-    with f_col2:
+    with c_sort:
         sort_idx = st.selectbox(
             "Sort by",
             options=list(range(len(sort_labels))),
             format_func=lambda i: sort_labels[i],
             key=f"sort_{tab_key}",
         )
-
-    with f_col3:
+    with c_order:
         sort_order = st.selectbox(
             "Order",
             options=["Desc", "Asc"],
@@ -935,42 +932,40 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
         render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
 
-    # ── Save the current result set as a reusable Bank Group ───────────
-    with st.expander(f"Save these {len(display_metrics)} banks as a group",
-                     expanded=False):
-        st.caption("Persist the current (filtered) result set as a named group, "
-                   "then reuse it as a scope here or in Compare.")
-        sg1, sg2 = st.columns([3, 1])
-        with sg1:
-            grp_name = st.text_input("Group name",
-                                     placeholder="e.g. CRE-heavy Southeast",
-                                     key=f"save_grp_name_{tab_key}",
-                                     label_visibility="collapsed")
-        with sg2:
-            if st.button(f"Save {len(display_metrics)} banks",
-                         key=f"save_grp_btn_{tab_key}", use_container_width=True):
-                grp_tickers = [m["ticker"] for m in display_metrics if m.get("ticker")]
-                if not grp_name.strip():
-                    st.warning("Enter a group name first.")
-                elif not grp_tickers:
-                    st.warning("No banks to save.")
-                elif save_group(grp_name, grp_tickers):
-                    st.success(f"Saved '{grp_name.strip()}' ({len(grp_tickers)} banks).")
-                else:
-                    st.error("Could not save (empty name or storage error).")
-
-    # Screen → Compare handoff: send the current result set straight into the
-    # side-by-side Compare view (it arrives as a Manual scope there).
-    if display_metrics and st.button(
-            f"Compare these {len(display_metrics)} banks →",
-            key=f"compare_handoff_{tab_key}"):
-        st.session_state["_compare_handoff_tickers"] = [
-            m["ticker"] for m in display_metrics if m.get("ticker")]
-        # sc_sub is a widget already instantiated above; flag the switch and let
-        # the pre-radio handler set it on the next run (can't write a widget's
-        # session_state after it's created).
-        st.session_state["_goto_compare"] = True
-        st.rerun()
+    # ── Result-set actions (one row): Compare handoff · Save-as-group ───
+    # Was two stacked full-width bands (a Save expander + a standalone Compare
+    # button). Compare hands the current set to the side-by-side view (it arrives
+    # as a Manual scope there); the inline name field + Save persists the
+    # (filtered) set as a reusable Bank Group for reuse here or in Compare.
+    a_cmp, a_name, a_save = st.columns([2, 3, 1])
+    with a_cmp:
+        if display_metrics and st.button(
+                f"Compare these {len(display_metrics)} banks →",
+                key=f"compare_handoff_{tab_key}", use_container_width=True):
+            st.session_state["_compare_handoff_tickers"] = [
+                m["ticker"] for m in display_metrics if m.get("ticker")]
+            # sc_sub is a widget already instantiated above; flag the switch and
+            # let the pre-radio handler set it next run (can't write a widget's
+            # session_state after it's created).
+            st.session_state["_goto_compare"] = True
+            st.rerun()
+    with a_name:
+        grp_name = st.text_input(
+            "Save as group",
+            placeholder=f"Name to save these {len(display_metrics)} banks as a reusable group…",
+            key=f"save_grp_name_{tab_key}", label_visibility="collapsed")
+    with a_save:
+        if st.button("Save group", key=f"save_grp_btn_{tab_key}",
+                     use_container_width=True):
+            grp_tickers = [m["ticker"] for m in display_metrics if m.get("ticker")]
+            if not grp_name.strip():
+                st.warning("Enter a group name first.")
+            elif not grp_tickers:
+                st.warning("No banks to save.")
+            elif save_group(grp_name, grp_tickers):
+                st.success(f"Saved '{grp_name.strip()}' ({len(grp_tickers)} banks).")
+            else:
+                st.error("Could not save (empty name or storage error).")
 
     # ── Column picker + Excel export ──────────────────────────────────
     with st.expander("Customize columns & export", expanded=False):

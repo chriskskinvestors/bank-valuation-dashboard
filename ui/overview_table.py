@@ -135,59 +135,42 @@ def render_overview_table(metrics_data: list[dict], selected_columns: list[str])
 
 
 def render_data_freshness(fdic_ages: dict, sec_ages: dict, ibkr_connected: bool):
-    """Show data freshness indicators."""
-    cols = st.columns(3)
+    """One compact, left-aligned row of data-provenance freshness badges.
 
-    with cols[0]:
-        if ibkr_connected:
-            st.markdown(
-                '<span class="freshness-badge freshness-live">IBKR LIVE</span>',
-                unsafe_allow_html=True,
-            )
-        else:
-            # Cloud price source is FMP (live), not IBKR. Show its real status.
-            try:
-                from data.fmp_client import _has_key
-                fmp_ok = _has_key()
-            except Exception:
-                fmp_ok = False
-            if fmp_ok:
-                st.markdown(
-                    '<span class="freshness-badge freshness-live">FMP LIVE</span>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    '<span class="freshness-badge freshness-stale">PRICES OFFLINE</span>',
-                    unsafe_allow_html=True,
-                )
+    Was ``st.columns(3)``, which pinned each badge to the left edge of its own
+    third of the page — three tiny pills flung across the full width with big
+    empty gaps. A single flex row keeps them tight together, which is also how
+    the design system treats pill groups.
+    """
+    badges: list[tuple[str, str]] = []
 
-    with cols[1]:
-        ages = [a for a in fdic_ages.values() if a is not None]
+    # Price source: IBKR when connected (local), else FMP (cloud) — show real status.
+    if ibkr_connected:
+        badges.append(("IBKR LIVE", "freshness-live"))
+    else:
+        try:
+            from data.fmp_client import _has_key
+            fmp_ok = _has_key()
+        except Exception:
+            fmp_ok = False
+        badges.append(("FMP LIVE", "freshness-live") if fmp_ok
+                      else ("PRICES OFFLINE", "freshness-stale"))
+
+    # FDIC + SEC fundamentals: average age across the sampled tickers.
+    for src, ages_map in (("FDIC", fdic_ages), ("SEC", sec_ages)):
+        ages = [a for a in ages_map.values() if a is not None]
         if ages:
             avg_hours = sum(ages) / len(ages) / 3600
-            if avg_hours < 24:
-                badge = "freshness-live"
-                label = f"FDIC {avg_hours:.0f}h ago"
-            else:
-                badge = "freshness-cached"
-                label = f"FDIC {avg_hours:.0f}h ago"
+            cls = "freshness-live" if avg_hours < 24 else "freshness-cached"
+            badges.append((f"{src} {avg_hours:.0f}h ago", cls))
         else:
-            badge = "freshness-stale"
-            label = "FDIC NO DATA"
-        st.markdown(f'<span class="freshness-badge {badge}">{label}</span>', unsafe_allow_html=True)
+            badges.append((f"{src} NO DATA", "freshness-stale"))
 
-    with cols[2]:
-        ages = [a for a in sec_ages.values() if a is not None]
-        if ages:
-            avg_hours = sum(ages) / len(ages) / 3600
-            if avg_hours < 24:
-                badge = "freshness-live"
-                label = f"SEC {avg_hours:.0f}h ago"
-            else:
-                badge = "freshness-cached"
-                label = f"SEC {avg_hours:.0f}h ago"
-        else:
-            badge = "freshness-stale"
-            label = "SEC NO DATA"
-        st.markdown(f'<span class="freshness-badge {badge}">{label}</span>', unsafe_allow_html=True)
+    spans = "".join(
+        f'<span class="freshness-badge {cls}">{label}</span>'
+        for label, cls in badges)
+    st.markdown(
+        f'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;'
+        f'margin:0 0 8px;">{spans}</div>',
+        unsafe_allow_html=True,
+    )
