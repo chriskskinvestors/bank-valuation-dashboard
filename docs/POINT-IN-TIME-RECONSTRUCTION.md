@@ -17,14 +17,22 @@ past quarter-end and screens over FDIC point-in-time fundamentals.
   with an amber banner stating quarter, bank count, since-exited count, and the
   FDIC-point-in-time/n/a provenance. Verified: As-of Q4 2022 → SVB at $209.026B etc.
 
-## Known v1 limitations (labeled, not wrong)
+## Multi-quarter metrics — DONE (2026-06-18)
+
+As-of now builds over a **20-quarter window** ending at Q (matching the live engine's
+depth), so 4-quarter averages, trends, QoQ/YoY and the fair-value cascade compute
+exactly as the dashboard would have shown them at Q — not single-quarter-distorted.
+`fdic_client.fetch_quarter_financials(repdte, certs=…)` filters each quarter to the
+cohort (chunked OR filters, ~1.5s/quarter) so the window is ~20 fast calls, ≈76s first
+load then cached. Verified: SVB Q4-2022 ROATCE-adj 13.5% (was a 1-quarter-distorted
+53%), NIM 4Q 2.21% vs single 2.23%, deposit QoQ −1.96%.
+
+## Remaining limitations (labeled, not wrong)
 
 - Candidate set = today's public banks + tracked failures. **Lineage** (a target
   absorbed by a current bank after Q, shown separately at Q) is NOT yet expanded in the
   UI — the surviving acquirer shows its own correct Q filing, but the absorbed target is
   absent. `entity_graph.public_universe_as_of(..., with_lineage=True)` is the hook.
-- **Multi-quarter as-of metrics** (4Q / trends) are n/a in single-quarter mode. A
-  windowed fetch (N quarter-batches up to Q) would enable them at extra latency.
 - Defunct banks have no Company page, so their ticker cell does not deep-link.
 
 ## Original spec (retained)
