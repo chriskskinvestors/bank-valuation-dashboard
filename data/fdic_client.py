@@ -41,47 +41,66 @@ _BASE_FINANCIALS_FIELDS = {
 }
 
 
-def fetch_quarter_financials(repdte: str) -> dict[int, dict]:
-    """All institutions' financials for one quarter (``repdte`` = YYYYMMDD), as
-    ``{cert: record}`` with numeric fields coerced — the same field set as
-    fetch_financials. Paginated (≈5 calls for the whole banking system), so it is
-    far cheaper than per-cert fetches when building an as-of-quarter universe."""
+def _coerce_fin_record(d: dict) -> dict:
+    rec = {}
+    for k, v in d.items():
+        if k == "REPDTE":
+            rec[k] = pd.to_datetime(v, format="%Y%m%d", errors="coerce")
+        elif k == "REPNM":
+            rec[k] = v
+        else:
+            rec[k] = pd.to_numeric(v, errors="coerce")
+    return rec
+
+
+def _fetch_fin_page(filters: str, fields: str, offset: int) -> list[dict]:
+    try:
+        resp = _get_with_retry(FDIC_FINANCIALS_URL, {
+            "filters": filters, "fields": fields,
+            "limit": 1000, "offset": offset, "sort_by": "CERT", "sort_order": "ASC",
+        })
+        return resp.json().get("data", []) if resp is not None else []
+    except Exception as e:
+        print(f"[FDIC] fetch_quarter_financials error: {e}")
+        return []
+
+
+def fetch_quarter_financials(repdte: str, certs=None) -> dict[int, dict]:
+    """One quarter's financials (``repdte`` = YYYYMMDD) as ``{cert: record}`` with
+    numeric fields coerced (same field set as fetch_financials).
+
+    When ``certs`` is given, the query is filtered to those certs (chunked OR
+    filters) — one fast page per chunk, so a windowed as-of build over a few
+    hundred banks costs a handful of calls per quarter instead of a full-system
+    sweep. Without ``certs`` it paginates the whole banking system. Records carry
+    numpy/Timestamp values, so the caller (as_of_metrics) caches the BUILT metric
+    list (JSON-clean), not these raw records."""
     fields = ",".join(sorted(_BASE_FINANCIALS_FIELDS | get_fdic_fields()))
+    cert_list = sorted({int(c) for c in certs if c}) if certs else None
+
     out: dict[int, dict] = {}
-    offset = 0
-    while True:
-        params = {
-            "filters": f"REPDTE:{repdte}", "fields": fields,
-            "limit": 1000, "offset": offset,
-            "sort_by": "CERT", "sort_order": "ASC",
-        }
-        try:
-            resp = _get_with_retry(FDIC_FINANCIALS_URL, params)
-            if resp is None:
+    if cert_list:
+        for i in range(0, len(cert_list), 200):       # chunk to keep filter URL sane
+            chunk = cert_list[i:i + 200]
+            flt = f"REPDTE:{repdte} AND CERT:(" + " OR ".join(str(c) for c in chunk) + ")"
+            for r in _fetch_fin_page(flt, fields, 0):
+                d = r.get("data", {})
+                if d.get("CERT") is not None:
+                    out[int(d["CERT"])] = _coerce_fin_record(d)
+    else:
+        offset = 0
+        while True:
+            page = _fetch_fin_page(f"REPDTE:{repdte}", fields, offset)
+            if not page:
                 break
-            page = resp.json().get("data", [])
-        except Exception as e:
-            print(f"[FDIC] fetch_quarter_financials {repdte} error: {e}")
-            break
-        if not page:
-            break
-        for r in page:
-            d = r.get("data", {})
-            c = d.get("CERT")
-            if c is None:
-                continue
-            rec = {}
-            for k, v in d.items():
-                if k == "REPDTE":
-                    rec[k] = pd.to_datetime(v, format="%Y%m%d", errors="coerce")
-                elif k == "REPNM":
-                    rec[k] = v
-                else:
-                    rec[k] = pd.to_numeric(v, errors="coerce")
-            out[int(c)] = rec
-        if len(page) < 1000:
-            break
-        offset += 1000
+            for r in page:
+                d = r.get("data", {})
+                if d.get("CERT") is not None:
+                    out[int(d["CERT"])] = _coerce_fin_record(d)
+            if len(page) < 1000:
+                break
+            offset += 1000
+
     return out
 
 

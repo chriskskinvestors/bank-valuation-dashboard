@@ -1,40 +1,25 @@
 """
 As-of-quarter FDIC metrics for point-in-time screening (increment 2).
 
-For a chosen quarter and the reconstructed cert set (data/entity_graph), fetch each
-cert's FDIC quarterly history (the existing parallel fetcher), pick the chosen
-quarter's record, and build metrics through the REAL engine (build_bank_metrics over
-the as-of history window) — never a reimplementation, so a bank's Q1-2023 numbers are
-exactly what FDIC filed then, including for since-failed banks.
+For a chosen quarter and the reconstructed cert set (data/entity_graph), fetch a
+WINDOW of quarters up to Q (filtered to those certs — a handful of fast calls per
+quarter, not a full-system sweep), assemble each bank's history newest-first, and
+build metrics through the REAL engine (build_bank_metrics over that history) — never
+a reimplementation. The window matches the live engine's depth, so 4-quarter
+averages, trends, QoQ/YoY changes and the fair-value cascade compute exactly as the
+dashboard would have shown them at Q.
 
-As-of mode is FDIC-only: SEC/price/market-cap metrics are absent (None → n/a),
-never guessed. Results are cached per quarter.
+As-of mode is FDIC-only: SEC/price/market-cap metrics are absent (None → n/a), never
+guessed. Results are cached per (quarter, cohort size, window).
 """
 from __future__ import annotations
 
 import pandas as pd
 
 _CACHE_TTL_S = 24 * 3600
-
-# Metrics that need multiple quarters of history (4-quarter averages, trends, QoQ/
-# YoY changes, and the fair-value cascade built on blended/normalized ROATCE).
-# In single-quarter as-of mode they would be computed from one quarter and come
-# out distorted, so they are forced to n/a — never a plausible-wrong number.
-_HISTORY_DEPENDENT_CATEGORIES = {
-    "Fair Value", "Capital Dynamics", "Credit Dynamics",
-    "Deposit Dynamics", "Capital Return",
-}
-_HISTORY_DEPENDENT_EXTRA = {"roaa_4q", "roatce_4q", "nim_4q"}
-
-
-def _history_dependent_keys() -> set:
-    from config import METRICS
-    keys = {m["key"] for m in METRICS
-            if m.get("category") in _HISTORY_DEPENDENT_CATEGORIES}
-    return keys | _HISTORY_DEPENDENT_EXTRA
-
-
-_NA_KEYS = None
+# Quarters of history fed to the engine, matching the live build's effective depth
+# (load_fdic_hist limit=20) so as-of values equal the live values computed at Q.
+_WINDOW = 20
 
 
 def quarter_label(ts) -> str:
@@ -47,18 +32,17 @@ def recent_quarter_ends(n: int = 12) -> list[pd.Timestamp]:
     """The last ``n`` completed calendar quarter-ends, newest first. Used to
     populate the 'As of' picker. Excludes the current incomplete quarter."""
     today = pd.Timestamp.today().normalize()
-    # most recent quarter-end strictly before today
     q_end = (today - pd.offsets.QuarterEnd(startingMonth=12))
     return [q_end - pd.offsets.QuarterEnd(startingMonth=12) * i for i in range(n)]
 
 
-def as_of_quarter_metrics(quarter, cert_to_id: dict) -> list[dict]:
+def as_of_quarter_metrics(quarter, cert_to_id: dict, *, window: int = _WINDOW) -> list[dict]:
     """Build FDIC metrics as of ``quarter`` for the reconstructed certs.
 
-    cert_to_id: {fdic_cert: display_id} — display_id is the live ticker for current
-    banks or a synthetic id (e.g. name) for defunct ones. Returns a list of metric
-    dicts (the same shape the live screen uses), each tagged with ``_as_of`` and
-    ``_as_of_source``. Cached per quarter.
+    cert_to_id: {fdic_cert: display_id} — the live ticker for current banks or a
+    synthetic id (e.g. name) for defunct ones. A bank is included only if it FILED
+    at Q (its last filing on/before Q); the window back from Q gives the engine the
+    history its multi-quarter metrics need. Cached per quarter.
     """
     from data import cache, fdic_client
     from analysis.metrics import build_bank_metrics
@@ -66,29 +50,26 @@ def as_of_quarter_metrics(quarter, cert_to_id: dict) -> list[dict]:
 
     q = pd.Timestamp(quarter)
     repdte = q.strftime("%Y%m%d")
-    key = f"as_of_metrics:{repdte}:{len(cert_to_id)}"
+    key = f"as_of_metrics:{repdte}:{len(cert_to_id)}:w{window}"
     cached = cache.get(key)
     if is_fresh(cached, _CACHE_TTL_S) and isinstance(cached.get("metrics"), list):
         return cached["metrics"]
 
-    # ONE quarter's financials for the whole banking system (≈5 paginated calls),
-    # not a per-cert history sweep (hundreds of calls) — the only way this is
-    # interactive. As-of is single-quarter: _4q / trend metrics resolve None (n/a),
-    # never guessed.
-    quarter_recs = fdic_client.fetch_quarter_financials(repdte)
-
-    global _NA_KEYS
-    if _NA_KEYS is None:
-        _NA_KEYS = _history_dependent_keys()
+    certs = list(cert_to_id.keys())
+    # The window of quarter-ends [Q, Q-1, …], newest first; one filtered fetch each.
+    repdtes = [(q - pd.offsets.QuarterEnd(startingMonth=12) * i).strftime("%Y%m%d")
+               for i in range(window)]
+    by_quarter = {rd: fdic_client.fetch_quarter_financials(rd, certs=certs) for rd in repdtes}
 
     out: list[dict] = []
     for cert, id_ in cert_to_id.items():
-        rec = quarter_recs.get(int(cert))
-        if not rec:
-            continue  # didn't file this quarter (chartered later / already exited)
-        m = build_bank_metrics(id_, rec, {}, {}, [rec])
-        for k in _NA_KEYS:           # multi-quarter metrics → n/a in single-quarter mode
-            m[k] = None
+        c = int(cert)
+        anchor = by_quarter[repdtes[0]].get(c)
+        if anchor is None:
+            continue  # didn't file at Q (chartered later / already exited)
+        # newest-first history across the window (skip quarters it didn't file)
+        hist = [by_quarter[rd][c] for rd in repdtes if c in by_quarter[rd]]
+        m = build_bank_metrics(id_, anchor, {}, {}, hist)
         m["ticker"] = id_
         m["_as_of"] = repdte
         out.append(m)

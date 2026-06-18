@@ -737,7 +737,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
             _cand.setdefault(_c, _nm)
         with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
-                        "(first load fetches FDIC history, then cached)"):
+                        "(first load ~1–2 min of FDIC history, then cached)"):
             screen_metrics = as_of_quarter_metrics(_q, _cand)
         if not screen_metrics:
             st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
