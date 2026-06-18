@@ -210,27 +210,20 @@ def extract_capital_ratios(html: str) -> dict:
     return out
 
 
-# ── P&L extraction (increment 5e) ──────────────────────────────────────────
-# The freshest-source layer earns its keep on FAST-MOVING numbers the release
-# HEADLINES: total net income and diluted EPS (capital ratios barely move, so
-# their 3-week lead is marginal — and they're already covered cleanly by the
-# 10-Q iXBRL in Company Reported). Both here are stated prominently in prose;
-# the guards below avoid the look-alike variants (net income AVAILABLE TO COMMON
-# ≠ total; BASIC EPS ≠ diluted). Values are display-grade only after the
-# ground-truth audit (vs the filed NetIncomeLoss / EarningsPerShareDiluted
-# facts) confirms them — never a guess (cardinal rule).
-
-# "net income of/was/totaled $X million|billion" — but NOT "net income available
-# /applicable to common …" (that's after-preferred, a different line). Requiring
-# the verb right after "net income" excludes those variants.
-_NI_PROSE = re.compile(
-    r"net income\s+(?:of|was|were|total(?:ed|led)|totaling)\s+\$?\s?"
-    r"([\d]+(?:\.\d+)?)\s*(million|billion)", re.I)
-# Diluted EPS — require the word "diluted" so BASIC EPS can't be grabbed; target
-# the GAAP diluted LEVEL (matches the filing's EarningsPerShareDiluted), not a
-# non-GAAP "adjusted EPS" headline. The connector is deliberately tight — only
-# of/was/or/:/direct — so a CHANGE or IMPACT ("diluted EPS increased $0.31",
-# "accretive to diluted EPS by $3.50") can't be mistaken for the level.
+# ── P&L extraction (increment 5e) — diluted EPS only ───────────────────────
+# Scoped to DILUTED EPS: it's the single number the market reacts to, it's
+# per-share (no unit ambiguity), and unlike net income it has no segment/YTD/
+# annual variants all phrased the same way. (Net income via prose proved a
+# variant tar pit — segment vs total vs YTD vs prior-year all read "net income of
+# $X"; it's already covered cleanly by Company Reported's 10-Q iXBRL.)
+#
+# Two look-alikes to defeat, both cardinal-rule critical:
+#   1. BASIC EPS — every pattern requires the word "diluted".
+#   2. Non-GAAP "adjusted"/"core" EPS (and per-share-change/impact) — excluded by
+#      context so we only ever surface the GAAP diluted figure (= the filing's
+#      EarningsPerShareDiluted, which this supersedes).
+# And the disambiguator: gather ALL clean candidates; if they DISAGREE (e.g. a
+# prior-year EPS is also stated), return n/a — never guess which is current.
 _EPS_CONN = r"\s*(?:of|was|or|:)?\s*\$\s?"
 _EPS_PROSE = [
     re.compile(r"diluted\s+(?:earnings per (?:common )?share|eps)" + _EPS_CONN
@@ -241,49 +234,38 @@ _EPS_PROSE = [
                + r"(\d+\.\d{2})", re.I),
     re.compile(r"\$\s?(\d+\.\d{2})\s+per diluted (?:common )?share", re.I),
 ]
-# A "net income of $Y" preceded by these is a COMPARISON figure (prior period),
-# not the current total — exclude it so the max-of-candidates can't grab it.
-_NI_COMPARE = re.compile(
-    r"(?:compared\s+to|versus|\bvs\.?|year[- ]ago|prior[- ]year|a year ago|from)\s*$", re.I)
-_NI_BAND = (1e6, 2.5e10)       # quarterly net income for a bank holding co
+# A diluted-EPS value is rejected when one of these immediately precedes the
+# label: non-GAAP variants and per-share change/impact figures, plus prior-period
+# comparisons. (The actual GAAP figure, if stated elsewhere unqualified, still
+# qualifies — and if two clean values disagree the result is n/a anyway.)
+_EPS_EXCLUDE = re.compile(
+    r"(?:adjusted|core|operating|non-?gaap|normalized|underlying|tangible book|"
+    r"pre-?tax|cash|compared\s+to|versus|\bvs\.?|year[- ]ago|prior[- ]year)\s*$", re.I)
 _EPS_BAND = (-5.0, 50.0)       # diluted EPS per share
 
 
 def extract_pnl(html: str) -> dict:
-    """Current-quarter headline P&L from an earnings release: {net_income (in
-    dollars), diluted_eps (per share)} or None each. Prose-led with variant
-    guards (total net income, not available-to-common; diluted EPS, not basic).
-    CANDIDATES only — display is gated on the ground-truth audit."""
+    """Current-quarter GAAP DILUTED EPS from an earnings release: {diluted_eps}
+    or None. Gathers every "diluted EPS = $X" not preceded by a non-GAAP/change/
+    comparison qualifier; returns the value only when all such clean candidates
+    agree (to a cent). If none match, or they disagree (a prior-year/adjusted
+    figure also reads clean), returns None — never a guessed value (cardinal
+    rule). CANDIDATE only; display is gated on the ground-truth audit."""
     text = re.sub(r"\s+", " ", _h.unescape(re.sub(r"(?s)<[^>]+>", " ", html)))
-    out = {"net_income": None, "diluted_eps": None}
-
-    # Net income: a multi-segment bank states "Net income of $X" for EACH segment;
-    # the CONSOLIDATED total is the largest such figure. Take the max over all
-    # in-band candidates, excluding comparison (prior-period) mentions.
-    ni_vals = []
-    for m in _NI_PROSE.finditer(text):
-        if _NI_COMPARE.search(text[max(0, m.start() - 16):m.start()]):
-            continue
-        try:
-            val = float(m.group(1)) * (1e9 if m.group(2).lower() == "billion" else 1e6)
-        except ValueError:
-            continue
-        if _NI_BAND[0] <= val <= _NI_BAND[1]:
-            ni_vals.append(val)
-    if ni_vals:
-        out["net_income"] = max(ni_vals)
-
+    vals = []
     for pat in _EPS_PROSE:
-        m = pat.search(text)
-        if m:
+        for m in pat.finditer(text):
+            if _EPS_EXCLUDE.search(text[max(0, m.start() - 26):m.start()]):
+                continue
             try:
                 v = float(m.group(1))
             except ValueError:
                 continue
             if _EPS_BAND[0] <= v <= _EPS_BAND[1]:
-                out["diluted_eps"] = v
-                break
-    return out
+                vals.append(v)
+    if not vals or (max(vals) - min(vals)) > 0.011:
+        return {"diluted_eps": None}   # none, or ambiguous → n/a
+    return {"diluted_eps": vals[0]}
 
 
 def latest_earnings_release(cik) -> dict | None:

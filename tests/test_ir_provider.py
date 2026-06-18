@@ -185,23 +185,7 @@ class TestDashAccession(unittest.TestCase):
 
 
 class TestExtractPnl(unittest.TestCase):
-    def test_net_income_billion(self):
-        self.assertEqual(extract_pnl("Net Income of $16.5 billion.")["net_income"], 16.5e9)
-
-    def test_net_income_million(self):
-        self.assertEqual(extract_pnl("Net income of $517 million")["net_income"], 517e6)
-
-    def test_net_income_totaled(self):
-        self.assertEqual(extract_pnl("net income totaled $189.2 million")["net_income"], 189.2e6)
-
-    def test_available_to_common_excluded(self):
-        # "available to common" is after-preferred — NOT total net income.
-        r = extract_pnl("net income available to common shareholders of $128 million")
-        self.assertIsNone(r["net_income"])
-
-    def test_net_income_out_of_band(self):
-        self.assertIsNone(extract_pnl("net income of $0.2 million")["net_income"])
-
+    # Scoped to GAAP diluted EPS (net income was dropped — prose variant tar pit).
     def test_diluted_eps_leading(self):
         self.assertEqual(extract_pnl("Diluted earnings per common share $1.65")["diluted_eps"], 1.65)
 
@@ -216,29 +200,34 @@ class TestExtractPnl(unittest.TestCase):
         # No "diluted" anywhere → diluted EPS must be None (don't show basic).
         self.assertIsNone(extract_pnl("Earnings per common share: Basic $1.61")["diluted_eps"])
 
-    def test_both_present(self):
-        r = extract_pnl("Net Income of $1.8 billion, or Diluted EPS $4.32")
-        self.assertEqual(r["net_income"], 1.8e9)
-        self.assertEqual(r["diluted_eps"], 4.32)
-
-    def test_net_income_max_over_segments(self):
-        # Multi-segment bank: each segment says "Net income of $X"; the
-        # consolidated total is the largest.
-        txt = ("Net income of $3.1 billion in Consumer. Net income of $2.1 billion "
-               "in Markets. Net income of $8.6 billion for the firm.")
-        self.assertEqual(extract_pnl(txt)["net_income"], 8.6e9)
-
-    def test_net_income_excludes_prior_period_comparison(self):
-        # The higher prior-year figure is a comparison — must not win the max.
-        txt = "net income of $5.0 billion, compared to net income of $9.0 billion a year ago"
-        self.assertEqual(extract_pnl(txt)["net_income"], 5.0e9)
-
     def test_eps_change_not_grabbed(self):
         self.assertIsNone(extract_pnl("Diluted earnings per share increased $0.31")["diluted_eps"])
 
     def test_eps_accretion_impact_not_grabbed(self):
         self.assertIsNone(
             extract_pnl("was accretive to diluted earnings per share by $3.50")["diluted_eps"])
+
+    def test_adjusted_eps_excluded(self):
+        # Non-GAAP "adjusted" diluted EPS must not be surfaced as the GAAP level.
+        self.assertIsNone(extract_pnl("adjusted diluted EPS of $0.67")["diluted_eps"])
+
+    def test_core_eps_excluded(self):
+        self.assertIsNone(extract_pnl("Core earnings per diluted share $1.32")["diluted_eps"])
+
+    def test_gaap_kept_when_adjusted_also_present(self):
+        # GAAP stated cleanly + adjusted stated separately → GAAP wins, adjusted dropped.
+        txt = "Diluted EPS $0.52. Adjusted diluted EPS of $0.67."
+        self.assertEqual(extract_pnl(txt)["diluted_eps"], 0.52)
+
+    def test_disagreeing_candidates_return_na(self):
+        # Current 2.15 and a prior-year 1.81 both read clean → ambiguous → n/a.
+        txt = "diluted EPS was $2.15 this quarter; diluted EPS was $1.81 a year earlier."
+        self.assertIsNone(extract_pnl(txt)["diluted_eps"])
+
+    def test_agreeing_candidates_surface(self):
+        # Same value in prose and table → confirmed.
+        txt = "Diluted EPS of $1.13. ... Diluted earnings per share $1.13"
+        self.assertEqual(extract_pnl(txt)["diluted_eps"], 1.13)
 
 
 if __name__ == "__main__":

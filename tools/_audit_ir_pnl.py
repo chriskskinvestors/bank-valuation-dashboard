@@ -67,29 +67,19 @@ def _quarterly(facts, suffix, qend):
 
 
 def _classify(ir, facts, qend):
-    have = {k: v for k, v in ir.items() if v is not None}
-    if not have:
+    # Scoped to diluted EPS (net income dropped — prose variant tar pit).
+    eps = ir.get("diluted_eps")
+    if eps is None:
         return "NA", {}
     if facts is None or qend is None:
-        return "NO_GROUNDTRUTH", {"ir": have}
-    fni = _quarterly(facts, "NetIncomeLoss", qend)
+        return "NO_GROUNDTRUTH", {"ir_eps": eps}
     feps = _quarterly(facts, "EarningsPerShareDiluted", qend)
-    if fni is None and feps is None:
-        return "FRESH", {"ir": have, "qend": qend}  # quarter not yet filed
-    info, breaks = {"qend": qend}, []
-    if ir["net_income"] is not None and fni:
-        rel = abs(ir["net_income"] - fni) / abs(fni)
-        info["ni"] = {"ir": round(ir["net_income"] / 1e6, 1), "filed": round(fni / 1e6, 1),
-                      "rel%": round(rel * 100, 2)}
-        if rel > _NI_TOL:
-            breaks.append("net_income")
-    if ir["diluted_eps"] is not None and feps is not None:
-        d = abs(ir["diluted_eps"] - feps)
-        info["eps"] = {"ir": ir["diluted_eps"], "filed": feps, "d": round(d, 3)}
-        if d > _EPS_TOL:
-            breaks.append("diluted_eps")
-    if breaks:
-        info["break"] = breaks
+    if feps is None:
+        return "FRESH", {"ir_eps": eps, "qend": qend}  # quarter not yet filed
+    d = abs(eps - feps)
+    info = {"qend": qend, "eps": {"ir": eps, "filed": feps, "d": round(d, 3)}}
+    if d > _EPS_TOL:
+        info["break"] = ["diluted_eps"]
         return "MISMATCH", info
     return "MATCH", info
 
