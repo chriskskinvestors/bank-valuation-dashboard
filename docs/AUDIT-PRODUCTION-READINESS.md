@@ -124,15 +124,20 @@ So pandas 3.0 computes every covered value correctly; no downgrade. (numpy: pin
 `==2.4.6`, both are 2.4.x patches — immaterial.) Re-run this verification before
 any future pandas major bump.
 
-### Gap D (P2) — Deploy health alerting — ✅ DONE 2026-06-17 (alerts live)
-`ops/setup_monitoring_alerts.sh` created an email notification channel + two Cloud
-Monitoring alert policies on the service — a sustained 5xx-rate spike, and a
-"no 2xx requests for 15 min" liveness signal (a dead/crash-looping revision on a
-min-instances=1 service) — routed to email. **Activated:** notification channel
-`5112386644170620096` (chris@kskinvestors.com); 5xx-rate policy `…184737`; liveness
-policy `…850385`. Pairs with Gap A. To re-create or add recipients, re-run
-`bash ops/setup_monitoring_alerts.sh you@kskinvestors.com` from an authenticated
-terminal (CI can't mint the tokens).
+### Gap D (P2) — Deploy health alerting — ✅ DONE 2026-06-17; liveness alert removed 2026-06-18
+`ops/setup_monitoring_alerts.sh` created an email notification channel + a Cloud
+Monitoring **5xx-rate** alert policy on the service, routed to email. **Active:**
+channel `5112386644170620096` (chris@kskinvestors.com); 5xx-rate policy `…184737`.
+Pairs with Gap A. Re-run `bash ops/setup_monitoring_alerts.sh you@kskinvestors.com`
+from an authenticated terminal to re-create or add recipients.
+
+**Liveness "no 2xx for 15 min" policy (`…850385`) was REMOVED 2026-06-18** — it
+false-fired overnight (1:34 AM UTC): this IAP-gated, internal-only dashboard
+serves ZERO requests when no one is using it, so request-count can't distinguish
+a dead revision from an idle one (min-instances=1 keeps it warm but warm-idle
+still emits 0 2xx). The 5xx-rate policy + the post-deploy smoke + Cloud Run's
+keep-old-revision-on-failed-deploy already cover the real failure modes. Delete
+the live one with the command in the ops script's Policy-2 comment.
 
 ### Gap E (P2) — Dependency update policy — ✅ DONE 2026-06-17
 `.github/dependabot.yml` opens a grouped pip-bump PR (and a github-actions PR) each

@@ -51,38 +51,20 @@ cat >/tmp/bd-5xx-policy.json <<JSON
 JSON
 gcloud alpha monitoring policies create --project="${PROJECT}" --policy-from-file=/tmp/bd-5xx-policy.json
 
-# ── Policy 2: container instance startup / crash signal ─────────────────────
-# A crash-looping revision shows up as repeated container starts; alert when the
-# startup latency metric stops reporting healthy or instances churn. The 5xx
-# policy catches most user-visible breakage; this catches a revision that can't
-# even serve. Uses the request latency stream as a liveness proxy (no requests
-# being served at all for a sustained window on a min-instances=1 service is
-# itself a signal).
-echo ">> Creating 'no successful requests' liveness alert policy ..."
-cat >/tmp/bd-live-policy.json <<JSON
-{
-  "displayName": "bank-dashboard — no 2xx requests (possible dead revision)",
-  "combiner": "OR",
-  "conditions": [{
-    "displayName": "2xx request rate dropped to ~0 for 15 min",
-    "conditionThreshold": {
-      "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"2xx\"",
-      "aggregations": [{
-        "alignmentPeriod": "300s",
-        "perSeriesAligner": "ALIGN_RATE",
-        "crossSeriesReducer": "REDUCE_SUM"
-      }],
-      "comparison": "COMPARISON_LT",
-      "thresholdValue": 0.0001,
-      "duration": "900s",
-      "trigger": {"count": 1}
-    }
-  }],
-  "notificationChannels": ["${CHANNEL}"],
-  "alertStrategy": {"autoClose": "1800s"}
-}
-JSON
-gcloud alpha monitoring policies create --project="${PROJECT}" --policy-from-file=/tmp/bd-live-policy.json
+# ── Policy 2 (REMOVED 2026-06-18) — "no 2xx requests" liveness ──────────────
+# This keyed on run.googleapis.com/request_count 2xx dropping to ~0 for 15 min as
+# a "dead revision" proxy. It FALSE-FIRED on a quiet evening (1:34 AM UTC /
+# ~9:34 PM ET): the dashboard is IAP-gated and internal-only, so with no users
+# active it legitimately serves ZERO requests — request count can't tell "dead"
+# from "idle". min-instances=1 keeps the instance WARM but warm-idle still emits
+# 0 2xx. The real failure modes are already covered: the 5xx-rate policy above
+# catches an erroring/crash-looping revision, the post-deploy live smoke catches
+# a revision that won't render, and a broken NEW revision can't take traffic
+# (Cloud Run keeps the previous one serving). So this alert added noise, not
+# signal, and is intentionally not recreated. To delete the one already live:
+#   gcloud alpha monitoring policies list --project=${PROJECT} \
+#     --filter='displayName:"no 2xx requests"' --format='value(name)' \
+#     | xargs -r -n1 gcloud alpha monitoring policies delete --quiet --project=${PROJECT}
 
-echo ">> Done. Two alert policies created, routed to ${EMAIL}."
+echo ">> Done. 5xx-rate alert policy created, routed to ${EMAIL}."
 echo "   Review/tune them at: https://console.cloud.google.com/monitoring/alerting/policies?project=${PROJECT}"
