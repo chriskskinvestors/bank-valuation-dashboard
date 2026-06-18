@@ -72,6 +72,7 @@ def as_of_quarter_metrics(quarter, cert_to_id: dict, *, window: int = _WINDOW) -
         m = build_bank_metrics(id_, anchor, {}, {}, hist)
         m["ticker"] = id_
         m["_as_of"] = repdte
+        m["_fdic_cert"] = c     # lets the table link defunct banks to FDIC BankFind
         out.append(m)
 
     cache.put(key, {"metrics": out, "cached_at": q.isoformat()})

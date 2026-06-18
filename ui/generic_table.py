@@ -99,9 +99,22 @@ def render_generic_table(
     body = []
     for rec in df.to_dict("records"):
         tk = str(rec.get("ticker") or "")
+        cert = rec.get("_fdic_cert")
+        defunct = rec.get("_defunct") and cert and not (
+            isinstance(cert, float) and pd.isna(cert))
+        if defunct:
+            # As-of defunct / since-acquired bank (no Company page) → FDIC profile.
+            tk_cell = ('<td><a class="lnk tk" href="https://banks.data.fdic.gov/'
+                       f'bankfind-suite/bankfind/details/{int(cert)}" target="_blank" '
+                       f'rel="noopener">{_html.escape(tk)}</a></td>')
+        elif tk:
+            # A covered company → deep-link to its Company page.
+            tk_cell = (f'<td><a class="lnk tk" href="?bank={_html.escape(tk, quote=True)}" '
+                       f'target="_self">{_html.escape(tk)}</a></td>')
+        else:
+            tk_cell = f'<td class="tk">{_html.escape(tk)}</td>'
         cells = [
-            f'<td><a class="lnk tk" href="?bank={_html.escape(tk, quote=True)}" '
-            f'target="_self">{_html.escape(tk)}</a></td>',
+            tk_cell,
             f'<td class="nm">{_html.escape(str(rec.get("Bank") or ""))}</td>',
         ]
         for c in valid_cols:

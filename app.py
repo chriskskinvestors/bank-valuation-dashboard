@@ -720,7 +720,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # mode (FDIC-only); never guessed.
     from data.as_of_metrics import (recent_quarter_ends, quarter_label,
                                      as_of_quarter_metrics)
-    from data.entity_graph import KNOWN_PUBLIC_FAILURES
+    from data.entity_graph import KNOWN_PUBLIC_FAILURES, lineage_predecessors
     _qs_list = recent_quarter_ends(20)   # ~5 years, enough to reach the 2023 failures
     _asof_opts = ["Latest (live)"] + [quarter_label(q) for q in _qs_list]
     _ac, _ = st.columns([2, 3])
@@ -734,11 +734,20 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     if is_asof:
         _q = _qs_list[_asof_opts.index(_asof_pick) - 1]
         _cand = {get_fdic_cert(t): t for t in watchlist if get_fdic_cert(t)}
+        _company_certs = set(_cand)   # current public banks WITH a Company page
         for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
             _cand.setdefault(_c, _nm)
         with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
-                        "(first load ~1–2 min of FDIC history, then cached)"):
+                        "(first load fetches a few years of FDIC history; then cached)"):
+            # Lineage: banks since absorbed by a current bank were separate at Q —
+            # re-add them (the as-of builder still gates each on filing at Q).
+            for _c, _info in lineage_predecessors(set(_cand), _q).items():
+                _cand.setdefault(_c, _info.get("name") or f"CERT:{_c}")
             screen_metrics = as_of_quarter_metrics(_q, _cand)
+        # Tag rows with no current Company page (failures / since-acquired) so the
+        # table links them to FDIC BankFind instead of a dead ?bank= link.
+        for _m in screen_metrics:
+            _m["_defunct"] = _m.get("_fdic_cert") not in _company_certs
         if not screen_metrics:
             st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
     else:

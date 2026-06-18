@@ -116,6 +116,69 @@ def predecessors(cert: int) -> list[int]:
     return out
 
 
+_FDIC_HISTORY_URL = "https://api.fdic.gov/banks/history"
+_LINEAGE_TTL_S = 86400  # recent mergers can land daily
+
+
+def lineage_predecessors(base_certs, since) -> dict[int, dict]:
+    """Banks ABSORBED BY a current bank on/after ``since`` — they existed separately
+    before the merger, so a reconstruction as of that date should include them.
+
+    Returns ``{out_cert: {name, survivor_cert, date}}``. Uses ONE global query of
+    FDIC absorption events (CHANGECODE 810) filtered to the ``base_certs`` survivors
+    — cheap, versus a per-bank history sweep. Cached a day. The caller still gates
+    each on having actually filed at the target quarter (charter dates), so a target
+    chartered after the quarter is naturally excluded.
+    """
+    q = _as_date(since)
+    if q is None:
+        return {}
+    base = {int(c) for c in base_certs if c}
+    from data import cache
+    from data.freshness import is_fresh
+    key = f"entity_lineage:{q.isoformat()}:{len(base)}"
+    cached = cache.get(key)
+    if is_fresh(cached, _LINEAGE_TTL_S) and isinstance(cached.get("map"), dict):
+        return {int(k): v for k, v in cached["map"].items()}
+
+    from data.http import get_with_retry
+    out: dict[int, dict] = {}
+    offset = 0
+    since_str = q.strftime("%Y-%m-%d")
+    while True:
+        resp = get_with_retry(_FDIC_HISTORY_URL, {
+            "filters": f"CHANGECODE:810 AND EFFDATE:[{since_str} TO 2099-12-31]",
+            "fields": "EFFDATE,SUR_CERT,SUR_INSTNAME,OUT_CERT,OUT_INSTNAME",
+            "sort_by": "EFFDATE", "sort_order": "DESC", "limit": 1000, "offset": offset,
+        }, timeout=40)
+        if resp is None:
+            break
+        page = resp.json().get("data", [])
+        if not page:
+            break
+        for r in page:
+            d = r.get("data", {})
+            sur = _to_int(d.get("SUR_CERT"))
+            out_c = _to_int(d.get("OUT_CERT"))
+            if sur in base and out_c and out_c not in base:
+                out[out_c] = {"name": d.get("OUT_INSTNAME") or "",
+                              "survivor_cert": sur, "date": (d.get("EFFDATE") or "")[:10]}
+        if len(page) < 1000:
+            break
+        offset += 1000
+
+    cache.put(key, {"map": out, "cached_at": q.isoformat()})
+    return out
+
+
+def _to_int(raw):
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return v or None
+
+
 def public_universe_as_of(base_certs, quarter, *, with_lineage: bool = True) -> dict:
     """Reconstruct the public screening universe as of ``quarter``.
 

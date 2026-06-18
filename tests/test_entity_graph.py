@@ -67,5 +67,42 @@ class TestMembership(unittest.TestCase):
         self.assertNotIn(300, uni)
 
 
+class TestLineage(unittest.TestCase):
+    def setUp(self):
+        import data.http as http
+        from data import cache
+        self._orig = (http.get_with_retry, cache.get, cache.put)
+        cache.get = lambda k: None
+        cache.put = lambda k, v: None
+
+        class _Resp:
+            def __init__(self, rows): self._rows = rows
+            def json(self): return {"data": [{"data": d} for d in self._rows]}
+
+        rows = [
+            {"EFFDATE": "2025-06-01", "SUR_CERT": "100", "OUT_CERT": "900",
+             "OUT_INSTNAME": "Old Bank A"},                       # 100 base → include 900
+            {"EFFDATE": "2025-05-01", "SUR_CERT": "999", "OUT_CERT": "901",
+             "OUT_INSTNAME": "Other"},                            # survivor not base → skip
+            {"EFFDATE": "2025-04-01", "SUR_CERT": "100", "OUT_CERT": "100",
+             "OUT_INSTNAME": "self"},                             # out in base → skip
+        ]
+        http.get_with_retry = lambda url, params, timeout=40: (
+            _Resp(rows) if params.get("offset", 0) == 0 else _Resp([]))
+
+    def tearDown(self):
+        import data.http as http
+        from data import cache
+        http.get_with_retry, cache.get, cache.put = self._orig
+
+    def test_filters_to_base_survivors(self):
+        res = eg.lineage_predecessors({100}, "2025-01-01")
+        self.assertIn(900, res)
+        self.assertEqual(res[900]["survivor_cert"], 100)
+        self.assertEqual(res[900]["name"], "Old Bank A")
+        self.assertNotIn(901, res)   # survivor 999 not in base
+        self.assertNotIn(100, res)   # absorbed cert is itself a base cert
+
+
 if __name__ == "__main__":
     unittest.main()
