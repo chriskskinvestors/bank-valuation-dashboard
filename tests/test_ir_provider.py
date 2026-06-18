@@ -221,6 +221,25 @@ class TestExtractPnl(unittest.TestCase):
         self.assertEqual(r["net_income"], 1.8e9)
         self.assertEqual(r["diluted_eps"], 4.32)
 
+    def test_net_income_max_over_segments(self):
+        # Multi-segment bank: each segment says "Net income of $X"; the
+        # consolidated total is the largest.
+        txt = ("Net income of $3.1 billion in Consumer. Net income of $2.1 billion "
+               "in Markets. Net income of $8.6 billion for the firm.")
+        self.assertEqual(extract_pnl(txt)["net_income"], 8.6e9)
+
+    def test_net_income_excludes_prior_period_comparison(self):
+        # The higher prior-year figure is a comparison — must not win the max.
+        txt = "net income of $5.0 billion, compared to net income of $9.0 billion a year ago"
+        self.assertEqual(extract_pnl(txt)["net_income"], 5.0e9)
+
+    def test_eps_change_not_grabbed(self):
+        self.assertIsNone(extract_pnl("Diluted earnings per share increased $0.31")["diluted_eps"])
+
+    def test_eps_accretion_impact_not_grabbed(self):
+        self.assertIsNone(
+            extract_pnl("was accretive to diluted earnings per share by $3.50")["diluted_eps"])
+
 
 if __name__ == "__main__":
     unittest.main()

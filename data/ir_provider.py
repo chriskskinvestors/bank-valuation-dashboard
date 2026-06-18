@@ -226,19 +226,25 @@ def extract_capital_ratios(html: str) -> dict:
 _NI_PROSE = re.compile(
     r"net income\s+(?:of|was|were|total(?:ed|led)|totaling)\s+\$?\s?"
     r"([\d]+(?:\.\d+)?)\s*(million|billion)", re.I)
-# Diluted EPS — require the word "diluted" so BASIC EPS can't be grabbed. Targets
-# the GAAP diluted figure (the line that matches the filing's
-# EarningsPerShareDiluted), NOT a non-GAAP "adjusted EPS" headline.
+# Diluted EPS — require the word "diluted" so BASIC EPS can't be grabbed; target
+# the GAAP diluted LEVEL (matches the filing's EarningsPerShareDiluted), not a
+# non-GAAP "adjusted EPS" headline. The connector is deliberately tight — only
+# of/was/or/:/direct — so a CHANGE or IMPACT ("diluted EPS increased $0.31",
+# "accretive to diluted EPS by $3.50") can't be mistaken for the level.
+_EPS_CONN = r"\s*(?:of|was|or|:)?\s*\$\s?"
 _EPS_PROSE = [
-    re.compile(r"diluted\s+(?:earnings per (?:common )?share|eps)[^.$]{0,18}?"
-               r"\$\s?(\d+\.\d{2})", re.I),
-    re.compile(r"earnings per (?:common )?diluted share[^.$]{0,12}?\$\s?(\d+\.\d{2})", re.I),
-    # "Earnings per share - diluted $5.94" / "earnings per share, diluted": the
-    # word "diluted" trails the label (JPM/PNC house style).
-    re.compile(r"earnings per (?:common )?share\s*[-,–:]\s*diluted[^.$]{0,8}?"
-               r"\$\s?(\d+\.\d{2})", re.I),
+    re.compile(r"diluted\s+(?:earnings per (?:common )?share|eps)" + _EPS_CONN
+               + r"(\d+\.\d{2})", re.I),
+    re.compile(r"earnings per (?:common )?diluted share" + _EPS_CONN + r"(\d+\.\d{2})", re.I),
+    # "Earnings per share - diluted $5.94" (JPM/PNC house style: diluted trails).
+    re.compile(r"earnings per (?:common )?share\s*[-,–:]\s*diluted" + _EPS_CONN
+               + r"(\d+\.\d{2})", re.I),
     re.compile(r"\$\s?(\d+\.\d{2})\s+per diluted (?:common )?share", re.I),
 ]
+# A "net income of $Y" preceded by these is a COMPARISON figure (prior period),
+# not the current total — exclude it so the max-of-candidates can't grab it.
+_NI_COMPARE = re.compile(
+    r"(?:compared\s+to|versus|\bvs\.?|year[- ]ago|prior[- ]year|a year ago|from)\s*$", re.I)
 _NI_BAND = (1e6, 2.5e10)       # quarterly net income for a bank holding co
 _EPS_BAND = (-5.0, 50.0)       # diluted EPS per share
 
@@ -251,14 +257,21 @@ def extract_pnl(html: str) -> dict:
     text = re.sub(r"\s+", " ", _h.unescape(re.sub(r"(?s)<[^>]+>", " ", html)))
     out = {"net_income": None, "diluted_eps": None}
 
-    m = _NI_PROSE.search(text)
-    if m:
+    # Net income: a multi-segment bank states "Net income of $X" for EACH segment;
+    # the CONSOLIDATED total is the largest such figure. Take the max over all
+    # in-band candidates, excluding comparison (prior-period) mentions.
+    ni_vals = []
+    for m in _NI_PROSE.finditer(text):
+        if _NI_COMPARE.search(text[max(0, m.start() - 16):m.start()]):
+            continue
         try:
             val = float(m.group(1)) * (1e9 if m.group(2).lower() == "billion" else 1e6)
         except ValueError:
-            val = None
-        if val is not None and _NI_BAND[0] <= val <= _NI_BAND[1]:
-            out["net_income"] = val
+            continue
+        if _NI_BAND[0] <= val <= _NI_BAND[1]:
+            ni_vals.append(val)
+    if ni_vals:
+        out["net_income"] = max(ni_vals)
 
     for pat in _EPS_PROSE:
         m = pat.search(text)
