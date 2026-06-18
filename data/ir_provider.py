@@ -224,11 +224,17 @@ def extract_capital_ratios(html: str) -> dict:
 #      EarningsPerShareDiluted, which this supersedes).
 # And the disambiguator: gather ALL clean candidates; if they DISAGREE (e.g. a
 # prior-year EPS is also stated), return n/a — never guess which is current.
-_EPS_CONN = r"\s*(?:of|was|or|:)?\s*\$\s?"
+# Connector between the label and the value: an optional SHORT parenthetical
+# (a footnote "(4)" or "("EPS")" — capped at 8 chars so "(a non-GAAP measure)"
+# can't sneak a non-GAAP figure through), an optional verb, then the $value.
+_EPS_CONN = r"\s*(?:\([^)]{0,8}\)\s*)?(?:of|was|or|:)?\s*\$\s?"
 _EPS_PROSE = [
-    re.compile(r"diluted\s+(?:earnings per (?:common )?share|eps)" + _EPS_CONN
+    # "diluted [GAAP] earnings per [common] share" / "diluted EPS".
+    re.compile(r"diluted\s+(?:gaap\s+)?(?:earnings per (?:common )?share|eps)" + _EPS_CONN
                + r"(\d+\.\d{2})", re.I),
-    re.compile(r"earnings per (?:common )?diluted share" + _EPS_CONN + r"(\d+\.\d{2})", re.I),
+    # Either word order: "earnings per diluted common share" / "per common diluted share".
+    re.compile(r"earnings per (?:common\s+)?diluted\s+(?:common\s+)?share" + _EPS_CONN
+               + r"(\d+\.\d{2})", re.I),
     # "Earnings per share - diluted $5.94" (JPM/PNC house style: diluted trails).
     re.compile(r"earnings per (?:common )?share\s*[-,–:]\s*diluted" + _EPS_CONN
                + r"(\d+\.\d{2})", re.I),

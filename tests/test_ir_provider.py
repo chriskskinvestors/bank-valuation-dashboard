@@ -214,6 +214,24 @@ class TestExtractPnl(unittest.TestCase):
         # No "diluted" anywhere → diluted EPS must be None (don't show basic).
         self.assertIsNone(extract_pnl("Earnings per common share: Basic $1.61")["diluted_eps"])
 
+    def test_gaap_qualifier_in_label(self):
+        self.assertEqual(
+            extract_pnl("Diluted GAAP earnings per common share of $2.77")["diluted_eps"], 2.77)
+
+    def test_word_order_diluted_common(self):
+        self.assertEqual(
+            extract_pnl("Earnings per diluted common share of $0.89.")["diluted_eps"], 0.89)
+
+    def test_parenthetical_connector(self):
+        # Short footnote/abbrev parenthetical between label and value is allowed.
+        self.assertEqual(
+            extract_pnl('fully diluted earnings per share ("EPS") was $0.82')["diluted_eps"], 0.82)
+
+    def test_long_parenthetical_blocks_nongaap(self):
+        # A LONG parenthetical (>8 chars, e.g. "(a non-GAAP measure)") must NOT be
+        # bridged — it can hide a non-GAAP figure.
+        self.assertIsNone(extract_pnl("diluted EPS (a non-GAAP measure) of $1.20")["diluted_eps"])
+
     def test_eps_change_not_grabbed(self):
         self.assertIsNone(extract_pnl("Diluted earnings per share increased $0.31")["diluted_eps"])
 
