@@ -152,10 +152,23 @@ class TestCleanSummary(unittest.TestCase):
     def test_none_sentinel_dropped(self):
         self.assertEqual(_clean_summary("NONE"), "")
 
-    def test_refusal_dropped(self):
-        self.assertEqual(_clean_summary(
-            "Unable to summarize substantive content — the provided text contains "
-            "only SEC filing metadata."), "")
+    def test_refusal_phrasings_dropped(self):
+        # Every refusal variant seen in the live feed must be dropped.
+        for r in [
+            "Unable to summarize substantive content — the provided text contains only SEC filing metadata.",
+            "Unable to provide specific summary — the filing document itself is not included in the text.",
+            "Unable to provide a substantive summary—the 8-K filing document is not included in the provided text.",
+            "I cannot provide a substantive summary because the SEC filing text itself is not included.",
+            "The provided text contains only SEC filing metadata, not the actual 8-K content.",
+        ]:
+            with self.subTest(r=r):
+                self.assertEqual(_clean_summary(r), "")
+
+    def test_legit_summary_with_unable_survives(self):
+        # A real summary that happens to say a COMPANY was "unable to" must NOT
+        # be mistaken for a refusal.
+        s = "The bank disclosed it was unable to meet the minimum capital ratio in Q2."
+        self.assertEqual(_clean_summary(s), s)
 
     def test_clean_summary_passes_through(self):
         s = "Truist named a new CEO effective July 1, 2026."

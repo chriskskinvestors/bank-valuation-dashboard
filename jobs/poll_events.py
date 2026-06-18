@@ -15,6 +15,7 @@ Exit code:
 
 from __future__ import annotations
 import os
+import re
 import sys
 import time
 import traceback
@@ -204,6 +205,17 @@ def main() -> int:
     except Exception as e:
         print(f"  [purge] failed: {type(e).__name__}: {e}")
 
+    # Re-clean summaries stored before the cleanup shipped — strips markdown
+    # titles / "Summary:" labels and drops refusal / metadata-only answers so
+    # the feed self-heals on the next poll (and any future stragglers) instead
+    # of waiting for them to age out.
+    try:
+        n_clean = _reclean_summaries()
+        if n_clean:
+            print(f"▶ Re-cleaned {n_clean} noisy summaries")
+    except Exception as e:
+        print(f"  [reclean] failed: {type(e).__name__}: {e}")
+
     # Optional: LLM-summarize events with empty summaries (most recent first),
     # but only with budget left — and under a hard cap so the summarize pass
     # can't push the run past the 900s task kill on its own.
@@ -283,6 +295,32 @@ def _purge_junk_events() -> int:
     return len(bad)
 
 
+def _reclean_summaries(days: int = 21) -> int:
+    """Re-apply _clean_summary to summaries stored in the last `days`, nulling
+    the markdown-title / refusal noise that pre-dates the cleanup. Idempotent:
+    already-clean rows are unchanged, so it's safe to run every poll."""
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import text as _sql
+    from data.events.store import _get_engine
+
+    eng = _get_engine()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    with eng.connect() as conn:
+        rows = conn.execute(_sql(
+            "SELECT id, summary FROM events "
+            "WHERE summary IS NOT NULL AND summary <> '' AND published_at >= :c"
+        ), {"c": cutoff}).mappings().all()
+    n = 0
+    with eng.begin() as conn:
+        for r in rows:
+            cleaned = _clean_summary(r["summary"])
+            if cleaned != (r["summary"] or "").strip():
+                conn.execute(_sql("UPDATE events SET summary = :s WHERE id = :id"),
+                             {"s": cleaned, "id": r["id"]})
+                n += 1
+    return n
+
+
 def _clean_summary(text: str) -> str:
     """Normalize a model summary to a clean 1-2 sentence string, or "" to skip.
 
@@ -302,12 +340,29 @@ def _clean_summary(text: str) -> str:
     out = re.sub(r"^(summary\b[^:]*:|here'?s\b[^:]*:)\s*", "", out,
                  flags=re.IGNORECASE).strip()
     low = out.lower()
-    if (not out or low == "none" or low.startswith("none")
-            or "unable to summarize" in low or "no substantive" in low
-            or "only filing metadata" in low or "contains only" in low
-            or "only sec filing metadata" in low):
+    # Drop refusal / content-free answers (model couldn't summarize because the
+    # fetched text was only the filing index/metadata). Precise so it never
+    # catches a real summary that happens to say "unable to <do X>".
+    if not out or low == "none" or low.startswith("none") or _REFUSAL_RE.search(out):
         return ""
     return out
+
+
+# Phrasings the summarizer uses when it can't summarize (the fetched 8-K text
+# was just the index page / metadata). Targeted at "can't produce a summary" /
+# "text not included", NOT a company being "unable to <do something>".
+_REFUSAL_RE = re.compile(
+    r"\bunable to (provide|summari[sz]|generate|create|produce|give)"
+    r"|\bcannot (provide|summari[sz]|generate|produce)"
+    r"|\bi (can'?t|cannot)\b"
+    r"|\b(filing|document|text|content)\b[^.]{0,50}\bnot (included|provided|available)"
+    r"|\bnot included in[^.]{0,40}(text|filing|document|provided)"
+    r"|\bcontains only\b[^.]*\b(metadata|exhibit)"
+    r"|\bonly (the )?(sec )?(filing )?(metadata|exhibits)"
+    r"|\bno substantive (content|information|details?)"
+    r"|\bprovided text (contains|is |only)",
+    re.IGNORECASE,
+)
 
 
 def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int:
