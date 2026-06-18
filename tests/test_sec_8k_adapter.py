@@ -27,7 +27,7 @@ import data.events.sec_8k as sec_8k  # noqa: E402
 import data.events.wire_base as wire_base  # noqa: E402
 from data.events.sec_8k import SEC8KAdapter, SEC8KRecentAdapter  # noqa: E402
 from data.events.wire_base import RSSItem  # noqa: E402
-from jobs.poll_events import _is_high_signal_8k  # noqa: E402
+from jobs.poll_events import _is_high_signal_8k, _clean_summary  # noqa: E402
 
 PAST = datetime(2020, 1, 1, tzinfo=timezone.utc)
 NOW = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
@@ -131,6 +131,35 @@ class TestRecentFeedAdapter(unittest.TestCase):
         evs = self._poll([_entry("0000123456", "Item 1.01: Material Agreement",
                                  "0000123456-26-000005")])
         self.assertEqual(evs[0].source, "sec_8k")
+
+
+class TestCleanSummary(unittest.TestCase):
+    """_clean_summary strips the markdown-title / label noise Haiku leaks and
+    drops content-free refusals (the exact junk seen in the live feed)."""
+
+    def test_strips_leading_markdown_header(self):
+        self.assertEqual(
+            _clean_summary("# CFFI 8-K Summary\n\nC&F Financial Corp disclosed an officer change."),
+            "C&F Financial Corp disclosed an officer change.")
+
+    def test_header_only_becomes_empty(self):
+        self.assertEqual(_clean_summary("# Summary for Bank Analyst"), "")
+
+    def test_strips_summary_label(self):
+        self.assertEqual(_clean_summary("Summary: PNC raised its dividend to $1.60."),
+                         "PNC raised its dividend to $1.60.")
+
+    def test_none_sentinel_dropped(self):
+        self.assertEqual(_clean_summary("NONE"), "")
+
+    def test_refusal_dropped(self):
+        self.assertEqual(_clean_summary(
+            "Unable to summarize substantive content — the provided text contains "
+            "only SEC filing metadata."), "")
+
+    def test_clean_summary_passes_through(self):
+        s = "Truist named a new CEO effective July 1, 2026."
+        self.assertEqual(_clean_summary(s), s)
 
 
 class TestSummarizerPriority(unittest.TestCase):

@@ -283,6 +283,33 @@ def _purge_junk_events() -> int:
     return len(bad)
 
 
+def _clean_summary(text: str) -> str:
+    """Normalize a model summary to a clean 1-2 sentence string, or "" to skip.
+
+    Haiku sometimes prefixes a markdown title ("# CFFI 8-K Summary",
+    "# Summary for Bank Analyst") or a "Summary:" label, and answers a
+    content-free filing with a refusal sentence — all of which leaked into the
+    feed. Strip the headers/labels and drop refusals / the NONE sentinel so the
+    UI falls back to the clean item-based headline instead of showing noise."""
+    import re
+    if not text:
+        return ""
+    # Drop leading markdown headers + blank lines, join the rest to one block.
+    lines = [ln for ln in text.splitlines()
+             if ln.strip() and not ln.lstrip().startswith("#")]
+    out = " ".join(lines).strip()
+    # Strip a leading "Summary[ for ...]:" / "Here's ...:" label.
+    out = re.sub(r"^(summary\b[^:]*:|here'?s\b[^:]*:)\s*", "", out,
+                 flags=re.IGNORECASE).strip()
+    low = out.lower()
+    if (not out or low == "none" or low.startswith("none")
+            or "unable to summarize" in low or "no substantive" in low
+            or "only filing metadata" in low or "contains only" in low
+            or "only sec filing metadata" in low):
+        return ""
+    return out
+
+
 def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int:
     """
     Backfill summaries on the most-recently-ingested events that don't have
@@ -352,11 +379,16 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
                         "In 1-2 tight sentences, summarize the substance for a bank "
                         "analyst — dollar amounts, dates, people, and impact. Skip "
                         "boilerplate, disclaimers, and forward-looking-statement language.\n\n"
+                        "Reply with ONLY the summary sentences — no title, no heading, "
+                        "no markdown, no bullet points, and no 'Summary:' label. If the "
+                        "text has no substantive content (only filing metadata/exhibits), "
+                        "reply with exactly: NONE\n\n"
                         f"TEXT:\n{text_body}"
                     ),
                 }],
             )
-            summary = "".join(b.text for b in msg.content if b.type == "text").strip()
+            raw = "".join(b.text for b in msg.content if b.type == "text")
+            summary = _clean_summary(raw)
             if not summary:
                 continue
             with eng.begin() as conn:
