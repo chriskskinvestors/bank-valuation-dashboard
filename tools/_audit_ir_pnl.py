@@ -128,7 +128,7 @@ def main() -> int:
                 print(f"  [MISMATCH] {tk}: {row}", flush=True)
             if i % 20 == 0:
                 print(f"  {i}/{len(tickers)}  {dict(counts)}", flush=True)
-            time.sleep(0.12)
+            time.sleep(0.25)  # gentler on EDGAR — a prior run got throttled to mass NO_RELEASE
 
     print("\n" + "=" * 60)
     print("IR P&L AUDIT —", dict(counts))

@@ -243,6 +243,14 @@ class TestExtractPnl(unittest.TestCase):
         self.assertIsNone(
             extract_pnl("preferred dividends of $0.09 per diluted common share")["diluted_eps"])
 
+    def test_trailing_excluding_qualifier(self):
+        # GAAP was a LOSS (stated as "diluted loss per share"), and the positive
+        # "diluted earnings per share of $0.59, excluding …" is the adjusted figure
+        # — the trailing "excluding" marks it non-GAAP (BMRC).
+        txt = ("diluted loss per share of $2.49 (diluted earnings per share of "
+               "$0.59, excluding the goodwill charge)")
+        self.assertIsNone(extract_pnl(txt)["diluted_eps"])
+
 
 if __name__ == "__main__":
     unittest.main()

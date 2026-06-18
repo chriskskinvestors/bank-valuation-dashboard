@@ -245,6 +245,11 @@ _EPS_EXCLUDE = re.compile(
     r"pre-?tax|after-?tax|cash|reduc\w*|increas\w*|impact\w*|benefit\w*|charge\w*|"
     r"accret\w*|dividends?|compared\s+to|versus|vs\.?|year[- ]ago|prior[- ]year)\b",
     re.I)
+# A qualifier RIGHT AFTER the value also marks it non-GAAP: "diluted EPS of $0.59,
+# excluding the charge" (the GAAP figure that quarter was a loss, stated as
+# "diluted LOSS per share" which our patterns don't match).
+_EPS_TRAIL = re.compile(
+    r"^[\s,;(]*(?:excluding|adjusted|as adjusted|non-?gaap|core|operating)", re.I)
 _EPS_BAND = (-5.0, 50.0)       # diluted EPS per share
 
 
@@ -260,6 +265,8 @@ def extract_pnl(html: str) -> dict:
     for pat in _EPS_PROSE:
         for m in pat.finditer(text):
             if _EPS_EXCLUDE.search(text[max(0, m.start() - 26):m.start()]):
+                continue
+            if _EPS_TRAIL.match(text[m.end():m.end() + 28]):
                 continue
             try:
                 v = float(m.group(1))
