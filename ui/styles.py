@@ -160,6 +160,14 @@ CUSTOM_CSS = """
     /* tighten the value padding + shrink the dropdown / clear icons */
     .st-key-nav_bank_search [data-baseweb="select"] [data-baseweb="input"] { padding: 0 !important; }
     .st-key-nav_bank_search [data-baseweb="select"] svg { width: 15px !important; height: 15px !important; }
+    /* Selectbox DROPDOWN MENU — 10px option text. Streamlit renders every
+       selectbox menu from one shared body-level component
+       (stSelectboxVirtualDropdown), so this can't be scoped to just the search
+       box; it densifies every dropdown's OPEN menu. (Verified 10px live.) */
+    [data-testid="stSelectboxVirtualDropdown"] li[role="option"],
+    [data-testid="stSelectboxVirtualDropdown"] li[role="option"] * {
+        font-size: 10px !important;
+    }
 
     /* SNL-style title bar */
     .ksk-titlebar { padding: 2px 0 0; }
