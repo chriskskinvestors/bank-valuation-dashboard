@@ -2,6 +2,8 @@
 Generic table renderer — works for any tab by accepting a column list.
 """
 
+import html as _html
+
 import pandas as pd
 import streamlit as st
 
@@ -42,27 +44,20 @@ def _fast_name_lookup(tickers: pd.Series) -> pd.Series:
     return known_names
 
 
-def _apply_row_colors(row, renamed_cols, rename_map):
-    """Generate CSS styles for renamed columns."""
-    reverse = {v: k for k, v in rename_map.items()}
-    styles = []
-    for col in row.index:
-        orig_key = reverse.get(col, col)
-        if col in renamed_cols and orig_key in METRICS_BY_KEY:
-            bg = get_bg_color(orig_key, row[col])
-            styles.append(bg if bg else "")
-        else:
-            styles.append("")
-    return styles
-
-
 def _render_legend():
-    """One-line caption explaining get_bg_color's 3-band cell shading
-    (utils/formatting). Native st.caption + color squares — no hand-rolled
-    markup; the colored-swatch atom would belong in ui/components.py."""
-    st.caption(
-        "Cell shading — 🟩 good (at/above target) · 🟨 caution (near the line) · "
-        "🟥 poor (past the warn level) · unshaded = no threshold defined or n/a."
+    """One-line legend for get_bg_color's 3-band cell shading (utils/formatting),
+    using the design-system status dots (no emoji, per DESIGN-SYSTEM.md)."""
+    dot = ('<span class="ksk-dot {k}" style="margin-right:4px;"></span>{lbl}')
+    parts = " &nbsp;·&nbsp; ".join([
+        dot.format(k="ok", lbl="good (at/above target)"),
+        dot.format(k="warn", lbl="caution (near the line)"),
+        dot.format(k="bad", lbl="poor (past the warn level)"),
+        "unshaded = no threshold / n/a",
+    ])
+    st.markdown(
+        f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
+        f'margin:2px 0 6px;">Cell shading — {parts}</div>',
+        unsafe_allow_html=True,
     )
 
 
@@ -89,38 +84,51 @@ def render_generic_table(
 
     df = pd.DataFrame(metrics_data)
     df.insert(0, "Bank", _fast_name_lookup(df["ticker"]))
-
-    # Filter to only columns that exist in the dataframe
     valid_cols = [c for c in columns if c in df.columns]
-    show_cols = ["ticker", "Bank"] + valid_cols
-    display_df = df[show_cols].copy()
 
-    # Build rename map
-    rename = {"ticker": "Ticker", "Bank": "Bank"}
-    for col in valid_cols:
-        m = METRICS_BY_KEY.get(col)
-        if m:
-            rename[col] = m["label"]
+    # Full-grid SNL HTML table (design system): hairline grid, small-caps headers,
+    # tabular right-aligned numbers, negatives red, missing → "—", and a clickable
+    # ticker that deep-links to the Company page (?bank=). st.dataframe was dropped
+    # here because its canvas renderer ignores na_rep (showed literal "None") and
+    # can't carry per-row deep-links.
+    heads = ['<th>Ticker</th>', '<th class="nm">Bank</th>']
+    for c in valid_cols:
+        heads.append(f'<th>{_html.escape(METRICS_BY_KEY.get(c, {}).get("label", c))}</th>')
+    thead = "<tr>" + "".join(heads) + "</tr>"
 
-    # Build format dict
-    format_dict = {}
-    for col in valid_cols:
-        if col in METRICS_BY_KEY:
-            label = rename.get(col, col)
-            m = METRICS_BY_KEY[col]
-            format_dict[label] = lambda v, m=m: format_value(v, m["format"], m.get("decimals", 2))
+    body = []
+    for rec in df.to_dict("records"):
+        tk = str(rec.get("ticker") or "")
+        cells = [
+            f'<td><a class="lnk tk" href="?bank={_html.escape(tk, quote=True)}" '
+            f'target="_self">{_html.escape(tk)}</a></td>',
+            f'<td class="nm">{_html.escape(str(rec.get("Bank") or ""))}</td>',
+        ]
+        for c in valid_cols:
+            m = METRICS_BY_KEY.get(c, {})
+            v = rec.get(c)
+            missing = v is None or (isinstance(v, float) and pd.isna(v))
+            txt = "—" if missing else _html.escape(
+                format_value(v, m.get("format", "number"), m.get("decimals", 2)))
+            bg = get_bg_color(c, v)
+            cls = "num"
+            if not bg and isinstance(v, (int, float)) and not missing and v < 0:
+                cls += " neg"
+            style = f' style="{bg}"' if bg else ""
+            cells.append(f'<td class="{cls}"{style}>{txt}</td>')
+        body.append("<tr>" + "".join(cells) + "</tr>")
 
-    renamed_df = display_df.rename(columns=rename)
-    renamed_cols = [rename.get(c, c) for c in valid_cols]
-
-    st.dataframe(
-        renamed_df.style.apply(
-            lambda row: _apply_row_colors(row, renamed_cols, rename), axis=1
-        ).format(format_dict, na_rep="—")
-        .set_properties(**{"font-size": "0.6rem", "padding": "1px 3px", "line-height": "1.1"}),
-        use_container_width=True,
-        height=min(1000, 26 + 22 * len(display_df)),
-        hide_index=True,
+    st.markdown(
+        "<style>"
+        ".scrn-wrap{max-height:660px;overflow:auto;border:0.5px solid var(--grid-head);}"
+        ".scrn-wrap thead th{position:sticky;top:0;z-index:2;}"
+        ".scrn-wrap td.nm,.scrn-wrap th.nm{text-align:left;color:var(--text-secondary);"
+        "max-width:240px;overflow:hidden;text-overflow:ellipsis;}"
+        ".scrn-wrap a.tk{font-weight:700;text-decoration:none;}"
+        "</style>"
+        f'<div class="scrn-wrap"><table class="ksk-grid">'
+        f'<thead>{thead}</thead><tbody>{"".join(body)}</tbody></table></div>',
+        unsafe_allow_html=True,
     )
 
     return df

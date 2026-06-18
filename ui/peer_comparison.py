@@ -4,6 +4,8 @@ Peer Comparison UI — side-by-side bank comparison with percentile color-coding
 Top-level section in sidebar nav.
 """
 
+import html as _html
+
 import streamlit as st
 import pandas as pd
 
@@ -222,28 +224,30 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict], categor
     display_cols = ["Metric"] + tickers + ["Peer Median"]
     df_display = df[display_cols].copy()
 
-    # Apply styling
-    def _style_row(row):
-        styles = [""] * len(row)
-        # Get the metric key for this row from original df (by index)
-        mkey = df["_mkey"].iloc[row.name]
-        for i, col in enumerate(row.index):
-            if col in tickers:
-                styles[i] = style_map.get((mkey, col), "")
-        return styles
-
-    styled = df_display.style.apply(_style_row, axis=1).set_properties(
-        **{"font-size": "0.80rem", "padding": "4px 8px"}
+    # Full-grid SNL HTML table (design system): metrics in rows, banks in columns,
+    # each cell percentile-colored vs the full cohort, Peer Median last.
+    head = '<th class="nm">Metric</th>' + "".join(
+        f'<th>{_html.escape(c)}</th>' for c in tickers + ["Peer Median"])
+    body_rows = []
+    for row in rows:
+        mkey = row["_mkey"]
+        cells = [f'<td class="nm">{_html.escape(str(row["Metric"]))}</td>']
+        for t in tickers:
+            sty = style_map.get((mkey, t), "")
+            style = f' style="{sty}"' if sty else ""
+            cells.append(f'<td class="num"{style}>{_html.escape(str(row.get(t, "—")))}</td>')
+        cells.append(f'<td class="num med">{_html.escape(str(row.get("Peer Median", "—")))}</td>')
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    st.markdown(
+        "<style>"
+        ".cmp-wrap{overflow:auto;border:0.5px solid var(--grid-head);}"
+        ".cmp-wrap td.nm,.cmp-wrap th.nm{text-align:left;}"
+        ".cmp-wrap td.med{color:var(--text-secondary);font-weight:600;}"
+        "</style>"
+        f'<div class="cmp-wrap"><table class="ksk-grid">'
+        f'<thead><tr>{head}</tr></thead><tbody>{"".join(body_rows)}</tbody></table></div>',
+        unsafe_allow_html=True,
     )
-
-    st.dataframe(
-        styled,
-        use_container_width=True,
-        hide_index=True,
-        height=min(800, 60 + 38 * len(df_display)),
-    )
-    # Display frame (formatted values) — the raw per-metric values are not
-    # kept as a frame here.
     fname = f"peer_metrics_{category.lower().replace(' ', '_')}"
     table_export(df_display, fname, key=f"exp_{fname}")
 

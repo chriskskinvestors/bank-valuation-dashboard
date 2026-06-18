@@ -578,7 +578,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # ── Saved Screens bar ──────────────────────────────────────────────
     # Saved Screens capture the *how* (filters / sort / columns); the *who*
     # (bank scope) is chosen live and persisted separately as a Bank Group.
-    with st.expander("💾 Saved Screens", expanded=False):
+    with st.expander("Saved Screens", expanded=False):
         saved = list_screens()
         saved_for_tab = [s for s in saved if s.get("tab") == tab_key]
 
@@ -607,7 +607,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                         format_func=lambda x: _vlabel.get(x, f"v{x}"),
                         key=f"load_ver_{tab_key}",
                     )
-                if st.button(f"📂 Load '{load_choice}'", key=f"load_btn_{tab_key}"):
+                if st.button(f"Load '{load_choice}'", key=f"load_btn_{tab_key}"):
                     cfg = load_screen(load_choice, load_version)
                     if cfg:
                         ss = st.session_state
@@ -653,7 +653,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
 
         with del_col:
             if load_choice != "— select —":
-                if st.button("🗑 Delete", key=f"del_btn_{tab_key}"):
+                if st.button("Delete", key=f"del_btn_{tab_key}"):
                     delete_screen(load_choice)
                     st.success(f"Deleted '{load_choice}'")
                     st.rerun()
@@ -663,7 +663,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 new_name = st.text_input("Save current as…",
                                           placeholder="e.g. Value CRE Overweight",
                                           key=f"new_screen_name_{tab_key}")
-                if st.form_submit_button("💾 Save Screen") and new_name:
+                if st.form_submit_button("Save Screen") and new_name:
                     ss = st.session_state
                     num_filt = ss.get(f"num_filters_{tab_key}", 1)
                     filters = []
@@ -749,7 +749,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # ── Metric filters (any metric; AND-combined) ──────────────────────
     from analysis.screen_engine import evaluate as _evaluate_screen
     filter_specs = []
-    with st.expander("🔍 Metric Filters", expanded=False):
+    with st.expander("Metric Filters", expanded=False):
         st.caption("Filter on any metric, AND-combined. **Absolute** = value vs a "
                    "threshold · **Peer-relative** = Top/Bottom % by value within the "
                    "current scope · **Change** = QoQ/YoY move · **Trend** = N consecutive "
@@ -864,17 +864,19 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     scope_slug = ("".join(c if c.isalnum() else "_"
                           for c in scope_label.lower())[:30].strip("_") or "scope")
 
-    # Header — provenance is FDIC + SEC fundamentals (NOT a price feed); the old
-    # "IBKR/FMP" label was wrong for these tables. No-data exclusions are shown.
+    # SNL title bar + one dense meta line (design system: no boxed header, no
+    # emoji). Provenance is FDIC + SEC fundamentals; no-data exclusions are shown.
+    from ui.chrome import title_bar, status_dot
     filter_note = (f" · {len(filter_specs)} filter"
                    f"{'s' if len(filter_specs) != 1 else ''}") if filter_specs else ""
     nodata_note = f" · {n_excluded_nodata} excluded (no data)" if n_excluded_nodata else ""
+    title_bar("KSK Investors", screening_tab["title"])
+    _meta = (status_dot("ok", f"{len(display_metrics)} banks")
+             + f" · {scope_label}{filter_note}{nodata_note}"
+             + f" · FDIC + SEC fundamentals · {len(display_cols_final)} columns")
     st.markdown(
-        '<div class="dashboard-header">'
-        f"<h1>{screening_tab['title']}</h1>"
-        f"<p>{len(display_metrics)} banks · {scope_label}{filter_note}{nodata_note} · "
-        f"FDIC + SEC fundamentals · {len(display_cols_final)} columns</p>"
-        "</div>",
+        f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
+        f'margin:1px 0 7px;">{_meta}</div>',
         unsafe_allow_html=True,
     )
 
@@ -883,7 +885,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
 
     # ── Save the current result set as a reusable Bank Group ───────────
-    with st.expander(f"➕ Save these {len(display_metrics)} banks as a group",
+    with st.expander(f"Save these {len(display_metrics)} banks as a group",
                      expanded=False):
         st.caption("Persist the current (filtered) result set as a named group, "
                    "then reuse it as a scope here or in Compare.")
@@ -894,7 +896,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                                      key=f"save_grp_name_{tab_key}",
                                      label_visibility="collapsed")
         with sg2:
-            if st.button(f"💾 Save {len(display_metrics)} banks",
+            if st.button(f"Save {len(display_metrics)} banks",
                          key=f"save_grp_btn_{tab_key}", use_container_width=True):
                 grp_tickers = [m["ticker"] for m in display_metrics if m.get("ticker")]
                 if not grp_name.strip():
@@ -909,7 +911,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # Screen → Compare handoff: send the current result set straight into the
     # side-by-side Compare view (it arrives as a Manual scope there).
     if display_metrics and st.button(
-            f"🔬 Compare these {len(display_metrics)} banks →",
+            f"Compare these {len(display_metrics)} banks →",
             key=f"compare_handoff_{tab_key}"):
         st.session_state["_compare_handoff_tickers"] = [
             m["ticker"] for m in display_metrics if m.get("ticker")]
@@ -920,7 +922,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         st.rerun()
 
     # ── Column picker + Excel export ──────────────────────────────────
-    with st.expander("🧰 Customize columns & export", expanded=False):
+    with st.expander("Customize columns & export", expanded=False):
         cc_col, ex_col = st.columns([3, 1])
 
         with cc_col:
@@ -959,7 +961,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 # CSV export (no extra deps required)
                 csv_bytes = export_df.to_csv(index=False).encode("utf-8")
                 st.download_button(
-                    "📄 CSV",
+                    "CSV",
                     csv_bytes,
                     file_name=f"{tab_key}_{scope_slug}.csv",
                     mime="text/csv",
@@ -984,7 +986,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                             )
                             ws.column_dimensions[get_column_letter(col_idx)].width = min(28, max_len + 2)
                     st.download_button(
-                        "📊 Excel",
+                        "Excel",
                         buf.getvalue(),
                         file_name=f"{tab_key}_{scope_slug}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
