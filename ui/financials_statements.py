@@ -1865,6 +1865,25 @@ def _render_performance(ticker):
         res = None
     st.markdown("---")
     st.subheader("Performance Analysis — Company Reported")
+
+    # Freshest-source layer: when the bank's latest earnings release reports a
+    # quarter the 10-Q/10-K hasn't filed yet, surface its (preliminary) diluted
+    # EPS — ~2-3 weeks ahead of the periodic filing. 0-mismatch audited; n/a
+    # unless the release is genuinely fresher (data.ir_provider.fresh_diluted_eps).
+    try:
+        from data.ir_provider import fresh_diluted_eps
+        _fresh = fresh_diluted_eps(cik)
+    except Exception:
+        _fresh = None
+    if _fresh:
+        _q = _fresh["quarter"]
+        _ql = f"Q{(int(_q[5:7]) - 1) // 3 + 1} {_q[:4]}"
+        st.info(
+            f"**Latest quarter (preliminary):** diluted EPS **\\${_fresh['eps']:.2f}** "
+            f"for {_ql} — from the [earnings release filed {_fresh['filed_date']}]"
+            f"({_fresh['url']}), ahead of the next 10-Q. Unaudited; the filed figure "
+            f"supersedes it once published.")
+
     if not res or not res.get("performance"):
         st.caption("Full-year income-statement lines not tagged in this filer's "
                    "latest 10-K — n/a.")

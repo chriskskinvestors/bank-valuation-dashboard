@@ -320,3 +320,78 @@ def latest_earnings_release(cik) -> dict | None:
         return None
     return {"url": f"{base}/{doc}", "html": html, "filed_date": hit["filed_date"],
             "accession": hit["accession"], "form": hit["form"]}
+
+
+# ── Freshest-wins wire-in (increment 5d) ───────────────────────────────────
+_QENDS = ((3, 31), (6, 30), (9, 30), (12, 31))
+
+
+def _quarter_end_before(filed_iso: str) -> str | None:
+    """The quarter-end the release covers — most recent quarter-end strictly
+    before the filing date (releases land ~2-4 weeks after quarter close)."""
+    from datetime import date
+    try:
+        y, m, d = (int(x) for x in filed_iso.split("-"))
+        filed = date(y, m, d)
+    except Exception:
+        return None
+    cands = [date(yy, qm, qd) for yy in (y, y - 1) for (qm, qd) in _QENDS
+             if date(yy, qm, qd) < filed]
+    return max(cands).isoformat() if cands else None
+
+
+def _compute_fresh_diluted_eps(cik) -> dict | None:
+    try:
+        rel = latest_earnings_release(cik)
+    except Exception:
+        return None
+    if not rel:
+        return None
+    eps = extract_pnl(rel["html"]).get("diluted_eps")
+    if eps is None:
+        return None
+    qend = _quarter_end_before(rel.get("filed_date", ""))
+    if not qend:
+        return None
+    # Only "fresh" if the release's quarter is NEWER than what the latest filing
+    # already reports — otherwise the 10-Q/10-K has it and there's no lead to add.
+    # If we can't confirm (fetch/parse fails), return None (don't show an
+    # unverifiable "preliminary" value).
+    try:
+        from data.sec_filing_scraper import latest_filing, instance_facts
+        meta = latest_filing(cik, ("10-Q", "10-K"))
+        if not meta:
+            return None
+        for f in instance_facts(meta):
+            if (f.concept.endswith("EarningsPerShareDiluted") and not f.members
+                    and f.period_end and f.period_end >= qend):
+                return None  # filing already covers this quarter (or newer)
+    except Exception:
+        return None
+    return {"eps": eps, "quarter": qend, "filed_date": rel.get("filed_date"),
+            "url": rel.get("url")}
+
+
+def fresh_diluted_eps(cik) -> dict | None:
+    """The current-quarter GAAP diluted EPS from the latest earnings release,
+    returned ONLY when that quarter is fresher than the latest 10-Q/10-K already
+    reports (the freshest-wins decision). {eps, quarter, filed_date, url} or None.
+    Cached ~12h (the fetch+parse is heavy and the release changes quarterly)."""
+    if not cik:
+        return None
+    from data import cache as _cache
+    from data.freshness import is_fresh
+    key = f"ir_fresh_eps:v1:{int(cik)}"
+    try:
+        cached = _cache.get(key)
+        if cached is not None and is_fresh(cached, 12 * 3600):
+            return cached.get("value")
+    except Exception:
+        pass
+    val = _compute_fresh_diluted_eps(cik)
+    try:
+        from datetime import datetime
+        _cache.put(key, {"cached_at": datetime.now().isoformat(), "value": val})
+    except Exception:
+        pass
+    return val

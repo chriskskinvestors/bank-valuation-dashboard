@@ -8,7 +8,7 @@ import unittest
 
 from data.ir_provider import (
     _latest_earnings_8k, _pick_ex99, _parse_index_html, _dash_accession,
-    extract_capital_ratios, extract_pnl,
+    extract_capital_ratios, extract_pnl, _quarter_end_before,
 )
 
 
@@ -174,6 +174,20 @@ class TestExtractCapitalRatios(unittest.TestCase):
     def test_out_of_band_cet1_unconfirmed(self):
         doc = "<table><tr><td>CET1 capital</td><td>95.0 %</td></tr></table><p>CET1 ratio of 95.0%</p>"
         self.assertIsNone(extract_capital_ratios(doc)["cet1_ratio"])
+
+
+class TestQuarterEndBefore(unittest.TestCase):
+    def test_q1_release(self):
+        self.assertEqual(_quarter_end_before("2026-04-14"), "2026-03-31")
+
+    def test_q4_release_january(self):
+        self.assertEqual(_quarter_end_before("2026-01-23"), "2025-12-31")
+
+    def test_q3_release(self):
+        self.assertEqual(_quarter_end_before("2025-10-20"), "2025-09-30")
+
+    def test_bad_date(self):
+        self.assertIsNone(_quarter_end_before(""))
 
 
 class TestDashAccession(unittest.TestCase):
