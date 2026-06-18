@@ -604,68 +604,71 @@ def _render_fed_panel(full: bool = True):
         st.caption(f"SEP median fed funds path — {path}. Source: FRED (SEP {sep_txt}).")
         return
 
-    # Dot-plot-style chart: median (diamond) · central-tendency band (thick) ·
-    # full range (thin whisker), per horizon.
+    # Compact dot-plot-style chart (median diamond · CT band · range whisker)
+    # on the left ~1/3, with the medians table beside it — not full width.
     import plotly.graph_objects as go
-    fig = go.Figure()
-    allvals = []
-    for f in funds:
-        x = f["horizon"]
-        rl, rh, cl, ch, md = (f.get("range_low"), f.get("range_high"),
-                              f.get("ct_low"), f.get("ct_high"), f.get("median"))
-        if rl is not None and rh is not None:
-            fig.add_trace(go.Scatter(x=[x, x], y=[rl, rh], mode="lines",
-                line=dict(color="#cbd5e1", width=2), showlegend=False, hoverinfo="skip"))
-            allvals += [rl, rh]
-        if cl is not None and ch is not None:
-            fig.add_trace(go.Scatter(x=[x, x], y=[cl, ch], mode="lines",
-                line=dict(color="#93c5fd", width=11), showlegend=False, hoverinfo="skip"))
-            allvals += [cl, ch]
-        if md is not None:
-            fig.add_trace(go.Scatter(x=[x], y=[md], mode="markers",
-                marker=dict(symbol="diamond", color="#1e3a8a", size=12), showlegend=False,
-                hovertemplate=f"{x}<br>median %{{y:.2f}}%<extra></extra>"))
-            allvals.append(md)
-    apply_standard_layout(
-        fig, title=f"FOMC fed funds projections — median · central tendency · range (SEP {sep_txt})",
-        height=300, yaxis_title="%", show_legend=False)
-    if allvals:
-        tighten_yaxis(fig, allvals, ticksuffix="%")
-    st.plotly_chart(fig, use_container_width=True)
+    proj_chart, proj_table = st.columns([1, 2])
+    with proj_chart:
+        fig = go.Figure()
+        allvals = []
+        for f in funds:
+            x = f["horizon"]
+            rl, rh, cl, ch, md = (f.get("range_low"), f.get("range_high"),
+                                  f.get("ct_low"), f.get("ct_high"), f.get("median"))
+            if rl is not None and rh is not None:
+                fig.add_trace(go.Scatter(x=[x, x], y=[rl, rh], mode="lines",
+                    line=dict(color="#cbd5e1", width=2), showlegend=False, hoverinfo="skip"))
+                allvals += [rl, rh]
+            if cl is not None and ch is not None:
+                fig.add_trace(go.Scatter(x=[x, x], y=[cl, ch], mode="lines",
+                    line=dict(color="#93c5fd", width=11), showlegend=False, hoverinfo="skip"))
+                allvals += [cl, ch]
+            if md is not None:
+                fig.add_trace(go.Scatter(x=[x], y=[md], mode="markers",
+                    marker=dict(symbol="diamond", color="#1e3a8a", size=12), showlegend=False,
+                    hovertemplate=f"{x}<br>median %{{y:.2f}}%<extra></extra>"))
+                allvals.append(md)
+        apply_standard_layout(fig, title=f"Fed funds projections (SEP {sep_txt})",
+                              height=CHART_HEIGHT_HERO, yaxis_title="%", show_legend=False)
+        # Categorical x so the 4 horizons sit evenly (no bogus 2026.5 ticks).
+        fig.update_xaxes(type="category")
+        if allvals:
+            tighten_yaxis(fig, allvals, ticksuffix="%")
+        st.plotly_chart(fig, use_container_width=True)
+    with proj_table:
+        macro = proj.get("macro") or {}
+        horizons = [f["horizon"] for f in funds]
 
-    macro = proj.get("macro") or {}
-    horizons = [f["horizon"] for f in funds]
-
-    def _mm(key):
-        return {m["horizon"]: m.get("median") for m in (macro.get(key) or [])}
-    gdp, ur, pce, cpce = _mm("gdp"), _mm("unemployment"), _mm("pce"), _mm("core_pce")
-    fundmed = {f["horizon"]: f.get("median") for f in funds}
-    body = ""
-    for hz in horizons:
-        body += (
-            "<tr>"
-            f'<td style="text-align:left;">{_h.escape(str(hz))}</td>'
-            f'<td style="text-align:right;">{_sep_cell(fundmed.get(hz))}</td>'
-            f'<td style="text-align:right;">{_sep_cell(gdp.get(hz))}</td>'
-            f'<td style="text-align:right;">{_sep_cell(ur.get(hz))}</td>'
-            f'<td style="text-align:right;">{_sep_cell(pce.get(hz))}</td>'
-            f'<td style="text-align:right;">{_sep_cell(cpce.get(hz))}</td>'
-            "</tr>"
+        def _mm(key):
+            return {m["horizon"]: m.get("median") for m in (macro.get(key) or [])}
+        gdp, ur, pce, cpce = _mm("gdp"), _mm("unemployment"), _mm("pce"), _mm("core_pce")
+        fundmed = {f["horizon"]: f.get("median") for f in funds}
+        body = ""
+        for hz in horizons:
+            body += (
+                "<tr>"
+                f'<td style="text-align:left;">{_h.escape(str(hz))}</td>'
+                f'<td style="text-align:right;">{_sep_cell(fundmed.get(hz))}</td>'
+                f'<td style="text-align:right;">{_sep_cell(gdp.get(hz))}</td>'
+                f'<td style="text-align:right;">{_sep_cell(ur.get(hz))}</td>'
+                f'<td style="text-align:right;">{_sep_cell(pce.get(hz))}</td>'
+                f'<td style="text-align:right;">{_sep_cell(cpce.get(hz))}</td>'
+                "</tr>"
+            )
+        st.markdown(
+            '<div class="ksk-grid"><table><thead><tr>'
+            '<th style="text-align:left;">Horizon</th>'
+            '<th style="text-align:right;">Fed funds</th>'
+            '<th style="text-align:right;">Real GDP</th>'
+            '<th style="text-align:right;">Unemployment</th>'
+            '<th style="text-align:right;">PCE</th>'
+            '<th style="text-align:right;">Core PCE</th>'
+            "</tr></thead><tbody>" + body + "</tbody></table></div>",
+            unsafe_allow_html=True,
         )
-    st.markdown(
-        '<div class="ksk-grid"><table><thead><tr>'
-        '<th style="text-align:left;">Horizon</th>'
-        '<th style="text-align:right;">Fed funds</th>'
-        '<th style="text-align:right;">Real GDP</th>'
-        '<th style="text-align:right;">Unemployment</th>'
-        '<th style="text-align:right;">PCE</th>'
-        '<th style="text-align:right;">Core PCE</th>'
-        "</tr></thead><tbody>" + body + "</tbody></table></div>",
-        unsafe_allow_html=True,
-    )
-    st.caption("FOMC median projections by horizon; fed funds shown with central-tendency band "
-               "+ full range in the chart above. Individual participant dots aren't published "
-               f"machine-readably — band/range conveys the spread. Source: FRED (SEP {sep_txt}).")
+        st.caption("FOMC median projections by horizon; fed funds shown as median diamond + "
+                   "central-tendency band + full range in the chart. Individual participant dots "
+                   f"aren't published machine-readably. Source: FRED (SEP {sep_txt}).")
 
     # ── Statement & commentary: the FOMC's own words + recent Fed headlines ──
     st.markdown("---")
@@ -807,9 +810,9 @@ def _render_economy_calendar():
     recent = get_recent_releases(days=10, limit=16)
     up = get_upcoming_releases(days=14, limit=20)
     rows = get_print_board()
-    # Calendars (left) + board (right) packed adjacent; leftover to the right
-    # edge. The board is ONE table (themes as sub-sections) so every row aligns.
-    cal_col, board_col, _spacer = st.columns([1, 1, 1.1])
+    # Calendars (left) · board (middle) · Inflation + Labor charts stacked on
+    # the right, so the charts sit beside the tables and fill the right column.
+    cal_col, board_col, chart_col = st.columns([1, 1, 1.1])
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
@@ -897,13 +900,8 @@ def _render_economy_calendar():
             "series_id": r["series_id"],
         } for r in rows])
         table_export(export_df, "macro_print_board", key="macro_print_board_export")
-
-    st.markdown("---")
-
-    # ── Trend charts — 3-up at a taller aspect, NBER recessions shaded ──
-    st.markdown("**Trend charts**")
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    with chart_col:
+        # Box 1 (top): Inflation. Box 2 (below): Labor — beside the board.
         figi = go.Figure()
         for sid, label, color in [
             ("CPIAUCSL", "CPI", "#1e40af"),
@@ -923,11 +921,10 @@ def _render_economy_calendar():
                        annotation_text="Fed 2% target", annotation_position="top left",
                        annotation_font=dict(size=10, color="#059669"))
         apply_standard_layout(figi, title="Inflation — YoY % (5Y)",
-                              height=CHART_HEIGHT_HERO, yaxis_title="YoY")
+                              height=CHART_HEIGHT_FULL, yaxis_title="YoY")
         figi.update_yaxes(ticksuffix="%")
         st.plotly_chart(figi, use_container_width=True)
 
-    with c2:
         figl = go.Figure()
         nfp = to_mom_change(fetch_series("PAYEMS", years=6))
         if not nfp.empty:
@@ -948,14 +945,19 @@ def _render_economy_calendar():
             ))
         _shade_recessions(figl)
         apply_standard_layout(figl, title="Labor — payrolls Δ & unemployment (5Y)",
-                              height=CHART_HEIGHT_HERO, yaxis_title="Jobs Δ (000s)")
+                              height=CHART_HEIGHT_FULL, yaxis_title="Jobs Δ (000s)")
         figl.update_layout(
             yaxis2=dict(title="Unemp %", overlaying="y", side="right",
                         ticksuffix="%", showgrid=False),
         )
         st.plotly_chart(figl, use_container_width=True)
 
-    with c3:
+    st.markdown("---")
+
+    # ── Trend charts (the remaining four), 2-up, NBER recessions shaded ──
+    st.markdown("**Trend charts**")
+    c1, c2 = st.columns(2)
+    with c1:
         figg = go.Figure()
         gdp = fetch_series("A191RL1Q225SBEA", years=6)
         if not gdp.empty:
@@ -972,8 +974,7 @@ def _render_economy_calendar():
         figg.update_yaxes(ticksuffix="%")
         st.plotly_chart(figg, use_container_width=True)
 
-    c4, c5, c6 = st.columns(3)
-    with c4:
+    with c2:
         figa = go.Figure()
         for sid, label, color in [
             ("INDPRO", "Industrial Production", "#1e40af"),
@@ -992,7 +993,8 @@ def _render_economy_calendar():
         figa.update_yaxes(ticksuffix="%")
         st.plotly_chart(figa, use_container_width=True)
 
-    with c5:
+    c3, c4 = st.columns(2)
+    with c3:
         figh = go.Figure()
         for sid, label, color in [
             ("HOUST", "Housing Starts", "#1e40af"),
@@ -1011,7 +1013,7 @@ def _render_economy_calendar():
                               height=CHART_HEIGHT_HERO, yaxis_title="000s")
         st.plotly_chart(figh, use_container_width=True)
 
-    with c6:
+    with c4:
         figm = go.Figure()
         sent = fetch_series("UMCSENT", years=6)
         if not sent.empty:
