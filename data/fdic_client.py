@@ -21,6 +21,69 @@ from data.http import get_with_retry as _get_with_retry
 FDIC_FINANCIALS_URL = "https://banks.data.fdic.gov/api/financials"
 FDIC_INSTITUTIONS_URL = "https://banks.data.fdic.gov/api/institutions"
 
+# Identifiers + every raw FDIC field the metric engine reads (registry fields are
+# unioned in at call time). ERNAST = true earning-assets base for rate metrics,
+# INTEXPY for cost of funds; the rest feed the SNL-depth statement tabs.
+_BASE_FINANCIALS_FIELDS = {
+    "CERT", "REPNM", "REPDTE", "ASSET", "DEP", "LNLSNET", "NETINC",
+    "EQTOT", "INTANGW", "ERNAST", "INTEXPY", "INTINCY", "NIMY",
+    "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR", "ITAX", "PTAXNETINC",
+    "SC", "LNLSGR", "CHBAL", "DEPNIDOM", "LIAB", "ROA", "ROE", "EEFFR",
+    "NCLNLSR", "NTLNLSR", "LNATRESR", "IDT1CER", "RBCRWAJ", "RBCT1JR", "INTAN",
+    "ILNDOM", "ISC", "EDEP", "ESAL", "EPREMAGG", "EAMINTAN", "EOTHNINT",
+    "INTINCY", "NONIIAY", "NONIXAY", "ROAPTX",
+    "IGLSEC", "EXTRA",
+    "DEPIDOM",
+    "TRADE", "IFIDUC", "ISERCHG", "IINSOTH", "IINVFEE", "IOTHII", "NETIMIN",
+    "SCAF", "ORE", "MSA", "INTANMSR", "BKPREM", "CHBALI", "FREPO",
+    "OTHBFHLB", "SUBND", "EQPP", "EQCS", "EQUPTOT",
+    "RBCT1J", "RBCT1", "RBCT2", "RBC", "RWAJ", "RBC1RWAJ", "RBC1AAJ",
+}
+
+
+def fetch_quarter_financials(repdte: str) -> dict[int, dict]:
+    """All institutions' financials for one quarter (``repdte`` = YYYYMMDD), as
+    ``{cert: record}`` with numeric fields coerced — the same field set as
+    fetch_financials. Paginated (≈5 calls for the whole banking system), so it is
+    far cheaper than per-cert fetches when building an as-of-quarter universe."""
+    fields = ",".join(sorted(_BASE_FINANCIALS_FIELDS | get_fdic_fields()))
+    out: dict[int, dict] = {}
+    offset = 0
+    while True:
+        params = {
+            "filters": f"REPDTE:{repdte}", "fields": fields,
+            "limit": 1000, "offset": offset,
+            "sort_by": "CERT", "sort_order": "ASC",
+        }
+        try:
+            resp = _get_with_retry(FDIC_FINANCIALS_URL, params)
+            if resp is None:
+                break
+            page = resp.json().get("data", [])
+        except Exception as e:
+            print(f"[FDIC] fetch_quarter_financials {repdte} error: {e}")
+            break
+        if not page:
+            break
+        for r in page:
+            d = r.get("data", {})
+            c = d.get("CERT")
+            if c is None:
+                continue
+            rec = {}
+            for k, v in d.items():
+                if k == "REPDTE":
+                    rec[k] = pd.to_datetime(v, format="%Y%m%d", errors="coerce")
+                elif k == "REPNM":
+                    rec[k] = v
+                else:
+                    rec[k] = pd.to_numeric(v, errors="coerce")
+            out[int(c)] = rec
+        if len(page) < 1000:
+            break
+        offset += 1000
+    return out
+
 
 def list_all_active_institutions() -> list[dict]:
     """
@@ -116,34 +179,7 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     Returns a DataFrame with one row per quarter, columns matching the
     FDIC field names defined in the metric registry.
     """
-    fields_needed = get_fdic_fields()
-    # Always include identifiers and date. ERNAST is fetched for rate sensitivity
-    # calculations (true earning assets base), INTEXPY for cost of funds.
-    base_fields = {
-        "CERT", "REPNM", "REPDTE", "ASSET", "DEP", "LNLSNET", "NETINC",
-        "EQTOT", "INTANGW", "ERNAST", "INTEXPY", "INTINCY", "NIMY",
-        # Income-statement + balance-sheet detail for the SNL-style statement tabs.
-        "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR", "ITAX", "PTAXNETINC",
-        "SC", "LNLSGR", "CHBAL", "DEPNIDOM", "LIAB", "ROA", "ROE", "EEFFR",
-        "NCLNLSR", "NTLNLSR", "LNATRESR", "IDT1CER", "RBCRWAJ", "RBCT1JR", "INTAN",
-        # Granular income-statement line items (verified present via FDIC probe).
-        "ILNDOM", "ISC", "EDEP", "ESAL", "EPREMAGG", "EAMINTAN", "EOTHNINT",
-        # Performance-analysis yields / costs.
-        "INTINCY", "NONIIAY", "NONIXAY", "ROAPTX",
-        # Normalization inputs: realized securities gains/losses + extraordinary.
-        "IGLSEC", "EXTRA",
-        # Interest-bearing deposit balance (for cost of IB deposits).
-        "DEPIDOM",
-        # SNL-depth Income Statement detail (probed valid 2026-06-12 —
-        # docs/SNL-BUILD-PLAN.md): noninterest income split + minority int.
-        "TRADE", "IFIDUC", "ISERCHG", "IINSOTH", "IINVFEE", "IOTHII", "NETIMIN",
-        # SNL-depth Balance Sheet detail.
-        "SCAF", "ORE", "MSA", "INTANMSR", "BKPREM", "CHBALI", "FREPO",
-        "OTHBFHLB", "SUBND", "EQPP", "EQCS", "EQUPTOT",
-        # SNL-depth Capital Adequacy ($ amounts + ratios).
-        "RBCT1J", "RBCT1", "RBCT2", "RBC", "RWAJ", "RBC1RWAJ", "RBC1AAJ",
-    }
-    all_fields = sorted(base_fields | fields_needed)
+    all_fields = sorted(_BASE_FINANCIALS_FIELDS | get_fdic_fields())
 
     params = {
         "filters": f"CERT:{cert}",

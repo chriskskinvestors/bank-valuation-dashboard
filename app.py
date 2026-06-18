@@ -713,15 +713,46 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     st.success(f"Saved '{new_name}' (v{_v})")
                     st.rerun()
 
+    # ── As-of point-in-time (optional) ─────────────────────────────────
+    # Reconstruct the universe as it FILED at a past quarter-end (FDIC
+    # point-in-time): includes since-failed/acquired banks for the quarters they
+    # filed (e.g. SVB shows in Q4-2022). Market & SEC metrics are n/a in this
+    # mode (FDIC-only); never guessed.
+    from data.as_of_metrics import (recent_quarter_ends, quarter_label,
+                                     as_of_quarter_metrics)
+    from data.entity_graph import KNOWN_PUBLIC_FAILURES
+    _qs_list = recent_quarter_ends(20)   # ~5 years, enough to reach the 2023 failures
+    _asof_opts = ["Latest (live)"] + [quarter_label(q) for q in _qs_list]
+    _ac, _ = st.columns([2, 3])
+    with _ac:
+        _asof_pick = st.selectbox(
+            "As of", _asof_opts, key=f"asof_{tab_key}",
+            help="Screen the universe as it filed at a past quarter-end (FDIC "
+                 "point-in-time; market/SEC metrics are n/a in this mode).")
+    is_asof = _asof_pick != "Latest (live)"
+    asof_q_label = _asof_pick if is_asof else ""
+    if is_asof:
+        _q = _qs_list[_asof_opts.index(_asof_pick) - 1]
+        _cand = {get_fdic_cert(t): t for t in watchlist if get_fdic_cert(t)}
+        for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
+            _cand.setdefault(_c, _nm)
+        with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
+                        "(first load fetches FDIC history, then cached)"):
+            screen_metrics = as_of_quarter_metrics(_q, _cand)
+        if not screen_metrics:
+            st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
+    else:
+        screen_metrics = all_metrics
+
     # ── Scope + sort controls ──────────────────────────────────────────
     # Scope is the shared Bank-Groups selector (All banks / asset-size tier /
-    # business mix / saved group / manual), sliced from the single full-universe
-    # snapshot — one load path, one freshness for every scope.
+    # business mix / saved group / manual), sliced from the active metrics set
+    # (live snapshot, or the as-of reconstruction).
     f_col1, f_col2, f_col3 = st.columns([2, 2, 1])
 
     with f_col1:
         display_metrics, display_tickers, scope_label = render_scope_selector(
-            all_metrics, key_prefix=f"screen_{tab_key}")
+            screen_metrics, key_prefix=f"screen_{tab_key}")
 
     sort_labels = ["Default"]
     sort_keys = [None]
@@ -871,18 +902,29 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                    f"{'s' if len(filter_specs) != 1 else ''}") if filter_specs else ""
     nodata_note = f" · {n_excluded_nodata} excluded (no data)" if n_excluded_nodata else ""
     title_bar("KSK Investors", screening_tab["title"])
-    _meta = (status_dot("ok", f"{len(display_metrics)} banks")
-             + f" · {scope_label}{filter_note}{nodata_note}"
-             + f" · FDIC + SEC fundamentals · {len(display_cols_final)} columns")
+    if is_asof:
+        # Point-in-time: count banks no longer in today's coverage (since failed
+        # or acquired) so the reconstruction is transparent.
+        _live = {t for t in watchlist}
+        _exited = sum(1 for m in display_metrics if m.get("ticker") not in _live)
+        _exit_note = f" · incl. {_exited} since-exited" if _exited else ""
+        _meta = (status_dot("warn", f"As of {asof_q_label}")
+                 + f" · {len(display_metrics)} banks · {scope_label}{filter_note}{nodata_note}"
+                 + f"{_exit_note} · FDIC point-in-time (market & SEC metrics n/a)")
+    else:
+        _meta = (status_dot("ok", f"{len(display_metrics)} banks")
+                 + f" · {scope_label}{filter_note}{nodata_note}"
+                 + f" · FDIC + SEC fundamentals · {len(display_cols_final)} columns")
     st.markdown(
         f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
         f'margin:1px 0 7px;">{_meta}</div>',
         unsafe_allow_html=True,
     )
 
-    fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
-    sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
-    render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
+    if not is_asof:
+        fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
+        sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
+        render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
 
     # ── Save the current result set as a reusable Bank Group ───────────
     with st.expander(f"Save these {len(display_metrics)} banks as a group",
