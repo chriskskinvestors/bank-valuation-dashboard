@@ -1,8 +1,36 @@
-# Point-in-time universe reconstruction — deferred spec
+# Point-in-time universe reconstruction
 
-Status: **deferred** (user decision 2026-06-17 — separate backend track; do not block
-the screening UX on it). The interactive screener runs the **current** universe,
-labeled "as of latest". This doc specs the work to support "screen as of quarter Q".
+Status: **BUILT (v1 shipped 2026-06-18)** — the user pulled it forward. The Screen
+view has an "As of" quarter picker that reconstructs the universe as it filed at a
+past quarter-end and screens over FDIC point-in-time fundamentals.
+
+## What shipped (v1)
+
+- **`data/entity_graph.py`** (increment 1): as-of membership from FDIC institution
+  charter dates (`ESTYMD ≤ Q ≤ ENDEFYMD`); a tracked public-failures registry; lineage
+  helper. Ground-truth tested (SVB/Signature/First Republic in Q1-2023, gone by year-end).
+- **`data/as_of_metrics.py` + `fdic_client.fetch_quarter_financials`** (increment 2):
+  one quarter's financials for the whole banking system in ~5 paginated calls (≈26s,
+  cached), built through the real engine. Single-quarter mode → market/SEC and all 35
+  history-dependent metrics (4Q averages, trends, fair-value) are n/a, never guessed.
+- **Screen "As of" picker** (last 20 quarters): swaps the screen to the reconstruction
+  with an amber banner stating quarter, bank count, since-exited count, and the
+  FDIC-point-in-time/n/a provenance. Verified: As-of Q4 2022 → SVB at $209.026B etc.
+
+## Known v1 limitations (labeled, not wrong)
+
+- Candidate set = today's public banks + tracked failures. **Lineage** (a target
+  absorbed by a current bank after Q, shown separately at Q) is NOT yet expanded in the
+  UI — the surviving acquirer shows its own correct Q filing, but the absorbed target is
+  absent. `entity_graph.public_universe_as_of(..., with_lineage=True)` is the hook.
+- **Multi-quarter as-of metrics** (4Q / trends) are n/a in single-quarter mode. A
+  windowed fetch (N quarter-batches up to Q) would enable them at extra latency.
+- Defunct banks have no Company page, so their ticker cell does not deep-link.
+
+## Original spec (retained)
+
+The interactive screener also still runs the **current** universe by default
+("Latest (live)"). The remaining backend depth below is the future-fidelity track.
 
 ## Why it matters
 
