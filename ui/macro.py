@@ -807,11 +807,9 @@ def _render_economy_calendar():
     recent = get_recent_releases(days=10, limit=16)
     up = get_upcoming_releases(days=14, limit=20)
     rows = get_print_board()
-    _LEFT = ("Inflation", "Labor")
-    _RIGHT = ("Growth & Activity", "Housing", "Sentiment & Money")
-    # Calendars (left ~1/3) + the board in a wide right column (~2/3) whose two
-    # theme halves sit side by side, so the board fills the width with no gap.
-    cal_col, board_col = st.columns([1, 2])
+    # Calendars (left) + board (right) packed adjacent; leftover to the right
+    # edge. The board is ONE table (themes as sub-sections) so every row aligns.
+    cal_col, board_col, _spacer = st.columns([1, 1, 1.1])
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
@@ -883,13 +881,7 @@ def _render_economy_calendar():
                        "Source: FMP economic calendar.")
     with board_col:
         st.markdown("**Key indicators**")
-        bc1, bc2 = st.columns(2)
-        with bc1:
-            st.markdown(_board_table([r for r in rows if r["theme"] in _LEFT]),
-                        unsafe_allow_html=True)
-        with bc2:
-            st.markdown(_board_table([r for r in rows if r["theme"] in _RIGHT]),
-                        unsafe_allow_html=True)
+        st.markdown(_board_table(rows), unsafe_allow_html=True)
         st.caption(
             "Latest reading per series, grouped by theme. YoY = year-over-year, "
             "MoM = month-over-month, QoQ SAAR = quarter-over-quarter annualized. "
