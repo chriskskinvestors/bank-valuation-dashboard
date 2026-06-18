@@ -215,6 +215,7 @@ echo "▶ Storing API keys in Secret Manager..."
 echo "  (Press Enter to skip any you don't have yet — you can add later)"
 create_secret "anthropic-api-key" "Anthropic API key (sk-ant-...)"
 create_secret "fred-api-key" "FRED API key"
+create_secret "fmp-api-key" "Financial Modeling Prep API key (powers the fmp_news adapter + price/EOD jobs)"
 
 # ──────────────────────────────────────────────────────────────────────
 #  Done
@@ -245,7 +246,7 @@ Resources created:
   • Cloud SQL database:    ${SQL_DB_NAME}
   • GCS bucket:            gs://${GCS_BUCKET}
   • Artifact Registry:     ${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}
-  • Secrets:               db-password, anthropic-api-key, fred-api-key
+  • Secrets:               db-password, anthropic-api-key, fred-api-key, fmp-api-key
 
 Estimated monthly cost:   \$30-50 (idle) / \$60-100 (active use)
 EOF
