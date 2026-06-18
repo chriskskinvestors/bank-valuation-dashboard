@@ -87,7 +87,6 @@ section, _nav_search, _nav_right = _top_nav(SECTIONS, key="nav_section")
 # scope parameter.)
 with timed("app.universe_tickers"):
     watchlist = sorted(get_universe_tickers())
-portfolio = []
 
 with _nav_right:
     _u1, _u2 = st.columns([3, 1.2], vertical_alignment="center")
@@ -554,7 +553,7 @@ if section == "Home":
 elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # ── SCREEN: Multi-bank comparison tables ────────────────────────────
     from data.saved_screens import (
-        save_screen, load_screen, list_screens, delete_screen,
+        save_screen, load_screen, list_screens, delete_screen, screen_versions,
     )
 
     tab_key = screening_tab["key"]
@@ -586,15 +585,30 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         load_col, del_col, new_col = st.columns([2, 1, 2])
 
         with load_col:
+            ver_by_name = {s["name"]: s.get("version", 1) for s in saved_for_tab}
             load_options = ["— select —"] + [s["name"] for s in saved_for_tab]
             load_choice = st.selectbox(
                 f"Load saved screen ({len(saved_for_tab)} available for this tab)",
                 load_options,
+                format_func=lambda n: (f"{n}  (v{ver_by_name[n]})" if n in ver_by_name else n),
                 key=f"load_screen_{tab_key}",
             )
+            load_version = None
             if load_choice != "— select —":
+                # Versioned templates: offer the current version + any prior
+                # revisions to roll back to.
+                versions = screen_versions(load_choice)
+                if len(versions) > 1:
+                    _vlabel = {v["version"]: (f"v{v['version']} · {v['saved_at'][:10]}"
+                                              + (" (current)" if v["current"] else ""))
+                               for v in versions}
+                    load_version = st.selectbox(
+                        "Version", [v["version"] for v in versions],
+                        format_func=lambda x: _vlabel.get(x, f"v{x}"),
+                        key=f"load_ver_{tab_key}",
+                    )
                 if st.button(f"📂 Load '{load_choice}'", key=f"load_btn_{tab_key}"):
-                    cfg = load_screen(load_choice)
+                    cfg = load_screen(load_choice, load_version)
                     if cfg:
                         ss = st.session_state
                         if cfg.get("sort_idx") is not None:
@@ -694,7 +708,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                         "columns": ss.get(f"custom_cols_{tab_key}") or tab_columns,
                     }
                     save_screen(new_name, cfg)
-                    st.success(f"Saved '{new_name}'")
+                    _vs = screen_versions(new_name)
+                    _v = _vs[0]["version"] if _vs else 1
+                    st.success(f"Saved '{new_name}' (v{_v})")
                     st.rerun()
 
     # ── Scope + sort controls ──────────────────────────────────────────
@@ -1090,7 +1106,7 @@ elif section == "Screen & Compare" and sc_sub == "Compare":
     if not all_metrics:
         all_metrics = load_all_data(watchlist)
         cache.put("watchlist_metrics_last", all_metrics)
-    render_peer_comparison(all_metrics, watchlist, portfolio)
+    render_peer_comparison(all_metrics)
 
 elif section == "Earnings":
     # ── EARNINGS ANALYSIS: Aggregate tracking ───────────────────────────

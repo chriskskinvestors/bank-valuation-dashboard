@@ -78,7 +78,7 @@ def _percentile_color(pct: float | None, higher_better: bool = True) -> str:
     return ""
 
 
-def render_peer_comparison(all_metrics: list[dict], watchlist: list[str], portfolio: list[str]):
+def render_peer_comparison(all_metrics: list[dict]):
     """Render the Peer Comparison top-level page."""
     title_bar("KSK Investors", "Peer Comparison", ids_html="")
 

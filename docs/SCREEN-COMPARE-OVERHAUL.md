@@ -75,12 +75,18 @@ quarter membership + historical financials for defunct entities is a substantial
 Screen the CURRENT universe meanwhile, labeled "as of latest". Spec doc TBD.
 
 Build order (each its own verified, shippable batch):
-- **B3** — peer-relative primitive (engine + UI). No new data.
-- **B4** — state geography groups (ticker→state resolver + scope dimension).
-- **B5** — generic change/growth + trend/persistence (history engine; correctness-gated).
-- **B6** — Compare rebuild (shared scope selector + Screen→Compare handoff) +
-  saved-screen versioning.
-- **B7** — retire `portfolio = []`, point-in-time spec doc, cleanup.
+- **B1** ✅ groups foundation (`data/bank_groups.py`, `ui/bank_scope.py`). Deployed green.
+- **B2** ✅ Screen rebuild (scope selector, any-metric filters + n/a counter, save-as-group,
+  honest header, themed picker, legend, na_rep). Deployed green.
+- **B3** ✅ peer-relative primitive + `analysis/screen_engine.py`. Deployed green.
+- **B4** ✅ state/region geography groups (`data/bank_geography.py`). Deployed (with B5).
+- **B5** ✅ generic change/growth + trend/persistence (`analysis/metric_history.py`;
+  recompute via the real engine; validated on real data). Deployed (with B4).
+- **B6** ✅ Compare rebuild (shared scope selector, cohort-vs-display, Screen→Compare
+  handoff). Render-verified; push pending B4+B5 green.
+- **B7** — retire `portfolio = []`, point-in-time spec doc, final cleanup. (open)
+
+Saved-screen versioning (the remaining confirmed item) folds into B7.
 
 ## Do-not-touch (other lanes)
 
