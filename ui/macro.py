@@ -40,7 +40,6 @@ MACRO_SECTIONS = [
     "Economic Data",
     "Rates & Curve",
     "Bank Sector",
-    "Funding & Deposits",
     "Credit & Spreads",
     "Regime",
 ]
@@ -60,6 +59,15 @@ _MACRO_NAV_CSS = """
 .dashboard-header h1{font-size:1.3rem!important;}
 .dashboard-header p{margin-top:0.15rem!important;}
 .st-key-macro_section_nav{margin-top:0!important;}
+/* Bank Sector sub-tab bar (Sector ETFs · Funding & Deposits) — a lighter
+   secondary underline tab bar under the main section nav. */
+.st-key-bank_sector_sub_nav div[role="radiogroup"]{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:flex-end;border-bottom:1px solid rgba(148,163,184,0.22);margin:0 0 12px;}
+.st-key-bank_sector_sub_nav div[role="radiogroup"]>label{margin:0!important;padding:5px 12px;cursor:pointer;border-bottom:2px solid transparent;transition:border-color .12s,color .12s;}
+.st-key-bank_sector_sub_nav div[role="radiogroup"]>label:hover{background:rgba(37,99,235,0.05);}
+.st-key-bank_sector_sub_nav div[role="radiogroup"]>label>div:first-of-type{display:none!important;}
+.st-key-bank_sector_sub_nav div[role="radiogroup"]>label p{font-size:0.86rem;color:var(--text-secondary);font-weight:600;}
+.st-key-bank_sector_sub_nav div[role="radiogroup"]>label:has(input:checked){border-bottom-color:#3b82f6;}
+.st-key-bank_sector_sub_nav div[role="radiogroup"]>label:has(input:checked) p{color:#1e40af;font-weight:700;}
 .st-key-macro_section_nav div[role="radiogroup"]{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:flex-end;border-bottom:1px solid rgba(148,163,184,0.28);margin-bottom:8px;}
 .st-key-macro_section_nav div[role="radiogroup"]>label{margin:0!important;padding:7px 14px;cursor:pointer;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;transition:background .12s,border-color .12s;}
 .st-key-macro_section_nav div[role="radiogroup"]>label:hover{background:rgba(37,99,235,0.06);}
@@ -97,7 +105,6 @@ def render_macro_dashboard():
         "Economic Data": _render_economy_calendar,
         "Rates & Curve": _render_rates_curve,
         "Bank Sector": _render_bank_sector,
-        "Funding & Deposits": _render_funding_deposits,
         "Credit & Spreads": _render_credit_spreads,
         "Regime": _render_regime,
     }[section]()
@@ -147,6 +154,18 @@ def _fmt_range(lo, hi) -> str:
 
 
 def _render_bank_sector():
+    """Bank Sector, with two sub-sections: equity sector ETFs (default) and the
+    funding & deposits view (folded in from its old top-level tab)."""
+    with st.container(key="bank_sector_sub_nav"):
+        sub = st.radio("Bank Sector view", ["Sector ETFs", "Funding & Deposits"],
+                       horizontal=True, key="bank_sector_sub", label_visibility="collapsed")
+    if sub == "Funding & Deposits":
+        _render_funding_deposits()
+    else:
+        _render_bank_sector_etfs()
+
+
+def _render_bank_sector_etfs():
     import plotly.graph_objects as go
     from data.bank_etf import get_etf_history, get_etf_market_data, compute_stats, ETFS, PERIODS
     from data.etf_valuation import get_etf_valuation
