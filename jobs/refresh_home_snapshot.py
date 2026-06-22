@@ -164,9 +164,11 @@ def main() -> int:
 # block the whole Home grid ~84s). Warm every ETF × timeframe the overlay can
 # request here, off the request path. Symbols/periods mirror ui/home _AF_ETFS and
 # _AF_TF_FETCH (kept literal so this job doesn't import streamlit-heavy ui/home).
+# "1W" is the 15-min intraday window the 1D overlay tab reads (the only intraday
+# path); the daily windows (3M/6M/1Y/2Y) cover every other timeframe button.
 _OVERLAY_ETFS = ["SPY", "QQQ", "DIA", "IWM", "IWO", "IWN", "IJR", "KRE", "KBE",
                  "XLF", "KBWB"]
-_OVERLAY_PERIODS = ["1M", "3M", "6M", "1Y", "2Y"]
+_OVERLAY_PERIODS = ["1W", "3M", "6M", "1Y", "2Y"]
 
 
 def _warm_overlay_history() -> None:

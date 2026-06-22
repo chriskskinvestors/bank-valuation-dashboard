@@ -493,6 +493,7 @@ _PERIOD_TO_ENDPOINT = {
     "1M":  ("historical-chart/1hour", 30),      # last 30 days, 1-hour bars
     "3M":  ("historical-price-eod/full", 90),
     "1Y":  ("historical-price-eod/full", 365),
+    "2Y":  ("historical-price-eod/full", 731),
     "5Y":  ("historical-price-eod/full", 1826),
 }
 
@@ -500,7 +501,7 @@ _PERIOD_TO_ENDPOINT = {
 def get_history(ticker: str, period: str = "1Y", cache_only: bool = False) -> pd.DataFrame:
     """
     Return a DataFrame of (date, close, open, high, low, volume) for `ticker`
-    over `period`. Period: "1W" | "1M" | "3M" | "1Y" | "5Y".
+    over `period`. Period: "1W" | "1M" | "3M" | "1Y" | "2Y" | "5Y".
 
     cache_only=True: read the persisted cache and return empty on a miss — NEVER
     do the live FMP fetch. Render paths (the Home overlay chart, looped over

@@ -185,6 +185,94 @@ class TestHomeRendersPopulated(unittest.TestCase):
             self.home._esc = saved
 
 
+class TestOverlayTimeframes(unittest.TestCase):
+    """The Home overlay chart's timeframe handling. Pins the 2026-06-22 fixes
+    made when the FMP key went Premium and the old 'intraday endpoints denied'
+    assumption became false:
+
+      • 1D renders a real intraday series normalized to the PRIOR session's
+        close (owner-chosen baseline — today's move incl. the opening gap).
+      • 1W routes through EOD DAILY bars, not the 1-hour intraday endpoint
+        (which would tail 5 one-hour bars and mislabel ~5 hours as a week).
+      • 2Y resolves to a 2-year EOD endpoint, not a silent 1Y fallback.
+
+    get_history is read cache_only on the render path, so the mocks accept the
+    cache_only kwarg the same way the warm-cache reader passes it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        _install_streamlit_stub()
+        import importlib
+        import ui.home
+        cls.home = importlib.reload(ui.home)
+
+    def test_1d_normalizes_to_prior_close(self):
+        import pandas as pd
+        import data.fmp_client as fmp
+        prior = pd.date_range("2026-06-19 09:30", "2026-06-19 16:00", freq="15min")
+        today = pd.date_range("2026-06-22 09:30", "2026-06-22 16:00", freq="15min")
+        # Prior session flat at 100 (close=100); today ramps 101 -> 102.
+        closes = [100.0] * len(prior) + list(
+            pd.Series(range(len(today))).apply(lambda i: 101.0 + i / (len(today) - 1)))
+        df = pd.DataFrame({"date": list(prior) + list(today), "close": closes})
+        saved = fmp.get_history
+        try:
+            fmp.get_history = lambda tk, period="1Y", **k: df
+            series = self.home._af_overlay_series(["AAA"], "1D")
+        finally:
+            fmp.get_history = saved
+        self.assertEqual(len(series), 1)
+        _tk, _c, pcts, dates = series[0]
+        self.assertEqual(len(dates), len(today))          # only today's bars
+        self.assertAlmostEqual(pcts[0], 1.0, places=4)    # +1% vs prior close
+        self.assertAlmostEqual(pcts[-1], 2.0, places=4)   # +2% vs prior close
+
+    def test_1w_routes_through_eod_daily(self):
+        import pandas as pd
+        import data.fmp_client as fmp
+        seen = {}
+
+        def _spy(tk, period="1Y", **k):
+            seen["period"] = period
+            return pd.DataFrame({
+                "date": pd.date_range("2026-01-01", periods=90),
+                "close": [100.0 + i for i in range(90)]})
+
+        saved = fmp.get_history
+        try:
+            fmp.get_history = _spy
+            series = self.home._af_overlay_series(["AAA"], "1W")
+        finally:
+            fmp.get_history = saved
+        # Must NOT request "1M" (the 1-hour intraday endpoint); EOD daily only.
+        self.assertEqual(seen["period"], "3M")
+        self.assertEqual(len(series[0][2]), 5)            # tailed to 5 sessions
+
+    def test_2y_endpoint_is_two_year_eod(self):
+        import data.fmp_client as fmp
+        self.assertIn("2Y", fmp._PERIOD_TO_ENDPOINT)
+        endpoint, days = fmp._PERIOD_TO_ENDPOINT["2Y"]
+        self.assertIn("eod", endpoint)                    # daily, not intraday
+        self.assertGreater(days, 365)                     # genuinely 2 years
+
+    def test_intraday_axis_uses_clock_times(self):
+        import pandas as pd
+        import data.fmp_client as fmp
+        prior = pd.date_range("2026-06-19 09:30", "2026-06-19 16:00", freq="15min")
+        today = pd.date_range("2026-06-22 09:30", "2026-06-22 16:00", freq="15min")
+        df = pd.DataFrame({"date": list(prior) + list(today),
+                           "close": [100.0] * (len(prior) + len(today))})
+        saved = fmp.get_history
+        try:
+            fmp.get_history = lambda tk, period="1Y", **k: df
+            series = self.home._af_overlay_series(["AAA"], "1D")
+            svg = self.home._af_overlay_svg(series)
+        finally:
+            fmp.get_history = saved
+        self.assertIn("09:30", svg)                       # time label, not a date
+
+
 class TestCapitalWalkRendersPopulated(unittest.TestCase):
     """RC-R capital walk (ui/capital_dynamics._render_rcr_capital_walk) must
     render with POPULATED stored detail — the table loop, click-through

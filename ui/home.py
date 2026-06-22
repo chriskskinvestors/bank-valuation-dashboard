@@ -134,7 +134,13 @@ _AF_TIER_NAME = {"mc": "Money-Center (>$1T)", "lg": "Large Regional ($100B-$1T)"
 _AF_OVERLAY_COLORS = ["#1e3a8a", "#0e7490", "#b45309", "#6d28d9", "#047857",
                       "#be185d", "#0369a1", "#a16207"]
 _AF_TF_OPTS = ["1D", "1W", "1M", "3M", "6M", "YTD", "1Y", "2Y"]
-_AF_TF_FETCH = {"1W": "1M", "1M": "3M", "3M": "6M", "6M": "1Y",
+# Every window except 1D is served from EOD daily bars (one fetch, tailed by
+# trading days) — so none routes through the 15-min/1-hour intraday endpoints,
+# which return too few bars for these spans (e.g. tailing 5 one-hour bars
+# mislabels ~5 hours as a week). 1D is the only intraday path (see
+# _af_overlay_1d). Each value is a get_history period resolving to an EOD-daily
+# endpoint in fmp_client._PERIOD_TO_ENDPOINT; refresh_home_snapshot warms them.
+_AF_TF_FETCH = {"1W": "3M", "1M": "3M", "3M": "6M", "6M": "1Y",
                 "YTD": "1Y", "1Y": "1Y", "2Y": "2Y"}
 _AF_TF_TAIL = {"1W": 5, "1M": 21, "3M": 63, "6M": 126, "1Y": 252, "2Y": 504}
 
@@ -643,30 +649,68 @@ def _af_feed_table(watchlist: list[str]) -> str:
             + f'<div class="body">{body}</div>')
 
 
+def _af_overlay_1d(fmp_client, tk):
+    """Intraday (15-min) series for the latest trading session, normalized to
+    the PRIOR session's close — so the line shows today's full move including
+    the opening gap, matching the day-change % in the Movers/ETF panes.
+
+    Reads cache_only (like every overlay window — never live-fetch on the
+    render thread); refresh_home_snapshot warms the "1W" 15-min bars. The prior
+    close comes from that same 7-day window (last bar before today), so there's
+    no extra call; with no prior session in the window we fall back to the
+    session's first bar. Returns (pcts, dates) or None."""
+    h = fmp_client.get_history(tk, period="1W", cache_only=True)  # 15-min, 7d
+    if h is None or h.empty or "close" not in h:
+        return None
+    h = h.dropna(subset=["close"]).sort_values("date")
+    if h.empty:
+        return None
+    sess_day = h["date"].iloc[-1].normalize()      # midnight of the latest day
+    sess = h[h["date"] >= sess_day]
+    prior = h[h["date"] < sess_day]
+    if len(sess) < 2:
+        return None
+    base = (float(prior["close"].iloc[-1]) if not prior.empty
+            else float(sess["close"].iloc[0]))
+    if not base:
+        return None
+    closes = sess["close"].tolist()
+    dates = sess["date"].tolist()
+    pcts = [(c / base - 1.0) * 100.0 for c in closes]
+    return pcts, dates
+
+
 def _af_overlay_series(sel, tf):
     from data import fmp_client
     out = []
     for i, tk in enumerate(sel[:8]):
         try:
-            # cache_only: never do the live FMP history fetch on the render thread
-            # — a cold/expired cache here was looping N×15s and blocking the whole
-            # above-the-fold grid for ~84s. jobs/refresh_home_snapshot warms these.
-            h = fmp_client.get_history(tk, period=_AF_TF_FETCH.get(tf, "1Y"),
-                                       cache_only=True)
-            if h is None or h.empty or "close" not in h:
-                continue
-            h = h.dropna(subset=["close"]).sort_values("date")
-            if tf == "YTD":
-                yr = h["date"].iloc[-1].year
-                h = h[h["date"].dt.year == yr]
+            if tf == "1D":
+                row = _af_overlay_1d(fmp_client, tk)
+                if row is None:
+                    continue
+                pcts, dates = row
             else:
-                h = h.tail(_AF_TF_TAIL.get(tf, 252))
-            closes = h["close"].tolist()
-            dates = h["date"].tolist()
-            if len(closes) < 2 or not closes[0]:
-                continue
-            base = closes[0]
-            pcts = [(c / base - 1.0) * 100.0 for c in closes]
+                # cache_only: never do the live FMP history fetch on the render
+                # thread — a cold/expired cache here was looping N×15s and
+                # blocking the whole above-the-fold grid for ~84s.
+                # jobs/refresh_home_snapshot warms these.
+                h = fmp_client.get_history(tk, period=_AF_TF_FETCH.get(tf, "1Y"),
+                                           cache_only=True)
+                if h is None or h.empty or "close" not in h:
+                    continue
+                h = h.dropna(subset=["close"]).sort_values("date")
+                if tf == "YTD":
+                    yr = h["date"].iloc[-1].year
+                    h = h[h["date"].dt.year == yr]
+                else:
+                    h = h.tail(_AF_TF_TAIL.get(tf, 252))
+                closes = h["close"].tolist()
+                dates = h["date"].tolist()
+                if len(closes) < 2 or not closes[0]:
+                    continue
+                base = closes[0]
+                pcts = [(c / base - 1.0) * 100.0 for c in closes]
             out.append((tk, _AF_OVERLAY_COLORS[i % len(_AF_OVERLAY_COLORS)], pcts, dates))
         except Exception:
             continue
@@ -701,11 +745,18 @@ def _af_overlay_svg(series) -> str:
     longest = max(series, key=lambda s: len(s[3]))[3]
     n = len(longest)
     if n >= 2:
+        # Intraday spans (1D) label the axis with clock times; multi-day spans
+        # use calendar dates.
+        try:
+            intraday = (longest[-1] - longest[0]).total_seconds() < 36 * 3600
+        except Exception:
+            intraday = False
+        axis_fmt = "%H:%M" if intraday else "%b %d"
         for frac, anchor in [(0.0, "start"), (1/3, "middle"), (2/3, "middle"), (1.0, "end")]:
             idx = min(n - 1, int(frac * (n - 1)))
             d = longest[idx]
             try:
-                lbl = d.strftime("%b %d")
+                lbl = d.strftime(axis_fmt)
             except Exception:
                 lbl = str(d)[:6]
             parts.append(f'<text x="{X(idx,n):.1f}" y="140" font-family="monospace" font-size="8" fill="#aab4c2" text-anchor="{anchor}">{lbl}</text>')
@@ -722,7 +773,7 @@ def _af_overlay_svg(series) -> str:
 def _af_overlay_table(sel: list, tf: str) -> str:
     """Normalized %-change chart + legend (HTML). The ticker multi-select and
     timeframe control are native widgets rendered above this by _af_grid."""
-    series = [] if (not sel or tf == "1D") else _af_overlay_series(sel, tf)
+    series = _af_overlay_series(sel, tf) if sel else []
     last_by = {tk: pcts[-1] for tk, _c, pcts, _d in series}
     color_by = {tk: c for tk, c, _p, _d in series}
     leg = '<div class="leg">'
@@ -733,8 +784,6 @@ def _af_overlay_table(sel: list, tf: str) -> str:
     leg += "</div>"
     if not sel:
         body = '<div class="pend">Pick ETFs above to overlay them here.</div>'
-    elif tf == "1D":
-        body = '<div class="pend">1D intraday goes live once the Premium key deploys.</div>'
     elif not series:
         body = '<div class="pend">No history available for the selection.</div>'
     else:
