@@ -301,8 +301,10 @@ def _af_etf_table() -> str:
     except Exception:
         warm = {}
     try:
+        # cache_only: never live-fetch aftermarket on the render thread (a cold
+        # cache was ~13s of FMP calls); the home-snapshot job warms it.
         from data import fmp_client
-        aftq = fmp_client.get_aftermarket_quote_batch(syms)
+        aftq = fmp_client.get_aftermarket_quote_batch(syms, cache_only=True)
     except Exception:
         aftq = {}
     from data import fmp_client as _fc

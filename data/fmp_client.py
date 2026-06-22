@@ -204,9 +204,11 @@ def _empty_aftermarket() -> dict:
     return {"bid": None, "ask": None, "volume": None, "timestamp": None}
 
 
-def get_aftermarket_quote(ticker: str) -> dict:
+def get_aftermarket_quote(ticker: str, cache_only: bool = False) -> dict:
     """Pre/post-market bid/ask via FMP's stable `aftermarket-quote`.
-    Returns {bid, ask, volume, timestamp}; empty shape on denial/failure."""
+    Returns {bid, ask, volume, timestamp}; empty shape on denial/failure.
+    cache_only=True: read the cache, return the empty shape on a miss, never do
+    the live FMP fetch — for the Home render path so a cold cache can't block it."""
     if not _has_key():
         return _empty_aftermarket()
     ticker = ticker.upper()
@@ -214,6 +216,8 @@ def get_aftermarket_quote(ticker: str) -> dict:
     cached = _cache_get(cache_key, QUOTE_TTL_SECONDS)
     if cached is not None:
         return cached
+    if cache_only:
+        return _empty_aftermarket()
     data = _get("aftermarket-quote", {"symbol": ticker})
     if not data or not isinstance(data, list) or not data:
         return _empty_aftermarket()
@@ -229,9 +233,13 @@ def get_aftermarket_quote(ticker: str) -> dict:
 
 
 def get_aftermarket_quote_batch(tickers: Iterable[str],
-                                max_per_min: int | None = None) -> dict[str, dict]:
+                                max_per_min: int | None = None,
+                                cache_only: bool = False) -> dict[str, dict]:
     """Bulk aftermarket quotes — single-symbol fan-out + pacing, same shape
-    discipline as get_quote_batch. Returns {ticker: aftermarket_dict}."""
+    discipline as get_quote_batch. Returns {ticker: aftermarket_dict}.
+    cache_only=True: read the cache only (empty shape on a miss), never live-fetch
+    — the Home ETF table passes this so a cold cache can't block the render on
+    N live FMP calls; a background job keeps the cache warm."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     tickers = [t.upper() for t in tickers if t]
     if not tickers:
@@ -243,7 +251,7 @@ def get_aftermarket_quote_batch(tickers: Iterable[str],
     with ThreadPoolExecutor(max_workers=8) as ex:
         futures = {}
         for t in tickers:
-            futures[ex.submit(get_aftermarket_quote, t)] = t
+            futures[ex.submit(get_aftermarket_quote, t, cache_only)] = t
             if interval:
                 time.sleep(interval)
         for fut in as_completed(futures):

@@ -185,6 +185,13 @@ def _warm_overlay_history() -> None:
                 pass
     print(f"[{time.strftime('%H:%M:%S')}] warmed {n} overlay histories "
           f"({len(_OVERLAY_ETFS)}x{len(_OVERLAY_PERIODS)})", flush=True)
+    # Same deal for the ETF table's aftermarket column — live on render was ~13s.
+    try:
+        aq = fmp_client.get_aftermarket_quote_batch(_OVERLAY_ETFS)  # live → cache
+        print(f"[{time.strftime('%H:%M:%S')}] warmed {len(aq)} aftermarket quotes",
+              flush=True)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
