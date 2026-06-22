@@ -810,11 +810,11 @@ def _render_economy_calendar():
     recent = get_recent_releases(days=10, limit=16)
     up = get_upcoming_releases(days=14, limit=20)
     rows = get_print_board()
-    # Calendars (left) · board (middle, content-hug so no slack) · a 2×2 chart
-    # grid on the right: Inflation/Labor stacked beside Growth/Activity stacked.
-    # Tables packed left (tighter fractions), chart region widened to hold two
-    # charts side by side.
-    cal_col, board_col, chart_col = st.columns([1, 0.92, 1.78])
+    # Calendars (left) · board (middle) · a 2×2 chart grid on the right:
+    # Inflation/Labor stacked beside Growth/Activity stacked. board_col must be
+    # wide enough to hold the full 7-column board (indicator…Trend…As of) or it
+    # overflows and collides with the charts; chart grid takes the remainder.
+    cal_col, board_col, chart_col = st.columns([1, 1.25, 1.45])
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
