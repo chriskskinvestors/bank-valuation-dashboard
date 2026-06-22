@@ -557,21 +557,16 @@ def _sep_cell(v, suffix: str = "%") -> str:
     return f"{v:.2f}{suffix}" if v is not None else _NA_HTML
 
 
-def _render_fed_panel(full: bool = True):
-    """Fed policy snapshot + SEP projections, shared by Rates & Curve (full:
-    policy strip + dot-plot chart + macro-medians table) and Economic Data
-    (compact: policy strip + median funds path). FRED-sourced; the individual
-    SEP dots aren't published machine-readably, so the median + central-tendency
-    band + full range convey the distribution (see data/fomc.py)."""
+def _render_fed_policy_strip():
+    """Fed policy snapshot strip: target range · effective · last move · next
+    meeting · as-of (data/fomc.fed_policy_snapshot)."""
     import html as _h
-    from data.fomc import fed_policy_snapshot, sep_projections, fetch_fomc_statement
-
+    from data.fomc import fed_policy_snapshot
     snap = fed_policy_snapshot()
     nm = snap.get("next_meeting")
     nm_txt = nm.strftime("%b %d, %Y").replace(" 0", " ") if nm is not None else "—"
     ao = snap.get("as_of")
     ao_txt = ao.strftime("%b %d, %Y").replace(" 0", " ") if ao is not None else "—"
-
     st.markdown("**Federal Reserve — policy & projections**")
     st.markdown(
         '<div class="ksk-grid"><table><thead><tr>'
@@ -590,21 +585,12 @@ def _render_fed_panel(full: bool = True):
         unsafe_allow_html=True,
     )
 
-    if not full:
-        proj = sep_projections()
-        funds = proj.get("funds") or []
-        sep_asof = proj.get("as_of")
-        sep_txt = sep_asof.strftime("%b %Y") if sep_asof is not None else "—"
-        if not funds:
-            st.caption("FOMC Summary of Economic Projections unavailable.")
-            return
-        path = " → ".join(f'{f["horizon"]}: {f["median"]:.2f}%'
-                          for f in funds if f.get("median") is not None)
-        st.caption(f"SEP median fed funds path — {path}. Source: FRED (SEP {sep_txt}).")
-        return
 
-    # full=True: the FOMC's own words. Policy strip is rendered above; the SEP
-    # medians table + dot-plot render under the rates board (_render_sep_block).
+def _render_fed_words():
+    """The FOMC's own words: latest statement (left) + curated Fed headlines
+    (right)."""
+    import html as _h
+    from data.fomc import fetch_fomc_statement
     stmt_c, head_c = st.columns([1.4, 1])
     with stmt_c:
         st.markdown("**Latest FOMC statement**")
@@ -1511,8 +1497,17 @@ def _render_rates_charts():
 
 
 def _render_rates_curve():
-    # Lead with the dense, scannable part (rates board + chart grid) so the tab
-    # opens at Economic-Data density; the FOMC context block follows below.
+    # Lead with the dense, scannable part (rates board + chart grid). Under the
+    # board, two bordered cards: the Fed policy strip on top, the SEP table +
+    # dot-plot beneath it. The FOMC's own words (statement + headlines) follow
+    # full-width below.
+    st.markdown(
+        "<style>"
+        'div[class*="st-key-fedcard"]{padding:6px 12px 8px!important;}'
+        'div[class*="st-key-fedcard"] [data-testid="stElementContainer"]{margin:0!important;}'
+        "</style>",
+        unsafe_allow_html=True,
+    )
     board_col, chart_col = st.columns([1, 1.5])
     with board_col:
         st.markdown("**Rates & curve board**")
@@ -1522,14 +1517,16 @@ def _render_rates_curve():
             "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
             "HY OAS shown in bps over Treasuries. Source: FRED."
         )
-        st.markdown("---")
-        _render_sep_block()
+        with st.container(border=True, key="fedcard_policy"):
+            _render_fed_policy_strip()
+        with st.container(border=True, key="fedcard_sep"):
+            _render_sep_block()
     with chart_col:
         _render_rates_charts()
 
     st.markdown("---")
-    # ── Federal Reserve / FOMC context (policy + statement + headlines) ──
-    _render_fed_panel(full=True)
+    # ── The FOMC's own words: latest statement + curated Fed headlines ──
+    _render_fed_words()
 
 
 def _render_credit_spreads():
