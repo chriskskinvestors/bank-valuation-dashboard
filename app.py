@@ -231,6 +231,18 @@ if section == "Screen & Compare":
           /* Compact select controls: shorter, lighter, smaller value text. */
           div[data-testid="stSelectbox"] div[data-baseweb="select"]>div{
               min-height:30px;font-size:0.75rem;}
+          /* Seamless segmented toolbar — drop each select's native chrome and
+             merge the six cells into one bordered strip with hairline dividers. */
+          .st-key-screen_toolbar [data-testid="stHorizontalBlock"]{
+              gap:0 !important;border:0.5px solid var(--grid-head);
+              border-radius:7px;overflow:hidden;}
+          .st-key-screen_toolbar [data-testid="stColumn"]{
+              border-right:0.5px solid var(--grid-head);}
+          .st-key-screen_toolbar [data-testid="stColumn"]:last-child{border-right:none;}
+          .st-key-screen_toolbar div[data-baseweb="select"]>div{
+              border:none !important;background:transparent !important;
+              border-radius:0 !important;box-shadow:none !important;padding-left:4px;}
+          .st-key-screen_toolbar [data-testid="stWidgetLabel"]{padding:5px 0 0 11px;margin:0;}
           /* Compact buttons — kills the chunky 38px empty boxes. The label text
              sits in a nested <p>, so size that too (button font-size alone won't
              cascade past it). */
@@ -844,9 +856,15 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         _cur_theme = _theme_opts[0]
     _theme_members = _bt.get(_cur_theme, [])
 
-    # One toolbar row — Theme · Table · As of · Scope · Sort · Order.
-    c_theme, c_table, c_asof, c_scope, c_sort, c_order = st.columns(
-        [1.3, 1.8, 1.5, 1.6, 1.3, 0.9])
+    # One toolbar row — Theme · Table · As of · Scope · Sort · Order. Wrapped in
+    # a keyed container so the seamless-segmented-bar CSS (below) can scope to
+    # ONLY this row: drop each select's native border/background and merge the
+    # six cells into one bordered strip with hairline dividers. Columns are
+    # created inside the container but populated afterwards — Streamlit renders
+    # `with col:` content into the column wherever it's called.
+    with st.container(key="screen_toolbar"):
+        c_theme, c_table, c_asof, c_scope, c_sort, c_order = st.columns(
+            [1.3, 1.8, 1.5, 1.6, 1.3, 0.9])
     with c_theme:
         st.selectbox("Theme", _theme_opts, key="screen_theme")
     with c_table:
