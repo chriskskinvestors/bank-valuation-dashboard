@@ -590,29 +590,23 @@ def _render_fed_panel(full: bool = True):
         unsafe_allow_html=True,
     )
 
-    proj = sep_projections()
-    funds = proj.get("funds") or []
-    sep_asof = proj.get("as_of")
-    sep_txt = sep_asof.strftime("%b %Y") if sep_asof is not None else "—"
-    if not funds:
-        st.caption("FOMC Summary of Economic Projections unavailable.")
-        return
-
     if not full:
+        proj = sep_projections()
+        funds = proj.get("funds") or []
+        sep_asof = proj.get("as_of")
+        sep_txt = sep_asof.strftime("%b %Y") if sep_asof is not None else "—"
+        if not funds:
+            st.caption("FOMC Summary of Economic Projections unavailable.")
+            return
         path = " → ".join(f'{f["horizon"]}: {f["median"]:.2f}%'
                           for f in funds if f.get("median") is not None)
         st.caption(f"SEP median fed funds path — {path}. Source: FRED (SEP {sep_txt}).")
         return
 
-    # Compact FOMC context block (the dense rates board + chart grid lead the
-    # tab above this). LEFT = the FOMC's own words — statement + curated
-    # headlines, dense text that fills the column. RIGHT = the SEP medians
-    # table over a compact dot-plot (median diamond · CT band · range whisker,
-    # with a dotted median path threading the diamonds). Pairing the tall text
-    # against table+chart keeps both columns full — no dead whitespace.
-    import plotly.graph_objects as go
-    words_c, proj_c = st.columns([1.15, 1])
-    with words_c:
+    # full=True: the FOMC's own words. Policy strip is rendered above; the SEP
+    # medians table + dot-plot render under the rates board (_render_sep_block).
+    stmt_c, head_c = st.columns([1.4, 1])
+    with stmt_c:
         st.markdown("**Latest FOMC statement**")
         stmt = fetch_fomc_statement()
         if stmt and stmt.get("paragraphs"):
@@ -629,7 +623,7 @@ def _render_fed_panel(full: bool = True):
                        "Source: Federal Reserve.")
         else:
             st.caption("FOMC statement unavailable (federalreserve.gov fetch failed).")
-
+    with head_c:
         st.markdown("**Fed headlines**")
         try:
             from data.events.store import get_topic_news
@@ -652,7 +646,24 @@ def _render_fed_panel(full: bool = True):
         else:
             st.caption("Fed/Powell headlines populate from the macro news feed in production.")
 
-    with proj_c:
+
+def _render_sep_block():
+    """FOMC Summary of Economic Projections — the medians table BESIDE the
+    dot-plot (median diamond · central-tendency band · range whisker, with a
+    dotted median path). Sits under the rates board to fill that space."""
+    import plotly.graph_objects as go
+    import html as _h
+    from data.fomc import sep_projections
+    proj = sep_projections()
+    funds = proj.get("funds") or []
+    sep_asof = proj.get("as_of")
+    sep_txt = sep_asof.strftime("%b %Y") if sep_asof is not None else "—"
+    if not funds:
+        st.caption("FOMC Summary of Economic Projections unavailable.")
+        return
+    st.markdown(f"**Summary of Economic Projections (SEP {sep_txt})**")
+    tbl_c, chart_c = st.columns([1, 1])
+    with tbl_c:
         macro = proj.get("macro") or {}
         horizons = [f["horizon"] for f in funds]
 
@@ -673,18 +684,18 @@ def _render_fed_panel(full: bool = True):
                 "</tr>"
             )
         st.markdown(
-            f'<div style="font-weight:600;font-size:var(--fs-sm);margin-bottom:2px;">'
-            f'Summary of Economic Projections (SEP {sep_txt})</div>'
             '<div class="ksk-grid"><table><thead><tr>'
             '<th style="text-align:left;">Horizon</th>'
-            '<th style="text-align:right;">Fed funds</th>'
-            '<th style="text-align:right;">Real GDP</th>'
-            '<th style="text-align:right;">Unemployment</th>'
+            '<th style="text-align:right;">Funds</th>'
+            '<th style="text-align:right;">GDP</th>'
+            '<th style="text-align:right;">Unemp</th>'
             '<th style="text-align:right;">PCE</th>'
-            '<th style="text-align:right;">Core PCE</th>'
+            '<th style="text-align:right;">Core</th>'
             "</tr></thead><tbody>" + tbody + "</tbody></table></div>",
             unsafe_allow_html=True,
         )
+        st.caption("SEP medians by horizon. Funds = fed funds, Core = core PCE. Source: FRED.")
+    with chart_c:
         fig = go.Figure()
         allvals = []
         med_x, med_y = [], []
@@ -698,7 +709,7 @@ def _render_fed_panel(full: bool = True):
                 allvals += [rl, rh]
             if cl is not None and ch is not None:
                 fig.add_trace(go.Scatter(x=[x, x], y=[cl, ch], mode="lines",
-                    line=dict(color="#93c5fd", width=16), showlegend=False, hoverinfo="skip"))
+                    line=dict(color="#93c5fd", width=14), showlegend=False, hoverinfo="skip"))
                 allvals += [cl, ch]
             if md is not None:
                 med_x.append(x)
@@ -710,16 +721,14 @@ def _render_fed_panel(full: bool = True):
                 showlegend=False, hoverinfo="skip"))
         for x, md in zip(med_x, med_y):
             fig.add_trace(go.Scatter(x=[x], y=[md], mode="markers",
-                marker=dict(symbol="diamond", color="#1e3a8a", size=12), showlegend=False,
+                marker=dict(symbol="diamond", color="#1e3a8a", size=11), showlegend=False,
                 hovertemplate=f"{x}<br>median %{{y:.2f}}%<extra></extra>"))
-        apply_standard_layout(fig, title="Fed funds projections — median · central tendency · range",
+        apply_standard_layout(fig, title="Fed funds dot-plot — median · central tendency · range",
                               height=250, yaxis_title="%", show_legend=False)
         fig.update_xaxes(type="category")
         if allvals:
             tighten_yaxis(fig, allvals, ticksuffix="%")
         st.plotly_chart(fig, use_container_width=True)
-        st.caption("SEP medians by horizon; the chart adds the central-tendency band + full range. "
-                   "Individual participant dots aren't published machine-readably. Source: FRED.")
 
 
 def _shade_recessions(fig, years: int = 5):
@@ -1513,11 +1522,13 @@ def _render_rates_curve():
             "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
             "HY OAS shown in bps over Treasuries. Source: FRED."
         )
+        st.markdown("---")
+        _render_sep_block()
     with chart_col:
         _render_rates_charts()
 
     st.markdown("---")
-    # ── Federal Reserve / FOMC context (policy + projections + statement) ──
+    # ── Federal Reserve / FOMC context (policy + statement + headlines) ──
     _render_fed_panel(full=True)
 
 
