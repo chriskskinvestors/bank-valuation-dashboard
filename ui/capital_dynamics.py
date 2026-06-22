@@ -410,6 +410,34 @@ def _render_holdco_capital(ticker: str):
     cik = get_cik(ticker)
     if not cik:
         return
+
+    # Freshest-source layer: when the latest earnings release reports a quarter
+    # the 10-Q/10-K hasn't filed yet, surface its (preliminary) STANDARDIZED
+    # capital ratios above the filed walk — ~2-3 weeks ahead of the periodic
+    # filing. Each ratio is double-confirmed in the release (0-mismatch audited);
+    # shown only when genuinely fresher (data.ir_provider.fresh_capital). Rendered
+    # BEFORE the early-return below so it still appears for banks whose holdco
+    # walk is n/a (reconcile-gated) — exactly where a fresh CET1 is most useful.
+    try:
+        from data.ir_provider import fresh_capital
+        _fc = fresh_capital(cik)
+    except Exception:
+        _fc = None
+    if _fc and _fc.get("ratios"):
+        _q = _fc["quarter"]
+        _ql = f"Q{(int(_q[5:7]) - 1) // 3 + 1} {_q[:4]}"
+        _parts = [f"{lab} **{_fc['ratios'][k]:.2f}%**"
+                  for lab, k in (("CET1", "cet1_ratio"), ("Tier 1", "t1_ratio"),
+                                 ("Total", "total_ratio"), ("Leverage", "lev_ratio"))
+                  if _fc["ratios"].get(k) is not None]
+        if _parts:
+            st.info(
+                f"**Latest quarter (preliminary, {_ql}):** " + " · ".join(_parts)
+                + f" — from the [earnings release filed {_fc['filed_date']}]"
+                f"({_fc['url']}), ahead of the next 10-Q. Standardized basis, each "
+                "ratio double-confirmed in the release; the filed figures supersede "
+                "it once published.")
+
     try:
         from data.sec_filing_scraper import holdco_capital_for
         res = holdco_capital_for(cik, get_fdic_cert(ticker))

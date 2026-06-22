@@ -401,3 +401,70 @@ def fresh_diluted_eps(cik) -> dict | None:
     except Exception:
         pass
     return val
+
+
+def _latest_filing_period_end(cik) -> str | None:
+    """ISO date of the most recent quarter the latest 10-Q/10-K reports through
+    (max non-dimensional fact period_end). None if it can't be determined."""
+    from data.sec_filing_scraper import latest_filing, instance_facts
+    meta = latest_filing(cik, ("10-Q", "10-K"))
+    if not meta:
+        return None
+    ends = [f.period_end for f in instance_facts(meta)
+            if getattr(f, "period_end", None) and not f.members]
+    return max(ends) if ends else None
+
+
+def _compute_fresh_capital(cik) -> dict | None:
+    try:
+        rel = latest_earnings_release(cik)
+    except Exception:
+        return None
+    if not rel:
+        return None
+    caps = extract_capital_ratios(rel["html"])
+    # CET1 is the required anchor (extract_capital_ratios refuses the whole set
+    # without a double-confirmed CET1) — no anchor, nothing to surface.
+    if caps.get("cet1_ratio") is None:
+        return None
+    qend = _quarter_end_before(rel.get("filed_date", ""))
+    if not qend:
+        return None
+    # Only "preliminary" if the latest 10-Q/10-K hasn't yet reported THROUGH this
+    # quarter — otherwise the periodic filing (and the Regulatory Capital tab) has
+    # it and there's no lead to add. Unconfirmable (fetch/parse fails) → None, so
+    # we never show an unverifiable "preliminary" ratio.
+    try:
+        filed_through = _latest_filing_period_end(cik)
+    except Exception:
+        return None
+    if filed_through is None or filed_through >= qend:
+        return None
+    return {"ratios": caps, "quarter": qend,
+            "filed_date": rel.get("filed_date"), "url": rel.get("url")}
+
+
+def fresh_capital(cik) -> dict | None:
+    """Current-quarter STANDARDIZED capital ratios from the latest earnings
+    release, returned ONLY when that quarter is fresher than the latest 10-Q/10-K
+    reports (freshest-wins). {ratios: {cet1_ratio,t1_ratio,total_ratio,lev_ratio},
+    quarter, filed_date, url} or None — each ratio double-confirmed in the release
+    or None per extract_capital_ratios. Cached ~12h (heavy fetch+parse)."""
+    if not cik:
+        return None
+    from data import cache as _cache
+    from data.freshness import is_fresh
+    key = f"ir_fresh_capital:v1:{int(cik)}"
+    try:
+        cached = _cache.get(key)
+        if cached is not None and is_fresh(cached, 12 * 3600):
+            return cached.get("value")
+    except Exception:
+        pass
+    val = _compute_fresh_capital(cik)
+    try:
+        from datetime import datetime
+        _cache.put(key, {"cached_at": datetime.now().isoformat(), "value": val})
+    except Exception:
+        pass
+    return val

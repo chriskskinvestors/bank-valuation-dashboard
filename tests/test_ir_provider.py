@@ -298,5 +298,61 @@ class TestExtractPnl(unittest.TestCase):
         self.assertIsNone(extract_pnl(txt)["diluted_eps"])
 
 
+class TestFreshCapitalGate(unittest.TestCase):
+    """The freshest-wins gate on the preliminary capital callout: surface the
+    release's ratios ONLY when it's genuinely ahead of the latest filing.
+    Network deps (latest_earnings_release, the filing scraper) are monkeypatched;
+    extraction itself is covered by TestExtractCapitalRatios."""
+    # A release whose double-confirmed ratios extract cleanly (reuse the fixture).
+    _REL = {"html": TestExtractCapitalRatios._DOC, "filed_date": "2026-04-20",
+            "url": "http://example/release"}
+
+    @staticmethod
+    def _fact(period_end, members=()):
+        from types import SimpleNamespace
+        return SimpleNamespace(concept="us-gaap:Assets",
+                               period_end=period_end, members=members)
+
+    def setUp(self):
+        import data.ir_provider as ip
+        self.ip = ip
+        self._orig_rel = ip.latest_earnings_release
+        self._orig_pe = ip._latest_filing_period_end
+
+    def tearDown(self):
+        self.ip.latest_earnings_release = self._orig_rel
+        self.ip._latest_filing_period_end = self._orig_pe
+
+    def test_release_ahead_of_filing_surfaces_ratios(self):
+        # Release covers Q1'26 (qend 2026-03-31); latest filing only through Q4'25.
+        self.ip.latest_earnings_release = lambda cik: self._REL
+        self.ip._latest_filing_period_end = lambda cik: "2025-12-31"
+        out = self.ip._compute_fresh_capital(1)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["quarter"], "2026-03-31")
+        self.assertEqual(out["ratios"]["cet1_ratio"], 9.96)
+
+    def test_filing_already_covers_quarter_suppressed(self):
+        # Latest filing already reports through 2026-03-31 → no lead → n/a.
+        self.ip.latest_earnings_release = lambda cik: self._REL
+        self.ip._latest_filing_period_end = lambda cik: "2026-03-31"
+        self.assertIsNone(self.ip._compute_fresh_capital(1))
+
+    def test_unconfirmable_filing_period_suppressed(self):
+        # Can't determine the latest filing's period → never show an unverifiable
+        # "preliminary" ratio.
+        self.ip.latest_earnings_release = lambda cik: self._REL
+        self.ip._latest_filing_period_end = lambda cik: None
+        self.assertIsNone(self.ip._compute_fresh_capital(1))
+
+    def test_unconfirmed_cet1_suppressed(self):
+        # No double-confirmed CET1 anchor in the release → nothing to surface
+        # (filing period not even consulted).
+        self.ip.latest_earnings_release = lambda cik: {
+            "html": "<p>no ratios here</p>", "filed_date": "2026-04-20", "url": "u"}
+        self.ip._latest_filing_period_end = lambda cik: "2025-12-31"
+        self.assertIsNone(self.ip._compute_fresh_capital(1))
+
+
 if __name__ == "__main__":
     unittest.main()
