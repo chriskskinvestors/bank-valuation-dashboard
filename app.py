@@ -223,42 +223,40 @@ if section == "Screen & Compare":
           div[data-testid="stVerticalBlock"]{gap:0.4rem;}
           div[data-testid="stExpander"] summary{padding-top:0.3rem;padding-bottom:0.3rem;}
           div[data-testid="stExpander"] details{border-radius:6px;}
-          div[data-testid="stWidgetLabel"]{margin-bottom:0.12rem;}
-          div[data-testid="stWidgetLabel"] p{font-size:var(--fs-xs);
-              color:var(--text-secondary);letter-spacing:.02em;}
+          div[data-testid="stWidgetLabel"]{margin-bottom:0.1rem;}
+          div[data-testid="stWidgetLabel"] p{font-size:var(--fs-2xs);
+              text-transform:uppercase;letter-spacing:.05em;
+              color:var(--text-secondary);}
+          /* Compact toolbar selects: shorter control, tighter text. */
+          div[data-testid="stSelectbox"] div[data-baseweb="select"]>div{
+              min-height:32px;font-size:var(--fs-sm);}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 if section == "Screen & Compare" and sc_sub == "Screen":
-    # Two-step picker: theme → table. The (otherwise flat) tables are grouped by
-    # what an analyst is actually looking for, with the chosen table's one-line
-    # description shown beneath. The table selectbox is keyed per-theme so
-    # switching theme lands on that theme's first table (no stale cross-theme idx).
+    # Two-step picker: theme → table (tables grouped by what an analyst is looking
+    # for). The Theme/Table SELECTBOXES render later, as the first two cells of the
+    # unified control toolbar in the Screen block. Here we only RESOLVE the current
+    # selection from session_state so screening_tab — and therefore the gated data
+    # load below — is known up front. The later widgets share these exact keys, so
+    # render and resolution stay consistent; the first run falls back to the first
+    # theme and its first table.
     _by_theme: dict[str, list] = {}
     for _i, _t in enumerate(TABS):
         _theme, _desc = TAB_META.get(_t["key"], ("Other", ""))
         _by_theme.setdefault(_theme, []).append((_i, _t["label"], _desc))
     _themes = ([th for th in THEME_ORDER if th in _by_theme]
                + [th for th in _by_theme if th not in THEME_ORDER])
-    # Capped width (trailing spacer): full-width Theme/Table dropdowns were
-    # absurdly wide for the short values they hold.
-    _tcol1, _tcol2, _ = st.columns([2, 3, 4])
-    with _tcol1:
-        _theme_pick = st.selectbox("Theme", _themes, key="screen_theme")
+    _theme_pick = st.session_state.get("screen_theme", _themes[0])
+    if _theme_pick not in _themes:
+        _theme_pick = _themes[0]
     _members = _by_theme.get(_theme_pick, [])
-    with _tcol2:
-        _idx_in_theme = st.selectbox(
-            "Table",
-            options=list(range(len(_members))),
-            format_func=lambda j, _m=_members: _m[j][1],
-            key=f"screen_table_{_theme_pick}",
-        )
-    screening_tab_idx, _, _tab_desc = _members[_idx_in_theme]
-    screening_tab = TABS[screening_tab_idx]
-    if _tab_desc:
-        st.caption(_tab_desc)
+    _tbl_i = st.session_state.get(f"screen_table_{_theme_pick}", 0)
+    if not isinstance(_tbl_i, int) or _tbl_i >= len(_members):
+        _tbl_i = 0
+    screening_tab = TABS[_members[_tbl_i][0]]
 
 elif section == "Company":
     # Deep-link support: a metric card can link to ?bank=X&tab=<token> to jump
@@ -781,9 +779,31 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             sort_labels.append(m["label"])
             sort_keys.append(col_key)
 
-    # Trailing spacer keeps the four controls left-clustered at a sane width
-    # instead of stretched edge-to-edge with big gaps between them.
-    c_asof, c_scope, c_sort, c_order, _ = st.columns([2, 3, 2, 1, 2.5])
+    # Recompute the theme→table grouping for the toolbar's first two cells. The
+    # selection was resolved from session_state up top (to gate the data load);
+    # rendering the Theme/Table selectboxes here — same keys — packs all six
+    # controls onto a single toolbar row instead of a separate two-control band.
+    _bt: dict[str, list] = {}
+    for _i, _t in enumerate(TABS):
+        _th, _d = TAB_META.get(_t["key"], ("Other", ""))
+        _bt.setdefault(_th, []).append((_i, _t["label"], _d))
+    _theme_opts = ([th for th in THEME_ORDER if th in _bt]
+                   + [th for th in _bt if th not in THEME_ORDER])
+    _cur_theme = st.session_state.get("screen_theme", _theme_opts[0])
+    if _cur_theme not in _theme_opts:
+        _cur_theme = _theme_opts[0]
+    _theme_members = _bt.get(_cur_theme, [])
+
+    # One toolbar row — Theme · Table · As of · Scope · Sort · Order.
+    c_theme, c_table, c_asof, c_scope, c_sort, c_order = st.columns(
+        [1.3, 1.8, 1.5, 1.6, 1.3, 0.9])
+    with c_theme:
+        st.selectbox("Theme", _theme_opts, key="screen_theme")
+    with c_table:
+        st.selectbox(
+            "Table", options=list(range(len(_theme_members))),
+            format_func=lambda j, _m=_theme_members: _m[j][1],
+            key=f"screen_table_{_cur_theme}")
     with c_asof:
         _asof_pick = st.selectbox(
             "As of", _asof_opts, key=f"asof_{tab_key}",
@@ -957,6 +977,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                    f"{'s' if len(filter_specs) != 1 else ''}") if filter_specs else ""
     nodata_note = f" · {n_excluded_nodata} excluded (no data)" if n_excluded_nodata else ""
     title_bar("KSK Investors", screening_tab["title"])
+    _tab_desc = TAB_META.get(tab_key, ("", ""))[1]
+    if _tab_desc:
+        st.caption(_tab_desc)
     if is_asof:
         # Point-in-time: count banks no longer in today's coverage (since failed
         # or acquired) so the reconstruction is transparent.
