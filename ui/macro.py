@@ -53,6 +53,13 @@ MACRO_SECTIONS = [
 # A plain st.markdown <style> (not components.html), so CSS var() tokens work.
 _MACRO_NAV_CSS = """
 <style>
+/* Tighten the page header so the title card hugs its content (title+subtitle)
+   and the section tabs sit right beneath it — pulls the whole page up.
+   Scoped to the macro render; the shared .dashboard-header rule is untouched. */
+.dashboard-header{padding:0.45rem 1.2rem 0.5rem!important;margin-bottom:0.4rem!important;}
+.dashboard-header h1{font-size:1.3rem!important;}
+.dashboard-header p{margin-top:0.15rem!important;}
+.st-key-macro_section_nav{margin-top:0!important;}
 .st-key-macro_section_nav div[role="radiogroup"]{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:flex-end;border-bottom:1px solid rgba(148,163,184,0.28);margin-bottom:8px;}
 .st-key-macro_section_nav div[role="radiogroup"]>label{margin:0!important;padding:7px 14px;cursor:pointer;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;transition:background .12s,border-color .12s;}
 .st-key-macro_section_nav div[role="radiogroup"]>label:hover{background:rgba(37,99,235,0.06);}
