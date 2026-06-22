@@ -811,10 +811,11 @@ def _render_economy_calendar():
     up = get_upcoming_releases(days=14, limit=20)
     rows = get_print_board()
     # Calendars (left) · board (middle) · a 2×2 chart grid on the right:
-    # Inflation/Labor stacked beside Growth/Activity stacked. board_col must be
-    # wide enough to hold the full 7-column board (indicator…Trend…As of) or it
-    # overflows and collides with the charts; chart grid takes the remainder.
-    cal_col, board_col, chart_col = st.columns([1, 1.25, 1.45])
+    # Inflation/Labor stacked beside Growth/Activity stacked. board_col is sized
+    # to hug the full 7-column board (indicator…Trend…As of) — wide enough not to
+    # clip, tight enough to leave only a thin seam before the charts (no right
+    # slack); the chart grid takes the rest and runs taller to fill it.
+    cal_col, board_col, chart_col = st.columns([1, 1.04, 1.62])
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
@@ -904,7 +905,10 @@ def _render_economy_calendar():
         table_export(export_df, "macro_print_board", key="macro_print_board_export")
     with chart_col:
         # 2×2 grid beside the board: left sub-column = Inflation (top) / Labor
-        # (bottom); right sub-column = Growth (top) / Activity (bottom).
+        # (bottom); right sub-column = Growth (top) / Activity (bottom). Taller
+        # than CHART_HEIGHT_FULL so the two stacked rows fill the widened grid
+        # and roughly match the board's height.
+        grid_h = 272
         gl, gr = st.columns(2)
         with gl:
             figi = go.Figure()
@@ -926,7 +930,7 @@ def _render_economy_calendar():
                            annotation_text="Fed 2% target", annotation_position="top left",
                            annotation_font=dict(size=10, color="#059669"))
             apply_standard_layout(figi, title="Inflation — YoY % (5Y)",
-                                  height=CHART_HEIGHT_FULL, yaxis_title="YoY")
+                                  height=grid_h, yaxis_title="YoY")
             figi.update_yaxes(ticksuffix="%")
             st.plotly_chart(figi, use_container_width=True)
 
@@ -950,7 +954,7 @@ def _render_economy_calendar():
                 ))
             _shade_recessions(figl)
             apply_standard_layout(figl, title="Labor — payrolls Δ & unemployment (5Y)",
-                                  height=CHART_HEIGHT_FULL, yaxis_title="Jobs Δ (000s)")
+                                  height=grid_h, yaxis_title="Jobs Δ (000s)")
             figl.update_layout(
                 yaxis2=dict(title="Unemp %", overlaying="y", side="right",
                             ticksuffix="%", showgrid=False),
@@ -969,7 +973,7 @@ def _render_economy_calendar():
                                       marker_color=gcolors))
             _shade_recessions(figg)
             apply_standard_layout(figg, title="Growth — Real GDP (QoQ SAAR, 5Y)",
-                                  height=CHART_HEIGHT_FULL, yaxis_title="QoQ SAAR",
+                                  height=grid_h, yaxis_title="QoQ SAAR",
                                   show_legend=False)
             figg.update_yaxes(ticksuffix="%")
             st.plotly_chart(figg, use_container_width=True)
@@ -988,7 +992,7 @@ def _render_economy_calendar():
                         line=dict(color=color, width=2)))
             _shade_recessions(figa)
             apply_standard_layout(figa, title="Activity — Industrial Production & Retail (YoY, 5Y)",
-                                  height=CHART_HEIGHT_FULL, yaxis_title="YoY")
+                                  height=grid_h, yaxis_title="YoY")
             figa.update_yaxes(ticksuffix="%")
             st.plotly_chart(figa, use_container_width=True)
 
