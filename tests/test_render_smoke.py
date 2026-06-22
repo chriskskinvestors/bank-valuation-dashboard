@@ -197,6 +197,35 @@ class TestHomeRendersPopulated(unittest.TestCase):
         # 20 nearer macro events must NOT bury the (later) bank earnings.
         self.assertIn("BANR", h)
 
+    def test_calendar_earnings_show_call_info(self):
+        # Parsed conference-call info (time/webcast/dial-in) surfaces on the
+        # earnings row: time + 'webcast' in the column, the row links to the
+        # webcast (new tab), and the dial-in is a tooltip.
+        import datetime as _dt
+        import data.estimates as est
+        import data.econ_calendar as ec
+        import data.earnings_call as ecall
+        soon = (_dt.date.today() + _dt.timedelta(days=10)).isoformat()
+        saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
+                 ecall.call_info_map)
+        try:
+            est.fetch_earnings_calendar = lambda w: [
+                {"ticker": "NWBI", "next_earnings_date": soon, "eps_estimate": 1.2}]
+            ec.get_upcoming_releases = lambda days=14: []
+            ecall.call_info_map = lambda: {"NWBI": {
+                "call_time": "10:00a ET",
+                "webcast_url": "https://investor.example.com/webcast",
+                "dial_in": "1-800-555-1234 (ID 99)"}}
+            h = self.home._af_calendar_table(["NWBI"])
+        finally:
+            (est.fetch_earnings_calendar, ec.get_upcoming_releases,
+             ecall.call_info_map) = saved
+        self.assertIn("10:00a ET", h)                               # call time
+        self.assertIn("webcast", h)                                 # indicator
+        self.assertIn('href="https://investor.example.com/webcast"', h)  # row → webcast
+        self.assertIn('target="_blank"', h)
+        self.assertIn('title="Dial-in: 1-800-555-1234 (ID 99)"', h)  # dial-in tooltip
+
     def test_above_fold_integration_renders(self):
         # End-to-end grid assembly. Network sources are mocked off; every
         # other pane reads local cache/snapshots, and _af_safe isolates any

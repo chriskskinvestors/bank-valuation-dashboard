@@ -490,6 +490,10 @@ def _af_calendar_table(watchlist: list[str]) -> str:
     # soonest events overall, however far out.
     try:
         from data.estimates import fetch_earnings_calendar
+        from data import earnings_call as _ecall
+        # Conference-call info (time / webcast / dial-in) parsed best-effort from
+        # each bank's earnings-announcement PR — 1h-cached, blank when not found.
+        _call_map = _ecall.call_info_map()
         _td = dt.date.today()
         for e in fetch_earnings_calendar(tuple(watchlist)):
             ds = e.get("next_earnings_date")
@@ -500,10 +504,13 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             if not (0 <= (d - _td).days <= 60):
                 continue
             eps = e.get("eps_estimate")
-            # Earnings keep EPS-estimate on the right; the new Cons./Prior column
-            # is reserved for the upcoming conference-call build (webcast/dial-in).
+            ci = _call_map.get(e["ticker"]) or {}
+            # EPS estimate stays on the right; the Cons./Prior column carries the
+            # call time + a webcast indicator (the row links to the webcast).
             items.append({"kind": "earn", "date": ds, "ticker": e["ticker"],
-                          "name": get_name(e["ticker"]) or e["ticker"], "mid": "",
+                          "name": get_name(e["ticker"]) or e["ticker"],
+                          "mid": _ecall.mid_label(ci),
+                          "webcast": ci.get("webcast_url"), "dial_in": ci.get("dial_in"),
                           "detail": (f"${eps:.2f}e" if eps is not None else "")})
     except Exception:
         pass
@@ -548,8 +555,12 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             ev = (f'<span class="evt"><span class="dotc" style="background:{dot};'
                   f'margin-right:7px;"></span>{_esc(i["name"][:30])}{sym}</span>')
             href = (f'?s=Home&bank={i["ticker"]}' if i["ticker"] else "?s=Home")
+            target, rel = "_self", ""
+            if i.get("webcast"):           # earnings row links to the call webcast
+                href, target, rel = _esc(i["webcast"]), "_blank", ' rel="noopener noreferrer"'
+            ttl = f' title="Dial-in: {_esc(i["dial_in"])}"' if i.get("dial_in") else ""
             rows += (
-                f'<a class="crow" href="{href}" target="_self"><div class="erow a4 ed">'
+                f'<a class="crow" href="{href}" target="{target}"{rel}{ttl}><div class="erow a4 ed">'
                 f'<span class="nm"{wstyle}>{when}</span>{ev}'
                 f'<span class="num mut">{i.get("mid") or "—"}</span>'
                 f'<span class="num mut">{i["detail"] or "—"}</span></div></a>')
