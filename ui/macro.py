@@ -315,79 +315,101 @@ def _render_funding_deposits():
     ff_txt = f"{ff:.2f}%" if ff is not None else "n/a"
     st.caption(f"FDIC national deposit rates · as of {asof} · published monthly "
                f"(third Monday) · Fed Funds {ff_txt} for the spread.")
-
-    # ── Current rates grid: rate, cap, spread to Fed Funds ─────────────
-    body = ""
-    for field, label in _DEPOSIT_PRODUCTS:
-        prod = rates.get(field) or {}
-        rate = prod.get("rate_pct")
-        cap = prod.get("cap_pct")
-        if rate is None and cap is None:
-            continue
-        rate_txt = f"{rate:.2f}%" if rate is not None else '<span style="color:var(--text-muted);">n/a</span>'
-        cap_txt = f"{cap:.2f}%" if cap is not None else '<span style="color:var(--text-muted);">n/a</span>'
-        if rate is not None and ff is not None:
-            spread = rate - ff
-            spread_txt = f"{spread:+.2f}pp"
-        else:
-            spread_txt = '<span style="color:var(--text-muted);">n/a</span>'
-        body += (
-            "<tr>"
-            f"<td>{_html.escape(label)}</td>"
-            f"<td>{rate_txt}</td>"
-            f"<td>{cap_txt}</td>"
-            f'<td style="color:var(--text-secondary);">{spread_txt}</td>'
-            "</tr>"
-        )
     st.markdown(
-        '<div class="ksk-grid"><table style="width:100%;">'
-        "<thead><tr>"
-        "<th>Product</th><th>National Rate</th><th>Rate Cap</th><th>vs Fed Funds</th>"
-        "</tr></thead><tbody>" + body + "</tbody></table></div>",
+        "<style>"
+        'div[class*="st-key-fundchart"]{padding:2px 6px 0!important;}'
+        'div[class*="st-key-fundchart"] [data-testid="stElementContainer"]'
+        "{padding:0!important;margin:0!important;}"
+        "</style>",
         unsafe_allow_html=True,
     )
-    st.caption("National Rate = FDIC deposit-weighted national average. Rate Cap = "
-               "§337.7 cap (national rate + 75bps, or the Treasury-yield-based cap). "
-               "Spread vs Fed Funds shows how far deposit pricing lags policy.")
 
-    # ── History: key deposit rates vs Fed Funds (the deposit-beta picture) ──
-    hist = get_national_rate_history(weeks=260)  # ~5y, covers the revised-rule series
+    # ~5y of monthly prints (covers the revised-rule series) for the chart, the
+    # per-product trend sparklines, and the export.
+    hist = get_national_rate_history(weeks=260)
+    sparks = {}
     if hist:
-        dates = [r["asof"] for r in hist]
-        fig = go.Figure()
-        for field, label, color in [
-            ("savings", "Savings", "#0891b2"),
-            ("mmda", "Money Market", "#9333ea"),
-            ("cd_12mo", "12-Month CD", "#1e40af"),
-        ]:
-            ys = [(r.get(field) or {}).get("rate_pct") for r in hist]
-            if any(y is not None for y in ys):
-                fig.add_trace(go.Scatter(
-                    x=dates, y=ys, name=label, mode="lines+markers",
-                    line=dict(color=color, width=2), marker=dict(size=4),
-                ))
-        ffdf = fetch_series("FEDFUNDS", years=5)
-        if not ffdf.empty:
-            fig.add_trace(go.Scatter(
-                x=ffdf["date"], y=ffdf["value"], name="Fed Funds", mode="lines",
-                line=dict(color="#64748b", width=2, dash="dot"),
-            ))
-        apply_standard_layout(fig, title="Deposit rates vs Fed Funds — the deposit-beta picture",
-                              height=CHART_HEIGHT_FULL, yaxis_title="Rate")
-        fig.update_yaxes(ticksuffix="%")
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption("Deposit rates rise far less than Fed Funds (low deposit beta) and "
-                   "lag both up and down. Source: FDIC national rates · FRED (Fed Funds).")
+        for field, _label in _DEPOSIT_PRODUCTS:
+            sparks[field] = [float(y) for y in
+                             ((r.get(field) or {}).get("rate_pct") for r in hist)
+                             if y is not None]
 
-        # Export the full history (one row per month, rate per product).
-        export_rows = []
-        for r in hist:
-            row = {"asof": r["asof"]}
-            for field, label in _DEPOSIT_PRODUCTS:
-                row[field] = (r.get(field) or {}).get("rate_pct")
-            export_rows.append(row)
-        table_export(pd.DataFrame(export_rows), "fdic_national_rates",
-                     key="fdic_rates_export")
+    # Content-hug rates table (LEFT) beside the deposit-beta chart (RIGHT) —
+    # never width:100% on this sparse table (it leaves empty bands; the chart
+    # fills the freed space instead). See [[dense-html-table-no-slack]].
+    tbl_col, chart_col = st.columns([1, 1.9])
+    with tbl_col:
+        body = ""
+        for field, label in _DEPOSIT_PRODUCTS:
+            prod = rates.get(field) or {}
+            rate = prod.get("rate_pct")
+            cap = prod.get("cap_pct")
+            if rate is None and cap is None:
+                continue
+            rate_txt = f"{rate:.2f}%" if rate is not None else _NA_HTML
+            cap_txt = f"{cap:.2f}%" if cap is not None else _NA_HTML
+            spread_txt = (f"{rate - ff:+.2f}pp" if (rate is not None and ff is not None)
+                          else _NA_HTML)
+            body += (
+                "<tr>"
+                f'<td style="text-align:left;">{_html.escape(label)}</td>'
+                f'<td style="text-align:right;font-weight:600;">{rate_txt}</td>'
+                f'<td style="text-align:right;color:var(--text-secondary);">{cap_txt}</td>'
+                f'<td style="text-align:right;color:var(--text-secondary);">{spread_txt}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(sparks.get(field, []))}</td>'
+                "</tr>"
+            )
+        st.markdown(
+            '<div class="ksk-grid"><table><thead><tr>'
+            '<th style="text-align:left;">Product</th>'
+            '<th style="text-align:right;">National Rate</th>'
+            '<th style="text-align:right;">Rate Cap</th>'
+            '<th style="text-align:right;">vs Fed Funds</th>'
+            '<th style="text-align:center;">Trend (5Y)</th>'
+            "</tr></thead><tbody>" + body + "</tbody></table></div>",
+            unsafe_allow_html=True,
+        )
+        st.caption("National Rate = FDIC deposit-weighted national average. Rate Cap = "
+                   "§337.7 cap (national rate + 75bps, or the Treasury-yield-based cap). "
+                   "vs Fed Funds = how far deposit pricing lags policy. Source: FDIC.")
+        if hist:
+            export_rows = []
+            for r in hist:
+                row = {"asof": r["asof"]}
+                for field, _label in _DEPOSIT_PRODUCTS:
+                    row[field] = (r.get(field) or {}).get("rate_pct")
+                export_rows.append(row)
+            table_export(pd.DataFrame(export_rows), "fdic_national_rates",
+                         key="fdic_rates_export")
+
+    with chart_col:
+        if not hist:
+            st.info("Deposit-rate history is unavailable in this environment.")
+            return
+        dates = [r["asof"] for r in hist]
+        with st.container(border=True, key="fundchart"):
+            fig = go.Figure()
+            for field, label, color in [
+                ("savings", "Savings", "#0891b2"),
+                ("mmda", "Money Market", "#9333ea"),
+                ("cd_12mo", "12-Month CD", "#1e40af"),
+            ]:
+                ys = [(r.get(field) or {}).get("rate_pct") for r in hist]
+                if any(y is not None for y in ys):
+                    fig.add_trace(go.Scatter(
+                        x=dates, y=ys, name=label, mode="lines",
+                        line=dict(color=color, width=2)))
+            ffdf = fetch_series("FEDFUNDS", years=5)
+            if not ffdf.empty:
+                fig.add_trace(go.Scatter(
+                    x=ffdf["date"], y=ffdf["value"], name="Fed Funds", mode="lines",
+                    line=dict(color="#64748b", width=2, dash="dot")))
+            apply_standard_layout(fig, title="Deposit rates vs Fed Funds — the deposit-beta picture",
+                                  height=CHART_HEIGHT_HERO, yaxis_title="Rate")
+            fig.update_yaxes(ticksuffix="%")
+            st.plotly_chart(fig, use_container_width=True)
+        st.caption("Deposit rates rise far less than Fed Funds (low deposit beta) and lag "
+                   "both up and down. Source: FDIC national rates · FRED (Fed Funds).")
 
 
 # ── Economic Data formatting helpers ──────────────────────────────────
