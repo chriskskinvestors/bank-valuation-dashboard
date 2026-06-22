@@ -2,11 +2,14 @@
 Bank-sector ETF deep-dive data for the Market & Macro "Bank Sector" section
 (docs/HOME-MACRO-PLAN.md §2 — owner chose the single-ETF deep-dive lens).
 
-Source: FMP end-of-day price history via data.fmp_client.get_history. Only
-the EOD-backed windows (3M/1Y/5Y) are offered — the FMP Starter plan denies
-the intraday historical-chart endpoints behind 1W/1M (see the FMP-Starter
-memory). No key → get_history returns an empty frame and the renderer shows
-an honest note (never fabricated prices).
+Source: FMP end-of-day price history via data.fmp_client.get_history. The
+deep-dive is built on EOD daily bars by design — one fetch per ticker (1Y or
+5Y) sliced client-side into every window — which keeps the section to a single
+network call regardless of how many windows the selector offers. (Intraday
+historical-chart endpoints are available on the current Premium key, but this
+section deliberately doesn't use them; see the FMP-plan memory.) No key →
+get_history returns an empty frame and the renderer shows an honest note
+(never fabricated prices).
 
 The reducers (compute_stats, drawdown_series) are pure and unit-tested on
 synthetic OHLCV; the live render is verified in production where the key is
@@ -29,9 +32,10 @@ ETFS = [
     {"ticker": "QABA", "name": "First Trust NASDAQ ABA Community Bank ETF"},
 ]
 
-# Selectable windows. All are served from EOD daily bars (sliced client-side
-# from one fetch) so none depends on FMP's intraday historical-chart
-# endpoints, which the Starter plan denies (see the FMP-Starter memory).
+# Selectable windows. All are served from EOD daily bars sliced client-side
+# from one fetch — the deep-dive uses daily closes by design, so adding a
+# window here costs no extra network call (and never needs FMP's intraday
+# historical-chart endpoints).
 PERIODS = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
 
 
@@ -61,8 +65,8 @@ def get_etf_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
     fetch fails.
 
     One EOD fetch serves every window: pull 5Y for the long windows and 1Y
-    for the rest (1Y is the proven-working EOD call), then slice by date —
-    so adding short windows never touches the plan-denied intraday endpoints.
+    for the rest, then slice by date — so adding a window costs no extra call
+    and stays on daily closes (the deep-dive's by-design granularity).
     """
     base = "5Y" if period in ("3Y", "5Y") else "1Y"
     df = get_history(ticker, period=base)
