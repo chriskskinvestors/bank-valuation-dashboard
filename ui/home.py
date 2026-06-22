@@ -229,6 +229,10 @@ div[class*="st-key-afpane"] [data-testid="stElementContainer"],
 div[class*="st-key-afpane"] [data-testid="stMarkdown"],
 div[class*="st-key-afpane"] [data-testid="stMarkdownContainer"]{height:auto!important;min-height:0!important;overflow:visible!important;margin-bottom:0!important;}
 div[class*="st-key-afpane"] .afwrap,div[class*="st-key-afpane"] .body,div[class*="st-key-afpane"] .etf{height:auto!important;overflow:visible!important;}
+/* Calendar pane scrolls past ~13 rows (owner request) so the broad econ
+   calendar + bank earnings both fit without growing the pane unboundedly.
+   Overrides the .body overflow:visible above via later source order. */
+div[class*="st-key-afpane"] .calbody{max-height:236px!important;overflow-y:auto!important;}
 div[class*="st-key-afpane"] [data-testid="stVerticalBlock"]{gap:.3rem!important;}
 div[class*="st-key-afpane"] [data-testid="stElementContainer"]{padding:0!important;}
 div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"]{padding:3px 10px 0!important;gap:.35rem!important;}
@@ -517,8 +521,12 @@ def _af_calendar_table(watchlist: list[str]) -> str:
     except Exception:
         pass
     items = [i for i in items if i.get("date")]
-    items.sort(key=lambda i: i["date"])
-    items = items[:14]
+    # Keep both streams visible: the broad FMP econ calendar (weekly jobless
+    # claims, etc.) would otherwise bury the later bank-earnings dates entirely.
+    # Cap macro, keep earnings, show chronologically — the pane scrolls (.calbody).
+    earn = sorted([i for i in items if i["kind"] == "earn"], key=lambda i: i["date"])
+    macro = sorted([i for i in items if i["kind"] == "macro"], key=lambda i: i["date"])
+    items = sorted(earn[:24] + macro[:10], key=lambda i: i["date"])[:30]
     if not items:
         body = '<div class="pend">No earnings or macro prints in the window.</div>'
     else:
@@ -549,7 +557,7 @@ def _af_calendar_table(watchlist: list[str]) -> str:
     return (_af_hd("Calendar",
                    '<span class="dotc" style="background:#1e3a8a;"></span>earnings'
                    '&nbsp;<span class="dotc" style="background:#b45309;"></span>macro')
-            + f'<div class="body">{body}</div>')
+            + f'<div class="body calbody">{body}</div>')
 
 
 def _af_feed_items(watchlist: list[str]) -> list[dict]:

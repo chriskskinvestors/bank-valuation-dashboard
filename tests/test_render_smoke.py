@@ -169,6 +169,33 @@ class TestHomeRendersPopulated(unittest.TestCase):
         self.assertIn("8:30 AM ET", h)       # FMP UTC 12:30 -> 8:30 AM EDT
         self.assertIn("&lt;YoY&gt;", h)      # macro name HTML-escaped
         self.assertNotIn("<YoY>", h)
+        self.assertIn("calbody", h)          # scrollable pane class present
+
+    def test_earnings_survive_macro_flood(self):
+        # Regression: FMP's econ calendar returns ~20 near-term marquee releases,
+        # which (sorted by date, hard-capped) crowded out the later bank-earnings
+        # dates entirely. Earnings must still appear when macro floods the window.
+        import datetime as _dt
+        import data.estimates as est
+        import data.econ_calendar as ec
+        base = _dt.date.today()
+        macro = [{"date": (base + _dt.timedelta(days=d)).isoformat(),
+                  "event": f"Initial Jobless Claims {d}", "estimate": 230.0,
+                  "previous": 235.0, "unit": "K",
+                  "datetime": (base + _dt.timedelta(days=d)).isoformat() + " 12:30:00",
+                  "impact": "High", "released": False} for d in range(1, 21)]
+        earn = [{"ticker": "BANR",
+                 "next_earnings_date": (base + _dt.timedelta(days=35)).isoformat(),
+                 "eps_estimate": 1.23}]
+        saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases)
+        try:
+            est.fetch_earnings_calendar = lambda w: list(earn)
+            ec.get_upcoming_releases = lambda days=14: list(macro)
+            h = self.home._af_calendar_table(["BANR"])
+        finally:
+            est.fetch_earnings_calendar, ec.get_upcoming_releases = saved
+        # 20 nearer macro events must NOT bury the (later) bank earnings.
+        self.assertIn("BANR", h)
 
     def test_above_fold_integration_renders(self):
         # End-to-end grid assembly. Network sources are mocked off; every
