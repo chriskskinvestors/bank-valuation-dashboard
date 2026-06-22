@@ -235,21 +235,39 @@ if section == "Screen & Compare":
              merge the six cells into one bordered strip with hairline dividers. */
           .st-key-screen_toolbar [data-testid="stHorizontalBlock"]{
               gap:0 !important;border:0.5px solid var(--grid-head);
-              border-radius:7px;overflow:hidden;}
+              border-radius:7px;overflow:hidden;background:var(--bg-elevated);}
           .st-key-screen_toolbar [data-testid="stColumn"]{
               border-right:0.5px solid var(--grid-head);}
           .st-key-screen_toolbar [data-testid="stColumn"]:last-child{border-right:none;}
           .st-key-screen_toolbar div[data-baseweb="select"]>div{
               border:none !important;background:transparent !important;
-              border-radius:0 !important;box-shadow:none !important;padding-left:4px;}
-          .st-key-screen_toolbar [data-testid="stWidgetLabel"]{padding:5px 0 0 11px;margin:0;}
+              border-radius:0 !important;box-shadow:none !important;padding-left:7px;}
+          /* Tinted label band per cell (table-header feel) + on-brand labels. */
+          .st-key-screen_toolbar [data-testid="stWidgetLabel"]{
+              padding:4px 0 4px 11px;margin:0;background:var(--grid-head-bg);
+              border-bottom:0.5px solid var(--grid-head);}
+          .st-key-screen_toolbar [data-testid="stWidgetLabel"] p{
+              color:var(--brand-primary) !important;}
           /* Compact buttons — kills the chunky 38px empty boxes. The label text
              sits in a nested <p>, so size that too (button font-size alone won't
              cascade past it). */
           [data-testid="stButton"] button, button[data-testid^="stBaseButton"]{
-              min-height:30px;height:30px;padding:0 12px;}
+              min-height:30px;height:30px;padding:0 12px;
+              background:var(--bg-surface) !important;
+              border-color:var(--border-default) !important;}
+          [data-testid="stButton"] button:hover,
+          button[data-testid^="stBaseButton"]:hover{
+              background:var(--bg-hover) !important;
+              border-color:var(--brand-border) !important;color:var(--brand-primary) !important;}
           [data-testid="stButton"] button p, button[data-testid^="stBaseButton"] p{
               font-size:0.6875rem !important;}
+          /* Primary CTA (Compare) — navy brand fill. */
+          button[data-testid="stBaseButton-primary"]{
+              background:var(--brand-primary) !important;
+              border-color:var(--brand-primary) !important;}
+          button[data-testid="stBaseButton-primary"]:hover{
+              background:var(--brand-hover) !important;border-color:var(--brand-hover) !important;}
+          button[data-testid="stBaseButton-primary"] p{color:var(--text-inverse) !important;}
           /* Thin expander headers (Compare sub-view still uses expanders). */
           div[data-testid="stExpander"] summary{padding-top:0.3rem;padding-bottom:0.3rem;}
           div[data-testid="stExpander"] details{border-radius:6px;}
@@ -1174,7 +1192,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             _savegroup_dialog()
     with b5:
         if display_metrics and st.button(
-                f"Compare {len(display_metrics)} →",
+                f"Compare {len(display_metrics)} →", type="primary",
                 key=f"compare_handoff_{tab_key}", use_container_width=True):
             st.session_state["_compare_handoff_tickers"] = [
                 m["ticker"] for m in display_metrics if m.get("ticker")]
