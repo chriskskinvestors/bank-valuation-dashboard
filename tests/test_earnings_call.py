@@ -93,5 +93,27 @@ class TestParseCallInfo(unittest.TestCase):
         self.assertEqual(mid_label({"dial_in": "1-800-555-1234"}), "call")
 
 
+class TestEarningsTimingMap(unittest.TestCase):
+    """FMP earnings-calendar timing → {ticker: {when, confirmed}} — the reliable
+    universe-wide 'Before open' / 'After close' layer."""
+
+    def test_maps_bmo_amc_skips_unknown(self):
+        import data.fmp_client as fmp
+        from data import earnings_call as ec
+        saved = fmp.get_earnings_calendar
+        try:
+            fmp.get_earnings_calendar = lambda f, t: [
+                {"symbol": "JPM", "date": "2026-07-14", "time": "bmo", "confirmed": True},
+                {"symbol": "GS", "date": "2026-07-14", "time": "amc", "confirmed": False},
+                {"symbol": "XX", "date": "2026-07-15", "time": "--", "confirmed": True},
+            ]
+            m = ec.earnings_timing_map()
+        finally:
+            fmp.get_earnings_calendar = saved
+        self.assertEqual(m["JPM"], {"when": "Before open", "confirmed": True})
+        self.assertEqual(m["GS"]["when"], "After close")
+        self.assertNotIn("XX", m)            # unrecognized time code → skipped
+
+
 if __name__ == "__main__":
     unittest.main()

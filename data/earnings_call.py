@@ -162,3 +162,42 @@ def call_info_map() -> dict:
         return _build()
     except Exception:
         return {}
+
+
+# FMP's report-time code → human label. bmo = before market open, amc = after
+# market close, dmh = during market hours.
+_WHEN_LABEL = {"bmo": "Before open", "amc": "After close", "dmh": "Midday"}
+
+
+def earnings_timing_map() -> dict:
+    """{ticker: {"when": label, "confirmed": bool}} from FMP's earnings calendar
+    for the next ~75 days — reliable, universe-wide report timing (before/after
+    open) that the yfinance estimate lacks. ONE FMP call, 6h-cached. The Home
+    calendar shows this when no precise PR/IR call time is available. Empty on
+    failure."""
+    import streamlit as st
+
+    @st.cache_data(ttl=21600, show_spinner=False)
+    def _build() -> dict:
+        from datetime import date, timedelta
+        from data import fmp_client
+        try:
+            today = date.today()
+            rows = fmp_client.get_earnings_calendar(
+                today.isoformat(), (today + timedelta(days=75)).isoformat())
+        except Exception:
+            return {}
+        out: dict = {}
+        for r in (rows or []):
+            tk = (r.get("symbol") or "").upper()
+            if not tk or tk in out:                 # first (soonest) per symbol
+                continue
+            label = _WHEN_LABEL.get((r.get("time") or "").lower())
+            if label:
+                out[tk] = {"when": label, "confirmed": bool(r.get("confirmed"))}
+        return out
+
+    try:
+        return _build()
+    except Exception:
+        return {}

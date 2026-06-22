@@ -571,6 +571,20 @@ def get_price_change(ticker: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def get_earnings_calendar(from_date: str, to_date: str) -> list[dict] | None:
+    """FMP stable earnings-calendar for [from_date, to_date], all symbols. Each
+    row: {symbol, date, time ('bmo'|'amc'|...), epsEstimated, revenueEstimated,
+    periodEnding, confirmed}. None on failure.
+
+    Source of reliable, universe-wide report timing (before/after market open)
+    and the confirmed-date flag — neither of which the yfinance estimate carries.
+    """
+    if not _has_key():
+        return None
+    data = _get("earnings-calendar", {"from": from_date, "to": to_date}, timeout=15)
+    return data if isinstance(data, list) else None
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Public API — analyst coverage & executive compensation
 # ──────────────────────────────────────────────────────────────────────────

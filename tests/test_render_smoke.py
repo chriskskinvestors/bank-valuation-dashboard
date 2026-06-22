@@ -207,11 +207,12 @@ class TestHomeRendersPopulated(unittest.TestCase):
         import data.earnings_call as ecall
         soon = (_dt.date.today() + _dt.timedelta(days=10)).isoformat()
         saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-                 ecall.call_info_map)
+                 ecall.call_info_map, ecall.earnings_timing_map)
         try:
             est.fetch_earnings_calendar = lambda w: [
                 {"ticker": "NWBI", "next_earnings_date": soon, "eps_estimate": 1.2}]
             ec.get_upcoming_releases = lambda days=14: []
+            ecall.earnings_timing_map = lambda: {}
             ecall.call_info_map = lambda: {"NWBI": {
                 "call_time": "10:00a ET",
                 "webcast_url": "https://investor.example.com/webcast",
@@ -219,12 +220,35 @@ class TestHomeRendersPopulated(unittest.TestCase):
             h = self.home._af_calendar_table(["NWBI"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-             ecall.call_info_map) = saved
+             ecall.call_info_map, ecall.earnings_timing_map) = saved
         self.assertIn("10:00a ET", h)                               # call time
         self.assertIn("webcast", h)                                 # indicator
         self.assertIn('href="https://investor.example.com/webcast"', h)  # row → webcast
         self.assertIn('target="_blank"', h)
         self.assertIn('title="Dial-in: 1-800-555-1234 (ID 99)"', h)  # dial-in tooltip
+
+    def test_calendar_earnings_fmp_timing_fallback(self):
+        # With no precise PR/IR call info, the earnings row falls back to FMP's
+        # reliable "Before open" / "After close" timing.
+        import datetime as _dt
+        import data.estimates as est
+        import data.econ_calendar as ec
+        import data.earnings_call as ecall
+        soon = (_dt.date.today() + _dt.timedelta(days=12)).isoformat()
+        saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
+                 ecall.call_info_map, ecall.earnings_timing_map)
+        try:
+            est.fetch_earnings_calendar = lambda w: [
+                {"ticker": "JPM", "next_earnings_date": soon, "eps_estimate": 5.4}]
+            ec.get_upcoming_releases = lambda days=14: []
+            ecall.call_info_map = lambda: {}                      # no precise call info
+            ecall.earnings_timing_map = lambda: {"JPM": {"when": "Before open",
+                                                         "confirmed": True}}
+            h = self.home._af_calendar_table(["JPM"])
+        finally:
+            (est.fetch_earnings_calendar, ec.get_upcoming_releases,
+             ecall.call_info_map, ecall.earnings_timing_map) = saved
+        self.assertIn("Before open", h)      # FMP timing fills the column
 
     def test_above_fold_integration_renders(self):
         # End-to-end grid assembly. Network sources are mocked off; every

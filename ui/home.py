@@ -491,9 +491,11 @@ def _af_calendar_table(watchlist: list[str]) -> str:
     try:
         from data.estimates import fetch_earnings_calendar
         from data import earnings_call as _ecall
-        # Conference-call info (time / webcast / dial-in) parsed best-effort from
-        # each bank's earnings-announcement PR — 1h-cached, blank when not found.
+        # Two layers: FMP's earnings calendar gives reliable, universe-wide report
+        # timing ("Before open" / "After close"); the PR/IR parser adds the precise
+        # call time + webcast where a bank publishes it (and takes precedence).
         _call_map = _ecall.call_info_map()
+        _timing = _ecall.earnings_timing_map()
         _td = dt.date.today()
         for e in fetch_earnings_calendar(tuple(watchlist)):
             ds = e.get("next_earnings_date")
@@ -505,11 +507,11 @@ def _af_calendar_table(watchlist: list[str]) -> str:
                 continue
             eps = e.get("eps_estimate")
             ci = _call_map.get(e["ticker"]) or {}
-            # EPS estimate stays on the right; the Cons./Prior column carries the
-            # call time + a webcast indicator (the row links to the webcast).
+            # Cons./Prior column: precise PR/IR call time + webcast if known, else
+            # FMP's before/after-open label. Row links to the webcast when present.
+            mid = _ecall.mid_label(ci) or (_timing.get(e["ticker"]) or {}).get("when") or ""
             items.append({"kind": "earn", "date": ds, "ticker": e["ticker"],
-                          "name": get_name(e["ticker"]) or e["ticker"],
-                          "mid": _ecall.mid_label(ci),
+                          "name": get_name(e["ticker"]) or e["ticker"], "mid": mid,
                           "webcast": ci.get("webcast_url"), "dial_in": ci.get("dial_in"),
                           "detail": (f"${eps:.2f}e" if eps is not None else "")})
     except Exception:
