@@ -1524,9 +1524,8 @@ def _render_rates_curve():
             "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
             "HY OAS shown in bps over Treasuries. Source: FRED."
         )
-        with st.container(border=True, key="fedcard_policy"):
+        with st.container(border=True, key="fedcard"):
             _render_fed_policy_strip()
-        with st.container(border=True, key="fedcard_sep"):
             _render_sep_block()
     with chart_col:
         _render_rates_charts()
