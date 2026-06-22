@@ -380,6 +380,22 @@ def _resolve_8k_doc_url(url: str) -> str:
     return body or url
 
 
+def _primary_doc_url(url: str) -> str:
+    """The 8-K's primary cover-document URL, used as a fallback body when the
+    resolved exhibit is a too-thin stub (a forward-looking-statements fragment
+    or an image-only press release that doesn't extract to text)."""
+    m = _ARCHIVE_URL_RE.search(url or "")
+    if not m:
+        return ""
+    d = m.group(2)
+    accession = f"{d[:10]}-{d[10:12]}-{d[12:]}"
+    try:
+        from data.filing_summarizer import find_8k_primary_doc_url
+        return find_8k_primary_doc_url(int(m.group(1)), accession) or ""
+    except Exception:
+        return ""
+
+
 def _clean_summary(text: str) -> str:
     """Normalize a model summary to a clean 1-2 sentence string, or "" to skip.
 
@@ -475,10 +491,19 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
             print(f"    [summarizer] time budget ({max_seconds:.0f}s) reached after {n}")
             break
         try:
-            # Fetch the filing text (filing_summarizer caches via TTL); resolve
-            # an index-page URL to the EX-99.1 exhibit so there's real body text.
+            # Resolve the filing URL to its body document (EX-99.1 or primary
+            # cover) and fetch the text.
             doc_url = _resolve_8k_doc_url(r["url"]) if r["url"] else ""
             text_body = fetch_filing_text(doc_url) if doc_url else ""
+            # Stub exhibit (e.g. a forward-looking-statements fragment or an
+            # image-only release that doesn't extract): fall back to the primary
+            # cover doc, which may carry the event narrative.
+            if doc_url and len(text_body) < 200:
+                alt = _primary_doc_url(r["url"])
+                if alt and alt != doc_url:
+                    alt_body = fetch_filing_text(alt)
+                    if len(alt_body) > len(text_body):
+                        text_body = alt_body
             if not text_body or len(text_body) < 200:
                 continue
             # 8-K filings can be huge; truncate to first ~10K chars

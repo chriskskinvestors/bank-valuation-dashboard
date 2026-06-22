@@ -184,6 +184,13 @@ def find_8k_body_url(cik: int, accession: str) -> str | None:
     return _press_release_from_index_html(html) or _primary_doc_from_index_html(html)
 
 
+def find_8k_primary_doc_url(cik: int, accession: str) -> str | None:
+    """The primary 8-K cover-document URL only (never an exhibit) — the fallback
+    body when a filing's chosen exhibit is a too-thin stub to summarize."""
+    html = _fetch_index_html(cik, accession)
+    return _primary_doc_from_index_html(html) if html else None
+
+
 def _press_release_from_index_html(html: str) -> str | None:
     """Pure parser: from an EDGAR filing-detail index page, return the absolute
     URL of the EX-99.1 exhibit (preferred) or any EX-99 exhibit, matching on the

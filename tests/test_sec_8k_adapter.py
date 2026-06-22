@@ -29,7 +29,7 @@ from data.events.sec_8k import SEC8KAdapter, SEC8KRecentAdapter  # noqa: E402
 from data.events.wire_base import RSSItem  # noqa: E402
 import data.filing_summarizer as filing_summarizer  # noqa: E402
 from jobs.poll_events import (  # noqa: E402
-    _is_high_signal_8k, _clean_summary, _resolve_8k_doc_url,
+    _is_high_signal_8k, _clean_summary, _resolve_8k_doc_url, _primary_doc_url,
 )
 
 PAST = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -218,6 +218,25 @@ class TestResolve8KDocUrl(unittest.TestCase):
         with patch.object(filing_summarizer, "find_8k_body_url",
                           side_effect=AssertionError("should not be called")):
             self.assertEqual(_resolve_8k_doc_url(u), u)
+
+
+class TestPrimaryDocFallback(unittest.TestCase):
+    """When the resolved exhibit is a too-thin stub, the summarizer falls back to
+    the primary cover doc — _primary_doc_url reconstructs the accession and asks
+    for the primary document; non-archive URLs yield ''."""
+
+    def test_reconstructs_accession_for_primary(self):
+        u = "https://www.sec.gov/Archives/edgar/data/1228454/000119312526276008/d104020dex991.htm"
+        prim = "https://www.sec.gov/Archives/edgar/data/1228454/000119312526276008/d104020d8k.htm"
+        with patch.object(filing_summarizer, "find_8k_primary_doc_url",
+                          return_value=prim) as m:
+            self.assertEqual(_primary_doc_url(u), prim)
+            m.assert_called_once_with(1228454, "0001193125-26-276008")
+
+    def test_non_archive_url_returns_empty(self):
+        with patch.object(filing_summarizer, "find_8k_primary_doc_url",
+                          side_effect=AssertionError("should not be called")):
+            self.assertEqual(_primary_doc_url("https://example.com/x"), "")
 
 
 class TestPressReleaseFromIndexHtml(unittest.TestCase):
