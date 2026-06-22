@@ -1183,21 +1183,21 @@ TAB_LABELS = [t["label"] for t in TABS]
 # groups the (otherwise flat) tables by what an analyst is actually looking for.
 # Keyed by tab "key"; THEME_ORDER fixes the display order of the theme groups.
 # Every theme holds 2+ tables so the Table picker is never a dead one-option
-# dropdown: Securities folds into Balance Sheet (it's a balance-sheet asset) and
-# Capital Return joins Overview (shareholder returns are investor-overview, while
-# Capital stays the adequacy view).
-THEME_ORDER = ["Overview", "Balance Sheet", "Loans", "Deposits",
-               "Credit", "Capital", "Earnings"]
+# dropdown. "Balance Sheet" is the full balance-sheet composition — assets
+# (securities, loans) and funding (deposits) all live under it. Capital Return
+# joins Overview (shareholder returns are investor-overview, while Capital stays
+# the adequacy view).
+THEME_ORDER = ["Overview", "Balance Sheet", "Credit", "Capital", "Earnings"]
 TAB_META = {
     "valuation":          ("Overview", "Price, multiples, fair-value P/TBV and headline returns in one view."),
     "capital_return":     ("Overview", "Dividends, buybacks and total shareholder yield (TTM)."),
     "balance_sheet":      ("Balance Sheet", "Assets, funding, equity and the key balance-sheet ratios."),
     "securities":         ("Balance Sheet", "AFS/HTM portfolio, sector mix and unrealized gains/losses."),
-    "loan_mix":           ("Loans", "Loan book broken out by category, in dollars."),
-    "loan_concentration": ("Loans", "Loan categories as a % of total loans, plus CRE-to-capital."),
-    "deposits":           ("Deposits", "Deposit base by type, in dollars."),
-    "deposit_ratios":     ("Deposits", "Funding quality: uninsured, core, brokered, non-interest."),
-    "deposit_dynamics":   ("Deposits", "Deposit growth, cost-of-deposit trend, beta and funding alerts."),
+    "loan_mix":           ("Balance Sheet", "Loan book broken out by category, in dollars."),
+    "loan_concentration": ("Balance Sheet", "Loan categories as a % of total loans, plus CRE-to-capital."),
+    "deposits":           ("Balance Sheet", "Deposit base by type, in dollars."),
+    "deposit_ratios":     ("Balance Sheet", "Funding quality: uninsured, core, brokered, non-interest."),
+    "deposit_dynamics":   ("Balance Sheet", "Deposit growth, cost-of-deposit trend, beta and funding alerts."),
     "credit_detail":      ("Credit", "Non-performing loans, charge-offs and reserves by segment."),
     "credit_dynamics":    ("Credit", "Credit trend: NPL/NCO direction, migration and alerts."),
     "capital":            ("Capital", "Regulatory capital ratios and equity-to-assets."),
