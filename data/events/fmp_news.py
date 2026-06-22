@@ -142,18 +142,21 @@ def _is_subject(ticker: str, text_blob: str) -> bool:
     blob = " " + " ".join(_canon_tokens(text_blob)) + " "
 
     from data.bank_mapping import get_name
+    from data.events.wire_base import phrase_in_text
     name = (get_name(ticker) or "").strip()
     if name and name.upper() != ticker.upper():
         phrase = _subject_phrase(name, ticker)
         toks = phrase.split()
         # Require a non-trivial phrase: not empty, and not a single generic word.
         if toks and not (len(toks) == 1 and toks[0] in _GENERIC_WORDS):
-            if f" {phrase} " in blob:
+            # Word-boundary match that rejects a brand core swallowed by a larger
+            # proper noun ("First United" vs "first United Arab Emirates").
+            if phrase_in_text(blob, phrase):
                 return True
 
     for alias in _BRAND_ALIASES.get(ticker.upper(), []):
         a = " ".join(_canon_tokens(alias))
-        if a and f" {a} " in blob:
+        if a and phrase_in_text(blob, a):
             return True
     return False
 

@@ -31,8 +31,39 @@ sys.modules.setdefault("streamlit", _st)
 
 from data.events.wire_base import (  # noqa: E402
     is_junk_news, is_company_press_release, is_routine_noise, is_safe_news_url,
-    is_material_regulatory,
+    is_material_regulatory, phrase_in_text,
 )
+
+
+def _pad(s: str) -> str:
+    """Space-normalize + pad as match_tickers/_is_subject do before matching."""
+    import re
+    return " " + re.sub(r"[^A-Za-z0-9]+", " ", s.upper()).strip() + " "
+
+
+class TestProperNounTrap(unittest.TestCase):
+    """A brand core ending in a greedy word ("United") must not match when the
+    text continues into a larger proper noun — the FUNC/"First United Arab
+    Emirates" mis-tag. Genuine bank mentions still match."""
+
+    def test_swallowed_by_country_rejected(self):
+        self.assertFalse(phrase_in_text(
+            _pad("Century 21 Opens First United Arab Emirates Office"), "FIRST UNITED"))
+        self.assertFalse(phrase_in_text(
+            _pad("Acme Opens Its First United States Center"), "FIRST UNITED"))
+        self.assertFalse(phrase_in_text(
+            _pad("Charity partners with United Kingdom office"), "UNITED"))
+
+    def test_genuine_brand_matches(self):
+        self.assertTrue(phrase_in_text(
+            _pad("First United Corporation Declares Dividend"), "FIRST UNITED"))
+        self.assertTrue(phrase_in_text(
+            _pad("First United Bank Reports Q2 Results"), "FIRST UNITED"))
+
+    def test_non_trap_brand_unaffected(self):
+        self.assertTrue(phrase_in_text(
+            _pad("Eastern Bankshares Declares Dividend"), "EASTERN"))
+        self.assertFalse(phrase_in_text(_pad("No mention here"), "EASTERN"))
 
 
 # (headline, ticker) pairs pulled from the live feed (or close paraphrases of

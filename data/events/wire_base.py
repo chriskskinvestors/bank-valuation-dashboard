@@ -182,6 +182,50 @@ def build_name_index() -> list[tuple[str, str]]:
 _NAME_INDEX: list[tuple[str, str]] = []
 
 
+# Multiword proper nouns that BEGIN with a word also used as a bank-brand token.
+# A brand phrase ending in that word must not match when the text is really
+# continuing into the proper noun — e.g. brand "First United" (FUNC) vs the
+# country in "...opening of first United Arab Emirates office". Keyed by the
+# matched phrase's LAST token → the set of following tokens that prove it's the
+# non-bank proper noun, not the bank.
+_PROPER_NOUN_TRAP = {
+    "UNITED": {"STATES", "KINGDOM", "ARAB", "NATIONS", "AIRLINES", "AIRWAYS",
+               "HEALTHCARE", "HEALTH", "PARCEL", "METHODIST", "WAY",
+               "TECHNOLOGIES", "RENTALS", "NATURAL"},
+}
+
+
+def _first_real_occurrence(haystack_padded: str, name: str) -> int:
+    """Index of the first WORD-BOUNDARY occurrence of `name` in `haystack_padded`
+    (which must be space-normalized and padded with leading/trailing spaces) that
+    is NOT swallowed by a larger proper noun. Returns -1 if there's no genuine
+    occurrence. Without a trap entry for the phrase's last word this is a plain
+    boundary find; with one it skips occurrences where the next token completes
+    the proper noun (so "FIRST UNITED" matches "First United Bank" but not
+    "first United Arab Emirates")."""
+    if not name:
+        return -1
+    needle = " " + name + " "
+    trap = _PROPER_NOUN_TRAP.get(name.rsplit(" ", 1)[-1])
+    pos = haystack_padded.find(needle)
+    while pos != -1:
+        if not trap:
+            return pos
+        nxt = haystack_padded[pos + len(needle):].split(" ", 1)[0]
+        if nxt not in trap:
+            return pos
+        pos = haystack_padded.find(needle, pos + 1)
+    return -1
+
+
+def phrase_in_text(haystack_padded: str, phrase: str) -> bool:
+    """True if `phrase` occurs as a genuine word-boundary mention in
+    `haystack_padded` (space-normalized, space-padded), not swallowed by a larger
+    proper noun. Shared by the fmp subject guard so its brand-core check uses the
+    same trap as the wire name matcher."""
+    return _first_real_occurrence(haystack_padded, phrase) >= 0
+
+
 def match_tickers(text: str) -> list[str]:
     """
     Find which bank tickers are mentioned in a piece of text.
@@ -200,9 +244,11 @@ def match_tickers(text: str) -> list[str]:
     consumed: list[tuple[int, int]] = []  # (start, end) ranges already matched
 
     for name, ticker in _NAME_INDEX:
-        # Use word-boundary check: search for " NAME " in " ...HAYSTACK... "
+        # Word-boundary search for " NAME " in " ...HAYSTACK... ", skipping
+        # occurrences swallowed by a larger proper noun ("First United" must not
+        # match "first United Arab Emirates").
         needle = " " + name + " "
-        idx = haystack.find(needle)
+        idx = _first_real_occurrence(haystack, name)
         if idx < 0:
             continue
         end = idx + len(needle)

@@ -165,6 +165,23 @@ class TestIsSubjectGuard(unittest.TestCase):
             self.assertTrue(_is_subject(
                 "CHCO", "City Holding Company Reports First Quarter 2026 Results."))
 
+    def test_brand_not_swallowed_by_proper_noun(self):
+        # FMP-live regression: "First United" (FUNC) was tagged onto a Century 21
+        # PR because the brand core "FIRST UNITED" is a substring of the country
+        # in "...first United Arab Emirates office". The trap must drop it while
+        # keeping the bank's own releases ("First United <entity word>").
+        with patch.object(bank_mapping, "get_name", return_value="First United"):
+            self.assertFalse(_is_subject(
+                "FUNC",
+                "Century 21 Brand Expands Global Footprint With Opening of First "
+                "United Arab Emirates Office."))
+            self.assertFalse(_is_subject(
+                "FUNC", "Acme Opens Its First United States Distribution Center."))
+            self.assertTrue(_is_subject(
+                "FUNC", "First United Corporation Declares Quarterly Cash Dividend."))
+            self.assertTrue(_is_subject(
+                "FUNC", "First United Bank Reports Second Quarter 2026 Results."))
+
 
 class TestJunkAndDedup(unittest.TestCase):
     def test_structured_note_filler_dropped(self):
