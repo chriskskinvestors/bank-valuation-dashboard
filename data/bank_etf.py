@@ -2,18 +2,24 @@
 Bank-sector ETF deep-dive data for the Market & Macro "Bank Sector" section
 (docs/HOME-MACRO-PLAN.md §2 — owner chose the single-ETF deep-dive lens).
 
-Source: FMP end-of-day price history via data.fmp_client.get_history. The
-deep-dive is built on EOD daily bars by design — one fetch per ticker (1Y or
-5Y) sliced client-side into every window — which keeps the section to a single
-network call regardless of how many windows the selector offers. (Intraday
-historical-chart endpoints are available on the current Premium key, but this
-section deliberately doesn't use them; see the FMP-plan memory.) No key →
+Source: FMP price history via data.fmp_client.get_history. Each selectable
+window is served by ONE underlying fetch, sliced client-side (see PERIODS /
+_fetch_period): the multi-day windows read EOD daily bars (1Y or 5Y); the
+short windows (1D/1W) read FMP's 15-min intraday series — one "1W" fetch
+covers both (1D = the latest session, 1W = the full week). No key →
 get_history returns an empty frame and the renderer shows an honest note
 (never fabricated prices).
 
-The reducers (compute_stats, drawdown_series) are pure and unit-tested on
-synthetic OHLCV; the live render is verified in production where the key is
-mounted, since this environment has no FMP key and prod is IAP-gated.
+Render reads cache_only (get_etf_history(..., cache_only=True)) so a cold
+cache can't block the request thread on a live FMP call; the background job
+jobs/refresh_home_snapshot keeps every ETFS × FETCH_PERIODS history warm.
+FETCH_PERIODS is derived from PERIODS, so adding a window updates the warm
+contract automatically (see the overlay-render-cache-only-warm memory).
+
+The reducers (compute_stats, window_cutoff, latest_session, parse_market_data)
+are pure and unit-tested on synthetic OHLCV; the live render is verified in
+production where the key is mounted, since this environment has no FMP key and
+prod is IAP-gated.
 """
 
 from __future__ import annotations
@@ -32,11 +38,28 @@ ETFS = [
     {"ticker": "QABA", "name": "First Trust NASDAQ ABA Community Bank ETF"},
 ]
 
-# Selectable windows. All are served from EOD daily bars sliced client-side
-# from one fetch — the deep-dive uses daily closes by design, so adding a
-# window here costs no extra network call (and never needs FMP's intraday
-# historical-chart endpoints).
-PERIODS = ["1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
+# Selectable windows, served from ONE underlying get_history fetch each (sliced
+# client-side, see _fetch_period). 1D/1W are 15-min intraday; the rest are EOD
+# daily closes. Adding a window here costs no extra render call — its underlying
+# fetch is already warmed via FETCH_PERIODS.
+PERIODS = ["1D", "1W", "1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y"]
+
+# Underlying get_history fetch that serves each window. Intraday windows (1D/1W)
+# read FMP's 15-min "1W" series; multi-year windows read the 5Y EOD pull; every
+# other window is sliced from the 1Y EOD pull (the default).
+_FETCH_FOR = {"1D": "1W", "1W": "1W", "3Y": "5Y", "5Y": "5Y"}
+
+
+def _fetch_period(period: str) -> str:
+    """The get_history period whose single fetch serves `period` (default 1Y)."""
+    return _FETCH_FOR.get(period, "1Y")
+
+
+# Distinct underlying fetches the cache_only render reads — the WARM CONTRACT.
+# jobs/refresh_home_snapshot must keep get_history(ticker, p) cached for every
+# ticker in ETFS and every p here, or the render shows "no history". Derived
+# from PERIODS so a new window can't silently break the contract.
+FETCH_PERIODS = sorted({_fetch_period(p) for p in PERIODS})
 
 
 def window_cutoff(period: str, last_date) -> pd.Timestamp:
@@ -59,17 +82,22 @@ def window_cutoff(period: str, last_date) -> pd.Timestamp:
     return ld - pd.DateOffset(years=1)  # "1Y" + fallback
 
 
-def get_etf_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
-    """Cleaned (date, close, volume) EOD frame for `ticker`, sliced to
-    `period`, ascending by date. Empty frame when FMP has no key or the
-    fetch fails.
+def latest_session(df: pd.DataFrame) -> pd.DataFrame:
+    """Rows on the latest calendar day present in an intraday frame, ascending
+    by date. Pure / unit-tested. Mirrors ui.home._af_overlay_1d's session split
+    so the 1D window shows one trading session. Empty in → empty out."""
+    if df is None or df.empty or "date" not in df.columns:
+        return pd.DataFrame(columns=getattr(df, "columns", ["date", "close"]))
+    d = df.dropna(subset=["date"]).sort_values("date")
+    if d.empty:
+        return d.reset_index(drop=True)
+    sess_day = d["date"].iloc[-1].normalize()
+    return d[d["date"] >= sess_day].reset_index(drop=True)
 
-    One EOD fetch serves every window: pull 5Y for the long windows and 1Y
-    for the rest, then slice by date — so adding a window costs no extra call
-    and stays on daily closes (the deep-dive's by-design granularity).
-    """
-    base = "5Y" if period in ("3Y", "5Y") else "1Y"
-    df = get_history(ticker, period=base)
+
+def _clean_history(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce a raw get_history frame to a clean (date, close[, volume]) frame:
+    typed, NaN-dropped, ascending by date. Empty frame on unusable input."""
     if df is None or df.empty or "close" not in df.columns:
         return pd.DataFrame(columns=["date", "close", "volume"])
     cols = ["date", "close"] + (["volume"] if "volume" in df.columns else [])
@@ -78,9 +106,29 @@ def get_etf_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
     d["close"] = pd.to_numeric(d["close"], errors="coerce")
     if "volume" in d.columns:
         d["volume"] = pd.to_numeric(d["volume"], errors="coerce")
-    d = d.dropna(subset=["date", "close"]).sort_values("date").reset_index(drop=True)
+    return d.dropna(subset=["date", "close"]).sort_values("date").reset_index(drop=True)
+
+
+def get_etf_history(ticker: str, period: str = "1Y",
+                    cache_only: bool = False) -> pd.DataFrame:
+    """Cleaned (date, close, volume) frame for `ticker`, sliced to `period`,
+    ascending by date. Empty frame when FMP has no key, the fetch fails, or
+    (cache_only) the cache is cold.
+
+    One fetch serves every window (see _fetch_period): the 15-min "1W" series
+    for 1D/1W (1D = latest session, 1W = the full week), the 5Y or 1Y EOD pull
+    for the rest — then slice by date. cache_only=True is passed on the render
+    path so a cold cache can't block on a live FMP call; the warm job keeps
+    FETCH_PERIODS populated.
+    """
+    df = get_history(ticker, period=_fetch_period(period), cache_only=cache_only)
+    d = _clean_history(df)
     if d.empty:
         return d
+    if period == "1D":
+        return latest_session(d)
+    if period == "1W":
+        return d  # the full 15-min week, as fetched
     cutoff = window_cutoff(period, d["date"].iloc[-1])
     return d[d["date"] >= cutoff].reset_index(drop=True)
 
@@ -133,11 +181,16 @@ def get_etf_market_data(ticker: str) -> dict:
     return parse_market_data(quote_row, info_row)
 
 
-def compute_stats(df: pd.DataFrame) -> dict:
+def compute_stats(df: pd.DataFrame, baseline: float | None = None) -> dict:
     """Headline deep-dive stats over the window. All None when unusable.
 
     Returns: last, last_date, period_return_pct, period_high, period_high_date,
     period_low, drawdown_from_high_pct, avg_volume.
+
+    `baseline` overrides the return's denominator: the 1D view passes the prior
+    session's close so the figure includes the opening gap (the day's full move,
+    matching the quote's change %), instead of measuring from the session's open
+    (the first plotted bar). None/0 → fall back to the first bar.
     """
     out = {k: None for k in (
         "last", "last_date", "period_return_pct", "period_high",
@@ -150,13 +203,14 @@ def compute_stats(df: pd.DataFrame) -> dict:
 
     last = float(d["close"].iloc[-1])
     first = float(d["close"].iloc[0])
+    base = float(baseline) if baseline else first
     hi_idx = int(d["close"].idxmax())
     period_high = float(d["close"].iloc[hi_idx])
     period_low = float(d["close"].min())
 
     out["last"] = last
     out["last_date"] = d["date"].iloc[-1]
-    out["period_return_pct"] = (last / first - 1.0) * 100.0 if first else None
+    out["period_return_pct"] = (last / base - 1.0) * 100.0 if base else None
     out["period_high"] = period_high
     out["period_high_date"] = d["date"].iloc[hi_idx]
     out["period_low"] = period_low

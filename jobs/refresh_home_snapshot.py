@@ -156,6 +156,7 @@ def main() -> int:
           f"in {time.time() - t0:.0f}s", flush=True)
 
     _warm_overlay_history()
+    _warm_bank_sector_history()
     return 0
 
 
@@ -194,6 +195,32 @@ def _warm_overlay_history() -> None:
               flush=True)
     except Exception:
         pass
+
+
+def _warm_bank_sector_history() -> None:
+    """Warm the Market & Macro "Bank Sector" deep-dive histories. That render
+    reads get_history cache_only (one fetch per window, sliced client-side), so
+    a cold cache shows "no history". The ETF list + the distinct fetch periods
+    are imported from data.bank_etf (ETFS × FETCH_PERIODS) so this can't drift
+    from what the render reads — adding a window there warms automatically.
+    Distinct from _OVERLAY_* above: those are the Home overlay's needs; this
+    covers QABA and the 5Y EOD pull the overlay doesn't fetch."""
+    try:
+        from data import fmp_client
+        from data.bank_etf import ETFS, FETCH_PERIODS
+    except Exception:
+        return
+    n = 0
+    for e in ETFS:
+        for p in FETCH_PERIODS:
+            try:
+                df = fmp_client.get_history(e["ticker"], period=p)  # live → persists cache
+                if df is not None and not df.empty:
+                    n += 1
+            except Exception:
+                pass
+    print(f"[{time.strftime('%H:%M:%S')}] warmed {n} bank-sector histories "
+          f"({len(ETFS)}x{len(FETCH_PERIODS)})", flush=True)
 
 
 if __name__ == "__main__":

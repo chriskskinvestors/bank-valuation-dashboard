@@ -155,23 +155,31 @@ def _render_bank_sector():
                           label_visibility="collapsed")
 
     # The timeframe radio renders above the chart (below), so read the current
-    # selection from session state here to drive the EOD fetch.
+    # selection from session state here to drive the fetch.
     st.session_state.setdefault("bank_sector_period", "1Y")
     period = st.session_state["bank_sector_period"]
 
-    st.caption(f"**{ticker}** — {names.get(ticker, '')} · {period} · EOD closes")
+    intraday = period in ("1D", "1W")
+    gran = "15-min bars" if intraday else "EOD closes"
+    st.caption(f"**{ticker}** — {names.get(ticker, '')} · {period} · {gran}")
 
-    df = get_etf_history(ticker, period=period)
+    # cache_only: render reads the warm cache only — never a live FMP call on the
+    # request thread (jobs/refresh_home_snapshot warms ETFS × FETCH_PERIODS).
+    df = get_etf_history(ticker, period=period, cache_only=True)
     if df.empty:
         st.info(
-            f"Price history for {ticker} comes from FMP end-of-day data "
-            "(needs FMP_API_KEY, mounted in production). Unavailable in this "
-            "environment, or the fetch returned no rows for the window."
+            f"Price history for {ticker} is served from a warm cache (refreshed "
+            "every ~15 min by jobs/refresh_home_snapshot; needs FMP_API_KEY, "
+            "mounted in production). Unavailable in this environment, or briefly "
+            "cold right after a deploy."
         )
         return
 
-    stats = compute_stats(df)
-    md = get_etf_market_data(ticker)  # live quote + ETF fund fields (Premium)
+    md = get_etf_market_data(ticker)  # quote + ETF fund fields (Premium), 10-min cache
+    # 1D measures the day's full move from the official prior close (incl. the
+    # opening gap); the other windows measure from the first plotted bar.
+    baseline = md["prev_close"] if period == "1D" else None
+    stats = compute_stats(df, baseline=baseline)
 
     # ── Compact price panel (~1/3 width, taller): timeframe tabs directly
     # above the price chart, volume below; the Price/Range/Valuation stats
@@ -192,6 +200,14 @@ def _render_bank_sector():
                            annotation_text=f"period high ${stats['period_high']:,.2f}",
                            annotation_position="top left",
                            annotation_font=dict(size=10, color="#64748b"))
+        # 1D: dotted prior-close reference so the opening gap is visible (the
+        # session line starts above/below it by the overnight move).
+        if period == "1D" and md["prev_close"] is not None:
+            figp.add_hline(y=md["prev_close"], line_color="#cbd5e1", line_width=1,
+                           line_dash="dot",
+                           annotation_text=f"prev close ${md['prev_close']:,.2f}",
+                           annotation_position="bottom left",
+                           annotation_font=dict(size=10, color="#94a3b8"))
         ret = stats["period_return_pct"]
         ret_txt = f" · {ret:+.1f}%" if ret is not None else ""
         apply_standard_layout(figp, title=f"{ticker} — price ({period}){ret_txt}",
@@ -252,8 +268,9 @@ def _render_bank_sector():
         cov = (f" Valuation is a look-through blend across {val['n_pe']} of "
                f"{val['n_holdings']} holdings — harmonic P/E & P/TBV, "
                f"weighted-average dividend yield.")
-    st.caption("Live market data via FMP (quote + ETF info); price line is "
-               "end-of-day. Net Assets = assets under management." + cov)
+    price_src = "15-min intraday" if intraday else "end-of-day"
+    st.caption(f"Live market data via FMP (quote + ETF info); price line is "
+               f"{price_src}. Net Assets = assets under management." + cov)
 
 
 # Display order + labels for the FDIC national-rate products.
