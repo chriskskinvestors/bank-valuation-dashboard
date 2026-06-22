@@ -229,10 +229,10 @@ div[class*="st-key-afpane"] [data-testid="stElementContainer"],
 div[class*="st-key-afpane"] [data-testid="stMarkdown"],
 div[class*="st-key-afpane"] [data-testid="stMarkdownContainer"]{height:auto!important;min-height:0!important;overflow:visible!important;margin-bottom:0!important;}
 div[class*="st-key-afpane"] .afwrap,div[class*="st-key-afpane"] .body,div[class*="st-key-afpane"] .etf{height:auto!important;overflow:visible!important;}
-/* Calendar pane scrolls past ~13 rows (owner request) so the broad econ
+/* Calendar pane scrolls past ~17 rows (owner request) so the broad econ
    calendar + bank earnings both fit without growing the pane unboundedly.
    Overrides the .body overflow:visible above via later source order. */
-div[class*="st-key-afpane"] .calbody{max-height:236px!important;overflow-y:auto!important;}
+div[class*="st-key-afpane"] .calbody{max-height:292px!important;overflow-y:auto!important;}
 div[class*="st-key-afpane"] [data-testid="stVerticalBlock"]{gap:.3rem!important;}
 div[class*="st-key-afpane"] [data-testid="stElementContainer"]{padding:0!important;}
 div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"]{padding:3px 10px 0!important;gap:.35rem!important;}
