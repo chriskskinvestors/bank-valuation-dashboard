@@ -36,22 +36,43 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-# Union of fred_client.SERIES and every fetch_series("...") id in ui/macro.py.
-# Kept literal so the job doesn't import streamlit. See module docstring.
-_MACRO_SERIES = [
+# Base set: rates/curve/credit/commodity ids used by the Rates & Curve, Credit,
+# and FOMC-panel sections. The ECONOMIC-DATA BOARD's ids are added at runtime
+# from data.macro_indicators.INDICATORS (the source of truth) so this job can't
+# drift when the board gains an indicator. Kept literal where it isn't derivable.
+_BASE_SERIES = [
     # rates / curve
     "FEDFUNDS", "DFF", "DGS3MO", "DGS2", "DGS5", "DGS10", "DGS30",
     "T10Y2Y", "T10Y3M", "MORTGAGE30US",
-    # inflation
-    "CPIAUCSL", "CPILFESL", "PCEPILFE",
-    # activity / labor / sentiment / money
-    "GDP", "A191RL1Q225SBEA", "UNRATE", "PAYEMS", "INDPRO", "RSAFS",
-    "HOUST", "PERMIT", "UMCSENT", "M2SL", "USREC",
     # commodities / dollar
     "DCOILWTICO", "DXY",
     # credit spreads
     "BAMLH0A0HYM2", "BAMLH0A3HYC", "BAMLC0A0CM", "BAMLC0A4CBBB",
+    # recession shading + money
+    "USREC", "M2SL",
 ]
+
+
+def _series_to_warm() -> list[str]:
+    """Every FRED id the macro dashboard reads, derived from source-of-truth
+    constants so the warm set tracks the UI automatically:
+      • data.macro_indicators.INDICATORS — the Economic-Data board (~25 ids)
+      • data.fred_client.SERIES          — the rates/curve board
+      • _BASE_SERIES                     — literals not in either constant
+    """
+    ids = set(_BASE_SERIES)
+    try:
+        from data.macro_indicators import INDICATORS
+        ids |= {i["series_id"] for i in INDICATORS if i.get("series_id")}
+    except Exception as e:
+        print(f"[macro-warm] INDICATORS import failed ({type(e).__name__}: {e}) "
+              "— board ids not warmed this run", flush=True)
+    try:
+        from data.fred_client import SERIES
+        ids |= set(SERIES)
+    except Exception:
+        pass
+    return sorted(ids)
 
 
 def main() -> int:
@@ -65,7 +86,7 @@ def main() -> int:
         return 1
 
     t0 = time.time()
-    series = sorted(set(_MACRO_SERIES))
+    series = _series_to_warm()
     print(f"[{time.strftime('%H:%M:%S')}] warming {len(series)} FRED series...",
           flush=True)
 
@@ -90,6 +111,18 @@ def main() -> int:
         recession_probability()
     except Exception as e:
         print(f"[macro-warm] snapshot/recession warm failed: "
+              f"{type(e).__name__}: {e}", flush=True)
+
+    # The Economic-Data landing section also reads the FMP economic calendar
+    # (get_us_calendar) — same 1h-Postgres-cache-with-no-warmer pattern as FRED,
+    # so it too stalled the render thread once an hour. Warm it here.
+    try:
+        from data.econ_calendar import get_us_calendar
+        cal = get_us_calendar()
+        print(f"[{time.strftime('%H:%M:%S')}] warmed econ calendar "
+              f"({len(cal)} events)", flush=True)
+    except Exception as e:
+        print(f"[macro-warm] econ calendar warm failed: "
               f"{type(e).__name__}: {e}", flush=True)
 
     print(f"[{time.strftime('%H:%M:%S')}] warmed {ok}/{len(series)} series "

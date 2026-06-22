@@ -1258,7 +1258,8 @@ elif section == "Company":
 
 elif section == "Market & Macro":
     from ui.macro import render_macro_dashboard
-    render_macro_dashboard()
+    with timed("macro.render"):
+        render_macro_dashboard()
 
 elif section == "Screen & Compare" and sc_sub == "Compare":
     # ── COMPARE: Side-by-side bank comparison (peers) ───────────────────
