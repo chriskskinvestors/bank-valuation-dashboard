@@ -16,6 +16,7 @@ mounted, since this environment has no FMP key and prod is IAP-gated.
 from __future__ import annotations
 
 import pandas as pd
+import streamlit as st
 
 from data.fmp_client import get_history, _get
 
@@ -111,11 +112,17 @@ def _first_row(data) -> dict | None:
     return data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else None
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def get_etf_market_data(ticker: str) -> dict:
-    """Live market-data snapshot for `ticker` (FMP Premium): /quote for the
-    price block + /etf/info for fund fields (AUM, NAV, expense ratio, avg
-    volume). All-None shape when FMP has no key or the calls fail — the
-    renderer then shows n/a, never a fabricated quote."""
+    """Market-data snapshot for `ticker` (FMP Premium): /quote for the price
+    block + /etf/info for fund fields (AUM, NAV, expense ratio, avg volume).
+    All-None shape when FMP has no key or the calls fail — the renderer then
+    shows n/a, never a fabricated quote.
+
+    Cached 10 min: without this it fired TWO live FMP calls on EVERY macro
+    rerun (every timeframe/ETF toggle), a needless render-thread stall. The
+    fund fields are ~static and the quote is an overview, not a trading
+    surface, so 10-min staleness is well within tolerance."""
     t = ticker.upper()
     quote_row = _first_row(_get("quote", {"symbol": t}))
     info_row = _first_row(_get("etf/info", {"symbol": t}))
