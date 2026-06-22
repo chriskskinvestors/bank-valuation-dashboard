@@ -167,7 +167,7 @@ _AF_CSS = r"""
 .afwrap .erow.ed{flex:0 0 auto;height:16px;}
 .afwrap .erow.r2{grid-template-columns:1.55fr 1fr .8fr .85fr;}
 .afwrap .erow.m5{grid-template-columns:1.5fr .62fr 1fr .8fr;}
-.afwrap .erow.a4{grid-template-columns:.62fr 2fr .72fr;}
+.afwrap .erow.a4{grid-template-columns:.58fr 1.5fr .92fr .72fr;}
 .afwrap .erow.e1{grid-template-columns:1.3fr .58fr .95fr .85fr .62fr .62fr .62fr .62fr .8fr;column-gap:4px;padding:0 10px;}
 .afwrap .erow.selrow{background:#f3f7ff;}
 .afwrap .erow.e1 .num{font-size:var(--fs-grid-10);}
@@ -496,17 +496,24 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             if not (0 <= (d - _td).days <= 60):
                 continue
             eps = e.get("eps_estimate")
+            # Earnings keep EPS-estimate on the right; the new Cons./Prior column
+            # is reserved for the upcoming conference-call build (webcast/dial-in).
             items.append({"kind": "earn", "date": ds, "ticker": e["ticker"],
-                          "name": get_name(e["ticker"]) or e["ticker"],
+                          "name": get_name(e["ticker"]) or e["ticker"], "mid": "",
                           "detail": (f"${eps:.2f}e" if eps is not None else "")})
     except Exception:
         pass
     try:
-        from data.macro_calendar import get_upcoming_prints
-        for p in get_upcoming_prints(days=30):
+        # Econ prints from FMP's economic calendar (consensus + previous, which
+        # the FRED schedule lacks) — marquee US releases only, soonest first.
+        from data import econ_calendar as _ec
+        for p in _ec.get_upcoming_releases(days=30):
+            est = _ec.fmt_value(p.get("estimate"), p.get("unit"))
+            prev = _ec.fmt_value(p.get("previous"), p.get("unit"))
+            mid = f"{est or '—'} / {prev or '—'}" if (est or prev) else ""
             items.append({"kind": "macro", "date": p.get("date"),
-                          "ticker": None, "name": p.get("name") or "",
-                          "detail": p.get("time") or "—"})
+                          "ticker": None, "name": p.get("event") or "", "mid": mid,
+                          "detail": _ec.et_time(p.get("datetime")) or "—"})
     except Exception:
         pass
     items = [i for i in items if i.get("date")]
@@ -517,7 +524,9 @@ def _af_calendar_table(watchlist: list[str]) -> str:
     else:
         today = dt.date.today().isoformat()
         rows = ('<div class="erow a4 eh"><span class="h">When</span>'
-                '<span class="h">Event</span><span class="num h">Est./Time</span></div>')
+                '<span class="h">Event</span>'
+                '<span class="num h">Cons./Prior</span>'
+                '<span class="num h">Est./Time</span></div>')
         for i in items:
             is_today = i["date"] == today
             try:
@@ -534,6 +543,7 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             rows += (
                 f'<a class="crow" href="{href}" target="_self"><div class="erow a4 ed">'
                 f'<span class="nm"{wstyle}>{when}</span>{ev}'
+                f'<span class="num mut">{i.get("mid") or "—"}</span>'
                 f'<span class="num mut">{i["detail"] or "—"}</span></div></a>')
         body = f'<div class="etf">{rows}</div>'
     return (_af_hd("Calendar",

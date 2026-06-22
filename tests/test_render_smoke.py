@@ -143,17 +143,30 @@ class TestHomeRendersPopulated(unittest.TestCase):
         self.assertIn("acquire rival", h)    # both rows rendered
 
     def test_calendar_pane_with_prints(self):
+        # Macro rows come from econ_calendar (consensus + previous + UTC time);
+        # the Cons./Prior column must render and the time must convert to ET.
         import data.estimates as est
-        import data.macro_calendar as mc
-        saved = (est.fetch_earnings_calendar, mc.get_upcoming_prints)
+        import data.econ_calendar as ec
+        fake = [
+            {"date": "2026-07-02", "event": "Nonfarm Payrolls <YoY>",
+             "estimate": 180.0, "previous": 175.0, "unit": "K",
+             "datetime": "2026-07-02 12:30:00", "impact": "High",
+             "released": False},
+            {"date": "2026-07-09", "event": "Core PCE Price Index",
+             "estimate": 3.2, "previous": 3.1, "unit": "%",
+             "datetime": "2026-07-09 12:30:00", "impact": "High",
+             "released": False},
+        ]
+        saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases)
         try:
             est.fetch_earnings_calendar = lambda w: []
-            mc.get_upcoming_prints = lambda days=7: list(FAKE_PRINTS)
+            ec.get_upcoming_releases = lambda days=14: list(fake)
             h = self.home._af_calendar_table([])
         finally:
-            est.fetch_earnings_calendar, mc.get_upcoming_prints = saved
-        self.assertIn("8:30 ET", h)          # redesign's scheduled-time column
-        self.assertIn("2:00 ET", h)
+            est.fetch_earnings_calendar, ec.get_upcoming_releases = saved
+        self.assertIn("180K / 175K", h)      # consensus / previous column
+        self.assertIn("3.2% / 3.1%", h)
+        self.assertIn("8:30 AM ET", h)       # FMP UTC 12:30 -> 8:30 AM EDT
         self.assertIn("&lt;YoY&gt;", h)      # macro name HTML-escaped
         self.assertNotIn("<YoY>", h)
 
