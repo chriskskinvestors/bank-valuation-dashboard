@@ -220,16 +220,27 @@ if section == "Screen & Compare":
     st.markdown(
         """
         <style>
-          div[data-testid="stVerticalBlock"]{gap:0.4rem;}
+          div[data-testid="stVerticalBlock"]{gap:0.35rem;}
+          /* Small upper-case control labels. The element is a <label> (not a
+             div) and the text lives in a nested <p>, so target both directly and
+             force past Streamlit's emotion classes. */
+          [data-testid="stWidgetLabel"]{margin-bottom:1px;}
+          [data-testid="stWidgetLabel"] p{font-size:0.625rem !important;
+              text-transform:uppercase;letter-spacing:.05em;font-weight:500;
+              color:var(--text-secondary);line-height:1.1;}
+          /* Compact select controls: shorter, lighter, smaller value text. */
+          div[data-testid="stSelectbox"] div[data-baseweb="select"]>div{
+              min-height:30px;font-size:0.75rem;}
+          /* Compact buttons — kills the chunky 38px empty boxes. The label text
+             sits in a nested <p>, so size that too (button font-size alone won't
+             cascade past it). */
+          [data-testid="stButton"] button, button[data-testid^="stBaseButton"]{
+              min-height:30px;height:30px;padding:0 12px;}
+          [data-testid="stButton"] button p, button[data-testid^="stBaseButton"] p{
+              font-size:0.6875rem !important;}
+          /* Thin expander headers (Compare sub-view still uses expanders). */
           div[data-testid="stExpander"] summary{padding-top:0.3rem;padding-bottom:0.3rem;}
           div[data-testid="stExpander"] details{border-radius:6px;}
-          div[data-testid="stWidgetLabel"]{margin-bottom:0.1rem;}
-          div[data-testid="stWidgetLabel"] p{font-size:var(--fs-2xs);
-              text-transform:uppercase;letter-spacing:.05em;
-              color:var(--text-secondary);}
-          /* Compact toolbar selects: shorter control, tighter text. */
-          div[data-testid="stSelectbox"] div[data-baseweb="select"]>div{
-              min-height:32px;font-size:var(--fs-sm);}
         </style>
         """,
         unsafe_allow_html=True,
