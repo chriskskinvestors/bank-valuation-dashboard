@@ -337,7 +337,9 @@ def _render_funding_deposits():
     # Content-hug rates table (LEFT) beside the deposit-beta chart (RIGHT) —
     # never width:100% on this sparse table (it leaves empty bands; the chart
     # fills the freed space instead). See [[dense-html-table-no-slack]].
-    tbl_col, chart_col = st.columns([1, 1.9])
+    # Narrow table column so its caption wraps to the table width (not past it),
+    # chart sized to a fixed block, and the right kept open (owner-specified).
+    tbl_col, chart_col, _spacer = st.columns([1.15, 1.6, 1.0])
     with tbl_col:
         body = ""
         for field, label in _DEPOSIT_PRODUCTS:
