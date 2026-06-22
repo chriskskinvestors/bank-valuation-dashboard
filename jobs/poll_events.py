@@ -337,6 +337,28 @@ def _reclean_summaries(days: int = 21) -> int:
     return n
 
 
+_IDX_URL_RE = re.compile(r"/data/(\d+)/[^/]+/([\d-]+)-index\.htm", re.IGNORECASE)
+
+
+def _resolve_8k_doc_url(url: str) -> str:
+    """Resolve an EDGAR 8-K *index* URL (".../<accession>-index.htm", what the
+    all-banks recent-feed adapter stores) to its EX-99.1 press-release exhibit,
+    so the summarizer fetches real body text instead of a document list. Earnings
+    / Reg-FD / M&A 8-Ks carry an EX-99.1 (resolved -> they summarize); bare
+    officer-change/vote 8-Ks don't (returns the index unchanged -> the model gets
+    metadata, the summary is dropped, and the clean item headline stands).
+    Non-index URLs (the per-CIK adapter's primary-doc links) pass through."""
+    m = _IDX_URL_RE.search(url or "")
+    if not m:
+        return url
+    try:
+        from data.filing_summarizer import find_press_release_url
+        ex = find_press_release_url(int(m.group(1)), m.group(2))
+    except Exception:
+        ex = None
+    return ex or url
+
+
 def _clean_summary(text: str) -> str:
     """Normalize a model summary to a clean 1-2 sentence string, or "" to skip.
 
@@ -432,8 +454,10 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
             print(f"    [summarizer] time budget ({max_seconds:.0f}s) reached after {n}")
             break
         try:
-            # Fetch the filing text (filing_summarizer caches via TTL)
-            text_body = fetch_filing_text(r["url"]) if r["url"] else ""
+            # Fetch the filing text (filing_summarizer caches via TTL); resolve
+            # an index-page URL to the EX-99.1 exhibit so there's real body text.
+            doc_url = _resolve_8k_doc_url(r["url"]) if r["url"] else ""
+            text_body = fetch_filing_text(doc_url) if doc_url else ""
             if not text_body or len(text_body) < 200:
                 continue
             # 8-K filings can be huge; truncate to first ~10K chars

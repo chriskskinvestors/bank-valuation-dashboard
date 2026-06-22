@@ -27,7 +27,10 @@ import data.events.sec_8k as sec_8k  # noqa: E402
 import data.events.wire_base as wire_base  # noqa: E402
 from data.events.sec_8k import SEC8KAdapter, SEC8KRecentAdapter  # noqa: E402
 from data.events.wire_base import RSSItem  # noqa: E402
-from jobs.poll_events import _is_high_signal_8k, _clean_summary  # noqa: E402
+import data.filing_summarizer as filing_summarizer  # noqa: E402
+from jobs.poll_events import (  # noqa: E402
+    _is_high_signal_8k, _clean_summary, _resolve_8k_doc_url,
+)
 
 PAST = datetime(2020, 1, 1, tzinfo=timezone.utc)
 NOW = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
@@ -173,6 +176,31 @@ class TestCleanSummary(unittest.TestCase):
     def test_clean_summary_passes_through(self):
         s = "Truist named a new CEO effective July 1, 2026."
         self.assertEqual(_clean_summary(s), s)
+
+
+class TestResolve8KDocUrl(unittest.TestCase):
+    """An index-page URL (recent-feed adapter) must resolve to the EX-99.1 doc so
+    the summarizer gets real body text instead of a document list."""
+
+    IDX = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/0000713676-26-000050-index.htm"
+
+    def test_index_resolves_to_exhibit_when_present(self):
+        ex = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/ex-991.htm"
+        with patch.object(filing_summarizer, "find_press_release_url", return_value=ex):
+            self.assertEqual(_resolve_8k_doc_url(self.IDX), ex)
+
+    def test_index_unchanged_when_no_exhibit(self):
+        # Officer-change/vote 8-Ks have no EX-99.1 → keep the index (summary then
+        # drops, the item headline stands).
+        with patch.object(filing_summarizer, "find_press_release_url", return_value=None):
+            self.assertEqual(_resolve_8k_doc_url(self.IDX), self.IDX)
+
+    def test_primary_doc_url_passes_through(self):
+        # Per-CIK adapter already points at a document — must not be touched.
+        doc = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/pnc8k.htm"
+        with patch.object(filing_summarizer, "find_press_release_url",
+                          side_effect=AssertionError("should not be called")):
+            self.assertEqual(_resolve_8k_doc_url(doc), doc)
 
 
 class TestSummarizerPriority(unittest.TestCase):
