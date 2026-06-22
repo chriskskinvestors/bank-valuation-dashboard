@@ -798,18 +798,192 @@ def _render_surprise_summary(recent):
     )
 
 
+# ── Cached figure builders (render-path perf) ────────────────────────────
+# Economic Data renders 6 grid charts + the explorer on EVERY Streamlit
+# rerun. A go.Figure build (data transforms + trace construction + layout)
+# costs ~300–500ms, so a warm rerun spent ~2.9s rebuilding identical charts.
+# Each builder is @st.cache_data-memoized: the underlying series are already
+# warm-cache reads (jobs/refresh_macro */30 + fetch_series memo), so after
+# the first build the figure comes from cache (cache_data returns a fresh
+# copy per call — safe to hand to st.plotly_chart). ttl matches the */30
+# warm-refresh cadence so charts pick up new prints within the window.
+_GRID_H = 272
+_FIG_TTL = 1800
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_inflation():
+    import plotly.graph_objects as go
+    from data.macro_indicators import to_yoy
+    fig = go.Figure()
+    for sid, label, color in [
+        ("CPIAUCSL", "CPI", "#1e40af"),
+        ("CPILFESL", "Core CPI", "#3b82f6"),
+        ("PCEPILFE", "Core PCE", "#d97706"),
+    ]:
+        s = to_yoy(fetch_series(sid, years=6))
+        if not s.empty:
+            cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+            s = s[s["date"] >= cutoff]
+            fig.add_trace(go.Scatter(
+                x=s["date"], y=s["value"], name=label, mode="lines",
+                line=dict(color=color, width=2)))
+    _shade_recessions(fig)
+    fig.add_hline(y=2.0, line_color="#059669", line_width=1, line_dash="dash",
+                  annotation_text="Fed 2% target", annotation_position="top left",
+                  annotation_font=dict(size=10, color="#059669"))
+    apply_standard_layout(fig, title="Inflation — YoY % (5Y)",
+                          height=_GRID_H, yaxis_title="YoY")
+    fig.update_yaxes(ticksuffix="%")
+    return fig
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_labor():
+    import plotly.graph_objects as go
+    from data.macro_indicators import to_mom_change
+    fig = go.Figure()
+    nfp = to_mom_change(fetch_series("PAYEMS", years=6))
+    if not nfp.empty:
+        cutoff = nfp["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+        nfp = nfp[nfp["date"] >= cutoff]
+        bar_colors = ["#dc2626" if v < 0 else "#3b82f6" for v in nfp["value"]]
+        fig.add_trace(go.Bar(
+            x=nfp["date"], y=nfp["value"], name="Payrolls Δ (000s)",
+            marker_color=bar_colors, yaxis="y"))
+    unr = fetch_series("UNRATE", years=6)
+    if not unr.empty:
+        cutoff = unr["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+        unr = unr[unr["date"] >= cutoff]
+        fig.add_trace(go.Scatter(
+            x=unr["date"], y=unr["value"], name="Unemployment %",
+            mode="lines", line=dict(color="#0f172a", width=2), yaxis="y2"))
+    _shade_recessions(fig)
+    apply_standard_layout(fig, title="Labor — payrolls Δ & unemployment (5Y)",
+                          height=_GRID_H, yaxis_title="Jobs Δ (000s)")
+    fig.update_layout(yaxis2=dict(title="Unemp %", overlaying="y", side="right",
+                                  ticksuffix="%", showgrid=False))
+    return fig
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_housing():
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    for sid, label, color in [
+        ("HOUST", "Housing Starts", "#1e40af"),
+        ("PERMIT", "Building Permits", "#d97706"),
+    ]:
+        s = fetch_series(sid, years=6)
+        if not s.empty:
+            d = s.dropna(subset=["value"]).sort_values("date")
+            cutoff = d["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+            d = d[d["date"] >= cutoff]
+            fig.add_trace(go.Scatter(
+                x=d["date"], y=d["value"], name=label, mode="lines",
+                line=dict(color=color, width=2)))
+    _shade_recessions(fig)
+    apply_standard_layout(fig, title="Housing — Starts & Permits (000s SAAR, 5Y)",
+                          height=_GRID_H, yaxis_title="000s")
+    return fig
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_growth():
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    gdp = fetch_series("A191RL1Q225SBEA", years=6)
+    if not gdp.empty:
+        g = gdp.dropna(subset=["value"]).sort_values("date")
+        cutoff = g["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+        g = g[g["date"] >= cutoff]
+        gcolors = ["#dc2626" if v < 0 else "#1e40af" for v in g["value"]]
+        fig.add_trace(go.Bar(x=g["date"], y=g["value"], name="Real GDP QoQ SAAR",
+                             marker_color=gcolors))
+    _shade_recessions(fig)
+    apply_standard_layout(fig, title="Growth — Real GDP (QoQ SAAR, 5Y)",
+                          height=_GRID_H, yaxis_title="QoQ SAAR", show_legend=False)
+    fig.update_yaxes(ticksuffix="%")
+    return fig
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_activity():
+    import plotly.graph_objects as go
+    from data.macro_indicators import to_yoy
+    fig = go.Figure()
+    for sid, label, color in [
+        ("INDPRO", "Industrial Production", "#1e40af"),
+        ("RSAFS", "Retail Sales", "#d97706"),
+    ]:
+        s = to_yoy(fetch_series(sid, years=6))
+        if not s.empty:
+            cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+            s = s[s["date"] >= cutoff]
+            fig.add_trace(go.Scatter(
+                x=s["date"], y=s["value"], name=label, mode="lines",
+                line=dict(color=color, width=2)))
+    _shade_recessions(fig)
+    apply_standard_layout(fig, title="Activity — Industrial Production & Retail (YoY, 5Y)",
+                          height=_GRID_H, yaxis_title="YoY")
+    fig.update_yaxes(ticksuffix="%")
+    return fig
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_sentiment():
+    import plotly.graph_objects as go
+    from data.macro_indicators import to_yoy
+    fig = go.Figure()
+    sent = fetch_series("UMCSENT", years=6)
+    if not sent.empty:
+        d = sent.dropna(subset=["value"]).sort_values("date")
+        cutoff = d["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+        d = d[d["date"] >= cutoff]
+        fig.add_trace(go.Scatter(
+            x=d["date"], y=d["value"], name="UMich Sentiment",
+            mode="lines", line=dict(color="#1e40af", width=2), yaxis="y"))
+    m2 = to_yoy(fetch_series("M2SL", years=6))
+    if not m2.empty:
+        cutoff = m2["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+        m2 = m2[m2["date"] >= cutoff]
+        fig.add_trace(go.Scatter(
+            x=m2["date"], y=m2["value"], name="M2 YoY", mode="lines",
+            line=dict(color="#d97706", width=2), yaxis="y2"))
+    _shade_recessions(fig)
+    apply_standard_layout(fig, title="Sentiment & Money — UMich & M2 YoY (5Y)",
+                          height=_GRID_H, yaxis_title="Sentiment")
+    fig.update_layout(yaxis2=dict(title="M2 YoY %", overlaying="y", side="right",
+                                  ticksuffix="%", showgrid=False))
+    return fig
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _cached_print_board():
+    """Memoize the indicator board so its 25 YoY/MoM transforms don't re-run
+    every Streamlit rerun (underlying series are warm-cache reads)."""
+    from data.macro_indicators import get_print_board
+    return get_print_board()
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _cached_trend_fig(series_id: str, basis: str, label: str, years: int = 8):
+    """Memoized explorer chart, keyed on the hashable spec fields (the spec
+    dict itself isn't hashable, so _macro_trend_fig can't be decorated)."""
+    return _macro_trend_fig({"series_id": series_id, "basis": basis, "label": label},
+                            years=years)
+
+
 def _render_economy_calendar():
     import html as _html
-    import plotly.graph_objects as go
     from datetime import date as _date, datetime as _dt
-    from data.macro_indicators import get_print_board, to_yoy, to_mom_change
     from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
 
     # ── Calendars stacked (left) · Key indicators board (right) ──
     recent = get_recent_releases(days=10, limit=16)
     up = get_upcoming_releases(days=14, limit=20)
-    rows = get_print_board()
+    rows = _cached_print_board()
     # Calendars (left) · board (middle) · a 2×2 chart grid on the right:
     # Inflation/Labor stacked beside Growth/Activity stacked. board_col is sized
     # to hug the full 7-column board (indicator…Trend…As of) — wide enough not to
@@ -908,150 +1082,30 @@ def _render_economy_calendar():
         # bordered card (st.container(border=True), same device as home.py's
         # _af_card) so it reads as a panel instead of floating in whitespace.
         # Left: Inflation / Labor / Housing.  Right: Growth / Activity /
-        # Sentiment.  grid_h taller than CHART_HEIGHT_FULL so three rows fill
-        # the column down to roughly the board's height.
-        grid_h = 272
+        # Sentiment.  Figures come from @st.cache_data builders, so a warm
+        # rerun reuses them instead of rebuilding ~6 go.Figures each time.
         gl, gr = st.columns(2)
         with gl:
-            with st.container(border=True):
-                figi = go.Figure()
-                for sid, label, color in [
-                    ("CPIAUCSL", "CPI", "#1e40af"),
-                    ("CPILFESL", "Core CPI", "#3b82f6"),
-                    ("PCEPILFE", "Core PCE", "#d97706"),
-                ]:
-                    s = to_yoy(fetch_series(sid, years=6))
-                    if not s.empty:
-                        cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                        s = s[s["date"] >= cutoff]
-                        figi.add_trace(go.Scatter(
-                            x=s["date"], y=s["value"], name=label, mode="lines",
-                            line=dict(color=color, width=2),
-                        ))
-                _shade_recessions(figi)
-                figi.add_hline(y=2.0, line_color="#059669", line_width=1, line_dash="dash",
-                               annotation_text="Fed 2% target", annotation_position="top left",
-                               annotation_font=dict(size=10, color="#059669"))
-                apply_standard_layout(figi, title="Inflation — YoY % (5Y)",
-                                      height=grid_h, yaxis_title="YoY")
-                figi.update_yaxes(ticksuffix="%")
-                st.plotly_chart(figi, use_container_width=True)
-
-            with st.container(border=True):
-                figl = go.Figure()
-                nfp = to_mom_change(fetch_series("PAYEMS", years=6))
-                if not nfp.empty:
-                    cutoff = nfp["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                    nfp = nfp[nfp["date"] >= cutoff]
-                    bar_colors = ["#dc2626" if v < 0 else "#3b82f6" for v in nfp["value"]]
-                    figl.add_trace(go.Bar(
-                        x=nfp["date"], y=nfp["value"], name="Payrolls Δ (000s)",
-                        marker_color=bar_colors, yaxis="y",
-                    ))
-                unr = fetch_series("UNRATE", years=6)
-                if not unr.empty:
-                    cutoff = unr["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                    unr = unr[unr["date"] >= cutoff]
-                    figl.add_trace(go.Scatter(
-                        x=unr["date"], y=unr["value"], name="Unemployment %",
-                        mode="lines", line=dict(color="#0f172a", width=2), yaxis="y2",
-                    ))
-                _shade_recessions(figl)
-                apply_standard_layout(figl, title="Labor — payrolls Δ & unemployment (5Y)",
-                                      height=grid_h, yaxis_title="Jobs Δ (000s)")
-                figl.update_layout(
-                    yaxis2=dict(title="Unemp %", overlaying="y", side="right",
-                                ticksuffix="%", showgrid=False),
-                )
-                st.plotly_chart(figl, use_container_width=True)
-
-            with st.container(border=True):
-                figh = go.Figure()
-                for sid, label, color in [
-                    ("HOUST", "Housing Starts", "#1e40af"),
-                    ("PERMIT", "Building Permits", "#d97706"),
-                ]:
-                    s = fetch_series(sid, years=6)
-                    if not s.empty:
-                        d = s.dropna(subset=["value"]).sort_values("date")
-                        cutoff = d["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                        d = d[d["date"] >= cutoff]
-                        figh.add_trace(go.Scatter(
-                            x=d["date"], y=d["value"], name=label, mode="lines",
-                            line=dict(color=color, width=2)))
-                _shade_recessions(figh)
-                apply_standard_layout(figh, title="Housing — Starts & Permits (000s SAAR, 5Y)",
-                                      height=grid_h, yaxis_title="000s")
-                st.plotly_chart(figh, use_container_width=True)
-
+            for _build in (_fig_inflation, _fig_labor, _fig_housing):
+                with st.container(border=True):
+                    st.plotly_chart(_build(), use_container_width=True)
         with gr:
-            with st.container(border=True):
-                figg = go.Figure()
-                gdp = fetch_series("A191RL1Q225SBEA", years=6)
-                if not gdp.empty:
-                    g = gdp.dropna(subset=["value"]).sort_values("date")
-                    cutoff = g["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                    g = g[g["date"] >= cutoff]
-                    gcolors = ["#dc2626" if v < 0 else "#1e40af" for v in g["value"]]
-                    figg.add_trace(go.Bar(x=g["date"], y=g["value"], name="Real GDP QoQ SAAR",
-                                          marker_color=gcolors))
-                _shade_recessions(figg)
-                apply_standard_layout(figg, title="Growth — Real GDP (QoQ SAAR, 5Y)",
-                                      height=grid_h, yaxis_title="QoQ SAAR",
-                                      show_legend=False)
-                figg.update_yaxes(ticksuffix="%")
-                st.plotly_chart(figg, use_container_width=True)
-
-            with st.container(border=True):
-                figa = go.Figure()
-                for sid, label, color in [
-                    ("INDPRO", "Industrial Production", "#1e40af"),
-                    ("RSAFS", "Retail Sales", "#d97706"),
-                ]:
-                    s = to_yoy(fetch_series(sid, years=6))
-                    if not s.empty:
-                        cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                        s = s[s["date"] >= cutoff]
-                        figa.add_trace(go.Scatter(
-                            x=s["date"], y=s["value"], name=label, mode="lines",
-                            line=dict(color=color, width=2)))
-                _shade_recessions(figa)
-                apply_standard_layout(figa, title="Activity — Industrial Production & Retail (YoY, 5Y)",
-                                      height=grid_h, yaxis_title="YoY")
-                figa.update_yaxes(ticksuffix="%")
-                st.plotly_chart(figa, use_container_width=True)
-
-            with st.container(border=True):
-                figm = go.Figure()
-                sent = fetch_series("UMCSENT", years=6)
-                if not sent.empty:
-                    d = sent.dropna(subset=["value"]).sort_values("date")
-                    cutoff = d["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                    d = d[d["date"] >= cutoff]
-                    figm.add_trace(go.Scatter(
-                        x=d["date"], y=d["value"], name="UMich Sentiment",
-                        mode="lines", line=dict(color="#1e40af", width=2), yaxis="y"))
-                m2 = to_yoy(fetch_series("M2SL", years=6))
-                if not m2.empty:
-                    cutoff = m2["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                    m2 = m2[m2["date"] >= cutoff]
-                    figm.add_trace(go.Scatter(
-                        x=m2["date"], y=m2["value"], name="M2 YoY", mode="lines",
-                        line=dict(color="#d97706", width=2), yaxis="y2"))
-                _shade_recessions(figm)
-                apply_standard_layout(figm, title="Sentiment & Money — UMich & M2 YoY (5Y)",
-                                      height=grid_h, yaxis_title="Sentiment")
-                figm.update_layout(
-                    yaxis2=dict(title="M2 YoY %", overlaying="y", side="right",
-                                ticksuffix="%", showgrid=False),
-                )
-                st.plotly_chart(figm, use_container_width=True)
+            for _build in (_fig_growth, _fig_activity, _fig_sentiment):
+                with st.container(border=True):
+                    st.plotly_chart(_build(), use_container_width=True)
 
     st.markdown("---")
 
     # ── Explore any indicator (interactive; charts any of the 27 on demand) ──
-    st.markdown("**Explore any indicator**")
+    # In an st.fragment so changing the selection re-runs ONLY this block, not
+    # the whole macro script (the calendars / board / grid stay put).
+    _render_indicator_explorer()
+
+
+@st.fragment
+def _render_indicator_explorer():
     from data.macro_indicators import INDICATORS
+    st.markdown("**Explore any indicator**")
     by_label = {s["label"]: s for s in INDICATORS}
     _defaults = [d for d in ("CPI", "Nonfarm Payrolls", "Real GDP (QoQ SAAR)")
                  if d in by_label]
@@ -1060,8 +1114,11 @@ def _render_economy_calendar():
     if picks:
         ecols = st.columns(3)
         for i, lbl in enumerate(picks):
+            spec = by_label[lbl]
             with ecols[i % 3]:
-                st.plotly_chart(_macro_trend_fig(by_label[lbl]), use_container_width=True)
+                st.plotly_chart(
+                    _cached_trend_fig(spec["series_id"], spec["basis"], spec["label"]),
+                    use_container_width=True)
         st.caption("Indicator's displayed metric over ~8y; NBER recessions shaded; latest value "
                    "labeled. Source: FRED.")
     else:
