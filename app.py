@@ -211,6 +211,26 @@ if section == "Screen & Compare":
     sc_sub = st.radio("View", ["Screen", "Compare"], key="sc_sub",
                       horizontal=True, label_visibility="collapsed")
 
+    # Density pass for the whole Screen & Compare panel. Injected only on this
+    # page's render, so it's effectively page-scoped (other sections never emit
+    # it). Streamlit's default 1rem inter-element gap + full-width controls left
+    # this view sprawling and hard to scan; tighten the vertical rhythm, thin the
+    # collapsed expander "bars", and pull labels closer to their inputs so the
+    # controls read as one compact toolbar instead of a tall stack of bands.
+    st.markdown(
+        """
+        <style>
+          div[data-testid="stVerticalBlock"]{gap:0.4rem;}
+          div[data-testid="stExpander"] summary{padding-top:0.3rem;padding-bottom:0.3rem;}
+          div[data-testid="stExpander"] details{border-radius:6px;}
+          div[data-testid="stWidgetLabel"]{margin-bottom:0.12rem;}
+          div[data-testid="stWidgetLabel"] p{font-size:var(--fs-xs);
+              color:var(--text-secondary);letter-spacing:.02em;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 if section == "Screen & Compare" and sc_sub == "Screen":
     # Two-step picker: theme → table. The (otherwise flat) tables are grouped by
     # what an analyst is actually looking for, with the chosen table's one-line
@@ -222,7 +242,9 @@ if section == "Screen & Compare" and sc_sub == "Screen":
         _by_theme.setdefault(_theme, []).append((_i, _t["label"], _desc))
     _themes = ([th for th in THEME_ORDER if th in _by_theme]
                + [th for th in _by_theme if th not in THEME_ORDER])
-    _tcol1, _tcol2 = st.columns([1, 2])
+    # Capped width (trailing spacer): full-width Theme/Table dropdowns were
+    # absurdly wide for the short values they hold.
+    _tcol1, _tcol2, _ = st.columns([2, 3, 4])
     with _tcol1:
         _theme_pick = st.selectbox("Theme", _themes, key="screen_theme")
     _members = _by_theme.get(_theme_pick, [])
@@ -759,7 +781,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             sort_labels.append(m["label"])
             sort_keys.append(col_key)
 
-    c_asof, c_scope, c_sort, c_order = st.columns([2, 3, 2, 1])
+    # Trailing spacer keeps the four controls left-clustered at a sane width
+    # instead of stretched edge-to-edge with big gaps between them.
+    c_asof, c_scope, c_sort, c_order, _ = st.columns([2, 3, 2, 1, 2.5])
     with c_asof:
         _asof_pick = st.selectbox(
             "As of", _asof_opts, key=f"asof_{tab_key}",
