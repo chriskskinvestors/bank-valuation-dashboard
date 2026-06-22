@@ -646,7 +646,11 @@ def _af_overlay_series(sel, tf):
     out = []
     for i, tk in enumerate(sel[:8]):
         try:
-            h = fmp_client.get_history(tk, period=_AF_TF_FETCH.get(tf, "1Y"))
+            # cache_only: never do the live FMP history fetch on the render thread
+            # — a cold/expired cache here was looping N×15s and blocking the whole
+            # above-the-fold grid for ~84s. jobs/refresh_home_snapshot warms these.
+            h = fmp_client.get_history(tk, period=_AF_TF_FETCH.get(tf, "1Y"),
+                                       cache_only=True)
             if h is None or h.empty or "close" not in h:
                 continue
             h = h.dropna(subset=["close"]).sort_values("date")

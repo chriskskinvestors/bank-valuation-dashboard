@@ -489,10 +489,16 @@ _PERIOD_TO_ENDPOINT = {
 }
 
 
-def get_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
+def get_history(ticker: str, period: str = "1Y", cache_only: bool = False) -> pd.DataFrame:
     """
     Return a DataFrame of (date, close, open, high, low, volume) for `ticker`
     over `period`. Period: "1W" | "1M" | "3M" | "1Y" | "5Y".
+
+    cache_only=True: read the persisted cache and return empty on a miss — NEVER
+    do the live FMP fetch. Render paths (the Home overlay chart, looped over
+    several ETFs) pass this so a cold/expired cache can't block the request
+    thread on N×15s FMP calls; a background job (jobs/refresh_home_snapshot)
+    keeps the cache warm.
     """
     if not _has_key():
         return pd.DataFrame()
@@ -504,6 +510,8 @@ def get_history(ticker: str, period: str = "1Y") -> pd.DataFrame:
             return pd.DataFrame(cached)
         except Exception:
             pass
+    if cache_only:
+        return pd.DataFrame()
 
     endpoint, days = _PERIOD_TO_ENDPOINT.get(period, _PERIOD_TO_ENDPOINT["1Y"])
 

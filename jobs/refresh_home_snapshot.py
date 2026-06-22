@@ -154,7 +154,37 @@ def main() -> int:
     })
     print(f"[{time.strftime('%H:%M:%S')}] wrote {SNAP_KEY}: {len(metrics)} banks "
           f"in {time.time() - t0:.0f}s", flush=True)
+
+    _warm_overlay_history()
     return 0
+
+
+# The above-the-fold overlay chart reads ETF price history cache_only on the
+# render thread (a cold/expired cache there used to loop N×15s live FMP calls and
+# block the whole Home grid ~84s). Warm every ETF × timeframe the overlay can
+# request here, off the request path. Symbols/periods mirror ui/home _AF_ETFS and
+# _AF_TF_FETCH (kept literal so this job doesn't import streamlit-heavy ui/home).
+_OVERLAY_ETFS = ["SPY", "QQQ", "DIA", "IWM", "IWO", "IWN", "IJR", "KRE", "KBE",
+                 "XLF", "KBWB"]
+_OVERLAY_PERIODS = ["1M", "3M", "6M", "1Y", "2Y"]
+
+
+def _warm_overlay_history() -> None:
+    try:
+        from data import fmp_client
+    except Exception:
+        return
+    n = 0
+    for tk in _OVERLAY_ETFS:
+        for p in _OVERLAY_PERIODS:
+            try:
+                df = fmp_client.get_history(tk, period=p)  # live → persists cache
+                if df is not None and not df.empty:
+                    n += 1
+            except Exception:
+                pass
+    print(f"[{time.strftime('%H:%M:%S')}] warmed {n} overlay histories "
+          f"({len(_OVERLAY_ETFS)}x{len(_OVERLAY_PERIODS)})", flush=True)
 
 
 if __name__ == "__main__":
