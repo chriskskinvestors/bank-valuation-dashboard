@@ -604,92 +604,83 @@ def _render_fed_panel(full: bool = True):
         st.caption(f"SEP median fed funds path — {path}. Source: FRED (SEP {sep_txt}).")
         return
 
-    # Body packed into two balanced columns so nothing floats in dead space:
-    # LEFT = the projections chart (median diamond · CT band · range whisker)
-    # stacked over the SEP medians table; RIGHT = the FOMC's own words + recent
-    # Fed headlines (which used to sit in a separate full-width row, leaving the
-    # whole right half of the projections row empty).
+    # Layout: LEFT = a COMPACT dot-plot (beside, not above, the SEP table) so
+    # the 4-horizon chart isn't a wide sea of white, with the Fed headlines
+    # under it to balance height; RIGHT = the FOMC's own words. A dotted median
+    # path threads the diamonds so the chart reads as a path, not floating dots.
     import plotly.graph_objects as go
-    body_l, body_r = st.columns([1.15, 1])
+    body_l, body_r = st.columns([1.3, 1])
     with body_l:
-        fig = go.Figure()
-        allvals = []
-        for f in funds:
-            x = f["horizon"]
-            rl, rh, cl, ch, md = (f.get("range_low"), f.get("range_high"),
-                                  f.get("ct_low"), f.get("ct_high"), f.get("median"))
-            if rl is not None and rh is not None:
-                fig.add_trace(go.Scatter(x=[x, x], y=[rl, rh], mode="lines",
-                    line=dict(color="#cbd5e1", width=2), showlegend=False, hoverinfo="skip"))
-                allvals += [rl, rh]
-            if cl is not None and ch is not None:
-                fig.add_trace(go.Scatter(x=[x, x], y=[cl, ch], mode="lines",
-                    line=dict(color="#93c5fd", width=11), showlegend=False, hoverinfo="skip"))
-                allvals += [cl, ch]
-            if md is not None:
+        chart_c, tbl_c = st.columns([1, 1.15])
+        with chart_c:
+            fig = go.Figure()
+            allvals = []
+            med_x, med_y = [], []
+            for f in funds:
+                x = f["horizon"]
+                rl, rh, cl, ch, md = (f.get("range_low"), f.get("range_high"),
+                                      f.get("ct_low"), f.get("ct_high"), f.get("median"))
+                if rl is not None and rh is not None:
+                    fig.add_trace(go.Scatter(x=[x, x], y=[rl, rh], mode="lines",
+                        line=dict(color="#cbd5e1", width=2), showlegend=False, hoverinfo="skip"))
+                    allvals += [rl, rh]
+                if cl is not None and ch is not None:
+                    fig.add_trace(go.Scatter(x=[x, x], y=[cl, ch], mode="lines",
+                        line=dict(color="#93c5fd", width=16), showlegend=False, hoverinfo="skip"))
+                    allvals += [cl, ch]
+                if md is not None:
+                    med_x.append(x)
+                    med_y.append(md)
+                    allvals.append(md)
+            if len(med_x) > 1:
+                fig.add_trace(go.Scatter(x=med_x, y=med_y, mode="lines",
+                    line=dict(color="#1e3a8a", width=1.5, dash="dot"),
+                    showlegend=False, hoverinfo="skip"))
+            for x, md in zip(med_x, med_y):
                 fig.add_trace(go.Scatter(x=[x], y=[md], mode="markers",
                     marker=dict(symbol="diamond", color="#1e3a8a", size=12), showlegend=False,
                     hovertemplate=f"{x}<br>median %{{y:.2f}}%<extra></extra>"))
-                allvals.append(md)
-        apply_standard_layout(fig, title=f"Fed funds projections (SEP {sep_txt})",
-                              height=CHART_HEIGHT_HERO, yaxis_title="%", show_legend=False)
-        # Categorical x so the 4 horizons sit evenly (no bogus 2026.5 ticks).
-        fig.update_xaxes(type="category")
-        if allvals:
-            tighten_yaxis(fig, allvals, ticksuffix="%")
-        st.plotly_chart(fig, use_container_width=True)
+            apply_standard_layout(fig, title=f"Fed funds projections (SEP {sep_txt})",
+                                  height=300, yaxis_title="%", show_legend=False)
+            # Categorical x so the 4 horizons sit evenly (no bogus 2026.5 ticks).
+            fig.update_xaxes(type="category")
+            if allvals:
+                tighten_yaxis(fig, allvals, ticksuffix="%")
+            st.plotly_chart(fig, use_container_width=True)
+        with tbl_c:
+            macro = proj.get("macro") or {}
+            horizons = [f["horizon"] for f in funds]
 
-        macro = proj.get("macro") or {}
-        horizons = [f["horizon"] for f in funds]
-
-        def _mm(key):
-            return {m["horizon"]: m.get("median") for m in (macro.get(key) or [])}
-        gdp, ur, pce, cpce = _mm("gdp"), _mm("unemployment"), _mm("pce"), _mm("core_pce")
-        fundmed = {f["horizon"]: f.get("median") for f in funds}
-        body = ""
-        for hz in horizons:
-            body += (
-                "<tr>"
-                f'<td style="text-align:left;">{_h.escape(str(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(fundmed.get(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(gdp.get(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(ur.get(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(pce.get(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(cpce.get(hz))}</td>'
-                "</tr>"
-            )
-        st.markdown(
-            '<div class="ksk-grid"><table><thead><tr>'
-            '<th style="text-align:left;">Horizon</th>'
-            '<th style="text-align:right;">Fed funds</th>'
-            '<th style="text-align:right;">Real GDP</th>'
-            '<th style="text-align:right;">Unemployment</th>'
-            '<th style="text-align:right;">PCE</th>'
-            '<th style="text-align:right;">Core PCE</th>'
-            "</tr></thead><tbody>" + body + "</tbody></table></div>",
-            unsafe_allow_html=True,
-        )
-        st.caption("FOMC median projections by horizon; fed funds shown as median diamond + "
-                   "central-tendency band + full range in the chart. Individual participant dots "
-                   f"aren't published machine-readably. Source: FRED (SEP {sep_txt}).")
-
-    with body_r:
-        st.markdown("**Latest FOMC statement**")
-        stmt = fetch_fomc_statement()
-        if stmt and stmt.get("paragraphs"):
-            sdt = stmt["date"].strftime("%b %d, %Y").replace(" 0", " ")
-            paras = "".join(f'<p style="margin:0 0 6px;">{_h.escape(p)}</p>'
-                            for p in stmt["paragraphs"])
+            def _mm(key):
+                return {m["horizon"]: m.get("median") for m in (macro.get(key) or [])}
+            gdp, ur, pce, cpce = _mm("gdp"), _mm("unemployment"), _mm("pce"), _mm("core_pce")
+            fundmed = {f["horizon"]: f.get("median") for f in funds}
+            body = ""
+            for hz in horizons:
+                body += (
+                    "<tr>"
+                    f'<td style="text-align:left;">{_h.escape(str(hz))}</td>'
+                    f'<td style="text-align:right;">{_sep_cell(fundmed.get(hz))}</td>'
+                    f'<td style="text-align:right;">{_sep_cell(gdp.get(hz))}</td>'
+                    f'<td style="text-align:right;">{_sep_cell(ur.get(hz))}</td>'
+                    f'<td style="text-align:right;">{_sep_cell(pce.get(hz))}</td>'
+                    f'<td style="text-align:right;">{_sep_cell(cpce.get(hz))}</td>'
+                    "</tr>"
+                )
             st.markdown(
-                '<div style="border-left:3px solid var(--brand-primary);padding:4px 12px;'
-                'background:var(--bg-surface);font-size:var(--fs-sm);line-height:1.45;">'
-                f'{paras}</div>',
+                '<div class="ksk-grid"><table><thead><tr>'
+                '<th style="text-align:left;">Horizon</th>'
+                '<th style="text-align:right;">Fed funds</th>'
+                '<th style="text-align:right;">Real GDP</th>'
+                '<th style="text-align:right;">Unemployment</th>'
+                '<th style="text-align:right;">PCE</th>'
+                '<th style="text-align:right;">Core PCE</th>'
+                "</tr></thead><tbody>" + body + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
-            st.caption(f"FOMC statement · {sdt} · [full release]({stmt['url']}) · "
-                       "Source: Federal Reserve.")
-        else:
-            st.caption("FOMC statement unavailable (federalreserve.gov fetch failed).")
+            st.caption("FOMC median projections by horizon; fed funds = median diamond + "
+                       "central-tendency band + full range in the chart. Individual participant "
+                       f"dots aren't published machine-readably. Source: FRED (SEP {sep_txt}).")
 
         st.markdown("**Fed headlines**")
         try:
@@ -712,6 +703,24 @@ def _render_fed_panel(full: bool = True):
                 unsafe_allow_html=True)
         else:
             st.caption("Fed/Powell headlines populate from the macro news feed in production.")
+
+    with body_r:
+        st.markdown("**Latest FOMC statement**")
+        stmt = fetch_fomc_statement()
+        if stmt and stmt.get("paragraphs"):
+            sdt = stmt["date"].strftime("%b %d, %Y").replace(" 0", " ")
+            paras = "".join(f'<p style="margin:0 0 6px;">{_h.escape(p)}</p>'
+                            for p in stmt["paragraphs"])
+            st.markdown(
+                '<div style="border-left:3px solid var(--brand-primary);padding:4px 12px;'
+                'background:var(--bg-surface);font-size:var(--fs-sm);line-height:1.45;">'
+                f'{paras}</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(f"FOMC statement · {sdt} · [full release]({stmt['url']}) · "
+                       "Source: Federal Reserve.")
+        else:
+            st.caption("FOMC statement unavailable (federalreserve.gov fetch failed).")
 
 
 def _shade_recessions(fig, years: int = 5):
