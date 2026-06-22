@@ -611,7 +611,21 @@ def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
     try:
         from data.form4_client import recent_open_market_transactions
         from data.bank_mapping import get_cik
-        ciks = {t: get_cik(t) for t in (watchlist or [])}
+        from data.bank_universe import get_universe
+        # Universe-wide, matching the news half (get_universe_recent above) — the
+        # feed is labeled "UNIVERSE". The Form 4 cache is already populated for the
+        # whole universe by jobs/refresh_insider.py, and recent_open_market_
+        # transactions is cache-only (no live SEC fetch), so this stays cheap.
+        # Dedupe by CIK: the raw universe keeps non-common share classes (e.g.
+        # BPOP/BPOPM share one CIK), and rows are keyed by ticker — without this
+        # a multi-class bank's insider trades would render twice.
+        tickers = sorted(set(get_universe().keys()) | set(watchlist or []))
+        ciks, _seen_cik = {}, set()
+        for _t in tickers:
+            _c = get_cik(_t)
+            if _c and _c not in _seen_cik:
+                ciks[_t] = _c
+                _seen_cik.add(_c)
         for tx in recent_open_market_transactions(ciks, days=14, limit=40):
             buy = tx.get("direction") == "Buy"
             sh = tx.get("shares")
