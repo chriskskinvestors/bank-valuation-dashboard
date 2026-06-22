@@ -145,6 +145,45 @@ def _abs_edgar_url(href: str) -> str:
     return "https://www.sec.gov" + (href if href.startswith("/") else "/" + href)
 
 
+def _fetch_index_html(cik: int, accession: str) -> str:
+    """Fetch an 8-K's filing-detail index page HTML, or '' on failure."""
+    acc_clean = accession.replace("-", "")
+    url = (f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_clean}/"
+           f"{accession}-index.htm")
+    try:
+        resp = requests.get(url, headers=SEC_HEADERS, timeout=15)
+        resp.raise_for_status()
+        return resp.text
+    except Exception:
+        return ""
+
+
+def _primary_doc_from_index_html(html: str) -> str | None:
+    """Pure parser: return the absolute URL of the PRIMARY filing document — the
+    first row of the 'Document Format Files' table (Seq 1, the 8-K cover that
+    carries the event narrative for officer-change / vote / bylaw / other-event
+    items that have no EX-99.1). None if the table can't be located."""
+    i = html.lower().find("document format files")
+    region = html[i:] if i >= 0 else html
+    for row in re.split(r"<tr\b", region, flags=re.IGNORECASE):
+        m = re.search(r'href="([^"]+\.html?[^"]*)"', row, re.IGNORECASE)
+        if m:
+            return _abs_edgar_url(m.group(1))
+    return None
+
+
+def find_8k_body_url(cik: int, accession: str) -> str | None:
+    """Best URL to summarize an 8-K from: the EX-99.1 press release if present,
+    else the primary filing document (the cover doc carries the substance for
+    officer-change / vote / bylaw / other-event 8-Ks that file no exhibit). One
+    network fetch. None when the index page can't be fetched/parsed — caller
+    keeps the original URL so the item headline stands."""
+    html = _fetch_index_html(cik, accession)
+    if not html:
+        return None
+    return _press_release_from_index_html(html) or _primary_doc_from_index_html(html)
+
+
 def _press_release_from_index_html(html: str) -> str | None:
     """Pure parser: from an EDGAR filing-detail index page, return the absolute
     URL of the EX-99.1 exhibit (preferred) or any EX-99 exhibit, matching on the
@@ -178,17 +217,7 @@ def find_press_release_url(cik: int, accession: str) -> str | None:
     acc_clean = accession.replace("-", "")
 
     # 1) Parse the filing-detail index page's document table (Type column).
-    idx_html_url = (
-        f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_clean}/"
-        f"{accession}-index.htm"
-    )
-    try:
-        resp = requests.get(idx_html_url, headers=SEC_HEADERS, timeout=15)
-        resp.raise_for_status()
-        html = resp.text
-    except Exception:
-        html = ""
-
+    html = _fetch_index_html(cik, accession)
     hit = _press_release_from_index_html(html) if html else None
     if hit:
         return hit

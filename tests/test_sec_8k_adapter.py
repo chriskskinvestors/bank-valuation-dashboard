@@ -179,44 +179,43 @@ class TestCleanSummary(unittest.TestCase):
 
 
 class TestResolve8KDocUrl(unittest.TestCase):
-    """An index-page URL (recent-feed adapter) must resolve to the EX-99.1 doc so
-    the summarizer gets real body text instead of a document list."""
+    """An 8-K filing URL must resolve to its body document (EX-99.1 press release
+    if present, else the primary cover doc) so the summarizer reads real text
+    instead of the EDGAR metadata index page."""
 
     IDX = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/0000713676-26-000050-index.htm"
 
-    def test_index_resolves_to_exhibit_when_present(self):
+    def test_index_resolves_to_body_when_present(self):
         ex = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/ex-991.htm"
-        with patch.object(filing_summarizer, "find_press_release_url", return_value=ex):
+        with patch.object(filing_summarizer, "find_8k_body_url", return_value=ex):
             self.assertEqual(_resolve_8k_doc_url(self.IDX), ex)
 
-    def test_index_unchanged_when_no_exhibit(self):
-        # Officer-change/vote 8-Ks have no EX-99.1 → keep the index (summary then
-        # drops, the item headline stands).
-        with patch.object(filing_summarizer, "find_press_release_url", return_value=None):
+    def test_index_unchanged_when_body_unresolvable(self):
+        # Index page unfetchable/unparseable → keep the URL (summary drops, the
+        # item headline stands).
+        with patch.object(filing_summarizer, "find_8k_body_url", return_value=None):
             self.assertEqual(_resolve_8k_doc_url(self.IDX), self.IDX)
 
     def test_primary_doc_url_also_resolves(self):
-        # Per-CIK adapter stores the primary-doc URL (the cover page that only
-        # *references* Exhibit 99.1) — it must ALSO resolve to the EX-99.1, with
-        # the dashed accession reconstructed from the 18-digit directory.
+        # Per-CIK adapter stores the primary-doc URL — it must ALSO resolve via
+        # the body resolver, with the dashed accession reconstructed from the
+        # 18-digit directory.
         doc = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/pnc8k.htm"
-        ex = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/release.htm"
-        with patch.object(filing_summarizer, "find_press_release_url",
-                          return_value=ex) as m:
-            self.assertEqual(_resolve_8k_doc_url(doc), ex)
+        body = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/release.htm"
+        with patch.object(filing_summarizer, "find_8k_body_url",
+                          return_value=body) as m:
+            self.assertEqual(_resolve_8k_doc_url(doc), body)
             m.assert_called_once_with(713676, "0000713676-26-000050")
 
-    def test_primary_doc_url_unchanged_when_no_exhibit(self):
-        # Bare officer-change/vote 8-K: no EX-99.1 → keep the primary doc (its
-        # cover narrative still summarizes, or drops to the item headline).
+    def test_primary_doc_url_unchanged_when_unresolvable(self):
         doc = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/pnc8k.htm"
-        with patch.object(filing_summarizer, "find_press_release_url", return_value=None):
+        with patch.object(filing_summarizer, "find_8k_body_url", return_value=None):
             self.assertEqual(_resolve_8k_doc_url(doc), doc)
 
     def test_non_archive_url_passes_through(self):
         # browse-edgar fallback / non-EDGAR URLs must not be touched.
         u = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=713676&type=8-K"
-        with patch.object(filing_summarizer, "find_press_release_url",
+        with patch.object(filing_summarizer, "find_8k_body_url",
                           side_effect=AssertionError("should not be called")):
             self.assertEqual(_resolve_8k_doc_url(u), u)
 
@@ -278,6 +277,22 @@ class TestPressReleaseFromIndexHtml(unittest.TestCase):
         self.assertEqual(
             filing_summarizer._press_release_from_index_html(html),
             "https://www.sec.gov/Archives/edgar/data/1/2/release.htm",
+        )
+
+    def test_primary_doc_is_first_document_row(self):
+        # No EX-99.1 → the primary 8-K cover doc (Seq 1) carries the narrative;
+        # its iXBRL '/ix?doc=' wrapper must be stripped.
+        html = """
+          <p>Document Format Files</p>
+          <table class="tableFile" summary="Document Format Files">
+            <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th></tr>
+            <tr><td>1</td><td>8-K</td>
+                <td><a href="/ix?doc=/Archives/edgar/data/713676/000071367626000031/pnc-20260422.htm">pnc-20260422.htm</a></td>
+                <td>8-K</td></tr>
+          </table>"""
+        self.assertEqual(
+            filing_summarizer._primary_doc_from_index_html(html),
+            "https://www.sec.gov/Archives/edgar/data/713676/000071367626000031/pnc-20260422.htm",
         )
 
 

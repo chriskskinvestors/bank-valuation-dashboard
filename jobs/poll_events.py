@@ -359,26 +359,25 @@ _ARCHIVE_URL_RE = re.compile(r"/Archives/edgar/data/(\d+)/(\d{18})(?:/|$)", re.I
 
 
 def _resolve_8k_doc_url(url: str) -> str:
-    """Resolve an EDGAR 8-K filing URL to its EX-99.1 press-release exhibit so
-    the summarizer fetches real body text instead of a cover page / document
-    list. Works for BOTH the recent-feed adapter's "-index.htm" URL and the
-    per-CIK adapter's primary-document URL — for a press-release 8-K the primary
-    doc is just the cover that *references* Exhibit 99.1, so neither carries the
-    substance. Earnings / Reg-FD / M&A 8-Ks have an EX-99.1 (resolved -> they
-    summarize); bare officer-change/vote 8-Ks don't (URL returned unchanged ->
-    the model gets metadata, the summary is dropped, the item headline stands).
-    Non-EDGAR-archive URLs (e.g. the browse-edgar fallback) pass through."""
+    """Resolve an EDGAR 8-K filing URL to the document that carries its substance
+    so the summarizer reads real body text instead of the EDGAR metadata index
+    page. Works for BOTH the recent-feed adapter's "-index.htm" URL and the
+    per-CIK adapter's primary-document URL: extract the CIK + accession and ask
+    find_8k_body_url for the EX-99.1 press release (earnings / Reg-FD / M&A) or,
+    when there's no exhibit, the primary 8-K cover document (which holds the
+    narrative for officer-change / vote / bylaw / other-event items). Falls back
+    to the original URL if nothing resolves; non-EDGAR-archive URLs pass through."""
     m = _ARCHIVE_URL_RE.search(url or "")
     if not m:
         return url
     d = m.group(2)  # 18-digit accession with dashes stripped
     accession = f"{d[:10]}-{d[10:12]}-{d[12:]}"
     try:
-        from data.filing_summarizer import find_press_release_url
-        ex = find_press_release_url(int(m.group(1)), accession)
+        from data.filing_summarizer import find_8k_body_url
+        body = find_8k_body_url(int(m.group(1)), accession)
     except Exception:
-        ex = None
-    return ex or url
+        body = None
+    return body or url
 
 
 def _clean_summary(text: str) -> str:
