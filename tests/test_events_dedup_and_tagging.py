@@ -171,6 +171,38 @@ class TestWireTitleOnlyTagging(unittest.TestCase):
         self.assertTrue(all("Arcade" not in e.headline for e in evs))
 
 
+class TestPurgeRevalidatesNameMatches(unittest.TestCase):
+    """_purge_junk_events re-runs the (now trap-aware) name matcher on stored
+    wire/aggregator rows, so a historical mis-tag the matcher would no longer
+    make ("First United" on a Century 21 PR) is cleaned out — while the bank's
+    own correctly-tagged releases survive."""
+
+    def setUp(self):
+        _fresh_db()
+
+    def test_corrected_mistag_purged_legit_kept(self):
+        import jobs.poll_events as pe
+        import data.events.wire_base as wb
+        # Deterministic mini name index (avoids a live universe build).
+        with patch.object(wb, "_NAME_INDEX", [("FIRST UNITED", "FUNC")]):
+            store.insert_events_returning_new([
+                _ev("FUNC", "businesswire",
+                    "Century 21 Brand Expands Global Footprint With Opening of "
+                    "First United Arab Emirates Office", "bw-junk",
+                    url="https://www.businesswire.com/news/junk"),
+                _ev("FUNC", "businesswire",
+                    "First United Corporation Declares Quarterly Cash Dividend",
+                    "bw-legit", url="https://www.businesswire.com/news/legit"),
+            ])
+            n = pe._purge_junk_events()
+        self.assertEqual(n, 1, "only the mis-tagged row should be purged")
+        from sqlalchemy import text
+        with db._engine.connect() as c:
+            kept = [r[0] for r in c.execute(text("SELECT headline FROM events")).all()]
+        self.assertEqual(len(kept), 1)
+        self.assertIn("Declares Quarterly Cash Dividend", kept[0])
+
+
 class TestGoogleNewsRegulatoryCoverage(unittest.TestCase):
     def test_regulatory_event_passes_first_party_gate(self):
         from data.events.google_news import GoogleNewsAdapter

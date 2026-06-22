@@ -276,8 +276,16 @@ def _purge_junk_events() -> int:
     filters the adapters apply at ingest."""
     from sqlalchemy import text
     from data.events.store import _get_engine, TOPIC_SOURCE
-    from data.events.wire_base import is_safe_news_url, is_junk_news
+    from data.events.wire_base import is_safe_news_url, is_junk_news, match_tickers
     from data.events.fmp_news import _is_subject
+
+    # Wire/aggregator sources that assign a ticker by name-matching the headline
+    # (match_tickers). Re-running the matcher purges historical mis-tags that the
+    # current matcher would no longer make — e.g. "First United" tagged onto a
+    # Century 21 PR before the proper-noun trap landed. Self-consistent (the
+    # adapters matched on the same headline), so it only removes what wouldn't be
+    # ingested today; no over-purge of legitimately-named rows.
+    _NAME_MATCHED = {"businesswire", "globenewswire", "prnewswire", "google_news"}
 
     eng = _get_engine()
     with eng.connect() as conn:
@@ -299,6 +307,12 @@ def _purge_junk_events() -> int:
         if r["source"] == "fmp_news":
             blob = f"{r['headline']}. {(r['summary'] or '')[:1000]}"
             if not _is_subject(r["ticker"], blob):
+                return True
+        # Name-matched wire/aggregator rows: drop if the current matcher would no
+        # longer tag this ticker from the same headline (a corrected mis-tag).
+        if r["source"] in _NAME_MATCHED and r["ticker"]:
+            matched = {t.upper() for t in match_tickers(r["headline"] or "")}
+            if r["ticker"].upper() not in matched:
                 return True
         return False
 
