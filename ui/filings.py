@@ -18,6 +18,17 @@ from data.filing_summarizer import (
 from ui.chrome import table_export, title_bar
 
 
+def _no_latex(s: str) -> str:
+    """Neutralize '$' in data-derived text before it goes into st.markdown.
+
+    Streamlit runs KaTeX over markdown even with unsafe_allow_html=True, so an
+    unescaped '$…$' pair (common in summaries: "$1.35 billion … $300 million")
+    is parsed as a math span — which mangles the surrounding HTML and dumps the
+    whole table as raw text. The HTML entity renders as a literal '$' that KaTeX
+    can't see, in both HTML and plain-markdown contexts."""
+    return s.replace("$", "&#36;") if s else s
+
+
 # ── Color badges for form types ─────────────────────────────────────────
 FORM_COLORS = {
     "10-K":     "var(--success)",       # green
@@ -358,7 +369,7 @@ def _render_press_releases(press_releases: list[dict], ticker: str, cik: int):
                     text = fetch_filing_text(summary_url)
                     if text and not text.startswith("[Error"):
                         summary = summarize_filing(text, form, ticker)
-                        st.markdown(summary)
+                        st.markdown(_no_latex(summary))
                     else:
                         st.caption("Could not fetch filing content for summary.")
             else:
@@ -423,17 +434,18 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
         acc = (f.get("accession") or "").strip()
 
         # Plain-English headline (better than raw item codes).
-        primary = _filing_primary(f["form"], items, f.get("is_earnings", False))
+        primary = _no_latex(_filing_primary(f["form"], items, f.get("is_earnings", False)))
         # The actual content summary (Claude, from the events table) if we have it.
         summ = summaries.get(acc, "")
         if summ and len(summ) > 220:
             summ = summ[:217].rstrip() + "…"
+        summ = _no_latex(summ)
         summ_html = (f'<div style="color:var(--text-secondary);font-size:0.86em;margin-top:2px;'
                      f'line-height:1.4;">{summ}</div>') if summ else ""
         # Item chips as faint supporting detail (8-Ks only).
         chips_html = ""
         if items and f["form"] in ("8-K", "8-K/A"):
-            chips = _items_description(items)
+            chips = _no_latex(_items_description(items))
             if chips:
                 chips_html = (f'<div style="color:var(--text-muted);font-size:0.74em;'
                               f'margin-top:2px;">{chips}</div>')
@@ -509,7 +521,7 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
                     text = fetch_filing_text(url)
                     if text and not text.startswith("[Error"):
                         summary = summarize_filing(text, f["form"], ticker)
-                        st.markdown(summary)
+                        st.markdown(_no_latex(summary))
                     else:
                         st.warning("Could not fetch filing content.")
 
