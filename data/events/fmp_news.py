@@ -54,6 +54,22 @@ _US_STATES = {
     "WI", "WY", "DC",
 }
 
+# Common English words that are ALSO single-word bank brand cores. A name must
+# not collapse to one of these alone — "Freedom Holding"->"FREEDOM" then matched
+# "Freedom Roofing"; "Popular Inc"->"POPULAR" matched "Popular CBD Salve";
+# "Citizens Inc"->"CITIZENS" matched "US Citizens". For these we keep the
+# full multi-token name (their real releases use it) unless the token ties back
+# to the ticker. Distinctive uncommon cores (COMERICA, SEACOAST, WINTRUST) are
+# unaffected.
+_COMMON_NAME_WORDS = {
+    "FREEDOM", "POPULAR", "CITIZENS", "INDEPENDENT", "COMMERCE", "COMMUNITY",
+    "HERITAGE", "PEOPLES", "PREMIER", "PROSPERITY", "PACIFIC", "COLUMBIA",
+    "CENTRAL", "LIBERTY", "PROVIDENT", "GENESIS", "SUMMIT", "PINNACLE",
+    "BUSINESS", "AMERICAN", "SOUTHERN", "NORTHERN",
+    "HORIZON", "ALLIANCE", "CAPITAL", "PARTNERS", "PROGRESS", "PREFERRED",
+    "EQUITY", "GUARANTY", "HOMETOWN", "PATRIOT", "SERVICE", "SELECT",
+}
+
 
 def _ticker_related(tok: str, ticker: str) -> bool:
     """A single-token core is trustworthy if it ties back to the ticker — covers
@@ -98,8 +114,9 @@ def _subject_phrase(name: str, ticker: str = "") -> str:
     while len(toks) > 1 and toks[-1].rstrip(".") in _SUBJ_SUFFIX:
         if len(toks) >= 3:                         # dropping still leaves >=2
             toks.pop()
-        elif ((len(toks[0]) >= 6 or _ticker_related(toks[0], ticker))
-              and toks[0] not in _GENERIC_WORDS):
+        elif (toks[0] not in _GENERIC_WORDS
+              and (_ticker_related(toks[0], ticker)
+                   or (len(toks[0]) >= 6 and toks[0] not in _COMMON_NAME_WORDS))):
             toks.pop()                             # 2->1 only if survivor distinctive
         else:
             break

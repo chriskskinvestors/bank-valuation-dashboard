@@ -98,6 +98,11 @@ KNOWN_JUNK = [
      "Are Reshaping Family Finances", "BAC"),
     ("Citizens Financial Group Named Exclusive Financial Advisor to Acme on "
      "Its $900 Million Sale", "CFG"),
+    # ── EU major-shareholding / transparency notices (_SHAREHOLDER_NOTICE_RE):
+    #    plural + non-English forms the _OFFSUBJECT_RE pass missed (live feed) ──
+    ("Umicore - Transparency notifications by Bank of America Corporation", "BAC"),
+    ("Umicore - Transparantieverklaringen van Bank of America Corporation", "BAC"),
+    ("REG - Permanent TSB Group JPMorgan Chase & Co - Holding(s) in Company", "JPM"),
 ]
 
 # Wrong-company ticker tags — story is about another company; must be junk when

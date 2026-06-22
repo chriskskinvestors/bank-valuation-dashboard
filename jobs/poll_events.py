@@ -277,16 +277,32 @@ def _purge_junk_events() -> int:
     from sqlalchemy import text
     from data.events.store import _get_engine, TOPIC_SOURCE
     from data.events.wire_base import is_safe_news_url, is_junk_news
+    from data.events.fmp_news import _is_subject
 
     eng = _get_engine()
     with eng.connect() as conn:
-        rows = conn.execute(text("SELECT id, ticker, source, url, headline FROM events")).mappings().all()
-    # Topic rows have a sentinel ticker ('TOPIC:MACRO'), so the foreign-
-    # paren-ticker check must not apply — pass ticker=None for those.
-    bad = [r["id"] for r in rows
-           if (not is_safe_news_url(r["url"]))
-           or is_junk_news(r["headline"],
-                           None if r["source"] == TOPIC_SOURCE else r["ticker"])]
+        rows = conn.execute(text(
+            "SELECT id, ticker, source, url, headline, summary FROM events"
+        )).mappings().all()
+
+    def _is_bad(r) -> bool:
+        if not is_safe_news_url(r["url"]):
+            return True
+        # Topic rows have a sentinel ticker ('TOPIC:MACRO'), so the foreign-
+        # paren-ticker check must not apply — pass ticker=None for those.
+        tk = None if r["source"] == TOPIC_SOURCE else r["ticker"]
+        if is_junk_news(r["headline"], tk):
+            return True
+        # FMP's symbol index mis-tags common-word banks (Popular/Freedom/Citizens)
+        # onto unrelated PRs whose text never names the bank — re-apply the
+        # subject guard so those get purged, not just blocked at ingest.
+        if r["source"] == "fmp_news":
+            blob = f"{r['headline']}. {(r['summary'] or '')[:1000]}"
+            if not _is_subject(r["ticker"], blob):
+                return True
+        return False
+
+    bad = [r["id"] for r in rows if _is_bad(r)]
     if not bad:
         return 0
     with eng.begin() as conn:

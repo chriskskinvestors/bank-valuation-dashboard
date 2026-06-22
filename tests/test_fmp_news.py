@@ -129,6 +129,26 @@ class TestIsSubjectGuard(unittest.TestCase):
                     self.assertTrue(_is_subject(ticker, headline),
                                     f"{ticker}: {_subject_phrase(legal, ticker)!r} should match")
 
+    def test_common_word_name_requires_full_phrase(self):
+        # FMP-live regression: a bank whose core is a common English word
+        # ("Freedom Holding"->FREEDOM, "Popular Inc"->POPULAR) must NOT match an
+        # unrelated PR that merely contains the word — keep the full name.
+        for legal, ticker, junk, real in [
+            ("Freedom Holding Corp", "FRHC",
+             "Ridgeline Roofing Acquires Freedom Roofing & Construction.",
+             "Freedom Holding Corp Reports Second Quarter 2026 Results."),
+            ("Popular, Inc.", "BPOP",
+             "Joy Organics Enhances Popular CBD Salve with Added Arnica.",
+             "Popular, Inc. Declares Quarterly Cash Dividend."),
+            ("Citizens, Inc.", "CIA",
+             "APEX Capital Survey: A Majority of US Citizens Want Lower Fees.",
+             "Citizens, Inc. Reports First Quarter 2026 Financial Results."),
+        ]:
+            with self.subTest(ticker=ticker):
+                with patch.object(bank_mapping, "get_name", return_value=legal):
+                    self.assertFalse(_is_subject(ticker, junk), f"{ticker}: junk must drop")
+                    self.assertTrue(_is_subject(ticker, real), f"{ticker}: real must keep")
+
     def test_short_core_kept_only_when_ticker_related(self):
         # "UMB" (ticker UMBF) is a trustworthy short core; "CITY" (vs CHCO) is not.
         self.assertEqual(_subject_phrase("UMB FINANCIAL CORP", "UMBF"), "UMB")

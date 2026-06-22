@@ -477,6 +477,24 @@ _INSTITUTIONAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Foreign / EU-style major-shareholding & transparency notifications — a holder
+# (often a big bank) filing a regulatory ownership notice ABOUT another company.
+# The bank's name sits in the title, so the name-match + cross-ticker guards keep
+# it, but it's third-party ownership plumbing, not bank news.
+# Examples: "Umicore - Transparency notifications by Bank of America Corporation",
+# "...Transparantieverklaringen...", "REG - X JPMorgan Chase - Holding(s) in Company".
+_SHAREHOLDER_NOTICE_RE = re.compile(
+    r"\btransparency\s+notification"
+    r"|\btransparantieverklaring"
+    r"|\bd[eé]clarations?\s+de\s+transparence"
+    r"|\bnotification\s+of\s+major\s+holding"
+    r"|\bmajor\s+(shareholding|holding)s?\b"
+    r"|\bholding\(s\)\s+in\s+company"
+    r"|\btotal\s+voting\s+rights\b"
+    r"|\btr-1\b",
+    re.IGNORECASE,
+)
+
 # Form-4 / insider micro-events auto-posted by content farms — tax-withholding
 # share events and "N-share" vesting/award trivia. Non-material.
 # Examples: "CF Bankshares (NASDAQ: CFBK) CEO reports 1,932-share tax
@@ -653,7 +671,7 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
             or _INSIDER_TRIVIA_RE.search(h) or _FARM_RE.search(h)
             or _PROMO_RE.search(h) or _PROSPECTUS_RE.search(h)
             or _DIV_CALENDAR_RE.search(h) or _OFFSUBJECT_RE.search(h)
-            or is_routine_noise(h)):
+            or _SHAREHOLDER_NOTICE_RE.search(h) or is_routine_noise(h)):
         return True
     if ticker:
         t = ticker.upper()
