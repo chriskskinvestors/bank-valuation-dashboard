@@ -620,10 +620,49 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     filter_keys = [None] + [k for k, _ in filterable]
     filter_key_to_idx = {k: i + 1 for i, (k, _) in enumerate(filterable)}
 
-    # ── Saved Screens bar ──────────────────────────────────────────────
-    # Saved Screens capture the *how* (filters / sort / columns); the *who*
+    def _filter_specs_from_state():
+        """Rebuild active filter specs from session_state every run, so filters
+        apply even while the Metric Filters dialog is closed (a dialog body only
+        executes while open). Mirrors the widgets in _filters_dialog — same keys.
+        session_state is committed before each rerun, so this always reflects the
+        latest edits made inside the dialog."""
+        ss = st.session_state
+        n = ss.get(f"num_filters_{tab_key}", 1)
+        specs = []
+        for fi in range(n):
+            midx = ss.get(f"filt_metric_{tab_key}_{fi}", 0)
+            mkey = (filter_keys[midx]
+                    if isinstance(midx, int) and 0 < midx < len(filter_keys) else None)
+            if mkey is None:
+                continue
+            kind = ss.get(f"filt_kind_{tab_key}_{fi}", "Absolute")
+            if kind == "Peer-relative":
+                specs.append({"kind": "peer_relative", "metric": mkey,
+                              "band": ss.get(f"filt_band_{tab_key}_{fi}", "Top"),
+                              "pct": ss.get(f"filt_pct_{tab_key}_{fi}", 25.0)})
+            elif kind == "Change":
+                specs.append({"kind": "change", "metric": mkey,
+                              "basis": ss.get(f"filt_basis_{tab_key}_{fi}", "QoQ"),
+                              "op": ss.get(f"filt_chop_{tab_key}_{fi}", "<"),
+                              "value": ss.get(f"filt_chval_{tab_key}_{fi}", 0.0)})
+            elif kind == "Trend":
+                specs.append({"kind": "trend", "metric": mkey,
+                              "direction": ("down" if ss.get(f"filt_dir_{tab_key}_{fi}",
+                                            "Declining") == "Declining" else "up"),
+                              "quarters": int(ss.get(f"filt_q_{tab_key}_{fi}", 3))})
+            else:
+                specs.append({"kind": "absolute", "metric": mkey,
+                              "op": ss.get(f"filt_op_{tab_key}_{fi}", "<"),
+                              "value": ss.get(f"filt_val_{tab_key}_{fi}", 0.0)})
+        return specs
+
+    # ── Saved screens dialog ───────────────────────────────────────────
+    # Saved screens capture the *how* (filters / sort / columns); the *who*
     # (bank scope) is chosen live and persisted separately as a Bank Group.
-    with st.expander("Saved Screens", expanded=False):
+    # Opened from a toolbar button below; load/save/delete each st.rerun() so the
+    # toolbar controls (rendered above) pick up the restored state next run.
+    @st.dialog("Saved screens", width="large")
+    def _saved_dialog():
         saved = list_screens()
         saved_for_tab = [s for s in saved if s.get("tab") == tab_key]
 
@@ -852,10 +891,14 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             key=f"order_{tab_key}",
         )
 
-    # ── Metric filters (any metric; AND-combined) ──────────────────────
+    # ── Metric filters dialog (any metric; AND-combined) ───────────────
     from analysis.screen_engine import evaluate as _evaluate_screen
-    filter_specs = []
-    with st.expander("Metric Filters", expanded=False):
+
+    @st.dialog("Metric filters", width="large")
+    def _filters_dialog():
+        # Local list is discarded; the specs actually applied are rebuilt from
+        # session_state below (_filter_specs_from_state) so they hold when closed.
+        filter_specs = []
         st.caption("Filter on any metric, AND-combined. **Absolute** = value vs a "
                    "threshold · **Peer-relative** = Top/Bottom % by value within the "
                    "current scope · **Change** = QoQ/YoY move · **Trend** = N consecutive "
@@ -929,6 +972,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 if filt_key is not None:
                     filter_specs.append({"kind": "absolute", "metric": filt_key,
                                          "op": fop, "value": fval})
+
+    # Live specs (independent of whether the dialog is open) drive the table.
+    filter_specs = _filter_specs_from_state()
 
     # Apply via the screening engine — it excludes no-data banks (counted) rather
     # than silently scoring them as failures (cardinal rule). Change/trend specs
@@ -1004,31 +1050,70 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
         render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
 
-    # ── Result-set actions (one row): Compare handoff · Save-as-group ───
-    # Was two stacked full-width bands (a Save expander + a standalone Compare
-    # button). Compare hands the current set to the side-by-side view (it arrives
-    # as a Manual scope there); the inline name field + Save persists the
-    # (filtered) set as a reusable Bank Group for reuse here or in Compare.
-    a_cmp, a_name, a_save = st.columns([2, 3, 1])
-    with a_cmp:
-        if display_metrics and st.button(
-                f"Compare these {len(display_metrics)} banks →",
-                key=f"compare_handoff_{tab_key}", use_container_width=True):
-            st.session_state["_compare_handoff_tickers"] = [
-                m["ticker"] for m in display_metrics if m.get("ticker")]
-            # sc_sub is a widget already instantiated above; flag the switch and
-            # let the pre-radio handler set it next run (can't write a widget's
-            # session_state after it's created).
-            st.session_state["_goto_compare"] = True
-            st.rerun()
-    with a_name:
-        grp_name = st.text_input(
-            "Save as group",
-            placeholder=f"Name to save these {len(display_metrics)} banks as a reusable group…",
-            key=f"save_grp_name_{tab_key}", label_visibility="collapsed")
-    with a_save:
-        if st.button("Save group", key=f"save_grp_btn_{tab_key}",
-                     use_container_width=True):
+    # ── Columns & export dialog ────────────────────────────────────────
+    @st.dialog("Columns & export", width="large")
+    def _columns_dialog():
+        cc, ex = st.columns([3, 1])
+        with cc:
+            all_metric_keys = [m["key"] for m in METRICS if m.get("format") != "date"]
+            default_cols = st.session_state.get(f"custom_cols_{tab_key}", tab_columns)
+            default_cols = [c for c in default_cols if c in all_metric_keys]
+            selected_cols = st.multiselect(
+                "Columns to display (leave as-is for the tab's default view)",
+                all_metric_keys, default=default_cols,
+                format_func=lambda k: f"{METRICS_BY_KEY.get(k, {}).get('label', k)}  "
+                                      f"({METRICS_BY_KEY.get(k, {}).get('category', '—')})",
+                key=f"custom_cols_{tab_key}",
+            )
+        with ex:
+            st.markdown("**Export**")
+            if display_metrics:
+                export_df = pd.DataFrame(display_metrics)
+                display_cols_export = selected_cols or tab_columns
+                export_cols = ["ticker"] + [c for c in display_cols_export
+                                            if c in export_df.columns]
+                export_df = export_df[export_cols].copy()
+                rename = {"ticker": "Ticker"}
+                for c in display_cols_export:
+                    m = METRICS_BY_KEY.get(c)
+                    if m:
+                        rename[c] = m["label"]
+                export_df = export_df.rename(columns=rename)
+                csv_bytes = export_df.to_csv(index=False).encode("utf-8")
+                st.download_button("CSV", csv_bytes,
+                                   file_name=f"{tab_key}_{scope_slug}.csv", mime="text/csv",
+                                   use_container_width=True, key=f"csv_{tab_key}")
+                try:
+                    import io
+                    buf = io.BytesIO()
+                    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                        export_df.to_excel(writer, index=False, sheet_name=tab_key[:31])
+                        from openpyxl.utils import get_column_letter
+                        ws = writer.sheets[tab_key[:31]]
+                        ws.freeze_panes = "A2"
+                        for col_idx, col_name in enumerate(export_df.columns, start=1):
+                            max_len = max(
+                                len(str(col_name)),
+                                export_df[col_name].astype(str).map(len).max()
+                                if len(export_df) else 10)
+                            ws.column_dimensions[get_column_letter(col_idx)].width = min(
+                                28, max_len + 2)
+                    st.download_button(
+                        "Excel", buf.getvalue(), file_name=f"{tab_key}_{scope_slug}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True, key=f"xlsx_{tab_key}")
+                except Exception as e:
+                    st.caption(f"Excel export unavailable: {type(e).__name__}")
+
+    # ── Save-as-group dialog ───────────────────────────────────────────
+    @st.dialog("Save as a Bank Group")
+    def _savegroup_dialog():
+        st.caption("Persist the current (filtered) result set as a named group — "
+                   "reuse it as a scope here or in Compare.")
+        grp_name = st.text_input("Group name", placeholder="e.g. CRE-heavy Southeast",
+                                 key=f"save_grp_name_{tab_key}")
+        if st.button(f"Save {len(display_metrics)} banks",
+                     key=f"save_grp_btn_{tab_key}", use_container_width=True):
             grp_tickers = [m["ticker"] for m in display_metrics if m.get("ticker")]
             if not grp_name.strip():
                 st.warning("Enter a group name first.")
@@ -1039,80 +1124,35 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             else:
                 st.error("Could not save (empty name or storage error).")
 
-    # ── Column picker + Excel export ──────────────────────────────────
-    with st.expander("Customize columns & export", expanded=False):
-        cc_col, ex_col = st.columns([3, 1])
-
-        with cc_col:
-            # All possible metric keys (sorted by category)
-            all_metric_keys = [m["key"] for m in METRICS if m.get("format") != "date"]
-            # Default to this tab's columns if user hasn't customized
-            default_cols = st.session_state.get(f"custom_cols_{tab_key}", tab_columns)
-            # Ensure defaults are valid
-            default_cols = [c for c in default_cols if c in all_metric_keys]
-
-            selected_cols = st.multiselect(
-                "Columns to display (leave as-is for the tab's default view)",
-                all_metric_keys,
-                default=default_cols,
-                format_func=lambda k: f"{METRICS_BY_KEY.get(k, {}).get('label', k)}  ({METRICS_BY_KEY.get(k, {}).get('category', '—')})",
-                key=f"custom_cols_{tab_key}",
-            )
-
-        with ex_col:
-            st.markdown("**Export**")
-            # Prepare DataFrame for export
-            if display_metrics:
-                export_df = pd.DataFrame(display_metrics)
-                # Friendly column labels
-                display_cols_export = selected_cols or tab_columns
-                export_cols = ["ticker"] + [c for c in display_cols_export if c in export_df.columns]
-                export_df = export_df[export_cols].copy()
-                # Rename to labels
-                rename = {"ticker": "Ticker"}
-                for c in display_cols_export:
-                    m = METRICS_BY_KEY.get(c)
-                    if m:
-                        rename[c] = m["label"]
-                export_df = export_df.rename(columns=rename)
-
-                # CSV export (no extra deps required)
-                csv_bytes = export_df.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "CSV",
-                    csv_bytes,
-                    file_name=f"{tab_key}_{scope_slug}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    key=f"csv_{tab_key}",
-                )
-
-                # Excel export (needs openpyxl, which is in requirements.txt already)
-                try:
-                    import io
-                    buf = io.BytesIO()
-                    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                        export_df.to_excel(writer, index=False, sheet_name=tab_key[:31])
-                        # Freeze header row, set column widths
-                        from openpyxl.utils import get_column_letter
-                        ws = writer.sheets[tab_key[:31]]
-                        ws.freeze_panes = "A2"
-                        for col_idx, col_name in enumerate(export_df.columns, start=1):
-                            max_len = max(
-                                len(str(col_name)),
-                                export_df[col_name].astype(str).map(len).max() if len(export_df) else 10,
-                            )
-                            ws.column_dimensions[get_column_letter(col_idx)].width = min(28, max_len + 2)
-                    st.download_button(
-                        "Excel",
-                        buf.getvalue(),
-                        file_name=f"{tab_key}_{scope_slug}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                        key=f"xlsx_{tab_key}",
-                    )
-                except Exception as e:
-                    st.caption(f"Excel export unavailable: {type(e).__name__}")
+    # ── Action strip: view-config dialogs + result-set actions ─────────
+    # The three full-width expander bars (Saved screens / Metric filters /
+    # Columns) and the standalone action row are compact buttons now; the heavy
+    # panels open as modal dialogs. Compare hands the current set to the
+    # side-by-side Compare view (arrives there as a Manual scope).
+    _flabel = f"Filters ({len(filter_specs)})" if filter_specs else "Filters"
+    b1, b2, b3, b4, b5, _bsp = st.columns([1, 1, 1, 1.1, 1.6, 2])
+    with b1:
+        if st.button("Saved", key=f"btn_saved_{tab_key}", use_container_width=True):
+            _saved_dialog()
+    with b2:
+        if st.button(_flabel, key=f"btn_filters_{tab_key}", use_container_width=True):
+            _filters_dialog()
+    with b3:
+        if st.button("Columns", key=f"btn_cols_{tab_key}", use_container_width=True):
+            _columns_dialog()
+    with b4:
+        if st.button("Save group", key=f"btn_grp_{tab_key}", use_container_width=True):
+            _savegroup_dialog()
+    with b5:
+        if display_metrics and st.button(
+                f"Compare {len(display_metrics)} →",
+                key=f"compare_handoff_{tab_key}", use_container_width=True):
+            st.session_state["_compare_handoff_tickers"] = [
+                m["ticker"] for m in display_metrics if m.get("ticker")]
+            # sc_sub widget already instantiated above; flag the switch and let the
+            # pre-radio handler set it next run.
+            st.session_state["_goto_compare"] = True
+            st.rerun()
 
     st.markdown("")
 
