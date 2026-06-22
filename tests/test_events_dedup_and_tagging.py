@@ -141,6 +141,76 @@ class TestNameMatchingCoverage(unittest.TestCase):
         self.assertEqual(_normalize_name("First Bancorp"), "FIRST BANCORP")
 
 
+class TestDisambiguateUnit(unittest.TestCase):
+    """_disambiguate scoring in isolation (no index build)."""
+
+    def setUp(self):
+        from data.events import wire_base as wb
+        self.wb = wb
+
+    def _hay(self, s):
+        return self.wb._alnum_pad(s)
+
+    def test_ticker_cue_wins(self):
+        self.assertEqual(self.wb._disambiguate(
+            ["FBP", "FNLC"], self._hay("First BanCorp (NYSE: FBP) reports")), "FBP")
+
+    def test_geo_cue_wins(self):
+        self.assertEqual(self.wb._disambiguate(
+            ["FBP", "FNLC"], self._hay("First Bancorp, based in Maine, ...")), "FNLC")
+
+    def test_no_cue_returns_none(self):
+        self.assertIsNone(self.wb._disambiguate(
+            ["FBP", "FNLC"], self._hay("First Bancorp reported results")))
+
+    def test_conflicting_cues_tie_returns_none(self):
+        # Both tickers present (e.g. a comparison piece) → can't tell → no tag.
+        self.assertIsNone(self.wb._disambiguate(
+            ["FBP", "FNLC"], self._hay("FBP vs FNLC: which bank wins")))
+
+
+class TestAmbiguousNameDisambiguation(unittest.TestCase):
+    """Real index: 'First Bancorp' (FBP/FNLC, same name + different CIKs) is
+    recovered via ticker/geo in the body, without regressing share-class
+    siblings (First Niles) or distinguishable collisions (Citizens Holding)."""
+
+    def test_only_same_name_diff_cik_is_ambiguous(self):
+        from data.events import wire_base as wb
+        wb.build_name_index()
+        self.assertIn("FIRST BANCORP", wb._AMBIGUOUS_INDEX)
+        self.assertEqual(set(wb._AMBIGUOUS_INDEX["FIRST BANCORP"]), {"FBP", "FNLC"})
+        # Citizens (different resolved names) and share-class siblings must NOT
+        # be treated as ambiguous.
+        self.assertNotIn("CITIZENS", wb._AMBIGUOUS_INDEX)
+        self.assertNotIn("FIRST NILES FINANCIAL", wb._AMBIGUOUS_INDEX)
+
+    def test_fbp_recovered_by_ticker(self):
+        self.assertEqual(
+            match_tickers("First BanCorp to Announce Q2 2026 Results",
+                          context="San Juan, Puerto Rico. First BanCorp (NYSE: FBP) today..."),
+            ["FBP"])
+
+    def test_fnlc_recovered_by_geo(self):
+        self.assertIn("FNLC", match_tickers(
+            "The First Bancorp Declares Quarterly Dividend",
+            context="Damariscotta, Maine — The First Bancorp announced..."))
+
+    def test_first_bancorp_no_cue_skips(self):
+        # Ambiguous and nothing distinguishes them → tag NONE (never a guess).
+        self.assertEqual(
+            match_tickers("First Bancorp Reports Results",
+                          context="First Bancorp reported results today."),
+            [])
+
+    def test_citizens_holding_not_regressed(self):
+        self.assertEqual(match_tickers("Citizens Holding Company Declares Dividend"),
+                         ["CIZN"])
+
+    def test_share_class_sibling_collapsed(self):
+        self.assertEqual(match_tickers("First Niles Financial Reports Earnings"),
+                         ["FNFI"])
+
+
 class TestWireTitleOnlyTagging(unittest.TestCase):
     """Wire adapters must tag on the TITLE only — a bank named in the body as an
     investor/underwriter/advisor is not the subject and must not be tagged."""

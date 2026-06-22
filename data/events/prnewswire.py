@@ -43,7 +43,10 @@ class PRNewswireAdapter(SourceAdapter):
                     continue
                 # Title-only matching — a bank named only in the body (as an
                 # underwriter / investor / advisor) is not the story's subject.
-                matched = [t for t in match_tickers(item.title) if t in in_universe]
+                # context=summary disambiguates a shared headline name (First
+                # Bancorp → FBP/FNLC) only; it never adds a body-only tag.
+                matched = [t for t in match_tickers(item.title, context=item.summary)
+                           if t in in_universe]
                 if not matched:
                     continue
 

@@ -61,7 +61,12 @@ class BusinessWireAdapter(SourceAdapter):
                 # "Raises $60M" release that credits a bank) is NOT the subject;
                 # summary-matching mis-tagged exactly those to the bank. A
                 # company's own release always names it in the headline.
-                matched = [t for t in match_tickers(item.title) if t in in_universe]
+                # context=summary is used ONLY to disambiguate a headline name
+                # shared by >1 bank (First Bancorp → FBP/FNLC); it never adds a
+                # tag the title didn't already name, so the underwriter concern
+                # above still holds.
+                matched = [t for t in match_tickers(item.title, context=item.summary)
+                           if t in in_universe]
                 if not matched:
                     continue
 

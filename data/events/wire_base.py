@@ -123,7 +123,9 @@ _BRAND_ALIASES: dict[str, list[str]] = {
 
 def build_name_index() -> list[tuple[str, str]]:
     """
-    Build a sorted list of (normalized_name, ticker) tuples.
+    Build a sorted list of (normalized_name, ticker) tuples for unambiguous
+    names, and (as a side effect) populate _AMBIGUOUS_INDEX for names shared by
+    more than one bank.
 
     Sources, in precedence order:
       1. BANK_MAP legal names + _BRAND_ALIASES (curated, highest quality).
@@ -132,21 +134,26 @@ def build_name_index() -> list[tuple[str, str]]:
          curated subset. Without this, a universe bank like Regions (RF) is
          polled but its name never matches, so its press releases are dropped.
 
-    Sorted longest-first so the most specific name wins ('BANK OF AMERICA'
-    beats 'BANK OF'); BANK_MAP entries win ties over universe-derived names.
+    A curated (BANK_MAP/alias) ticker always wins a name outright. A name that
+    resolves ONLY to universe tickers and lands on >1 of them (e.g. "FIRST
+    BANCORP" → FBP + FNLC, or the too-generic names that used to be dropped
+    entirely) is AMBIGUOUS: it goes to _AMBIGUOUS_INDEX for the disambiguation
+    pass (ticker / geo in the release body) instead of silently tagging one bank
+    or none. Sorted longest-first so the most specific name wins.
     """
-    pairs: list[tuple[str, str]] = []
+    global _AMBIGUOUS_INDEX
+    curated: dict[str, str] = {}          # normname -> curated ticker (wins outright)
+    universe_cands: dict[str, list[str]] = {}  # normname -> [universe tickers]
     curated_tickers: set[str] = set()
+
     for ticker, info in BANK_MAP.items():
         curated_tickers.add(ticker)
-        names = [info.get("name", "")] + _BRAND_ALIASES.get(ticker, [])
-        for name in names:
+        for name in [info.get("name", "")] + _BRAND_ALIASES.get(ticker, []):
             normalized = _normalize_name(name)
             if not normalized or _is_too_generic(normalized):
                 continue
-            pairs.append((normalized, ticker))
+            curated.setdefault(normalized, ticker)
 
-    # 2. Universe names not already curated.
     try:
         from data.bank_universe import get_universe_tickers
         from data.bank_mapping import get_name
@@ -154,32 +161,102 @@ def build_name_index() -> list[tuple[str, str]]:
             if ticker in curated_tickers:
                 continue
             nm = get_name(ticker) or ""
-            # Skip placeholders (name == ticker) and anything too short/generic
-            # to match safely.
             if not nm or nm.strip().upper() == ticker.upper():
                 continue
             normalized = _normalize_name(nm)
-            if len(normalized) < 6 or _is_too_generic(normalized):
+            # Keep too-generic names here (unlike before): a generic name shared
+            # by >1 bank is recoverable via disambiguation, not just noise.
+            if len(normalized) < 6:
                 continue
-            pairs.append((normalized, ticker))
+            cands = universe_cands.setdefault(normalized, [])
+            if ticker not in cands:
+                cands.append(ticker)
     except Exception as e:
         print(f"[wire] universe name index skipped: {type(e).__name__}: {e}")
 
-    # Deduplicate (same normalized name → first/most-specific ticker wins).
-    # Stable sort keeps BANK_MAP entries (added first) ahead of universe ones
-    # on equal length.
-    seen: set[str] = set()
     unique: list[tuple[str, str]] = []
-    pairs.sort(key=lambda x: -len(x[0]))
-    for name, ticker in pairs:
-        if name not in seen:
-            seen.add(name)
-            unique.append((name, ticker))
+    ambiguous: dict[str, list[str]] = {}
+    # Curated names: win outright, and are never too-generic (filtered above).
+    for normname, ticker in curated.items():
+        unique.append((normname, ticker))
+    # Universe-only names: 1 candidate → regular index (if not too-generic);
+    # >1 candidate → ambiguous, UNLESS the candidates are share-class siblings of
+    # one issuer (same CIK, e.g. First Niles common FNFI + preferred FNFPA) — that
+    # collapses to the common (shortest) ticker, not a real disambiguation.
+    try:
+        from data.bank_mapping import get_cik, get_name as _gn
+    except Exception:
+        get_cik = lambda _t: None  # noqa: E731
+        _gn = lambda _t: ""        # noqa: E731
+    for normname, cands in universe_cands.items():
+        if normname in curated:
+            continue                      # a curated ticker already owns it
+        if len(cands) > 1:
+            names = {(_gn(t) or "").strip().upper() for t in cands}
+            distinct_ciks = {get_cik(t) for t in cands} - {None}
+            # TRULY ambiguous = candidates with the SAME resolved name but
+            # DIFFERENT issuers (FBP/FNLC, both "First Bancorp") — indistinguishable
+            # except by ticker/geo, so disambiguate at match time. Everything else
+            # keeps the old single-tag behaviour so nothing that matched before
+            # regresses: share-class siblings (FNFI/FNFPA, same name + no distinct
+            # CIK) and distinguishable-by-name collisions (Citizens vs Citizens
+            # Holding) collapse to one — the most-specific resolved name, then the
+            # shortest ticker.
+            if len(names) == 1 and len(distinct_ciks) >= 2:
+                ambiguous[normname] = cands
+            else:
+                best = sorted(cands, key=lambda t: (-len(_gn(t) or ""), len(t)))[0]
+                unique.append((normname, best))
+        elif not _is_too_generic(normname):
+            unique.append((normname, cands[0]))
+
+    unique.sort(key=lambda x: -len(x[0]))
+    _AMBIGUOUS_INDEX = ambiguous
     return unique
 
 
 # Lazy-initialized at first match call
 _NAME_INDEX: list[tuple[str, str]] = []
+# normname -> [candidate tickers] for names shared by >1 bank (built alongside
+# _NAME_INDEX). Resolved at match time by ticker / geo cues in the release body.
+_AMBIGUOUS_INDEX: dict[str, list[str]] = {}
+
+# Geo disambiguators for banks whose normalized name collides with another's.
+# When the ambiguous brand appears in a headline, the candidate whose ticker or
+# one of these location cues also appears (title OR body) wins. Curated only for
+# verified cases — an unknown candidate just relies on its ticker symbol (which
+# first-party releases almost always print as "(NYSE: XXX)").
+_AMBIGUOUS_GEO: dict[str, list[str]] = {
+    "FBP":  ["PUERTO RICO", "SAN JUAN"],        # First BanCorp (NYSE: FBP)
+    "FNLC": ["MAINE", "DAMARISCOTTA"],          # The First Bancorp (NASDAQ: FNLC)
+    "INDB": ["MASSACHUSETTS", "ROCKLAND"],      # Independent Bank Corp / Rockland Trust
+}
+
+
+def _alnum_pad(text: str) -> str:
+    """Uppercase, punctuation→space, collapse, and pad — for scanning a release
+    for ticker/geo cues (no trailing-suffix stripping, unlike _normalize_name)."""
+    t = re.sub(r"[^A-Za-z0-9]+", " ", (text or "").upper())
+    return " " + re.sub(r"\s+", " ", t).strip() + " "
+
+
+def _disambiguate(candidates: list[str], haystack_padded: str) -> str | None:
+    """Pick the one ambiguous-name candidate the release is actually about, by
+    scoring each on its ticker symbol (strong) and curated geo cues (weak) in the
+    title+body. Returns the unique top scorer, or None when nothing distinguishes
+    them (better no tag than a wrong one — CLAUDE.md)."""
+    best_ticker, best_score = None, 0
+    tie = False
+    for tk in candidates:
+        score = 2 if f" {tk.upper()} " in haystack_padded else 0
+        for geo in _AMBIGUOUS_GEO.get(tk.upper(), []):
+            if f" {geo} " in haystack_padded:
+                score += 1
+        if score > best_score:
+            best_ticker, best_score, tie = tk, score, False
+        elif score == best_score and score > 0:
+            tie = True
+    return None if (best_score == 0 or tie) else best_ticker
 
 
 # Multiword proper nouns that BEGIN with a word also used as a bank-brand token.
@@ -226,9 +303,13 @@ def phrase_in_text(haystack_padded: str, phrase: str) -> bool:
     return _first_real_occurrence(haystack_padded, phrase) >= 0
 
 
-def match_tickers(text: str) -> list[str]:
+def match_tickers(text: str, context: str = "") -> list[str]:
     """
-    Find which bank tickers are mentioned in a piece of text.
+    Find which bank tickers are mentioned in a piece of text (the headline).
+
+    `context` (e.g. the release body) is used ONLY to disambiguate a candidate
+    when the headline carries a name shared by >1 bank — it never introduces a
+    new tag on its own, so the title-only safety property is preserved.
 
     Returns a deduplicated list of tickers (preserving order of appearance).
     """
@@ -258,6 +339,18 @@ def match_tickers(text: str) -> list[str]:
         consumed.append((idx, end))
         if ticker not in found:
             found.append(ticker)
+
+    # Ambiguous pass: a name shared by >1 bank (e.g. "First Bancorp" → FBP/FNLC,
+    # which the regular index drops as too generic) tags a bank ONLY when the
+    # headline names it and the title+body carries that bank's ticker or geo cue.
+    if _AMBIGUOUS_INDEX:
+        disamb_hay = _alnum_pad(f"{text} {context}")
+        for name, cands in _AMBIGUOUS_INDEX.items():
+            if _first_real_occurrence(haystack, name) < 0:
+                continue                  # the ambiguous brand must be in the headline
+            winner = _disambiguate(cands, disamb_hay)
+            if winner and winner not in found:
+                found.append(winner)
 
     return found
 
