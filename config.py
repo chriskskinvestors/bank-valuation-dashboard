@@ -1182,28 +1182,26 @@ TAB_LABELS = [t["label"] for t in TABS]
 # Screen table grouping — theme + one-line description per table, so the picker
 # groups the (otherwise flat) tables by what an analyst is actually looking for.
 # Keyed by tab "key"; THEME_ORDER fixes the display order of the theme groups.
-# Every theme holds 2+ tables so the Table picker is never a dead one-option
-# dropdown. "Balance Sheet" is the full balance-sheet composition — assets
-# (securities, loans) and funding (deposits) all live under it. Capital Return
-# joins Overview (shareholder returns are investor-overview, while Capital stays
-# the adequacy view).
-THEME_ORDER = ["Overview", "Balance Sheet", "Credit", "Capital", "Earnings"]
+# Two themes: "Overview" (the investor headline — valuation + shareholder return)
+# and "Financials" (everything else — the full fundamental detail: balance sheet,
+# loans, deposits, securities, credit, capital and earnings).
+THEME_ORDER = ["Overview", "Financials"]
 TAB_META = {
     "valuation":          ("Overview", "Price, multiples, fair-value P/TBV and headline returns in one view."),
     "capital_return":     ("Overview", "Dividends, buybacks and total shareholder yield (TTM)."),
-    "balance_sheet":      ("Balance Sheet", "Assets, funding, equity and the key balance-sheet ratios."),
-    "securities":         ("Balance Sheet", "AFS/HTM portfolio, sector mix and unrealized gains/losses."),
-    "loan_mix":           ("Balance Sheet", "Loan book broken out by category, in dollars."),
-    "loan_concentration": ("Balance Sheet", "Loan categories as a % of total loans, plus CRE-to-capital."),
-    "deposits":           ("Balance Sheet", "Deposit base by type, in dollars."),
-    "deposit_ratios":     ("Balance Sheet", "Funding quality: uninsured, core, brokered, non-interest."),
-    "deposit_dynamics":   ("Balance Sheet", "Deposit growth, cost-of-deposit trend, beta and funding alerts."),
-    "credit_detail":      ("Credit", "Non-performing loans, charge-offs and reserves by segment."),
-    "credit_dynamics":    ("Credit", "Credit trend: NPL/NCO direction, migration and alerts."),
-    "capital":            ("Capital", "Regulatory capital ratios and equity-to-assets."),
-    "capital_dynamics":   ("Capital", "CET1 trend, TBV growth, payout and buyback capacity."),
-    "income":             ("Earnings", "Income statement: revenue, expense, provisions and productivity."),
-    "nim_metrics":        ("Earnings", "Margin detail: asset yields, funding costs and spreads."),
+    "balance_sheet":      ("Financials", "Assets, funding, equity and the key balance-sheet ratios."),
+    "securities":         ("Financials", "AFS/HTM portfolio, sector mix and unrealized gains/losses."),
+    "loan_mix":           ("Financials", "Loan book broken out by category, in dollars."),
+    "loan_concentration": ("Financials", "Loan categories as a % of total loans, plus CRE-to-capital."),
+    "deposits":           ("Financials", "Deposit base by type, in dollars."),
+    "deposit_ratios":     ("Financials", "Funding quality: uninsured, core, brokered, non-interest."),
+    "deposit_dynamics":   ("Financials", "Deposit growth, cost-of-deposit trend, beta and funding alerts."),
+    "credit_detail":      ("Financials", "Non-performing loans, charge-offs and reserves by segment."),
+    "credit_dynamics":    ("Financials", "Credit trend: NPL/NCO direction, migration and alerts."),
+    "capital":            ("Financials", "Regulatory capital ratios and equity-to-assets."),
+    "capital_dynamics":   ("Financials", "CET1 trend, TBV growth, payout and buyback capacity."),
+    "income":             ("Financials", "Income statement: revenue, expense, provisions and productivity."),
+    "nim_metrics":        ("Financials", "Margin detail: asset yields, funding costs and spreads."),
 }
 
 # Legacy aliases
