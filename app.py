@@ -85,8 +85,20 @@ section, _nav_search, _nav_right = _top_nav(SECTIONS, key="nav_section")
 # the nav is already on screen. (The watchlist concept is retired; the
 # variable keeps its name because ~30 downstream call sites take it as the
 # scope parameter.)
+@st.cache_data(ttl=1800, show_spinner=False)
+def _universe_tickers_cached() -> list[str]:
+    """get_universe_tickers() resolves every ticker against a Postgres-backed
+    cert-active check — hundreds of DB round-trips, ~1.7s — yet the resolved
+    list only changes when the nightly refresh-universe job rebuilds the
+    snapshot. A Streamlit rerun re-executes this script top-to-bottom, so
+    UNCACHED this ran on EVERY page navigation. Memoize it (30-min TTL) so the
+    cost is paid once per instance, not per click. The snapshot is <26h fresh
+    by design, so 30 min of staleness in membership is well within tolerance."""
+    return sorted(get_universe_tickers())
+
+
 with timed("app.universe_tickers"):
-    watchlist = sorted(get_universe_tickers())
+    watchlist = _universe_tickers_cached()
 
 with _nav_right:
     _u1, _u2 = st.columns([3, 1.2], vertical_alignment="center")
