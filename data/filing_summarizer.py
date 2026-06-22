@@ -136,31 +136,78 @@ def fetch_filing_text(url: str, max_chars: int = 15000) -> str:
     return text
 
 
+def _abs_edgar_url(href: str) -> str:
+    """Absolutize an EDGAR href and unwrap the iXBRL viewer ('/ix?doc=...')
+    so we fetch the raw document, not the JS viewer page."""
+    href = re.sub(r"^/?ix\?doc=", "", href.strip())
+    if href.startswith("http"):
+        return href
+    return "https://www.sec.gov" + (href if href.startswith("/") else "/" + href)
+
+
+def _press_release_from_index_html(html: str) -> str | None:
+    """Pure parser: from an EDGAR filing-detail index page, return the absolute
+    URL of the EX-99.1 exhibit (preferred) or any EX-99 exhibit, matching on the
+    document table's Type column. Returns None when there's no EX-99 row."""
+    fallback_99 = None
+    # Each document is one table row: an <a href> to the doc plus a Type cell
+    # (e.g. ">EX-99.1<"). Walk rows so each href pairs with its own Type.
+    for row in re.split(r"<tr\b", html, flags=re.IGNORECASE):
+        m = re.search(r'href="([^"]+\.html?[^"]*)"', row, re.IGNORECASE)
+        if not m:
+            continue
+        href = _abs_edgar_url(m.group(1))
+        if re.search(r">\s*EX-?99\.1\b", row, re.IGNORECASE):
+            return href
+        if fallback_99 is None and re.search(r">\s*EX-?99\b", row, re.IGNORECASE):
+            fallback_99 = href
+    return fallback_99
+
+
 def find_press_release_url(cik: int, accession: str) -> str | None:
     """
     Given an 8-K filing, find the EX-99.1 press release exhibit URL.
+
+    Modern filers name the exhibit arbitrarily (e.g.
+    "a2026_0622xrlsxpncxfirst.htm"), so the EX-99.1 designation lives only in
+    the *Type* column of the filing index's document table — a filename regex
+    misses it. Parse the filing-detail index page's table and match on the Type
+    cell, preferring EX-99.1, then any EX-99. Fall back to the legacy
+    filename heuristic against the directory listing if the table can't be read.
     """
     acc_clean = accession.replace("-", "")
-    idx_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_clean}/"
 
+    # 1) Parse the filing-detail index page's document table (Type column).
+    idx_html_url = (
+        f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_clean}/"
+        f"{accession}-index.htm"
+    )
     try:
-        resp = requests.get(idx_url, headers=SEC_HEADERS, timeout=15)
+        resp = requests.get(idx_html_url, headers=SEC_HEADERS, timeout=15)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception:
+        html = ""
+
+    hit = _press_release_from_index_html(html) if html else None
+    if hit:
+        return hit
+
+    # 2) Legacy fallback: match the exhibit by filename in the directory listing
+    #    (handles older filings whose index page we couldn't fetch/parse).
+    dir_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_clean}/"
+    try:
+        resp = requests.get(dir_url, headers=SEC_HEADERS, timeout=15)
         resp.raise_for_status()
     except Exception:
         return None
-
-    # Look for EX-99.1 (the press release is almost always here)
-    patterns = [
+    for pattern in (
         r'href="([^"]*ex-?99[\-_]?1[^"]*\.htm[^"]*)"',
         r'href="([^"]*ex-?99[^"]*\.htm[^"]*)"',
-    ]
-    for pattern in patterns:
+    ):
         matches = re.findall(pattern, resp.text, re.IGNORECASE)
         if matches:
-            url = matches[0]
-            if not url.startswith("http"):
-                url = f"https://www.sec.gov{url}"
-            return url
+            return _abs_edgar_url(matches[0])
 
     return None
 

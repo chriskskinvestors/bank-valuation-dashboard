@@ -203,6 +203,66 @@ class TestResolve8KDocUrl(unittest.TestCase):
             self.assertEqual(_resolve_8k_doc_url(doc), doc)
 
 
+class TestPressReleaseFromIndexHtml(unittest.TestCase):
+    """The EX-99.1 designation lives in the index table's Type column, NOT the
+    filename — modern filers name the exhibit arbitrarily (regression: PNC's
+    'a2026_0622xrlsxpncxfirst.htm' was missed by the old filename regex, so
+    8-Ks never summarized)."""
+
+    # Real PNC 8-K index table shape: primary doc wrapped in the iXBRL viewer,
+    # then an EX-99.1 row whose filename contains neither "ex" nor "99".
+    HTML = """
+      <table class="tableFile" summary="Document Format Files">
+        <tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th></tr>
+        <tr><td>1</td><td>8-K</td>
+            <td><a href="/ix?doc=/Archives/edgar/data/713676/000162828026044499/pnc-20260622.htm">pnc-20260622.htm</a></td>
+            <td>8-K</td></tr>
+        <tr class="evenRow"><td>2</td><td>EX-99.1</td>
+            <td><a href="/Archives/edgar/data/713676/000162828026044499/a2026_0622xrlsxpncxfirst.htm">a2026_0622xrlsxpncxfirst.htm</a></td>
+            <td>EX-99.1</td></tr>
+      </table>"""
+
+    def test_matches_ex991_by_type_not_filename(self):
+        url = filing_summarizer._press_release_from_index_html(self.HTML)
+        self.assertEqual(
+            url,
+            "https://www.sec.gov/Archives/edgar/data/713676/000162828026044499/a2026_0622xrlsxpncxfirst.htm",
+        )
+
+    def test_unwraps_ixbrl_viewer_prefix(self):
+        # The primary 8-K doc is wrapped in '/ix?doc=' — if it were ever the hit,
+        # the viewer wrapper must be stripped so we fetch the raw document.
+        out = filing_summarizer._abs_edgar_url(
+            "/ix?doc=/Archives/edgar/data/713676/000162828026044499/pnc-20260622.htm")
+        self.assertEqual(
+            out,
+            "https://www.sec.gov/Archives/edgar/data/713676/000162828026044499/pnc-20260622.htm",
+        )
+
+    def test_no_ex99_row_returns_none(self):
+        # Bare officer-change/vote 8-K (only the primary doc) → no exhibit.
+        html = """
+          <table class="tableFile">
+            <tr><td>1</td><td>8-K</td>
+                <td><a href="/Archives/edgar/data/1/2/x.htm">x.htm</a></td>
+                <td>8-K</td></tr>
+          </table>"""
+        self.assertIsNone(filing_summarizer._press_release_from_index_html(html))
+
+    def test_falls_back_to_any_ex99(self):
+        # EX-99 (no .1) still counts as the press release exhibit.
+        html = """
+          <table class="tableFile">
+            <tr><td>1</td><td>EX-99</td>
+                <td><a href="/Archives/edgar/data/1/2/release.htm">release.htm</a></td>
+                <td>EX-99</td></tr>
+          </table>"""
+        self.assertEqual(
+            filing_summarizer._press_release_from_index_html(html),
+            "https://www.sec.gov/Archives/edgar/data/1/2/release.htm",
+        )
+
+
 class TestSummarizerPriority(unittest.TestCase):
     def test_high_signal_items_flagged(self):
         for item in ("1.01", "2.01", "8.01", "5.02", "4.02", "2.06", "5.01"):
