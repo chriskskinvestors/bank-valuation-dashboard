@@ -321,6 +321,28 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
     return [dict(r) for r in rows]
 
 
+def get_events_by_type(event_type: str, limit: int = 600) -> list[dict]:
+    """Recent events of one event_type across the universe, newest-first.
+
+    Used by the calendar's conference-call parsing: a bank's call-details PR is
+    often issued weeks before the report date, so a recency window over ALL
+    events would push it off the edge. Querying the (sparse) earnings-typed rows
+    directly reaches back far enough. Topic-feed rows are excluded."""
+    from sqlalchemy import text
+    sql = """
+        SELECT ticker, source, event_type, headline, summary, url,
+               published_at, external_id
+        FROM events
+        WHERE event_type = :et AND source <> :topic_src
+        ORDER BY published_at DESC
+        LIMIT :n
+    """
+    params = {"et": event_type, "topic_src": TOPIC_SOURCE, "n": limit}
+    with _get_engine().connect() as conn:
+        rows = conn.execute(text(sql), params).mappings().all()
+    return [dict(r) for r in rows]
+
+
 def get_topic_news(category: str, hours: int = 24, limit: int = 50) -> list[dict]:
     """
     Recent topic-feed headlines for one Home-page category ('macro',

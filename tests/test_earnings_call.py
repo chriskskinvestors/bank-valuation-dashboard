@@ -33,6 +33,24 @@ class TestParseCallInfo(unittest.TestCase):
         self.assertEqual(info["webcast_url"], "https://investor.bannerbank.com/events")
         self.assertEqual(info["dial_in"], "1-833-470-1428 (ID 123456)")
 
+    def test_real_citizens_release_parenthesized_zone(self):
+        # VERBATIM-shaped Citizens (CFG) Q2-2026 call-details release. Pins the
+        # "9:00 am (ET)" parenthesized-zone format + dial-in boilerplate gap that
+        # the first parser version missed.
+        text = (
+            "As previously announced, Citizens Financial Group, Inc. (NYSE: CFG) "
+            "will report its second quarter 2026 earnings on July 16, 2026. The "
+            "news release and supplemental materials will be available at "
+            "http://investor.citizensbank.com. CFG management will host a live "
+            "conference call that morning with details as follows: Time: 9:00 am "
+            "(ET) Dial-in: To ask a question on the call, individuals may call in "
+            "by dialing 800-369-1703, conference ID 1679767."
+        )
+        info = parse_call_info(text)
+        self.assertEqual(info["call_time"], "9:00a ET")
+        self.assertEqual(info["webcast_url"], "http://investor.citizensbank.com")
+        self.assertEqual(info["dial_in"], "800-369-1703 (ID 1679767)")
+
     def test_eastern_time_words_normalize(self):
         text = ("Acme Bancorp will release Q2 results on July 22 followed by a "
                 "conference call at 9:00 a.m. Eastern Time.")

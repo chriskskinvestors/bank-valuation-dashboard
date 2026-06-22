@@ -21,14 +21,11 @@ from __future__ import annotations
 
 import re
 
-# PR sources that carry first-party company releases (mirror the news half of
-# the Home feed). Topic/aggregator sources are excluded.
-_PR_SOURCES = ["sec_8k", "businesswire", "prnewswire", "globenewswire", "ir_site"]
-
 # Time-of-day with an explicit US time zone — banks always state the zone for
-# the call ("10:00 a.m. ET", "8:30 AM Eastern Time", "9 a.m. Central").
+# the call ("10:00 a.m. ET", "8:30 AM Eastern Time", "9 a.m. Central", and the
+# very common "9:00 am (ET)" with the zone in parentheses).
 _TIME_RE = re.compile(
-    r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\s*"
+    r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\s*[(\[]?\s*"
     r"(eastern|central|mountain|pacific|e[ds]?t|c[ds]?t|m[ds]?t|p[ds]?t)\b",
     re.I,
 )
@@ -79,7 +76,9 @@ def _parse_dial_in(text: str) -> str | None:
     num = None
     cue = _DIALIN_CUE_RE.search(text)
     if cue:
-        m = _PHONE_RE.search(text, cue.end(), cue.end() + 80)
+        # Releases often put boilerplate ("To ask a question on the call,
+        # individuals may call in by dialing …") between the cue and the number.
+        m = _PHONE_RE.search(text, cue.end(), cue.end() + 140)
         if m:
             num = m.group(0).strip()
     if not num:
@@ -127,25 +126,27 @@ def call_info_map() -> dict:
     recent earnings-announcement press release.
 
     ONE events query, 1h-cached (st.cache_data) so the calendar render never
-    re-queries/re-parses. A parsed webcast URL is dropped unless it passes the
-    same safety filter the news feed uses. Empty on any failure."""
+    re-queries/re-parses. Queries 'earnings'-typed events directly (not a flat
+    recency window): the call-details PR is often weeks old by the report date,
+    so it would otherwise fall outside the most-recent rows. A parsed webcast URL
+    is dropped unless it passes the news feed's safety filter. Empty on failure."""
     import streamlit as st
 
     @st.cache_data(ttl=3600, show_spinner=False)
     def _build() -> dict:
         try:
-            from data.events.store import get_universe_recent
+            from data.events.store import get_events_by_type
             from data.events.wire_base import is_safe_news_url
         except Exception:
             return {}
         try:
-            rows = get_universe_recent(limit=1000, sources=_PR_SOURCES)
+            rows = get_events_by_type("earnings", limit=800)
         except Exception:
             return {}
         out: dict = {}
         for r in rows:                               # newest-first
             tk = r.get("ticker")
-            if not tk or tk in out or r.get("event_type") != "earnings":
+            if not tk or tk in out:
                 continue
             info = parse_call_info(r.get("summary") or "")
             if not info:
