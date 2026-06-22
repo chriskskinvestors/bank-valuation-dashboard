@@ -659,11 +659,16 @@ def _af_overlay_1d(fmp_client, tk):
     close comes from that same 7-day window (last bar before today), so there's
     no extra call; with no prior session in the window we fall back to the
     session's first bar. Returns (pcts, dates) or None."""
+    import pandas as pd
     h = fmp_client.get_history(tk, period="1W", cache_only=True)  # 15-min, 7d
     if h is None or h.empty or "close" not in h:
         return None
-    h = h.dropna(subset=["close"]).sort_values("date")
-    if h.empty:
+    h = h.dropna(subset=["close"]).copy()
+    # The cache round-trips through JSON (data/cache.py json.dumps default=str),
+    # so "date" comes back as strings — coerce before any datetime op.
+    h["date"] = pd.to_datetime(h["date"], errors="coerce")
+    h = h.dropna(subset=["date"]).sort_values("date")
+    if len(h) < 2:
         return None
     sess_day = h["date"].iloc[-1].normalize()      # midnight of the latest day
     sess = h[h["date"] >= sess_day]
@@ -682,6 +687,7 @@ def _af_overlay_1d(fmp_client, tk):
 
 def _af_overlay_series(sel, tf):
     from data import fmp_client
+    import pandas as pd
     out = []
     for i, tk in enumerate(sel[:8]):
         try:
@@ -699,7 +705,11 @@ def _af_overlay_series(sel, tf):
                                            cache_only=True)
                 if h is None or h.empty or "close" not in h:
                     continue
-                h = h.dropna(subset=["close"]).sort_values("date")
+                h = h.dropna(subset=["close"]).copy()
+                # Cache round-trips through JSON (dates come back as strings) —
+                # coerce so YTD's .dt.year and the axis date labels work.
+                h["date"] = pd.to_datetime(h["date"], errors="coerce")
+                h = h.dropna(subset=["date"]).sort_values("date")
                 if tf == "YTD":
                     yr = h["date"].iloc[-1].year
                     h = h[h["date"].dt.year == yr]

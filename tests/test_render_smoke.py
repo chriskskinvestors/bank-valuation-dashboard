@@ -197,7 +197,11 @@ class TestOverlayTimeframes(unittest.TestCase):
       • 2Y resolves to a 2-year EOD endpoint, not a silent 1Y fallback.
 
     get_history is read cache_only on the render path, so the mocks accept the
-    cache_only kwarg the same way the warm-cache reader passes it.
+    cache_only kwarg the same way the warm-cache reader passes it. CRITICAL: the
+    cache round-trips through JSON (data/cache.py json.dumps default=str), so the
+    "date" column comes back as STRINGS, not Timestamps — every fixture here uses
+    string dates to mirror that, which is what pins the date-coercion fix (real
+    datetime fixtures masked the prod bug where 1D/YTD rendered blank).
     """
 
     @classmethod
@@ -207,6 +211,12 @@ class TestOverlayTimeframes(unittest.TestCase):
         import ui.home
         cls.home = importlib.reload(ui.home)
 
+    @staticmethod
+    def _strdates(timestamps):
+        # Mirror the JSON cache round-trip: Timestamp -> str (e.g. "2026-06-22
+        # 09:30:00"), the shape get_history returns on a cache_only read.
+        return [str(t) for t in timestamps]
+
     def test_1d_normalizes_to_prior_close(self):
         import pandas as pd
         import data.fmp_client as fmp
@@ -215,7 +225,8 @@ class TestOverlayTimeframes(unittest.TestCase):
         # Prior session flat at 100 (close=100); today ramps 101 -> 102.
         closes = [100.0] * len(prior) + list(
             pd.Series(range(len(today))).apply(lambda i: 101.0 + i / (len(today) - 1)))
-        df = pd.DataFrame({"date": list(prior) + list(today), "close": closes})
+        df = pd.DataFrame({"date": self._strdates(list(prior) + list(today)),
+                           "close": closes})
         saved = fmp.get_history
         try:
             fmp.get_history = lambda tk, period="1Y", **k: df
@@ -236,7 +247,8 @@ class TestOverlayTimeframes(unittest.TestCase):
         def _spy(tk, period="1Y", **k):
             seen["period"] = period
             return pd.DataFrame({
-                "date": pd.date_range("2026-01-01", periods=90),
+                "date": TestOverlayTimeframes._strdates(
+                    pd.date_range("2026-01-01", periods=90)),
                 "close": [100.0 + i for i in range(90)]})
 
         saved = fmp.get_history
@@ -248,6 +260,24 @@ class TestOverlayTimeframes(unittest.TestCase):
         # Must NOT request "1M" (the 1-hour intraday endpoint); EOD daily only.
         self.assertEqual(seen["period"], "3M")
         self.assertEqual(len(series[0][2]), 5)            # tailed to 5 sessions
+
+    def test_ytd_slices_on_coerced_dates(self):
+        # YTD does h["date"].dt.year — must work on the cache's string dates.
+        import pandas as pd
+        import data.fmp_client as fmp
+        dates = pd.date_range("2025-10-01", "2026-06-22", freq="D")
+        df = pd.DataFrame({"date": self._strdates(dates),
+                           "close": [100.0 + i for i in range(len(dates))]})
+        saved = fmp.get_history
+        try:
+            fmp.get_history = lambda tk, period="1Y", **k: df
+            series = self.home._af_overlay_series(["AAA"], "YTD")
+        finally:
+            fmp.get_history = saved
+        self.assertEqual(len(series), 1)                  # not blank
+        _tk, _c, pcts, ds = series[0]
+        # All retained points fall in 2026 (the latest observation's year).
+        self.assertTrue(all(d.year == 2026 for d in ds))
 
     def test_2y_endpoint_is_two_year_eod(self):
         import data.fmp_client as fmp
@@ -261,7 +291,7 @@ class TestOverlayTimeframes(unittest.TestCase):
         import data.fmp_client as fmp
         prior = pd.date_range("2026-06-19 09:30", "2026-06-19 16:00", freq="15min")
         today = pd.date_range("2026-06-22 09:30", "2026-06-22 16:00", freq="15min")
-        df = pd.DataFrame({"date": list(prior) + list(today),
+        df = pd.DataFrame({"date": self._strdates(list(prior) + list(today)),
                            "close": [100.0] * (len(prior) + len(today))})
         saved = fmp.get_history
         try:
