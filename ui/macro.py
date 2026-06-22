@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 
 from data.fred_client import (
-    fetch_series, latest_value, get_macro_snapshot, recession_probability, SERIES,
+    fetch_series, latest_value, recession_probability, SERIES,
 )
 from utils.chart_style import (
     apply_standard_layout, tighten_yaxis,
@@ -1262,171 +1262,262 @@ def _render_regime():
     )
 
 
-def _render_rates_curve():
-    # ── Federal Reserve / FOMC (full: policy + dot-plot + projections) ──
-    _render_fed_panel(full=True)
-    st.markdown("---")
+# ── Rates & Curve: cached board + chart builders ─────────────────────────
+# Same playbook as the Economic Data grid: a dense board on the left + a 2×2
+# grid of bordered chart cards on the right, all @st.cache_data-memoized and
+# keyed on the timeframe window. Only warm-cached SERIES are used so reads
+# stay fast (no live FRED on the render thread).
+_RATE_GRID_H = 296
+_CURVE_PALETTE = {
+    "DGS3MO": ("3M", "#93c5fd"),
+    "DGS2":   ("2Y", "#60a5fa"),
+    "DGS5":   ("5Y", "#3b82f6"),
+    "DGS10":  ("10Y", "#2563eb"),
+    "DGS30":  ("30Y", "#1e3a8a"),
+}
+# (group, series_id, label, unit) — unit drives Latest formatting.
+_RATE_BOARD = [
+    ("Policy",   "DFF",          "Fed Funds (effective)", "%"),
+    ("Treasury", "DGS3MO",       "3-Month",      "%"),
+    ("Treasury", "DGS2",         "2-Year",       "%"),
+    ("Treasury", "DGS5",         "5-Year",       "%"),
+    ("Treasury", "DGS10",        "10-Year",      "%"),
+    ("Treasury", "DGS30",        "30-Year",      "%"),
+    ("Spreads",  "T10Y2Y",       "10Y − 2Y",     "pp"),
+    ("Spreads",  "T10Y3M",       "10Y − 3M",     "pp"),
+    ("Credit",   "BAMLH0A0HYM2", "HY OAS",       "bps"),
+    ("Consumer", "MORTGAGE30US", "30-Yr Mortgage", "%"),
+]
 
-    # ── Key Macro KPIs ─────────────────────────────────────────────────
-    snap = get_macro_snapshot()
-    ff = snap.get("FEDFUNDS", {}).get("value")
-    t2 = snap.get("DGS2", {}).get("value")
-    t10 = snap.get("DGS10", {}).get("value")
-    t30 = snap.get("DGS30", {}).get("value")
-    spread_2y = snap.get("T10Y2Y", {}).get("value")
-    spread_3m = snap.get("T10Y3M", {}).get("value")
-    mortgage = snap.get("MORTGAGE30US", {}).get("value")
-    unemp = snap.get("UNRATE", {}).get("value")
-    hy_spread = snap.get("BAMLH0A0HYM2", {}).get("value")
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Fed Funds", f"{ff:.2f}%" if ff is not None else "—",
-                  delta=snap.get("FEDFUNDS", {}).get("date"))
-    with c2:
-        st.metric("10Y Treasury", f"{t10:.2f}%" if t10 is not None else "—",
-                  delta=f"2Y: {t2:.2f}%" if t2 is not None else None, delta_color="off")
-    with c3:
-        st.metric("10Y - 2Y Spread", f"{spread_2y:+.2f}pp" if spread_2y is not None else "—",
-                  delta="Inverted" if (spread_2y is not None and spread_2y < 0) else "Normal",
-                  delta_color="inverse")
-    with c4:
-        st.metric("30Y Mortgage", f"{mortgage:.2f}%" if mortgage is not None else "—")
+def _fmt_rate(v, unit) -> str:
+    if v is None or v != v:
+        return _NA_HTML
+    if unit == "bps":
+        return f"{v * 100:,.0f} bps"
+    if unit == "pp":
+        return f"{v:+.2f}pp"
+    return f"{v:.2f}%"
 
-    c5, c6, c7, c8 = st.columns(4)
-    with c5:
-        st.metric("Unemployment", f"{unemp:.1f}%" if unemp is not None else "—")
-    with c6:
-        st.metric("HY Spread", f"{hy_spread:.2f}%" if hy_spread is not None else "—")
-    with c7:
-        st.metric("10Y - 3M Spread", f"{spread_3m:+.2f}pp" if spread_3m is not None else "—",
-                  delta="Inverted" if (spread_3m is not None and spread_3m < 0) else "Normal",
-                  delta_color="inverse")
-    with c8:
-        st.metric("30Y Treasury", f"{t30:.2f}%" if t30 is not None else "—")
 
-    st.markdown("---")
+def _fmt_rate_delta(dbps) -> str:
+    """Signed change in basis points, neutral color (direction, not good/bad —
+    rising/falling yields aren't inherently better)."""
+    if dbps is None or dbps != dbps:
+        return '<span style="color:var(--text-muted);">—</span>'
+    if abs(dbps) < 0.5:
+        return '<span style="color:var(--text-secondary);">0</span>'
+    return f'<span style="color:var(--text-secondary);">{dbps:+.0f}</span>'
 
-    # ── Charts ─────────────────────────────────────────────────────────
-    # Cohesive treasury palette: short→long maturities run light→dark blue so
-    # the family reads as one curve; Fed funds (policy) is slate, non-treasury
-    # series get a distinct accent.
-    CURVE = {
-        "DGS3MO": ("3M", "#93c5fd"),
-        "DGS2":   ("2Y", "#60a5fa"),
-        "DGS5":   ("5Y", "#3b82f6"),
-        "DGS10":  ("10Y", "#2563eb"),
-        "DGS30":  ("30Y", "#1e3a8a"),
-    }
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _rates_board_rows():
+    from data.macro_indicators import basis_series, zscore_latest
+    rows = []
+    for group, sid, label, unit in _RATE_BOARD:
+        df = fetch_series(sid, years=11)
+        d = (df.dropna(subset=["value"]).sort_values("date")
+             if df is not None and not df.empty else None)
+        latest = as_of = d1w = d3m = z = None
+        spark = []
+        if d is not None and not d.empty:
+            latest = float(d["value"].iloc[-1])
+            as_of = d["date"].iloc[-1]
+
+            def _ago(days):
+                cut = as_of - pd.Timedelta(days=days)
+                prior = d[d["date"] <= cut]
+                return float(prior["value"].iloc[-1]) if not prior.empty else None
+            p1w, p3m = _ago(7), _ago(91)
+            d1w = (latest - p1w) * 100 if p1w is not None else None
+            d3m = (latest - p3m) * 100 if p3m is not None else None
+            bs = basis_series(df, "level_pct")
+            if bs is not None and not bs.empty:
+                cut = bs["date"].iloc[-1] - pd.Timedelta(days=365 * 3)
+                spark = [float(v) for v in bs[bs["date"] >= cut]["value"].tolist() if v == v]
+            z = zscore_latest(df, "level_pct", years=10)
+        rows.append({"group": group, "label": label, "unit": unit, "latest": latest,
+                     "d1w": d1w, "d3m": d3m, "z": z, "spark": spark, "as_of": as_of})
+    return rows
+
+
+def _rates_board_table(rows) -> str:
+    import html as _h
+    groups = []
+    for r in rows:
+        if r["group"] not in groups:
+            groups.append(r["group"])
+    body = ""
+    for g in groups:
+        body += (f'<tr><td colspan="7" style="text-align:left;background:var(--grid-head-bg);'
+                 'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
+                 f'font-size:var(--fs-2xs);letter-spacing:0.06em;">{_h.escape(g)}</td></tr>')
+        for r in (x for x in rows if x["group"] == g):
+            aod = (r["as_of"].strftime("%b %d").replace(" 0", " ") if r["as_of"] is not None else "—")
+            body += (
+                "<tr>"
+                f'<td style="text-align:left;">{_h.escape(r["label"])}</td>'
+                f'<td style="text-align:right;font-weight:600;">{_fmt_rate(r["latest"], r["unit"])}</td>'
+                f'<td style="text-align:right;">{_fmt_rate_delta(r["d1w"])}</td>'
+                f'<td style="text-align:right;">{_fmt_rate_delta(r["d3m"])}</td>'
+                f'<td style="text-align:right;">{_fmt_z(r["z"])}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(r["spark"])}</td>'
+                f'<td style="text-align:right;color:var(--text-secondary);">{aod}</td>'
+                "</tr>"
+            )
+    return (
+        '<div class="ksk-grid"><table><thead><tr>'
+        '<th style="text-align:left;">Instrument</th>'
+        '<th style="text-align:right;">Latest</th>'
+        '<th style="text-align:right;">Δ1W</th>'
+        '<th style="text-align:right;">Δ3M</th>'
+        '<th style="text-align:right;">vs hist</th>'
+        '<th style="text-align:center;">Trend (3Y)</th>'
+        '<th style="text-align:right;">As of</th></tr></thead><tbody>'
+        + body + "</tbody></table></div>"
+    )
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_yield_curve():
     import plotly.graph_objects as go
 
-    # ── Chart 1: the actual yield curve — today / 3M ago / 1Y ago ──────
-    def _at(df, days_ago):
+    def _at(df, days):
         if df is None or df.empty:
             return None
         d = df.dropna(subset=["value"]).sort_values("date")
         if d.empty:
             return None
-        if days_ago == 0:
+        if days == 0:
             return float(d["value"].iloc[-1])
-        cutoff = d["date"].iloc[-1] - pd.Timedelta(days=days_ago)
-        prior = d[d["date"] <= cutoff]
+        cut = d["date"].iloc[-1] - pd.Timedelta(days=days)
+        prior = d[d["date"] <= cut]
         return float(prior["value"].iloc[-1]) if not prior.empty else None
-
     tenors = [("3M", "DGS3MO"), ("2Y", "DGS2"), ("5Y", "DGS5"),
               ("10Y", "DGS10"), ("30Y", "DGS30")]
-    labels, cur_y, m3_y, y1_y = [], [], [], []
+    labels, cur, m3, y1 = [], [], [], []
     for lbl, sid in tenors:
         d = fetch_series(sid, years=2)
         labels.append(lbl)
-        cur_y.append(_at(d, 0)); m3_y.append(_at(d, 90)); y1_y.append(_at(d, 365))
+        cur.append(_at(d, 0))
+        m3.append(_at(d, 90))
+        y1.append(_at(d, 365))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=labels, y=y1, name="1Y ago", mode="lines+markers",
+        line=dict(color="#cbd5e1", width=2, dash="dot"), marker=dict(size=5, color="#cbd5e1")))
+    fig.add_trace(go.Scatter(x=labels, y=m3, name="3M ago", mode="lines+markers",
+        line=dict(color="#93c5fd", width=2, dash="dash"), marker=dict(size=5, color="#93c5fd")))
+    fig.add_trace(go.Scatter(x=labels, y=cur, name="Today", mode="lines+markers+text",
+        line=dict(color="#2563eb", width=3), marker=dict(size=9, color="#2563eb"),
+        text=[f"{v:.2f}%" if v is not None else "" for v in cur],
+        textposition="top center", textfont=dict(size=10, color="#1e3a8a")))
+    apply_standard_layout(fig, title="Treasury yield curve — today vs 3M & 1Y ago",
+                          height=_RATE_GRID_H, yaxis_title="Yield", xaxis_title="Maturity",
+                          hovermode="x unified")
+    fig.update_yaxes(ticksuffix="%")
+    return fig
 
-    figc = go.Figure()
-    figc.add_trace(go.Scatter(
-        x=labels, y=y1_y, name="1Y ago", mode="lines+markers",
-        line=dict(color="#cbd5e1", width=2, dash="dot"),
-        marker=dict(size=5, color="#cbd5e1"),
-    ))
-    figc.add_trace(go.Scatter(
-        x=labels, y=m3_y, name="3M ago", mode="lines+markers",
-        line=dict(color="#93c5fd", width=2, dash="dash"),
-        marker=dict(size=5, color="#93c5fd"),
-    ))
-    figc.add_trace(go.Scatter(
-        x=labels, y=cur_y, name="Today", mode="lines+markers+text",
-        line=dict(color="#2563eb", width=3),
-        marker=dict(size=9, color="#2563eb"),
-        text=[f"{v:.2f}%" if v is not None else "" for v in cur_y],
-        textposition="top center", textfont=dict(size=11, color="#1e3a8a"),
-    ))
-    apply_standard_layout(figc, title="Treasury Yield Curve — today vs 3M & 1Y ago",
-                          height=CHART_HEIGHT_FULL, yaxis_title="Yield",
-                          xaxis_title="Maturity", hovermode="x unified")
-    figc.update_yaxes(ticksuffix="%")
-    st.plotly_chart(figc, use_container_width=True)
 
-    # ── Chart 2: rate history (3Y), cohesive palette ───────────────────
-    fig1 = go.Figure()
-    ffdf = fetch_series("FEDFUNDS", years=3)
-    if not ffdf.empty:
-        fig1.add_trace(go.Scatter(
-            x=ffdf["date"], y=ffdf["value"], name="Fed Funds",
-            mode="lines", line=dict(color="#64748b", width=2, dash="dot"),
-        ))
-    for sid, (label, color) in CURVE.items():
-        df = fetch_series(sid, years=3)
-        if not df.empty:
-            fig1.add_trace(go.Scatter(
-                x=df["date"], y=df["value"], name=label, mode="lines",
-                line=dict(color=color, width=2),
-            ))
-    apply_standard_layout(fig1, title="Rate History (3Y)", height=CHART_HEIGHT_FULL,
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_rate_history(window="5Y"):
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    ff = _win(fetch_series("DFF", years=_FETCH_YEARS), window)
+    if ff is not None and not ff.empty:
+        fig.add_trace(go.Scatter(x=ff["date"], y=ff["value"], name="Fed Funds",
+            mode="lines", line=dict(color="#64748b", width=2, dash="dot")))
+    for sid, (label, color) in _CURVE_PALETTE.items():
+        d = _win(fetch_series(sid, years=_FETCH_YEARS), window)
+        if d is not None and not d.empty:
+            fig.add_trace(go.Scatter(x=d["date"], y=d["value"], name=label,
+                mode="lines", line=dict(color=color, width=2)))
+    apply_standard_layout(fig, title=f"Rate history ({window})", height=_RATE_GRID_H,
                           yaxis_title="Rate")
-    fig1.update_yaxes(ticksuffix="%")
-    st.plotly_chart(fig1, use_container_width=True)
+    fig.update_yaxes(ticksuffix="%")
+    return fig
 
-    # Chart 3: curve spreads — 10Y-3M (the NY Fed recession indicator) is
-    # emphasized, with the inverted (<0) zone shaded red and a live callout.
-    fig2 = go.Figure()
-    fig2.add_hrect(y0=-4, y1=0, fillcolor="rgba(220,38,38,0.07)",
-                   line_width=0, layer="below")
-    last_3m, last_3m_date = None, None
-    for sid, label, color, width in [
-        ("T10Y2Y", "10Y − 2Y", "#93c5fd", 1.6),
-        ("T10Y3M", "10Y − 3M (recession signal)", "#dc2626", 2.8),
-    ]:
-        df = fetch_series(sid, years=5)
-        if not df.empty:
-            fig2.add_trace(go.Scatter(
-                x=df["date"], y=df["value"], name=label, mode="lines",
-                line=dict(color=color, width=width),
-            ))
-            if sid == "T10Y3M":
-                dd = df.dropna(subset=["value"]).sort_values("date")
-                if not dd.empty:
-                    last_3m = float(dd["value"].iloc[-1])
-                    last_3m_date = dd["date"].iloc[-1]
-    fig2.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
-    if last_3m is not None:
-        inv = last_3m < 0
-        fig2.add_annotation(
-            x=last_3m_date, y=last_3m,
-            text=f"10Y−3M {last_3m:+.2f}pp · {'inverted' if inv else 'normal'}",
-            showarrow=True, arrowhead=0, ax=-70, ay=-26,
-            font=dict(size=10, color="#dc2626" if inv else "#059669"),
-            bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3,
-        )
-    apply_standard_layout(fig2, title="Curve Spreads (5Y) — 10Y−3M is the recession signal",
-                          height=CHART_HEIGHT_COMPACT, yaxis_title="Spread")
-    fig2.update_yaxes(ticksuffix="pp")
-    st.plotly_chart(fig2, use_container_width=True)
 
-    st.markdown("---")
-    st.caption(
-        "Data from FRED (Federal Reserve Economic Data). Refreshed daily. "
-        "Recession score combines 10Y-2Y spread, 10Y-3M spread (NY Fed indicator), "
-        "and Sahm Rule proxy on unemployment."
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_curve_spreads(window="5Y"):
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    fig.add_hrect(y0=-4, y1=0, fillcolor="rgba(220,38,38,0.07)", line_width=0, layer="below")
+    for sid, label, color, w in [("T10Y2Y", "10Y − 2Y", "#93c5fd", 1.8),
+                                 ("T10Y3M", "10Y − 3M (recession signal)", "#dc2626", 2.6)]:
+        d = _win(fetch_series(sid, years=_FETCH_YEARS), window)
+        if d is not None and not d.empty:
+            fig.add_trace(go.Scatter(x=d["date"], y=d["value"], name=label,
+                mode="lines", line=dict(color=color, width=w)))
+    fig.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
+    apply_standard_layout(fig, title=f"Curve spreads ({window}) — below 0 = inverted",
+                          height=_RATE_GRID_H, yaxis_title="Spread")
+    fig.update_yaxes(ticksuffix="pp")
+    return fig
+
+
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _fig_mortgage_10y(window="5Y"):
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    mort = _win(fetch_series("MORTGAGE30US", years=_FETCH_YEARS), window)
+    t10 = _win(fetch_series("DGS10", years=_FETCH_YEARS), window)
+    if mort is not None and not mort.empty:
+        fig.add_trace(go.Scatter(x=mort["date"], y=mort["value"], name="30Y Mortgage",
+            mode="lines", line=dict(color="#d97706", width=2.4)))
+    if t10 is not None and not t10.empty:
+        fig.add_trace(go.Scatter(x=t10["date"], y=t10["value"], name="10Y Treasury",
+            mode="lines", line=dict(color="#2563eb", width=2)))
+    apply_standard_layout(fig, title=f"Mortgage vs 10Y ({window}) — the gap is the spread",
+                          height=_RATE_GRID_H, yaxis_title="Rate")
+    fig.update_yaxes(ticksuffix="%")
+    return fig
+
+
+@st.fragment
+def _render_rates_charts():
+    """Timeframe selector + 2×2 grid of bordered chart cards (in a fragment so
+    changing the timeframe re-runs only the charts, not the board)."""
+    st.markdown(
+        "<style>"
+        'div[class*="st-key-ratechart"]{padding:2px 6px 0!important;}'
+        'div[class*="st-key-ratechart"] [data-testid="stElementContainer"]'
+        "{padding:0!important;margin:0!important;}"
+        'div[class*="st-key-ratechart"] [data-testid="stVerticalBlock"]{gap:0!important;}'
+        "</style>",
+        unsafe_allow_html=True,
     )
+    window = st.segmented_control(
+        "Timeframe", _TF_OPTIONS, default="5Y", key="rates_grid_tf",
+        label_visibility="collapsed") or "5Y"
+    ca, cb = st.columns(2)
+    with ca:
+        with st.container(border=True, key="ratechart_curve"):
+            st.plotly_chart(_fig_yield_curve(), use_container_width=True)
+        with st.container(border=True, key="ratechart_spreads"):
+            st.plotly_chart(_fig_curve_spreads(window), use_container_width=True)
+    with cb:
+        with st.container(border=True, key="ratechart_hist"):
+            st.plotly_chart(_fig_rate_history(window), use_container_width=True)
+        with st.container(border=True, key="ratechart_mort"):
+            st.plotly_chart(_fig_mortgage_10y(window), use_container_width=True)
+
+
+def _render_rates_curve():
+    # ── Federal Reserve / FOMC (full: policy + dot-plot + projections) ──
+    _render_fed_panel(full=True)
+    st.markdown("---")
+
+    board_col, chart_col = st.columns([1, 1.5])
+    with board_col:
+        st.markdown("**Rates & curve board**")
+        st.markdown(_rates_board_table(_rates_board_rows()), unsafe_allow_html=True)
+        st.caption(
+            "Latest level per instrument; Δ 1W / Δ 3M in basis points; vs hist = "
+            "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
+            "HY OAS shown in bps over Treasuries. Source: FRED."
+        )
+    with chart_col:
+        _render_rates_charts()
 
 
 def _render_credit_spreads():
