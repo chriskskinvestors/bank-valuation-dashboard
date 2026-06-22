@@ -810,9 +810,11 @@ def _render_economy_calendar():
     recent = get_recent_releases(days=10, limit=16)
     up = get_upcoming_releases(days=14, limit=20)
     rows = get_print_board()
-    # Calendars (left) · board (middle) · Inflation + Labor charts stacked on
-    # the right, so the charts sit beside the tables and fill the right column.
-    cal_col, board_col, chart_col = st.columns([1, 1, 1.1])
+    # Calendars (left) · board (middle, content-hug so no slack) · a 2×2 chart
+    # grid on the right: Inflation/Labor stacked beside Growth/Activity stacked.
+    # Tables packed left (tighter fractions), chart region widened to hold two
+    # charts side by side.
+    cal_col, board_col, chart_col = st.columns([1, 0.92, 1.78])
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
@@ -901,98 +903,99 @@ def _render_economy_calendar():
         } for r in rows])
         table_export(export_df, "macro_print_board", key="macro_print_board_export")
     with chart_col:
-        # Box 1 (top): Inflation. Box 2 (below): Labor — beside the board.
-        figi = go.Figure()
-        for sid, label, color in [
-            ("CPIAUCSL", "CPI", "#1e40af"),
-            ("CPILFESL", "Core CPI", "#3b82f6"),
-            ("PCEPILFE", "Core PCE", "#d97706"),
-        ]:
-            s = to_yoy(fetch_series(sid, years=6))
-            if not s.empty:
-                cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                s = s[s["date"] >= cutoff]
-                figi.add_trace(go.Scatter(
-                    x=s["date"], y=s["value"], name=label, mode="lines",
-                    line=dict(color=color, width=2),
-                ))
-        _shade_recessions(figi)
-        figi.add_hline(y=2.0, line_color="#059669", line_width=1, line_dash="dash",
-                       annotation_text="Fed 2% target", annotation_position="top left",
-                       annotation_font=dict(size=10, color="#059669"))
-        apply_standard_layout(figi, title="Inflation — YoY % (5Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="YoY")
-        figi.update_yaxes(ticksuffix="%")
-        st.plotly_chart(figi, use_container_width=True)
+        # 2×2 grid beside the board: left sub-column = Inflation (top) / Labor
+        # (bottom); right sub-column = Growth (top) / Activity (bottom).
+        gl, gr = st.columns(2)
+        with gl:
+            figi = go.Figure()
+            for sid, label, color in [
+                ("CPIAUCSL", "CPI", "#1e40af"),
+                ("CPILFESL", "Core CPI", "#3b82f6"),
+                ("PCEPILFE", "Core PCE", "#d97706"),
+            ]:
+                s = to_yoy(fetch_series(sid, years=6))
+                if not s.empty:
+                    cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+                    s = s[s["date"] >= cutoff]
+                    figi.add_trace(go.Scatter(
+                        x=s["date"], y=s["value"], name=label, mode="lines",
+                        line=dict(color=color, width=2),
+                    ))
+            _shade_recessions(figi)
+            figi.add_hline(y=2.0, line_color="#059669", line_width=1, line_dash="dash",
+                           annotation_text="Fed 2% target", annotation_position="top left",
+                           annotation_font=dict(size=10, color="#059669"))
+            apply_standard_layout(figi, title="Inflation — YoY % (5Y)",
+                                  height=CHART_HEIGHT_FULL, yaxis_title="YoY")
+            figi.update_yaxes(ticksuffix="%")
+            st.plotly_chart(figi, use_container_width=True)
 
-        figl = go.Figure()
-        nfp = to_mom_change(fetch_series("PAYEMS", years=6))
-        if not nfp.empty:
-            cutoff = nfp["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-            nfp = nfp[nfp["date"] >= cutoff]
-            bar_colors = ["#dc2626" if v < 0 else "#3b82f6" for v in nfp["value"]]
-            figl.add_trace(go.Bar(
-                x=nfp["date"], y=nfp["value"], name="Payrolls Δ (000s)",
-                marker_color=bar_colors, yaxis="y",
-            ))
-        unr = fetch_series("UNRATE", years=6)
-        if not unr.empty:
-            cutoff = unr["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-            unr = unr[unr["date"] >= cutoff]
-            figl.add_trace(go.Scatter(
-                x=unr["date"], y=unr["value"], name="Unemployment %",
-                mode="lines", line=dict(color="#0f172a", width=2), yaxis="y2",
-            ))
-        _shade_recessions(figl)
-        apply_standard_layout(figl, title="Labor — payrolls Δ & unemployment (5Y)",
-                              height=CHART_HEIGHT_FULL, yaxis_title="Jobs Δ (000s)")
-        figl.update_layout(
-            yaxis2=dict(title="Unemp %", overlaying="y", side="right",
-                        ticksuffix="%", showgrid=False),
-        )
-        st.plotly_chart(figl, use_container_width=True)
+            figl = go.Figure()
+            nfp = to_mom_change(fetch_series("PAYEMS", years=6))
+            if not nfp.empty:
+                cutoff = nfp["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+                nfp = nfp[nfp["date"] >= cutoff]
+                bar_colors = ["#dc2626" if v < 0 else "#3b82f6" for v in nfp["value"]]
+                figl.add_trace(go.Bar(
+                    x=nfp["date"], y=nfp["value"], name="Payrolls Δ (000s)",
+                    marker_color=bar_colors, yaxis="y",
+                ))
+            unr = fetch_series("UNRATE", years=6)
+            if not unr.empty:
+                cutoff = unr["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+                unr = unr[unr["date"] >= cutoff]
+                figl.add_trace(go.Scatter(
+                    x=unr["date"], y=unr["value"], name="Unemployment %",
+                    mode="lines", line=dict(color="#0f172a", width=2), yaxis="y2",
+                ))
+            _shade_recessions(figl)
+            apply_standard_layout(figl, title="Labor — payrolls Δ & unemployment (5Y)",
+                                  height=CHART_HEIGHT_FULL, yaxis_title="Jobs Δ (000s)")
+            figl.update_layout(
+                yaxis2=dict(title="Unemp %", overlaying="y", side="right",
+                            ticksuffix="%", showgrid=False),
+            )
+            st.plotly_chart(figl, use_container_width=True)
+
+        with gr:
+            figg = go.Figure()
+            gdp = fetch_series("A191RL1Q225SBEA", years=6)
+            if not gdp.empty:
+                g = gdp.dropna(subset=["value"]).sort_values("date")
+                cutoff = g["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+                g = g[g["date"] >= cutoff]
+                gcolors = ["#dc2626" if v < 0 else "#1e40af" for v in g["value"]]
+                figg.add_trace(go.Bar(x=g["date"], y=g["value"], name="Real GDP QoQ SAAR",
+                                      marker_color=gcolors))
+            _shade_recessions(figg)
+            apply_standard_layout(figg, title="Growth — Real GDP (QoQ SAAR, 5Y)",
+                                  height=CHART_HEIGHT_FULL, yaxis_title="QoQ SAAR",
+                                  show_legend=False)
+            figg.update_yaxes(ticksuffix="%")
+            st.plotly_chart(figg, use_container_width=True)
+
+            figa = go.Figure()
+            for sid, label, color in [
+                ("INDPRO", "Industrial Production", "#1e40af"),
+                ("RSAFS", "Retail Sales", "#d97706"),
+            ]:
+                s = to_yoy(fetch_series(sid, years=6))
+                if not s.empty:
+                    cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
+                    s = s[s["date"] >= cutoff]
+                    figa.add_trace(go.Scatter(
+                        x=s["date"], y=s["value"], name=label, mode="lines",
+                        line=dict(color=color, width=2)))
+            _shade_recessions(figa)
+            apply_standard_layout(figa, title="Activity — Industrial Production & Retail (YoY, 5Y)",
+                                  height=CHART_HEIGHT_FULL, yaxis_title="YoY")
+            figa.update_yaxes(ticksuffix="%")
+            st.plotly_chart(figa, use_container_width=True)
 
     st.markdown("---")
 
-    # ── Trend charts (the remaining four), 2-up, NBER recessions shaded ──
+    # ── Trend charts (Housing & Sentiment), 2-up, NBER recessions shaded ──
     st.markdown("**Trend charts**")
-    c1, c2 = st.columns(2)
-    with c1:
-        figg = go.Figure()
-        gdp = fetch_series("A191RL1Q225SBEA", years=6)
-        if not gdp.empty:
-            g = gdp.dropna(subset=["value"]).sort_values("date")
-            cutoff = g["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-            g = g[g["date"] >= cutoff]
-            gcolors = ["#dc2626" if v < 0 else "#1e40af" for v in g["value"]]
-            figg.add_trace(go.Bar(x=g["date"], y=g["value"], name="Real GDP QoQ SAAR",
-                                  marker_color=gcolors))
-        _shade_recessions(figg)
-        apply_standard_layout(figg, title="Growth — Real GDP (QoQ SAAR, 5Y)",
-                              height=CHART_HEIGHT_HERO, yaxis_title="QoQ SAAR",
-                              show_legend=False)
-        figg.update_yaxes(ticksuffix="%")
-        st.plotly_chart(figg, use_container_width=True)
-
-    with c2:
-        figa = go.Figure()
-        for sid, label, color in [
-            ("INDPRO", "Industrial Production", "#1e40af"),
-            ("RSAFS", "Retail Sales", "#d97706"),
-        ]:
-            s = to_yoy(fetch_series(sid, years=6))
-            if not s.empty:
-                cutoff = s["date"].iloc[-1] - pd.Timedelta(days=365 * 5)
-                s = s[s["date"] >= cutoff]
-                figa.add_trace(go.Scatter(
-                    x=s["date"], y=s["value"], name=label, mode="lines",
-                    line=dict(color=color, width=2)))
-        _shade_recessions(figa)
-        apply_standard_layout(figa, title="Activity — Industrial Production & Retail (YoY, 5Y)",
-                              height=CHART_HEIGHT_HERO, yaxis_title="YoY")
-        figa.update_yaxes(ticksuffix="%")
-        st.plotly_chart(figa, use_container_width=True)
-
     c3, c4 = st.columns(2)
     with c3:
         figh = go.Figure()
