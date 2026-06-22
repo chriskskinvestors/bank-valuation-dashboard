@@ -337,23 +337,31 @@ def _reclean_summaries(days: int = 21) -> int:
     return n
 
 
-_IDX_URL_RE = re.compile(r"/data/(\d+)/[^/]+/([\d-]+)-index\.htm", re.IGNORECASE)
+# Any EDGAR archives URL exposes the CIK and the 18-digit accession-directory,
+# whether it's an "-index.htm" page (recent-feed adapter) or a primary-document
+# link (per-CIK adapter, e.g. ".../000162828026044499/pnc-20260622.htm"). Both
+# resolve to the same filing, so we can find the EX-99.1 from either.
+_ARCHIVE_URL_RE = re.compile(r"/Archives/edgar/data/(\d+)/(\d{18})(?:/|$)", re.IGNORECASE)
 
 
 def _resolve_8k_doc_url(url: str) -> str:
-    """Resolve an EDGAR 8-K *index* URL (".../<accession>-index.htm", what the
-    all-banks recent-feed adapter stores) to its EX-99.1 press-release exhibit,
-    so the summarizer fetches real body text instead of a document list. Earnings
-    / Reg-FD / M&A 8-Ks carry an EX-99.1 (resolved -> they summarize); bare
-    officer-change/vote 8-Ks don't (returns the index unchanged -> the model gets
-    metadata, the summary is dropped, and the clean item headline stands).
-    Non-index URLs (the per-CIK adapter's primary-doc links) pass through."""
-    m = _IDX_URL_RE.search(url or "")
+    """Resolve an EDGAR 8-K filing URL to its EX-99.1 press-release exhibit so
+    the summarizer fetches real body text instead of a cover page / document
+    list. Works for BOTH the recent-feed adapter's "-index.htm" URL and the
+    per-CIK adapter's primary-document URL — for a press-release 8-K the primary
+    doc is just the cover that *references* Exhibit 99.1, so neither carries the
+    substance. Earnings / Reg-FD / M&A 8-Ks have an EX-99.1 (resolved -> they
+    summarize); bare officer-change/vote 8-Ks don't (URL returned unchanged ->
+    the model gets metadata, the summary is dropped, the item headline stands).
+    Non-EDGAR-archive URLs (e.g. the browse-edgar fallback) pass through."""
+    m = _ARCHIVE_URL_RE.search(url or "")
     if not m:
         return url
+    d = m.group(2)  # 18-digit accession with dashes stripped
+    accession = f"{d[:10]}-{d[10:12]}-{d[12:]}"
     try:
         from data.filing_summarizer import find_press_release_url
-        ex = find_press_release_url(int(m.group(1)), m.group(2))
+        ex = find_press_release_url(int(m.group(1)), accession)
     except Exception:
         ex = None
     return ex or url

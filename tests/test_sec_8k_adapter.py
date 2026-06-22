@@ -195,12 +195,30 @@ class TestResolve8KDocUrl(unittest.TestCase):
         with patch.object(filing_summarizer, "find_press_release_url", return_value=None):
             self.assertEqual(_resolve_8k_doc_url(self.IDX), self.IDX)
 
-    def test_primary_doc_url_passes_through(self):
-        # Per-CIK adapter already points at a document — must not be touched.
+    def test_primary_doc_url_also_resolves(self):
+        # Per-CIK adapter stores the primary-doc URL (the cover page that only
+        # *references* Exhibit 99.1) — it must ALSO resolve to the EX-99.1, with
+        # the dashed accession reconstructed from the 18-digit directory.
         doc = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/pnc8k.htm"
+        ex = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/release.htm"
+        with patch.object(filing_summarizer, "find_press_release_url",
+                          return_value=ex) as m:
+            self.assertEqual(_resolve_8k_doc_url(doc), ex)
+            m.assert_called_once_with(713676, "0000713676-26-000050")
+
+    def test_primary_doc_url_unchanged_when_no_exhibit(self):
+        # Bare officer-change/vote 8-K: no EX-99.1 → keep the primary doc (its
+        # cover narrative still summarizes, or drops to the item headline).
+        doc = "https://www.sec.gov/Archives/edgar/data/713676/000071367626000050/pnc8k.htm"
+        with patch.object(filing_summarizer, "find_press_release_url", return_value=None):
+            self.assertEqual(_resolve_8k_doc_url(doc), doc)
+
+    def test_non_archive_url_passes_through(self):
+        # browse-edgar fallback / non-EDGAR URLs must not be touched.
+        u = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=713676&type=8-K"
         with patch.object(filing_summarizer, "find_press_release_url",
                           side_effect=AssertionError("should not be called")):
-            self.assertEqual(_resolve_8k_doc_url(doc), doc)
+            self.assertEqual(_resolve_8k_doc_url(u), u)
 
 
 class TestPressReleaseFromIndexHtml(unittest.TestCase):
