@@ -645,7 +645,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     tab_key = screening_tab["key"]
     tab_columns = screening_tab["columns"]
 
-    from ui.bank_scope import render_scope_selector
+    from ui.bank_scope import scope_type_options, render_scope_sub
     from data.bank_groups import save_group
 
     # Filterable metrics span the ENTIRE metric set (not just this table's
@@ -919,11 +919,13 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     else:
         screen_metrics = all_metrics
 
-    # Scope = shared Bank-Groups selector (All banks / asset-size tier / business
-    # mix / state / region / saved group / manual), sliced from the active set.
+    # Scope = shared Bank-Groups selector. Only the scope TYPE goes in the toolbar
+    # cell; its secondary picker (cohort / state / region / group / manual) renders
+    # on a thin row BELOW the bar (see below) so the segmented toolbar stays exactly
+    # one row tall no matter which scope is chosen.
     with c_scope:
-        display_metrics, display_tickers, scope_label = render_scope_selector(
-            screen_metrics, key_prefix=f"screen_{tab_key}")
+        _scope_type = st.selectbox("Scope", scope_type_options(),
+                                   key=f"screen_{tab_key}_scope_type")
     with c_sort:
         sort_idx = st.selectbox(
             "Sort by",
@@ -937,6 +939,14 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             options=["Desc", "Asc"],
             key=f"order_{tab_key}",
         )
+
+    # Scope's secondary picker renders here, BELOW the toolbar, width-capped. For
+    # "All banks" render_scope_sub draws nothing and just returns the full set, so
+    # no empty band appears in the common case.
+    _sub_l, _ = st.columns([2, 7])
+    with _sub_l:
+        display_metrics, display_tickers, scope_label = render_scope_sub(
+            screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
 
     # ── Metric filters dialog (any metric; AND-combined) ───────────────
     from analysis.screen_engine import evaluate as _evaluate_screen

@@ -41,21 +41,46 @@ def _seed_once():
         st.session_state["_bank_groups_seeded"] = True
 
 
+def scope_type_options(include_manual: bool = True) -> list[str]:
+    """The scope-type choices (the first selectbox). Exposed so a caller can render
+    the type picker on its own (e.g. inside Screen's one-row segmented toolbar) and
+    render the secondary picker separately via ``render_scope_sub``."""
+    return SCOPE_TYPES if include_manual else [t for t in SCOPE_TYPES if t != "Manual"]
+
+
 def render_scope_selector(
     all_metrics: list[dict],
     key_prefix: str,
     *,
     include_manual: bool = True,
 ) -> tuple[list[dict], list[str], str]:
-    """Render the scope picker and return (metrics_subset, tickers, label).
+    """Render the scope picker (type + secondary) inline and return
+    (metrics_subset, tickers, label). Used where stacking the two controls is fine
+    (e.g. Compare). Screen splits them — type in the toolbar, secondary below —
+    via ``scope_type_options`` + ``render_scope_sub`` so its segmented toolbar
+    stays one row tall.
 
     Streamlit widgets are keyed by ``key_prefix`` so Screen and Compare keep
     independent selections.
     """
-    _seed_once()
-    types = SCOPE_TYPES if include_manual else [t for t in SCOPE_TYPES if t != "Manual"]
+    scope_type = st.selectbox("Scope", scope_type_options(include_manual),
+                              key=f"{key_prefix}_scope_type")
+    return render_scope_sub(all_metrics, scope_type, key_prefix,
+                            include_manual=include_manual)
 
-    scope_type = st.selectbox("Scope", types, key=f"{key_prefix}_scope_type")
+
+def render_scope_sub(
+    all_metrics: list[dict],
+    scope_type: str,
+    key_prefix: str,
+    *,
+    include_manual: bool = True,
+) -> tuple[list[dict], list[str], str]:
+    """Resolve a chosen ``scope_type`` into (metrics_subset, tickers, label),
+    rendering the SECONDARY picker (cohort / state / region / group / manual) only
+    when the type needs one. For 'All banks' it renders nothing — so a caller can
+    place this below a toolbar without adding height for the no-sub-picker case."""
+    _seed_once()
 
     if scope_type == "All banks":
         return list(all_metrics), [m.get("ticker") for m in all_metrics], "All banks"
