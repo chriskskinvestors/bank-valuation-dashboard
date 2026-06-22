@@ -604,11 +604,14 @@ def _render_fed_panel(full: bool = True):
         st.caption(f"SEP median fed funds path — {path}. Source: FRED (SEP {sep_txt}).")
         return
 
-    # Compact dot-plot-style chart (median diamond · CT band · range whisker)
-    # on the left ~1/3, with the medians table beside it — not full width.
+    # Body packed into two balanced columns so nothing floats in dead space:
+    # LEFT = the projections chart (median diamond · CT band · range whisker)
+    # stacked over the SEP medians table; RIGHT = the FOMC's own words + recent
+    # Fed headlines (which used to sit in a separate full-width row, leaving the
+    # whole right half of the projections row empty).
     import plotly.graph_objects as go
-    proj_chart, proj_table = st.columns([1, 2])
-    with proj_chart:
+    body_l, body_r = st.columns([1.15, 1])
+    with body_l:
         fig = go.Figure()
         allvals = []
         for f in funds:
@@ -635,7 +638,7 @@ def _render_fed_panel(full: bool = True):
         if allvals:
             tighten_yaxis(fig, allvals, ticksuffix="%")
         st.plotly_chart(fig, use_container_width=True)
-    with proj_table:
+
         macro = proj.get("macro") or {}
         horizons = [f["horizon"] for f in funds]
 
@@ -670,10 +673,7 @@ def _render_fed_panel(full: bool = True):
                    "central-tendency band + full range in the chart. Individual participant dots "
                    f"aren't published machine-readably. Source: FRED (SEP {sep_txt}).")
 
-    # ── Statement & commentary: the FOMC's own words + recent Fed headlines ──
-    st.markdown("---")
-    sc1, sc2 = st.columns([1.4, 1])
-    with sc1:
+    with body_r:
         st.markdown("**Latest FOMC statement**")
         stmt = fetch_fomc_statement()
         if stmt and stmt.get("paragraphs"):
@@ -690,7 +690,7 @@ def _render_fed_panel(full: bool = True):
                        "Source: Federal Reserve.")
         else:
             st.caption("FOMC statement unavailable (federalreserve.gov fetch failed).")
-    with sc2:
+
         st.markdown("**Fed headlines**")
         try:
             from data.events.store import get_topic_news
