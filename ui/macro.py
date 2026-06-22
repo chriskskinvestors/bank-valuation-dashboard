@@ -1084,14 +1084,28 @@ def _render_economy_calendar():
         # Left: Inflation / Labor / Housing.  Right: Growth / Activity /
         # Sentiment.  Figures come from @st.cache_data builders, so a warm
         # rerun reuses them instead of rebuilding ~6 go.Figures each time.
+        # The st.container default ~1rem border padding wastes space around the
+        # chart; the keyed CSS hook below trims it (mirrors home.py afpane).
+        st.markdown(
+            "<style>"
+            'div[class*="st-key-macrochart"]{padding:2px 6px 0!important;}'
+            'div[class*="st-key-macrochart"] [data-testid="stElementContainer"]'
+            "{padding:0!important;margin:0!important;}"
+            'div[class*="st-key-macrochart"] [data-testid="stVerticalBlock"]'
+            "{gap:0!important;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
         gl, gr = st.columns(2)
         with gl:
-            for _build in (_fig_inflation, _fig_labor, _fig_housing):
-                with st.container(border=True):
+            for _name, _build in (("inflation", _fig_inflation), ("labor", _fig_labor),
+                                  ("housing", _fig_housing)):
+                with st.container(border=True, key=f"macrochart_{_name}"):
                     st.plotly_chart(_build(), use_container_width=True)
         with gr:
-            for _build in (_fig_growth, _fig_activity, _fig_sentiment):
-                with st.container(border=True):
+            for _name, _build in (("growth", _fig_growth), ("activity", _fig_activity),
+                                  ("sentiment", _fig_sentiment)):
+                with st.container(border=True, key=f"macrochart_{_name}"):
                     st.plotly_chart(_build(), use_container_width=True)
 
     st.markdown("---")
