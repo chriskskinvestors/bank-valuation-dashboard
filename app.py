@@ -66,8 +66,21 @@ _qs = st.query_params.get("s")
 _qs = _SECTION_ALIASES.get(_qs, _qs)
 if "nav_section" not in st.session_state and _qs in SECTIONS:
     st.session_state["nav_section"] = _qs
-if st.query_params.get("bank") and st.session_state.get("nav_section") not in ("Company",):
+# A ?bank=X deep-link (Home movers/feed row, nav-search pick) jumps into Company
+# by flipping nav_section before the radio instantiates. But it must fire ONLY on
+# the rerun where the bank param actually ARRIVES — not on every rerun a bank is
+# in the URL. Otherwise the bank param left over from a prior Company visit
+# (it's stripped at L174, but only AFTER the radio renders) re-forces Company on
+# the very rerun you click another tab, trapping you on the company page forever.
+# Discriminator: a genuine deep-link is a bank param that CHANGED since last
+# render (paired with ?s=Company, which every deep-link sets); a lingering one is
+# unchanged → respect the radio's fresh section instead.
+_bank_qs = st.query_params.get("bank")
+if (_bank_qs and _bank_qs != st.session_state.get("_bank_qs_seen")
+        and _qs in (None, "Company")
+        and st.session_state.get("nav_section") != "Company"):
     st.session_state["nav_section"] = "Company"
+st.session_state["_bank_qs_seen"] = _bank_qs
 from utils.timing import timed
 
 # Render the top nav FIRST — it depends only on SECTIONS, never on data, so
