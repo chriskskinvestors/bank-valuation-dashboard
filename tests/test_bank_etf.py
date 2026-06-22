@@ -161,11 +161,17 @@ class TestFetchContract(unittest.TestCase):
 
 
 class TestGetEtfHistory(unittest.TestCase):
+    # IMPORTANT: fixtures use STRING dates — that's what a cache_only read
+    # returns (the cache JSON-serializes Timestamps with default=str). Real
+    # datetime fixtures would pass against code that forgot to coerce and mask
+    # the exact "No history" regression (overlay-render-cache-only-warm memory).
+    # get_etf_history must coerce (via _clean_history) before any datetime op.
     def _intraday(self):
         # Two trading days of intraday bars (3 on the 18th, 4 on the 19th).
         dates = list(pd.date_range("2026-06-18 09:30", periods=3, freq="15min")) + \
                 list(pd.date_range("2026-06-19 09:30", periods=4, freq="15min"))
-        return pd.DataFrame({"date": dates, "close": [10, 11, 12, 20, 21, 22, 23],
+        return pd.DataFrame({"date": [str(d) for d in dates],
+                             "close": [10, 11, 12, 20, 21, 22, 23],
                              "volume": [1] * 7})
 
     def test_1d_returns_latest_session_only_and_passes_cache_only(self):
@@ -182,17 +188,17 @@ class TestGetEtfHistory(unittest.TestCase):
         self.assertEqual(len(out), 7)
 
     def test_eod_window_uses_1y_fetch_and_slices_by_cutoff(self):
-        dates = pd.date_range("2025-01-01", periods=500, freq="D")
+        dates = [str(d) for d in pd.date_range("2025-01-01", periods=500, freq="D")]
         df = pd.DataFrame({"date": dates, "close": list(range(500)), "volume": [1] * 500})
         with mock.patch.object(be, "get_history", return_value=df) as gh:
             out = get_etf_history("KRE", period="1M")
         gh.assert_called_once_with("KRE", period="1Y", cache_only=False)
-        cutoff = window_cutoff("1M", df["date"].iloc[-1])
+        cutoff = window_cutoff("1M", out["date"].iloc[-1])
         self.assertTrue((out["date"] >= cutoff).all())
         self.assertLess(len(out), len(df))
 
     def test_multi_year_window_uses_5y_fetch(self):
-        df = pd.DataFrame({"date": pd.date_range("2021-01-01", periods=10, freq="D"),
+        df = pd.DataFrame({"date": [str(d) for d in pd.date_range("2021-01-01", periods=10, freq="D")],
                            "close": list(range(10))})
         with mock.patch.object(be, "get_history", return_value=df) as gh:
             get_etf_history("KRE", period="3Y")
