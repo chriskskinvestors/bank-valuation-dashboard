@@ -397,6 +397,21 @@ if section == "Screen & Compare" and sc_sub == "Screen":
             _cur_key = _ordered_keys[0]
         screening_tab = next(t for t in TABS if t["key"] == _cur_key)
 
+    # Quick "add a bank by ticker" → accumulate the pick into the Manual scope so
+    # the chosen banks populate the table immediately. Handled HERE (before the
+    # scope/manual widgets render) so writing their session keys is legal; the
+    # search box is then reset to empty for the next add.
+    _addbank = st.session_state.get("screen_addbank")
+    if _addbank:
+        _mk = f"screen_{screening_tab['key']}_manual"
+        _cur_manual = list(st.session_state.get(_mk, []))
+        if _addbank not in _cur_manual:
+            _cur_manual.append(_addbank)
+        st.session_state[_mk] = _cur_manual
+        st.session_state[f"screen_{screening_tab['key']}_scope_type"] = "Manual"
+        st.session_state["screen_addbank"] = None   # reset the search box
+        st.session_state["_screen_open"] = True
+
 elif section == "Company":
     # Deep-link support: a metric card can link to ?bank=X&tab=<token> to jump
     # straight to the tab that shows that figure (carries the bank so the deep
@@ -1009,8 +1024,8 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # Plain columns with a trailing SPACER column keep the selects content-width
     # instead of stretching edge-to-edge. Theme is folded into Table. The action
     # buttons render below under a thin divider (screen_actbtns).
-    c_table, c_asof, c_scope, c_sort, c_order, _c_spacer = st.columns(
-        [2.4, 1.4, 1.5, 1.3, 0.85, 3.6])
+    c_table, c_asof, c_scope, c_sort, c_order, c_add, _c_spacer = st.columns(
+        [2.3, 1.3, 1.4, 1.2, 0.8, 2.3, 1.4])
     with c_table:
         # Theme folded in: one flat Table picker over all tables (ordered by
         # theme). screen_tab_key holds the chosen key (resolved up top).
@@ -1056,6 +1071,15 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     with c_order:
         sort_order = st.selectbox("Order", options=["Desc", "Asc"],
                                   key=f"order_{tab_key}")
+    with c_add:
+        # Quick add: search a ticker/name → it's appended to the Manual scope and
+        # the table populates (handled in the resolution block above on rerun).
+        st.selectbox(
+            "Add bank", options=sorted(watchlist), index=None,
+            placeholder="ticker or name…",
+            format_func=lambda t: (f"{t} — {get_name(t)}"
+                                   if get_name(t) and get_name(t) != t else t),
+            key="screen_addbank")
     # Scope's secondary picker — only when the type needs one; narrow, below the
     # selects. For "All banks" render_scope_sub draws nothing (no empty band).
     if _scope_type == "All banks":
