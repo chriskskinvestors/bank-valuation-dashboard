@@ -936,9 +936,11 @@ def _render_earnings_grid(headers, body_rows, height: int = 540):
     list of pre-built <tr>…</tr> strings."""
     head = "<tr>" + "".join(
         f'<th class="{cls}">{_html.escape(lbl)}</th>' for lbl, cls in headers) + "</tr>"
+    # Height is INLINE per element — every table/bucket shares the .ern-wrap class,
+    # so a shared `.ern-wrap{height}` rule would let the last-rendered table (e.g. a
+    # 1-row Calls & Webcasts week) clamp ALL of them, including the 245-row Calendar.
     css = (
-        ".ern-wrap{height:" + str(height) + "px;overflow:auto;"
-        "border:0.5px solid var(--grid-head);}"
+        ".ern-wrap{overflow:auto;border:0.5px solid var(--grid-head);}"
         ".ern-wrap thead th{position:sticky;top:0;z-index:2;}"
         ".ern-grid td.nm,.ern-grid th.nm{text-align:left;color:var(--text-secondary);"
         "max-width:230px;overflow:hidden;text-overflow:ellipsis;}"
@@ -949,7 +951,8 @@ def _render_earnings_grid(headers, body_rows, height: int = 540):
     )
     st.markdown(
         f"<style>{css}</style>"
-        f'<div class="ern-wrap"><table class="ksk-grid ern-grid">'
+        f'<div class="ern-wrap" style="height:{height}px">'
+        f'<table class="ksk-grid ern-grid">'
         f'<thead>{head}</thead><tbody>{"".join(body_rows)}</tbody></table></div>',
         unsafe_allow_html=True)
 
