@@ -546,6 +546,9 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec)
     from ui.chrome import title_bar
     title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
+    # Breathing room between the identity line and the ledger headers — the app's
+    # global 0.45rem block gap leaves them almost touching.
+    st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
     val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
     _gap = '<div style="margin-top:0.5rem"></div>'  # heading-sized break only
     # Two stacked-pair ledger columns at 1/6 width each, the price chart filling
