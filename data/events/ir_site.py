@@ -269,7 +269,7 @@ def _q4_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, d
 # Most banks aren't in the curated IR_URLS map, but ~a third run a Q4 IR site
 # reachable at a standard subdomain off their FDIC website. Discover those
 # nightly and cache {ticker: q4_ir_url} so the poll adapter covers them too.
-_IR_SUBDOMAINS = ("investorrelations", "ir", "investors")
+_IR_SUBDOMAINS = ("investorrelations", "ir", "investors", "investor")
 _IR_ENDPOINTS_CACHE_KEY = "ir_q4_endpoints"
 
 
@@ -284,12 +284,15 @@ def _domain_root(webaddr: str) -> str:
 
 
 def discover_q4_ir_url(webaddr: str) -> str | None:
-    """Probe a bank's standard IR subdomains for a Q4 site; return the Q4 home
-    URL (and warm its apiKey cache) or None. DNS misses fail fast, so most
-    non-Q4 banks cost ~nothing."""
+    """Find a bank's Q4 IR site from its website. Two methods: (1) probe standard
+    IR subdomains (investorrelations./ir./investors./investor.<domain>); (2) if
+    none hit, pull the "Investor Relations" link off the bank's main page and
+    check it (catches Q4 sites at non-standard URLs, e.g. Zions). Returns the Q4
+    home URL (apiKey cache warmed) or None. DNS misses fail fast."""
     root = _domain_root(webaddr)
     if not root:
         return None
+    # Method 1 — subdomain probe (cheap; DNS miss is instant).
     for sub in _IR_SUBDOMAINS:
         url = f"https://{sub}.{root}/"
         try:
@@ -297,6 +300,24 @@ def discover_q4_ir_url(webaddr: str) -> str | None:
                 return url
         except Exception:
             continue
+    # Method 2 — follow the main site's investor-relations link.
+    try:
+        html = _fetch(f"https://{root}/", timeout=6)
+        if html:
+            seen = set()
+            for href in re.findall(r'href="([^"]+)"', html):
+                if not re.search(r"investor", href, re.IGNORECASE):
+                    continue
+                url = urljoin(f"https://{root}/", href)
+                if url in seen:
+                    continue
+                seen.add(url)
+                if _q4_apikey(url):
+                    return url
+                if len(seen) >= 4:   # bound: don't chase every investor-ish link
+                    break
+    except Exception:
+        pass
     return None
 
 
