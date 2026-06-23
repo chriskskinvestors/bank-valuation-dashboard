@@ -270,6 +270,11 @@ if section == "Screen & Compare":
           button[data-testid="stBaseButton-primary"]:hover{
               background:var(--brand-hover) !important;border-color:var(--brand-hover) !important;}
           button[data-testid="stBaseButton-primary"] p{color:var(--text-inverse) !important;}
+          /* Compare's view tabs (st.tabs) — navy active to match the sub-nav. */
+          [data-baseweb="tab-list"] button[aria-selected="true"],
+          [data-baseweb="tab-list"] button[aria-selected="true"] p{
+              color:var(--brand-primary) !important;}
+          [data-baseweb="tab-highlight"]{background:var(--brand-primary) !important;}
           /* Thin expander headers (Compare sub-view still uses expanders). */
           div[data-testid="stExpander"] summary{padding-top:0.3rem;padding-bottom:0.3rem;}
           div[data-testid="stExpander"] details{border-radius:6px;}

@@ -9,13 +9,13 @@ import html as _html
 import streamlit as st
 import pandas as pd
 
-from config import METRICS, METRICS_BY_KEY
+from config import METRICS_BY_KEY
 from data.bank_mapping import get_name
 from analysis.peer_groups import (
     asset_size_tier, business_mix_tier, compute_peer_percentile,
 )
 from utils.formatting import format_value
-from ui.chrome import table_export, title_bar
+from ui.chrome import table_export, status_dot
 
 
 # Curated metric sets per category (focused on what analysts actually look at).
@@ -80,16 +80,26 @@ def _percentile_color(pct: float | None, higher_better: bool = True) -> str:
     return ""
 
 
-def render_peer_comparison(all_metrics: list[dict]):
-    """Render the Peer Comparison top-level page."""
-    title_bar("KSK Investors", "Peer Comparison", ids_html="")
+# Best-in-class call-outs across the compared banks (label, metric_key, min|max).
+_HIGHLIGHTS = [
+    ("Cheapest P/TBV", "ptbv_ratio", "min"),
+    ("Biggest discount", "ptbv_discount", "min"),
+    ("Highest ROATCE", "roatce_normalized", "max"),
+    ("Best efficiency", "efficiency_ratio", "min"),
+    ("Highest NIM", "nim", "max"),
+    ("Strongest CET1", "cet1_ratio", "max"),
+    ("Cleanest credit", "npl_ratio", "min"),
+    ("Fastest TBV growth", "tbv_cagr_1y", "max"),
+]
 
+
+def render_peer_comparison(all_metrics: list[dict]):
+    """Render the Peer Comparison page — dense, all-category side-by-side."""
     if not all_metrics:
         st.warning("No bank data loaded. Check your watchlist.")
         return
 
-    # ── Scope (the shared Bank-Groups selector) + display picker ───────
-    from ui.bank_scope import render_scope_selector
+    from ui.bank_scope import scope_type_options, render_scope_sub
 
     # Screen → Compare handoff: a "Compare these banks" click on a screen stashes
     # the result set; pre-seed Manual scope with them on arrival, then consume it.
@@ -98,58 +108,69 @@ def render_peer_comparison(all_metrics: list[dict]):
         st.session_state["compare_scope_type"] = "Manual"
         st.session_state["compare_manual"] = list(handoff)
 
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        cohort, _cohort_tk, peer_label = render_scope_selector(
-            all_metrics, key_prefix="compare", include_manual=True)
-    with c2:
-        category = st.selectbox(
-            "Metric category",
-            list(CATEGORY_METRICS.keys()),
-            key="peer_category",
-        )
+    # ── Compact controls: Scope · Categories (content-width via trailing spacer);
+    # the scope secondary picker (Manual chips / cohort) sits narrow below. ──
+    _CATS = list(CATEGORY_METRICS.keys())
+    cc1, cc2, _csp = st.columns([1.7, 2.6, 3.7])
+    with cc1:
+        scope_type = st.selectbox("Scope", scope_type_options(), key="compare_scope_type")
+    with cc2:
+        categories = st.multiselect("Metric categories", _CATS, default=_CATS,
+                                    key="peer_categories")
+    if not categories:
+        categories = _CATS
+    _subl, _ = st.columns([7, 3])
+    with _subl:
+        cohort, _cohort_tk, peer_label = render_scope_sub(
+            all_metrics, scope_type, key_prefix="compare")
 
     if not cohort:
-        st.info("Pick a scope above to compare — a saved group, a tier, a state, or a manual set.")
+        st.info("Pick a scope above to compare — a saved group, a tier, a state, "
+                "or a manual set (add banks by ticker).")
         return
-
     if len(cohort) < 2:
         st.warning(f"Only {len(cohort)} bank in this scope — widen it to compare.")
 
-    # The side-by-side table puts banks in COLUMNS, so it caps at a readable
-    # number; percentiles and the median still resolve against the FULL cohort.
-    # Scatter and radar use the whole cohort.
+    # Banks are COLUMNS, so the table caps at a readable count; percentiles and the
+    # median still resolve against the FULL cohort. Scatter/radar use all of it.
     TABLE_CAP = 12
     cohort_tickers = [m["ticker"] for m in cohort]
     if len(cohort) > TABLE_CAP:
-        disp_tickers = st.multiselect(
-            f"Banks to tabulate (of {len(cohort)} in scope; percentiles vs the full scope)",
-            cohort_tickers, default=cohort_tickers[:TABLE_CAP],
-            max_selections=TABLE_CAP, key="compare_display",
-        )
+        _dl, _ = st.columns([7, 3])
+        with _dl:
+            disp_tickers = st.multiselect(
+                f"Banks to tabulate (of {len(cohort)}; percentiles vs the full scope)",
+                cohort_tickers, default=cohort_tickers[:TABLE_CAP],
+                max_selections=TABLE_CAP, key="compare_display")
         display_peers = [m for m in cohort if m["ticker"] in disp_tickers] or cohort[:TABLE_CAP]
     else:
         display_peers = cohort
 
-    st.caption(f"**Scope:** {peer_label} · {len(cohort)} banks · Category: **{category}**")
+    # ── Status line (no boxed title bar) ───────────────────────────────
+    _ncat = len(categories)
+    st.markdown(
+        f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
+        f'margin:6px 0 8px;">{status_dot("ok", f"{len(cohort)} banks")} · '
+        f'{_html.escape(peer_label)} · {len(display_peers)} shown · '
+        f'{_ncat} categor{"y" if _ncat == 1 else "ies"} · '
+        f'percentiles vs full scope</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Best-in-class highlights ───────────────────────────────────────
+    _render_highlights(display_peers)
 
     # ── View tabs ──────────────────────────────────────────────────────
     view_tab, scatter_tab, radar_tab = st.tabs([
-        "Metrics Table",
-        "Scatter Plots",
-        "Radar Chart",
-    ])
-
+        "Metrics Table", "Scatter Plots", "Radar Chart"])
     with view_tab:
-        _render_metrics_table(cohort, display_peers, category)
-
+        _render_metrics_table(cohort, display_peers, categories)
     with scatter_tab:
         _render_peer_scatters(cohort)
-
     with radar_tab:
         _render_peer_radar(cohort)
 
-    # ── Summary stats ──────────────────────────────────────────────────
+    # ── Peer group composition ─────────────────────────────────────────
     st.markdown("---")
     with st.expander("Peer group composition"):
         comp_rows = []
@@ -170,88 +191,129 @@ def render_peer_comparison(all_metrics: list[dict]):
                      key="exp_peer_group_composition")
 
 
-def _render_metrics_table(cohort: list[dict], display_peers: list[dict], category: str):
-    """Metrics table — banks (the display subset) in columns, metrics in rows.
-    Percentile color and the Peer Median resolve against the FULL ``cohort``, so
-    a focused display still ranks each bank within its whole peer group."""
-    metric_keys = CATEGORY_METRICS.get(category, [])
-
-    tickers = [m["ticker"] for m in display_peers]   # columns
-    rows = []
-    style_map = {}  # (metric_key, ticker) → color
-
-    for mkey in metric_keys:
+def _render_highlights(peers: list[dict]):
+    """A row of best-in-class chips across the compared banks (no-op for <2)."""
+    if len(peers) < 2:
+        return
+    chips = []
+    for label, mkey, mode in _HIGHLIGHTS:
         m_def = METRICS_BY_KEY.get(mkey)
         if not m_def:
             continue
-
-        # Percentile basis = the full cohort, not just the displayed banks.
-        cohort_values = [b.get(mkey) for b in cohort]
-        numeric = [v for v in cohort_values if isinstance(v, (int, float)) and v is not None]
-        if not numeric:
+        cand = [(p["ticker"], p.get(mkey)) for p in peers
+                if isinstance(p.get(mkey), (int, float))]
+        if not cand:
             continue
+        tk, val = (min if mode == "min" else max)(cand, key=lambda x: x[1])
+        vs = _html.escape(format_value(val, m_def.get("format", "number"),
+                                       m_def.get("decimals", 2)))
+        chips.append(
+            f'<span style="font-size:0.75rem;background:var(--bg-surface);'
+            f'border:0.5px solid var(--grid-head);border-radius:6px;padding:4px 9px;'
+            f'white-space:nowrap;">'
+            f'<span style="color:var(--text-secondary);">{_html.escape(label)}</span> '
+            f'<b>{_html.escape(tk)}</b> '
+            f'<span style="color:var(--brand-primary);">{vs}</span></span>')
+    if chips:
+        st.markdown(
+            f'<div style="display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 12px;">'
+            f'{"".join(chips)}</div>',
+            unsafe_allow_html=True)
 
-        peer_median = pd.Series(numeric).median()
-        higher_better = m_def.get("color_rule") == "higher_better"
-        lower_better = m_def.get("color_rule") == "lower_better"
 
-        row = {"Metric": m_def["label"]}
-        fmt = m_def.get("format", "number")
-        dec = m_def.get("decimals", 2)
+def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
+                          categories: list[str]):
+    """Dense side-by-side table — banks (the display subset) in columns, metrics in
+    rows grouped under category section headers, EVERY metric per selected category.
+    Percentile color and Peer Median resolve against the FULL ``cohort``."""
+    tickers = [m["ticker"] for m in display_peers]   # columns
+    style_map = {}                                   # (metric_key, ticker) → color
+    sections = []                                    # [(category, [row, …]), …]
+    export_rows = []
 
-        for d in display_peers:
-            t = d["ticker"]
-            v = d.get(mkey)
-            row[t] = format_value(v, fmt, dec) if v is not None else "—"
-            pct = compute_peer_percentile(v, numeric)   # vs full cohort
-            if higher_better:
-                style_map[(mkey, t)] = _percentile_color(pct, True)
-            elif lower_better:
-                style_map[(mkey, t)] = _percentile_color(pct, False)
-            else:
-                style_map[(mkey, t)] = ""
+    for cat in categories:
+        cat_rows = []
+        for mkey in CATEGORY_METRICS.get(cat, []):
+            m_def = METRICS_BY_KEY.get(mkey)
+            if not m_def:
+                continue
+            # Percentile basis = the full cohort, not just the displayed banks.
+            numeric = [b.get(mkey) for b in cohort
+                       if isinstance(b.get(mkey), (int, float))]
+            if not numeric:
+                continue
+            peer_median = pd.Series(numeric).median()
+            higher_better = m_def.get("color_rule") == "higher_better"
+            lower_better = m_def.get("color_rule") == "lower_better"
+            fmt = m_def.get("format", "number")
+            dec = m_def.get("decimals", 2)
+            row = {"Metric": m_def["label"], "_mkey": mkey, "_cat": cat}
+            for d in display_peers:
+                t = d["ticker"]
+                v = d.get(mkey)
+                row[t] = format_value(v, fmt, dec) if v is not None else "—"
+                pct = compute_peer_percentile(v, numeric)   # vs full cohort
+                if higher_better:
+                    style_map[(mkey, t)] = _percentile_color(pct, True)
+                elif lower_better:
+                    style_map[(mkey, t)] = _percentile_color(pct, False)
+                else:
+                    style_map[(mkey, t)] = ""
+            row["Peer Median"] = format_value(peer_median, fmt, dec)
+            cat_rows.append(row)
+            export_rows.append(row)
+        if cat_rows:
+            sections.append((cat, cat_rows))
 
-        row["Peer Median"] = format_value(peer_median, fmt, dec)
-
-        row["_mkey"] = mkey
-        rows.append(row)
-
-    if not rows:
-        st.warning(f"No metrics to display for {category}.")
+    if not sections:
+        st.warning("No metrics to display for the selected categories.")
         return
 
-    df = pd.DataFrame(rows)
-    display_cols = ["Metric"] + tickers + ["Peer Median"]
-    df_display = df[display_cols].copy()
-
-    # Full-grid SNL HTML table (design system): metrics in rows, banks in columns,
-    # each cell percentile-colored vs the full cohort, Peer Median last.
-    head = '<th class="nm">Metric</th>' + "".join(
-        f'<th>{_html.escape(c)}</th>' for c in tickers + ["Peer Median"])
+    n_cols = len(tickers) + 2
+    head = ('<th class="nm">Metric</th>'
+            + "".join(f'<th>{_html.escape(t)}</th>' for t in tickers)
+            + '<th>Peer Median</th>')
     body_rows = []
-    for row in rows:
-        mkey = row["_mkey"]
-        cells = [f'<td class="nm">{_html.escape(str(row["Metric"]))}</td>']
-        for t in tickers:
-            sty = style_map.get((mkey, t), "")
-            style = f' style="{sty}"' if sty else ""
-            cells.append(f'<td class="num"{style}>{_html.escape(str(row.get(t, "—")))}</td>')
-        cells.append(f'<td class="num med">{_html.escape(str(row.get("Peer Median", "—")))}</td>')
-        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+    for cat, cat_rows in sections:
+        body_rows.append(
+            f'<tr class="sec"><td class="nm" colspan="{n_cols}">'
+            f'{_html.escape(cat)}</td></tr>')
+        for row in cat_rows:
+            mkey = row["_mkey"]
+            cells = [f'<td class="nm">{_html.escape(str(row["Metric"]))}</td>']
+            for t in tickers:
+                sty = style_map.get((mkey, t), "")
+                style = f' style="{sty}"' if sty else ""
+                cells.append(
+                    f'<td class="num"{style}>{_html.escape(str(row.get(t, "—")))}</td>')
+            cells.append(
+                f'<td class="num med">{_html.escape(str(row.get("Peer Median", "—")))}</td>')
+            body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
     st.markdown(
         "<style>"
-        ".cmp-wrap{overflow:auto;border:0.5px solid var(--grid-head);}"
+        ".cmp-wrap{max-height:640px;overflow:auto;border:0.5px solid var(--grid-head);}"
+        ".cmp-wrap thead th{position:sticky;top:0;z-index:3;}"
         ".cmp-wrap td.nm,.cmp-wrap th.nm{text-align:left;}"
         ".cmp-wrap td.med{color:var(--text-secondary);font-weight:600;}"
+        ".cmp-wrap tr.sec td{position:sticky;left:0;background:var(--grid-head-bg);"
+        "color:var(--brand-primary);text-transform:uppercase;letter-spacing:.04em;"
+        "font-size:0.68rem;font-weight:600;padding:5px 10px;}"
         "</style>"
         f'<div class="cmp-wrap"><table class="ksk-grid">'
         f'<thead><tr>{head}</tr></thead><tbody>{"".join(body_rows)}</tbody></table></div>',
         unsafe_allow_html=True,
     )
-    fname = f"peer_metrics_{category.lower().replace(' ', '_')}"
-    table_export(df_display, fname, key=f"exp_{fname}")
 
-    # ── Legend — built from the same scale that colors the cells ────────
+    # Export a flat (category-tagged) frame of everything shown.
+    exp_df = pd.DataFrame([
+        {"Category": r["_cat"], "Metric": r["Metric"],
+         **{t: r.get(t, "—") for t in tickers}, "Peer Median": r["Peer Median"]}
+        for r in export_rows
+    ])
+    table_export(exp_df, "peer_metrics_all", key="exp_peer_metrics_all")
+
+    # ── Legend — same scale that colors the cells ──────────────────────
     chips = "".join(
         f'<div style="background:{bg}; padding:4px 10px; border-radius:4px; '
         f'color:{fg};">{"<b>" + label + "</b>" if bold else label}</div>'
@@ -259,7 +321,9 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict], categor
     )
     st.markdown(
         '<div style="display:flex; gap:12px; margin-top:8px; flex-wrap:wrap; '
-        f'font-size:0.8rem;">{chips}</div>',
+        f'font-size:0.8rem; align-items:center;">'
+        f'<span style="color:var(--text-secondary);">Percentile vs full scope:</span>'
+        f'{chips}</div>',
         unsafe_allow_html=True,
     )
 
@@ -294,8 +358,6 @@ _CURATED_SCATTERS = [
 
 def _render_peer_scatters(selected_peers: list[dict]):
     """Render curated preset scatters + custom 2-axis picker."""
-    import plotly.graph_objects as go
-
     if len(selected_peers) < 3:
         st.info("Need at least 3 banks in the peer group for meaningful scatter plots.")
         return
