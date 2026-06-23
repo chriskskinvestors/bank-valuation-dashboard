@@ -223,6 +223,13 @@ _AF_CSS = r"""
    their last row. Force content height + visible overflow down the wrapper chain
    (card → stVerticalBlock/ElementContainer/Markdown → .afwrap/.body/.etf). */
 div[class*="st-key-afpane"]{border:1px solid #dde3ec!important;border-radius:4px!important;background:#fff!important;padding:0 0 5px!important;margin-bottom:14px;flex:0 0 auto!important;align-self:flex-start!important;display:block!important;height:auto!important;}
+/* Uniform grid gutters: widen the 3-column horizontal gap (Streamlit "small" =
+   9px) to match the vertical pane separation (column flex gap 6.75px + the
+   14px pane margin-bottom = 20.75px measured), so columns sit as far apart as
+   stacked panes. Scoped via :has to the grid row only — its columns are the
+   ones containing the afpane cards; inner pane st.columns rows never contain
+   an afpane. */
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] div[class*="st-key-afpane"]){gap:20.75px!important;}
 div[class*="st-key-afpane"] [data-testid="stVerticalBlock"],
 div[class*="st-key-afpane"] [data-testid="stMarkdown"]>div{display:block!important;height:auto!important;overflow:visible!important;}
 div[class*="st-key-afpane"] [data-testid="stElementContainer"],
@@ -1034,7 +1041,7 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
 
     # Drop the page a touch below the top nav so the title bar + data-source
     # freshness strip ("Live · FDIC …") clear the nav and aren't clipped.
-    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:9px'></div>", unsafe_allow_html=True)
 
     # ── Title bar (DESIGN-SYSTEM.md) ──────────────────────────────────
     from ui.chrome import title_bar
