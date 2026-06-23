@@ -594,30 +594,33 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
 
     st.markdown("---")
 
-    # ── Main tabs (reordered by usage priority) ─────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "Calendar",
-        "Calls & Webcasts",
-        "Surprise Heat-Map",
-        "Beat / Miss",
-        "Biggest Surprises",
-        "Sector Aggregates",
-        "Upload / Input",
-    ])
+    # ── Sections (LAZY) ─────────────────────────────────────────────────
+    # st.tabs renders EVERY tab body on every run, so opening Earnings used to
+    # fire all seven tabs' data fetches at once — including the Heat-Map's
+    # universe-wide (~all banks) yfinance pull — which made every load crawl. A
+    # segmented_control renders only the selected section, so each tab's fetches
+    # run only when you're on it.
+    SECTIONS = [
+        "Calendar", "Calls & Webcasts", "Surprise Heat-Map", "Beat / Miss",
+        "Biggest Surprises", "Sector Aggregates", "Upload / Input",
+    ]
+    active = st.segmented_control(
+        "Earnings view", SECTIONS, default="Calendar",
+        key="earnings_section", label_visibility="collapsed") or "Calendar"
 
-    with tab1:
+    if active == "Calendar":
         _render_earnings_calendar(watchlist)
-    with tab2:
+    elif active == "Calls & Webcasts":
         _render_calls_webcasts()
-    with tab3:
+    elif active == "Surprise Heat-Map":
         _render_surprise_heatmap(watchlist)
-    with tab4:
+    elif active == "Beat / Miss":
         _render_beat_miss_summary(all_consensus, metrics_by_ticker)
-    with tab5:
+    elif active == "Biggest Surprises":
         _render_surprise_rankings(all_consensus, metrics_by_ticker, watchlist)
-    with tab6:
+    elif active == "Sector Aggregates":
         _render_sector_aggregates(all_consensus, metrics_by_ticker, watchlist)
-    with tab7:
+    elif active == "Upload / Input":
         _render_upload_section(watchlist)
 
 
@@ -1081,6 +1084,19 @@ def _fmt_rev_est(v) -> str:
     return f"${v:,.0f}"
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def _fmp_earnings_window(from_iso: str, to_iso: str):
+    """FMP earnings calendar for the window, cached 6h. fmp_client.get_earnings_
+    calendar is a raw ~15s network call with no cache of its own; calling it on
+    every render made the Calls & Webcasts tab slow. Raises on failure so a
+    transient error is NOT cached (house pattern: never cache failures)."""
+    from data import fmp_client
+    rows = fmp_client.get_earnings_calendar(from_iso, to_iso)
+    if rows is None:
+        raise RuntimeError("FMP earnings calendar unavailable")
+    return rows
+
+
 def _render_calls_webcasts():
     """Universe-wide upcoming earnings calls & webcasts, grouped by week.
 
@@ -1110,8 +1126,7 @@ def _render_calls_webcasts():
         except Exception:
             yf_cal = []
         try:
-            from data import fmp_client
-            fmp_cal = fmp_client.get_earnings_calendar(
+            fmp_cal = _fmp_earnings_window(
                 today.isoformat(), (today + timedelta(days=horizon_days)).isoformat())
         except Exception:
             fmp_cal = None
