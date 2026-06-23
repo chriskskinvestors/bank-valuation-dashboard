@@ -285,23 +285,24 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
 def earnings_timing_map() -> dict:
     """{ticker: {"when": label, "confirmed": bool}} from FMP's earnings calendar
     for the next ~75 days — reliable, universe-wide report timing (before/after
-    open) that the yfinance estimate lacks. ONE FMP call, 6h-cached. The Home
+    open) that the yfinance estimate lacks. ONE FMP call, CROSS-INSTANCE cached
+    6h (cache.served_snapshot) so a cold Cloud Run instance — the common case
+    under active deploys — reads the shared value instead of re-calling FMP (that
+    re-call was a chunk of the Earnings/Home calendar's cold-load time). The Home
     calendar shows this when no precise PR/IR call time is available. Empty on
-    failure."""
-    import streamlit as st
+    failure (a genuine FMP failure raises out of build() so it is NOT cached)."""
+    from datetime import date, timedelta
+    from data import cache as _cache
+    from data import fmp_client
 
-    @st.cache_data(ttl=21600, show_spinner=False)
     def _build() -> dict:
-        from datetime import date, timedelta
-        from data import fmp_client
-        try:
-            today = date.today()
-            rows = fmp_client.get_earnings_calendar(
-                today.isoformat(), (today + timedelta(days=75)).isoformat())
-        except Exception:
-            return {}
+        today = date.today()
+        rows = fmp_client.get_earnings_calendar(
+            today.isoformat(), (today + timedelta(days=75)).isoformat())
+        if rows is None:                            # FMP failure → don't cache
+            raise RuntimeError("FMP earnings calendar unavailable")
         out: dict = {}
-        for r in (rows or []):
+        for r in rows:
             tk = (r.get("symbol") or "").upper()
             if not tk or tk in out:                 # first (soonest) per symbol
                 continue
@@ -311,6 +312,6 @@ def earnings_timing_map() -> dict:
         return out
 
     try:
-        return _build()
+        return _cache.served_snapshot("earnings_timing_map_v1", 21600, _build) or {}
     except Exception:
         return {}
