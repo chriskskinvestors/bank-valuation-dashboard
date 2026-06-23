@@ -318,11 +318,15 @@ def _af_etf_table() -> str:
     except Exception:
         aftq = {}
     from data import fmp_client as _fc
+    from data.market_session import is_premarket
+    # The extended-hours column IS the pre-market move during 4:00–9:30 ET; label
+    # it "Pre" then, "Aft" otherwise (after-hours / spread fallback).
+    _ext_lbl = "Pre" if is_premarket() else "Aft"
     sel = set(st.session_state.get("af_overlay") or _AF_DEFAULT_OVERLAY)
     rows = ('<div class="erow e1 eh"><span class="h">Name</span>'
             '<span class="h">Tkr</span><span class="num h">Last</span>'
             '<span class="num h">Chg</span><span class="num h">%</span>'
-            '<span class="num h">Aft</span><span class="num h">1W</span>'
+            f'<span class="num h">{_ext_lbl}</span><span class="num h">1W</span>'
             '<span class="num h">YTD</span><span class="num h">Vol</span></div>')
     for t, name in _AF_ETFS:
         q = warm.get(t) or {}
@@ -409,6 +413,7 @@ def _af_rates_table() -> str:
 
 def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str:
     from analysis.peer_groups import asset_size_tier
+    from data.market_session import is_premarket
     want = _AF_TIER_NAME.get(msz)
     # Warm cache holds the derived columns (chg_1w/chg_ytd/volume) + the
     # week sort field — one read for the whole universe.
@@ -418,6 +423,17 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
                            if m.get("ticker")])
     except Exception:
         warm = {}
+    # Pre-market window: the regular-session day move is stale (yesterday's
+    # close), so rank/show each bank's pre-market move instead — warmed by
+    # jobs/refresh_premarket, read cache-only.
+    pm = is_premarket()
+    premkt = {}
+    if pm:
+        try:
+            from data import cache as _pmc
+            premkt = (_pmc.get("premarket_moves:v1") or {}).get("value") or {}
+        except Exception:
+            premkt = {}
     data = []
     for m in (all_metrics or []):
         tk = m.get("ticker")
@@ -429,9 +445,12 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
         # Day move from the LIVE warm price cache (~2 min, refreshed by
         # jobs/refresh_prices) — fall back to the 15-min metrics snapshot only
         # for a bank that isn't warm-cached. Week uses the nightly chg_1w.
-        day_pct = w.get("change_pct")
-        if day_pct is None:
-            day_pct = m.get("change_pct")
+        if pm:
+            day_pct = premkt.get(tk)        # pre-market move
+        else:
+            day_pct = w.get("change_pct")
+            if day_pct is None:
+                day_pct = m.get("change_pct")
         sortval = day_pct if mh == "d" else w.get("chg_1w")
         if sortval is None:
             continue
@@ -440,7 +459,10 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
         except (TypeError, ValueError):
             continue
         price = w.get("price") if w.get("price") is not None else m.get("price")
-        chg = w.get("change") if w.get("change") is not None else m.get("change")
+        # Absolute $ change is a regular-session figure; blank it pre-market (we
+        # only have the pre-market move as a %) rather than show a stale number.
+        chg = None if pm else (
+            w.get("change") if w.get("change") is not None else m.get("change"))
         data.append({"tk": tk, "price": price, "chg": chg,
                      "pct": day_pct, "w1": w.get("chg_1w"),
                      "ytd": w.get("chg_ytd"),
@@ -457,7 +479,8 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
     else:
         rows = ('<div class="erow m1 eh"><span class="h">Name</span>'
                 '<span class="h">Tkr</span><span class="num h">Last</span>'
-                '<span class="num h">Chg</span><span class="num h">%</span>'
+                '<span class="num h">Chg</span>'
+                f'<span class="num h">{"Pre" if pm else "%"}</span>'
                 '<span class="num h">1W</span><span class="num h">YTD</span>'
                 '<span class="num h">Vol</span></div>')
         for d in data:

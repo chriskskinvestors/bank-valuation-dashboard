@@ -250,6 +250,30 @@ class TestHomeRendersPopulated(unittest.TestCase):
              ecall.call_info_map, ecall.earnings_timing_map) = saved
         self.assertIn("Before open", h)      # FMP timing fills the column
 
+    def test_movers_premarket_window(self):
+        # During the pre-market window the Movers pane ranks/shows each bank's
+        # PRE-MARKET move (warmed by jobs/refresh_premarket), not the stale
+        # regular-session day change, and the column header reads "Pre".
+        import data.market_session as ms
+        import data.cache as cache
+        import data.price_cache_store as pcs
+        metrics = [{"ticker": "BANR", "total_assets": 1e10, "change_pct": 0.1},
+                   {"ticker": "WBHC", "total_assets": 1e10, "change_pct": 0.1}]
+        saved = (ms.is_premarket, cache.get, pcs.get_prices)
+        try:
+            ms.is_premarket = lambda *a, **k: True
+            cache.get = lambda k: ({"value": {"BANR": 4.2, "WBHC": -2.1}}
+                                   if k == "premarket_moves:v1" else None)
+            pcs.get_prices = lambda tks: {"BANR": {"price": 48.10},
+                                          "WBHC": {"price": 1475.0}}
+            h = self.home._af_movers_table(metrics, "g", "d", "all")  # gainers/day
+        finally:
+            ms.is_premarket, cache.get, pcs.get_prices = saved
+        self.assertIn(">Pre<", h)            # header relabeled for pre-market
+        self.assertIn("BANR", h)             # the +4.2% pre-market gainer
+        self.assertIn("+4.2", h)             # its pre-market move shown
+        self.assertNotIn("WBHC", h)          # the -2.1% loser excluded from gainers
+
     def test_above_fold_integration_renders(self):
         # End-to-end grid assembly. Network sources are mocked off; every
         # other pane reads local cache/snapshots, and _af_safe isolates any
