@@ -138,7 +138,7 @@ def _fetch_fdic_banks() -> dict[str, dict]:
     while True:
         params = {
             "filters": "ACTIVE:1",
-            "fields": "CERT,NAME,NAMEHCR,ASSET",
+            "fields": "CERT,NAME,NAMEHCR,ASSET,WEBADDR",
             "sort_by": "ASSET",
             "sort_order": "DESC",
             "limit": 1000,
@@ -159,6 +159,7 @@ def _fetch_fdic_banks() -> dict[str, dict]:
                 "cert": int(d["CERT"]),
                 "name": d.get("NAME", ""),         # subsidiary bank brand (e.g. "Provident Bank")
                 "namehcr": d.get("NAMEHCR", ""),
+                "webaddr": d.get("WEBADDR", ""),   # bank website — seed for IR-site discovery
                 "asset": d.get("ASSET") or 0,
             })
         offset += len(rows)
@@ -452,10 +453,16 @@ def _build_universe_live() -> dict[str, dict]:
     # holdco name. Sourced from the FDIC certs already fetched (no extra calls).
     cert_name = {bi["cert"]: bi.get("name", "")
                  for bi in hc_lookup.values() if bi.get("name")}
+    cert_web = {bi["cert"]: bi.get("webaddr", "")
+                for bi in hc_lookup.values() if bi.get("webaddr")}
     for info in universe.values():
-        nm = cert_name.get(info.get("fdic_cert"))
+        cert = info.get("fdic_cert")
+        nm = cert_name.get(cert)
         if nm:
             info["bank_name"] = nm.title() if nm.isupper() else nm
+        web = cert_web.get(cert)
+        if web:
+            info["webaddr"] = web
 
     return universe
 

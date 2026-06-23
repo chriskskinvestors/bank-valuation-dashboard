@@ -231,6 +231,19 @@ def main():
         print(f"[warn] earnings calendar warm failed: {type(e).__name__}: {e}",
               flush=True)
 
+    # Discover each bank's Q4 IR endpoint (probe IR subdomains off the FDIC
+    # webaddr) and cache {ticker: url}, so the news poll's IR adapter pulls
+    # first-party releases universe-wide — not just the ~54 curated IR sites.
+    try:
+        from data.events.ir_site import refresh_q4_ir_endpoints
+        t1 = time.time()
+        eps = refresh_q4_ir_endpoints(snapshot)
+        print(f"[{time.strftime('%H:%M:%S')}] IR endpoints discovered "
+              f"({len(eps)} banks, {time.time()-t1:.0f}s)", flush=True)
+    except Exception as e:
+        print(f"[warn] IR endpoint discovery failed: {type(e).__name__}: {e}",
+              flush=True)
+
     # Exit code reflects severity: new regressions or >5% failure rate fail
     # the execution (visible in Cloud Run job history).
     if new_failures:

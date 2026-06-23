@@ -265,6 +265,97 @@ def _q4_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, d
     return out
 
 
+# ── Universe-wide Q4 IR discovery ────────────────────────────────────────
+# Most banks aren't in the curated IR_URLS map, but ~a third run a Q4 IR site
+# reachable at a standard subdomain off their FDIC website. Discover those
+# nightly and cache {ticker: q4_ir_url} so the poll adapter covers them too.
+_IR_SUBDOMAINS = ("investorrelations", "ir", "investors")
+_IR_ENDPOINTS_CACHE_KEY = "ir_q4_endpoints"
+
+
+def _domain_root(webaddr: str) -> str:
+    """Bare registrable domain from an FDIC WEBADDR ("www.provident.bank/" ->
+    "provident.bank"); "" if it doesn't look like a domain."""
+    d = re.sub(r"^\s*https?://", "", (webaddr or "").strip().lower())
+    d = d.split("/")[0].strip().strip(".")
+    if d.startswith("www."):
+        d = d[4:]
+    return d if ("." in d and " " not in d) else ""
+
+
+def discover_q4_ir_url(webaddr: str) -> str | None:
+    """Probe a bank's standard IR subdomains for a Q4 site; return the Q4 home
+    URL (and warm its apiKey cache) or None. DNS misses fail fast, so most
+    non-Q4 banks cost ~nothing."""
+    root = _domain_root(webaddr)
+    if not root:
+        return None
+    for sub in _IR_SUBDOMAINS:
+        url = f"https://{sub}.{root}/"
+        try:
+            if _q4_apikey(url):
+                return url
+        except Exception:
+            continue
+    return None
+
+
+def refresh_q4_ir_endpoints(universe: dict | None = None,
+                            max_workers: int = 16) -> dict[str, str]:
+    """Discover each universe bank's Q4 IR endpoint and cache {ticker: url}.
+    Run nightly (from refresh-universe). Curated IR_URLS are kept as-is (and
+    their Q4 key warmed); other banks are probed off their FDIC webaddr.
+    Pass the freshly-built `universe` dict to avoid any snapshot-cache staleness."""
+    from concurrent.futures import ThreadPoolExecutor
+    if universe is None:
+        from data.bank_universe import get_universe
+        universe = get_universe()
+    uni = universe
+
+    def _disc(item):
+        tk, info = item
+        curated = IR_URLS.get(tk)
+        if curated:
+            try:
+                _q4_apikey(curated)   # warm key cache for fast polling
+            except Exception:
+                pass
+            return tk, curated
+        try:
+            return tk, discover_q4_ir_url(info.get("webaddr") or "")
+        except Exception:
+            return tk, None
+
+    found: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for tk, url in ex.map(_disc, list(uni.items())):
+            if url:
+                found[tk] = url
+    try:
+        from data import cache
+        cache.put(_IR_ENDPOINTS_CACHE_KEY,
+                  {"endpoints": found, "cached_at": datetime.now().isoformat()})
+    except Exception as e:
+        print(f"[ir] could not cache endpoints: {type(e).__name__}: {e}")
+    n_probed = sum(1 for t in found if t not in IR_URLS)
+    print(f"[ir] discovered {len(found)} IR endpoints ({n_probed} via webaddr probe)",
+          flush=True)
+    return found
+
+
+def get_ir_endpoints() -> dict[str, str]:
+    """Curated IR_URLS merged with the nightly-discovered Q4 endpoints — the full
+    set the adapter polls. Falls back to just IR_URLS before discovery has run."""
+    endpoints = dict(IR_URLS)
+    try:
+        from data import cache
+        cached = (cache.get(_IR_ENDPOINTS_CACHE_KEY) or {}).get("endpoints") or {}
+        endpoints.update(cached)
+    except Exception:
+        pass
+    return endpoints
+
+
 class IRSiteAdapter(SourceAdapter):
     """Generic IR-page scraper. Watchlist-only."""
 
@@ -292,10 +383,12 @@ class IRSiteAdapter(SourceAdapter):
                 headline=headline[:300], published_at=pub, url=url,
                 summary="", external_id=url, raw=raw))
 
-        # Cover EVERY bank with a mapped IR site (many, incl. PFS, aren't in the
-        # passed watchlist), watchlist first.
-        passed = [t for t in tickers if t in IR_URLS]
-        order = passed + sorted(set(IR_URLS) - set(passed))
+        # Cover EVERY bank with an IR site — the curated IR_URLS PLUS the
+        # nightly-discovered Q4 endpoints (so ~130 banks, not just the 54
+        # curated). Passed watchlist first.
+        ir_map = get_ir_endpoints()
+        passed = [t for t in tickers if t in ir_map]
+        order = passed + sorted(set(ir_map) - set(passed))
 
         # PHASE 1 — the cheap Q4 JSON API for every site FIRST. This is where the
         # first-party releases the wires/EDGAR miss live (e.g. PFS). Run it in a
@@ -309,7 +402,7 @@ class IRSiteAdapter(SourceAdapter):
         non_q4: list[tuple[str, str]] = []
 
         def _q4(t):
-            return _q4_press_releases(IR_URLS[t], cutoff)
+            return _q4_press_releases(ir_map[t], cutoff)
 
         # HARD-bounded: collect whatever finishes within the budget and ABANDON
         # stragglers (cancel_futures) — a slow/hung IR host (or cache call) can no
@@ -323,7 +416,7 @@ class IRSiteAdapter(SourceAdapter):
             for fut in as_completed(futs, timeout=self.MAX_POLL_SECONDS):
                 ticker = futs[fut]
                 done_tickers.add(ticker)
-                ir_home = IR_URLS[ticker]
+                ir_home = ir_map[ticker]
                 try:
                     q4 = fut.result()
                 except Exception as e:

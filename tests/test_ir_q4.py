@@ -92,12 +92,46 @@ class TestQ4PressReleases(unittest.TestCase):
 
     def test_adapter_emits_q4_events_for_pfs(self):
         with patch.object(ir, "IR_URLS", {"PFS": "https://investorrelations.provident.bank/"}), \
+             patch.object(ir, "get_ir_endpoints",
+                          return_value={"PFS": "https://investorrelations.provident.bank/"}), \
              patch.object(ir, "_fetch", return_value=_Q4_HTML), \
              patch.object(ir.requests, "get", return_value=_FakeResp(_Q4_JSON)):
             evs = ir.IRSiteAdapter().poll(["PFS"], since=self.CUTOFF)
         self.assertTrue(evs)
         self.assertTrue(all(e.ticker == "PFS" and e.source == "ir_site" for e in evs))
         self.assertTrue(any("Adriano Duarte" in e.headline for e in evs))
+
+
+class TestIRDiscovery(unittest.TestCase):
+    """Universe-wide Q4 endpoint discovery: probe IR subdomains off the FDIC
+    webaddr, cache + merge {ticker: url}."""
+
+    def test_domain_root_normalizes(self):
+        self.assertEqual(ir._domain_root("www.provident.bank/"), "provident.bank")
+        self.assertEqual(ir._domain_root("https://Old National.com"), "")  # space → not a domain
+        self.assertEqual(ir._domain_root("ir.oldnational.com"), "ir.oldnational.com")
+        self.assertEqual(ir._domain_root(""), "")
+
+    def test_discover_probes_subdomains(self):
+        # Q4 only on investorrelations.<domain>; ir./investors. miss.
+        def fake_key(url):
+            return "KEY" if url == "https://investorrelations.provident.bank/" else None
+        with patch.object(ir, "_q4_apikey", side_effect=fake_key):
+            self.assertEqual(ir.discover_q4_ir_url("www.provident.bank"),
+                             "https://investorrelations.provident.bank/")
+            self.assertIsNone(ir.discover_q4_ir_url("www.nonq4bank.com"))
+
+    def test_get_ir_endpoints_merges_cache(self):
+        with patch.object(ir, "IR_URLS", {"PFS": "https://investorrelations.provident.bank/"}):
+            class _C:
+                @staticmethod
+                def get(k):
+                    return {"endpoints": {"ONB": "https://ir.oldnational.com/"}}
+            import data.cache as real_cache
+            with patch.object(real_cache, "get", _C.get):
+                eps = ir.get_ir_endpoints()
+        self.assertIn("PFS", eps)
+        self.assertEqual(eps.get("ONB"), "https://ir.oldnational.com/")
 
 
 if __name__ == "__main__":
