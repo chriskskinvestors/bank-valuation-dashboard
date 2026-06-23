@@ -592,8 +592,9 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
     st.markdown("---")
 
     # ── Main tabs (reordered by usage priority) ─────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Calendar",
+        "Calls & Webcasts",
         "Surprise Heat-Map",
         "Beat / Miss",
         "Biggest Surprises",
@@ -604,14 +605,16 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
     with tab1:
         _render_earnings_calendar(watchlist)
     with tab2:
-        _render_surprise_heatmap(watchlist)
+        _render_calls_webcasts()
     with tab3:
-        _render_beat_miss_summary(all_consensus, metrics_by_ticker)
+        _render_surprise_heatmap(watchlist)
     with tab4:
-        _render_surprise_rankings(all_consensus, metrics_by_ticker, watchlist)
+        _render_beat_miss_summary(all_consensus, metrics_by_ticker)
     with tab5:
-        _render_sector_aggregates(all_consensus, metrics_by_ticker, watchlist)
+        _render_surprise_rankings(all_consensus, metrics_by_ticker, watchlist)
     with tab6:
+        _render_sector_aggregates(all_consensus, metrics_by_ticker, watchlist)
+    with tab7:
         _render_upload_section(watchlist)
 
 
@@ -1017,6 +1020,133 @@ def _days_until(date_str: str) -> int:
         return (ed - date.today()).days
     except Exception:
         return 999
+
+
+# ── Earnings Calls & Webcasts ─────────────────────────────────────────
+
+def _fmt_rev_est(v) -> str:
+    """Revenue estimate (absolute $) → compact $B / $M label; '—' if unknown."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if v == 0:
+        return "—"
+    if abs(v) >= 1e9:
+        return f"${v / 1e9:.2f}B"
+    if abs(v) >= 1e6:
+        return f"${v / 1e6:.0f}M"
+    return f"${v:,.0f}"
+
+
+def _render_calls_webcasts():
+    """Universe-wide upcoming earnings calls & webcasts, grouped by week.
+
+    Coverage spans the FULL bank universe (FMP earnings calendar), unlike the
+    watchlist-scoped Calendar tab. Report timing (before/after open) and the
+    confirmed-date flag come from FMP; precise call time / webcast link / dial-in
+    are best-effort from each bank's earnings press release where published, and
+    render '—' / blank when not yet available (never fabricated — see CLAUDE.md).
+    """
+    from datetime import date, timedelta
+
+    st.subheader("Earnings Calls & Webcasts")
+
+    today = date.today()
+    with st.spinner("Loading earnings calendar..."):
+        try:
+            from data.bank_universe import get_universe
+            universe = set(get_universe().keys())
+        except Exception:
+            universe = set()
+        try:
+            from data import fmp_client
+            calendar = fmp_client.get_earnings_calendar(
+                today.isoformat(), (today + timedelta(days=45)).isoformat())
+        except Exception:
+            calendar = None
+        try:
+            from data import earnings_call as _ecall
+            calls = _ecall.call_info_map()
+            agenda = _ecall.build_calls_agenda(calendar, universe, calls, today)
+        except Exception:
+            agenda = []
+
+    if not universe or calendar is None:
+        st.info("Earnings calendar is temporarily unavailable. Please try again "
+                "shortly.")
+        return
+    if not agenda:
+        st.info("No upcoming bank earnings found in the next six weeks.")
+        return
+
+    all_rows = [r for b in agenda for r in b["rows"]]
+    n_confirmed = sum(1 for r in all_rows if r["confirmed"])
+    n_webcast = sum(1 for r in all_rows if r.get("webcast_url"))
+    n_time = sum(1 for r in all_rows if r.get("call_time"))
+    ledger("Upcoming Calls", [
+        ("Banks Reporting", str(len(all_rows))),
+        ("Confirmed Dates", str(n_confirmed)),
+        ("Webcast Links", str(n_webcast)),
+        ("Precise Call Times", str(n_time)),
+    ])
+    st.caption(
+        "Full bank universe. **When** = report timing (FMP, before/after market "
+        "open) and a **✓** marks an FMP-confirmed date. **Call Time**, "
+        "**Webcast** and **Dial-in** are parsed from each bank's earnings press "
+        "release where published — these ramp as banks announce call details "
+        "(~2 weeks out), so many rows show — until then.")
+
+    for bucket in agenda:
+        rows = bucket["rows"]
+        soon = bucket["label"] == "This week"
+        header = f"{bucket['label']} · {len(rows)} report{'s' if len(rows) != 1 else ''}"
+        st.markdown(f"##### {'🔴 ' if soon else ''}{header}")
+
+        table = []
+        for r in rows:
+            days = r["days_until"]
+            days_str = "Today" if days == 0 else f"{days}d"
+            table.append({
+                "Date": r["date"],
+                "In": days_str,
+                "Ticker": r["ticker"],
+                "Bank": get_name(r["ticker"]),
+                "✓": "✓" if r["confirmed"] else "—",
+                "When": r.get("when") or "—",
+                "Call Time": r.get("call_time") or "—",
+                "EPS Est": f"${r['eps_est']:.2f}" if r.get("eps_est") else "—",
+                "Rev Est": _fmt_rev_est(r.get("rev_est")),
+                "Webcast": r.get("webcast_url") or None,
+                "Dial-in": r.get("dial_in") or "—",
+            })
+
+        df = pd.DataFrame(table)
+
+        def _highlight_this_week(row):
+            if soon:
+                return ["background-color: rgba(217, 119, 6, 0.06);"] * len(row)
+            return [""] * len(row)
+
+        styled = df.style.apply(_highlight_this_week, axis=1).set_properties(
+            **{"font-size": "0.78rem", "padding": "3px 6px"})
+        st.dataframe(
+            styled, use_container_width=True, hide_index=True,
+            height=min(560, 40 + 35 * len(df)),
+            column_config={
+                "Webcast": st.column_config.LinkColumn(
+                    "Webcast", display_text="▶ Listen"),
+                "✓": st.column_config.TextColumn(
+                    "✓", help="FMP-confirmed report date"),
+                "When": st.column_config.TextColumn(
+                    "When", help="Report timing: before or after market open"),
+                "Dial-in": st.column_config.TextColumn(
+                    "Dial-in", help="Conference dial-in where published in the "
+                    "earnings press release"),
+            })
+
+    table_export(pd.DataFrame(all_rows), "earnings_calls_webcasts",
+                 key="exp_earnings_calls_webcasts")
 
 
 # ── Beat / Miss Summary ───────────────────────────────────────────────

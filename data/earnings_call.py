@@ -169,6 +169,85 @@ def call_info_map() -> dict:
 _WHEN_LABEL = {"bmo": "Before open", "amc": "After close", "dmh": "Midday"}
 
 
+def _week_monday(d):
+    """The Monday that starts d's calendar week."""
+    from datetime import timedelta
+    return d - timedelta(days=d.weekday())
+
+
+def build_calls_agenda(calendar_rows, universe, call_info, today,
+                       horizon_days: int = 45):
+    """Shape universe-wide FMP earnings-calendar rows into the Calls & Webcasts
+    agenda: keep bank-universe symbols reporting in [today, today+horizon_days],
+    soonest row per ticker, joined to parsed call info, grouped into Monday-
+    started weekly buckets.
+
+    Pure / unit-tested. `universe` is any container of upper-case tickers;
+    `call_info` is {ticker: {call_time, webcast_url, dial_in}} (may be empty).
+    Each row's date / timing / estimates are the raw FMP source values or None —
+    never fabricated. Returns [] when nothing qualifies.
+
+    Returns: [{"label": str, "week_start": "YYYY-MM-DD", "rows": [row, ...]}],
+    week buckets ordered soonest-first; rows within a bucket ordered by date
+    then ticker. Each row:
+        {ticker, date, days_until, when, confirmed, eps_est, rev_est,
+         period_ending, call_time, webcast_url, dial_in}
+    """
+    from datetime import date, timedelta
+
+    uni = set(universe or ())
+    ci_map = call_info or {}
+    horizon = today + timedelta(days=horizon_days)
+
+    seen: dict = {}
+    for r in (calendar_rows or []):
+        tk = (r.get("symbol") or "").upper()
+        if not tk or tk not in uni:
+            continue
+        ds = r.get("date")
+        try:
+            d = date.fromisoformat(ds)
+        except (TypeError, ValueError):
+            continue
+        if d < today or d > horizon:
+            continue
+        if tk in seen and seen[tk]["_date"] <= d:   # keep soonest per ticker
+            continue
+        ci = ci_map.get(tk) or {}
+        seen[tk] = {
+            "_date": d,
+            "ticker": tk,
+            "date": ds,
+            "days_until": (d - today).days,
+            "when": _WHEN_LABEL.get((r.get("time") or "").lower()),
+            "confirmed": bool(r.get("confirmed")),
+            "eps_est": r.get("epsEstimated"),
+            "rev_est": r.get("revenueEstimated"),
+            "period_ending": r.get("periodEnding"),
+            "call_time": ci.get("call_time"),
+            "webcast_url": ci.get("webcast_url"),
+            "dial_in": ci.get("dial_in"),
+        }
+
+    rows = sorted(seen.values(), key=lambda x: (x["_date"], x["ticker"]))
+    this_monday = _week_monday(today)
+    buckets: dict = {}
+    for row in rows:
+        buckets.setdefault(_week_monday(row.pop("_date")), []).append(row)
+
+    out = []
+    for wk in sorted(buckets):
+        if wk == this_monday:
+            label = "This week"
+        elif wk == this_monday + timedelta(days=7):
+            label = "Next week"
+        else:
+            label = f"Week of {wk.isoformat()}"
+        out.append({"label": label, "week_start": wk.isoformat(),
+                    "rows": buckets[wk]})
+    return out
+
+
 def earnings_timing_map() -> dict:
     """{ticker: {"when": label, "confirmed": bool}} from FMP's earnings calendar
     for the next ~75 days — reliable, universe-wide report timing (before/after

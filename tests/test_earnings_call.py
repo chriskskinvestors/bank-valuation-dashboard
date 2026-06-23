@@ -14,7 +14,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.earnings_call import parse_call_info, mid_label  # noqa: E402
+from datetime import date  # noqa: E402
+
+from data.earnings_call import (  # noqa: E402
+    parse_call_info,
+    mid_label,
+    build_calls_agenda,
+)
 
 
 class TestParseCallInfo(unittest.TestCase):
@@ -113,6 +119,70 @@ class TestEarningsTimingMap(unittest.TestCase):
         self.assertEqual(m["JPM"], {"when": "Before open", "confirmed": True})
         self.assertEqual(m["GS"]["when"], "After close")
         self.assertNotIn("XX", m)            # unrecognized time code → skipped
+
+
+class TestBuildCallsAgenda(unittest.TestCase):
+    """build_calls_agenda — universe filter + soonest-per-ticker dedupe + call-
+    info join + Monday-started weekly bucketing for the Calls & Webcasts view."""
+
+    UNIVERSE = {"JPM", "GS", "WFC", "FAR"}
+    CALLS = {"JPM": {"call_time": "8:30a ET",
+                     "webcast_url": "https://investor.jpm.com/q2",
+                     "dial_in": "1-800-555-0100"}}
+
+    def _calendar(self):
+        return [
+            {"symbol": "JPM", "date": "2026-07-28", "time": "bmo", "confirmed": True,
+             "epsEstimated": 4.5, "revenueEstimated": 4.2e10, "periodEnding": "2026-06-30"},
+            {"symbol": "JPM", "date": "2026-07-14", "time": "bmo", "confirmed": True,
+             "epsEstimated": 4.5, "revenueEstimated": 4.2e10, "periodEnding": "2026-06-30"},
+            {"symbol": "GS", "date": "2026-07-15", "time": "amc", "confirmed": False,
+             "epsEstimated": 9.1, "revenueEstimated": None, "periodEnding": "2026-06-30"},
+            {"symbol": "WFC", "date": "2026-07-21", "time": "bmo", "confirmed": False,
+             "epsEstimated": 1.2, "revenueEstimated": 2.05e10, "periodEnding": "2026-06-30"},
+            {"symbol": "FAR", "date": "2026-09-01", "time": "bmo", "confirmed": True},  # past horizon
+            {"symbol": "XYZ", "date": "2026-07-16", "time": "bmo", "confirmed": True},  # not a bank
+            {"symbol": "GS", "date": None, "time": "amc", "confirmed": True},           # bad date
+        ]
+
+    def test_groups_filters_and_dedupes(self):
+        agenda = build_calls_agenda(
+            self._calendar(), self.UNIVERSE, self.CALLS, date(2026, 7, 13))
+        self.assertEqual([b["label"] for b in agenda], ["This week", "Next week"])
+        self.assertEqual(agenda[0]["week_start"], "2026-07-13")
+
+        wk1 = agenda[0]["rows"]
+        self.assertEqual([r["ticker"] for r in wk1], ["JPM", "GS"])  # date-sorted
+        jpm = wk1[0]
+        self.assertEqual(jpm["date"], "2026-07-14")          # soonest kept, not 07-28
+        self.assertEqual(jpm["days_until"], 1)
+        self.assertEqual(jpm["when"], "Before open")
+        self.assertTrue(jpm["confirmed"])
+        self.assertEqual(jpm["eps_est"], 4.5)
+        self.assertEqual(jpm["webcast_url"], "https://investor.jpm.com/q2")
+        self.assertEqual(jpm["dial_in"], "1-800-555-0100")
+        # No internal sort key leaks into the public row.
+        self.assertNotIn("_date", jpm)
+
+        gs = wk1[1]
+        self.assertEqual(gs["when"], "After close")
+        self.assertIsNone(gs["call_time"])          # no PR call info → None, not faked
+        self.assertIsNone(gs["webcast_url"])
+
+        self.assertEqual([r["ticker"] for r in agenda[1]["rows"]], ["WFC"])
+
+    def test_excludes_out_of_universe_horizon_and_bad_dates(self):
+        agenda = build_calls_agenda(
+            self._calendar(), self.UNIVERSE, self.CALLS, date(2026, 7, 13))
+        tickers = {r["ticker"] for b in agenda for r in b["rows"]}
+        self.assertNotIn("XYZ", tickers)            # not in universe
+        self.assertNotIn("FAR", tickers)            # beyond 45-day horizon
+
+    def test_empty_inputs_return_empty(self):
+        self.assertEqual(build_calls_agenda(None, self.UNIVERSE, {}, date(2026, 7, 13)), [])
+        self.assertEqual(build_calls_agenda([], set(), {}, date(2026, 7, 13)), [])
+        self.assertEqual(
+            build_calls_agenda(self._calendar(), set(), self.CALLS, date(2026, 7, 13)), [])
 
 
 if __name__ == "__main__":
