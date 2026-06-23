@@ -320,6 +320,7 @@ def _render_funding_deposits():
         'div[class*="st-key-fundchart"]{padding:2px 6px 0!important;}'
         'div[class*="st-key-fundchart"] [data-testid="stElementContainer"]'
         "{padding:0!important;margin:0!important;}"
+        'div[class*="st-key-fundtable"]{padding:6px 10px!important;}'
         "</style>",
         unsafe_allow_html=True,
     )
@@ -361,16 +362,17 @@ def _render_funding_deposits():
                 f'<td style="text-align:center;">{_sparkline_svg(sparks.get(field, []))}</td>'
                 "</tr>"
             )
-        st.markdown(
-            '<div class="ksk-grid"><table><thead><tr>'
-            '<th style="text-align:left;">Product</th>'
-            '<th style="text-align:right;">National Rate</th>'
-            '<th style="text-align:right;">Rate Cap</th>'
-            '<th style="text-align:right;">vs Fed Funds</th>'
-            '<th style="text-align:center;">Trend (5Y)</th>'
-            "</tr></thead><tbody>" + body + "</tbody></table></div>",
-            unsafe_allow_html=True,
-        )
+        with st.container(border=True, key="fundtable", height=420):
+            st.markdown(
+                '<div class="ksk-grid"><table><thead><tr>'
+                '<th style="text-align:left;">Product</th>'
+                '<th style="text-align:right;">National Rate</th>'
+                '<th style="text-align:right;">Rate Cap</th>'
+                '<th style="text-align:right;">vs Fed Funds</th>'
+                '<th style="text-align:center;">Trend (5Y)</th>'
+                "</tr></thead><tbody>" + body + "</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
         st.caption("National Rate = FDIC deposit-weighted national average. Rate Cap = "
                    "§337.7 cap (national rate + 75bps, or the Treasury-yield-based cap). "
                    "vs Fed Funds = how far deposit pricing lags policy. Source: FDIC.")
@@ -389,7 +391,7 @@ def _render_funding_deposits():
             st.info("Deposit-rate history is unavailable in this environment.")
             return
         dates = [r["asof"] for r in hist]
-        with st.container(border=True, key="fundchart"):
+        with st.container(border=True, key="fundchart", height=420):
             fig = go.Figure()
             for field, label, color in [
                 ("savings", "Savings", "#0891b2"),
