@@ -10,6 +10,8 @@ Features:
 6. Auto-populated consensus estimates (via yfinance)
 """
 
+import html as _html
+
 import streamlit as st
 import pandas as pd
 
@@ -908,6 +910,54 @@ def _render_surprise_heatmap(watchlist: list[str]):
 
 
 
+# ── SNL-style grid for the earnings tables ────────────────────────────
+
+def _tk_cell(ticker: str) -> str:
+    """Ticker cell deep-linking to the Company page (matches generic_table)."""
+    tk = _html.escape(str(ticker or ""))
+    if not tk:
+        return '<td></td>'
+    return (f'<td><a class="tk" href="?bank={_html.escape(str(ticker), quote=True)}" '
+            f'target="_self">{tk}</a></td>')
+
+
+def _render_earnings_grid(headers, body_rows, max_height: int = 560):
+    """Render an SNL-style `ksk-grid` HTML table (design-system look used across
+    the site) — hairline grid, small-caps headers, tabular right-aligned cells.
+    Replaces st.dataframe here, which can't carry per-row links and renders a
+    literal "None" for empty cells. `headers` is a list of (label, cls) where cls
+    is "" (right-aligned, default) or "nm" (left-aligned text); `body_rows` is a
+    list of pre-built <tr>…</tr> strings."""
+    head = "<tr>" + "".join(
+        f'<th class="{cls}">{_html.escape(lbl)}</th>' for lbl, cls in headers) + "</tr>"
+    css = (
+        ".ern-wrap{max-height:" + str(max_height) + "px;overflow:auto;"
+        "border:0.5px solid var(--grid-head);}"
+        ".ern-wrap thead th{position:sticky;top:0;z-index:2;}"
+        ".ern-grid td.nm,.ern-grid th.nm{text-align:left;color:var(--text-secondary);"
+        "max-width:230px;overflow:hidden;text-overflow:ellipsis;}"
+        ".ern-grid a.tk{font-weight:700;text-decoration:none;color:var(--brand-primary);}"
+        ".ern-grid a.lnk{text-decoration:none;color:var(--brand-primary);font-weight:600;}"
+        ".ern-grid td.mut{color:var(--text-muted);}"
+        ".ern-grid tr.soon td{background:rgba(217,119,6,0.07);}"
+    )
+    st.markdown(
+        f"<style>{css}</style>"
+        f'<div class="ern-wrap"><table class="ksk-grid ern-grid">'
+        f'<thead>{head}</thead><tbody>{"".join(body_rows)}</tbody></table></div>',
+        unsafe_allow_html=True)
+
+
+def _cell(value, cls: str = "") -> str:
+    """A right-aligned grid cell; empty/None → muted '—'. `value` is plain text
+    (escaped here)."""
+    text = "" if value is None else str(value)
+    if text in ("", "—", "None"):
+        return '<td class="mut">—</td>'
+    c = f' class="{cls}"' if cls else ""
+    return f'<td{c}>{_html.escape(text)}</td>'
+
+
 # ── Earnings Calendar ──────────────────────────────────────────────────
 
 def _render_earnings_calendar(watchlist: list[str]):
@@ -938,16 +988,19 @@ def _render_earnings_calendar(watchlist: list[str]):
             _timing = _ecall.earnings_timing_map()
         except Exception:
             _timing = {}
-        rows = []
+        headers = [("Ticker", ""), ("Bank", "nm"), ("Report Date", ""),
+                   ("Days", ""), ("When", ""), ("EPS Est (Qtr)", ""),
+                   ("EPS Est (Ann)", ""), ("Price Target", ""), ("Rating", ""),
+                   ("Analysts", "")]
+        body = []
         for c in upcoming:
-            # Calculate days until
             try:
                 from datetime import datetime
                 ed = datetime.strptime(c["next_earnings_date"], "%Y-%m-%d").date()
                 days_until = (ed - date.today()).days
-                days_str = f"{days_until}d" if days_until > 0 else "Today"
+                days_str = "Today" if days_until == 0 else f"{days_until}d"
             except Exception:
-                days_str = "—"
+                days_until, days_str = 999, "—"
 
             # yfinance returns the string "none" for unrated names — render "—",
             # never the literal "None".
@@ -955,42 +1008,24 @@ def _render_earnings_calendar(watchlist: list[str]):
             rec_display = (rec.replace("_", " ").title()
                            if rec and rec.lower() != "none" else "—")
             ac = c.get("analyst_count")          # None / 0 → "—", not "None"/"0"
-
             tm = _timing.get(c["ticker"]) or {}
-            rows.append({
-                "Ticker": c["ticker"],
-                "Bank": get_name(c["ticker"]),
-                "Report Date": c["next_earnings_date"],
-                "Days": days_str,
-                "When": tm.get("when") or "—",
-                "EPS Est (Qtr)": f"${c['eps_estimate']:.2f}" if c.get("eps_estimate") else "—",
-                "EPS Est (Ann)": f"${c['eps_fwd_annual']:.2f}" if c.get("eps_fwd_annual") else "—",
-                "Price Target": f"${c['target_price']:.2f}" if c.get("target_price") else "—",
-                "Rating": rec_display,
-                "Analysts": str(ac) if ac else "—",
-            })
 
-        df = pd.DataFrame(rows)
+            tr_cls = ' class="soon"' if days_until <= 7 else ""
+            cells = [
+                _tk_cell(c["ticker"]),
+                _cell(get_name(c["ticker"]), "nm"),
+                _cell(c["next_earnings_date"]),
+                _cell(days_str),
+                _cell(tm.get("when")),
+                _cell(f"${c['eps_estimate']:.2f}" if c.get("eps_estimate") else None),
+                _cell(f"${c['eps_fwd_annual']:.2f}" if c.get("eps_fwd_annual") else None),
+                _cell(f"${c['target_price']:.2f}" if c.get("target_price") else None),
+                _cell(rec_display),
+                _cell(str(ac) if ac else None),
+            ]
+            body.append(f"<tr{tr_cls}>" + "".join(cells) + "</tr>")
 
-        def _highlight_soon(row):
-            days = row.get("Days", "")
-            if days == "Today":
-                return [_BEAT_STYLE] * len(row)
-            try:
-                d = int(days.replace("d", ""))
-                if d <= 7:
-                    return ["background-color: rgba(217, 119, 6, 0.08); color: #d97706;"] * len(row)
-                elif d <= 14:
-                    return ["background-color: #f3f4f6;"] * len(row)
-            except (ValueError, AttributeError):
-                pass
-            return [""] * len(row)
-
-        styled = df.style.apply(_highlight_soon, axis=1).set_properties(
-            **{"font-size": "0.75rem", "padding": "3px 6px"}
-        )
-        st.dataframe(styled, use_container_width=True, hide_index=True,
-                      height=min(500, 40 + 35 * len(df)))
+        _render_earnings_grid(headers, body, max_height=min(560, 60 + 30 * len(body)))
         st.caption("When = report timing (FMP, before/after market open). "
                    "Call times & webcast links live on the Calls & Webcasts tab.")
         # Underlying numeric calendar records (unformatted estimates)
@@ -1122,44 +1157,37 @@ def _render_calls_webcasts():
         header = f"{bucket['label']} · {len(rows)} report{'s' if len(rows) != 1 else ''}"
         st.markdown(f"##### {'🔴 ' if soon else ''}{header}")
 
-        table = []
+        headers = [("Ticker", ""), ("Bank", "nm"), ("Date", ""), ("In", ""),
+                   ("✓", ""), ("When", ""), ("Call Time", ""), ("EPS Est", ""),
+                   ("Rev Est", ""), ("Webcast", ""), ("Dial-in", "")]
+        body = []
         for r in rows:
             days = r["days_until"]
             days_str = "Today" if days == 0 else f"{days}d"
             date_str = r["date"] if r["confirmed"] else f"{r['date']} (proj.)"
-            table.append({
-                "Date": date_str,
-                "In": days_str,
-                "Ticker": r["ticker"],
-                "Bank": get_name(r["ticker"]),
-                "✓": "✓" if r["confirmed"] else "—",
-                "When": r.get("when") or "—",
-                "Call Time": r.get("call_time") or "—",
-                "EPS Est": f"${r['eps_est']:.2f}" if r.get("eps_est") else "—",
-                "Rev Est": _fmt_rev_est(r.get("rev_est")),
-                # Empty string (NOT None) for "no webcast": an all-None column
-                # types as Arrow null and LinkColumn renders the literal "None".
-                # "" stays string-typed and is falsy, so LinkColumn shows a blank
-                # cell — and the "▶ Listen" label only on real URLs.
-                "Webcast": r.get("webcast_url") or "",
-                "Dial-in": r.get("dial_in") or "—",
-            })
+            url = r.get("webcast_url")
+            if url:
+                webcast = (f'<td><a class="lnk" href="{_html.escape(url, quote=True)}" '
+                           f'target="_blank" rel="noopener">▶ Listen</a></td>')
+            else:
+                webcast = '<td class="mut">—</td>'
+            cells = [
+                _tk_cell(r["ticker"]),
+                _cell(get_name(r["ticker"]), "nm"),
+                _cell(date_str),
+                _cell(days_str),
+                _cell("✓" if r["confirmed"] else None),
+                _cell(r.get("when")),
+                _cell(r.get("call_time")),
+                _cell(f"${r['eps_est']:.2f}" if r.get("eps_est") else None),
+                _cell(_fmt_rev_est(r.get("rev_est"))),
+                webcast,
+                _cell(r.get("dial_in")),
+            ]
+            tr_cls = ' class="soon"' if soon else ""
+            body.append(f"<tr{tr_cls}>" + "".join(cells) + "</tr>")
 
-        df = pd.DataFrame(table)
-        st.dataframe(
-            df, use_container_width=True, hide_index=True,
-            height=min(560, 40 + 35 * len(df)),
-            column_config={
-                "Webcast": st.column_config.LinkColumn(
-                    "Webcast", display_text="▶ Listen"),
-                "✓": st.column_config.TextColumn(
-                    "✓", help="FMP-confirmed report date"),
-                "When": st.column_config.TextColumn(
-                    "When", help="Report timing: before or after market open"),
-                "Dial-in": st.column_config.TextColumn(
-                    "Dial-in", help="Conference dial-in where published in the "
-                    "earnings press release"),
-            })
+        _render_earnings_grid(headers, body, max_height=min(560, 60 + 30 * len(body)))
 
     table_export(pd.DataFrame(all_rows), "earnings_calls_webcasts",
                  key="exp_earnings_calls_webcasts")
