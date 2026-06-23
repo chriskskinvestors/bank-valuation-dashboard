@@ -578,11 +578,24 @@ def get_earnings_calendar(from_date: str, to_date: str) -> list[dict] | None:
 
     Source of reliable, universe-wide report timing (before/after market open)
     and the confirmed-date flag — neither of which the yfinance estimate carries.
+
+    Cached 1h in the cross-instance Postgres cache (keyed on the date range): the
+    Earnings page renders its 7 sub-tabs with st.tabs, which evaluates EVERY tab
+    body on each load, so the Calls & Webcasts tab's whole-market 75-day fetch ran
+    live on every Earnings open. Failures are never cached (house pattern), so a
+    transient FMP error retries rather than poisoning the cache with None.
     """
     if not _has_key():
         return None
+    key = f"fmp_earn_cal:{from_date}:{to_date}"
+    cached = _cache_get(key, 3600)
+    if cached is not None:
+        return cached
     data = _get("earnings-calendar", {"from": from_date, "to": to_date}, timeout=15)
-    return data if isinstance(data, list) else None
+    out = data if isinstance(data, list) else None
+    if out is not None:
+        _cache_put(key, out)
+    return out
 
 
 # ──────────────────────────────────────────────────────────────────────────
