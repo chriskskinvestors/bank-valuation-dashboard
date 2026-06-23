@@ -921,7 +921,13 @@ def _tk_cell(ticker: str) -> str:
             f'target="_self">{tk}</a></td>')
 
 
-def _render_earnings_grid(headers, body_rows, max_height: int = 560):
+def _grid_height(n_rows: int) -> int:
+    """Pixel height for a grid scroll box of n_rows (header + ~18px rows),
+    capped so long tables scroll instead of running off the page."""
+    return min(540, 44 + 18 * n_rows)
+
+
+def _render_earnings_grid(headers, body_rows, height: int = 540):
     """Render an SNL-style `ksk-grid` HTML table (design-system look used across
     the site) — hairline grid, small-caps headers, tabular right-aligned cells.
     Replaces st.dataframe here, which can't carry per-row links and renders a
@@ -931,7 +937,7 @@ def _render_earnings_grid(headers, body_rows, max_height: int = 560):
     head = "<tr>" + "".join(
         f'<th class="{cls}">{_html.escape(lbl)}</th>' for lbl, cls in headers) + "</tr>"
     css = (
-        ".ern-wrap{max-height:" + str(max_height) + "px;overflow:auto;"
+        ".ern-wrap{height:" + str(height) + "px;overflow:auto;"
         "border:0.5px solid var(--grid-head);}"
         ".ern-wrap thead th{position:sticky;top:0;z-index:2;}"
         ".ern-grid td.nm,.ern-grid th.nm{text-align:left;color:var(--text-secondary);"
@@ -1025,7 +1031,7 @@ def _render_earnings_calendar(watchlist: list[str]):
             ]
             body.append(f"<tr{tr_cls}>" + "".join(cells) + "</tr>")
 
-        _render_earnings_grid(headers, body, max_height=min(560, 60 + 30 * len(body)))
+        _render_earnings_grid(headers, body, height=_grid_height(len(body)))
         st.caption("When = report timing (FMP, before/after market open). "
                    "Call times & webcast links live on the Calls & Webcasts tab.")
         # Underlying numeric calendar records (unformatted estimates)
@@ -1187,7 +1193,7 @@ def _render_calls_webcasts():
             tr_cls = ' class="soon"' if soon else ""
             body.append(f"<tr{tr_cls}>" + "".join(cells) + "</tr>")
 
-        _render_earnings_grid(headers, body, max_height=min(560, 60 + 30 * len(body)))
+        _render_earnings_grid(headers, body, height=_grid_height(len(body)))
 
     table_export(pd.DataFrame(all_rows), "earnings_calls_webcasts",
                  key="exp_earnings_calls_webcasts")
