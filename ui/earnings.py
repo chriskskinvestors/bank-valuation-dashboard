@@ -624,6 +624,31 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
         _render_upload_section(watchlist)
 
 
+def _avg_eps_surprise_cached(tickers: tuple) -> float | None:
+    """Average last-quarter EPS surprise across (up to ~30) banks, CROSS-INSTANCE
+    cached 6h. The underlying ~30 yfinance/GCS reads ran on EVERY Earnings load
+    (the KPI bar is always rendered) and re-ran on each cold Cloud Run instance,
+    which was a chunk of the tab's slowness. served_snapshot shares one computed
+    value across instances; a genuine fetch failure raises out of build() so it
+    is NOT cached (next render retries), while a real 'no surprises' caches None."""
+    from data import cache as _cache
+
+    def _build():
+        from data.estimates import fetch_all_estimates
+        estimates = fetch_all_estimates(tickers)
+        surprises = [e.get("surprise_pct")
+                     for est in estimates.values()
+                     for e in (est.get("earnings_history") or [])[:1]
+                     if e.get("surprise_pct") is not None]
+        return (sum(surprises) / len(surprises)) if surprises else None
+
+    try:
+        return _cache.served_snapshot("earnings_avg_eps_surprise_v1", 21600, _build)
+    except Exception as e:
+        print(f"[earnings] surprise fetch failed: {type(e).__name__}: {e}")
+        return None
+
+
 def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_by_ticker: dict):
     """Top summary KPIs across the whole watchlist."""
     from datetime import datetime, date
@@ -677,22 +702,7 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_
     total_cmp = total_beats + total_misses + total_inlines
     beat_pct = (total_beats / total_cmp * 100) if total_cmp else 0
 
-    avg_surprise = None
-    try:
-        # Compute avg EPS surprise from yfinance history
-        from data.estimates import fetch_all_estimates
-        estimates = fetch_all_estimates(tuple(watchlist[:30]))
-        surprises = []
-        for t, est in estimates.items():
-            for e in est.get("earnings_history", [])[:1]:
-                sp = e.get("surprise_pct")
-                if sp is not None:
-                    surprises.append(sp)
-        if surprises:
-            avg_surprise = sum(surprises) / len(surprises)
-    except Exception as e:
-        # Renders "—" below, which is honest; log so the failure is visible.
-        print(f"[earnings] surprise fetch failed: {type(e).__name__}: {e}")
+    avg_surprise = _avg_eps_surprise_cached(tuple(watchlist[:30]))
 
     _m = "color:var(--text-muted);font-size:var(--fs-xs)"
     ledger("Earnings Summary", [
