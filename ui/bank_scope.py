@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from analysis.peer_groups import group_banks
+from analysis.peer_groups import group_banks, asset_size_bands
 from data import bank_groups, bank_geography
 from data.bank_mapping import get_name
 
@@ -86,13 +86,20 @@ def render_scope_sub(
         return list(all_metrics), [m.get("ticker") for m in all_metrics], "All banks"
 
     if scope_type in ("Asset-size tier", "Business mix"):
-        groups = group_banks(all_metrics)
-        bucket = groups["by_size"] if scope_type == "Asset-size tier" else groups["by_mix"]
+        # Asset-size tier uses the finer scope-only bands (incl. $1-10B); business
+        # mix uses the group_banks cohorts. (asset_size_bands is ordered ascending;
+        # by_mix is dict order — both are fine for the picker.)
+        if scope_type == "Asset-size tier":
+            bucket = asset_size_bands(all_metrics)
+        else:
+            bucket = group_banks(all_metrics)["by_mix"]
         options = list(bucket.keys())
         if not options:
             st.info("No cohorts computed yet — load more banks.")
             return [], [], scope_type
-        picked = st.selectbox(scope_type, options, key=f"{key_prefix}_cohort")
+        picked = st.selectbox(
+            scope_type, options,
+            format_func=lambda k: f"{k} ({len(bucket[k])})", key=f"{key_prefix}_cohort")
         subset = bucket.get(picked, [])
         return subset, [m.get("ticker") for m in subset], picked
 

@@ -38,6 +38,42 @@ def asset_size_tier(total_assets_usd: float | None) -> str | None:
         return "Money-Center (>$1T)"
 
 
+# Finer asset bands for the Screen/Compare "Asset-size tier" SCOPE picker only.
+# These are deliberately separate from asset_size_tier above: that 4-tier framework
+# feeds the peer-percentile cohorts (Peer Rank / Valuation verdict) and must stay
+# fixed, whereas the scope wants a tighter selectable band (e.g. $1-10B).
+_ASSET_BANDS = [
+    ("< $1B",     0.0,     1e9),
+    ("$1-10B",    1e9,     10e9),
+    ("$10-50B",   10e9,    50e9),
+    ("$50-250B",  50e9,    250e9),
+    ("> $250B",   250e9,   float("inf")),
+]
+
+
+def asset_size_band(total_assets_usd: float | None) -> str | None:
+    """Classify a bank into a finer scope-only asset band (raw $). None for
+    missing / non-positive assets, so a bank with no value is simply unbucketed
+    rather than guessed into a band."""
+    if total_assets_usd is None or total_assets_usd <= 0:
+        return None
+    for label, lo, hi in _ASSET_BANDS:
+        if lo <= total_assets_usd < hi:
+            return label
+    return None
+
+
+def asset_size_bands(all_metrics: list[dict]) -> dict:
+    """Banks bucketed into the finer scope-only asset bands, ascending, empties
+    dropped. Distinct from group_banks()['by_size'] (the coarse peer tiers)."""
+    buckets: dict[str, list] = {}
+    for m in all_metrics:
+        band = asset_size_band(m.get("total_assets"))
+        if band:
+            buckets.setdefault(band, []).append(m)
+    return {label: buckets[label] for label, _, _ in _ASSET_BANDS if label in buckets}
+
+
 def business_mix_tier(metrics: dict) -> str:
     """Classify a bank by dominant business mix."""
     cre_cap = metrics.get("cre_to_capital")
