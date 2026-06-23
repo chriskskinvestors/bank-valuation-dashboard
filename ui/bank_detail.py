@@ -481,19 +481,29 @@ def _valuation_history_chart(ticker: str, info: dict):
 
 def _render_price_panel(ticker: str):
     """Interactive price + volume chart with a period selector. Rendered in the
-    snapshot band's open right column so it fills the space beside the ledgers;
-    its natural height lines up with the ledger block."""
-    st.markdown("**Price**")
-    per = st.radio("Period", ["1M", "3M", "1Y", "5Y"], index=2, horizontal=True,
-                   key=f"ov_price_per_{ticker}", label_visibility="collapsed")
-    hist_df = pd.DataFrame()
-    try:
-        from data.fmp_client import get_history
-        hist_df = get_history(ticker, per)
-    except Exception:
-        pass
-    st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True,
-                    key=f"ov_price_{ticker}")
+    snapshot band's open right column. Scoped CSS collapses the inter-element
+    gaps and tightens the period buttons so the header/selector take half the
+    height and the chart sits up near the top of the ledger block beside it."""
+    with st.container(key="ov_price_box"):
+        st.markdown(
+            "<style>"
+            ".st-key-ov_price_box [data-testid='stVerticalBlock']{gap:0.15rem;}"
+            ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
+            ".st-key-ov_price_box [data-testid='stRadio'] > div{gap:0.4rem;}"
+            ".st-key-ov_price_box [data-testid='stRadio'] label{padding:1px 0;margin:0;}"
+            ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-4px;}"
+            "</style>", unsafe_allow_html=True)
+        st.markdown("**Price**")
+        per = st.radio("Period", ["1M", "3M", "1Y", "5Y"], index=2, horizontal=True,
+                       key=f"ov_price_per_{ticker}", label_visibility="collapsed")
+        hist_df = pd.DataFrame()
+        try:
+            from data.fmp_client import get_history
+            hist_df = get_history(ticker, per)
+        except Exception:
+            pass
+        st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True,
+                        key=f"ov_price_{ticker}")
 
 
 def _render_valuation_panel(ticker: str, info: dict):
