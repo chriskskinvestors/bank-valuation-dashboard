@@ -211,7 +211,7 @@ def _q4_apikey(ir_home: str) -> str | None:
             return hit.get("apiKey") or None
     except Exception:
         pass
-    html = _fetch(ir_home, timeout=8)
+    html = _fetch(ir_home, timeout=5)
     key = ""
     if html and _Q4_MARKER_RE.search(html):
         m = _Q4_APIKEY_RE.search(html)
@@ -244,7 +244,7 @@ def _q4_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, d
     try:
         resp = requests.get(
             host + "/feed/PressRelease.svc/GetPressReleaseList",
-            params=params, timeout=15,
+            params=params, timeout=10,
             headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)",
                      "Accept": "application/json"},
         )
@@ -270,7 +270,7 @@ class IRSiteAdapter(SourceAdapter):
 
     name = "ir_site"
     LOOKBACK_DAYS = 30  # Looser since dates on IR pages aren't always reliable
-    MAX_POLL_SECONDS = 200  # internal budget; return partial before poll-events' cap
+    MAX_POLL_SECONDS = 150  # internal budget; return partial well before the 240s cap
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
         import time as _t
@@ -298,37 +298,44 @@ class IRSiteAdapter(SourceAdapter):
         order = passed + sorted(set(IR_URLS) - set(passed))
 
         # PHASE 1 — the cheap Q4 JSON API for every site FIRST. This is where the
-        # first-party releases the wires/EDGAR miss live (e.g. PFS), and a cached
-        # key makes it ~one fast call per site. Critical ordering: doing this
-        # before any slow HTML scrape means the Q4 banks are never starved by a
-        # few slow non-Q4 sites eating the budget (the bug that left PFS at 0).
+        # first-party releases the wires/EDGAR miss live (e.g. PFS). Run it in a
+        # thread pool: these are 54 independent I/O-bound fetches to DIFFERENT
+        # hosts, so concurrency collapses cold-cache time from minutes to ~30s and
+        # GUARANTEES every Q4 bank (incl. PFS) is reached well within budget —
+        # before any slow HTML scrape (the bug that left PFS at 0 fetched, then
+        # timed the whole adapter out and discarded everything).
+        from concurrent.futures import ThreadPoolExecutor
         non_q4: list[tuple[str, str]] = []
-        for ticker in order:
-            if _t.monotonic() > deadline:
-                break
-            ir_home = IR_URLS.get(ticker)
-            if not ir_home:
-                continue
-            try:
-                q4 = _q4_press_releases(ir_home, cutoff)
-            except Exception as e:
-                print(f"[ir_site] {ticker} q4 error: {type(e).__name__}: {e}")
-                q4 = None
-            if q4 is None:
-                non_q4.append((ticker, ir_home))   # defer to the HTML phase
-                continue
-            for url, headline, pub in q4:
-                _emit(ticker, url, headline, pub, {"ir_home": ir_home, "platform": "q4"})
 
-        # PHASE 2 — best-effort HTML scrape for non-Q4 sites with leftover budget;
-        # whatever doesn't fit catches up next cycle.
+        def _q4(t):
+            try:
+                return t, _q4_press_releases(IR_URLS[t], cutoff)
+            except Exception as e:
+                print(f"[ir_site] {t} q4 error: {type(e).__name__}: {e}")
+                return t, None
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for ticker, q4 in ex.map(_q4, order):
+                ir_home = IR_URLS[ticker]
+                if q4 is None:
+                    non_q4.append((ticker, ir_home))   # defer to the HTML phase
+                    continue
+                for url, headline, pub in q4:
+                    _emit(ticker, url, headline, pub, {"ir_home": ir_home, "platform": "q4"})
+
+        # PHASE 2 — best-effort HTML scrape for non-Q4 sites with leftover budget.
+        # Each scrape is deadline-aware (a single slow site can't run its full
+        # 14-path × per-fetch budget and blow poll-events' 240s cap, which would
+        # discard EVERY event including Phase 1's PFS release). Whatever doesn't
+        # fit catches up next cycle.
         for ticker, ir_home in non_q4:
-            if _t.monotonic() > deadline:
+            # Need comfortable headroom for at least one fetch; else stop here.
+            if _t.monotonic() > deadline - 10:
                 print(f"[ir_site] budget reached — {len(out)} events; "
                       f"{len(non_q4)} HTML sites deferred to next cycle")
                 break
             try:
-                links = self._find_press_links(ir_home)
+                links = self._find_press_links(ir_home, deadline)
             except Exception as e:
                 print(f"[ir_site] {ticker} error: {type(e).__name__}: {e}")
                 continue
@@ -340,8 +347,12 @@ class IRSiteAdapter(SourceAdapter):
                       {"ir_home": ir_home, "date_inferred": pub is None})
         return out
 
-    def _find_press_links(self, ir_home: str) -> list[tuple[str, str]]:
-        """Try the IR home + common press-release subpaths, return plausible links."""
+    def _find_press_links(self, ir_home: str,
+                          deadline: float | None = None) -> list[tuple[str, str]]:
+        """Try the IR home + common press-release subpaths, return plausible links.
+        Stops early when `deadline` (time.monotonic seconds) is reached so a slow
+        site can't run all 14 paths and overrun the poll's per-adapter cap."""
+        import time as _t
         # Get the host root for path-joining (handle https://ir.example.com/sub/)
         parsed = urlparse(ir_home)
         host = f"{parsed.scheme}://{parsed.netloc}"
@@ -350,8 +361,10 @@ class IRSiteAdapter(SourceAdapter):
         seen_hrefs: set[str] = set()
 
         for path in _PRESS_PAGE_CANDIDATES:
+            if deadline is not None and _t.monotonic() > deadline:
+                break
             candidate = ir_home if path == "" else (ir_home.rstrip("/") + path)
-            html = _fetch(candidate)
+            html = _fetch(candidate, timeout=6)
             if not html:
                 continue
             for href, text in _extract_links(html, candidate):
