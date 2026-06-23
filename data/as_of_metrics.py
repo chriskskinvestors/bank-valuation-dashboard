@@ -77,3 +77,115 @@ def as_of_quarter_metrics(quarter, cert_to_id: dict, *, window: int = _WINDOW) -
 
     cache.put(key, {"metrics": out, "cached_at": q.isoformat()})
     return out
+
+
+# Curated FDIC-resolvable fundamentals offered in the Trends view (key, label).
+# All are built in ONE engine pass per bank-quarter, so the cached series serves
+# every metric — the heavy all-banks build is pre-warmed by jobs/refresh_trends.
+TREND_METRICS = [
+    ("roaa", "ROAA"), ("roaa_4q", "ROAA (4Q avg)"),
+    ("roatce", "ROATCE"), ("roatce_4q", "ROATCE (4Q)"),
+    ("nim", "NIM"), ("nim_4q", "NIM (4Q)"), ("efficiency_ratio", "Efficiency"),
+    ("npl_ratio", "NPL ratio"), ("nco_ratio", "NCO ratio"),
+    ("allowance_loans", "ALL / Loans"), ("reserve_to_loans", "Reserves / Loans"),
+    ("cet1_ratio", "CET1"), ("total_capital_ratio", "Total capital"),
+    ("leverage_ratio", "T1 leverage"), ("equity_to_assets", "Equity / Assets"),
+    ("total_assets", "Total assets ($)"), ("total_loans", "Loans ($)"),
+    ("total_deposits", "Deposits ($)"), ("total_equity", "Total equity ($)"),
+    ("uninsured_pct", "Uninsured deposits %"), ("brokered_pct", "Brokered %"),
+    ("loans_to_deposits", "Loans / Deposits"), ("cost_of_funds", "Cost of funds"),
+    ("dep_qoq_growth", "Deposit QoQ %"),
+]
+TREND_KEYS = [k for k, _ in TREND_METRICS]
+# Pre-warmed all-banks grids are stable day-to-day; allow a generous TTL so the
+# Trends view stays instant between nightly refreshes even if one is missed.
+_GRID_TTL_S = 36 * 3600
+
+
+def _cohort_key(certs) -> str:
+    import hashlib
+    return hashlib.md5(",".join(str(c) for c in sorted(certs)).encode()).hexdigest()[:12]
+
+
+def quarterly_series(cert_to_id: dict, n_quarters: int = _WINDOW, *,
+                     build_if_missing: bool = True, trail_buffer: int = 4,
+                     scope_id: str | None = None):
+    """Full per-bank quarterly series for all TREND_METRICS over the last
+    ``n_quarters`` quarter-ends. ONE engine pass per bank-quarter computes every
+    metric, so the cached payload serves the whole Trends view.
+
+    Returns ``{"labels": [...], "rows": [{"ticker","_fdic_cert","series":{key:[v…]}}]}``
+    — or ``None`` when ``build_if_missing`` is False and nothing is cached. The
+    all-banks build recomputes the engine ~7.5k times (~300s), exceeding the 300s
+    request timeout, so it is NEVER built in a live page request: jobs/refresh_trends
+    pre-warms it (within the 900s job timeout) into the cross-instance cache, and the
+    Trends view reads it. Scoped cohorts (≤ a few hundred banks) build live.
+    """
+    from data import cache, fdic_client
+    from analysis.metrics import build_bank_metrics
+    from data.freshness import is_fresh
+
+    n = max(int(n_quarters), 1)
+    certs = list(cert_to_id.keys())
+    # A caller-supplied scope_id (e.g. "ALLBANKS") gives a STABLE key the pre-warm
+    # job and the live view agree on; otherwise hash the exact cohort (scoped sets).
+    key = f"trend_series:{scope_id or _cohort_key(certs)}:{n}"
+    cached = cache.get(key)
+    if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
+        return cached
+    if not build_if_missing:
+        return None
+
+    # n display quarters + a trailing buffer so the oldest column's TTM/4Q metrics
+    # still have their look-back window.
+    all_ends = recent_quarter_ends(n + trail_buffer)        # newest first
+    repdtes = [e.strftime("%Y%m%d") for e in all_ends]
+    by_quarter = {rd: fdic_client.fetch_quarter_financials(rd, certs=certs)
+                  for rd in repdtes}
+    labels = [quarter_label(e) for e in all_ends[:n]]
+
+    rows: list[dict] = []
+    for cert, id_ in cert_to_id.items():
+        c = int(cert)
+        series = {k: [] for k in TREND_KEYS}
+        any_val = False
+        for qi in range(n):
+            anchor = by_quarter[repdtes[qi]].get(c)
+            if anchor is None:
+                for k in TREND_KEYS:
+                    series[k].append(None)
+                continue
+            hist = [by_quarter[r][c] for r in repdtes[qi:] if c in by_quarter[r]]
+            # ticker=None skips the per-call SEC companyfacts fetch (capital-return) —
+            # FDIC-only here, and that fetch ×N quarters ×all banks was a ~5x slowdown.
+            m = build_bank_metrics(None, anchor, {}, {}, hist)
+            for k in TREND_KEYS:
+                v = m.get(k)
+                series[k].append(v)
+                any_val = any_val or v is not None
+        if any_val:
+            rows.append({"ticker": id_, "_fdic_cert": c, "series": series})
+
+    payload = {"labels": labels, "rows": rows,
+               "cached_at": pd.Timestamp.today().isoformat()}
+    cache.put(key, payload)
+    return payload
+
+
+def metric_grid(metric_key: str, cert_to_id: dict, n_quarters: int = _WINDOW,
+                *, build_if_missing: bool = True, scope_id: str | None = None):
+    """One metric extracted from the cached full series → ``(labels, rows)`` with
+    rows ``[{"ticker","_fdic_cert", <label>: value, …}]``. ``(None, None)`` when the
+    series isn't available (not pre-warmed and ``build_if_missing`` is False)."""
+    data = quarterly_series(cert_to_id, n_quarters, build_if_missing=build_if_missing,
+                            scope_id=scope_id)
+    if data is None:
+        return None, None
+    labels = data["labels"]
+    out = []
+    for r in data["rows"]:
+        ser = r.get("series", {}).get(metric_key) or []
+        row = {"ticker": r["ticker"], "_fdic_cert": r["_fdic_cert"]}
+        row.update({lb: (ser[i] if i < len(ser) else None) for i, lb in enumerate(labels)})
+        out.append(row)
+    return labels, out
