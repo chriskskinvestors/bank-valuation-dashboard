@@ -1602,24 +1602,30 @@ _CREDIT_LADDER = [
 
 @st.cache_data(ttl=_FIG_TTL, show_spinner=False)
 def _credit_oas_data():
-    """Latest OAS, 3-month change (bps) and a 5Y spark for each ICE BofA OAS
-    series in the ladder. These aren't in the warm SERIES set, so cache here."""
+    """Latest OAS + 3M/1Y change (bps), 5Y percentile and a 5Y spark for each
+    ICE BofA OAS series in the ladder (not in the warm SERIES set, so cached)."""
     out = {}
     for _grp, sid, _lbl in _CREDIT_LADDER:
         df = fetch_series(sid, years=6)
-        latest = d3m = as_of = None
+        latest = d3m = d1y = pctile = as_of = None
         spark = []
         if df is not None and not df.empty:
             d = df.dropna(subset=["value"]).sort_values("date")
             if not d.empty:
                 latest = float(d["value"].iloc[-1])
                 as_of = d["date"].iloc[-1]
-                prior = d[d["date"] <= as_of - pd.Timedelta(days=91)]
-                if not prior.empty:
-                    d3m = (latest - float(prior["value"].iloc[-1])) * 100
+                p3 = d[d["date"] <= as_of - pd.Timedelta(days=91)]
+                if not p3.empty:
+                    d3m = (latest - float(p3["value"].iloc[-1])) * 100
+                p1 = d[d["date"] <= as_of - pd.Timedelta(days=365)]
+                if not p1.empty:
+                    d1y = (latest - float(p1["value"].iloc[-1])) * 100
                 cut5 = as_of - pd.Timedelta(days=365 * 5)
                 spark = [float(v) for v in d[d["date"] >= cut5]["value"].tolist()]
-        out[sid] = {"latest": latest, "d3m": d3m, "spark": spark, "as_of": as_of}
+                if spark:
+                    pctile = round(100 * sum(1 for v in spark if v <= latest) / len(spark))
+        out[sid] = {"latest": latest, "d3m": d3m, "d1y": d1y, "pctile": pctile,
+                    "spark": spark, "as_of": as_of}
     return out
 
 
@@ -1649,8 +1655,8 @@ def _render_credit_spreads():
     )
     st.markdown(
         "<style>"
-        'div[class*="st-key-creditchart"]{padding:2px 6px 0!important;}'
-        'div[class*="st-key-creditchart"] [data-testid="stElementContainer"]'
+        'div[class*="st-key-creditfig"]{padding:2px 6px 0!important;}'
+        'div[class*="st-key-creditfig"] [data-testid="stElementContainer"]'
         "{padding:0!important;margin:0!important;}"
         'div[class*="st-key-creditcard"]{padding:6px 10px!important;}'
         "</style>",
@@ -1665,32 +1671,41 @@ def _render_credit_spreads():
             return '<span style="color:var(--text-muted);">-</span>'
         return f'<span style="color:var(--text-secondary);">{v:+.0f}</span>'
 
+    def _pctile(v):
+        if v is None:
+            return '<span style="color:var(--text-muted);">-</span>'
+        return f'<span style="color:var(--text-secondary);">{v}%</span>'
+
     groups = []
     for grp, _sid, _lbl in _CREDIT_LADDER:
         if grp not in groups:
             groups.append(grp)
     body = ""
     for grp in groups:
-        body += (f'<tr><td colspan="4" style="text-align:left;background:var(--grid-head-bg);'
+        body += (f'<tr><td colspan="6" style="text-align:left;background:var(--grid-head-bg);'
                  'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
                  f'font-size:var(--fs-2xs);letter-spacing:0.06em;">{grp}</td></tr>')
         for g, sid, label in _CREDIT_LADDER:
             if g != grp:
                 continue
-            d = data[sid]
+            dd = data[sid]
             body += (
                 "<tr>"
                 f'<td style="text-align:left;">{label}</td>'
-                f'<td style="text-align:right;font-weight:600;">{_bps(d["latest"])}</td>'
-                f'<td style="text-align:right;">{_dbps(d["d3m"])}</td>'
-                f'<td style="text-align:center;">{_sparkline_svg(d["spark"])}</td>'
+                f'<td style="text-align:right;font-weight:600;">{_bps(dd["latest"])}</td>'
+                f'<td style="text-align:right;">{_dbps(dd["d3m"])}</td>'
+                f'<td style="text-align:right;">{_dbps(dd["d1y"])}</td>'
+                f'<td style="text-align:right;">{_pctile(dd["pctile"])}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(dd["spark"])}</td>'
                 "</tr>"
             )
-    body += (f'<tr><td colspan="4" style="text-align:left;background:var(--grid-head-bg);'
+    body += (f'<tr><td colspan="6" style="text-align:left;background:var(--grid-head-bg);'
              'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
              'font-size:var(--fs-2xs);letter-spacing:0.06em;">Risk premium</td></tr>'
              '<tr><td style="text-align:left;">HY - IG differential</td>'
              f'<td style="text-align:right;font-weight:600;">{_bps(diff)}</td>'
+             '<td style="text-align:right;color:var(--text-muted);">-</td>'
+             '<td style="text-align:right;color:var(--text-muted);">-</td>'
              '<td style="text-align:right;color:var(--text-muted);">-</td>'
              '<td style="text-align:center;color:var(--text-muted);">-</td></tr>')
     table_html = (
@@ -1698,18 +1713,22 @@ def _render_credit_spreads():
         '<th style="text-align:left;">Spread</th>'
         '<th style="text-align:right;">OAS</th>'
         '<th style="text-align:right;">&Delta; 3M</th>'
+        '<th style="text-align:right;">&Delta; 1Y</th>'
+        '<th style="text-align:right;">5Y %ile</th>'
         '<th style="text-align:center;">Trend (5Y)</th>'
         "</tr></thead><tbody>" + body + "</tbody></table></div>"
     )
 
-    lc, cc = st.columns([1, 1.65])
+    # Row 1: ladder table (hugs its card) + the HY/IG/BBB time series.
+    lc, cc = st.columns([1, 2.5])
     with lc:
-        with st.container(border=True, key="creditcard", height=430):
+        with st.container(border=True, key="creditcard", height=415):
             st.markdown(table_html, unsafe_allow_html=True)
         st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA via FRED). "
-                   "Δ 3M = change over 3 months, in bps. Source: FRED.")
+                   "Delta in bps; 5Y %ile = where today sits in the 5Y range (low = tight). "
+                   "Source: FRED.")
     with cc:
-        with st.container(border=True, key="creditchart", height=430):
+        with st.container(border=True, key="creditfig_ts", height=415):
             fig = go.Figure()
             last_hy = last_hy_date = None
             data_max = 0.0
@@ -1727,10 +1746,10 @@ def _render_credit_spreads():
                     if vmax == vmax:
                         data_max = max(data_max, float(vmax))
                     if sid == "BAMLH0A0HYM2":
-                        dd = df.dropna(subset=["value"]).sort_values("date")
-                        if not dd.empty:
-                            last_hy = float(dd["value"].iloc[-1])
-                            last_hy_date = dd["date"].iloc[-1]
+                        ddh = df.dropna(subset=["value"]).sort_values("date")
+                        if not ddh.empty:
+                            last_hy = float(ddh["value"].iloc[-1])
+                            last_hy_date = ddh["date"].iloc[-1]
             top = max(9.0, data_max * 1.15)
             fig.add_hrect(y0=5.0, y1=8.0, fillcolor="rgba(217,119,6,0.06)", line_width=0, layer="below")
             fig.add_hrect(y0=8.0, y1=top, fillcolor="rgba(220,38,38,0.07)", line_width=0, layer="below")
@@ -1743,7 +1762,46 @@ def _render_credit_spreads():
                     font=dict(size=10, color="#dc2626"),
                     bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3)
             apply_standard_layout(fig, title="Credit spreads (5Y) - IG / BBB / HY OAS with regime bands",
-                                  height=378, yaxis_title="OAS")
+                                  height=372, yaxis_title="OAS")
             fig.update_yaxes(ticksuffix="%")
             st.plotly_chart(fig, use_container_width=True)
         st.caption("Shaded zones mark Elevated (500-800 bps) and Stressed (>=800 bps) HY regimes.")
+
+    # Row 2: the credit curve (OAS by rating) + the HY-IG risk-premium history.
+    cv, dp = st.columns(2)
+    with cv:
+        with st.container(border=True, key="creditfig_curve", height=320):
+            curve = [(lbl, data[sid]["latest"], grp) for grp, sid, lbl in _CREDIT_LADDER
+                     if "Master" not in lbl]
+            xs = [c[0] for c in curve]
+            ys = [c[1] * 100 if c[1] is not None else None for c in curve]
+            colors = ["#1e40af" if c[2] == "Investment grade" else "#dc2626" for c in curve]
+            figc = go.Figure(go.Bar(
+                x=xs, y=ys, marker_color=colors,
+                text=[f"{y:.0f}" if y is not None else "" for y in ys],
+                textposition="outside", textfont=dict(size=10), cliponaxis=False))
+            ymax = max([y for y in ys if y is not None], default=0)
+            apply_standard_layout(figc, title="Credit curve - OAS by rating (bps)",
+                                  height=278, yaxis_title="bps", show_legend=False)
+            figc.update_yaxes(range=[0, ymax * 1.18 if ymax else 1])
+            st.plotly_chart(figc, use_container_width=True)
+        st.caption("OAS by rating, AAA to CCC. Blue = investment grade, red = high yield. "
+                   "Source: FRED.")
+    with dp:
+        with st.container(border=True, key="creditfig_diff", height=320):
+            hy_df = fetch_series("BAMLH0A0HYM2", years=5)
+            ig_df = fetch_series("BAMLC0A0CM", years=5)
+            figd = go.Figure()
+            if not hy_df.empty and not ig_df.empty:
+                m = hy_df.merge(ig_df, on="date", suffixes=("_hy", "_ig")).dropna()
+                m = m.sort_values("date")
+                figd.add_trace(go.Scatter(
+                    x=m["date"], y=(m["value_hy"] - m["value_ig"]), mode="lines",
+                    line=dict(color="#1e3a8a", width=2),
+                    fill="tozeroy", fillcolor="rgba(30,58,138,0.06)", name="HY - IG"))
+            apply_standard_layout(figd, title="HY - IG risk premium (5Y)",
+                                  height=278, yaxis_title="pp", show_legend=False)
+            figd.update_yaxes(ticksuffix="pp")
+            st.plotly_chart(figd, use_container_width=True)
+        st.caption("The extra spread investors demand for high yield over investment grade; "
+                   "widens when risk appetite falls. Source: FRED.")
