@@ -157,7 +157,31 @@ def main() -> int:
 
     _warm_overlay_history()
     _warm_bank_sector_history()
+    _warm_feed_insider_aggregate(tickers)
     return 0
+
+
+def _warm_feed_insider_aggregate(tickers: list[str]) -> None:
+    """Build the Home feed's universe-wide insider aggregate here, off the render
+    path. The feed's _af_feed_items_live then reads ONE cache row instead of
+    fanning out a Form-4 GCS read per bank — turning a 15-35s render-thread
+    rebuild into a single cache hit. Dedupe by CIK (multi-class names like
+    BPOP/BPOPM share one CIK) so a bank's trades don't render twice."""
+    try:
+        from data.bank_mapping import get_cik
+        from data.form4_client import build_open_market_universe_cache
+        ciks, seen = {}, set()
+        for t in tickers:
+            c = get_cik(t)
+            if c and c not in seen:
+                ciks[t] = c
+                seen.add(c)
+        n = build_open_market_universe_cache(ciks, days=14, limit=60)
+        print(f"[{time.strftime('%H:%M:%S')}] feed insider aggregate: {n} tx "
+              f"across {len(ciks)} banks", flush=True)
+    except Exception as e:
+        print(f"[home-snap] feed insider aggregate failed: "
+              f"{type(e).__name__}: {e}", flush=True)
 
 
 # The above-the-fold overlay chart reads ETF price history cache_only on the

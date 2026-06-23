@@ -86,5 +86,59 @@ class TestRecentOpenMarket(unittest.TestCase):
         self.assertEqual(out[0]["ticker"], "AAA")
 
 
+class TestUniverseAggregate(unittest.TestCase):
+    """The pre-built aggregate (build_* writes one cache row; the feed reads it
+    via recent_open_market_universe) — the fix that keeps the render thread off
+    the per-CIK Form-4 fan-out."""
+
+    def test_build_then_read_roundtrip(self):
+        from data import form4_client
+        today = datetime.now().strftime("%Y-%m-%d")
+        cache_by_cik = {111: {"transactions": [_tx("P", today, "Buy")]}}
+        store: dict = {}
+
+        def fake_load(prefix, name):
+            return cache_by_cik.get(int(name.split(".")[0]))
+
+        with patch("data.form4_client.load_json", side_effect=fake_load), \
+             patch("data.cache.put", side_effect=lambda k, v: store.__setitem__(k, v)), \
+             patch("data.cache.get", side_effect=lambda k: store.get(k)):
+            n = form4_client.build_open_market_universe_cache({"AAA": 111}, days=14)
+            self.assertEqual(n, 1)
+            rows = form4_client.recent_open_market_universe(limit=40)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["ticker"], "AAA")
+        self.assertEqual(rows[0]["cik"], 111)
+
+    def test_read_missing_returns_empty_not_fanout(self):
+        # No aggregate built yet → [] (feed shows disclosures-only), never a
+        # per-CIK scan. Pins the render-thread-safe contract.
+        from data import form4_client
+        with patch("data.cache.get", return_value=None):
+            self.assertEqual(form4_client.recent_open_market_universe(), [])
+
+    def test_warming_job_dedupes_by_cik(self):
+        # The universe-span + dedup-by-CIK (multi-class names like BPOP/BPOPM
+        # share one CIK) moved from the render path into the warming job. Pin
+        # that the job feeds the builder a deduped, universe-wide CIK map.
+        import jobs.refresh_home_snapshot as job
+        captured = {}
+
+        def fake_build(ciks, days=14, limit=60):
+            captured["ciks"] = dict(ciks)
+            return len(ciks)
+
+        cikmap = {"NWBI": "100", "BPOP": "200", "BPOPM": "200", "WAL": "300"}
+        with patch("data.bank_mapping.get_cik", side_effect=lambda t: cikmap.get(t)), \
+             patch("data.form4_client.build_open_market_universe_cache",
+                   side_effect=fake_build):
+            job._warm_feed_insider_aggregate(["NWBI", "BPOP", "BPOPM", "WAL"])
+        ciks = captured["ciks"]
+        self.assertIn("NWBI", ciks)
+        self.assertIn("WAL", ciks)
+        self.assertNotIn("BPOPM", ciks)     # deduped — shares CIK 200 with BPOP
+        self.assertEqual(ciks["BPOP"], "200")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -302,41 +302,27 @@ class TestHomeRendersPopulated(unittest.TestCase):
         finally:
             self.home._esc = saved
 
-    def test_insider_rows_span_universe_deduped_by_cik(self):
-        # The feed's insider rows must cover the whole universe (not just the
-        # watchlist), matching its "UNIVERSE" label — and dedupe by CIK so a
-        # bank's non-common share classes (BPOP/BPOPM share a CIK) don't double
-        # its rows.
+    def test_insider_rows_read_from_prebuilt_aggregate(self):
+        # The feed now reads the pre-aggregated universe insider row (ONE cache
+        # hit) instead of fanning out a Form-4 read per bank on the render thread.
+        # Pin that it renders BUY/SELL rows straight from that aggregate.
         import data.events as ev
-        import data.bank_universe as bu
-        import data.bank_mapping as bm
         import data.form4_client as f4
-        captured = {}
-
-        def _fake_txns(ciks, days=30, limit=60):
-            captured["ciks"] = dict(ciks)
-            return [{"ticker": "NWBI", "cik": "100", "insider": "Jane Doe",
-                     "role": "CFO", "direction": "Buy", "code": "P",
-                     "shares": 1000, "value_usd": 50000, "date": "2026-06-20",
-                     "url": "https://example.com/f4"}]
-
-        saved = (ev.get_universe_recent, bu.get_universe, bm.get_cik,
-                 f4.recent_open_market_transactions)
+        saved = (ev.get_universe_recent, f4.recent_open_market_universe)
         try:
             ev.get_universe_recent = lambda *a, **k: []          # quiet the news half
-            bu.get_universe = lambda: {"NWBI": {}, "BPOP": {}, "BPOPM": {}, "WAL": {}}
-            bm.get_cik = lambda t: {"NWBI": "100", "BPOP": "200",
-                                    "BPOPM": "200", "WAL": "300"}.get(t)
-            f4.recent_open_market_transactions = _fake_txns
-            items = self.home._af_feed_items_live(["WAL"])          # watchlist=WAL only
+            f4.recent_open_market_universe = lambda limit=40: [
+                {"ticker": "NWBI", "cik": "100", "role": "CFO", "direction": "Buy",
+                 "shares": 1000, "date": "2026-06-20",
+                 "url": "https://example.com/f4"}]
+            items = self.home._af_feed_items_live(["WAL"])
         finally:
-            (ev.get_universe_recent, bu.get_universe, bm.get_cik,
-             f4.recent_open_market_transactions) = saved
-        ciks = captured["ciks"]
-        self.assertIn("NWBI", ciks)        # universe-only ticker now queried
-        self.assertIn("WAL", ciks)         # watchlist still included
-        self.assertNotIn("BPOPM", ciks)    # deduped — shares CIK 200 with BPOP
-        self.assertEqual(ciks["BPOP"], "200")
+            (ev.get_universe_recent, f4.recent_open_market_universe) = saved
+        buys = [i for i in items if i.get("tag") == "BUY"]
+        self.assertEqual(len(buys), 1)
+        self.assertEqual(buys[0]["tk"], "NWBI")
+        self.assertIn("buys", buys[0]["head"])
+        self.assertEqual(buys[0]["url"], "https://example.com/f4")
         self.assertTrue(any(it.get("tk") == "NWBI" for it in items))  # row rendered
 
 

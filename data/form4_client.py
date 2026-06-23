@@ -316,6 +316,36 @@ def recent_open_market_transactions(ticker_ciks: dict, days: int = 30,
     return out[:limit]
 
 
+# Postgres cache key for the pre-aggregated universe insider feed. Bumped (_v1)
+# if the row shape changes so a stale aggregate is rebuilt, not mis-read.
+_OPEN_MARKET_UNIVERSE_KEY = "form4_open_market_universe_v1"
+
+
+def build_open_market_universe_cache(ticker_ciks: dict, days: int = 14,
+                                     limit: int = 60) -> int:
+    """Run the heavy per-CIK Form-4 scan ONCE and persist the result as a single
+    aggregate row, so the Home feed reads one cache hit instead of fanning out a
+    GCS object read per bank on the render thread. Run by a background job
+    (jobs/refresh_home_snapshot), NEVER on the render path. Returns the row count.
+    """
+    from data import cache
+    rows = recent_open_market_transactions(ticker_ciks, days=days, limit=limit)
+    cache.put(_OPEN_MARKET_UNIVERSE_KEY,
+              {"cached_at": datetime.now().isoformat(), "value": rows})
+    return len(rows)
+
+
+def recent_open_market_universe(limit: int = 40) -> list[dict]:
+    """Fast read of the pre-built universe insider feed (see
+    build_open_market_universe_cache). Returns [] until a job has built it — the
+    feed degrades to disclosures-only rather than fanning out per-CIK reads. Does
+    ZERO per-bank I/O, so it is safe to call on the render thread."""
+    from data import cache
+    snap = cache.get(_OPEN_MARKET_UNIVERSE_KEY)
+    rows = (snap or {}).get("value") or []
+    return rows[:limit]
+
+
 def summarize_insider_activity(transactions: list[dict]) -> dict:
     """Compute summary stats: 6M buy/sell totals, net $ flow, by-insider summary."""
     if not transactions:

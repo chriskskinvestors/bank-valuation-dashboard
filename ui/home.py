@@ -654,31 +654,20 @@ def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
     except Exception:
         pass
     try:
-        from data.form4_client import recent_open_market_transactions
-        from data.bank_mapping import get_cik
-        from data.bank_universe import get_universe
-        # Universe-wide, matching the news half (get_universe_recent above) — the
-        # feed is labeled "UNIVERSE". The Form 4 cache is already populated for the
-        # whole universe by jobs/refresh_insider.py, and recent_open_market_
-        # transactions is cache-only (no live SEC fetch), so this stays cheap.
-        # Dedupe by CIK: the raw universe keeps non-common share classes (e.g.
-        # BPOP/BPOPM share one CIK), and rows are keyed by ticker — without this
-        # a multi-class bank's insider trades would render twice.
-        tickers = sorted(set(get_universe().keys()) | set(watchlist or []))
-        ciks, _seen_cik = {}, set()
-        for _t in tickers:
-            _c = get_cik(_t)
-            if _c and _c not in _seen_cik:
-                ciks[_t] = _c
-                _seen_cik.add(_c)
-        for tx in recent_open_market_transactions(ciks, days=14, limit=40):
+        # Universe-wide insider rows, matching the news half above. Read the
+        # PRE-AGGREGATED feed (one cache hit) instead of fanning out a Form-4 GCS
+        # read per bank on the render thread — the heavy per-CIK scan (and the
+        # dedup-by-CIK for multi-class names) runs in jobs/refresh_home_snapshot.
+        # See data.form4_client.recent_open_market_universe.
+        from data.form4_client import recent_open_market_universe
+        for tx in recent_open_market_universe(limit=40):
             buy = tx.get("direction") == "Buy"
             sh = tx.get("shares")
             verb = "buys" if buy else "sells"
             who = (tx.get("role") or "Insider").split(",")[0]
             nm = get_name(tx["ticker"]) or tx["ticker"]
             qty = f"{int(sh):,} of " if sh else ""
-            cik = ciks.get(tx["ticker"])
+            cik = tx.get("cik")
             edgar = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
                      f"&CIK={cik}&type=4&dateb=&owner=include&count=40") if cik else None
             out.append({"tag": "BUY" if buy else "SELL", "cls": "tr",
