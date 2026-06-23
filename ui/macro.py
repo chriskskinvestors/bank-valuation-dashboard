@@ -626,7 +626,7 @@ def _render_fed_policy_strip():
     ao_txt = ao.strftime("%b %d, %Y").replace(" 0", " ") if ao is not None else "—"
     st.markdown("**Federal Reserve — policy & projections**")
     st.markdown(
-        '<div class="ksk-grid"><table><thead><tr>'
+        '<div class="ksk-grid"><table style="width:100%;"><thead><tr>'
         '<th style="text-align:left;">Target range</th>'
         '<th style="text-align:right;">Effective</th>'
         '<th style="text-align:left;">Last move</th>'
@@ -725,7 +725,7 @@ def _render_sep_block():
             "</tr>"
         )
     st.markdown(
-        '<div class="ksk-grid"><table><thead><tr>'
+        '<div class="ksk-grid"><table style="width:100%;"><thead><tr>'
         '<th style="text-align:left;">Horizon</th>'
         '<th style="text-align:right;">Funds</th>'
         '<th style="text-align:right;">GDP</th>'
@@ -768,8 +768,7 @@ def _render_sep_block():
     fig.update_xaxes(type="category")
     if allvals:
         tighten_yaxis(fig, allvals, ticksuffix="%")
-    with st.container(border=True):
-        st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _shade_recessions(fig, years: int = 5):
@@ -1410,12 +1409,12 @@ def _rates_board_table(rows) -> str:
                 f'<td style="text-align:right;">{_fmt_rate_delta(r["d1w"])}</td>'
                 f'<td style="text-align:right;">{_fmt_rate_delta(r["d3m"])}</td>'
                 f'<td style="text-align:right;">{_fmt_z(r["z"])}</td>'
-                f'<td style="text-align:center;">{_sparkline_svg(r["spark"])}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(r["spark"], width=150)}</td>'
                 f'<td style="text-align:right;color:var(--text-secondary);">{aod}</td>'
                 "</tr>"
             )
     return (
-        '<div class="ksk-grid"><table><thead><tr>'
+        '<div class="ksk-grid"><table style="width:100%;"><thead><tr>'
         '<th style="text-align:left;">Instrument</th>'
         '<th style="text-align:right;">Latest</th>'
         '<th style="text-align:right;">Δ1W</th>'
@@ -1553,21 +1552,19 @@ def _render_rates_charts():
 
 def _render_rates_curve():
     # Lead with the dense, scannable part (rates board + chart grid). Under the
-    # board, the borderless Fed card: policy strip on top, SEP medians table
-    # beneath, then the dot-plot in its own bordered card (boxes are for charts
-    # only). The FOMC's own words (statement + headlines) follow full-width
-    # below. Both Fed tables are width:100% of the rail so they match exactly.
+    # board, two bordered cards: the Fed policy strip on top, the SEP table +
+    # dot-plot beneath it. The FOMC's own words (statement + headlines) follow
+    # full-width below.
     st.markdown(
         "<style>"
-        'div[class*="st-key-fedcard"]{padding:8px 0 0!important;}'
+        'div[class*="st-key-fedcard"]{padding:6px 12px 8px!important;}'
         'div[class*="st-key-fedcard"] [data-testid="stElementContainer"]{margin:0!important;}'
-        'div[class*="st-key-fedcard"] .ksk-grid table{width:100%;}'
         "</style>",
         unsafe_allow_html=True,
     )
     # Narrow left rail (board + the stacked Fed card) running full height;
     # the chart grid + the FOMC's own words fill the wide right column.
-    board_col, chart_col = st.columns([1, 2.9])
+    board_col, chart_col = st.columns([1.5, 2.5])
     with board_col:
         st.markdown("**Rates & curve board**")
         st.markdown(_rates_board_table(_rates_board_rows()), unsafe_allow_html=True)
@@ -1576,7 +1573,7 @@ def _render_rates_curve():
             "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
             "HY OAS shown in bps over Treasuries. Source: FRED."
         )
-        with st.container(key="fedcard"):
+        with st.container(border=True, key="fedcard"):
             _render_fed_policy_strip()
             _render_sep_block()
     with chart_col:
