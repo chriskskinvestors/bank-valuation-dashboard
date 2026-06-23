@@ -6,6 +6,7 @@ Stores parsed consensus as JSON in the consensus/ directory.
 """
 
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -119,10 +120,58 @@ METRIC_UNITS = {
 }
 
 
+# Consensus metric key → the build_bank_metrics key that carries the ACTUAL value.
+# These differ because the consensus aliases/manual form predate the metrics
+# config (e.g. consensus "netinc" vs the actual "net_income"). Without this map
+# the comparison silently returned n/a for 8 metrics. None = no actual exists, so
+# the comparison stays n/a honestly (revenue has no single actual; the actuals
+# carry total dividends, not per-share). See data/consensus tests + AUDIT doc.
+CONSENSUS_ACTUAL_KEY = {
+    "netinc": "net_income",
+    "nii": "net_interest_income",
+    "nonii": "nonint_income",
+    "nonix": "nonint_expense",
+    "dep": "total_deposits",
+    "lnlsnet": "total_loans",
+    "revenue": None,
+    "dps": None,
+}
+
+# Unit string → multiplier to raw dollars. Actuals store $-amounts in RAW dollars
+# (analysis/metrics.py converts FDIC thousands ×1000), while consensus is entered
+# in a display magnitude ($M/$B). Both sides are converted to the metric's
+# canonical magnitude before comparison so we never subtract $M from raw $ (which
+# produced ×10^6–10^9-wrong beat/miss verdicts — the cardinal-rule violation).
+_UNIT_TO_RAW = {"$B": 1e9, "$M": 1e6, "$000": 1e3, "$K": 1e3}
+
+
 def _normalize_key(name: str) -> str | None:
     """Map a metric name string to our internal key."""
     name_lower = name.lower().strip()
     return METRIC_ALIASES.get(name_lower)
+
+
+def _finite_float(x) -> float | None:
+    """Coerce to a finite float, or None — rejects NaN/inf and non-numerics so a
+    misparsed value never becomes a fabricated consensus estimate."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _known_ticker(ticker: str) -> bool:
+    """True if the ticker is a real bank in our universe — guards the PDF parser,
+    which is told to extract tickers and could otherwise save consensus under a
+    hallucinated/wrong symbol (a wrong-entity join). Fails OPEN (returns True) only
+    if the universe itself can't be loaded, so a transient outage never silently
+    drops every upload."""
+    try:
+        from data.bank_universe import get_universe
+        return ticker.upper() in get_universe()
+    except Exception:
+        return True
 
 
 # ── PDF Parsing (Anthropic SDK) ──────────────────────────────────────────
@@ -159,8 +208,8 @@ Extract every metric you can find — EPS, revenue, NIM, efficiency, ROAA, ROATC
 Return ONLY the JSON array, no other text."""
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
+            model="claude-sonnet-4-6",
+            max_tokens=8000,
             messages=[{
                 "role": "user",
                 "content": [
@@ -179,6 +228,13 @@ Return ONLY the JSON array, no other text."""
 
         # Parse the response
         text = response.content[0].text.strip()
+        if response.stop_reason == "max_tokens":
+            return {
+                "ticker": ticker.upper(), "period": period, "source": "pdf",
+                "metrics": [],
+                "error": "The document is too large — the AI response was "
+                         "truncated. Try a shorter excerpt or split the file.",
+            }
         # Extract JSON from response (might have markdown code blocks)
         json_match = re.search(r'\[.*\]', text, re.DOTALL)
         if json_match:
@@ -186,14 +242,20 @@ Return ONLY the JSON array, no other text."""
         else:
             raw_metrics = json.loads(text)
 
-        # Map to our internal keys
+        # Map to our internal keys — every field defensive (the model's JSON shape
+        # varies); a non-numeric / NaN value is dropped, never fabricated.
         metrics = []
         for m in raw_metrics:
-            key = _normalize_key(m["name"])
+            if not isinstance(m, dict):
+                continue
+            mname = str(m.get("name", "")).strip()
+            val = _finite_float(m.get("value"))
+            if not mname or val is None:
+                continue
             metrics.append({
-                "name": m["name"],
-                "key": key,
-                "value": float(m["value"]) if m["value"] is not None else None,
+                "name": mname,
+                "key": _normalize_key(mname),
+                "value": val,
                 "unit": m.get("unit", ""),
             })
 
@@ -261,15 +323,15 @@ Return a JSON object grouped by ticker like this:
 Rules:
 - Use standard US stock ticker symbols (JPM not "JP Morgan")
 - Extract every metric you can find per bank: EPS, revenue, NIM, efficiency, ROAA, ROATCE, ROE, NPL, CET1, net income, provision, deposits, loans, TBV, dividends, charge-offs, yields, costs, growth rates, noninterest income/expense, etc.
-- If a bank name is mentioned but you're not sure of the ticker, use your best guess
+- Use the OFFICIAL US ticker. If you cannot identify the exact ticker for a bank with confidence, OMIT that bank entirely — do not guess.
 - Values should be numeric (no commas or dollar signs in the value field)
 - Unit should be one of: %, $, $M, $B, bps, x, or blank
 
 Return ONLY the JSON object, no other text."""
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=8192,
+            model="claude-sonnet-4-6",
+            max_tokens=16000,
             messages=[{
                 "role": "user",
                 "content": [
@@ -288,6 +350,12 @@ Return ONLY the JSON object, no other text."""
 
         # Parse response
         text = response.content[0].text.strip()
+        if response.stop_reason == "max_tokens":
+            return {
+                "results": [], "total_banks": 0, "total_metrics": 0,
+                "errors": ["The document is too large — the AI response was "
+                           "truncated. Split it into fewer banks and retry."],
+            }
         json_match = re.search(r'\{.*\}', text, re.DOTALL)
         if json_match:
             bank_data = json.loads(json_match.group())
@@ -303,13 +371,20 @@ Return ONLY the JSON object, no other text."""
             ticker = ticker.strip().upper()
             if not ticker or not raw_metrics:
                 continue
+            # Never save under a ticker the model invented — that's a wrong-entity
+            # join. Validate against the bank universe and skip with a clear note.
+            if not _known_ticker(ticker):
+                errors.append(f"{ticker}: not a recognized bank ticker — skipped "
+                              "(the AI may have guessed). Add it manually if real.")
+                continue
 
             metrics = []
             for m in raw_metrics:
+                if not isinstance(m, dict):
+                    continue
                 key = _normalize_key(m.get("name", ""))
-                try:
-                    val = float(m["value"]) if m.get("value") is not None else None
-                except (ValueError, TypeError):
+                val = _finite_float(m.get("value"))
+                if val is None:
                     continue
 
                 metrics.append({
@@ -590,7 +665,9 @@ def _parse_multi_bank_sheet(df: pd.DataFrame, ticker_col: str, period: str,
         for col in df.columns:
             if col == ticker_col:
                 continue
-            key = _normalize_key(col)
+            key = _normalize_key(str(col))
+            if key is None:        # ignore junk columns (Notes, Date, Analyst…)
+                continue
             metric_columns.append((col, key))
 
         for _, row in df.iterrows():
@@ -759,8 +836,9 @@ def load_consensus(ticker: str, period: str | None = None) -> dict | None:
 
     if period:
         period_clean = period.replace("/", "-").replace(" ", "_")
-        for f in all_files:
-            if period_clean in f.replace(".json", ""):
+        target = f"{ticker}_{period_clean}.json"     # exact, not substring
+        for f in all_files:                          # ("2026Q1" must not hit "2026Q10")
+            if f == target:
                 return load_json(CONSENSUS_PREFIX, f)
     elif all_files:
         return load_json(CONSENSUS_PREFIX, all_files[0])
@@ -828,43 +906,44 @@ def compare_consensus_to_actual(
         key = m.get("key")
         consensus_val = m.get("value")
         name = m.get("name", "")
-        unit = m.get("unit", METRIC_UNITS.get(key, ""))
+        # The metric KEY is the source of truth for the unit (NIM is always %,
+        # provision always $M) — the per-metric unit string can be LLM noise.
+        canon_unit = METRIC_UNITS.get(key) or (m.get("unit") or "")
+
+        actual_key = CONSENSUS_ACTUAL_KEY.get(key, key) if key else None
+        actual_raw = actual_metrics.get(actual_key) if actual_key else None
+
+        def _na(disp_name):
+            return {
+                "metric_name": disp_name, "key": key,
+                "consensus": consensus_val, "actual": None, "delta": None,
+                "delta_pct": None, "beat_miss": "n/a", "unit": canon_unit,
+            }
 
         if consensus_val is None or key is None:
-            results.append({
-                "metric_name": name,
-                "key": key,
-                "consensus": consensus_val,
-                "actual": None,
-                "delta": None,
-                "delta_pct": None,
-                "beat_miss": "n/a",
-                "unit": unit,
-            })
+            results.append(_na(name))
+            continue
+        if actual_raw is None:                       # no actual counterpart
+            results.append(_na(METRIC_DISPLAY.get(key, name)))
             continue
 
-        actual_val = actual_metrics.get(key)
+        # Put consensus and actual on the SAME basis. Actuals are raw dollars for
+        # $-amounts; consensus is entered in a display magnitude. Convert both to
+        # the metric's canonical magnitude ($M/$B), honoring the entered unit so a
+        # PDF that quotes $B instead of $M still lines up.
+        entered_unit = (m.get("unit") or "").strip() or canon_unit
+        cons_raw = consensus_val * _UNIT_TO_RAW.get(entered_unit, 1.0)
+        disp_scale = _UNIT_TO_RAW.get(canon_unit, 1.0)
+        consensus_disp = cons_raw / disp_scale
+        actual_disp = actual_raw / disp_scale
 
-        if actual_val is None:
-            results.append({
-                "metric_name": METRIC_DISPLAY.get(key, name),
-                "key": key,
-                "consensus": consensus_val,
-                "actual": None,
-                "delta": None,
-                "delta_pct": None,
-                "beat_miss": "n/a",
-                "unit": unit,
-            })
-            continue
+        delta = actual_disp - consensus_disp
+        delta_pct = (delta / abs(consensus_disp) * 100) if consensus_disp else 0
 
-        delta = actual_val - consensus_val
-        delta_pct = (delta / abs(consensus_val) * 100) if consensus_val != 0 else 0
-
-        # Determine beat/miss
-        # For most metrics, higher = beat. For efficiency/NPL/NCO, lower = beat.
+        # Higher = beat for most; for cost/risk metrics lower = beat. Provision and
+        # noninterest expense are costs — a higher actual than expected is a miss.
         lower_is_better = key in ("efficiency_ratio", "npl_ratio", "nco_ratio",
-                                   "nonix", "cost_of_deposits")
+                                  "nonix", "cost_of_deposits", "provision")
 
         if abs(delta_pct) <= 1.0:
             beat_miss = "inline"
@@ -876,12 +955,12 @@ def compare_consensus_to_actual(
         results.append({
             "metric_name": METRIC_DISPLAY.get(key, name),
             "key": key,
-            "consensus": consensus_val,
-            "actual": actual_val,
+            "consensus": consensus_disp,
+            "actual": actual_disp,
             "delta": delta,
             "delta_pct": delta_pct,
             "beat_miss": beat_miss,
-            "unit": unit,
+            "unit": canon_unit,
         })
 
     return results

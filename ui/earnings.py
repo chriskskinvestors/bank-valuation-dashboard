@@ -1542,6 +1542,11 @@ def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watc
 
 # ── Upload / Input Section ─────────────────────────────────────────────
 
+# Cap uploaded consensus files — a large PDF is base64-encoded straight to the
+# LLM (cost + truncation risk); Excel/CSV this big is never a consensus sheet.
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
 def _render_upload_section(watchlist: list[str]):
     """Upload and manual input for the aggregate view."""
     st.subheader("Add Consensus Estimates")
@@ -1600,16 +1605,23 @@ def _render_upload_section(watchlist: list[str]):
                 key="earnings_overview_period",
             )
 
-        if uploaded and upload_ticker and upload_period:
-            with st.spinner("Parsing consensus document..."):
-                file_bytes = uploaded.read()
-                filename = uploaded.name.lower()
-                ticker_clean = upload_ticker.strip().upper()
+        # Gate parsing behind an explicit button: without it Streamlit re-ran the
+        # parser (a paid LLM call for PDFs) on every widget interaction.
+        if uploaded and upload_ticker and upload_period and st.button(
+                "Parse & Save", type="primary", key="single_parse"):
+            file_bytes = uploaded.read()
+            if len(file_bytes) > _MAX_UPLOAD_BYTES:
+                st.error(f"File is too large ({len(file_bytes)/1e6:.1f} MB). "
+                         "Please upload a file under 10 MB.")
+            else:
+                with st.spinner("Parsing consensus document..."):
+                    filename = uploaded.name.lower()
+                    ticker_clean = upload_ticker.strip().upper()
 
-                if filename.endswith(".pdf"):
-                    parsed = parse_consensus_pdf(file_bytes, ticker_clean, upload_period)
-                else:
-                    parsed = parse_consensus_excel(file_bytes, ticker_clean, upload_period, filename)
+                    if filename.endswith(".pdf"):
+                        parsed = parse_consensus_pdf(file_bytes, ticker_clean, upload_period)
+                    else:
+                        parsed = parse_consensus_excel(file_bytes, ticker_clean, upload_period, filename)
 
                 if parsed.get("error"):
                     st.error(f"Error parsing: {parsed['error']}")
@@ -1667,6 +1679,11 @@ def _render_bulk_upload():
         if st.button("Process Bulk Upload", type="primary", key="bulk_process"):
             file_bytes = bulk_file.read()
             filename = bulk_file.name.lower()
+
+            if len(file_bytes) > _MAX_UPLOAD_BYTES:
+                st.error(f"File is too large ({len(file_bytes)/1e6:.1f} MB). "
+                         "Please upload a file under 10 MB.")
+                st.stop()
 
             if filename.endswith(".pdf"):
                 with st.spinner("AI is reading PDF and extracting consensus estimates for all banks..."):
