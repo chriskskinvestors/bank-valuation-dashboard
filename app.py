@@ -1107,60 +1107,67 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
         render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
 
-    # ── Columns & export dialog ────────────────────────────────────────
-    @st.dialog("Columns & export", width="large")
+    # ── Columns dialog (picker only — export is its own button now) ────
+    @st.dialog("Columns", width="large")
     def _columns_dialog():
-        cc, ex = st.columns([3, 1])
-        with cc:
-            all_metric_keys = [m["key"] for m in METRICS if m.get("format") != "date"]
-            default_cols = st.session_state.get(f"custom_cols_{tab_key}", tab_columns)
-            default_cols = [c for c in default_cols if c in all_metric_keys]
-            selected_cols = st.multiselect(
-                "Columns to display (leave as-is for the tab's default view)",
-                all_metric_keys, default=default_cols,
-                format_func=lambda k: f"{METRICS_BY_KEY.get(k, {}).get('label', k)}  "
-                                      f"({METRICS_BY_KEY.get(k, {}).get('category', '—')})",
-                key=f"custom_cols_{tab_key}",
-            )
-        with ex:
-            st.markdown("**Export**")
-            if display_metrics:
-                export_df = pd.DataFrame(display_metrics)
-                display_cols_export = selected_cols or tab_columns
-                export_cols = ["ticker"] + [c for c in display_cols_export
-                                            if c in export_df.columns]
-                export_df = export_df[export_cols].copy()
-                rename = {"ticker": "Ticker"}
-                for c in display_cols_export:
-                    m = METRICS_BY_KEY.get(c)
-                    if m:
-                        rename[c] = m["label"]
-                export_df = export_df.rename(columns=rename)
-                csv_bytes = export_df.to_csv(index=False).encode("utf-8")
-                st.download_button("CSV", csv_bytes,
-                                   file_name=f"{tab_key}_{scope_slug}.csv", mime="text/csv",
-                                   use_container_width=True, key=f"csv_{tab_key}")
-                try:
-                    import io
-                    buf = io.BytesIO()
-                    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                        export_df.to_excel(writer, index=False, sheet_name=tab_key[:31])
-                        from openpyxl.utils import get_column_letter
-                        ws = writer.sheets[tab_key[:31]]
-                        ws.freeze_panes = "A2"
-                        for col_idx, col_name in enumerate(export_df.columns, start=1):
-                            max_len = max(
-                                len(str(col_name)),
-                                export_df[col_name].astype(str).map(len).max()
-                                if len(export_df) else 10)
-                            ws.column_dimensions[get_column_letter(col_idx)].width = min(
-                                28, max_len + 2)
-                    st.download_button(
-                        "Excel", buf.getvalue(), file_name=f"{tab_key}_{scope_slug}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True, key=f"xlsx_{tab_key}")
-                except Exception as e:
-                    st.caption(f"Excel export unavailable: {type(e).__name__}")
+        all_metric_keys = [m["key"] for m in METRICS if m.get("format") != "date"]
+        default_cols = st.session_state.get(f"custom_cols_{tab_key}", tab_columns)
+        default_cols = [c for c in default_cols if c in all_metric_keys]
+        st.multiselect(
+            "Columns to display (leave as-is for the tab's default view)",
+            all_metric_keys, default=default_cols,
+            format_func=lambda k: f"{METRICS_BY_KEY.get(k, {}).get('label', k)}  "
+                                  f"({METRICS_BY_KEY.get(k, {}).get('category', '—')})",
+            key=f"custom_cols_{tab_key}")
+
+    # ── Export dialog — CSV / Excel of the current result set ──────────
+    @st.dialog("Export results")
+    def _export_dialog():
+        st.caption(f"Export the current {len(display_metrics)} banks × "
+                   f"{len(display_cols_final)} columns, exactly as shown "
+                   "(scope, filters and sort applied).")
+        if not display_metrics:
+            st.warning("No banks to export.")
+            return
+        export_df = pd.DataFrame(display_metrics)
+        export_cols = ["ticker"] + [c for c in display_cols_final
+                                    if c in export_df.columns]
+        export_df = export_df[export_cols].copy()
+        rename = {"ticker": "Ticker"}
+        for c in display_cols_final:
+            m = METRICS_BY_KEY.get(c)
+            if m:
+                rename[c] = m["label"]
+        export_df = export_df.rename(columns=rename)
+        ec1, ec2 = st.columns(2)
+        with ec1:
+            st.download_button(
+                "Download CSV", export_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"{tab_key}_{scope_slug}.csv", mime="text/csv",
+                use_container_width=True, key=f"csv_{tab_key}")
+        with ec2:
+            try:
+                import io
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                    export_df.to_excel(writer, index=False, sheet_name=tab_key[:31])
+                    from openpyxl.utils import get_column_letter
+                    ws = writer.sheets[tab_key[:31]]
+                    ws.freeze_panes = "A2"
+                    for col_idx, col_name in enumerate(export_df.columns, start=1):
+                        # NaN-safe width: str() every value (Arrow-backed columns
+                        # keep NaN as a float, so .astype(str).map(len) TypeErrors).
+                        max_len = max([len(str(col_name))]
+                                      + [len(str(v)) for v in export_df[col_name].tolist()])
+                        ws.column_dimensions[get_column_letter(col_idx)].width = min(
+                            28, max_len + 2)
+                st.download_button(
+                    "Download Excel", buf.getvalue(),
+                    file_name=f"{tab_key}_{scope_slug}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True, key=f"xlsx_{tab_key}")
+            except Exception as e:
+                st.caption(f"Excel export unavailable: {type(e).__name__}")
 
     # ── Save-as-group dialog ───────────────────────────────────────────
     @st.dialog("Bank Groups", width="large")
@@ -1293,7 +1300,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # panels open as modal dialogs. Compare hands the current set to the
     # side-by-side Compare view (arrives there as a Manual scope).
     _flabel = f"Filters ({len(filter_specs)})" if filter_specs else "Filters"
-    b1, b2, b3, b4, b5, _bsp = st.columns([1, 1, 1, 1.1, 1.6, 2])
+    b1, b2, b3, b4, b5, b6, _bsp = st.columns([1, 1, 1, 1, 1, 1.6, 1.3])
     with b1:
         if st.button("Saved", key=f"btn_saved_{tab_key}", use_container_width=True):
             _saved_dialog()
@@ -1307,6 +1314,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         if st.button("Groups", key=f"btn_grp_{tab_key}", use_container_width=True):
             _groups_dialog()
     with b5:
+        if st.button("Export", key=f"btn_export_{tab_key}", use_container_width=True):
+            _export_dialog()
+    with b6:
         if display_metrics and st.button(
                 f"Compare {len(display_metrics)} →", type="primary",
                 key=f"compare_handoff_{tab_key}", use_container_width=True):
