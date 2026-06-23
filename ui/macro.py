@@ -414,7 +414,7 @@ def _render_funding_deposits():
                     x=ffdf["date"], y=ffdf["value"], name="Fed Funds", mode="lines",
                     line=dict(color="#64748b", width=2, dash="dot")))
             apply_standard_layout(fig, title="Deposit rates vs Fed Funds — the deposit-beta picture",
-                                  height=300, yaxis_title="Rate")
+                                  height=330, yaxis_title="Rate")
             fig.update_yaxes(ticksuffix="%")
             st.plotly_chart(fig, use_container_width=True)
         st.caption("Deposit rates rise far less than Fed Funds (low deposit beta) and lag "
