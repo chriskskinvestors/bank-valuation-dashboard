@@ -12,7 +12,7 @@ from data.fred_client import (
 )
 from utils.chart_style import (
     apply_standard_layout, tighten_yaxis,
-    CHART_HEIGHT_HERO, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT, ALERT_STYLE,
+    CHART_HEIGHT_HERO, CHART_HEIGHT_COMPACT, ALERT_STYLE,
 )
 
 
@@ -1580,18 +1580,40 @@ def _render_rates_curve():
     _render_fed_words()
 
 
+@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
+def _credit_oas_data():
+    """Latest OAS, 3-month change (bps) and a 5Y spark for each ICE BofA OAS
+    series. These aren't in the warm SERIES set, so cache the fetch here."""
+    out = {}
+    for sid in ("BAMLH0A0HYM2", "BAMLC0A0CM", "BAMLC0A4CBBB", "BAMLH0A3HYC"):
+        df = fetch_series(sid, years=6)
+        latest = d3m = as_of = None
+        spark = []
+        if df is not None and not df.empty:
+            d = df.dropna(subset=["value"]).sort_values("date")
+            if not d.empty:
+                latest = float(d["value"].iloc[-1])
+                as_of = d["date"].iloc[-1]
+                prior = d[d["date"] <= as_of - pd.Timedelta(days=91)]
+                if not prior.empty:
+                    d3m = (latest - float(prior["value"].iloc[-1])) * 100
+                cut5 = as_of - pd.Timedelta(days=365 * 5)
+                spark = [float(v) for v in d[d["date"] >= cut5]["value"].tolist()]
+        out[sid] = {"latest": latest, "d3m": d3m, "spark": spark, "as_of": as_of}
+    return out
+
+
 def _render_credit_spreads():
     import plotly.graph_objects as go
     from data.macro_indicators import credit_regime
-    from data.fred_client import latest_date
-    from ui.chrome import ledger
 
-    # ICE BofA OAS series (percent / bps-over-treasuries).
-    hy = latest_value("BAMLH0A0HYM2")     # US High Yield
-    ig = latest_value("BAMLC0A0CM")       # US Corporate (investment grade)
-    bbb = latest_value("BAMLC0A4CBBB")    # BBB
-    ccc = latest_value("BAMLH0A3HYC")     # CCC & lower
-    asof = latest_date("BAMLH0A0HYM2")
+    data = _credit_oas_data()
+    hy = data["BAMLH0A0HYM2"]["latest"]
+    ig = data["BAMLC0A0CM"]["latest"]
+    bbb = data["BAMLC0A4CBBB"]["latest"]
+    ccc = data["BAMLH0A3HYC"]["latest"]
+    diff = (hy - ig) if (hy is not None and ig is not None) else None
+    asof = data["BAMLH0A0HYM2"]["as_of"]
     asof_txt = asof.strftime("%b %d, %Y").replace(" 0", " ") if asof is not None else "—"
 
     # ── Credit regime banner (shared classifier, also used by Regime) ──
@@ -1608,62 +1630,96 @@ def _render_credit_spreads():
         f'Elevated 500–800 · Stressed ≥800 bps. As of {asof_txt}.</span></div>',
         unsafe_allow_html=True,
     )
+    st.markdown(
+        "<style>"
+        'div[class*="st-key-creditchart"]{padding:2px 6px 0!important;}'
+        'div[class*="st-key-creditchart"] [data-testid="stElementContainer"]'
+        "{padding:0!important;margin:0!important;}"
+        'div[class*="st-key-creditcard"]{padding:6px 10px!important;}'
+        "</style>",
+        unsafe_allow_html=True,
+    )
 
-    lc, cc = st.columns([1, 2])
+    def _bps(v):
+        return f"{v * 100:,.0f} bps" if v is not None else _NA_HTML
+
+    def _dbps(v):
+        if v is None:
+            return '<span style="color:var(--text-muted);">—</span>'
+        return f'<span style="color:var(--text-secondary);">{v:+.0f}</span>'
+
+    rows = [
+        ("High Yield (HY)", "BAMLH0A0HYM2", hy),
+        ("Investment Grade (IG)", "BAMLC0A0CM", ig),
+        ("BBB", "BAMLC0A4CBBB", bbb),
+        ("CCC & lower", "BAMLH0A3HYC", ccc),
+    ]
+    body = ""
+    for label, sid, val in rows:
+        body += (
+            "<tr>"
+            f'<td style="text-align:left;">{label}</td>'
+            f'<td style="text-align:right;font-weight:600;">{_bps(val)}</td>'
+            f'<td style="text-align:right;">{_dbps(data[sid]["d3m"])}</td>'
+            f'<td style="text-align:center;">{_sparkline_svg(data[sid]["spark"])}</td>'
+            "</tr>"
+        )
+    body += (
+        '<tr><td style="text-align:left;">HY − IG differential</td>'
+        f'<td style="text-align:right;font-weight:600;">{_bps(diff)}</td>'
+        '<td style="text-align:right;color:var(--text-muted);">—</td>'
+        '<td style="text-align:center;color:var(--text-muted);">—</td></tr>'
+    )
+    table_html = (
+        '<div class="ksk-grid"><table><thead><tr>'
+        '<th style="text-align:left;">Spread</th>'
+        '<th style="text-align:right;">OAS</th>'
+        '<th style="text-align:right;">Δ 3M</th>'
+        '<th style="text-align:center;">Trend (5Y)</th>'
+        "</tr></thead><tbody>" + body + "</tbody></table></div>"
+    )
+
+    lc, cc = st.columns([1, 1.8])
     with lc:
-        def _bps(v):
-            return f"{v * 100:.0f} bps" if v is not None else '<span style="color:var(--text-muted);">n/a</span>'
-        diff = (hy - ig) if (hy is not None and ig is not None) else None
-        ledger("Option-adjusted spreads", [
-            ("High Yield (HY)", _bps(hy)),
-            ("Investment Grade (IG)", _bps(ig)),
-            ("BBB", _bps(bbb)),
-            ("CCC & lower", _bps(ccc)),
-            ("HY − IG differential", _bps(diff)),
-        ])
-
+        with st.container(border=True, key="creditcard", height=300):
+            st.markdown(table_html, unsafe_allow_html=True)
+        st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA via FRED). "
+                   "Δ 3M = change over 3 months, in bps. Source: FRED.")
     with cc:
-        fig = go.Figure()
-        last_hy = last_hy_date = None
-        data_max = 0.0
-        for sid, label, color, width in [
-            ("BAMLC0A0CM", "IG OAS", "#1e40af", 1.8),
-            ("BAMLH0A0HYM2", "HY OAS", "#dc2626", 2.6),
-        ]:
-            df = fetch_series(sid, years=5)
-            if not df.empty:
-                fig.add_trace(go.Scatter(
-                    x=df["date"], y=df["value"], name=label, mode="lines",
-                    line=dict(color=color, width=width),
-                ))
-                vmax = df["value"].dropna().max()
-                if vmax == vmax:  # not NaN
-                    data_max = max(data_max, float(vmax))
-                if sid == "BAMLH0A0HYM2":
-                    dd = df.dropna(subset=["value"]).sort_values("date")
-                    if not dd.empty:
-                        last_hy = float(dd["value"].iloc[-1])
-                        last_hy_date = dd["date"].iloc[-1]
-        # Y-axis top: enough to show the Elevated band, but never let the
-        # regime shading blow out the scale and flatten the spread lines.
-        top = max(9.0, data_max * 1.15)
-        # Regime band shading (only the risk-alert zones, to avoid clutter),
-        # clipped to the visible range.
-        fig.add_hrect(y0=5.0, y1=8.0, fillcolor="rgba(217,119,6,0.06)", line_width=0, layer="below")
-        fig.add_hrect(y0=8.0, y1=top, fillcolor="rgba(220,38,38,0.07)", line_width=0, layer="below")
-        fig.update_yaxes(range=[0, top])
-        if last_hy is not None:
-            fig.add_annotation(
-                x=last_hy_date, y=last_hy,
-                text=f"HY {last_hy * 100:.0f} bps · {reg['label'].lower()}",
-                showarrow=True, arrowhead=0, ax=-66, ay=-24,
-                font=dict(size=10, color="#dc2626"),
-                bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3,
-            )
-        apply_standard_layout(fig, title="Credit spreads (5Y) — HY & IG OAS with regime bands",
-                              height=CHART_HEIGHT_FULL, yaxis_title="OAS")
-        fig.update_yaxes(ticksuffix="%")
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA indices via FRED). "
-               "Shaded zones mark Elevated (500–800 bps) and Stressed (≥800 bps) HY regimes.")
+        with st.container(border=True, key="creditchart", height=300):
+            fig = go.Figure()
+            last_hy = last_hy_date = None
+            data_max = 0.0
+            for sid, label, color, width in [
+                ("BAMLC0A0CM", "IG OAS", "#1e40af", 1.8),
+                ("BAMLH0A0HYM2", "HY OAS", "#dc2626", 2.6),
+            ]:
+                df = fetch_series(sid, years=5)
+                if not df.empty:
+                    fig.add_trace(go.Scatter(
+                        x=df["date"], y=df["value"], name=label, mode="lines",
+                        line=dict(color=color, width=width)))
+                    vmax = df["value"].dropna().max()
+                    if vmax == vmax:
+                        data_max = max(data_max, float(vmax))
+                    if sid == "BAMLH0A0HYM2":
+                        dd = df.dropna(subset=["value"]).sort_values("date")
+                        if not dd.empty:
+                            last_hy = float(dd["value"].iloc[-1])
+                            last_hy_date = dd["date"].iloc[-1]
+            top = max(9.0, data_max * 1.15)
+            fig.add_hrect(y0=5.0, y1=8.0, fillcolor="rgba(217,119,6,0.06)", line_width=0, layer="below")
+            fig.add_hrect(y0=8.0, y1=top, fillcolor="rgba(220,38,38,0.07)", line_width=0, layer="below")
+            fig.update_yaxes(range=[0, top])
+            if last_hy is not None:
+                fig.add_annotation(
+                    x=last_hy_date, y=last_hy,
+                    text=f"HY {last_hy * 100:.0f} bps · {reg['label'].lower()}",
+                    showarrow=True, arrowhead=0, ax=-66, ay=-24,
+                    font=dict(size=10, color="#dc2626"),
+                    bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3)
+            apply_standard_layout(fig, title="Credit spreads (5Y) — HY & IG OAS with regime bands",
+                                  height=255, yaxis_title="OAS")
+            fig.update_yaxes(ticksuffix="%")
+            st.plotly_chart(fig, use_container_width=True)
+        st.caption("Shaded zones mark Elevated (500–800 bps) and Stressed (≥800 bps) HY regimes.")
