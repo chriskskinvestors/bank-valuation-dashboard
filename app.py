@@ -208,8 +208,9 @@ if section == "Screen & Compare":
     # once it exists).
     if st.session_state.pop("_goto_compare", False):
         st.session_state["sc_sub"] = "Compare"
-    sc_sub = st.radio("View", ["Screen", "Compare", "Trends"], key="sc_sub",
-                      horizontal=True, label_visibility="collapsed")
+    with st.container(key="sc_subnav"):
+        sc_sub = st.radio("View", ["Screen", "Compare", "Trends"], key="sc_sub",
+                          horizontal=True, label_visibility="collapsed")
 
     # Density pass for the whole Screen & Compare panel. Injected only on this
     # page's render, so it's effectively page-scoped (other sections never emit
@@ -231,37 +232,78 @@ if section == "Screen & Compare":
           /* Compact select controls: shorter, lighter, smaller value text. */
           div[data-testid="stSelectbox"] div[data-baseweb="select"]>div{
               min-height:30px;font-size:0.75rem;}
-          /* Seamless segmented toolbar — drop each select's native chrome and
-             merge the six cells into one bordered strip with hairline dividers. */
-          .st-key-screen_toolbar [data-testid="stHorizontalBlock"]{
-              gap:0 !important;border:0.5px solid var(--grid-head);
-              border-radius:7px;overflow:hidden;background:var(--bg-elevated);}
-          .st-key-screen_toolbar [data-testid="stColumn"]{
+          /* Sub-view nav (Screen · Compare · Trends) — navy underline tab bar
+             instead of radio dots, matching the section nav. */
+          .st-key-sc_subnav div[role="radiogroup"]{display:flex;gap:2px 6px;
+              align-items:flex-end;border-bottom:1px solid var(--grid-head);
+              margin-bottom:10px;}
+          .st-key-sc_subnav div[role="radiogroup"]>label{margin:0 !important;
+              padding:6px 16px;cursor:pointer;border-bottom:2px solid transparent;
+              border-radius:6px 6px 0 0;transition:background .12s,border-color .12s;}
+          .st-key-sc_subnav div[role="radiogroup"]>label:hover{background:var(--bg-hover);}
+          .st-key-sc_subnav div[role="radiogroup"]>label>div:first-of-type{
+              display:none !important;}
+          .st-key-sc_subnav div[role="radiogroup"]>label p{font-size:0.95rem;
+              color:var(--text-secondary);font-weight:500;}
+          .st-key-sc_subnav div[role="radiogroup"]>label:has(input:checked){
+              border-bottom-color:var(--brand-primary);}
+          .st-key-sc_subnav div[role="radiogroup"]>label:has(input:checked) p{
+              color:var(--brand-primary);font-weight:700;}
+          /* Combined control bar = two adjacent self-bordered bars (selects on
+             top, actions below) joined seamlessly: the actions bar pulls up to
+             butt against the selects bar so they read as one unit. */
+          .st-key-screen_selects{border:0.5px solid var(--grid-head);
+              border-bottom:none;border-radius:8px 8px 0 0;overflow:hidden;
+              background:var(--bg-elevated);}
+          .st-key-screen_actions{border:0.5px solid var(--grid-head);
+              border-radius:0 0 8px 8px;overflow:hidden;
+              background:var(--bg-elevated);margin-top:-0.35rem;}
+          /* Selects row — seamless segmented cells, hairline dividers, tinted
+             navy label band per cell (table-header feel). */
+          .st-key-screen_selects [data-testid="stHorizontalBlock"]{gap:0 !important;}
+          .st-key-screen_selects [data-testid="stColumn"]{
               border-right:0.5px solid var(--grid-head);}
-          .st-key-screen_toolbar [data-testid="stColumn"]:last-child{border-right:none;}
-          .st-key-screen_toolbar div[data-baseweb="select"]>div{
+          .st-key-screen_selects [data-testid="stColumn"]:last-child{border-right:none;}
+          .st-key-screen_selects div[data-baseweb="select"]>div{
               border:none !important;background:transparent !important;
               border-radius:0 !important;box-shadow:none !important;padding-left:7px;}
-          /* Tinted label band per cell (table-header feel) + on-brand labels. */
-          .st-key-screen_toolbar [data-testid="stWidgetLabel"]{
+          .st-key-screen_selects [data-testid="stWidgetLabel"]{
               padding:4px 0 4px 11px;margin:0;background:var(--grid-head-bg);
               border-bottom:0.5px solid var(--grid-head);}
-          .st-key-screen_toolbar [data-testid="stWidgetLabel"] p{
+          .st-key-screen_selects [data-testid="stWidgetLabel"] p{
               color:var(--brand-primary) !important;}
-          /* Compact buttons — kills the chunky 38px empty boxes. The label text
-             sits in a nested <p>, so size that too (button font-size alone won't
-             cascade past it). */
+          /* Scope's secondary picker, when shown, sits flush under the selects. */
+          .st-key-screen_scopesub{border-top:0.5px solid var(--grid-head);
+              padding:4px 8px;background:var(--grid-head-bg);}
+          .st-key-screen_scopesub div[data-baseweb="select"]{max-width:340px;}
+          /* Actions row — flush full-width buttons, hairline dividers. */
+          .st-key-screen_actions [data-testid="stHorizontalBlock"]{gap:0 !important;}
+          .st-key-screen_actions [data-testid="stColumn"]{
+              border-right:0.5px solid var(--grid-head);display:flex;}
+          .st-key-screen_actions [data-testid="stColumn"]:last-child{border-right:none;}
+          .st-key-screen_actions [data-testid="stButton"]{width:100%;}
+          .st-key-screen_actions [data-testid="stButton"] button,
+          .st-key-screen_actions button[data-testid^="stBaseButton"]{
+              width:100% !important;border:none !important;border-radius:0 !important;
+              background:transparent !important;height:34px;min-height:34px;}
+          .st-key-screen_actions [data-testid="stButton"] button:hover,
+          .st-key-screen_actions button[data-testid^="stBaseButton"]:hover{
+              background:var(--bg-hover) !important;color:var(--brand-primary) !important;}
+          .st-key-screen_actions button[data-testid="stBaseButton-primary"]{
+              background:var(--brand-primary) !important;}
+          .st-key-screen_actions button[data-testid="stBaseButton-primary"]:hover{
+              background:var(--brand-hover) !important;}
+          .st-key-screen_actions button[data-testid="stBaseButton-primary"] p{
+              color:var(--text-inverse) !important;}
+          /* Compact buttons elsewhere on the page (launcher, dialogs). */
           [data-testid="stButton"] button, button[data-testid^="stBaseButton"]{
-              min-height:30px;height:30px;padding:0 12px;
-              background:var(--bg-surface) !important;
-              border-color:var(--border-default) !important;}
+              min-height:30px;padding:0 12px;}
           [data-testid="stButton"] button:hover,
           button[data-testid^="stBaseButton"]:hover{
-              background:var(--bg-hover) !important;
               border-color:var(--brand-border) !important;color:var(--brand-primary) !important;}
           [data-testid="stButton"] button p, button[data-testid^="stBaseButton"] p{
               font-size:0.6875rem !important;}
-          /* Primary CTA (Compare) — navy brand fill. */
+          /* Primary CTA — navy brand fill. */
           button[data-testid="stBaseButton-primary"]{
               background:var(--brand-primary) !important;
               border-color:var(--brand-primary) !important;}
@@ -305,13 +347,9 @@ def _screen_clear_filters(ss, tk):
 
 
 def _screen_switch_tab(ss, tk):
-    """Point the Theme/Table pickers at the tab a saved screen was built from."""
-    th = TAB_META.get(tk, ("Other", ""))[0]
-    members = [t["key"] for t in TABS
-               if TAB_META.get(t["key"], ("Other", ""))[0] == th]
-    if tk in members:
-        ss["screen_theme"] = th
-        ss[f"screen_table_{th}"] = members.index(tk)
+    """Point the single Table picker at the tab a saved screen was built from."""
+    if any(t["key"] == tk for t in TABS):
+        ss["screen_tab_key"] = tk
 
 
 def _screen_restore_cfg(ss, cfg, tk):
@@ -356,32 +394,26 @@ def _screen_restore_cfg(ss, cfg, tk):
 
 
 if section == "Screen & Compare" and sc_sub == "Screen":
-    # Two-step picker: theme → table (tables grouped by what an analyst is looking
-    # for). The Theme/Table SELECTBOXES render later, as the first two cells of the
-    # unified control toolbar in the Screen block. Here we only RESOLVE the current
-    # selection from session_state so screening_tab — and therefore the gated data
-    # load below — is known up front. The later widgets share these exact keys, so
-    # render and resolution stay consistent; the first run falls back to the first
-    # theme and its first table.
-    _by_theme: dict[str, list] = {}
-    for _i, _t in enumerate(TABS):
-        _theme, _desc = TAB_META.get(_t["key"], ("Other", ""))
-        _by_theme.setdefault(_theme, []).append((_i, _t["label"], _desc))
-    _themes = ([th for th in THEME_ORDER if th in _by_theme]
-               + [th for th in _by_theme if th not in THEME_ORDER])
-    _theme_pick = st.session_state.get("screen_theme", _themes[0])
-    if _theme_pick not in _themes:
-        _theme_pick = _themes[0]
-    _members = _by_theme.get(_theme_pick, [])
-    _tbl_i = st.session_state.get(f"screen_table_{_theme_pick}", 0)
-    if not isinstance(_tbl_i, int) or _tbl_i >= len(_members):
-        _tbl_i = 0
-    screening_tab = TABS[_members[_tbl_i][0]]
+    # Single flat Table picker — Theme is folded in (only two themes), so tables
+    # are listed grouped by theme order under one "Table" control. screen_tab_key
+    # holds the chosen table key. Resolved up front (before any Screen widget) so
+    # screening_tab — and the gated data load below — is known; the Table selectbox
+    # in the control bar shares this exact key. First run falls back to the first
+    # table.
+    _ordered_keys = []
+    for _th in THEME_ORDER:
+        _ordered_keys += [t["key"] for t in TABS
+                          if TAB_META.get(t["key"], ("", ""))[0] == _th]
+    _ordered_keys += [t["key"] for t in TABS if t["key"] not in _ordered_keys]
+    _cur_key = st.session_state.get("screen_tab_key")
+    if _cur_key not in _ordered_keys:
+        _cur_key = _ordered_keys[0]
+    screening_tab = next(t for t in TABS if t["key"] == _cur_key)
 
     # Launcher actions (New / Open / Close) set by a button last run. Applied
     # HERE — before any Screen widget instantiates — so writing widget-backed
-    # keys (theme/table/sort/filters/scope) is legal this run. "Open" may switch
-    # the active Table, so re-resolve screening_tab afterward.
+    # keys (table/sort/filters/scope) is legal this run. "Open" may switch the
+    # active Table, so re-resolve screening_tab afterward.
     _sa = st.session_state.pop("_screen_action", None)
     if _sa:
         _act = _sa.get("act")
@@ -400,14 +432,10 @@ if section == "Screen & Compare" and sc_sub == "Screen":
                 _screen_restore_cfg(st.session_state, _cfg, _tk)
                 st.session_state["_screen_open"] = True
         # Re-resolve the active table in case Open switched it.
-        _theme_pick = st.session_state.get("screen_theme", _themes[0])
-        if _theme_pick not in _themes:
-            _theme_pick = _themes[0]
-        _members = _by_theme.get(_theme_pick, [])
-        _tbl_i = st.session_state.get(f"screen_table_{_theme_pick}", 0)
-        if not isinstance(_tbl_i, int) or _tbl_i >= len(_members):
-            _tbl_i = 0
-        screening_tab = TABS[_members[_tbl_i][0]]
+        _cur_key = st.session_state.get("screen_tab_key")
+        if _cur_key not in _ordered_keys:
+            _cur_key = _ordered_keys[0]
+        screening_tab = next(t for t in TABS if t["key"] == _cur_key)
 
 elif section == "Company":
     # Deep-link support: a metric card can link to ?bank=X&tab=<token> to jump
@@ -949,6 +977,10 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     st.success(f"Saved '{new_name}' (v{_v})")
                     st.rerun()
 
+        st.divider()
+        with st.expander("Bank groups — save the result set or manage saved groups"):
+            _render_groups_panel()
+
     # ── Controls row: As of · Scope · Sort · Order ─────────────────────
     # One dense control row (was a stacked As-of band ABOVE a separate
     # Scope/Sort/Order row). As-of reconstructs the universe as it FILED at a
@@ -969,21 +1001,6 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         if m:
             sort_labels.append(m["label"])
             sort_keys.append(col_key)
-
-    # Recompute the theme→table grouping for the toolbar's first two cells. The
-    # selection was resolved from session_state up top (to gate the data load);
-    # rendering the Theme/Table selectboxes here — same keys — packs all six
-    # controls onto a single toolbar row instead of a separate two-control band.
-    _bt: dict[str, list] = {}
-    for _i, _t in enumerate(TABS):
-        _th, _d = TAB_META.get(_t["key"], ("Other", ""))
-        _bt.setdefault(_th, []).append((_i, _t["label"], _d))
-    _theme_opts = ([th for th in THEME_ORDER if th in _bt]
-                   + [th for th in _bt if th not in THEME_ORDER])
-    _cur_theme = st.session_state.get("screen_theme", _theme_opts[0])
-    if _cur_theme not in _theme_opts:
-        _cur_theme = _theme_opts[0]
-    _theme_members = _bt.get(_cur_theme, [])
 
     # ── Screen HOME (launcher) ─────────────────────────────────────────
     # No screen open → show ONLY the launcher and STOP, BEFORE the toolbar renders.
@@ -1028,79 +1045,69 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                             st.rerun()
         st.stop()
 
-    # One toolbar row — Theme · Table · As of · Scope · Sort · Order. Wrapped in
-    # a keyed container so the seamless-segmented-bar CSS (below) can scope to
-    # ONLY this row: drop each select's native border/background and merge the
-    # six cells into one bordered strip with hairline dividers. Columns are
-    # created inside the container but populated afterwards — Streamlit renders
-    # `with col:` content into the column wherever it's called.
-    with st.container(key="screen_toolbar"):
-        c_theme, c_table, c_asof, c_scope, c_sort, c_order = st.columns(
-            [1.3, 1.8, 1.5, 1.6, 1.3, 0.9])
-    with c_theme:
-        st.selectbox("Theme", _theme_opts, key="screen_theme")
-    with c_table:
-        st.selectbox(
-            "Table", options=list(range(len(_theme_members))),
-            format_func=lambda j, _m=_theme_members: _m[j][1],
-            key=f"screen_table_{_cur_theme}")
-    with c_asof:
-        _asof_pick = st.selectbox(
-            "As of", _asof_opts, key=f"asof_{tab_key}",
-            help="Screen the universe as it filed at a past quarter-end (FDIC "
-                 "point-in-time; market/SEC metrics are n/a in this mode).")
-    is_asof = _asof_pick != "Latest (live)"
-    asof_q_label = _asof_pick if is_asof else ""
-    if is_asof:
-        _q = _qs_list[_asof_opts.index(_asof_pick) - 1]
-        _cand = {get_fdic_cert(t): t for t in watchlist if get_fdic_cert(t)}
-        _company_certs = set(_cand)   # current public banks WITH a Company page
-        for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
-            _cand.setdefault(_c, _nm)
-        with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
-                        "(first load fetches a few years of FDIC history; then cached)"):
-            # Lineage: banks since absorbed by a current bank were separate at Q —
-            # re-add them (the as-of builder still gates each on filing at Q).
-            for _c, _info in lineage_predecessors(set(_cand), _q).items():
-                _cand.setdefault(_c, _info.get("name") or f"CERT:{_c}")
-            screen_metrics = as_of_quarter_metrics(_q, _cand)
-        # Tag rows with no current Company page (failures / since-acquired) so the
-        # table links them to FDIC BankFind instead of a dead ?bank= link.
-        for _m in screen_metrics:
-            _m["_defunct"] = _m.get("_fdic_cert") not in _company_certs
-        if not screen_metrics:
-            st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
-    else:
-        screen_metrics = all_metrics
-
-    # Scope = shared Bank-Groups selector. Only the scope TYPE goes in the toolbar
-    # cell; its secondary picker (cohort / state / region / group / manual) renders
-    # on a thin row BELOW the bar (see below) so the segmented toolbar stays exactly
-    # one row tall no matter which scope is chosen.
-    with c_scope:
-        _scope_type = st.selectbox("Scope", scope_type_options(),
-                                   key=f"screen_{tab_key}_scope_type")
-    with c_sort:
-        sort_idx = st.selectbox(
-            "Sort by",
-            options=list(range(len(sort_labels))),
-            format_func=lambda i: sort_labels[i],
-            key=f"sort_{tab_key}",
-        )
-    with c_order:
-        sort_order = st.selectbox(
-            "Order",
-            options=["Desc", "Asc"],
-            key=f"order_{tab_key}",
-        )
-
-    # Scope's secondary picker renders here, BELOW the toolbar, width-capped. For
-    # "All banks" render_scope_sub draws nothing and just returns the full set, so
-    # no empty band appears in the common case.
-    _sub_l, _ = st.columns([2, 7])
-    with _sub_l:
-        display_metrics, display_tickers, scope_label = render_scope_sub(
-            screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
+    # ── Combined control bar — top segment: configurator selects ──────
+    # One bordered bar (Table · As of · Scope · Sort · Order); the action buttons
+    # render as a second segment below (screen_actions) so the whole thing reads
+    # as a single control unit. Widgets render INSIDE the container so the
+    # segmented-bar CSS scopes to it; the scope secondary picker sits flush under
+    # the selects when a non-default scope needs one.
+    with st.container(key="screen_selects"):
+        c_table, c_asof, c_scope, c_sort, c_order = st.columns(
+            [2.0, 1.5, 1.7, 1.4, 0.9])
+        with c_table:
+            # Theme folded in: one flat Table picker over all tables (ordered by
+            # theme). screen_tab_key holds the chosen key (resolved up top).
+            st.selectbox(
+                "Table", options=_ordered_keys,
+                format_func=lambda k: next(t["label"] for t in TABS if t["key"] == k),
+                key="screen_tab_key")
+        with c_asof:
+            _asof_pick = st.selectbox(
+                "As of", _asof_opts, key=f"asof_{tab_key}",
+                help="Screen the universe as it filed at a past quarter-end (FDIC "
+                     "point-in-time; market/SEC metrics are n/a in this mode).")
+        is_asof = _asof_pick != "Latest (live)"
+        asof_q_label = _asof_pick if is_asof else ""
+        if is_asof:
+            _q = _qs_list[_asof_opts.index(_asof_pick) - 1]
+            _cand = {get_fdic_cert(t): t for t in watchlist if get_fdic_cert(t)}
+            _company_certs = set(_cand)   # current public banks WITH a Company page
+            for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
+                _cand.setdefault(_c, _nm)
+            with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
+                            "(first load fetches a few years of FDIC history; then cached)"):
+                # Lineage: banks since absorbed by a current bank were separate at Q —
+                # re-add them (the as-of builder still gates each on filing at Q).
+                for _c, _info in lineage_predecessors(set(_cand), _q).items():
+                    _cand.setdefault(_c, _info.get("name") or f"CERT:{_c}")
+                screen_metrics = as_of_quarter_metrics(_q, _cand)
+            # Tag rows with no current Company page (failures / since-acquired) so the
+            # table links them to FDIC BankFind instead of a dead ?bank= link.
+            for _m in screen_metrics:
+                _m["_defunct"] = _m.get("_fdic_cert") not in _company_certs
+            if not screen_metrics:
+                st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
+        else:
+            screen_metrics = all_metrics
+        with c_scope:
+            _scope_type = st.selectbox("Scope", scope_type_options(),
+                                       key=f"screen_{tab_key}_scope_type")
+        with c_sort:
+            sort_idx = st.selectbox(
+                "Sort by", options=list(range(len(sort_labels))),
+                format_func=lambda i: sort_labels[i], key=f"sort_{tab_key}")
+        with c_order:
+            sort_order = st.selectbox("Order", options=["Desc", "Asc"],
+                                      key=f"order_{tab_key}")
+        # Scope's secondary picker — drawn only when the type needs one; for
+        # "All banks" render_scope_sub draws nothing, so no empty band appears.
+        if _scope_type == "All banks":
+            display_metrics, display_tickers, scope_label = render_scope_sub(
+                screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
+        else:
+            with st.container(key="screen_scopesub"):
+                display_metrics, display_tickers, scope_label = render_scope_sub(
+                    screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
 
     # ── Metric filters dialog (any metric; AND-combined) ───────────────
     from analysis.screen_engine import evaluate as _evaluate_screen
@@ -1232,46 +1239,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     scope_slug = ("".join(c if c.isalnum() else "_"
                           for c in scope_label.lower())[:30].strip("_") or "scope")
 
-    # SNL title bar + one dense meta line (design system: no boxed header, no
-    # emoji). Provenance is FDIC + SEC fundamentals; no-data exclusions are shown.
-    from ui.chrome import title_bar, status_dot
-    filter_note = (f" · {len(filter_specs)} filter"
-                   f"{'s' if len(filter_specs) != 1 else ''}") if filter_specs else ""
-    nodata_note = f" · {n_excluded_nodata} excluded (no data)" if n_excluded_nodata else ""
-    title_bar("KSK Investors", screening_tab["title"])
-    _tab_desc = TAB_META.get(tab_key, ("", ""))[1]
-    if _tab_desc:
-        st.caption(_tab_desc)
-    if not _engaged:
-        # Brand-new blank screen: prompt for the first filter/scope rather than
-        # listing the whole universe.
-        st.info("**Blank screen** — add a **Filter** or pick a **Scope** above to "
-                "populate results, or use **Saved** to load one. **← Screens** "
-                "goes back to the launcher.")
-    else:
-        if is_asof:
-            # Point-in-time: count banks no longer in today's coverage (since failed
-            # or acquired) so the reconstruction is transparent.
-            _live = {t for t in watchlist}
-            _exited = sum(1 for m in display_metrics if m.get("ticker") not in _live)
-            _exit_note = f" · incl. {_exited} since-exited" if _exited else ""
-            _meta = (status_dot("warn", f"As of {asof_q_label}")
-                     + f" · {len(display_metrics)} banks · {scope_label}{filter_note}{nodata_note}"
-                     + f"{_exit_note} · FDIC point-in-time (market & SEC metrics n/a)")
-        else:
-            _meta = (status_dot("ok", f"{len(display_metrics)} banks")
-                     + f" · {scope_label}{filter_note}{nodata_note}"
-                     + f" · FDIC + SEC fundamentals · {len(display_cols_final)} columns")
-        st.markdown(
-            f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
-            f'margin:1px 0 7px;">{_meta}</div>',
-            unsafe_allow_html=True,
-        )
-
-        if not is_asof:
-            fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
-            sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
-            render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
+    # The big SNL title bar is gone — the tab bar + Table name identify the view.
+    # The status line (count / provenance) and the results table render BELOW the
+    # control bar (after the action row); see the status block further down.
 
     # ── Columns dialog (picker only — export is its own button now) ────
     @st.dialog("Columns", width="large")
@@ -1335,12 +1305,11 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             except Exception as e:
                 st.caption(f"Excel export unavailable: {type(e).__name__}")
 
-    # ── Save-as-group dialog ───────────────────────────────────────────
-    @st.dialog("Bank Groups", width="large")
-    def _groups_dialog():
-        """Front-end for the firm-wide bank groups (data/bank_groups). Three tabs:
-        save the current screen set, build from a pasted/CSV ticker list, or manage
-        an existing group (members, description, tag/folder, export, rename, delete)."""
+    # ── Bank groups panel (folded into the Saved dialog) ───────────────
+    def _render_groups_panel():
+        """Firm-wide bank groups (data/bank_groups), shown inside the Saved dialog.
+        Three tabs: save the current screen set, build from a pasted/CSV ticker
+        list, or manage an existing group (members, description, tag, rename, del)."""
         from data.bank_groups import (list_groups, load_group, rename_group,
                                        delete_group, parse_tickers)
 
@@ -1460,50 +1429,77 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 else:
                     st.error("Could not delete.")
 
-    # ── Action strip: view-config dialogs + result-set actions ─────────
-    # The three full-width expander bars (Saved screens / Metric filters /
-    # Columns) and the standalone action row are compact buttons now; the heavy
-    # panels open as modal dialogs. Compare hands the current set to the
-    # side-by-side Compare view (arrives there as a Manual scope).
+    # ── Combined control bar — bottom segment: action buttons ──────────
+    # Renders flush under the selects bar (screen_actions CSS) so the two read as
+    # one unit: Back · Filters · Columns · Saved · Export · Compare. Groups is
+    # folded into Saved; Compare hands the set to the side-by-side Compare view and
+    # appears only when the set is small enough to compare (engaged and ≤30 banks).
     _flabel = f"Filters ({len(filter_specs)})" if filter_specs else "Filters"
-    b1, b2, b3, b4, b5, b6, _bsp = st.columns([1, 1, 1, 1, 1, 1.6, 1.3])
-    with b1:
-        if st.button("Saved", key=f"btn_saved_{tab_key}", use_container_width=True):
-            _saved_dialog()
-    with b2:
-        if st.button(_flabel, key=f"btn_filters_{tab_key}", use_container_width=True):
-            _filters_dialog()
-    with b3:
-        if st.button("Columns", key=f"btn_cols_{tab_key}", use_container_width=True):
-            _columns_dialog()
-    with b4:
-        if st.button("Groups", key=f"btn_grp_{tab_key}", use_container_width=True):
-            _groups_dialog()
-    with b5:
-        if st.button("Export", key=f"btn_export_{tab_key}", use_container_width=True):
-            _export_dialog()
-    with b6:
-        if display_metrics and st.button(
-                f"Compare {len(display_metrics)} →", type="primary",
-                key=f"compare_handoff_{tab_key}", use_container_width=True):
-            st.session_state["_compare_handoff_tickers"] = [
-                m["ticker"] for m in display_metrics if m.get("ticker")]
-            # sc_sub widget already instantiated above; flag the switch and let the
-            # pre-radio handler set it next run.
-            st.session_state["_goto_compare"] = True
-            st.rerun()
-    with _bsp:
-        if st.button("← Screens", key=f"btn_close_{tab_key}",
-                     use_container_width=True,
-                     help="Back to the screen launcher"):
-            st.session_state["_screen_action"] = {"act": "close"}
-            st.rerun()
+    _show_compare = _engaged and 0 < len(display_metrics) <= 30
+    with st.container(key="screen_actions"):
+        _aw = [1.1, 1.0, 1.0, 1.0, 1.0] + ([1.6] if _show_compare else [])
+        _ac = st.columns(_aw)
+        with _ac[0]:
+            if st.button("← Screens", key=f"btn_close_{tab_key}",
+                         use_container_width=True, help="Back to the launcher"):
+                st.session_state["_screen_action"] = {"act": "close"}
+                st.rerun()
+        with _ac[1]:
+            if st.button(_flabel, key=f"btn_filters_{tab_key}", use_container_width=True):
+                _filters_dialog()
+        with _ac[2]:
+            if st.button("Columns", key=f"btn_cols_{tab_key}", use_container_width=True):
+                _columns_dialog()
+        with _ac[3]:
+            if st.button("Saved", key=f"btn_saved_{tab_key}", use_container_width=True):
+                _saved_dialog()
+        with _ac[4]:
+            if st.button("Export", key=f"btn_export_{tab_key}", use_container_width=True):
+                _export_dialog()
+        if _show_compare:
+            with _ac[5]:
+                if st.button(f"Compare {len(display_metrics)} →", type="primary",
+                             key=f"compare_handoff_{tab_key}", use_container_width=True):
+                    st.session_state["_compare_handoff_tickers"] = [
+                        m["ticker"] for m in display_metrics if m.get("ticker")]
+                    # sc_sub already instantiated; flag the switch for next run.
+                    st.session_state["_goto_compare"] = True
+                    st.rerun()
 
-    st.markdown("")
-
-    # The table renders only for an engaged screen; a blank new screen already
-    # showed its "add a filter" prompt above.
-    if _engaged:
+    # ── Status line + results (below the control bar) ──────────────────
+    from ui.chrome import status_dot
+    if not _engaged:
+        st.info("**Blank screen** — add a **Filter** or pick a **Scope** in the bar "
+                "above to populate results, or use **Saved** to load one. "
+                "**← Screens** goes back to the launcher.")
+    else:
+        filter_note = (f" · {len(filter_specs)} filter"
+                       f"{'s' if len(filter_specs) != 1 else ''}") if filter_specs else ""
+        nodata_note = (f" · {n_excluded_nodata} excluded (no data)"
+                       if n_excluded_nodata else "")
+        if is_asof:
+            # Point-in-time: count banks no longer in today's coverage.
+            _live = {t for t in watchlist}
+            _exited = sum(1 for m in display_metrics if m.get("ticker") not in _live)
+            _exit_note = f" · incl. {_exited} since-exited" if _exited else ""
+            _meta = (status_dot("warn", f"As of {asof_q_label}")
+                     + f" · {len(display_metrics)} banks · {screening_tab['title']}"
+                     + f" · {scope_label}{filter_note}{nodata_note}{_exit_note}"
+                     + " · FDIC point-in-time (market & SEC metrics n/a)")
+        else:
+            _meta = (status_dot("ok", f"{len(display_metrics)} banks")
+                     + f" · {screening_tab['title']} · {scope_label}{filter_note}"
+                     + f"{nodata_note} · FDIC + SEC fundamentals · "
+                     + f"{len(display_cols_final)} columns")
+        st.markdown(
+            f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
+            f'margin:8px 0 7px;">{_meta}</div>',
+            unsafe_allow_html=True,
+        )
+        if not is_asof:
+            fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
+            sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
+            render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
         render_generic_table(
             display_metrics, display_cols_final, table_key=tab_key, show_legend=True,
         )
