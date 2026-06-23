@@ -19,6 +19,7 @@ from data.bank_mapping import get_name, get_fdic_cert, get_cik
 from data.consensus import (
     parse_consensus_pdf,
     parse_consensus_excel,
+    detect_and_parse_pdf,
     parse_bulk_consensus,
     parse_bulk_consensus_pdf,
     save_consensus,
@@ -1588,56 +1589,96 @@ def _render_upload_section(watchlist: list[str]):
             _render_manual_input(upload_ticker)
 
     else:
-        u_col1, u_col2, u_col3 = st.columns([2, 1, 1])
-        with u_col1:
-            uploaded = st.file_uploader(
-                "Consensus file (PDF or Excel)",
-                type=["pdf", "xlsx", "xls", "csv"],
-                key="earnings_overview_upload",
-            )
-        with u_col2:
-            upload_ticker = st.text_input(
-                "Ticker",
-                placeholder="e.g. SFST",
-                key="earnings_overview_ticker",
-            )
-        with u_col3:
-            upload_period = st.text_input(
-                "Period",
-                placeholder="e.g. 2026Q1",
-                key="earnings_overview_period",
-            )
+        _render_single_file_upload()
 
-        # Gate parsing behind an explicit button: without it Streamlit re-ran the
-        # parser (a paid LLM call for PDFs) on every widget interaction.
-        if uploaded and upload_ticker and upload_period and st.button(
-                "Parse & Save", type="primary", key="single_parse"):
-            file_bytes = uploaded.read()
-            if len(file_bytes) > _MAX_UPLOAD_BYTES:
-                st.error(f"File is too large ({len(file_bytes)/1e6:.1f} MB). "
-                         "Please upload a file under 10 MB.")
+
+def _render_single_file_upload():
+    """Single-file consensus upload with auto-detect: drop a PDF and the AI fills
+    in the ticker, period and metrics for you (you just confirm/edit, then Save).
+    Excel/CSV parses locally; ticker/period there are entered by hand."""
+    ss = st.session_state
+    uploaded = st.file_uploader(
+        "Consensus file (PDF or Excel) — for a PDF the ticker & period are filled "
+        "in automatically",
+        type=["pdf", "xlsx", "xls", "csv"],
+        key="earnings_overview_upload",
+    )
+    if not uploaded:
+        ss.pop("cons_detect", None)            # reset when the file is cleared
+        ss.pop("cons_detect_sig", None)
+        return
+
+    file_bytes = uploaded.read()
+    if len(file_bytes) > _MAX_UPLOAD_BYTES:
+        st.error(f"File is too large ({len(file_bytes)/1e6:.1f} MB). "
+                 "Please upload a file under 10 MB.")
+        return
+
+    filename = uploaded.name.lower()
+    is_pdf = filename.endswith(".pdf")
+    sig = f"{uploaded.name}:{len(file_bytes)}"
+
+    # Parse ONCE per file (cached by signature) — the AI/parse call never re-runs
+    # on later reruns (typing in the fields, etc.).
+    if ss.get("cons_detect_sig") != sig:
+        with st.spinner("Reading the document — detecting ticker, period & metrics…"
+                        if is_pdf else "Parsing consensus file…"):
+            if is_pdf:
+                ss["cons_detect"] = detect_and_parse_pdf(file_bytes, filename)
             else:
-                with st.spinner("Parsing consensus document..."):
-                    filename = uploaded.name.lower()
-                    ticker_clean = upload_ticker.strip().upper()
+                ex = parse_consensus_excel(file_bytes, "", "", filename)
+                ss["cons_detect"] = {"detected_ticker": "", "detected_period": "",
+                                     "metrics": ex.get("metrics", []),
+                                     "error": ex.get("error")}
+        ss["cons_detect_sig"] = sig
+        ss.pop("single_tkr", None)             # re-seed fields from the new file
+        ss.pop("single_per", None)
 
-                    if filename.endswith(".pdf"):
-                        parsed = parse_consensus_pdf(file_bytes, ticker_clean, upload_period)
-                    else:
-                        parsed = parse_consensus_excel(file_bytes, ticker_clean, upload_period, filename)
+    det = ss.get("cons_detect", {})
+    if det.get("error"):
+        st.error(f"Error parsing: {det['error']}")
+        return
+    metrics = det.get("metrics", [])
+    if not metrics:
+        st.warning("No consensus metrics found in the document.")
+        return
 
-                if parsed.get("error"):
-                    st.error(f"Error parsing: {parsed['error']}")
-                elif not parsed.get("metrics"):
-                    st.warning("No metrics found in the document.")
-                else:
-                    try:
-                        save_consensus(parsed)
-                    except IOError as e:
-                        st.error(str(e))
-                    else:
-                        st.success(f"Parsed {len(parsed['metrics'])} metrics for {ticker_clean} {upload_period}")
-                        st.rerun()
+    det_tkr = det.get("detected_ticker", "")
+    det_per = det.get("detected_period", "")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        ticker = st.text_input("Ticker", value=det_tkr, placeholder="e.g. SFST",
+                               key="single_tkr").strip().upper()
+    with c2:
+        period = st.text_input("Period", value=det_per, placeholder="e.g. 2026Q2",
+                               key="single_per").strip()
+
+    detected_bits = []
+    if det_tkr:
+        detected_bits.append(f"ticker **{det_tkr}**")
+    if det_per:
+        detected_bits.append(f"period **{det_per}**")
+    note = (f"Auto-detected {', '.join(detected_bits)} and " if detected_bits
+            else ("Couldn't read the ticker/period — please enter them. " if is_pdf
+                  else ""))
+    st.caption(f"{note}{len(metrics)} metric(s) found — confirm and save.")
+
+    if st.button("Save Consensus", type="primary", key="single_save"):
+        if not ticker or not period:
+            st.error("Enter a ticker and period before saving.")
+        else:
+            try:
+                save_consensus({"ticker": ticker, "period": period,
+                                "source": "pdf" if is_pdf else "excel",
+                                "metrics": metrics})
+            except IOError as e:
+                st.error(str(e))
+            else:
+                st.success(f"Saved {len(metrics)} metrics for {ticker} {period}")
+                for k in ("cons_detect", "cons_detect_sig", "single_tkr", "single_per"):
+                    ss.pop(k, None)
+                st.rerun()
 
 
 def _render_bulk_upload():

@@ -298,6 +298,83 @@ Return ONLY the JSON array, no other text."""
         }
 
 
+def detect_and_parse_pdf(file_bytes: bytes, filename: str = "") -> dict:
+    """Read a single-company consensus PDF and AUTO-DETECT the ticker + period
+    alongside the metrics, so the user doesn't have to type them. The detected
+    ticker is validated against the bank universe and BLANKED if unknown — we
+    pre-fill only a verified ticker, never a guess that would save under the
+    wrong entity. The user still confirms/edits before saving.
+
+    Returns {detected_ticker, detected_period, metrics: [...], error?}.
+    """
+    try:
+        import base64
+
+        client = _anthropic_client()
+        b64_pdf = base64.standard_b64encode(file_bytes).decode("utf-8")
+
+        prompt = """This is an equity research note / consensus sheet for ONE bank.
+
+Return ONLY a JSON object of this shape:
+{ "ticker": "WTFC", "period": "2Q26",
+  "metrics": [ {"name": "EPS", "value": 1.25, "unit": "$"},
+               {"name": "Net Interest Margin", "value": 3.45, "unit": "%"} ] }
+
+- ticker: the official US stock ticker of the PRIMARY company the note covers. If you cannot identify it with confidence, use "".
+- period: the estimate/consensus period as written (e.g. 2Q26, 2026Q2, FY26). Use "" if not stated.
+- metrics: every consensus estimate you can find — EPS, revenue, NIM, efficiency, ROAA, ROATCE, NPL, CET1, net income, provision, deposits, loans, TBV, dividends, charge-offs, yields, growth, etc.
+- values numeric (no $/commas); unit one of: %, $, $M, $B, bps, x, or blank.
+
+Return ONLY the JSON object, no other text."""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=8000,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "document", "source": {
+                        "type": "base64", "media_type": "application/pdf",
+                        "data": b64_pdf}},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+
+        text = response.content[0].text.strip()
+        if response.stop_reason == "max_tokens":
+            return {"detected_ticker": "", "detected_period": "", "metrics": [],
+                    "error": "The document is too large — the AI response was "
+                             "truncated. Try a shorter excerpt or split the file."}
+
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        data = json.loads(json_match.group() if json_match else text)
+
+        metrics = []
+        for m in data.get("metrics", []) or []:
+            if not isinstance(m, dict):
+                continue
+            mname = str(m.get("name", "")).strip()
+            val = _finite_float(m.get("value"))
+            if not mname or val is None:
+                continue
+            metrics.append({"name": mname, "key": _normalize_key(mname),
+                            "value": val, "unit": m.get("unit", "")})
+
+        tkr = str(data.get("ticker") or "").strip().upper()
+        if tkr and not _known_ticker(tkr):     # pre-fill only a verified ticker
+            tkr = ""
+        return {
+            "detected_ticker": tkr,
+            "detected_period": str(data.get("period") or "").strip(),
+            "metrics": metrics,
+        }
+
+    except Exception as e:
+        return {"detected_ticker": "", "detected_period": "", "metrics": [],
+                "error": str(e)}
+
+
 def parse_bulk_consensus_pdf(file_bytes: bytes, period: str) -> dict:
     """
     Parse a PDF containing consensus estimates for MULTIPLE banks.
