@@ -95,21 +95,13 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
         v = _num(fdic_rec.get(field))
         return f"{v:.2f}%" if v is not None else None
 
-    chg = _num(row.get("change_pct"))
-    chg_html = None
-    if chg is not None:
-        c = "var(--success)" if chg >= 0 else "var(--danger)"
-        chg_html = f'<span style="color:{c};">{chg:+.2f}%</span>'
-
+    # Price / change / market cap / dividend yield live in the Market ledger;
+    # keep Valuation to the multiples so the two snapshot blocks don't repeat.
     valuation = [
-        ("Last Price", disp("price")),
-        ("Change", chg_html),
-        ("Market Cap", disp("market_cap")),
         ("P/E (LTM)", disp("pe_ratio")),
         ("EPS (TTM)", disp("eps")),
         ("P/TBV", disp("ptbv_ratio")),
         ("TBV / Share", disp("tbvps")),
-        ("Dividend Yield", disp("dividend_yield")),
     ]
 
     # ROATCE: prefer the engine's blended figure; fall back to an annualized
@@ -479,30 +471,31 @@ def _valuation_history_chart(ticker: str, info: dict):
     return fig
 
 
-def _render_overview_charts(ticker: str, info: dict):
-    """Price chart + valuation-multiple history, side by side, to fill the space
-    next to the snapshot tables. Both are interactive (zoom / hover)."""
-    st.markdown("---")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Price**")
-        per = st.radio("Period", ["1M", "3M", "1Y", "5Y"], index=2, horizontal=True,
-                       key=f"ov_price_per_{ticker}", label_visibility="collapsed")
-        hist_df = pd.DataFrame()
-        try:
-            from data.fmp_client import get_history
-            hist_df = get_history(ticker, per)
-        except Exception:
-            pass
-        st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True,
-                        key=f"ov_price_{ticker}")
-    with c2:
-        st.markdown("**Valuation — P/TBV & P/E**")
-        fig = _valuation_history_chart(ticker, info)
-        if fig is not None:
-            st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
-        else:
-            st.caption("Valuation history unavailable for this bank.")
+def _render_price_panel(ticker: str):
+    """Interactive price chart with a period selector — the above-the-fold chart
+    that sits beside the market/valuation snapshot."""
+    st.markdown("**Price**")
+    per = st.radio("Period", ["1M", "3M", "1Y", "5Y"], index=2, horizontal=True,
+                   key=f"ov_price_per_{ticker}", label_visibility="collapsed")
+    hist_df = pd.DataFrame()
+    try:
+        from data.fmp_client import get_history
+        hist_df = get_history(ticker, per)
+    except Exception:
+        pass
+    st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True,
+                    key=f"ov_price_{ticker}")
+
+
+def _render_valuation_panel(ticker: str, info: dict):
+    """Quarter-end P/TBV & P/E history — the fundamentals-band chart beside the
+    performance/profile snapshot."""
+    st.markdown("**Valuation — P/TBV & P/E**")
+    fig = _valuation_history_chart(ticker, info)
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
+    else:
+        st.caption("Valuation history unavailable for this bank.")
 
 
 def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
@@ -526,20 +519,28 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
             fdic_rec = fdic_client.get_latest_financials(cert) or {}
         except Exception:
             fdic_rec = {}
-    # Capital-IQ-style snapshot: identity + quick links, then four reference
-    # tables packed across the full width (no half-width dead space).
+    # Capital-IQ-style snapshot: identity + quick links, then the reference
+    # ledgers paired with their chart in two symmetric bands.
     mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec)
     from ui.chrome import title_bar
     title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
     val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
-    _g = st.columns(4)
-    for _col, _html in zip(_g, (mkt_html, val_html, perf_html, co_html)):
-        _col.markdown(_html, unsafe_allow_html=True)
-    st.markdown(
-        '<div style="margin-top:5px; font-size:0.75rem; color:var(--text-secondary);">'
-        'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
-        'FMP (market data)</div>', unsafe_allow_html=True)
-    _render_overview_charts(ticker, info)
+
+    # ── Above the fold: market quote + valuation multiples, price chart beside ──
+    s_mkt, s_val, s_chart = st.columns([1, 1, 2.4])
+    s_mkt.markdown(mkt_html, unsafe_allow_html=True)
+    s_val.markdown(val_html, unsafe_allow_html=True)
+    with s_chart:
+        _render_price_panel(ticker)
+
+    st.markdown("---")
+    # ── Fundamentals band: performance + profile, valuation-multiple history ──
+    f_perf, f_co, f_chart = st.columns([1, 1, 2.4])
+    f_perf.markdown(perf_html, unsafe_allow_html=True)
+    f_co.markdown(co_html, unsafe_allow_html=True)
+    with f_chart:
+        _render_valuation_panel(ticker, info)
+
     st.markdown("---")
     # Highlights (year-ago vs latest) beside the activity feed so both fill the
     # width instead of each spreading across the page.
