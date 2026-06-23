@@ -519,24 +519,28 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
             fdic_rec = fdic_client.get_latest_financials(cert) or {}
         except Exception:
             fdic_rec = {}
-    # Capital-IQ-style snapshot: identity + quick links, then the reference
-    # ledgers paired with their chart in two symmetric bands.
+    # Capital-IQ-style snapshot: identity + quick links, then a stacked stats
+    # rail beside each chart so the short ledgers fill the chart's height
+    # instead of leaving dead space below a single-ledger column.
     mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec)
     from ui.chrome import title_bar
     title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
     val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
 
-    # ── Above the fold: market quote + valuation multiples, price chart beside ──
-    s_mkt, s_val, s_chart = st.columns([1, 1, 2.4])
-    s_mkt.markdown(mkt_html, unsafe_allow_html=True)
-    s_val.markdown(val_html, unsafe_allow_html=True)
+    # ── Above the fold: a quote/valuation/performance rail beside the price ──
+    # chart. Stacking the three ledgers makes the rail roughly chart-tall, so
+    # the right edge of the snapshot doesn't trail off into white space.
+    s_rail, s_chart = st.columns([1, 1.7])
+    with s_rail:
+        st.markdown(mkt_html, unsafe_allow_html=True)
+        st.markdown(val_html, unsafe_allow_html=True)
+        st.markdown(perf_html, unsafe_allow_html=True)
     with s_chart:
         _render_price_panel(ticker)
 
     st.markdown("---")
-    # ── Fundamentals band: performance + profile, valuation-multiple history ──
-    f_perf, f_co, f_chart = st.columns([1, 1, 2.4])
-    f_perf.markdown(perf_html, unsafe_allow_html=True)
+    # ── Fundamentals band: company profile beside its valuation-multiple chart.
+    f_co, f_chart = st.columns([1, 1.7])
     f_co.markdown(co_html, unsafe_allow_html=True)
     with f_chart:
         _render_valuation_panel(ticker, info)
