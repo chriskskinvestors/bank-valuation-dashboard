@@ -1760,7 +1760,7 @@ def _render_credit_spreads():
                     font=dict(size=10, color="#dc2626"),
                     bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3)
             apply_standard_layout(fig, title="Credit spreads (5Y) - IG / BBB / HY OAS with regime bands",
-                                  height=372, yaxis_title="OAS")
+                                  height=330, yaxis_title="OAS")
             fig.update_yaxes(ticksuffix="%")
             st.plotly_chart(fig, use_container_width=True)
         st.caption("Shaded zones mark Elevated (500-800 bps) and Stressed (>=800 bps) HY regimes.")
@@ -1778,7 +1778,7 @@ def _render_credit_spreads():
                     line=dict(color="#1e3a8a", width=2),
                     fill="tozeroy", fillcolor="rgba(30,58,138,0.06)", name="HY - IG"))
             apply_standard_layout(figd, title="HY − IG risk premium (5Y)",
-                                  height=372, yaxis_title="pp", show_legend=False)
+                                  height=330, yaxis_title="pp", show_legend=False)
             figd.update_yaxes(ticksuffix="pp")
             st.plotly_chart(figd, use_container_width=True)
         st.caption("Extra spread for high yield over investment grade; widens when "
