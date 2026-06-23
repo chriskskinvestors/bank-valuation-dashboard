@@ -36,6 +36,12 @@ _GENERIC_WORDS = {
     "TRUST", "SAVINGS", "FEDERAL", "NATIONAL", "FIRST", "THE", "CORP",
     "CORPORATION", "INC", "COMPANY", "CO", "HOLDINGS", "HOLDING", "GROUP",
     "OF", "AND", "&",
+    # Industry terms that are also a holdco's whole name — "Financial
+    # Institutions, Inc." (FISI) normalizes to "FINANCIAL INSTITUTIONS", which
+    # then matched the GENERIC phrase in any "...helps financial institutions..."
+    # headline. Such banks are covered by their subsidiary brand (FISI = "Five
+    # Star Bank") + 8-Ks instead.
+    "INSTITUTIONS", "INSTITUTION", "SERVICES",
 }
 
 # Token-level suffixes to strip. We tokenize the name and drop trailing

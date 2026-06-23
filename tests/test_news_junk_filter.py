@@ -31,8 +31,26 @@ sys.modules.setdefault("streamlit", _st)
 
 from data.events.wire_base import (  # noqa: E402
     is_junk_news, is_company_press_release, is_routine_noise, is_safe_news_url,
-    is_material_regulatory, phrase_in_text,
+    is_material_regulatory, phrase_in_text, _is_too_generic,
 )
+
+
+class TestGenericIndustryNames(unittest.TestCase):
+    """A holdco whose whole name is a generic industry phrase ("Financial
+    Institutions, Inc." -> FISI) must NOT match that phrase in unrelated
+    headlines ("...helps financial institutions..."). It's covered by its
+    subsidiary brand ("Five Star Bank") + 8-Ks instead. Distinctive names with a
+    real brand token are unaffected."""
+
+    def test_industry_phrase_names_are_too_generic(self):
+        for n in ("FINANCIAL INSTITUTIONS", "FINANCIAL SERVICES",
+                  "FINANCIAL INSTITUTION", "BANK SERVICES"):
+            self.assertTrue(_is_too_generic(n), f"{n!r} should be too generic")
+
+    def test_distinctive_names_survive(self):
+        for n in ("PROVIDENT FINANCIAL SERVICES", "PNC FINANCIAL SERVICES",
+                  "AMERIS BANCORP", "EASTERN BANKSHARES"):
+            self.assertFalse(_is_too_generic(n), f"{n!r} must stay matchable")
 
 
 def _pad(s: str) -> str:
