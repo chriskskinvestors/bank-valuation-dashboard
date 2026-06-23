@@ -46,9 +46,12 @@ def _row(title, url="https://www.businesswire.com/news/home/x/en/y/",
 
 
 def _poll(ticker, rows):
-    """Run the adapter for one ticker with get_press_releases mocked."""
+    """Run the adapter for one ticker with the batched FMP call mocked. FMP
+    tags each row with a `symbol`; the batch endpoint returns it, so inject
+    `ticker` as the symbol on each fixture row."""
+    tagged = [{**r, "symbol": ticker} for r in rows]
     with patch.object(fmp, "_has_key", return_value=True), \
-         patch.object(fmp, "get_press_releases", return_value=rows):
+         patch.object(fmp, "get_press_releases_multi", return_value=tagged):
         return FMPPressReleaseAdapter().poll([ticker])
 
 

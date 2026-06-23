@@ -121,12 +121,11 @@ def main() -> int:
     if profile == "fast":
         # FULL-universe coverage, still sub-minute. SEC 8-K comes from EDGAR's
         # recent-filings feed (SEC8KRecentAdapter) — ONE call returns every
-        # bank's latest 8-Ks (the per-CIK SEC8KAdapter would loop ~440 times) —
-        # plus the cheap single-feed wires. Only FMP stays watchlist-scoped
-        # (it's per-ticker and can't collapse to one call); the full profile
-        # backfills FMP/Yahoo/IR + per-CIK 8-K for the rest.
-        narrow_adapters = [FMPPressReleaseAdapter()]
-        broad_adapters = [SEC8KRecentAdapter(), PRNewswireAdapter(), GlobeNewswireAdapter()]
+        # bank's latest 8-Ks. FMP press releases are now batched (symbols=...),
+        # so they cover the WHOLE universe in ~18 calls — broad, not watchlist.
+        narrow_adapters = []
+        broad_adapters = [SEC8KRecentAdapter(), PRNewswireAdapter(),
+                          GlobeNewswireAdapter(), FMPPressReleaseAdapter()]
     else:
         # Order matters: cheap, high-visibility sources FIRST so they always fit
         # in budget. Google News is per-ticker over the full universe — the
@@ -142,11 +141,11 @@ def main() -> int:
             GoogleNewsTopicAdapter(),
             # Google News: per-ticker, parallelized; the slow one at full universe.
             GoogleNewsAdapter(),
+            # FMP press releases: batched over the universe (symbols=...), the
+            # broadest first-party press-release source (BW/PRN/IR aggregated).
+            FMPPressReleaseAdapter(),
         ]
-        # FMP press releases first among narrow sources: per-ticker, pre-indexed
-        # (no name-matching/mis-tag risk), and the primary replacement for the
-        # dead Business Wire direct feed — so it gets budget priority over Yahoo/IR.
-        narrow_adapters = [FMPPressReleaseAdapter(), YFinanceNewsAdapter(), IRSiteAdapter()]
+        narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
 
     adapters = broad_adapters + narrow_adapters
 

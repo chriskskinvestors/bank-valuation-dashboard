@@ -949,6 +949,42 @@ def get_press_releases(ticker: str, limit: int = 25) -> list[dict]:
     return out
 
 
+def get_press_releases_multi(tickers: list[str], limit: int = 250) -> list[dict]:
+    """Press releases for MANY tickers in ONE call (FMP's symbols= accepts a
+    comma list), so the whole bank universe is covered in ~18 calls instead of
+    435. Each row carries its FMP `symbol` so the caller can route + subject-
+    check it. Cached 30m per sorted-ticker chunk → repeat polls within the
+    window are free. [] on no key / failure."""
+    import hashlib
+    if not _has_key() or not tickers:
+        return []
+    syms = ",".join(sorted({t.upper() for t in tickers}))
+    cache_key = f"fmp_press_multi:{hashlib.md5(syms.encode()).hexdigest()}:{limit}"
+    cached = _cache_get(cache_key, PRESS_RELEASE_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    data = _get("news/press-releases", {"symbols": syms, "limit": limit})
+    out: list[dict] = []
+    if isinstance(data, list):
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            title = (r.get("title") or "").strip()
+            if not title:
+                continue
+            out.append({
+                "symbol": (r.get("symbol") or "").strip().upper(),
+                "title": title,
+                "publisher": (r.get("publisher") or r.get("site") or "").strip(),
+                "url": (r.get("url") or "").strip(),
+                "published_at": str(r.get("publishedDate") or "").strip(),
+                "text": (r.get("text") or "").strip(),
+            })
+    _cache_put(cache_key, out)
+    return out
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Diagnostic
 # ──────────────────────────────────────────────────────────────────────────

@@ -22,7 +22,6 @@ named before tagging it.
 
 from __future__ import annotations
 import re
-import time
 from datetime import datetime, timezone, timedelta
 
 from data.events.base import Event, SourceAdapter
@@ -173,10 +172,10 @@ class FMPPressReleaseAdapter(SourceAdapter):
 
     name = "fmp_news"
     LOOKBACK_DAYS = 14
-    MAX_PER_TICKER = 25
+    BATCH = 25   # tickers per FMP call (symbols=A,B,...) — ~18 calls for the universe
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
-        from data.fmp_client import get_press_releases, _has_key
+        from data.fmp_client import get_press_releases_multi, _has_key
         if not _has_key():
             print(f"[{self.name}] FMP_API_KEY not set; skipping")
             return []
@@ -184,27 +183,35 @@ class FMPPressReleaseAdapter(SourceAdapter):
         cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
         out: list[Event] = []
         seen: set[str] = set()
+        uni = {t.upper() for t in tickers}
+        ordered = sorted(uni)
 
-        for ticker in tickers:
+        # Batched over the FULL universe (was watchlist-only): FMP aggregates
+        # Business Wire / PR Newswire / IR press releases per ticker, so this is
+        # the broadest first-party press-release source we have. One call per
+        # BATCH tickers (symbols=...), 30m-cached per chunk.
+        for i in range(0, len(ordered), self.BATCH):
+            chunk = ordered[i:i + self.BATCH]
             try:
-                rows = get_press_releases(ticker, limit=self.MAX_PER_TICKER)
+                rows = get_press_releases_multi(chunk, limit=250)
             except Exception as e:
-                # One bank must never break the whole poll.
-                print(f"[{self.name}] {ticker} error: {type(e).__name__}: {e}")
+                print(f"[{self.name}] batch {i}-{i+self.BATCH} error: "
+                      f"{type(e).__name__}: {e}")
                 continue
 
             for r in rows:
+                sym = (r.get("symbol") or "").strip().upper()
+                if sym not in uni:            # FMP returned a non-bank symbol
+                    continue
                 title = (r.get("title") or "").strip()
                 if not title:
                     continue
                 url = (r.get("url") or "").strip()
                 body = (r.get("text") or "")
 
-                # Confirm THIS bank is actually the subject (see _is_subject):
-                # FMP's symbol index is polluted for short/ambiguous tickers, so
-                # without this an unrelated "CMA Fest" release would be tagged to
-                # Comerica — re-introducing wrong-company mis-tagging.
-                if not _is_subject(ticker, f"{title}. {body[:1000]}"):
+                # Confirm THIS bank is actually the subject (FMP's symbol index
+                # is polluted for short/ambiguous tickers — "CMA Fest" → CMA).
+                if not _is_subject(sym, f"{title}. {body[:1000]}"):
                     continue
 
                 pub = _parse_dt(r.get("published_at", ""))
@@ -213,32 +220,24 @@ class FMPPressReleaseAdapter(SourceAdapter):
                 elif pub < cutoff:
                     continue
 
-                # THE single junk filter (drops structured-note / ETN-coupon
-                # filler, wrong-company $tags) + spam-URL guard.
-                if is_junk_news(title, ticker) or not is_safe_news_url(url):
+                if is_junk_news(title, sym) or not is_safe_news_url(url):
                     continue
 
-                # Stable dedup key — collapses re-syndication across polls; the
-                # store's cross-source content key collapses it against the
-                # wire/Google copies of the same release.
-                ext_id = f"{ticker}::{_slug(title)}"
+                ext_id = f"{sym}::{_slug(title)}"
                 if ext_id in seen:
                     continue
                 seen.add(ext_id)
 
                 out.append(Event(
-                    ticker=ticker,
+                    ticker=sym,
                     source=self.name,
                     event_type=classify_press_release(title),
                     headline=title,
                     published_at=pub,
                     url=url,
-                    summary=(r.get("text") or "")[:1500],
+                    summary=body[:1500],
                     external_id=ext_id,
                     raw={"publisher": (r.get("publisher") or "").strip()},
                 ))
-
-            # Gentle throttle — per-ticker REST calls; keeps us under the cap.
-            time.sleep(0.05)
 
         return out
