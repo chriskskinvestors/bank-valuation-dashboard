@@ -1045,7 +1045,7 @@ def _render_calls_webcasts():
 
     st.subheader("Earnings Calls & Webcasts")
 
-    horizon_days = 75            # full upcoming-season window (matches earnings_timing_map)
+    horizon_days = 75            # full upcoming-season window
     today = date.today()
     with st.spinner("Loading earnings calendar..."):
         try:
@@ -1053,21 +1053,28 @@ def _render_calls_webcasts():
             universe = set(get_universe().keys())
         except Exception:
             universe = set()
+        # Date spine: the universe-wide yfinance snapshot (real near-term dates,
+        # nightly-cached). FMP's calendar overlays before/after-open timing, the
+        # confirmed flag and the revenue estimate (and extends coverage).
+        try:
+            yf_cal = fetch_earnings_calendar(tuple(sorted(universe)))
+        except Exception:
+            yf_cal = []
         try:
             from data import fmp_client
-            calendar = fmp_client.get_earnings_calendar(
+            fmp_cal = fmp_client.get_earnings_calendar(
                 today.isoformat(), (today + timedelta(days=horizon_days)).isoformat())
         except Exception:
-            calendar = None
+            fmp_cal = None
         try:
             from data import earnings_call as _ecall
             calls = _ecall.call_info_map()
             agenda = _ecall.build_calls_agenda(
-                calendar, universe, calls, today, horizon_days=horizon_days)
+                yf_cal, fmp_cal, universe, calls, today, horizon_days=horizon_days)
         except Exception:
             agenda = []
 
-    if not universe or calendar is None:
+    if not universe:
         st.info("Earnings calendar is temporarily unavailable. Please try again "
                 "shortly.")
         return
@@ -1137,7 +1144,11 @@ def _render_calls_webcasts():
                 return ["background-color: rgba(217, 119, 6, 0.06);"] * len(row)
             return [""] * len(row)
 
-        styled = df.style.apply(_highlight_this_week, axis=1).set_properties(
+        # na_rep="" so empty Webcast cells stay blank — a bare None renders the
+        # literal "None" through a Styler. The underlying value stays null, so
+        # the LinkColumn shows no stray "▶ Listen" for banks without a webcast.
+        styled = df.style.format(na_rep="").apply(
+            _highlight_this_week, axis=1).set_properties(
             **{"font-size": "0.78rem", "padding": "3px 6px"})
         st.dataframe(
             styled, use_container_width=True, hide_index=True,

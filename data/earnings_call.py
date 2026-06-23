@@ -175,17 +175,49 @@ def _week_monday(d):
     return d - timedelta(days=d.weekday())
 
 
-def build_calls_agenda(calendar_rows, universe, call_info, today,
-                       horizon_days: int = 45):
-    """Shape universe-wide FMP earnings-calendar rows into the Calls & Webcasts
-    agenda: keep bank-universe symbols reporting in [today, today+horizon_days],
-    soonest row per ticker, joined to parsed call info, grouped into Monday-
-    started weekly buckets.
+def _iso_date(s):
+    """Parse an ISO 'YYYY-MM-DD' string to a date; None on anything unparseable."""
+    from datetime import date
+    try:
+        return date.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _index_soonest(rows, ticker_key, date_key, uni):
+    """{ticker: {"d": date|None, "row": row}} keeping the soonest-dated row per
+    universe ticker. Rows with no parseable date are kept only if the ticker has
+    no dated row (so a date-less estimate still surfaces the bank)."""
+    out: dict = {}
+    for r in (rows or []):
+        tk = (r.get(ticker_key) or "").upper()
+        if not tk or tk not in uni:
+            continue
+        d = _iso_date(r.get(date_key))
+        prev = out.get(tk)
+        if prev is None or (d is not None and (prev["d"] is None or d < prev["d"])):
+            out[tk] = {"d": d, "row": r}
+    return out
+
+
+def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
+                       horizon_days: int = 75):
+    """Merge the two upcoming-earnings sources into the Calls & Webcasts agenda.
+
+    The yfinance snapshot (data.estimates.fetch_earnings_calendar) carries the
+    accurate near-term report dates universe-wide; FMP's calendar adds before/
+    after-open timing, the confirmed flag and the revenue estimate (and extends
+    coverage to any bank yfinance is missing). Per universe ticker we take the
+    soonest real date (yfinance preferred, FMP fallback) and overlay FMP's
+    timing/confirmed/revenue and the parsed call info. Banks reporting in
+    [today, today+horizon_days] are grouped into Monday-started weekly buckets.
 
     Pure / unit-tested. `universe` is any container of upper-case tickers;
     `call_info` is {ticker: {call_time, webcast_url, dial_in}} (may be empty).
-    Each row's date / timing / estimates are the raw FMP source values or None —
-    never fabricated. Returns [] when nothing qualifies.
+    Every date / timing / estimate is a raw source value or None — the date is
+    "confirmed" only when FMP says so (yfinance carries no confirmed flag), so
+    callers mark unconfirmed dates as projected. Nothing is fabricated. Returns
+    [] when nothing qualifies.
 
     Returns: [{"label": str, "week_start": "YYYY-MM-DD", "rows": [row, ...]}],
     week buckets ordered soonest-first; rows within a bucket ordered by date
@@ -193,37 +225,39 @@ def build_calls_agenda(calendar_rows, universe, call_info, today,
         {ticker, date, days_until, when, confirmed, eps_est, rev_est,
          period_ending, call_time, webcast_url, dial_in}
     """
-    from datetime import date, timedelta
+    from datetime import timedelta
 
     uni = set(universe or ())
     ci_map = call_info or {}
     horizon = today + timedelta(days=horizon_days)
 
+    yf_by_tk = _index_soonest(yf_rows, "ticker", "next_earnings_date", uni)
+    fmp_by_tk = _index_soonest(fmp_rows, "symbol", "date", uni)
+
     seen: dict = {}
-    for r in (calendar_rows or []):
-        tk = (r.get("symbol") or "").upper()
-        if not tk or tk not in uni:
+    for tk in set(yf_by_tk) | set(fmp_by_tk):
+        yf = yf_by_tk.get(tk)
+        fmp = fmp_by_tk.get(tk)
+        yrow = (yf or {}).get("row", {})
+        frow = (fmp or {}).get("row", {})
+        # Prefer yfinance's real near-term date; fall back to FMP's projection.
+        d = (yf or {}).get("d") or (fmp or {}).get("d")
+        if d is None or d < today or d > horizon:
             continue
-        ds = r.get("date")
-        try:
-            d = date.fromisoformat(ds)
-        except (TypeError, ValueError):
-            continue
-        if d < today or d > horizon:
-            continue
-        if tk in seen and seen[tk]["_date"] <= d:   # keep soonest per ticker
-            continue
+        eps = yrow.get("eps_estimate")
+        if eps is None:
+            eps = frow.get("epsEstimated")
         ci = ci_map.get(tk) or {}
         seen[tk] = {
             "_date": d,
             "ticker": tk,
-            "date": ds,
+            "date": d.isoformat(),
             "days_until": (d - today).days,
-            "when": _WHEN_LABEL.get((r.get("time") or "").lower()),
-            "confirmed": bool(r.get("confirmed")),
-            "eps_est": r.get("epsEstimated"),
-            "rev_est": r.get("revenueEstimated"),
-            "period_ending": r.get("periodEnding"),
+            "when": _WHEN_LABEL.get((frow.get("time") or "").lower()),
+            "confirmed": bool(frow.get("confirmed")),
+            "eps_est": eps,
+            "rev_est": frow.get("revenueEstimated"),
+            "period_ending": frow.get("periodEnding"),
             "call_time": ci.get("call_time"),
             "webcast_url": ci.get("webcast_url"),
             "dial_in": ci.get("dial_in"),

@@ -122,77 +122,95 @@ class TestEarningsTimingMap(unittest.TestCase):
 
 
 class TestBuildCallsAgenda(unittest.TestCase):
-    """build_calls_agenda — universe filter + soonest-per-ticker dedupe + call-
-    info join + Monday-started weekly bucketing for the Calls & Webcasts view."""
+    """build_calls_agenda — merge the yfinance date spine with FMP timing/
+    revenue/confirmed overlays, universe-filter, dedupe to soonest per ticker,
+    join call info, and bucket by Monday-started week for Calls & Webcasts."""
 
-    UNIVERSE = {"JPM", "GS", "WFC", "FAR"}
+    # JPM, BKSC, WFC report; FMPONLY only appears in FMP; FAR is past horizon.
+    UNIVERSE = {"JPM", "BKSC", "WFC", "FMPONLY", "FAR", "OLD"}
     CALLS = {"JPM": {"call_time": "8:30a ET",
                      "webcast_url": "https://investor.jpm.com/q2",
                      "dial_in": "1-800-555-0100"}}
 
-    def _calendar(self):
+    def _yf(self):
+        # yfinance snapshot shape (data.estimates.fetch_earnings_calendar rows).
         return [
-            {"symbol": "JPM", "date": "2026-07-28", "time": "bmo", "confirmed": True,
-             "epsEstimated": 4.5, "revenueEstimated": 4.2e10, "periodEnding": "2026-06-30"},
-            {"symbol": "JPM", "date": "2026-07-14", "time": "bmo", "confirmed": True,
-             "epsEstimated": 4.5, "revenueEstimated": 4.2e10, "periodEnding": "2026-06-30"},
-            {"symbol": "GS", "date": "2026-07-15", "time": "amc", "confirmed": False,
-             "epsEstimated": 9.1, "revenueEstimated": None, "periodEnding": "2026-06-30"},
-            {"symbol": "WFC", "date": "2026-07-21", "time": "bmo", "confirmed": False,
-             "epsEstimated": 1.2, "revenueEstimated": 2.05e10, "periodEnding": "2026-06-30"},
-            {"symbol": "FAR", "date": "2026-09-01", "time": "bmo", "confirmed": True},  # past horizon
-            {"symbol": "XYZ", "date": "2026-07-16", "time": "bmo", "confirmed": True},  # not a bank
-            {"symbol": "GS", "date": None, "time": "amc", "confirmed": True},           # bad date
+            {"ticker": "JPM", "next_earnings_date": "2026-07-14", "eps_estimate": 5.41},
+            {"ticker": "BKSC", "next_earnings_date": "2026-07-16", "eps_estimate": 0.07},
+            {"ticker": "WFC", "next_earnings_date": "2026-07-21", "eps_estimate": 1.2},
+            {"ticker": "OLD", "next_earnings_date": "2026-06-01", "eps_estimate": 9.0},  # past
+            {"ticker": "NOTBANK", "next_earnings_date": "2026-07-15"},                   # not a bank
         ]
 
-    def test_groups_filters_and_dedupes(self):
+    def _fmp(self):
+        # FMP calendar shape — overlays timing/confirmed/revenue, extends coverage.
+        return [
+            {"symbol": "JPM", "date": "2026-08-06", "time": "bmo", "confirmed": True,
+             "epsEstimated": 5.5, "revenueEstimated": 4.2e10, "periodEnding": "2026-06-30"},
+            {"symbol": "FMPONLY", "date": "2026-07-20", "time": "amc", "confirmed": False,
+             "epsEstimated": 2.0, "revenueEstimated": 5.0e8, "periodEnding": "2026-06-30"},
+            {"symbol": "FAR", "date": "2026-12-01", "time": "bmo", "confirmed": True},  # past horizon
+        ]
+
+    def test_merges_sources_and_buckets(self):
         agenda = build_calls_agenda(
-            self._calendar(), self.UNIVERSE, self.CALLS, date(2026, 7, 13))
+            self._yf(), self._fmp(), self.UNIVERSE, self.CALLS, date(2026, 7, 13))
         self.assertEqual([b["label"] for b in agenda], ["This week", "Next week"])
         self.assertEqual(agenda[0]["week_start"], "2026-07-13")
 
-        wk1 = agenda[0]["rows"]
-        self.assertEqual([r["ticker"] for r in wk1], ["JPM", "GS"])  # date-sorted
-        jpm = wk1[0]
-        self.assertEqual(jpm["date"], "2026-07-14")          # soonest kept, not 07-28
+        wk1 = {r["ticker"]: r for r in agenda[0]["rows"]}
+        self.assertEqual([r["ticker"] for r in agenda[0]["rows"]], ["JPM", "BKSC"])
+
+        jpm = wk1["JPM"]                                  # in BOTH sources
+        self.assertEqual(jpm["date"], "2026-07-14")       # yfinance date wins over FMP's 08-06
         self.assertEqual(jpm["days_until"], 1)
-        self.assertEqual(jpm["when"], "Before open")
-        self.assertTrue(jpm["confirmed"])
-        self.assertEqual(jpm["eps_est"], 4.5)
+        self.assertEqual(jpm["when"], "Before open")      # overlaid from FMP
+        self.assertTrue(jpm["confirmed"])                 # FMP confirmed
+        self.assertEqual(jpm["eps_est"], 5.41)            # yfinance EPS preferred
+        self.assertEqual(jpm["rev_est"], 4.2e10)          # FMP revenue
         self.assertEqual(jpm["webcast_url"], "https://investor.jpm.com/q2")
         self.assertEqual(jpm["dial_in"], "1-800-555-0100")
-        # No internal sort key leaks into the public row.
-        self.assertNotIn("_date", jpm)
+        self.assertNotIn("_date", jpm)                    # internal key not leaked
 
-        gs = wk1[1]
-        self.assertEqual(gs["when"], "After close")
-        self.assertIsNone(gs["call_time"])          # no PR call info → None, not faked
-        self.assertIsNone(gs["webcast_url"])
+        bksc = wk1["BKSC"]                                # yfinance-only
+        self.assertIsNone(bksc["when"])                   # no FMP overlay
+        self.assertFalse(bksc["confirmed"])               # yfinance carries no confirmed flag
+        self.assertEqual(bksc["eps_est"], 0.07)
+        self.assertIsNone(bksc["rev_est"])
+        self.assertIsNone(bksc["call_time"])              # no PR info → None, not faked
 
-        self.assertEqual([r["ticker"] for r in agenda[1]["rows"]], ["WFC"])
+        wk2 = {r["ticker"]: r for r in agenda[1]["rows"]}
+        self.assertEqual(sorted(wk2), ["FMPONLY", "WFC"])
+        fmponly = wk2["FMPONLY"]                          # FMP-only extends coverage
+        self.assertEqual(fmponly["date"], "2026-07-20")
+        self.assertEqual(fmponly["when"], "After close")
+        self.assertEqual(fmponly["rev_est"], 5.0e8)
 
-    def test_excludes_out_of_universe_horizon_and_bad_dates(self):
+    def test_excludes_universe_horizon_and_past_dates(self):
         agenda = build_calls_agenda(
-            self._calendar(), self.UNIVERSE, self.CALLS, date(2026, 7, 13))
+            self._yf(), self._fmp(), self.UNIVERSE, self.CALLS, date(2026, 7, 13))
         tickers = {r["ticker"] for b in agenda for r in b["rows"]}
-        self.assertNotIn("XYZ", tickers)            # not in universe
-        self.assertNotIn("FAR", tickers)            # beyond 45-day horizon
+        self.assertNotIn("NOTBANK", tickers)              # not in universe (yfinance side)
+        self.assertNotIn("OLD", tickers)                  # date in the past
+        self.assertNotIn("FAR", tickers)                  # beyond the 75-day horizon
 
-    def test_horizon_days_widens_window(self):
-        # FAR reports 2026-09-01 — beyond the default 45-day horizon, inside 75.
-        # The Calls & Webcasts view passes horizon_days=75 to surface the full
-        # upcoming season rather than only the next six weeks.
+    def test_horizon_days_bounds_window(self):
+        # FMPONLY reports 2026-07-20 — inside 75 days, outside a tight 5-day window.
         agenda = build_calls_agenda(
-            self._calendar(), self.UNIVERSE, self.CALLS, date(2026, 7, 13),
-            horizon_days=75)
+            self._yf(), self._fmp(), self.UNIVERSE, self.CALLS, date(2026, 7, 13),
+            horizon_days=5)
         tickers = {r["ticker"] for b in agenda for r in b["rows"]}
-        self.assertIn("FAR", tickers)
+        self.assertIn("JPM", tickers)                     # 07-14, within 5 days
+        self.assertNotIn("FMPONLY", tickers)              # 07-20, beyond 5 days
 
     def test_empty_inputs_return_empty(self):
-        self.assertEqual(build_calls_agenda(None, self.UNIVERSE, {}, date(2026, 7, 13)), [])
-        self.assertEqual(build_calls_agenda([], set(), {}, date(2026, 7, 13)), [])
         self.assertEqual(
-            build_calls_agenda(self._calendar(), set(), self.CALLS, date(2026, 7, 13)), [])
+            build_calls_agenda(None, None, self.UNIVERSE, {}, date(2026, 7, 13)), [])
+        self.assertEqual(
+            build_calls_agenda([], [], set(), {}, date(2026, 7, 13)), [])
+        self.assertEqual(
+            build_calls_agenda(self._yf(), self._fmp(), set(), self.CALLS,
+                               date(2026, 7, 13)), [])
 
 
 if __name__ == "__main__":
