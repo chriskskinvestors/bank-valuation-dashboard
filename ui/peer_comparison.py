@@ -191,10 +191,23 @@ def render_peer_comparison(all_metrics: list[dict]):
         st.session_state["compare_scope_type"] = "Manual"
         st.session_state["compare_manual"] = list(handoff)
 
+    # Quick "add a bank by ticker" → append to the Manual scope. Handled BEFORE the
+    # scope/manual widgets render so writing their session keys is legal; the search
+    # box then resets for the next add (mirrors the Screen toolbar's Add bank).
+    _addbank = st.session_state.get("compare_addbank")
+    if _addbank:
+        _cur = list(st.session_state.get("compare_manual", []))
+        if _addbank not in _cur:
+            _cur.append(_addbank)
+        st.session_state["compare_manual"] = _cur
+        st.session_state["compare_scope_type"] = "Manual"
+        st.session_state["compare_addbank"] = None
+
     # ── Compact controls: Scope · Categories (content-width via trailing spacer);
     # the scope secondary picker (Manual chips / cohort) sits narrow below. ──
     _CATS = list(CATEGORY_METRICS.keys())
-    cc1, cc2, cc3, _csp = st.columns([1.5, 2.3, 1.7, 2.5])
+    _all_tk = sorted({m["ticker"] for m in all_metrics if m.get("ticker")})
+    cc1, cc2, cc3, cc4, _csp = st.columns([1.3, 2.0, 1.5, 1.9, 1.3])
     with cc1:
         scope_type = st.selectbox("Scope", scope_type_options(), key="compare_scope_type")
     with cc2:
@@ -203,6 +216,12 @@ def render_peer_comparison(all_metrics: list[dict]):
     with cc3:
         rank_label = st.selectbox("Rank banks by", [lbl for _, lbl in _RANK_OPTIONS],
                                   key="compare_rank")
+    with cc4:
+        st.selectbox(
+            "Add bank", options=_all_tk, index=None, placeholder="ticker or name…",
+            format_func=lambda t: (f"{t} — {get_name(t)}"
+                                   if get_name(t) and get_name(t) != t else t),
+            key="compare_addbank")
     if not categories:
         categories = _CATS
     _subl, _ = st.columns([7, 3])
@@ -271,7 +290,11 @@ def render_peer_comparison(all_metrics: list[dict]):
     view_tab, scatter_tab, radar_tab = st.tabs([
         "Metrics Table", "Scatter Plots", "Radar Chart"])
     with view_tab:
-        _render_metrics_table(cohort, display_peers, categories)
+        _cell_mode = st.radio(
+            "Cell display", ["Value", "Δ vs median"], horizontal=True,
+            key="compare_cellmode", label_visibility="collapsed")
+        _render_metrics_table(cohort, display_peers, categories,
+                              delta=_cell_mode.startswith("Δ"))
     with scatter_tab:
         _render_peer_scatters(cohort)
     with radar_tab:
@@ -394,10 +417,11 @@ def _render_headline_charts(display_peers: list[dict]):
 
 
 def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
-                          categories: list[str]):
+                          categories: list[str], delta: bool = False):
     """Dense side-by-side table — banks (the display subset) in columns, metrics in
     rows grouped under category section headers, EVERY metric per selected category.
-    Percentile color and Peer Median resolve against the FULL ``cohort``."""
+    Percentile color and Peer Median resolve against the FULL ``cohort``. When
+    ``delta`` is set, bank cells show the signed difference from the peer median."""
     tickers = [m["ticker"] for m in display_peers]   # columns
     style_map = {}                                   # (metric_key, ticker) → color
     sections = []                                    # [(category, [row, …]), …]
@@ -423,7 +447,14 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
             for d in display_peers:
                 t = d["ticker"]
                 v = d.get(mkey)
-                row[t] = format_value(v, fmt, dec) if v is not None else "—"
+                if v is None or not isinstance(v, (int, float)):
+                    row[t] = "—"
+                elif delta:
+                    dv = v - peer_median
+                    row[t] = ("+" if dv >= 0 else "−") + format_value(
+                        abs(dv), fmt, dec)
+                else:
+                    row[t] = format_value(v, fmt, dec)
                 pct = compute_peer_percentile(v, numeric)   # vs full cohort
                 if higher_better:
                     style_map[(mkey, t)] = _percentile_color(pct, True)
