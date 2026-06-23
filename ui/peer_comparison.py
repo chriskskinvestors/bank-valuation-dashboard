@@ -92,6 +92,89 @@ _HIGHLIGHTS = [
     ("Fastest TBV growth", "tbv_cagr_1y", "max"),
 ]
 
+# Column-ordering choices for the side-by-side table (metric_key, label).
+# "__score__" = the composite percentile; the rest order by a single metric.
+_RANK_OPTIONS = [("__score__", "Overall score")] + [
+    (k, lbl) for k, lbl in [
+        ("roatce_normalized", "ROATCE"), ("nim", "NIM"),
+        ("efficiency_ratio", "Efficiency"), ("cet1_ratio", "CET1"),
+        ("ptbv_ratio", "P/TBV"), ("ptbv_discount", "Discount to fair"),
+        ("npl_ratio", "NPL"), ("market_cap", "Market cap"),
+        ("total_assets", "Total assets"),
+    ] if k in METRICS_BY_KEY
+]
+
+
+def _peer_scores(cohort: list[dict], display_peers: list[dict],
+                 categories: list[str]) -> dict:
+    """Per-displayed-bank composite: mean EFFECTIVE percentile (higher = better;
+    lower-is-better metrics inverted) across every directional metric in the
+    selected categories, plus top-/bottom-quartile finish counts. Percentiles
+    resolve against the FULL cohort."""
+    agg = {d["ticker"]: {"vals": [], "top": 0, "bot": 0} for d in display_peers}
+    for cat in categories:
+        for mkey in CATEGORY_METRICS.get(cat, []):
+            m_def = METRICS_BY_KEY.get(mkey)
+            if not m_def:
+                continue
+            rule = m_def.get("color_rule")
+            if rule not in ("higher_better", "lower_better"):
+                continue
+            numeric = [b.get(mkey) for b in cohort
+                       if isinstance(b.get(mkey), (int, float))]
+            if not numeric:
+                continue
+            for d in display_peers:
+                v = d.get(mkey)
+                if not isinstance(v, (int, float)):
+                    continue
+                pct = compute_peer_percentile(v, numeric)
+                if pct is None:
+                    continue
+                eff = pct if rule == "higher_better" else (100 - pct)
+                a = agg[d["ticker"]]
+                a["vals"].append(eff)
+                if eff >= 80:
+                    a["top"] += 1
+                elif eff < 20:
+                    a["bot"] += 1
+    return {tk: {"score": (sum(a["vals"]) / len(a["vals"]) if a["vals"] else None),
+                 "top": a["top"], "bot": a["bot"], "n": len(a["vals"])}
+            for tk, a in agg.items()}
+
+
+def _render_scorecard(scores: dict, order: list[str]):
+    """A strip of per-bank chips — composite score + top/bottom-quartile counts —
+    in the current column order (best-first when ranked by score)."""
+    chips = []
+    for tk in order:
+        s = scores.get(tk)
+        if not s or s.get("score") is None:
+            continue
+        parts = [f'<b>{_html.escape(tk)}</b>',
+                 f'<span style="color:var(--brand-primary);">{round(s["score"])}</span>']
+        if s["top"]:
+            parts.append(f'<span style="color:#047857;">▲{s["top"]}</span>')
+        if s["bot"]:
+            parts.append(f'<span style="color:#b91c1c;">▼{s["bot"]}</span>')
+        chips.append(
+            f'<span style="font-size:0.75rem;background:var(--bg-surface);'
+            f'border:0.5px solid var(--grid-head);border-radius:6px;padding:4px 9px;'
+            f'white-space:nowrap;">{" ".join(parts)}</span>')
+    if not chips:
+        return
+    st.markdown(
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;'
+        'margin:2px 0 10px;">'
+        '<span style="font-size:0.72rem;color:var(--text-tertiary);'
+        'text-transform:uppercase;letter-spacing:.04em;">Scorecard</span>'
+        + "".join(chips)
+        + '<span style="font-size:0.68rem;color:var(--text-tertiary);">'
+        'score = avg percentile · ▲ top-quartile · ▼ bottom-quartile finishes</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
 
 def render_peer_comparison(all_metrics: list[dict]):
     """Render the Peer Comparison page — dense, all-category side-by-side."""
@@ -111,12 +194,15 @@ def render_peer_comparison(all_metrics: list[dict]):
     # ── Compact controls: Scope · Categories (content-width via trailing spacer);
     # the scope secondary picker (Manual chips / cohort) sits narrow below. ──
     _CATS = list(CATEGORY_METRICS.keys())
-    cc1, cc2, _csp = st.columns([1.7, 2.6, 3.7])
+    cc1, cc2, cc3, _csp = st.columns([1.5, 2.3, 1.7, 2.5])
     with cc1:
         scope_type = st.selectbox("Scope", scope_type_options(), key="compare_scope_type")
     with cc2:
         categories = st.multiselect("Metric categories", _CATS, default=_CATS,
                                     key="peer_categories")
+    with cc3:
+        rank_label = st.selectbox("Rank banks by", [lbl for _, lbl in _RANK_OPTIONS],
+                                  key="compare_rank")
     if not categories:
         categories = _CATS
     _subl, _ = st.columns([7, 3])
@@ -146,6 +232,26 @@ def render_peer_comparison(all_metrics: list[dict]):
     else:
         display_peers = cohort
 
+    # Composite percentile score per bank, then reorder the columns by the rank
+    # choice (default: best overall first) so the side-by-side reads at a glance.
+    scores = _peer_scores(cohort, display_peers, categories)
+    rank_key = next((k for k, lbl in _RANK_OPTIONS if lbl == rank_label), "__score__")
+    if rank_key == "__score__":
+        display_peers = sorted(
+            display_peers,
+            key=lambda d: (scores[d["ticker"]]["score"] is None,
+                           -(scores[d["ticker"]]["score"] or 0)))
+    else:
+        _rb_lower = METRICS_BY_KEY.get(rank_key, {}).get("color_rule") == "lower_better"
+
+        def _rank_sort(d):
+            v = d.get(rank_key)
+            missing = not isinstance(v, (int, float))
+            val = v if isinstance(v, (int, float)) else 0
+            return (missing, val if _rb_lower else -val)
+
+        display_peers = sorted(display_peers, key=_rank_sort)
+
     # ── Status line (no boxed title bar) ───────────────────────────────
     _ncat = len(categories)
     st.markdown(
@@ -157,7 +263,8 @@ def render_peer_comparison(all_metrics: list[dict]):
         unsafe_allow_html=True,
     )
 
-    # ── Best-in-class highlights ───────────────────────────────────────
+    # ── Per-bank scorecard + best-in-class highlights ──────────────────
+    _render_scorecard(scores, [d["ticker"] for d in display_peers])
     _render_highlights(display_peers)
 
     # ── View tabs ──────────────────────────────────────────────────────
