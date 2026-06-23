@@ -221,22 +221,20 @@ if section == "Screen & Compare":
     st.markdown(
         """
         <style>
-          div[data-testid="stVerticalBlock"]{gap:0.35rem;}
-          /* Small upper-case control labels. The element is a <label> (not a
-             div) and the text lives in a nested <p>, so target both directly and
-             force past Streamlit's emotion classes. */
-          [data-testid="stWidgetLabel"]{margin-bottom:1px;}
-          [data-testid="stWidgetLabel"] p{font-size:0.625rem !important;
-              text-transform:uppercase;letter-spacing:.05em;font-weight:500;
-              color:var(--text-secondary);line-height:1.1;}
-          /* Compact select controls: shorter, lighter, smaller value text. */
+          div[data-testid="stVerticalBlock"]{gap:0.4rem;}
+          /* Small, light, sentence-case control labels (NOT a grey header band).
+             The element is a <label> with the text in a nested <p>. */
+          [data-testid="stWidgetLabel"]{margin-bottom:2px;}
+          [data-testid="stWidgetLabel"] p{font-size:0.7rem !important;
+              letter-spacing:.01em;font-weight:500;color:var(--text-tertiary);
+              line-height:1.1;}
+          /* Compact selects — light bordered pills, smaller value text. */
           div[data-testid="stSelectbox"] div[data-baseweb="select"]>div{
-              min-height:30px;font-size:0.75rem;}
-          /* Sub-view nav (Screen · Compare · Trends) — navy underline tab bar
-             instead of radio dots, matching the section nav. */
+              min-height:34px;font-size:0.8rem;}
+          /* Sub-view nav (Screen · Compare · Trends) — navy underline tab bar. */
           .st-key-sc_subnav div[role="radiogroup"]{display:flex;gap:2px 6px;
               align-items:flex-end;border-bottom:1px solid var(--grid-head);
-              margin-bottom:10px;}
+              margin-bottom:12px;}
           .st-key-sc_subnav div[role="radiogroup"]>label{margin:0 !important;
               padding:6px 16px;cursor:pointer;border-bottom:2px solid transparent;
               border-radius:6px 6px 0 0;transition:background .12s,border-color .12s;}
@@ -249,61 +247,23 @@ if section == "Screen & Compare":
               border-bottom-color:var(--brand-primary);}
           .st-key-sc_subnav div[role="radiogroup"]>label:has(input:checked) p{
               color:var(--brand-primary);font-weight:700;}
-          /* Combined control bar = two adjacent self-bordered bars (selects on
-             top, actions below) joined seamlessly: the actions bar pulls up to
-             butt against the selects bar so they read as one unit. */
-          .st-key-screen_selects{border:0.5px solid var(--grid-head);
-              border-bottom:none;border-radius:8px 8px 0 0;overflow:hidden;
-              background:var(--bg-elevated);}
-          .st-key-screen_actions{border:0.5px solid var(--grid-head);
-              border-radius:0 0 8px 8px;overflow:hidden;
-              background:var(--bg-elevated);margin-top:-0.35rem;}
-          /* Selects row — seamless segmented cells, hairline dividers, tinted
-             navy label band per cell (table-header feel). */
-          .st-key-screen_selects [data-testid="stHorizontalBlock"]{gap:0 !important;}
-          .st-key-screen_selects [data-testid="stColumn"]{
-              border-right:0.5px solid var(--grid-head);}
-          .st-key-screen_selects [data-testid="stColumn"]:last-child{border-right:none;}
-          .st-key-screen_selects div[data-baseweb="select"]>div{
-              border:none !important;background:transparent !important;
-              border-radius:0 !important;box-shadow:none !important;padding-left:7px;}
-          .st-key-screen_selects [data-testid="stWidgetLabel"]{
-              padding:4px 0 4px 11px;margin:0;background:var(--grid-head-bg);
-              border-bottom:0.5px solid var(--grid-head);}
-          .st-key-screen_selects [data-testid="stWidgetLabel"] p{
-              color:var(--brand-primary) !important;}
-          /* Scope's secondary picker, when shown, sits flush under the selects. */
-          .st-key-screen_scopesub{border-top:0.5px solid var(--grid-head);
-              padding:4px 8px;background:var(--grid-head-bg);}
+          /* Compact toolbar: selects sit left (a trailing spacer column keeps
+             them content-width, not full-bleed); the small outline action buttons
+             group under a thin divider. Single neutral tone — navy is reserved
+             for the active tab and the primary CTA. */
+          .st-key-screen_actbtns{border-top:0.5px solid var(--grid-head);
+              margin-top:7px;padding-top:9px;}
+          .st-key-screen_actbtns [data-testid="stHorizontalBlock"]{gap:6px !important;}
           .st-key-screen_scopesub div[data-baseweb="select"]{max-width:340px;}
-          /* Actions row — flush full-width buttons, hairline dividers. */
-          .st-key-screen_actions [data-testid="stHorizontalBlock"]{gap:0 !important;}
-          .st-key-screen_actions [data-testid="stColumn"]{
-              border-right:0.5px solid var(--grid-head);display:flex;}
-          .st-key-screen_actions [data-testid="stColumn"]:last-child{border-right:none;}
-          .st-key-screen_actions [data-testid="stButton"]{width:100%;}
-          .st-key-screen_actions [data-testid="stButton"] button,
-          .st-key-screen_actions button[data-testid^="stBaseButton"]{
-              width:100% !important;border:none !important;border-radius:0 !important;
-              background:transparent !important;height:34px;min-height:34px;}
-          .st-key-screen_actions [data-testid="stButton"] button:hover,
-          .st-key-screen_actions button[data-testid^="stBaseButton"]:hover{
-              background:var(--bg-hover) !important;color:var(--brand-primary) !important;}
-          .st-key-screen_actions button[data-testid="stBaseButton-primary"]{
-              background:var(--brand-primary) !important;}
-          .st-key-screen_actions button[data-testid="stBaseButton-primary"]:hover{
-              background:var(--brand-hover) !important;}
-          .st-key-screen_actions button[data-testid="stBaseButton-primary"] p{
-              color:var(--text-inverse) !important;}
-          /* Compact buttons elsewhere on the page (launcher, dialogs). */
+          /* Compact buttons (toolbar, launcher, dialogs) — outline, navy hover. */
           [data-testid="stButton"] button, button[data-testid^="stBaseButton"]{
               min-height:30px;padding:0 12px;}
           [data-testid="stButton"] button:hover,
           button[data-testid^="stBaseButton"]:hover{
               border-color:var(--brand-border) !important;color:var(--brand-primary) !important;}
           [data-testid="stButton"] button p, button[data-testid^="stBaseButton"] p{
-              font-size:0.6875rem !important;}
-          /* Primary CTA — navy brand fill. */
+              font-size:0.72rem !important;}
+          /* Primary CTA (Compare) — navy brand fill. */
           button[data-testid="stBaseButton-primary"]{
               background:var(--brand-primary) !important;
               border-color:var(--brand-primary) !important;}
@@ -1045,67 +1005,66 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                             st.rerun()
         st.stop()
 
-    # ── Combined control bar — top segment: configurator selects ──────
-    # One bordered bar (Table · As of · Scope · Sort · Order); the action buttons
-    # render as a second segment below (screen_actions) so the whole thing reads
-    # as a single control unit. Widgets render INSIDE the container so the
-    # segmented-bar CSS scopes to it; the scope secondary picker sits flush under
-    # the selects when a non-default scope needs one.
-    with st.container(key="screen_selects"):
-        c_table, c_asof, c_scope, c_sort, c_order = st.columns(
-            [2.0, 1.5, 1.7, 1.4, 0.9])
-        with c_table:
-            # Theme folded in: one flat Table picker over all tables (ordered by
-            # theme). screen_tab_key holds the chosen key (resolved up top).
-            st.selectbox(
-                "Table", options=_ordered_keys,
-                format_func=lambda k: next(t["label"] for t in TABS if t["key"] == k),
-                key="screen_tab_key")
-        with c_asof:
-            _asof_pick = st.selectbox(
-                "As of", _asof_opts, key=f"asof_{tab_key}",
-                help="Screen the universe as it filed at a past quarter-end (FDIC "
-                     "point-in-time; market/SEC metrics are n/a in this mode).")
-        is_asof = _asof_pick != "Latest (live)"
-        asof_q_label = _asof_pick if is_asof else ""
-        if is_asof:
-            _q = _qs_list[_asof_opts.index(_asof_pick) - 1]
-            _cand = {get_fdic_cert(t): t for t in watchlist if get_fdic_cert(t)}
-            _company_certs = set(_cand)   # current public banks WITH a Company page
-            for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
-                _cand.setdefault(_c, _nm)
-            with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
-                            "(first load fetches a few years of FDIC history; then cached)"):
-                # Lineage: banks since absorbed by a current bank were separate at Q —
-                # re-add them (the as-of builder still gates each on filing at Q).
-                for _c, _info in lineage_predecessors(set(_cand), _q).items():
-                    _cand.setdefault(_c, _info.get("name") or f"CERT:{_c}")
-                screen_metrics = as_of_quarter_metrics(_q, _cand)
-            # Tag rows with no current Company page (failures / since-acquired) so the
-            # table links them to FDIC BankFind instead of a dead ?bank= link.
-            for _m in screen_metrics:
-                _m["_defunct"] = _m.get("_fdic_cert") not in _company_certs
-            if not screen_metrics:
-                st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
-        else:
-            screen_metrics = all_metrics
-        with c_scope:
-            _scope_type = st.selectbox("Scope", scope_type_options(),
-                                       key=f"screen_{tab_key}_scope_type")
-        with c_sort:
-            sort_idx = st.selectbox(
-                "Sort by", options=list(range(len(sort_labels))),
-                format_func=lambda i: sort_labels[i], key=f"sort_{tab_key}")
-        with c_order:
-            sort_order = st.selectbox("Order", options=["Desc", "Asc"],
-                                      key=f"order_{tab_key}")
-        # Scope's secondary picker — drawn only when the type needs one; for
-        # "All banks" render_scope_sub draws nothing, so no empty band appears.
-        if _scope_type == "All banks":
-            display_metrics, display_tickers, scope_label = render_scope_sub(
-                screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
-        else:
-            with st.container(key="screen_scopesub"):
+    # ── Compact toolbar — configurator selects (left-aligned, content-width) ──
+    # Plain columns with a trailing SPACER column keep the selects content-width
+    # instead of stretching edge-to-edge. Theme is folded into Table. The action
+    # buttons render below under a thin divider (screen_actbtns).
+    c_table, c_asof, c_scope, c_sort, c_order, _c_spacer = st.columns(
+        [2.4, 1.4, 1.5, 1.3, 0.85, 3.6])
+    with c_table:
+        # Theme folded in: one flat Table picker over all tables (ordered by
+        # theme). screen_tab_key holds the chosen key (resolved up top).
+        st.selectbox(
+            "Table", options=_ordered_keys,
+            format_func=lambda k: next(t["label"] for t in TABS if t["key"] == k),
+            key="screen_tab_key")
+    with c_asof:
+        _asof_pick = st.selectbox(
+            "As of", _asof_opts, key=f"asof_{tab_key}",
+            help="Screen the universe as it filed at a past quarter-end (FDIC "
+                 "point-in-time; market/SEC metrics are n/a in this mode).")
+    is_asof = _asof_pick != "Latest (live)"
+    asof_q_label = _asof_pick if is_asof else ""
+    if is_asof:
+        _q = _qs_list[_asof_opts.index(_asof_pick) - 1]
+        _cand = {get_fdic_cert(t): t for t in watchlist if get_fdic_cert(t)}
+        _company_certs = set(_cand)   # current public banks WITH a Company page
+        for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
+            _cand.setdefault(_c, _nm)
+        with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
+                        "(first load fetches a few years of FDIC history; then cached)"):
+            # Lineage: banks since absorbed by a current bank were separate at Q —
+            # re-add them (the as-of builder still gates each on filing at Q).
+            for _c, _info in lineage_predecessors(set(_cand), _q).items():
+                _cand.setdefault(_c, _info.get("name") or f"CERT:{_c}")
+            screen_metrics = as_of_quarter_metrics(_q, _cand)
+        # Tag rows with no current Company page (failures / since-acquired) so the
+        # table links them to FDIC BankFind instead of a dead ?bank= link.
+        for _m in screen_metrics:
+            _m["_defunct"] = _m.get("_fdic_cert") not in _company_certs
+        if not screen_metrics:
+            st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
+    else:
+        screen_metrics = all_metrics
+    with c_scope:
+        _scope_type = st.selectbox("Scope", scope_type_options(),
+                                   key=f"screen_{tab_key}_scope_type")
+    with c_sort:
+        sort_idx = st.selectbox(
+            "Sort", options=list(range(len(sort_labels))),
+            format_func=lambda i: sort_labels[i], key=f"sort_{tab_key}")
+    with c_order:
+        sort_order = st.selectbox("Order", options=["Desc", "Asc"],
+                                  key=f"order_{tab_key}")
+    # Scope's secondary picker — only when the type needs one; narrow, below the
+    # selects. For "All banks" render_scope_sub draws nothing (no empty band).
+    if _scope_type == "All banks":
+        display_metrics, display_tickers, scope_label = render_scope_sub(
+            screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
+    else:
+        with st.container(key="screen_scopesub"):
+            _ssub, _ = st.columns([3, 6])
+            with _ssub:
                 display_metrics, display_tickers, scope_label = render_scope_sub(
                     screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
 
@@ -1429,15 +1388,14 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 else:
                     st.error("Could not delete.")
 
-    # ── Combined control bar — bottom segment: action buttons ──────────
-    # Renders flush under the selects bar (screen_actions CSS) so the two read as
-    # one unit: Back · Filters · Columns · Saved · Export · Compare. Groups is
-    # folded into Saved; Compare hands the set to the side-by-side Compare view and
-    # appears only when the set is small enough to compare (engaged and ≤30 banks).
+    # ── Compact toolbar — action buttons (small, left, under a thin divider) ──
+    # Groups is folded into Saved; Compare hands the set to the side-by-side
+    # Compare view and shows only when small enough to compare (engaged, ≤30). A
+    # trailing SPACER column keeps the buttons grouped left and content-sized.
     _flabel = f"Filters ({len(filter_specs)})" if filter_specs else "Filters"
     _show_compare = _engaged and 0 < len(display_metrics) <= 30
-    with st.container(key="screen_actions"):
-        _aw = [1.1, 1.0, 1.0, 1.0, 1.0] + ([1.6] if _show_compare else [])
+    with st.container(key="screen_actbtns"):
+        _aw = [1.0, 1.0, 1.0, 1.0, 1.0] + ([1.5] if _show_compare else []) + [7.5]
         _ac = st.columns(_aw)
         with _ac[0]:
             if st.button("← Screens", key=f"btn_close_{tab_key}",
