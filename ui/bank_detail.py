@@ -526,15 +526,20 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
             fdic_rec = fdic_client.get_latest_financials(cert) or {}
         except Exception:
             fdic_rec = {}
-    # Capital-IQ-style snapshot: identity + quick links, then four reference
-    # tables packed across the full width (no half-width dead space).
+    # Capital-IQ-style snapshot: identity + quick links, then two stacked pairs
+    # of reference tables — Market Data over Performance (left) and Valuation
+    # over Company Profile (right). Each pair is concatenated into a single
+    # markdown block so the only break between the two tables is the lower
+    # table's heading (no Streamlit inter-block gap), and the two columns line
+    # up above the Price / Valuation charts below.
     mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec)
     from ui.chrome import title_bar
     title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
     val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
-    _g = st.columns(4)
-    for _col, _html in zip(_g, (mkt_html, val_html, perf_html, co_html)):
-        _col.markdown(_html, unsafe_allow_html=True)
+    _gap = '<div style="margin-top:0.5rem"></div>'  # heading-sized break only
+    _left, _right = st.columns(2)
+    _left.markdown(mkt_html + _gap + perf_html, unsafe_allow_html=True)
+    _right.markdown(val_html + _gap + co_html, unsafe_allow_html=True)
     st.markdown(
         '<div style="margin-top:5px; font-size:0.75rem; color:var(--text-secondary);">'
         'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
