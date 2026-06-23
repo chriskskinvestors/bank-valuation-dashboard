@@ -1133,15 +1133,15 @@ def _render_calls_webcasts():
                 "Call Time": r.get("call_time") or "—",
                 "EPS Est": f"${r['eps_est']:.2f}" if r.get("eps_est") else "—",
                 "Rev Est": _fmt_rev_est(r.get("rev_est")),
-                "Webcast": r.get("webcast_url") or None,
+                # Empty string (NOT None) for "no webcast": an all-None column
+                # types as Arrow null and LinkColumn renders the literal "None".
+                # "" stays string-typed and is falsy, so LinkColumn shows a blank
+                # cell — and the "▶ Listen" label only on real URLs.
+                "Webcast": r.get("webcast_url") or "",
                 "Dial-in": r.get("dial_in") or "—",
             })
 
         df = pd.DataFrame(table)
-        # Plain frame (no Styler): Streamlit renders a Styler's str(None) as the
-        # literal "None", but a raw frame lets LinkColumn show empty cells for
-        # banks with no webcast. Nullable string so the null reaches LinkColumn.
-        df["Webcast"] = df["Webcast"].astype("string")
         st.dataframe(
             df, use_container_width=True, hide_index=True,
             height=min(560, 40 + 35 * len(df)),
