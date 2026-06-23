@@ -1063,7 +1063,7 @@ def _render_economy_calendar():
                 srows += (
                     "<tr>"
                     f'<td style="white-space:nowrap;">{d}</td>'
-                    f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
+                    f'<td style="text-align:left;white-space:normal;max-width:210px;">{_html.escape(e["event"])}</td>'
                     f'<td style="text-align:right;"><strong>{_fmt_econ_val(e["actual"], e["unit"])}</strong></td>'
                     f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
                     f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e.get("previous"), e["unit"])}</td>'
@@ -1103,7 +1103,7 @@ def _render_economy_calendar():
                     f"<tr{row_bg}>"
                     f'<td style="white-space:nowrap;">{d.strftime("%b %d").replace(" 0", " ")}</td>'
                     f'<td style="text-align:left;color:var(--text-secondary);white-space:nowrap;">{_et_time(e["datetime"])}</td>'
-                    f'<td style="text-align:left;">{_html.escape(e["event"])}</td>'
+                    f'<td style="text-align:left;white-space:normal;max-width:210px;">{_html.escape(e["event"])}</td>'
                     f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e.get("previous"), e["unit"])}</td>'
                     f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
                     f'<td style="text-align:right;">{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
