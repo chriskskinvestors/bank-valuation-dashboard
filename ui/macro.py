@@ -287,6 +287,7 @@ _DEPOSIT_PRODUCTS = [
     ("savings", "Savings"),
     ("interest_checking", "Interest Checking"),
     ("mmda", "Money Market"),
+    ("cd_1mo", "1-Month CD"),
     ("cd_3mo", "3-Month CD"),
     ("cd_6mo", "6-Month CD"),
     ("cd_12mo", "12-Month CD"),
@@ -351,6 +352,8 @@ def _render_funding_deposits():
                 continue
             rate_txt = f"{rate:.2f}%" if rate is not None else _NA_HTML
             cap_txt = f"{cap:.2f}%" if cap is not None else _NA_HTML
+            room_txt = (f"{cap - rate:.2f}pp" if (rate is not None and cap is not None)
+                        else _NA_HTML)
             spread_txt = (f"{rate - ff:+.2f}pp" if (rate is not None and ff is not None)
                           else _NA_HTML)
             body += (
@@ -358,24 +361,26 @@ def _render_funding_deposits():
                 f'<td style="text-align:left;">{_html.escape(label)}</td>'
                 f'<td style="text-align:right;font-weight:600;">{rate_txt}</td>'
                 f'<td style="text-align:right;color:var(--text-secondary);">{cap_txt}</td>'
+                f'<td style="text-align:right;color:var(--text-secondary);">{room_txt}</td>'
                 f'<td style="text-align:right;color:var(--text-secondary);">{spread_txt}</td>'
                 f'<td style="text-align:center;">{_sparkline_svg(sparks.get(field, []))}</td>'
                 "</tr>"
             )
-        with st.container(border=True, key="fundtable", height=420):
+        with st.container(border=True, key="fundtable", height=345):
             st.markdown(
                 '<div class="ksk-grid"><table><thead><tr>'
                 '<th style="text-align:left;">Product</th>'
                 '<th style="text-align:right;">National Rate</th>'
                 '<th style="text-align:right;">Rate Cap</th>'
+                '<th style="text-align:right;">Cap room</th>'
                 '<th style="text-align:right;">vs Fed Funds</th>'
                 '<th style="text-align:center;">Trend (5Y)</th>'
                 "</tr></thead><tbody>" + body + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
         st.caption("National Rate = FDIC deposit-weighted national average. Rate Cap = "
-                   "§337.7 cap (national rate + 75bps, or the Treasury-yield-based cap). "
-                   "vs Fed Funds = how far deposit pricing lags policy. Source: FDIC.")
+                   "§337.7 cap (national rate + 75bps, or Treasury-yield-based). Cap room = "
+                   "headroom to that cap. vs Fed Funds = how far pricing lags policy. Source: FDIC.")
         if hist:
             export_rows = []
             for r in hist:
@@ -391,7 +396,7 @@ def _render_funding_deposits():
             st.info("Deposit-rate history is unavailable in this environment.")
             return
         dates = [r["asof"] for r in hist]
-        with st.container(border=True, key="fundchart", height=420):
+        with st.container(border=True, key="fundchart", height=345):
             fig = go.Figure()
             for field, label, color in [
                 ("savings", "Savings", "#0891b2"),
@@ -409,7 +414,7 @@ def _render_funding_deposits():
                     x=ffdf["date"], y=ffdf["value"], name="Fed Funds", mode="lines",
                     line=dict(color="#64748b", width=2, dash="dot")))
             apply_standard_layout(fig, title="Deposit rates vs Fed Funds — the deposit-beta picture",
-                                  height=CHART_HEIGHT_HERO, yaxis_title="Rate")
+                                  height=300, yaxis_title="Rate")
             fig.update_yaxes(ticksuffix="%")
             st.plotly_chart(fig, use_container_width=True)
         st.caption("Deposit rates rise far less than Fed Funds (low deposit beta) and lag "
