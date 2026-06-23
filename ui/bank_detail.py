@@ -479,30 +479,31 @@ def _valuation_history_chart(ticker: str, info: dict):
     return fig
 
 
-def _render_overview_charts(ticker: str, info: dict):
-    """Price chart + valuation-multiple history, side by side, to fill the space
-    next to the snapshot tables. Both are interactive (zoom / hover)."""
-    st.markdown("---")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Price**")
-        per = st.radio("Period", ["1M", "3M", "1Y", "5Y"], index=2, horizontal=True,
-                       key=f"ov_price_per_{ticker}", label_visibility="collapsed")
-        hist_df = pd.DataFrame()
-        try:
-            from data.fmp_client import get_history
-            hist_df = get_history(ticker, per)
-        except Exception:
-            pass
-        st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True,
-                        key=f"ov_price_{ticker}")
-    with c2:
-        st.markdown("**Valuation — P/TBV & P/E**")
-        fig = _valuation_history_chart(ticker, info)
-        if fig is not None:
-            st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
-        else:
-            st.caption("Valuation history unavailable for this bank.")
+def _render_price_panel(ticker: str):
+    """Interactive price + volume chart with a period selector. Rendered in the
+    snapshot band's open right column so it fills the space beside the ledgers;
+    its natural height lines up with the ledger block."""
+    st.markdown("**Price**")
+    per = st.radio("Period", ["1M", "3M", "1Y", "5Y"], index=2, horizontal=True,
+                   key=f"ov_price_per_{ticker}", label_visibility="collapsed")
+    hist_df = pd.DataFrame()
+    try:
+        from data.fmp_client import get_history
+        hist_df = get_history(ticker, per)
+    except Exception:
+        pass
+    st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True,
+                    key=f"ov_price_{ticker}")
+
+
+def _render_valuation_panel(ticker: str, info: dict):
+    """Quarter-end P/TBV & P/E history chart, shown below the snapshot band."""
+    st.markdown("**Valuation — P/TBV & P/E**")
+    fig = _valuation_history_chart(ticker, info)
+    if fig is not None:
+        st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
+    else:
+        st.caption("Valuation history unavailable for this bank.")
 
 
 def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
@@ -537,16 +538,24 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
     val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
     _gap = '<div style="margin-top:0.5rem"></div>'  # heading-sized break only
-    # Two stacked-pair columns at ~1/6 width each (a third narrower than the
-    # prior quarter-width); the rest of the row is empty space on the right.
-    _cols = st.columns([1, 1, 4])
+    # Two stacked-pair ledger columns at 1/6 width each, the price chart filling
+    # the open space beside them (next third), and the far right left empty. The
+    # chart's natural height lines up with the ledger block.
+    _cols = st.columns([1, 1, 2, 2])
     _cols[0].markdown(mkt_html + _gap + perf_html, unsafe_allow_html=True)
     _cols[1].markdown(val_html + _gap + co_html, unsafe_allow_html=True)
+    with _cols[2]:
+        _render_price_panel(ticker)
     st.markdown(
         '<div style="margin-top:5px; font-size:0.75rem; color:var(--text-secondary);">'
         'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
         'FMP (market data)</div>', unsafe_allow_html=True)
-    _render_overview_charts(ticker, info)
+    st.markdown("---")
+    # Valuation-multiple history below the snapshot, kept to ~half width so it
+    # doesn't stretch across the full page.
+    _vc, _ = st.columns(2)
+    with _vc:
+        _render_valuation_panel(ticker, info)
     st.markdown("---")
     # Highlights (year-ago vs latest) beside the activity feed so both fill the
     # width instead of each spreading across the page.
