@@ -429,6 +429,7 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
 
     for cat in categories:
         cat_rows = []
+        cat_effs = {t: [] for t in tickers}   # effective percentiles for the subtotal
         for mkey in CATEGORY_METRICS.get(cat, []):
             m_def = METRICS_BY_KEY.get(mkey)
             if not m_def:
@@ -462,11 +463,21 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
                     style_map[(mkey, t)] = _percentile_color(pct, False)
                 else:
                     style_map[(mkey, t)] = ""
+                if (higher_better or lower_better) and pct is not None \
+                        and isinstance(v, (int, float)):
+                    cat_effs[t].append(pct if higher_better else (100 - pct))
             row["Peer Median"] = format_value(peer_median, fmt, dec)
             cat_rows.append(row)
             export_rows.append(row)
         if cat_rows:
-            sections.append((cat, cat_rows))
+            # Per-category subtotal = each bank's mean EFFECTIVE percentile within
+            # the category (the only unit-neutral "average"); {ticker: (str, avg)}.
+            sub_vals = {}
+            for t in tickers:
+                effs = cat_effs[t]
+                avg = (sum(effs) / len(effs)) if effs else None
+                sub_vals[t] = (str(round(avg)) if avg is not None else "—", avg)
+            sections.append((cat, cat_rows, sub_vals))
 
     if not sections:
         st.warning("No metrics to display for the selected categories.")
@@ -477,7 +488,7 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
             + "".join(f'<th>{_html.escape(t)}</th>' for t in tickers)
             + '<th>Peer Median</th>')
     body_rows = []
-    for cat, cat_rows in sections:
+    for cat, cat_rows, sub_vals in sections:
         body_rows.append(
             f'<tr class="sec"><td class="nm" colspan="{n_cols}">'
             f'{_html.escape(cat)}</td></tr>')
@@ -492,6 +503,15 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
             cells.append(
                 f'<td class="num med">{_html.escape(str(row.get("Peer Median", "—")))}</td>')
             body_rows.append("<tr>" + "".join(cells) + "</tr>")
+        # Category subtotal: mean effective percentile per bank (colored higher=better).
+        scells = ['<td class="nm">Avg percentile</td>']
+        for t in tickers:
+            disp, avg = sub_vals[t]
+            sty = _percentile_color(avg, True) if avg is not None else ""
+            style = f' style="{sty}"' if sty else ""
+            scells.append(f'<td class="num"{style}>{_html.escape(disp)}</td>')
+        scells.append('<td class="num med">50</td>')
+        body_rows.append('<tr class="subtot">' + "".join(scells) + "</tr>")
 
     # Table on the LEFT; a rail of headline bar charts on the RIGHT fills the
     # space (the table scrolls within its own column when there are many banks).
@@ -506,6 +526,9 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
             ".cmp-wrap tr.sec td{position:sticky;left:0;background:var(--grid-head-bg);"
             "color:var(--brand-primary);text-transform:uppercase;letter-spacing:.04em;"
             "font-size:0.68rem;font-weight:600;padding:5px 10px;}"
+            ".cmp-wrap tr.subtot td{border-top:0.5px solid var(--grid-head);"
+            "border-bottom:0.5px solid var(--grid-head);font-weight:600;}"
+            ".cmp-wrap tr.subtot td.nm{font-style:italic;color:var(--text-secondary);}"
             "</style>"
             f'<div class="cmp-wrap"><table class="ksk-grid">'
             f'<thead><tr>{head}</tr></thead><tbody>{"".join(body_rows)}</tbody></table></div>',
