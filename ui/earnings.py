@@ -930,15 +930,14 @@ def _render_earnings_calendar(watchlist: list[str]):
 
     if upcoming:
         st.markdown("##### Upcoming Reports")
-        # Conference-call info: FMP gives reliable, universe-wide report timing
-        # (before/after market open); the PR/IR parser adds the precise call time
-        # + webcast link where a bank publishes it.
+        # Report timing (before/after market open) from FMP — reliable and
+        # universe-wide. Precise call times + webcast links live on the dedicated
+        # Calls & Webcasts tab; this view stays focused on dates + estimates.
         try:
             from data import earnings_call as _ecall
             _timing = _ecall.earnings_timing_map()
-            _calls = _ecall.call_info_map()
         except Exception:
-            _timing, _calls = {}, {}
+            _timing = {}
         rows = []
         for c in upcoming:
             # Calculate days until
@@ -953,7 +952,6 @@ def _render_earnings_calendar(watchlist: list[str]):
             rec = c.get("recommendation", "")
             rec_display = rec.replace("_", " ").title() if rec else "—"
 
-            ci = _calls.get(c["ticker"]) or {}
             tm = _timing.get(c["ticker"]) or {}
             rows.append({
                 "Ticker": c["ticker"],
@@ -961,8 +959,6 @@ def _render_earnings_calendar(watchlist: list[str]):
                 "Report Date": c["next_earnings_date"],
                 "Days": days_str,
                 "When": tm.get("when") or "—",
-                "Call Time": ci.get("call_time") or "—",
-                "Webcast": ci.get("webcast_url") or None,
                 "EPS Est (Qtr)": f"${c['eps_estimate']:.2f}" if c.get("eps_estimate") else "—",
                 "EPS Est (Ann)": f"${c['eps_fwd_annual']:.2f}" if c.get("eps_fwd_annual") else "—",
                 "Price Target": f"${c['target_price']:.2f}" if c.get("target_price") else "—",
@@ -990,12 +986,9 @@ def _render_earnings_calendar(watchlist: list[str]):
             **{"font-size": "0.75rem", "padding": "3px 6px"}
         )
         st.dataframe(styled, use_container_width=True, hide_index=True,
-                      height=min(500, 40 + 35 * len(df)),
-                      column_config={"Webcast": st.column_config.LinkColumn(
-                          "Webcast", display_text="▶ Listen")})
+                      height=min(500, 40 + 35 * len(df)))
         st.caption("When = report timing (FMP, before/after market open). "
-                   "Call Time + Webcast are sourced from each bank's earnings "
-                   "press release where published.")
+                   "Call times & webcast links live on the Calls & Webcasts tab.")
         # Underlying numeric calendar records (unformatted estimates)
         table_export(pd.DataFrame(upcoming), "earnings_calendar_upcoming",
                      key="exp_earnings_calendar_upcoming")
