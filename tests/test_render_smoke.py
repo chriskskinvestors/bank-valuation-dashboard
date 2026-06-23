@@ -272,6 +272,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
         self.assertIn(">Pre<", h)            # header relabeled for pre-market
         self.assertIn("BANR", h)             # the +4.2% pre-market gainer
         self.assertIn("+4.2", h)             # its pre-market move shown
+        self.assertIn("+2.0", h)             # pre-market $ chg = 48.10 * 4.2%
         self.assertNotIn("WBHC", h)          # the -2.1% loser excluded from gainers
 
     def test_above_fold_integration_renders(self):

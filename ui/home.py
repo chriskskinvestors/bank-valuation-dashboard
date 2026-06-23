@@ -459,10 +459,13 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
         except (TypeError, ValueError):
             continue
         price = w.get("price") if w.get("price") is not None else m.get("price")
-        # Absolute $ change is a regular-session figure; blank it pre-market (we
-        # only have the pre-market move as a %) rather than show a stale number.
-        chg = None if pm else (
-            w.get("change") if w.get("change") is not None else m.get("change"))
+        if pm:
+            # Pre-market $ change derived from the move % and the prior close
+            # (warm cache's last regular-session price) — not the stale day chg.
+            chg = (price * day_pct / 100.0) if (price is not None
+                                                and day_pct is not None) else None
+        else:
+            chg = w.get("change") if w.get("change") is not None else m.get("change")
         data.append({"tk": tk, "price": price, "chg": chg,
                      "pct": day_pct, "w1": w.get("chg_1w"),
                      "ytd": w.get("chg_ytd"),

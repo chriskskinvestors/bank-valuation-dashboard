@@ -22,6 +22,13 @@ from datetime import datetime, timezone
 
 CACHE_KEY = "premarket_moves:v1"
 
+# Home ETF pane reads its aftermarket-quote cache (fmp_aq:<sym>) cache_only and
+# is warmed by refresh_home_snapshot — which doesn't run pre-market. Fetch these
+# alongside the banks so the ETF "Pre" column is live in the pre-market window
+# too. (Mirrors ui/home._AF_ETFS / refresh_home_snapshot._OVERLAY_ETFS.)
+_ETF_SYMS = ["SPY", "QQQ", "DIA", "IWM", "IWO", "IWN", "IJR", "KRE", "KBE",
+             "XLF", "KBWB"]
+
 
 def main() -> int:
     from data.bank_universe import get_universe_tickers
@@ -44,9 +51,12 @@ def main() -> int:
         warm = {}
 
     print(f"[{time.strftime('%H:%M:%S')}] fetching aftermarket quotes for "
-          f"{len(tickers)} banks...", flush=True)
+          f"{len(tickers)} banks + {len(_ETF_SYMS)} ETFs...", flush=True)
     try:
-        aftq = fmp_client.get_aftermarket_quote_batch(tickers, max_per_min=270)
+        # Banks (for the moves blob) + ETFs (the live fetch warms their
+        # fmp_aq: cache for the Home ETF pane's pre-market column).
+        aftq = fmp_client.get_aftermarket_quote_batch(
+            tickers + _ETF_SYMS, max_per_min=270)
     except Exception as e:
         print(f"[premarket] aftermarket batch raised {type(e).__name__}: {e}",
               flush=True)
