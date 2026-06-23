@@ -52,11 +52,10 @@ MACRO_SECTIONS = [
 # A plain st.markdown <style> (not components.html), so CSS var() tokens work.
 _MACRO_NAV_CSS = """
 <style>
-/* Boxless page header to match Home: strip the card chrome (background, border,
-   shadow, radius) so the title+subtitle read as plain page text with the section
-   tabs right beneath — no big empty bordered box. Scoped to the macro render
-   (this is the only .dashboard-header on the page); the shared rule is untouched. */
-.dashboard-header{background:none!important;border:none!important;box-shadow:none!important;border-radius:0!important;padding:0.1rem 0 0.3rem!important;margin-bottom:0.3rem!important;}
+/* Tighten the page header so the title card hugs its content (title+subtitle)
+   and the section tabs sit right beneath it — pulls the whole page up.
+   Scoped to the macro render; the shared .dashboard-header rule is untouched. */
+.dashboard-header{padding:0.45rem 1.2rem 0.5rem!important;margin-bottom:0.4rem!important;}
 .dashboard-header h1{font-size:1.3rem!important;}
 .dashboard-header p{margin-top:0.15rem!important;}
 .st-key-macro_section_nav{margin-top:0!important;}
@@ -1722,7 +1721,10 @@ def _render_credit_spreads():
     # HY−IG risk-premium line — both line charts at a readable (~2:1) aspect.
     lc, cc, dp = st.columns([1.0, 1.5, 1.1])
     with lc:
-        st.markdown(table_html, unsafe_allow_html=True)
+        # Pin the table to the chart-card height (border=False = no visible box)
+        # so its bottom lines up exactly with the two charts on the right.
+        with st.container(height=356, border=False):
+            st.markdown(table_html, unsafe_allow_html=True)
         st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA via FRED). "
                    "Delta in bps; 5Y %ile = where today sits in the 5Y range (low = tight). "
                    "Source: FRED.")
@@ -1761,7 +1763,7 @@ def _render_credit_spreads():
                     font=dict(size=10, color="#dc2626"),
                     bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3)
             apply_standard_layout(fig, title="Credit spreads (5Y) - IG / BBB / HY OAS with regime bands",
-                                  height=330, yaxis_title="OAS")
+                                  height=352, yaxis_title="OAS")
             fig.update_yaxes(ticksuffix="%")
             st.plotly_chart(fig, use_container_width=True)
         st.caption("Shaded zones mark Elevated (500-800 bps) and Stressed (>=800 bps) HY regimes.")
@@ -1779,7 +1781,7 @@ def _render_credit_spreads():
                     line=dict(color="#1e3a8a", width=2),
                     fill="tozeroy", fillcolor="rgba(30,58,138,0.06)", name="HY - IG"))
             apply_standard_layout(figd, title="HY − IG risk premium (5Y)",
-                                  height=330, yaxis_title="pp", show_legend=False)
+                                  height=352, yaxis_title="pp", show_legend=False)
             figd.update_yaxes(ticksuffix="pp")
             st.plotly_chart(figd, use_container_width=True)
         st.caption("Extra spread for high yield over investment grade; widens when "
