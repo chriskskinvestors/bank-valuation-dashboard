@@ -1138,20 +1138,12 @@ def _render_calls_webcasts():
             })
 
         df = pd.DataFrame(table)
-
-        def _highlight_this_week(row):
-            if soon:
-                return ["background-color: rgba(217, 119, 6, 0.06);"] * len(row)
-            return [""] * len(row)
-
-        # na_rep="" so empty Webcast cells stay blank — a bare None renders the
-        # literal "None" through a Styler. The underlying value stays null, so
-        # the LinkColumn shows no stray "▶ Listen" for banks without a webcast.
-        styled = df.style.format(na_rep="").apply(
-            _highlight_this_week, axis=1).set_properties(
-            **{"font-size": "0.78rem", "padding": "3px 6px"})
+        # Plain frame (no Styler): Streamlit renders a Styler's str(None) as the
+        # literal "None", but a raw frame lets LinkColumn show empty cells for
+        # banks with no webcast. Nullable string so the null reaches LinkColumn.
+        df["Webcast"] = df["Webcast"].astype("string")
         st.dataframe(
-            styled, use_container_width=True, hide_index=True,
+            df, use_container_width=True, hide_index=True,
             height=min(560, 40 + 35 * len(df)),
             column_config={
                 "Webcast": st.column_config.LinkColumn(
