@@ -18,6 +18,15 @@ from data.filing_summarizer import (
 from ui.chrome import table_export, title_bar
 
 
+def _flush_html(html: str) -> str:
+    """Strip leading whitespace from every line so st.markdown(unsafe_allow_html)
+    renders it as HTML, not a markdown code block. Streamlit treats any line
+    indented 4+ spaces as a fenced code block, so an indented HTML f-string leaks
+    verbatim into the page. Whitespace between HTML tags is insignificant, so
+    flush-left is safe."""
+    return "\n".join(line.lstrip() for line in (html or "").splitlines())
+
+
 def _no_latex(s: str) -> str:
     """Neutralize '$' in data-derived text before it goes into st.markdown.
 
@@ -491,7 +500,10 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
     </div>
     """
 
-    st.markdown(table_html, unsafe_allow_html=True)
+    # Strip per-line indentation: Streamlit's markdown renders any line indented
+    # 4+ spaces as a CODE BLOCK, so an indented HTML f-string leaks as raw text
+    # (the whole <table> dumped verbatim) instead of rendering. Flush-left = HTML.
+    st.markdown(_flush_html(table_html), unsafe_allow_html=True)
     # Raw filing records (date, form, items, accession, urls)
     table_export(pd.DataFrame(filings), f"filings_{key_prefix}_{ticker}",
                  key=f"exp_filings_{key_prefix}_{ticker}")
