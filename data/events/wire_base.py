@@ -118,6 +118,11 @@ _BRAND_ALIASES: dict[str, list[str]] = {
     "KEY":  ["KeyBank"],
     "FNB":  ["First National Bank"],
     "ZION": ["Zions Bank"],
+    # Holdco name ("Provident Financial Services") never appears in its own
+    # subsidiary-brand releases ("Provident Bank Appoints ..."). Unambiguous: the
+    # only other Provident in the universe (PROV) trades as "Provident Savings
+    # Bank", so the exact phrase "Provident Bank" can't collide.
+    "PFS":  ["Provident Bank"],
 }
 
 
@@ -154,23 +159,41 @@ def build_name_index() -> list[tuple[str, str]]:
                 continue
             curated.setdefault(normalized, ticker)
 
+    # Brand aliases apply to EVERY ticker, not just the curated BANK_MAP subset —
+    # many universe holdcos (e.g. PFS = "Provident Financial Services") publish
+    # under their bank-subsidiary brand ("Provident Bank"), which the legal name
+    # never matches. Aliases are hand-picked and unambiguous, so they win outright.
+    for ticker, aliases in _BRAND_ALIASES.items():
+        for alias in aliases:
+            normalized = _normalize_name(alias)
+            if normalized and not _is_too_generic(normalized):
+                curated.setdefault(normalized, ticker)
+
     try:
-        from data.bank_universe import get_universe_tickers
+        from data.bank_universe import get_universe_tickers, get_universe
         from data.bank_mapping import get_name
+        uni = get_universe()
         for ticker in get_universe_tickers():
             if ticker in curated_tickers:
                 continue
-            nm = get_name(ticker) or ""
-            if not nm or nm.strip().upper() == ticker.upper():
-                continue
-            normalized = _normalize_name(nm)
-            # Keep too-generic names here (unlike before): a generic name shared
-            # by >1 bank is recoverable via disambiguation, not just noise.
-            if len(normalized) < 6:
-                continue
-            cands = universe_cands.setdefault(normalized, [])
-            if ticker not in cands:
-                cands.append(ticker)
+            # Index BOTH the SEC holdco name (get_name) AND the FDIC bank-subsidiary
+            # brand (bank_name, e.g. "Provident Bank", "Rockland Trust") — holdcos
+            # routinely publish news under the subsidiary brand, which the holdco
+            # name never matches. The bank_name is absent until refresh-universe
+            # repopulates the snapshot, so this no-ops gracefully until then.
+            holdco = get_name(ticker) or ""
+            sub = (uni.get(ticker) or {}).get("bank_name") or ""
+            for nm in (holdco, sub):
+                if not nm or nm.strip().upper() == ticker.upper():
+                    continue
+                normalized = _normalize_name(nm)
+                # Keep too-generic names here (unlike before): a generic name
+                # shared by >1 bank is recoverable via disambiguation, not noise.
+                if len(normalized) < 6:
+                    continue
+                cands = universe_cands.setdefault(normalized, [])
+                if ticker not in cands:
+                    cands.append(ticker)
     except Exception as e:
         print(f"[wire] universe name index skipped: {type(e).__name__}: {e}")
 
@@ -696,7 +719,25 @@ _INSIDER_TRIVIA_RE = re.compile(
     r"disposition|acquisition)\b"
     r"|\b(ceo|cfo|director|evp|svp|president|insider)\s+sells?\s+\d"
     r"|\bsells?\s+\d[\d,]*\s+shares?\b"
-    r"|\bshares?\s+sold\s+by\s+(insider|ceo|cfo|director|evp|svp|president)\b",
+    r"|\bshares?\s+sold\s+by\s+(insider|ceo|cfo|director|evp|svp|president)\b"
+    r"|\bform\s+144\b",   # notice of proposed sale of restricted stock — plumbing
+    re.IGNORECASE,
+)
+
+# SEO / stock-analysis profile pages that aggregators (simplywall.st, marketbeat,
+# stockanalysis, "Risk Zones" trade-signal sites) auto-generate per ticker. They
+# name the bank but carry no news — pure click-bait reference pages. Patterns are
+# specific to those page titles; real dividend/M&A/earnings/officer releases never
+# read this way (pinned in tests/test_news_junk_filter.py).
+_SEO_RE = re.compile(
+    r"\bshareholder\s+structure\b"
+    r"|\binstitutional\s+(holdings?|ownership)\b"
+    r"|\bmajor\s+shareholders?\b"
+    r"|\bvaluation\s*[:\-]"                         # "Valuation: PE, PB & Fair Value..."
+    r"|\bfair\s+value\s+analysis\b"
+    r"|\bpe,?\s*pb\b|\bp/?e\b[^.]{0,10}\bp/?b\b"    # "PE, PB" / "P/E ... P/B"
+    r"|\bprecision\s+trading\b|\brisk\s+zones?\b"
+    r"|\bintrinsic\s+value\b|\bdcf\s+(valuation|analysis|value)\b",
     re.IGNORECASE,
 )
 
@@ -862,7 +903,8 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
             or _INSIDER_TRIVIA_RE.search(h) or _FARM_RE.search(h)
             or _PROMO_RE.search(h) or _PROSPECTUS_RE.search(h)
             or _DIV_CALENDAR_RE.search(h) or _OFFSUBJECT_RE.search(h)
-            or _SHAREHOLDER_NOTICE_RE.search(h) or is_routine_noise(h)):
+            or _SHAREHOLDER_NOTICE_RE.search(h) or _SEO_RE.search(h)
+            or is_routine_noise(h)):
         return True
     if ticker:
         t = ticker.upper()

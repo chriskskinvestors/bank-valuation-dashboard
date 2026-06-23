@@ -157,6 +157,7 @@ def _fetch_fdic_banks() -> dict[str, dict]:
             d = r["data"]
             fdic_banks.append({
                 "cert": int(d["CERT"]),
+                "name": d.get("NAME", ""),         # subsidiary bank brand (e.g. "Provident Bank")
                 "namehcr": d.get("NAMEHCR", ""),
                 "asset": d.get("ASSET") or 0,
             })
@@ -442,6 +443,19 @@ def _build_universe_live() -> dict[str, dict]:
         annotate_share_classes(universe, name_lookup=get_company_name)
     except Exception as e:
         print(f"[universe] share-class annotation skipped: {type(e).__name__}: {e}")
+
+    # ── Subsidiary bank brand ────────────────────────────────────────────
+    # Stamp each entry with its FDIC institution NAME (the bank-subsidiary brand,
+    # e.g. PFS→"Provident Bank", INDB→"Rockland Trust Company"). Holdcos publish
+    # news under this brand, which the SEC holdco name never matches — the news
+    # matcher (data/events/wire_base.build_name_index) indexes it alongside the
+    # holdco name. Sourced from the FDIC certs already fetched (no extra calls).
+    cert_name = {bi["cert"]: bi.get("name", "")
+                 for bi in hc_lookup.values() if bi.get("name")}
+    for info in universe.values():
+        nm = cert_name.get(info.get("fdic_cert"))
+        if nm:
+            info["bank_name"] = nm.title() if nm.isupper() else nm
 
     return universe
 

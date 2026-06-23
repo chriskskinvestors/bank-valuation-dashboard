@@ -120,6 +120,47 @@ class TestCrossSourceDedup(unittest.TestCase):
         self.assertEqual(len(new), 1, "8-K is exempt from content dedup")
 
 
+class TestSubsidiaryNameIndexing(unittest.TestCase):
+    """build_name_index indexes each bank's FDIC subsidiary brand (bank_name)
+    alongside its SEC holdco name, so a release under the bank brand ("Provident
+    Bank Appoints…") matches the holdco ticker. Mocked universe; aliases patched
+    out so it proves the bank_name path, not the curated Provident alias."""
+
+    def setUp(self):
+        import data.events.wire_base as wb
+        self.wb = wb
+        wb._NAME_INDEX, wb._AMBIGUOUS_INDEX = [], {}
+
+    def tearDown(self):
+        # Drop the test-built index so other tests rebuild the real one.
+        self.wb._NAME_INDEX, self.wb._AMBIGUOUS_INDEX = [], {}
+
+    def _build(self, names, universe):
+        import data.bank_universe as bu
+        import data.bank_mapping as bm
+        with patch.object(self.wb, "BANK_MAP", {}), \
+             patch.object(self.wb, "_BRAND_ALIASES", {}), \
+             patch.object(bu, "get_universe_tickers", return_value=list(names)), \
+             patch.object(bu, "get_universe", return_value=universe), \
+             patch.object(bm, "get_name", side_effect=lambda t: names.get(t)), \
+             patch.object(bm, "get_cik", side_effect=lambda t: {"PFS": 1, "FNLC": 2}.get(t)):
+            self.wb._NAME_INDEX = self.wb.build_name_index()
+
+    def test_subsidiary_brand_matches_holdco_ticker(self):
+        self._build({"PFS": "Provident Financial Services"},
+                    {"PFS": {"bank_name": "Provident Bank"}})
+        self.assertEqual(self.wb.match_tickers("Provident Bank Appoints a New CFO"), ["PFS"])
+        self.assertEqual(
+            self.wb.match_tickers("Provident Financial Services Declares Dividend"), ["PFS"])
+
+    def test_missing_bank_name_is_safe(self):
+        # Snapshot without bank_name (pre refresh-universe) → only holdco indexed.
+        self._build({"PFS": "Provident Financial Services"}, {"PFS": {}})
+        self.assertEqual(self.wb.match_tickers("Provident Bank Appoints a New CFO"), [])
+        self.assertEqual(
+            self.wb.match_tickers("Provident Financial Services Declares Dividend"), ["PFS"])
+
+
 class TestNameMatchingCoverage(unittest.TestCase):
     def test_one_word_jpmorganchase_brand(self):
         self.assertIn("JPM", match_tickers(

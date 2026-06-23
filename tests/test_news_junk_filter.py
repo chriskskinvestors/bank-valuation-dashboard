@@ -66,6 +66,38 @@ class TestProperNounTrap(unittest.TestCase):
         self.assertFalse(phrase_in_text(_pad("No mention here"), "EASTERN"))
 
 
+class TestSEOAndForm144(unittest.TestCase):
+    """Auto-generated stock-analysis profile pages (simplywall.st / marketbeat /
+    'Risk Zones' trade-signal sites) and Form 144 restricted-stock notices name a
+    bank but carry no news — must be filtered (live PFS feed, 2026-06-23)."""
+
+    def test_seo_profile_pages_are_junk(self):
+        for h in [
+            "Provident Financial Services Inc (PFS) Shareholder Structure: Major Shareholders & Institutional Holdings",
+            "Provident Financial Services Inc (PFS) Valuation: PE, PB & Fair Value Analysis",
+            "Precision Trading with Provident Financial Services Inc (PFS) Risk Zones",
+            "Acme Bancorp Fair Value Analysis and Intrinsic Value Estimate",
+        ]:
+            with self.subTest(h=h):
+                self.assertTrue(is_junk_news(h, "PFS"))
+
+    def test_form_144_is_junk(self):
+        self.assertTrue(is_junk_news(
+            "Provident Financial Services (PFS) files Form 144 for restricted stock awards", "PFS"))
+
+    def test_real_releases_survive(self):
+        # The SEO regex must not catch legitimate releases that mention value/
+        # shareholders in a normal way.
+        for h in [
+            "Provident Bank Appoints Adriano Duarte EVP and Chief Financial Officer",
+            "Ameris Bancorp Announces Second Quarter 2026 Results",
+            "PNC Declares Quarterly Dividend; Approves Share Repurchase",
+            "First Horizon to Hold Annual Meeting of Shareholders on May 21",
+        ]:
+            with self.subTest(h=h):
+                self.assertFalse(is_junk_news(h))
+
+
 # (headline, ticker) pairs pulled from the live feed (or close paraphrases of
 # the same generator templates) that MUST be filtered as junk.
 KNOWN_JUNK = [
