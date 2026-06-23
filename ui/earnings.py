@@ -1052,6 +1052,7 @@ def _render_calls_webcasts():
 
     st.subheader("Earnings Calls & Webcasts")
 
+    horizon_days = 75            # full upcoming-season window (matches earnings_timing_map)
     today = date.today()
     with st.spinner("Loading earnings calendar..."):
         try:
@@ -1062,13 +1063,14 @@ def _render_calls_webcasts():
         try:
             from data import fmp_client
             calendar = fmp_client.get_earnings_calendar(
-                today.isoformat(), (today + timedelta(days=45)).isoformat())
+                today.isoformat(), (today + timedelta(days=horizon_days)).isoformat())
         except Exception:
             calendar = None
         try:
             from data import earnings_call as _ecall
             calls = _ecall.call_info_map()
-            agenda = _ecall.build_calls_agenda(calendar, universe, calls, today)
+            agenda = _ecall.build_calls_agenda(
+                calendar, universe, calls, today, horizon_days=horizon_days)
         except Exception:
             agenda = []
 
@@ -1077,7 +1079,7 @@ def _render_calls_webcasts():
                 "shortly.")
         return
     if not agenda:
-        st.info("No upcoming bank earnings found in the next six weeks.")
+        st.info("No upcoming bank earnings found in the next 75 days.")
         return
 
     all_rows = [r for b in agenda for r in b["rows"]]
@@ -1092,10 +1094,23 @@ def _render_calls_webcasts():
     ])
     st.caption(
         "Full bank universe. **When** = report timing (FMP, before/after market "
-        "open) and a **✓** marks an FMP-confirmed date. **Call Time**, "
-        "**Webcast** and **Dial-in** are parsed from each bank's earnings press "
-        "release where published — these ramp as banks announce call details "
-        "(~2 weeks out), so many rows show — until then.")
+        "open) and a **✓** marks an FMP-confirmed date — unconfirmed dates are "
+        "FMP projections, marked **(proj.)**. **Call Time**, **Webcast** and "
+        "**Dial-in** are parsed from each bank's earnings press release where "
+        "published — these ramp as banks announce call details (~2 weeks out), "
+        "so many rows show — until then.")
+
+    # Quiet-state: nothing in the near term (the gap between earnings seasons).
+    # Set expectations with the real soonest date rather than an empty-looking
+    # table — all_rows is soonest-first.
+    if not any(r["days_until"] <= 14 for r in all_rows):
+        soonest = all_rows[0]
+        proj = "" if soonest["confirmed"] else " (projected)"
+        st.info(
+            f"No bank earnings calls in the next two weeks — the earliest "
+            f"upcoming report is **{soonest['ticker']}** on "
+            f"**{soonest['date']}**{proj}. Call times and webcasts appear as "
+            f"banks publish call details (~2 weeks ahead of each report).")
 
     for bucket in agenda:
         rows = bucket["rows"]
@@ -1107,8 +1122,9 @@ def _render_calls_webcasts():
         for r in rows:
             days = r["days_until"]
             days_str = "Today" if days == 0 else f"{days}d"
+            date_str = r["date"] if r["confirmed"] else f"{r['date']} (proj.)"
             table.append({
-                "Date": r["date"],
+                "Date": date_str,
                 "In": days_str,
                 "Ticker": r["ticker"],
                 "Bank": get_name(r["ticker"]),

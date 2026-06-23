@@ -178,6 +178,16 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertNotIn("XYZ", tickers)            # not in universe
         self.assertNotIn("FAR", tickers)            # beyond 45-day horizon
 
+    def test_horizon_days_widens_window(self):
+        # FAR reports 2026-09-01 — beyond the default 45-day horizon, inside 75.
+        # The Calls & Webcasts view passes horizon_days=75 to surface the full
+        # upcoming season rather than only the next six weeks.
+        agenda = build_calls_agenda(
+            self._calendar(), self.UNIVERSE, self.CALLS, date(2026, 7, 13),
+            horizon_days=75)
+        tickers = {r["ticker"] for b in agenda for r in b["rows"]}
+        self.assertIn("FAR", tickers)
+
     def test_empty_inputs_return_empty(self):
         self.assertEqual(build_calls_agenda(None, self.UNIVERSE, {}, date(2026, 7, 13)), [])
         self.assertEqual(build_calls_agenda([], set(), {}, date(2026, 7, 13)), [])
