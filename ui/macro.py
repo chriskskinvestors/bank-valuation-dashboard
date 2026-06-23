@@ -1719,10 +1719,9 @@ def _render_credit_spreads():
 
     # Row 1: ladder table (hugs its card) + the HY/IG/BBB time series + the
     # HY−IG risk-premium line — both line charts at a readable (~2:1) aspect.
-    lc, cc, dp = st.columns([1, 1.5, 1.1])
+    lc, cc, dp = st.columns([0.85, 1.5, 1.1])
     with lc:
-        with st.container(border=True, key="creditcard"):
-            st.markdown(table_html, unsafe_allow_html=True)
+        st.markdown(table_html, unsafe_allow_html=True)
         st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA via FRED). "
                    "Delta in bps; 5Y %ile = where today sits in the 5Y range (low = tight). "
                    "Source: FRED.")
