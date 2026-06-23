@@ -1580,12 +1580,27 @@ def _render_rates_curve():
     _render_fed_words()
 
 
+# Full credit-quality ladder (ICE BofA OAS, % over Treasuries) — IG buckets
+# AAA->BBB and HY buckets BB->CCC, plus the two master indices.
+_CREDIT_LADDER = [
+    ("Investment grade", "BAMLC0A0CM",   "IG (Corp Master)"),
+    ("Investment grade", "BAMLC0A1CAAA", "AAA"),
+    ("Investment grade", "BAMLC0A2CAA",  "AA"),
+    ("Investment grade", "BAMLC0A3CA",   "A"),
+    ("Investment grade", "BAMLC0A4CBBB", "BBB"),
+    ("High yield",       "BAMLH0A0HYM2", "HY (Master)"),
+    ("High yield",       "BAMLH0A1HYBB", "BB"),
+    ("High yield",       "BAMLH0A2HYB",  "B"),
+    ("High yield",       "BAMLH0A3HYC",  "CCC & lower"),
+]
+
+
 @st.cache_data(ttl=_FIG_TTL, show_spinner=False)
 def _credit_oas_data():
     """Latest OAS, 3-month change (bps) and a 5Y spark for each ICE BofA OAS
-    series. These aren't in the warm SERIES set, so cache the fetch here."""
+    series in the ladder. These aren't in the warm SERIES set, so cache here."""
     out = {}
-    for sid in ("BAMLH0A0HYM2", "BAMLC0A0CM", "BAMLC0A4CBBB", "BAMLH0A3HYC"):
+    for _grp, sid, _lbl in _CREDIT_LADDER:
         df = fetch_series(sid, years=6)
         latest = d3m = as_of = None
         spark = []
@@ -1610,13 +1625,10 @@ def _render_credit_spreads():
     data = _credit_oas_data()
     hy = data["BAMLH0A0HYM2"]["latest"]
     ig = data["BAMLC0A0CM"]["latest"]
-    bbb = data["BAMLC0A4CBBB"]["latest"]
-    ccc = data["BAMLH0A3HYC"]["latest"]
     diff = (hy - ig) if (hy is not None and ig is not None) else None
     asof = data["BAMLH0A0HYM2"]["as_of"]
-    asof_txt = asof.strftime("%b %d, %Y").replace(" 0", " ") if asof is not None else "—"
+    asof_txt = asof.strftime("%b %d, %Y").replace(" 0", " ") if asof is not None else "-"
 
-    # ── Credit regime banner (shared classifier, also used by Regime) ──
     reg = credit_regime(hy)
     dot = {"ok": "ok", "warn": "warn", "bad": "bad", "na": "warn"}[reg["level"]]
     style = ALERT_STYLE.get({"ok": "ok", "warn": "medium", "bad": "high", "na": "medium"}[reg["level"]],
@@ -1624,10 +1636,10 @@ def _render_credit_spreads():
     hy_bps = f"{hy * 100:.0f} bps" if hy is not None else "n/a"
     st.markdown(
         f'<div style="{style}"><span class="ksk-dot {dot}"></span> '
-        f'<strong>Credit regime: {reg["label"]}</strong> · HY OAS {hy_bps}'
+        f'<strong>Credit regime: {reg["label"]}</strong> &middot; HY OAS {hy_bps}'
         f'<br><span style="font-weight:normal; font-size:var(--fs-sm);">'
-        f'Bands on the High Yield OAS: Tight &lt;350 · Normal 350–500 · '
-        f'Elevated 500–800 · Stressed ≥800 bps. As of {asof_txt}.</span></div>',
+        f'Bands on the High Yield OAS: Tight &lt;350 &middot; Normal 350-500 &middot; '
+        f'Elevated 500-800 &middot; Stressed &ge;800 bps. As of {asof_txt}.</span></div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -1645,53 +1657,60 @@ def _render_credit_spreads():
 
     def _dbps(v):
         if v is None:
-            return '<span style="color:var(--text-muted);">—</span>'
+            return '<span style="color:var(--text-muted);">-</span>'
         return f'<span style="color:var(--text-secondary);">{v:+.0f}</span>'
 
-    rows = [
-        ("High Yield (HY)", "BAMLH0A0HYM2", hy),
-        ("Investment Grade (IG)", "BAMLC0A0CM", ig),
-        ("BBB", "BAMLC0A4CBBB", bbb),
-        ("CCC & lower", "BAMLH0A3HYC", ccc),
-    ]
+    groups = []
+    for grp, _sid, _lbl in _CREDIT_LADDER:
+        if grp not in groups:
+            groups.append(grp)
     body = ""
-    for label, sid, val in rows:
-        body += (
-            "<tr>"
-            f'<td style="text-align:left;">{label}</td>'
-            f'<td style="text-align:right;font-weight:600;">{_bps(val)}</td>'
-            f'<td style="text-align:right;">{_dbps(data[sid]["d3m"])}</td>'
-            f'<td style="text-align:center;">{_sparkline_svg(data[sid]["spark"])}</td>'
-            "</tr>"
-        )
-    body += (
-        '<tr><td style="text-align:left;">HY − IG differential</td>'
-        f'<td style="text-align:right;font-weight:600;">{_bps(diff)}</td>'
-        '<td style="text-align:right;color:var(--text-muted);">—</td>'
-        '<td style="text-align:center;color:var(--text-muted);">—</td></tr>'
-    )
+    for grp in groups:
+        body += (f'<tr><td colspan="4" style="text-align:left;background:var(--grid-head-bg);'
+                 'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
+                 f'font-size:var(--fs-2xs);letter-spacing:0.06em;">{grp}</td></tr>')
+        for g, sid, label in _CREDIT_LADDER:
+            if g != grp:
+                continue
+            d = data[sid]
+            body += (
+                "<tr>"
+                f'<td style="text-align:left;">{label}</td>'
+                f'<td style="text-align:right;font-weight:600;">{_bps(d["latest"])}</td>'
+                f'<td style="text-align:right;">{_dbps(d["d3m"])}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(d["spark"])}</td>'
+                "</tr>"
+            )
+    body += (f'<tr><td colspan="4" style="text-align:left;background:var(--grid-head-bg);'
+             'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
+             'font-size:var(--fs-2xs);letter-spacing:0.06em;">Risk premium</td></tr>'
+             '<tr><td style="text-align:left;">HY - IG differential</td>'
+             f'<td style="text-align:right;font-weight:600;">{_bps(diff)}</td>'
+             '<td style="text-align:right;color:var(--text-muted);">-</td>'
+             '<td style="text-align:center;color:var(--text-muted);">-</td></tr>')
     table_html = (
         '<div class="ksk-grid"><table><thead><tr>'
         '<th style="text-align:left;">Spread</th>'
         '<th style="text-align:right;">OAS</th>'
-        '<th style="text-align:right;">Δ 3M</th>'
+        '<th style="text-align:right;">&Delta; 3M</th>'
         '<th style="text-align:center;">Trend (5Y)</th>'
         "</tr></thead><tbody>" + body + "</tbody></table></div>"
     )
 
-    lc, cc = st.columns([1, 1.8])
+    lc, cc = st.columns([1, 1.65])
     with lc:
-        with st.container(border=True, key="creditcard", height=300):
+        with st.container(border=True, key="creditcard", height=430):
             st.markdown(table_html, unsafe_allow_html=True)
         st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA via FRED). "
                    "Δ 3M = change over 3 months, in bps. Source: FRED.")
     with cc:
-        with st.container(border=True, key="creditchart", height=300):
+        with st.container(border=True, key="creditchart", height=430):
             fig = go.Figure()
             last_hy = last_hy_date = None
             data_max = 0.0
             for sid, label, color, width in [
                 ("BAMLC0A0CM", "IG OAS", "#1e40af", 1.8),
+                ("BAMLC0A4CBBB", "BBB OAS", "#7c3aed", 1.5),
                 ("BAMLH0A0HYM2", "HY OAS", "#dc2626", 2.6),
             ]:
                 df = fetch_series(sid, years=5)
@@ -1718,8 +1737,8 @@ def _render_credit_spreads():
                     showarrow=True, arrowhead=0, ax=-66, ay=-24,
                     font=dict(size=10, color="#dc2626"),
                     bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3)
-            apply_standard_layout(fig, title="Credit spreads (5Y) — HY & IG OAS with regime bands",
-                                  height=255, yaxis_title="OAS")
+            apply_standard_layout(fig, title="Credit spreads (5Y) - IG / BBB / HY OAS with regime bands",
+                                  height=378, yaxis_title="OAS")
             fig.update_yaxes(ticksuffix="%")
             st.plotly_chart(fig, use_container_width=True)
-        st.caption("Shaded zones mark Elevated (500–800 bps) and Stressed (≥800 bps) HY regimes.")
+        st.caption("Shaded zones mark Elevated (500-800 bps) and Stressed (>=800 bps) HY regimes.")
