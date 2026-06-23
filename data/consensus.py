@@ -176,6 +176,29 @@ def _known_ticker(ticker: str) -> bool:
 
 # ── PDF Parsing (Anthropic SDK) ──────────────────────────────────────────
 
+def _anthropic_client():
+    """Anthropic client keyed from the environment (Cloud Run injects
+    ANTHROPIC_API_KEY from Secret Manager) or local Streamlit secrets.
+
+    st.secrets RAISES "No secrets found" when there is no secrets.toml (as on
+    Cloud Run), so it must be read lazily and guarded — the old inline
+    `os.environ.get(KEY, st.secrets.get(KEY))` evaluated the st.secrets default
+    eagerly on every call and crashed PDF parsing even though the env var was
+    set. Raises a clear error when no key is configured anywhere."""
+    import anthropic
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        try:
+            key = st.secrets.get("ANTHROPIC_API_KEY")
+        except Exception:
+            key = None
+    if not key:
+        raise RuntimeError(
+            "PDF parsing is unavailable — ANTHROPIC_API_KEY is not configured. "
+            "Use Excel/CSV or Manual Entry instead.")
+    return anthropic.Anthropic(api_key=key)
+
+
 def parse_consensus_pdf(file_bytes: bytes, ticker: str, period: str) -> dict:
     """
     Parse a consensus PDF using Anthropic Claude to extract structured metrics.
@@ -183,10 +206,9 @@ def parse_consensus_pdf(file_bytes: bytes, ticker: str, period: str) -> dict:
     Returns: {ticker, period, source: "pdf", metrics: [{name, key, value, unit}]}
     """
     try:
-        import anthropic
         import base64
 
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", st.secrets.get("ANTHROPIC_API_KEY", "")))
+        client = _anthropic_client()
 
         b64_pdf = base64.standard_b64encode(file_bytes).decode("utf-8")
 
@@ -292,12 +314,9 @@ def parse_bulk_consensus_pdf(file_bytes: bytes, period: str) -> dict:
     }
     """
     try:
-        import anthropic
         import base64
 
-        client = anthropic.Anthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY", st.secrets.get("ANTHROPIC_API_KEY", ""))
-        )
+        client = _anthropic_client()
 
         b64_pdf = base64.standard_b64encode(file_bytes).decode("utf-8")
 
