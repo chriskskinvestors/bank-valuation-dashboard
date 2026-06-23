@@ -768,7 +768,8 @@ def _render_sep_block():
     fig.update_xaxes(type="category")
     if allvals:
         tighten_yaxis(fig, allvals, ticksuffix="%")
-    st.plotly_chart(fig, use_container_width=True)
+    with st.container(border=True):
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def _shade_recessions(fig, years: int = 5):
@@ -1552,13 +1553,15 @@ def _render_rates_charts():
 
 def _render_rates_curve():
     # Lead with the dense, scannable part (rates board + chart grid). Under the
-    # board, two bordered cards: the Fed policy strip on top, the SEP table +
-    # dot-plot beneath it. The FOMC's own words (statement + headlines) follow
-    # full-width below.
+    # board, the borderless Fed card: policy strip on top, SEP medians table
+    # beneath, then the dot-plot in its own bordered card (boxes are for charts
+    # only). The FOMC's own words (statement + headlines) follow full-width
+    # below. Both Fed tables are width:100% of the rail so they match exactly.
     st.markdown(
         "<style>"
-        'div[class*="st-key-fedcard"]{padding:6px 12px 8px!important;}'
+        'div[class*="st-key-fedcard"]{padding:8px 0 0!important;}'
         'div[class*="st-key-fedcard"] [data-testid="stElementContainer"]{margin:0!important;}'
+        'div[class*="st-key-fedcard"] .ksk-grid table{width:100%;}'
         "</style>",
         unsafe_allow_html=True,
     )
@@ -1573,7 +1576,7 @@ def _render_rates_curve():
             "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
             "HY OAS shown in bps over Treasuries. Source: FRED."
         )
-        with st.container(border=True, key="fedcard"):
+        with st.container(key="fedcard"):
             _render_fed_policy_strip()
             _render_sep_block()
     with chart_col:
