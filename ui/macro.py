@@ -1721,13 +1721,13 @@ def _render_credit_spreads():
     # HY−IG risk-premium line — both line charts at a readable (~2:1) aspect.
     lc, cc, dp = st.columns([1, 1.5, 1.1])
     with lc:
-        with st.container(border=True, key="creditcard", height=415):
+        with st.container(border=True, key="creditcard"):
             st.markdown(table_html, unsafe_allow_html=True)
         st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA via FRED). "
                    "Delta in bps; 5Y %ile = where today sits in the 5Y range (low = tight). "
                    "Source: FRED.")
     with cc:
-        with st.container(border=True, key="creditfig_ts", height=415):
+        with st.container(border=True, key="creditfig_ts"):
             fig = go.Figure()
             last_hy = last_hy_date = None
             data_max = 0.0
@@ -1767,7 +1767,7 @@ def _render_credit_spreads():
         st.caption("Shaded zones mark Elevated (500-800 bps) and Stressed (>=800 bps) HY regimes.")
 
     with dp:
-        with st.container(border=True, key="creditfig_diff", height=415):
+        with st.container(border=True, key="creditfig_diff"):
             hy_df = fetch_series("BAMLH0A0HYM2", years=5)
             ig_df = fetch_series("BAMLC0A0CM", years=5)
             figd = go.Figure()
@@ -1787,7 +1787,7 @@ def _render_credit_spreads():
 
     # Row 2: the credit curve (OAS by rating) — a bar chart, full width (bars
     # read fine wide, unlike the line charts above).
-    with st.container(border=True, key="creditfig_curve", height=300):
+    with st.container(border=True, key="creditfig_curve"):
         curve = [(lbl, data[sid]["latest"], grp) for grp, sid, lbl in _CREDIT_LADDER
                  if "Master" not in lbl]
         xs = [c[0] for c in curve]
