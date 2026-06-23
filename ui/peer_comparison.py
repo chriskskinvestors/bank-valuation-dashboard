@@ -221,6 +221,71 @@ def _render_highlights(peers: list[dict]):
             unsafe_allow_html=True)
 
 
+# Headline metrics drawn as bar charts in the right rail (key, label, higher_better).
+_HEADLINE_CHARTS = [
+    ("roatce_normalized", "ROATCE", True),
+    ("nim", "NIM", True),
+    ("efficiency_ratio", "Efficiency", False),
+    ("cet1_ratio", "CET1", True),
+    ("ptbv_ratio", "P/TBV", False),
+    ("npl_ratio", "NPL", False),
+]
+
+
+def _render_headline_charts(display_peers: list[dict]):
+    """Compact horizontal bar charts (one per headline metric) for the compared
+    banks — best bank navy, peer median noted. Lightweight HTML bars (no plotly);
+    bar length ∝ |value|, the best bank highlighted regardless of magnitude."""
+    if len(display_peers) < 2:
+        return
+    blocks = []
+    for mkey, label, higher_better in _HEADLINE_CHARTS:
+        m_def = METRICS_BY_KEY.get(mkey)
+        if not m_def:
+            continue
+        pts = [(p["ticker"], p.get(mkey)) for p in display_peers
+               if isinstance(p.get(mkey), (int, float))]
+        if len(pts) < 2:
+            continue
+        fmt = m_def.get("format", "number")
+        dec = m_def.get("decimals", 2)
+        vals = [v for _, v in pts]
+        median = pd.Series(vals).median()
+        max_abs = max(abs(v) for v in vals) or 1.0
+        best_tk = (max if higher_better else min)(pts, key=lambda x: x[1])[0]
+        pts_sorted = sorted(pts, key=lambda x: x[1], reverse=higher_better)
+        bars = []
+        for tk, v in pts_sorted:
+            w = max(4, round(100 * abs(v) / max_abs))
+            color = "var(--brand-primary)" if tk == best_tk else "#a9bbdc"
+            vs = _html.escape(format_value(v, fmt, dec))
+            bars.append(
+                f'<div style="display:flex;align-items:center;gap:6px;margin:2px 0;">'
+                f'<span style="width:42px;font-size:0.7rem;color:var(--text-secondary);'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                f'{_html.escape(tk)}</span>'
+                f'<div style="flex:1;background:var(--grid-head-bg);border-radius:2px;">'
+                f'<div style="height:11px;width:{w}%;background:{color};'
+                f'border-radius:2px;"></div></div>'
+                f'<span style="width:50px;text-align:right;font-size:0.7rem;">{vs}</span>'
+                f'</div>')
+        note = "" if higher_better else " · lower better"
+        med_s = _html.escape(format_value(median, fmt, dec))
+        blocks.append(
+            f'<div style="margin-bottom:13px;">'
+            f'<div style="font-size:0.78rem;margin-bottom:3px;">{_html.escape(label)} '
+            f'<span style="color:var(--text-tertiary);">· med {med_s}{note}</span></div>'
+            f'{"".join(bars)}</div>')
+    if not blocks:
+        return
+    st.markdown(
+        '<div style="font-size:0.68rem;letter-spacing:.04em;text-transform:uppercase;'
+        'color:var(--text-tertiary);margin:2px 0 8px;">At a glance</div>'
+        + "".join(blocks),
+        unsafe_allow_html=True,
+    )
+
+
 def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
                           categories: list[str]):
     """Dense side-by-side table — banks (the display subset) in columns, metrics in
@@ -290,42 +355,48 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
                 f'<td class="num med">{_html.escape(str(row.get("Peer Median", "—")))}</td>')
             body_rows.append("<tr>" + "".join(cells) + "</tr>")
 
-    st.markdown(
-        "<style>"
-        ".cmp-wrap{max-height:640px;overflow:auto;border:0.5px solid var(--grid-head);}"
-        ".cmp-wrap thead th{position:sticky;top:0;z-index:3;}"
-        ".cmp-wrap td.nm,.cmp-wrap th.nm{text-align:left;}"
-        ".cmp-wrap td.med{color:var(--text-secondary);font-weight:600;}"
-        ".cmp-wrap tr.sec td{position:sticky;left:0;background:var(--grid-head-bg);"
-        "color:var(--brand-primary);text-transform:uppercase;letter-spacing:.04em;"
-        "font-size:0.68rem;font-weight:600;padding:5px 10px;}"
-        "</style>"
-        f'<div class="cmp-wrap"><table class="ksk-grid">'
-        f'<thead><tr>{head}</tr></thead><tbody>{"".join(body_rows)}</tbody></table></div>',
-        unsafe_allow_html=True,
-    )
+    # Table on the LEFT; a rail of headline bar charts on the RIGHT fills the
+    # space (the table scrolls within its own column when there are many banks).
+    tbl_col, chart_col = st.columns([3, 1.4])
+    with tbl_col:
+        st.markdown(
+            "<style>"
+            ".cmp-wrap{max-height:640px;overflow:auto;border:0.5px solid var(--grid-head);}"
+            ".cmp-wrap thead th{position:sticky;top:0;z-index:3;}"
+            ".cmp-wrap td.nm,.cmp-wrap th.nm{text-align:left;}"
+            ".cmp-wrap td.med{color:var(--text-secondary);font-weight:600;}"
+            ".cmp-wrap tr.sec td{position:sticky;left:0;background:var(--grid-head-bg);"
+            "color:var(--brand-primary);text-transform:uppercase;letter-spacing:.04em;"
+            "font-size:0.68rem;font-weight:600;padding:5px 10px;}"
+            "</style>"
+            f'<div class="cmp-wrap"><table class="ksk-grid">'
+            f'<thead><tr>{head}</tr></thead><tbody>{"".join(body_rows)}</tbody></table></div>',
+            unsafe_allow_html=True,
+        )
 
-    # Export a flat (category-tagged) frame of everything shown.
-    exp_df = pd.DataFrame([
-        {"Category": r["_cat"], "Metric": r["Metric"],
-         **{t: r.get(t, "—") for t in tickers}, "Peer Median": r["Peer Median"]}
-        for r in export_rows
-    ])
-    table_export(exp_df, "peer_metrics_all", key="exp_peer_metrics_all")
+        # Export a flat (category-tagged) frame of everything shown.
+        exp_df = pd.DataFrame([
+            {"Category": r["_cat"], "Metric": r["Metric"],
+             **{t: r.get(t, "—") for t in tickers}, "Peer Median": r["Peer Median"]}
+            for r in export_rows
+        ])
+        table_export(exp_df, "peer_metrics_all", key="exp_peer_metrics_all")
 
-    # ── Legend — same scale that colors the cells ──────────────────────
-    chips = "".join(
-        f'<div style="background:{bg}; padding:4px 10px; border-radius:4px; '
-        f'color:{fg};">{"<b>" + label + "</b>" if bold else label}</div>'
-        for _floor, label, bg, fg, bold in _PCT_SCALE
-    )
-    st.markdown(
-        '<div style="display:flex; gap:12px; margin-top:8px; flex-wrap:wrap; '
-        f'font-size:0.8rem; align-items:center;">'
-        f'<span style="color:var(--text-secondary);">Percentile vs full scope:</span>'
-        f'{chips}</div>',
-        unsafe_allow_html=True,
-    )
+        # ── Legend — same scale that colors the cells ──────────────────
+        chips = "".join(
+            f'<div style="background:{bg}; padding:4px 10px; border-radius:4px; '
+            f'color:{fg};">{"<b>" + label + "</b>" if bold else label}</div>'
+            for _floor, label, bg, fg, bold in _PCT_SCALE
+        )
+        st.markdown(
+            '<div style="display:flex; gap:12px; margin-top:8px; flex-wrap:wrap; '
+            f'font-size:0.8rem; align-items:center;">'
+            f'<span style="color:var(--text-secondary);">Percentile vs full scope:</span>'
+            f'{chips}</div>',
+            unsafe_allow_html=True,
+        )
+    with chart_col:
+        _render_headline_charts(display_peers)
 
 
 # ── Scatter Plots ────────────────────────────────────────────────────
