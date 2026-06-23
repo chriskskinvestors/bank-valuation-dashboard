@@ -985,6 +985,49 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         _cur_theme = _theme_opts[0]
     _theme_members = _bt.get(_cur_theme, [])
 
+    # ── Screen HOME (launcher) ─────────────────────────────────────────
+    # No screen open → show ONLY the launcher and STOP, BEFORE the toolbar renders.
+    # Starting a screen is the required first step, so the Theme/Table/As-of/Scope/
+    # Sort/Order controls don't appear until you're in one. New screen → a blank
+    # screen; or open / delete a saved one.
+    if not st.session_state.get("_screen_open"):
+        st.markdown("")
+        _lc1, _lc2 = st.columns([1.5, 4])
+        with _lc1:
+            if st.button("➕  New screen", type="primary", use_container_width=True,
+                         key="screen_new_btn"):
+                st.session_state["_screen_action"] = {"act": "new"}
+                st.rerun()
+            st.caption("Start a blank screen, then pick the table, filters and scope.")
+        with _lc2:
+            _saved = list_screens()
+            if not _saved:
+                st.caption("No saved screens yet. Start one with **New screen**, set "
+                           "filters, then **Save** it from the action bar.")
+            else:
+                st.markdown("**Saved screens**")
+                _lbl_of = {t["key"]: t["label"] for t in TABS}
+                for _s in _saved:
+                    _oc, _mc, _dc = st.columns([2.4, 3, 0.7])
+                    with _oc:
+                        if st.button(_s["name"], key=f"open_{_s['filename']}",
+                                     use_container_width=True):
+                            st.session_state["_screen_action"] = {
+                                "act": "open", "name": _s["name"],
+                                "tab": _s.get("tab")}
+                            st.rerun()
+                    with _mc:
+                        _tablab = _lbl_of.get(_s.get("tab"), _s.get("tab") or "—")
+                        _fc = _s.get("filter_count", 0)
+                        st.caption(f"{_tablab} · {_fc} filter"
+                                   f"{'' if _fc == 1 else 's'} · v{_s.get('version', 1)}")
+                    with _dc:
+                        if st.button("✕", key=f"del_{_s['filename']}",
+                                     help=f"Delete '{_s['name']}'"):
+                            delete_screen(_s["name"])
+                            st.rerun()
+        st.stop()
+
     # One toolbar row — Theme · Table · As of · Scope · Sort · Order. Wrapped in
     # a keyed container so the seamless-segmented-bar CSS (below) can scope to
     # ONLY this row: drop each select's native border/background and merge the
@@ -1050,50 +1093,6 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             options=["Desc", "Asc"],
             key=f"order_{tab_key}",
         )
-
-    # ── Screen HOME (launcher) ─────────────────────────────────────────
-    # No screen open → show the launcher and STOP: start a new (blank) screen on
-    # the current Table, or open / delete a saved one. The results table lives
-    # only inside an open screen, so the home stays empty of screens. The toolbar
-    # above stays visible (pick a Theme/Table, then "New screen" starts there).
-    if not st.session_state.get("_screen_open"):
-        st.markdown("")
-        _lc1, _lc2 = st.columns([1.5, 4])
-        with _lc1:
-            if st.button("➕  New screen", type="primary", use_container_width=True,
-                         key="screen_new_btn"):
-                st.session_state["_screen_action"] = {"act": "new"}
-                st.rerun()
-            st.caption(f"Blank screen on **{screening_tab['label']}** — add "
-                       "filters / scope next.")
-        with _lc2:
-            _saved = list_screens()
-            if not _saved:
-                st.caption("No saved screens yet. Start one with **New screen**, set "
-                           "filters, then **Save** it from the action bar.")
-            else:
-                st.markdown("**Saved screens**")
-                _lbl_of = {t["key"]: t["label"] for t in TABS}
-                for _s in _saved:
-                    _oc, _mc, _dc = st.columns([2.4, 3, 0.7])
-                    with _oc:
-                        if st.button(_s["name"], key=f"open_{_s['filename']}",
-                                     use_container_width=True):
-                            st.session_state["_screen_action"] = {
-                                "act": "open", "name": _s["name"],
-                                "tab": _s.get("tab")}
-                            st.rerun()
-                    with _mc:
-                        _tablab = _lbl_of.get(_s.get("tab"), _s.get("tab") or "—")
-                        _fc = _s.get("filter_count", 0)
-                        st.caption(f"{_tablab} · {_fc} filter"
-                                   f"{'' if _fc == 1 else 's'} · v{_s.get('version', 1)}")
-                    with _dc:
-                        if st.button("✕", key=f"del_{_s['filename']}",
-                                     help=f"Delete '{_s['name']}'"):
-                            delete_screen(_s["name"])
-                            st.rerun()
-        st.stop()
 
     # Scope's secondary picker renders here, BELOW the toolbar, width-capped. For
     # "All banks" render_scope_sub draws nothing and just returns the full set, so
