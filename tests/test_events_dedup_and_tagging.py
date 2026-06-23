@@ -141,6 +141,45 @@ class TestNameMatchingCoverage(unittest.TestCase):
         self.assertEqual(_normalize_name("First Bancorp"), "FIRST BANCORP")
 
 
+class TestSingleTokenCollisionGuard(unittest.TestCase):
+    """A bare common-word / short-initialism index entry ('FREEDOM'->FRHC,
+    'FNB'->FNB) collides with unrelated text, so it tags a bank ONLY when the
+    issuer's exchange-qualified ticker confirms it. Pins the 2026-06-23 feed
+    mis-tags ('Freedom Boat Club'->FRHC, French 'FNB AGF'->FNB). Injects the
+    exact prod index entries to skip the slow universe build."""
+
+    def setUp(self):
+        import data.events.wire_base as wb
+        self._wb = wb
+        self._saved = (wb._NAME_INDEX, wb._AMBIGUOUS_INDEX)
+        wb._NAME_INDEX = [("FREEDOM", "FRHC"), ("FNB", "FNB")]
+        wb._AMBIGUOUS_INDEX = {}
+
+    def tearDown(self):
+        self._wb._NAME_INDEX, self._wb._AMBIGUOUS_INDEX = self._saved
+
+    def test_freedom_boat_club_not_tagged_frhc(self):
+        self.assertEqual(match_tickers(
+            "Freedom Boat Club Marks 450th Global Location",
+            "Freedom Boat Club, a business of Brunswick Corporation (NYSE: BC), "
+            "today announced its 450th location."), [])
+
+    def test_french_fnb_etf_not_tagged_fnb(self):
+        self.assertEqual(match_tickers(
+            "Placements AGF annonce les distributions pour certains FNB AGF",
+            "La serie FNB AGF du Fonds de revenu ameliore Etats-Unis Plus AGF."), [])
+
+    def test_legit_fnb_kept_via_exchange_tag(self):
+        self.assertIn("FNB", match_tickers(
+            "FNB Invests in Future Talent",
+            "F.N.B. Corporation (NYSE: FNB) announced its summer internship class."))
+
+    def test_legit_freedom_holding_kept_via_exchange_tag(self):
+        self.assertIn("FRHC", match_tickers(
+            "Freedom Holding Corp. Reports Record Revenue",
+            "Freedom Holding Corp. (NASDAQ: FRHC) today reported fiscal 2026 results."))
+
+
 class TestDisambiguateUnit(unittest.TestCase):
     """_disambiguate scoring in isolation (no index build)."""
 

@@ -28,7 +28,7 @@ from datetime import datetime, timezone, timedelta
 from data.events.base import Event, SourceAdapter
 from data.events.wire_base import (
     classify_press_release, is_junk_news, is_safe_news_url,
-    _GENERIC_WORDS, _BRAND_ALIASES, _STATE_SUFFIX,
+    _GENERIC_WORDS, _BRAND_ALIASES, _STATE_SUFFIX, _COMMON_NAME_WORDS,
 )
 
 # Trailing tokens dropped to reduce a bank's legal name to its distinctive
@@ -53,23 +53,6 @@ _US_STATES = {
     "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV",
     "WI", "WY", "DC",
 }
-
-# Common English words that are ALSO single-word bank brand cores. A name must
-# not collapse to one of these alone — "Freedom Holding"->"FREEDOM" then matched
-# "Freedom Roofing"; "Popular Inc"->"POPULAR" matched "Popular CBD Salve";
-# "Citizens Inc"->"CITIZENS" matched "US Citizens". For these we keep the
-# full multi-token name (their real releases use it) unless the token ties back
-# to the ticker. Distinctive uncommon cores (COMERICA, SEACOAST, WINTRUST) are
-# unaffected.
-_COMMON_NAME_WORDS = {
-    "FREEDOM", "POPULAR", "CITIZENS", "INDEPENDENT", "COMMERCE", "COMMUNITY",
-    "HERITAGE", "PEOPLES", "PREMIER", "PROSPERITY", "PACIFIC", "COLUMBIA",
-    "CENTRAL", "LIBERTY", "PROVIDENT", "GENESIS", "SUMMIT", "PINNACLE",
-    "BUSINESS", "AMERICAN", "SOUTHERN", "NORTHERN",
-    "HORIZON", "ALLIANCE", "CAPITAL", "PARTNERS", "PROGRESS", "PREFERRED",
-    "EQUITY", "GUARANTY", "HOMETOWN", "PATRIOT", "SERVICE", "SELECT",
-}
-
 
 def _ticker_related(tok: str, ticker: str) -> bool:
     """A single-token core is trustworthy if it ties back to the ticker — covers

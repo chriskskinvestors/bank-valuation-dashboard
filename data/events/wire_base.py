@@ -303,6 +303,48 @@ def phrase_in_text(haystack_padded: str, phrase: str) -> bool:
     return _first_real_occurrence(haystack_padded, phrase) >= 0
 
 
+# Common English words that are ALSO a bank's whole single-token name core. A
+# bare match on one of these collides with unrelated text ("FREEDOM" -> "Freedom
+# Boat Club"; "POPULAR" -> "Popular CBD Salve"). (Also imported by fmp_news.)
+_COMMON_NAME_WORDS = {
+    "FREEDOM", "POPULAR", "CITIZENS", "INDEPENDENT", "COMMERCE", "COMMUNITY",
+    "HERITAGE", "PEOPLES", "PREMIER", "PROSPERITY", "PACIFIC", "COLUMBIA",
+    "CENTRAL", "LIBERTY", "PROVIDENT", "GENESIS", "SUMMIT", "PINNACLE",
+    "BUSINESS", "AMERICAN", "SOUTHERN", "NORTHERN",
+    "HORIZON", "ALLIANCE", "CAPITAL", "PARTNERS", "PROGRESS", "PREFERRED",
+    "EQUITY", "GUARANTY", "HOMETOWN", "PATRIOT", "SERVICE", "SELECT",
+}
+
+# A name whose entire core is a single common word OR a short initialism is
+# collision-prone (a French "FNB" = ETF; "Freedom Boat Club"). Confirm those
+# only when the issuer's exchange-qualified ticker is present.
+_EXCHANGE_RE = (r"(?:NYSE\s*AMERICAN|NYSE|NASDAQ|AMEX|OTCQX|OTCQB|OTCMKTS|OTC|"
+                r"CBOE|BATS|ARCA)")
+
+
+def _is_risky_single(name: str) -> bool:
+    toks = name.split()
+    return len(toks) == 1 and (toks[0] in _COMMON_NAME_WORDS or len(toks[0]) <= 4)
+
+
+def _word_after(haystack: str, name: str) -> str:
+    """The token immediately following `name` in the space-normalized haystack
+    ('CITIZENS HOLDING ...' -> 'HOLDING'); '' if none. Used to confirm a risky
+    single-token match sits inside the bank's real name ('Citizens Holding')
+    rather than an unrelated phrase ('Freedom Boat Club')."""
+    m = re.search(r"(?:^|\s)" + re.escape(name) + r"\s+(\S+)", haystack)
+    return m.group(1).rstrip(".") if m else ""
+
+
+def _has_exchange_ticker(text: str, context: str, ticker: str) -> bool:
+    """True if the issuer's exchange-qualified ticker ('(NYSE: FNB)', 'Nasdaq:
+    FRHC') appears in the title/body — the discriminator between a first-party
+    release and FMP's polluted symbol index."""
+    blob = f"{text} {context}".upper()
+    return re.search(_EXCHANGE_RE + r"\s*:?\s*" + re.escape(ticker.upper()) + r"\b",
+                     blob) is not None
+
+
 def match_tickers(text: str, context: str = "") -> list[str]:
     """
     Find which bank tickers are mentioned in a piece of text (the headline).
@@ -335,6 +377,16 @@ def match_tickers(text: str, context: str = "") -> list[str]:
         end = idx + len(needle)
         # Don't double-count: if this match overlaps a longer earlier match, skip.
         if any(s <= idx < e or s < end <= e for (s, e) in consumed):
+            continue
+        # A bare common-word / short-initialism core ("FREEDOM", "FNB") collides
+        # with unrelated text. Accept it only when it sits inside the bank's real
+        # name (followed by a corporate word: "Citizens Holding", "Freedom
+        # Holding") OR the issuer's exchange-qualified ticker confirms it. Kills
+        # the "Freedom Boat Club"→FRHC and French-"FNB AGF"→FNB mis-tags while
+        # keeping "Citizens Holding Company"→CIZN.
+        if _is_risky_single(name) and not (
+                _word_after(haystack, name) in _SUFFIX_TOKENS
+                or _has_exchange_ticker(text, context, ticker)):
             continue
         consumed.append((idx, end))
         if ticker not in found:
