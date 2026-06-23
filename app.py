@@ -276,6 +276,85 @@ if section == "Screen & Compare":
         unsafe_allow_html=True,
     )
 
+# ── Screen launcher helpers (New / Open a saved screen) ─────────────────────
+# A "screen" is a saved filter/sort/columns template. The Screen home is a
+# launcher; a results table renders only INSIDE an open screen. These helpers
+# write the toolbar's widget-backed session keys, so they MUST run before those
+# widgets instantiate (i.e. in the resolution block below, never mid-render).
+_SCREEN_FILTER_FMTS = ("pct", "ratio", "currency", "number", "millions",
+                       "billions", "dollars_auto")
+
+
+def _screen_filter_key_to_idx():
+    """metric_key → filter-dropdown index. MIRRORS the toolbar's `filterable`
+    derivation (kept identical so a restored filter lands on the right metric)."""
+    fk = sorted([(m["key"], m["label"]) for m in METRICS
+                 if m.get("format") in _SCREEN_FILTER_FMTS], key=lambda x: x[1])
+    return {k: i + 1 for i, (k, _) in enumerate(fk)}
+
+
+def _screen_clear_filters(ss, tk):
+    """Reset tab `tk`'s filter + scope + sort widgets to a blank screen."""
+    ss[f"num_filters_{tk}"] = 1
+    for _fi in range(4):
+        ss.pop(f"filt_metric_{tk}_{_fi}", None)
+        ss.pop(f"filt_kind_{tk}_{_fi}", None)
+    ss[f"screen_{tk}_scope_type"] = "All banks"
+    ss[f"sort_{tk}"] = 0
+    ss.pop(f"custom_cols_{tk}", None)
+
+
+def _screen_switch_tab(ss, tk):
+    """Point the Theme/Table pickers at the tab a saved screen was built from."""
+    th = TAB_META.get(tk, ("Other", ""))[0]
+    members = [t["key"] for t in TABS
+               if TAB_META.get(t["key"], ("Other", ""))[0] == th]
+    if tk in members:
+        ss["screen_theme"] = th
+        ss[f"screen_table_{th}"] = members.index(tk)
+
+
+def _screen_restore_cfg(ss, cfg, tk):
+    """Restore a saved screen `cfg` into tab `tk`'s widgets — filters by metric
+    KEY (survives column/table changes; unknown keys are skipped, never
+    mis-mapped onto the wrong metric)."""
+    k2i = _screen_filter_key_to_idx()
+    if cfg.get("sort_idx") is not None:
+        ss[f"sort_{tk}"] = cfg["sort_idx"]
+    if cfg.get("sort_order"):
+        ss[f"order_{tk}"] = cfg["sort_order"]
+    restored = 0
+    for flt in cfg.get("filters", []):
+        mk = flt.get("metric_key")
+        if mk not in k2i:
+            continue
+        ss[f"filt_metric_{tk}_{restored}"] = k2i[mk]
+        kind = flt.get("kind", "absolute")
+        if kind == "peer_relative":
+            ss[f"filt_kind_{tk}_{restored}"] = "Peer-relative"
+            ss[f"filt_band_{tk}_{restored}"] = flt.get("band", "Top")
+            ss[f"filt_pct_{tk}_{restored}"] = float(flt.get("pct", 25.0))
+        elif kind == "change":
+            ss[f"filt_kind_{tk}_{restored}"] = "Change"
+            ss[f"filt_basis_{tk}_{restored}"] = flt.get("basis", "QoQ")
+            ss[f"filt_chop_{tk}_{restored}"] = flt.get("op", ">")
+            ss[f"filt_chval_{tk}_{restored}"] = flt.get("value", 0.0)
+        elif kind == "trend":
+            ss[f"filt_kind_{tk}_{restored}"] = "Trend"
+            ss[f"filt_dir_{tk}_{restored}"] = (
+                "Declining" if flt.get("direction") == "down" else "Rising")
+            ss[f"filt_q_{tk}_{restored}"] = int(flt.get("quarters", 3))
+        else:
+            ss[f"filt_kind_{tk}_{restored}"] = "Absolute"
+            ss[f"filt_op_{tk}_{restored}"] = flt.get("op", "<")
+            ss[f"filt_val_{tk}_{restored}"] = flt.get("value", 0.0)
+        restored += 1
+    if restored:
+        ss[f"num_filters_{tk}"] = min(restored, 4)
+    if cfg.get("columns"):
+        ss[f"custom_cols_{tk}"] = cfg["columns"]
+
+
 if section == "Screen & Compare" and sc_sub == "Screen":
     # Two-step picker: theme → table (tables grouped by what an analyst is looking
     # for). The Theme/Table SELECTBOXES render later, as the first two cells of the
@@ -298,6 +377,37 @@ if section == "Screen & Compare" and sc_sub == "Screen":
     if not isinstance(_tbl_i, int) or _tbl_i >= len(_members):
         _tbl_i = 0
     screening_tab = TABS[_members[_tbl_i][0]]
+
+    # Launcher actions (New / Open / Close) set by a button last run. Applied
+    # HERE — before any Screen widget instantiates — so writing widget-backed
+    # keys (theme/table/sort/filters/scope) is legal this run. "Open" may switch
+    # the active Table, so re-resolve screening_tab afterward.
+    _sa = st.session_state.pop("_screen_action", None)
+    if _sa:
+        _act = _sa.get("act")
+        if _act == "close":
+            st.session_state["_screen_open"] = False
+        elif _act == "new":
+            _screen_clear_filters(st.session_state, screening_tab["key"])
+            st.session_state["_screen_open"] = True
+        elif _act == "open":
+            from data.saved_screens import load_screen as _ls
+            _cfg = _ls(_sa.get("name"), _sa.get("version"))
+            if _cfg:
+                _tk = _cfg.get("tab_key") or _sa.get("tab") or screening_tab["key"]
+                _screen_switch_tab(st.session_state, _tk)
+                _screen_clear_filters(st.session_state, _tk)
+                _screen_restore_cfg(st.session_state, _cfg, _tk)
+                st.session_state["_screen_open"] = True
+        # Re-resolve the active table in case Open switched it.
+        _theme_pick = st.session_state.get("screen_theme", _themes[0])
+        if _theme_pick not in _themes:
+            _theme_pick = _themes[0]
+        _members = _by_theme.get(_theme_pick, [])
+        _tbl_i = st.session_state.get(f"screen_table_{_theme_pick}", 0)
+        if not isinstance(_tbl_i, int) or _tbl_i >= len(_members):
+            _tbl_i = 0
+        screening_tab = TABS[_members[_tbl_i][0]]
 
 elif section == "Company":
     # Deep-link support: a metric card can link to ?bank=X&tab=<token> to jump
@@ -941,6 +1051,50 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             key=f"order_{tab_key}",
         )
 
+    # ── Screen HOME (launcher) ─────────────────────────────────────────
+    # No screen open → show the launcher and STOP: start a new (blank) screen on
+    # the current Table, or open / delete a saved one. The results table lives
+    # only inside an open screen, so the home stays empty of screens. The toolbar
+    # above stays visible (pick a Theme/Table, then "New screen" starts there).
+    if not st.session_state.get("_screen_open"):
+        st.markdown("")
+        _lc1, _lc2 = st.columns([1.5, 4])
+        with _lc1:
+            if st.button("➕  New screen", type="primary", use_container_width=True,
+                         key="screen_new_btn"):
+                st.session_state["_screen_action"] = {"act": "new"}
+                st.rerun()
+            st.caption(f"Blank screen on **{screening_tab['label']}** — add "
+                       "filters / scope next.")
+        with _lc2:
+            _saved = list_screens()
+            if not _saved:
+                st.caption("No saved screens yet. Start one with **New screen**, set "
+                           "filters, then **Save** it from the action bar.")
+            else:
+                st.markdown("**Saved screens**")
+                _lbl_of = {t["key"]: t["label"] for t in TABS}
+                for _s in _saved:
+                    _oc, _mc, _dc = st.columns([2.4, 3, 0.7])
+                    with _oc:
+                        if st.button(_s["name"], key=f"open_{_s['filename']}",
+                                     use_container_width=True):
+                            st.session_state["_screen_action"] = {
+                                "act": "open", "name": _s["name"],
+                                "tab": _s.get("tab")}
+                            st.rerun()
+                    with _mc:
+                        _tablab = _lbl_of.get(_s.get("tab"), _s.get("tab") or "—")
+                        _fc = _s.get("filter_count", 0)
+                        st.caption(f"{_tablab} · {_fc} filter"
+                                   f"{'' if _fc == 1 else 's'} · v{_s.get('version', 1)}")
+                    with _dc:
+                        if st.button("✕", key=f"del_{_s['filename']}",
+                                     help=f"Delete '{_s['name']}'"):
+                            delete_screen(_s["name"])
+                            st.rerun()
+        st.stop()
+
     # Scope's secondary picker renders here, BELOW the toolbar, width-capped. For
     # "All banks" render_scope_sub draws nothing and just returns the full set, so
     # no empty band appears in the common case.
@@ -1034,6 +1188,11 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # Live specs (independent of whether the dialog is open) drive the table.
     filter_specs = _filter_specs_from_state()
 
+    # A screen is "engaged" once it has a filter or a narrowed scope. A brand-new
+    # blank screen (no filter, All banks) shows a prompt instead of dumping the
+    # full universe — results appear as soon as you add a filter or pick a scope.
+    _engaged = bool(filter_specs) or (_scope_type != "All banks")
+
     # Apply via the screening engine — it excludes no-data banks (counted) rather
     # than silently scoring them as failures (cardinal rule). Change/trend specs
     # need per-quarter history, computed lazily per bank and cached.
@@ -1084,29 +1243,36 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     _tab_desc = TAB_META.get(tab_key, ("", ""))[1]
     if _tab_desc:
         st.caption(_tab_desc)
-    if is_asof:
-        # Point-in-time: count banks no longer in today's coverage (since failed
-        # or acquired) so the reconstruction is transparent.
-        _live = {t for t in watchlist}
-        _exited = sum(1 for m in display_metrics if m.get("ticker") not in _live)
-        _exit_note = f" · incl. {_exited} since-exited" if _exited else ""
-        _meta = (status_dot("warn", f"As of {asof_q_label}")
-                 + f" · {len(display_metrics)} banks · {scope_label}{filter_note}{nodata_note}"
-                 + f"{_exit_note} · FDIC point-in-time (market & SEC metrics n/a)")
+    if not _engaged:
+        # Brand-new blank screen: prompt for the first filter/scope rather than
+        # listing the whole universe.
+        st.info("**Blank screen** — add a **Filter** or pick a **Scope** above to "
+                "populate results, or use **Saved** to load one. **← Screens** "
+                "goes back to the launcher.")
     else:
-        _meta = (status_dot("ok", f"{len(display_metrics)} banks")
-                 + f" · {scope_label}{filter_note}{nodata_note}"
-                 + f" · FDIC + SEC fundamentals · {len(display_cols_final)} columns")
-    st.markdown(
-        f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
-        f'margin:1px 0 7px;">{_meta}</div>',
-        unsafe_allow_html=True,
-    )
+        if is_asof:
+            # Point-in-time: count banks no longer in today's coverage (since failed
+            # or acquired) so the reconstruction is transparent.
+            _live = {t for t in watchlist}
+            _exited = sum(1 for m in display_metrics if m.get("ticker") not in _live)
+            _exit_note = f" · incl. {_exited} since-exited" if _exited else ""
+            _meta = (status_dot("warn", f"As of {asof_q_label}")
+                     + f" · {len(display_metrics)} banks · {scope_label}{filter_note}{nodata_note}"
+                     + f"{_exit_note} · FDIC point-in-time (market & SEC metrics n/a)")
+        else:
+            _meta = (status_dot("ok", f"{len(display_metrics)} banks")
+                     + f" · {scope_label}{filter_note}{nodata_note}"
+                     + f" · FDIC + SEC fundamentals · {len(display_cols_final)} columns")
+        st.markdown(
+            f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
+            f'margin:1px 0 7px;">{_meta}</div>',
+            unsafe_allow_html=True,
+        )
 
-    if not is_asof:
-        fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
-        sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
-        render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
+        if not is_asof:
+            fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
+            sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
+            render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
 
     # ── Columns dialog (picker only — export is its own button now) ────
     @st.dialog("Columns", width="large")
@@ -1327,12 +1493,21 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             # pre-radio handler set it next run.
             st.session_state["_goto_compare"] = True
             st.rerun()
+    with _bsp:
+        if st.button("← Screens", key=f"btn_close_{tab_key}",
+                     use_container_width=True,
+                     help="Back to the screen launcher"):
+            st.session_state["_screen_action"] = {"act": "close"}
+            st.rerun()
 
     st.markdown("")
 
-    render_generic_table(
-        display_metrics, display_cols_final, table_key=tab_key, show_legend=True,
-    )
+    # The table renders only for an engaged screen; a blank new screen already
+    # showed its "add a filter" prompt above.
+    if _engaged:
+        render_generic_table(
+            display_metrics, display_cols_final, table_key=tab_key, show_legend=True,
+        )
 
 elif section == "Company":
     # ── COMPANY ANALYSIS: Single-bank deep dive ─────────────────────────
