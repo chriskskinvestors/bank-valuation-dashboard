@@ -1640,15 +1640,15 @@ def _render_credit_spreads():
 
     reg = credit_regime(hy)
     dot = {"ok": "ok", "warn": "warn", "bad": "bad", "na": "warn"}[reg["level"]]
-    style = ALERT_STYLE.get({"ok": "ok", "warn": "medium", "bad": "high", "na": "medium"}[reg["level"]],
-                            ALERT_STYLE["medium"])
     hy_bps = f"{hy * 100:.0f} bps" if hy is not None else "n/a"
+    # Compact plain line (no boxed banner) so the table + charts sit higher.
     st.markdown(
-        f'<div style="{style}"><span class="ksk-dot {dot}"></span> '
-        f'<strong>Credit regime: {reg["label"]}</strong> &middot; HY OAS {hy_bps}'
-        f'<br><span style="font-weight:normal; font-size:var(--fs-sm);">'
-        f'Bands on the High Yield OAS: Tight &lt;350 &middot; Normal 350-500 &middot; '
-        f'Elevated 500-800 &middot; Stressed &ge;800 bps. As of {asof_txt}.</span></div>',
+        f'<div style="font-size:var(--fs-sm);margin:0 0 6px;">'
+        f'<span class="ksk-dot {dot}"></span> '
+        f'<strong>Credit regime: {reg["label"]}</strong> &middot; HY OAS {hy_bps} &middot; '
+        f'<span style="color:var(--text-muted);">HY OAS bands: Tight &lt;350 &middot; '
+        f'Normal 350-500 &middot; Elevated 500-800 &middot; Stressed &ge;800 bps &middot; '
+        f'as of {asof_txt}.</span></div>',
         unsafe_allow_html=True,
     )
     st.markdown(
