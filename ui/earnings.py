@@ -949,8 +949,12 @@ def _render_earnings_calendar(watchlist: list[str]):
             except Exception:
                 days_str = "—"
 
-            rec = c.get("recommendation", "")
-            rec_display = rec.replace("_", " ").title() if rec else "—"
+            # yfinance returns the string "none" for unrated names — render "—",
+            # never the literal "None".
+            rec = (c.get("recommendation") or "").strip()
+            rec_display = (rec.replace("_", " ").title()
+                           if rec and rec.lower() != "none" else "—")
+            ac = c.get("analyst_count")          # None / 0 → "—", not "None"/"0"
 
             tm = _timing.get(c["ticker"]) or {}
             rows.append({
@@ -963,7 +967,7 @@ def _render_earnings_calendar(watchlist: list[str]):
                 "EPS Est (Ann)": f"${c['eps_fwd_annual']:.2f}" if c.get("eps_fwd_annual") else "—",
                 "Price Target": f"${c['target_price']:.2f}" if c.get("target_price") else "—",
                 "Rating": rec_display,
-                "Analysts": str(c.get("analyst_count", "—")),
+                "Analysts": str(ac) if ac else "—",
             })
 
         df = pd.DataFrame(rows)
