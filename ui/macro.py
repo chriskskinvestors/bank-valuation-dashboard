@@ -1694,7 +1694,7 @@ def _render_credit_spreads():
                 f'<td style="text-align:right;">{_dbps(dd["d3m"])}</td>'
                 f'<td style="text-align:right;">{_dbps(dd["d1y"])}</td>'
                 f'<td style="text-align:right;">{_pctile(dd["pctile"])}</td>'
-                f'<td style="text-align:center;">{_sparkline_svg(dd["spark"])}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(dd["spark"], width=130)}</td>'
                 "</tr>"
             )
     body += (f'<tr><td colspan="6" style="text-align:left;background:var(--grid-head-bg);'
@@ -1707,7 +1707,7 @@ def _render_credit_spreads():
              '<td style="text-align:right;color:var(--text-muted);">-</td>'
              '<td style="text-align:center;color:var(--text-muted);">-</td></tr>')
     table_html = (
-        '<div class="ksk-grid"><table><thead><tr>'
+        '<div class="ksk-grid"><table style="width:100%;"><thead><tr>'
         '<th style="text-align:left;">Spread</th>'
         '<th style="text-align:right;">OAS</th>'
         '<th style="text-align:right;">&Delta; 3M</th>'
@@ -1719,7 +1719,7 @@ def _render_credit_spreads():
 
     # Row 1: ladder table (hugs its card) + the HY/IG/BBB time series + the
     # HY−IG risk-premium line — both line charts at a readable (~2:1) aspect.
-    lc, cc, dp = st.columns([0.85, 1.5, 1.1])
+    lc, cc, dp = st.columns([1.0, 1.5, 1.1])
     with lc:
         st.markdown(table_html, unsafe_allow_html=True)
         st.caption("OAS = option-adjusted spread over Treasuries (ICE BofA via FRED). "
