@@ -489,13 +489,13 @@ def _render_price_panel(ticker: str):
             "<style>"
             ".st-key-ov_price_box [data-testid='stVerticalBlock']{gap:0.15rem;}"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
-            ".st-key-ov_price_box [data-testid='stRadio'] > div{gap:0.4rem;}"
-            ".st-key-ov_price_box [data-testid='stRadio'] label{padding:1px 0;margin:0;}"
             ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-4px;}"
             "</style>", unsafe_allow_html=True)
         st.markdown("**Price**")
-        per = st.radio("Period", ["1M", "3M", "1Y", "5Y"], index=2, horizontal=True,
-                       key=f"ov_price_per_{ticker}", label_visibility="collapsed")
+        # Segmented buttons (the app's standard timeframe selector) — not radio.
+        per = st.segmented_control(
+            "Period", ["1M", "3M", "1Y", "5Y"], default="1Y",
+            key=f"ov_price_per_{ticker}", label_visibility="collapsed") or "1Y"
         hist_df = pd.DataFrame()
         try:
             from data.fmp_client import get_history
