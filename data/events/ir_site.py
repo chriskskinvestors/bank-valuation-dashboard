@@ -304,24 +304,40 @@ class IRSiteAdapter(SourceAdapter):
         # GUARANTEES every Q4 bank (incl. PFS) is reached well within budget —
         # before any slow HTML scrape (the bug that left PFS at 0 fetched, then
         # timed the whole adapter out and discarded everything).
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import (ThreadPoolExecutor, as_completed,
+                                         TimeoutError as _FTimeout)
         non_q4: list[tuple[str, str]] = []
 
         def _q4(t):
-            try:
-                return t, _q4_press_releases(IR_URLS[t], cutoff)
-            except Exception as e:
-                print(f"[ir_site] {t} q4 error: {type(e).__name__}: {e}")
-                return t, None
+            return _q4_press_releases(IR_URLS[t], cutoff)
 
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            for ticker, q4 in ex.map(_q4, order):
+        # HARD-bounded: collect whatever finishes within the budget and ABANDON
+        # stragglers (cancel_futures) — a slow/hung IR host (or cache call) can no
+        # longer make the whole adapter overrun poll-events' 240s cap, which would
+        # discard every event incl. PFS. PFS is a fast Q4 fetch, so its future
+        # resolves early regardless of slow siblings.
+        ex = ThreadPoolExecutor(max_workers=8)
+        futs = {ex.submit(_q4, t): t for t in order}
+        done_tickers: set[str] = set()
+        try:
+            for fut in as_completed(futs, timeout=self.MAX_POLL_SECONDS):
+                ticker = futs[fut]
+                done_tickers.add(ticker)
                 ir_home = IR_URLS[ticker]
+                try:
+                    q4 = fut.result()
+                except Exception as e:
+                    print(f"[ir_site] {ticker} q4 error: {type(e).__name__}: {e}")
+                    q4 = None
                 if q4 is None:
                     non_q4.append((ticker, ir_home))   # defer to the HTML phase
                     continue
                 for url, headline, pub in q4:
                     _emit(ticker, url, headline, pub, {"ir_home": ir_home, "platform": "q4"})
+        except _FTimeout:
+            print(f"[ir_site] Q4 phase budget hit — {len(done_tickers)}/{len(order)} "
+                  "sites checked; rest catch up next cycle")
+        ex.shutdown(wait=False, cancel_futures=True)
 
         # PHASE 2 — best-effort HTML scrape for non-Q4 sites with leftover budget.
         # Each scrape is deadline-aware (a single slow site can't run its full
