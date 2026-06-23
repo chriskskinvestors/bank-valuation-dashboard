@@ -124,16 +124,23 @@ def render_scope_sub(
     if scope_type == "Saved group":
         glist = bank_groups.list_groups()
         if not glist:
-            st.info("No saved groups yet. Build one with “Save as group” on a screen, "
-                    "or pick **Manual** to assemble one.")
+            st.info("No saved groups yet. Build one with the **Groups** button on a "
+                    "screen, or pick **Manual** to assemble one.")
             return [], [], "Saved group"
-        names = [g["name"] for g in glist]
+        # Order by tag (folder) then name so tagged groups cluster; the option label
+        # carries the tag + count, and the group's description shows beneath.
+        glist = sorted(glist, key=lambda g: (g.get("tag", "") or "~", g["name"]))
+        by_name = {g["name"]: g for g in glist}
         picked = st.selectbox(
-            "Group", names,
-            format_func=lambda n: next(
-                (f"{g['name']} ({g['count']})" for g in glist if g["name"] == n), n),
+            "Group", [g["name"] for g in glist],
+            format_func=lambda n: (
+                (f"[{by_name[n].get('tag')}] " if by_name[n].get("tag") else "")
+                + f"{n} ({by_name[n]['count']})"),
             key=f"{key_prefix}_group",
         )
+        _desc = by_name.get(picked, {}).get("description", "")
+        if _desc:
+            st.caption(_desc)
         tickers = bank_groups.get_group_tickers(picked)
         subset = _subset(all_metrics, tickers)
         missing = len(tickers) - len(subset)

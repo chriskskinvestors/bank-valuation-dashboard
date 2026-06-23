@@ -1165,83 +1165,127 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # ── Save-as-group dialog ───────────────────────────────────────────
     @st.dialog("Bank Groups", width="large")
     def _groups_dialog():
-        """Manage the named, firm-wide bank groups (data/bank_groups): save the
-        current set, and view / edit-members / rename / delete existing groups —
-        the front-end for the backend CRUD that previously had only save+use."""
-        from data.bank_groups import (list_groups, get_group_tickers,
-                                       rename_group, delete_group)
+        """Front-end for the firm-wide bank groups (data/bank_groups). Three tabs:
+        save the current screen set, build from a pasted/CSV ticker list, or manage
+        an existing group (members, description, tag/folder, export, rename, delete)."""
+        from data.bank_groups import (list_groups, load_group, rename_group,
+                                       delete_group, parse_tickers)
 
-        # — Save the current (filtered) result set as a new group —
-        st.markdown("**Save current set as a group**")
-        sg1, sg2 = st.columns([3, 1])
-        with sg1:
-            _gn = st.text_input(
-                "Group name", placeholder="e.g. CRE-heavy Southeast",
-                key=f"grp_new_{tab_key}", label_visibility="collapsed")
-        with sg2:
-            if st.button(f"Save {len(display_metrics)}", key=f"grp_newbtn_{tab_key}",
+        _t_save, _t_paste, _t_manage = st.tabs(
+            ["Save current", "Paste / import", "Manage"])
+
+        with _t_save:
+            st.caption("Save the current (filtered) screen set as a named group.")
+            _gn = st.text_input("Group name", placeholder="e.g. CRE-heavy Southeast",
+                                key=f"grp_new_{tab_key}")
+            _gd = st.text_input("Description (optional)", key=f"grp_newdesc_{tab_key}")
+            _gt = st.text_input("Tag / folder (optional)", placeholder="e.g. Watchlists",
+                                key=f"grp_newtag_{tab_key}")
+            if st.button(f"Save {len(display_metrics)} banks", key=f"grp_newbtn_{tab_key}",
                          use_container_width=True):
                 _tk = [m["ticker"] for m in display_metrics if m.get("ticker")]
                 if not _gn.strip():
                     st.warning("Enter a name first.")
                 elif not _tk:
                     st.warning("No banks to save.")
-                elif save_group(_gn, _tk):
+                elif save_group(_gn, _tk, _gd, _gt):
                     st.success(f"Saved '{_gn.strip()}' ({len(_tk)} banks).")
                     st.rerun()
                 else:
                     st.error("Could not save.")
 
-        st.divider()
-
-        # — Manage existing groups: view members, edit, rename, delete —
-        _groups = list_groups()
-        if not _groups:
-            st.caption("No saved groups yet — save one above, or build a Manual scope.")
-            return
-        st.markdown("**Manage a group**")
-        _cnt = {g["name"]: g["count"] for g in _groups}
-        _pick = st.selectbox(
-            "Group", [g["name"] for g in _groups],
-            format_func=lambda n: f"{n}  ({_cnt.get(n, 0)})", key=f"grp_pick_{tab_key}")
-
-        _cur = get_group_tickers(_pick)
-        _univ = sorted(set(watchlist) | set(_cur))
-        _members = st.multiselect(
-            "Members — add or remove banks", _univ, default=_cur,
-            format_func=lambda t: (f"{t} — {get_name(t)}"
-                                   if get_name(t) and get_name(t) != t else t),
-            key=f"grp_members_{tab_key}_{_pick}")
-        if st.button("Save member changes", key=f"grp_savemem_{tab_key}",
-                     use_container_width=True):
-            if save_group(_pick, _members):
-                st.success(f"Updated '{_pick}' ({len(_members)} banks).")
-                st.rerun()
-            else:
-                st.error("Could not save changes.")
-
-        rc1, rc2 = st.columns([3, 1])
-        with rc1:
-            _rn = st.text_input("Rename to", placeholder="New name…",
-                                key=f"grp_rn_{tab_key}", label_visibility="collapsed")
-        with rc2:
-            if st.button("Rename", key=f"grp_rnbtn_{tab_key}", use_container_width=True):
-                if _rn.strip() and rename_group(_pick, _rn):
-                    st.success(f"Renamed '{_pick}' → '{_rn.strip()}'.")
+        with _t_paste:
+            st.caption("Build a group from a pasted ticker list or an uploaded "
+                       "CSV/TXT of tickers (comma, space or newline separated).")
+            _pn = st.text_input("Group name", key=f"grp_pn_{tab_key}")
+            _pt = st.text_input("Tag / folder (optional)", key=f"grp_pt_{tab_key}")
+            _paste = st.text_area("Tickers", placeholder="JPM, BAC, WFC …",
+                                  key=f"grp_paste_{tab_key}")
+            _csv = st.file_uploader("…or upload CSV / TXT", type=["csv", "txt"],
+                                    key=f"grp_csv_{tab_key}")
+            if st.button("Create group", key=f"grp_pbtn_{tab_key}",
+                         use_container_width=True):
+                _raw = _paste or ""
+                if _csv is not None:
+                    try:
+                        _raw += "\n" + _csv.getvalue().decode("utf-8", "ignore")
+                    except Exception:
+                        pass
+                _tk = parse_tickers(_raw)
+                if not _pn.strip():
+                    st.warning("Enter a name first.")
+                elif not _tk:
+                    st.warning("No tickers parsed.")
+                elif save_group(_pn, _tk, "", _pt):
+                    _miss = [t for t in _tk if t not in set(watchlist)]
+                    _msg = f"Created '{_pn.strip()}' ({len(_tk)} tickers)."
+                    if _miss:
+                        _msg += (f" {len(_miss)} not in the current universe: "
+                                 f"{', '.join(_miss[:8])}{'…' if len(_miss) > 8 else ''}")
+                    st.success(_msg)
                     st.rerun()
                 else:
-                    st.warning("Enter a new name.")
+                    st.error("Could not save.")
 
-        # Delete is gated behind an explicit confirm so a stray click can't drop a
-        # group (it's a one-way write to firm-wide storage).
-        _delok = st.checkbox("Confirm delete", key=f"grp_delok_{tab_key}")
-        if st.button("Delete this group", key=f"grp_del_{tab_key}",
-                     disabled=not _delok, use_container_width=True):
-            if delete_group(_pick):
-                st.success(f"Deleted '{_pick}'.")
-                st.rerun()
-            else:
-                st.error("Could not delete.")
+        with _t_manage:
+            _groups = list_groups()
+            if not _groups:
+                st.caption("No saved groups yet — create one in the other tabs.")
+                return
+            _cnt = {g["name"]: g["count"] for g in _groups}
+            _tagof = {g["name"]: g.get("tag", "") for g in _groups}
+            _pick = st.selectbox(
+                "Group", [g["name"] for g in _groups],
+                format_func=lambda n: ((f"[{_tagof[n]}] " if _tagof.get(n) else "")
+                                       + f"{n}  ({_cnt.get(n, 0)})"),
+                key=f"grp_pick_{tab_key}")
+            _g = load_group(_pick) or {}
+            _cur = _g.get("tickers", [])
+            _univ = sorted(set(watchlist) | set(_cur))
+            _members = st.multiselect(
+                "Members — add or remove banks", _univ, default=_cur,
+                format_func=lambda t: (f"{t} — {get_name(t)}"
+                                       if get_name(t) and get_name(t) != t else t),
+                key=f"grp_members_{tab_key}_{_pick}")
+            _ed_desc = st.text_input("Description", value=_g.get("description", ""),
+                                     key=f"grp_eddesc_{tab_key}_{_pick}")
+            _ed_tag = st.text_input("Tag / folder", value=_g.get("tag", ""),
+                                    key=f"grp_edtag_{tab_key}_{_pick}")
+            if st.button("Save changes", key=f"grp_savemem_{tab_key}",
+                         use_container_width=True):
+                if save_group(_pick, _members, _ed_desc, _ed_tag):
+                    st.success(f"Updated '{_pick}' ({len(_members)} banks).")
+                    st.rerun()
+                else:
+                    st.error("Could not save changes.")
+
+            st.markdown("**Export**")
+            st.download_button("Download CSV", ("ticker\n" + "\n".join(_cur)).encode("utf-8"),
+                               file_name=f"{_pick}.csv", mime="text/csv",
+                               key=f"grp_dl_{tab_key}", use_container_width=True)
+            st.text_area("Copy tickers", value=", ".join(_cur), height=68,
+                         key=f"grp_copy_{tab_key}_{_pick}")
+
+            rc1, rc2 = st.columns([3, 1])
+            with rc1:
+                _rn = st.text_input("Rename to", placeholder="New name…",
+                                    key=f"grp_rn_{tab_key}", label_visibility="collapsed")
+            with rc2:
+                if st.button("Rename", key=f"grp_rnbtn_{tab_key}", use_container_width=True):
+                    if _rn.strip() and rename_group(_pick, _rn):
+                        st.success(f"Renamed '{_pick}' → '{_rn.strip()}'.")
+                        st.rerun()
+                    else:
+                        st.warning("Enter a new name.")
+            # Delete gated behind an explicit confirm — one-way write to shared storage.
+            _delok = st.checkbox("Confirm delete", key=f"grp_delok_{tab_key}")
+            if st.button("Delete this group", key=f"grp_del_{tab_key}",
+                         disabled=not _delok, use_container_width=True):
+                if delete_group(_pick):
+                    st.success(f"Deleted '{_pick}'.")
+                    st.rerun()
+                else:
+                    st.error("Could not delete.")
 
     # ── Action strip: view-config dialogs + result-set actions ─────────
     # The three full-width expander bars (Saved screens / Metric filters /

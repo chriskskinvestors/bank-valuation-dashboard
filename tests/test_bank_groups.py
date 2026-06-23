@@ -88,6 +88,28 @@ class TestBankGroups(unittest.TestCase):
         self.assertFalse(bg.rename_group("Old", "  "))
         self.assertEqual(bg.get_group_tickers("Old"), ["JPM"])
 
+    def test_parse_tickers_freeform(self):
+        # commas / spaces / newlines / semicolons all split; normalized + deduped.
+        self.assertEqual(
+            bg.parse_tickers("jpm, BAC  wfc\nBAC; gs"),
+            ["BAC", "GS", "JPM", "WFC"],
+        )
+        self.assertEqual(bg.parse_tickers(""), [])
+        self.assertEqual(bg.parse_tickers(None), [])
+
+    def test_tag_persists_through_crud(self):
+        bg.save_group("G", ["JPM"], "a note", "Watchlists")
+        self.assertEqual(bg.load_group("G")["tag"], "Watchlists")
+        self.assertEqual({g["name"]: g["tag"] for g in bg.list_groups()},
+                         {"G": "Watchlists"})
+        # tag + description survive rename and member edits
+        bg.rename_group("G", "G2")
+        self.assertEqual(bg.load_group("G2")["tag"], "Watchlists")
+        bg.add_tickers("G2", ["BAC"])
+        g = bg.load_group("G2")
+        self.assertEqual(g["tag"], "Watchlists")
+        self.assertEqual(g["description"], "a note")
+
     def test_portfolio_seed_idempotent(self):
         # Reads the real committed portfolio.json (a non-empty list of tickers).
         bg.ensure_portfolio_seed()

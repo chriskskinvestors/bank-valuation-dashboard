@@ -41,15 +41,26 @@ def _safe_filename(name: str) -> str:
     return safe[:60]
 
 
-def save_group(name: str, tickers, description: str = "") -> bool:
+def parse_tickers(text: str) -> list[str]:
+    """Parse a free-form paste (commas / spaces / newlines / tabs) into a clean
+    ticker list. Lets a group be built or bulk-updated from an external list rather
+    than clicked one at a time. Normalization (upper/dedupe/sort) is shared with
+    ``save_group`` so a paste and a click produce the same stored set."""
+    import re
+    return _normalize_tickers(re.split(r"[\s,;]+", text or ""))
+
+
+def save_group(name: str, tickers, description: str = "", tag: str = "") -> bool:
     """Create or overwrite a named group. Returns False on an empty name or a
-    non-durable write (mirrors save_screen / save_json semantics)."""
+    non-durable write (mirrors save_screen / save_json semantics). ``tag`` is a
+    free-form folder/category for organizing groups; ``description`` is a note."""
     if not name or not name.strip():
         return False
     payload = {
         "name": name.strip(),
         "tickers": _normalize_tickers(tickers),
         "description": (description or "").strip(),
+        "tag": (tag or "").strip(),
         "saved_at": datetime.now().isoformat(),
     }
     return save_json(GROUPS_PREFIX, f"{_safe_filename(name)}.json", payload)
@@ -69,7 +80,7 @@ def get_group_tickers(name: str) -> list[str]:
 
 
 def list_groups() -> list[dict]:
-    """All groups as {name, count, saved_at, description}, most-recent first."""
+    """All groups as {name, count, tag, saved_at, description}, most-recent first."""
     out = []
     for fname in list_files(GROUPS_PREFIX, pattern="*.json"):
         data = load_json(GROUPS_PREFIX, fname)
@@ -78,6 +89,7 @@ def list_groups() -> list[dict]:
         out.append({
             "name": data.get("name", fname[:-5]),
             "count": len(_normalize_tickers(data.get("tickers"))),
+            "tag": data.get("tag", ""),
             "saved_at": data.get("saved_at", ""),
             "description": data.get("description", ""),
         })
@@ -95,7 +107,7 @@ def rename_group(old: str, new: str) -> bool:
     g = load_group(old)
     if not g:
         return False
-    ok = save_group(new, g.get("tickers", []), g.get("description", ""))
+    ok = save_group(new, g.get("tickers", []), g.get("description", ""), g.get("tag", ""))
     if ok and _safe_filename(new) != _safe_filename(old):
         delete_group(old)
     return ok
@@ -106,7 +118,7 @@ def add_tickers(name: str, tickers) -> bool:
     if not g:
         return False
     merged = list(g.get("tickers", [])) + list(tickers or [])
-    return save_group(name, merged, g.get("description", ""))
+    return save_group(name, merged, g.get("description", ""), g.get("tag", ""))
 
 
 def remove_tickers(name: str, tickers) -> bool:
@@ -115,7 +127,7 @@ def remove_tickers(name: str, tickers) -> bool:
         return False
     drop = set(_normalize_tickers(tickers))
     kept = [t for t in g.get("tickers", []) if t not in drop]
-    return save_group(name, kept, g.get("description", ""))
+    return save_group(name, kept, g.get("description", ""), g.get("tag", ""))
 
 
 def ensure_portfolio_seed() -> None:
