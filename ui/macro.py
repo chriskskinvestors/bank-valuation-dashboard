@@ -1719,8 +1719,9 @@ def _render_credit_spreads():
         "</tr></thead><tbody>" + body + "</tbody></table></div>"
     )
 
-    # Row 1: ladder table (hugs its card) + the HY/IG/BBB time series.
-    lc, cc = st.columns([1, 2.5])
+    # Row 1: ladder table (hugs its card) + the HY/IG/BBB time series + the
+    # HY−IG risk-premium line — both line charts at a readable (~2:1) aspect.
+    lc, cc, dp = st.columns([1, 1.5, 1.1])
     with lc:
         with st.container(border=True, key="creditcard", height=415):
             st.markdown(table_html, unsafe_allow_html=True)
@@ -1767,28 +1768,8 @@ def _render_credit_spreads():
             st.plotly_chart(fig, use_container_width=True)
         st.caption("Shaded zones mark Elevated (500-800 bps) and Stressed (>=800 bps) HY regimes.")
 
-    # Row 2: the credit curve (OAS by rating) + the HY-IG risk-premium history.
-    cv, dp = st.columns(2)
-    with cv:
-        with st.container(border=True, key="creditfig_curve", height=320):
-            curve = [(lbl, data[sid]["latest"], grp) for grp, sid, lbl in _CREDIT_LADDER
-                     if "Master" not in lbl]
-            xs = [c[0] for c in curve]
-            ys = [c[1] * 100 if c[1] is not None else None for c in curve]
-            colors = ["#1e40af" if c[2] == "Investment grade" else "#dc2626" for c in curve]
-            figc = go.Figure(go.Bar(
-                x=xs, y=ys, marker_color=colors,
-                text=[f"{y:.0f}" if y is not None else "" for y in ys],
-                textposition="outside", textfont=dict(size=10), cliponaxis=False))
-            ymax = max([y for y in ys if y is not None], default=0)
-            apply_standard_layout(figc, title="Credit curve - OAS by rating (bps)",
-                                  height=278, yaxis_title="bps", show_legend=False)
-            figc.update_yaxes(range=[0, ymax * 1.18 if ymax else 1])
-            st.plotly_chart(figc, use_container_width=True)
-        st.caption("OAS by rating, AAA to CCC. Blue = investment grade, red = high yield. "
-                   "Source: FRED.")
     with dp:
-        with st.container(border=True, key="creditfig_diff", height=320):
+        with st.container(border=True, key="creditfig_diff", height=415):
             hy_df = fetch_series("BAMLH0A0HYM2", years=5)
             ig_df = fetch_series("BAMLC0A0CM", years=5)
             figd = go.Figure()
@@ -1799,9 +1780,29 @@ def _render_credit_spreads():
                     x=m["date"], y=(m["value_hy"] - m["value_ig"]), mode="lines",
                     line=dict(color="#1e3a8a", width=2),
                     fill="tozeroy", fillcolor="rgba(30,58,138,0.06)", name="HY - IG"))
-            apply_standard_layout(figd, title="HY - IG risk premium (5Y)",
-                                  height=278, yaxis_title="pp", show_legend=False)
+            apply_standard_layout(figd, title="HY − IG risk premium (5Y)",
+                                  height=372, yaxis_title="pp", show_legend=False)
             figd.update_yaxes(ticksuffix="pp")
             st.plotly_chart(figd, use_container_width=True)
-        st.caption("The extra spread investors demand for high yield over investment grade; "
-                   "widens when risk appetite falls. Source: FRED.")
+        st.caption("Extra spread for high yield over investment grade; widens when "
+                   "risk appetite falls. Source: FRED.")
+
+    # Row 2: the credit curve (OAS by rating) — a bar chart, full width (bars
+    # read fine wide, unlike the line charts above).
+    with st.container(border=True, key="creditfig_curve", height=300):
+        curve = [(lbl, data[sid]["latest"], grp) for grp, sid, lbl in _CREDIT_LADDER
+                 if "Master" not in lbl]
+        xs = [c[0] for c in curve]
+        ys = [c[1] * 100 if c[1] is not None else None for c in curve]
+        colors = ["#1e40af" if c[2] == "Investment grade" else "#dc2626" for c in curve]
+        figc = go.Figure(go.Bar(
+            x=xs, y=ys, marker_color=colors,
+            text=[f"{y:.0f}" if y is not None else "" for y in ys],
+            textposition="outside", textfont=dict(size=11), cliponaxis=False))
+        ymax = max([y for y in ys if y is not None], default=0)
+        apply_standard_layout(figc, title="Credit curve — OAS by rating (bps), AAA → CCC",
+                              height=258, yaxis_title="bps", show_legend=False)
+        figc.update_yaxes(range=[0, ymax * 1.18 if ymax else 1])
+        st.plotly_chart(figc, use_container_width=True)
+    st.caption("OAS by rating: blue = investment grade, red = high yield. The curve steepens "
+               "sharply into CCC. Source: FRED.")
