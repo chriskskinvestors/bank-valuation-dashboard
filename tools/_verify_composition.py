@@ -28,23 +28,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-# Polite SEC throttle — wrap the one _get used by the composition engine.
+# Polite ~7 req/s SEC throttle + a hard per-request timeout so a transient socket
+# stall can't hang a full-universe run (see tools/_audit_common).
 import data.sec_filing_scraper as sfs  # noqa: E402
+from tools._audit_common import install_throttle
 
-_MIN_INTERVAL = 1 / 7.0
-_last = [0.0]
-_orig_get = sfs._get
-
-
-def _throttled(url, *a, **k):
-    dt = time.time() - _last[0]
-    if dt < _MIN_INTERVAL:
-        time.sleep(_MIN_INTERVAL - dt)
-    _last[0] = time.time()
-    return _orig_get(url, *a, **k)
-
-
-sfs._get = _throttled
+_throttled = install_throttle(sfs)
 # sec_composition imported _get by name at module load — rebind that reference too.
 import data.sec_composition as sc  # noqa: E402
 

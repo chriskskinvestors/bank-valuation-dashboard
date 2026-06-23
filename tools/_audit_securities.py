@@ -26,18 +26,11 @@ sys.path.insert(0, str(ROOT))
 
 import data.sec_filing_scraper as sfs  # noqa: E402
 
-_MIN, _last, _orig = 1 / 7.0, [0.0], sfs._get
+from tools._audit_common import install_throttle
 
-
-def _throttled(url, *a, **k):
-    dt = time.time() - _last[0]
-    if dt < _MIN:
-        time.sleep(_MIN - dt)
-    _last[0] = time.time()
-    return _orig(url, *a, **k)
-
-
-sfs._get = _throttled
+# Polite ~7 req/s SEC throttle + a hard per-request timeout so a transient socket
+# stall can't hang a full-universe run (see tools/_audit_common).
+install_throttle(sfs)
 
 from data.sec_filing_scraper import (instance_facts, extract_securities,  # noqa: E402
                                      latest_filing, _undimensioned_total)
