@@ -52,10 +52,11 @@ MACRO_SECTIONS = [
 # A plain st.markdown <style> (not components.html), so CSS var() tokens work.
 _MACRO_NAV_CSS = """
 <style>
-/* Tighten the page header so the title card hugs its content (title+subtitle)
-   and the section tabs sit right beneath it — pulls the whole page up.
-   Scoped to the macro render; the shared .dashboard-header rule is untouched. */
-.dashboard-header{padding:0.45rem 1.2rem 0.5rem!important;margin-bottom:0.4rem!important;}
+/* Boxless page header to match Home: strip the card chrome (background, border,
+   shadow, radius) so the title+subtitle read as plain page text with the section
+   tabs right beneath — no big empty bordered box. Scoped to the macro render
+   (this is the only .dashboard-header on the page); the shared rule is untouched. */
+.dashboard-header{background:none!important;border:none!important;box-shadow:none!important;border-radius:0!important;padding:0.1rem 0 0.3rem!important;margin-bottom:0.3rem!important;}
 .dashboard-header h1{font-size:1.3rem!important;}
 .dashboard-header p{margin-top:0.15rem!important;}
 .st-key-macro_section_nav{margin-top:0!important;}
