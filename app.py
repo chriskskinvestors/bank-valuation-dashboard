@@ -1445,25 +1445,28 @@ elif section == "Screen & Compare" and sc_sub == "Compare":
 
 elif section == "Screen & Compare" and sc_sub == "Trends":
     # ── TRENDS: one metric across N quarters, banks × quarters (FDIC) ────
-    # The "As of" picker shows ONE past quarter; Trends shows the SAME metric
-    # across the last N quarters, so you can scan a metric's trajectory across
-    # banks. FDIC-only (bank-subsidiary), so market / per-share metrics are n/a
-    # here — those come in a later SEC-sourced pass.
+    # The "As of" picker shows ONE past quarter; Trends shows the SAME metric across
+    # the last N quarters, one row per bank. FDIC fundamentals (bank-subsidiary) +
+    # SEC per-share (TBV/share, book value/share — HoldCo, forward-filled goodwill).
     from ui.chrome import title_bar
     from ui.bank_scope import scope_type_options, render_scope_sub
     from ui.trends_table import render_trends_table
     from data.as_of_metrics import metric_grid, TREND_METRICS
+    from data.sec_per_share import (sec_metric_grid, SEC_TREND_METRICS,
+                                    SEC_TREND_KEYS, SEC_TREND_FMT)
 
-    _mlabels = dict(TREND_METRICS)
+    _ALL_TM = TREND_METRICS + SEC_TREND_METRICS
+    _mlabels = dict(_ALL_TM)
+    _sec_keys = set(SEC_TREND_KEYS)
 
     title_bar("KSK Investors", "Quarterly Trends")
-    st.caption("One FDIC fundamental across recent quarters, one row per bank — "
-               "scan a metric's trajectory. FDIC bank-subsidiary basis; market & "
-               "per-share metrics (TBV/share, P/TBV, EPS) are n/a here.")
+    st.caption("One metric across recent quarters, one row per bank. FDIC "
+               "fundamentals (bank-subsidiary) plus SEC per-share (TBV/share, book "
+               "value/share — holding-company basis).")
 
     tc1, tc2, tc3 = st.columns([2, 1, 3])
     with tc1:
-        _metric = st.selectbox("Metric", [k for k, _ in TREND_METRICS],
+        _metric = st.selectbox("Metric", [k for k, _ in _ALL_TM],
                                format_func=lambda k: _mlabels[k], key="trend_metric")
     with tc2:
         _nq = st.selectbox("Quarters", [4, 8, 12, 16, 20], index=4, key="trend_nq")
@@ -1472,21 +1475,33 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
 
     _td, _ttick, _tlabel = render_scope_sub(all_metrics, _scope_t, key_prefix="trend")
 
-    _c2i = {}
-    for _t in _ttick:
-        _c = get_fdic_cert(_t)
-        if _c:
-            _c2i[int(_c)] = _t
-
-    # All-banks × 20q (~300s) exceeds the live request timeout, so it is NEVER built
-    # in-request — it's pre-warmed nightly (jobs/refresh_trends) and served from the
-    # 20-quarter grid, sliced to the chosen depth. Scoped cohorts build live.
+    _is_sec = _metric in _sec_keys
     _is_all = _scope_t == "All banks"
-    if not _c2i:
-        st.warning("No banks with an FDIC cert in this scope.")
+    _src = "SEC companyfacts (HoldCo)" if _is_sec else "FDIC point-in-time"
+    _fmt, _dec = SEC_TREND_FMT.get(_metric, (None, None)) if _is_sec else (None, None)
+
+    # Per source: SEC keyed by CIK, FDIC by cert.
+    _idmap = {}
+    for _t in _ttick:
+        _k = get_cik(_t) if _is_sec else get_fdic_cert(_t)
+        if _k:
+            _idmap[int(_k)] = _t
+
+    def _grid(build_it):
+        _sid = "ALLBANKS" if _is_all else None
+        _gn = 20 if _is_all else _nq   # all-banks served from the pre-warmed 20q grid
+        if _is_sec:
+            return sec_metric_grid(_metric, _idmap, _gn, build_if_missing=build_it,
+                                   scope_id=_sid)
+        return metric_grid(_metric, _idmap, _gn, build_if_missing=build_it, scope_id=_sid)
+
+    # All-banks (~300s for FDIC; ~40s+ SEC fetches) exceeds the live request timeout,
+    # so it is NEVER built in-request — pre-warmed nightly (jobs/refresh_trends) and
+    # read cache-only here. Scoped cohorts build live.
+    if not _idmap:
+        st.warning("No banks with an FDIC cert / SEC CIK in this scope.")
     elif _is_all:
-        _labels, _rows = metric_grid(_metric, _c2i, 20, build_if_missing=False,
-                                     scope_id="ALLBANKS")
+        _labels, _rows = _grid(False)
         if _labels is None:
             st.info("The **all-banks** trend grid is prepared by a nightly job and "
                     "isn't cached yet. Pick a **scope** (a saved group, asset band, "
@@ -1497,19 +1512,19 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
             st.markdown(
                 f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
                 f'margin:1px 0 7px;">{_mlabels[_metric]} · {len(_rows)} banks · '
-                f'all banks · {_nq} quarters · FDIC point-in-time (pre-warmed)</div>',
+                f'all banks · {_nq} quarters · {_src} (pre-warmed)</div>',
                 unsafe_allow_html=True)
-            render_trends_table(_rows, _labels, _metric)
+            render_trends_table(_rows, _labels, _metric, _fmt, _dec)
     else:
         with st.spinner(f"Building {_mlabels[_metric]} across {_nq} quarters for "
-                        f"{len(_c2i)} banks…"):
-            _labels, _rows = metric_grid(_metric, _c2i, _nq)
+                        f"{len(_idmap)} banks…"):
+            _labels, _rows = _grid(True)
         st.markdown(
             f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
             f'margin:1px 0 7px;">{_mlabels[_metric]} · {len(_rows)} banks · '
-            f'{_tlabel} · {_nq} quarters · FDIC point-in-time</div>',
+            f'{_tlabel} · {_nq} quarters · {_src}</div>',
             unsafe_allow_html=True)
-        render_trends_table(_rows, _labels, _metric)
+        render_trends_table(_rows, _labels, _metric, _fmt, _dec)
 
 elif section == "Earnings":
     # ── EARNINGS ANALYSIS: Aggregate tracking ───────────────────────────

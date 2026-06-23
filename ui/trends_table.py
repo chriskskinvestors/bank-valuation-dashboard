@@ -14,13 +14,16 @@ from data.bank_mapping import get_name, BANK_MAP
 from utils.formatting import format_value, get_bg_color
 
 
-def render_trends_table(rows: list[dict], labels: list[str], metric_key: str):
+def render_trends_table(rows: list[dict], labels: list[str], metric_key: str,
+                        fmt: str | None = None, dec: int | None = None):
     if not rows:
         st.warning("No data for this metric and scope.")
         return None
 
+    # fmt/dec override for metrics not in the registry (e.g. SEC per-share keys).
     m = METRICS_BY_KEY.get(metric_key, {})
-    fmt, dec = m.get("format", "number"), m.get("decimals", 2)
+    fmt = fmt or m.get("format", "number")
+    dec = dec if dec is not None else m.get("decimals", 2)
 
     heads = ['<th>Ticker</th>', '<th class="nm">Bank</th>']
     heads += [f'<th>{_html.escape(lb)}</th>' for lb in labels]
