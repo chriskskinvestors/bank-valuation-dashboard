@@ -691,9 +691,9 @@ def _render_fed_words():
 
 
 def _render_sep_block():
-    """FOMC Summary of Economic Projections — the medians table BESIDE the
-    dot-plot (median diamond · central-tendency band · range whisker, with a
-    dotted median path). Sits under the rates board to fill that space."""
+    """FOMC Summary of Economic Projections — the medians table STACKED above
+    the dot-plot (median diamond · central-tendency band · range whisker, with
+    a dotted median path), for the narrow Fed column."""
     import plotly.graph_objects as go
     import html as _h
     from data.fomc import sep_projections
@@ -705,73 +705,70 @@ def _render_sep_block():
         st.caption("FOMC Summary of Economic Projections unavailable.")
         return
     st.markdown(f"**Summary of Economic Projections (SEP {sep_txt})**")
-    tbl_c, chart_c = st.columns([1, 1])
-    with tbl_c:
-        macro = proj.get("macro") or {}
-        horizons = [f["horizon"] for f in funds]
+    macro = proj.get("macro") or {}
+    horizons = [f["horizon"] for f in funds]
 
-        def _mm(key):
-            return {m["horizon"]: m.get("median") for m in (macro.get(key) or [])}
-        gdp, ur, pce, cpce = _mm("gdp"), _mm("unemployment"), _mm("pce"), _mm("core_pce")
-        fundmed = {f["horizon"]: f.get("median") for f in funds}
-        tbody = ""
-        for hz in horizons:
-            tbody += (
-                "<tr>"
-                f'<td style="text-align:left;">{_h.escape(str(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(fundmed.get(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(gdp.get(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(ur.get(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(pce.get(hz))}</td>'
-                f'<td style="text-align:right;">{_sep_cell(cpce.get(hz))}</td>'
-                "</tr>"
-            )
-        st.markdown(
-            '<div class="ksk-grid"><table><thead><tr>'
-            '<th style="text-align:left;">Horizon</th>'
-            '<th style="text-align:right;">Funds</th>'
-            '<th style="text-align:right;">GDP</th>'
-            '<th style="text-align:right;">Unemp</th>'
-            '<th style="text-align:right;">PCE</th>'
-            '<th style="text-align:right;">Core</th>'
-            "</tr></thead><tbody>" + tbody + "</tbody></table></div>",
-            unsafe_allow_html=True,
+    def _mm(key):
+        return {m["horizon"]: m.get("median") for m in (macro.get(key) or [])}
+    gdp, ur, pce, cpce = _mm("gdp"), _mm("unemployment"), _mm("pce"), _mm("core_pce")
+    fundmed = {f["horizon"]: f.get("median") for f in funds}
+    tbody = ""
+    for hz in horizons:
+        tbody += (
+            "<tr>"
+            f'<td style="text-align:left;">{_h.escape(str(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(fundmed.get(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(gdp.get(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(ur.get(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(pce.get(hz))}</td>'
+            f'<td style="text-align:right;">{_sep_cell(cpce.get(hz))}</td>'
+            "</tr>"
         )
-        st.caption("SEP medians by horizon. Funds = fed funds, Core = core PCE. Source: FRED.")
-    with chart_c:
-        fig = go.Figure()
-        allvals = []
-        med_x, med_y = [], []
-        for f in funds:
-            x = f["horizon"]
-            rl, rh, cl, ch, md = (f.get("range_low"), f.get("range_high"),
-                                  f.get("ct_low"), f.get("ct_high"), f.get("median"))
-            if rl is not None and rh is not None:
-                fig.add_trace(go.Scatter(x=[x, x], y=[rl, rh], mode="lines",
-                    line=dict(color="#cbd5e1", width=2), showlegend=False, hoverinfo="skip"))
-                allvals += [rl, rh]
-            if cl is not None and ch is not None:
-                fig.add_trace(go.Scatter(x=[x, x], y=[cl, ch], mode="lines",
-                    line=dict(color="#93c5fd", width=14), showlegend=False, hoverinfo="skip"))
-                allvals += [cl, ch]
-            if md is not None:
-                med_x.append(x)
-                med_y.append(md)
-                allvals.append(md)
-        if len(med_x) > 1:
-            fig.add_trace(go.Scatter(x=med_x, y=med_y, mode="lines",
-                line=dict(color="#1e3a8a", width=1.5, dash="dot"),
-                showlegend=False, hoverinfo="skip"))
-        for x, md in zip(med_x, med_y):
-            fig.add_trace(go.Scatter(x=[x], y=[md], mode="markers",
-                marker=dict(symbol="diamond", color="#1e3a8a", size=11), showlegend=False,
-                hovertemplate=f"{x}<br>median %{{y:.2f}}%<extra></extra>"))
-        apply_standard_layout(fig, title="Fed funds dot-plot — median · central tendency · range",
-                              height=250, yaxis_title="%", show_legend=False)
-        fig.update_xaxes(type="category")
-        if allvals:
-            tighten_yaxis(fig, allvals, ticksuffix="%")
-        st.plotly_chart(fig, use_container_width=True)
+    st.markdown(
+        '<div class="ksk-grid"><table><thead><tr>'
+        '<th style="text-align:left;">Horizon</th>'
+        '<th style="text-align:right;">Funds</th>'
+        '<th style="text-align:right;">GDP</th>'
+        '<th style="text-align:right;">Unemp</th>'
+        '<th style="text-align:right;">PCE</th>'
+        '<th style="text-align:right;">Core</th>'
+        "</tr></thead><tbody>" + tbody + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("SEP medians by horizon. Funds = fed funds, Core = core PCE. Source: FRED.")
+    fig = go.Figure()
+    allvals = []
+    med_x, med_y = [], []
+    for f in funds:
+        x = f["horizon"]
+        rl, rh, cl, ch, md = (f.get("range_low"), f.get("range_high"),
+                              f.get("ct_low"), f.get("ct_high"), f.get("median"))
+        if rl is not None and rh is not None:
+            fig.add_trace(go.Scatter(x=[x, x], y=[rl, rh], mode="lines",
+                line=dict(color="#cbd5e1", width=2), showlegend=False, hoverinfo="skip"))
+            allvals += [rl, rh]
+        if cl is not None and ch is not None:
+            fig.add_trace(go.Scatter(x=[x, x], y=[cl, ch], mode="lines",
+                line=dict(color="#93c5fd", width=14), showlegend=False, hoverinfo="skip"))
+            allvals += [cl, ch]
+        if md is not None:
+            med_x.append(x)
+            med_y.append(md)
+            allvals.append(md)
+    if len(med_x) > 1:
+        fig.add_trace(go.Scatter(x=med_x, y=med_y, mode="lines",
+            line=dict(color="#1e3a8a", width=1.5, dash="dot"),
+            showlegend=False, hoverinfo="skip"))
+    for x, md in zip(med_x, med_y):
+        fig.add_trace(go.Scatter(x=[x], y=[md], mode="markers",
+            marker=dict(symbol="diamond", color="#1e3a8a", size=11), showlegend=False,
+            hovertemplate=f"{x}<br>median %{{y:.2f}}%<extra></extra>"))
+    apply_standard_layout(fig, title="Fed funds dot-plot — median · central tendency · range",
+                          height=250, yaxis_title="%", show_legend=False)
+    fig.update_xaxes(type="category")
+    if allvals:
+        tighten_yaxis(fig, allvals, ticksuffix="%")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _shade_recessions(fig, years: int = 5):
@@ -1565,7 +1562,9 @@ def _render_rates_curve():
         "</style>",
         unsafe_allow_html=True,
     )
-    board_col, chart_col = st.columns([1, 1.5])
+    # Narrow left rail (board + the stacked Fed card) running full height;
+    # the chart grid + the FOMC's own words fill the wide right column.
+    board_col, chart_col = st.columns([1, 2.9])
     with board_col:
         st.markdown("**Rates & curve board**")
         st.markdown(_rates_board_table(_rates_board_rows()), unsafe_allow_html=True)
@@ -1579,10 +1578,9 @@ def _render_rates_curve():
             _render_sep_block()
     with chart_col:
         _render_rates_charts()
-
-    st.markdown("---")
-    # ── The FOMC's own words: latest statement + curated Fed headlines ──
-    _render_fed_words()
+        st.markdown("---")
+        # ── The FOMC's own words: latest statement + curated Fed headlines ──
+        _render_fed_words()
 
 
 # Full credit-quality ladder (ICE BofA OAS, % over Treasuries) — IG buckets
