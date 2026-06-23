@@ -537,7 +537,9 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
     val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
     _gap = '<div style="margin-top:0.5rem"></div>'  # heading-sized break only
-    _cols = st.columns(4)
+    # Two stacked-pair columns at ~1/6 width each (a third narrower than the
+    # prior quarter-width); the rest of the row is empty space on the right.
+    _cols = st.columns([1, 1, 4])
     _cols[0].markdown(mkt_html + _gap + perf_html, unsafe_allow_html=True)
     _cols[1].markdown(val_html + _gap + co_html, unsafe_allow_html=True)
     st.markdown(
