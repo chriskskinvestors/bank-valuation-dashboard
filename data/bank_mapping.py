@@ -154,6 +154,7 @@ BANK_MAP = {
 # Maps ticker -> investor relations URL. Not every bank is listed; the UI
 # falls back to the SEC EDGAR company page when missing.
 IR_URLS = {
+    "PFS":   "https://investorrelations.provident.bank/",
     "SFST":  "https://www.southernfirst.com/investor-relations",
     "CFFI":  "https://www.cffc.com/investor-relations/",
     "CBNK":  "https://ir.capitalbankmd.com/",

@@ -171,21 +171,129 @@ def _fetch(url: str, timeout: int = 12) -> str | None:
     return None
 
 
+# ── Q4 Inc IR platform (JSON API) ────────────────────────────────────────
+# A large share of bank IR sites run on Q4 Inc, which renders press releases
+# CLIENT-SIDE from a JSON API — so the HTML scraper above finds nothing (the
+# page ships no release links). But the same endpoint the page's JS calls is a
+# plain GET we can hit directly: <host>/feed/PressRelease.svc/GetPressReleaseList
+# with the site's apiKey (embedded in the page). This is first-party, fresh, and
+# unblocked — the BEST source — and the apiKey/endpoint pattern is identical
+# across every Q4-hosted site, so one path covers them all.
+_Q4_APIKEY_RE = re.compile(r"apiKey['\"\s:=]+([0-9A-Fa-f]{24,40})")
+_Q4_MARKER_RE = re.compile(r"q4cdn|q4inc|q4app|q4web", re.IGNORECASE)
+
+
+def _parse_q4_date(s: str) -> datetime | None:
+    """Q4 dates read 'MM/DD/YYYY HH:MM:SS' (naive ET-ish). Treat as UTC — the
+    multi-day lookback makes a few hours' drift immaterial."""
+    for fmt in ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y"):
+        try:
+            return datetime.strptime((s or "").strip(), fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _q4_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, datetime]] | None:
+    """If `ir_home` is a Q4 site, return [(url, headline, published)] from its
+    PressRelease JSON API. Returns None when it's NOT a Q4 site or the API can't
+    be reached — the caller then falls back to HTML scraping. An empty list means
+    'Q4 site, nothing recent' (no fallback needed)."""
+    html = _fetch(ir_home)
+    if not html:
+        return None
+    key_m = _Q4_APIKEY_RE.search(html)
+    if not key_m or not _Q4_MARKER_RE.search(html):
+        return None  # not a Q4 site
+    parsed = urlparse(ir_home)
+    host = f"{parsed.scheme}://{parsed.netloc}"
+    params = {
+        "apiKey": key_m.group(1), "LanguageId": 1, "bodyType": 0,
+        "pressReleaseDateFilter": 3, "categoryId": "", "tagList": "",
+        "includeTags": "true", "year": 0, "excludeSelection": 1,
+        "pageSize": 20, "pageNumber": 0,
+    }
+    try:
+        resp = requests.get(
+            host + "/feed/PressRelease.svc/GetPressReleaseList",
+            params=params, timeout=15,
+            headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)",
+                     "Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        items = resp.json().get("GetPressReleaseListResult") or []
+    except Exception:
+        return None
+    out: list[tuple[str, str, datetime]] = []
+    for it in items:
+        headline = (it.get("Headline") or "").strip()
+        link = it.get("LinkToDetailPage") or it.get("LinkToUrl") or ""
+        if not headline or not link:
+            continue
+        pub = _parse_q4_date(it.get("PressReleaseDate")) or datetime.now(timezone.utc)
+        if pub < cutoff:
+            continue
+        out.append((urljoin(host, link), headline, pub))
+    return out
+
+
 class IRSiteAdapter(SourceAdapter):
     """Generic IR-page scraper. Watchlist-only."""
 
     name = "ir_site"
     LOOKBACK_DAYS = 30  # Looser since dates on IR pages aren't always reliable
+    MAX_POLL_SECONDS = 200  # internal budget; return partial before poll-events' cap
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
+        import time as _t
+        from data.events.wire_base import is_junk_news, is_safe_news_url
         cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
         out: list[Event] = []
         seen_urls: set[str] = set()
 
-        for ticker in tickers:
+        # Cover EVERY bank with a mapped IR site, not just the passed scope — the
+        # Q4 API is per-bank first-party news the wires/EDGAR often miss, and many
+        # mapped banks (e.g. PFS) aren't in the watchlist this adapter is handed.
+        # Passed tickers first so the active watchlist is always covered; the rest
+        # fill in until the internal budget, then continue next cycle.
+        passed = [t for t in tickers if t in IR_URLS]
+        order = passed + sorted(set(IR_URLS) - set(passed))
+        # Bounded so a slow HTML site can't blow the poll-events per-adapter cap —
+        # which would abandon the WHOLE adapter and commit nothing (the prior
+        # ir_site behaviour). Returning partial means every run makes progress.
+        deadline = _t.monotonic() + self.MAX_POLL_SECONDS
+        for ticker in order:
+            if _t.monotonic() > deadline:
+                print(f"[ir_site] budget reached after {len(out)} events — "
+                      "rest catches up next cycle")
+                break
             ir_home = IR_URLS.get(ticker)
             if not ir_home:
                 continue
+
+            # Q4 JSON API first (real data on JS-rendered IR sites); fall back to
+            # HTML link-scraping for non-Q4 platforms.
+            q4 = None
+            try:
+                q4 = _q4_press_releases(ir_home, cutoff)
+            except Exception as e:
+                print(f"[ir_site] {ticker} q4 error: {type(e).__name__}: {e}")
+            if q4 is not None:
+                for url, headline, pub in q4:
+                    if url in seen_urls or not is_safe_news_url(url):
+                        continue
+                    if is_junk_news(headline, ticker):
+                        continue
+                    seen_urls.add(url)
+                    out.append(Event(
+                        ticker=ticker, source=self.name,
+                        event_type=classify_press_release(headline),
+                        headline=headline[:300], published_at=pub, url=url,
+                        summary="", external_id=url,
+                        raw={"ir_home": ir_home, "platform": "q4"},
+                    ))
+                continue  # Q4 handled this bank — don't also HTML-scrape it
+
             try:
                 links = self._find_press_links(ir_home)
             except Exception as e:
@@ -193,7 +301,9 @@ class IRSiteAdapter(SourceAdapter):
                 continue
 
             for url, text in links:
-                if url in seen_urls:
+                if url in seen_urls or not is_safe_news_url(url):
+                    continue
+                if is_junk_news(text, ticker):
                     continue
                 seen_urls.add(url)
 
@@ -201,8 +311,7 @@ class IRSiteAdapter(SourceAdapter):
                 pub = _parse_date_in_text(url) or _parse_date_in_text(text)
                 if pub and pub < cutoff:
                     continue
-                # If no date, assume "recent" (now) but mark in raw so we
-                # can de-prioritize undated items in the UI later.
+                inferred = pub is None
                 if not pub:
                     pub = datetime.now(timezone.utc)
 
@@ -215,7 +324,7 @@ class IRSiteAdapter(SourceAdapter):
                     url=url,
                     summary="",  # IR pages don't always have summaries
                     external_id=url,  # URL is the natural dedup key
-                    raw={"ir_home": ir_home, "date_inferred": pub is None},
+                    raw={"ir_home": ir_home, "date_inferred": inferred},
                 ))
         return out
 
