@@ -269,7 +269,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
             h = self.home._af_movers_table(metrics, "g", "d", "all")  # gainers/day
         finally:
             ms.is_premarket, cache.get, pcs.get_prices = saved
-        self.assertIn(">Pre<", h)            # header relabeled for pre-market
+        self.assertIn(">Pre %<", h)          # header relabeled for pre-market (unit-tagged)
         self.assertIn("BANR", h)             # the +4.2% pre-market gainer
         self.assertIn("+4.2", h)             # its pre-market move shown
         self.assertIn("+2.0", h)             # pre-market $ chg = 48.10 * 4.2%

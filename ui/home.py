@@ -321,13 +321,15 @@ def _af_etf_table() -> str:
     from data.market_session import is_premarket
     # The extended-hours column IS the pre-market move during 4:00–9:30 ET; label
     # it "Pre" then, "Aft" otherwise (after-hours / spread fallback).
-    _ext_lbl = "Pre" if is_premarket() else "Aft"
+    _ext_lbl = "Pre %" if is_premarket() else "Aft %"
     sel = set(st.session_state.get("af_overlay") or _AF_DEFAULT_OVERLAY)
+    # Headers carry the unit so $ moves (Chg) read distinctly from % moves
+    # (day %, Pre/Aft, 1W, YTD).
     rows = ('<div class="erow e1 eh"><span class="h">Name</span>'
             '<span class="h">Tkr</span><span class="num h">Last</span>'
-            '<span class="num h">Chg</span><span class="num h">%</span>'
-            f'<span class="num h">{_ext_lbl}</span><span class="num h">1W</span>'
-            '<span class="num h">YTD</span><span class="num h">Vol</span></div>')
+            '<span class="num h">Chg $</span><span class="num h">%</span>'
+            f'<span class="num h">{_ext_lbl}</span><span class="num h">1W %</span>'
+            '<span class="num h">YTD %</span><span class="num h">Vol</span></div>')
     for t, name in _AF_ETFS:
         q = warm.get(t) or {}
         price = q.get("price")
@@ -482,9 +484,9 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
     else:
         rows = ('<div class="erow m1 eh"><span class="h">Name</span>'
                 '<span class="h">Tkr</span><span class="num h">Last</span>'
-                '<span class="num h">Chg</span>'
-                f'<span class="num h">{"Pre" if pm else "%"}</span>'
-                '<span class="num h">1W</span><span class="num h">YTD</span>'
+                '<span class="num h">Chg $</span>'
+                f'<span class="num h">{"Pre %" if pm else "%"}</span>'
+                '<span class="num h">1W %</span><span class="num h">YTD %</span>'
                 '<span class="num h">Vol</span></div>')
         for d in data:
             last = _af_n(d["price"]) or "—"
