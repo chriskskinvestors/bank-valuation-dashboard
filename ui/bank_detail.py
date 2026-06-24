@@ -561,24 +561,20 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
     val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
     _gap = '<div style="margin-top:0.5rem"></div>'  # heading-sized break only
-    # Two stacked-pair ledger columns at 1/6 width each, the price chart filling
-    # the open space beside them (next third), and the far right left empty. The
-    # chart's natural height lines up with the ledger block.
+    # Two stacked-pair ledger columns at 1/6 width each, then the two charts
+    # side by side filling the right two-thirds: price (col 3) and the
+    # valuation-multiple history (col 4). Their heights line up with the ledgers.
     _cols = st.columns([1, 1, 2, 2])
     _cols[0].markdown(mkt_html + _gap + perf_html, unsafe_allow_html=True)
     _cols[1].markdown(val_html + _gap + co_html, unsafe_allow_html=True)
     with _cols[2]:
         _render_price_panel(ticker)
+    with _cols[3]:
+        _render_valuation_panel(ticker, info)
     st.markdown(
         '<div style="margin-top:5px; font-size:0.75rem; color:var(--text-secondary);">'
         'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
         'FMP (market data)</div>', unsafe_allow_html=True)
-    st.markdown("---")
-    # Valuation-multiple history below the snapshot, kept to ~half width so it
-    # doesn't stretch across the full page.
-    _vc, _ = st.columns(2)
-    with _vc:
-        _render_valuation_panel(ticker, info)
     st.markdown("---")
     # Highlights (year-ago vs latest) beside the activity feed so both fill the
     # width instead of each spreading across the page.
