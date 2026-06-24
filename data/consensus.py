@@ -1115,6 +1115,47 @@ def compile_consensus(ticker: str, period: str) -> dict | None:
             "firms": firms, "metrics": metrics}
 
 
+def consensus_detail(ticker: str, period: str) -> dict | None:
+    """Per-FIRM breakdown for (ticker, period) — the estimates browser. Each
+    metric carries every firm's value (canonical units) plus mean/low/high/n, so
+    the UI can show 'what each firm estimated'. None when no firm has estimates.
+    Returns {ticker, period, firms: [...], metrics: [{key, name, unit, by_firm:
+    {firm: value}, mean, low, high, n}]}."""
+    records = _firm_records(ticker, period)
+    if not records:
+        return None
+    firms = sorted({(r.get("firm") or r.get("source") or "?") for r in records})
+
+    by_key: dict = {}
+    for rec in records:
+        firm = rec.get("firm") or rec.get("source") or "?"
+        for m in rec.get("metrics", []):
+            key = m.get("key")
+            if key is None:
+                continue
+            cv = _to_canonical(m.get("value"), m.get("unit"), key)
+            if cv is None:
+                continue
+            slot = by_key.setdefault(key, {
+                "name": METRIC_DISPLAY.get(key, m.get("name", key)),
+                "unit": METRIC_UNITS.get(key, m.get("unit", "")),
+                "by_firm": {},
+            })
+            slot["by_firm"][firm] = cv
+
+    metrics = []
+    for key, slot in by_key.items():
+        vals = list(slot["by_firm"].values())
+        metrics.append({
+            "key": key, "name": slot["name"], "unit": slot["unit"],
+            "by_firm": slot["by_firm"],
+            "mean": sum(vals) / len(vals), "low": min(vals), "high": max(vals),
+            "n": len(vals),
+        })
+    return {"ticker": ticker.upper(), "period": period, "firms": firms,
+            "metrics": metrics}
+
+
 def list_all_consensus() -> dict[str, list[dict]]:
     """Consensus coverage for all tickers, GROUPED across firms.
     Returns {ticker: [{period, n_firms, firms, metric_count}]} (periods desc)."""

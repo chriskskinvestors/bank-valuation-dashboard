@@ -24,6 +24,7 @@ from data.consensus import (
     parse_bulk_consensus_pdf,
     save_consensus,
     compile_consensus,
+    consensus_detail,
     list_consensus,
     list_all_consensus,
     compare_consensus_to_actual,
@@ -613,7 +614,7 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
     # run only when you're on it.
     SECTIONS = [
         "Calendar", "Calls & Webcasts", "Surprise Heat-Map", "Beat / Miss",
-        "Biggest Surprises", "Sector Aggregates", "Upload / Input",
+        "Estimates", "Biggest Surprises", "Sector Aggregates", "Upload / Input",
     ]
     active = st.segmented_control(
         "Earnings view", SECTIONS, default="Calendar",
@@ -627,6 +628,8 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
         _render_surprise_heatmap(watchlist)
     elif active == "Beat / Miss":
         _render_beat_miss_summary(all_consensus, metrics_by_ticker)
+    elif active == "Estimates":
+        _render_estimates_browser(all_consensus)
     elif active == "Biggest Surprises":
         _render_surprise_rankings(all_consensus, metrics_by_ticker, watchlist)
     elif active == "Sector Aggregates":
@@ -1240,6 +1243,62 @@ def _render_calls_webcasts():
 
 
 # ── Beat / Miss Summary ───────────────────────────────────────────────
+
+def _render_estimates_browser(all_consensus: dict):
+    """Browse the saved consensus estimates by company → period, showing each
+    firm's number per metric plus the mean and low–high range. This is the
+    'what did the upload actually pull' view."""
+    st.subheader("Consensus Estimates by Company")
+
+    if not all_consensus:
+        st.info("No estimates uploaded yet. Add a firm's research note on the "
+                "**Upload / Input** tab — it's stored per firm and combined here.")
+        return
+
+    tickers = sorted(all_consensus.keys())
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        ticker = st.selectbox(
+            "Company", tickers,
+            format_func=lambda t: f"{t} — {get_name(t)}", key="estbrowse_tkr")
+    periods_info = all_consensus.get(ticker, [])
+    period_labels = [p["period"] for p in periods_info]
+    with c2:
+        period = st.selectbox("Period", period_labels, key="estbrowse_per")
+
+    if periods_info:
+        st.caption("Periods on file: " + " · ".join(
+            f"**{p['period']}** ({p['n_firms']} firm{'s' if p['n_firms'] != 1 else ''}, "
+            f"{p['metric_count']} metrics)" for p in periods_info))
+
+    detail = consensus_detail(ticker, period) if period else None
+    if not detail or not detail.get("metrics"):
+        st.info("No estimates for this selection.")
+        return
+
+    firms = detail["firms"]
+    st.markdown(f"##### {ticker} · {period} — {len(firms)} firm(s): {', '.join(firms)}")
+
+    rows = []
+    for m in sorted(detail["metrics"], key=lambda x: x["name"]):
+        row = {"Metric": m["name"]}
+        for f in firms:
+            v = m["by_firm"].get(f)
+            row[f] = _format_val(v, m["unit"]) if v is not None else "—"
+        row["Mean"] = _format_val(m["mean"], m["unit"])
+        row["Range"] = (f'{_format_val(m["low"], m["unit"])}–'
+                        f'{_format_val(m["high"], m["unit"])}') if m["n"] > 1 else "—"
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, hide_index=True,
+                 height=min(720, 45 + 32 * len(df)))
+    table_export(df, f"estimates_{ticker}_{period}",
+                 key=f"exp_estimates_{ticker}_{period}")
+    st.caption("Values shown in each metric's standard unit; **Mean** is the "
+               "consensus across firms, **Range** is low–high. Add more firms' "
+               "notes to broaden the consensus.")
+
 
 def _render_beat_miss_summary(all_consensus: dict, metrics_by_ticker: dict):
     """Show beat/miss summary across all banks with consensus data."""
