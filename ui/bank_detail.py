@@ -489,8 +489,11 @@ def _render_price_panel(ticker: str):
             "<style>"
             # Hairline border around the whole price card (readout + buttons +
             # chart inset inside it) — same line as the ledger heading rules.
+            # margin-top drops the box so its top border lines up with the top of
+            # the valuation chart in the next column (which sits below its own
+            # "Valuation — P/TBV & P/E" heading); the heading floats above the box.
             ".st-key-ov_price_box{border:1px solid var(--grid-head);"
-            "border-radius:0;padding:8px 11px;}"
+            "border-radius:0;padding:8px 11px;margin-top:20px;}"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
             ".st-key-ov_price_box .ovp-readout{font-size:var(--fs-sm);font-weight:600;"
@@ -532,11 +535,6 @@ def _render_price_panel(ticker: str):
 
 def _render_valuation_panel(ticker: str, info: dict):
     """Quarter-end P/TBV & P/E history chart, shown below the snapshot band."""
-    # Leading zero-height element so this column's first VISIBLE child (the title)
-    # sits one vertical-block gap down — matching the price panel, whose first
-    # child is an invisible <style> block. Without it the valuation title rides
-    # ~0.45rem higher than the price box's top border (they must be level).
-    st.markdown("<div style='height:0'></div>", unsafe_allow_html=True)
     st.markdown("**Valuation — P/TBV & P/E**")
     fig = _valuation_history_chart(ticker, info)
     if fig is not None:
