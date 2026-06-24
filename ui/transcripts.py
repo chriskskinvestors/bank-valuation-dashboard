@@ -1,19 +1,48 @@
 """
 Transcripts & Presentations sub-tab (SNL panel, docs/SNL-BUILD-PLAN.md §10).
 
-Minimal and honest:
   • Investor presentations = 8-K EX-99 exhibits, reusing the Key Exhibits
     fetch (one EDGAR parse, two views).
-  • Earnings-call transcripts: NOT wired — the FMP transcript endpoint is
-    pending plan-tier verification (the Starter plan denies several
-    endpoints). A labeled placeholder, never fake data.
+  • Earnings-call transcripts = FMP full-text transcripts (endpoint verified
+    in-plan on the Premium key 2026-06-24): a quarter picker over the available
+    calls, rendering the full call text with speaker turns. Empty/honest when a
+    bank has no coverage.
 """
 from __future__ import annotations
+
+import html as _h
+import re
 
 import streamlit as st
 
 from data.bank_mapping import get_cik, get_name
+from data.fmp_transcripts import get_transcript_dates, get_transcript
 from ui.chrome import title_bar
+
+# A line that begins with "Speaker Name:" — bold the name, keep the rest inline.
+_SPEAKER_RE = re.compile(r"^([A-Z][^:]{1,60}?):\s+(.*)$")
+
+
+def _transcript_body_html(content: str) -> str:
+    """Format the raw transcript text into readable paragraphs, bolding the
+    leading "Speaker:" on each turn. Everything is HTML-escaped first."""
+    paras = []
+    for raw in content.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        m = _SPEAKER_RE.match(line)
+        if m:
+            paras.append(
+                f'<p style="margin:0 0 11px;"><strong>{_h.escape(m.group(1))}:</strong> '
+                f'{_h.escape(m.group(2))}</p>')
+        else:
+            paras.append(f'<p style="margin:0 0 11px;">{_h.escape(line)}</p>')
+    return (
+        '<div style="max-height:620px;overflow-y:auto;padding:10px 16px;'
+        'border:1px solid var(--border-default,#e2e8f0);border-radius:8px;'
+        'background:var(--bg-surface,#fff);font-size:var(--fs-sm,0.86rem);'
+        f'line-height:1.55;">{"".join(paras)}</div>')
 
 
 def render_transcripts(ticker: str):
@@ -45,12 +74,29 @@ def render_transcripts(ticker: str):
         st.info("No EX-99 exhibits found in this bank's recent 8-K filings, "
                 "or EDGAR index pages could not be fetched.")
 
-    # ── Transcripts: pending integration, clearly labeled ────────────────
+    # ── Earnings-call transcripts (FMP full text) ────────────────────────
     st.markdown("#### Earnings-Call Transcripts")
-    st.info(
-        "Transcript integration is pending: the FMP earnings-transcript "
-        "endpoint requires plan-tier verification (the current Starter plan "
-        "denies several endpoints). No transcript data is shown until that "
-        "access is confirmed — this panel will never display placeholder "
-        "transcripts."
-    )
+    dates = get_transcript_dates(ticker)
+    if not dates:
+        st.info("No earnings-call transcripts are available for this company "
+                "from the transcript provider.")
+        return
+
+    labels = [
+        f"Q{d['quarter']} {d['year']}" + (f"  ·  {d['date']}" if d.get("date") else "")
+        for d in dates
+    ]
+    choice = st.selectbox("Earnings call", labels, index=0, key=f"tx_pick_{ticker}")
+    sel = dates[labels.index(choice)]
+
+    with st.spinner("Loading transcript…"):
+        tx = get_transcript(ticker, sel["year"], sel["quarter"])
+    if not tx or not tx.get("content"):
+        st.info("The transcript text for this call is unavailable.")
+        return
+
+    words = len(tx["content"].split())
+    asof = f"  ·  {tx['date']}" if tx.get("date") else ""
+    st.caption(f"Q{sel['quarter']} {sel['year']} earnings call{asof}  ·  "
+               f"~{words:,} words  ·  source: Financial Modeling Prep")
+    st.markdown(_transcript_body_html(tx["content"]), unsafe_allow_html=True)
