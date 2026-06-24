@@ -23,7 +23,7 @@ from data.consensus import (
     parse_bulk_consensus,
     parse_bulk_consensus_pdf,
     save_consensus,
-    load_consensus,
+    compile_consensus,
     list_consensus,
     list_all_consensus,
     compare_consensus_to_actual,
@@ -147,9 +147,12 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
         )
 
         selected_period = periods[selected_idx]["period"]
-        consensus = load_consensus(ticker, selected_period)
+        consensus = compile_consensus(ticker, selected_period)
 
         if consensus:
+            firms = consensus.get("firms") or []
+            st.caption(f"Consensus = mean of **{consensus.get('n_firms', len(firms))} "
+                       f"firm(s)**: {', '.join(firms) if firms else '—'}")
             comparison = compare_consensus_to_actual(consensus, actual_metrics)
             if comparison:
                 _render_comparison_table(comparison)
@@ -442,9 +445,17 @@ def _render_comparison_table(comparison: list[dict]):
         else:
             label = _NA_LABEL
 
+        # Consensus = MEAN across firms; show the low–high range when >1 firm.
+        n = c.get("n_firms")
+        if c.get("low") is not None and c.get("high") is not None and (n or 0) > 1:
+            rng = (f'{_format_val(c["low"], c["unit"])}–'
+                   f'{_format_val(c["high"], c["unit"])} ({n})')
+        else:
+            rng = "—"
         rows.append({
             "Metric": c["metric_name"],
             "Consensus": _format_val(c["consensus"], c["unit"]),
+            "Range (firms)": rng,
             "Actual": _format_val(c["actual"], c["unit"]),
             "Δ": _format_delta(c["delta"], c["unit"]),
             "Δ %": f"{c['delta_pct']:+.1f}%" if c.get("delta_pct") is not None else "—",
@@ -687,7 +698,7 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_
         if not periods:
             continue
         latest = periods[0]
-        consensus = load_consensus(ticker, latest["period"])
+        consensus = compile_consensus(ticker, latest["period"])
         actual = metrics_by_ticker.get(ticker, {})
         if consensus:
             comparison = compare_consensus_to_actual(consensus, actual)
@@ -1244,7 +1255,7 @@ def _render_beat_miss_summary(all_consensus: dict, metrics_by_ticker: dict):
         if not latest:
             continue
 
-        consensus = load_consensus(ticker, latest["period"])
+        consensus = compile_consensus(ticker, latest["period"])
         actual = metrics_by_ticker.get(ticker, {})
 
         if consensus:
@@ -1329,7 +1340,7 @@ def _render_surprise_rankings(all_consensus: dict, metrics_by_ticker: dict, watc
         if not latest:
             continue
 
-        consensus = load_consensus(ticker, latest["period"])
+        consensus = compile_consensus(ticker, latest["period"])
         actual = metrics_by_ticker.get(ticker, {})
 
         if consensus:
@@ -1465,7 +1476,7 @@ def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watc
         if not latest:
             continue
 
-        consensus = load_consensus(ticker, latest["period"])
+        consensus = compile_consensus(ticker, latest["period"])
         actual = metrics_by_ticker.get(ticker, {})
 
         if consensus:
@@ -1653,11 +1664,12 @@ def _render_single_file_upload():
             else:
                 ex = parse_consensus_excel(file_bytes, "", "", filename)
                 ss["cons_detect"] = {"detected_ticker": "", "detected_period": "",
+                                     "detected_firm": "",
                                      "metrics": ex.get("metrics", []),
                                      "error": ex.get("error")}
         ss["cons_detect_sig"] = sig
-        ss.pop("single_tkr", None)             # re-seed fields from the new file
-        ss.pop("single_per", None)
+        for k in ("single_tkr", "single_per", "single_firm"):
+            ss.pop(k, None)                    # re-seed fields from the new file
 
     det = ss.get("cons_detect", {})
     if det.get("error"):
@@ -1670,38 +1682,49 @@ def _render_single_file_upload():
 
     det_tkr = det.get("detected_ticker", "")
     det_per = det.get("detected_period", "")
+    det_firm = det.get("detected_firm", "")
 
-    c1, c2 = st.columns(2)
+    st.markdown("This is **one firm's** estimates — it's stored under the firm and "
+                "combined with other firms into the consensus.")
+    c1, c2, c3 = st.columns(3)
     with c1:
         ticker = st.text_input("Ticker", value=det_tkr, placeholder="e.g. SFST",
                                key="single_tkr").strip().upper()
     with c2:
         period = st.text_input("Period", value=det_per, placeholder="e.g. 2026Q2",
                                key="single_per").strip()
+    with c3:
+        firm = st.text_input("Firm / Broker", value=det_firm,
+                             placeholder="e.g. Brean Capital",
+                             key="single_firm").strip()
 
     detected_bits = []
     if det_tkr:
         detected_bits.append(f"ticker **{det_tkr}**")
     if det_per:
         detected_bits.append(f"period **{det_per}**")
-    note = (f"Auto-detected {', '.join(detected_bits)} and " if detected_bits
-            else ("Couldn't read the ticker/period — please enter them. " if is_pdf
-                  else ""))
-    st.caption(f"{note}{len(metrics)} metric(s) found — confirm and save.")
+    if det_firm:
+        detected_bits.append(f"firm **{det_firm}**")
+    note = (f"Auto-detected {', '.join(detected_bits)} — " if detected_bits
+            else ("Couldn't read the ticker/period/firm — please enter them. "
+                  if is_pdf else ""))
+    st.caption(f"{note}{len(metrics)} metric(s) found. Confirm and save.")
 
-    if st.button("Save Consensus", type="primary", key="single_save"):
-        if not ticker or not period:
-            st.error("Enter a ticker and period before saving.")
+    if st.button("Save Estimates", type="primary", key="single_save"):
+        if not ticker or not period or not firm:
+            st.error("Enter a ticker, period, and firm before saving.")
         else:
             try:
-                save_consensus({"ticker": ticker, "period": period,
+                save_consensus({"ticker": ticker, "period": period, "firm": firm,
                                 "source": "pdf" if is_pdf else "excel",
                                 "metrics": metrics})
             except IOError as e:
                 st.error(str(e))
             else:
-                st.success(f"Saved {len(metrics)} metrics for {ticker} {period}")
-                for k in ("cons_detect", "cons_detect_sig", "single_tkr", "single_per"):
+                st.success(f"Saved {firm}'s estimates for {ticker} {period} "
+                           f"({len(metrics)} metrics).")
+                for k in ("cons_detect", "cons_detect_sig",
+                          "single_tkr", "single_per", "single_firm"):
                     ss.pop(k, None)
                 st.rerun()
 

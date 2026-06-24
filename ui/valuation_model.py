@@ -15,7 +15,7 @@ from analysis.dcf import (
     warranted_ptbv, run_scenarios,
 )
 from analysis.deposit_dynamics import summarize_bank_deposits  # reuse helpers
-from data.consensus import list_consensus, load_consensus
+from data.consensus import list_consensus, compile_consensus
 from utils.formatting import fmt_dollars
 from utils.chart_style import COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY
 from ui.chrome import ledger, title_bar
@@ -291,7 +291,7 @@ def render_valuation_model(ticker: str):
                 key=f"dcf_use_consensus_{ticker}",
             )
             if use_consensus:
-                consensus = load_consensus(ticker, available[sel_idx]["period"])
+                consensus = compile_consensus(ticker, available[sel_idx]["period"])
                 if consensus:
                     for m in consensus.get("metrics", []):
                         if m.get("key") == "eps" and m.get("value"):
@@ -845,7 +845,7 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
     Compare the model's EPS projection against uploaded consensus estimates.
     Shows where the model is above/below street for each metric.
     """
-    from data.consensus import list_consensus, load_consensus
+    from data.consensus import list_consensus, compile_consensus
 
     available = list_consensus(ticker)
     if not available:
@@ -868,7 +868,7 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
             key=f"val_consensus_period_{ticker}",
         )
 
-    consensus = load_consensus(ticker, available[sel_idx]["period"])
+    consensus = compile_consensus(ticker, available[sel_idx]["period"])
     if not consensus:
         st.warning("Could not load consensus data.")
         return

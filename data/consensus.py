@@ -313,16 +313,17 @@ def detect_and_parse_pdf(file_bytes: bytes, filename: str = "") -> dict:
         client = _anthropic_client()
         b64_pdf = base64.standard_b64encode(file_bytes).decode("utf-8")
 
-        prompt = """This is an equity research note / consensus sheet for ONE bank.
+        prompt = """This is an equity research note from ONE sell-side firm covering ONE bank.
 
 Return ONLY a JSON object of this shape:
-{ "ticker": "WTFC", "period": "2Q26",
+{ "ticker": "WTFC", "period": "2Q26", "firm": "Brean Capital",
   "metrics": [ {"name": "EPS", "value": 1.25, "unit": "$"},
                {"name": "Net Interest Margin", "value": 3.45, "unit": "%"} ] }
 
 - ticker: the official US stock ticker of the PRIMARY company the note covers. If you cannot identify it with confidence, use "".
 - period: the estimate/consensus period as written (e.g. 2Q26, 2026Q2, FY26). Use "" if not stated.
-- metrics: every consensus estimate you can find — EPS, revenue, NIM, efficiency, ROAA, ROATCE, NPL, CET1, net income, provision, deposits, loans, TBV, dividends, charge-offs, yields, growth, etc.
+- firm: the name of the research firm / broker that PUBLISHED this note (e.g. "Brean Capital", "KBW", "Piper Sandler"), usually on the cover/header/footer. Use "" if you can't tell. Do NOT use the covered bank's name here.
+- metrics: every estimate you can find — EPS, revenue, NIM, efficiency, ROAA, ROATCE, NPL, CET1, net income, provision, deposits, loans, TBV, dividends, charge-offs, yields, growth, etc.
 - values numeric (no $/commas); unit one of: %, $, $M, $B, bps, x, or blank.
 
 Return ONLY the JSON object, no other text."""
@@ -367,12 +368,13 @@ Return ONLY the JSON object, no other text."""
         return {
             "detected_ticker": tkr,
             "detected_period": str(data.get("period") or "").strip(),
+            "detected_firm": str(data.get("firm") or "").strip(),
             "metrics": metrics,
         }
 
     except Exception as e:
-        return {"detected_ticker": "", "detected_period": "", "metrics": [],
-                "error": str(e)}
+        return {"detected_ticker": "", "detected_period": "", "detected_firm": "",
+                "metrics": [], "error": str(e)}
 
 
 def parse_bulk_consensus_pdf(file_bytes: bytes, period: str) -> dict:
@@ -871,20 +873,33 @@ def _parse_single_bank_sheet(df: pd.DataFrame, ticker: str, period: str) -> dict
 
 # ── Storage ──────────────────────────────────────────────────────────────
 
-def save_consensus(data: dict) -> Path:
-    """Save parsed consensus to JSON (local + GCS). Returns the local file path.
+def _firm_slug(firm: str) -> str:
+    """Filesystem-safe slug for a broker/firm name (lowercase alnum + dashes)."""
+    s = re.sub(r"[^A-Za-z0-9]+", "-", (firm or "").strip()).strip("-").lower()
+    return s or "unknown"
 
-    Raises IOError when the durable (GCS) write fails — on Cloud Run the local
-    copy is ephemeral, so silently continuing meant the upload could vanish on
-    instance recycle while the user saw a success message."""
+
+def save_consensus(data: dict) -> Path:
+    """Save ONE firm's estimates to JSON (local + GCS). Returns the local path.
+
+    A single sell-side note is NOT "consensus" — it is one firm's view, so each
+    upload is stored per (ticker, period, FIRM) as {TICKER}_{period}__{firm}.json;
+    compile_consensus() aggregates all firms for a (ticker, period) into the
+    consensus. The firm defaults to the source label (manual / bulk) when none is
+    given. Raises IOError when the durable (GCS) write fails — on Cloud Run the
+    local copy is ephemeral, so silently continuing meant the upload could vanish
+    on instance recycle while the user saw a success message."""
     ticker = data["ticker"].upper()
     period = data["period"].replace("/", "-").replace(" ", "_")
-    filename = f"{ticker}_{period}.json"
+    firm = (data.get("firm") or data.get("source") or "manual").strip()
+    firm_slug = _firm_slug(firm)
+    filename = f"{ticker}_{period}__{firm_slug}.json"
 
-    if not save_json(CONSENSUS_PREFIX, filename, data):
+    payload = {**data, "ticker": ticker, "firm": firm}
+    if not save_json(CONSENSUS_PREFIX, filename, payload):
         raise IOError(
-            f"Consensus for {ticker} {period} could not be written to durable "
-            "storage (GCS). Not saved — please retry."
+            f"Consensus for {ticker} {period} ({firm}) could not be written to "
+            "durable storage (GCS). Not saved — please retry."
         )
 
     return CONSENSUS_DIR / filename
@@ -942,43 +957,138 @@ def load_consensus(ticker: str, period: str | None = None) -> dict | None:
 
 
 def list_consensus(ticker: str) -> list[dict]:
-    """List all consensus periods for a ticker."""
+    """Consensus periods for a ticker, ONE entry per period (firms grouped).
+    Each: {period, n_firms, firms, metric_count, source}. `source` is a firm
+    summary kept for label back-compat."""
     ticker = ticker.upper()
-    results = []
-
-    all_files = sorted(
-        [f for f in list_files(CONSENSUS_PREFIX) if f.startswith(f"{ticker}_")],
-        reverse=True,
-    )
-
-    for filename in all_files:
+    groups: dict = {}
+    for filename in list_files(CONSENSUS_PREFIX):
+        if not filename.startswith(f"{ticker}_"):
+            continue
         data = load_json(CONSENSUS_PREFIX, filename)
-        if data:
-            results.append({
-                "period": data.get("period", ""),
-                "source": data.get("source", ""),
-                "metric_count": len(data.get("metrics", [])),
-                "file": filename,
+        if not data:
+            continue
+        period = data.get("period", "")
+        g = groups.setdefault(period, {"firms": set(), "keys": set()})
+        g["firms"].add(data.get("firm") or data.get("source") or "?")
+        for m in data.get("metrics", []):
+            if m.get("key"):
+                g["keys"].add(m["key"])
+
+    out = []
+    for period, g in groups.items():
+        firms = sorted(g["firms"])
+        out.append({
+            "period": period,
+            "n_firms": len(firms),
+            "firms": firms,
+            "source": f"{len(firms)} firm{'s' if len(firms) != 1 else ''}",
+            "metric_count": len(g["keys"]),
+        })
+    out.sort(key=lambda x: x["period"], reverse=True)
+    return out
+
+
+def _to_canonical(value, stored_unit, key) -> float | None:
+    """Convert a stored metric value to the metric's CANONICAL display magnitude
+    (e.g. always $M for net income), honoring the unit it was entered/parsed in.
+    This lets us average across firms that quote the same metric in different
+    units ($B vs $M) without corrupting the mean. None if not finite."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v):
+        return None
+    canon = METRIC_UNITS.get(key, (stored_unit or ""))
+    entered = (stored_unit or "").strip() or canon
+    raw = v * _UNIT_TO_RAW.get(entered, 1.0)
+    return raw / _UNIT_TO_RAW.get(canon, 1.0)
+
+
+def _firm_records(ticker: str, period: str) -> list[dict]:
+    """All firms' stored estimates for one (ticker, period) — the firm-tagged
+    files plus any legacy single file."""
+    ticker = ticker.upper()
+    period_clean = period.replace("/", "-").replace(" ", "_")
+    prefix = f"{ticker}_{period_clean}__"
+    legacy = f"{ticker}_{period_clean}.json"
+    out = []
+    for f in list_files(CONSENSUS_PREFIX):
+        if f.startswith(prefix) or f == legacy:
+            d = load_json(CONSENSUS_PREFIX, f)
+            if d:
+                out.append(d)
+    return out
+
+
+def compile_consensus(ticker: str, period: str) -> dict | None:
+    """Aggregate every firm's estimates for (ticker, period) into the consensus:
+    per metric the MEAN across firms, with the low/high range and firm count.
+    Values are normalized to each metric's canonical unit before averaging.
+    Returns None when no firm has estimates. Shape matches what
+    compare_consensus_to_actual expects (metrics carry value = mean), with extra
+    low/high/n_firms fields for display."""
+    records = _firm_records(ticker, period)
+    if not records:
+        return None
+
+    by_key: dict = {}
+    for rec in records:
+        for m in rec.get("metrics", []):
+            key = m.get("key")
+            if key is None:
+                continue
+            cv = _to_canonical(m.get("value"), m.get("unit"), key)
+            if cv is None:
+                continue
+            slot = by_key.setdefault(key, {
+                "name": METRIC_DISPLAY.get(key, m.get("name", key)),
+                "unit": METRIC_UNITS.get(key, m.get("unit", "")),
+                "values": [],
             })
-    return results
+            slot["values"].append(cv)
+
+    metrics = []
+    for key, slot in by_key.items():
+        vals = slot["values"]
+        metrics.append({
+            "key": key, "name": slot["name"], "unit": slot["unit"],
+            "value": sum(vals) / len(vals),
+            "low": min(vals), "high": max(vals), "n_firms": len(vals),
+        })
+
+    firms = sorted({(r.get("firm") or r.get("source") or "?") for r in records})
+    return {"ticker": ticker.upper(), "period": period, "n_firms": len(records),
+            "firms": firms, "metrics": metrics}
 
 
 def list_all_consensus() -> dict[str, list[dict]]:
-    """List consensus data for all tickers. Returns {ticker: [periods]}."""
-    result = {}
-
+    """Consensus coverage for all tickers, GROUPED across firms.
+    Returns {ticker: [{period, n_firms, firms, metric_count}]} (periods desc)."""
+    groups: dict = {}
     for filename in list_files(CONSENSUS_PREFIX):
         data = load_json(CONSENSUS_PREFIX, filename)
         if not data:
             continue
-        ticker = data.get("ticker", filename.split("_")[0])
-        if ticker not in result:
-            result[ticker] = []
-        result[ticker].append({
-            "period": data.get("period", ""),
-            "source": data.get("source", ""),
-            "metric_count": len(data.get("metrics", [])),
+        ticker = (data.get("ticker") or filename.split("_")[0]).upper()
+        period = data.get("period", "")
+        g = groups.setdefault((ticker, period), {"firms": set(), "keys": set()})
+        g["firms"].add(data.get("firm") or data.get("source") or "?")
+        for m in data.get("metrics", []):
+            if m.get("key"):
+                g["keys"].add(m["key"])
+
+    result: dict = {}
+    for (ticker, period), g in groups.items():
+        result.setdefault(ticker, []).append({
+            "period": period,
+            "n_firms": len(g["firms"]),
+            "firms": sorted(g["firms"]),
+            "metric_count": len(g["keys"]),
         })
+    for ticker in result:
+        result[ticker].sort(key=lambda x: x["period"], reverse=True)
     return result
 
 
@@ -1057,6 +1167,11 @@ def compare_consensus_to_actual(
             "delta_pct": delta_pct,
             "beat_miss": beat_miss,
             "unit": canon_unit,
+            # Carried through from compile_consensus for display (None for a
+            # single-firm/manual consensus).
+            "low": m.get("low"),
+            "high": m.get("high"),
+            "n_firms": m.get("n_firms"),
         })
 
     return results
