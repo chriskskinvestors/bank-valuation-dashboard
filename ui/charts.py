@@ -81,6 +81,10 @@ def price_chart(df: pd.DataFrame, ticker: str, show_title: bool = True) -> go.Fi
         # title, which plotly.js renders as the literal "undefined". Force an
         # empty text so nothing shows.
         fig.update_layout(title_text="")
+        # The readout bar above the chart is the heading, so there's no in-chart
+        # title — drop the title-sized top margin (t=30) that left a dead white
+        # band inside the card, and trim r/b so the plot fills the box.
+        fig.update_layout(margin=dict(l=42, r=8, t=6, b=22))
     fig.update_xaxes(showgrid=True, gridcolor="rgba(148,163,184,0.12)")
     # Zoom the price y-axis to the data range so the move reads clearly.
     ymin, ymax = float(y.min()), float(y.max())

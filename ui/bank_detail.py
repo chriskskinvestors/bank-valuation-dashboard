@@ -493,7 +493,7 @@ def _render_price_panel(ticker: str):
             # the valuation chart in the next column (which sits below its own
             # "Valuation — P/TBV & P/E" heading); the heading floats above the box.
             ".st-key-ov_price_box{border:1px solid var(--grid-head);"
-            "border-radius:0;padding:8px 11px;margin-top:20px;}"
+            "border-radius:0;padding:4px 10px 5px;margin-top:20px;}"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
             ".st-key-ov_price_box .ovp-readout{font-size:var(--fs-sm);font-weight:600;"
