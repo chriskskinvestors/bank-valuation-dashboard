@@ -191,11 +191,35 @@ jobs:
             fi
           done
 
+      # Self-heal the invoker binding BEFORE verifying it. A newly-created or
+      # recreated job loses its IAM policy; rather than red-fail every deploy
+      # until someone grants it by hand (refresh-trends did exactly this on
+      # 2026-06-24), (re)grant the scheduler-invoker binding here.
+      # add-iam-policy-binding is idempotent — a no-op for jobs that already
+      # carry it. If the deploy SA lacks setIamPolicy the grant fails softly and
+      # the verify gate below still catches the gap loudly (no safety regression).
+      - name: Ensure scheduler invoker bindings on scheduled jobs
+        run: |
+          INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices verify-metrics refresh-trends; do
+            if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
+              echo "  Ensuring invoker binding on $job..."
+              gcloud run jobs add-iam-policy-binding "$job" \
+                --region="${{ env.REGION }}" \
+                --member="serviceAccount:${INVOKER}" \
+                --role="roles/run.invoker" \
+                --quiet >/dev/null \
+                || echo "    WARN: could not grant on $job (verify step below will flag if still missing)"
+            fi
+          done
+
       # A recreated job silently loses its IAM policy, the scheduler gets
       # PERMISSION_DENIED every tick, and data goes stale with no visible
       # failure (refresh-prices was dead 3 days, 2026-06-09..12, found only
       # via a stale on-screen timestamp). Scheduler-triggered jobs MUST
       # carry the invoker binding — fail the deploy loudly if one doesn't.
+      # (The Ensure step above normally heals this; this gate stays as the
+      # last line of defense if the auto-grant itself was denied.)
       - name: Verify scheduler invoker bindings on scheduled jobs
         run: |
           INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
