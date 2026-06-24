@@ -480,36 +480,32 @@ def _valuation_history_chart(ticker: str, info: dict):
 
 
 def _render_price_panel(ticker: str):
-    """Interactive price + volume chart with a period selector. The "Price"
-    label and the period buttons share one aligned row; the buttons are
-    compacted to the design system's dense (--fs-sm) scale. Chart sits below."""
+    """Interactive price + volume chart with a flat, Koyfin-style timeframe strip
+    — borderless square buttons compacted to the dense grid scale, the active one
+    on a subtle brand tint. No "Price" label: the chart titles itself with the
+    ticker and the period move, so the strip sits straight above it."""
     with st.container(key="ov_price_box"):
-        # Compact segmented buttons — same recipe as the Home above-the-fold
-        # timeframe selector (home.py), scoped to this panel.
         st.markdown(
             "<style>"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
-            ".st-key-ov_price_box [data-testid='stButtonGroup']{gap:2px!important;}"
+            ".st-key-ov_price_box [data-testid='stButtonGroup']{gap:1px!important;"
+            "background:transparent!important;border:0!important;padding:0!important;"
+            "justify-content:flex-start!important;}"
             ".st-key-ov_price_box [data-testid^='stBaseButton-segmented_control']"
-            "{min-height:0!important;height:22px!important;padding:0 9px!important;"
-            "border-radius:3px!important;}"
+            "{min-height:0!important;height:18px!important;padding:0 5px!important;"
+            "border:0!important;border-radius:0!important;background:transparent!important;"
+            "color:var(--text-secondary)!important;box-shadow:none!important;}"
             ".st-key-ov_price_box [data-testid^='stBaseButton-segmented_control'] p"
-            "{font-size:var(--fs-grid-10)!important;line-height:1!important;"
+            "{font-size:var(--fs-grid-9_5)!important;line-height:1!important;"
             "font-weight:600!important;}"
-            # Pull the label and buttons together: tight column gap + the button
-            # group hugging the left edge of its column (next to "Price").
-            ".st-key-ov_price_box [data-testid='stHorizontalBlock']{gap:0.3rem!important;}"
-            ".st-key-ov_price_box [data-testid='stButtonGroup']"
-            "{justify-content:flex-start!important;}"
+            ".st-key-ov_price_box [data-testid='stBaseButton-segmented_controlActive']"
+            "{background:var(--brand-soft)!important;color:var(--brand-primary)!important;}"
             "</style>", unsafe_allow_html=True)
-        # "Price" label and the period buttons hugging together on one row.
-        _hl, _hr = st.columns([1, 6], vertical_alignment="center")
-        _hl.markdown("**Price**")
-        with _hr:
-            per = st.segmented_control(
-                "Period", ["1M", "3M", "1Y", "5Y"], default="1Y",
-                key=f"ov_price_per_{ticker}", label_visibility="collapsed") or "1Y"
+        per = st.segmented_control(
+            "Period", ["1W", "1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y", "ALL"],
+            default="1Y", key=f"ov_price_per_{ticker}",
+            label_visibility="collapsed") or "1Y"
         hist_df = pd.DataFrame()
         try:
             from data.fmp_client import get_history

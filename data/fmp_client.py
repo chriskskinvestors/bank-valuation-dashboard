@@ -492,16 +492,21 @@ _PERIOD_TO_ENDPOINT = {
     "1W":  ("historical-chart/15min", 7),       # last 7 days, 15-min bars
     "1M":  ("historical-chart/1hour", 30),      # last 30 days, 1-hour bars
     "3M":  ("historical-price-eod/full", 90),
+    "6M":  ("historical-price-eod/full", 183),
+    "YTD": ("historical-price-eod/full", 365),  # from-date overridden to Jan 1
     "1Y":  ("historical-price-eod/full", 365),
     "2Y":  ("historical-price-eod/full", 731),
+    "3Y":  ("historical-price-eod/full", 1096),
     "5Y":  ("historical-price-eod/full", 1826),
+    "ALL": ("historical-price-eod/full", 18250),  # ~50y — full available history
 }
 
 
 def get_history(ticker: str, period: str = "1Y", cache_only: bool = False) -> pd.DataFrame:
     """
     Return a DataFrame of (date, close, open, high, low, volume) for `ticker`
-    over `period`. Period: "1W" | "1M" | "3M" | "1Y" | "2Y" | "5Y".
+    over `period`. Period: "1W" | "1M" | "3M" | "6M" | "YTD" | "1Y" | "2Y" |
+    "3Y" | "5Y" | "ALL".
 
     cache_only=True: read the persisted cache and return empty on a miss — NEVER
     do the live FMP fetch. Render paths (the Home overlay chart, looped over
@@ -524,7 +529,10 @@ def get_history(ticker: str, period: str = "1Y", cache_only: bool = False) -> pd
 
     endpoint, days = _PERIOD_TO_ENDPOINT.get(period, _PERIOD_TO_ENDPOINT["1Y"])
 
-    from_d = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+    if period == "YTD":
+        from_d = datetime.utcnow().strftime("%Y-01-01")
+    else:
+        from_d = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
     to_d = datetime.utcnow().strftime("%Y-%m-%d")
 
     params = {"symbol": ticker, "from": from_d, "to": to_d}
