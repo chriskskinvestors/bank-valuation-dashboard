@@ -1487,8 +1487,13 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
             sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
             render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
+        _heat = st.toggle(
+            "Percentile heatmap", key=f"heat_{tab_key}",
+            help="Color each column by its rank within the current results "
+                 "(green = top, red = bottom), instead of threshold shading.")
         render_generic_table(
             display_metrics, display_cols_final, table_key=tab_key, show_legend=True,
+            heatmap=_heat,
         )
 
 elif section == "Company":
@@ -1607,7 +1612,7 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
     # SEC per-share (TBV/share, book value/share — HoldCo, forward-filled goodwill).
     from ui.chrome import title_bar
     from ui.bank_scope import scope_type_options, render_scope_sub
-    from ui.trends_table import render_trends_table
+    from ui.trends_table import render_trends_table, render_trends_chart
     from data.as_of_metrics import metric_grid, TREND_METRICS
     from data.sec_per_share import (sec_metric_grid, SEC_TREND_METRICS,
                                     SEC_TREND_KEYS, SEC_TREND_FMT)
@@ -1631,6 +1636,15 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
         _scope_t = st.selectbox("Scope", scope_type_options(), key="trend_scope_type")
 
     _td, _ttick, _tlabel = render_scope_sub(all_metrics, _scope_t, key_prefix="trend")
+
+    _tview = st.radio("View", ["Table", "Chart"], horizontal=True, key="trend_view",
+                      label_visibility="collapsed")
+
+    def _show_trend(_rows, _labels):
+        if _tview == "Chart":
+            render_trends_chart(_rows, _labels, _metric, _fmt, _dec, _mlabels[_metric])
+        else:
+            render_trends_table(_rows, _labels, _metric, _fmt, _dec)
 
     _is_sec = _metric in _sec_keys
     _is_all = _scope_t == "All banks"
@@ -1671,7 +1685,7 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
                 f'margin:1px 0 7px;">{_mlabels[_metric]} · {len(_rows)} banks · '
                 f'all banks · {_nq} quarters · {_src} (pre-warmed)</div>',
                 unsafe_allow_html=True)
-            render_trends_table(_rows, _labels, _metric, _fmt, _dec)
+            _show_trend(_rows, _labels)
     else:
         with st.spinner(f"Building {_mlabels[_metric]} across {_nq} quarters for "
                         f"{len(_idmap)} banks…"):
@@ -1681,7 +1695,7 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
             f'margin:1px 0 7px;">{_mlabels[_metric]} · {len(_rows)} banks · '
             f'{_tlabel} · {_nq} quarters · {_src}</div>',
             unsafe_allow_html=True)
-        render_trends_table(_rows, _labels, _metric, _fmt, _dec)
+        _show_trend(_rows, _labels)
 
 elif section == "Earnings":
     # ── EARNINGS ANALYSIS: Aggregate tracking ───────────────────────────

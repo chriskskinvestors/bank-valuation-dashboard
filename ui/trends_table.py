@@ -70,3 +70,45 @@ def render_trends_table(rows: list[dict], labels: list[str], metric_key: str,
         unsafe_allow_html=True,
     )
     return rows
+
+
+def render_trends_chart(rows: list[dict], labels: list[str], metric_key: str,
+                        fmt: str | None = None, dec: int | None = None,
+                        title: str = ""):
+    """Line chart of the quarterly series — one line per bank, time ascending
+    (labels arrive newest-first, so they're reversed). Capped to a readable number
+    of lines; narrow the scope for fewer."""
+    if not rows:
+        st.warning("No data for this metric and scope.")
+        return None
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, CATEGORICAL_PALETTE,
+                                   CHART_HEIGHT_FULL)
+
+    x = list(reversed(labels))   # newest-first → chronological (oldest → newest)
+    MAX_LINES = 12
+    shown = rows[:MAX_LINES]
+    colors = CATEGORICAL_PALETTE
+    fig = go.Figure()
+    plotted = 0
+    for r in shown:
+        tk = str(r.get("ticker") or "")
+        y = [r.get(lb) for lb in x]
+        if sum(1 for v in y if isinstance(v, (int, float))) < 2:
+            continue   # need ≥2 points to draw a line
+        fig.add_trace(go.Scatter(
+            x=x, y=y, mode="lines+markers", name=tk,
+            line=dict(color=colors[plotted % len(colors)], width=2),
+            marker=dict(size=5), connectgaps=True,
+        ))
+        plotted += 1
+    if plotted == 0:
+        st.info("Not enough history to chart this metric for the current scope.")
+        return None
+    apply_standard_layout(fig, title=title, height=CHART_HEIGHT_FULL,
+                          show_legend=True, hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True)
+    if len(rows) > MAX_LINES:
+        st.caption(f"Showing {MAX_LINES} of {len(rows)} banks — narrow the scope "
+                   "for a cleaner chart.")
+    return rows

@@ -293,7 +293,7 @@ def render_peer_comparison(all_metrics: list[dict]):
         _cell_mode = st.radio(
             "Cell display", ["Value", "Δ vs median"], horizontal=True,
             key="compare_cellmode", label_visibility="collapsed")
-        _render_metrics_table(cohort, display_peers, categories,
+        _render_metrics_table(cohort, display_peers, categories, scores,
                               delta=_cell_mode.startswith("Δ"))
     with scatter_tab:
         _render_peer_scatters(cohort)
@@ -417,11 +417,14 @@ def _render_headline_charts(display_peers: list[dict]):
 
 
 def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
-                          categories: list[str], delta: bool = False):
+                          categories: list[str], scores: dict | None = None,
+                          delta: bool = False):
     """Dense side-by-side table — banks (the display subset) in columns, metrics in
     rows grouped under category section headers, EVERY metric per selected category.
     Percentile color and Peer Median resolve against the FULL ``cohort``. When
-    ``delta`` is set, bank cells show the signed difference from the peer median."""
+    ``delta`` is set, bank cells show the signed difference from the peer median.
+    ``scores`` (per-ticker composite) pins an Overall-score row at the top."""
+    scores = scores or {}
     tickers = [m["ticker"] for m in display_peers]   # columns
     style_map = {}                                   # (metric_key, ticker) → color
     sections = []                                    # [(category, [row, …]), …]
@@ -485,9 +488,22 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
 
     n_cols = len(tickers) + 2
     head = ('<th class="nm">Metric</th>'
-            + "".join(f'<th>{_html.escape(t)}</th>' for t in tickers)
+            + "".join(
+                f'<th><a class="lnk tk" href="?bank={_html.escape(t, quote=True)}" '
+                f'target="_self">{_html.escape(t)}</a></th>' for t in tickers)
             + '<th>Peer Median</th>')
-    body_rows = []
+
+    # Pinned "Overall score" row (composite percentile) at the top of the body.
+    ov_cells = ['<td class="nm">Overall score</td>']
+    for t in tickers:
+        _sc = scores.get(t, {}).get("score")
+        _sty = _percentile_color(_sc, True) if _sc is not None else ""
+        _style = f' style="{_sty}"' if _sty else ""
+        ov_cells.append(
+            f'<td class="num"{_style}>{round(_sc) if _sc is not None else "—"}</td>')
+    ov_cells.append('<td class="num med">50</td>')
+    body_rows = ['<tr class="overall">' + "".join(ov_cells) + "</tr>"]
+
     for cat, cat_rows, sub_vals in sections:
         body_rows.append(
             f'<tr class="sec"><td class="nm" colspan="{n_cols}">'
@@ -529,6 +545,12 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
             ".cmp-wrap tr.subtot td{border-top:0.5px solid var(--grid-head);"
             "border-bottom:0.5px solid var(--grid-head);font-weight:600;}"
             ".cmp-wrap tr.subtot td.nm{font-style:italic;color:var(--text-secondary);}"
+            ".cmp-wrap tr.overall td{font-weight:700;"
+            "border-bottom:1px solid var(--grid-head);}"
+            ".cmp-wrap tr.overall td.nm{color:var(--brand-primary);}"
+            ".cmp-wrap thead th a.tk{color:inherit;text-decoration:none;font-weight:600;}"
+            ".cmp-wrap thead th a.tk:hover{color:var(--brand-primary);"
+            "text-decoration:underline;}"
             "</style>"
             f'<div class="cmp-wrap"><table class="ksk-grid">'
             f'<thead><tr>{head}</tr></thead><tbody>{"".join(body_rows)}</tbody></table></div>',
