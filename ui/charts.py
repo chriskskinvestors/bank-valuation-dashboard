@@ -12,14 +12,32 @@ from config import METRICS_BY_KEY
 from utils.chart_style import CHART_LAYOUT
 
 
-def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
+def price_readout(df: pd.DataFrame, ticker: str, over_period: bool = True) -> str:
+    """The compact 'TICKER $last +pct%' readout (HTML, the move colored). Used as
+    the chart's own title AND, when a caller renders its own header bar, as the
+    standalone readout beside the timeframe buttons — so both read identically.
+    Returns a '— no price data' line when the series is empty (never a fake number)."""
+    if df is None or df.empty or "close" not in df.columns:
+        return f"{ticker} — no price data"
+    y = df.sort_values("date")["close"].astype(float)
+    first, last = float(y.iloc[0]), float(y.iloc[-1])
+    color = "#059669" if last >= first else "#dc2626"
+    pct = ((last - first) / first * 100) if first else 0.0
+    suffix = " over period" if over_period else ""
+    return (f"{ticker}  ${last:,.2f}  "
+            f"<span style='color:{color}'>{pct:+.2f}%{suffix}</span>")
+
+
+def price_chart(df: pd.DataFrame, ticker: str, show_title: bool = True) -> go.Figure:
     """A proper price chart: candlesticks (when OHLC is available) + a volume
     panel, taller aspect ratio, gridlines. Falls back to a clean line if only
-    close prices exist."""
+    close prices exist. `show_title=False` drops the in-chart title for callers
+    that render the readout themselves (e.g. a header bar with the timeframe
+    buttons) — avoids showing it twice."""
     from utils.chart_style import apply_standard_layout
     if df is None or df.empty or "close" not in df.columns:
         fig = go.Figure()
-        apply_standard_layout(fig, title=f"{ticker} — no price data",
+        apply_standard_layout(fig, title=(price_readout(df, ticker) if show_title else ""),
                               height=300, show_legend=False)
         return fig
 
@@ -28,9 +46,7 @@ def price_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
     first, last = float(y.iloc[0]), float(y.iloc[-1])
     up = last >= first
     color = "#059669" if up else "#dc2626"
-    pct = ((last - first) / first * 100) if first else 0.0
-    title = (f"{ticker}  ${last:,.2f}  "
-             f"<span style='color:{color}'>{pct:+.2f}% over period</span>")
+    title = price_readout(df, ticker) if show_title else ""
 
     has_vol = "volume" in d.columns and d["volume"].notna().any()
 

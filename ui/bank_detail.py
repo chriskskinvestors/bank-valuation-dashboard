@@ -14,7 +14,7 @@ from data.ibkr_client import get_ibkr_client
 from analysis.peer_comparison import build_radar_data, get_peer_group_by_asset_size
 from utils.formatting import format_value
 from ui.charts import (
-    price_chart, metrics_trend_chart, peer_radar_chart, balance_sheet_chart,
+    price_chart, price_readout, metrics_trend_chart, peer_radar_chart, balance_sheet_chart,
     asset_composition_chart, loan_mix_chart, funding_mix_chart,
     growth_trend_chart, loans_deposits_chart,
 )
@@ -480,18 +480,21 @@ def _valuation_history_chart(ticker: str, info: dict):
 
 
 def _render_price_panel(ticker: str):
-    """Interactive price + volume chart with a flat, Koyfin-style timeframe strip
-    — borderless square buttons compacted to the dense grid scale, the active one
-    on a subtle brand tint. No "Price" label: the chart titles itself with the
-    ticker and the period move, so the strip sits straight above it."""
+    """Interactive price + volume chart. One header row: the price readout
+    (ticker · last · period move) on the left, a flat Koyfin-style timeframe strip
+    (borderless square buttons, active on a subtle brand tint) right-aligned. The
+    chart drops its own title (show_title=False) so the readout isn't shown twice."""
     with st.container(key="ov_price_box"):
         st.markdown(
             "<style>"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
+            ".st-key-ov_price_box .ovp-readout{font-size:var(--fs-sm);font-weight:600;"
+            "color:var(--text-primary);white-space:nowrap;}"
+            # flat borderless strip, right-aligned in its column
             ".st-key-ov_price_box [data-testid='stButtonGroup']{gap:1px!important;"
             "background:transparent!important;border:0!important;padding:0!important;"
-            "justify-content:flex-start!important;}"
+            "justify-content:flex-end!important;}"
             ".st-key-ov_price_box [data-testid^='stBaseButton-segmented_control']"
             "{min-height:0!important;height:18px!important;padding:0 5px!important;"
             "border:0!important;border-radius:0!important;background:transparent!important;"
@@ -502,18 +505,25 @@ def _render_price_panel(ticker: str):
             ".st-key-ov_price_box [data-testid='stBaseButton-segmented_controlActive']"
             "{background:var(--brand-soft)!important;color:var(--brand-primary)!important;}"
             "</style>", unsafe_allow_html=True)
-        per = st.segmented_control(
-            "Period", ["1W", "1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y", "ALL"],
-            default="1Y", key=f"ov_price_per_{ticker}",
-            label_visibility="collapsed") or "1Y"
+        # Header row: readout (left) · timeframe buttons (right). The buttons are
+        # rendered first to resolve the period that the readout/chart then use.
+        _hl, _hr = st.columns([1, 1], vertical_alignment="center")
+        with _hr:
+            per = st.segmented_control(
+                "Period", ["1W", "1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y", "ALL"],
+                default="1Y", key=f"ov_price_per_{ticker}",
+                label_visibility="collapsed") or "1Y"
         hist_df = pd.DataFrame()
         try:
             from data.fmp_client import get_history
             hist_df = get_history(ticker, per)
         except Exception:
             pass
-        st.plotly_chart(price_chart(hist_df, ticker), use_container_width=True,
-                        key=f"ov_price_{ticker}")
+        _hl.markdown(
+            f"<div class='ovp-readout'>{price_readout(hist_df, ticker, over_period=False)}</div>",
+            unsafe_allow_html=True)
+        st.plotly_chart(price_chart(hist_df, ticker, show_title=False),
+                        use_container_width=True, key=f"ov_price_{ticker}")
 
 
 def _render_valuation_panel(ticker: str, info: dict):
