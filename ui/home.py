@@ -436,10 +436,10 @@ def _af_rates_table() -> str:
     bundle = _rates_bundle()
 
     head = ('<div class="erow r7 eh"><span class="h">Instrument</span>'
-            '<span class="num h">Level</span><span class="num h">1D</span>'
-            '<span class="num h">1W</span><span class="num h">1M</span>'
-            '<span class="num h">YTD</span>'
-            '<span class="h" style="text-align:center">52W</span></div>')
+            '<span class="num h">Level %</span><span class="num h">1D bp</span>'
+            '<span class="num h">1W bp</span><span class="num h">1M bp</span>'
+            '<span class="num h">YTD bp</span>'
+            '<span class="h" style="text-align:center">52wk</span></div>')
     body = ""
     for section, rows in _AF_RATES_SECTIONS:
         is_spread = section == "Spreads"
