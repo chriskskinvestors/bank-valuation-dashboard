@@ -69,5 +69,32 @@ class TestDeploySecretContract(unittest.TestCase):
         self.assertIn("steps.secrets_arg.outputs.secrets", self.text)
 
 
+class TestJobSecretCoverageMap(unittest.TestCase):
+    """Well-formedness of ops/report_job_secret_coverage.py's EXPECTED map —
+    catches typos (an expected job not in the sync list, or an unknown secret)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        path = DEPLOY_YML.resolve().parents[2] / "ops" / "report_job_secret_coverage.py"
+        spec = importlib.util.spec_from_file_location("_jobcov", path)
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+
+    def test_expected_jobs_are_in_the_synced_job_list(self):
+        unknown = set(self.mod.EXPECTED) - set(self.mod.JOBS)
+        self.assertEqual(set(), unknown, f"EXPECTED names not in JOBS: {sorted(unknown)}")
+
+    def test_expected_secrets_are_known_env_vars(self):
+        known = {"FMP_API_KEY", "FRED_API_KEY", "ANTHROPIC_API_KEY",
+                 "FFIEC_USERNAME", "FFIEC_JWT_TOKEN"}
+        used = set().union(*self.mod.EXPECTED.values())
+        self.assertTrue(used <= known, f"unknown secret env var(s): {sorted(used - known)}")
+
+    def test_observe_only_default(self):
+        # Stays non-blocking until a clean baseline is established by hand.
+        self.assertTrue(self.mod.OBSERVE_ONLY)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -214,6 +214,16 @@ jobs:
           fi
           echo "All scheduled jobs carry the invoker binding."
 
+      # Secret-side twin of the invoker check, but OBSERVE-ONLY for now: a job
+      # that silently lost e.g. FMP_API_KEY warms nothing and the cached panes
+      # go blank with no error (the 2026-06-24 outage was the service-side
+      # version). Reports each job's mounted secrets + warns on a missing
+      # expected one; never fails the deploy (continue-on-error) until a clean
+      # baseline is established. See ops/report_job_secret_coverage.py.
+      - name: Report secret coverage on Cloud Run Jobs (observe-only)
+        continue-on-error: true
+        run: python ops/report_job_secret_coverage.py
+
       # Block silent regressions: deploy succeeded but if any ticker no
       # longer resolves to a working data source, fail the workflow so it
       # surfaces in the GitHub UI + CI status. The service still serves
