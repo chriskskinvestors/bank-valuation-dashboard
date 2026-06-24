@@ -40,7 +40,7 @@ def _transcript_body_html(content: str) -> str:
             paras.append(f'<p style="margin:0 0 11px;">{_h.escape(line)}</p>')
     return (
         '<div style="max-height:620px;overflow-y:auto;padding:10px 16px;'
-        'border:1px solid var(--border-default,#e2e8f0);border-radius:8px;'
+        'border:1px solid var(--border-default,#e2e8f0);border-radius:0;'
         'background:var(--bg-surface,#fff);font-size:var(--fs-sm,0.86rem);'
         f'line-height:1.55;">{"".join(paras)}</div>')
 

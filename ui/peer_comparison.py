@@ -159,7 +159,7 @@ def _render_scorecard(scores: dict, order: list[str]):
             parts.append(f'<span style="color:#b91c1c;">▼{s["bot"]}</span>')
         chips.append(
             f'<span style="font-size:0.75rem;background:var(--bg-surface);'
-            f'border:0.5px solid var(--grid-head);border-radius:6px;padding:4px 9px;'
+            f'border:0.5px solid var(--grid-head);border-radius:0;padding:4px 9px;'
             f'white-space:nowrap;">{" ".join(parts)}</span>')
     if not chips:
         return
@@ -339,7 +339,7 @@ def _render_highlights(peers: list[dict]):
                                        m_def.get("decimals", 2)))
         chips.append(
             f'<span style="font-size:0.75rem;background:var(--bg-surface);'
-            f'border:0.5px solid var(--grid-head);border-radius:6px;padding:4px 9px;'
+            f'border:0.5px solid var(--grid-head);border-radius:0;padding:4px 9px;'
             f'white-space:nowrap;">'
             f'<span style="color:var(--text-secondary);">{_html.escape(label)}</span> '
             f'<b>{_html.escape(tk)}</b> '
@@ -425,8 +425,8 @@ def _render_headline_charts(display_peers: list[dict]):
                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
                 f'{_html.escape(tk)}</span>'
                 f'<div style="flex:1;min-width:24px;background:var(--grid-head-bg);'
-                f'border-radius:2px;"><div style="height:11px;width:{w}%;'
-                f'background:{color};border-radius:2px;"></div></div>'
+                f'border-radius:0;"><div style="height:11px;width:{w}%;'
+                f'background:{color};border-radius:0;"></div></div>'
                 f'<span style="width:44px;text-align:right;font-size:0.7rem;">{vs}</span>'
                 f'{spark}</div>')
         note = "" if higher_better else " · lower better"
@@ -675,7 +675,7 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
 
         # ── Legend — same scale that colors the cells ──────────────────
         chips = "".join(
-            f'<div style="background:{bg}; padding:4px 10px; border-radius:4px; '
+            f'<div style="background:{bg}; padding:4px 10px; border-radius:0; '
             f'color:{fg};">{"<b>" + label + "</b>" if bold else label}</div>'
             for _floor, label, bg, fg, bold in _PCT_SCALE
         )

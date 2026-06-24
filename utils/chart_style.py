@@ -154,7 +154,7 @@ ALERT_STYLE = {
         "color: #991b1b; "
         "border: 1px solid rgba(220, 38, 38, 0.22); "
         "border-left: 3px solid #dc2626; "
-        "padding: 9px 14px; margin: 4px 0; border-radius: 6px; "
+        "padding: 9px 14px; margin: 4px 0; border-radius:0; "
         "font-size: 0.88rem; line-height: 1.45;"
     ),
     "medium": (
@@ -162,7 +162,7 @@ ALERT_STYLE = {
         "color: #92400e; "
         "border: 1px solid rgba(217, 119, 6, 0.22); "
         "border-left: 3px solid #d97706; "
-        "padding: 9px 14px; margin: 4px 0; border-radius: 6px; "
+        "padding: 9px 14px; margin: 4px 0; border-radius:0; "
         "font-size: 0.88rem; line-height: 1.45;"
     ),
     "ok": (
@@ -170,7 +170,7 @@ ALERT_STYLE = {
         "color: #065f46; "
         "border: 1px solid rgba(5, 150, 105, 0.22); "
         "border-left: 3px solid #059669; "
-        "padding: 9px 14px; margin: 4px 0; border-radius: 6px; "
+        "padding: 9px 14px; margin: 4px 0; border-radius:0; "
         "font-size: 0.88rem; line-height: 1.45;"
     ),
 }

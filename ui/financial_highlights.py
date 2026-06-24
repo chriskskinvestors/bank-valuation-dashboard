@@ -723,7 +723,7 @@ td.val:hover {{ background:rgba(30,64,175,0.14) !important; text-decoration:unde
 #ov {{ position:fixed; inset:0; background:rgba(15,23,42,0.35); display:none;
   align-items:flex-start; justify-content:center; padding-top:40px; z-index:50; }}
 #card {{ width:min(440px,92%); background:#fff; border:1px solid rgba(148,163,184,0.3);
-  border-radius:10px; box-shadow:0 12px 40px rgba(15,23,42,0.25); overflow:hidden; }}
+  border-radius:0; box-shadow:0 12px 40px rgba(15,23,42,0.25); overflow:hidden; }}
 #card .hd {{ padding:13px 16px; border-bottom:1px solid rgba(148,163,184,0.2); }}
 #card .ttl {{ display:flex; justify-content:space-between; align-items:center;
   font-size:15px; font-weight:700; color:#0f172a; }}

@@ -73,7 +73,7 @@ def render_data_quality(ticker: str):
         st.markdown(
             '<div style="background: rgba(5, 150, 105, 0.08); color: #065f46; '
             'border: 1px solid rgba(5, 150, 105, 0.22); border-left: 3px solid #059669; '
-            'padding: 12px 16px; border-radius: 6px; font-size: 0.88rem;">'
+            'padding: 12px 16px; border-radius:0; font-size: 0.88rem;">'
             "<strong>All checks passed</strong> — no range violations or "
             "reconciliation issues detected."
             "</div>",
@@ -87,7 +87,7 @@ def render_data_quality(ticker: str):
         st.markdown(
             f'<div style="background: {bg}; color: {text_color}; '
             f'border: 1px solid {border}; border-left: 3px solid {color}; '
-            f'padding: 12px 16px; border-radius: 6px; font-size: 0.88rem;">'
+            f'padding: 12px 16px; border-radius:0; font-size: 0.88rem;">'
             f"<strong>{summary['errors']} errors, {summary['warnings']} warnings</strong> — "
             f"review the Findings table below."
             f"</div>",

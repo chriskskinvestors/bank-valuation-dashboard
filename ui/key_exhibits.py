@@ -122,7 +122,7 @@ def _exhibit_table(rows: list[dict]) -> str:
     body = []
     for i, r in enumerate(rows):
         badge = (f'<span style="background:{r["color"]};color:white;'
-                 f'padding:2px 8px;border-radius:4px;font-size:0.78em;'
+                 f'padding:2px 8px;border-radius:0;font-size:0.78em;'
                  f'font-weight:600;white-space:nowrap;">{r["type"]}</span>')
         fam = (f'<span style="color:{r["color"]};font-size:0.8em;'
                f'font-weight:600;white-space:nowrap;">{r["family"]}</span>')
@@ -142,7 +142,7 @@ def _exhibit_table(rows: list[dict]) -> str:
     return f"""
     <style>
     .exhibits-tbl {{ width:100%; border-collapse:collapse; font-size:13px;
-      border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
+      border:1px solid rgba(148,163,184,0.22); border-radius:0; overflow:hidden; }}
     .exhibits-tbl thead th {{ padding:8px 10px; text-align:left; color:var(--text-primary);
       font-weight:600; border-bottom:1px solid rgba(148,163,184,0.3);
       background:rgba(241,245,249,0.6); }}

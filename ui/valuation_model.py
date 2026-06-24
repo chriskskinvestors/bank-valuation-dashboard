@@ -233,7 +233,7 @@ def _render_verdict_banner(price, blended, dcf_fv, w_fair_price, irr, coe_pct):
 
     banner = (
         f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;'
-        f'background:{bg};border:1px solid {bd};border-radius:12px;'
+        f'background:{bg};border:1px solid {bd};border-radius:0;'
         f'padding:12px 16px;margin:2px 0 10px;">'
         f'<div style="padding-right:16px;">'
         f'<div style="font-size:0.64rem;text-transform:uppercase;letter-spacing:.04em;'

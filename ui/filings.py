@@ -95,12 +95,12 @@ def _form_badge(form: str, is_earnings: bool = False) -> str:
     color = FORM_COLORS.get(form, "#757575")  # default grey — no :root token match (flagged)
     badge = (
         f'<span style="background:{color};color:var(--text-inverse);padding:2px 8px;'
-        f'border-radius:4px;font-size:0.8em;font-weight:600;">{form}</span>'
+        f'border-radius:0;font-size:0.8em;font-weight:600;">{form}</span>'
     )
     if is_earnings:
         badge += (
             ' <span style="background:#ff6f00;color:var(--text-inverse);padding:2px 6px;'
-            'border-radius:4px;font-size:0.75em;">EARNINGS</span>'
+            'border-radius:0;font-size:0.75em;">EARNINGS</span>'
         )
     return badge
 
@@ -483,7 +483,7 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
     table_html = f"""
     <style>
     .filings-tbl {{ width:100%; border-collapse:collapse; font-size:13px;
-      border:1px solid rgba(148,163,184,0.22); border-radius:8px; overflow:hidden; }}
+      border:1px solid rgba(148,163,184,0.22); border-radius:0; overflow:hidden; }}
     .filings-tbl thead th {{ padding:8px 10px; text-align:left; color:var(--text-primary);
       font-weight:600; border-bottom:1px solid rgba(148,163,184,0.3);
       background:rgba(241,245,249,0.6); }}

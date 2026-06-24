@@ -821,7 +821,7 @@ def _render_all_metrics(row):
         .m-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
           gap:6px;margin:1px 0 14px;}
         .m-card{background:rgba(148,163,184,0.05);border:1px solid rgba(148,163,184,0.16);
-          border-radius:8px;padding:6px 10px;}
+          border-radius:0;padding:6px 10px;}
         .m-card .m-lbl{font-size:0.6rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;
           letter-spacing:0.02em;}
         .m-card .m-lbl .i{color:#b6c0cc;cursor:help;font-weight:400;}

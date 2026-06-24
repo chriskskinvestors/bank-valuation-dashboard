@@ -237,7 +237,7 @@ if section == "Screen & Compare":
               margin-bottom:12px;}
           .st-key-sc_subnav div[role="radiogroup"]>label{margin:0 !important;
               padding:6px 16px;cursor:pointer;border-bottom:2px solid transparent;
-              border-radius:6px 6px 0 0;transition:background .12s,border-color .12s;}
+              border-radius:0;transition:background .12s,border-color .12s;}
           .st-key-sc_subnav div[role="radiogroup"]>label:hover{background:var(--bg-hover);}
           .st-key-sc_subnav div[role="radiogroup"]>label>div:first-of-type{
               display:none !important;}
@@ -277,7 +277,7 @@ if section == "Screen & Compare":
           [data-baseweb="tab-highlight"]{background:var(--brand-primary) !important;}
           /* Thin expander headers (Compare sub-view still uses expanders). */
           div[data-testid="stExpander"] summary{padding-top:0.3rem;padding-bottom:0.3rem;}
-          div[data-testid="stExpander"] details{border-radius:6px;}
+          div[data-testid="stExpander"] details{border-radius:0;}
         </style>
         """,
         unsafe_allow_html=True,

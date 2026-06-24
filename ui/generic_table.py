@@ -87,7 +87,7 @@ def _render_heatmap_legend():
     """Legend for the percentile heatmap (same scale that colors the cells)."""
     labels = ["Top 20%", "60–80th", "40–60th", "20–40th", "Bottom 20%"]
     chips = "".join(
-        f'<span style="background:{bg};color:{fg};padding:3px 9px;border-radius:4px;'
+        f'<span style="background:{bg};color:{fg};padding:3px 9px;border-radius:0;'
         f'{"font-weight:600;" if bold else ""}">{lbl}</span>'
         for (_floor, bg, fg, bold), lbl in zip(_HEAT_SCALE, labels))
     st.markdown(

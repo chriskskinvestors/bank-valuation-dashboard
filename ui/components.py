@@ -93,7 +93,7 @@ def stat_pill(label: str, value_html: str, delta_html: str = "",
             if foot_html else "")
     pill = (
         '<span style="display:inline-flex; flex-direction:column; '
-        f'padding:{pad}; border-radius:7px; background:{bg}; '
+        f'padding:{pad}; border-radius:0; background:{bg}; '
         f'border:1px solid {border}; line-height:1.25;'
         + ("cursor:pointer;" if href else "") + '">'
         f'<span style="font-size:var(--fs-2xs); color:{label_col}; font-weight:600; '
@@ -129,7 +129,7 @@ def bank_link_row(ticker: str, name: str, right_html: str) -> str:
     return (
         f'<a href="?bank={_html.escape(str(ticker), quote=True)}" target="_self" '
         'style="display:flex; align-items:baseline; justify-content:space-between; '
-        'gap:8px; padding:5px 11px; border-radius:7px; text-decoration:none; '
+        'gap:8px; padding:5px 11px; border-radius:0; text-decoration:none; '
         'border:1px solid var(--border-subtle);">'
         '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; '
         'white-space:nowrap;">'

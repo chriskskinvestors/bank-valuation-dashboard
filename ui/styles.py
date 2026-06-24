@@ -55,11 +55,14 @@ CUSTOM_CSS = """
         --shadow-md: 0 4px 6px rgba(15, 23, 42, 0.04), 0 10px 15px rgba(15, 23, 42, 0.06);
         --shadow-lg: 0 20px 25px rgba(15, 23, 42, 0.08), 0 10px 10px rgba(15, 23, 42, 0.04);
 
-        /* Radii */
-        --radius-sm: 6px;
-        --radius-md: 10px;
-        --radius-lg: 14px;
-        --radius-xl: 20px;
+        /* Radii — owner directive: zero rounding anywhere (hard 90° corners).
+           Every var(--radius-*) consumer therefore renders square; the global
+           override at the end of this sheet squares Streamlit's own components
+           too, re-asserting 50% only for the genuine status/range dots. */
+        --radius-sm: 0;
+        --radius-md: 0;
+        --radius-lg: 0;
+        --radius-xl: 0;
 
         /* Type scale — the font sizes inline HTML may use for chrome/body.
            (The audit found 31 ad-hoc sizes between 0.55 and 1.2rem; every new
@@ -136,7 +139,7 @@ CUSTOM_CSS = """
         min-height: 30px !important; height: 30px !important;
         padding-top: 0 !important; padding-bottom: 0 !important;
         border: 1px solid var(--border-default) !important;
-        border-radius: 4px !important;
+        border-radius: 0 !important;
         background: #fff !important;
         box-shadow: none !important;
     }
@@ -288,7 +291,7 @@ CUSTOM_CSS = """
         background: var(--bg-inset) !important;
         color: var(--brand-primary) !important;
         padding: 2px 6px !important;
-        border-radius: 4px !important;
+        border-radius: 0 !important;
         font-size: 0.85em !important;
         font-family: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace !important;
         border: 1px solid var(--border-subtle) !important;
@@ -733,7 +736,7 @@ CUSTOM_CSS = """
     .freshness-badge {
         display: inline-block;
         padding: 2px 9px;
-        border-radius: 12px;
+        border-radius: 0;
         font-size: 0.7rem;
         font-weight: 500;
         border: 1px solid;
@@ -766,7 +769,7 @@ CUSTOM_CSS = """
     }
     ::-webkit-scrollbar-thumb {
         background: var(--border-default);
-        border-radius: 5px;
+        border-radius: 0;
     }
     ::-webkit-scrollbar-thumb:hover {
         background: var(--border-strong);
@@ -799,7 +802,7 @@ CUSTOM_CSS = """
     }
     .st-key-company_section_nav div[role="radiogroup"] > label {
         margin: 0 !important; padding: 7px 14px; cursor: pointer;
-        border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0;
+        border-bottom: 2px solid transparent; border-radius: 0;
         transition: background 0.12s, border-color 0.12s;
     }
     .st-key-company_section_nav div[role="radiogroup"] > label:hover {
@@ -825,7 +828,7 @@ CUSTOM_CSS = """
     }
     .st-key-company_subtab_nav div[role="radiogroup"] > label {
         margin: 0 !important; padding: 3px 11px; cursor: pointer;
-        border-radius: 14px; transition: background 0.12s;
+        border-radius: 0; transition: background 0.12s;
     }
     .st-key-company_subtab_nav div[role="radiogroup"] > label:hover {
         background: rgba(37, 99, 235, 0.06);
@@ -847,7 +850,7 @@ CUSTOM_CSS = """
        section tab bar and the sub-tab pills) */
     .st-key-company_basis_nav div[role="radiogroup"] {
         display: inline-flex; gap: 0; margin: 6px 0 4px;
-        border: 1px solid rgba(148, 163, 184, 0.45); border-radius: 8px; overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.45); border-radius: 0; overflow: hidden;
     }
     .st-key-company_basis_nav div[role="radiogroup"] > label {
         margin: 0 !important; padding: 5px 18px; cursor: pointer;
@@ -876,7 +879,7 @@ CUSTOM_CSS = """
     .mc {
         background: rgba(148,163,184,0.05);
         border: 1px solid rgba(148,163,184,0.16);
-        border-radius: 10px; padding: 8px 12px; min-width: 0;
+        border-radius: 0; padding: 8px 12px; min-width: 0;
         transition: border-color 0.12s, background 0.12s;
     }
     .mc[title]:hover { border-color: rgba(37,99,235,0.35); background: rgba(37,99,235,0.05); }
@@ -893,5 +896,24 @@ CUSTOM_CSS = """
     }
     .mc-src { color: #b6c0cc; text-decoration: none; font-weight: 400; flex-shrink: 0; }
     .mc-src:hover { color: var(--brand-primary); }
+
+    /* ═══════════════════════════════════════════════════════════════════
+       GLOBAL SQUARE-CORNERS OVERRIDE (owner directive — zero rounding)
+       Belt-and-suspenders: Streamlit's own components (buttons, tabs,
+       dataframes, metric cards, selectboxes/inputs, expanders, alerts,
+       sliders, the segmented control, code blocks, the top nav) round
+       themselves regardless of our tokens. Square everything hard, then
+       re-assert 50% ONLY for the genuine circles — the status/range dots.
+       Kept last so it wins the cascade. */
+    *, *::before, *::after { border-radius: 0 !important; }
+
+    /* Re-round the real circles (status dots + Home range-bar dots). These
+       carry higher specificity than `*` AND !important, so they win. */
+    .ksk-dot,
+    .ksk-hero-meta .dot,
+    .status-dot,
+    .afwrap .live,
+    .afwrap .rngdot,
+    .afwrap .dotc { border-radius: 50% !important; }
 </style>
 """

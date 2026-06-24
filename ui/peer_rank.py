@@ -106,8 +106,8 @@ def _metric_row(key: str, d: dict) -> str:
         'border-bottom:1px solid rgba(148,163,184,0.12);">'
         f'<div style="width:140px;flex-shrink:0;font-size:0.82rem;color:#334155;">{_html.escape(label)}</div>'
         f'<div style="width:74px;flex-shrink:0;font-size:0.9rem;font-weight:700;color:#0f172a;">{val:.2f}%</div>'
-        '<div style="flex:1;height:9px;background:#eef2f7;border-radius:5px;min-width:60px;">'
-        f'<div style="width:{max(2, min(100, p)):.0f}%;height:100%;background:{color};border-radius:5px;"></div>'
+        '<div style="flex:1;height:9px;background:#eef2f7;border-radius:0;min-width:60px;">'
+        f'<div style="width:{max(2, min(100, p)):.0f}%;height:100%;background:{color};border-radius:0;"></div>'
         '</div>'
         f'<div style="width:150px;flex-shrink:0;text-align:right;font-size:0.78rem;color:{color};font-weight:700;">'
         f'{_ordinal(p)} pctile <span style="color:#94a3b8;font-weight:500;">· {rank_txt}</span></div>'
@@ -166,7 +166,7 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
     if glance:
         st.markdown(
             '<div style="font-size:0.92rem;color:#0f172a;background:rgba(148,163,184,0.06);'
-            'border-radius:10px;padding:10px 14px;margin:2px 0 12px;">'
+            'border-radius:0;padding:10px 14px;margin:2px 0 12px;">'
             '<span style="color:#64748b;">At a glance — </span>'
             + " &nbsp;·&nbsp; ".join(glance) + '</div>',
             unsafe_allow_html=True,
@@ -252,7 +252,7 @@ def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str):
         f'<div style="font-size:0.72rem;color:#64748b;margin-bottom:4px;">'
         f'{_LABELS.get(key, key)} — {"higher" if hib else "lower"} is better · {len(rows)} banks</div>'
         '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;'
-        'border:1px solid rgba(148,163,184,0.22);border-radius:8px;overflow:hidden;">'
+        'border:1px solid rgba(148,163,184,0.22);border-radius:0;overflow:hidden;">'
         '<thead><tr style="background:rgba(241,245,249,0.7);color:#0f172a;">'
         '<th style="padding:6px 10px;text-align:left;">Rank</th>'
         '<th style="padding:6px 10px;text-align:left;">Ticker</th>'

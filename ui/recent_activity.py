@@ -71,7 +71,7 @@ _FEED_CSS = """
 .ev-row { padding: 6px 0 7px; border-bottom: 1px solid rgba(148,163,184,0.14); }
 .ev-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.2; }
 .ev-tk { font-weight: 700; color: var(--text-primary); font-size: 0.82rem; }
-.ev-badge { font-size: 0.64rem; font-weight: 600; padding: 1px 7px; border-radius: 9px;
+.ev-badge { font-size: 0.64rem; font-weight: 600; padding: 1px 7px; border-radius:0;
             background: rgba(107,114,128,0.12); color: #6b7280; white-space: nowrap; }
 .ev-ago { color: var(--text-muted); font-size: 0.72rem; margin-left: auto; white-space: nowrap; }
 .ev-head { font-size: 0.88rem; font-weight: 600; color: var(--text-primary); line-height: 1.3; margin-top: 1px; }

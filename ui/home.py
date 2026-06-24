@@ -147,7 +147,7 @@ _AF_TF_TAIL = {"1W": 5, "1M": 21, "3M": 63, "6M": 126, "1Y": 252, "2Y": 504}
 _AF_CSS = r"""
 <style>
 .afwrap{--mono:'SFMono-Regular','SF Mono','JetBrains Mono',ui-monospace,'Roboto Mono',Menlo,Consolas,monospace;color:#111827;}
-.afwrap .pane{background:#fff;border:1px solid #dde3ec;border-radius:3px;display:flex;flex-direction:column;overflow:hidden;}
+.afwrap .pane{background:#fff;border:1px solid #dde3ec;border-radius:0;display:flex;flex-direction:column;overflow:hidden;}
 .afwrap .hd{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;padding:9px 14px 7px;border-bottom:1px solid #eceff4;}
 .afwrap .hd .t{font-size:var(--fs-grid-11);font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#1e293b;}
 .afwrap .hd .s{font-size:var(--fs-grid-9);font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#94a3b8;display:flex;align-items:center;gap:5px;}
@@ -179,7 +179,7 @@ _AF_CSS = r"""
 .afwrap .erow.r7{grid-template-columns:1.18fr .72fr .56fr .56fr .56fr .58fr .86fr;column-gap:4px;padding:0 10px;}
 .afwrap .erow.r7 .num{font-size:var(--fs-grid-10);}
 .afwrap .rsec{font-size:var(--fs-grid-8);font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#1e3a8a;background:#f7f9fc;padding:4px 10px 3px;border-bottom:1px solid #eef1f5;}
-.afwrap .rng{position:relative;height:5px;width:100%;border-radius:3px;background:#e9edf3;align-self:center;}
+.afwrap .rng{position:relative;height:5px;width:100%;border-radius:0;background:#e9edf3;align-self:center;}
 .afwrap .rng .rngdot{position:absolute;top:50%;width:5px;height:5px;border-radius:50%;background:#1e3a8a;transform:translate(-50%,-50%);}
 .afwrap .h{font-size:var(--fs-grid-8_5);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9aa6b4;}
 .afwrap .num{text-align:right;font-family:var(--mono);font-size:var(--fs-grid-11);font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:#1f2937;}
@@ -188,22 +188,22 @@ _AF_CSS = r"""
 .afwrap .tk{font-size:var(--fs-grid-10_5);font-weight:700;letter-spacing:.03em;color:#1e3a8a;text-decoration:none;}
 .afwrap .up{color:#047857;}.afwrap .dn{color:#b91c1c;}.afwrap .mut{color:#aab4c2;}
 .afwrap a.crow{text-decoration:none;color:inherit;display:contents;}
-.afwrap .cbx{width:11px;height:11px;border:1px solid #1e3a8a;border-radius:2px;background:#1e3a8a;position:relative;display:inline-block;}
+.afwrap .cbx{width:11px;height:11px;border:1px solid #1e3a8a;border-radius:0;background:#1e3a8a;position:relative;display:inline-block;}
 .afwrap .cbx.off{background:#fff;}
 .afwrap .cbx:not(.off):after{content:"";position:absolute;left:3px;top:1px;width:2.5px;height:5.5px;border:solid #fff;border-width:0 1.4px 1.4px 0;transform:rotate(45deg);}
 .afwrap .ph{display:flex;align-items:center;justify-content:center;color:#aab4c2;font-size:var(--fs-grid-11);font-style:italic;}
 .afwrap .pend{padding:7px 14px;color:#aab4c2;font-size:var(--fs-grid-10);font-style:italic;}
 .afwrap .ctl{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:6px 12px 5px;border-bottom:1px solid #f4f6f9;flex-wrap:wrap;}
 .afwrap .seg{display:flex;gap:2px;}
-.afwrap .seg a{font-family:var(--mono);font-size:var(--fs-grid-8);font-weight:700;padding:2px 5px;border-radius:3px;color:#7c8a9c;background:#f1f4f8;text-decoration:none;}
+.afwrap .seg a{font-family:var(--mono);font-size:var(--fs-grid-8);font-weight:700;padding:2px 5px;border-radius:0;color:#7c8a9c;background:#f1f4f8;text-decoration:none;}
 .afwrap .seg a.on{background:#1e3a8a;color:#fff;}
 .afwrap .cdiv{width:1px;height:10px;background:#e2e8f0;margin:0 3px;}
 .afwrap .seglbl{font-size:var(--fs-grid-7_5);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#aab4c2;}
 .afwrap .dd{position:relative;font-size:var(--fs-grid-8);overflow:visible!important;}
-.afwrap .dd summary{list-style:none;cursor:pointer;font-family:var(--mono);font-size:var(--fs-grid-8)!important;line-height:1.5!important;font-weight:700;color:#7c8a9c;background:#f1f4f8;border:none;border-radius:3px;padding:2px 6px!important;min-height:0!important;display:inline-block;}
+.afwrap .dd summary{list-style:none;cursor:pointer;font-family:var(--mono);font-size:var(--fs-grid-8)!important;line-height:1.5!important;font-weight:700;color:#7c8a9c;background:#f1f4f8;border:none;border-radius:0;padding:2px 6px!important;min-height:0!important;display:inline-block;}
 .afwrap .dd summary::-webkit-details-marker{display:none;}
-.afwrap .dd .menu{position:absolute;z-index:6;top:115%;left:0;background:#fff;border:1px solid #d8dee8;border-radius:4px;box-shadow:0 4px 12px rgba(15,23,42,.12);min-width:128px;padding:3px;}
-.afwrap .dd .menu a{display:block;padding:3px 8px;font-size:var(--fs-grid-9);color:#334155;text-decoration:none;border-radius:3px;white-space:nowrap;}
+.afwrap .dd .menu{position:absolute;z-index:6;top:115%;left:0;background:#fff;border:1px solid #d8dee8;border-radius:0;box-shadow:0 4px 12px rgba(15,23,42,.12);min-width:128px;padding:3px;}
+.afwrap .dd .menu a{display:block;padding:3px 8px;font-size:var(--fs-grid-9);color:#334155;text-decoration:none;border-radius:0;white-space:nowrap;}
 .afwrap .dd .menu a.on{background:#eef2fb;color:#1e3a8a;font-weight:600;}
 .afwrap .dotc{width:7px;height:7px;border-radius:50%;display:inline-block;flex:0 0 auto;}
 .afwrap .evt{font-size:var(--fs-grid-11);color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -232,7 +232,7 @@ _AF_CSS = r"""
    margin-bottom + a constant 6.75px baseline gap, and the column gap is
    Streamlit "small" = 9px. Set margin-bottom to 2.25px so the row gap lands at
    2.25 + 6.75 = 9px, matching the column gap — tight, even gutters both ways. */
-div[class*="st-key-afpane"]{border:1px solid #dde3ec!important;border-radius:4px!important;background:#fff!important;padding:0 0 5px!important;margin-bottom:2.25px;flex:0 0 auto!important;align-self:flex-start!important;display:block!important;height:auto!important;}
+div[class*="st-key-afpane"]{border:1px solid #dde3ec!important;border-radius:0!important;background:#fff!important;padding:0 0 5px!important;margin-bottom:2.25px;flex:0 0 auto!important;align-self:flex-start!important;display:block!important;height:auto!important;}
 div[class*="st-key-afpane"] [data-testid="stVerticalBlock"],
 div[class*="st-key-afpane"] [data-testid="stMarkdown"]>div{display:block!important;height:auto!important;overflow:visible!important;}
 div[class*="st-key-afpane"] [data-testid="stElementContainer"],
@@ -253,7 +253,7 @@ div[class*="st-key-afpane"] [data-testid="stElementContainer"]:has(>[data-testid
 div[class*="st-key-afpane"] [data-testid="stElementContainer"]:has(>div>[data-testid="stSelectbox"]){padding:3px 10px 0!important;}
 div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"] [data-testid="stElementContainer"]{padding:0!important;}
 div[class*="st-key-afpane"] [data-testid="stButtonGroup"]{gap:2px!important;}
-div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"]{min-height:0!important;height:22px!important;padding:0 9px!important;border-radius:3px!important;}
+div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"]{min-height:0!important;height:22px!important;padding:0 9px!important;border-radius:0!important;}
 div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"] p{font-size:var(--fs-grid-10)!important;line-height:1!important;font-weight:600!important;}
 div[class*="st-key-afpane"] [data-baseweb="select"]>div{min-height:26px!important;}
 div[class*="st-key-afpane"] [data-baseweb="select"] *{font-size:var(--fs-grid-10_5)!important;}
