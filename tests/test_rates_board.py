@@ -104,6 +104,39 @@ class TestRowResolver(unittest.TestCase):
         self.assertIsNone(an["lo"])                 # range n/a for a difference
         self.assertIsNone(an["hi"])
 
+    def test_neg_flips_sign_and_swaps_range(self):
+        home = self._home()
+        out = home._neg({"level": 0.30, "d1": 0.28, "w1": 0.25, "m1": 0.20,
+                         "ytd": 0.10, "lo": 0.05, "hi": 0.50})
+        self.assertAlmostEqual(out["level"], -0.30)
+        self.assertAlmostEqual(out["ytd"], -0.10)
+        self.assertAlmostEqual(out["lo"], -0.50)    # -hi
+        self.assertAlmostEqual(out["hi"], -0.05)    # -lo
+
+    def test_spread_is_short_minus_long_with_live_and_range(self):
+        # kind "spread" now quotes 2Y − 10Y (short − long): negated T10Y2Y
+        # anchors keep a real 52-week range, live overlay flips too.
+        home = self._home()
+        bundle = {"T10Y2Y": {"level": 0.34, "d1": 0.33, "w1": 0.30, "m1": 0.20,
+                             "ytd": 0.10, "lo": 0.05, "hi": 0.50}}
+        ly = {"10Y": [4.52, 4.46, 4.42], "2Y": [4.25, 4.23, 4.18]}
+        an, is_live = home._af_row_anchors("spread", "T10Y2Y", None, bundle, ly)
+        self.assertTrue(is_live)
+        self.assertAlmostEqual(an["level"], 4.25 - 4.52)   # 2Y − 10Y (negative)
+        self.assertAlmostEqual(an["m1"], -0.20)            # negated FRED history
+        self.assertAlmostEqual(an["lo"], -0.50)            # range preserved, flipped
+        self.assertAlmostEqual(an["hi"], -0.05)
+
+    def test_fredn_negates_series_keeps_range(self):
+        home = self._home()
+        bundle = {"T10Y3M": {"level": 0.23, "d1": 0.22, "w1": 0.20, "m1": 0.15,
+                             "ytd": 0.05, "lo": -0.10, "hi": 0.60}}
+        an, is_live = home._af_row_anchors("fredn", "T10Y3M", None, bundle, {})
+        self.assertFalse(is_live)
+        self.assertAlmostEqual(an["level"], -0.23)   # 3M − 10Y
+        self.assertAlmostEqual(an["lo"], -0.60)      # -hi
+        self.assertAlmostEqual(an["hi"], 0.10)       # -lo
+
 
 if __name__ == "__main__":
     unittest.main()

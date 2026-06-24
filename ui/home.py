@@ -100,12 +100,12 @@ _AF_RATES_SECTIONS = [
         ("10Y", "tenor", "10Y", None), ("20Y", "fred", "DGS20", None),
         ("30Y", "tenor", "30Y", None),
     ]),
-    ("Spreads", [
-        ("5Y − 3M", "calc", "DGS5", "DGS3MO"),
-        ("10Y − 2Y", "spread", "T10Y2Y", None),
-        ("10Y − 3M", "fred", "T10Y3M", None),
-        ("30Y − 10Y", "calc", "DGS30", "DGS10"),
-        ("2Y − Fed Funds", "calc", "DGS2", "DFF"),
+    ("Spreads", [   # convention: shorter tenor first (short − long)
+        ("3M − 5Y", "calc", "DGS3MO", "DGS5"),
+        ("2Y − 10Y", "spread", "T10Y2Y", None),
+        ("3M − 10Y", "fredn", "T10Y3M", None),
+        ("10Y − 30Y", "calc", "DGS10", "DGS30"),
+        ("Fed Funds − 2Y", "calc", "DFF", "DGS2"),
     ]),
     ("Credit · OAS", [
         ("AAA", "fred", "BAMLC0A1CAAA", None),
@@ -372,12 +372,29 @@ def _af_etf_table() -> str:
             + f'<div class="body"><div class="etf">{rows}</div></div>')
 
 
+def _neg(an):
+    """Negate an anchors dict (for a spread quoted short − long off a FRED series
+    that's stored long − short, e.g. T10Y2Y). level/Δ negate; the range flips:
+    [lo, hi] → [-hi, -lo]."""
+    if not an:
+        return {}
+    out = {k: (-an[k] if an.get(k) is not None else None)
+           for k in ("level", "d1", "w1", "m1", "ytd")}
+    lo, hi = an.get("lo"), an.get("hi")
+    out["lo"] = -hi if hi is not None else None
+    out["hi"] = -lo if lo is not None else None
+    return out
+
+
 def _af_row_anchors(kind, a, b, bundle, ly):
-    """Resolve {level,d1,w1,m1,ytd,lo,hi} + is_live for one board row. Live
-    overlays (intraday level/1D/1W) ride on top of the FRED history anchors;
-    computed spreads (calc) get no live overlay and no 52w range (min of a
-    difference ≠ difference of the per-leg extremes — show n/a, never a guess)."""
-    if kind == "calc":
+    """Resolve {level,d1,w1,m1,ytd,lo,hi} + is_live for one board row.
+
+    Curve-spread convention: SHORTER tenor first (short − long), so a steep
+    upward curve reads negative. Live overlays (intraday level/1D/1W) ride on
+    top of the FRED history anchors. Computed (calc) spreads get no 52w range —
+    the min of a difference ≠ the difference of the per-leg extremes, so n/a,
+    never a guess; FRED-series spreads keep a real (possibly negated) range."""
+    if kind == "calc":   # a − b, config ordered short − long
         A = _rate_anchors(a, bundle) or {}
         B = _rate_anchors(b, bundle) or {}
         out = {k: ((A.get(k) - B.get(k))
@@ -396,17 +413,19 @@ def _af_row_anchors(kind, a, b, bundle, ly):
             an["w1"] = v[2] if v[2] is not None else an.get("w1")
             return an, True
         return an, False
-    if kind == "spread":   # `a` = the FRED spread series (T10Y2Y) for anchors
-        an = dict(_rate_anchors(a, bundle) or {})
+    if kind == "spread":   # 2Y − 10Y: negated T10Y2Y anchors + live overlay
+        an = _neg(_rate_anchors(a, bundle) or {})
         t10, t2 = ly.get("10Y"), ly.get("2Y")
         if t10 and t2 and t10[0] is not None and t2[0] is not None:
-            an["level"] = t10[0] - t2[0]
-            if t10[1] is not None and t2[1] is not None:
-                an["d1"] = t10[1] - t2[1]
-            if t10[2] is not None and t2[2] is not None:
-                an["w1"] = t10[2] - t2[2]
+            an["level"] = t2[0] - t10[0]
+            if t2[1] is not None and t10[1] is not None:
+                an["d1"] = t2[1] - t10[1]
+            if t2[2] is not None and t10[2] is not None:
+                an["w1"] = t2[2] - t10[2]
             return an, True
         return an, False
+    if kind == "fredn":   # short − long off a long − short FRED series (−T10Y3M)
+        return _neg(_rate_anchors(a, bundle) or {}), False
     return dict(_rate_anchors(a, bundle) or {}), False   # fred
 
 
