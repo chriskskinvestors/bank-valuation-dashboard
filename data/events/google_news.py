@@ -115,8 +115,26 @@ class GoogleNewsAdapter(SourceAdapter):
             ))
         return evs
 
+    def _blocked(self) -> bool:
+        """Google soft-blocks datacenter IPs with a 5xx on news.google.com. It's
+        IP-level, so one probe tells us the whole run is blocked — skip the cycle
+        instead of grinding 435 per-ticker queries into the 240s cap (each ~4s
+        when throttled). A network hiccup (not a 5xx) is NOT treated as a block."""
+        import requests
+        try:
+            r = requests.get(_query_url("JPMorgan Chase"),
+                             headers={"User-Agent": _GN_UA}, timeout=8)
+            return r.status_code >= 500
+        except Exception:
+            return False
+
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
         cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        if self._blocked():
+            print("[google_news] news.google.com 5xx-blocking this datacenter IP "
+                  "— skipping the per-ticker sweep this cycle (catches up when "
+                  "Google lifts the soft-block)")
+            return []
         # Warm the shared name index once in this thread so the worker threads
         # don't race to build it on first match_tickers() call.
         match_tickers("")

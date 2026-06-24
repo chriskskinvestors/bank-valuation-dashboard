@@ -221,6 +221,32 @@ class TestSingleTokenCollisionGuard(unittest.TestCase):
             "Freedom Holding Corp. (NASDAQ: FRHC) today reported fiscal 2026 results."))
 
 
+class TestGoogleNewsCircuitBreaker(unittest.TestCase):
+    """When news.google.com 5xx-blocks the datacenter IP, the adapter probes
+    once and skips the 435-ticker sweep instead of burning the 240s cap."""
+
+    def _resp(self, code):
+        return type("R", (), {"status_code": code})()
+
+    def test_skips_sweep_when_blocked(self):
+        from data.events.google_news import GoogleNewsAdapter
+        a = GoogleNewsAdapter()
+        with patch("requests.get", return_value=self._resp(503)), \
+             patch.object(a, "_fetch_ticker",
+                          side_effect=AssertionError("must not sweep when blocked")):
+            self.assertEqual(a.poll(["JPM", "BAC", "WFC"]), [])
+
+    def test_proceeds_when_not_blocked(self):
+        from data.events.google_news import GoogleNewsAdapter
+        from unittest.mock import MagicMock
+        a = GoogleNewsAdapter()
+        fetch = MagicMock(return_value=[])
+        with patch("requests.get", return_value=self._resp(200)), \
+             patch.object(a, "_fetch_ticker", fetch):
+            a.poll(["JPM", "BAC"])
+        self.assertTrue(fetch.called, "should sweep when not blocked")
+
+
 class TestDisambiguateUnit(unittest.TestCase):
     """_disambiguate scoring in isolation (no index build)."""
 
