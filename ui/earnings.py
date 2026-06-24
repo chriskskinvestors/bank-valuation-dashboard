@@ -1629,19 +1629,20 @@ def _render_upload_section(watchlist: list[str]):
 
 
 def _render_single_file_upload():
-    """Single-file consensus upload with auto-detect: drop a PDF and the AI fills
-    in the ticker, period and metrics for you (you just confirm/edit, then Save).
-    Excel/CSV parses locally; ticker/period there are entered by hand."""
+    """One firm's research file → consensus. A PDF model auto-detects the ticker,
+    the firm, and the firm's estimates for EVERY forecast period (multi-period
+    grid) — each saved as its own (ticker, period, firm) record. Excel/CSV is a
+    single period entered by hand."""
     ss = st.session_state
     uploaded = st.file_uploader(
-        "Consensus file (PDF or Excel) — for a PDF the ticker & period are filled "
-        "in automatically",
+        "Research file (PDF or Excel) — a PDF model auto-detects the ticker, firm "
+        "and every forecast period",
         type=["pdf", "xlsx", "xls", "csv"],
         key="earnings_overview_upload",
     )
     if not uploaded:
-        ss.pop("cons_detect", None)            # reset when the file is cleared
-        ss.pop("cons_detect_sig", None)
+        for k in ("cons_detect", "cons_detect_sig"):
+            ss.pop(k, None)                    # reset when the file is cleared
         return
 
     file_bytes = uploaded.read()
@@ -1657,74 +1658,86 @@ def _render_single_file_upload():
     # Parse ONCE per file (cached by signature) — the AI/parse call never re-runs
     # on later reruns (typing in the fields, etc.).
     if ss.get("cons_detect_sig") != sig:
-        with st.spinner("Reading the document — detecting ticker, period & metrics…"
-                        if is_pdf else "Parsing consensus file…"):
+        with st.spinner("Reading the model — detecting ticker, firm & per-period "
+                        "estimates…" if is_pdf else "Parsing file…"):
             if is_pdf:
                 ss["cons_detect"] = detect_and_parse_pdf(file_bytes, filename)
             else:
                 ex = parse_consensus_excel(file_bytes, "", "", filename)
-                ss["cons_detect"] = {"detected_ticker": "", "detected_period": "",
-                                     "detected_firm": "",
-                                     "metrics": ex.get("metrics", []),
+                ss["cons_detect"] = {"detected_ticker": "", "detected_firm": "",
+                                     "excel_metrics": ex.get("metrics", []),
                                      "error": ex.get("error")}
         ss["cons_detect_sig"] = sig
-        for k in ("single_tkr", "single_per", "single_firm"):
+        for k in ("single_tkr", "single_per", "single_firm", "single_periods"):
             ss.pop(k, None)                    # re-seed fields from the new file
 
     det = ss.get("cons_detect", {})
     if det.get("error"):
         st.error(f"Error parsing: {det['error']}")
         return
-    metrics = det.get("metrics", [])
-    if not metrics:
-        st.warning("No consensus metrics found in the document.")
-        return
 
     det_tkr = det.get("detected_ticker", "")
-    det_per = det.get("detected_period", "")
     det_firm = det.get("detected_firm", "")
 
-    st.markdown("This is **one firm's** estimates — it's stored under the firm and "
+    st.markdown("This is **one firm's** estimates — stored under the firm and "
                 "combined with other firms into the consensus.")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     with c1:
         ticker = st.text_input("Ticker", value=det_tkr, placeholder="e.g. SFST",
                                key="single_tkr").strip().upper()
     with c2:
-        period = st.text_input("Period", value=det_per, placeholder="e.g. 2026Q2",
-                               key="single_per").strip()
-    with c3:
         firm = st.text_input("Firm / Broker", value=det_firm,
                              placeholder="e.g. Brean Capital",
                              key="single_firm").strip()
 
-    detected_bits = []
-    if det_tkr:
-        detected_bits.append(f"ticker **{det_tkr}**")
-    if det_per:
-        detected_bits.append(f"period **{det_per}**")
-    if det_firm:
-        detected_bits.append(f"firm **{det_firm}**")
-    note = (f"Auto-detected {', '.join(detected_bits)} — " if detected_bits
-            else ("Couldn't read the ticker/period/firm — please enter them. "
-                  if is_pdf else ""))
-    st.caption(f"{note}{len(metrics)} metric(s) found. Confirm and save.")
+    # ── PDF: many forecast periods; Excel: one period entered by hand ──
+    if is_pdf:
+        periods = det.get("periods", [])
+        if not periods:
+            st.warning("No forecast-period estimates found in the document.")
+            return
+        by_period = {p["period"]: p["metrics"] for p in periods}
+        labels = list(by_period)
+        total = sum(len(m) for m in by_period.values())
+        st.caption(
+            (f"Auto-detected firm **{det_firm or '—'}** · **{len(labels)}** forecast "
+             f"period(s) · **{total}** estimates. Pick which periods to save:"))
+        chosen = st.multiselect("Periods to save", labels, default=labels,
+                                key="single_periods")
+        to_save = [(p, by_period[p]) for p in chosen]
+    else:
+        period = st.text_input("Period", placeholder="e.g. 2026Q2",
+                               key="single_per").strip()
+        em = det.get("excel_metrics", [])
+        if not em:
+            st.warning("No consensus metrics found in the file.")
+            return
+        st.caption(f"{len(em)} metric(s) found.")
+        to_save = [(period, em)] if period else []
 
     if st.button("Save Estimates", type="primary", key="single_save"):
-        if not ticker or not period or not firm:
-            st.error("Enter a ticker, period, and firm before saving.")
+        if not ticker or not firm:
+            st.error("Enter a ticker and firm before saving.")
+        elif not to_save:
+            st.error("Select at least one period (and enter it for Excel).")
         else:
-            try:
-                save_consensus({"ticker": ticker, "period": period, "firm": firm,
-                                "source": "pdf" if is_pdf else "excel",
-                                "metrics": metrics})
-            except IOError as e:
-                st.error(str(e))
-            else:
-                st.success(f"Saved {firm}'s estimates for {ticker} {period} "
-                           f"({len(metrics)} metrics).")
-                for k in ("cons_detect", "cons_detect_sig",
-                          "single_tkr", "single_per", "single_firm"):
+            saved, errs = 0, []
+            for per, mets in to_save:
+                try:
+                    save_consensus({"ticker": ticker, "period": per, "firm": firm,
+                                    "source": "pdf" if is_pdf else "excel",
+                                    "metrics": mets})
+                    saved += 1
+                except IOError as e:
+                    errs.append(f"{per}: {e}")
+            if errs:
+                for e in errs:
+                    st.error(e)
+            if saved:
+                st.success(f"Saved {firm}'s estimates for {ticker} across "
+                           f"{saved} period(s).")
+                for k in ("cons_detect", "cons_detect_sig", "single_tkr",
+                          "single_per", "single_firm", "single_periods"):
                     ss.pop(k, None)
                 st.rerun()
 

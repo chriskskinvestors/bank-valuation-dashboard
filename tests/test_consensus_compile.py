@@ -96,5 +96,23 @@ class TestCompileConsensus(unittest.TestCase):
         self.assertIsNone(c.compile_consensus("WTFC", "2Q26"))
 
 
+class TestNormalizePeriod(unittest.TestCase):
+    """Period canonicalization so firms group regardless of broker notation."""
+
+    def test_quarters_and_years(self):
+        n = c.normalize_period
+        for s in ("2Q26", "2Q26E", "2026Q2", "Q2'26", "2Q2026"):
+            self.assertEqual(n(s), "2026Q2", s)
+        self.assertEqual(n("3Q26E"), "2026Q3")
+        self.assertEqual(n("1Q27E"), "2027Q1")
+        for s in ("2026", "2026E", "FY26", "FY2026", "26"):
+            self.assertEqual(n(s), "2026", s)
+
+    def test_blank_and_unknown(self):
+        self.assertEqual(c.normalize_period(""), "")
+        self.assertEqual(c.normalize_period(None), "")
+        self.assertEqual(c.normalize_period("H1 2026"), "H1 2026")   # unmatched → kept
+
+
 if __name__ == "__main__":
     unittest.main()

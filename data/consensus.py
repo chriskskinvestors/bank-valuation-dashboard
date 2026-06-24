@@ -298,14 +298,31 @@ Return ONLY the JSON array, no other text."""
         }
 
 
-def detect_and_parse_pdf(file_bytes: bytes, filename: str = "") -> dict:
-    """Read a single-company consensus PDF and AUTO-DETECT the ticker + period
-    alongside the metrics, so the user doesn't have to type them. The detected
-    ticker is validated against the bank universe and BLANKED if unknown — we
-    pre-fill only a verified ticker, never a guess that would save under the
-    wrong entity. The user still confirms/edits before saving.
+def _clean_metric_list(raw_metrics) -> list[dict]:
+    """Map/validate a raw metric list from the model — drop non-numeric / unnamed."""
+    out = []
+    for m in raw_metrics or []:
+        if not isinstance(m, dict):
+            continue
+        mname = str(m.get("name", "")).strip()
+        val = _finite_float(m.get("value"))
+        if not mname or val is None:
+            continue
+        out.append({"name": mname, "key": _normalize_key(mname),
+                    "value": val, "unit": m.get("unit", "")})
+    return out
 
-    Returns {detected_ticker, detected_period, metrics: [...], error?}.
+
+def detect_and_parse_pdf(file_bytes: bytes, filename: str = "") -> dict:
+    """Read a single-firm research model and AUTO-DETECT the ticker, the firm and
+    the firm's estimates for EACH forecast period (forward quarters + annual
+    estimates), so the user doesn't retype them. Broker models are multi-period
+    grids; each forecast column becomes its own (ticker, period, firm) record on
+    save. Historical/actual columns are skipped — they're reported facts, not
+    estimates. The ticker is validated against the bank universe and blanked if
+    unknown (never a wrong-entity guess).
+
+    Returns {detected_ticker, detected_firm, periods: [{period, metrics}], error?}.
     """
     try:
         import base64
@@ -313,24 +330,28 @@ def detect_and_parse_pdf(file_bytes: bytes, filename: str = "") -> dict:
         client = _anthropic_client()
         b64_pdf = base64.standard_b64encode(file_bytes).decode("utf-8")
 
-        prompt = """This is an equity research note from ONE sell-side firm covering ONE bank.
+        prompt = """This is an equity research MODEL from ONE sell-side firm covering ONE bank — a grid of metrics (rows) across many period columns (quarterly and annual).
 
 Return ONLY a JSON object of this shape:
-{ "ticker": "WTFC", "period": "2Q26", "firm": "Brean Capital",
-  "metrics": [ {"name": "EPS", "value": 1.25, "unit": "$"},
-               {"name": "Net Interest Margin", "value": 3.45, "unit": "%"} ] }
+{ "ticker": "WTFC", "firm": "Brean Capital",
+  "periods": [
+    { "period": "2Q26", "metrics": [ {"name":"EPS","value":3.10,"unit":"$"},
+                                     {"name":"Net Interest Margin","value":3.55,"unit":"%"} ] },
+    { "period": "2026",  "metrics": [ {"name":"EPS","value":12.80,"unit":"$"} ] }
+  ] }
 
-- ticker: the official US stock ticker of the PRIMARY company the note covers. If you cannot identify it with confidence, use "".
-- period: the estimate/consensus period as written (e.g. 2Q26, 2026Q2, FY26). Use "" if not stated.
-- firm: the name of the research firm / broker that PUBLISHED this note (e.g. "Brean Capital", "KBW", "Piper Sandler"), usually on the cover/header/footer. Use "" if you can't tell. Do NOT use the covered bank's name here.
-- metrics: every estimate you can find — EPS, revenue, NIM, efficiency, ROAA, ROATCE, NPL, CET1, net income, provision, deposits, loans, TBV, dividends, charge-offs, yields, growth, etc.
+- ticker: the official US stock ticker of the PRIMARY company. If unsure, use "".
+- firm: the research firm/broker that PUBLISHED the model (e.g. "Brean Capital", "KBW"), from the cover/header/footer. NOT the covered bank's name. "" if unsure.
+- periods: ONE entry per FORECAST / ESTIMATE period only — forward quarters (e.g. 2Q26, 3Q26, 4Q26, 1Q27) and annual estimates (e.g. 2026, 2027). These are the columns marked "E" (estimate). SKIP every historical/actual column (marked "A" or an already-reported quarter).
+- period labels: quarters as "2Q26", annuals as "2026" — DROP any trailing E/A.
+- metrics per period: every estimate in that column — EPS, NII, NIM, efficiency, ROAA, ROATCE, net income, provision, deposits, loans, TBV, dividends, charge-offs, yields, growth, etc.
 - values numeric (no $/commas); unit one of: %, $, $M, $B, bps, x, or blank.
 
 Return ONLY the JSON object, no other text."""
 
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=8000,
+            max_tokens=16000,
             messages=[{
                 "role": "user",
                 "content": [
@@ -344,37 +365,38 @@ Return ONLY the JSON object, no other text."""
 
         text = response.content[0].text.strip()
         if response.stop_reason == "max_tokens":
-            return {"detected_ticker": "", "detected_period": "", "metrics": [],
+            return {"detected_ticker": "", "detected_firm": "", "periods": [],
                     "error": "The document is too large — the AI response was "
                              "truncated. Try a shorter excerpt or split the file."}
 
         json_match = re.search(r'\{.*\}', text, re.DOTALL)
         data = json.loads(json_match.group() if json_match else text)
 
-        metrics = []
-        for m in data.get("metrics", []) or []:
-            if not isinstance(m, dict):
+        periods = []
+        seen = set()
+        for p in data.get("periods", []) or []:
+            if not isinstance(p, dict):
                 continue
-            mname = str(m.get("name", "")).strip()
-            val = _finite_float(m.get("value"))
-            if not mname or val is None:
+            per = normalize_period(str(p.get("period") or ""))
+            if not per or per in seen:
                 continue
-            metrics.append({"name": mname, "key": _normalize_key(mname),
-                            "value": val, "unit": m.get("unit", "")})
+            ms = _clean_metric_list(p.get("metrics"))
+            if ms:
+                periods.append({"period": per, "metrics": ms})
+                seen.add(per)
 
         tkr = str(data.get("ticker") or "").strip().upper()
         if tkr and not _known_ticker(tkr):     # pre-fill only a verified ticker
             tkr = ""
         return {
             "detected_ticker": tkr,
-            "detected_period": str(data.get("period") or "").strip(),
             "detected_firm": str(data.get("firm") or "").strip(),
-            "metrics": metrics,
+            "periods": periods,
         }
 
     except Exception as e:
-        return {"detected_ticker": "", "detected_period": "", "detected_firm": "",
-                "metrics": [], "error": str(e)}
+        return {"detected_ticker": "", "detected_firm": "", "periods": [],
+                "error": str(e)}
 
 
 def parse_bulk_consensus_pdf(file_bytes: bytes, period: str) -> dict:
@@ -879,6 +901,36 @@ def _firm_slug(firm: str) -> str:
     return s or "unknown"
 
 
+def normalize_period(s: str) -> str:
+    """Canonicalize broker period labels so firms group together regardless of
+    notation: quarters → "YYYYQn", years → "YYYY". Drops the E/A estimate-vs-
+    actual marker. Falls back to the cleaned input when it doesn't match.
+        2Q26 / 2Q26E / Q2'26 / 2026Q2 → 2026Q2 ;  2026E / FY26 / 26 → 2026
+    """
+    raw = (s or "").strip().upper().replace(" ", "").replace("'", "")
+    raw = re.sub(r"[EA]$", "", raw)              # estimate / actual marker
+    if not raw:
+        return ""
+
+    def _yr(y: str) -> int:
+        n = int(y)
+        return n + 2000 if n < 100 else n
+
+    m = re.fullmatch(r"(\d{4})Q([1-4])", raw)            # 2026Q2
+    if m:
+        return f"{m.group(1)}Q{m.group(2)}"
+    m = re.fullmatch(r"([1-4])Q(\d{2,4})", raw)          # 2Q26 / 2Q2026
+    if m:
+        return f"{_yr(m.group(2))}Q{m.group(1)}"
+    m = re.fullmatch(r"Q([1-4])(\d{2,4})", raw)          # Q226 / Q22026
+    if m:
+        return f"{_yr(m.group(2))}Q{m.group(1)}"
+    m = re.fullmatch(r"(?:FY)?(\d{2,4})", raw)           # FY26 / 2026 / 26
+    if m:
+        return str(_yr(m.group(1)))
+    return (s or "").strip()
+
+
 def save_consensus(data: dict) -> Path:
     """Save ONE firm's estimates to JSON (local + GCS). Returns the local path.
 
@@ -890,12 +942,12 @@ def save_consensus(data: dict) -> Path:
     local copy is ephemeral, so silently continuing meant the upload could vanish
     on instance recycle while the user saw a success message."""
     ticker = data["ticker"].upper()
-    period = data["period"].replace("/", "-").replace(" ", "_")
+    period = (normalize_period(data["period"]) or data["period"]).replace("/", "-").replace(" ", "_")
     firm = (data.get("firm") or data.get("source") or "manual").strip()
     firm_slug = _firm_slug(firm)
     filename = f"{ticker}_{period}__{firm_slug}.json"
 
-    payload = {**data, "ticker": ticker, "firm": firm}
+    payload = {**data, "ticker": ticker, "period": period, "firm": firm}
     if not save_json(CONSENSUS_PREFIX, filename, payload):
         raise IOError(
             f"Consensus for {ticker} {period} ({firm}) could not be written to "
