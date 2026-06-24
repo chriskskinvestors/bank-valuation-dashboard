@@ -448,6 +448,69 @@ def _render_headline_charts(display_peers: list[dict]):
     )
 
 
+def _compare_export_bytes(cohort: list[dict], categories: list[str]):
+    """Build (xlsx, csv) of the WHOLE cohort as a SORTABLE sheet: banks in rows,
+    each metric (across the selected categories) a RAW-number column + an overall-
+    score column. The xlsx has AutoFilter, a frozen header + ticker/bank columns,
+    and per-column number formats so Excel sorts numerically. No colors."""
+    import io
+    import csv as _csv
+
+    mcols = []   # (key, label, format) — metrics with any data in the cohort
+    for cat in categories:
+        for mkey in CATEGORY_METRICS.get(cat, []):
+            m_def = METRICS_BY_KEY.get(mkey)
+            if m_def and any(isinstance(b.get(mkey), (int, float)) for b in cohort):
+                mcols.append((mkey, m_def.get("label", mkey),
+                              m_def.get("format", "number")))
+    scores = _peer_scores(cohort, cohort, categories)
+    headers = ["Ticker", "Bank", "Overall score"] + [lbl for _, lbl, _ in mcols]
+    rows = []
+    for b in cohort:
+        tk = b.get("ticker")
+        sc = scores.get(tk, {}).get("score")
+        r = [tk, get_name(tk), (round(sc) if sc is not None else None)]
+        for mkey, _, _ in mcols:
+            v = b.get(mkey)
+            r.append(v if isinstance(v, (int, float)) else None)
+        rows.append(r)
+
+    sbuf = io.StringIO()
+    _w = _csv.writer(sbuf)
+    _w.writerow(headers)
+    _w.writerows(rows)
+    csv_bytes = sbuf.getvalue().encode("utf-8")
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Peer comparison"
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    for c in range(1, len(headers) + 1):
+        ws.cell(1, c).font = Font(bold=True)
+    for rr in range(2, ws.max_row + 1):
+        ws.cell(rr, 3).number_format = "0"   # score (integer)
+    for ci, (_, _, fmt) in enumerate(mcols, start=4):
+        nf = {"pct": '0.00"%"', "ratio": '0.00"x"'}.get(fmt, '#,##0.00')
+        for rr in range(2, ws.max_row + 1):
+            ws.cell(rr, ci).number_format = nf
+    ws.freeze_panes = "C2"   # freeze header row + Ticker/Bank
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{ws.max_row}"
+    ws.column_dimensions["A"].width = 9
+    ws.column_dimensions["B"].width = 26
+    ws.column_dimensions["C"].width = 13
+    for ci in range(4, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(ci)].width = min(
+            22, max(10, len(headers[ci - 1]) + 2))
+    xbuf = io.BytesIO()
+    wb.save(xbuf)
+    return xbuf.getvalue(), csv_bytes
+
+
 def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
                           categories: list[str], scores: dict | None = None,
                           delta: bool = False):
@@ -460,7 +523,6 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
     tickers = [m["ticker"] for m in display_peers]   # columns
     style_map = {}                                   # (metric_key, ticker) → color
     sections = []                                    # [(category, [row, …]), …]
-    export_rows = []
 
     for cat in categories:
         cat_rows = []
@@ -503,7 +565,6 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
                     cat_effs[t].append(pct if higher_better else (100 - pct))
             row["Peer Median"] = format_value(peer_median, fmt, dec)
             cat_rows.append(row)
-            export_rows.append(row)
         if cat_rows:
             # Per-category subtotal = each bank's mean EFFECTIVE percentile within
             # the category (the only unit-neutral "average"); {ticker: (str, avg)}.
@@ -589,13 +650,28 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
             unsafe_allow_html=True,
         )
 
-        # Export a flat (category-tagged) frame of everything shown.
-        exp_df = pd.DataFrame([
-            {"Category": r["_cat"], "Metric": r["Metric"],
-             **{t: r.get(t, "—") for t in tickers}, "Peer Median": r["Peer Median"]}
-            for r in export_rows
-        ])
-        table_export(exp_df, "peer_metrics_all", key="exp_peer_metrics_all")
+        # Export: the WHOLE cohort as a sortable sheet (banks in rows, raw numbers).
+        # Built on dialog-open so the per-bank scoring runs only on demand.
+        @st.dialog("Export comparison")
+        def _cmp_export_dialog():
+            st.caption(f"All {len(cohort)} banks in scope × {len(categories)} "
+                       "categories — banks in rows, every metric a sortable column "
+                       "(raw numbers; the .xlsx has AutoFilter + frozen header).")
+            with st.spinner("Building…"):
+                _xlsx, _csv_bytes = _compare_export_bytes(cohort, categories)
+            e1, e2 = st.columns(2)
+            with e1:
+                st.download_button(
+                    "Excel (sortable)", _xlsx, file_name="peer_comparison.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument."
+                         "spreadsheetml.sheet",
+                    use_container_width=True, key="cmp_xlsx_dl")
+            with e2:
+                st.download_button(
+                    "CSV", _csv_bytes, file_name="peer_comparison.csv",
+                    mime="text/csv", use_container_width=True, key="cmp_csv_dl")
+        if st.button("Export", key="cmp_export_btn"):
+            _cmp_export_dialog()
 
         # ── Legend — same scale that colors the cells ──────────────────
         chips = "".join(
