@@ -480,22 +480,24 @@ def _valuation_history_chart(ticker: str, info: dict):
 
 
 def _render_price_panel(ticker: str):
-    """Interactive price + volume chart with a period selector. Rendered in the
-    snapshot band's open right column. Scoped CSS collapses the inter-element
-    gaps and tightens the period buttons so the header/selector take half the
-    height and the chart sits up near the top of the ledger block beside it."""
+    """Interactive price + volume chart with a period selector. The "Price"
+    label and the period buttons share one aligned row; the buttons are
+    compacted to the design system's dense (--fs-sm) scale. Chart sits below."""
     with st.container(key="ov_price_box"):
         st.markdown(
             "<style>"
-            ".st-key-ov_price_box [data-testid='stVerticalBlock']{gap:0.15rem;}"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
-            ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-4px;}"
+            ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
+            ".st-key-ov_price_box button{padding:2px 12px;min-height:0;"
+            "font-size:var(--fs-sm);}"
             "</style>", unsafe_allow_html=True)
-        st.markdown("**Price**")
-        # Segmented buttons (the app's standard timeframe selector) — not radio.
-        per = st.segmented_control(
-            "Period", ["1M", "3M", "1Y", "5Y"], default="1Y",
-            key=f"ov_price_per_{ticker}", label_visibility="collapsed") or "1Y"
+        # "Price" label and the period buttons on one tidy row.
+        _hl, _hr = st.columns([1, 4], vertical_alignment="center")
+        _hl.markdown("**Price**")
+        with _hr:
+            per = st.segmented_control(
+                "Period", ["1M", "3M", "1Y", "5Y"], default="1Y",
+                key=f"ov_price_per_{ticker}", label_visibility="collapsed") or "1Y"
         hist_df = pd.DataFrame()
         try:
             from data.fmp_client import get_history
