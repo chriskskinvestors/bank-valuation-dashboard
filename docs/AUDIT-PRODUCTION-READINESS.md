@@ -148,6 +148,33 @@ every bump PR — and every PR generally, which previously ran NO checks — mus
 before merge. Updates become deliberate and tested, never silent. CI suite verified
 green locally before commit.
 
+### Gap F (P0) — Deploy could silently drop a required secret — ✅ FIXED 2026-06-24
+**Incident:** all prices went blank app-wide. Not FMP — the key + Premium plan
+were fine (live `/quote` returned a price). The **bank-dashboard service was
+running with only `ANTHROPIC_API_KEY` mounted**; `FMP_API_KEY`, `FRED_API_KEY`,
+`FFIEC_USERNAME`, `FFIEC_JWT_TOKEN` were all missing → `_api_key()` returns "" →
+every price fetch empty → blank everywhere, no error logged.
+**Root cause (two layers):**
+1. The deploy's secrets-arg builder appended a secret to `--set-secrets` only
+   when `gcloud secrets describe` succeeded, and *silently skipped* it otherwise.
+   Since `--set-secrets` replaces the whole set, a deploy where any describe
+   failed shipped a half-keyed service.
+2. The CI deployer SA (`github-deployer`) had project `secretmanager.secretAccessor`
+   (payload access) but **not** `secrets.get` (metadata), so `describe` failed for
+   every secret except `anthropic-api-key` (which carried an extra per-secret
+   binding) — so those four were dropped on every deploy.
+**Fixed:**
+- Immediate restore: `gcloud run services update bank-dashboard
+  --update-secrets=FMP_API_KEY=fmp-api-key:latest,…` (merge, not replace).
+- Builder hardened (`ce1a90d`): collect any missing/inaccessible required secret
+  and `::error:: … exit 1` — a half-keyed deploy now fails loudly instead of
+  shipping. Locked by `tests/test_deploy_secret_contract.py`.
+- IAM closed: granted `github-deployer` project `roles/secretmanager.viewer`, so
+  `describe` resolves for all secrets and the guard never false-fails on a secret
+  that genuinely exists.
+If a future deploy red-fails at "Build secrets-arg", the deployer SA lost
+`secretmanager` metadata access to that secret — grant it, don't loosen the guard.
+
 ---
 
 ## Rollback runbook (tested commands)

@@ -47,5 +47,6 @@ jobs:
             tests.test_audit_regressions \
             tests.test_dcf_and_models \
             tests.test_sec_filing_scraper \
-            tests.test_nav_renders
+            tests.test_nav_renders \
+            tests.test_deploy_secret_contract
           PYTHONIOENCODING=utf-8 python tests/test_metric_formulas.py
