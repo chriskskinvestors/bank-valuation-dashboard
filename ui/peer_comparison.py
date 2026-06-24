@@ -362,17 +362,43 @@ _HEADLINE_CHARTS = [
 ]
 
 
+def _sparkline_svg(vals: list, w: int = 46, h: int = 13, color: str = "#1e40af") -> str:
+    """Inline-SVG sparkline from a numeric series (None-aware); '' for <2 points."""
+    idx = [(i, v) for i, v in enumerate(vals) if isinstance(v, (int, float))]
+    if len(idx) < 2:
+        return ""
+    nums = [v for _, v in idx]
+    lo, hi = min(nums), max(nums)
+    rng = (hi - lo) or 1.0
+    n = len(vals)
+    pts = " ".join(
+        f"{(i / (n - 1)) * w:.1f},{h - ((v - lo) / rng) * h:.1f}" for i, v in idx)
+    return (f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
+            f'preserveAspectRatio="none" style="vertical-align:middle;flex:none;">'
+            f'<polyline points="{pts}" fill="none" stroke="{color}" '
+            f'stroke-width="1.3" stroke-linejoin="round"/></svg>')
+
+
 def _render_headline_charts(display_peers: list[dict]):
     """Compact horizontal bar charts (one per headline metric) for the compared
-    banks — best bank navy, peer median noted. Lightweight HTML bars (no plotly);
-    bar length ∝ |value|, the best bank highlighted regardless of magnitude."""
+    banks — best bank navy, peer median noted. Each FDIC-sourced metric also gets
+    an 8-quarter sparkline per bank (from the warm FDIC history cache); computed/
+    market metrics show just the bar. Lightweight HTML/SVG (no plotly)."""
     if len(display_peers) < 2:
         return
+    from data.loaders import load_fdic_hist
+    hist = {}
+    for d in display_peers:
+        try:
+            hist[d["ticker"]] = load_fdic_hist(d["ticker"]) or []
+        except Exception:
+            hist[d["ticker"]] = []
     blocks = []
     for mkey, label, higher_better in _HEADLINE_CHARTS:
         m_def = METRICS_BY_KEY.get(mkey)
         if not m_def:
             continue
+        fld = m_def.get("fdic_field")   # direct FDIC field → sparkline available
         pts = [(p["ticker"], p.get(mkey)) for p in display_peers
                if isinstance(p.get(mkey), (int, float))]
         if len(pts) < 2:
@@ -389,16 +415,20 @@ def _render_headline_charts(display_peers: list[dict]):
             w = max(4, round(100 * abs(v) / max_abs))
             color = "var(--brand-primary)" if tk == best_tk else "#a9bbdc"
             vs = _html.escape(format_value(v, fmt, dec))
+            spark = ""
+            if fld:
+                ser = list(reversed([r.get(fld) for r in (hist.get(tk) or [])[:8]]))
+                spark = _sparkline_svg(ser)
             bars.append(
-                f'<div style="display:flex;align-items:center;gap:6px;margin:2px 0;">'
-                f'<span style="width:42px;font-size:0.7rem;color:var(--text-secondary);'
+                f'<div style="display:flex;align-items:center;gap:5px;margin:2px 0;">'
+                f'<span style="width:38px;font-size:0.7rem;color:var(--text-secondary);'
                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
                 f'{_html.escape(tk)}</span>'
-                f'<div style="flex:1;background:var(--grid-head-bg);border-radius:2px;">'
-                f'<div style="height:11px;width:{w}%;background:{color};'
-                f'border-radius:2px;"></div></div>'
-                f'<span style="width:50px;text-align:right;font-size:0.7rem;">{vs}</span>'
-                f'</div>')
+                f'<div style="flex:1;min-width:24px;background:var(--grid-head-bg);'
+                f'border-radius:2px;"><div style="height:11px;width:{w}%;'
+                f'background:{color};border-radius:2px;"></div></div>'
+                f'<span style="width:44px;text-align:right;font-size:0.7rem;">{vs}</span>'
+                f'{spark}</div>')
         note = "" if higher_better else " · lower better"
         med_s = _html.escape(format_value(median, fmt, dec))
         blocks.append(
@@ -410,7 +440,9 @@ def _render_headline_charts(display_peers: list[dict]):
         return
     st.markdown(
         '<div style="font-size:0.68rem;letter-spacing:.04em;text-transform:uppercase;'
-        'color:var(--text-tertiary);margin:2px 0 8px;">At a glance</div>'
+        'color:var(--text-tertiary);margin:2px 0 8px;">At a glance '
+        '<span style="text-transform:none;letter-spacing:0;">'
+        '· bar = current · line = 8q trend</span></div>'
         + "".join(blocks),
         unsafe_allow_html=True,
     )
