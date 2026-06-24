@@ -496,8 +496,11 @@ def _render_price_panel(ticker: str):
             "border-radius:0;padding:4px 10px 5px;margin-top:20px;}"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
+            # padding-left matches the chart's left margin (l=42 in price_chart's
+            # show_title=False branch) so the readout starts at the y-axis line —
+            # inline with where the plot/gridlines begin, not over the $-label gutter.
             ".st-key-ov_price_box .ovp-readout{font-size:var(--fs-sm);font-weight:600;"
-            "color:var(--text-primary);white-space:nowrap;}"
+            "color:var(--text-primary);white-space:nowrap;padding-left:42px;}"
             # flat borderless strip, right-aligned in its column
             ".st-key-ov_price_box [data-testid='stButtonGroup']{gap:1px!important;"
             "background:transparent!important;border:0!important;padding:0!important;"
