@@ -127,23 +127,24 @@ def main() -> int:
         broad_adapters = [SEC8KRecentAdapter(), PRNewswireAdapter(),
                           GlobeNewswireAdapter(), FMPPressReleaseAdapter()]
     else:
-        # Order matters: cheap, high-visibility sources FIRST so they always fit
-        # in budget. Google News is per-ticker over the full universe — the
-        # expensive one — so it goes LAST among broad, where the per-adapter cap
-        # can abandon it without starving the rest.
+        # Order matters: cheap, high-yield, RELIABLE sources first so they always
+        # fit in budget. FMP (batched, ~18 calls, the broadest press-release
+        # source) runs right after SEC 8-K — never starved behind Google News,
+        # which is per-ticker, often 503-rate-limited from datacenter IPs, and
+        # burns its full 240s cap, so it stays LAST where it can be abandoned.
         broad_adapters = [
             SEC8KAdapter(),
+            # FMP press releases: batched over the universe (symbols=...), the
+            # broadest first-party press-release source (BW/PRN/IR aggregated).
+            FMPPressReleaseAdapter(),
             BusinessWireAdapter(),
             PRNewswireAdapter(),
             GlobeNewswireAdapter(),
             # Topic feeds for the Home page's categorized overnight news (Macro /
             # Geopolitical / Domestic / Markets) — ONE query per topic, not per-bank.
             GoogleNewsTopicAdapter(),
-            # Google News: per-ticker, parallelized; the slow one at full universe.
+            # Google News: per-ticker, parallelized; the slow/flaky one — LAST.
             GoogleNewsAdapter(),
-            # FMP press releases: batched over the universe (symbols=...), the
-            # broadest first-party press-release source (BW/PRN/IR aggregated).
-            FMPPressReleaseAdapter(),
         ]
         narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
 
