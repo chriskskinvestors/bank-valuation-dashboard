@@ -101,6 +101,7 @@ _AF_RATES_SECTIONS = [
         ("30Y", "tenor", "30Y", None),
     ]),
     ("Spreads", [
+        ("5Y − 3M", "calc", "DGS5", "DGS3MO"),
         ("10Y − 2Y", "spread", "T10Y2Y", None),
         ("10Y − 3M", "fred", "T10Y3M", None),
         ("30Y − 10Y", "calc", "DGS30", "DGS10"),
