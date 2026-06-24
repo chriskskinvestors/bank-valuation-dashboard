@@ -532,6 +532,11 @@ def _render_price_panel(ticker: str):
 
 def _render_valuation_panel(ticker: str, info: dict):
     """Quarter-end P/TBV & P/E history chart, shown below the snapshot band."""
+    # Leading zero-height element so this column's first VISIBLE child (the title)
+    # sits one vertical-block gap down — matching the price panel, whose first
+    # child is an invisible <style> block. Without it the valuation title rides
+    # ~0.45rem higher than the price box's top border (they must be level).
+    st.markdown("<div style='height:0'></div>", unsafe_allow_html=True)
     st.markdown("**Valuation — P/TBV & P/E**")
     fig = _valuation_history_chart(ticker, info)
     if fig is not None:
