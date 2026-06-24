@@ -87,3 +87,66 @@ def refresh() -> dict:
     data = _build()
     cache.put(_SNAP_KEY, {"_ts": time.time(), "_v": data})
     return data
+
+
+# ── FRED anchor bundle for the Rates · Credit board ──────────────────────
+# The board shows Level + 1D/1W/1M/YTD bp + a 52-week range bar for the full
+# Treasury curve, curve spreads, credit OAS by rating, and funding/real rates.
+# Every series is daily FRED (authoritative) — one fetch_series per id yields
+# all anchors. A job warms the bundle so the render reads cache, never fans out
+# ~25 FRED fetches on the request thread.
+RATES_FRED_SERIES = [
+    # Treasury curve
+    "DGS1MO", "DGS3MO", "DGS6MO", "DGS1", "DGS2", "DGS3", "DGS5", "DGS7",
+    "DGS10", "DGS20", "DGS30",
+    # spread series + components for the computed spreads
+    "T10Y2Y", "T10Y3M", "DFF",
+    # credit OAS by rating
+    "BAMLC0A1CAAA", "BAMLC0A4CBBB", "BAMLC0A0CM",
+    "BAMLH0A1HYBB", "BAMLH0A0HYM2", "BAMLH0A3HYC", "BAMLEMCBPIOAS",
+    # funding · policy · real
+    "SOFR", "DPRIME", "MORTGAGE30US", "DFII10", "T10YIE",
+]
+
+
+def rate_anchors_live(series_id: str) -> dict | None:
+    """{level, d1, w1, m1, ytd, lo, hi} for a daily FRED series from one year of
+    history (one fetch_series call). d1/w1/m1 are the ~1-business-day, ~1-week,
+    ~1-month-ago observations; ytd is the first obs of the current calendar
+    year; lo/hi are the trailing-52-week min/max. None on any failure — the
+    caller renders '—', never a guess."""
+    try:
+        from data.fred_client import fetch_series
+        df = fetch_series(series_id, years=1)
+        if df is None or df.empty:
+            return None
+        df = df.dropna(subset=["value"]).sort_values("date")
+        vals = [float(v) for v in df["value"].tolist()]
+        if not vals:
+            return None
+        import datetime as _dt
+        jan1 = _dt.datetime(_dt.date.today().year, 1, 1)
+        ytd = None
+        for d, v in zip(df["date"].tolist(), vals):
+            dd = d.to_pydatetime() if hasattr(d, "to_pydatetime") else d
+            if dd >= jan1:
+                ytd = v
+                break
+        return {
+            "level": vals[-1],
+            "d1": vals[-2] if len(vals) >= 2 else None,
+            "w1": vals[-6] if len(vals) >= 6 else None,
+            "m1": vals[-22] if len(vals) >= 22 else None,
+            "ytd": ytd,
+            "lo": min(vals),
+            "hi": max(vals),
+        }
+    except Exception:
+        return None
+
+
+def build_rates_anchor_bundle() -> dict:
+    """{series_id: anchors|None} for every RATES_FRED_SERIES — the cross-instance
+    bundle the Rates board reads. Built by jobs/refresh_home_snapshot (off the
+    render thread); ui.home._af_rates_table reads it via served_snapshot."""
+    return {sid: rate_anchors_live(sid) for sid in RATES_FRED_SERIES}

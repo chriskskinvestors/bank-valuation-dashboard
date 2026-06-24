@@ -158,7 +158,27 @@ def main() -> int:
     _warm_overlay_history()
     _warm_bank_sector_history()
     _warm_feed_insider_aggregate(tickers)
+    _warm_rates_bundle()
     return 0
+
+
+def _warm_rates_bundle() -> None:
+    """Warm the Rates · Credit anchor bundle (home_rates_full_snap) off the render
+    path: ~25 daily-FRED series, each one fetch_series → {level,d1,w1,m1,ytd,lo,
+    hi}. The board then reads one cache row instead of fanning out those FRED
+    fetches on a request. Writes the served_snapshot shape (cached_at + value)."""
+    try:
+        from data import cache
+        from data.live_rates import build_rates_anchor_bundle
+        bundle = build_rates_anchor_bundle()
+        got = sum(1 for v in bundle.values() if v)
+        cache.put("home_rates_full_snap", {
+            "cached_at": datetime.now().isoformat(), "value": bundle})
+        print(f"[{time.strftime('%H:%M:%S')}] rates bundle: {got}/{len(bundle)} "
+              f"series", flush=True)
+    except Exception as e:
+        print(f"[home-snap] rates bundle failed: {type(e).__name__}: {e}",
+              flush=True)
 
 
 def _warm_feed_insider_aggregate(tickers: list[str]) -> None:

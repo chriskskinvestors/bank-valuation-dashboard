@@ -14,47 +14,22 @@ from data.bank_mapping import get_name
 # Markets & Rates
 # ══════════════════════════════════════════════════════════════════════
 
-_TENORS = [("3M", "DGS3MO"), ("2Y", "DGS2"), ("5Y", "DGS5"),
-           ("10Y", "DGS10"), ("30Y", "DGS30")]
-
-
-# Every FRED series Markets & Rates renders. Fetched as ONE persisted
-# bundle (30-min TTL, cross-instance) — live per-series fetches cost a
-# measured 3.6s on each cold instance.
-_FRED_HOME_SERIES = ([sid for _, sid in _TENORS]
-                     + ["FEDFUNDS", "T10Y2Y", "BAMLH0A0HYM2",
-                        "BAMLC0A0CM", "VIXCLS"])
-
-
-def _fred_points_live(series_id: str):
-    """Return (latest, prior_business_day, ~1-week-ago) for a FRED series."""
-    try:
-        from data.fred_client import fetch_series
-        df = fetch_series(series_id, years=1)
-        if df is None or df.empty:
-            return (None, None, None)
-        vals = df.dropna(subset=["value"])["value"].tolist()
-        if not vals:
-            return (None, None, None)
-        latest = float(vals[-1])
-        prior = float(vals[-2]) if len(vals) >= 2 else None
-        weekago = float(vals[-6]) if len(vals) >= 6 else float(vals[0])
-        return (latest, prior, weekago)
-    except Exception:
-        return (None, None, None)
-
-
-def _fred_points(series_id: str):
-    """(latest, prior, ~1wk) from the persisted home-rates bundle.
-    JSON round-trip returns lists, not tuples — callers index/unpack only."""
+def _rates_bundle() -> dict:
+    """The Rates · Credit anchor bundle ({series_id: {level,d1,w1,m1,ytd,lo,hi}}),
+    job-warmed (home_rates_full_snap, 30-min TTL) so the render reads cache
+    instead of fanning out ~25 FRED fetches on the request thread. Falls back to
+    a live build only if no instance/job has warmed it yet."""
     from data.cache import served_snapshot
-    bundle = served_snapshot(
-        "home_rates_snap", 1800,
-        lambda: {sid: _fred_points_live(sid) for sid in _FRED_HOME_SERIES})
-    pts = bundle.get(series_id)
-    if pts is None:  # series outside the bundle — fetch live, don't hide it
-        return _fred_points_live(series_id)
-    return (pts[0], pts[1], pts[2])
+    from data.live_rates import build_rates_anchor_bundle
+    return served_snapshot("home_rates_full_snap", 1800, build_rates_anchor_bundle)
+
+
+def _rate_anchors(series_id: str, bundle: dict):
+    """Anchors for one series from the warmed bundle; live fallback for any id
+    the bundle is missing (JSON round-trip keeps the dict shape)."""
+    from data.live_rates import rate_anchors_live
+    a = bundle.get(series_id)
+    return a if a is not None else rate_anchors_live(series_id)
 
 
 # ── Feed helpers (shared by the above-the-fold news rail) ─────────────
@@ -108,23 +83,47 @@ _AF_ETFS = [
 ]
 _AF_DEFAULT_OVERLAY = ("SPY", "QQQ", "KRE")
 
-# (label, source, key, kind). source: live (yfinance intraday), fred (daily),
-# spread (computed from live 10Y−2Y, FRED fallback). kind drives unit fmt.
-_AF_RATES = [
-    ("Fed Funds", "fred", "FEDFUNDS", "pct"),
-    ("3M", "live", "3M", "pct"),
-    ("6M", "fred", "DGS6MO", "pct"),
-    ("1Y", "fred", "DGS1", "pct"),
-    ("2Y", "live", "2Y", "pct"),
-    ("5Y", "live", "5Y", "pct"),
-    ("10Y", "live", "10Y", "pct"),
-    ("30Y", "live", "30Y", "pct"),
-    ("10Y − 2Y", "spread", None, "spread"),
-    ("HY OAS", "fred", "BAMLH0A0HYM2", "pct"),
-    ("IG OAS", "fred", "BAMLC0A0CM", "pct"),
+# Rates · Credit board, sectioned. Each row is (label, kind, a, b):
+#   tenor  — live yfinance level/1D/1W, FRED series `a` for the 1M/YTD/52w anchors
+#   fred   — everything from FRED series `a`
+#   spread — live 10Y−2Y level/1D/1W, FRED series `a` (T10Y2Y) for anchors
+#   calc   — FRED series `a` minus `b`, all anchors (no live; 52w range n/a)
+# Live tenors map to their FRED fallback series for the history anchors.
+_LIVE_FRED = {"3M": "DGS3MO", "2Y": "DGS2", "5Y": "DGS5",
+              "10Y": "DGS10", "30Y": "DGS30"}
+_AF_RATES_SECTIONS = [
+    ("Treasuries", [
+        ("1M", "fred", "DGS1MO", None), ("3M", "tenor", "3M", None),
+        ("6M", "fred", "DGS6MO", None), ("1Y", "fred", "DGS1", None),
+        ("2Y", "tenor", "2Y", None), ("3Y", "fred", "DGS3", None),
+        ("5Y", "tenor", "5Y", None), ("7Y", "fred", "DGS7", None),
+        ("10Y", "tenor", "10Y", None), ("20Y", "fred", "DGS20", None),
+        ("30Y", "tenor", "30Y", None),
+    ]),
+    ("Spreads", [
+        ("10Y − 2Y", "spread", "T10Y2Y", None),
+        ("10Y − 3M", "fred", "T10Y3M", None),
+        ("30Y − 10Y", "calc", "DGS30", "DGS10"),
+        ("2Y − Fed Funds", "calc", "DGS2", "DFF"),
+    ]),
+    ("Credit · OAS", [
+        ("AAA", "fred", "BAMLC0A1CAAA", None),
+        ("BBB", "fred", "BAMLC0A4CBBB", None),
+        ("IG", "fred", "BAMLC0A0CM", None),
+        ("BB", "fred", "BAMLH0A1HYBB", None),
+        ("HY", "fred", "BAMLH0A0HYM2", None),
+        ("CCC", "fred", "BAMLH0A3HYC", None),
+        ("EM", "fred", "BAMLEMCBPIOAS", None),
+    ]),
+    ("Funding · Real", [
+        ("Fed Funds", "fred", "DFF", None),
+        ("SOFR", "fred", "SOFR", None),
+        ("Prime", "fred", "DPRIME", None),
+        ("30Y Mtg", "fred", "MORTGAGE30US", None),
+        ("10Y Real", "fred", "DFII10", None),
+        ("10Y B/E", "fred", "T10YIE", None),
+    ]),
 ]
-_AF_LIVE_FALLBACK = {"3M": "DGS3MO", "2Y": "DGS2", "5Y": "DGS5",
-                     "10Y": "DGS10", "30Y": "DGS30"}
 
 _AF_TIERS = [("all", "All"), ("mc", "Money-Center"), ("lg", "Large Regional"),
              ("reg", "Regional"), ("comm", "Community")]
@@ -175,6 +174,12 @@ _AF_CSS = r"""
 .afwrap .erow.m1 .num{font-size:var(--fs-grid-10);}
 .afwrap .erow.v1{grid-template-columns:1.45fr .58fr .95fr .66fr .72fr .98fr;column-gap:5px;padding:0 12px;}
 .afwrap .erow.v1 .num{font-size:var(--fs-grid-10);}
+/* Rates · Credit board: Instrument | Level | 1D | 1W | 1M | YTD | 52w-bar. */
+.afwrap .erow.r7{grid-template-columns:1.18fr .72fr .56fr .56fr .56fr .58fr .86fr;column-gap:4px;padding:0 10px;}
+.afwrap .erow.r7 .num{font-size:var(--fs-grid-10);}
+.afwrap .rsec{font-size:var(--fs-grid-8);font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#1e3a8a;background:#f7f9fc;padding:4px 10px 3px;border-bottom:1px solid #eef1f5;}
+.afwrap .rng{position:relative;height:5px;width:100%;border-radius:3px;background:#e9edf3;align-self:center;}
+.afwrap .rng .rngdot{position:absolute;top:50%;width:5px;height:5px;border-radius:50%;background:#1e3a8a;transform:translate(-50%,-50%);}
 .afwrap .h{font-size:var(--fs-grid-8_5);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9aa6b4;}
 .afwrap .num{text-align:right;font-family:var(--mono);font-size:var(--fs-grid-11);font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:#1f2937;}
 .afwrap .num.h{font-family:inherit;}
@@ -366,55 +371,107 @@ def _af_etf_table() -> str:
             + f'<div class="body"><div class="etf">{rows}</div></div>')
 
 
+def _af_row_anchors(kind, a, b, bundle, ly):
+    """Resolve {level,d1,w1,m1,ytd,lo,hi} + is_live for one board row. Live
+    overlays (intraday level/1D/1W) ride on top of the FRED history anchors;
+    computed spreads (calc) get no live overlay and no 52w range (min of a
+    difference ≠ difference of the per-leg extremes — show n/a, never a guess)."""
+    if kind == "calc":
+        A = _rate_anchors(a, bundle) or {}
+        B = _rate_anchors(b, bundle) or {}
+        out = {k: ((A.get(k) - B.get(k))
+                   if (A.get(k) is not None and B.get(k) is not None) else None)
+               for k in ("level", "d1", "w1", "m1", "ytd")}
+        out["lo"] = out["hi"] = None
+        return out, False
+    if kind == "tenor":
+        # `a` is the live key (e.g. "10Y"); its history anchors live under the
+        # FRED fallback series. Overlay the intraday level/1D/1W when live.
+        an = dict(_rate_anchors(_LIVE_FRED[a], bundle) or {})
+        v = ly.get(a)
+        if v and v[0] is not None:
+            an["level"] = v[0]
+            an["d1"] = v[1] if v[1] is not None else an.get("d1")
+            an["w1"] = v[2] if v[2] is not None else an.get("w1")
+            return an, True
+        return an, False
+    if kind == "spread":   # `a` = the FRED spread series (T10Y2Y) for anchors
+        an = dict(_rate_anchors(a, bundle) or {})
+        t10, t2 = ly.get("10Y"), ly.get("2Y")
+        if t10 and t2 and t10[0] is not None and t2[0] is not None:
+            an["level"] = t10[0] - t2[0]
+            if t10[1] is not None and t2[1] is not None:
+                an["d1"] = t10[1] - t2[1]
+            if t10[2] is not None and t2[2] is not None:
+                an["w1"] = t10[2] - t2[2]
+            return an, True
+        return an, False
+    return dict(_rate_anchors(a, bundle) or {}), False   # fred
+
+
+def _af_range_bar(level, lo, hi):
+    """A 52-week range bar: dot positioned where `level` sits in [lo, hi].
+    n/a (—) when the range is unavailable (e.g. computed spreads)."""
+    try:
+        if lo is None or hi is None or hi <= lo:
+            return '<span class="num mut">—</span>'
+        pct = max(0.0, min(100.0, (level - lo) / (hi - lo) * 100.0))
+        return (f'<span class="rng" title="52-wk {lo:.2f} – {hi:.2f}">'
+                f'<span class="rngdot" style="left:{pct:.0f}%"></span></span>')
+    except Exception:
+        return '<span class="num mut">—</span>'
+
+
 def _af_rates_table() -> str:
-    """Live intraday yields (yfinance) for 3M/2Y/5Y/10Y/30Y + a live 10Y−2Y
-    spread; FRED daily for 6M/1Y/Fed Funds + the credit OAS. Live rows carry
-    a green marker; a failed live tenor falls back to FRED (never a guess)."""
+    """Sectioned rates & credit board: full Treasury curve, curve spreads,
+    credit OAS by rating, and funding/real rates — each with Level + 1D/1W/1M/YTD
+    bp and a 52-week range bar. Live tenors (yfinance ~15m) carry a green dot and
+    refresh the level/1D/1W; the 1M/YTD/range anchors and everything else are
+    daily FRED. Missing inputs render '—', never a guess."""
     try:
         from data.live_rates import live_yields
         ly = live_yields() or {}
     except Exception:
         ly = {}
+    bundle = _rates_bundle()
 
-    def pts(source, key):
-        if source == "live":
-            v = ly.get(key)
-            if v and v[0] is not None:
-                return (v[0], v[1], v[2], True)
-            lv, pr, wk = _fred_points(_AF_LIVE_FALLBACK[key])
-            return (lv, pr, wk, False)
-        if source == "spread":
-            t10, t2 = ly.get("10Y"), ly.get("2Y")
-            if t10 and t2 and t10[0] is not None and t2[0] is not None:
-                pr = (t10[1] - t2[1]) if (t10[1] is not None and t2[1] is not None) else None
-                wk = (t10[2] - t2[2]) if (t10[2] is not None and t2[2] is not None) else None
-                return (t10[0] - t2[0], pr, wk, True)
-            lv, pr, wk = _fred_points("T10Y2Y")
-            return (lv, pr, wk, False)
-        lv, pr, wk = _fred_points(key)
-        return (lv, pr, wk, False)
+    head = ('<div class="erow r7 eh"><span class="h">Instrument</span>'
+            '<span class="num h">Level</span><span class="num h">1D</span>'
+            '<span class="num h">1W</span><span class="num h">1M</span>'
+            '<span class="num h">YTD</span>'
+            '<span class="h" style="text-align:center">52W</span></div>')
+    body = ""
+    for section, rows in _AF_RATES_SECTIONS:
+        is_spread = section == "Spreads"
+        body += f'<div class="rsec">{section}</div>'
+        for label, kind, a, b in rows:
+            an, is_live = _af_row_anchors(kind, a, b, bundle, ly)
+            lv = an.get("level")
+            dot = ('<span class="dotc" style="background:#059669;margin-right:4px;"'
+                   ' title="live ~15m"></span>') if is_live else ""
+            if lv is None:
+                body += (f'<div class="erow r7 ed"><span class="nm">{dot}{label}</span>'
+                         + '<span class="num mut">—</span>' * 5
+                         + '<span class="num mut">—</span></div>')
+                continue
+            lvl = f'{lv:+.2f}' if is_spread else f'{lv:.2f}'
 
-    rows = ('<div class="erow r2 eh"><span class="h">Instrument</span>'
-            '<span class="num h">Level</span><span class="num h">1D bp</span>'
-            '<span class="num h">1W bp</span></div>')
-    for label, source, key, kind in _AF_RATES:
-        lv, pr, wk, is_live = pts(source, key)
-        dot = ('<span class="dotc" style="background:#059669;margin-right:5px;" '
-               'title="live ~15m"></span>') if is_live else ""
-        if lv is None:
-            rows += (f'<div class="erow r2 ed"><span class="nm">{dot}{label}</span>'
-                     '<span class="num mut">—</span><span class="num mut">—</span>'
-                     '<span class="num mut">—</span></div>')
-            continue
-        lvl = (f'<span class="num">{lv:+.2f}</span>' if kind == "spread"
-               else f'<span class="num">{lv:.2f}</span>')
-        d1_t, d1_c = _af_signed((lv - pr) * 100, dp=0) if pr is not None else ("—", "mut")
-        d1w_t, d1w_c = _af_signed((lv - wk) * 100, dp=0) if wk is not None else ("—", "mut")
-        rows += (f'<div class="erow r2 ed"><span class="nm">{dot}{label}</span>{lvl}'
-                 f'<span class="num {d1_c}">{d1_t}</span>'
-                 f'<span class="num {d1w_c}">{d1w_t}</span></div>')
+            def _bp(anchor):
+                return (_af_signed((lv - anchor) * 100, dp=0)
+                        if anchor is not None else ("—", "mut"))
+            d1t, d1c = _bp(an.get("d1"))
+            w1t, w1c = _bp(an.get("w1"))
+            m1t, m1c = _bp(an.get("m1"))
+            ytt, ytc = _bp(an.get("ytd"))
+            rng = _af_range_bar(lv, an.get("lo"), an.get("hi"))
+            body += (f'<div class="erow r7 ed"><span class="nm">{dot}{label}</span>'
+                     f'<span class="num">{lvl}</span>'
+                     f'<span class="num {d1c}">{d1t}</span>'
+                     f'<span class="num {w1c}">{w1t}</span>'
+                     f'<span class="num {m1c}">{m1t}</span>'
+                     f'<span class="num {ytc}">{ytt}</span>{rng}</div>')
     return (_af_hd("Rates · Credit", '<span class="live"></span>live · FRED daily')
-            + f'<div class="body"><div class="etf">{rows}</div></div>')
+            + f'<div class="body"><div class="etf">{head}{body}</div></div>')
 
 
 def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str:
