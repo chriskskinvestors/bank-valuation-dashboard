@@ -484,12 +484,19 @@ def _render_price_panel(ticker: str):
     label and the period buttons share one aligned row; the buttons are
     compacted to the design system's dense (--fs-sm) scale. Chart sits below."""
     with st.container(key="ov_price_box"):
+        # Compact segmented buttons — same recipe as the Home above-the-fold
+        # timeframe selector (home.py), scoped to this panel.
         st.markdown(
             "<style>"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
-            ".st-key-ov_price_box button{padding:2px 12px;min-height:0;"
-            "font-size:var(--fs-sm);}"
+            ".st-key-ov_price_box [data-testid='stButtonGroup']{gap:2px!important;}"
+            ".st-key-ov_price_box [data-testid^='stBaseButton-segmented_control']"
+            "{min-height:0!important;height:22px!important;padding:0 9px!important;"
+            "border-radius:3px!important;}"
+            ".st-key-ov_price_box [data-testid^='stBaseButton-segmented_control'] p"
+            "{font-size:var(--fs-grid-10)!important;line-height:1!important;"
+            "font-weight:600!important;}"
             "</style>", unsafe_allow_html=True)
         # "Price" label and the period buttons on one tidy row.
         _hl, _hr = st.columns([1, 4], vertical_alignment="center")
