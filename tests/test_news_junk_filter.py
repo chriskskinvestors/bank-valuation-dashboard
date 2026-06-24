@@ -115,6 +115,28 @@ class TestSEOAndForm144(unittest.TestCase):
             with self.subTest(h=h):
                 self.assertFalse(is_junk_news(h))
 
+    def test_foreign_language_twins_are_junk(self):
+        # Wires re-issue the SAME release in another language alongside the
+        # English original; the translated twin is a pure duplicate.
+        for h in [
+            "JPMorgan annonce des distributions en espèces pour les FNB JPMorgan",
+            "JPMorgan anuncia distribuciones en efectivo para los ETF de JPMorgan",
+            "JPMorgan kündigt Barausschüttungen für die JPMorgan ETFs an",
+        ]:
+            with self.subTest(h=h):
+                self.assertTrue(is_junk_news(h))
+
+    def test_english_originals_survive_foreign_filter(self):
+        # The English twin and a real F.N.B. Corp (ticker FNB) headline must NOT
+        # be caught by the foreign-language filter.
+        for h in [
+            "JPMorgan Announces Cash Distributions for the JPMorgan ETFs",
+            "F.N.B. Corporation Declares Quarterly Common Stock Dividend",
+            "FNB Corp Reports Second Quarter 2026 Earnings",
+        ]:
+            with self.subTest(h=h):
+                self.assertFalse(is_junk_news(h))
+
 
 # (headline, ticker) pairs pulled from the live feed (or close paraphrases of
 # the same generator templates) that MUST be filtered as junk.

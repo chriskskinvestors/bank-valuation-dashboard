@@ -747,6 +747,24 @@ _SEO_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Foreign-language syndication — wires (CNW/Q4 et al.) push the SAME release in
+# French/Spanish/German alongside the English original ("JPMorgan annonce des
+# distributions en espèces pour les FNB JPMorgan" === "JPMorgan Announces Cash
+# Distributions for the JPMorgan ETFs"). We surface US-bank news in English, so
+# the translated twin is a pure duplicate. Match on PR-announce verbs and
+# connective phrases that never appear in an English bank headline. Kept tight:
+# NO bare "FNB" (that's a real US ticker, F.N.B. Corp) and no lone accented char.
+_FOREIGN_LANG_RE = re.compile(
+    r"\bannonce(?:nt)?\b"                        # FR: announce(s)
+    r"|\ben\s+esp[eè]ces\b"                      # FR: in cash
+    r"|\bpour\s+l(?:es|a|e)\b"                   # FR: for the
+    r"|\banuncia\b|\bpara\s+los\b"               # ES: announces / for the
+    r"|\bdistribuciones\b|\ben\s+efectivo\b"     # ES: distributions / in cash
+    r"|\bk[uü]ndigt\b|\bf[uü]r\s+die\b"          # DE: announces / for the
+    r"|\baussch[uü]ttung",                       # DE: distribution
+    re.IGNORECASE,
+)
+
 # Content-farm editorializing tacked onto an earnings-shaped headline.
 # Example: "...Q1 2026 Earnings: EPS Falls Short ... - Earnings Manipulation Risk"
 _FARM_RE = re.compile(
@@ -893,6 +911,8 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
         supplements, free-writing prospectuses, "Guarantor:" stubs
       • dividend-CALENDAR filler (_DIV_CALENDAR_RE) — ex-dividend reminders /
         upcoming-dividend schedules (NOT real "Declares Dividend" actions)
+      • foreign-language syndicated twins (_FOREIGN_LANG_RE) — the same release
+        re-issued in French/Spanish/German alongside the English original
       • off-subject / marketing (_OFFSUBJECT_RE) — bank named only as
         underwriter/advisor/custodian on someone else's deal, EU transparency
         notifications, sponsorship/sports fluff, "study finds" content-marketing
@@ -910,6 +930,7 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
             or _PROMO_RE.search(h) or _PROSPECTUS_RE.search(h)
             or _DIV_CALENDAR_RE.search(h) or _OFFSUBJECT_RE.search(h)
             or _SHAREHOLDER_NOTICE_RE.search(h) or _SEO_RE.search(h)
+            or _FOREIGN_LANG_RE.search(h)
             or is_routine_noise(h)):
         return True
     if ticker:
