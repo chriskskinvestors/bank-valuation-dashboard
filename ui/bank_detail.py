@@ -487,6 +487,10 @@ def _render_price_panel(ticker: str):
     with st.container(key="ov_price_box"):
         st.markdown(
             "<style>"
+            # Hairline border around the whole price card (readout + buttons +
+            # chart inset inside it) — same line as the ledger heading rules.
+            ".st-key-ov_price_box{border:1px solid var(--grid-head);"
+            "border-radius:var(--radius-sm);padding:8px 11px;}"
             ".st-key-ov_price_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_price_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
             ".st-key-ov_price_box .ovp-readout{font-size:var(--fs-sm);font-weight:600;"
