@@ -325,6 +325,58 @@ def list_msas() -> pd.DataFrame:
     """, {})
 
 
+def get_branches_by_county(stcntybr: str, tickers: list[str] | None = None,
+                            year: int | None = None) -> pd.DataFrame:
+    """All branches in a county (5-digit state+county FIPS, STCNTYBR), optionally
+    filtered to a ticker subset."""
+    params = {"stcntybr": str(stcntybr)}
+    sql = "SELECT * FROM branches WHERE stcntybr = :stcntybr"
+    if year:
+        sql += " AND year = :year"
+        params["year"] = year
+    if tickers:
+        if _USE_POSTGRES:
+            sql += " AND ticker = ANY(:tickers)"
+            params["tickers"] = [t.upper() for t in tickers]
+        else:
+            placeholders = ",".join(f":t{i}" for i in range(len(tickers)))
+            sql += f" AND ticker IN ({placeholders})"
+            for i, t in enumerate(tickers):
+                params[f"t{i}"] = t.upper()
+    sql += " ORDER BY deposits DESC"
+    return _q_to_df(sql, params)
+
+
+def get_banks_by_county(stcntybr: str, year: int | None = None) -> pd.DataFrame:
+    """Aggregated: total deposits + branch count per bank in a county."""
+    params = {"stcntybr": str(stcntybr)}
+    extra = " AND year = :year" if year else ""
+    if year:
+        params["year"] = year
+    sql = f"""
+        SELECT ticker, bank_name,
+               COUNT(*) AS n_branches,
+               SUM(deposits) AS total_deposits,
+               MAX(county) AS county, MAX(state) AS state
+        FROM branches
+        WHERE stcntybr = :stcntybr {extra}
+        GROUP BY ticker, bank_name
+        ORDER BY total_deposits DESC
+    """
+    return _q_to_df(sql, params)
+
+
+def list_counties() -> pd.DataFrame:
+    """List of (stcntybr, county, state) present, sorted by state then county."""
+    return _q_to_df("""
+        SELECT stcntybr, MAX(county) AS county, MAX(state) AS state
+        FROM branches
+        WHERE stcntybr != '' AND county != ''
+        GROUP BY stcntybr
+        ORDER BY MAX(state), MAX(county)
+    """, {})
+
+
 def get_latest_year() -> int | None:
     """Most recent SOD year present in the table."""
     df = _q_to_df("SELECT MAX(year) AS y FROM branches", {})

@@ -20,9 +20,9 @@ import pandas as pd
 import plotly.express as px
 
 from data.branches_store import (
-    list_states, list_msas, get_latest_year,
-    get_branches_by_state, get_branches_by_msa,
-    get_banks_by_state, get_banks_by_msa,
+    list_states, list_msas, list_counties, get_latest_year,
+    get_branches_by_state, get_branches_by_msa, get_branches_by_county,
+    get_banks_by_state, get_banks_by_msa, get_banks_by_county,
     get_branch_counts_by_ticker,
 )
 from ui.chrome import table_export
@@ -97,9 +97,10 @@ def render_geo_view():
 
     st.caption(f"Data as of FDIC Summary of Deposits, year {year}.")
 
-    tab_state, tab_msa, tab_banks = st.tabs([
+    tab_state, tab_msa, tab_county, tab_banks = st.tabs([
         "By State",
         "By MSA",
+        "By County",
         "By Bank(s)",
     ])
 
@@ -201,6 +202,58 @@ def render_geo_view():
                 # Underlying numeric frame (deposits in $K, unformatted)
                 table_export(banks_disp, f"banks_by_msa_{msa_code}",
                              key=f"exp_banks_by_msa_{msa_code}")
+
+            st.markdown(f"### Branch map — {len(branches_disp):,} branches")
+            _render_map(branches_disp)
+
+    # ───────── County view ─────────
+    with tab_county:
+        counties_df = list_counties()
+        if counties_df.empty:
+            st.info("No counties loaded yet — wait for the refresh job.")
+        else:
+            opts = counties_df.to_dict("records")
+            labels = [f"{r['county']}, {r['state']}" for r in opts]
+            label_to_fips = {lbl: r["stcntybr"] for lbl, r in zip(labels, opts)}
+
+            col1, col2 = st.columns([2, 2])
+            with col1:
+                default_idx = next(
+                    (i for i, r in enumerate(opts)
+                     if r["county"] and "Los Angeles" in r["county"]), 0,
+                )
+                county_label = st.selectbox("County", labels, key="geo_county",
+                                            index=default_idx)
+            stcntybr = label_to_fips[county_label]
+
+            branches = get_branches_by_county(stcntybr, year=year)
+            banks = get_banks_by_county(stcntybr, year=year)
+
+            public_only_county = st.checkbox(
+                "Public-traded banks only", value=False,
+                key=f"geo_county_public_{stcntybr}",
+                help="Off = include all FDIC-insured banks in the county.",
+            )
+            if public_only_county and not banks.empty:
+                banks_disp = banks[banks["ticker"].notna() & (banks["ticker"] != "")]
+                branches_disp = branches[branches["ticker"].notna() & (branches["ticker"] != "")]
+            else:
+                banks_disp = banks
+                branches_disp = branches
+
+            st.markdown(f"### Banks operating in {county_label} — {len(banks_disp)} institutions")
+            if not banks_disp.empty:
+                table = banks_disp.copy()
+                table["ticker"] = table["ticker"].fillna("").replace("", "—")
+                table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
+                table = table.rename(columns={
+                    "ticker": "Ticker", "bank_name": "Bank",
+                    "n_branches": "Branches",
+                })[["Ticker", "Bank", "Branches", "Deposits"]]
+                st.dataframe(table, use_container_width=True, hide_index=True,
+                              height=min(500, 38 * (len(table) + 1) + 4))
+                table_export(banks_disp, f"banks_by_county_{stcntybr}",
+                             key=f"exp_banks_by_county_{stcntybr}")
 
             st.markdown(f"### Branch map — {len(branches_disp):,} branches")
             _render_map(branches_disp)
