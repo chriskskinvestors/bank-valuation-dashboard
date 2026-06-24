@@ -1,0 +1,48 @@
+name: Run Cloud Run Job
+
+# Manual trigger for any of our Cloud Run jobs, using the same WIF
+# credentials as the deploy workflow. Lets an operator (or Claude) fire
+# e.g. refresh-universe without a locally authenticated gcloud.
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Cloud Run job to execute"
+        required: true
+        type: choice
+        options:
+          - refresh-universe
+          - refresh-sod
+          - refresh-ffiec
+          - poll-events
+          - live-audit
+          - refresh-prices
+          - verify-metrics
+
+env:
+  PROJECT_ID: ace-beanbag-486220-a8
+  REGION: us-central1
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Required for Workload Identity Federation
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Execute job and wait
+        run: |
+          gcloud run jobs execute "${{ inputs.job }}" \
+            --region="${{ env.REGION }}" \
+            --wait
