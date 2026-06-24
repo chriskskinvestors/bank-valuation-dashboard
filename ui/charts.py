@@ -39,6 +39,8 @@ def price_chart(df: pd.DataFrame, ticker: str, show_title: bool = True) -> go.Fi
         fig = go.Figure()
         apply_standard_layout(fig, title=(price_readout(df, ticker) if show_title else ""),
                               height=300, show_legend=False)
+        if not show_title:
+            fig.update_layout(title_text="")   # else plotly renders "undefined"
         return fig
 
     d = df.sort_values("date")
@@ -74,6 +76,11 @@ def price_chart(df: pd.DataFrame, ticker: str, show_title: bool = True) -> go.Fi
 
     apply_standard_layout(fig, title=title, height=420, show_legend=False,
                           hovermode="x unified")
+    if not show_title:
+        # apply_standard_layout leaves an empty title object ({}) for a falsy
+        # title, which plotly.js renders as the literal "undefined". Force an
+        # empty text so nothing shows.
+        fig.update_layout(title_text="")
     fig.update_xaxes(showgrid=True, gridcolor="rgba(148,163,184,0.12)")
     # Zoom the price y-axis to the data range so the move reads clearly.
     ymin, ymax = float(y.min()), float(y.max())
