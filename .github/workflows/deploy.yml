@@ -106,6 +106,16 @@ jobs:
             echo "::error::Required secret(s) not accessible — refusing to deploy a half-keyed service:${MISSING}"
             exit 1
           fi
+          # OPTIONAL secrets — mounted IF they exist, skipped silently if not (so a
+          # deploy never fails on their absence). external-access-password gates
+          # non-kskinvestors.com users (ui/access_gate.py); the app runs
+          # gate-dormant until the secret is created.
+          for s in external-access-password; do
+            if gcloud secrets describe "$s" --quiet >/dev/null 2>&1; then
+              env_var=$(echo "$s" | tr '[:lower:]-' '[:upper:]_')
+              SECRETS="${SECRETS:+$SECRETS,}${env_var}=${s}:latest"
+            fi
+          done
           echo "secrets=${SECRETS}" >> $GITHUB_OUTPUT
 
       - name: Build DATABASE_URL

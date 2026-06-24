@@ -31,6 +31,12 @@ st.set_page_config(
 )
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
+# External-access gate (defense-in-depth on top of IAP): @kskinvestors.com users
+# pass on Google login alone; other emails must also enter a shared password.
+# DORMANT until the EXTERNAL_ACCESS_PASSWORD secret is set. See ui/access_gate.py.
+from ui.access_gate import enforce_access_gate  # noqa: E402
+enforce_access_gate()
+
 
 # ── Session state initialization ─────────────────────────────────────────
 if "ibkr_connected" not in st.session_state:
