@@ -17,7 +17,6 @@ import pandas as pd
 
 from data.bank_mapping import get_name, get_fdic_cert, get_cik
 from data.consensus import (
-    parse_consensus_pdf,
     parse_consensus_excel,
     detect_and_parse_pdf,
     parse_bulk_consensus,
@@ -117,14 +116,18 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
 
     st.markdown("---")
 
-    # ── Tabs for input methods ──────────────────────────────────────────
-    input_tab1, input_tab2 = st.tabs(["Manual Input", "Upload File"])
-
-    with input_tab1:
+    # ── Add estimates (shared firm-level component, ticker pre-filled) ───
+    # Lazy segmented_control (st.tabs renders both bodies eagerly); the upload
+    # path auto-detects firm + every forecast period, manual tags one firm.
+    st.markdown("**Add estimates for this bank**")
+    add_mode = st.segmented_control(
+        "Add estimates", ["Upload research file", "Enter manually"],
+        default="Upload research file", key=f"pb_addmode_{ticker}",
+        label_visibility="collapsed") or "Upload research file"
+    if add_mode == "Upload research file":
+        _render_firm_upload(default_ticker=ticker, kp=f"pb_{ticker}")
+    else:
         _render_manual_input(ticker)
-
-    with input_tab2:
-        _render_file_upload(ticker)
 
     st.markdown("---")
 
@@ -159,6 +162,15 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
                 _render_comparison_table(comparison)
             else:
                 st.info("No comparable metrics found.")
+
+            # Per-firm breakdown — what each firm estimated (reuses the same
+            # matrix as the Estimates browser).
+            detail = consensus_detail(ticker, selected_period)
+            if detail and detail.get("metrics"):
+                with st.expander(
+                        f"Per-firm breakdown — {len(detail['firms'])} firm(s): "
+                        f"{', '.join(detail['firms'])}"):
+                    _render_firm_matrix(detail, f"{ticker}_{selected_period}")
     else:
         st.info(
             f"No consensus data for {ticker} yet. "
@@ -251,14 +263,18 @@ def _render_auto_estimates(ticker: str, estimates: dict):
 
 
 def _render_manual_input(ticker: str):
-    """Manual consensus input form."""
-    st.markdown("**Enter consensus estimates manually:**")
+    """Manual consensus input form — stored as ONE firm's view (a broker, or the
+    user's own model) so it aggregates with other firms into the consensus."""
+    st.markdown("**Enter estimates manually (one firm / your own model):**")
 
-    period = st.text_input(
-        "Period",
-        placeholder="e.g. 2026Q1",
-        key=f"manual_period_{ticker}",
-    )
+    pcol, fcol = st.columns(2)
+    with pcol:
+        period = st.text_input(
+            "Period", placeholder="e.g. 2026Q1", key=f"manual_period_{ticker}")
+    with fcol:
+        firm = st.text_input(
+            "Firm / Broker (or your model)", value="My model",
+            key=f"m_firm_{ticker}").strip()
 
     # Core metrics in organized groups
     st.markdown("##### Earnings & Profitability")
@@ -334,50 +350,10 @@ def _render_manual_input(ticker: str):
             if not metrics:
                 st.error("Please enter at least one metric.")
             else:
-                save_manual_consensus(ticker, period, metrics)
-                st.success(f"Saved {len(metrics)} consensus estimates for {ticker} {period}")
+                save_manual_consensus(ticker, period, metrics, firm or "My model")
+                st.success(f"Saved {len(metrics)} estimates for {ticker} {period} "
+                           f"({firm or 'My model'})")
                 st.rerun()
-
-
-def _render_file_upload(ticker: str):
-    """File upload for consensus estimates."""
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        uploaded = st.file_uploader(
-            "Upload consensus estimate",
-            type=["pdf", "xlsx", "xls", "csv"],
-            key=f"consensus_upload_{ticker}",
-            help="Upload a PDF or Excel file with consensus estimates",
-        )
-    with col2:
-        period = st.text_input(
-            "Period",
-            placeholder="e.g. 2026Q1",
-            key=f"consensus_period_{ticker}",
-        )
-
-    if uploaded and period:
-        with st.spinner("Parsing consensus document..."):
-            file_bytes = uploaded.read()
-            filename = uploaded.name.lower()
-
-            if filename.endswith(".pdf"):
-                parsed = parse_consensus_pdf(file_bytes, ticker, period)
-            else:
-                parsed = parse_consensus_excel(file_bytes, ticker, period, filename)
-
-            if parsed.get("error"):
-                st.error(f"Error parsing: {parsed['error']}")
-            elif not parsed.get("metrics"):
-                st.warning("No metrics found in the document.")
-            else:
-                try:
-                    save_consensus(parsed)
-                except IOError as e:
-                    st.error(str(e))
-                else:
-                    st.success(f"Parsed {len(parsed['metrics'])} metrics for {ticker} {period}")
-                    st.rerun()
 
 
 def _render_earnings_history_chart(ticker: str, estimates: dict):
@@ -1244,6 +1220,30 @@ def _render_calls_webcasts():
 
 # ── Beat / Miss Summary ───────────────────────────────────────────────
 
+def _render_firm_matrix(detail: dict, key_suffix: str):
+    """Per-firm estimate matrix for one (ticker, period): a row per metric, a
+    column per firm (in that metric's canonical unit), plus Mean and low–high
+    Range. Shared by the Estimates browser and the per-bank Earnings tab so both
+    show the SAME 'what each firm estimated' view. `detail` is consensus_detail()."""
+    firms = detail["firms"]
+    rows = []
+    for m in sorted(detail["metrics"], key=lambda x: x["name"]):
+        row = {"Metric": m["name"]}
+        for f in firms:
+            v = m["by_firm"].get(f)
+            row[f] = _format_val(v, m["unit"]) if v is not None else "—"
+        row["Mean"] = _format_val(m["mean"], m["unit"])
+        row["Range"] = (f'{_format_val(m["low"], m["unit"])}–'
+                        f'{_format_val(m["high"], m["unit"])}') if m["n"] > 1 else "—"
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, hide_index=True,
+                 height=min(720, 45 + 32 * len(df)))
+    table_export(df, f"estimates_{key_suffix}",
+                 key=f"exp_estimates_{key_suffix}")
+
+
 def _render_estimates_browser(all_consensus: dict):
     """Browse the saved consensus estimates by company → period, showing each
     firm's number per metric plus the mean and low–high range. This is the
@@ -1278,23 +1278,7 @@ def _render_estimates_browser(all_consensus: dict):
 
     firms = detail["firms"]
     st.markdown(f"##### {ticker} · {period} — {len(firms)} firm(s): {', '.join(firms)}")
-
-    rows = []
-    for m in sorted(detail["metrics"], key=lambda x: x["name"]):
-        row = {"Metric": m["name"]}
-        for f in firms:
-            v = m["by_firm"].get(f)
-            row[f] = _format_val(v, m["unit"]) if v is not None else "—"
-        row["Mean"] = _format_val(m["mean"], m["unit"])
-        row["Range"] = (f'{_format_val(m["low"], m["unit"])}–'
-                        f'{_format_val(m["high"], m["unit"])}') if m["n"] > 1 else "—"
-        rows.append(row)
-
-    df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True,
-                 height=min(720, 45 + 32 * len(df)))
-    table_export(df, f"estimates_{ticker}_{period}",
-                 key=f"exp_estimates_{ticker}_{period}")
+    _render_firm_matrix(detail, f"{ticker}_{period}")
     st.caption("Values shown in each metric's standard unit; **Mean** is the "
                "consensus across firms, **Range** is low–high. Add more firms' "
                "notes to broaden the consensus.")
@@ -1647,20 +1631,23 @@ _MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def _render_upload_section(watchlist: list[str]):
-    """Upload and manual input for the aggregate view."""
+    """Add estimates for the aggregate view — every path is firm-level (the same
+    shared component the per-bank tab uses), so a single note, a hand model, and
+    a multi-bank sector note all land per (ticker, period, firm)."""
     st.subheader("Add Consensus Estimates")
 
     input_method = st.radio(
         "Input method",
-        ["Bulk Upload (Multi-Bank)", "Manual Entry (Single Bank)", "Single File Upload"],
+        ["Single research file (one firm)", "Manual entry (one firm)",
+         "Bulk multi-bank (one firm)"],
         key="overview_input_method",
         horizontal=True,
     )
 
-    if input_method == "Bulk Upload (Multi-Bank)":
-        _render_bulk_upload()
+    if input_method == "Single research file (one firm)":
+        _render_firm_upload(kp="ovr")
 
-    elif input_method == "Manual Entry (Single Bank)":
+    elif input_method == "Manual entry (one firm)":
         uc1, uc2 = st.columns([1, 1])
 
         with uc1:
@@ -1678,29 +1665,36 @@ def _render_upload_section(watchlist: list[str]):
             if custom_ticker:
                 upload_ticker = custom_ticker.strip().upper()
 
-        # (No Period field here — _render_manual_input has its own; the
-        # duplicate box this branch used to show was never read.)
+        # (No Period field here — _render_manual_input has its own period + firm.)
         if upload_ticker:
             _render_manual_input(upload_ticker)
 
     else:
-        _render_single_file_upload()
+        _render_bulk_upload()
 
 
-def _render_single_file_upload():
-    """One firm's research file → consensus. A PDF model auto-detects the ticker,
-    the firm, and the firm's estimates for EVERY forecast period (multi-period
-    grid) — each saved as its own (ticker, period, firm) record. Excel/CSV is a
-    single period entered by hand."""
+def _render_firm_upload(default_ticker: str = "", kp: str = "ovr"):
+    """THE shared upload+confirm component (both the per-bank Estimates/Earnings
+    tab and the aggregate Upload/Input section use this). One firm's research file
+    → consensus: a PDF model auto-detects the ticker, the firm, and the firm's
+    estimates for EVERY forecast period (multi-period grid) — each saved as its
+    own (ticker, period, firm) record. Excel/CSV is a single period entered by
+    hand.
+
+    `default_ticker` pre-fills the ticker (the per-bank tab knows it; the
+    aggregate tab passes "" and detects). `kp` namespaces every widget/session
+    key so multiple instances (e.g. per ticker) never collide."""
     ss = st.session_state
+    k_det, k_sig = f"{kp}_detect", f"{kp}_detect_sig"
+    field_keys = (f"{kp}_tkr", f"{kp}_per", f"{kp}_firm", f"{kp}_periods")
     uploaded = st.file_uploader(
         "Research file (PDF or Excel) — a PDF model auto-detects the ticker, firm "
         "and every forecast period",
         type=["pdf", "xlsx", "xls", "csv"],
-        key="earnings_overview_upload",
+        key=f"{kp}_upload",
     )
     if not uploaded:
-        for k in ("cons_detect", "cons_detect_sig"):
+        for k in (k_det, k_sig):
             ss.pop(k, None)                    # reset when the file is cleared
         return
 
@@ -1716,26 +1710,27 @@ def _render_single_file_upload():
 
     # Parse ONCE per file (cached by signature) — the AI/parse call never re-runs
     # on later reruns (typing in the fields, etc.).
-    if ss.get("cons_detect_sig") != sig:
+    if ss.get(k_sig) != sig:
         with st.spinner("Reading the model — detecting ticker, firm & per-period "
                         "estimates…" if is_pdf else "Parsing file…"):
             if is_pdf:
-                ss["cons_detect"] = detect_and_parse_pdf(file_bytes, filename)
+                ss[k_det] = detect_and_parse_pdf(file_bytes, filename)
             else:
                 ex = parse_consensus_excel(file_bytes, "", "", filename)
-                ss["cons_detect"] = {"detected_ticker": "", "detected_firm": "",
-                                     "excel_metrics": ex.get("metrics", []),
-                                     "error": ex.get("error")}
-        ss["cons_detect_sig"] = sig
-        for k in ("single_tkr", "single_per", "single_firm", "single_periods"):
+                ss[k_det] = {"detected_ticker": "", "detected_firm": "",
+                             "excel_metrics": ex.get("metrics", []),
+                             "error": ex.get("error")}
+        ss[k_sig] = sig
+        for k in field_keys:
             ss.pop(k, None)                    # re-seed fields from the new file
 
-    det = ss.get("cons_detect", {})
+    det = ss.get(k_det, {})
     if det.get("error"):
         st.error(f"Error parsing: {det['error']}")
         return
 
-    det_tkr = det.get("detected_ticker", "")
+    # Per-bank tab pre-fills the known ticker; aggregate uses the detected one.
+    det_tkr = default_ticker or det.get("detected_ticker", "")
     det_firm = det.get("detected_firm", "")
 
     st.markdown("This is **one firm's** estimates — stored under the firm and "
@@ -1743,11 +1738,11 @@ def _render_single_file_upload():
     c1, c2 = st.columns(2)
     with c1:
         ticker = st.text_input("Ticker", value=det_tkr, placeholder="e.g. SFST",
-                               key="single_tkr").strip().upper()
+                               key=f"{kp}_tkr").strip().upper()
     with c2:
         firm = st.text_input("Firm / Broker", value=det_firm,
                              placeholder="e.g. Brean Capital",
-                             key="single_firm").strip()
+                             key=f"{kp}_firm").strip()
 
     # ── PDF: many forecast periods; Excel: one period entered by hand ──
     if is_pdf:
@@ -1762,11 +1757,11 @@ def _render_single_file_upload():
             (f"Auto-detected firm **{det_firm or '—'}** · **{len(labels)}** forecast "
              f"period(s) · **{total}** estimates. Pick which periods to save:"))
         chosen = st.multiselect("Periods to save", labels, default=labels,
-                                key="single_periods")
+                                key=f"{kp}_periods")
         to_save = [(p, by_period[p]) for p in chosen]
     else:
         period = st.text_input("Period", placeholder="e.g. 2026Q2",
-                               key="single_per").strip()
+                               key=f"{kp}_per").strip()
         em = det.get("excel_metrics", [])
         if not em:
             st.warning("No consensus metrics found in the file.")
@@ -1774,7 +1769,7 @@ def _render_single_file_upload():
         st.caption(f"{len(em)} metric(s) found.")
         to_save = [(period, em)] if period else []
 
-    if st.button("Save Estimates", type="primary", key="single_save"):
+    if st.button("Save Estimates", type="primary", key=f"{kp}_save"):
         if not ticker or not firm:
             st.error("Enter a ticker and firm before saving.")
         elif not to_save:
@@ -1795,8 +1790,7 @@ def _render_single_file_upload():
             if saved:
                 st.success(f"Saved {firm}'s estimates for {ticker} across "
                            f"{saved} period(s).")
-                for k in ("cons_detect", "cons_detect_sig", "single_tkr",
-                          "single_per", "single_firm", "single_periods"):
+                for k in (k_det, k_sig, *field_keys):
                     ss.pop(k, None)
                 st.rerun()
 
@@ -1822,7 +1816,9 @@ def _render_bulk_upload():
     **PDF** — Broker research reports, sector summaries, or any PDF with consensus estimates for multiple banks. AI will extract tickers and metrics automatically.
     """)
 
-    bc1, bc2 = st.columns([3, 1])
+    st.caption("A sector note is from ONE firm — tag the firm so each bank's row "
+               "groups with that firm's other estimates.")
+    bc1, bc2, bc3 = st.columns([3, 1, 1])
 
     with bc1:
         bulk_file = st.file_uploader(
@@ -1839,10 +1835,18 @@ def _render_bulk_upload():
             key="bulk_consensus_period",
         )
 
-    if bulk_file and bulk_period:
+    with bc3:
+        bulk_firm = st.text_input(
+            "Firm / Broker",
+            placeholder="e.g. KBW",
+            key="bulk_consensus_firm",
+        )
+
+    if bulk_file and bulk_period and bulk_firm.strip():
         if st.button("Process Bulk Upload", type="primary", key="bulk_process"):
             file_bytes = bulk_file.read()
             filename = bulk_file.name.lower()
+            firm = bulk_firm.strip()
 
             if len(file_bytes) > _MAX_UPLOAD_BYTES:
                 st.error(f"File is too large ({len(file_bytes)/1e6:.1f} MB). "
@@ -1851,10 +1855,10 @@ def _render_bulk_upload():
 
             if filename.endswith(".pdf"):
                 with st.spinner("AI is reading PDF and extracting consensus estimates for all banks..."):
-                    result = parse_bulk_consensus_pdf(file_bytes, bulk_period.strip())
+                    result = parse_bulk_consensus_pdf(file_bytes, bulk_period.strip(), firm)
             else:
                 with st.spinner("Parsing multi-bank consensus file..."):
-                    result = parse_bulk_consensus(file_bytes, bulk_period.strip(), filename)
+                    result = parse_bulk_consensus(file_bytes, bulk_period.strip(), filename, firm)
 
             # Show results
             if result["errors"]:

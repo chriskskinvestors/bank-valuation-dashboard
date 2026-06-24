@@ -399,9 +399,10 @@ Return ONLY the JSON object, no other text."""
                 "error": str(e)}
 
 
-def parse_bulk_consensus_pdf(file_bytes: bytes, period: str) -> dict:
+def parse_bulk_consensus_pdf(file_bytes: bytes, period: str, firm: str = "") -> dict:
     """
-    Parse a PDF containing consensus estimates for MULTIPLE banks.
+    Parse a PDF containing consensus estimates for MULTIPLE banks, all from ONE
+    firm (a sector note). `firm` tags every saved record.
 
     Uses Anthropic Claude to extract structured data grouped by ticker.
     Works with broker research reports, sector summaries, multi-bank consensus docs.
@@ -521,6 +522,8 @@ Return ONLY the JSON object, no other text."""
                     "source": "bulk_pdf",
                     "metrics": metrics,
                 }
+                if firm:
+                    data["firm"] = firm
                 try:
                     save_consensus(data)
                     results.append({
@@ -627,9 +630,12 @@ def parse_consensus_excel(file_bytes: bytes, ticker: str, period: str, filename:
 
 # ── Bulk Multi-Bank Parsing ─────────────────────────────────────────────
 
-def parse_bulk_consensus(file_bytes: bytes, period: str, filename: str = "") -> dict:
+def parse_bulk_consensus(file_bytes: bytes, period: str, filename: str = "",
+                         firm: str = "") -> dict:
     """
-    Parse a file with consensus estimates for MULTIPLE banks.
+    Parse a file with consensus estimates for MULTIPLE banks, all from ONE firm
+    (a sector note). `firm` tags every saved record so each bank's row groups
+    with that firm's other estimates into the consensus.
 
     Supports two formats:
 
@@ -688,7 +694,7 @@ def parse_bulk_consensus(file_bytes: bytes, period: str, filename: str = "") -> 
 
         if ticker_col:
             # Has a ticker column — could be wide or long format
-            parsed = _parse_multi_bank_sheet(df, ticker_col, period, cols_lower)
+            parsed = _parse_multi_bank_sheet(df, ticker_col, period, cols_lower, firm)
             results.extend(parsed["results"])
             errors.extend(parsed["errors"])
             total_metrics += parsed["total_metrics"]
@@ -696,7 +702,7 @@ def parse_bulk_consensus(file_bytes: bytes, period: str, filename: str = "") -> 
             # Multi-sheet mode: sheet name = ticker
             ticker = sheet_name.strip().upper()
             if len(ticker) <= 6 and ticker.isalpha():
-                parsed = _parse_single_bank_sheet(df, ticker, period)
+                parsed = _parse_single_bank_sheet(df, ticker, period, firm)
                 if parsed:
                     results.append(parsed)
                     total_metrics += parsed["metrics_count"]
@@ -713,8 +719,9 @@ def parse_bulk_consensus(file_bytes: bytes, period: str, filename: str = "") -> 
 
 
 def _parse_multi_bank_sheet(df: pd.DataFrame, ticker_col: str, period: str,
-                             cols_lower: dict) -> dict:
-    """Parse a sheet with multiple banks (has a Ticker column)."""
+                             cols_lower: dict, firm: str = "") -> dict:
+    """Parse a sheet with multiple banks (has a Ticker column). `firm` tags every
+    saved record so the bulk note groups as one firm in the consensus."""
     results = []
     errors = []
     total_metrics = 0
@@ -768,6 +775,8 @@ def _parse_multi_bank_sheet(df: pd.DataFrame, ticker_col: str, period: str,
                 "source": "bulk_upload",
                 "metrics": metrics,
             }
+            if firm:
+                data["firm"] = firm
             try:
                 save_consensus(data)
                 results.append({
@@ -820,6 +829,8 @@ def _parse_multi_bank_sheet(df: pd.DataFrame, ticker_col: str, period: str,
                     "source": "bulk_upload",
                     "metrics": metrics,
                 }
+                if firm:
+                    data["firm"] = firm
                 try:
                     save_consensus(data)
                     results.append({
@@ -833,7 +844,8 @@ def _parse_multi_bank_sheet(df: pd.DataFrame, ticker_col: str, period: str,
     return {"results": results, "total_metrics": total_metrics, "errors": errors}
 
 
-def _parse_single_bank_sheet(df: pd.DataFrame, ticker: str, period: str) -> dict | None:
+def _parse_single_bank_sheet(df: pd.DataFrame, ticker: str, period: str,
+                             firm: str = "") -> dict | None:
     """Parse a single-bank sheet (no ticker column, sheet name = ticker)."""
     cols_lower = {c.lower().strip(): c for c in df.columns}
 
@@ -885,6 +897,8 @@ def _parse_single_bank_sheet(df: pd.DataFrame, ticker: str, period: str) -> dict
         "source": "bulk_upload",
         "metrics": metrics,
     }
+    if firm:
+        data["firm"] = firm
     save_consensus(data)
 
     return {
@@ -957,14 +971,17 @@ def save_consensus(data: dict) -> Path:
     return CONSENSUS_DIR / filename
 
 
-def save_manual_consensus(ticker: str, period: str, metrics_dict: dict) -> Path:
+def save_manual_consensus(ticker: str, period: str, metrics_dict: dict,
+                          firm: str = "My model") -> Path:
     """
-    Save manually entered consensus estimates.
+    Save manually entered consensus estimates as ONE firm's view.
 
     Args:
         ticker: Bank ticker
         period: Period string (e.g. "2026Q1")
         metrics_dict: {metric_key: value} e.g. {"eps": 1.25, "nim": 3.45}
+        firm: the firm/broker (or the user's own model) this estimate is FROM.
+            Stored per-firm so it aggregates with other firms into the consensus.
 
     Returns the file path.
     """
@@ -982,6 +999,7 @@ def save_manual_consensus(ticker: str, period: str, metrics_dict: dict) -> Path:
         "ticker": ticker.upper(),
         "period": period,
         "source": "manual",
+        "firm": (firm or "My model").strip() or "My model",
         "metrics": metrics,
     }
     return save_consensus(data)
