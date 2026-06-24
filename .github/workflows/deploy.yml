@@ -84,20 +84,28 @@ jobs:
             --quiet
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
-      - name: Build secrets-arg from existing Secret Manager entries
+      - name: Build secrets-arg (all required — fail the deploy if any is missing)
         id: secrets_arg
         run: |
+          # These secrets are REQUIRED. Never conditionally skip one: --set-secrets
+          # replaces the whole set, so a silently-dropped secret ships a service
+          # missing that key (e.g. blank prices when FMP_API_KEY is absent — the
+          # 2026-06-24 outage). If a secret is missing/inaccessible, fail loudly
+          # here instead of deploying a half-keyed service.
           SECRETS=""
+          MISSING=""
           for s in anthropic-api-key fred-api-key fmp-api-key ffiec-username ffiec-jwt-token; do
             if gcloud secrets describe "$s" --quiet >/dev/null 2>&1; then
               env_var=$(echo "$s" | tr '[:lower:]-' '[:upper:]_')
-              if [[ -z "$SECRETS" ]]; then
-                SECRETS="${env_var}=${s}:latest"
-              else
-                SECRETS="${SECRETS},${env_var}=${s}:latest"
-              fi
+              SECRETS="${SECRETS:+$SECRETS,}${env_var}=${s}:latest"
+            else
+              MISSING="${MISSING} ${s}"
             fi
           done
+          if [[ -n "$MISSING" ]]; then
+            echo "::error::Required secret(s) not accessible — refusing to deploy a half-keyed service:${MISSING}"
+            exit 1
+          fi
           echo "secrets=${SECRETS}" >> $GITHUB_OUTPUT
 
       - name: Build DATABASE_URL
