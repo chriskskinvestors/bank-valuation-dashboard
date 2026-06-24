@@ -38,7 +38,7 @@ if "ibkr_connected" not in st.session_state:
 
 
 # ── Level 1 Navigation: top nav bar (DESIGN-SYSTEM.md — sidebar retired) ──
-SECTIONS = ["Home", "Market & Macro", "Screen & Compare", "Company", "Earnings", "News & Research", "Geographic"]
+SECTIONS = ["Home", "Market & Macro", "Screen & Compare", "Company", "Earnings", "News & Research", "Transactions", "Geographic"]
 # Backward-compat for the old ?s= section key (renamed 2026-06-15). Old
 # bookmarks/links to ?s=Activity should still land on the renamed section;
 # the former top-level "Screening" and "Peers" are now sub-sections of
@@ -1708,6 +1708,11 @@ elif section == "News & Research":
     # ── NEWS & RESEARCH: Universe-wide event feed ───────────────────────
     from ui.recent_activity import render_activity_overview
     render_activity_overview()
+
+elif section == "Transactions":
+    # ── TRANSACTIONS: universe-wide insider activity (13F flows pending) ──
+    from ui.transactions import render_transactions
+    render_transactions()
 
 elif section == "Geographic":
     # ── GEOGRAPHIC: Multi-bank branch map + state/MSA deposit lookup ────
