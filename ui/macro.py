@@ -1719,7 +1719,9 @@ def _render_credit_spreads():
 
     # Row 1: ladder table (hugs its card) + the HY/IG/BBB time series + the
     # HY−IG risk-premium line — both line charts at a readable (~2:1) aspect.
-    lc, cc, dp = st.columns([1.0, 1.5, 1.1])
+    # Two equal-width charts packed left next to the table, with a spacer so
+    # the pair sits left instead of the middle chart stretching wide.
+    lc, cc, dp, _sp = st.columns([1.0, 1.1, 1.1, 0.6])
     with lc:
         # Pin the table to the chart-card height (border=False = no visible box)
         # so its bottom lines up exactly with the two charts on the right.
