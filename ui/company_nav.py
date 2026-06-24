@@ -41,7 +41,7 @@ COMPANY_NAV = {
     "News & Filings": ["Filings & Reports", "Key Exhibits", "Press Releases",
                        "Transcripts & Presentations", "Events Calendar"],
     "Market Analysis": ["Market Share & Branches"],
-    "Ownership": ["Institutional (13F)", "Insider Activity"],
+    "Ownership": ["Institutional (13F)", "Insider Activity", "Executive Compensation"],
 }
 
 
@@ -214,6 +214,11 @@ def _insider_activity(t, ctx):
     render_insider_activity(t)
 
 
+def _executive_compensation(t, ctx):
+    from ui.compensation import render_compensation
+    render_compensation(t)
+
+
 # ── Company Reported renderers (Financials basis = "Company Reported") ──────
 # Scraped from the company's own latest filing. The built ones render real data;
 # the rest are placeholders until the company-reported pipeline lands. Each will
@@ -322,6 +327,7 @@ _RENDERERS = {
     "Market Share & Branches": _market_share,
     "Institutional (13F)": _ownership_13f,
     "Insider Activity": _insider_activity,
+    "Executive Compensation": _executive_compensation,
 }
 
 # Financials → Company Reported basis. Keyed by the same leaf names as the
