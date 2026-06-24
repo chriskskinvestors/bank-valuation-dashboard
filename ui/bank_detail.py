@@ -497,9 +497,14 @@ def _render_price_panel(ticker: str):
             ".st-key-ov_price_box [data-testid^='stBaseButton-segmented_control'] p"
             "{font-size:var(--fs-grid-10)!important;line-height:1!important;"
             "font-weight:600!important;}"
+            # Pull the label and buttons together: tight column gap + the button
+            # group hugging the left edge of its column (next to "Price").
+            ".st-key-ov_price_box [data-testid='stHorizontalBlock']{gap:0.3rem!important;}"
+            ".st-key-ov_price_box [data-testid='stButtonGroup']"
+            "{justify-content:flex-start!important;}"
             "</style>", unsafe_allow_html=True)
-        # "Price" label and the period buttons on one tidy row.
-        _hl, _hr = st.columns([1, 4], vertical_alignment="center")
+        # "Price" label and the period buttons hugging together on one row.
+        _hl, _hr = st.columns([1, 6], vertical_alignment="center")
         _hl.markdown("**Price**")
         with _hr:
             per = st.segmented_control(
