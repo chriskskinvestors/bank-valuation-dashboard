@@ -1104,13 +1104,13 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         # Page pattern (user 2026-06-25): click-to-source table on the left,
         # trend charts stacked on the right — like Financial Highlights. The
         # table keeps a bit more than half (it carries more period columns than
-        # the FH summary), and the charts go one-per-row down the right column.
+        # the FH summary); the charts tile two-per-row (2×2) in the right column.
         _lt, _rt = st.columns([3, 2])
         with _lt:
             components.html(html, height=height, scrolling=False)
             st.caption(cap)
         with _rt:
-            _render_statement_trends(hist, ticker, key_prefix, tr, stacked=True)
+            _render_statement_trends(hist, ticker, key_prefix, tr)
     else:
         # The statement IS the page: table full-width on top (its many columns
         # need the room), then a dense grid of grouped trend charts beneath it
@@ -1120,10 +1120,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         _render_statement_trends(hist, ticker, key_prefix, tr)
 
 
-def _render_statement_trends(hist, ticker, key_prefix, trends, stacked=False):
-    """Grouped trend charts. Default: two per row (beneath a full-width table).
-    stacked=True: one per row, for the right column of the table-left/charts-
-    right layout. `trends` is a list of (chart_title, [metric_keys])."""
+def _render_statement_trends(hist, ticker, key_prefix, trends):
+    """Grouped trend charts, two per row. Works full-width (beneath the table)
+    or nested in the right column of the table-left/charts-right layout (one
+    level of column nesting, same as Financial Highlights). `trends` is a list
+    of (chart_title, [metric_keys])."""
     if not trends:
         return
     try:
@@ -1132,15 +1133,6 @@ def _render_statement_trends(hist, ticker, key_prefix, trends, stacked=False):
         return
     h = hist.sort_values("REPDTE").tail(20)
     st.markdown("##### Trends")
-    if stacked:
-        for i, (title, keys) in enumerate(trends):
-            try:
-                st.plotly_chart(grouped_trend_chart(h, keys, title),
-                                use_container_width=True,
-                                key=f"{key_prefix}_tr_{ticker}_{i}")
-            except Exception:
-                pass
-        return
     for r in range(0, len(trends), 2):
         cols = st.columns(2)
         for j, (col, (title, keys)) in enumerate(zip(cols, trends[r:r + 2])):
