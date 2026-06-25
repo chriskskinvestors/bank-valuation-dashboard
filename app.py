@@ -87,7 +87,7 @@ if (_bank_qs and _bank_qs != st.session_state.get("_bank_qs_seen")
         and st.session_state.get("nav_section") != "Company"):
     st.session_state["nav_section"] = "Company"
 st.session_state["_bank_qs_seen"] = _bank_qs
-from utils.timing import timed
+from utils.timing import timed, render_timing_panel
 
 # Render the top nav FIRST — it depends only on SECTIONS, never on data, so
 # it must ALWAYS paint immediately. (Regression 2026-06-13: get_universe_
@@ -99,6 +99,7 @@ from utils.timing import timed
 # the tabs appear within milliseconds regardless of load time below.)
 from ui.chrome import top_nav as _top_nav
 section, _nav_search, _nav_right = _top_nav(SECTIONS, key="nav_section")
+render_timing_panel()  # ?perf=1 → per-section ms breakdown (no-op otherwise)
 
 # Universe scope AFTER the nav. Even when this is slow on a cold instance,
 # the nav is already on screen. (The watchlist concept is retired; the
@@ -759,7 +760,8 @@ else:
 # ═══════════════════════════════════════════════════════════════════════════
 
 if section == "Home":
-    render_home(all_metrics, watchlist)
+    with timed("render:Home"):
+        render_home(all_metrics, watchlist)
 
 elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # ── SCREEN: Multi-bank comparison tables ────────────────────────────
@@ -1586,11 +1588,12 @@ elif section == "Company":
         st.session_state["_applied_url_bank"] = company_ticker
 
     if company_ticker:
-        rendered = render_company_subtab(company_subtab, company_ticker, {
-            "watchlist": watchlist,
-            "load_metrics": load_single_bank_metrics_cached,
-            "peer_cohort": lambda: all_metrics or get_watchlist_cohort(),
-        }, basis=company_basis)
+        with timed(f"render:Company/{company_subtab}"):
+            rendered = render_company_subtab(company_subtab, company_ticker, {
+                "watchlist": watchlist,
+                "load_metrics": load_single_bank_metrics_cached,
+                "peer_cohort": lambda: all_metrics or get_watchlist_cohort(),
+            }, basis=company_basis)
         if not rendered:
             st.error(
                 f"No renderer wired for sub-tab “{company_subtab}” — "
@@ -1708,22 +1711,26 @@ elif section == "Earnings":
     if not all_metrics:
         all_metrics = load_all_data(watchlist)
         cache.put("watchlist_metrics_last", all_metrics)
-    render_earnings_overview(watchlist, all_metrics)
+    with timed("render:Earnings"):
+        render_earnings_overview(watchlist, all_metrics)
 
 elif section == "News & Research":
     # ── NEWS & RESEARCH: Universe-wide event feed ───────────────────────
     from ui.recent_activity import render_activity_overview
-    render_activity_overview()
+    with timed("render:News & Research"):
+        render_activity_overview()
 
 elif section == "Transactions":
     # ── TRANSACTIONS: universe-wide insider activity (13F flows pending) ──
     from ui.transactions import render_transactions
-    render_transactions()
+    with timed("render:Transactions"):
+        render_transactions()
 
 elif section == "Geographic":
     # ── GEOGRAPHIC: Multi-bank branch map + state/MSA deposit lookup ────
     from ui.geo_view import render_geo_view
-    render_geo_view()
+    with timed("render:Geographic"):
+        render_geo_view()
 
 
 # ── Auto-refresh ─────────────────────────────────────────────────────────
