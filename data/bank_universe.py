@@ -70,6 +70,14 @@ _SKIP_TICKERS = {
     "SYF",   # Synchrony Financial
     "BFH",   # Bread Financial (Comenity)
     "ALLY",  # Ally Financial (auto lender)
+
+    # Broker-dealers / non-deposit financial holdings — excluded by business
+    # scope (owner directive 2026-06-25). They carry a bank charter (so they
+    # match bank-SIC / FDIC) but are brokerages / investment banks in spirit,
+    # not deposit-taking commercial banks. Same "identity over charter" rule as
+    # the card issuers above.
+    "RJF",   # Raymond James Financial (broker-dealer / wealth management)
+    "FRHC",  # Freedom Holding Corp (brokerage holding; Freedom Finance)
 }
 
 # US-domiciled only (explicit scope: US banks traded on exchanges or OTC).
@@ -469,6 +477,14 @@ def _build_universe_live() -> dict[str, dict]:
 
 # Module-level cache to avoid re-deserializing the universe dict on every call
 _UNIVERSE_CACHE: dict | None = None
+
+
+def universe_is_cached() -> bool:
+    """True if the universe dict is already built this process. Read paths that
+    want to filter/canonicalize against the universe (e.g. the news feed) check
+    this first so they never trigger the ~174s cold build on a render thread —
+    they just skip the enrichment until some other surface has built it."""
+    return _UNIVERSE_CACHE is not None
 
 
 def get_universe() -> dict[str, dict]:

@@ -389,20 +389,35 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
         rows = conn.execute(text(sql), params).mappings().all()
     out = [dict(r) for r in rows]
 
-    # Canonicalize the display ticker. Legacy rows can be tagged to a non-common
-    # sibling (preferred/ETN) that shares its registrant's CIK — e.g. a JPMorgan
-    # 8-K stored as ">VYLD". The poller no longer creates these, but a row is
-    # frozen under (source, accession), so a re-poll can't re-tag it. Remap on
-    # read so the feed shows the common (">JPM"). No-op for normal tickers; never
-    # remaps when the cluster's common can't be identified. Fail-open.
+    # Canonicalize + scope the display ticker. Two read-time corrections, both
+    # fail-open (a universe-build hiccup never breaks the feed):
+    #   1. Remap a non-common sibling (preferred/ETN sharing its registrant's
+    #      CIK) onto the common — a legacy JPMorgan 8-K frozen as ">VYLD" shows
+    #      ">JPM". The poller no longer creates these, but a row is frozen under
+    #      (source, accession) so a re-poll can't re-tag it.
+    #   2. Drop rows for out-of-scope tickers (coverage_excluded — skip-listed
+    #      broker-dealers / card issuers / foreign ADRs, plus any non-common that
+    #      couldn't be resolved to a common). Their events were ingested before
+    #      the exclusion (or are frozen), so filter them here too — otherwise
+    #      RJF / FRHC news lingers in the feed after they're removed from scope.
     try:
-        from data.bank_universe import get_noncommon_primary_map
-        remap = get_noncommon_primary_map()
-        if remap:
+        from data.bank_universe import (universe_is_cached,
+                                         get_noncommon_primary_map,
+                                         coverage_excluded)
+        # Only enrich when the universe is already built — never trigger a cold
+        # build on this read path. The feed snapshot job builds it first.
+        remap = get_noncommon_primary_map() if universe_is_cached() else {}
+        excluded = coverage_excluded() if universe_is_cached() else set()
+        if remap or excluded:
+            kept = []
             for r in out:
-                canon = remap.get((r.get("ticker") or "").upper())
-                if canon:
-                    r["ticker"] = canon
+                tk = remap.get((r.get("ticker") or "").upper(),
+                               (r.get("ticker") or "").upper())
+                if tk in excluded:
+                    continue
+                r["ticker"] = tk
+                kept.append(r)
+            out = kept
     except Exception:
         pass
     return out

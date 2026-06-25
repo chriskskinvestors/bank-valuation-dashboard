@@ -167,27 +167,61 @@ class TestCrossSourceDedup(unittest.TestCase):
         self.assertEqual(len(new), 1)
         self.assertEqual(self._sources("SBNC"), ["fmp_news"])
 
-    def test_universe_recent_canonicalizes_sibling_ticker(self):
-        # A legacy 8-K frozen under ticker VYLD (a JPMorgan ETN sibling sharing
-        # CIK 19617) must DISPLAY as JPM via read-time canonicalization — the row
-        # can't be re-tagged in place (frozen under (source, accession)).
-        store.insert_events_returning_new(
-            [_ev("VYLD", "sec_8k", "8-K · Officer / Director Change", "acc-vyld-1")])
-        import data.bank_universe as bu
-        with patch.object(bu, "get_noncommon_primary_map",
-                          return_value={"VYLD": "JPM"}):
-            rows = store.get_universe_recent(limit=50, sources=["sec_8k"])
-        self.assertTrue(rows)
-        self.assertEqual(rows[0]["ticker"], "JPM")
+class TestUniverseRecentScoping(unittest.TestCase):
+    """get_universe_recent enriches the universe-wide feed at READ time, but only
+    when the universe is already built (never a cold build on the read path):
+      • canonicalizes a non-common sibling ticker onto its common (VYLD -> JPM),
+      • drops out-of-scope tickers (skip-listed broker-dealers / card issuers).
+    Drives the REAL share_class / coverage logic against a small injected
+    universe rather than mocking it."""
 
-    def test_universe_recent_leaves_normal_ticker_untouched(self):
-        store.insert_events_returning_new(
-            [_ev("PNC", "sec_8k", "8-K · Earnings / Results", "acc-pnc-1")])
+    def setUp(self):
+        _fresh_db()
         import data.bank_universe as bu
-        with patch.object(bu, "get_noncommon_primary_map",
-                          return_value={"VYLD": "JPM"}):
-            rows = store.get_universe_recent(limit=50, sources=["sec_8k"])
-        self.assertEqual(rows[0]["ticker"], "PNC")
+        self.bu = bu
+        self._saved = (bu._UNIVERSE_CACHE, bu._NONCOMMON_CACHE,
+                       bu._NONCOMMON_PRIMARY_CACHE)
+
+    def tearDown(self):
+        (self.bu._UNIVERSE_CACHE, self.bu._NONCOMMON_CACHE,
+         self.bu._NONCOMMON_PRIMARY_CACHE) = self._saved
+
+    def _set_universe(self, uni):
+        # Inject a built universe so universe_is_cached() is True and the real
+        # accessors compute from it (no network build).
+        self.bu._UNIVERSE_CACHE = uni
+        self.bu._NONCOMMON_CACHE = None
+        self.bu._NONCOMMON_PRIMARY_CACHE = None
+
+    def test_sibling_ticker_canonicalized_to_common(self):
+        # A legacy 8-K frozen under VYLD (a JPMorgan ETN under CIK 19617) must
+        # DISPLAY as JPM — it can't be re-tagged in place (frozen accession).
+        self._set_universe({"JPM": {"cik": 19617}, "VYLD": {"cik": 19617}})
+        store.insert_events_returning_new(
+            [_ev("VYLD", "sec_8k", "8-K · Officer / Director Change", "acc-v1")])
+        rows = store.get_universe_recent(limit=50, sources=["sec_8k"])
+        self.assertEqual([r["ticker"] for r in rows], ["JPM"])
+
+    def test_excluded_broker_dealers_dropped_from_feed(self):
+        # RJF / FRHC are skip-listed (broker-dealers): their already-stored news
+        # must be filtered out of the feed; a real bank (PNC) stays.
+        self._set_universe({"PNC": {"cik": 713676}, "RJF": {"cik": 720005},
+                            "FRHC": {"cik": 924805}})
+        store.insert_events_returning_new([
+            _ev("PNC", "sec_8k", "8-K · Earnings / Results", "acc-pnc"),
+            _ev("RJF", "sec_8k", "8-K · Other Material Event", "acc-rjf"),
+            _ev("FRHC", "businesswire", "Freedom Holding Reports Results", "bw-frhc"),
+        ])
+        rows = store.get_universe_recent(limit=50)
+        self.assertEqual(sorted(r["ticker"] for r in rows), ["PNC"])
+
+    def test_no_enrichment_when_universe_not_built(self):
+        # Universe not cached -> read path must NOT build it; rows pass through.
+        self.bu._UNIVERSE_CACHE = None
+        store.insert_events_returning_new(
+            [_ev("RJF", "sec_8k", "8-K · Other Material Event", "acc-rjf2")])
+        rows = store.get_universe_recent(limit=50, sources=["sec_8k"])
+        self.assertEqual([r["ticker"] for r in rows], ["RJF"])
 
 
 class TestNoncommonPrimaryMap(unittest.TestCase):
