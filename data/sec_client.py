@@ -6,6 +6,7 @@ API docs: https://www.sec.gov/search-filings/edgar-application-programming-inter
 """
 
 import pandas as pd
+import streamlit as st
 from config import SEC_USER_AGENT
 
 SEC_COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -417,10 +418,15 @@ def _extract_time_series(facts: dict, concept: str) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_latest_fundamentals(cik: int) -> dict:
     """
     Return latest key fundamentals as a dict.
     Keys match the short names in CONCEPTS_OF_INTEREST values.
+
+    In-process memo (1h): these are filing-derived (quarterly) values, so a 1h
+    memo is invisible to the data but spares every Company tab a repeated SEC
+    round-trip on each rerun. (Outside Streamlit — jobs — this no-ops.)
     """
     facts = fetch_company_facts(cik)
     if not facts:

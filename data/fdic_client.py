@@ -12,6 +12,7 @@ and cap parallel workers at 4 to stay well under their limit.
 import time
 
 import pandas as pd
+import streamlit as st
 
 from config import get_fdic_fields
 # The shared retry policy (data/http.py) — this module's local implementation
@@ -231,10 +232,15 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     return df.sort_values("REPDTE", ascending=False).reset_index(drop=True)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_latest_financials(cert: int) -> dict:
     """
     Return the most recent quarter's financial data as a flat dict.
     Keys are FDIC field names (e.g. ROA, ROE, NIMY, ASSET, etc.).
+
+    In-process memo (1h): Call Report data is quarterly, so caching the latest
+    row is functionally invisible but spares every Company tab a ~600ms FDIC
+    round-trip on each rerun. (Outside Streamlit — jobs — this just no-ops.)
     """
     df = fetch_financials(cert, limit=1)
     if df.empty:
