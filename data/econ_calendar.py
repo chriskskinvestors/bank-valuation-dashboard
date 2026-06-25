@@ -179,3 +179,35 @@ def get_upcoming_releases(days: int = 14, limit: int = 20) -> list[dict]:
             if not e["released"] and e["date"] >= today and is_marquee(e["event"])]
     rows.sort(key=lambda e: e["datetime"])
     return rows[:limit]
+
+
+# ── Display helpers ─────────────────────────────────────────────────────────
+# Plain-text formatters (no HTML) so any consumer can apply its own styling —
+# the Market & Macro panel and the Home calendar pane both render these events.
+
+def fmt_value(v, unit) -> str | None:
+    """An econ value + its unit as plain text ('180K', '3.2%', '1.5 bps'), or
+    None when there's no value. Pure / unit-tested."""
+    if v is None:
+        return None
+    u = (unit or "").strip()
+    if u in ("%", "M", "K", "B"):
+        return f"{v:g}{u}"
+    return f"{v:g}{(' ' + u) if u else ''}"
+
+
+def et_time(dt_str) -> str:
+    """FMP UTC datetime string → US/Eastern 'h:mm AM/PM ET'; '' for a midnight
+    placeholder (FMP's no-scheduled-time marker) or any parse failure."""
+    from datetime import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo
+        utc = _dt.strptime(str(dt_str), "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=ZoneInfo("UTC"))
+    except Exception:
+        return ""
+    if utc.hour == 0 and utc.minute == 0:
+        return ""
+    d = utc.astimezone(ZoneInfo("America/New_York"))
+    h = d.hour % 12 or 12
+    return f"{h}:{d.minute:02d} {'AM' if d.hour < 12 else 'PM'} ET"
