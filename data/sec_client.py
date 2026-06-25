@@ -57,6 +57,16 @@ SLIM_USGAAP_CONCEPTS = {
     "InterestIncome", "InterestExpense",
     "Goodwill", "IntangibleAssetsNetExcludingGoodwill",
     "IntangibleAssetsNetIncludingGoodwill", "FiniteLivedIntangibleAssetsNet",
+    # Period-matched actuals for the consensus comparison (data/sec_period.py):
+    # bank income-statement flows, net interest income, provision, and the
+    # balance-sheet stocks brokers estimate.
+    "InterestIncomeExpenseNet", "InterestAndDividendIncomeOperating",
+    "NoninterestIncome", "NoninterestIncomeLoss", "NoninterestExpense",
+    "ProvisionForCreditLosses", "ProvisionForLoanAndLeaseLosses",
+    "ProvisionForLoanLeaseAndOtherLosses", "ProvisionForCreditLossExpenseReversal",
+    "Deposits", "DepositsDomestic",
+    "LoansAndLeasesReceivableNetReportedAmount",
+    "LoansReceivableHeldForInvestmentNet", "NotesReceivableNet",
 }
 
 # Cache the slim projection under a key that embeds a hash of the kept-concept

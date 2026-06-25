@@ -224,11 +224,11 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
             if comparison:
                 _render_comparison_table(comparison)
                 if period_actual is not None:
-                    st.caption("Actuals are the FDIC call-report figures for this "
-                               "period (net income, NII, fee income, expense, "
-                               "provision, deposits, loans, assets). EPS, margins "
-                               "and returns show n/a — there's no clean "
-                               "single-period basis to compare them on yet.")
+                    st.caption("Actuals are the company's as-reported figures for "
+                               "this period (SEC companyfacts — the same holding-"
+                               "company basis as **Company Reported**, refreshed as "
+                               "filings are processed). Margins and returns show n/a "
+                               "— there's no clean single-period basis for them yet.")
             else:
                 st.info("No comparable metrics found.")
 
