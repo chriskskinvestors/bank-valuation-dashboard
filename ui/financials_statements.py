@@ -2054,8 +2054,10 @@ def _render_rate_risk(ticker):
 
 
 def render_portfolio(ticker):
-    render_statement(ticker, "port", "Portfolio Analysis", _PORTFOLIO)
+    render_statement(ticker, "port", "Portfolio Analysis", _PORTFOLIO,
+                     side_by_side=True)
 
 
 def render_capital_structure(ticker):
-    render_statement(ticker, "capstruct", "Capital Structure Details", _CAPITAL_STRUCTURE)
+    render_statement(ticker, "capstruct", "Capital Structure Details",
+                     _CAPITAL_STRUCTURE, side_by_side=True)
