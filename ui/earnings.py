@@ -59,6 +59,33 @@ _MISS_LABEL = "Miss"
 _INLINE_LABEL = "Inline"
 _NA_LABEL = "—"
 
+# Design-system styling for this view (boxless KPI strip + full-grid colours).
+# Injected once per render; matches the Corporate Profile / Financials look
+# (ksk-ledger + ksk-grid) rather than boxed cards and tinted st.dataframes.
+_EC_CSS = (
+    "<style>"
+    ".ec-sec{font-size:var(--fs-2xs);letter-spacing:0.08em;text-transform:uppercase;"
+    "font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--grid-head);"
+    "padding-bottom:2px;margin:14px 0 6px;}"
+    ".ec-kpi{display:grid;grid-template-columns:repeat(5,1fr);"
+    "border-top:1px solid var(--grid-head);border-bottom:1px solid var(--grid-head);}"
+    ".ec-kpi-cell{padding:5px 12px;border-right:0.5px solid var(--grid-line);}"
+    ".ec-kpi-cell:last-child{border-right:none;}"
+    ".ec-kpi-l{font-size:var(--fs-2xs);letter-spacing:0.05em;text-transform:uppercase;"
+    "color:var(--text-secondary);white-space:nowrap;}"
+    ".ec-kpi-v{font-size:var(--fs-md);font-weight:600;color:var(--text-primary);"
+    "font-variant-numeric:tabular-nums;}"
+    ".ksk-grid .beat{color:var(--success);font-weight:600;}"
+    ".ksk-grid .miss{color:var(--danger);font-weight:600;}"
+    ".ec-grid table{width:100%;}"
+    "</style>")
+
+
+def _ec_cell(s):
+    """HTML-safe cell text that also neutralises '$' so Streamlit's markdown
+    doesn't interpret two dollar amounts on a line as LaTeX."""
+    return _html.escape(str(s)).replace("$", "&#36;")
+
 
 def _format_val(val, unit: str) -> str:
     if val is None:
@@ -106,6 +133,7 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
 
     bank_name = get_name(ticker)
     title_bar(f"{bank_name} ({ticker})", "Earnings vs Consensus", ids_html="")
+    st.markdown(_EC_CSS, unsafe_allow_html=True)
 
     # ── Auto-populated estimates from yfinance ──────────────────────────
     with st.spinner("Loading analyst estimates..."):
@@ -140,7 +168,8 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
     periods = list_consensus(ticker)
 
     if periods:
-        st.subheader("Consensus vs Actual")
+        st.markdown('<div class="ec-sec">Consensus vs Actual</div>',
+                    unsafe_allow_html=True)
 
         period_labels = [f"{p['period']} ({p['source']}, {p['metric_count']} metrics)" for p in periods]
         selected_idx = st.selectbox(
@@ -182,39 +211,30 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
 
 def _render_auto_estimates(ticker: str, estimates: dict):
     """Show auto-populated analyst estimates from yfinance."""
-    st.subheader("Analyst Estimates")
-
-    from ui.source_trace import render_traceable_cards, make_calc
-    from data.bank_mapping import get_name
-    entity = f"{get_name(ticker)} ({ticker})"
-
     ned = estimates.get("next_earnings_date")
     eps_est = estimates.get("eps_estimate"); eps_fwd = estimates.get("eps_fwd_annual")
     target = estimates.get("target_price"); analysts = estimates.get("analyst_count")
-    SRC = "Analyst consensus (market data)"
 
-    def analyst_card(label, value, definition):
-        # Forward-looking analyst consensus — sourced from market data, NOT a
-        # filing (clearly distinguished from the reported/computed figures).
-        return {"label": label, "value": value,
-                "calc": make_calc(label, value, entity=entity, source=SRC, asof="latest consensus",
-                                  unit="estimate", ref="forward analyst estimate",
-                                  definition=definition,
-                                  terms=[{"label": label, "val": value}], reported=True)}
-
-    cards = [
-        analyst_card("Next Earnings", (ned if ned else "Unknown"),
-                     "Estimated date of the next quarterly earnings release."),
-        analyst_card("EPS Est (Next Qtr)", (f"${eps_est:.2f}" if eps_est else "—"),
-                     "Consensus analyst estimate for next-quarter diluted EPS."),
-        analyst_card("EPS Est (Annual)", (f"${eps_fwd:.2f}" if eps_fwd else "—"),
-                     "Consensus analyst estimate for forward annual diluted EPS."),
-        analyst_card("Avg Price Target", (f"${target:.2f}" if target else "—"),
-                     "Average of analysts' 12-month price targets."),
-        analyst_card("Analyst Coverage", (str(analysts) if analysts else "—"),
-                     "Number of sell-side analysts contributing estimates."),
+    # Boxless KPI strip (design system: no boxed cards) — small-caps label over
+    # the value, hairline-separated; each cell keeps its definition as a tooltip.
+    kpis = [
+        ("Next Earnings", (ned if ned else "Unknown"),
+         "Estimated date of the next quarterly earnings release."),
+        ("EPS Est (Next Qtr)", (f"${eps_est:.2f}" if eps_est else "—"),
+         "Consensus analyst estimate for next-quarter diluted EPS."),
+        ("EPS Est (Annual)", (f"${eps_fwd:.2f}" if eps_fwd else "—"),
+         "Consensus analyst estimate for forward annual diluted EPS."),
+        ("Avg Price Target", (f"${target:.2f}" if target else "—"),
+         "Average of analysts' 12-month price targets."),
+        ("Analyst Coverage", (str(analysts) if analysts else "—"),
+         "Number of sell-side analysts contributing estimates."),
     ]
-    render_traceable_cards(cards, key=f"earn_estimates_{ticker}", columns=5)
+    st.markdown('<div class="ec-sec">Analyst Estimates</div>', unsafe_allow_html=True)
+    st.markdown('<div class="ec-kpi">' + "".join(
+        f'<div class="ec-kpi-cell" title="{_html.escape(d, quote=True)}">'
+        f'<div class="ec-kpi-l">{_html.escape(l)}</div>'
+        f'<div class="ec-kpi-v">{_ec_cell(v)}</div></div>'
+        for l, v, d in kpis) + '</div>', unsafe_allow_html=True)
 
     # Price target range
     t_low = estimates.get("target_low")
@@ -439,28 +459,29 @@ def _render_comparison_table(comparison: list[dict]):
             "Result": label,
         })
 
-    df = pd.DataFrame(rows)
-
-    def _color_row(row):
-        result = row["Result"]
-        if _BEAT_LABEL in result:
-            return [_BEAT_STYLE] * len(row)
-        elif _MISS_LABEL in result:
-            return [_MISS_STYLE] * len(row)
-        elif _INLINE_LABEL in result:
-            return [_INLINE_STYLE] * len(row)
-        return [_NA_STYLE] * len(row)
-
-    styled = df.style.apply(_color_row, axis=1).set_properties(
-        **{"font-size": "0.75rem", "padding": "3px 6px"}
-    )
-
-    st.dataframe(
-        styled,
-        use_container_width=True,
-        hide_index=True,
-        height=min(600, 40 + 35 * len(df)),
-    )
+    # Full-grid table (design system .ksk-grid) — semantic colour on Δ / Δ % and
+    # the Result column, not a heavy whole-row tint.
+    head = ("<tr><th>Metric</th><th>Consensus</th><th>Range (firms)</th>"
+            "<th>Actual</th><th>Δ</th><th>Δ %</th><th>Result</th></tr>")
+    body = ""
+    for r in rows:
+        res = r["Result"]
+        rcls = "beat" if res == _BEAT_LABEL else ("miss" if res == _MISS_LABEL else "")
+        # Financial convention: negatives red, positives plain (note _format_delta
+        # writes "$-1.51", so test for "-" anywhere, not just the leading char).
+        dcls = "neg" if "-" in r["Δ"] else ""
+        pcls = "neg" if "-" in r["Δ %"] else ""
+        body += (
+            "<tr>"
+            f"<td>{_ec_cell(r['Metric'])}</td>"
+            f"<td>{_ec_cell(r['Consensus'])}</td>"
+            f"<td>{_ec_cell(r['Range (firms)'])}</td>"
+            f"<td>{_ec_cell(r['Actual'])}</td>"
+            f"<td class='{dcls}'>{_ec_cell(r['Δ'])}</td>"
+            f"<td class='{pcls}'>{_ec_cell(r['Δ %'])}</td>"
+            f"<td class='{rcls}'>{_ec_cell(res)}</td></tr>")
+    st.markdown(f'<div class="ksk-grid ec-grid"><table><thead>{head}</thead>'
+                f'<tbody>{body}</tbody></table></div>', unsafe_allow_html=True)
     # Underlying numeric comparison (unformatted consensus/actual/deltas)
     table_export(pd.DataFrame(comparison), "consensus_vs_actual",
                  key="exp_consensus_vs_actual")
