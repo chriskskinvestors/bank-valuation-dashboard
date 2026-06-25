@@ -1042,8 +1042,9 @@ def list_consensus(ticker: str) -> list[dict]:
         g = groups.setdefault(period, {"firms": set(), "keys": set()})
         g["firms"].add(data.get("firm") or data.get("source") or "?")
         for m in data.get("metrics", []):
-            if m.get("key"):
-                g["keys"].add(m["key"])
+            ident = _metric_identity(m)
+            if ident:
+                g["keys"].add(ident[0])
 
     out = []
     for period, g in groups.items():
@@ -1076,6 +1077,31 @@ def _to_canonical(value, stored_unit, key) -> float | None:
     return raw / _UNIT_TO_RAW.get(canon, 1.0)
 
 
+def _metric_identity(m: dict):
+    """(group_id, out_key, display_name, unit) for a stored metric, or None to
+    skip it entirely. Used by every aggregator so they group metrics the SAME way.
+
+    A metric whose name maps to one of our canonical keys groups by that key
+    (display name + canonical unit come from the maps). A metric the alias map
+    doesn't recognize is NOT discarded — broker models carry far more line items
+    (PPNR, tangible common equity, average earning assets, reserve ratios, tax
+    rate, share count, specific fee/expense lines…) than our ~two-dozen aliases.
+    Those group by name+unit so identical line items from different firms still
+    aggregate, but we never average values quoted in different units. out_key
+    stays None for unmapped metrics so the beat/miss comparison correctly treats
+    them as having no actual counterpart (n/a) rather than inventing one."""
+    key = m.get("key")
+    name = (m.get("name") or "").strip()
+    if key is not None:
+        return (key, key,
+                METRIC_DISPLAY.get(key, name or str(key)),
+                METRIC_UNITS.get(key, m.get("unit", "")))
+    if not name:
+        return None
+    unit = m.get("unit") or ""
+    return (f"~{name.lower()}|{unit}", None, name, unit)
+
+
 def _firm_records(ticker: str, period: str) -> list[dict]:
     """All firms' stored estimates for one (ticker, period) — the firm-tagged
     files plus any legacy single file."""
@@ -1106,24 +1132,23 @@ def compile_consensus(ticker: str, period: str) -> dict | None:
     by_key: dict = {}
     for rec in records:
         for m in rec.get("metrics", []):
-            key = m.get("key")
-            if key is None:
+            ident = _metric_identity(m)
+            if ident is None:
                 continue
-            cv = _to_canonical(m.get("value"), m.get("unit"), key)
+            gid, out_key, disp_name, unit = ident
+            cv = _to_canonical(m.get("value"), m.get("unit"), out_key)
             if cv is None:
                 continue
-            slot = by_key.setdefault(key, {
-                "name": METRIC_DISPLAY.get(key, m.get("name", key)),
-                "unit": METRIC_UNITS.get(key, m.get("unit", "")),
-                "values": [],
+            slot = by_key.setdefault(gid, {
+                "key": out_key, "name": disp_name, "unit": unit, "values": [],
             })
             slot["values"].append(cv)
 
     metrics = []
-    for key, slot in by_key.items():
+    for gid, slot in by_key.items():
         vals = slot["values"]
         metrics.append({
-            "key": key, "name": slot["name"], "unit": slot["unit"],
+            "key": slot["key"], "name": slot["name"], "unit": slot["unit"],
             "value": sum(vals) / len(vals),
             "low": min(vals), "high": max(vals), "n_firms": len(vals),
         })
@@ -1148,24 +1173,23 @@ def consensus_detail(ticker: str, period: str) -> dict | None:
     for rec in records:
         firm = rec.get("firm") or rec.get("source") or "?"
         for m in rec.get("metrics", []):
-            key = m.get("key")
-            if key is None:
+            ident = _metric_identity(m)
+            if ident is None:
                 continue
-            cv = _to_canonical(m.get("value"), m.get("unit"), key)
+            gid, out_key, disp_name, unit = ident
+            cv = _to_canonical(m.get("value"), m.get("unit"), out_key)
             if cv is None:
                 continue
-            slot = by_key.setdefault(key, {
-                "name": METRIC_DISPLAY.get(key, m.get("name", key)),
-                "unit": METRIC_UNITS.get(key, m.get("unit", "")),
-                "by_firm": {},
+            slot = by_key.setdefault(gid, {
+                "key": out_key, "name": disp_name, "unit": unit, "by_firm": {},
             })
             slot["by_firm"][firm] = cv
 
     metrics = []
-    for key, slot in by_key.items():
+    for gid, slot in by_key.items():
         vals = list(slot["by_firm"].values())
         metrics.append({
-            "key": key, "name": slot["name"], "unit": slot["unit"],
+            "key": slot["key"], "name": slot["name"], "unit": slot["unit"],
             "by_firm": slot["by_firm"],
             "mean": sum(vals) / len(vals), "low": min(vals), "high": max(vals),
             "n": len(vals),
@@ -1187,8 +1211,9 @@ def list_all_consensus() -> dict[str, list[dict]]:
         g = groups.setdefault((ticker, period), {"firms": set(), "keys": set()})
         g["firms"].add(data.get("firm") or data.get("source") or "?")
         for m in data.get("metrics", []):
-            if m.get("key"):
-                g["keys"].add(m["key"])
+            ident = _metric_identity(m)
+            if ident:
+                g["keys"].add(ident[0])
 
     result: dict = {}
     for (ticker, period), g in groups.items():

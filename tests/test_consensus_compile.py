@@ -114,5 +114,65 @@ class TestNormalizePeriod(unittest.TestCase):
         self.assertEqual(c.normalize_period("H1 2026"), "H1 2026")   # unmatched → kept
 
 
+class TestUnmappedMetricsSurvive(unittest.TestCase):
+    """Broker models carry many line items beyond our ~two-dozen alias map. The
+    parser keeps them with key=None; the aggregators must SHOW them (grouped by
+    name+unit), not silently drop them — that drop made the estimates tables look
+    far emptier than the uploaded report."""
+
+    def setUp(self):
+        self._orig = c._firm_records
+        self._records = []
+        c._firm_records = lambda ticker, period: list(self._records)
+
+    def tearDown(self):
+        c._firm_records = self._orig
+
+    def test_compile_keeps_unmapped_and_aggregates_by_name(self):
+        # PPNR is not in METRIC_ALIASES → parser stores it with key=None.
+        self._records = [
+            _rec("Brean", [_m("EPS", "eps", 1.20, "$"),
+                           _m("PPNR", None, 480.0, "$M")]),
+            _rec("KBW",   [_m("EPS", "eps", 1.40, "$"),
+                           _m("PPNR", None, 500.0, "$M")]),
+        ]
+        out = c.compile_consensus("WTFC", "2Q26")
+        by_name = {m["name"]: m for m in out["metrics"]}
+        self.assertIn("PPNR", by_name)                       # not dropped
+        ppnr = by_name["PPNR"]
+        self.assertIsNone(ppnr["key"])                       # stays unmapped
+        self.assertAlmostEqual(ppnr["value"], 490.0)         # mean across firms
+        self.assertAlmostEqual(ppnr["low"], 480.0)
+        self.assertAlmostEqual(ppnr["high"], 500.0)
+        self.assertEqual(ppnr["n_firms"], 2)
+        self.assertEqual(ppnr["unit"], "$M")
+
+    def test_detail_keeps_unmapped_per_firm(self):
+        self._records = [
+            _rec("Brean", [_m("Tax Rate", None, 21.0, "%")]),
+            _rec("KBW",   [_m("Tax Rate", None, 22.0, "%")]),
+        ]
+        detail = c.consensus_detail("WTFC", "2Q26")
+        names = {m["name"]: m for m in detail["metrics"]}
+        self.assertIn("Tax Rate", names)
+        tr = names["Tax Rate"]
+        self.assertEqual(tr["by_firm"], {"Brean": 21.0, "KBW": 22.0})
+        self.assertAlmostEqual(tr["mean"], 21.5)
+
+    def test_same_name_different_units_not_averaged(self):
+        # Two firms quote an unmapped line in different units — with no canonical
+        # unit to normalize to, they must NOT be blended into one bogus mean.
+        self._records = [
+            _rec("A", [_m("Total Revenue", None, 1.2, "$B")]),
+            _rec("B", [_m("Total Revenue", None, 1300.0, "$M")]),
+        ]
+        out = c.compile_consensus("WTFC", "2Q26")
+        rev = [m for m in out["metrics"] if m["name"] == "Total Revenue"]
+        self.assertEqual(len(rev), 2)                        # kept separate
+        self.assertEqual({m["unit"] for m in rev}, {"$B", "$M"})
+        for m in rev:
+            self.assertEqual(m["n_firms"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
