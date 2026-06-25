@@ -305,7 +305,7 @@ def _spec_with_rie_rows(spec, rie_by_ci):
 def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                      trends: list | None = None, with_persh: bool = False,
                      with_ri: bool = False, with_dep_cost: bool = False,
-                     with_fte: bool = False):
+                     with_fte: bool = False, side_by_side: bool = False):
     info = get_bank_info(ticker)
     name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
@@ -1098,20 +1098,32 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 if cik else fdic_link)
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
 
-    # The statement IS the page: table full-width on top (its many columns need
-    # the room), then a dense grid of grouped trend charts beneath it. The old
-    # narrow right-hand chart column couldn't fit the per-tab chart sets the
-    # tables now carry (user 2026-06-14: more charts, multi-metric, real axes).
     tr = _DEFAULT_TRENDS if trends is None else trends
-    components.html(html, height=height, scrolling=False)
-    st.caption(f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load.")
-    _render_statement_trends(hist, ticker, key_prefix, tr)
+    cap = f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load."
+    if side_by_side:
+        # Page pattern (user 2026-06-25): click-to-source table on the left,
+        # trend charts stacked on the right — like Financial Highlights. The
+        # table keeps a bit more than half (it carries more period columns than
+        # the FH summary), and the charts go one-per-row down the right column.
+        _lt, _rt = st.columns([3, 2])
+        with _lt:
+            components.html(html, height=height, scrolling=False)
+            st.caption(cap)
+        with _rt:
+            _render_statement_trends(hist, ticker, key_prefix, tr, stacked=True)
+    else:
+        # The statement IS the page: table full-width on top (its many columns
+        # need the room), then a dense grid of grouped trend charts beneath it
+        # (user 2026-06-14: more charts, multi-metric, real axes).
+        components.html(html, height=height, scrolling=False)
+        st.caption(cap)
+        _render_statement_trends(hist, ticker, key_prefix, tr)
 
 
-def _render_statement_trends(hist, ticker, key_prefix, trends):
-    """Grouped trend charts below the statement table — two per row. `trends` is
-    a list of (chart_title, [metric_keys]); each entry is one multi-metric chart
-    (see ui.charts.grouped_trend_chart for the axis handling)."""
+def _render_statement_trends(hist, ticker, key_prefix, trends, stacked=False):
+    """Grouped trend charts. Default: two per row (beneath a full-width table).
+    stacked=True: one per row, for the right column of the table-left/charts-
+    right layout. `trends` is a list of (chart_title, [metric_keys])."""
     if not trends:
         return
     try:
@@ -1120,6 +1132,15 @@ def _render_statement_trends(hist, ticker, key_prefix, trends):
         return
     h = hist.sort_values("REPDTE").tail(20)
     st.markdown("##### Trends")
+    if stacked:
+        for i, (title, keys) in enumerate(trends):
+            try:
+                st.plotly_chart(grouped_trend_chart(h, keys, title),
+                                use_container_width=True,
+                                key=f"{key_prefix}_tr_{ticker}_{i}")
+            except Exception:
+                pass
+        return
     for r in range(0, len(trends), 2):
         cols = st.columns(2)
         for j, (col, (title, keys)) in enumerate(zip(cols, trends[r:r + 2])):
@@ -1570,7 +1591,8 @@ def _render_company_composition(ticker, kind):
 
 
 def render_income_statement(ticker):
-    render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True)
+    render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True,
+                     side_by_side=True)
 
 
 def render_balance_sheet(ticker):
