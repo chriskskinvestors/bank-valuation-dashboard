@@ -155,7 +155,8 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     # ── Header ─────────────────────────────────────────────────────────
     if show_title:
         title_bar(f"{get_name(ticker)} ({ticker})", "Deposit Trends")
-    st.subheader("Deposit Dynamics")
+    st.markdown('<div class="ksk-sec">Deposit &amp; Loan Composition</div>',
+                unsafe_allow_html=True)
 
     # ── Alerts ─────────────────────────────────────────────────────────
     alerts = summary["alerts"]
@@ -173,11 +174,7 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
             unsafe_allow_html=True,
         )
 
-    # ── Key Metrics Row (click any value for its calc + sources) ──
-    latest = summary["latest"]
     cycle_beta = summary["cycle_beta"]
-    rolling_beta = summary["rolling_beta"]
-    _render_deposit_headline(ticker, hist, summary, timeline)
 
     # ── Cycle Beta Explainer ───────────────────────────────────────────
     if cycle_beta:
@@ -271,12 +268,41 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     )
     fig3.update_yaxes(ticksuffix="%")
 
-    # Row 1: cost trend | composition (2-up). Row 2: QoQ growth bars (wide).
-    _g1 = st.columns(2)
-    with _g1[0]:
-        st.plotly_chart(fig1, use_container_width=True)
-    if fig2 is not None:
-        with _g1[1]:
-            st.plotly_chart(fig2, use_container_width=True)
-    st.plotly_chart(fig3, use_container_width=True)
+    # Page pattern: click-to-source deposit/loan composition table on the left,
+    # charts tiled 2×2 on the right. Fields are the same FDIC items Financial
+    # Highlights proves correct (DEP, LNLSNET, Loans/Deposits) plus the FDIC
+    # loan-segment balances.
+    from ui.fdic_click_table import render_fdic_click_table
+    _dl_sections = [
+        ("Deposits — FDIC Call Report", [
+            ("Total deposits", "dollar", "DEP"),
+            ("Brokered deposits", "dollar", "BRO"),
+            ("Brokered / deposits", "ratio", "BRO", "DEP",
+             "Brokered deposits", "Total deposits"),
+            ("Loans / deposits", "ratio", "LNLSNET", "DEP",
+             "Net loans", "Total deposits"),
+        ]),
+        ("Loan Composition", [
+            ("Net loans", "dollar", "LNLSNET"),
+            ("Construction & land", "dollar", "LNRECONS"),
+            ("Commercial RE (non-owner-occ)", "dollar", "LNRENRES"),
+            ("Multifamily", "dollar", "LNREMULT"),
+            ("1–4 family residential", "dollar", "LNRERES"),
+            ("Commercial & industrial", "dollar", "LNCI"),
+        ]),
+    ]
+    _left, _right = st.columns([1, 1])
+    with _left:
+        if not render_fdic_click_table(ticker, _dl_sections, period="Annual"):
+            st.caption("FDIC composition table unavailable.")
+    with _right:
+        _g = st.columns(2)
+        with _g[0]:
+            st.plotly_chart(fig1, use_container_width=True, key=f"dep_cost_{ticker}")
+        if fig2 is not None:
+            with _g[1]:
+                st.plotly_chart(fig2, use_container_width=True, key=f"dep_comp_{ticker}")
+        _g2 = st.columns(2)
+        with _g2[0]:
+            st.plotly_chart(fig3, use_container_width=True, key=f"dep_qoq_{ticker}")
 

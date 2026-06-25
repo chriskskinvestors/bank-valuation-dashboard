@@ -27,14 +27,12 @@ def render_deposits_for_ticker(ticker: str):
     name = get_name(ticker)
     title_bar(f"{name} ({ticker})", "Deposit/Loan Composition")
 
-    # ── Deposit Dynamics (beta, alerts, trends) ──
+    # ── Deposit & loan composition (table left, charts right) ──
+    # The branch map + market-share summary live on Market Analysis ▸ Market
+    # Share & Branches (render_market_share_for_ticker), so they are NOT
+    # duplicated on this Financials tab anymore.
     from ui.deposit_dynamics import render_deposit_dynamics
     render_deposit_dynamics(ticker, show_title=False)
-
-    st.markdown("---")
-
-    # ── Branch map & market share ──
-    _render_deposits_core(cert, name)
 
 
 def render_market_share_for_ticker(ticker: str):
