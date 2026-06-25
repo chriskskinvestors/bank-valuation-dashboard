@@ -1587,12 +1587,14 @@ def render_income_statement(ticker):
 
 
 def render_balance_sheet(ticker):
-    render_statement(ticker, "bs", "Balance Sheet", _BALANCE, trends=_BS_TRENDS)
+    render_statement(ticker, "bs", "Balance Sheet", _BALANCE, trends=_BS_TRENDS,
+                     side_by_side=True)
 
 
 def render_performance_analysis(ticker):
     render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE,
-                     with_persh=True, with_dep_cost=True, with_fte=True)
+                     with_persh=True, with_dep_cost=True, with_fte=True,
+                     side_by_side=True)
 
 
 def _render_fair_value_hierarchy(ticker):
