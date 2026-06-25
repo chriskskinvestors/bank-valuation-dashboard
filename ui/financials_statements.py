@@ -1102,10 +1102,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     cap = f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load."
     if side_by_side:
         # Page pattern (user 2026-06-25): click-to-source table on the left,
-        # trend charts stacked on the right — like Financial Highlights. The
-        # table keeps a bit more than half (it carries more period columns than
-        # the FH summary); the charts tile two-per-row (2×2) in the right column.
-        _lt, _rt = st.columns([3, 2])
+        # trend charts tiled two-per-row (2×2) on the right — like Financial
+        # Highlights, an even 50/50 split.
+        _lt, _rt = st.columns([1, 1])
         with _lt:
             components.html(html, height=height, scrolling=False)
             st.caption(cap)
