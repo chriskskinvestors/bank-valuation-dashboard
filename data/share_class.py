@@ -174,6 +174,31 @@ def members_except(cluster: list[str], keep: str | None) -> set[str]:
     return {t for t in cluster if t != keep}
 
 
+def noncommon_to_primary(universe: dict[str, dict]) -> dict[str, str]:
+    """Map each non-common sibling ticker -> its registrant's primary common.
+
+    The inverse view of noncommon_tickers(): used to CANONICALIZE a ticker that
+    was attributed to a preferred/ETN sibling back onto the common — e.g. a
+    legacy 8-K row stored as ">VYLD" (a JPMorgan ETN under CIK 19617) displays
+    as ">JPM". Only clusters with an identifiable primary contribute; a cluster
+    whose common can't be picked is left alone (no canonicalization, never a
+    wrong remap). Uses the persisted share_class label when present, else the
+    structural pick — mirrors noncommon_tickers()."""
+    out: dict[str, str] = {}
+    for cik, cluster in _clusters(universe).items():
+        labels = {t: str((universe[t].get("share_class") or "")).lower()
+                  for t in cluster}
+        if any(labels.values()):
+            commons = [t for t in cluster if labels[t] == "common"]
+            primary = _pick_primary(commons, cik, universe) if commons else None
+        else:
+            primary = _pick_primary(cluster, cik, universe)
+        if primary:
+            for t in members_except(cluster, primary):
+                out[t] = primary
+    return out
+
+
 def annotate_share_classes(universe: dict[str, dict],
                            name_lookup=None) -> dict[str, dict]:
     """Set `share_class` ('common' | 'preferred') on every universe entry,

@@ -167,6 +167,49 @@ class TestCrossSourceDedup(unittest.TestCase):
         self.assertEqual(len(new), 1)
         self.assertEqual(self._sources("SBNC"), ["fmp_news"])
 
+    def test_universe_recent_canonicalizes_sibling_ticker(self):
+        # A legacy 8-K frozen under ticker VYLD (a JPMorgan ETN sibling sharing
+        # CIK 19617) must DISPLAY as JPM via read-time canonicalization — the row
+        # can't be re-tagged in place (frozen under (source, accession)).
+        store.insert_events_returning_new(
+            [_ev("VYLD", "sec_8k", "8-K · Officer / Director Change", "acc-vyld-1")])
+        import data.bank_universe as bu
+        with patch.object(bu, "get_noncommon_primary_map",
+                          return_value={"VYLD": "JPM"}):
+            rows = store.get_universe_recent(limit=50, sources=["sec_8k"])
+        self.assertTrue(rows)
+        self.assertEqual(rows[0]["ticker"], "JPM")
+
+    def test_universe_recent_leaves_normal_ticker_untouched(self):
+        store.insert_events_returning_new(
+            [_ev("PNC", "sec_8k", "8-K · Earnings / Results", "acc-pnc-1")])
+        import data.bank_universe as bu
+        with patch.object(bu, "get_noncommon_primary_map",
+                          return_value={"VYLD": "JPM"}):
+            rows = store.get_universe_recent(limit=50, sources=["sec_8k"])
+        self.assertEqual(rows[0]["ticker"], "PNC")
+
+
+class TestNoncommonPrimaryMap(unittest.TestCase):
+    """noncommon_to_primary maps each preferred/ETN sibling onto the registrant's
+    primary common, so a mis-attributed ticker can be canonicalized on display."""
+
+    def test_maps_sibling_to_primary_common(self):
+        from data.share_class import noncommon_to_primary
+        uni = {
+            "JPM":  {"cik": 19617, "exchange": "NYSE"},
+            "VYLD": {"cik": 19617, "exchange": "NYSE Arca"},
+            "AMJB": {"cik": 19617, "exchange": "NYSE Arca"},
+        }
+        m = noncommon_to_primary(uni)
+        self.assertEqual(m.get("VYLD"), "JPM")
+        self.assertEqual(m.get("AMJB"), "JPM")
+        self.assertNotIn("JPM", m, "the common must never remap to itself")
+
+    def test_single_ticker_registrant_not_mapped(self):
+        from data.share_class import noncommon_to_primary
+        self.assertEqual(noncommon_to_primary({"PNC": {"cik": 713676}}), {})
+
 
 class TestEightKCikCollision(unittest.TestCase):
     """A single registrant (one CIK) lists several tickers — common + preferred

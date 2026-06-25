@@ -501,6 +501,21 @@ def get_noncommon_tickers() -> set[str]:
     return _NONCOMMON_CACHE
 
 
+# Memoized sibling -> primary-common remap (inverse of the non-common set).
+_NONCOMMON_PRIMARY_CACHE: dict[str, str] | None = None
+
+
+def get_noncommon_primary_map() -> dict[str, str]:
+    """Map each non-common sibling ticker -> its registrant's primary common
+    (e.g. VYLD/AMJB -> JPM, FRMEP -> FRME). Canonicalizes a ticker that was
+    attributed to a preferred/ETN sibling. See data/share_class.py."""
+    global _NONCOMMON_PRIMARY_CACHE
+    if _NONCOMMON_PRIMARY_CACHE is None:
+        from data.share_class import noncommon_to_primary
+        _NONCOMMON_PRIMARY_CACHE = noncommon_to_primary(get_universe())
+    return _NONCOMMON_PRIMARY_CACHE
+
+
 def coverage_excluded() -> set[str]:
     """Tickers hidden from every covered/display surface (screens, leaderboard,
     search, count):

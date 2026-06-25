@@ -387,7 +387,25 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
 
     with _get_engine().connect() as conn:
         rows = conn.execute(text(sql), params).mappings().all()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+
+    # Canonicalize the display ticker. Legacy rows can be tagged to a non-common
+    # sibling (preferred/ETN) that shares its registrant's CIK — e.g. a JPMorgan
+    # 8-K stored as ">VYLD". The poller no longer creates these, but a row is
+    # frozen under (source, accession), so a re-poll can't re-tag it. Remap on
+    # read so the feed shows the common (">JPM"). No-op for normal tickers; never
+    # remaps when the cluster's common can't be identified. Fail-open.
+    try:
+        from data.bank_universe import get_noncommon_primary_map
+        remap = get_noncommon_primary_map()
+        if remap:
+            for r in out:
+                canon = remap.get((r.get("ticker") or "").upper())
+                if canon:
+                    r["ticker"] = canon
+    except Exception:
+        pass
+    return out
 
 
 def get_events_by_type(event_type: str, limit: int = 600) -> list[dict]:
