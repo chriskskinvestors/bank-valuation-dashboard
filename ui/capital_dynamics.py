@@ -3,6 +3,8 @@ Capital Dynamics UI — renders the capital adequacy & buyback capacity panel
 in the Company Analysis > Capital tab.
 """
 
+import html as _html
+
 import streamlit as st
 import pandas as pd
 
@@ -20,6 +22,21 @@ from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
                                COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER,
                                CATEGORICAL_PALETTE)
 from ui.chrome import ledger, title_bar
+
+
+def _kg_table(col0, period_labels, rows):
+    """Render rows as a design-system .ksk-grid table (SNL spreadsheet look).
+    rows: list of (label, [cell strings]). '$' is neutralised so Streamlit's
+    markdown doesn't read two amounts on a line as LaTeX."""
+    def esc(s):
+        return _html.escape(str(s)).replace("$", "&#36;")
+    head = f"<th>{esc(col0)}</th>" + "".join(f"<th>{esc(p)}</th>" for p in period_labels)
+    body = "".join(
+        "<tr><td>" + esc(lab) + "</td>"
+        + "".join(f"<td>{esc(c)}</td>" for c in cells) + "</tr>"
+        for lab, cells in rows)
+    st.markdown(f'<div class="ksk-grid"><table><thead><tr>{head}</tr></thead>'
+                f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
 
 
 def _pick_scale(max_abs_dollars: float) -> tuple[float, str]:
@@ -467,7 +484,8 @@ def _render_holdco_capital(ticker: str):
         y, m = p[:4], p[5:7]
         return f"FY{y}" if m == "12" else f"Q{(int(m) - 1) // 3 + 1} '{y[2:]}"
 
-    st.subheader("Capital Adequacy — holding company (SEC filing)")
+    st.markdown('<div class="ksk-sec">Capital Adequacy — holding company '
+                '(SEC filing)</div>', unsafe_allow_html=True)
     basis = cap[periods[0]].get("_basis")
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
            f"{meta['accession']}/{meta['doc']}")
@@ -495,11 +513,9 @@ def _render_holdco_capital(ticker: str):
             return "n/a"
         return f"{v * 100:.2f}%" if kind == "pct" else f"${v / 1e9:,.2f}B"
 
-    hdr = "| ($) | " + " | ".join(_plab(p) for p in periods) + " |"
-    sep = "|---|" + "---|" * len(periods)
-    body = [f"| {lab} | " + " | ".join(_cell(cap[p].get(k), kind) for p in periods) + " |"
-            for lab, k, kind in rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    _kg_table("($)", [_plab(p) for p in periods],
+              [(lab, [_cell(cap[p].get(k), kind) for p in periods])
+               for lab, k, kind in rows])
     st.caption("Liquidity Coverage Ratio · HQLA · Net cash outflows · Supplementary "
                "leverage: large-bank disclosures (FR 2052a) — not in this filing (n/a).")
 
@@ -524,7 +540,8 @@ def _render_holdco_walk(cap: dict, periods: list, _plab) -> None:
                    "reported CET1 capital — shown as n/a rather than a guess.")
         return
 
-    st.markdown("###### Regulatory capital walk — holding company")
+    st.markdown('<div class="ksk-sec">Regulatory capital walk — holding company</div>',
+                unsafe_allow_html=True)
 
     def usd(v):
         return "n/a" if v is None else f"${v / 1e9:,.2f}B"
@@ -585,11 +602,8 @@ def _render_holdco_walk(cap: dict, periods: list, _plab) -> None:
         ("**= Tier 2 capital**", lambda p: bridge(p, "tier2_cap")),
         ("**= Total capital**", lambda p: bridge(p, "total_cap")),
     ]
-    hdr = "| Walk ($) | " + " | ".join(_plab(p) for p in periods) + " |"
-    sep = "|---|" + "---|" * len(periods)
-    body = [f"| {lab} | " + " | ".join(fn(p) for p in periods) + " |"
-            for lab, fn in walk_rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    _kg_table("Walk ($)", [_plab(p) for p in periods],
+              [(lab, [fn(p) for p in periods]) for lab, fn in walk_rows])
     st.caption("CET1 = common equity − intangibles ± AOCI − deductions; "
                "Tier 1 = CET1 + qualifying preferred; Tier 2 = sub-debt + "
                "allowance; Total = Tier 1 + Tier 2. Component steps are inline-XBRL "
