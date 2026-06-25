@@ -67,12 +67,15 @@ _EC_CSS = (
     ".ec-sec{font-size:var(--fs-2xs);letter-spacing:0.08em;text-transform:uppercase;"
     "font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--grid-head);"
     "padding-bottom:2px;margin:14px 0 6px;}"
-    ".ec-kpi{display:grid;grid-template-columns:repeat(5,1fr);"
-    "border-top:1px solid var(--grid-head);border-bottom:1px solid var(--grid-head);}"
-    ".ec-kpi-cell{padding:5px 12px;border-right:0.5px solid var(--grid-line);}"
-    ".ec-kpi-cell:last-child{border-right:none;}"
+    # Hairline KPI grid — frame from the container (top/left), internal + right/
+    # bottom lines from the cells, so it tiles cleanly at any column count / rows.
+    ".ec-kpi{display:grid;border-top:1px solid var(--grid-head);"
+    "border-left:0.5px solid var(--grid-line);}"
+    ".ec-kpi-cell{padding:5px 12px;border-right:0.5px solid var(--grid-line);"
+    "border-bottom:0.5px solid var(--grid-line);}"
     ".ec-kpi-l{font-size:var(--fs-2xs);letter-spacing:0.05em;text-transform:uppercase;"
     "color:var(--text-secondary);white-space:nowrap;}"
+    ".ec-kpi-l a.src{color:var(--brand-primary);text-decoration:none;margin-left:4px;}"
     ".ec-kpi-v{font-size:var(--fs-md);font-weight:600;color:var(--text-primary);"
     "font-variant-numeric:tabular-nums;}"
     ".ksk-grid .beat{color:var(--success);font-weight:600;}"
@@ -85,6 +88,27 @@ def _ec_cell(s):
     """HTML-safe cell text that also neutralises '$' so Streamlit's markdown
     doesn't interpret two dollar amounts on a line as LaTeX."""
     return _html.escape(str(s)).replace("$", "&#36;")
+
+
+def _kpi_strip(items, cols):
+    """Boxless hairline KPI grid (design system: no boxed cards / shadows).
+
+    items: list of (label, value, tooltip, link). A non-empty ``link`` adds a
+    small ↗ to the source document; ``tooltip`` becomes the cell's title. Used
+    for both the analyst-estimate strip and the reported-metrics strip so they
+    read identically."""
+    cells = []
+    for label, value, tip, link in items:
+        src = (f'<a class="src" href="{_html.escape(str(link), quote=True)}" '
+               f'target="_blank" title="View source document">↗</a>') if link else ""
+        ttl = f' title="{_html.escape(str(tip), quote=True)}"' if tip else ""
+        cells.append(
+            f'<div class="ec-kpi-cell"{ttl}>'
+            f'<div class="ec-kpi-l">{_html.escape(str(label))}{src}</div>'
+            f'<div class="ec-kpi-v">{_ec_cell(value)}</div></div>')
+    st.markdown(
+        f'<div class="ec-kpi" style="grid-template-columns:repeat({cols},1fr)">'
+        + "".join(cells) + "</div>", unsafe_allow_html=True)
 
 
 def _format_val(val, unit: str) -> str:
@@ -230,11 +254,7 @@ def _render_auto_estimates(ticker: str, estimates: dict):
          "Number of sell-side analysts contributing estimates."),
     ]
     st.markdown('<div class="ec-sec">Analyst Estimates</div>', unsafe_allow_html=True)
-    st.markdown('<div class="ec-kpi">' + "".join(
-        f'<div class="ec-kpi-cell" title="{_html.escape(d, quote=True)}">'
-        f'<div class="ec-kpi-l">{_html.escape(l)}</div>'
-        f'<div class="ec-kpi-v">{_ec_cell(v)}</div></div>'
-        for l, v, d in kpis) + '</div>', unsafe_allow_html=True)
+    _kpi_strip([(l, v, d, None) for l, v, d in kpis], cols=5)
 
     # Price target range
     t_low = estimates.get("target_low")
@@ -506,9 +526,10 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
     as the Overview cards): FDIC ratios → Call Report, SEC per-share → 10-K/10-Q,
     ROATCE → formula + inputs, with the one-time-item flag preserved."""
     st.markdown("---")
-    st.subheader("Key Reported Metrics")
+    st.markdown('<div class="ec-sec">Key Reported Metrics</div>',
+                unsafe_allow_html=True)
 
-    from ui.source_trace import render_traceable_cards, fdic_calc, make_calc, sec_doc_for
+    from ui.source_trace import _calc_tooltip, fdic_calc, make_calc, sec_doc_for
     from ui.financial_highlights import _fdic_doc, _disp_date, _num, _thou
     from data.bank_mapping import get_fdic_cert, get_cik, get_name
     from data import fdic_client, sec_client
@@ -583,7 +604,8 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
                                    "val": (f"{shares:,.0f}" if shares else "—"), "doc": sh_doc}],
                            op="Tangible common equity ÷ shares")},
     ]
-    render_traceable_cards(cards, key=f"earn_keymetrics_{ticker}", columns=4)
+    _kpi_strip([(c["label"], c["value"], _calc_tooltip(c.get("calc")),
+                 (c.get("calc") or {}).get("link")) for c in cards], cols=4)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
