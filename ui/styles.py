@@ -846,6 +846,33 @@ CUSTOM_CSS = """
         color: #2563eb; font-weight: 600;
     }
 
+    /* Generic lazy-tabs pill bar (chrome.lazy_tabs) — looks like the sub-tab
+       pills but renders only the active pane. Class-contains so one rule styles
+       every lazy_tabs(key=...) instance. */
+    [class*="st-key-lazytabs_"] div[role="radiogroup"] {
+        display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+        margin: 6px 0 8px;
+    }
+    [class*="st-key-lazytabs_"] div[role="radiogroup"] > label {
+        margin: 0 !important; padding: 4px 13px; cursor: pointer;
+        border-radius: 14px; transition: background 0.12s;
+    }
+    [class*="st-key-lazytabs_"] div[role="radiogroup"] > label:hover {
+        background: rgba(37, 99, 235, 0.06);
+    }
+    [class*="st-key-lazytabs_"] div[role="radiogroup"] > label > div:first-of-type {
+        display: none !important;
+    }
+    [class*="st-key-lazytabs_"] div[role="radiogroup"] > label p {
+        font-size: 0.84rem; color: var(--text-secondary); font-weight: 500;
+    }
+    [class*="st-key-lazytabs_"] div[role="radiogroup"] > label:has(input:checked) {
+        background: rgba(37, 99, 235, 0.12);
+    }
+    [class*="st-key-lazytabs_"] div[role="radiogroup"] > label:has(input:checked) p {
+        color: #2563eb; font-weight: 600;
+    }
+
     /* Basis: Company Reported | Templated (segmented control between the
        section tab bar and the sub-tab pills) */
     .st-key-company_basis_nav div[role="radiogroup"] {

@@ -25,7 +25,33 @@ from data.branches_store import (
     get_banks_by_state, get_banks_by_msa, get_banks_by_county,
     get_branch_counts_by_ticker,
 )
-from ui.chrome import table_export
+from ui.chrome import table_export, lazy_tabs
+
+
+# ── Cached read wrappers ────────────────────────────────────────────────────
+# Each Geographic pane re-queries Postgres on EVERY rerun (selectbox change,
+# public-only checkbox, map zoom). st.cache_data keyed by region + year means
+# only a genuine region/year change re-hits the DB; repeat renders are free.
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_states(): return list_states()
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_msas(): return list_msas()
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_counties(): return list_counties()
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_branch_counts(): return get_branch_counts_by_ticker()
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_branches_state(state, year): return get_branches_by_state(state, year=year)
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_banks_state(state, year): return get_banks_by_state(state, year=year)
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_branches_msa(code, year): return get_branches_by_msa(code, year=year)
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_banks_msa(code, year): return get_banks_by_msa(code, year=year)
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_branches_county(fips, year): return get_branches_by_county(fips, year=year)
+@st.cache_data(ttl=900, show_spinner=False)
+def _c_banks_county(fips, year): return get_banks_by_county(fips, year=year)
 
 
 def _fmt_dollars_k(thousands: float | int | None) -> str:
@@ -97,16 +123,16 @@ def render_geo_view():
 
     st.caption(f"Data as of FDIC Summary of Deposits, year {year}.")
 
-    tab_state, tab_msa, tab_county, tab_banks = st.tabs([
-        "By State",
-        "By MSA",
-        "By County",
-        "By Bank(s)",
-    ])
+    # lazy_tabs (not st.tabs): render ONLY the active geography pane. st.tabs ran
+    # all four — State, MSA, County, Bank(s) — every rerun, each doing its own
+    # Postgres branch query + mapbox build (~2.3s warm). (docs/PERFORMANCE.md
+    # lever 1.)
+    _geo_tab = lazy_tabs(["By State", "By MSA", "By County", "By Bank(s)"],
+                         key="geo")
 
     # ───────── State view ─────────
-    with tab_state:
-        states = list_states()
+    if _geo_tab == "By State":
+        states = _c_states()
         if not states:
             st.info("No states loaded yet — wait for the refresh job to finish.")
         else:
@@ -117,8 +143,8 @@ def render_geo_view():
             with col2:
                 st.write("")  # spacing
 
-            branches = get_branches_by_state(state, year=year)
-            banks = get_banks_by_state(state, year=year)
+            branches = _c_branches_state(state, year)
+            banks = _c_banks_state(state, year)
 
             # Public-only toggle (state view) — defaults to OFF so users
             # see the full deposit landscape including private/community banks.
@@ -155,8 +181,8 @@ def render_geo_view():
             _render_map(branches_disp)
 
     # ───────── MSA view ─────────
-    with tab_msa:
-        msas_df = list_msas()
+    elif _geo_tab == "By MSA":
+        msas_df = _c_msas()
         if msas_df.empty:
             st.info("No MSAs loaded yet — wait for the refresh job.")
         else:
@@ -173,8 +199,8 @@ def render_geo_view():
                 msa_label = st.selectbox("MSA", labels, key="geo_msa", index=default_idx)
             msa_code = label_to_code[msa_label]
 
-            branches = get_branches_by_msa(msa_code, year=year)
-            banks = get_banks_by_msa(msa_code, year=year)
+            branches = _c_branches_msa(msa_code, year)
+            banks = _c_banks_msa(msa_code, year)
 
             public_only_msa = st.checkbox(
                 "Public-traded banks only", value=False,
@@ -207,8 +233,8 @@ def render_geo_view():
             _render_map(branches_disp)
 
     # ───────── County view ─────────
-    with tab_county:
-        counties_df = list_counties()
+    elif _geo_tab == "By County":
+        counties_df = _c_counties()
         if counties_df.empty:
             st.info("No counties loaded yet — wait for the refresh job.")
         else:
@@ -226,8 +252,8 @@ def render_geo_view():
                                             index=default_idx)
             stcntybr = label_to_fips[county_label]
 
-            branches = get_branches_by_county(stcntybr, year=year)
-            banks = get_banks_by_county(stcntybr, year=year)
+            branches = _c_branches_county(stcntybr, year)
+            banks = _c_banks_county(stcntybr, year)
 
             public_only_county = st.checkbox(
                 "Public-traded banks only", value=False,
@@ -259,8 +285,8 @@ def render_geo_view():
             _render_map(branches_disp)
 
     # ───────── Multi-bank view ─────────
-    with tab_banks:
-        coverage = get_branch_counts_by_ticker()
+    elif _geo_tab == "By Bank(s)":
+        coverage = _c_branch_counts()
         if coverage.empty:
             st.info("No banks loaded yet.")
             return

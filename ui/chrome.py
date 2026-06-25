@@ -35,6 +35,24 @@ def top_nav(sections: list[str], key: str = "nav_section",
     return section, search, right
 
 
+def lazy_tabs(labels: list[str], key: str, default: int = 0) -> str:
+    """A tab bar that renders ONLY the selected pane.
+
+    ``st.tabs`` runs *every* pane's body on every rerun (hidden ones included),
+    which is pure wasted work for heavy panes (charts, DB pulls). This renders a
+    pill bar styled like the Company sub-tabs and returns the active label so the
+    caller dispatches just one pane::
+
+        sel = lazy_tabs(["Calendar", "Heat-Map", ...], key="earnings")
+        if sel == "Calendar": _render_calendar()
+        elif sel == "Heat-Map": _render_heatmap()
+
+    The container key drives the pill styling (see styles.py ``st-key-lazytabs_``)."""
+    with st.container(key=f"lazytabs_{key}"):
+        return st.radio(key, labels, index=default, horizontal=True,
+                        key=f"_lazytab_{key}", label_visibility="collapsed")
+
+
 def title_bar(entity: str, page: str, ids_html: str = "") -> None:
     """SNL-style title bar: `Entity | PAGE NAME` + identifier link row.
     ids_html is caller-built (links already escaped/trusted)."""
