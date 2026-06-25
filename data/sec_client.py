@@ -65,7 +65,9 @@ SLIM_USGAAP_CONCEPTS = {
     "ProvisionForCreditLosses", "ProvisionForLoanAndLeaseLosses",
     "ProvisionForLoanLeaseAndOtherLosses", "ProvisionForCreditLossExpenseReversal",
     "Deposits", "DepositsDomestic",
+    "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss",
     "LoansAndLeasesReceivableNetReportedAmount",
+    "LoansAndLeasesReceivableNetOfDeferredIncome",
     "LoansReceivableHeldForInvestmentNet", "NotesReceivableNet",
 }
 

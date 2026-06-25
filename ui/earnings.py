@@ -227,8 +227,10 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
                     st.caption("Actuals are the company's as-reported figures for "
                                "this period (SEC companyfacts — the same holding-"
                                "company basis as **Company Reported**, refreshed as "
-                               "filings are processed). Margins and returns show n/a "
-                               "— there's no clean single-period basis for them yet.")
+                               "filings are processed). ROAA is implied (annualized "
+                               "income ÷ average assets). NIM and ROATCE show n/a — "
+                               "filings don't carry a clean average-earning-assets "
+                               "or common-tangible-equity basis to compare on.")
             else:
                 st.info("No comparable metrics found.")
 

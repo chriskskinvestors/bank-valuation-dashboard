@@ -146,6 +146,46 @@ class TestFundamentalsForPeriod(unittest.TestCase):
         self.assertIsNone(sp.fundamentals_for_period(123, "H1 2026"))
         self.assertIsNone(sp.fundamentals_for_period(123, ""))
 
+    def test_loans_prefers_financing_receivable_total(self):
+        # Post-CECL filers tag loans HFI as FinancingReceivable…BeforeAllowance…;
+        # it must win over the older (often stale) Net concept.
+        self._facts = _facts({
+            "FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss":
+                ("USD", [_e("2026-04-01", "2026-06-30", 400e9)]),
+            "LoansAndLeasesReceivableNetReportedAmount":
+                ("USD", [_e("2026-04-01", "2026-06-30", 50e9)]),
+        })
+        a = sp.fundamentals_for_period(123, "2026Q2")
+        self.assertEqual(a["total_loans"], 400e9)
+
+    def test_roaa_annualized_two_point_average(self):
+        # Q2 NI = 250 − 100 = 150 ; avg assets = (10B at 3/31 + 12B at 6/30)/2 = 11B
+        # ROAA = 150 × 4 / 11,000 × 100 = 5.4545%
+        self._facts = _facts({
+            "NetIncomeLoss": ("USD", [
+                _e("2026-01-01", "2026-03-31", 100e6),
+                _e("2026-01-01", "2026-06-30", 250e6)]),
+            "Assets": ("USD", [
+                _e("2026-03-31", "2026-03-31", 10e9),
+                _e("2026-04-01", "2026-06-30", 12e9)]),
+        })
+        a = sp.fundamentals_for_period(123, "2026Q2")
+        self.assertAlmostEqual(a["roaa"], 150e6 * 4 / 11e9 * 100, places=4)
+        # NIM and ROATCE are never fabricated.
+        self.assertNotIn("nim", a)
+        self.assertNotIn("roatce", a)
+
+    def test_roaa_absent_without_both_balance_endpoints(self):
+        # Only the period-end balance on file → no average → no ROAA (not a guess).
+        self._facts = _facts({
+            "NetIncomeLoss": ("USD", [
+                _e("2026-01-01", "2026-03-31", 100e6),
+                _e("2026-01-01", "2026-06-30", 250e6)]),
+            "Assets": ("USD", [_e("2026-04-01", "2026-06-30", 12e9)]),
+        })
+        a = sp.fundamentals_for_period(123, "2026Q2")
+        self.assertNotIn("roaa", a)
+
     def test_concepts_registered_in_slim_cache(self):
         # Every concept the extractor reads must be in the slim projection, or the
         # cached facts wouldn't contain it (the silent-n/a trap the slim hash guards).

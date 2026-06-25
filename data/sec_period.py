@@ -48,10 +48,14 @@ _FLOW = {
     "nonint_expense": _NONINT_EXPENSE,
     "provision": _PROVISION,
 }
-# Point-in-time balance-sheet stocks.
+# Point-in-time balance-sheet stocks. Loans: post-CECL filers tag loans held for
+# investment as FinancingReceivable…BeforeAllowance… (the headline "total loans"
+# line); the older Net concepts cover banks that still report that way.
 _INSTANT = {
     "total_deposits": ("Deposits", "DepositsDomestic"),
-    "total_loans": ("LoansAndLeasesReceivableNetReportedAmount",
+    "total_loans": ("FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss",
+                    "LoansAndLeasesReceivableNetReportedAmount",
+                    "LoansAndLeasesReceivableNetOfDeferredIncome",
                     "LoansReceivableHeldForInvestmentNet", "NotesReceivableNet"),
     "total_assets": ("Assets",),
 }
@@ -220,6 +224,40 @@ def _instant(facts, concepts, end_target, unit_types=("USD",)):
     return None
 
 
+def _prev_period_end(kind, year, q) -> date:
+    """Period-START balance date = the prior period's end (one quarter back for a
+    quarter, the prior year-end for an annual period)."""
+    if kind == "Y" or q == 1:
+        return date(year - 1, 12, 31)
+    mm, dd = _Q_END[q - 1]
+    return date(year, mm, dd)
+
+
+def _roaa(facts, kind, year, q, net_income):
+    """Return on average assets (%), annualized: period net income × (4 for a
+    quarter, 1 for a year) ÷ AVERAGE total assets, where the average is the two
+    end-points (period start + period end) / 2.
+
+    This is an implied figure — banks report ROAA on average DAILY balances, which
+    structured XBRL doesn't carry — so it can differ from the bank's stated ROAA
+    by a few bps. Returned only when both balance end-points are on file; the UI
+    labels it as implied. NIM and ROATCE are NOT computed: there is no clean
+    average-earning-assets denominator, and preferred equity can't be separated
+    from companyfacts to form common tangible equity — guessing either is exactly
+    the wrong-number trap, so they stay n/a."""
+    if net_income is None:
+        return None
+    a_end = _instant(facts, ("Assets",), _q_end(year, q) if kind == "Q" else date(year, 12, 31))
+    a_beg = _instant(facts, ("Assets",), _prev_period_end(kind, year, q))
+    if a_end is None or a_beg is None:
+        return None
+    avg = (a_end + a_beg) / 2
+    if avg <= 0:
+        return None
+    annualized = net_income * (4 if kind == "Q" else 1)
+    return annualized / avg * 100
+
+
 def fundamentals_for_period(cik, period: str) -> dict | None:
     """As-reported HoldCo actuals for (cik, period) in the metrics key space, or
     None if the period has not been filed yet. $-amounts are raw dollars; eps is
@@ -252,4 +290,7 @@ def fundamentals_for_period(cik, period: str) -> dict | None:
         v = _instant(facts, concepts, end_target)
         if v is not None:
             out[key] = v
+    roaa = _roaa(facts, kind, year, q, out.get("net_income"))
+    if roaa is not None:
+        out["roaa"] = roaa
     return out or None
