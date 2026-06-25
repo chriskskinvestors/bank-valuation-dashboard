@@ -39,6 +39,22 @@ def _kg_table(col0, period_labels, rows):
                 f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
 
 
+def _kg_rows_table(rows):
+    """Render a list of uniform dicts as a .ksk-grid table — header = the dict
+    keys, one body row per dict. '$' neutralised for the LaTeX guard."""
+    if not rows:
+        return
+    def esc(s):
+        return _html.escape(str(s)).replace("$", "&#36;")
+    cols = list(rows[0].keys())
+    head = "".join(f"<th>{esc(c)}</th>" for c in cols)
+    body = "".join(
+        "<tr>" + "".join(f"<td>{esc(r.get(c, '—'))}</td>" for c in cols) + "</tr>"
+        for r in rows)
+    st.markdown(f'<div class="ksk-grid"><table><thead><tr>{head}</tr></thead>'
+                f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+
+
 def _pick_scale(max_abs_dollars: float) -> tuple[float, str]:
     """
     Pick an appropriate scale for a chart axis given the max absolute $ value.
@@ -637,7 +653,8 @@ def _render_rcr_capital_walk(ticker: str):
     from utils.formatting import (num as _n, thou as _thou,
                                   usd_compact_from_thousands as _usd)
 
-    st.subheader("Regulatory Capital Walk — bank subsidiary (call report)")
+    st.markdown('<div class="ksk-sec">Regulatory Capital Walk — bank subsidiary '
+                '(call report)</div>', unsafe_allow_html=True)
 
     cert = get_fdic_cert(ticker)
     details = get_stored_rcr_detail(cert, quarters=8) if cert else []
@@ -911,7 +928,8 @@ def _render_capital_return_attribution(ticker: str):
     growth = result.get("growth", {})
     yld = result.get("yield", {})
 
-    st.subheader("Capital Return Attribution")
+    st.markdown('<div class="ksk-sec">Capital Return Attribution</div>',
+                unsafe_allow_html=True)
 
     div_source = result.get("dividend_source", "unknown")
     source_note = {
@@ -1098,4 +1116,4 @@ def _render_capital_return_attribution(ticker: str):
                     else "—"
                 ),
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        _kg_rows_table(rows)
