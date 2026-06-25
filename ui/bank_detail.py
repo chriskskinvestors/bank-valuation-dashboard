@@ -517,7 +517,10 @@ def _render_price_panel(ticker: str):
             "</style>", unsafe_allow_html=True)
         # Header row: readout (left) · timeframe buttons (right). The buttons are
         # rendered first to resolve the period that the readout/chart then use.
-        _hl, _hr = st.columns([1, 1], vertical_alignment="center")
+        # vertical_alignment="top" (not "center"): the readout column collapses to
+        # a few px and "center" then drops the readout ~7px below the buttons —
+        # "top" sits both flush at the row top so they line up.
+        _hl, _hr = st.columns([1, 1], vertical_alignment="top")
         with _hr:
             per = st.segmented_control(
                 "Period", ["1W", "1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y", "ALL"],
