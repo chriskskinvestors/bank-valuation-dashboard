@@ -596,21 +596,23 @@ class TestHoldcoCapitalRendersPopulated(unittest.TestCase):
         self.assertIn("13.89%", h)
         self.assertIn("9.68%", h)
         # The $ capital amounts alongside the ratios (the TASK-1 confirmation).
-        self.assertIn("$13.49B", h)    # CET1 capital
-        self.assertIn("$14.86B", h)    # Tier 1 capital
-        self.assertIn("$2.35B", h)     # Tier 2 capital
-        self.assertIn("$17.20B", h)    # Total capital
-        self.assertIn("$123.90B", h)   # RWA
+        # Matched without the leading "$": the .ksk-grid table escapes it to the
+        # &#36; HTML entity (LaTeX guard) — still displays as "$" in-browser.
+        self.assertIn("13.49B", h)    # CET1 capital
+        self.assertIn("14.86B", h)    # Tier 1 capital
+        self.assertIn("2.35B", h)     # Tier 2 capital
+        self.assertIn("17.20B", h)    # Total capital
+        self.assertIn("123.90B", h)   # RWA
 
     def test_walk_renders_when_reconciled(self):
         h = self._render({"meta": self.META, "capital": self.CAP})
         self.assertIn("Regulatory capital walk", h)
         self.assertIn("Total common equity", h)
-        self.assertIn("$19.00B", h)                 # common equity
+        self.assertIn("19.00B", h)                 # common equity
         # Additional Tier 1 = t1 − cet1 = 14.859 − 13.49 = 1.369 → $1.37B.
-        self.assertIn("$1.37B", h)
+        self.assertIn("1.37B", h)
         # Other Tier 2 = tier2 − sub-debt = 2.346 − 1.00 = 1.346 → $1.35B.
-        self.assertIn("$1.35B", h)
+        self.assertIn("1.35B", h)
         # AOCI retained (opt-in) → no removal step.
         self.assertIn("in CET1", h)
 
@@ -619,7 +621,7 @@ class TestHoldcoCapitalRendersPopulated(unittest.TestCase):
                                   _walk_reconciles=False)}
         h = self._render({"meta": self.META, "capital": cap})
         # Ratios + amounts still render; the walk does not.
-        self.assertIn("$13.49B", h)
+        self.assertIn("13.49B", h)
         self.assertNotIn("Total common equity", h)
         self.assertIn("does not tag a machine-readable", h)
 
