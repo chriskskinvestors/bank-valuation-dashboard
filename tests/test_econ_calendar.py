@@ -9,7 +9,7 @@ Permits, Housing Starts MoM).
 """
 import unittest
 
-from data.econ_calendar import parse_event, _impact_ok, is_marquee
+from data.econ_calendar import parse_event, _impact_ok, is_marquee, merge_us_events
 
 
 class TestParseEvent(unittest.TestCase):
@@ -93,6 +93,36 @@ class TestIsMarquee(unittest.TestCase):
     def test_empty(self):
         self.assertFalse(is_marquee(""))
         self.assertFalse(is_marquee(None))
+
+
+class TestMergeUsEvents(unittest.TestCase):
+    """Pins the 2026-06-25 bug: an 8:30am print sat in Upcoming because the
+    endpoint queried first carried a null actual. A released print on EITHER
+    endpoint must win over a not-yet-released duplicate of the same release."""
+
+    def _ev(self, actual):
+        return {"date": "2026-06-25 12:30:00", "country": "US",
+                "event": "Core PCE Price Index YoY (May)", "previous": 3.3,
+                "estimate": 3.4, "actual": actual, "impact": "Low", "unit": "%"}
+
+    def test_released_supersedes_null_regardless_of_order(self):
+        null_first = merge_us_events([[self._ev(None)], [self._ev(3.4)]])
+        actual_first = merge_us_events([[self._ev(3.4)], [self._ev(None)]])
+        for merged in (null_first, actual_first):
+            self.assertEqual(len(merged), 1)            # one row per release
+            self.assertTrue(merged[0]["released"])
+            self.assertAlmostEqual(merged[0]["actual"], 3.4)
+
+    def test_dedups_same_release_across_endpoints(self):
+        merged = merge_us_events([[self._ev(3.4)], [self._ev(3.4)]])
+        self.assertEqual(len(merged), 1)
+
+    def test_drops_non_us_and_ignores_non_list(self):
+        foreign = {"date": "2026-06-25 12:30:00", "country": "JP",
+                   "event": "CPI YoY (Jun)", "actual": 1.6, "impact": "Low"}
+        merged = merge_us_events([None, [foreign, self._ev(3.4)], "oops"])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["event"], "Core PCE Price Index YoY (May)")
 
 
 if __name__ == "__main__":

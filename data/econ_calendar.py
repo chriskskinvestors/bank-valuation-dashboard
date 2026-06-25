@@ -25,7 +25,7 @@ from datetime import date, datetime, timedelta
 
 from data.fmp_client import _get
 
-CACHE_KEY = "econ_calendar_us:v1"
+CACHE_KEY = "econ_calendar_us:v2"  # v2: dual-endpoint merge (forces a clean refetch)
 CACHE_TTL_SECONDS = 3600  # 1h — actuals print intraday
 
 _IMPACT_RANK = {"High": 0, "Medium": 1, "Low": 2}
@@ -119,21 +119,44 @@ def get_us_calendar(back_days: int = 10, fwd_days: int = 14) -> list[dict]:
     today = date.today()
     params = {"from": (today - timedelta(days=back_days)).isoformat(),
               "to": (today + timedelta(days=fwd_days)).isoformat()}
-    # FMP's stable REST path is "economic-calendar" (singular); the docs page
-    # slug / MCP name is "economics-calendar". Try the real path first and fall
-    # back, so a naming change on either side can't silently break this.
-    raw = None
-    for path in ("economic-calendar", "economics-calendar"):
-        resp = _get(path, params, timeout=20)
-        if isinstance(resp, list) and resp:
-            raw = resp
-            break
-    if not isinstance(raw, list):
+    # Two FMP paths serve this calendar: "economics-calendar" (the docs/MCP slug)
+    # and "economic-calendar" (singular, legacy). They are NOT interchangeable on
+    # release day — one can carry the just-printed `actual` while the other still
+    # shows it null (found live 2026-06-25: 8:30am ET prints stuck in Upcoming
+    # because the singular path, queried first, hadn't filled actuals yet). So we
+    # query BOTH and merge per release, preferring the row that has an actual, and
+    # never let a stale null mask a printed value. Empty only if both paths fail.
+    responses = [_get(path, params, timeout=20)
+                 for path in ("economics-calendar", "economic-calendar")]
+    if not any(isinstance(r, list) for r in responses):
         return []
-    events = [pe for e in raw if e.get("country") == "US"
-              for pe in (parse_event(e),) if pe is not None]
+    events = merge_us_events(responses)
     cache.put(CACHE_KEY, {"cached_at": datetime.now().isoformat(), "events": events})
     return events
+
+
+def merge_us_events(responses: list) -> list[dict]:
+    """Merge US events across the FMP calendar endpoints, one row per release.
+
+    Pure / unit-tested. A released print (actual present) always supersedes a
+    not-yet-released duplicate of the same (date, event) — so a stale null from
+    one endpoint can never mask a printed value the other endpoint carries.
+    Non-list responses are ignored."""
+    merged: dict[tuple, dict] = {}
+    for resp in responses:
+        if not isinstance(resp, list):
+            continue
+        for e in resp:
+            if not isinstance(e, dict) or e.get("country") != "US":
+                continue
+            pe = parse_event(e)
+            if pe is None:
+                continue
+            key = (pe["date"], pe["event"])
+            prev = merged.get(key)
+            if prev is None or (pe["released"] and not prev["released"]):
+                merged[key] = pe
+    return list(merged.values())
 
 
 def get_recent_releases(days: int = 10, limit: int = 14) -> list[dict]:
@@ -156,35 +179,3 @@ def get_upcoming_releases(days: int = 14, limit: int = 20) -> list[dict]:
             if not e["released"] and e["date"] >= today and is_marquee(e["event"])]
     rows.sort(key=lambda e: e["datetime"])
     return rows[:limit]
-
-
-# ── Display helpers ─────────────────────────────────────────────────────────
-# Plain-text formatters (no HTML) so any consumer can apply its own styling —
-# the Market & Macro panel and the Home calendar pane both render these events.
-
-def fmt_value(v, unit) -> str | None:
-    """An econ value + its unit as plain text ('180K', '3.2%', '1.5 bps'), or
-    None when there's no value. Pure / unit-tested."""
-    if v is None:
-        return None
-    u = (unit or "").strip()
-    if u in ("%", "M", "K", "B"):
-        return f"{v:g}{u}"
-    return f"{v:g}{(' ' + u) if u else ''}"
-
-
-def et_time(dt_str) -> str:
-    """FMP UTC datetime string → US/Eastern 'h:mm AM/PM ET'; '' for a midnight
-    placeholder (FMP's no-scheduled-time marker) or any parse failure."""
-    from datetime import datetime as _dt
-    try:
-        from zoneinfo import ZoneInfo
-        utc = _dt.strptime(str(dt_str), "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=ZoneInfo("UTC"))
-    except Exception:
-        return ""
-    if utc.hour == 0 and utc.minute == 0:
-        return ""
-    d = utc.astimezone(ZoneInfo("America/New_York"))
-    h = d.hour % 12 or 12
-    return f"{h}:{d.minute:02d} {'AM' if d.hour < 12 else 'PM'} ET"
