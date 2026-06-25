@@ -50,6 +50,28 @@ _CONTENT_DEDUP_SOURCES = {
 }
 _CONTENT_DEDUP_WINDOW_DAYS = 5
 
+# When the SAME release is syndicated across an AGGREGATOR (fmp_news /
+# google_news / yfinance_news) and a first-party WIRE (businesswire /
+# prnewswire / globenewswire), we keep ONE row — and it should be the wire copy:
+# cleaner headline, first-party URL, and (critically) the Home feed surfaces the
+# wires but hides the aggregators. Polls are unordered, so without an explicit
+# preference an aggregator that happens to poll first would "capture" the
+# release under a source Home never shows (the bug that hid the JPMorgan
+# co-presidents release: stored under fmp_news, deduped away the businesswire
+# copy, invisible on Home). Lower rank = preferred. When a higher-priority copy
+# arrives for a key already stored under a lower-priority source, we UPGRADE the
+# stored row in place rather than inserting a duplicate.
+_SOURCE_RANK = {
+    "businesswire": 0, "prnewswire": 0, "globenewswire": 0,
+    "fmp_news": 1, "google_news": 1, "yfinance_news": 1,
+}
+
+
+def _source_rank(source: str | None) -> int:
+    """Dedup preference for a source; lower = preferred. Unknown sources rank as
+    aggregators (1), never beating a first-party wire."""
+    return _SOURCE_RANK.get(source or "", 1)
+
 
 def _content_key(ticker: str, headline: str) -> str:
     """Normalized (ticker, headline) key for cross-source dedup: lower-cased,
@@ -144,16 +166,18 @@ def init_schema():
         ))
 
 
-def _existing_content_keys(eng, events: list[Event]) -> set[str]:
+def _existing_content_rows(eng, events: list[Event]) -> dict[str, tuple[str, str]]:
     """Content keys already in the store for this batch's tickers (dedup-eligible
-    sources, within the recent window). Used to collapse the same release
-    syndicated across multiple sources."""
+    sources, within the recent window) -> the BEST (highest-priority) stored row
+    for each, as ``(source, external_id)``. Used to collapse the same release
+    syndicated across sources, and to decide whether an incoming higher-priority
+    wire copy should upgrade a stored aggregator copy in place (see _SOURCE_RANK)."""
     from sqlalchemy import text
 
     dedup_events = [e for e in events
                     if e.source in _CONTENT_DEDUP_SOURCES and e.ticker]
     if not dedup_events:
-        return set()
+        return {}
 
     tickers = sorted({e.ticker.upper() for e in dedup_events})
     src_list = sorted(_CONTENT_DEDUP_SOURCES)
@@ -161,7 +185,7 @@ def _existing_content_keys(eng, events: list[Event]) -> set[str]:
 
     if _USE_POSTGRES:
         sql = text("""
-            SELECT ticker, headline FROM events
+            SELECT ticker, headline, source, external_id FROM events
             WHERE ticker = ANY(:tickers) AND source = ANY(:srcs)
               AND published_at >= :cutoff
         """)
@@ -170,7 +194,7 @@ def _existing_content_keys(eng, events: list[Event]) -> set[str]:
         t_ph = ",".join(f":t{i}" for i in range(len(tickers)))
         s_ph = ",".join(f":s{i}" for i in range(len(src_list)))
         sql = text(f"""
-            SELECT ticker, headline FROM events
+            SELECT ticker, headline, source, external_id FROM events
             WHERE ticker IN ({t_ph}) AND source IN ({s_ph})
               AND published_at >= :cutoff
         """)
@@ -178,11 +202,14 @@ def _existing_content_keys(eng, events: list[Event]) -> set[str]:
         params.update({f"t{i}": t for i, t in enumerate(tickers)})
         params.update({f"s{i}": s for i, s in enumerate(src_list)})
 
-    keys: set[str] = set()
+    best: dict[str, tuple[str, str]] = {}
     with eng.connect() as conn:
         for r in conn.execute(sql, params).mappings().all():
-            keys.add(_content_key(r["ticker"], r["headline"]))
-    return keys
+            ck = _content_key(r["ticker"], r["headline"])
+            prev = best.get(ck)
+            if prev is None or _source_rank(r["source"]) < _source_rank(prev[0]):
+                best[ck] = (r["source"], r["external_id"])
+    return best
 
 
 def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
@@ -199,11 +226,24 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
 
     eng = _get_engine()
 
-    # Cross-source dedup: load content keys already present for the tickers in
-    # this batch (eligible sources only, recent window), so a release already
-    # ingested from one wire/aggregator isn't duplicated from another. Keys seen
-    # earlier in THIS batch are added as we go.
-    seen_content_keys = _existing_content_keys(eng, events)
+    # Cross-source dedup: load the best stored copy per content key for the
+    # tickers in this batch (eligible sources only, recent window), so a release
+    # already ingested from one wire/aggregator isn't duplicated from another.
+    # When a higher-priority wire copy arrives for a key currently stored under a
+    # lower-priority aggregator, we UPGRADE that row in place instead of skipping
+    # (so the single retained copy is first-party and Home-visible). Rows seen /
+    # written earlier in THIS batch are tracked as we go.
+    existing_rows = _existing_content_rows(eng, events)
+    best_rank: dict[str, int] = {
+        ck: _source_rank(src) for ck, (src, _eid) in existing_rows.items()
+    }
+    upgrade_stmt = text("""
+        UPDATE events SET
+          source = :source, event_type = :event_type, headline = :headline,
+          summary = :summary, url = :url, external_id = :external_id,
+          published_at = :published_at, raw_json = :raw_json
+        WHERE source = :old_source AND external_id = :old_external_id
+    """)
 
     new: list[Event] = []
     with eng.begin() as conn:
@@ -212,11 +252,36 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
                 # Without an external_id we can't dedupe, so don't insert.
                 # Adapters should always provide one.
                 continue
+            ck = None
             if e.source in _CONTENT_DEDUP_SOURCES:
                 ck = _content_key(e.ticker, e.headline)
-                if ck in seen_content_keys:
-                    continue  # same release already present from another source
-                seen_content_keys.add(ck)
+                incoming_rank = _source_rank(e.source)
+                cur_rank = best_rank.get(ck)
+                if cur_rank is not None:
+                    if incoming_rank >= cur_rank:
+                        continue  # an equal-or-better copy is already present
+                    # Strictly higher priority (a wire beating a stored aggregator
+                    # copy): swap the stored row's content for the wire's so the
+                    # one retained copy is first-party — and surfaced on Home.
+                    old = existing_rows.get(ck)
+                    if old is not None:
+                        conn.execute(upgrade_stmt, {
+                            "source": e.source,
+                            "event_type": e.event_type,
+                            "headline": e.headline[:5000] if e.headline else "",
+                            "summary": e.summary[:20000] if e.summary else None,
+                            "url": e.url or None,
+                            "external_id": e.external_id[:255],
+                            "published_at": e.published_at,
+                            "raw_json": json.dumps(e.raw, default=str) if e.raw else None,
+                            "old_source": old[0],
+                            "old_external_id": old[1],
+                        })
+                        existing_rows[ck] = (e.source, e.external_id[:255])
+                        best_rank[ck] = incoming_rank
+                        new.append(e)
+                    continue
+                best_rank[ck] = incoming_rank
             params = {
                 "ticker": e.ticker.upper(),
                 "source": e.source,
@@ -250,6 +315,10 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
             result = conn.execute(stmt, params)
             if (result.rowcount or 0) > 0:
                 new.append(e)
+                if ck is not None:
+                    # Track this just-written row so a higher-priority copy later
+                    # in the SAME batch can upgrade it in place.
+                    existing_rows[ck] = (e.source, e.external_id[:255])
     return new
 
 

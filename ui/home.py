@@ -698,11 +698,15 @@ def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
     try:
         from data.events import get_universe_recent
         from data.events.wire_base import is_safe_news_url, is_junk_news
-        # Disclosures only — NO google_news (it floods the feed with
-        # third-party/analyst mentions, e.g. "Morgan Stanley lowers Brent
-        # forecast" tagged >MS). SEC 8-K + the PR wires + IR-site only.
+        # First-party disclosures + curated PR wires. NO google_news (it floods
+        # the feed with third-party/analyst mentions, e.g. "Morgan Stanley lowers
+        # Brent forecast" tagged >MS). fmp_news IS included: it carries first-
+        # party Business Wire / PR Newswire releases (gated by its brand-core
+        # subject guard) and is the stored copy whenever no direct-wire copy was
+        # ingested — store._SOURCE_RANK now lets a wire copy upgrade it when both
+        # exist, but fmp_news-only releases would otherwise never reach Home.
         _feed_sources = ["sec_8k", "businesswire", "prnewswire",
-                         "globenewswire", "ir_site"]
+                         "globenewswire", "ir_site", "fmp_news"]
         for r in get_universe_recent(limit=150, sources=_feed_sources):
             if not is_safe_news_url(r.get("url")):
                 continue

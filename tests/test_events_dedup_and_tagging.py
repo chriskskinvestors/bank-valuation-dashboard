@@ -119,6 +119,54 @@ class TestCrossSourceDedup(unittest.TestCase):
             [_ev("JPM", "sec_8k", "JPMorgan Chase Declares Dividend", "acc-1")])
         self.assertEqual(len(new), 1, "8-K is exempt from content dedup")
 
+    def _sources(self, ticker):
+        return sorted(r["source"] for r in store.get_recent_events(ticker))
+
+    def test_wire_upgrades_aggregator_copy_in_place(self):
+        # The bug: fmp_news polled the JPMorgan release first, deduping away the
+        # businesswire copy — leaving it under a source Home hides. Now the wire
+        # copy UPGRADES the stored aggregator row in place: one row, sourced to
+        # the wire (Home-visible), with the wire's URL.
+        h = "JPMorganChase Names Doug Petno and Troy Rohrbaugh Co-Presidents of the Company"
+        first = store.insert_events_returning_new(
+            [_ev("JPM", "fmp_news", h, "fmp-1", url="https://fmp/x")])
+        second = store.insert_events_returning_new(
+            [_ev("JPM", "businesswire", h, "bw-1", url="https://businesswire/y")])
+        self.assertEqual(len(first), 1)
+        self.assertEqual(len(second), 1, "wire upgrade surfaces as a new/changed row")
+        self.assertEqual(self._sources("JPM"), ["businesswire"],
+                         "single row, now sourced to the first-party wire")
+        row = store.get_recent_events("JPM")[0]
+        self.assertEqual(row["url"], "https://businesswire/y")
+        self.assertEqual(row["external_id"], "bw-1")
+
+    def test_aggregator_does_not_downgrade_a_wire_copy(self):
+        # Reverse order: wire stored first, aggregator re-syndicates later. The
+        # aggregator must NOT replace the wire and must NOT add a second row.
+        h = "Comerica Incorporated Declares Quarterly Dividend"
+        store.insert_events_returning_new([_ev("CMA", "businesswire", h, "bw-1")])
+        second = store.insert_events_returning_new([_ev("CMA", "fmp_news", h, "fmp-1")])
+        self.assertEqual(len(second), 0)
+        self.assertEqual(self._sources("CMA"), ["businesswire"])
+
+    def test_same_batch_wire_wins_over_aggregator(self):
+        # Both copies in one batch (aggregator listed first): collapse to one row
+        # sourced to the wire regardless of order.
+        h = "Zions Bancorporation Prices $500 Million Senior Notes Offering"
+        store.insert_events_returning_new([
+            _ev("ZION", "fmp_news", h, "fmp-1"),
+            _ev("ZION", "businesswire", h, "bw-1"),
+        ])
+        self.assertEqual(self._sources("ZION"), ["businesswire"])
+
+    def test_aggregator_only_release_is_retained(self):
+        # No wire copy ever arrives — the fmp_news row stays (Home's allowlist now
+        # includes fmp_news, so it's still surfaced).
+        h = "Some Bancorp Announces Strategic Partnership"
+        new = store.insert_events_returning_new([_ev("SBNC", "fmp_news", h, "fmp-1")])
+        self.assertEqual(len(new), 1)
+        self.assertEqual(self._sources("SBNC"), ["fmp_news"])
+
 
 class TestSubsidiaryNameIndexing(unittest.TestCase):
     """build_name_index indexes each bank's FDIC subsidiary brand (bank_name)
