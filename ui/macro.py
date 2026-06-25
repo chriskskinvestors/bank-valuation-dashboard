@@ -1045,7 +1045,9 @@ def _render_economy_calendar():
     from ui.chrome import table_export
 
     # ── Calendars stacked (left) · Key indicators board (right) ──
-    recent = get_recent_releases(days=10, limit=16)
+    # Limit generous so a heavy print day (the 8:30 ET cluster alone can be ~16
+    # marquee US releases) doesn't crowd out the prior few days entirely.
+    recent = get_recent_releases(days=10, limit=30)
     up = get_upcoming_releases(days=14, limit=20)
     rows = _cached_print_board()
     # Calendars (left) · board (middle) · a 2×2 chart grid on the right:
