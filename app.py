@@ -1708,11 +1708,11 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
 
 elif section == "Earnings":
     # ── EARNINGS ANALYSIS: Aggregate tracking ───────────────────────────
-    if not all_metrics:
-        all_metrics = load_all_data(watchlist)
-        cache.put("watchlist_metrics_last", all_metrics)
+    # No full watchlist metrics load here: the consensus comparisons pull
+    # period-matched actuals per bank (only for banks that have estimates), so
+    # the section no longer needs (or waits on) load_all_data for every bank.
     with timed("render:Earnings"):
-        render_earnings_overview(watchlist, all_metrics)
+        render_earnings_overview(watchlist)
 
 elif section == "News & Research":
     # ── NEWS & RESEARCH: Universe-wide event feed ───────────────────────

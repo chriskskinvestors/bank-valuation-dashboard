@@ -31,6 +31,7 @@ from data.consensus import (
     METRIC_DISPLAY,
     METRIC_UNITS,
 )
+from analysis.period_actuals import period_actuals
 from data.estimates import (
     fetch_estimates_cached,
     fetch_earnings_calendar,
@@ -210,9 +211,24 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
             firms = consensus.get("firms") or []
             st.caption(f"Consensus = mean of **{consensus.get('n_firms', len(firms))} "
                        f"firm(s)**: {', '.join(firms) if firms else '—'}")
-            comparison = compare_consensus_to_actual(consensus, actual_metrics)
+            # Compare against the actuals for THIS period — not the bank's latest
+            # trailing snapshot (which made a forward quarter show actuals at all,
+            # and pitted a single-quarter estimate against a TTM figure). None ⇒
+            # the period has not been reported yet, so we show the estimate only.
+            period_actual = period_actuals(ticker, selected_period)
+            if period_actual is None:
+                st.info(f"**{selected_period} has not been reported yet** — showing "
+                        "the consensus estimate only. Actuals will populate once "
+                        "the bank files for this period.")
+            comparison = compare_consensus_to_actual(consensus, period_actual or {})
             if comparison:
                 _render_comparison_table(comparison)
+                if period_actual is not None:
+                    st.caption("Actuals are the FDIC call-report figures for this "
+                               "period (net income, NII, fee income, expense, "
+                               "provision, deposits, loans, assets). EPS, margins "
+                               "and returns show n/a — there's no clean "
+                               "single-period basis to compare them on yet.")
             else:
                 st.info("No comparable metrics found.")
 
@@ -612,16 +628,15 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
 # AGGREGATE EARNINGS VIEW (Earnings Analysis section)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
+def render_earnings_overview(watchlist: list[str]):
     """Render the full earnings analysis section with all features."""
 
     title_bar("KSK Investors", "Earnings Analysis")
 
-    metrics_by_ticker = {m["ticker"]: m for m in all_metrics}
     all_consensus = list_all_consensus()
 
     # ── Top KPI bar ─────────────────────────────────────────────────────
-    _render_earnings_kpi_bar(watchlist, all_consensus, metrics_by_ticker)
+    _render_earnings_kpi_bar(watchlist, all_consensus)
 
     st.markdown("---")
 
@@ -646,13 +661,13 @@ def render_earnings_overview(watchlist: list[str], all_metrics: list[dict]):
     elif active == "Surprise Heat-Map":
         _render_surprise_heatmap(watchlist)
     elif active == "Beat / Miss":
-        _render_beat_miss_summary(all_consensus, metrics_by_ticker)
+        _render_beat_miss_summary(all_consensus)
     elif active == "Estimates":
         _render_estimates_browser(all_consensus)
     elif active == "Biggest Surprises":
-        _render_surprise_rankings(all_consensus, metrics_by_ticker, watchlist)
+        _render_surprise_rankings(all_consensus, watchlist)
     elif active == "Sector Aggregates":
-        _render_sector_aggregates(all_consensus, metrics_by_ticker, watchlist)
+        _render_sector_aggregates(all_consensus, watchlist)
     elif active == "Upload / Input":
         _render_upload_section(watchlist)
 
@@ -682,7 +697,7 @@ def _avg_eps_surprise_cached(tickers: tuple) -> float | None:
         return None
 
 
-def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_by_ticker: dict):
+def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict):
     """Top summary KPIs across the whole watchlist."""
     from datetime import datetime, date
 
@@ -721,7 +736,10 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict, metrics_
             continue
         latest = periods[0]
         consensus = compile_consensus(ticker, latest["period"])
-        actual = metrics_by_ticker.get(ticker, {})
+        # Period-matched reported actuals (None ⇒ this period isn't reported yet,
+        # so the bank drops out of the aggregate rather than scoring a forward
+        # estimate against trailing actuals — which used to inflate beat rates).
+        actual = period_actuals(ticker, latest["period"]) or {}
         if consensus:
             comparison = compare_consensus_to_actual(consensus, actual)
             for c in comparison:
@@ -1327,7 +1345,7 @@ def _render_estimates_browser(all_consensus: dict):
                "notes to broaden the consensus.")
 
 
-def _render_beat_miss_summary(all_consensus: dict, metrics_by_ticker: dict):
+def _render_beat_miss_summary(all_consensus: dict):
     """Show beat/miss summary across all banks with consensus data."""
     st.subheader("Beat / Miss Summary")
 
@@ -1342,7 +1360,10 @@ def _render_beat_miss_summary(all_consensus: dict, metrics_by_ticker: dict):
             continue
 
         consensus = compile_consensus(ticker, latest["period"])
-        actual = metrics_by_ticker.get(ticker, {})
+        # Period-matched reported actuals (None ⇒ this period isn't reported yet,
+        # so the bank drops out of the aggregate rather than scoring a forward
+        # estimate against trailing actuals — which used to inflate beat rates).
+        actual = period_actuals(ticker, latest["period"]) or {}
 
         if consensus:
             comparison = compare_consensus_to_actual(consensus, actual)
@@ -1409,7 +1430,7 @@ def _render_beat_miss_summary(all_consensus: dict, metrics_by_ticker: dict):
 
 # ── Surprise Rankings ──────────────────────────────────────────────────
 
-def _render_surprise_rankings(all_consensus: dict, metrics_by_ticker: dict, watchlist: list[str]):
+def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
     """Rank banks by biggest beats and misses."""
     st.subheader("Surprise Magnitude Rankings")
 
@@ -1427,7 +1448,10 @@ def _render_surprise_rankings(all_consensus: dict, metrics_by_ticker: dict, watc
             continue
 
         consensus = compile_consensus(ticker, latest["period"])
-        actual = metrics_by_ticker.get(ticker, {})
+        # Period-matched reported actuals (None ⇒ this period isn't reported yet,
+        # so the bank drops out of the aggregate rather than scoring a forward
+        # estimate against trailing actuals — which used to inflate beat rates).
+        actual = period_actuals(ticker, latest["period"]) or {}
 
         if consensus:
             comparison = compare_consensus_to_actual(consensus, actual)
@@ -1550,7 +1574,7 @@ def _render_surprise_rankings(all_consensus: dict, metrics_by_ticker: dict, watc
 
 # ── Sector Aggregates ──────────────────────────────────────────────────
 
-def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watchlist: list[str]):
+def _render_sector_aggregates(all_consensus: dict, watchlist: list[str]):
     """Show aggregate beat/miss statistics across all banks."""
     st.subheader("Sector Aggregate Statistics")
 
@@ -1563,7 +1587,10 @@ def _render_sector_aggregates(all_consensus: dict, metrics_by_ticker: dict, watc
             continue
 
         consensus = compile_consensus(ticker, latest["period"])
-        actual = metrics_by_ticker.get(ticker, {})
+        # Period-matched reported actuals (None ⇒ this period isn't reported yet,
+        # so the bank drops out of the aggregate rather than scoring a forward
+        # estimate against trailing actuals — which used to inflate beat rates).
+        actual = period_actuals(ticker, latest["period"]) or {}
 
         if consensus:
             comparison = compare_consensus_to_actual(consensus, actual)
