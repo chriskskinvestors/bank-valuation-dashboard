@@ -25,6 +25,7 @@ _MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 # Shared null-safe float (utils/formatting), kept under the local name.
 from utils.formatting import num as _num
+from utils.timing import timed
 
 
 def _usd_b(v):
@@ -566,17 +567,19 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     cert = info.get("fdic_cert") if info else None
     fdic_rec = {}
     if cert:
-        try:
-            fdic_rec = fdic_client.get_latest_financials(cert) or {}
-        except Exception:
-            fdic_rec = {}
+        with timed("cp.fdic"):
+            try:
+                fdic_rec = fdic_client.get_latest_financials(cert) or {}
+            except Exception:
+                fdic_rec = {}
     # Capital-IQ-style snapshot: identity + quick links, then two stacked pairs
     # of reference tables — Market Data over Performance (col 1) and Valuation
     # over Company Profile (col 2). Keep the original four-column widths so each
     # table stays exactly its prior size; only their positions change. Each pair
     # is one markdown block so the only break between the two tables is the lower
     # table's heading (no Streamlit inter-block gap).
-    mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec)
+    with timed("cp.snapshot"):
+        mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec)
     from ui.chrome import title_bar
     title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
     # Breathing room between the identity line and the ledger headers — the app's
@@ -591,9 +594,11 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     _cols[0].markdown(mkt_html + _gap + perf_html, unsafe_allow_html=True)
     _cols[1].markdown(val_html + _gap + co_html, unsafe_allow_html=True)
     with _cols[2]:
-        _render_price_panel(ticker)
+        with timed("cp.price_panel"):
+            _render_price_panel(ticker)
     with _cols[3]:
-        _render_valuation_panel(ticker, info)
+        with timed("cp.val_panel"):
+            _render_valuation_panel(ticker, info)
     st.markdown(
         '<div style="margin-top:5px; font-size:0.75rem; color:var(--text-secondary);">'
         'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
@@ -603,9 +608,11 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     # width instead of each spreading across the page.
     _hl, _act = st.columns([1, 2])
     with _hl:
-        _render_financial_highlights_table(ticker, info)
+        with timed("cp.highlights"):
+            _render_financial_highlights_table(ticker, info)
     with _act:
-        _render_latest_activity(ticker, info)
+        with timed("cp.activity"):
+            _render_latest_activity(ticker, info)
 
     # Click-through to the primary data sources for this bank.
     cik = info.get("cik") if info else None
