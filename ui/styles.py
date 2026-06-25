@@ -902,14 +902,18 @@ CUSTOM_CSS = """
     /* ── Native traceable metric cards (ui/source_trace) ──────────────────
        Rendered as plain HTML (no iframe), so the grid sizes to its content —
        hover a card for the calculation, click ↗ for the source filing. */
-    .mc-grid { display: grid; gap: 8px; margin: 2px 0 8px; }
+    /* Boxless KPI cells (design system: no boxed cards) — a hairline grid:
+       frame from .mc-grid (top/left), dividers from each cell (right/bottom). */
+    .mc-grid { display: grid; gap: 0; margin: 2px 0 8px;
+        border-top: 1px solid var(--grid-head); border-left: 0.5px solid var(--grid-line); }
     .mc {
-        background: rgba(148,163,184,0.05);
-        border: 1px solid rgba(148,163,184,0.16);
+        background: transparent; border: 0;
+        border-right: 0.5px solid var(--grid-line);
+        border-bottom: 0.5px solid var(--grid-line);
         border-radius: 0; padding: 8px 12px; min-width: 0;
-        transition: border-color 0.12s, background 0.12s;
+        transition: background 0.12s;
     }
-    .mc[title]:hover { border-color: rgba(37,99,235,0.35); background: rgba(37,99,235,0.05); }
+    .mc[title]:hover { background: var(--brand-soft); }
     .mc[title] { cursor: help; }
     .mc-l {
         font-size: 0.6rem; color: var(--text-secondary); font-weight: 600;
