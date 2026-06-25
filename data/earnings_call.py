@@ -164,6 +164,28 @@ def call_info_map() -> dict:
         return {}
 
 
+def merged_call_info() -> dict:
+    """{ticker: {call_time, webcast_url, dial_in}} combining BOTH call-detail
+    sources: the structured Q4 IR events snapshot (date/time/webcast link, the
+    reliable source) layered over the press-release parser (which still supplies
+    the dial-in number Q4 events don't expose). Q4's call_time / webcast_url win
+    when present. Used by the Calls & Webcasts agenda and the Home calendar."""
+    base = {tk: dict(info) for tk, info in (call_info_map() or {}).items()}
+    try:
+        from data.events.ir_site import get_q4_call_details
+        q4 = get_q4_call_details() or {}
+    except Exception:
+        q4 = {}
+    for tk, info in q4.items():
+        cur = dict(base.get(tk) or {})
+        if info.get("call_time"):
+            cur["call_time"] = info["call_time"]
+        if info.get("webcast_url"):
+            cur["webcast_url"] = info["webcast_url"]
+        base[tk] = cur
+    return base
+
+
 # FMP's report-time code → human label. bmo = before market open, amc = after
 # market close, dmh = during market hours.
 _WHEN_LABEL = {"bmo": "Before open", "amc": "After close", "dmh": "Midday"}

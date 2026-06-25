@@ -1195,7 +1195,7 @@ def _render_calls_webcasts():
             fmp_cal = None
         try:
             from data import earnings_call as _ecall
-            calls = _ecall.call_info_map()
+            calls = _ecall.merged_call_info()
             agenda = _ecall.build_calls_agenda(
                 yf_cal, fmp_cal, universe, calls, today, horizon_days=horizon_days)
         except Exception:

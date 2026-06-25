@@ -377,6 +377,136 @@ def get_ir_endpoints() -> dict[str, str]:
     return endpoints
 
 
+# ── Q4 events-and-presentations: upcoming earnings-CALL details ──────────────
+# Press releases rarely carry the webcast link / call time in a parseable form;
+# the structured details live on the IR site's events page (the Q4 Event API).
+# We already discover each bank's Q4 IR home, so we can pull its next earnings
+# call's date, time and webcast link directly.
+_Q4_CALLS_SNAP_KEY = "q4_calls_snap"
+
+
+def _q4_call_time(start_str: str, tz: str | None) -> str | None:
+    """Format a Q4 StartDate ('MM/DD/YYYY HH:MM:SS', local) + TimeZone into a
+    compact label like '9:00a ET'. None when there's no real time-of-day (a
+    midnight stamp means the event carries only a date)."""
+    dt = _parse_q4_date(start_str)
+    if dt is None or (dt.hour == 0 and dt.minute == 0):
+        return None
+    h = dt.hour % 12 or 12
+    label = f"{h}:{dt.minute:02d}{'a' if dt.hour < 12 else 'p'}"
+    return f"{label} {tz}".strip() if tz else label
+
+
+def _q4_events(ir_home: str) -> list[dict] | None:
+    """Upcoming EARNINGS-CALL events from a Q4 IR site's Event API, or None when
+    it isn't a Q4 site / the API can't be reached. Each:
+    {start: datetime, call_time: str|None, webcast_url: str|None, detail_url}."""
+    parsed = urlparse(ir_home)
+    host = f"{parsed.scheme}://{parsed.netloc}"
+    if not host.startswith("http"):
+        return None
+    key = _q4_apikey(ir_home)          # warm/cached; the Event feed also serves keyless
+    params = {
+        "apiKey": key or "", "LanguageId": 1, "eventDateFilter": 1,  # 1 = upcoming
+        "pageSize": 20, "pageNumber": 0, "tagList": "", "includeTags": "true",
+    }
+    try:
+        resp = requests.get(
+            host + "/feed/Event.svc/GetEventList", params=params, timeout=10,
+            headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)",
+                     "Accept": "application/json"})
+        resp.raise_for_status()
+        items = resp.json().get("GetEventListResult") or []
+    except Exception:
+        return None
+    out: list[dict] = []
+    for it in items:
+        # Title is often blank on these rows; SeoName carries the event name.
+        name = (((it.get("SeoName") or "").replace("-", " ")) + " "
+                + (it.get("Title") or "")).strip().lower()
+        if "earnings" not in name and "conference call" not in name:
+            continue                    # presentations / investor days etc. — skip
+        start = _parse_q4_date(it.get("StartDate"))
+        if start is None:
+            continue
+        web = (it.get("WebCastLink") or "").strip()
+        if web and not web.lower().startswith("http"):
+            web = ""
+        link = it.get("LinkToDetailPage") or ""
+        out.append({
+            "start": start,
+            "call_time": _q4_call_time(it.get("StartDate"), it.get("TimeZone")),
+            "webcast_url": web or None,
+            "detail_url": urljoin(host, link) if link else None,
+        })
+    return out
+
+
+def refresh_q4_calls_snapshot(universe: dict | None = None, max_workers: int = 12,
+                              horizon_days: int = 120) -> dict[str, dict]:
+    """Pull each Q4-hosted bank's NEXT earnings call (date, time, webcast link)
+    and persist {ticker: {call_date, call_time, webcast_url, detail_url}} as the
+    cross-instance snapshot the Calls & Webcasts agenda overlays. Background-only
+    (nightly refresh-universe) — it's one HTTP call per Q4 bank (~a third of the
+    universe), far too slow for the interactive path."""
+    from concurrent.futures import ThreadPoolExecutor
+    from data.events.wire_base import is_safe_news_url
+
+    ir_map = get_ir_endpoints()
+    if universe:
+        keep = set(universe)
+        ir_map = {t: u for t, u in ir_map.items() if t in keep} or ir_map
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(days=horizon_days)
+    grace = now - timedelta(days=1)     # tolerate a call stamped earlier today
+
+    def _one(item):
+        tk, url = item
+        try:
+            evs = _q4_events(url)
+        except Exception:
+            return tk, None
+        upcoming = sorted((e for e in (evs or []) if grace <= e["start"] <= horizon),
+                          key=lambda e: e["start"])
+        if not upcoming:
+            return tk, None
+        e = upcoming[0]
+        web = e["webcast_url"] if (e["webcast_url"] and is_safe_news_url(e["webcast_url"])) else None
+        if not (e["call_time"] or web):
+            return tk, None             # nothing worth overlaying
+        return tk, {"call_date": e["start"].date().isoformat(),
+                    "call_time": e["call_time"], "webcast_url": web,
+                    "detail_url": e["detail_url"]}
+
+    found: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for tk, info in ex.map(_one, list(ir_map.items())):
+            if info:
+                found[tk] = info
+    try:
+        from data import cache
+        cache.put(_Q4_CALLS_SNAP_KEY,
+                  {"value": found, "cached_at": datetime.now().isoformat()})
+    except Exception as e:
+        print(f"[ir] could not cache q4 call details: {type(e).__name__}: {e}")
+    print(f"[ir] q4 call details for {len(found)} banks", flush=True)
+    return found
+
+
+def get_q4_call_details() -> dict[str, dict]:
+    """{ticker: {call_date, call_time, webcast_url, detail_url}} from the nightly
+    Q4 events snapshot. {} before the job has run (degrades to no call details,
+    never blocks)."""
+    try:
+        from data import cache
+        snap = cache.get(_Q4_CALLS_SNAP_KEY)
+    except Exception:
+        snap = None
+    if snap and isinstance(snap.get("value"), dict):
+        return snap["value"]
+    return {}
+
+
 class IRSiteAdapter(SourceAdapter):
     """Generic IR-page scraper. Watchlist-only."""
 

@@ -603,7 +603,7 @@ def _af_calendar_table(watchlist: list[str]) -> str:
         # Two layers: FMP's earnings calendar gives reliable, universe-wide report
         # timing ("Before open" / "After close"); the PR/IR parser adds the precise
         # call time + webcast where a bank publishes it (and takes precedence).
-        _call_map = _ecall.call_info_map()
+        _call_map = _ecall.merged_call_info()
         _timing = _ecall.earnings_timing_map()
         _td = dt.date.today()
         for e in fetch_earnings_calendar(tuple(watchlist)):

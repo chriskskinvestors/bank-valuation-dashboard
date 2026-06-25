@@ -244,6 +244,20 @@ def main():
         print(f"[warn] IR endpoint discovery failed: {type(e).__name__}: {e}",
               flush=True)
 
+    # Pull each Q4-hosted bank's next earnings-call details (date / time /
+    # webcast link) from its IR events page and snapshot them, so the Calls &
+    # Webcasts agenda can show the webcast + call time (the press-release parser
+    # alone leaves these almost entirely blank).
+    try:
+        from data.events.ir_site import refresh_q4_calls_snapshot
+        t1 = time.time()
+        calls = refresh_q4_calls_snapshot(snapshot)
+        print(f"[{time.strftime('%H:%M:%S')}] Q4 call details snapshotted "
+              f"({len(calls)} banks, {time.time()-t1:.0f}s)", flush=True)
+    except Exception as e:
+        print(f"[warn] Q4 call-details snapshot failed: {type(e).__name__}: {e}",
+              flush=True)
+
     # Exit code reflects severity: new regressions or >5% failure rate fail
     # the execution (visible in Cloud Run job history).
     if new_failures:
