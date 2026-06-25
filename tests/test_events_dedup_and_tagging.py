@@ -168,6 +168,33 @@ class TestCrossSourceDedup(unittest.TestCase):
         self.assertEqual(self._sources("SBNC"), ["fmp_news"])
 
 
+class TestEightKCikCollision(unittest.TestCase):
+    """A single registrant (one CIK) lists several tickers — common + preferred
+    series + bank-issued ETNs. CIK 19617 = JPM (common), VYLD/AMJB (ETNs). They
+    share the registrant's 8-Ks, so the recent-feed adapter must attribute them
+    to the COMMON regardless of input order. Regression: JPMorgan 8-Ks tagged
+    ">VYLD" because the sibling clobbered JPM in the CIK->ticker map."""
+
+    def test_bank_map_common_wins_cik_collision(self):
+        from data.events import sec_8k
+        # JPM is in BANK_MAP (cik 19617); VYLD/AMJB are not. Patch the resolver so
+        # all three report the shared CIK without a live lookup.
+        with patch.object(sec_8k, "get_cik",
+                          side_effect=lambda t: 19617 if t.upper() in
+                          ("JPM", "VYLD", "AMJB") else None):
+            for order in (["AMJB", "JPM", "VYLD"], ["VYLD", "AMJB", "JPM"],
+                          ["JPM", "VYLD"], ["VYLD", "JPM"]):
+                m = sec_8k._canonical_cik_map(order)
+                self.assertEqual(m.get(19617), "JPM", f"order={order}")
+
+    def test_unknown_cik_collision_is_order_deterministic(self):
+        from data.events import sec_8k
+        # Neither ticker is curated — keep the first seen (stable, never random).
+        with patch.object(sec_8k, "get_cik", side_effect=lambda t: 42):
+            self.assertEqual(sec_8k._canonical_cik_map(["BBB", "AAA"]).get(42), "BBB")
+            self.assertEqual(sec_8k._canonical_cik_map(["AAA", "BBB"]).get(42), "AAA")
+
+
 class TestSubsidiaryNameIndexing(unittest.TestCase):
     """build_name_index indexes each bank's FDIC subsidiary brand (bank_name)
     alongside its SEC holdco name, so a release under the bank brand ("Provident

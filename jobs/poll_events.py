@@ -86,7 +86,7 @@ def main() -> int:
     except Exception:
         pass
 
-    from data.bank_universe import get_universe
+    from data.bank_universe import get_universe, coverage_excluded
     from config import DEFAULT_WATCHLIST
     from data.events import init_schema, insert_events_returning_new, last_seen_published
     from data.events.sec_8k import SEC8KAdapter, SEC8KRecentAdapter
@@ -106,7 +106,16 @@ def main() -> int:
     # throttles the burst and the build alone blew the 900s task timeout before
     # any adapter ran (news froze 2026-06-12). The broad adapters name-match, so
     # the unfiltered superset is correct — same fix refresh_prices already uses.
-    universe = sorted(set(get_universe().keys()) | set(DEFAULT_WATCHLIST))
+    #
+    # BUT drop non-common share classes + out-of-scope ETNs/ADRs (coverage_
+    # excluded() is offline — CIK clustering + the static skip set, no network).
+    # They share their registrant's CIK, so an 8-K adapter would attribute the
+    # COMMON's filing to whichever sibling won the CIK race — JPMorgan's CIK
+    # 19617 carries the VYLD/AMJB ETNs, which tagged JPM's 8-Ks ">VYLD". The
+    # common stock still polls the same CIK and name-matches the same wire
+    # releases, so nothing is lost; the sibling tickers are pure mis-tag risk.
+    universe = sorted((set(get_universe().keys()) - coverage_excluded())
+                      | set(DEFAULT_WATCHLIST))
 
     # POLL_PROFILE selects the source mix so a single job image can serve two
     # very different cadences (Cloud Scheduler passes the env override):

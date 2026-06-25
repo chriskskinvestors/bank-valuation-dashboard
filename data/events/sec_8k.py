@@ -23,7 +23,7 @@ from typing import Iterable
 
 import requests
 
-from data.bank_mapping import get_cik
+from data.bank_mapping import get_cik, BANK_MAP
 from data.events.base import Event, SourceAdapter
 
 
@@ -241,6 +241,32 @@ _FEED_ACC_RE = re.compile(r"accession-number=([\d-]+)")
 _FEED_ACC_SUM_RE = re.compile(r"AccNo:\s*([\d-]+)", re.IGNORECASE)
 
 
+def _canonical_cik_map(tickers: list[str]) -> dict[int, str]:
+    """CIK -> the ticker we attribute that registrant's filings to.
+
+    A single SEC registrant (one CIK) can list several tickers: its common
+    stock plus preferred series and bank-issued ETNs — e.g. CIK 19617 carries
+    JPM (common), VYLD and AMJB (ETNs), and JPM-P* preferreds. They all share
+    the registrant's 8-Ks, so without a deterministic pick an 8-K gets tagged to
+    whichever sibling happened to come last (the bug: JPMorgan 8-Ks tagged
+    ">VYLD"). Resolve to the primary COMMON: a curated BANK_MAP ticker wins;
+    otherwise keep the first seen, so the result never depends on input order."""
+    cik_map: dict[int, str] = {}
+    for t in tickers:
+        c = get_cik(t)
+        if not c:
+            continue
+        try:
+            cik = int(c)
+        except (TypeError, ValueError):
+            continue
+        tk = t.upper()
+        existing = cik_map.get(cik)
+        if existing is None or (tk in BANK_MAP and existing not in BANK_MAP):
+            cik_map[cik] = tk
+    return cik_map
+
+
 class SEC8KRecentAdapter(SourceAdapter):
     """All-banks 8-K via EDGAR's recent-filings Atom feed (one call). Used by the
     FAST poll profile; dedups with SEC8KAdapter on (source, accession)."""
@@ -252,16 +278,10 @@ class SEC8KRecentAdapter(SourceAdapter):
         from data.events.wire_base import fetch_rss
         cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
 
-        # CIK -> ticker for the banks we track (get_cik is a local lookup).
-        cik_map: dict[int, str] = {}
-        for t in tickers:
-            c = get_cik(t)
-            if not c:
-                continue
-            try:
-                cik_map[int(c)] = t.upper()
-            except (TypeError, ValueError):
-                continue
+        # CIK -> primary-common ticker for the banks we track (offline lookup).
+        # Collapses shared-CIK siblings (preferreds / bank-issued ETNs) onto the
+        # common so a registrant's 8-K is never mis-tagged to a sibling ticker.
+        cik_map = _canonical_cik_map(tickers)
         if not cik_map:
             return []
 
