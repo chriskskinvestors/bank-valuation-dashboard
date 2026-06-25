@@ -211,8 +211,18 @@ CUSTOM_CSS = """
     }
     .ksk-grid th:first-child, .ksk-grid td:first-child { text-align: left; }
     .ksk-grid .neg { color: var(--danger); }
+    .ksk-grid .pos { color: var(--success); }
     .ksk-grid .lnk { color: var(--brand-primary); cursor: pointer; }
     .ksk-grid .computed { border-bottom: 1px dotted var(--text-muted); }
+
+    /* Small-caps section label — the in-page heading for design-system pages
+       (replaces st.subheader, which is too large/off-brand). */
+    .ksk-sec {
+        font-size: var(--fs-2xs); letter-spacing: 0.08em; text-transform: uppercase;
+        font-weight: 600; color: var(--text-secondary);
+        border-bottom: 1px solid var(--grid-head);
+        padding-bottom: 2px; margin: 14px 0 6px;
+    }
 
     /* Status dot */
     .ksk-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;

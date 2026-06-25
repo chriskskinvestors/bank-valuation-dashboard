@@ -3,6 +3,8 @@ Credit Dynamics UI — renders the institutional-grade credit quality panel
 in the Company Analysis > Credit tab.
 """
 
+import html as _html
+
 import streamlit as st
 import pandas as pd
 
@@ -144,7 +146,8 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
         _render_by_loan_type(ticker, summary, timeline)
         return
 
-    st.subheader("Credit Quality Dynamics")
+    st.markdown('<div class="ksk-sec">Credit Quality Dynamics</div>',
+                unsafe_allow_html=True)
 
     # ── Alerts ─────────────────────────────────────────────────────────
     alerts = summary["alerts"]
@@ -252,22 +255,21 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
     """Asset Quality by Loan Type — segment hotspots table + NPL trend per
     loan segment. Split out of the main credit view so the two nav tabs show
     distinct content."""
-    st.subheader("Asset Quality by Loan Type")
-
     hotspots = summary["hotspots"]
     _tbl, _chart = st.columns([1, 2])
     with _tbl:
         if hotspots:
-            st.markdown('<div style="font-size:var(--fs-xs);text-transform:uppercase;'
-                        'letter-spacing:.04em;color:var(--brand-hover);font-weight:700;'
-                        'margin:0 0 3px;">Segment Hotspots — NPL vs bank total</div>',
+            st.markdown('<div class="ksk-sec">Segment Hotspots — NPL vs bank total</div>',
                         unsafe_allow_html=True)
-            hs_df = pd.DataFrame([{
-                "Segment": h["segment"],
-                "NPL %": f"{h['npl_pct']:.2f}%",
-                "vs Bank Total": f"{h['vs_total_multiple']:.1f}x",
-            } for h in hotspots])
-            st.dataframe(hs_df, use_container_width=True, hide_index=True)
+            rows = "".join(
+                f'<tr><td>{_html.escape(str(h["segment"]))}</td>'
+                f'<td>{h["npl_pct"]:.2f}%</td>'
+                f'<td>{h["vs_total_multiple"]:.1f}x</td></tr>' for h in hotspots)
+            st.markdown(
+                '<div class="ksk-grid"><table><thead><tr>'
+                '<th>Segment</th><th>NPL %</th><th>vs Bank Total</th>'
+                f'</tr></thead><tbody>{rows}</tbody></table></div>',
+                unsafe_allow_html=True)
         else:
             st.caption("No segment NPLs above the bank-wide ratio.")
 
