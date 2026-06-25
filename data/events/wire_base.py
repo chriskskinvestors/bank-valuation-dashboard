@@ -715,6 +715,34 @@ _SHAREHOLDER_NOTICE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Plaintiff-law-firm solicitation spam — "shareholder / stock / investor ALERTS"
+# and M&A "investigation" / securities-class-action trawling that piggybacks on
+# a bank's merger or earnings. The bank's name sits in the title (so it passes
+# name-matching), but it's a law firm trawling for clients, not company news.
+# Examples: "Shareholder Alert: Ademi LLP investigates whether First Reliance
+# Bancshares is obtaining a fair price...", "CBAN Stock Alert: Halper Sadeh LLC
+# is Investigating Whether Colony Bankcorp...". Tight on purpose — must NOT catch
+# the legit corporate actions "Shareholder Vote Results", "Shareholders Approve
+# Merger", or a real regulator enforcement action (none carry alert / "investigates
+# whether" / class-action solicitation phrasing). Firm-name branch is a backstop
+# for the few that lead with the firm. Pinned in tests/test_news_junk_filter.py.
+_LAW_FIRM_SOLICITATION_RE = re.compile(
+    r"\b(?:shareholder|stockholder|investor|stock)\s+alert\b"
+    r"|\binvestigat(?:es|ing)\s+whether\b"
+    r"|\bannounces?\s+(?:an\s+)?investigation\b"
+    r"|\binvestigation\s+(?:of|into)\s+[^.]{0,60}"
+    r"\b(?:merger|acquisition|sale|buyout|proposed|transaction)\b"
+    r"|\bbreach(?:es|ed)?\s+of\s+fiduciary\s+dut"
+    r"|\b(?:securities\s+)?class\s+action\b"
+    r"|\blead\s+plaintiff\b"
+    r"|\bsecurities\s+(?:fraud|litigation)\b"
+    r"|\b(?:halper\s+sadeh|ademi|kahn\s+swick|rigrodsky|monteverde|weiss\s*law|"
+    r"levi\s*&\s*korsinsky|bragar\s+eagel|johnson\s+fistel|pomerantz|faruqi|"
+    r"kaskela|robbins\s+llp|rowley\s+law|kirby\s+mcinerney|block\s*&\s*leviton|"
+    r"gainey\s+mckenna|wohl\s*&\s*fruchter)\b",
+    re.IGNORECASE,
+)
+
 # Form-4 / insider micro-events auto-posted by content farms — tax-withholding
 # share events and "N-share" vesting/award trivia. Non-material.
 # Examples: "CF Bankshares (NASDAQ: CFBK) CEO reports 1,932-share tax
@@ -916,6 +944,9 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
       • off-subject / marketing (_OFFSUBJECT_RE) — bank named only as
         underwriter/advisor/custodian on someone else's deal, EU transparency
         notifications, sponsorship/sports fluff, "study finds" content-marketing
+      • plaintiff-law-firm solicitation (_LAW_FIRM_SOLICITATION_RE) — "Shareholder
+        / Stock Alert", "investigates whether ... merger", securities class-action
+        trawling (Halper Sadeh / Ademi / etc.) piggybacking on a bank's deal
       • structured-note issuance (is_routine_noise)
       • (when ``ticker`` is given) headlines tagged with a DIFFERENT company's
         exchange ticker, both "(NYSE:XXX)" and bare "$XXX" cashtag forms.
@@ -931,6 +962,7 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
             or _DIV_CALENDAR_RE.search(h) or _OFFSUBJECT_RE.search(h)
             or _SHAREHOLDER_NOTICE_RE.search(h) or _SEO_RE.search(h)
             or _FOREIGN_LANG_RE.search(h)
+            or _LAW_FIRM_SOLICITATION_RE.search(h)
             or is_routine_noise(h)):
         return True
     if ticker:

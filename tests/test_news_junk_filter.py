@@ -137,6 +137,37 @@ class TestSEOAndForm144(unittest.TestCase):
             with self.subTest(h=h):
                 self.assertFalse(is_junk_news(h))
 
+    def test_law_firm_solicitation_is_junk(self):
+        # Plaintiff-firm "shareholder/stock alert" + M&A "investigation" trawling.
+        for h in [
+            "Shareholder Alert: Ademi LLP investigates whether First Reliance "
+            "Bancshares, Inc. is obtaining a fair price in its sale",
+            "CBAN Stock Alert: Halper Sadeh LLC is Investigating Whether Colony "
+            "Bankcorp, Inc. is Obtaining a Fair Price",
+            "FSRL Stock Alert: Halper Sadeh LLC is Investigating Whether First "
+            "Reliance Bancshares, Inc. is Obtaining a Fair Price",
+            "INVESTOR ALERT: Kahn Swick & Foti, LLC Investigates Merger of "
+            "Heritage Financial Corporation",
+            "Monteverde & Associates PC Announces an Investigation of Banner "
+            "Corporation Merger",
+            "Bragar Eagel & Squire Reminds Investors of Class Action Against "
+            "Valley National Bancorp",
+        ]:
+            with self.subTest(h=h):
+                self.assertTrue(is_junk_news(h), h)
+
+    def test_real_corporate_actions_survive_lawfirm_filter(self):
+        # Legit shareholder/merger corporate actions must NOT be caught.
+        for h in [
+            "Renasant Corporation Announces Shareholder Vote Results",
+            "Burke & Herbert Shareholders Approve Merger with Summit Financial",
+            "First Merchants Corporation to Hold Annual Meeting of Shareholders",
+            "Pinnacle Financial Partners Declares Quarterly Cash Dividend",
+            "Old National Bancorp and Bremer Financial Complete Merger",
+        ]:
+            with self.subTest(h=h):
+                self.assertFalse(is_junk_news(h), h)
+
 
 # (headline, ticker) pairs pulled from the live feed (or close paraphrases of
 # the same generator templates) that MUST be filtered as junk.
