@@ -165,9 +165,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
             unsafe_allow_html=True,
         )
 
-    # ── Headline metrics (click any value for its calc + Call Report) ──
     latest = summary["latest"]
-    _render_credit_headline(ticker, hist, summary, peer_median)
 
     # Absolute + peer context
     if peer_median:
@@ -240,15 +238,24 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
         _rc_vals.append(peer_median)
     tighten_yaxis(fig4, _rc_vals, floor_zero=True, ticksuffix="%")
 
-    # Dense grid — NCO + past-due 2-up, reserve coverage below.
-    _g1 = st.columns(2)
-    with _g1[0]:
-        st.plotly_chart(fig2, use_container_width=True)
-    with _g1[1]:
-        st.plotly_chart(fig3, use_container_width=True)
-    _g2 = st.columns(2)
-    with _g2[0]:
-        st.plotly_chart(fig4, use_container_width=True)
+    # Page pattern (matches Financial Highlights): click-to-source data table
+    # on the left, trend charts stacked on the right.
+    from ui.fdic_click_table import render_fdic_click_table
+    _aq_sections = [
+        ("Asset Quality — FDIC Call Report", [
+            ("NPLs / loans", "pct", "NCLNLSR"),
+            ("Net charge-offs / loans", "pct", "NTLNLSR"),
+            ("Loan-loss reserves / loans", "pct", "LNATRESR"),
+        ]),
+    ]
+    _left, _right = st.columns([1, 1])
+    with _left:
+        if not render_fdic_click_table(ticker, _aq_sections, period="Annual"):
+            st.caption("FDIC metrics table unavailable.")
+    with _right:
+        st.plotly_chart(fig2, use_container_width=True, key=f"aq_nco_{ticker}")
+        st.plotly_chart(fig3, use_container_width=True, key=f"aq_pd_{ticker}")
+        st.plotly_chart(fig4, use_container_width=True, key=f"aq_rc_{ticker}")
 
 
 def _render_by_loan_type(ticker: str, summary: dict, timeline):
