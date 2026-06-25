@@ -189,7 +189,8 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         return
 
     title_bar(f"{get_name(ticker)} ({ticker})", "Capital Adequacy")
-    st.subheader("Capital Adequacy & Buyback Capacity")
+    st.markdown('<div class="ksk-sec">Capital Adequacy & Buyback Capacity</div>',
+                unsafe_allow_html=True)
 
     # ── Alerts ─────────────────────────────────────────────────────────
     alerts = summary["alerts"]
@@ -207,9 +208,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             unsafe_allow_html=True,
         )
 
-    # ── Headline metrics ───────────────────────────────────────────────
     latest = summary["latest"]
-    _render_capital_headline(ticker, hist, summary, timeline, peer_cet1)
 
     # Buyback capacity explainer
     bb = summary["buyback_capacity"]
@@ -373,19 +372,33 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         _pad = max((_hi - _lo) * 0.6, 0.03 * max(abs(x) for x in _levels), 0.02)
         fig4.update_yaxes(range=[_lo - _pad, _hi + _pad])
 
-    # Dense 2×2 grid — no full-width single charts.
-    _g1 = st.columns(2)
-    with _g1[0]:
-        st.plotly_chart(fig1, use_container_width=True)
-    if fig2 is not None:
-        with _g1[1]:
-            st.plotly_chart(fig2, use_container_width=True)
-    _g2 = st.columns(2)
-    with _g2[0]:
-        st.plotly_chart(fig3, use_container_width=True)
-    if fig4 is not None:
-        with _g2[1]:
-            st.plotly_chart(fig4, use_container_width=True)
+    # Page pattern (matches Financial Highlights): click-to-source capital
+    # table on the left, trend charts tiled 2×2 on the right.
+    from ui.fdic_click_table import render_fdic_click_table
+    _cap_sections = [
+        ("Capital Adequacy — bank level (FDIC Call Report)", [
+            ("CET1 ratio", "pct", "IDT1CER"),
+            ("Total capital ratio", "pct", "RBCRWAJ"),
+            ("Leverage ratio", "pct", "RBCT1JR"),
+        ]),
+    ]
+    _left, _right = st.columns([1, 1])
+    with _left:
+        if not render_fdic_click_table(ticker, _cap_sections, period="Annual"):
+            st.caption("FDIC capital table unavailable.")
+    with _right:
+        _g1 = st.columns(2)
+        with _g1[0]:
+            st.plotly_chart(fig1, use_container_width=True, key=f"cap_cet1_{ticker}")
+        if fig2 is not None:
+            with _g1[1]:
+                st.plotly_chart(fig2, use_container_width=True, key=f"cap_tbv_{ticker}")
+        _g2 = st.columns(2)
+        with _g2[0]:
+            st.plotly_chart(fig3, use_container_width=True, key=f"cap_ret_{ticker}")
+        if fig4 is not None:
+            with _g2[1]:
+                st.plotly_chart(fig4, use_container_width=True, key=f"cap_f4_{ticker}")
 
 
     # ── Holding-company regulatory capital (SEC 10-K/10-Q — SNL basis) ──
