@@ -575,12 +575,14 @@ def _board_table(rows: list[dict]) -> str:
                 f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_level(r.get("prior"), r["basis"])}</td>'
                 f'<td style="text-align:right;">{_fmt_delta(r)}</td>'
                 f'<td style="text-align:right;">{_fmt_z(r.get("zscore"))}</td>'
-                f'<td style="text-align:center;">{_sparkline_svg(r.get("spark"))}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(r.get("spark"), width=64)}</td>'
                 f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_as_of(r["as_of"], r["freq"])}</td>'
                 "</tr>"
             )
     return (
-        '<div class="ksk-grid"><table>'
+        # overflow-x:auto so on a narrow window the board scrolls within its own
+        # column instead of bleeding (hiding As-of) under the charts beside it.
+        '<div class="ksk-grid" style="overflow-x:auto;"><table>'
         '<thead><tr><th style="text-align:left;">Indicator</th>'
         '<th style="text-align:right;">Latest</th>'
         '<th style="text-align:right;">Prior</th>'
@@ -1055,7 +1057,10 @@ def _render_economy_calendar():
     # to hug the full 7-column board (indicator…Trend…As of) — wide enough not to
     # clip, tight enough to leave only a thin seam before the charts (no right
     # slack); the chart grid takes the rest and runs taller to fill it.
-    cal_col, board_col, chart_col = st.columns([1, 1.04, 1.62])
+    # Board carries an extra ~0.2 vs the charts so a narrower window keeps the
+    # As-of column on-screen instead of pushing it under the chart grid; the
+    # board table also scrolls within its own column as a hard backstop.
+    cal_col, board_col, chart_col = st.columns([1, 1.25, 1.45])
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
