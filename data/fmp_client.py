@@ -55,19 +55,24 @@ GRADES_TTL_SECONDS = 21600  # 6h — grade actions land intraday
 INSIDER_TTL_SECONDS = 21600  # 6h — Form 4s land intraday too
 
 
-def _cache_get(key: str, ttl: int) -> dict | None:
+def _cache_get(key: str, ttl: int, allow_stale: bool = False) -> dict | None:
     """Tiny custom-TTL cache layered on the Postgres cache backend.
 
     Stores the timestamp inside the value so we can use a shorter TTL
     than the global cache.TTL_SECONDS (which is 24h) without changing
     the backend.
+
+    allow_stale=True: on a custom-TTL miss, still return the stored value if one
+    is present (only its absence yields None). Render paths that read cache_only
+    use this so a brief background-warm gap serves slightly-stale data instead of
+    blanking — the backend's own 24h cap still bounds how old "stale" can get.
     """
     from data import cache as _cache
     cached = _cache.get(key)
     if not cached:
         return None
     ts = cached.get("_ts")
-    if ts and time.time() - float(ts) > ttl:
+    if ts and time.time() - float(ts) > ttl and not allow_stale:
         return None
     return cached.get("_v")
 
@@ -502,7 +507,8 @@ _PERIOD_TO_ENDPOINT = {
 }
 
 
-def get_history(ticker: str, period: str = "1Y", cache_only: bool = False) -> pd.DataFrame:
+def get_history(ticker: str, period: str = "1Y", cache_only: bool = False,
+                allow_stale: bool = False) -> pd.DataFrame:
     """
     Return a DataFrame of (date, close, open, high, low, volume) for `ticker`
     over `period`. Period: "1W" | "1M" | "3M" | "6M" | "YTD" | "1Y" | "2Y" |
@@ -513,12 +519,19 @@ def get_history(ticker: str, period: str = "1Y", cache_only: bool = False) -> pd
     several ETFs) pass this so a cold/expired cache can't block the request
     thread on N×15s FMP calls; a background job (jobs/refresh_home_snapshot)
     keeps the cache warm.
+
+    allow_stale=True (cache_only only): if the warm cache lapsed its 1h freshness
+    but a prior value is still present, serve that stale value rather than empty.
+    A brief warm gap (e.g. one job tick where the FMP fetch returned nothing) then
+    shows last-known prices instead of a bare "No history" — invisible on a
+    normalized overlay; the backend's 24h cap bounds the staleness.
     """
     if not _has_key():
         return pd.DataFrame()
     ticker = ticker.upper()
     cache_key = f"fmp_history:{ticker}:{period}"
-    cached = _cache_get(cache_key, HISTORY_TTL_SECONDS)
+    cached = _cache_get(cache_key, HISTORY_TTL_SECONDS,
+                        allow_stale=(cache_only and allow_stale))
     if cached is not None:
         try:
             return pd.DataFrame(cached)

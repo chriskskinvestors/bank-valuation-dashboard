@@ -117,6 +117,41 @@ class TestUniverseAggregate(unittest.TestCase):
         with patch("data.cache.get", return_value=None):
             self.assertEqual(form4_client.recent_open_market_universe(), [])
 
+    def test_empty_scan_keeps_last_good_aggregate(self):
+        # A transient empty scan (per-CIK GCS reads briefly failing) must NOT
+        # clobber a good aggregate — that blanked the feed's insider rows on
+        # 2026-06-26. Keep last-known; report its count.
+        from data import form4_client
+        today = datetime.now().strftime("%Y-%m-%d")
+        store: dict = {}
+        good = {111: {"transactions": [_tx("P", today, "Buy")]}}
+
+        with patch("data.cache.put", side_effect=lambda k, v: store.__setitem__(k, v)), \
+             patch("data.cache.get", side_effect=lambda k: store.get(k)):
+            with patch("data.form4_client.load_json",
+                       side_effect=lambda p, n: good.get(int(n.split(".")[0]))):
+                form4_client.build_open_market_universe_cache({"AAA": 111})
+            # Now a run where the scan finds nothing.
+            with patch("data.form4_client.load_json", return_value=None):
+                n = form4_client.build_open_market_universe_cache({"AAA": 111})
+            rows = form4_client.recent_open_market_universe()
+        self.assertEqual(n, 1, "empty scan should report the retained count")
+        self.assertEqual(len(rows), 1, "last-good aggregate must survive an empty scan")
+        self.assertEqual(rows[0]["ticker"], "AAA")
+
+    def test_empty_scan_seeds_empty_when_no_prior(self):
+        # First-ever run that finds nothing: seed an empty row (so a real miss
+        # still degrades to disclosures-only), not a crash.
+        from data import form4_client
+        store: dict = {}
+        with patch("data.cache.put", side_effect=lambda k, v: store.__setitem__(k, v)), \
+             patch("data.cache.get", side_effect=lambda k: store.get(k)), \
+             patch("data.form4_client.load_json", return_value=None):
+            n = form4_client.build_open_market_universe_cache({"AAA": 111})
+            rows = form4_client.recent_open_market_universe()
+        self.assertEqual(n, 0)
+        self.assertEqual(rows, [])
+
     def test_warming_job_dedupes_by_cik(self):
         # The universe-span + dedup-by-CIK (multi-class names like BPOP/BPOPM
         # share one CIK) moved from the render path into the warming job. Pin

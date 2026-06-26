@@ -827,7 +827,8 @@ def _af_overlay_1d(fmp_client, tk):
     no extra call; with no prior session in the window we fall back to the
     session's first bar. Returns (pcts, dates) or None."""
     import pandas as pd
-    h = fmp_client.get_history(tk, period="1W", cache_only=True)  # 15-min, 7d
+    h = fmp_client.get_history(tk, period="1W", cache_only=True,  # 15-min, 7d
+                               allow_stale=True)
     if h is None or h.empty or "close" not in h:
         return None
     h = h.dropna(subset=["close"]).copy()
@@ -867,9 +868,11 @@ def _af_overlay_series(sel, tf):
                 # cache_only: never do the live FMP history fetch on the render
                 # thread — a cold/expired cache here was looping N×15s and
                 # blocking the whole above-the-fold grid for ~84s.
-                # jobs/refresh_home_snapshot warms these.
+                # jobs/refresh_home_snapshot warms these. allow_stale: ride
+                # through a one-tick warm gap with last-known data instead of
+                # blanking the chart to "No history".
                 h = fmp_client.get_history(tk, period=_AF_TF_FETCH.get(tf, "1Y"),
-                                           cache_only=True)
+                                           cache_only=True, allow_stale=True)
                 if h is None or h.empty or "close" not in h:
                     continue
                 h = h.dropna(subset=["close"]).copy()

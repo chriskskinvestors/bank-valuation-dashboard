@@ -330,6 +330,14 @@ def build_open_market_universe_cache(ticker_ciks: dict, days: int = 14,
     """
     from data import cache
     rows = recent_open_market_transactions(ticker_ciks, days=days, limit=limit)
+    if not rows:
+        # A transient empty scan (e.g. the per-CIK GCS reads briefly failing)
+        # must NOT clobber a good aggregate — that would blank the feed's insider
+        # rows until the next clean run. Keep last-known when present; only seed
+        # an empty row if nothing has ever been built.
+        prior = cache.get(_OPEN_MARKET_UNIVERSE_KEY)
+        if prior and (prior.get("value") or []):
+            return len(prior["value"])
     cache.put(_OPEN_MARKET_UNIVERSE_KEY,
               {"cached_at": datetime.now().isoformat(), "value": rows})
     return len(rows)
