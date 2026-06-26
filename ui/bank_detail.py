@@ -415,9 +415,10 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
 
 
 def _valuation_history_chart(ticker: str, info: dict):
-    """Quarter-end P/TBV and P/E over the last ~3 years, dual-axis. Price from
-    market history ÷ per-share book value and trailing-twelve-month earnings
-    from SEC filings (P/E uses TTM EPS so there's a point every quarter)."""
+    """Daily P/TBV and P/E over the last ~3 years, dual-axis. Each trading day's
+    close ÷ the most recently *filed* book value per share / trailing-twelve-
+    month EPS from SEC filings — fundamentals step in on their 10-Q/10-K filing
+    date (no lookahead) while price moves daily."""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     from utils.chart_style import apply_standard_layout, COLOR_PRIMARY, COLOR_WARNING
@@ -426,7 +427,8 @@ def _valuation_history_chart(ticker: str, info: dict):
     if not cik:
         return None
     try:
-        from ui.financial_highlights import _per_share_for_ends, _flow_for, _sec_map
+        from ui.financial_highlights import (_per_share_for_ends, _flow_for,
+                                             _sec_map, _sec_prov_map)
         from data.fmp_client import get_history
     except Exception:
         return None
@@ -439,10 +441,9 @@ def _valuation_history_chart(ticker: str, info: dict):
             ends_all = [d.to_pydatetime() for d in ds]
     if len(ends_all) < 4:
         return None
-    ends = ends_all[-12:]   # quarters shown; earlier ones only feed the TTM sum
 
     try:
-        ps = _per_share_for_ends(cik, ends, quarterly=False)
+        ps = _per_share_for_ends(cik, ends_all, quarterly=False)
         facts = sec_client.fetch_company_facts(cik)
         px = get_history(ticker, "5Y")
     except Exception:
@@ -454,10 +455,9 @@ def _valuation_history_chart(ticker: str, info: dict):
     px = px.dropna(subset=["date"]).sort_values("date")
 
     # Trailing-twelve-month diluted EPS at each quarter-end = sum of the four
-    # single-quarter EPS ending there (Q4 derived as FY − 9-mo). The prior code
-    # used point-in-time ANNUAL EPS, which is reported only at fiscal year-ends,
-    # so P/E showed a single dot per year. TTM gives a P/E point every quarter
-    # and its latest value ties to the snapshot's "EPS (TTM)".
+    # single-quarter EPS ending there (Q4 derived as FY − 9-mo). TTM is what makes
+    # P/E meaningful between reports; its latest value ties to the snapshot's
+    # "EPS (TTM)".
     eps_q = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="quarter") if facts else {}
     eps_a = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="annual") if facts else {}
     sq = [_flow_for(e, eps_q, eps_a, True)[0] for e in ends_all]
@@ -466,30 +466,50 @@ def _valuation_history_chart(ticker: str, info: dict):
         w = sq[i - 3:i + 1]
         ttm[e] = sum(w) if (i >= 3 and len(w) == 4 and None not in w) else None
 
-    dates, ptbvs, pes = [], [], []
-    for e in ends:
+    # Each quarter's book value / TTM EPS steps in on the date its 10-Q/10-K was
+    # actually FILED (not the period-end), so a given day's multiple only uses
+    # fundamentals the market already had — no lookahead.
+    eq_prov = _sec_prov_map(facts, "StockholdersEquity", instant=True) if facts else {}
+    frows = []
+    for e in ends_all:
         rec = ps.get(e) or {}
-        tbvps = rec.get("tbvps")
-        sub = px[px["date"] <= pd.Timestamp(e)]
-        if sub.empty:
+        tbvps, eps_ttm = rec.get("tbvps"), ttm.get(e)
+        if tbvps is None and eps_ttm is None:
             continue
-        price = float(sub["close"].iloc[-1])
-        dates.append(e)
-        ptbvs.append(price / tbvps if (tbvps and tbvps > 0) else None)
-        eps_ttm = ttm.get(e)
-        pes.append(price / eps_ttm if (eps_ttm and eps_ttm > 0) else None)
-    if not dates or all(v is None for v in ptbvs):
+        prov = eq_prov.get(e.strftime("%Y-%m-%d"))
+        eff = (pd.to_datetime(prov["filed"], errors="coerce")
+               if (prov and prov.get("filed")) else pd.Timestamp(e))
+        if pd.isna(eff):
+            eff = pd.Timestamp(e)
+        frows.append({"date": eff, "tbvps": tbvps, "ttm_eps": eps_ttm})
+    if not frows:
+        return None
+    fund = (pd.DataFrame(frows).dropna(subset=["date"]).sort_values("date")
+            .drop_duplicates("date", keep="last"))
+
+    # Daily valuation: each trading day ÷ the most recently filed fundamentals
+    # (merge_asof backward). Show the last ~3 years; earlier filings only seed the
+    # first day's lookup.
+    px = px[px["date"] >= fund["date"].iloc[0]]
+    if px.empty:
+        return None
+    val = pd.merge_asof(px, fund, on="date", direction="backward")
+    start = max(fund["date"].iloc[0], val["date"].max() - pd.DateOffset(years=3))
+    val = val[val["date"] >= start].copy()
+    val["ptbv"] = (val["close"] / val["tbvps"]).where(val["tbvps"] > 0)
+    val["pe"] = (val["close"] / val["ttm_eps"]).where(val["ttm_eps"] > 0)
+    if val.empty or val["ptbv"].isna().all():
         return None
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(
-        x=dates, y=ptbvs, name="P/TBV", mode="lines+markers",
-        connectgaps=True, line=dict(color=COLOR_PRIMARY, width=2), marker=dict(size=5),
-        hovertemplate="%{x|%b %Y}<br>P/TBV %{y:.2f}x<extra></extra>"), secondary_y=False)
+        x=val["date"], y=val["ptbv"], name="P/TBV", mode="lines",
+        connectgaps=True, line=dict(color=COLOR_PRIMARY, width=2),
+        hovertemplate="%{x|%b %d, %Y}<br>P/TBV %{y:.2f}x<extra></extra>"), secondary_y=False)
     fig.add_trace(go.Scatter(
-        x=dates, y=pes, name="P/E", mode="lines+markers",
-        connectgaps=True, line=dict(color=COLOR_WARNING, width=2), marker=dict(size=5),
-        hovertemplate="%{x|%b %Y}<br>P/E %{y:.1f}x<extra></extra>"), secondary_y=True)
+        x=val["date"], y=val["pe"], name="P/E", mode="lines",
+        connectgaps=True, line=dict(color=COLOR_WARNING, width=2),
+        hovertemplate="%{x|%b %d, %Y}<br>P/E %{y:.1f}x<extra></extra>"), secondary_y=True)
     apply_standard_layout(fig, title="", height=294,
                           show_legend=True, hovermode="x unified")
     # The card heading above the chart is the title (mirrors the price panel's
