@@ -90,7 +90,10 @@ class GoogleNewsAdapter(SourceAdapter):
             if not (is_company_press_release(headline)
                     or is_material_regulatory(headline)):
                 continue
-            if is_junk_news(headline, ticker):
+            # source="google_news" also drops aggregator soft fluff (CRE loans,
+            # award/recognition rewrites, local civic) that a first-party wire
+            # would be trusted for — Google News is held to a material-only bar.
+            if is_junk_news(headline, ticker, source="google_news"):
                 continue
             # Reject content-farm/spam links (messaging, social, shorteners) —
             # a real release links to a wire / IR / outlet, never WhatsApp et al.

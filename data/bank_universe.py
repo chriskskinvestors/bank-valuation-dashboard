@@ -78,6 +78,7 @@ _SKIP_TICKERS = {
     # the card issuers above.
     "RJF",   # Raymond James Financial (broker-dealer / wealth management)
     "FRHC",  # Freedom Holding Corp (brokerage holding; Freedom Finance)
+    "SF",    # Stifel Financial (broker-dealer / wealth management)
 }
 
 # US-domiciled only (explicit scope: US banks traded on exchanges or OTC).

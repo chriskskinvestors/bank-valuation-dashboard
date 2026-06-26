@@ -250,7 +250,16 @@ def render_activity_overview(limit: int = 50):
             format_func=lambda x: SOURCE_LABELS.get(x, x),
         )
 
+    from data.events.wire_base import is_junk_news
     events = get_universe_recent(limit=limit * 2)  # over-fetch for filtering
+    # Parity with the Home feed's quality bar: drop junk headlines (SEO/promo/
+    # law-firm spam/foreign twins/philanthropy) and — for Google News / Yahoo
+    # rewrites — soft fluff (single-property loans, award rewrites, local civic).
+    # First-party wires keep the benefit of the doubt. get_universe_recent has
+    # already canonicalized sibling tickers and dropped out-of-scope names.
+    events = [e for e in events
+              if not is_junk_news(e.get("headline") or "", e.get("ticker"),
+                                  e.get("source"))]
     if type_filter:
         events = [e for e in events if e["event_type"] in type_filter]
     if source_filter:

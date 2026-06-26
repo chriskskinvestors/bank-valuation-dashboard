@@ -771,7 +771,58 @@ _SEO_RE = re.compile(
     r"|\bfair\s+value\s+analysis\b"
     r"|\bpe,?\s*pb\b|\bp/?e\b[^.]{0,10}\bp/?b\b"    # "PE, PB" / "P/E ... P/B"
     r"|\bprecision\s+trading\b|\brisk\s+zones?\b"
-    r"|\bintrinsic\s+value\b|\bdcf\s+(valuation|analysis|value)\b",
+    r"|\bintrinsic\s+value\b|\bdcf\s+(valuation|analysis|value)\b"
+    # stockanalysis.com-style per-ticker valuation-stat pages: "Price to earnings
+    # forward of First Reliance Bancshares, Inc. - OTC:FSRL", "Price to sales
+    # forward of First Citizens BancShares - NASDAQ:FCNCA". A metric name + "of".
+    r"|\bprice\s+to\s+(?:earnings|sales|book(?:\s+value)?|tangible\s+book|"
+    r"cash\s*flow|free\s+cash\s+flow|ebitda|fcf)\s+(?:forward\s+|trailing\s+)?of\b",
+    re.IGNORECASE,
+)
+
+# Corporate-philanthropy / CSR PRs — a bank's charitable foundation grant,
+# donation, or gift. Non-material; owner doesn't want them in the feed. Applies
+# to ALL sources. Tight so it does NOT catch a bank literally named "...
+# Foundation" (e.g. First Foundation / FFWM) reporting earnings, nor a paid
+# NAMING-RIGHTS sponsorship (a commercial deal the owner keeps): requires an
+# explicit grant/donation/charitable verb, not the bare word "foundation".
+# Example caught: "...CDC RECEIVES TRUIST FOUNDATION SUPPORT TO STRENGTHEN...".
+_PHILANTHROPY_RE = re.compile(
+    r"\breceives?\b[^.]{0,40}\bfoundation\b[^.]{0,15}"
+    r"\b(?:support|grant|gift|funding|donation)\b"
+    r"|\bfoundation\s+(?:grant|donation|gift)\b"
+    r"|\b(?:donat(?:es|ed|ion|ing)|charitable\s+(?:gift|contribution|donation)|"
+    r"philanthrop\w+)\b"
+    r"|\bgives?\s+\$[\d.,]+\s*(?:million|thousand|k|m|b)?\s+(?:to\b|in\s+grants?)"
+    r"|\b\$[\d.,]+\s*(?:million|thousand|k|m)?\s+(?:grant|donation|gift)\s+to\b",
+    re.IGNORECASE,
+)
+
+# AGGREGATOR-ONLY soft fluff. The owner trusts first-party wires (a Business
+# Wire / PR Newswire award or naming-rights PR is kept), but holds Google News /
+# Yahoo rewrites to a "must be material" bar — drop their single-property CRE
+# loans, award/recognition rewrites, and local civic/sponsorship items, while
+# letting material aggregator news (officer changes, earnings, M&A, dividends)
+# through. Applied ONLY when is_junk_news is given an aggregator ``source``.
+# Examples caught (Google News): "Wells Fargo Provides $46M Refi for SoCal
+# Shopping Center", "First Horizon gets three adoption- and foster-friendly
+# awards", "WNY officials and M&T Bank announce 'Meet Me Downtown' initiative".
+_AGGREGATOR_SOURCES = {"google_news", "yfinance_news"}
+_AGGREGATOR_FLUFF_RE = re.compile(
+    # single-property CRE financing the bank ORIGINATES (lender-side verbs)
+    r"\b(?:provides?|arranges?|closes?|originat\w+|funds?)\s+(?:a\s+)?"
+    r"\$[\d.,]+\s*(?:million|billion|m|b|mm)?\s+"
+    r"(?:refi(?:nanc\w+)?|financing|loan|mortgage|construction|bridge)\b"
+    # award / recognition / "best place to work" rewrites
+    r"|\b(?:named|recognized|honou?red|wins?|earns?|receives?|gets?)\s+"
+    r"[^.]{0,40}\b(?:awards?|recognition|honou?rs?|best\s+place|"
+    r"great\s+place\s+to\s+work|most\s+admired|friendly\s+awards?)\b"
+    r"|\bbest\s+(?:places?|companies)\s+to\s+work\b"
+    # local civic / community initiative / sponsorship
+    r"|\bofficials?\b[^.]{0,40}\b(?:announce|unveil|launch)\w*\b[^.]{0,30}"
+    r"\binitiative\b"
+    r"|\b(?:community|downtown|neighborhood)\s+(?:initiative|program)\b"
+    r"|\bmeet\s+me\s+downtown\b",
     re.IGNORECASE,
 )
 
@@ -924,7 +975,8 @@ _OFFSUBJECT_RE = re.compile(
 )
 
 
-def is_junk_news(headline: str, ticker: str | None = None) -> bool:
+def is_junk_news(headline: str, ticker: str | None = None,
+                 source: str | None = None) -> bool:
     """ONE junk filter for ingest AND display. Rejects:
       • third-party broker forecasts / branch-hire trivia (_THIRD_PARTY_RE)
       • 13F institutional-ownership churn (_INSTITUTIONAL_RE) — the biggest junk
@@ -947,6 +999,13 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
       • plaintiff-law-firm solicitation (_LAW_FIRM_SOLICITATION_RE) — "Shareholder
         / Stock Alert", "investigates whether ... merger", securities class-action
         trawling (Halper Sadeh / Ademi / etc.) piggybacking on a bank's deal
+      • corporate-philanthropy / CSR (_PHILANTHROPY_RE) — charitable foundation
+        grants, donations, gifts (all sources)
+      • (when ``source`` is an aggregator — Google News / Yahoo) soft fluff a
+        first-party wire would be trusted for but an aggregator rewrite is not:
+        single-property CRE loans, award/recognition rewrites, local civic /
+        sponsorship items (_AGGREGATOR_FLUFF_RE). Material aggregator news
+        (officer changes, earnings, M&A, dividends) still passes.
       • structured-note issuance (is_routine_noise)
       • (when ``ticker`` is given) headlines tagged with a DIFFERENT company's
         exchange ticker, both "(NYSE:XXX)" and bare "$XXX" cashtag forms.
@@ -963,7 +1022,12 @@ def is_junk_news(headline: str, ticker: str | None = None) -> bool:
             or _SHAREHOLDER_NOTICE_RE.search(h) or _SEO_RE.search(h)
             or _FOREIGN_LANG_RE.search(h)
             or _LAW_FIRM_SOLICITATION_RE.search(h)
+            or _PHILANTHROPY_RE.search(h)
             or is_routine_noise(h)):
+        return True
+    # Aggregator rewrites (Google News / Yahoo) must clear a higher bar than
+    # first-party wires — drop their soft fluff, keep their material events.
+    if source in _AGGREGATOR_SOURCES and _AGGREGATOR_FLUFF_RE.search(h):
         return True
     if ticker:
         t = ticker.upper()

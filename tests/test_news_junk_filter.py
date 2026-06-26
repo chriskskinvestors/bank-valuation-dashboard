@@ -168,6 +168,62 @@ class TestSEOAndForm144(unittest.TestCase):
             with self.subTest(h=h):
                 self.assertFalse(is_junk_news(h), h)
 
+    def test_valuation_stat_seo_is_junk(self):
+        # stockanalysis.com-style per-ticker valuation pages.
+        for h in [
+            "Price to earnings forward of First Reliance Bancshares, Inc. - OTC:FSRL",
+            "Price to sales forward of First Citizens BancShares, Inc. - NASDAQ:FCNCA",
+            "Price to earnings forward of InsCorp, Inc. - OTC:IBTN",
+        ]:
+            with self.subTest(h=h):
+                self.assertTrue(is_junk_news(h), h)
+
+    def test_philanthropy_is_junk_all_sources(self):
+        # Charitable foundation grants / donations — universal.
+        for h in [
+            "Lancaster Avenue 21st CDC Receives Truist Foundation Support to "
+            "Strengthen Small Business Initiative",
+            "Banner Bank Donates $250,000 to Local Food Banks",
+            "Fifth Third Foundation Grant Supports Affordable Housing",
+        ]:
+            with self.subTest(h=h):
+                self.assertTrue(is_junk_news(h), h)
+
+    def test_real_bank_named_foundation_not_overfiltered(self):
+        # "First Foundation" (FFWM) is a real bank — its material news survives.
+        for h in [
+            "First Foundation Inc. Declares Quarterly Cash Dividend",
+            "First Foundation Inc. Reports Second Quarter 2026 Results",
+        ]:
+            with self.subTest(h=h):
+                self.assertFalse(is_junk_news(h, "FFWM"), h)
+
+    def test_aggregator_fluff_dropped_only_for_aggregators(self):
+        # Soft fluff: junk from Google News / Yahoo, KEPT from a first-party wire.
+        fluff = [
+            "Wells Fargo Provides $46M Refi for SoCal Shopping Center",
+            "First Horizon gets three adoption- and foster-friendly awards",
+            'WNY officials and M&T Bank announce "Meet Me Downtown" initiative - News 4 Buffalo',
+            "Truist Named One of the Best Places to Work in 2026",
+        ]
+        for h in fluff:
+            with self.subTest(h=h, src="google_news"):
+                self.assertTrue(is_junk_news(h, source="google_news"), h)
+            with self.subTest(h=h, src="prnewswire"):
+                # Same headline from a first-party wire is trusted (kept).
+                self.assertFalse(is_junk_news(h, source="prnewswire"), h)
+
+    def test_material_aggregator_news_survives(self):
+        # Officer changes / earnings / M&A / dividends from Google News stay.
+        for h in [
+            "Amerant Bancorp Announces Retirement of Chief Risk Officer",
+            "Pinnacle Financial Partners Declares Quarterly Cash Dividend",
+            "First Horizon Completes Acquisition of XYZ Bank",
+            "Old National Bancorp Names New Chief Financial Officer",
+        ]:
+            with self.subTest(h=h):
+                self.assertFalse(is_junk_news(h, source="google_news"), h)
+
 
 # (headline, ticker) pairs pulled from the live feed (or close paraphrases of
 # the same generator templates) that MUST be filtered as junk.
