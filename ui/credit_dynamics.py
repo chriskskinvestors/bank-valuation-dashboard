@@ -264,41 +264,47 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
 
 
 def _render_by_loan_type(ticker: str, summary: dict, timeline):
-    """Asset Quality by Loan Type — segment hotspots table + NPL trend per
-    loan segment. Split out of the main credit view so the two nav tabs show
-    distinct content."""
-    hotspots = summary["hotspots"]
+    """Asset Quality by Loan Type — every loan segment's latest NPL ratio (and
+    its multiple vs the bank-wide ratio) on the left, the per-segment NPL trend
+    on the right. Shows ALL segments (the prior 'hotspots only' table was empty
+    whenever no segment ran above the bank average)."""
+    from utils.chart_style import CATEGORICAL_PALETTE
+    segments = [
+        ("npl_ratio", "Total", "#0f172a", 3),
+        ("npl_cre", "CRE", COLOR_DANGER, 2),
+        ("npl_resi", "Residential", COLOR_PRIMARY, 2),
+        ("npl_multifam", "Multifamily", COLOR_WARNING, 2),
+        ("npl_nres_re", "Non-Res RE", CATEGORICAL_PALETTE[4], 2),
+        ("npl_ci", "C&I", COLOR_SUCCESS, 2),
+        ("npl_consumer", "Consumer", CATEGORICAL_PALETTE[6], 2),
+    ]
+    latest = timeline.iloc[-1] if not timeline.empty else None
+    total = latest.get("npl_ratio") if latest is not None else None
+
     _tbl, _chart = st.columns([1, 2])
     with _tbl:
-        if hotspots:
-            st.markdown('<div class="ksk-sec">Segment Hotspots — NPL vs bank total</div>',
-                        unsafe_allow_html=True)
-            rows = "".join(
-                f'<tr><td>{_html.escape(str(h["segment"]))}</td>'
-                f'<td>{h["npl_pct"]:.2f}%</td>'
-                f'<td>{h["vs_total_multiple"]:.1f}x</td></tr>' for h in hotspots)
-            st.markdown(
-                '<div class="ksk-grid"><table><thead><tr>'
-                '<th>Segment</th><th>NPL %</th><th>vs Bank Total</th>'
-                f'</tr></thead><tbody>{rows}</tbody></table></div>',
-                unsafe_allow_html=True)
-        else:
-            st.caption("No segment NPLs above the bank-wide ratio.")
+        st.markdown('<div class="ksk-sec">NPL by Loan Segment — latest quarter</div>',
+                    unsafe_allow_html=True)
+        body = ""
+        if latest is not None:
+            for col, label, _c, _w in segments:
+                v = latest.get(col)
+                if v is None or pd.isna(v):
+                    continue
+                mult = f"{v / total:.1f}x" if (total and col != "npl_ratio") else "—"
+                body += (f'<tr><td>{_html.escape(label)}</td>'
+                         f'<td>{v:.2f}%</td><td>{mult}</td></tr>')
+        st.markdown(
+            '<div class="ksk-grid"><table><thead><tr>'
+            '<th>Segment</th><th>NPL %</th><th>vs Bank Total</th>'
+            f'</tr></thead><tbody>{body}</tbody></table></div>',
+            unsafe_allow_html=True)
 
     with _chart:
         import plotly.graph_objects as go
         from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                       CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+                                       CHART_HEIGHT_COMPACT)
         fig = go.Figure()
-        segments = [
-            ("npl_ratio", "Total", "#0f172a", 3),
-            ("npl_cre", "CRE", COLOR_DANGER, 2),
-            ("npl_resi", "Residential", COLOR_PRIMARY, 2),
-            ("npl_multifam", "Multifamily", COLOR_WARNING, 2),
-            ("npl_nres_re", "Non-Res RE", CATEGORICAL_PALETTE[4], 2),
-            ("npl_ci", "C&I", COLOR_SUCCESS, 2),
-            ("npl_consumer", "Consumer", CATEGORICAL_PALETTE[6], 2),
-        ]
         for key, label, color, width in segments:
             if key in timeline.columns and timeline[key].notna().any():
                 fig.add_trace(go.Scatter(
