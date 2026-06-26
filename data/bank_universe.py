@@ -80,6 +80,17 @@ _SKIP_TICKERS = {
     "FRHC",  # Freedom Holding Corp (brokerage holding; Freedom Finance)
     "SF",    # Stifel Financial (broker-dealer / wealth management)
     "JXN",   # Jackson Financial (annuity / retirement insurer, not a bank)
+
+    # Non-banks that leaked in via Phase-1 name-matching (SIC sweep 2026-06-26 —
+    # their SEC SIC is NOT a bank/thrift/BHC code). Owner-approved removal.
+    "CIA",   # Citizens Inc — life insurance (SIC 6311)
+    "FAF",   # First American Financial — title insurance (SIC 6361)
+    "AMP",   # Ameriprise Financial — wealth / asset management (SIC 6282)
+    "SFB",   # Stifel Financial sibling security (shares SF's registrant; SIC 6211)
+    "SOFI",  # SoFi Technologies — fintech consumer lender (SIC 6199)
+    "GDOT",  # Green Dot — fintech / prepaid (SIC 6199)
+    "LC",    # LendingClub — fintech consumer lender (SIC 6141)
+    "CASS",  # Cass Information Systems — freight/utility payments (SIC 7389)
 }
 
 # US-domiciled only (explicit scope: US banks traded on exchanges or OTC).
