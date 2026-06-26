@@ -35,6 +35,24 @@ from ui.chrome import ledger, title_bar
 from data.loaders import load_fdic_hist as _load_hist
 
 
+def _kg_rows(rows):
+    """Render a list of uniform dicts as a design-system .ksk-grid table
+    (header = keys, one body row per dict). '$' is neutralised for the
+    Streamlit LaTeX guard. Used for the plain scenario tables; the colour-coded
+    Δ-NIM / Δ-NII heatmap matrices stay as styled dataframes (colour = signal)."""
+    if not rows:
+        return
+    def esc(s):
+        return html.escape(str(s)).replace("$", "&#36;")
+    cols = list(rows[0].keys())
+    head = "".join(f"<th>{esc(c)}</th>" for c in cols)
+    body = "".join(
+        "<tr>" + "".join(f"<td>{esc(r.get(c, '—'))}</td>" for c in cols) + "</tr>"
+        for r in rows)
+    st.markdown(f'<div class="ksk-grid"><table><thead><tr>{head}</tr></thead>'
+                f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+
+
 def _nim_color(delta_bps: float | None) -> str:
     if delta_bps is None:
         return "#999"
@@ -158,7 +176,8 @@ def render_rate_sensitivity(ticker: str):
     latest = hist[0]
 
     title_bar(f"{get_name(ticker)} ({ticker})", "Interest Rate Risk")
-    st.subheader("NIM Rate Sensitivity")
+    st.markdown('<div class="ksk-sec">NIM Rate Sensitivity</div>',
+                unsafe_allow_html=True)
     st.caption(
         "Curve-based NIM scenarios: **3M rate** drives funding costs, "
         "**5Y rate** drives earning-asset yields. Steepening curve widens NIM; "
@@ -676,9 +695,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
             row[f"Yr{yr} ΔNII"] = fmt_dollars(y["nii_delta_usd"])
             row[f"Yr{yr} ΔEPS"] = f"${eps_d:+.2f}" if eps_d is not None else "—"
         rows.append(row)
-    table_df = pd.DataFrame(rows)
-    st.dataframe(table_df, use_container_width=True, hide_index=True,
-                  height=min(420, 38 * (len(table_df) + 1) + 4))
+    _kg_rows(rows)
 
     # Honest disclosure
     with st.expander("Model assumptions + known limitations"):
@@ -1089,7 +1106,8 @@ def _render_historical_nim_scatter(hist: list[dict]):
     fig.update_xaxes(ticksuffix="pp")
     fig.update_yaxes(ticksuffix="%")
 
-    st.markdown("##### Historical NIM vs Curve Slope")
+    st.markdown('<div class="ksk-sec">Historical NIM vs Curve Slope</div>',
+                unsafe_allow_html=True)
     st.caption(
         "Each dot = one quarter. Darker = more recent. The red line is the best-fit "
         "regression: a positive slope (β > 0) means the bank's NIM historically expanded "
@@ -1157,7 +1175,8 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
         if val < -5: return "background-color: rgba(220, 38, 38, 0.08);"
         return "background-color: #f1f5f9;"
 
-    st.markdown("##### Δ NIM Matrix (bps)")
+    st.markdown('<div class="ksk-sec">Δ NIM Matrix (bps)</div>',
+                unsafe_allow_html=True)
     styled_nim = nim_df.style.map(_cell_color).format("{:+.0f}")
     st.dataframe(styled_nim, use_container_width=True)
 
