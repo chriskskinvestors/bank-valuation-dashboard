@@ -20,6 +20,7 @@ query, 1h-cached, so the per-render path stays cheap.
 from __future__ import annotations
 
 import re
+from datetime import date
 
 # Time-of-day with an explicit US time zone — banks always state the zone for
 # the call ("10:00 a.m. ET", "8:30 AM Eastern Time", "9 a.m. Central", and the
@@ -121,9 +122,52 @@ def mid_label(ci: dict | None) -> str:
     return " · ".join(parts)
 
 
+# ── Announced earnings-RELEASE date (from the PR headline) ────────────────
+# Universal across IR platforms: every bank issues a "… Will Announce Q2 2026
+# Results on July 14, 2026" headline ~2 weeks out, and we never truncate
+# headlines — so parsing the date there confirms the release date even for banks
+# whose IR site we don't scrape for structured call events.
+_MONTHS = {m: i for i, m in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july", "august",
+     "september", "october", "november", "december"), 1)}
+_ON_DATE_RE = re.compile(
+    r"\b(?:on|for)\s+(?:or\s+about\s+)?([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})", re.I)
+_ANNOUNCE_CUES = ("announce", "will report", "to report", "will release",
+                  "to release", "schedule", "set date", "sets date",
+                  "will host", "to host")
+
+
+def _parse_on_date(text: str) -> str | None:
+    """First '… on <Month> <Day>, <Year>' date in `text`, as ISO; None if none."""
+    for m in _ON_DATE_RE.finditer(text or ""):
+        mon = _MONTHS.get(m.group(1).lower())
+        if not mon:
+            continue
+        try:
+            return date(int(m.group(3)), mon, int(m.group(2))).isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _announced_release_date(headline: str, today_iso: str) -> str | None:
+    """The earnings-RELEASE date a bank states in an announcement headline ('…
+    Will Announce Q2 2026 Results on July 14, 2026') — ISO, only when it's an
+    announcement headline AND the date is in the future. A call/webcast-only
+    headline is NOT read as the release date. None otherwise — never guessed."""
+    hl = (headline or "").lower()
+    if not any(c in hl for c in _ANNOUNCE_CUES):
+        return None
+    if ("conference call" in hl or "webcast" in hl) and not (
+            "result" in hl or "earnings" in hl):
+        return None
+    d = _parse_on_date(headline)
+    return d if (d and d >= today_iso) else None
+
+
 def call_info_map() -> dict:
-    """{ticker: {call_time, webcast_url, dial_in}} parsed from each bank's most
-    recent earnings-announcement press release.
+    """{ticker: {call_time, webcast_url, dial_in, release_date}} parsed from each
+    bank's earnings-announcement press release.
 
     ONE events query, 1h-cached (st.cache_data) so the calendar render never
     re-queries/re-parses. Queries 'earnings'-typed events directly (not a flat
@@ -143,19 +187,31 @@ def call_info_map() -> dict:
             rows = get_events_by_type("earnings", limit=800)
         except Exception:
             return {}
+        today_iso = date.today().isoformat()
         out: dict = {}
         for r in rows:                               # newest-first
             tk = r.get("ticker")
-            if not tk or tk in out:
+            if not tk:
                 continue
-            info = parse_call_info(r.get("summary") or "")
-            if not info:
-                continue
-            url = info.get("webcast_url")
-            if url and not is_safe_news_url(url):
-                info["webcast_url"] = None
-            if any(info.values()):
-                out[tk] = info
+            cur = out.get(tk) or {}
+            # Call logistics from the PR body (best-effort, when not already found
+            # from a newer PR for this ticker).
+            if not any(cur.get(k) for k in ("call_time", "webcast_url", "dial_in")):
+                ci = parse_call_info(r.get("summary") or "")
+                url = ci.get("webcast_url")
+                if url and not is_safe_news_url(url):
+                    ci["webcast_url"] = None
+                for k in ("call_time", "webcast_url", "dial_in"):
+                    if ci.get(k):
+                        cur[k] = ci[k]
+            # Announced release date from the HEADLINE — captured even when the
+            # body has no parseable call logistics (the universe-wide signal).
+            if not cur.get("release_date"):
+                rd = _announced_release_date(r.get("headline") or "", today_iso)
+                if rd:
+                    cur["release_date"] = rd
+            if any(cur.values()):
+                out[tk] = cur
         return out
 
     try:
@@ -265,23 +321,24 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         yrow = (yf or {}).get("row", {})
         frow = (fmp or {}).get("row", {})
         ci = ci_map.get(tk) or {}
-        # The row date is the REPORT date (yfinance's near-term estimate, FMP
-        # fallback). The conference CALL is often a separate day (e.g. report
-        # after close, call next morning), so it's carried separately as call_date
-        # — NOT folded into the report date, which would read as "reports on the
-        # call day".
-        d = (yf or {}).get("d") or (fmp or {}).get("d")
+        # Release date: the bank's OWN announced date (parsed from its earnings PR
+        # headline) is authoritative and confirmed; else the yfinance/FMP estimate.
+        # The CALL is carried separately as call_date (often a different day, e.g.
+        # report after close / call next morning) — never folded into the release.
+        rel_d = _iso_date(ci.get("release_date")) if ci.get("release_date") else None
+        if rel_d is not None and not (today <= rel_d <= horizon):
+            rel_d = None
+        d = rel_d or (yf or {}).get("d") or (fmp or {}).get("d")
         if d is None or d < today or d > horizon:
             continue
         eps = yrow.get("eps_estimate")
         if eps is None:
             eps = frow.get("epsEstimated")
-        # A published conference-call event (we have its date) means the company
-        # has ANNOUNCED this earnings cycle — so a report date consistent with it
-        # (same day, or a few days before a next-morning call) is a confirmed
-        # date, not an FMP projection.
+        # Confirmed when the company announced the release date (rel_d), FMP
+        # confirms it, or a published call event is consistent with it (same day,
+        # or a few days before a next-morning call).
         call_d = _iso_date(ci.get("call_date")) if ci.get("call_date") else None
-        confirmed = bool(frow.get("confirmed")) or (
+        confirmed = bool(rel_d) or bool(frow.get("confirmed")) or (
             call_d is not None and 0 <= (call_d - d).days <= 4)
         # Report timing: FMP's before/after-open code, else inferred — a call the
         # NEXT morning means the release went out after close the day before.

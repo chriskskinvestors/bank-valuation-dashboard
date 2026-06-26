@@ -20,7 +20,36 @@ from data.earnings_call import (  # noqa: E402
     parse_call_info,
     mid_label,
     build_calls_agenda,
+    _announced_release_date,
 )
+
+
+class TestAnnouncedReleaseDate(unittest.TestCase):
+    """The universe-wide release-date signal parsed from PR headlines."""
+
+    T = "2026-06-26"
+
+    def test_announcement_headlines(self):
+        f = _announced_release_date
+        self.assertEqual(f("Equity Bancshares, Inc. Will Announce Second Quarter "
+                           "2026 Results on July 14, 2026", self.T), "2026-07-14")
+        self.assertEqual(f("Acme to Report Q3 2026 Results on October 20, 2026",
+                           self.T), "2026-10-20")
+        self.assertEqual(f("XYZ to Release Q2 Results on or about August 1, 2026",
+                           self.T), "2026-08-01")
+        self.assertEqual(f("DEF Schedules Earnings Release for July 22, 2026",
+                           self.T), "2026-07-22")
+
+    def test_not_a_release_date(self):
+        f = _announced_release_date
+        # Call/webcast-only headline → not the release date.
+        self.assertIsNone(f("ABC to Host Q2 2026 Conference Call on July 15, 2026",
+                            self.T))
+        # A results recap (no announcement cue) → nothing.
+        self.assertIsNone(f("GHI Reports Record Second Quarter 2026 Results", self.T))
+        # A past date is ignored (not an upcoming report).
+        self.assertIsNone(f("JKL Will Announce Q1 Results on April 14, 2026", self.T))
+        self.assertIsNone(f("", self.T))
 
 
 class TestParseCallInfo(unittest.TestCase):
@@ -220,6 +249,18 @@ class TestBuildCallsAgenda(unittest.TestCase):
             self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
         rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
         self.assertFalse(rows["BKSC"]["confirmed"])         # gap too large → stays (proj.)
+
+    def test_announced_release_date_overrides_estimate_and_confirms(self):
+        # An announced release date (from the PR headline) is authoritative — it
+        # becomes the row date and confirms it, over the yfinance estimate.
+        calls = dict(self.CALLS)
+        calls["BKSC"] = {"release_date": "2026-07-15"}   # yfinance said 07-16
+        agenda = build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
+        rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
+        bksc = rows["BKSC"]
+        self.assertEqual(bksc["date"], "2026-07-15")        # announced date wins
+        self.assertTrue(bksc["confirmed"])                  # announced ⇒ confirmed
 
     def test_horizon_days_bounds_window(self):
         # FMPONLY reports 2026-07-20 — inside 75 days, outside a tight 5-day window.
