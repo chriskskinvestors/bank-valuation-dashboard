@@ -170,10 +170,10 @@ def grouped_trend_chart(
     fields absent from this bank's history, are silently skipped — a chart that
     can't source any series renders empty (never fabricated)."""
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                   CHART_HEIGHT_DENSE, CATEGORICAL_PALETTE)
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
     fig = go.Figure()
     if fdic_df is None or fdic_df.empty:
-        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_DENSE,
+        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
                               show_legend=False)
         return fig
 
@@ -187,7 +187,7 @@ def grouped_trend_chart(
         if field and field in fdic_df.columns:
             plot.append((m, field, _axis_family(m.get("format"))))
     if not plot:
-        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_DENSE,
+        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
                               show_legend=False)
         return fig
 
@@ -214,7 +214,7 @@ def grouped_trend_chart(
             yaxis="y2" if on_secondary else "y",
         ))
 
-    apply_standard_layout(fig, title=title, height=CHART_HEIGHT_DENSE,
+    apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
                           yaxis_title=primary, show_legend=len(fig.data) > 1,
                           hovermode="x unified")
     if secondary:
