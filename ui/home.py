@@ -795,7 +795,9 @@ def _af_feed_table(watchlist: list[str]) -> str:
         body = ""
         for it in items:
             tk = it.get("tk")
-            sym = f' <span class="sym">&gt;{tk}</span>' if tk else ""
+            # Ticker label LEADS the headline (was trailing) — always visible
+            # even when a long headline ellipsizes inside .fhl.
+            sym = f'<span class="sym">&gt;{tk}</span> ' if tk else ""
             when = _relative_time(it.get("ts"))
             # Link to the actual story / SEC filing (new tab); fall back to the
             # in-app company page only when no source URL is available.
@@ -808,7 +810,7 @@ def _af_feed_table(watchlist: list[str]) -> str:
             body += (
                 f'<a class="fitem" href="{href}" target="{target}"{rel}>'
                 f'<span class="ftag {it["cls"]}">{_esc(it["tag"])}</span>'
-                f'<span class="fhl">{_esc(it["head"][:90])}{sym}</span>'
+                f'<span class="fhl">{sym}{_esc(it["head"][:90])}</span>'
                 f'<span class="fwhen">{when}</span></a>')
     return (_af_hd("Bank News Feed", "universe")
             + f'<div class="body">{body}</div>')
