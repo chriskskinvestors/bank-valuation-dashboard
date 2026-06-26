@@ -74,7 +74,7 @@ def price_chart(df: pd.DataFrame, ticker: str, show_title: bool = True) -> go.Fi
                              name="Volume", showlegend=False), row=2, col=1)
         fig.update_yaxes(showgrid=False, row=2, col=1)
 
-    apply_standard_layout(fig, title=title, height=545, show_legend=False,
+    apply_standard_layout(fig, title=title, height=294, show_legend=False,
                           hovermode="x unified")
     if not show_title:
         # apply_standard_layout leaves an empty title object ({}) for a falsy
