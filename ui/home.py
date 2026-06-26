@@ -682,14 +682,32 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             + f'<div class="body calbody">{body}</div>')
 
 
+# Bumped to _v3 (2026-06-25): a stale v2 snapshot would keep serving the
+# pre-filter feed (law-firm-spam drop, sibling-ticker canonicalization VYLD→JPM,
+# RJF/FRHC exclusion) for up to its 30-min TTL — the bump forces a rebuild on
+# this deploy's first render instead of waiting it out. The feed is ALSO warmed
+# on a schedule by jobs.refresh_home_snapshot (warm_news_feed_snapshot), so it no
+# longer goes stale waiting for someone to load Home after the TTL lapses.
+_NEWS_FEED_SNAP_KEY = "home_af_feed_snap_v3"
+_NEWS_FEED_SNAP_TTL = 1800   # 30 min
+
+
 def _af_feed_items(watchlist: list[str]) -> list[dict]:
     from data.cache import served_snapshot
-    # Key bumped to _v2 (2026-06-17) so the relevance-filter + source-link +
-    # 8-K-summary changes take effect on this deploy's first render instead of
-    # waiting out the 30-min TTL on the pre-existing snapshot.
-    return served_snapshot("home_af_feed_snap_v2", 1800,
+    return served_snapshot(_NEWS_FEED_SNAP_KEY, _NEWS_FEED_SNAP_TTL,
                            lambda: _af_feed_items_live(watchlist),
                            guard=len(watchlist or []))
+
+
+def warm_news_feed_snapshot(watchlist: list[str]) -> int:
+    """Rebuild + persist the Bank News Feed snapshot OFF the render path (called
+    by jobs.refresh_home_snapshot). Invalidate first so the rebuild always runs
+    even within the TTL, then go through the SAME served_snapshot path the render
+    uses — identical key, guard and value shape — so the next Home load is a
+    cache hit on a fresh feed. Returns the item count."""
+    from data.cache import invalidate
+    invalidate(_NEWS_FEED_SNAP_KEY)
+    return len(_af_feed_items(watchlist))
 
 
 def _af_feed_items_live(watchlist: list[str]) -> list[dict]:

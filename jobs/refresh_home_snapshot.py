@@ -158,8 +158,27 @@ def main() -> int:
     _warm_overlay_history()
     _warm_bank_sector_history()
     _warm_feed_insider_aggregate(tickers)
+    _warm_news_feed(tickers)
     _warm_rates_bundle()
     return 0
+
+
+def _warm_news_feed(tickers: list[str]) -> None:
+    """Rebuild + persist the Bank News Feed snapshot off the render path, so the
+    feed (junk-filtered, sibling-canonicalized, scope-filtered) stays fresh on
+    THIS job's schedule instead of lazily rebuilding only when a user loads Home
+    after the 30-min TTL. Goes through ui.home's served_snapshot path (same key/
+    guard the render uses; guard is the universe size = len(tickers) here too).
+    Runs AFTER _warm_feed_insider_aggregate so the feed's insider half reads the
+    fresh aggregate this same run just wrote."""
+    try:
+        from ui.home import warm_news_feed_snapshot
+        n = warm_news_feed_snapshot(tickers)
+        print(f"[{time.strftime('%H:%M:%S')}] news feed snapshot: {n} items",
+              flush=True)
+    except Exception as e:
+        print(f"[home-snap] news feed snapshot failed: {type(e).__name__}: {e}",
+              flush=True)
 
 
 def _warm_rates_bundle() -> None:
