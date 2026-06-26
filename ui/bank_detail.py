@@ -414,11 +414,14 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
     return _kv_table("Market Data", market), _kv_table("Company Profile", company), ids_html
 
 
-def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y"):
-    """Daily P/TBV and P/E over `period` (the price card's 1W…ALL window),
-    dual-axis. Each trading day's close ÷ the most recently *filed* book value
-    per share / trailing-twelve-month EPS from SEC filings — fundamentals step in
-    on their 10-Q/10-K filing date (no lookahead) while price moves daily."""
+def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
+                             metrics: str = "both"):
+    """Daily P/TBV and/or P/E over `period` (the price card's 1W…ALL window).
+    `metrics` is "ptbv", "pe", or "both": one metric → a single clean axis that
+    fills the card like the price chart; "both" → color-matched dual axes. Each
+    trading day's close ÷ the most recently *filed* book value per share /
+    trailing-twelve-month EPS from SEC filings — fundamentals step in on their
+    10-Q/10-K filing date (no lookahead) while price moves daily."""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     from utils.chart_style import apply_standard_layout, COLOR_PRIMARY, COLOR_WARNING
@@ -500,31 +503,43 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y"):
     if val.empty or val["ptbv"].isna().all():
         return None
 
+    show_ptbv = metrics in ("both", "ptbv")
+    show_pe = metrics in ("both", "pe")
+    dual = show_ptbv and show_pe
+
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Scatter(
-        x=val["date"], y=val["ptbv"], name="P/TBV", mode="lines",
-        connectgaps=True, line=dict(color=COLOR_PRIMARY, width=2),
-        hovertemplate="%{x|%b %d, %Y}<br>P/TBV %{y:.2f}x<extra></extra>"), secondary_y=False)
-    fig.add_trace(go.Scatter(
-        x=val["date"], y=val["pe"], name="P/E", mode="lines",
-        connectgaps=True, line=dict(color=COLOR_WARNING, width=2),
-        hovertemplate="%{x|%b %d, %Y}<br>P/E %{y:.1f}x<extra></extra>"), secondary_y=True)
+    if show_ptbv:
+        fig.add_trace(go.Scatter(
+            x=val["date"], y=val["ptbv"], name="P/TBV", mode="lines",
+            connectgaps=True, line=dict(color=COLOR_PRIMARY, width=2),
+            hovertemplate="%{x|%b %d, %Y}<br>P/TBV %{y:.2f}x<extra></extra>"),
+            secondary_y=False)
+    if show_pe:
+        # P/E goes on the right axis only when both are shown; alone it takes the
+        # primary (left) axis so it's a clean single-axis chart.
+        fig.add_trace(go.Scatter(
+            x=val["date"], y=val["pe"], name="P/E", mode="lines",
+            connectgaps=True, line=dict(color=COLOR_WARNING, width=2),
+            hovertemplate="%{x|%b %d, %Y}<br>P/E %{y:.1f}x<extra></extra>"),
+            secondary_y=dual)
+    # Legend only matters when both lines share the plot; a single metric is named
+    # by its colored axis and the selector, so drop it (and its bottom margin).
     apply_standard_layout(fig, title="", height=294,
-                          show_legend=True, hovermode="x unified")
-    # Both lines keep their own slim axis, each COLORED to its line so the numbers
-    # read as that metric's scale, not empty white space: P/TBV blue on the left,
-    # P/E orange on the right. No axis titles (legend names the lines), tight
-    # margins, and the x-axis clamped to the data so the plot fills the card with
-    # only the thin tick-number gutters. automargin off so nothing re-expands.
-    fig.update_layout(title_text="", margin=dict(l=30, r=26, t=8))
+                          show_legend=dual, hovermode="x unified")
+    # Each visible line keeps a slim axis COLORED to it (P/TBV blue left, P/E
+    # orange right when both). One metric → no right axis, so the plot fills the
+    # card edge-to-edge like the price chart. x clamped to the data; automargin
+    # off so nothing re-expands.
+    fig.update_layout(title_text="", margin=dict(l=30, r=26 if dual else 8, t=8))
     _grid = "rgba(148,163,184,0.12)"
     fig.update_xaxes(showgrid=True, gridcolor=_grid, ticks="outside", ticklen=3,
                      tickcolor=_grid, range=[val["date"].min(), val["date"].max()])
     fig.update_yaxes(title_text="", secondary_y=False, ticksuffix="x", automargin=False,
                      showgrid=True, gridcolor=_grid, nticks=6,
-                     tickfont=dict(color=COLOR_PRIMARY))
-    fig.update_yaxes(title_text="", secondary_y=True, ticksuffix="x", automargin=False,
-                     showgrid=False, nticks=6, tickfont=dict(color=COLOR_WARNING))
+                     tickfont=dict(color=COLOR_PRIMARY if show_ptbv else COLOR_WARNING))
+    if dual:
+        fig.update_yaxes(title_text="", secondary_y=True, ticksuffix="x", automargin=False,
+                         showgrid=False, nticks=6, tickfont=dict(color=COLOR_WARNING))
     return fig
 
 
@@ -589,10 +604,11 @@ def _render_price_panel(ticker: str):
 
 
 def _render_valuation_panel(ticker: str, info: dict):
-    """Daily P/TBV & P/E. Mirrors the price card beside it exactly: a hairline
-    box with a label + flat Koyfin-style timeframe strip on one header row, then
-    the chart at the same 294px height. The strip drives the chart's window the
-    same way the price card's does."""
+    """Daily valuation. Mirrors the price card: a hairline box whose header row
+    carries a metric selector (P/TBV / P/E / Both, left) and the 1W…ALL timeframe
+    strip (right), then the chart. One metric → a single clean axis filling the
+    card; Both → color-matched dual axes. The strip drives the window like the
+    price card's; the metric choice persists across banks (static key)."""
     with st.container(key="ov_val_box"):
         # Same card + strip styling as the price panel so the two read as a
         # matched pair (border, flush chart inset, borderless square buttons).
@@ -602,10 +618,6 @@ def _render_valuation_panel(ticker: str, info: dict):
             "border-radius:0;padding:4px 0 5px;margin-top:20px;}"
             ".st-key-ov_val_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_val_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
-            # padding-left matches the chart's left margin (l=42) so the label
-            # starts at the P/TBV axis line, not over the tick-label gutter.
-            ".st-key-ov_val_box .ovv-readout{font-size:var(--fs-sm);font-weight:600;"
-            "color:var(--text-primary);white-space:nowrap;padding-left:42px;}"
             ".st-key-ov_val_box [data-testid='stButtonGroup']{gap:1px!important;"
             "background:transparent!important;border:0!important;padding:0!important;"
             "justify-content:flex-end!important;}"
@@ -618,19 +630,25 @@ def _render_valuation_panel(ticker: str, info: dict):
             "font-weight:600!important;}"
             ".st-key-ov_val_box [data-testid='stBaseButton-segmented_controlActive']"
             "{background:var(--brand-soft)!important;color:var(--brand-primary)!important;}"
+            # Metric selector (left) is left-aligned and indented to the chart's
+            # y-axis line; this rule follows the global flex-end one so it wins.
+            ".st-key-ov_val_metric [data-testid='stButtonGroup']"
+            "{justify-content:flex-start!important;padding-left:30px!important;}"
             "</style>", unsafe_allow_html=True)
-        # Header row: label (left) · timeframe buttons (right) — buttons first so
-        # they resolve the period the chart then uses. vertical_alignment="top"
-        # keeps both flush at the row top (see the price panel for the rationale).
+        # Header row: metric selector (left) · timeframe strip (right). Both
+        # rendered before the chart so they resolve what/when it draws.
         _hl, _hr = st.columns([1, 1], vertical_alignment="top")
         with _hr:
             per = st.segmented_control(
                 "Period", ["1W", "1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y", "ALL"],
                 default="1Y", key=f"ov_val_per_{ticker}",
                 label_visibility="collapsed") or "1Y"
-        _hl.markdown("<div class='ovv-readout'>Valuation — P/TBV &amp; P/E</div>",
-                     unsafe_allow_html=True)
-        fig = _valuation_history_chart(ticker, info, per)
+        with _hl:
+            _m = st.segmented_control(
+                "Metric", ["P/TBV", "P/E", "Both"], default="Both",
+                key="ov_val_metric", label_visibility="collapsed") or "Both"
+        metrics = {"P/TBV": "ptbv", "P/E": "pe", "Both": "both"}[_m]
+        fig = _valuation_history_chart(ticker, info, per, metrics)
         if fig is not None:
             st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
         else:
