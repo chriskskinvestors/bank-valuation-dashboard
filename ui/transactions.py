@@ -18,6 +18,7 @@ import streamlit as st
 from data.bank_mapping import get_name
 from data.form4_client import recent_open_market_universe
 from utils.formatting import fmt_dollars
+from ui.components import stat_pill, pill_row
 
 
 def _fmt_shares(n) -> str:
@@ -46,11 +47,17 @@ def render_transactions():
     buy_val = sum(r.get("value_usd") or 0 for r in buys)
     sell_val = sum(r.get("value_usd") or 0 for r in sells)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Transactions", f"{len(rows):,}")
-    c2.metric("Buys", f"{len(buys):,}", help="Open-market purchases (code P)")
-    c3.metric("Sells", f"{len(sells):,}", help="Open-market sales (code S)")
-    c4.metric("Net buy − sell", fmt_dollars(buy_val - sell_val))
+    # Dense KPI strip (design-system pills, not boxed st.metric — the spec bans
+    # st.metric and the big bordered cards read as a beginner Streamlit demo).
+    net = buy_val - sell_val
+    net_col = "var(--success,#059669)" if net >= 0 else "var(--danger,#dc2626)"
+    pill_row([
+        stat_pill("TRANSACTIONS", f"{len(rows):,}"),
+        stat_pill("BUYS", f"{len(buys):,}"),
+        stat_pill("SELLS", f"{len(sells):,}"),
+        stat_pill("NET BUY − SELL",
+                  f'<span style="color:{net_col};">{fmt_dollars(net)}</span>'),
+    ], margin="2px 0 12px")
 
     # ── Filters ──────────────────────────────────────────────────────────
     fa, fb = st.columns([1, 2])
