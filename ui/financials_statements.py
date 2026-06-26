@@ -335,7 +335,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         st.info("No FDIC Call Report data mapped for this bank.")
         return
     with st.spinner("Loading…"):
-        hist = fdic_client.get_historical_financials(cert, quarters=36)
+        hist = fdic_client.get_historical_financials(cert, quarters=44)
     if hist is None or hist.empty:
         st.info("No FDIC history available.")
         return
@@ -1145,8 +1145,15 @@ def _render_statement_trends(hist, ticker, key_prefix, trends):
         from ui.charts import grouped_trend_chart
     except Exception:
         return
-    h = hist.sort_values("REPDTE").tail(20)
     st.markdown("##### Trends")
+    # One timeframe selector drives every chart below. Data is quarterly, so the
+    # windows are year-based; 5Y (= the prior fixed tail(20)) is the default.
+    tf = st.segmented_control(
+        "Timeframe", ["1Y", "3Y", "5Y", "10Y", "ALL"], default="5Y",
+        key=f"{key_prefix}_trtf_{ticker}", label_visibility="collapsed") or "5Y"
+    _nq = {"1Y": 4, "3Y": 12, "5Y": 20, "10Y": 40, "ALL": None}[tf]
+    _hh = hist.sort_values("REPDTE")
+    h = _hh if _nq is None else _hh.tail(_nq)
     for r in range(0, len(trends), 2):
         cols = st.columns(2)
         for j, (col, (title, keys)) in enumerate(zip(cols, trends[r:r + 2])):
