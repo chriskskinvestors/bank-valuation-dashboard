@@ -514,17 +514,20 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y"):
     # The card heading above the chart is the title (mirrors the price panel's
     # readout); drop the in-chart title and its top-margin band so the plot fills
     # the box at the same height as the price chart next to it.
-    fig.update_layout(title_text="", margin=dict(t=12))
+    # Fill the card like the price chart: drop the rotated P/TBV/P/E axis TITLES
+    # (the legend already names the lines) — they were forcing automargin to blow
+    # the left/right margins out into white space — and pin l/r to just the tick
+    # labels (automargin off so nothing re-expands). b keeps the legend room.
+    fig.update_layout(title_text="", margin=dict(l=36, r=34, t=12))
     # Axes: light gridlines matching the price chart. Ticks auto-adapt to the
-    # selected window (days for 1W/1M, months for 1Y, years for 5Y/ALL) instead
-    # of fixed 6-month ticks. Only the left (P/TBV) axis draws horizontal
-    # gridlines so the dual scales don't double up.
+    # selected window (days for 1W/1M, months for 1Y, years for 5Y/ALL). Only the
+    # left (P/TBV) axis draws horizontal gridlines so the dual scales don't double.
     _grid = "rgba(148,163,184,0.12)"
     fig.update_xaxes(showgrid=True, gridcolor=_grid,
                      ticks="outside", ticklen=3, tickcolor=_grid)
-    fig.update_yaxes(title_text="P/TBV", secondary_y=False, ticksuffix="x",
+    fig.update_yaxes(title_text="", secondary_y=False, ticksuffix="x", automargin=False,
                      showgrid=True, gridcolor=_grid, nticks=6)
-    fig.update_yaxes(title_text="P/E", secondary_y=True, ticksuffix="x",
+    fig.update_yaxes(title_text="", secondary_y=True, ticksuffix="x", automargin=False,
                      showgrid=False, nticks=6)
     return fig
 
