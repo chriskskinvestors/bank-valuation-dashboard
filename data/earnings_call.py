@@ -182,6 +182,8 @@ def merged_call_info() -> dict:
             cur["call_time"] = info["call_time"]
         if info.get("webcast_url"):
             cur["webcast_url"] = info["webcast_url"]
+        if info.get("call_date"):
+            cur["call_date"] = info["call_date"]   # the company's announced date
         base[tk] = cur
     return base
 
@@ -262,21 +264,26 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         fmp = fmp_by_tk.get(tk)
         yrow = (yf or {}).get("row", {})
         frow = (fmp or {}).get("row", {})
-        # Prefer yfinance's real near-term date; fall back to FMP's projection.
-        d = (yf or {}).get("d") or (fmp or {}).get("d")
+        ci = ci_map.get(tk) or {}
+        # The company's OWN announced call date (from its IR events page) is
+        # authoritative — prefer it over yfinance's/FMP's report-date estimate
+        # when it's in window; that also makes the date confirmed (no "proj.").
+        call_d = _iso_date(ci.get("call_date")) if ci.get("call_date") else None
+        if call_d is not None and not (today <= call_d <= horizon):
+            call_d = None
+        d = call_d or (yf or {}).get("d") or (fmp or {}).get("d")
         if d is None or d < today or d > horizon:
             continue
         eps = yrow.get("eps_estimate")
         if eps is None:
             eps = frow.get("epsEstimated")
-        ci = ci_map.get(tk) or {}
         seen[tk] = {
             "_date": d,
             "ticker": tk,
             "date": d.isoformat(),
             "days_until": (d - today).days,
             "when": _WHEN_LABEL.get((frow.get("time") or "").lower()),
-            "confirmed": bool(frow.get("confirmed")),
+            "confirmed": bool(call_d) or bool(frow.get("confirmed")),
             "eps_est": eps,
             "rev_est": frow.get("revenueEstimated"),
             "period_ending": frow.get("periodEnding"),

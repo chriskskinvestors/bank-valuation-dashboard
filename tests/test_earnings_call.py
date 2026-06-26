@@ -194,6 +194,31 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertNotIn("OLD", tickers)                  # date in the past
         self.assertNotIn("FAR", tickers)                  # beyond the 75-day horizon
 
+    def test_q4_call_date_overrides_report_date_and_confirms(self):
+        # The company's announced CALL date (from its IR events page) beats the
+        # yfinance report-date estimate and marks the row confirmed (no "proj.").
+        calls = dict(self.CALLS)
+        calls["BKSC"] = {"call_time": "9:00a ET",
+                         "webcast_url": "https://events.q4inc.com/x",
+                         "call_date": "2026-07-15"}
+        agenda = build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
+        rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
+        bksc = rows["BKSC"]
+        self.assertEqual(bksc["date"], "2026-07-15")   # announced date wins over yf's 07-16
+        self.assertEqual(bksc["days_until"], 2)
+        self.assertTrue(bksc["confirmed"])             # announced ⇒ confirmed
+        self.assertEqual(bksc["call_time"], "9:00a ET")
+
+    def test_q4_call_date_out_of_window_falls_back(self):
+        calls = dict(self.CALLS)
+        calls["BKSC"] = {"call_date": "2026-12-31"}    # beyond horizon → ignore it
+        agenda = build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
+        rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
+        self.assertEqual(rows["BKSC"]["date"], "2026-07-16")   # back to the yfinance date
+        self.assertFalse(rows["BKSC"]["confirmed"])
+
     def test_horizon_days_bounds_window(self):
         # FMPONLY reports 2026-07-20 — inside 75 days, outside a tight 5-day window.
         agenda = build_calls_agenda(
