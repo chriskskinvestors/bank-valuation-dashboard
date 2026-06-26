@@ -649,7 +649,7 @@ def render_earnings_overview(watchlist: list[str]):
     # segmented_control renders only the selected section, so each tab's fetches
     # run only when you're on it.
     SECTIONS = [
-        "Calendar", "Calls & Webcasts", "Surprise Heat-Map", "Beat / Miss",
+        "Calendar", "Surprise Heat-Map", "Beat / Miss",
         "Estimates", "Biggest Surprises", "Sector Aggregates", "Upload / Input",
     ]
     active = st.segmented_control(
@@ -658,8 +658,6 @@ def render_earnings_overview(watchlist: list[str]):
 
     if active == "Calendar":
         _render_earnings_calendar(watchlist)
-    elif active == "Calls & Webcasts":
-        _render_calls_webcasts()
     elif active == "Surprise Heat-Map":
         _render_surprise_heatmap(watchlist)
     elif active == "Beat / Miss":
@@ -1037,141 +1035,15 @@ def _cell(value, cls: str = "") -> str:
 # ── Earnings Calendar ──────────────────────────────────────────────────
 
 def _render_earnings_calendar(watchlist: list[str]):
-    """Show upcoming earnings dates for all tracked banks."""
-    st.subheader("Upcoming Earnings Dates")
-
-    with st.spinner("Loading earnings calendar..."):
-        calendar = fetch_earnings_calendar(tuple(watchlist))
-
-    if not calendar:
-        st.info("No earnings dates found. Earnings calendar data may not be available for all banks.")
-        return
-
-    # Split into upcoming and past
-    from datetime import date
-    today = date.today().isoformat()
-
-    upcoming = [c for c in calendar if c.get("next_earnings_date", "9999") >= today]
-    past = [c for c in calendar if c.get("next_earnings_date", "") < today]
-
-    if upcoming:
-        st.markdown("##### Upcoming Reports")
-        # Report timing (before/after market open) from FMP — reliable and
-        # universe-wide. Precise call times + webcast links live on the dedicated
-        # Calls & Webcasts tab; this view stays focused on dates + estimates.
-        try:
-            from data import earnings_call as _ecall
-            _timing = _ecall.earnings_timing_map()
-        except Exception:
-            _timing = {}
-        headers = [("Ticker", ""), ("Bank", "nm"), ("Report Date", ""),
-                   ("Days", ""), ("When", ""), ("EPS Est (Qtr)", ""),
-                   ("EPS Est (Ann)", ""), ("Price Target", ""), ("Rating", ""),
-                   ("Analysts", "")]
-        body = []
-        for c in upcoming:
-            try:
-                from datetime import datetime
-                ed = datetime.strptime(c["next_earnings_date"], "%Y-%m-%d").date()
-                days_until = (ed - date.today()).days
-                days_str = "Today" if days_until == 0 else f"{days_until}d"
-            except Exception:
-                days_until, days_str = 999, "—"
-
-            # yfinance returns the string "none" for unrated names — render "—",
-            # never the literal "None".
-            rec = (c.get("recommendation") or "").strip()
-            rec_display = (rec.replace("_", " ").title()
-                           if rec and rec.lower() != "none" else "—")
-            ac = c.get("analyst_count")          # None / 0 → "—", not "None"/"0"
-            tm = _timing.get(c["ticker"]) or {}
-
-            tr_cls = ' class="soon"' if days_until <= 7 else ""
-            cells = [
-                _tk_cell(c["ticker"]),
-                _cell(get_name(c["ticker"]), "nm"),
-                _cell(c["next_earnings_date"]),
-                _cell(days_str),
-                _cell(tm.get("when")),
-                _cell(f"${c['eps_estimate']:.2f}" if c.get("eps_estimate") else None),
-                _cell(f"${c['eps_fwd_annual']:.2f}" if c.get("eps_fwd_annual") else None),
-                _cell(f"${c['target_price']:.2f}" if c.get("target_price") else None),
-                _cell(rec_display),
-                _cell(str(ac) if ac else None),
-            ]
-            body.append(f"<tr{tr_cls}>" + "".join(cells) + "</tr>")
-
-        _render_earnings_grid(headers, body, height=_grid_height(len(body)))
-        st.caption("When = report timing (FMP, before/after market open). "
-                   "Call times & webcast links live on the Calls & Webcasts tab.")
-        # Underlying numeric calendar records (unformatted estimates)
-        table_export(pd.DataFrame(upcoming), "earnings_calendar_upcoming",
-                     key="exp_earnings_calendar_upcoming")
-
-        # Summary metrics
-        within_7 = sum(1 for c in upcoming if _days_until(c.get("next_earnings_date")) <= 7)
-        within_30 = sum(1 for c in upcoming if _days_until(c.get("next_earnings_date")) <= 30)
-        ledger("Upcoming Reports", [
-            ("Total Upcoming", str(len(upcoming))),
-            ("This Week", str(within_7)),
-            ("This Month", str(within_30)),
-        ])
-    else:
-        st.info("No upcoming earnings dates found.")
-
-
-def _days_until(date_str: str) -> int:
-    """Calculate days until a date string."""
-    try:
-        from datetime import datetime, date
-        ed = datetime.strptime(date_str, "%Y-%m-%d").date()
-        return (ed - date.today()).days
-    except Exception:
-        return 999
-
-
-# ── Earnings Calls & Webcasts ─────────────────────────────────────────
-
-def _fmt_rev_est(v) -> str:
-    """Revenue estimate (absolute $) → compact $B / $M label; '—' if unknown."""
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return "—"
-    if v == 0:
-        return "—"
-    if abs(v) >= 1e9:
-        return f"${v / 1e9:.2f}B"
-    if abs(v) >= 1e6:
-        return f"${v / 1e6:.0f}M"
-    return f"${v:,.0f}"
-
-
-@st.cache_data(ttl=21600, show_spinner=False)
-def _fmp_earnings_window(from_iso: str, to_iso: str):
-    """FMP earnings calendar for the window, cached 6h. fmp_client.get_earnings_
-    calendar is a raw ~15s network call with no cache of its own; calling it on
-    every render made the Calls & Webcasts tab slow. Raises on failure so a
-    transient error is NOT cached (house pattern: never cache failures)."""
-    from data import fmp_client
-    rows = fmp_client.get_earnings_calendar(from_iso, to_iso)
-    if rows is None:
-        raise RuntimeError("FMP earnings calendar unavailable")
-    return rows
-
-
-def _render_calls_webcasts():
-    """Universe-wide upcoming earnings calls & webcasts, grouped by week.
-
-    Coverage spans the FULL bank universe (FMP earnings calendar), unlike the
-    watchlist-scoped Calendar tab. Report timing (before/after open) and the
-    confirmed-date flag come from FMP; precise call time / webcast link / dial-in
-    are best-effort from each bank's earnings press release where published, and
-    render '—' / blank when not yet available (never fabricated — see CLAUDE.md).
-    """
+    """Universe-wide upcoming earnings calendar, grouped by week — report date &
+    timing, the conference call (time / webcast / dial-in), the estimates and the
+    analyst context together, one row per bank. (Merges the old Calendar and Calls
+    & Webcasts tabs.) Dates/timing/confirmed from FMP + yfinance; call details from
+    the IR/PR pipeline; annual EPS / target / rating / coverage from yfinance.
+    '—' wherever a value isn't available yet (never fabricated — see CLAUDE.md)."""
     from datetime import date, timedelta
 
-    st.subheader("Earnings Calls & Webcasts")
+    st.subheader("Earnings Calendar")
 
     horizon_days = 75            # full upcoming-season window
     today = date.today()
@@ -1182,8 +1054,8 @@ def _render_calls_webcasts():
         except Exception:
             universe = set()
         # Date spine: the universe-wide yfinance snapshot (real near-term dates,
-        # nightly-cached). FMP's calendar overlays before/after-open timing, the
-        # confirmed flag and the revenue estimate (and extends coverage).
+        # nightly-cached) carrying the analyst estimates; FMP overlays timing, the
+        # confirmed flag and revenue; the IR/PR pipeline adds call time + webcast.
         try:
             yf_cal = fetch_earnings_calendar(tuple(sorted(universe)))
         except Exception:
@@ -1209,35 +1081,34 @@ def _render_calls_webcasts():
         st.info("No upcoming bank earnings found in the next 75 days.")
         return
 
+    # Analyst context (price target, rating, coverage) per ticker — carried on the
+    # yfinance calendar rows; joined onto the date/call agenda below.
+    yf_by_tk = {r.get("ticker"): r for r in (yf_cal or [])}
+
     all_rows = [r for b in agenda for r in b["rows"]]
+    n_week = sum(1 for r in all_rows if r["days_until"] <= 7)
     n_confirmed = sum(1 for r in all_rows if r["confirmed"])
     n_webcast = sum(1 for r in all_rows if r.get("webcast_url"))
     n_time = sum(1 for r in all_rows if r.get("call_time"))
-    ledger("Upcoming Calls", [
+    ledger("Upcoming Earnings", [
         ("Banks Reporting", str(len(all_rows))),
+        ("This Week", str(n_week)),
         ("Confirmed Dates", str(n_confirmed)),
         ("Webcast Links", str(n_webcast)),
         ("Precise Call Times", str(n_time)),
     ])
     st.caption(
-        "Full bank universe. **When** = report timing (FMP, before/after market "
-        "open) and a **✓** marks an FMP-confirmed date — unconfirmed dates are "
-        "FMP projections, marked **(proj.)**. **Call Time**, **Webcast** and "
-        "**Dial-in** are parsed from each bank's earnings press release where "
-        "published — these ramp as banks announce call details (~2 weeks out), "
-        "so many rows show — until then.")
+        "Full bank universe, by week. **When** = report timing (FMP, before/after "
+        "market open); a **✓** marks a confirmed date — from FMP or the company's "
+        "own call announcement — others are projections, marked **(proj.)**. "
+        "**Call Time / Webcast / Dial-in** come from each bank's IR call "
+        "announcement; **Target / Rating / Cov** are the yfinance analyst "
+        "consensus. '—' wherever a value isn't available yet.")
 
-    # Quiet-state: nothing in the near term (the gap between earnings seasons).
-    # Set expectations with the real soonest date rather than an empty-looking
-    # table — all_rows is soonest-first.
-    if not any(r["days_until"] <= 14 for r in all_rows):
-        soonest = all_rows[0]
-        proj = "" if soonest["confirmed"] else " (projected)"
-        st.info(
-            f"No bank earnings calls in the next two weeks — the earliest "
-            f"upcoming report is **{soonest['ticker']}** on "
-            f"**{soonest['date']}**{proj}. Call times and webcasts appear as "
-            f"banks publish call details (~2 weeks ahead of each report).")
+    headers = [("Ticker", ""), ("Bank", "nm"), ("Date", ""), ("✓", ""),
+               ("In", ""), ("When", ""), ("Call Time", ""), ("Webcast", ""),
+               ("Dial-in", ""), ("EPS Est", ""), ("Rev Est", ""),
+               ("Target", ""), ("Rating", ""), ("Cov", "")]
 
     for bucket in agenda:
         rows = bucket["rows"]
@@ -1245,9 +1116,6 @@ def _render_calls_webcasts():
         header = f"{bucket['label']} · {len(rows)} report{'s' if len(rows) != 1 else ''}"
         st.markdown(f"##### {'🔴 ' if soon else ''}{header}")
 
-        headers = [("Ticker", ""), ("Bank", "nm"), ("Date", ""), ("In", ""),
-                   ("✓", ""), ("When", ""), ("Call Time", ""), ("EPS Est", ""),
-                   ("Rev Est", ""), ("Webcast", ""), ("Dial-in", "")]
         body = []
         for r in rows:
             days = r["days_until"]
@@ -1259,26 +1127,66 @@ def _render_calls_webcasts():
                            f'target="_blank" rel="noopener">▶ Listen</a></td>')
             else:
                 webcast = '<td class="mut">—</td>'
+            # yfinance returns "none" for unrated names — render "—", never "None".
+            yc = yf_by_tk.get(r["ticker"]) or {}
+            rec = (yc.get("recommendation") or "").strip()
+            rec_display = (rec.replace("_", " ").title()
+                           if rec and rec.lower() != "none" else None)
+            ac = yc.get("analyst_count")         # None / 0 → "—"
+            tp = yc.get("target_price")
             cells = [
                 _tk_cell(r["ticker"]),
                 _cell(get_name(r["ticker"]), "nm"),
                 _cell(date_str),
-                _cell(days_str),
                 _cell("✓" if r["confirmed"] else None),
+                _cell(days_str),
                 _cell(r.get("when")),
                 _cell(r.get("call_time")),
-                _cell(f"${r['eps_est']:.2f}" if r.get("eps_est") else None),
-                _cell(_fmt_rev_est(r.get("rev_est"))),
                 webcast,
                 _cell(r.get("dial_in")),
+                _cell(f"${r['eps_est']:.2f}" if r.get("eps_est") else None),
+                _cell(_fmt_rev_est(r.get("rev_est"))),
+                _cell(f"${tp:.2f}" if tp else None),
+                _cell(rec_display),
+                _cell(str(ac) if ac else None),
             ]
             tr_cls = ' class="soon"' if soon else ""
             body.append(f"<tr{tr_cls}>" + "".join(cells) + "</tr>")
 
         _render_earnings_grid(headers, body, height=_grid_height(len(body)))
 
-    table_export(pd.DataFrame(all_rows), "earnings_calls_webcasts",
-                 key="exp_earnings_calls_webcasts")
+    table_export(pd.DataFrame(all_rows), "earnings_calendar",
+                 key="exp_earnings_calendar")
+
+
+# ── Earnings call helpers ─────────────────────────────────────────────
+
+def _fmt_rev_est(v) -> str:
+    """Revenue estimate (absolute $) → compact $B / $M label; '—' if unknown."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if v == 0:
+        return "—"
+    if abs(v) >= 1e9:
+        return f"${v / 1e9:.2f}B"
+    if abs(v) >= 1e6:
+        return f"${v / 1e6:.0f}M"
+    return f"${v:,.0f}"
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def _fmp_earnings_window(from_iso: str, to_iso: str):
+    """FMP earnings calendar for the window, cached 6h. fmp_client.get_earnings_
+    calendar is a raw ~15s network call with no cache of its own; calling it on
+    every render made the Calendar tab slow. Raises on failure so a
+    transient error is NOT cached (house pattern: never cache failures)."""
+    from data import fmp_client
+    rows = fmp_client.get_earnings_calendar(from_iso, to_iso)
+    if rows is None:
+        raise RuntimeError("FMP earnings calendar unavailable")
+    return rows
 
 
 # ── Beat / Miss Summary ───────────────────────────────────────────────
