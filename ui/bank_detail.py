@@ -511,14 +511,13 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y"):
         hovertemplate="%{x|%b %d, %Y}<br>P/E %{y:.1f}x<extra></extra>"), secondary_y=True)
     apply_standard_layout(fig, title="", height=294,
                           show_legend=True, hovermode="x unified")
-    # The card heading above the chart is the title (mirrors the price panel's
-    # readout); drop the in-chart title and its top-margin band so the plot fills
-    # the box at the same height as the price chart next to it.
-    # Fill the card like the price chart: drop the rotated P/TBV/P/E axis TITLES
-    # (the legend already names the lines) — they were forcing automargin to blow
-    # the left/right margins out into white space — and pin l/r to just the tick
-    # labels (automargin off so nothing re-expands). b keeps the legend room.
-    fig.update_layout(title_text="", margin=dict(l=36, r=34, t=12))
+    # Fill the card edge-to-edge like the price chart. No axis titles (the legend
+    # names the lines); drop the in-chart title and its top band. The left P/TBV
+    # ticks sit in a thin gutter, but the right P/E ticks are tucked INSIDE the
+    # plot so the right margin drops to ~0 and the plot reaches the card's right
+    # border (a right axis otherwise leaves a tick gutter the price chart has
+    # none of). automargin off so nothing re-expands.
+    fig.update_layout(title_text="", margin=dict(l=36, r=6, t=12))
     # Axes: light gridlines matching the price chart. Ticks auto-adapt to the
     # selected window (days for 1W/1M, months for 1Y, years for 5Y/ALL). Only the
     # left (P/TBV) axis draws horizontal gridlines so the dual scales don't double.
@@ -528,7 +527,8 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y"):
     fig.update_yaxes(title_text="", secondary_y=False, ticksuffix="x", automargin=False,
                      showgrid=True, gridcolor=_grid, nticks=6)
     fig.update_yaxes(title_text="", secondary_y=True, ticksuffix="x", automargin=False,
-                     showgrid=False, nticks=6)
+                     showgrid=False, nticks=5, ticks="",
+                     ticklabelposition="inside", tickfont=dict(color=COLOR_WARNING))
     return fig
 
 
