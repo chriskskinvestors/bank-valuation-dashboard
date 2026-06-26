@@ -1518,7 +1518,15 @@ def _cr_component(col_labels: list, rows: list, *, entity: str = "", src: str | 
             + "".join(f'<th class="colh">{_h.escape(str(lb))}</th>' for lb in col_labels))
     height = 96 + 23 * (ri + 4) + height_extra
     html = _build_component(head, "".join(body), {}, entity, None, src)
-    _stc.html(html, height=height, scrolling=False)
+    # _build_component is width:100% — right for a multi-year statement that fills
+    # the page, but a snapshot with only 1-2 value columns would stretch those
+    # columns edge-to-edge and leave a huge dead gap. Constrain narrow tables to a
+    # left column instead of spanning the full width.
+    if len(col_labels) <= 2:
+        with st.columns([2, 3])[0]:
+            _stc.html(html, height=height, scrolling=False)
+    else:
+        _stc.html(html, height=height, scrolling=False)
 
 
 def _cr_usd(raw):
