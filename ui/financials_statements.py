@@ -1480,6 +1480,45 @@ def _render_as_reported_statement(ticker: str, stype: str):
     st.markdown("\n".join(rows))
 
 
+def _cr_title(ticker: str, page: str) -> None:
+    """SNL title bar for a Company-Reported sub-tab (replaces st.subheader)."""
+    from ui.chrome import title_bar
+    info = get_bank_info(ticker)
+    name = info.get("name") if info else ticker
+    title_bar(f"{name} ({ticker})", page)
+
+
+def _cr_grid(columns: list, rows: list) -> None:
+    """Render a Company-Reported table as a .ksk-grid HTML table (the Templated
+    look: navy header, tabular nums, red negatives). columns[0] is the row-label
+    column header; rows is a list of dicts:
+      {"label": str, "values": [formatted-str|None,...], "kind": "data"|"header"|"total"}
+    - kind "header": bold section row spanning all columns (label only)
+    - kind "total":  bold data row
+    Values are already-formatted strings; a value starting with "(" renders red
+    (.neg); None/"" renders blank."""
+    import html as _h
+    n = len(columns)
+    head = "<tr>" + "".join(f"<th>{_h.escape(str(c))}</th>" for c in columns) + "</tr>"
+    body = []
+    for r in rows:
+        lab = _h.escape(str(r["label"]))
+        kind = r.get("kind", "data")
+        if kind == "header":
+            body.append(f'<tr><td colspan="{n}"><strong>{lab}</strong></td></tr>')
+            continue
+        op, cl = ("<strong>", "</strong>") if kind == "total" else ("", "")
+        tds = [f"<td>{op}{lab}{cl}</td>"]
+        for v in r["values"]:
+            s = "" if v is None else _h.escape(str(v))
+            neg = ' class="neg"' if s.strip().startswith("(") else ""
+            tds.append(f"<td{neg}>{op}{s}{cl}</td>")
+        body.append("<tr>" + "".join(tds) + "</tr>")
+    st.markdown('<div class="ksk-grid"><table><thead>' + head
+                + "</thead><tbody>" + "".join(body) + "</tbody></table></div>",
+                unsafe_allow_html=True)
+
+
 def _render_company_statement(ticker: str, stype: str):
     """Multi-year Company-Reported statement (stype = "income" | "balance"),
     stitched from the bank's recent 10-Ks. Faithful to the company's own line
@@ -1529,18 +1568,16 @@ def _render_company_statement(ticker: str, stype: str):
         x = v / 1e6
         return f"({abs(x):,.1f})" if x < 0 else f"{x:,.1f}"
 
-    def _esc(s):
-        return s.replace("|", r"\|").replace("$", r"\$")
-
-    out = ["| | " + " | ".join(cols) + " |", "|---|" + "---|" * len(cols)]
+    rows = []
     for r in stmt["rows"]:
-        lab = _esc(r["label"])
         if r["header"]:
-            out.append(f"| **{lab}** |" + " |" * len(cols))
+            rows.append({"label": r["label"], "values": [], "kind": "header"})
         else:
             vals = r["values"][::-1]
-            out.append(f"| {lab} | " + " | ".join(_m(r["label"], v) for v in vals) + " |")
-    st.markdown("\n".join(out))
+            rows.append({"label": r["label"],
+                         "values": [_m(r["label"], v) for v in vals],
+                         "kind": "data"})
+    _cr_grid([""] + cols, rows)
 
 
 def _compositions_cached(cik):
@@ -1593,14 +1630,15 @@ def _render_company_composition(ticker, kind):
     st.caption(f"Source: company 10-K [{meta['date']}]({src}) — as reported at "
                f"{period}. Each line is the company's own category; the lines "
                f"reconcile to the disclosed total of \\${total / 1e6:,.0f}M.")
-    out = ["| Category | $ millions | % of total |", "|---|--:|--:|"]
+    rows = []
     for row in d["rows"]:
         label, v = row[0], row[1]
-        lab = str(label).replace("|", r"\|").replace("$", r"\$")
         pct = (v / total * 100) if total else 0.0
-        out.append(f"| {lab} | {v / 1e6:,.0f} | {pct:.1f}% |")
-    out.append(f"| **Total** | **{total / 1e6:,.0f}** | **100.0%** |")
-    st.markdown("\n".join(out))
+        rows.append({"label": str(label),
+                     "values": [f"{v / 1e6:,.0f}", f"{pct:.1f}%"], "kind": "data"})
+    rows.append({"label": "Total", "values": [f"{total / 1e6:,.0f}", "100.0%"],
+                 "kind": "total"})
+    _cr_grid(["Category", "$ millions", "% of total"], rows)
 
 
 def render_income_statement(ticker):
@@ -1678,11 +1716,12 @@ def _render_fair_value_hierarchy(ticker):
                  ("Total per filing", "grand", "usd")]
     rows.append(("Level 3 % of total", "l3_pct", "pct"))
 
-    hdr = "| ($) | Assets | Liabilities |"
-    sep = "|---|---|---|"
-    body = [f"| {lab} | {_col(a, k, kind)} | {_col(lia, k, kind)} |"
-            for lab, k, kind in rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    _totals = {"Total (sum of levels)", "Total per filing"}
+    grid_rows = [{"label": lab,
+                  "values": [_col(a, k, kind), _col(lia, k, kind)],
+                  "kind": "total" if lab in _totals else "data"}
+                 for lab, k, kind in rows]
+    _cr_grid(["($)", "Assets", "Liabilities"], grid_rows)
     if needs_netting:
         st.caption("Level totals are gross; the filer's grand total nets "
                    "counterparty/collateral arrangements (shown as a reconciling line).")
@@ -1744,11 +1783,11 @@ def _render_securities_portfolio(ticker):
         ("Net unrealized gain / (loss)", "net_unrealized", _b),
         ("Net unrealized, % of amortized cost", "underwater_pct", _pct),
     ]
-    hdr = "| Debt securities | Available-for-sale | Held-to-maturity |"
-    sep = "|---|---|---|"
-    body = [f"| {lab} | {_col(afs, k, fmt)} | {_col(htm, k, fmt)} |"
-            for lab, k, fmt in rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    _totals = {"Fair value", "Net unrealized gain / (loss)"}
+    grid_rows = [{"label": lab, "values": [_col(afs, k, fmt), _col(htm, k, fmt)],
+                  "kind": "total" if lab in _totals else "data"}
+                 for lab, k, fmt in rows]
+    _cr_grid(["Debt securities", "Available-for-sale", "Held-to-maturity"], grid_rows)
     if (afs and not afs.get("_reconciles")) or (htm and not htm.get("_reconciles")):
         st.caption("Gross gain/loss split shown only where it ties the amortized-cost "
                    "→ fair-value bridge; otherwise only the (directly tagged) net is shown.")
@@ -1817,10 +1856,8 @@ def _render_credit_quality(ticker):
         ("Net charge-offs / loans", _pct(d["nco_to_loans"])),
         ("Provision for credit losses (period)", _b(d["provision"])),
     ]
-    hdr = "| Credit quality | Value |"
-    sep = "|---|---|"
-    body = [f"| {lab} | {val} |" for lab, val in rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    _cr_grid(["Credit quality", "Value"],
+             [{"label": lab, "values": [val], "kind": "data"} for lab, val in rows])
 
 
 def _render_financial_highlights(ticker):
@@ -1879,10 +1916,8 @@ def _render_financial_highlights(ticker):
         ("ACL / total loans", _hpct(h["acl_to_loans"])),
         ("Nonaccrual / total loans", _hpct(h["nonaccrual_to_loans"])),
     ]
-    hdr = "| Financial highlights | Value |"
-    sep = "|---|---|"
-    body = [f"| {lab} | {val} |" for lab, val in rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    _cr_grid(["Financial highlights", "Value"],
+             [{"label": lab, "values": [val], "kind": "data"} for lab, val in rows])
 
 
 def _render_performance(ticker):
@@ -1961,10 +1996,8 @@ def _render_performance(ticker):
         ("Return on average assets (ROA)", _pct(d["roa"])),
         ("Return on average equity (ROE)", _pct(d["roe"])),
     ]
-    hdr = f"| Performance (FY{period[:4]}) | Value |"
-    sep = "|---|---|"
-    body = [f"| {lab} | {val} |" for lab, val in rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    _cr_grid([f"Performance (FY{period[:4]})", "Value"],
+             [{"label": lab, "values": [val], "kind": "data"} for lab, val in rows])
 
 
 def _render_segments(ticker):
@@ -2004,14 +2037,15 @@ def _render_segments(ticker):
             return "n/a"
         return f"${v / 1e9:,.2f}B" if abs(v) >= 1e9 else f"${v / 1e6:,.0f}M"
 
-    rows = [(s["label"], _b(s["net_income"]), _b(s["revenue"]), _b(s["assets"]))
-            for s in d["segments"]]
-    rows.append(("Corporate / other & reconciling items", _b(d["reconciling_residual"]), "", ""))
-    rows.append(("**Consolidated net income**", f"**{_b(d['consolidated_net_income'])}**", "", ""))
-    hdr = f"| Segment (FY{period[:4]}) | Net income | Revenue | Assets |"
-    sep = "|---|---|---|---|"
-    body = [f"| {a} | {b} | {c} | {e} |" for a, b, c, e in rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    grid_rows = [{"label": s["label"],
+                  "values": [_b(s["net_income"]), _b(s["revenue"]), _b(s["assets"])],
+                  "kind": "data"} for s in d["segments"]]
+    grid_rows.append({"label": "Corporate / other & reconciling items",
+                      "values": [_b(d["reconciling_residual"]), "", ""], "kind": "data"})
+    grid_rows.append({"label": "Consolidated net income",
+                      "values": [_b(d["consolidated_net_income"]), "", ""],
+                      "kind": "total"})
+    _cr_grid([f"Segment (FY{period[:4]})", "Net income", "Revenue", "Assets"], grid_rows)
 
 
 def _render_rate_risk(ticker):
@@ -2069,10 +2103,10 @@ def _render_rate_risk(ticker):
         ("Unrealized as % of equity", _pct(d["unrealized_to_equity"])),
         ("Unrealized as % of CET1 capital", _pct(d["unrealized_to_cet1"])),
     ]
-    hdr = "| Embedded rate risk | Value |"
-    sep = "|---|---|"
-    body = [f"| {lab} | {val} |" for lab, val in rows]
-    st.markdown("\n".join([hdr, sep] + body))
+    _cr_grid(["Embedded rate risk", "Value"],
+             [{"label": lab, "values": [val],
+               "kind": "total" if lab == "Total unrealized gain / (loss)" else "data"}
+              for lab, val in rows])
 
 
 def render_portfolio(ticker):

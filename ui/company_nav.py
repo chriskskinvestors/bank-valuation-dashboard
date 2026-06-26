@@ -226,70 +226,75 @@ def _executive_compensation(t, ctx):
 # hidden per-bank when the company doesn't disclose it.
 
 def _cr_income(t, ctx):
-    import streamlit as st
-    from ui.financials_statements import _render_company_statement
-    st.subheader("Income Statement — Company Reported")
+    from ui.financials_statements import _cr_title, _render_company_statement
+    _cr_title(t, "Income Statement — Company Reported")
     _render_company_statement(t, "income")
 
 
 def _cr_balance(t, ctx):
-    import streamlit as st
-    from ui.financials_statements import _render_company_statement
-    st.subheader("Balance Sheet — Company Reported")
+    from ui.financials_statements import _cr_title, _render_company_statement
+    _cr_title(t, "Balance Sheet — Company Reported")
     _render_company_statement(t, "balance")
 
 
 def _cr_deposit(t, ctx):
-    import streamlit as st
-    from ui.financials_statements import _render_company_composition
-    st.subheader("Deposit Composition — Company Reported")
+    from ui.financials_statements import _cr_title, _render_company_composition
+    _cr_title(t, "Deposit Composition — Company Reported")
     _render_company_composition(t, "deposit")
 
 
 def _cr_loan(t, ctx):
-    import streamlit as st
-    from ui.financials_statements import _render_company_composition
-    st.subheader("Loan Composition — Company Reported")
+    from ui.financials_statements import _cr_title, _render_company_composition
+    _cr_title(t, "Loan Composition — Company Reported")
     _render_company_composition(t, "loan")
 
 
 def _cr_fair_value(t, ctx):
-    from ui.financials_statements import _render_fair_value_hierarchy
+    from ui.financials_statements import _cr_title, _render_fair_value_hierarchy
+    _cr_title(t, "Fair Value — Company Reported")
     _render_fair_value_hierarchy(t)
 
 
 def _cr_securities(t, ctx):
-    from ui.financials_statements import _render_securities_portfolio
+    from ui.financials_statements import _cr_title, _render_securities_portfolio
+    _cr_title(t, "Securities Portfolio — Company Reported")
     _render_securities_portfolio(t)
 
 
 def _cr_credit(t, ctx):
-    from ui.financials_statements import _render_credit_quality
+    from ui.financials_statements import _cr_title, _render_credit_quality
+    _cr_title(t, "Credit Quality / Allowance — Company Reported")
     _render_credit_quality(t)
 
 
 def _cr_performance(t, ctx):
-    from ui.financials_statements import _render_performance
+    from ui.financials_statements import _cr_title, _render_performance
+    _cr_title(t, "Performance Analysis — Company Reported")
     _render_performance(t)
 
 
 def _cr_highlights(t, ctx):
-    from ui.financials_statements import _render_financial_highlights
+    from ui.financials_statements import _cr_title, _render_financial_highlights
+    _cr_title(t, "Financial Highlights — Company Reported")
     _render_financial_highlights(t)
 
 
 def _cr_segments(t, ctx):
-    from ui.financials_statements import _render_segments
+    from ui.financials_statements import _cr_title, _render_segments
+    _cr_title(t, "Segment Reporting — Company Reported")
     _render_segments(t)
 
 
 def _cr_rate_risk(t, ctx):
-    from ui.financials_statements import _render_rate_risk
+    from ui.financials_statements import _cr_title, _render_rate_risk
+    _cr_title(t, "Interest Rate Risk — Company Reported")
     _render_rate_risk(t)
 
 
 def _cr_reg_capital(t, ctx):
+    from ui.financials_statements import _cr_title
     from ui.capital_dynamics import _render_holdco_capital
+    _cr_title(t, "Regulatory Capital — Company Reported")
     _render_holdco_capital(t)
 
 
