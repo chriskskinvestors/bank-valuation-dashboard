@@ -473,8 +473,12 @@ def _valuation_history_chart(ticker: str, info: dict):
         x=dates, y=pes, name="P/E", mode="lines+markers",
         connectgaps=True, line=dict(color=COLOR_WARNING, width=2), marker=dict(size=5),
         hovertemplate="%{x|%b %Y}<br>P/E %{y:.1f}x<extra></extra>"), secondary_y=True)
-    apply_standard_layout(fig, title="P/TBV & P/E — quarter-end", height=545,
+    apply_standard_layout(fig, title="", height=294,
                           show_legend=True, hovermode="x unified")
+    # The card heading above the chart is the title (mirrors the price panel's
+    # readout); drop the in-chart title and its top-margin band so the plot fills
+    # the box at the same height as the price chart next to it.
+    fig.update_layout(title_text="", margin=dict(t=12))
     fig.update_yaxes(title_text="P/TBV", secondary_y=False, ticksuffix="x")
     fig.update_yaxes(title_text="P/E", secondary_y=True, ticksuffix="x", showgrid=False)
     return fig
@@ -541,13 +545,28 @@ def _render_price_panel(ticker: str):
 
 
 def _render_valuation_panel(ticker: str, info: dict):
-    """Quarter-end P/TBV & P/E history chart, shown below the snapshot band."""
-    st.markdown("**Valuation — P/TBV & P/E**")
-    fig = _valuation_history_chart(ticker, info)
-    if fig is not None:
-        st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
-    else:
-        st.caption("Valuation history unavailable for this bank.")
+    """Quarter-end P/TBV & P/E history. Mirrors the price card beside it: a
+    hairline-bordered box holding the chart at the same 294px height, with the
+    heading floating above (the in-chart title is dropped to avoid doubling it)."""
+    st.markdown(
+        "**Valuation — P/TBV & P/E** "
+        "<span style='color:var(--text-secondary);font-weight:400;"
+        "font-size:var(--fs-grid-9_5);'>· quarter-end</span>",
+        unsafe_allow_html=True)
+    with st.container(key="ov_val_box"):
+        # Same hairline card as the price panel (border + flush chart inset) so
+        # the two charts read as a matched pair.
+        st.markdown(
+            "<style>"
+            ".st-key-ov_val_box{border:1px solid var(--grid-head);"
+            "border-radius:0;padding:4px 0 5px;}"
+            ".st-key-ov_val_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
+            "</style>", unsafe_allow_html=True)
+        fig = _valuation_history_chart(ticker, info)
+        if fig is not None:
+            st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
+        else:
+            st.caption("Valuation history unavailable for this bank.")
 
 
 def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
