@@ -246,6 +246,10 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
             ("NPLs / loans", "pct", "NCLNLSR"),
             ("Net charge-offs / loans", "pct", "NTLNLSR"),
             ("Loan-loss reserves / loans", "pct", "LNATRESR"),
+            ("30–89 days past due / loans", "ratio", "P3ASSET", "LNLSNET",
+             "30–89 days past due", "Net loans"),
+            ("90+ days past due / loans", "ratio", "P9ASSET", "LNLSNET",
+             "90+ days past due", "Net loans"),
         ]),
     ]
     _left, _right = st.columns([1, 1])

@@ -414,6 +414,11 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             ("Total capital ratio", "pct", "RBCRWAJ"),
             ("Leverage ratio", "pct", "RBCT1JR"),
         ]),
+        ("Regulatory Capital", [
+            ("Tier 1 capital", "dollar", "RBCT1J"),
+            ("Total equity", "dollar", "EQTOT"),
+            ("Risk-weighted assets", "dollar", "RWAJ"),
+        ]),
     ]
     _left, _right = st.columns([1, 1])
     with _left:
