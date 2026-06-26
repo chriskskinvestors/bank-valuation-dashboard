@@ -575,7 +575,7 @@ def _board_table(rows: list[dict]) -> str:
                 f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_level(r.get("prior"), r["basis"])}</td>'
                 f'<td style="text-align:right;">{_fmt_delta(r)}</td>'
                 f'<td style="text-align:right;">{_fmt_z(r.get("zscore"))}</td>'
-                f'<td style="text-align:center;">{_sparkline_svg(r.get("spark"), width=64)}</td>'
+                f'<td style="text-align:center;">{_sparkline_svg(r.get("spark"))}</td>'
                 f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_as_of(r["as_of"], r["freq"])}</td>'
                 "</tr>"
             )
@@ -1056,11 +1056,11 @@ def _render_economy_calendar():
     # Inflation/Labor stacked beside Growth/Activity stacked. board_col is sized
     # to hug the full 7-column board (indicator…Trend…As of) — wide enough not to
     # clip, tight enough to leave only a thin seam before the charts (no right
-    # slack); the chart grid takes the rest and runs taller to fill it.
-    # Board carries an extra ~0.2 vs the charts so a narrower window keeps the
-    # As-of column on-screen instead of pushing it under the chart grid; the
-    # board table also scrolls within its own column as a hard backstop.
-    cal_col, board_col, chart_col = st.columns([1, 1.25, 1.45])
+    # slack); the chart grid takes the rest and runs taller to fill it. On a
+    # narrower window the board table scrolls within its own column (overflow-x
+    # in _board_table) rather than pushing As-of under the charts — so this stays
+    # tight on a wide screen instead of widening the board and leaving a gap.
+    cal_col, board_col, chart_col = st.columns([1, 1.04, 1.62])
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
