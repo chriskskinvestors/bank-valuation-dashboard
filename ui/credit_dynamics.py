@@ -239,7 +239,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     tighten_yaxis(fig4, _rc_vals, floor_zero=True, ticksuffix="%")
 
     # Page pattern (matches Financial Highlights): click-to-source data table
-    # on the left, trend charts stacked on the right.
+    # on the left, trend charts tiled 2×2 on the right.
     from ui.fdic_click_table import render_fdic_click_table
     _aq_sections = [
         ("Asset Quality — FDIC Call Report", [
@@ -253,9 +253,14 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
         if not render_fdic_click_table(ticker, _aq_sections, period="Annual"):
             st.caption("FDIC metrics table unavailable.")
     with _right:
-        st.plotly_chart(fig2, use_container_width=True, key=f"aq_nco_{ticker}")
-        st.plotly_chart(fig3, use_container_width=True, key=f"aq_pd_{ticker}")
-        st.plotly_chart(fig4, use_container_width=True, key=f"aq_rc_{ticker}")
+        _g1 = st.columns(2)
+        with _g1[0]:
+            st.plotly_chart(fig2, use_container_width=True, key=f"aq_nco_{ticker}")
+        with _g1[1]:
+            st.plotly_chart(fig3, use_container_width=True, key=f"aq_pd_{ticker}")
+        _g2 = st.columns(2)
+        with _g2[0]:
+            st.plotly_chart(fig4, use_container_width=True, key=f"aq_rc_{ticker}")
 
 
 def _render_by_loan_type(ticker: str, summary: dict, timeline):
@@ -283,7 +288,7 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
     with _chart:
         import plotly.graph_objects as go
         from utils.chart_style import (apply_standard_layout, tighten_yaxis,
-                                       CHART_HEIGHT_FULL, CATEGORICAL_PALETTE)
+                                       CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
         fig = go.Figure()
         segments = [
             ("npl_ratio", "Total", "#0f172a", 3),
@@ -303,7 +308,7 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
                     marker=dict(size=5 if width < 3 else 7),
                 ))
         apply_standard_layout(fig, title="NPL by Loan Segment",
-                              height=CHART_HEIGHT_FULL,
+                              height=CHART_HEIGHT_COMPACT,
                               yaxis_title="NPL %", show_legend=True)
         tighten_yaxis(fig, floor_zero=True, ticksuffix="%")
         st.plotly_chart(fig, use_container_width=True)
