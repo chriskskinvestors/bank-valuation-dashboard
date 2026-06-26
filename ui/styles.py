@@ -103,17 +103,22 @@ CUSTOM_CSS = """
     /* ═══════════════════════════════════════════════════════════════════
        Chrome — top nav, title bar, ledgers, grid tables (DESIGN-SYSTEM.md)
     ═══════════════════════════════════════════════════════════════════ */
-    /* Top nav: the section radio rendered as a horizontal nav bar. */
+    /* Top nav: the section radio rendered as a horizontal nav bar.
+       NOTE: every rule below is scoped to [role="radiogroup"] label (the option
+       tabs) — NOT a bare `.st-key-topnav label`, which also matches the radio's
+       hidden WIDGET label ("Navigate") and the `display:inline-flex !important`
+       was force-un-hiding it (it leaked above the bar on every page). Scoping
+       lets Streamlit's label_visibility="collapsed" keep "Navigate" hidden. */
     .st-key-topnav { border-bottom: 1px solid var(--grid-head); }
     .st-key-topnav [role="radiogroup"] { display: flex; gap: 4px; flex-wrap: wrap; }
-    .st-key-topnav label {
+    .st-key-topnav [role="radiogroup"] label {
         border: none !important; background: transparent !important;
         padding: 4px 10px !important; margin: 0 !important;
         font-size: var(--fs-sm) !important; color: var(--text-secondary) !important;
         border-radius: 0 !important; cursor: pointer;
         border-bottom: 2px solid transparent !important;
     }
-    .st-key-topnav label:has(input:checked) {
+    .st-key-topnav [role="radiogroup"] label:has(input:checked) {
         color: var(--brand-primary) !important; font-weight: 600 !important;
         border-bottom: 2px solid var(--brand-primary) !important;
         background: transparent !important;
@@ -126,10 +131,10 @@ CUSTOM_CSS = """
        (The nav-blank incident that day was a browser render glitch —
        zoom/hardware-acceleration on a fresh Chrome 149 build — NOT this CSS;
        the same rule renders perfectly on the identical browser version.) */
-    .st-key-topnav label > div:first-child { display: none !important; }
-    .st-key-topnav label > input { position: absolute !important; opacity: 0 !important;
+    .st-key-topnav [role="radiogroup"] label > div:first-child { display: none !important; }
+    .st-key-topnav [role="radiogroup"] label > input { position: absolute !important; opacity: 0 !important;
         width: 1px !important; height: 1px !important; margin: 0 !important; }
-    .st-key-topnav label { display: inline-flex !important; align-items: center; }
+    .st-key-topnav [role="radiogroup"] label { display: inline-flex !important; align-items: center; }
 
     /* Global bank search in the nav bar — compact + professional so it reads as
        part of the nav, not the default chunky Streamlit selectbox. Matched to
