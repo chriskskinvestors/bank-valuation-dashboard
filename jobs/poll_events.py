@@ -244,6 +244,23 @@ def main() -> int:
             except Exception as e:
                 print(f"  [summarizer] failed: {type(e).__name__}: {e}")
 
+    # Rebuild the upcoming-earnings CALL-DETAIL snapshots from the now-fresh
+    # events store — here, every ~30 min, rather than only in the heavy nightly
+    # refresh-universe job (whose validation-gate exit code and image-pin churn
+    # kept call data stale). Cheap (Q4 events + a handful of PR detail fetches),
+    # never fails the poll, uses the IR endpoints discovered nightly.
+    try:
+        from data.events.ir_site import refresh_q4_calls_snapshot
+        from data.earnings_call import refresh_pr_call_snapshot
+        tq = time.time()
+        n_q4 = len(refresh_q4_calls_snapshot())
+        n_pr = len(refresh_pr_call_snapshot())
+        print(f"▶ Call details refreshed — Q4 {n_q4} banks, PR {n_pr} banks "
+              f"({time.time()-tq:.0f}s)", flush=True)
+    except Exception as e:
+        print(f"  [calls] snapshot refresh failed: {type(e).__name__}: {e}",
+              flush=True)
+
     elapsed = time.time() - t0
     print(f"✓ Done in {elapsed:.1f}s — {total_new} new events, "
           f"{crashes} crashes, {timeouts} timeouts")

@@ -244,33 +244,11 @@ def main():
         print(f"[warn] IR endpoint discovery failed: {type(e).__name__}: {e}",
               flush=True)
 
-    # Pull each Q4-hosted bank's next earnings-call details (date / time /
-    # webcast link) from its IR events page and snapshot them, so the Calls &
-    # Webcasts agenda can show the webcast + call time (the press-release parser
-    # alone leaves these almost entirely blank).
-    try:
-        from data.events.ir_site import refresh_q4_calls_snapshot
-        t1 = time.time()
-        calls = refresh_q4_calls_snapshot(snapshot)
-        print(f"[{time.strftime('%H:%M:%S')}] Q4 call details snapshotted "
-              f"({len(calls)} banks, {time.time()-t1:.0f}s)", flush=True)
-    except Exception as e:
-        print(f"[warn] Q4 call-details snapshot failed: {type(e).__name__}: {e}",
-              flush=True)
-
-    # Universe-wide (any IR platform): fetch each bank's earnings-announcement PR
-    # detail page and parse the conference-call section (webcast / dial-in / time)
-    # — the wire feeds only carry a short snippet, so the call details otherwise
-    # never reach non-Q4 banks.
-    try:
-        from data.earnings_call import refresh_pr_call_snapshot
-        t1 = time.time()
-        prc = refresh_pr_call_snapshot()
-        print(f"[{time.strftime('%H:%M:%S')}] PR call details snapshotted "
-              f"({len(prc)} banks, {time.time()-t1:.0f}s)", flush=True)
-    except Exception as e:
-        print(f"[warn] PR call-details snapshot failed: {type(e).__name__}: {e}",
-              flush=True)
+    # NB: the upcoming-earnings call-detail snapshots (Q4 events + PR bodies) are
+    # rebuilt by the poll-events job every ~30 min — not here — so call data stays
+    # fresh and isn't tied to this job's nightly cadence or its validation-gate
+    # exit code. This job only DISCOVERS the IR endpoints (above) that the
+    # poll-events snapshot builders consume.
 
     # Exit code reflects severity: new regressions or >5% failure rate fail
     # the execution (visible in Cloud Run job history).
