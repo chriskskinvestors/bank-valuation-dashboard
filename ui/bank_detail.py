@@ -473,7 +473,7 @@ def _valuation_history_chart(ticker: str, info: dict):
         x=dates, y=pes, name="P/E", mode="lines+markers",
         connectgaps=True, line=dict(color=COLOR_WARNING, width=2), marker=dict(size=5),
         hovertemplate="%{x|%b %Y}<br>P/E %{y:.1f}x<extra></extra>"), secondary_y=True)
-    apply_standard_layout(fig, title="P/TBV & P/E — quarter-end", height=420,
+    apply_standard_layout(fig, title="P/TBV & P/E — quarter-end", height=545,
                           show_legend=True, hovermode="x unified")
     fig.update_yaxes(title_text="P/TBV", secondary_y=False, ticksuffix="x")
     fig.update_yaxes(title_text="P/E", secondary_y=True, ticksuffix="x", showgrid=False)

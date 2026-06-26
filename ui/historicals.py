@@ -162,7 +162,7 @@ def render_historicals(ticker: str):
         fig1.add_trace(go.Scatter(x=periods, y=roa, name="ROAA", line=dict(color=COLOR_PRIMARY, width=2)), row=1, col=2)
         fig1.add_trace(go.Scatter(x=periods, y=eff, name="Efficiency", line=dict(color=COLOR_WARNING, width=2)), row=1, col=2)
 
-        apply_standard_layout(fig1, height=230, show_legend=True)
+        apply_standard_layout(fig1, height=300, show_legend=True)
         st.plotly_chart(fig1, use_container_width=True)
 
         # Chart 2: Balance Sheet Growth — auto-scale to B or T
@@ -187,7 +187,7 @@ def render_historicals(ticker: str):
         if core:
             fig2.add_trace(go.Bar(x=periods, y=core, name=f"Core (${unit})", marker_color=COLOR_SUCCESS, opacity=0.7), row=1, col=2)
 
-        apply_standard_layout(fig2, height=210, show_legend=True)
+        apply_standard_layout(fig2, height=275, show_legend=True)
         fig2.update_layout(barmode="group")
         st.plotly_chart(fig2, use_container_width=True)
 
@@ -198,7 +198,7 @@ def render_historicals(ticker: str):
         if "IDT1CER" in df.columns:
             cet1 = df["IDT1CER"].tolist()[::-1]
             fig3.add_trace(go.Scatter(x=periods, y=cet1, name="CET1 Ratio", line=dict(color=COLOR_SUCCESS, width=2)))
-        apply_standard_layout(fig3, title="Credit Quality & Capital", height=190, show_legend=True)
+        apply_standard_layout(fig3, title="Credit Quality & Capital", height=250, show_legend=True)
         st.plotly_chart(fig3, use_container_width=True)
 
     # ── TAB 2: Quarterly Detail ──────────────────────────────────────────

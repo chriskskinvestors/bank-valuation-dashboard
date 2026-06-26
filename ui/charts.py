@@ -38,7 +38,7 @@ def price_chart(df: pd.DataFrame, ticker: str, show_title: bool = True) -> go.Fi
     if df is None or df.empty or "close" not in df.columns:
         fig = go.Figure()
         apply_standard_layout(fig, title=(price_readout(df, ticker) if show_title else ""),
-                              height=300, show_legend=False)
+                              height=390, show_legend=False)
         if not show_title:
             fig.update_layout(title_text="")   # else plotly renders "undefined"
         return fig
@@ -74,7 +74,7 @@ def price_chart(df: pd.DataFrame, ticker: str, show_title: bool = True) -> go.Fi
                              name="Volume", showlegend=False), row=2, col=1)
         fig.update_yaxes(showgrid=False, row=2, col=1)
 
-    apply_standard_layout(fig, title=title, height=420, show_legend=False,
+    apply_standard_layout(fig, title=title, height=545, show_legend=False,
                           hovermode="x unified")
     if not show_title:
         # apply_standard_layout leaves an empty title object ({}) for a falsy
@@ -282,7 +282,7 @@ def balance_sheet_chart(fdic_df: pd.DataFrame) -> go.Figure:
     from utils.chart_style import apply_standard_layout
     if fdic_df is None or fdic_df.empty:
         fig = go.Figure()
-        apply_standard_layout(fig, title="Balance Sheet — no data", height=300, show_legend=False)
+        apply_standard_layout(fig, title="Balance Sheet — no data", height=390, show_legend=False)
         return fig
     d = fdic_df.sort_values("REPDTE")
     fig = go.Figure()
@@ -306,7 +306,7 @@ def _donut(labels, values, title, colors):
     pairs = [(l, v, c) for l, v, c in zip(labels, values, colors) if v and v > 0]
     if not pairs:
         fig = go.Figure()
-        fig.update_layout(title=f"{title} — no data", height=300, **CHART_LAYOUT)
+        fig.update_layout(title=f"{title} — no data", height=390, **CHART_LAYOUT)
         return fig
     ls, vs, cs = zip(*pairs)
     fig = go.Figure(go.Pie(
@@ -316,7 +316,7 @@ def _donut(labels, values, title, colors):
         textinfo="percent", textfont_size=11, textposition="inside",
         hovertemplate="%{label}: $%{value:.2f}B (%{percent})<extra></extra>"))
     fig.update_layout(
-        title=title, height=270, showlegend=True,
+        title=title, height=350, showlegend=True,
         legend=dict(orientation="v", x=0.54, xanchor="left", y=0.5, yanchor="middle",
                     font=dict(size=9.5)),
         margin=dict(l=6, r=6, t=34, b=6),
@@ -378,7 +378,7 @@ def growth_trend_chart(fdic_df: pd.DataFrame) -> go.Figure:
     from utils.chart_style import apply_standard_layout
     if fdic_df is None or fdic_df.empty:
         fig = go.Figure()
-        apply_standard_layout(fig, title="YoY Growth — no data", height=300, show_legend=False)
+        apply_standard_layout(fig, title="YoY Growth — no data", height=390, show_legend=False)
         return fig
     d = fdic_df.sort_values("REPDTE")
     fig = go.Figure()
@@ -405,7 +405,7 @@ def loans_deposits_chart(fdic_df: pd.DataFrame) -> go.Figure:
     if (fdic_df is None or fdic_df.empty
             or "LNLSNET" not in fdic_df.columns or "DEP" not in fdic_df.columns):
         fig = go.Figure()
-        apply_standard_layout(fig, title="Loans / Deposits — no data", height=240, show_legend=False)
+        apply_standard_layout(fig, title="Loans / Deposits — no data", height=310, show_legend=False)
         return fig
     d = fdic_df.sort_values("REPDTE")
     ld = (d["LNLSNET"] / d["DEP"] * 100)

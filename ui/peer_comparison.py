@@ -781,12 +781,12 @@ def _render_peer_scatters(selected_peers: list[dict]):
         "size": size_metric if size_metric != "(uniform)" else None,
     }
 
-    fig = _build_scatter(selected_peers, custom_preset, height=420)
+    fig = _build_scatter(selected_peers, custom_preset, height=545)
     if fig is not None:
         st.plotly_chart(fig, use_container_width=True)
 
 
-def _build_scatter(peers: list[dict], preset: dict, height: int = 320):
+def _build_scatter(peers: list[dict], preset: dict, height: int = 415):
     """Build a single scatter plot from a preset config."""
     import plotly.graph_objects as go
     from utils.chart_style import (
