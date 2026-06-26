@@ -986,27 +986,24 @@ def _tk_cell(ticker: str) -> str:
             f'target="_self">{tk}</a></td>')
 
 
-def _grid_height(n_rows: int) -> int:
-    """Pixel height for a grid scroll box of n_rows (header + ~18px rows),
-    capped so long tables scroll instead of running off the page."""
-    return min(540, 44 + 18 * n_rows)
-
-
-def _render_earnings_grid(headers, body_rows, height: int = 540):
+def _render_earnings_grid(headers, body_rows, height: int | None = None):
     """Render an SNL-style `ksk-grid` HTML table (design-system look used across
     the site) — hairline grid, small-caps headers, tabular right-aligned cells.
     Replaces st.dataframe here, which can't carry per-row links and renders a
     literal "None" for empty cells. `headers` is a list of (label, cls) where cls
     is "" (right-aligned, default) or "nm" (left-aligned text); `body_rows` is a
-    list of pre-built <tr>…</tr> strings."""
+    list of pre-built <tr>…</tr> strings.
+
+    `height` None (default) → NATURAL height: the table grows to fit every row and
+    the PAGE scrolls — no inner, separately-scrolling box (the row-height estimate
+    that fed a fixed box always under/over-shot and left a scrollbar). An explicit
+    px height gives the legacy fixed scroll box with a sticky header."""
     head = "<tr>" + "".join(
         f'<th class="{cls}">{_html.escape(lbl)}</th>' for lbl, cls in headers) + "</tr>"
-    # Height is INLINE per element — every table/bucket shares the .ern-wrap class,
-    # so a shared `.ern-wrap{height}` rule would let the last-rendered table (e.g. a
-    # 1-row Calls & Webcasts week) clamp ALL of them, including the 245-row Calendar.
     css = (
-        ".ern-wrap{overflow:auto;border:0.5px solid var(--grid-head);}"
-        ".ern-wrap thead th{position:sticky;top:0;z-index:2;}"
+        ".ern-wrap{border:0.5px solid var(--grid-head);}"
+        ".ern-wrap.scroll{overflow:auto;}"
+        ".ern-wrap.scroll thead th{position:sticky;top:0;z-index:2;}"
         ".ern-grid td.nm,.ern-grid th.nm{text-align:left;color:var(--text-secondary);"
         "max-width:230px;overflow:hidden;text-overflow:ellipsis;}"
         ".ern-grid a.tk{font-weight:700;text-decoration:none;color:var(--brand-primary);}"
@@ -1014,9 +1011,12 @@ def _render_earnings_grid(headers, body_rows, height: int = 540):
         ".ern-grid td.mut{color:var(--text-muted);}"
         ".ern-grid tr.soon td{background:rgba(217,119,6,0.07);}"
     )
+    if height is None:
+        wrap = '<div class="ern-wrap">'
+    else:
+        wrap = f'<div class="ern-wrap scroll" style="height:{height}px">'
     st.markdown(
-        f"<style>{css}</style>"
-        f'<div class="ern-wrap" style="height:{height}px">'
+        f"<style>{css}</style>{wrap}"
         f'<table class="ksk-grid ern-grid">'
         f'<thead>{head}</thead><tbody>{"".join(body_rows)}</tbody></table></div>',
         unsafe_allow_html=True)
@@ -1152,12 +1152,9 @@ def _render_earnings_calendar(watchlist: list[str]):
                ("Dial-in", ""), ("EPS Est", ""), ("Rev Est", ""),
                ("Target", ""), ("Rating", ""), ("Cov", "")]
 
-    # No internal scroll — each table grows to fit its rows; a long week is split
-    # into two balanced tables side by side so it fills the horizontal space
-    # instead of scrolling one tall box. (Cap is a safety net for a huge week.)
-    def _full_height(n):
-        return min(1600, 40 + 18 * n)
-
+    # Tables render at NATURAL height (no inner scrollbox — the page scrolls). A
+    # long week is split into two balanced tables side by side so it fills the
+    # horizontal space instead of running down one tall column.
     for bucket in agenda:
         rows = bucket["rows"]
         soon = bucket["label"] == "This week"
@@ -1170,11 +1167,11 @@ def _render_earnings_calendar(watchlist: list[str]):
             left, right = trs[:mid], trs[mid:]
             c1, c2 = st.columns(2, gap="small")
             with c1:
-                _render_earnings_grid(headers, left, height=_full_height(len(left)))
+                _render_earnings_grid(headers, left)
             with c2:
-                _render_earnings_grid(headers, right, height=_full_height(len(right)))
+                _render_earnings_grid(headers, right)
         else:
-            _render_earnings_grid(headers, trs, height=_full_height(len(trs)))
+            _render_earnings_grid(headers, trs)
 
     table_export(pd.DataFrame(all_rows), "earnings_calendar",
                  key="exp_earnings_calendar")
