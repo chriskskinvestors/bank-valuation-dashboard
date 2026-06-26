@@ -79,17 +79,32 @@ _DEFAULT_TRENDS = [
 ]
 
 # Balance Sheet — composition, mix, and funding trends (the table's own story).
+# Each chart groups SAME-MAGNITUDE series so tighten_yaxis can zoom and the
+# trends actually read. The old groups mixed a $20B line with a $0.1B one, which
+# pinned the axis to ~0 and flattened every line. Magnitudes hand-checked for
+# ABCB (e.g. total_assets 28B / total_loans 22B / total_deposits 23B cluster;
+# consumer/auto/card loans are all <$0.2B and belong together, not under a $5B
+# residential line).
 _BS_TRENDS = [
-    ("Balance Sheet Size ($B)", ["total_assets", "total_loans", "total_deposits", "total_equity"]),
-    ("Asset Mix ($B)", ["total_loans", "securities", "cash_balances", "trading_assets"]),
-    ("Loan Portfolio ($B)", ["ln_re_total", "ln_ci", "ln_consumer", "ln_ag"]),
+    ("Assets, Loans & Deposits ($B)", ["total_assets", "total_loans", "total_deposits"]),
+    ("Loan Composition ($B)", ["ln_re_total", "ln_re_residential", "ln_ci"]),
     ("CRE Detail ($B)", ["ln_re_nres_oo", "ln_re_nres_noo", "ln_re_multifam", "ln_re_construct"]),
-    ("Residential & Consumer ($B)", ["ln_re_residential", "ln_consumer", "ln_auto", "ln_credit_card"]),
-    ("Deposit Composition ($B)", ["total_deposits", "core_deposits", "brokered_deposits", "large_time_dep"]),
+    ("Consumer & Specialty Loans ($B)", ["ln_consumer", "ln_auto", "ln_credit_card", "ln_ag"]),
+    ("Securities & Cash ($B)", ["securities", "cash_balances"]),
+    ("Deposit Funding ($B)", ["core_deposits", "large_time_dep", "uninsured_deposits"]),
     ("Insured vs Uninsured Deposits ($B)", ["insured_deposits", "uninsured_deposits"]),
-    ("Securities: AFS vs HTM ($B)", ["sec_afs", "sec_htm", "trading_assets"]),
-    ("Loans & Deposits ($B) vs L/D (%)", ["total_loans", "total_deposits", "loans_to_deposits"]),
     ("Equity ($B) vs Capital Ratios (%)", ["total_equity", "cet1_ratio", "leverage_ratio"]),
+]
+
+# Income Statement — dollar P&L trends (its own story), so it no longer shows the
+# same ratio charts as Performance Analysis. NII/fees/expense/income are FDIC
+# YTD figures, so the lines step up within each year (Q1→Q4) and reset — the
+# YoY level is the trend. Margin (a clean ratio) rides the NII chart's right axis.
+_INCOME_TRENDS = [
+    ("Net Interest Income & Margin", ["net_interest_income", "nim"]),
+    ("Revenue & Expense ($B)", ["net_interest_income", "nonint_income", "nonint_expense"]),
+    ("Pre-tax & Net Income ($B)", ["pretax_income", "net_income"]),
+    ("Provision for Credit Losses ($B)", ["provision"]),
 ]
 
 
@@ -1583,7 +1598,7 @@ def _render_company_composition(ticker, kind):
 
 def render_income_statement(ticker):
     render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True,
-                     side_by_side=True)
+                     trends=_INCOME_TRENDS, side_by_side=True)
 
 
 def render_balance_sheet(ticker):

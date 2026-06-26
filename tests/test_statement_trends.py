@@ -25,7 +25,7 @@ sys.modules.setdefault("streamlit.components.v1", _c1)
 import pandas as pd
 
 from config import METRICS_BY_KEY
-from ui.financials_statements import _DEFAULT_TRENDS, _BS_TRENDS
+from ui.financials_statements import _DEFAULT_TRENDS, _BS_TRENDS, _INCOME_TRENDS
 from ui.charts import grouped_trend_chart
 
 
@@ -48,10 +48,16 @@ class TestTrendKeysResolve(unittest.TestCase):
     def test_bs_trends_resolve(self):
         self._check(_BS_TRENDS, "_BS_TRENDS")
 
+    def test_income_trends_resolve(self):
+        # Income Statement has its own dollar-P&L trend set (≠ Performance's
+        # ratio set), so the two tabs no longer render identical charts.
+        self._check(_INCOME_TRENDS, "_INCOME_TRENDS")
+
     def test_bs_has_full_chart_set(self):
-        # User asked for ~10 tab-relevant charts; pin the count so a future
-        # edit that drops the set back to a stub is caught.
-        self.assertEqual(len(_BS_TRENDS), 10)
+        # Same-scale regroup (2026-06-26): 8 charts, each grouping like-magnitude
+        # series so the trends read. Pin the count so a future edit can't quietly
+        # drop the set back to a stub.
+        self.assertEqual(len(_BS_TRENDS), 8)
 
 
 class TestGroupedTrendChart(unittest.TestCase):
