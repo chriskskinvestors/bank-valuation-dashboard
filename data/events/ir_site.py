@@ -194,13 +194,17 @@ def _parse_q4_date(s: str) -> datetime | None:
     return None
 
 
-def _q4_apikey(ir_home: str) -> str | None:
-    """The Q4 site's apiKey, or None if `ir_home` isn't a Q4 site. Cached per host
-    (7d) — the key rarely changes, so steady-state Q4 polling skips the homepage
-    fetch entirely and just hits the JSON API. A cached empty string records a
-    known NON-Q4 site so we don't re-fetch its homepage every cycle either."""
+def _q4_site(ir_home: str) -> tuple[bool, str | None]:
+    """(is_q4, apiKey) for an IR home. is_q4 ← the homepage carries a Q4 marker
+    (q4cdn/q4inc/…); apiKey is extracted ONLY when inlined. Modern Q4 sites omit
+    the key from the HTML — their JSON feeds serve keyless — so a missing key must
+    NOT be read as 'not a Q4 site'. That conflation was the bug that hid every
+    keyless Q4 bank (e.g. EQBK) from discovery and from press-release polling.
+
+    Cached per host 7d; (False, None) records a known non-Q4 site so we don't
+    refetch its homepage every cycle."""
     host = urlparse(ir_home).netloc
-    ck = f"q4_apikey:{host}"
+    ck = f"q4_site:{host}"
     cache = None
     try:
         from data import cache as _c
@@ -208,21 +212,29 @@ def _q4_apikey(ir_home: str) -> str | None:
         cache = _c
         hit = _c.get(ck)
         if hit and is_fresh(hit, 7 * 24 * 3600):
-            return hit.get("apiKey") or None
+            return bool(hit.get("is_q4")), (hit.get("apiKey") or None)
     except Exception:
         pass
     html = _fetch(ir_home, timeout=5)
+    is_q4 = bool(html and _Q4_MARKER_RE.search(html))
     key = ""
-    if html and _Q4_MARKER_RE.search(html):
+    if is_q4:
         m = _Q4_APIKEY_RE.search(html)
         if m:
             key = m.group(1)
     try:
         if cache is not None:
-            cache.put(ck, {"apiKey": key, "cached_at": datetime.now().isoformat()})
+            cache.put(ck, {"is_q4": is_q4, "apiKey": key,
+                           "cached_at": datetime.now().isoformat()})
     except Exception:
         pass
-    return key or None
+    return is_q4, (key or None)
+
+
+def _q4_apikey(ir_home: str) -> str | None:
+    """Back-compat shim: the Q4 site's apiKey (or None). Prefer _q4_site() when you
+    also need the is-Q4 signal — a keyless Q4 site returns (True, None) there."""
+    return _q4_site(ir_home)[1]
 
 
 def _q4_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, datetime]] | None:
@@ -230,13 +242,13 @@ def _q4_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, d
     PressRelease JSON API. Returns None when it's NOT a Q4 site or the API can't
     be reached — the caller then falls back to HTML scraping. An empty list means
     'Q4 site, nothing recent' (no fallback needed)."""
-    key = _q4_apikey(ir_home)
-    if not key:
+    is_q4, key = _q4_site(ir_home)
+    if not is_q4:
         return None
     parsed = urlparse(ir_home)
     host = f"{parsed.scheme}://{parsed.netloc}"
     params = {
-        "apiKey": key, "LanguageId": 1, "bodyType": 0,
+        "apiKey": key or "", "LanguageId": 1, "bodyType": 0,
         "pressReleaseDateFilter": 3, "categoryId": "", "tagList": "",
         "includeTags": "true", "year": 0, "excludeSelection": 1,
         "pageSize": 20, "pageNumber": 0,
@@ -296,7 +308,7 @@ def discover_q4_ir_url(webaddr: str) -> str | None:
     for sub in _IR_SUBDOMAINS:
         url = f"https://{sub}.{root}/"
         try:
-            if _q4_apikey(url):
+            if _q4_site(url)[0]:
                 return url
         except Exception:
             continue
@@ -312,7 +324,7 @@ def discover_q4_ir_url(webaddr: str) -> str | None:
                 if url in seen:
                     continue
                 seen.add(url)
-                if _q4_apikey(url):
+                if _q4_site(url)[0]:
                     return url
                 if len(seen) >= 4:   # bound: don't chase every investor-ish link
                     break
@@ -338,7 +350,7 @@ def refresh_q4_ir_endpoints(universe: dict | None = None,
         curated = IR_URLS.get(tk)
         if curated:
             try:
-                _q4_apikey(curated)   # warm key cache for fast polling
+                _q4_site(curated)   # warm the Q4 detection/key cache
             except Exception:
                 pass
             return tk, curated
@@ -405,7 +417,9 @@ def _q4_events(ir_home: str) -> list[dict] | None:
     host = f"{parsed.scheme}://{parsed.netloc}"
     if not host.startswith("http"):
         return None
-    key = _q4_apikey(ir_home)          # warm/cached; the Event feed also serves keyless
+    is_q4, key = _q4_site(ir_home)     # the Event feed also serves keyless
+    if not is_q4:
+        return None
     params = {
         "apiKey": key or "", "LanguageId": 1, "eventDateFilter": 1,  # 1 = upcoming
         "pageSize": 20, "pageNumber": 0, "tagList": "", "includeTags": "true",

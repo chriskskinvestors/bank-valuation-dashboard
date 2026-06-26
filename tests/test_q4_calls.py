@@ -19,6 +19,38 @@ import data.events.ir_site as ir  # noqa: E402
 import data.earnings_call as ec  # noqa: E402
 
 
+class TestQ4SiteDetection(unittest.TestCase):
+    """The bug that hid EQBK: a Q4 site whose homepage doesn't inline the apiKey
+    (modern Q4) was treated as NOT a Q4 site, so discovery and polling skipped it.
+    Detection must key off the Q4 marker, not the apiKey."""
+
+    def setUp(self):
+        import data.cache as dc
+        self._fetch, self._dc = ir._fetch, dc
+        self._get, self._put = dc.get, dc.put
+        dc.get = lambda k: None          # force fresh detection (no cache hit)
+        dc.put = lambda k, v: None
+
+    def tearDown(self):
+        ir._fetch = self._fetch
+        self._dc.get, self._dc.put = self._get, self._put
+
+    def test_marker_without_apikey_is_still_q4(self):
+        ir._fetch = lambda url, timeout=5: '<script src="https://q4cdn.com/a.js"></script>'
+        is_q4, key = ir._q4_site("https://investor.x.com")
+        self.assertTrue(is_q4)           # detected by marker …
+        self.assertIsNone(key)           # … even with no inline key (the fix)
+
+    def test_marker_with_apikey_extracted(self):
+        ir._fetch = lambda url, timeout=5: 'q4inc config apiKey: "abcdef0123456789abcdef01"'
+        self.assertEqual(ir._q4_site("https://investor.x.com"),
+                         (True, "abcdef0123456789abcdef01"))
+
+    def test_non_q4_site(self):
+        ir._fetch = lambda url, timeout=5: "<html>just a plain IR page</html>"
+        self.assertEqual(ir._q4_site("https://investor.x.com"), (False, None))
+
+
 class _Resp:
     def __init__(self, payload):
         self._p = payload
@@ -42,11 +74,11 @@ class TestQ4CallTime(unittest.TestCase):
 
 class TestQ4Events(unittest.TestCase):
     def setUp(self):
-        self._key, self._req = ir._q4_apikey, ir.requests
-        ir._q4_apikey = lambda home: ""        # skip the homepage fetch
+        self._site, self._req = ir._q4_site, ir.requests
+        ir._q4_site = lambda home: (True, None)   # treat as Q4, skip homepage fetch
 
     def tearDown(self):
-        ir._q4_apikey, ir.requests = self._key, self._req
+        ir._q4_site, ir.requests = self._site, self._req
 
     def _patch(self, payload):
         class _R:
