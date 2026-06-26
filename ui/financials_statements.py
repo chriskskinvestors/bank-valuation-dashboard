@@ -1578,6 +1578,98 @@ def _render_company_statement(ticker: str, stype: str):
                          "values": [_m(r["label"], v) for v in vals],
                          "kind": "data"})
     _cr_grid([""] + cols, rows)
+    _cr_statement_trends(stmt, ticker, f"cr{stype}",
+                         _CR_INCOME_TRENDS if stype == "income" else _CR_BALANCE_TRENDS)
+
+
+# Company-Reported statement trend charts. The scraped statement is ANNUAL (5 FY),
+# so these are clean year-over-year lines (no FDIC YTD sawtooth). Each series is
+# matched to a stmt row by its as-reported label; groups hold like-magnitude lines
+# so tighten_yaxis zooms and the trends read (same principle as the FDIC trends).
+# (title, divisor, axis-unit, [(legend, [accepted as-reported labels])]).
+_CR_INCOME_TRENDS = [
+    ("Net Interest Income & Net Income ($M)", 1e6, "$M", [
+        ("Net interest income", ["net interest income"]),
+        ("Net income", ["net income"]),
+    ]),
+    ("Revenue & Expense ($M)", 1e6, "$M", [
+        ("Total interest income", ["total interest income"]),
+        ("Noninterest income", ["total noninterest income"]),
+        ("Noninterest expense", ["total noninterest expense"]),
+    ]),
+    ("Provision for Credit Losses ($M)", 1e6, "$M", [
+        ("Provision", ["provision for credit losses"]),
+    ]),
+]
+_CR_BALANCE_TRENDS = [
+    ("Assets, Loans & Deposits ($B)", 1e9, "$B", [
+        ("Total assets", ["total assets"]),
+        ("Net loans", ["loans, net", "total loans, net", "net loans"]),
+        ("Total deposits", ["total deposits"]),
+    ]),
+    ("Shareholders' Equity ($B)", 1e9, "$B", [
+        ("Total equity", ["total shareholders' equity",
+                          "total stockholders' equity", "total equity"]),
+    ]),
+]
+
+
+def _cr_statement_trends(stmt, ticker, key_prefix, groups):
+    """Annual trend charts from a scraped Company-Reported statement (clean YoY
+    lines). Matches each series to a stmt data row by normalized as-reported label
+    (curly apostrophes folded); scales by the group divisor. Series with no match
+    are skipped; a chart with no matched series is skipped; nothing renders if no
+    chart has data."""
+    import re
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+
+    def _norm(s):
+        return re.sub(r"\s+", " ", (s or "")).strip().lower().replace(
+            "’", "'").replace("‘", "'")
+
+    by_label = {_norm(r["label"]): r["values"][::-1]
+                for r in stmt["rows"] if not r["header"]}
+
+    def _year(p):
+        m = re.search(r"\d{4}", p or "")
+        return m.group() if m else (p or "")
+    xs = [f"FY{_year(p)}" for p in stmt["periods"][::-1]]
+
+    charts = []
+    for title, div, unit, series in groups:
+        traces = []
+        for lab, alts in series:
+            vals = next((by_label[_norm(a)] for a in alts if _norm(a) in by_label), None)
+            if vals is None:
+                continue
+            ys = [(v / div if v is not None else None) for v in vals]
+            if any(y is not None for y in ys):
+                traces.append((lab, ys))
+        if traces:
+            charts.append((title, unit, traces))
+    if not charts:
+        return
+
+    st.markdown("##### Trends")
+    for r in range(0, len(charts), 2):
+        cols = st.columns(2)
+        for j, (col, (title, unit, traces)) in enumerate(zip(cols, charts[r:r + 2])):
+            with col:
+                fig = go.Figure()
+                allv = []
+                for i, (lab, ys) in enumerate(traces):
+                    fig.add_trace(go.Scatter(
+                        x=xs, y=ys, name=lab, mode="lines+markers", connectgaps=True,
+                        line=dict(color=CATEGORICAL_PALETTE[i % len(CATEGORICAL_PALETTE)],
+                                  width=2), marker=dict(size=5)))
+                    allv += [y for y in ys if y is not None]
+                apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                                      yaxis_title=unit, show_legend=len(traces) > 1)
+                tighten_yaxis(fig, values=allv or None)
+                st.plotly_chart(fig, use_container_width=True,
+                                key=f"{key_prefix}_crtr_{ticker}_{r + j}")
 
 
 def _compositions_cached(cik):
