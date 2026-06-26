@@ -20,7 +20,7 @@ query, 1h-cached, so the per-render path stays cheap.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 
 # Time-of-day with an explicit US time zone — banks always state the zone for
 # the call ("10:00 a.m. ET", "8:30 AM Eastern Time", "9 a.m. Central", and the
@@ -242,27 +242,128 @@ def call_info_map() -> dict:
         return {}
 
 
+def _fetch_pr_body(url: str) -> str:
+    """Fetch a press-release DETAIL PAGE and return its readable text with <a>
+    hrefs INLINED right after the link text — so the webcast link survives the
+    tag-strip (it usually lives in an <a> the snippet never carried). Whitespace
+    collapsed, length-bounded. '' on any failure."""
+    try:
+        from data.events.ir_site import _fetch
+        html = _fetch(url, timeout=8)
+    except Exception:
+        html = None
+    if not html:
+        return ""
+    text = re.sub(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+                  r"\2 \1 ", html, flags=re.I | re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", text)[:12000]
+
+
+def refresh_pr_call_snapshot(max_fetch: int = 200, max_workers: int = 8) -> dict:
+    """Universe-wide, platform-agnostic conference-call details from each bank's
+    earnings-ANNOUNCEMENT press release. Unlike the snippet parser, this fetches
+    the PR's full DETAIL PAGE (its URL — from whatever wire/IR source ingested it)
+    and parses the conference-call section: webcast link, dial-in, call time/date,
+    plus the confirmed release date. Persists {ticker: {...}} as the cross-instance
+    'pr_call_snap'. Background-only — the body fetches are far too many for the
+    interactive path. {} on failure."""
+    try:
+        from data.events.store import get_events_by_type
+        from data.events.wire_base import is_safe_news_url
+    except Exception:
+        return {}
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        rows = get_events_by_type("earnings", limit=800)
+    except Exception:
+        return {}
+    today_iso = date.today().isoformat()
+    # One announcement PR per ticker — the newest whose headline announces an
+    # upcoming release date or whose snippet states a call date (i.e. a forward
+    # announcement, not a results recap).
+    picked: dict = {}
+    for r in rows:                                    # newest-first
+        tk, url = r.get("ticker"), r.get("url")
+        if not tk or not url or tk in picked:
+            continue
+        if (_announced_release_date(r.get("headline") or "", today_iso)
+                or _parse_call_date(r.get("summary") or "", today_iso)):
+            picked[tk] = r
+
+    def _one(item):
+        tk, r = item
+        body = _fetch_pr_body(r.get("url") or "")
+        if not body:
+            return tk, None
+        ci = parse_call_info(body)
+        wc = ci.get("webcast_url")
+        if wc and not is_safe_news_url(wc):
+            ci["webcast_url"] = None
+        info = {k: v for k, v in ci.items() if v}
+        rd = _announced_release_date(r.get("headline") or "", today_iso)
+        cd = _parse_call_date(body, today_iso)
+        if rd:
+            info["release_date"] = rd
+        if cd:
+            info["call_date"] = cd
+        return tk, (info or None)
+
+    out: dict = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for tk, info in ex.map(_one, list(picked.items())[:max_fetch]):
+            if info:
+                out[tk] = info
+    try:
+        from data import cache
+        cache.put("pr_call_snap",
+                  {"value": out, "cached_at": datetime.now().isoformat()})
+    except Exception as e:
+        print(f"[earnings_call] could not cache PR call details: "
+              f"{type(e).__name__}: {e}")
+    print(f"[earnings_call] PR call details for {len(out)} banks", flush=True)
+    return out
+
+
+def get_pr_call_details() -> dict:
+    """{ticker: {...}} from the nightly full-body PR call-detail snapshot. {}
+    before it has run (degrades to the snippet parser)."""
+    try:
+        from data import cache
+        snap = cache.get("pr_call_snap")
+    except Exception:
+        snap = None
+    if snap and isinstance(snap.get("value"), dict):
+        return snap["value"]
+    return {}
+
+
 def merged_call_info() -> dict:
-    """{ticker: {call_time, webcast_url, dial_in}} combining BOTH call-detail
-    sources: the structured Q4 IR events snapshot (date/time/webcast link, the
-    reliable source) layered over the press-release parser (which still supplies
-    the dial-in number Q4 events don't expose). Q4's call_time / webcast_url win
-    when present. Used by the Calls & Webcasts agenda and the Home calendar."""
+    """{ticker: {call_time, webcast_url, dial_in, call_date, release_date}} from
+    ALL call-detail sources, layered weakest→strongest:
+      1. the snippet parser (call_info_map — the RSS description),
+      2. the full-body PR snapshot (get_pr_call_details — the PR detail page),
+      3. the structured Q4 IR events snapshot (get_q4_call_details — webcast/time).
+    Later layers overwrite earlier ones field-by-field. Used by the Calendar
+    agenda and the Home calendar."""
     base = {tk: dict(info) for tk, info in (call_info_map() or {}).items()}
+
+    def _overlay(src, keys):
+        for tk, info in (src or {}).items():
+            cur = dict(base.get(tk) or {})
+            for k in keys:
+                if info.get(k):
+                    cur[k] = info[k]
+            base[tk] = cur
+
+    _overlay(get_pr_call_details(),
+             ("call_time", "webcast_url", "dial_in", "call_date", "release_date"))
     try:
         from data.events.ir_site import get_q4_call_details
-        q4 = get_q4_call_details() or {}
+        q4 = get_q4_call_details()
     except Exception:
         q4 = {}
-    for tk, info in q4.items():
-        cur = dict(base.get(tk) or {})
-        if info.get("call_time"):
-            cur["call_time"] = info["call_time"]
-        if info.get("webcast_url"):
-            cur["webcast_url"] = info["webcast_url"]
-        if info.get("call_date"):
-            cur["call_date"] = info["call_date"]   # the company's announced date
-        base[tk] = cur
+    _overlay(q4, ("call_time", "webcast_url", "call_date"))
     return base
 
 

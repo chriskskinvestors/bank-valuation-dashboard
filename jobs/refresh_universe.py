@@ -258,6 +258,20 @@ def main():
         print(f"[warn] Q4 call-details snapshot failed: {type(e).__name__}: {e}",
               flush=True)
 
+    # Universe-wide (any IR platform): fetch each bank's earnings-announcement PR
+    # detail page and parse the conference-call section (webcast / dial-in / time)
+    # — the wire feeds only carry a short snippet, so the call details otherwise
+    # never reach non-Q4 banks.
+    try:
+        from data.earnings_call import refresh_pr_call_snapshot
+        t1 = time.time()
+        prc = refresh_pr_call_snapshot()
+        print(f"[{time.strftime('%H:%M:%S')}] PR call details snapshotted "
+              f"({len(prc)} banks, {time.time()-t1:.0f}s)", flush=True)
+    except Exception as e:
+        print(f"[warn] PR call-details snapshot failed: {type(e).__name__}: {e}",
+              flush=True)
+
     # Exit code reflects severity: new regressions or >5% failure rate fail
     # the execution (visible in Cloud Run job history).
     if new_failures:
