@@ -516,8 +516,16 @@ def _valuation_history_chart(ticker: str, info: dict):
     # readout); drop the in-chart title and its top-margin band so the plot fills
     # the box at the same height as the price chart next to it.
     fig.update_layout(title_text="", margin=dict(t=12))
-    fig.update_yaxes(title_text="P/TBV", secondary_y=False, ticksuffix="x")
-    fig.update_yaxes(title_text="P/E", secondary_y=True, ticksuffix="x", showgrid=False)
+    # Axes: light gridlines + 6-month time ticks, matching the price chart's
+    # polish (the bare 3-year-label axis read as empty). Only the left (P/TBV)
+    # axis draws horizontal gridlines so the dual scales don't double up.
+    _grid = "rgba(148,163,184,0.12)"
+    fig.update_xaxes(showgrid=True, gridcolor=_grid, dtick="M6", tickformat="%b %Y",
+                     ticks="outside", ticklen=3, tickcolor=_grid)
+    fig.update_yaxes(title_text="P/TBV", secondary_y=False, ticksuffix="x",
+                     showgrid=True, gridcolor=_grid, nticks=6)
+    fig.update_yaxes(title_text="P/E", secondary_y=True, ticksuffix="x",
+                     showgrid=False, nticks=6)
     return fig
 
 
