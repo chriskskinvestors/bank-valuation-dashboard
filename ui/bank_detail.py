@@ -414,11 +414,11 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
     return _kv_table("Market Data", market), _kv_table("Company Profile", company), ids_html
 
 
-def _valuation_history_chart(ticker: str, info: dict):
-    """Daily P/TBV and P/E over the last ~3 years, dual-axis. Each trading day's
-    close ÷ the most recently *filed* book value per share / trailing-twelve-
-    month EPS from SEC filings — fundamentals step in on their 10-Q/10-K filing
-    date (no lookahead) while price moves daily."""
+def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y"):
+    """Daily P/TBV and P/E over `period` (the price card's 1W…ALL window),
+    dual-axis. Each trading day's close ÷ the most recently *filed* book value
+    per share / trailing-twelve-month EPS from SEC filings — fundamentals step in
+    on their 10-Q/10-K filing date (no lookahead) while price moves daily."""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     from utils.chart_style import apply_standard_layout, COLOR_PRIMARY, COLOR_WARNING
@@ -435,7 +435,7 @@ def _valuation_history_chart(ticker: str, info: dict):
 
     ends_all = []
     if cert:
-        fh = fdic_client.get_historical_financials(cert, quarters=20)
+        fh = fdic_client.get_historical_financials(cert, quarters=44)
         if fh is not None and not fh.empty:
             ds = pd.to_datetime(fh["REPDTE"]).dropna().sort_values()
             ends_all = [d.to_pydatetime() for d in ds]
@@ -445,7 +445,7 @@ def _valuation_history_chart(ticker: str, info: dict):
     try:
         ps = _per_share_for_ends(cik, ends_all, quarterly=False)
         facts = sec_client.fetch_company_facts(cik)
-        px = get_history(ticker, "5Y")
+        px = get_history(ticker, period)
     except Exception:
         return None
     if px is None or px.empty or "close" not in px.columns:
@@ -487,15 +487,14 @@ def _valuation_history_chart(ticker: str, info: dict):
     fund = (pd.DataFrame(frows).dropna(subset=["date"]).sort_values("date")
             .drop_duplicates("date", keep="last"))
 
-    # Daily valuation: each trading day ÷ the most recently filed fundamentals
-    # (merge_asof backward). Show the last ~3 years; earlier filings only seed the
-    # first day's lookup.
+    # Daily valuation over the selected window: each trading day ÷ the most
+    # recently filed fundamentals (merge_asof backward). The window is whatever
+    # `period` returned; fundamentals reach back further only to seed the first
+    # day's lookup (so even 1W/1M start with the right book value / EPS).
     px = px[px["date"] >= fund["date"].iloc[0]]
     if px.empty:
         return None
-    val = pd.merge_asof(px, fund, on="date", direction="backward")
-    start = max(fund["date"].iloc[0], val["date"].max() - pd.DateOffset(years=3))
-    val = val[val["date"] >= start].copy()
+    val = pd.merge_asof(px, fund, on="date", direction="backward").copy()
     val["ptbv"] = (val["close"] / val["tbvps"]).where(val["tbvps"] > 0)
     val["pe"] = (val["close"] / val["ttm_eps"]).where(val["ttm_eps"] > 0)
     if val.empty or val["ptbv"].isna().all():
@@ -516,11 +515,12 @@ def _valuation_history_chart(ticker: str, info: dict):
     # readout); drop the in-chart title and its top-margin band so the plot fills
     # the box at the same height as the price chart next to it.
     fig.update_layout(title_text="", margin=dict(t=12))
-    # Axes: light gridlines + 6-month time ticks, matching the price chart's
-    # polish (the bare 3-year-label axis read as empty). Only the left (P/TBV)
-    # axis draws horizontal gridlines so the dual scales don't double up.
+    # Axes: light gridlines matching the price chart. Ticks auto-adapt to the
+    # selected window (days for 1W/1M, months for 1Y, years for 5Y/ALL) instead
+    # of fixed 6-month ticks. Only the left (P/TBV) axis draws horizontal
+    # gridlines so the dual scales don't double up.
     _grid = "rgba(148,163,184,0.12)"
-    fig.update_xaxes(showgrid=True, gridcolor=_grid, dtick="M6", tickformat="%b %Y",
+    fig.update_xaxes(showgrid=True, gridcolor=_grid,
                      ticks="outside", ticklen=3, tickcolor=_grid)
     fig.update_yaxes(title_text="P/TBV", secondary_y=False, ticksuffix="x",
                      showgrid=True, gridcolor=_grid, nticks=6)
@@ -590,24 +590,48 @@ def _render_price_panel(ticker: str):
 
 
 def _render_valuation_panel(ticker: str, info: dict):
-    """Quarter-end P/TBV & P/E history. Mirrors the price card beside it: a
-    hairline-bordered box holding the chart at the same 294px height, with the
-    heading floating above (the in-chart title is dropped to avoid doubling it)."""
-    st.markdown(
-        "**Valuation — P/TBV & P/E** "
-        "<span style='color:var(--text-secondary);font-weight:400;"
-        "font-size:var(--fs-grid-9_5);'>· quarter-end</span>",
-        unsafe_allow_html=True)
+    """Daily P/TBV & P/E. Mirrors the price card beside it exactly: a hairline
+    box with a label + flat Koyfin-style timeframe strip on one header row, then
+    the chart at the same 294px height. The strip drives the chart's window the
+    same way the price card's does."""
     with st.container(key="ov_val_box"):
-        # Same hairline card as the price panel (border + flush chart inset) so
-        # the two charts read as a matched pair.
+        # Same card + strip styling as the price panel so the two read as a
+        # matched pair (border, flush chart inset, borderless square buttons).
         st.markdown(
             "<style>"
             ".st-key-ov_val_box{border:1px solid var(--grid-head);"
-            "border-radius:0;padding:4px 0 5px;}"
+            "border-radius:0;padding:4px 0 5px;margin-top:20px;}"
+            ".st-key-ov_val_box [data-testid='stMarkdownContainer'] p{margin:0;}"
             ".st-key-ov_val_box [data-testid='stPlotlyChart']{margin-top:-2px;}"
+            # padding-left matches the chart's left margin (l=42) so the label
+            # starts at the P/TBV axis line, not over the tick-label gutter.
+            ".st-key-ov_val_box .ovv-readout{font-size:var(--fs-sm);font-weight:600;"
+            "color:var(--text-primary);white-space:nowrap;padding-left:42px;}"
+            ".st-key-ov_val_box [data-testid='stButtonGroup']{gap:1px!important;"
+            "background:transparent!important;border:0!important;padding:0!important;"
+            "justify-content:flex-end!important;}"
+            ".st-key-ov_val_box [data-testid^='stBaseButton-segmented_control']"
+            "{min-height:0!important;height:18px!important;padding:0 5px!important;"
+            "border:0!important;border-radius:0!important;background:transparent!important;"
+            "color:var(--text-secondary)!important;box-shadow:none!important;}"
+            ".st-key-ov_val_box [data-testid^='stBaseButton-segmented_control'] p"
+            "{font-size:var(--fs-grid-9_5)!important;line-height:1!important;"
+            "font-weight:600!important;}"
+            ".st-key-ov_val_box [data-testid='stBaseButton-segmented_controlActive']"
+            "{background:var(--brand-soft)!important;color:var(--brand-primary)!important;}"
             "</style>", unsafe_allow_html=True)
-        fig = _valuation_history_chart(ticker, info)
+        # Header row: label (left) · timeframe buttons (right) — buttons first so
+        # they resolve the period the chart then uses. vertical_alignment="top"
+        # keeps both flush at the row top (see the price panel for the rationale).
+        _hl, _hr = st.columns([1, 1], vertical_alignment="top")
+        with _hr:
+            per = st.segmented_control(
+                "Period", ["1W", "1M", "3M", "6M", "YTD", "1Y", "3Y", "5Y", "ALL"],
+                default="1Y", key=f"ov_val_per_{ticker}",
+                label_visibility="collapsed") or "1Y"
+        _hl.markdown("<div class='ovv-readout'>Valuation — P/TBV &amp; P/E</div>",
+                     unsafe_allow_html=True)
+        fig = _valuation_history_chart(ticker, info, per)
         if fig is not None:
             st.plotly_chart(fig, use_container_width=True, key=f"ov_val_{ticker}")
         else:
