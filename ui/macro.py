@@ -38,9 +38,8 @@ def _trend_arrow(df: pd.DataFrame, lookback_days: int = 30) -> str:
 # pretending to be data).
 MACRO_SECTIONS = [
     "Economic Data",
-    "Rates & Curve",
+    "Rates, Spreads & Credit",
     "Bank Sector",
-    "Credit & Spreads",
     "Regime",
 ]
 
@@ -103,9 +102,8 @@ def render_macro_dashboard():
 
     {
         "Economic Data": _render_economy_calendar,
-        "Rates & Curve": _render_rates_curve,
+        "Rates, Spreads & Credit": _render_rates_credit,
         "Bank Sector": _render_bank_sector,
-        "Credit & Spreads": _render_credit_spreads,
         "Regime": _render_regime,
     }[section]()
 
@@ -1340,7 +1338,8 @@ _RATE_BOARD = [
     ("Treasury", "DGS30",        "30-Year",      "%"),
     ("Spreads",  "T10Y2Y",       "10Y − 2Y",     "pp"),
     ("Spreads",  "T10Y3M",       "10Y − 3M",     "pp"),
-    ("Credit",   "BAMLH0A0HYM2", "HY OAS",       "bps"),
+    # HY OAS lives in the Credit section below (same tab); no need to duplicate
+    # it here now that Rates and Credit share one subtab.
     ("Consumer", "MORTGAGE30US", "30-Yr Mortgage", "%"),
 ]
 
@@ -1578,7 +1577,7 @@ def _render_rates_curve():
         st.caption(
             "Latest level per instrument; Δ 1W / Δ 3M in basis points; vs hist = "
             "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
-            "HY OAS shown in bps over Treasuries. Source: FRED."
+            "Source: FRED."
         )
         with st.container(border=True, key="fedcard"):
             _render_fed_policy_strip()
@@ -1588,6 +1587,21 @@ def _render_rates_curve():
         st.markdown("---")
         # ── The FOMC's own words: latest statement + curated Fed headlines ──
         _render_fed_words()
+
+
+def _render_rates_credit():
+    """Combined 'Rates, Spreads & Credit' subtab: the risk-free curve + Fed on
+    top, then corporate credit spreads (built over Treasuries) below — they
+    share one HY-OAS read, so they live together instead of in two near-identical
+    tabs."""
+    _render_rates_curve()
+    st.markdown("---")
+    st.markdown(
+        '<div style="font-size:1.05rem;font-weight:700;margin:0.2rem 0 0.7rem;">'
+        'Credit &amp; spreads</div>',
+        unsafe_allow_html=True,
+    )
+    _render_credit_spreads()
 
 
 # Full credit-quality ladder (ICE BofA OAS, % over Treasuries) — IG buckets
