@@ -298,6 +298,13 @@ _PROPER_NOUN_TRAP = {
     "UNITED": {"STATES", "KINGDOM", "ARAB", "NATIONS", "AIRLINES", "AIRWAYS",
                "HEALTHCARE", "HEALTH", "PARCEL", "METHODIST", "WAY",
                "TECHNOLOGIES", "RENTALS", "NATURAL"},
+    # "Banner" (BANR = Banner Corporation / Banner Bank) collides with unrelated
+    # companies — "Banner Capital" (a GCM Grosvenor partner), "Banner Health"
+    # (AZ hospital system), Banner Engineering, Banner Life. Trap those so they
+    # don't tag BANR; "Banner Bank / Corporation / Financial / Declares ..." (the
+    # bank's real headlines) keep matching.
+    "BANNER": {"CAPITAL", "HEALTH", "HEALTHCARE", "ENGINEERING", "LIFE",
+               "INDUSTRIAL", "SOLAR"},
 }
 
 

@@ -83,6 +83,17 @@ class TestProperNounTrap(unittest.TestCase):
             _pad("Eastern Bankshares Declares Dividend"), "EASTERN"))
         self.assertFalse(phrase_in_text(_pad("No mention here"), "EASTERN"))
 
+    def test_banner_capital_not_banner_bank(self):
+        # "Banner Capital" (a GCM Grosvenor partner) and "Banner Health" must NOT
+        # tag BANR (Banner Corporation / Banner Bank); the bank's own headlines do.
+        for h in ["Banner Capital Announces Strategic Partnership with GCM Grosvenor",
+                  "Banner Health Opens New Phoenix Facility"]:
+            self.assertFalse(phrase_in_text(_pad(h), "BANNER"), h)
+        for h in ["Banner Corporation Declares Quarterly Cash Dividend",
+                  "Banner Bank Announces New Branch in Spokane",
+                  "Banner Financial Reports Second Quarter 2026 Results"]:
+            self.assertTrue(phrase_in_text(_pad(h), "BANNER"), h)
+
 
 class TestSEOAndForm144(unittest.TestCase):
     """Auto-generated stock-analysis profile pages (simplywall.st / marketbeat /
