@@ -1098,15 +1098,17 @@ def _render_earnings_calendar(watchlist: list[str]):
         ("Precise Call Times", str(n_time)),
     ])
     st.caption(
-        "Full bank universe, by week. **When** = report timing (FMP, before/after "
-        "market open); a **✓** marks a confirmed date — from FMP or the company's "
-        "own call announcement — others are projections, marked **(proj.)**. "
-        "**Call Time / Webcast / Dial-in** come from each bank's IR call "
-        "announcement; **Target / Rating / Cov** are the yfinance analyst "
+        "Full bank universe, by week. **Report** = the earnings release date "
+        "(FMP/yfinance estimate; **When** is its before/after-open timing, a **✓** "
+        "marks an FMP-confirmed date, others are **(proj.)**). **Call** is the "
+        "conference-call time — prefixed with its date when the call is a "
+        "different day than the release (e.g. report after close, call next "
+        "morning) — with **Webcast / Dial-in**, all from the bank's own IR "
+        "announcement. **Target / Rating / Cov** are the yfinance analyst "
         "consensus. '—' wherever a value isn't available yet.")
 
-    headers = [("Ticker", ""), ("Bank", "nm"), ("Date", ""), ("✓", ""),
-               ("In", ""), ("When", ""), ("Call Time", ""), ("Webcast", ""),
+    headers = [("Ticker", ""), ("Bank", "nm"), ("Report", ""), ("✓", ""),
+               ("In", ""), ("When", ""), ("Call", ""), ("Webcast", ""),
                ("Dial-in", ""), ("EPS Est", ""), ("Rev Est", ""),
                ("Target", ""), ("Rating", ""), ("Cov", "")]
 
@@ -1141,7 +1143,7 @@ def _render_earnings_calendar(watchlist: list[str]):
                 _cell("✓" if r["confirmed"] else None),
                 _cell(days_str),
                 _cell(r.get("when")),
-                _cell(r.get("call_time")),
+                _cell(_call_label(r.get("call_date"), r.get("call_time"), r["date"])),
                 webcast,
                 _cell(r.get("dial_in")),
                 _cell(f"${r['eps_est']:.2f}" if r.get("eps_est") else None),
@@ -1160,6 +1162,30 @@ def _render_earnings_calendar(watchlist: list[str]):
 
 
 # ── Earnings call helpers ─────────────────────────────────────────────
+
+def _iso_to_short(iso) -> str | None:
+    """'2026-07-15' → 'Jul 15'; None on anything unparseable."""
+    try:
+        from datetime import date as _date
+        d = _date.fromisoformat(str(iso))
+        return f"{d.strftime('%b')} {d.day}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _call_label(call_date, call_time, report_date) -> str | None:
+    """The 'Call' cell — the call time, prefixed with a short date ONLY when the
+    call is a different day than the report (a same-day call shows just the time;
+    a next-morning call shows 'Jul 15 · 9:00a ET'). None when no call detail."""
+    bits = []
+    if call_date and call_date != report_date:
+        short = _iso_to_short(call_date)
+        if short:
+            bits.append(short)
+    if call_time:
+        bits.append(call_time)
+    return " · ".join(bits) or None
+
 
 def _fmt_rev_est(v) -> str:
     """Revenue estimate (absolute $) → compact $B / $M label; '—' if unknown."""

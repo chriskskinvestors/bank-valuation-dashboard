@@ -265,13 +265,12 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         yrow = (yf or {}).get("row", {})
         frow = (fmp or {}).get("row", {})
         ci = ci_map.get(tk) or {}
-        # The company's OWN announced call date (from its IR events page) is
-        # authoritative — prefer it over yfinance's/FMP's report-date estimate
-        # when it's in window; that also makes the date confirmed (no "proj.").
-        call_d = _iso_date(ci.get("call_date")) if ci.get("call_date") else None
-        if call_d is not None and not (today <= call_d <= horizon):
-            call_d = None
-        d = call_d or (yf or {}).get("d") or (fmp or {}).get("d")
+        # The row date is the REPORT date (yfinance's near-term estimate, FMP
+        # fallback). The conference CALL is often a separate day (e.g. report
+        # after close, call next morning), so it's carried separately as call_date
+        # — NOT folded into the report date, which would read as "reports on the
+        # call day".
+        d = (yf or {}).get("d") or (fmp or {}).get("d")
         if d is None or d < today or d > horizon:
             continue
         eps = yrow.get("eps_estimate")
@@ -283,11 +282,12 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
             "date": d.isoformat(),
             "days_until": (d - today).days,
             "when": _WHEN_LABEL.get((frow.get("time") or "").lower()),
-            "confirmed": bool(call_d) or bool(frow.get("confirmed")),
+            "confirmed": bool(frow.get("confirmed")),
             "eps_est": eps,
             "rev_est": frow.get("revenueEstimated"),
             "period_ending": frow.get("periodEnding"),
             "call_time": ci.get("call_time"),
+            "call_date": ci.get("call_date"),   # announced call day (may differ)
             "webcast_url": ci.get("webcast_url"),
             "dial_in": ci.get("dial_in"),
         }
