@@ -1100,8 +1100,9 @@ def _render_earnings_calendar(watchlist: list[str]):
     st.caption(
         "Full bank universe, by week. Two dates per bank: **Release** = the "
         "earnings release date (FMP/yfinance estimate; **When** is its before/"
-        "after-open timing, a **✓** marks an FMP-confirmed date, others are "
-        "**(proj.)**), and **Call** = the conference-call date + time (often a "
+        "after-open timing, a **✓** marks a confirmed date — FMP, or the company "
+        "has published its earnings call — others are **(proj.)**), and **Call** = "
+        "the conference-call date + time (often a "
         "different day — e.g. release after close, call next morning), with "
         "**Webcast / Dial-in**, all from the bank's own IR announcement. "
         "**Target / Rating / Cov** are the yfinance analyst consensus. '—' "

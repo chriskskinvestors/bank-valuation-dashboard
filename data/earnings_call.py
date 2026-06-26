@@ -276,13 +276,25 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         eps = yrow.get("eps_estimate")
         if eps is None:
             eps = frow.get("epsEstimated")
+        # A published conference-call event (we have its date) means the company
+        # has ANNOUNCED this earnings cycle — so a report date consistent with it
+        # (same day, or a few days before a next-morning call) is a confirmed
+        # date, not an FMP projection.
+        call_d = _iso_date(ci.get("call_date")) if ci.get("call_date") else None
+        confirmed = bool(frow.get("confirmed")) or (
+            call_d is not None and 0 <= (call_d - d).days <= 4)
+        # Report timing: FMP's before/after-open code, else inferred — a call the
+        # NEXT morning means the release went out after close the day before.
+        when = _WHEN_LABEL.get((frow.get("time") or "").lower())
+        if when is None and call_d is not None and (call_d - d).days == 1:
+            when = "After close"
         seen[tk] = {
             "_date": d,
             "ticker": tk,
             "date": d.isoformat(),
             "days_until": (d - today).days,
-            "when": _WHEN_LABEL.get((frow.get("time") or "").lower()),
-            "confirmed": bool(frow.get("confirmed")),
+            "when": when,
+            "confirmed": confirmed,
             "eps_est": eps,
             "rev_est": frow.get("revenueEstimated"),
             "period_ending": frow.get("periodEnding"),

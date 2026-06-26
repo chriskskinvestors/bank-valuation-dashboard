@@ -194,22 +194,32 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertNotIn("OLD", tickers)                  # date in the past
         self.assertNotIn("FAR", tickers)                  # beyond the 75-day horizon
 
-    def test_call_date_is_carried_not_folded_into_report_date(self):
-        # The conference call is often a different day than the release; the row's
-        # date stays the REPORT date, and the call date rides along separately so
-        # the UI can show both (the row must not read as "reports on the call day").
+    def test_call_date_carried_separately_and_confirms_consistent_report(self):
+        # The call is often a different day than the release; the row date stays
+        # the REPORT date and call_date rides along (so the UI shows both). A call
+        # within a few days of the report = the cycle is announced ⇒ confirmed.
         calls = dict(self.CALLS)
         calls["BKSC"] = {"call_time": "9:00a ET",
                          "webcast_url": "https://events.q4inc.com/x",
-                         "call_date": "2026-07-17"}   # call after the 07-16 release
+                         "call_date": "2026-07-17"}   # call a day after the 07-16 release
         agenda = build_calls_agenda(
             self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
         rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
         bksc = rows["BKSC"]
         self.assertEqual(bksc["date"], "2026-07-16")        # report date unchanged
-        self.assertFalse(bksc["confirmed"])                 # an announced call ≠ confirmed release
+        self.assertTrue(bksc["confirmed"])                  # announced call ⇒ confirmed
         self.assertEqual(bksc["call_date"], "2026-07-17")   # carried for display
         self.assertEqual(bksc["call_time"], "9:00a ET")
+
+    def test_call_far_from_report_does_not_confirm(self):
+        # A call date wildly inconsistent with the report estimate is NOT used to
+        # confirm it (guards against a stale/mismatched call event).
+        calls = dict(self.CALLS)
+        calls["BKSC"] = {"call_date": "2026-08-10"}   # 25d after the 07-16 report
+        agenda = build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
+        rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
+        self.assertFalse(rows["BKSC"]["confirmed"])         # gap too large → stays (proj.)
 
     def test_horizon_days_bounds_window(self):
         # FMPONLY reports 2026-07-20 — inside 75 days, outside a tight 5-day window.
