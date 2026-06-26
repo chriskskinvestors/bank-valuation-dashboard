@@ -395,19 +395,24 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
     #      CIK) onto the common — a legacy JPMorgan 8-K frozen as ">VYLD" shows
     #      ">JPM". The poller no longer creates these, but a row is frozen under
     #      (source, accession) so a re-poll can't re-tag it.
-    #   2. Drop rows for out-of-scope tickers (coverage_excluded — skip-listed
-    #      broker-dealers / card issuers / foreign ADRs, plus any non-common that
-    #      couldn't be resolved to a common). Their events were ingested before
-    #      the exclusion (or are frozen), so filter them here too — otherwise
-    #      RJF / FRHC news lingers in the feed after they're removed from scope.
+    #   2. Drop rows for out-of-scope tickers — skip-listed broker-dealers / card
+    #      issuers / foreign ADRs / non-banks, plus any non-common that couldn't
+    #      be resolved to a common. Their events were ingested before the
+    #      exclusion (or are frozen), so filter them here too. The FULL _SKIP_
+    #      TICKERS set is used (not coverage_excluded's universe∩skip) so a skip
+    #      ticker still filters AFTER the nightly rebuild drops it from the
+    #      universe — else its stored events (e.g. SF/RJF/JXN) leak back in.
     try:
         from data.bank_universe import (universe_is_cached,
                                          get_noncommon_primary_map,
-                                         coverage_excluded)
-        # Only enrich when the universe is already built — never trigger a cold
-        # build on this read path. The feed snapshot job builds it first.
+                                         coverage_excluded, _SKIP_TICKERS)
+        # Skip-listed tickers are a STATIC set — always drop them, even before
+        # the universe is built. Only the noncommon remap/exclusion needs the
+        # built universe, so it's gated (never a cold build on this read path).
         remap = get_noncommon_primary_map() if universe_is_cached() else {}
-        excluded = coverage_excluded() if universe_is_cached() else set()
+        excluded = set(_SKIP_TICKERS)
+        if universe_is_cached():
+            excluded |= coverage_excluded()
         if remap or excluded:
             kept = []
             for r in out:

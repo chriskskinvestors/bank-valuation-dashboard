@@ -215,13 +215,21 @@ class TestUniverseRecentScoping(unittest.TestCase):
         rows = store.get_universe_recent(limit=50)
         self.assertEqual(sorted(r["ticker"] for r in rows), ["PNC"])
 
-    def test_no_enrichment_when_universe_not_built(self):
-        # Universe not cached -> read path must NOT build it; rows pass through.
+    def test_skip_tickers_drop_even_when_universe_not_built(self):
+        # Skip-listed tickers are a STATIC set — they must drop from the feed even
+        # when the universe isn't cached (and AFTER the nightly rebuild removes
+        # them from the universe, the SF/JXN leak). A normal ticker passes through
+        # without triggering a cold universe build.
         self.bu._UNIVERSE_CACHE = None
-        store.insert_events_returning_new(
-            [_ev("RJF", "sec_8k", "8-K · Other Material Event", "acc-rjf2")])
+        store.insert_events_returning_new([
+            _ev("PNC", "sec_8k", "8-K · Earnings / Results", "acc-pnc9"),
+            _ev("RJF", "sec_8k", "8-K · Other Material Event", "acc-rjf9"),
+            _ev("SF", "sec_8k", "8-K · Other Material Event", "acc-sf9"),
+            _ev("JXN", "sec_8k", "8-K · Other Material Event", "acc-jxn9"),
+        ])
         rows = store.get_universe_recent(limit=50, sources=["sec_8k"])
-        self.assertEqual([r["ticker"] for r in rows], ["RJF"])
+        self.assertEqual([r["ticker"] for r in rows], ["PNC"],
+                         "skip tickers drop without a build; PNC stays")
 
 
 class TestNoncommonPrimaryMap(unittest.TestCase):

@@ -79,6 +79,7 @@ _SKIP_TICKERS = {
     "RJF",   # Raymond James Financial (broker-dealer / wealth management)
     "FRHC",  # Freedom Holding Corp (brokerage holding; Freedom Finance)
     "SF",    # Stifel Financial (broker-dealer / wealth management)
+    "JXN",   # Jackson Financial (annuity / retirement insurer, not a bank)
 }
 
 # US-domiciled only (explicit scope: US banks traded on exchanges or OTC).
