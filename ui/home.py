@@ -578,7 +578,7 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
             ytd_t, ytd_c = (_af_signed(d["ytd"], dp=1) if d["ytd"] is not None
                             else ("—", "mut"))
             rows += (
-                f'<a class="crow" href="?s=Home&bank={d["tk"]}" target="_self">'
+                f'<a class="crow" href="?s=Company&bank={d["tk"]}" target="_self">'
                 f'<div class="erow m1 ed"><span class="nm">{_esc((get_name(d["tk"]) or "")[:20])}</span>'
                 f'<span class="tk">{d["tk"]}</span>'
                 f'<span class="num">{last}</span>'
@@ -665,7 +665,7 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             sym = (f' <span class="sym">&gt;{i["ticker"]}</span>' if i["ticker"] else "")
             ev = (f'<span class="evt"><span class="dotc" style="background:{dot};'
                   f'margin-right:7px;"></span>{_esc(i["name"][:30])}{sym}</span>')
-            href = (f'?s=Home&bank={i["ticker"]}' if i["ticker"] else "?s=Home")
+            href = (f'?s=Company&bank={i["ticker"]}' if i["ticker"] else "?s=Home")
             target, rel = "_self", ""
             if i.get("webcast"):           # earnings row links to the call webcast
                 href, target, rel = _esc(i["webcast"]), "_blank", ' rel="noopener noreferrer"'
@@ -805,7 +805,7 @@ def _af_feed_table(watchlist: list[str]) -> str:
             if url:
                 href, target, rel = _esc(url), "_blank", ' rel="noopener noreferrer"'
             else:
-                href = f'?s=Home&bank={tk}' if tk else "?s=Home"
+                href = f'?s=Company&bank={tk}' if tk else "?s=Home"
                 target, rel = "_self", ""
             body += (
                 f'<a class="fitem" href="{href}" target="{target}"{rel}>'
@@ -1008,7 +1008,7 @@ def _af_volume_table(all_metrics: list[dict], vsz: str, vp: str) -> str:
             pct_t, pct_c = _af_signed(d["pct"])
             last = _af_n(d["price"]) or "—"
             rows += (
-                f'<a class="crow" href="?s=Home&bank={d["tk"]}" target="_self">'
+                f'<a class="crow" href="?s=Company&bank={d["tk"]}" target="_self">'
                 f'<div class="erow v1 ed"><span class="nm">{_esc((get_name(d["tk"]) or "")[:20])}</span>'
                 f'<span class="tk">{d["tk"]}</span>'
                 f'<span class="num">{last}</span>'
