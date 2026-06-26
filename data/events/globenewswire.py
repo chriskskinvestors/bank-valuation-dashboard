@@ -64,7 +64,7 @@ class GlobeNewswireAdapter(SourceAdapter):
                         headline=item.title,
                         published_at=item.published or datetime.now(timezone.utc),
                         url=item.link,
-                        summary=item.summary[:1500],
+                        summary=item.summary[:2000],
                         external_id=f"{item.guid}::{ticker}",
                         raw={"feed": url, "guid": item.guid},
                     ))

@@ -82,7 +82,7 @@ class BusinessWireAdapter(SourceAdapter):
                         headline=item.title,
                         published_at=item.published or datetime.now(timezone.utc),
                         url=item.link,
-                        summary=item.summary[:1500],
+                        summary=item.summary[:2000],
                         # External id includes ticker so the same release matched
                         # to multiple banks (rare but possible) gets one row per
                         # bank without falsely overwriting.

@@ -165,9 +165,26 @@ def _announced_release_date(headline: str, today_iso: str) -> str | None:
     return d if (d and d >= today_iso) else None
 
 
+_CALL_CUE_RE = re.compile(
+    r"(conference call|webcast|host[^.]{0,30}call|call to discuss)", re.I)
+
+
+def _parse_call_date(text: str, today_iso: str) -> str | None:
+    """The conference-CALL date from a PR body — a future '… on <Month> <Day>,
+    <Year>' shortly after a call/webcast cue (e.g. 'host a conference call on
+    July 15, 2026'). None if not found — never guessed."""
+    if not text:
+        return None
+    for cue in _CALL_CUE_RE.finditer(text):
+        d = _parse_on_date(text[cue.start():cue.start() + 170])
+        if d and d >= today_iso:
+            return d
+    return None
+
+
 def call_info_map() -> dict:
-    """{ticker: {call_time, webcast_url, dial_in, release_date}} parsed from each
-    bank's earnings-announcement press release.
+    """{ticker: {call_time, webcast_url, dial_in, call_date, release_date}} parsed
+    from each bank's earnings-announcement press release.
 
     ONE events query, 1h-cached (st.cache_data) so the calendar render never
     re-queries/re-parses. Queries 'earnings'-typed events directly (not a flat
@@ -204,6 +221,11 @@ def call_info_map() -> dict:
                 for k in ("call_time", "webcast_url", "dial_in"):
                     if ci.get(k):
                         cur[k] = ci[k]
+            # Conference-call date from the body (when stated up front).
+            if not cur.get("call_date"):
+                cd = _parse_call_date(r.get("summary") or "", today_iso)
+                if cd:
+                    cur["call_date"] = cd
             # Announced release date from the HEADLINE — captured even when the
             # body has no parseable call logistics (the universe-wide signal).
             if not cur.get("release_date"):

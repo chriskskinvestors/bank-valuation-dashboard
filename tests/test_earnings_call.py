@@ -51,6 +51,14 @@ class TestAnnouncedReleaseDate(unittest.TestCase):
         self.assertIsNone(f("JKL Will Announce Q1 Results on April 14, 2026", self.T))
         self.assertIsNone(f("", self.T))
 
+    def test_call_date_from_body(self):
+        from data.earnings_call import _parse_call_date as C
+        self.assertEqual(C("The company will host a conference call on July 15, "
+                           "2026 at 9:00 a.m. ET.", self.T), "2026-07-15")
+        # No call cue → nothing (a bare future date isn't a call date).
+        self.assertIsNone(C("Results will be released on July 14, 2026.", self.T))
+        self.assertIsNone(C("", self.T))
+
 
 class TestParseCallInfo(unittest.TestCase):
 
