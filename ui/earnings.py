@@ -1098,16 +1098,16 @@ def _render_earnings_calendar(watchlist: list[str]):
         ("Precise Call Times", str(n_time)),
     ])
     st.caption(
-        "Full bank universe, by week. **Report** = the earnings release date "
-        "(FMP/yfinance estimate; **When** is its before/after-open timing, a **✓** "
-        "marks an FMP-confirmed date, others are **(proj.)**). **Call** is the "
-        "conference-call time — prefixed with its date when the call is a "
-        "different day than the release (e.g. report after close, call next "
-        "morning) — with **Webcast / Dial-in**, all from the bank's own IR "
-        "announcement. **Target / Rating / Cov** are the yfinance analyst "
-        "consensus. '—' wherever a value isn't available yet.")
+        "Full bank universe, by week. Two dates per bank: **Release** = the "
+        "earnings release date (FMP/yfinance estimate; **When** is its before/"
+        "after-open timing, a **✓** marks an FMP-confirmed date, others are "
+        "**(proj.)**), and **Call** = the conference-call date + time (often a "
+        "different day — e.g. release after close, call next morning), with "
+        "**Webcast / Dial-in**, all from the bank's own IR announcement. "
+        "**Target / Rating / Cov** are the yfinance analyst consensus. '—' "
+        "wherever a value isn't available yet.")
 
-    headers = [("Ticker", ""), ("Bank", "nm"), ("Report", ""), ("✓", ""),
+    headers = [("Ticker", ""), ("Bank", "nm"), ("Release", ""), ("✓", ""),
                ("In", ""), ("When", ""), ("Call", ""), ("Webcast", ""),
                ("Dial-in", ""), ("EPS Est", ""), ("Rev Est", ""),
                ("Target", ""), ("Rating", ""), ("Cov", "")]
@@ -1143,7 +1143,7 @@ def _render_earnings_calendar(watchlist: list[str]):
                 _cell("✓" if r["confirmed"] else None),
                 _cell(days_str),
                 _cell(r.get("when")),
-                _cell(_call_label(r.get("call_date"), r.get("call_time"), r["date"])),
+                _cell(_call_label(r.get("call_date"), r.get("call_time"))),
                 webcast,
                 _cell(r.get("dial_in")),
                 _cell(f"${r['eps_est']:.2f}" if r.get("eps_est") else None),
@@ -1173,12 +1173,12 @@ def _iso_to_short(iso) -> str | None:
         return None
 
 
-def _call_label(call_date, call_time, report_date) -> str | None:
-    """The 'Call' cell — the call time, prefixed with a short date ONLY when the
-    call is a different day than the report (a same-day call shows just the time;
-    a next-morning call shows 'Jul 15 · 9:00a ET'). None when no call detail."""
+def _call_label(call_date, call_time) -> str | None:
+    """The 'Call' cell — the conference-call DATE and time, its own column distinct
+    from the release date (e.g. 'Jul 15 · 9:00a ET'). Shows whichever parts are
+    known; None when there's no call detail at all."""
     bits = []
-    if call_date and call_date != report_date:
+    if call_date:
         short = _iso_to_short(call_date)
         if short:
             bits.append(short)
