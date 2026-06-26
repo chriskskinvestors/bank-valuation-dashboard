@@ -416,7 +416,8 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
 
 def _valuation_history_chart(ticker: str, info: dict):
     """Quarter-end P/TBV and P/E over the last ~3 years, dual-axis. Price from
-    market history ÷ per-share book/earnings from SEC filings."""
+    market history ÷ per-share book value and trailing-twelve-month earnings
+    from SEC filings (P/E uses TTM EPS so there's a point every quarter)."""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     from utils.chart_style import apply_standard_layout, COLOR_PRIMARY, COLOR_WARNING
@@ -425,22 +426,24 @@ def _valuation_history_chart(ticker: str, info: dict):
     if not cik:
         return None
     try:
-        from ui.financial_highlights import _per_share_for_ends
+        from ui.financial_highlights import _per_share_for_ends, _flow_for, _sec_map
         from data.fmp_client import get_history
     except Exception:
         return None
 
-    ends = []
+    ends_all = []
     if cert:
         fh = fdic_client.get_historical_financials(cert, quarters=20)
         if fh is not None and not fh.empty:
             ds = pd.to_datetime(fh["REPDTE"]).dropna().sort_values()
-            ends = [d.to_pydatetime() for d in ds][-12:]
-    if not ends:
+            ends_all = [d.to_pydatetime() for d in ds]
+    if len(ends_all) < 4:
         return None
+    ends = ends_all[-12:]   # quarters shown; earlier ones only feed the TTM sum
 
     try:
         ps = _per_share_for_ends(cik, ends, quarterly=False)
+        facts = sec_client.fetch_company_facts(cik)
         px = get_history(ticker, "5Y")
     except Exception:
         return None
@@ -450,17 +453,31 @@ def _valuation_history_chart(ticker: str, info: dict):
     px["date"] = pd.to_datetime(px["date"], errors="coerce")
     px = px.dropna(subset=["date"]).sort_values("date")
 
+    # Trailing-twelve-month diluted EPS at each quarter-end = sum of the four
+    # single-quarter EPS ending there (Q4 derived as FY − 9-mo). The prior code
+    # used point-in-time ANNUAL EPS, which is reported only at fiscal year-ends,
+    # so P/E showed a single dot per year. TTM gives a P/E point every quarter
+    # and its latest value ties to the snapshot's "EPS (TTM)".
+    eps_q = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="quarter") if facts else {}
+    eps_a = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="annual") if facts else {}
+    sq = [_flow_for(e, eps_q, eps_a, True)[0] for e in ends_all]
+    ttm = {}
+    for i, e in enumerate(ends_all):
+        w = sq[i - 3:i + 1]
+        ttm[e] = sum(w) if (i >= 3 and len(w) == 4 and None not in w) else None
+
     dates, ptbvs, pes = [], [], []
     for e in ends:
         rec = ps.get(e) or {}
-        tbvps, eps = rec.get("tbvps"), rec.get("eps")
+        tbvps = rec.get("tbvps")
         sub = px[px["date"] <= pd.Timestamp(e)]
         if sub.empty:
             continue
         price = float(sub["close"].iloc[-1])
         dates.append(e)
         ptbvs.append(price / tbvps if (tbvps and tbvps > 0) else None)
-        pes.append(price / eps if (eps and eps > 0) else None)
+        eps_ttm = ttm.get(e)
+        pes.append(price / eps_ttm if (eps_ttm and eps_ttm > 0) else None)
     if not dates or all(v is None for v in ptbvs):
         return None
 
