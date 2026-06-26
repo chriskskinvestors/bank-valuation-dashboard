@@ -1034,6 +1034,45 @@ def _cell(value, cls: str = "") -> str:
 
 # ── Earnings Calendar ──────────────────────────────────────────────────
 
+def _cal_tr(r: dict, yf_by_tk: dict, soon: bool) -> str:
+    """One <tr> for the combined earnings-calendar grid (date/call + estimates +
+    analyst columns). `yf_by_tk` supplies the analyst consensus per ticker."""
+    days = r["days_until"]
+    days_str = "Today" if days == 0 else f"{days}d"
+    date_str = r["date"] if r["confirmed"] else f"{r['date']} (proj.)"
+    url = r.get("webcast_url")
+    if url:
+        webcast = (f'<td><a class="lnk" href="{_html.escape(url, quote=True)}" '
+                   f'target="_blank" rel="noopener">▶ Listen</a></td>')
+    else:
+        webcast = '<td class="mut">—</td>'
+    # yfinance returns "none" for unrated names — render "—", never "None".
+    yc = yf_by_tk.get(r["ticker"]) or {}
+    rec = (yc.get("recommendation") or "").strip()
+    rec_display = (rec.replace("_", " ").title()
+                   if rec and rec.lower() != "none" else None)
+    ac = yc.get("analyst_count")             # None / 0 → "—"
+    tp = yc.get("target_price")
+    cells = [
+        _tk_cell(r["ticker"]),
+        _cell(get_name(r["ticker"]), "nm"),
+        _cell(date_str),
+        _cell("✓" if r["confirmed"] else None),
+        _cell(days_str),
+        _cell(r.get("when")),
+        _cell(_call_label(r.get("call_date"), r.get("call_time"))),
+        webcast,
+        _cell(r.get("dial_in")),
+        _cell(f"${r['eps_est']:.2f}" if r.get("eps_est") else None),
+        _cell(_fmt_rev_est(r.get("rev_est"))),
+        _cell(f"${tp:.2f}" if tp else None),
+        _cell(rec_display),
+        _cell(str(ac) if ac else None),
+    ]
+    tr_cls = ' class="soon"' if soon else ""
+    return f"<tr{tr_cls}>" + "".join(cells) + "</tr>"
+
+
 def _render_earnings_calendar(watchlist: list[str]):
     """Universe-wide upcoming earnings calendar, grouped by week — report date &
     timing, the conference call (time / webcast / dial-in), the estimates and the
@@ -1113,50 +1152,29 @@ def _render_earnings_calendar(watchlist: list[str]):
                ("Dial-in", ""), ("EPS Est", ""), ("Rev Est", ""),
                ("Target", ""), ("Rating", ""), ("Cov", "")]
 
+    # No internal scroll — each table grows to fit its rows; a long week is split
+    # into two balanced tables side by side so it fills the horizontal space
+    # instead of scrolling one tall box. (Cap is a safety net for a huge week.)
+    def _full_height(n):
+        return min(1600, 40 + 18 * n)
+
     for bucket in agenda:
         rows = bucket["rows"]
         soon = bucket["label"] == "This week"
         header = f"{bucket['label']} · {len(rows)} report{'s' if len(rows) != 1 else ''}"
         st.markdown(f"##### {'🔴 ' if soon else ''}{header}")
 
-        body = []
-        for r in rows:
-            days = r["days_until"]
-            days_str = "Today" if days == 0 else f"{days}d"
-            date_str = r["date"] if r["confirmed"] else f"{r['date']} (proj.)"
-            url = r.get("webcast_url")
-            if url:
-                webcast = (f'<td><a class="lnk" href="{_html.escape(url, quote=True)}" '
-                           f'target="_blank" rel="noopener">▶ Listen</a></td>')
-            else:
-                webcast = '<td class="mut">—</td>'
-            # yfinance returns "none" for unrated names — render "—", never "None".
-            yc = yf_by_tk.get(r["ticker"]) or {}
-            rec = (yc.get("recommendation") or "").strip()
-            rec_display = (rec.replace("_", " ").title()
-                           if rec and rec.lower() != "none" else None)
-            ac = yc.get("analyst_count")         # None / 0 → "—"
-            tp = yc.get("target_price")
-            cells = [
-                _tk_cell(r["ticker"]),
-                _cell(get_name(r["ticker"]), "nm"),
-                _cell(date_str),
-                _cell("✓" if r["confirmed"] else None),
-                _cell(days_str),
-                _cell(r.get("when")),
-                _cell(_call_label(r.get("call_date"), r.get("call_time"))),
-                webcast,
-                _cell(r.get("dial_in")),
-                _cell(f"${r['eps_est']:.2f}" if r.get("eps_est") else None),
-                _cell(_fmt_rev_est(r.get("rev_est"))),
-                _cell(f"${tp:.2f}" if tp else None),
-                _cell(rec_display),
-                _cell(str(ac) if ac else None),
-            ]
-            tr_cls = ' class="soon"' if soon else ""
-            body.append(f"<tr{tr_cls}>" + "".join(cells) + "</tr>")
-
-        _render_earnings_grid(headers, body, height=_grid_height(len(body)))
+        trs = [_cal_tr(r, yf_by_tk, soon) for r in rows]
+        if len(trs) > 20:
+            mid = (len(trs) + 1) // 2
+            left, right = trs[:mid], trs[mid:]
+            c1, c2 = st.columns(2, gap="small")
+            with c1:
+                _render_earnings_grid(headers, left, height=_full_height(len(left)))
+            with c2:
+                _render_earnings_grid(headers, right, height=_full_height(len(right)))
+        else:
+            _render_earnings_grid(headers, trs, height=_full_height(len(trs)))
 
     table_export(pd.DataFrame(all_rows), "earnings_calendar",
                  key="exp_earnings_calendar")
