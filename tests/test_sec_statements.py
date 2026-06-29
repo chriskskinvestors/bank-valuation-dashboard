@@ -175,6 +175,157 @@ class TestStatementMatching(unittest.TestCase):
             self.assertTrue(bool(reject.search(title)), title)   # rejected
 
 
+# A COMBINED "Statements of Income AND Comprehensive Income" R-file (ABCB shape):
+# the FULL income statement (interest income/expense, provision, noninterest
+# income/expense, net income) followed by the OCI continuation, then EPS/share
+# rows. Two 3-month and two 9-month columns (a Q3 10-Q layout).
+_COMBINED_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Consolidated Statements of Income and Comprehensive Income '
+    b'(unaudited) - USD ($) $ in Thousands</th>'
+    b'<th class="th" colspan="2">3 Months Ended</th>'
+    b'<th class="th" colspan="2">9 Months Ended</th></tr>'
+    b'<tr><th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th>'
+    b'<th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th></tr>'
+    b'<tr><td class="pl">Total interest income</td>'
+    b'<td class="nump">355,046</td><td class="nump">355,146</td>'
+    b'<td class="nump">1,036,462</td><td class="nump">1,031,921</td></tr>'
+    b'<tr><td class="pl">Total interest expense</td>'
+    b'<td class="nump">117,082</td><td class="nump">141,086</td>'
+    b'<td class="nump">344,846</td><td class="nump">404,552</td></tr>'
+    b'<tr><td class="pl">Provision for credit losses</td>'
+    b'<td class="nump">22,630</td><td class="nump">6,107</td>'
+    b'<td class="nump">47,294</td><td class="nump">45,985</td></tr>'
+    b'<tr><td class="pl">Total noninterest expense</td>'
+    b'<td class="nump">154,566</td><td class="nump">151,777</td>'
+    b'<td class="nump">460,860</td><td class="nump">455,845</td></tr>'
+    b'<tr><td class="pl">Net income</td>'
+    b'<td class="nump">106,029</td><td class="nump">99,212</td>'
+    b'<td class="nump">303,798</td><td class="nump">264,309</td></tr>'
+    # OCI continuation — must be stripped.
+    b'<tr><td class="pl">Other comprehensive income</td>'
+    b'<td class="text"> </td><td class="text"> </td>'
+    b'<td class="text"> </td><td class="text"> </td></tr>'
+    b'<tr><td class="pl">Net unrealized holding gains on AFS securities</td>'
+    b'<td class="nump">12,145</td><td class="nump">22,296</td>'
+    b'<td class="nump">35,378</td><td class="nump">20,215</td></tr>'
+    b'<tr><td class="pl">Total other comprehensive income</td>'
+    b'<td class="nump">12,057</td><td class="nump">22,296</td>'
+    b'<td class="nump">35,290</td><td class="nump">20,215</td></tr>'
+    b'<tr><td class="pl">Comprehensive income</td>'
+    b'<td class="nump">118,086</td><td class="nump">121,508</td>'
+    b'<td class="nump">339,088</td><td class="nump">284,524</td></tr>'
+    # EPS / share rows follow the OCI block — they are part of the income
+    # statement and must SURVIVE the strip.
+    b'<tr><td class="pl">Diluted earnings per common share (in dollars per share)</td>'
+    b'<td class="nump">$ 1.54</td><td class="nump">1.44</td>'
+    b'<td class="nump">4.41</td><td class="nump">3.83</td></tr>'
+    b'</table>')
+
+# A STANDALONE "Statements of Comprehensive Income" (OCI-only, ZION shape): it
+# STARTS at net income and has NO revenue/expense lines above it — must be
+# rejected as an income statement.
+_OCI_ONLY = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME - '
+    b'USD ($) $ in Millions</th><th class="th">3 Months Ended</th></tr>'
+    b'<tr><th class="th">Mar. 31, 2026</th></tr>'
+    b'<tr><td class="pl">Net income for the period</td><td class="nump">233</td></tr>'
+    b'<tr><td class="pl">Other comprehensive income, net of tax</td>'
+    b'<td class="nump">40</td></tr>'
+    b'<tr><td class="pl">Net change in unrealized gains on investment securities</td>'
+    b'<td class="nump">30</td></tr>'
+    b'<tr><td class="pl">Comprehensive income</td><td class="nump">273</td></tr>'
+    b'</table>')
+
+
+class TestCombinedIncomeComprehensive(unittest.TestCase):
+    """A COMBINED 'Income and Comprehensive Income' statement (ABCB) is the full
+    income statement and must be ACCEPTED and parsed through net income, with the
+    OCI continuation stripped; a STANDALONE OCI-only 'Comprehensive Income'
+    statement (which starts at net income) must still be REJECTED — the
+    discriminator is CONTENT (income lines above net income), not the title."""
+
+    def test_combined_title_accepted_standalone_oci_rejected(self):
+        # Title-level first cut: 'income and comprehensive income' survives the
+        # reject; a bare 'comprehensive income' does not.
+        import data.sec_statements as s
+        want, reject = s._STMT_PATTERNS["income"]
+        combined = "Consolidated Statements of Income and Comprehensive Income (unaudited)"
+        self.assertTrue(want.search(combined) and not reject.search(combined))
+        for oci in ("Consolidated Statements of Comprehensive Income",
+                    "CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME"):
+            self.assertTrue(bool(reject.search(oci)), oci)
+        # The combined statement's own parenthetical companion is still rejected.
+        self.assertTrue(bool(reject.search(combined + " (Parenthetical)")))
+
+    def test_matcher_picks_combined_when_it_is_the_only_income_rfile(self):
+        # ABCB's 10-Q has ONLY the combined R-file (no separate income statement),
+        # so the matcher must select it for 'income'.
+        import data.sec_statements as s
+        summary = (b'<?xml version="1.0"?><FilingSummary><MyReports>'
+                   b'<Report><ShortName>Cover Page</ShortName><HtmlFileName>R1.htm</HtmlFileName></Report>'
+                   b'<Report><ShortName>Consolidated Balance Sheets</ShortName><HtmlFileName>R2.htm</HtmlFileName></Report>'
+                   b'<Report><ShortName>Consolidated Statements of Income and Comprehensive Income (unaudited)</ShortName><HtmlFileName>R4.htm</HtmlFileName></Report>'
+                   b'<Report><ShortName>Consolidated Statements of Income and Comprehensive Income (unaudited) (Parenthetical)</ShortName><HtmlFileName>R5.htm</HtmlFileName></Report>'
+                   b'</MyReports></FilingSummary>')
+        with mock.patch.object(s, "_get", return_value=summary):
+            out = _statement_rfiles("base/")
+        self.assertEqual(out.get("income"), "R4.htm")
+
+    def test_separate_income_statement_still_wins_over_combined_sibling(self):
+        # When BOTH a plain 'Statements of Income' AND a combined sibling exist
+        # (ABCB 10-K), first-match-wins must keep selecting the plain income
+        # statement — the relaxation must not change that.
+        import data.sec_statements as s
+        summary = (b'<?xml version="1.0"?><FilingSummary><MyReports>'
+                   b'<Report><ShortName>Consolidated Statements of Income</ShortName><HtmlFileName>R5.htm</HtmlFileName></Report>'
+                   b'<Report><ShortName>Consolidated Statements of Comprehensive Income</ShortName><HtmlFileName>R6.htm</HtmlFileName></Report>'
+                   b'</MyReports></FilingSummary>')
+        with mock.patch.object(s, "_get", return_value=summary):
+            out = _statement_rfiles("base/")
+        self.assertEqual(out.get("income"), "R5.htm")    # plain income, not comprehensive
+
+    def test_income_parse_strips_oci_and_keeps_net_income_and_eps(self):
+        from data.sec_statements import _income_parse
+        p = _income_parse(_COMBINED_INCOME)
+        self.assertIsNotNone(p)
+        labels = [r["label"] for r in p["rows"]]
+        # Income lines + net income kept; OCI block removed; EPS preserved.
+        self.assertIn("Net income", labels)
+        self.assertIn("Total interest income", labels)
+        self.assertIn("Diluted earnings per common share (in dollars per share)", labels)
+        self.assertNotIn("Other comprehensive income", labels)
+        self.assertNotIn("Total other comprehensive income", labels)
+        self.assertNotIn("Comprehensive income", labels)
+        # Net income value is the income bottom line (3-month col), in raw dollars.
+        ni = next(r for r in p["rows"] if r["label"] == "Net income")
+        self.assertEqual(ni["values"][0], 106_029_000.0)
+
+    def test_income_parse_rejects_standalone_oci_only(self):
+        # The OCI-only statement starts at net income with no income lines above —
+        # the content guard returns None so it is never rendered as income.
+        from data.sec_statements import _income_parse, _is_income_body
+        from data.sec_statements import parse_rfile
+        self.assertFalse(_is_income_body(parse_rfile(_OCI_ONLY)))
+        self.assertIsNone(_income_parse(_OCI_ONLY))
+
+    def test_combined_fixture_yields_discrete_quarter_income_series(self):
+        # ABCB-style: the combined R-file feeds the discrete-quarter stitch and
+        # yields a real single-quarter income series (3-month column, not YTD).
+        from data.sec_statements import _income_parse, _column_meta
+        from data.sec_statements import _stitch_flow_quarters
+        stmt = _income_parse(_COMBINED_INCOME)
+        ncol = max(len(r["values"]) for r in stmt["rows"] if not r["header"])
+        stmt["_colmeta"] = _column_meta(_COMBINED_INCOME, ncol)
+        stmt["_meta"] = {"accession": "Q3ACC"}
+        out = _stitch_flow_quarters([stmt], [], [(2025, 9)])
+        self.assertEqual(out["periods"], ["Q3'25"])
+        ni = next(r for r in out["rows"] if r["label"] == "Net income")
+        self.assertEqual(ni["values"][0], 106_029_000.0)   # discrete quarter
+        self.assertNotEqual(ni["values"][0], 303_798_000.0)  # A21: never the 9M YTD
+
+
 class TestStitchIncome(unittest.TestCase):
     """Multi-year stitch (data.sec_statements._stitch_income): union of labels
     with each filing's order preserved, each year sourced from the NEWEST filing

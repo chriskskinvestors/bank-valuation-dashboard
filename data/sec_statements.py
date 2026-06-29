@@ -28,10 +28,21 @@ from data.sec_filing_scraper import latest_filing, _get
 # Income Statement", which the "statement OF income" order alone misses. The
 # reject still drops the comprehensive-income and cash-flow siblings (a
 # "comprehensive income" title contains "income" but is not the income statement).
+#
+# COMBINED income+comprehensive: some filers (e.g. ABCB) fold the full income
+# statement into a single "Statements of Income AND Comprehensive Income" R-file
+# (interest income/expense, provision, noninterest income/expense, net income —
+# then an OCI continuation). That IS the income statement and must be ACCEPTED,
+# so the reject spares 'comprehensive' when it follows 'income and' (the combined
+# title). A STANDALONE "Statements of Comprehensive Income" (OCI-only: starts at
+# net income, no revenue/expense lines) is still rejected by the bare
+# 'comprehensive'. Title is only a first cut — a content check (_is_income_body)
+# is the true discriminator applied after parsing.
 _STMT_PATTERNS = {
     "income": (re.compile(r"statements?\s+of\s+(income|operations|earnings)|"
                           r"\bincome\s+statements?\b", re.I),
-               re.compile(r"comprehensive|parenthetical|cash\s+flow", re.I)),
+               re.compile(r"(?i:(?<!income and )comprehensive)|"
+                          r"parenthetical|cash\s+flow", re.I)),
     "balance": (re.compile(r"balance\s+sheet|financial\s+position|financial\s+condition", re.I),
                 re.compile(r"parenthetical", re.I)),
     "cashflow": (re.compile(r"statements?\s+of\s+cash\s+flows", re.I),
@@ -308,6 +319,86 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
             "basis": basis, "rows": rows}
 
 
+# ── Combined "Income AND Comprehensive Income" statements ────────────────────
+# Some filers (ABCB) render the full income statement and the OCI section in one
+# R-file titled "Statements of Income and Comprehensive Income". That R-file IS
+# the income statement (interest income/expense, provision, noninterest
+# income/expense, net income) — but it appends an other-comprehensive-income
+# continuation (unrealized gains, total OCI, comprehensive-income total) that is
+# NOT part of the income statement. We accept the combined R-file but strip that
+# OCI continuation so the parsed statement ends at the company's income lines.
+#
+# Discriminating a COMBINED statement from a STANDALONE "Statements of
+# Comprehensive Income" (OCI-only: starts AT net income, no revenue/expense
+# lines) is by CONTENT, not title — _is_income_body requires real income lines
+# ABOVE net income, which a pure-OCI statement lacks.
+
+# A net-income line (the income statement's bottom line). Excludes the OCI
+# "comprehensive income" total and "other comprehensive income" rows.
+_NET_INCOME = re.compile(r"^\s*net\s+income(\s+\(loss\))?\b(?!.*comprehensive)", re.I)
+# Income-statement lines that only ever appear ABOVE net income (revenue, cost,
+# tax) — their presence proves a body is a real income statement, not OCI-only.
+_INCOME_LINE = re.compile(
+    r"interest\s+income|interest\s+expense|interest\s+and\s+(fees|dividend)|"
+    r"noninterest\s+(income|expense)|non-interest\s+(income|expense)|"
+    r"provision\s+for|total\s+revenue|net\s+revenue|"
+    r"income\s+before\s+income\s+tax|income\s+tax\s+(expense|benefit)|"
+    r"salaries", re.I)
+# The OCI continuation that follows net income in a combined statement: the
+# section header "Other comprehensive income" through the "Comprehensive income"
+# total. These rows are dropped; per-share / share-count rows (which a normal
+# income statement also carries) are NOT in this range and survive.
+_OCI_START = re.compile(r"^\s*other\s+comprehensive\s+(income|loss)", re.I)
+_OCI_TOTAL = re.compile(r"^\s*(total\s+)?comprehensive\s+(income|loss)\b", re.I)
+
+
+def _is_income_body(parsed: dict | None) -> bool:
+    """True iff a parsed R-file is a real income statement: it has a net-income
+    line AND at least one revenue/expense line ABOVE it. A standalone OCI-only
+    'Statements of Comprehensive Income' (which STARTS at net income, with no
+    income lines above) fails this — the content discriminator the title cannot
+    make. A non-income statement (balance, cash flow) has no net-income line and
+    also fails, so this guard is only meaningful for income candidates."""
+    if not parsed or not parsed.get("rows"):
+        return False
+    ni_idx = next((i for i, r in enumerate(parsed["rows"])
+                   if not r["header"] and _NET_INCOME.match(r["label"])), None)
+    if ni_idx is None:
+        return False
+    return any(_INCOME_LINE.search(r["label"]) for r in parsed["rows"][:ni_idx])
+
+
+def _strip_oci(parsed: dict) -> dict:
+    """Drop the other-comprehensive-income continuation from a combined
+    income+comprehensive statement: the contiguous run from the 'Other
+    comprehensive income' section header through the 'Comprehensive income'
+    total. Net income and the per-share / weighted-share rows that follow the
+    OCI block are preserved — only the OCI section is removed. A pure income
+    statement (no OCI block) is returned unchanged."""
+    rows = parsed["rows"]
+    start = next((i for i, r in enumerate(rows) if _OCI_START.match(r["label"])), None)
+    if start is None:
+        return parsed
+    end = next((j for j in range(start, len(rows)) if _OCI_TOTAL.match(rows[j]["label"])),
+               None)
+    if end is None:
+        return parsed                       # no closing total → leave untouched
+    kept = rows[:start] + rows[end + 1:]
+    return {**parsed, "rows": kept}
+
+
+def _income_parse(html_bytes: bytes) -> dict | None:
+    """parse_rfile for an INCOME R-file, then strip any OCI continuation (combined
+    'Income and Comprehensive Income' statements). Returns None if the parsed body
+    is not a real income statement (e.g. a standalone OCI-only statement that
+    slipped past the title matcher) — the content discriminator for the cardinal
+    rule: never render a non-income statement as income."""
+    parsed = parse_rfile(html_bytes)
+    if not (parsed and parsed["rows"]) or not _is_income_body(parsed):
+        return None
+    return _strip_oci(parsed)
+
+
 def as_reported_statements_for(cik) -> dict | None:
     """Cached As-Reported primary statements (income, balance sheet, cash flows)
     for a company, from its latest 10-K's SEC-rendered R-files. Returns
@@ -327,7 +418,8 @@ def as_reported_statements_for(cik) -> dict | None:
     try:
         stmts = {}
         for stype, fn in _statement_rfiles(base).items():
-            parsed = parse_rfile(_get(base + fn))
+            raw = _get(base + fn)
+            parsed = _income_parse(raw) if stype == "income" else parse_rfile(raw)
             if parsed and parsed["rows"]:
                 stmts[stype] = parsed
     except Exception as e:
@@ -743,7 +835,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
             if not fn:
                 continue
             raw = _get(base + fn)
-            stmt = parse_rfile(raw)
+            stmt = _income_parse(raw) if stype == "income" else parse_rfile(raw)
             if not (stmt and stmt["rows"]):
                 continue
             ncol = max((len(r["values"]) for r in stmt["rows"]
@@ -822,7 +914,12 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
         base = _filing_base(m["cik"], m["accession"])
         try:
             fn = _rfile_for(base, stype)
-            stmt = parse_rfile(_get(base + fn)) if fn else None
+            if not fn:
+                stmt = None
+            elif stype == "income":
+                stmt = _income_parse(_get(base + fn))   # strip OCI / guard non-income
+            else:
+                stmt = parse_rfile(_get(base + fn))
             if stmt and stype in _NOTE_TRANSFORM:
                 stmt = _NOTE_TRANSFORM[stype](stmt)   # e.g. collapse loan dimensions
         except Exception as e:
