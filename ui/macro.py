@@ -1390,9 +1390,39 @@ def _rates_board_rows():
                 cut = bs["date"].iloc[-1] - pd.Timedelta(days=365 * 3)
                 spark = [float(v) for v in bs[bs["date"] >= cut]["value"].tolist() if v == v]
             z = zscore_latest(df, "level_pct", years=10)
-        rows.append({"group": group, "label": label, "unit": unit, "latest": latest,
-                     "d1w": d1w, "d3m": d3m, "z": z, "spark": spark, "as_of": as_of})
+        rows.append({"group": group, "sid": sid, "label": label, "unit": unit,
+                     "latest": latest, "d1w": d1w, "d3m": d3m, "z": z,
+                     "spark": spark, "as_of": as_of})
     return rows
+
+
+def _rates_board_rows_live():
+    """FRED board rows (cached) with live CBOE yields overlaid on the tenors
+    that have an intraday index (3M/5Y/10Y/30Y). Returns (rows, live_asof) where
+    live_asof is the freshest live timestamp or None when nothing was overlaid
+    (Yahoo unavailable → pure-FRED fallback). st.cache_data hands back a copy, so
+    mutating these rows here doesn't touch the cache."""
+    from data.treasury_live import live_yields
+    rows = _rates_board_rows()
+    live = live_yields()
+    if not live:
+        return rows, None
+    live_asof = None
+    for r in rows:
+        lv = live.get(r.get("sid"))
+        if not lv or lv.get("yield") is None or r.get("latest") is None:
+            continue
+        shift = (lv["yield"] - r["latest"]) * 100  # bps from FRED close to live
+        if r.get("d1w") is not None:
+            r["d1w"] += shift
+        if r.get("d3m") is not None:
+            r["d3m"] += shift
+        r["latest"] = lv["yield"]
+        r["as_of"] = lv["asof"]
+        r["live"] = True
+        if live_asof is None or lv["asof"] > live_asof:
+            live_asof = lv["asof"]
+    return rows, live_asof
 
 
 def _rates_board_table(rows) -> str:
@@ -1432,9 +1462,12 @@ def _rates_board_table(rows) -> str:
     )
 
 
-@st.cache_data(ttl=_FIG_TTL, show_spinner=False)
 def _fig_yield_curve():
+    # NOT cached: the "Today" curve overlays live CBOE yields (refreshed every
+    # ~90s in live_yields), so a 30-min figure cache would freeze them. The FRED
+    # series it reads are themselves cached, so rebuilding the figure is cheap.
     import plotly.graph_objects as go
+    from data.treasury_live import live_yields
 
     def _at(df, days):
         if df is None or df.empty:
@@ -1449,11 +1482,15 @@ def _fig_yield_curve():
         return float(prior["value"].iloc[-1]) if not prior.empty else None
     tenors = [("3M", "DGS3MO"), ("2Y", "DGS2"), ("5Y", "DGS5"),
               ("10Y", "DGS10"), ("30Y", "DGS30")]
+    live = live_yields()
     labels, cur, m3, y1 = [], [], [], []
     for lbl, sid in tenors:
         d = fetch_series(sid, years=2)
         labels.append(lbl)
-        cur.append(_at(d, 0))
+        # "Today" = live intraday yield where a CBOE index exists (all but 2Y),
+        # else FRED's latest close.
+        lv = live.get(sid)
+        cur.append(lv["yield"] if (lv and lv.get("yield") is not None) else _at(d, 0))
         m3.append(_at(d, 90))
         y1.append(_at(d, 365))
     fig = go.Figure()
@@ -1573,12 +1610,28 @@ def _render_rates_curve():
     board_col, chart_col = st.columns([1.5, 2.5])
     with board_col:
         st.markdown("**Rates & curve board**")
-        st.markdown(_rates_board_table(_rates_board_rows()), unsafe_allow_html=True)
-        st.caption(
-            "Latest level per instrument; Δ 1W / Δ 3M in basis points; vs hist = "
-            "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
-            "Source: FRED."
-        )
+        rows, live_asof = _rates_board_rows_live()
+        st.markdown(_rates_board_table(rows), unsafe_allow_html=True)
+        if live_asof is not None:
+            try:
+                from zoneinfo import ZoneInfo
+                et = live_asof.astimezone(ZoneInfo("America/New_York"))
+                h12 = et.hour % 12 or 12
+                ampm = "AM" if et.hour < 12 else "PM"
+                stamp = f"{et.strftime('%b')} {et.day}, {h12}:{et.minute:02d} {ampm} ET"
+            except Exception:
+                stamp = str(live_asof)
+            st.caption(
+                f"3M / 5Y / 10Y / 30Y are live market yields (CBOE indices via "
+                f"Yahoo, ~15-min delayed) as of {stamp}; 2-Year, Δ1W / Δ3M, "
+                "vs hist & history via FRED. Δ in bps; vs hist = z-score vs ~10y."
+            )
+        else:
+            st.caption(
+                "Latest level per instrument; Δ 1W / Δ 3M in basis points; vs hist = "
+                "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
+                "Source: FRED."
+            )
         with st.container(border=True, key="fedcard"):
             _render_fed_policy_strip()
             _render_sep_block()
