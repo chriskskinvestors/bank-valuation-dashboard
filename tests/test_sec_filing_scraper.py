@@ -598,6 +598,103 @@ class TestSecuritiesMultiyear(unittest.TestCase):
         self.assertIsNone(self._run([], {}))
 
 
+class TestFairValueMultiyear(unittest.TestCase):
+    """fair_value_multiyear_for stitches the FY-end-only ASC 820 hierarchy across
+    recent 10-Ks: NEWEST-FIRST periods, FY-ends only (stub quarters dropped),
+    de-duplicated so a period shared by two filings keeps the value from the NEWER
+    one, and per-period gated — a side with no clean level total is dropped, a
+    period with no surviving side is dropped (never carried forward). No live fetch
+    — _recent_10k_metas and the per-filing extract are stubbed."""
+
+    def _meta(self, date, acc):
+        return {"accession": acc, "doc": f"d-{acc}.htm", "date": date, "cik": 99}
+
+    def _side(self, l1, l2, l3, grand=None):
+        total = sum(v for v in (l1, l2, l3) if v is not None)
+        recon = grand is None or abs(grand - total) <= max(abs(total) * 0.01, 5e6)
+        return {"l1": l1, "l2": l2, "l3": l3, "total": total, "grand": grand,
+                "l3_pct": (l3 / total) if (total and l3 is not None) else None,
+                "netting": None if grand is None else grand - total,
+                "_reconciles": recon}
+
+    def _run(self, metas, extracts, n_years=5):
+        from data import sec_filing_scraper as S
+        with mock.patch("data.sec_statements._recent_10k_metas",
+                        return_value=metas), \
+             mock.patch.object(S, "_fair_value_extract_cached",
+                               side_effect=lambda m: extracts[m["accession"]]):
+            return S.fair_value_multiyear_for(99, n_years=n_years)
+
+    def test_stitch_fy_ends_newest_first_dedup(self):
+        # FY2025 10-K tags FY2025+FY2024; FY2024 10-K tags FY2024+FY2023.
+        # FY2024 shared → newer filing's value wins.
+        metas = [self._meta("2026-02-26", "A"), self._meta("2025-02-28", "B")]
+        extracts = {
+            "A": {"2025-12-31": {"assets": self._side(100.0, 50.0, 1.0)},
+                  "2024-12-31": {"assets": self._side(80.0, 40.0, 1.0)}},   # newer FY2024
+            "B": {"2024-12-31": {"assets": self._side(79.0, 39.0, 1.0)},    # older FY2024
+                  "2023-12-31": {"assets": self._side(60.0, 30.0, 1.0)}},
+        }
+        res = self._run(metas, extracts)
+        fv = res["fair_value"]
+        self.assertEqual(sorted(fv, reverse=True),
+                         ["2025-12-31", "2024-12-31", "2023-12-31"])
+        self.assertEqual(fv["2024-12-31"]["assets"]["l1"], 80.0)   # newer wins
+        self.assertEqual([f["accession"] for f in res["filings"]], ["A", "B"])
+        self.assertEqual(res["meta"]["accession"], "A")
+        # L1+L2+L3 == total for every surviving side.
+        for p in fv:
+            for s in fv[p].values():
+                self.assertAlmostEqual(
+                    sum(v for v in (s["l1"], s["l2"], s["l3"]) if v is not None),
+                    s["total"])
+
+    def test_stub_quarter_periods_dropped(self):
+        metas = [self._meta("2026-02-26", "A")]
+        extracts = {"A": {"2025-12-31": {"assets": self._side(100.0, 50.0, 1.0)},
+                          "2025-09-30": {"assets": self._side(95.0, 48.0, 1.0)}}}
+        res = self._run(metas, extracts)
+        self.assertEqual(list(res["fair_value"]), ["2025-12-31"])
+
+    def test_side_without_total_dropped(self):
+        # A side missing a clean level total is dropped; a period with no surviving
+        # side is dropped entirely (n/a, never a guess).
+        metas = [self._meta("2026-02-26", "A")]
+        bad = {"l1": None, "l2": None, "l3": None, "total": None, "grand": None,
+               "l3_pct": None, "netting": None, "_reconciles": True}
+        extracts = {"A": {"2025-12-31": {"assets": self._side(100.0, 50.0, 1.0),
+                                         "liabilities": bad},
+                          "2024-12-31": {"liabilities": bad}}}
+        res = self._run(metas, extracts)
+        fv = res["fair_value"]
+        self.assertEqual(list(fv), ["2025-12-31"])            # FY2024 all-bad → dropped
+        self.assertIn("assets", fv["2025-12-31"])
+        self.assertNotIn("liabilities", fv["2025-12-31"])     # bad side dropped
+
+    def test_netting_side_kept(self):
+        # A side whose tagged grand ≠ level sum (counterparty/collateral netting)
+        # is a valid reconciling case — kept, not dropped, with _reconciles False.
+        metas = [self._meta("2026-02-26", "A")]
+        M = 1e6
+        # grand 1200M vs level sum 1510M → 310M gap ≫ tolerance → netting case.
+        extracts = {"A": {"2025-12-31":
+                          {"assets": self._side(1000 * M, 500 * M, 10 * M,
+                                                grand=1200 * M)}}}
+        res = self._run(metas, extracts)
+        s = res["fair_value"]["2025-12-31"]["assets"]
+        self.assertFalse(s["_reconciles"])
+        self.assertEqual(s["total"], 1510 * M)
+        self.assertEqual(s["netting"], 1200 * M - 1510 * M)
+
+    def test_no_fy_ends_returns_none(self):
+        metas = [self._meta("2026-02-26", "A")]
+        extracts = {"A": {"2025-09-30": {"assets": self._side(95.0, 48.0, 1.0)}}}
+        self.assertIsNone(self._run(metas, extracts))
+
+    def test_no_filings_returns_none(self):
+        self.assertIsNone(self._run([], {}))
+
+
 class TestCreditQuality(unittest.TestCase):
     """The CECL allowance & asset-quality summary (extract_credit_quality). Pins the
     loans/ACL reconcile gate, the net-charge-off derivation, and — critically —

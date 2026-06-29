@@ -1816,71 +1816,143 @@ def render_performance_analysis(ticker):
                      side_by_side=True)
 
 
+# Fair-value hierarchy sub-tab: per-side section band + the rows shown within it.
+# fmt: "usd" = $-compact dollars; "pct" = % (fraction → %). The netting / grand
+# rows are added per-side only for years that disclose a reconciling netting item
+# (filer's tagged grand ≠ level sum); blank elsewhere.
+_FV_LEVEL_ROWS = [
+    ("Level 1 (quoted prices)", "l1", "usd"),
+    ("Level 2 (observable inputs)", "l2", "usd"),
+    ("Level 3 (unobservable inputs)", "l3", "usd"),
+    ("Total (sum of levels)", "total", "usd"),
+]
+_CR_FV_SIDES = [("assets", "Assets at fair value"),
+                ("liabilities", "Liabilities at fair value")]
+
+
 def _render_fair_value_hierarchy(ticker):
-    """Recurring ASC 820 fair-value hierarchy (Level 1/2/3) for the HOLDING
-    COMPANY, scraped from its own latest 10-K/10-Q inline XBRL. Level 3 is the
-    mark-to-model share. Renders only what reconciles: where the filer's tagged
-    grand total differs from the level sum (dealer derivative/collateral netting)
-    the difference is shown as an explicit reconciling line; filers that don't tag
-    a hierarchy rollup render n/a, never a component-summed guess."""
+    """Multi-year (up to 5 FY) recurring ASC 820 fair-value hierarchy (Level 1/2/3)
+    for the HOLDING COMPANY, stitched FY-end-only from its own recent 10-Ks
+    (data.sec_filing_scraper.fair_value_multiyear_for). Level 3 is the mark-to-
+    model share. Each year is independently reconcile-gated by the extractor (the
+    level sum is the side's total — never a component-summed guess; disclosure-table
+    conflations are rejected). Where a year's tagged grand total differs from the
+    level sum (dealer counterparty/collateral netting) that difference is shown as
+    an explicit reconciling line for that year; a row n/a for every year is dropped;
+    a year that doesn't disclose a side is blank. Company-reported, never FDIC."""
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
         return
     try:
-        from data.sec_filing_scraper import fair_value_for
-        res = fair_value_for(cik)
+        from data.sec_filing_scraper import fair_value_multiyear_for
+        res = fair_value_multiyear_for(cik, n_years=5)
     except Exception:
         res = None
     st.markdown("---")
     st.subheader("Fair Value Hierarchy — recurring (ASC 820)")
     if not res or not res.get("fair_value"):
-        st.caption("Fair-value hierarchy rollup not tagged in this filer's latest "
-                   "filing — n/a. (Per-instrument component extraction is planned.)")
+        st.caption("Fair-value hierarchy rollup not tagged in this filer's 10-Ks — "
+                   "n/a. (Per-instrument component extraction is planned.)")
         return
     meta, fv = res["meta"], res["fair_value"]
-    period = max(fv)
-    sides = fv[period]
-    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+    periods = sorted(fv, reverse=True)[::-1]            # oldest → newest (FY-ends)
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
            f"{meta['accession']}/{meta['doc']}")
-    y, mo = period[:4], period[5:7]
-    plab = f"FY{y}" if mo == "12" else f"Q{(int(mo) - 1) // 3 + 1} '{y[2:]}"
+    cols = [f"FY{p[:4]}" for p in periods]
+
+    def _cell(period, side, key, fmt):
+        """Formatted cell, or None (blank) when the year doesn't disclose it."""
+        d = (fv.get(period) or {}).get(side)
+        if not d:
+            return None
+        v = d.get(key)
+        if v is None:
+            return None
+        if fmt == "pct":
+            return f"{v * 100:.1f}%"
+        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+
+    needs_netting = any(
+        (fv.get(p) or {}).get(side) and not (fv[p][side]).get("_reconciles")
+        for p in periods for side, _ in _CR_FV_SIDES)
+
+    rows = []
+    for side, band in _CR_FV_SIDES:
+        metrics = list(_FV_LEVEL_ROWS)
+        if needs_netting:
+            metrics = metrics + [
+                ("Counterparty/collateral netting", "netting", "usd"),
+                ("Total per filing", "grand", "usd")]
+        metrics = metrics + [("Level 3 % of total", "l3_pct", "pct")]
+        side_rows = []
+        for label, key, fmt in metrics:
+            vals = [_cell(p, side, key, fmt) for p in periods]
+            if any(v is not None for v in vals):        # drop rows n/a every year
+                side_rows.append({"label": label, "values": vals, "kind": "data"})
+        if side_rows:
+            rows.append({"label": band, "values": [], "kind": "header"})
+            rows.extend(side_rows)
+
+    if not rows:
+        st.caption("Fair-value hierarchy rollup not tagged in this filer's 10-Ks — "
+                   "n/a. (Per-instrument component extraction is planned.)")
+        return
+
     st.caption(
-        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — assets & "
-        f"liabilities measured at fair value on a recurring basis, {plab}. Level 3 "
-        f"= mark-to-model (unobservable inputs). Updates as soon as the company files.")
+        f"Source: company 10-K filings — latest [{meta['date']}]({src}); "
+        f"{len(periods)} fiscal year-end{'s' if len(periods) != 1 else ''} stitched "
+        f"from {len(res['filings'])} filings. Level 3 = mark-to-model (unobservable "
+        "inputs); the total is the sum of tagged levels. Company-reported, never FDIC.")
 
-    def _b(v):
-        return "n/a" if v is None else _cr_usd(v)
-
-    a, lia = sides.get("assets"), sides.get("liabilities")
-    needs_netting = any(s and not s["_reconciles"] for s in (a, lia))
-
-    def _col(s, key, kind):
-        if not s or s.get(key) is None:
-            return "n/a"
-        v = s[key]
-        return f"{v * 100:.1f}%" if kind == "pct" else _b(v)
-
-    rows = [
-        ("Level 1 (quoted prices)", "l1", "usd"),
-        ("Level 2 (observable inputs)", "l2", "usd"),
-        ("Level 3 (unobservable inputs)", "l3", "usd"),
-        ("Total (sum of levels)", "total", "usd"),
-    ]
-    if needs_netting:
-        rows += [("Counterparty/collateral netting", "netting", "usd"),
-                 ("Total per filing", "grand", "usd")]
-    rows.append(("Level 3 % of total", "l3_pct", "pct"))
-
-    grid_rows = [{"label": lab,
-                  "values": [_col(a, k, kind), _col(lia, k, kind)], "kind": "data"}
-                 for lab, k, kind in rows]
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(["Assets", "Liabilities"], grid_rows, entity=entity, src=src)
-    if needs_netting:
-        st.caption("Level totals are gross; the filer's grand total nets "
-                   "counterparty/collateral arrangements (shown as a reconciling line).")
+    _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+    with _lt:
+        _cr_component(cols, rows, entity=entity, src=src)
+        if needs_netting:
+            st.caption("Level totals are gross; for a year whose filer-tagged grand "
+                       "total nets counterparty/collateral arrangements, the netting "
+                       "is shown as a reconciling line (blank where it doesn't apply).")
+    with _rt:
+        _cr_fair_value_trends(periods, fv, ticker, "crfv")
+
+
+def _cr_fair_value_trends(periods, fv, ticker, key_prefix):
+    """Right-hand trend charts for multi-year Company-Reported Fair Value: Level 3
+    as % of total, one single-line chart per side (Assets, Liabilities). Same style
+    as _cr_securities_trends; a side n/a for every year is skipped; ≥3 points to
+    render (else table only)."""
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+    xs = [f"FY{p[:4]}" for p in periods]               # already oldest → newest
+    charts = []
+    for title, side in (("Level 3 % of assets at fair value", "assets"),
+                        ("Level 3 % of liabilities at fair value", "liabilities")):
+        ys = []
+        for p in periods:
+            d = (fv.get(p) or {}).get(side)
+            l3p = d.get("l3_pct") if d else None
+            ys.append(l3p * 100 if l3p is not None else None)
+        if sum(1 for y in ys if y is not None) >= 3:
+            charts.append((title, ys))
+    if not charts:
+        return
+    st.markdown("##### Trends")
+    for r in range(0, len(charts), 2):
+        cols = st.columns(2)
+        for j, (col, (title, ys)) in enumerate(zip(cols, charts[r:r + 2])):
+            with col:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, mode="lines+markers", connectgaps=True,
+                    line=dict(color=CATEGORICAL_PALETTE[0], width=2),
+                    marker=dict(size=5)))
+                apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                                      yaxis_title="%", show_legend=False)
+                tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
+                st.plotly_chart(fig, use_container_width=True,
+                                key=f"{key_prefix}_fvtr_{ticker}_{r + j}")
 
 
 # Securities (AFS/HTM) sub-tab: (portfolio data-key, section band label,

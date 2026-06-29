@@ -737,6 +737,83 @@ def fair_value_for(cik) -> dict | None:
     return None
 
 
+def _fair_value_extract_cached(meta: dict) -> dict:
+    """extract_fair_value for one filing, cached per accession (shared key with
+    fair_value_for). {} on failure (never cache a transient None)."""
+    from data import cache
+    ckey = f"fair_value:v2:{meta['accession']}"
+    fv = cache.get(ckey)
+    if fv is None:
+        try:
+            fv = extract_fair_value(instance_facts(meta))
+            try:
+                cache.put(ckey, fv)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[sec_scraper] fair value failed for cik {meta.get('cik')}: "
+                  f"{type(e).__name__}: {e}")
+            fv = {}
+    return fv or {}
+
+
+def fair_value_multiyear_for(cik, n_years: int = 5) -> dict | None:
+    """Multi-year recurring ASC 820 fair-value hierarchy, stitched FY-end-only from
+    the bank's recent 10-Ks. Each 10-K tags its FY-end (and usually the prior
+    FY-end), so a handful of filings yield up to `n_years` fiscal year-ends.
+    Returns {"meta": <latest 10-K>, "filings": [...], "fair_value": {fy_period:
+    {...}}} (newest-first periods), or None when no FY-end hierarchy is tagged.
+
+    Each period entry is exactly what extract_fair_value produced — i.e. already
+    reconcile-gated by the extractor (the level sum ties the filer's tagged grand
+    within tolerance, the disclosure-table guards rejected; a side with no clean
+    level total was omitted). Periods are de-duplicated keeping the value from the
+    NEWEST filing that tagged them (filings agree on shared comparatives; newest is
+    the as-finally-reported figure). Fabricates nothing — drops a period whose
+    levels don't reconcile to a total."""
+    if not cik:
+        return None
+    from data.sec_statements import _recent_10k_metas
+    # ~2 FY-ends per 10-K → reach back enough filings to cover n_years.
+    metas = _recent_10k_metas(cik, n_years)
+    if not metas:
+        return None
+    fair_value: dict = {}
+    used_filings: list = []
+    for m in metas:                                  # newest-first
+        fv = _fair_value_extract_cached(m)
+        contributed = False
+        for period in sorted(fv.keys(), reverse=True):
+            if period[5:7] != "12":                  # FY-ends only (skip stub quarters)
+                continue
+            if period in fair_value:                 # newer filing already supplied it
+                continue
+            sides = fv[period]
+            # Independently gate each period: keep only sides with a clean level
+            # total (l1+l2+l3, computed by the extractor only from tagged levels —
+            # never a component-summed guess). The extractor already enforces the
+            # ASC-820 reconciliation: it omits a side with no clean level total and
+            # rejects the disclosure-table conflations. A tagged grand total that
+            # differs from the level sum (dealer counterparty/collateral netting) is
+            # a VALID reconciling item (carried as `netting`, flagged via
+            # _reconciles=False) — kept, not dropped. Drop the whole period if no
+            # side has a total (n/a, never a carried-forward guess).
+            kept = {sk: sv for sk, sv in sides.items()
+                    if sv and sv.get("total") is not None}
+            if not kept:
+                continue
+            fair_value[period] = kept
+            contributed = True
+        if contributed:
+            used_filings.append(m)
+        # Stop once we have the requested span of fiscal years.
+        if len({p[:4] for p in fair_value}) >= n_years:
+            break
+    if not fair_value:
+        return None
+    return {"meta": metas[0], "filings": used_filings, "fair_value": fair_value}
+
+
 # ── AFS / HTM debt-securities summary ────────────────────────────────────────
 # The investment-securities footnote tags, undimensioned, an amortized-cost →
 # fair-value bridge for each portfolio: amortized cost + gross unrealized/
