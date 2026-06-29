@@ -41,13 +41,17 @@ class TestRefreshPrCallSnapshot(unittest.TestCase):
     def setUp(self):
         import data.events.store as store
         import data.cache as dc
-        self._store, self._dc = store, dc
+        import data.events.ir_site as ir
+        self._store, self._dc, self._ir = store, dc, ir
         self._g, self._f, self._p = store.get_events_by_type, ec._fetch_pr_body, dc.put
+        self._eps = ir.get_ir_endpoints
+        ir.get_ir_endpoints = lambda: {}      # no Q4 banks → nothing skipped here
 
     def tearDown(self):
         self._store.get_events_by_type = self._g
         ec._fetch_pr_body = self._f
         self._dc.put = self._p
+        self._ir.get_ir_endpoints = self._eps
 
     def test_picks_announcement_fetches_body_parses_and_stores(self):
         self._store.get_events_by_type = lambda et, limit=800: [

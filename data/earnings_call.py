@@ -273,10 +273,13 @@ def call_info_map() -> dict:
 
 
 def _fetch_pr_body(url: str) -> str:
-    """Fetch a press-release DETAIL PAGE and return its readable text with <a>
-    hrefs INLINED right after the link text — so the webcast link survives the
-    tag-strip (it usually lives in an <a> the snippet never carried). Whitespace
-    collapsed, length-bounded. '' on any failure."""
+    """Fetch a press-release DETAIL PAGE and return its readable text. <a> hrefs
+    are inlined right after the link text so a real webcast link survives the
+    tag-strip — but NON-content blocks (script/style/head/nav/header/footer/svg)
+    are removed FIRST, since they carry the junk that polluted extraction: JSON-LD
+    'schema.org' URLs in <script>, and menu links like /corporate-profile in nav.
+    A generous length bound keeps the actual PR body (often deep below the page
+    chrome) from being truncated away. '' on any failure."""
     try:
         from data.events.ir_site import _fetch
         html = _fetch(url, timeout=8)
@@ -284,10 +287,12 @@ def _fetch_pr_body(url: str) -> str:
         html = None
     if not html:
         return ""
-    text = re.sub(r'<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-                  r"\2 \1 ", html, flags=re.I | re.S)
+    html = re.sub(r"(?is)<(script|style|head|nav|header|footer|svg)\b.*?</\1>",
+                  " ", html)
+    text = re.sub(r'(?is)<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+                  r"\2 \1 ", html)
     text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", text)[:12000]
+    return re.sub(r"\s+", " ", text)[:40000]
 
 
 def refresh_pr_call_snapshot(max_fetch: int = 200, max_workers: int = 8) -> dict:
@@ -308,6 +313,14 @@ def refresh_pr_call_snapshot(max_fetch: int = 200, max_workers: int = 8) -> dict
         rows = get_events_by_type("earnings", limit=800)
     except Exception:
         return {}
+    # Q4-hosted banks are handled cleanly by the Q4 snapshot (structured API body);
+    # skip them here so the noisy HTML detail-page scrape (wrong times, junk
+    # webcast URLs on multi-item pages) only runs for NON-Q4 banks.
+    try:
+        from data.events.ir_site import get_ir_endpoints
+        q4_tickers = set(get_ir_endpoints())
+    except Exception:
+        q4_tickers = set()
     today_iso = date.today().isoformat()
     # One announcement PR per ticker — the newest earnings-announcement headline
     # (cue + results/earnings), even when the date isn't in the headline. Many
@@ -317,7 +330,7 @@ def refresh_pr_call_snapshot(max_fetch: int = 200, max_workers: int = 8) -> dict
     picked: dict = {}
     for r in rows:                                    # newest-first
         tk, url = r.get("ticker"), r.get("url")
-        if not tk or not url or tk in picked:
+        if not tk or not url or tk in picked or tk in q4_tickers:
             continue
         if (_is_earnings_announcement(r.get("headline") or "")
                 or _parse_call_date(r.get("summary") or "", today_iso)):
@@ -377,7 +390,8 @@ def merged_call_info() -> dict:
     ALL call-detail sources, layered weakest→strongest:
       1. the snippet parser (call_info_map — the RSS description),
       2. the full-body PR snapshot (get_pr_call_details — the PR detail page),
-      3. the structured Q4 IR events snapshot (get_q4_call_details — webcast/time).
+      3. the Q4 IR snapshot (get_q4_call_details — clean PR-API body + event:
+         dates/time/webcast/dial-in, the most reliable for Q4-hosted banks).
     Later layers overwrite earlier ones field-by-field. Used by the Calendar
     agenda and the Home calendar."""
     base = {tk: dict(info) for tk, info in (call_info_map() or {}).items()}
@@ -397,7 +411,8 @@ def merged_call_info() -> dict:
         q4 = get_q4_call_details()
     except Exception:
         q4 = {}
-    _overlay(q4, ("call_time", "webcast_url", "call_date"))
+    _overlay(q4, ("call_time", "webcast_url", "call_date", "dial_in",
+                  "release_date"))
     return base
 
 

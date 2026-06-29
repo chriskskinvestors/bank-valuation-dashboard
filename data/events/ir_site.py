@@ -466,13 +466,69 @@ def _q4_events(ir_home: str) -> list[dict] | None:
     return out
 
 
+def _q4_announcement(ir_home: str, today_iso: str) -> dict | None:
+    """Parse a Q4 site's latest earnings-ANNOUNCEMENT press release from its CLEAN
+    API body (bodyType=1): release/call dates, call time, webcast, dial-in. Far
+    more reliable than scraping the HTML detail page — the page's nav/JSON-LD and
+    multiple items produced wrong times and junk webcast URLs; the API body is the
+    single release's text. Returns only the keys it found, or None."""
+    is_q4, key = _q4_site(ir_home)
+    if not is_q4:
+        return None
+    from data.events.wire_base import is_safe_news_url
+    from data.earnings_call import (parse_call_info, _parse_release_date,
+                                    _parse_call_date, _is_earnings_announcement,
+                                    _announced_release_date)
+    parsed = urlparse(ir_home)
+    host = f"{parsed.scheme}://{parsed.netloc}"
+    params = {"apiKey": key or "", "LanguageId": 1, "bodyType": 1,
+              "pressReleaseDateFilter": 3, "categoryId": "", "tagList": "",
+              "includeTags": "true", "year": 0, "excludeSelection": 1,
+              "pageSize": 12, "pageNumber": 0}
+    try:
+        resp = requests.get(
+            host + "/feed/PressRelease.svc/GetPressReleaseList", params=params,
+            timeout=10,
+            headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)",
+                     "Accept": "application/json"})
+        resp.raise_for_status()
+        items = resp.json().get("GetPressReleaseListResult") or []
+    except Exception:
+        return None
+    for it in items:                                  # newest-first
+        hl = it.get("Headline") or ""
+        if not _is_earnings_announcement(hl):
+            continue
+        body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", it.get("Body") or ""))
+        if not body:
+            continue
+        ci = parse_call_info(body)
+        wc = ci.get("webcast_url")
+        if wc and not is_safe_news_url(wc):
+            wc = None
+        info = {
+            "release_date": (_announced_release_date(hl, today_iso)
+                             or _parse_release_date(body, today_iso)),
+            "call_date": _parse_call_date(body, today_iso),
+            "call_time": ci.get("call_time"),
+            "webcast_url": wc,
+            "dial_in": ci.get("dial_in"),
+        }
+        info = {k: v for k, v in info.items() if v}
+        if info:
+            return info
+    return None
+
+
 def refresh_q4_calls_snapshot(universe: dict | None = None, max_workers: int = 12,
                               horizon_days: int = 120) -> dict[str, dict]:
-    """Pull each Q4-hosted bank's NEXT earnings call (date, time, webcast link)
-    and persist {ticker: {call_date, call_time, webcast_url, detail_url}} as the
-    cross-instance snapshot the Calls & Webcasts agenda overlays. Background-only
-    (nightly refresh-universe) — it's one HTTP call per Q4 bank (~a third of the
-    universe), far too slow for the interactive path."""
+    """Pull each Q4-hosted bank's NEXT earnings call and persist {ticker: {…}} as
+    the cross-instance snapshot the Calendar overlays. Two structured sources per
+    bank: the conference-call EVENT (Event.svc — webcast link, date) and the
+    announcement PR's CLEAN body (PressRelease.svc bodyType=1 — release/call dates,
+    time, dial-in). The PR body is authoritative for dates/time/dial-in (the
+    event's time is sometimes a stub); the event supplies the webcast link.
+    Background-only (poll-events) — two HTTP calls per Q4 bank."""
     from concurrent.futures import ThreadPoolExecutor
     from data.events.wire_base import is_safe_news_url
 
@@ -481,6 +537,7 @@ def refresh_q4_calls_snapshot(universe: dict | None = None, max_workers: int = 1
         keep = set(universe)
         ir_map = {t: u for t, u in ir_map.items() if t in keep} or ir_map
     now = datetime.now(timezone.utc)
+    today_iso = now.date().isoformat()
     horizon = now + timedelta(days=horizon_days)
     grace = now - timedelta(days=1)     # tolerate a call stamped earlier today
 
@@ -488,19 +545,28 @@ def refresh_q4_calls_snapshot(universe: dict | None = None, max_workers: int = 1
         tk, url = item
         try:
             evs = _q4_events(url)
+            ann = _q4_announcement(url, today_iso)
         except Exception:
             return tk, None
         upcoming = sorted((e for e in (evs or []) if grace <= e["start"] <= horizon),
                           key=lambda e: e["start"])
-        if not upcoming:
+        e = upcoming[0] if upcoming else {}
+        e_web = (e.get("webcast_url") if e.get("webcast_url")
+                 and is_safe_news_url(e["webcast_url"]) else None)
+        # PR body wins on dates / time / dial-in; the event fills the webcast link
+        # and a call date when the PR didn't state one.
+        info = dict(ann or {})
+        if e:
+            info.setdefault("call_date", e["start"].date().isoformat())
+            if not info.get("call_time") and e.get("call_time"):
+                info["call_time"] = e["call_time"]
+            if not info.get("webcast_url") and e_web:
+                info["webcast_url"] = e_web
+            info.setdefault("detail_url", e.get("detail_url"))
+        if not any(info.get(k) for k in
+                   ("call_time", "webcast_url", "release_date", "call_date")):
             return tk, None
-        e = upcoming[0]
-        web = e["webcast_url"] if (e["webcast_url"] and is_safe_news_url(e["webcast_url"])) else None
-        if not (e["call_time"] or web):
-            return tk, None             # nothing worth overlaying
-        return tk, {"call_date": e["start"].date().isoformat(),
-                    "call_time": e["call_time"], "webcast_url": web,
-                    "detail_url": e["detail_url"]}
+        return tk, info
 
     found: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as ex:

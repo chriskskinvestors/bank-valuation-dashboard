@@ -124,13 +124,15 @@ class TestQ4Events(unittest.TestCase):
 
 class TestRefreshSnapshot(unittest.TestCase):
     def setUp(self):
-        self._eps, self._evs = ir.get_ir_endpoints, ir._q4_events
-        self._cache_put = None
+        self._eps, self._evs, self._ann = (
+            ir.get_ir_endpoints, ir._q4_events, ir._q4_announcement)
         ir.get_ir_endpoints = lambda: {"ACME": "https://investor.acme.com",
                                        "NONE": "https://investor.none.com"}
+        ir._q4_announcement = lambda url, today_iso: None   # no PR body in this test
 
     def tearDown(self):
         ir.get_ir_endpoints, ir._q4_events = self._eps, self._evs
+        ir._q4_announcement = self._ann
 
     def test_picks_soonest_upcoming_and_skips_empty(self):
         now = datetime.now(timezone.utc)
@@ -191,6 +193,39 @@ class TestMergedCallInfo(unittest.TestCase):
         self.assertEqual(m["EQBK"]["dial_in"], "+1-800-555-1212")
         # A bank with only PR-parsed info and no Q4 event is unchanged.
         self.assertEqual(m["PRONLY"]["call_time"], "7:00a ET")
+
+
+class TestQ4Announcement(unittest.TestCase):
+    """The clean Q4 PressRelease-API body parse (the reliable Q4-bank source)."""
+
+    def setUp(self):
+        self._site, self._req = ir._q4_site, ir.requests
+        ir._q4_site = lambda home: (True, "")
+
+    def tearDown(self):
+        ir._q4_site, ir.requests = self._site, self._req
+
+    def test_parses_clean_body(self):
+        payload = {"GetPressReleaseListResult": [{
+            "Headline": "Acme Bancorp Announces Schedule for Second Quarter 2026 Results",
+            "Body": "<p>Acme will release its second quarter 2026 results on Thursday, "
+                    "July 23, 2026, after the close. The company will host a conference "
+                    "call on Friday, July 24, 2026 at 11:00 a.m. ET. Dial-in 888-555-1212.</p>"}]}
+
+        class _R:
+            @staticmethod
+            def get(url, params=None, timeout=None, headers=None):
+                return _Resp(payload)
+        ir.requests = _R
+        info = ir._q4_announcement("https://investor.acme.com", "2026-06-29")
+        self.assertEqual(info["release_date"], "2026-07-23")
+        self.assertEqual(info["call_date"], "2026-07-24")
+        self.assertEqual(info["call_time"], "11:00a ET")
+        self.assertEqual(info["dial_in"], "888-555-1212")
+
+    def test_non_q4_returns_none(self):
+        ir._q4_site = lambda home: (False, None)
+        self.assertIsNone(ir._q4_announcement("https://x", "2026-06-29"))
 
 
 if __name__ == "__main__":
