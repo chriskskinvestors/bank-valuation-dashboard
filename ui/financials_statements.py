@@ -2857,62 +2857,175 @@ def _render_segments(ticker):
 
 
 def _render_rate_risk(ticker):
-    """Embedded interest-rate risk: the AFS + HTM unrealized loss already on the
-    securities book, against equity and CET1 capital (the post-2023 'underwater
-    securities erode capital' story), composed from the same reconcile-gated
-    securities/capital extractors. Forward NII/EVE rate-shock sensitivity lives in
-    the bank's Item 7A and isn't standardized XBRL, so it is linked, not scraped."""
+    """Multi-year (up to 5 FY) embedded interest-rate risk: the AFS + HTM unrealized
+    gain/(loss) already on the securities book, against equity and CET1 capital (the
+    post-2023 'underwater securities erode capital' story). Composed by year from the
+    same shipped, reconcile-gated multi-year functions the Securities and Highlights
+    tabs use — the per-FY AFS/HTM net unrealized marks from securities_multiyear_for,
+    total equity from _cr_highlights_by_year. CET1 capital ($) is only tagged in the
+    bank's freshest filing (holdco_capital_for), so the loss/CET1 row populates only
+    the year(s) that filing carries cleanly; every other year blanks (never a guess).
+    Forward NII/EVE rate-shock sensitivity lives in the bank's Item 7A and isn't
+    standardized XBRL, so it is linked, not scraped. Company-reported, never FDIC
+    (the only FDIC touch is the unchanged CET1 anchor inside holdco_capital_for, for
+    parity with the prior single-period tab)."""
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
         return
-    anchor = None
-    try:
-        from data.sec_filing_scraper import rate_risk_for, _fdic_cet1
-        from data.bank_mapping import get_fdic_cert
-        try:
-            anchor = _fdic_cet1(get_fdic_cert(ticker))
-        except Exception:
-            anchor = None
-        res = rate_risk_for(cik, anchor_cet1=anchor)
-    except Exception:
-        res = None
     st.markdown("---")
     st.subheader("Interest Rate Risk — embedded securities marks (Company Reported)")
-    if not res or not res.get("rate_risk"):
-        st.caption("AFS/HTM unrealized marks not tagged in this filer's latest filing "
-                   "— n/a. Forward rate-shock (NII/EVE) sensitivity is disclosed in "
-                   "Item 7A of the 10-K.")
+
+    # Per-FY AFS/HTM net unrealized marks (same source the Securities tab shows).
+    try:
+        from data.sec_filing_scraper import securities_multiyear_for
+        sec_res = securities_multiyear_for(cik, n_years=5)
+    except Exception:
+        sec_res = None
+    # Per-FY total equity (and the latest-10-K link) from the shipped highlights.
+    try:
+        years, hdicts, hl_src = _cr_highlights_by_year(ticker)
+    except Exception:
+        years = hdicts = hl_src = None
+    if not sec_res or not sec_res.get("securities"):
+        st.caption("AFS/HTM unrealized marks not tagged in this filer's 10-Ks — n/a. "
+                   "Forward rate-shock (NII/EVE) sensitivity is disclosed in Item 7A "
+                   "of the 10-K.")
         return
-    meta, rr = res["meta"], res["rate_risk"]
-    period = max(rr)
-    d = rr[period]
-    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
-           f"{meta['accession']}/{meta['doc']}")
-    st.caption(
-        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — unrealized "
-        f"gain/(loss) on AFS + HTM debt securities at {period}, vs equity and CET1 "
-        f"capital. This is the rate risk ALREADY on the books; forward NII/EVE "
-        f"rate-shock sensitivity is narrative in Item 7A (not standardized XBRL).")
 
-    def _b(v):
-        return "n/a" if v is None else _cr_usd(v)
+    import re
 
-    def _pct(v):
-        return "n/a" if v is None else f"{v * 100:+.1f}%"
+    def _yr(s):
+        m = re.search(r"\d{4}", s or "")
+        return int(m.group()) if m else None
 
-    rows = [
-        ("AFS unrealized gain / (loss)", _b(d["afs_unrealized"])),
-        ("HTM unrealized gain / (loss)", _b(d["htm_unrealized"])),
-        ("Total unrealized gain / (loss)", _b(d["total_unrealized"])),
-        ("Total equity", _b(d["equity"])),
-        ("Unrealized as % of equity", _pct(d["unrealized_to_equity"])),
-        ("Unrealized as % of CET1 capital", _pct(d["unrealized_to_cet1"])),
+    sec = sec_res["securities"]                          # {fy_period: {...}}
+    sec_by_year = {_yr(p): v for p, v in sec.items() if _yr(p) is not None}
+    equity_by_year = {}
+    if years and hdicts:
+        for y, d in zip(years, hdicts):
+            yi = _yr(y)
+            if yi is not None:
+                equity_by_year[yi] = d.get("total_equity")
+
+    # CET1 capital ($) per FY — only the bank's freshest filing tags the capital
+    # table, so this typically covers the latest 1-2 FY-ends. Same FDIC CET1 anchor
+    # the prior single-period tab used (parity); no NEW FDIC for the marks.
+    cet1_by_year = {}
+    try:
+        from data.sec_filing_scraper import holdco_capital_for
+        from data.bank_mapping import get_fdic_cert
+        try:
+            cert = get_fdic_cert(ticker)
+        except Exception:
+            cert = info.get("fdic_cert") if info else None
+        cap_res = holdco_capital_for(cik, cert)
+        if cap_res:
+            for period, d in cap_res["capital"].items():
+                yi = _yr(period)
+                if yi is not None:
+                    cet1_by_year[yi] = d.get("cet1_cap")
+    except Exception:
+        cet1_by_year = {}
+
+    # Year set drives off the securities portfolio years, oldest → newest.
+    yrs = sorted(sec_by_year)
+    cols = [f"FY{y}" for y in yrs]
+
+    def _marks(y):
+        """(afs_net, htm_net, total) for a year, or (None, None, None) when neither
+        portfolio is tagged. Total is None only when BOTH marks are absent."""
+        d = sec_by_year.get(y) or {}
+        afs = (d.get("afs") or {}).get("net_unrealized")
+        htm = (d.get("htm") or {}).get("net_unrealized")
+        if afs is None and htm is None:
+            return None, None, None
+        return afs, htm, (afs or 0.0) + (htm or 0.0)
+
+    def _usd_cell(v):
+        if v is None:
+            return None
+        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+
+    def _pct_cell(v):
+        return None if v is None else f"{v * 100:.2f}%"
+
+    afs_row, htm_row, tot_row, eq_row, loss_eq_row, loss_cet1_row = ([] for _ in range(6))
+    eq_pct_series = []                                   # for the trend chart
+    for y in yrs:
+        afs, htm, tot = _marks(y)
+        eq = equity_by_year.get(y)
+        cet1 = cet1_by_year.get(y)
+        # Per-period gate: loss/equity needs the total mark AND a clean equity;
+        # loss/CET1 needs the total mark AND a clean CET1 capital. Each blanks
+        # independently when its inputs aren't cleanly disclosed for the year.
+        loss_eq = (tot / eq) if (tot is not None and eq not in (None, 0)) else None
+        loss_cet1 = (tot / cet1) if (tot is not None and cet1 not in (None, 0)) else None
+        afs_row.append(_usd_cell(afs))
+        htm_row.append(_usd_cell(htm))
+        tot_row.append(_usd_cell(tot))
+        eq_row.append(_usd_cell(eq))
+        loss_eq_row.append(_pct_cell(loss_eq))
+        loss_cet1_row.append(_pct_cell(loss_cet1))
+        eq_pct_series.append(loss_eq * 100 if loss_eq is not None else None)
+
+    candidate_rows = [
+        ("AFS unrealized gain / (loss)", afs_row),
+        ("HTM unrealized gain / (loss)", htm_row),
+        ("Total unrealized gain / (loss)", tot_row),
+        ("Total equity", eq_row),
+        ("Unrealized as % of equity", loss_eq_row),
+        ("Unrealized as % of CET1 capital", loss_cet1_row),
     ]
+    rows = [{"label": lab, "values": vals, "kind": "data"}
+            for lab, vals in candidate_rows
+            if any(v is not None for v in vals)]    # drop all-n/a rows
+    if not rows:
+        st.caption("AFS/HTM unrealized marks not tagged in this filer's 10-Ks — n/a. "
+                   "Forward rate-shock (NII/EVE) sensitivity is disclosed in Item 7A "
+                   "of the 10-K.")
+        return
+
+    meta = sec_res["meta"]
+    src = hl_src or (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
+                     f"{meta['accession']}/{meta['doc']}")
+    st.caption(
+        f"Source: company 10-K filings — latest [{meta['date']}]({src}); "
+        f"{len(yrs)} fiscal year-end(s) stitched from {len(sec_res['filings'])} "
+        "filing(s). Unrealized gain/(loss) on AFS + HTM debt securities vs equity "
+        "and CET1 capital — the rate risk ALREADY on the books. CET1 capital is "
+        "tagged only in the bank's freshest filing, so that % populates only the "
+        "year(s) it cleanly discloses. Forward NII/EVE rate-shock sensitivity is "
+        "narrative in Item 7A (not standardized XBRL). Company-reported, never FDIC.")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(["Value"],
-                  [{"label": lab, "values": [val], "kind": "data"} for lab, val in rows],
-                  entity=entity, src=src)
+    # Chart the loss/equity % only when a clean multi-year series exists (≥3 points).
+    if sum(1 for v in eq_pct_series if v is not None) >= 3:
+        _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+        with _lt:
+            _cr_component(cols, rows, entity=entity, src=src)
+        with _rt:
+            _rate_risk_trend(cols, eq_pct_series, ticker)
+    else:
+        _cr_component(cols, rows, entity=entity, src=src)
+
+
+def _rate_risk_trend(xs, ys, ticker):
+    """Right-hand trend chart for multi-year Rate Risk: embedded unrealized
+    gain/(loss) as % of equity, oldest → newest. Same compact style as the other
+    Company-Reported trend charts; gaps are blanked, not interpolated."""
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+    st.markdown("##### Trends")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="lines+markers", connectgaps=True,
+        line=dict(color=CATEGORICAL_PALETTE[0], width=2), marker=dict(size=5)))
+    apply_standard_layout(fig, title="Unrealized gain/(loss), % of equity",
+                          height=CHART_HEIGHT_COMPACT, yaxis_title="%",
+                          show_legend=False)
+    tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
+    st.plotly_chart(fig, use_container_width=True, key=f"crrr_trend_{ticker}")
 
 
 def render_portfolio(ticker):
