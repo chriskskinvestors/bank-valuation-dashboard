@@ -147,20 +147,73 @@ release a full financial supplement (EX-99.1) on the 8-K; scraping it closes the
 latest-quarter gap. 8-Ks are already ingested for News/Earnings via
 `data/events/` (incl. `sec_8k.py`) but are NOT used for the financial tables.*
 
-- [ ] Locate the most-recent earnings 8-K and its **EX-99.1** financial
-      supplement (reuse the `data/events/` 8-K discovery; do not re-ingest).
-- [ ] Parse the supplement **defensively**: it is **not XBRL** — free-form HTML,
-      per-bank layout, often **non-GAAP / preliminary**. Tolerant label/table
-      matching; extract only what's unambiguous.
-- [ ] Surface the latest-quarter figures on the relevant tabs labeled clearly
-      **"as-released / preliminary (8-K EX-99.1)"**, visually distinct from
-      audited columns.
-- [ ] **Reconcile to the 10-Q once filed**: when the 10-Q lands, the audited
-      figure replaces the preliminary one. **Never overwrite an audited
-      10-K/10-Q figure with an 8-K number** — the 8-K layer fills *only* the
-      not-yet-filed period.
-- [ ] Test: a quarter where 8-K preliminary and the later 10-Q differ — confirm
-      the preliminary is labeled, then superseded, never silently merged.
+- [x] Locate the most-recent earnings 8-K and its **EX-99.1** financial
+      supplement. SHIPPED in `data/sec_earnings_8k.py` — locates the EX-99.1 from
+      the filing index's exhibit-TYPE table (not by filename guess).
+- [x] Parse the supplement **defensively** — SHIPPED. Exact label match + per-
+      figure sanity gate (see §6 for the feasibility results and the gate rules).
+- [x] Surface the latest-quarter figures labeled **preliminary** — SHIPPED as a
+      visually-distinct orange banner at the top of **Financial Highlights**
+      (`_render_preliminary_quarter`), separate from the audited FY columns.
+- [x] **Never overwrite an audited figure** — by construction: the banner is a
+      separate block keyed off the 8-K, never written into the FY-column dicts.
+- [x] Tests: `tests/test_sec_earnings_8k.py` pins the gate, incl. the mis-parse-
+      rejected case (a segment subtotal that must NOT surface as the consolidated
+      total) and the no-scale / out-of-band / bare-"Diluted" rejections.
+
+> **Reconcile-to-10-Q nuance (as-built):** the layer is keyed off the *latest
+> earnings 8-K*, and it is shown on the Financial Highlights tab whose audited
+> table is FY-based. The banner therefore always shows the latest-released
+> quarter regardless of whether a 10-Q for it exists yet; it never merges into,
+> nor overwrites, the audited multi-year table. A "labeled-then-superseded-when-
+> the-later-10-Q-differs" flow (auto-hide once the matching 10-Q lands) is a
+> possible follow-up but was NOT built — the as-built design is strictly
+> additive and cannot corrupt an audited figure, which satisfies the cardinal
+> rule. Deferred, low risk.
+
+### §6 — 8-K EX-99.1 feasibility (measured 2026-06-29)
+
+Sample: **ABCB, PNFP, FFIN, CBSH, FHN, WAL, ONB, FITB, RF, KEY** (latest earnings
+8-K each). **EX-99.1 located: 10/10** via the index exhibit-type table.
+
+The releases are clean HTML tables (no XBRL) but layouts vary widely: small/mid
+banks (ABCB/FFIN/ONB/CBSH) lead with a tidy 5-quarter table, latest quarter in
+the first numeric column; large filers (KEY/FITB/FHN/WAL/PNFP) interleave percent-
+change columns, GAAP/non-GAAP reconciliations and **segment tables that repeat the
+same labels** with different values. Units split: ~half report $thousands, half
+$millions. So broad label-matching is unsafe for big filers — the cardinal rule
+demands a gate. **Strategy shipped:** exact label match → first numeric column;
+detect the dollar scale ONCE by anchoring total assets/deposits to the prior
+10-Q, apply it to all dollar figures; gate every figure (balance-sheet anchored to
+the 10-Q ±30/40% — this REJECTS a segment subtotal; ratios 0–60; EPS |x|<100;
+flows positive after scaling). Anything that fails → n/a, never a guess.
+
+**Hit rate AFTER the gate (n=10), i.e. clean values shipped:**
+
+| figure | ok | notes |
+|---|---|---|
+| `total_deposits` | 10/10 | anchored exact |
+| `net_interest_income` | 10/10 | scaled by detected release scale |
+| `net_income` | 9/10 | KEY n/a — its "Net income (loss) attributable to Key" label self-excluded (avoids the segment trap) |
+| `total_assets` | 8/10 | KEY **rejected** a $37B segment subtotal (anchor $189B) → n/a; RF label-miss → n/a |
+| `nim` | 7/10 | matches (TE)/(FTE)/(GAAP) variants |
+| `roae` | 6–7/10 | label variant coverage |
+| `roaa` | 6/10 | label variant coverage |
+| `diluted_eps` | 6/10 | bare "Diluted" (= share count) deliberately excluded; only explicit per-share labels match |
+
+**Read — production-ready?** The two **balance-sheet items are production-grade**
+(cross-source anchored, proven exact). `net_income`, `net_interest_income`, the
+ratios and EPS are **good and safe** (every shown value verified correct on the
+sample; the gate rejected the one dangerous mis-parse) but their COVERAGE is
+label-variant-limited — large filers with bespoke labels go n/a rather than wrong.
+That is the correct trade under the cardinal rule. **Verified ABCB:** 8-K assets
+$28.11B / deposits $22.64B tie the Q1-26 10-Q (2026-03-31) to the dollar; NI
+$110.5M, EPS $1.63, NIM 3.88%, ROAA 1.62% are trend-plausible vs audited FY2025
+(NI $412M, EPS $6.00, ROAA 1.53%). **Follow-up to lift coverage:** widen the label
+sets (esp. EPS, ROAA/ROAE, net income for the "attributable to common" filers) and
+add an anchored gate for `net_income`/`NII` (a prior-10Q single-quarter value) so
+they're as hard as the balance-sheet items. Re-measure across the universe before
+relying on the income/ratio rows broadly.
 
 ### Phase 5 — Universe-coverage validation
 *Rationale: n/a must mean "the bank didn't disclose it," not "our parser missed

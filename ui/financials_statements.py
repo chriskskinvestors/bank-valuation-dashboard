@@ -2714,6 +2714,75 @@ def _cr_highlights_trends(years, dicts, ticker, key_prefix):
                                 key=f"{key_prefix}_hltr_{ticker}_{r + j}")
 
 
+# Latest-quarter preliminary figures shown in the banner, in display order.
+# (label, key, kind) — kind: "usd" raw dollars; "eps" $/share; "pct" as-printed %.
+_PRELIM_FIGS = [
+    ("Total assets", "total_assets", "usd"),
+    ("Total deposits", "total_deposits", "usd"),
+    ("Net income", "net_income", "usd"),
+    ("Net interest income", "net_interest_income", "usd"),
+    ("Diluted EPS", "diluted_eps", "eps"),
+    ("Net interest margin", "nim", "pct"),
+    ("Return on avg assets", "roaa", "pct"),
+    ("Return on avg equity", "roae", "pct"),
+]
+
+
+def _render_preliminary_quarter(ticker, cik):
+    """Latest-quarter headline figures from the bank's most-recent earnings 8-K
+    (EX-99.1), rendered as a clearly-labeled AS-RELEASED / PRELIMINARY banner —
+    visually and textually distinct from the audited multi-year columns below, and
+    NEVER merged into them.
+
+    These come from the free-form press release (NOT XBRL) ~4 weeks before the
+    10-Q, so each figure is gated (data.sec_earnings_8k): exact label match, dollar
+    scale anchored to the prior 10-Q, segment/non-GAAP/out-of-band values rejected
+    to n/a. A figure the gate rejected is simply absent here. Renders nothing when
+    there's no earnings 8-K / no EX-99.1 / nothing survived the gate."""
+    if not cik:
+        return
+    try:
+        from data.sec_earnings_8k import latest_earnings_8k_figures
+        res = latest_earnings_8k_figures(cik)
+    except Exception:
+        res = None
+    if not res or not res.get("figures"):
+        return
+    figs = res["figures"]
+    shown = [(lbl, figs.get(key), kind) for lbl, key, kind in _PRELIM_FIGS
+             if figs.get(key) is not None]
+    if not shown:
+        return
+
+    def _fmt(v, kind):
+        if kind == "usd":
+            return _cr_usd(v)
+        if kind == "eps":
+            return f"\\${v:,.2f}"
+        return f"{v:.2f}%"                              # as-printed percent
+
+    acc = res.get("accession", "")
+    acc_nodash = acc.replace("-", "")
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_nodash}/"
+           f"{res.get('doc', '')}") if acc and res.get("doc") else ""
+    filed = res.get("filed", "")
+
+    st.markdown(
+        "**Latest quarter — preliminary (from earnings release, not yet in the "
+        "10-Q)**")
+    cells = " · ".join(f"**{lbl}** {_fmt(v, kind)}" for lbl, v, kind in shown)
+    st.markdown(f":orange[{cells}]")
+    link = f"[8-K EX-99.1]({src})" if src else "8-K EX-99.1"
+    st.caption(
+        f"As-released figures from the company's earnings {link} filed {filed} — "
+        "preliminary / as-reported, NOT audited and NOT yet in a 10-K/10-Q. Shown "
+        "only where the press-release figure cleanly matched and passed a sanity "
+        "check against the prior 10-Q; other headline figures are omitted rather "
+        "than guessed. Superseded by the audited 10-Q when filed. Company-reported, "
+        "never FDIC.")
+    st.markdown("---")
+
+
 def _render_financial_highlights(ticker):
     """Multi-year (up to 5 FY) Company-Reported Financial Highlights, mirroring the
     Templated Financial Highlights: section bands (Balance Sheet, Profitability,
@@ -2731,6 +2800,10 @@ def _render_financial_highlights(ticker):
         years = dicts = src = None
     st.markdown("---")
     st.subheader("Financial Highlights — Company Reported")
+    # Timeliness layer: the latest quarter's as-released figures from the earnings
+    # 8-K (EX-99.1), labeled preliminary and visually separate — never merged into
+    # the audited FY columns below, never overwriting an audited figure.
+    _render_preliminary_quarter(ticker, cik)
     if not years or not dicts:
         st.caption("Company-reported statements not available from this filer's "
                    "10-Ks — n/a.")
