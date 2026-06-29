@@ -391,7 +391,10 @@ def merged_call_info() -> dict:
       1. the snippet parser (call_info_map — the RSS description),
       2. the full-body PR snapshot (get_pr_call_details — the PR detail page),
       3. the Q4 IR snapshot (get_q4_call_details — clean PR-API body + event:
-         dates/time/webcast/dial-in, the most reliable for Q4-hosted banks).
+         dates/time/webcast/dial-in, the most reliable for Q4-hosted banks),
+      4. the curated megabank webcast map (get_curated_call_info — webcast link
+         ONLY, for the bespoke non-Q4 megabanks whose link the scrape can't reach
+         reliably; these tickers aren't on Q4, so it never collides with layer 3).
     Later layers overwrite earlier ones field-by-field. Used by the Calendar
     agenda and the Home calendar."""
     base = {tk: dict(info) for tk, info in (call_info_map() or {}).items()}
@@ -413,6 +416,14 @@ def merged_call_info() -> dict:
         q4 = {}
     _overlay(q4, ("call_time", "webcast_url", "call_date", "dial_in",
                   "release_date"))
+    # Curated megabank webcast links last: only the webcast_url field, only for
+    # the non-Q4 megabanks (so it overrides the junk webcast the HTML scrape
+    # produces for them, and never touches a date/time or a Q4 bank).
+    try:
+        from data.events.ir_site import get_curated_call_info
+        _overlay(get_curated_call_info(), ("webcast_url",))
+    except Exception:
+        pass
     return base
 
 

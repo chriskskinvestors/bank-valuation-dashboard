@@ -634,7 +634,13 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             ci = _call_map.get(e["ticker"]) or {}
             # Cons./Prior column: precise PR/IR call time + webcast if known, else
             # FMP's before/after-open label. Row links to the webcast when present.
-            mid = _ecall.mid_label(ci) or (_timing.get(e["ticker"]) or {}).get("when") or ""
+            # A webcast-only entry (the curated megabank links carry no time) keeps
+            # FMP's timing label and appends the webcast cue, so neither signal is lost.
+            when_lbl = (_timing.get(e["ticker"]) or {}).get("when") or ""
+            if ci.get("webcast_url") and not ci.get("call_time") and when_lbl:
+                mid = f"{when_lbl} · webcast ↗"
+            else:
+                mid = _ecall.mid_label(ci) or when_lbl
             items.append({"kind": "earn", "date": ds, "ticker": e["ticker"],
                           "name": get_name(e["ticker"]) or e["ticker"], "mid": mid,
                           "webcast": ci.get("webcast_url"), "dial_in": ci.get("dial_in"),

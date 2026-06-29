@@ -597,6 +597,46 @@ def get_q4_call_details() -> dict[str, dict]:
     return {}
 
 
+# ── Curated non-Q4 megabank webcast pages ────────────────────────────────────
+# The largest banks run bespoke IR stacks (custom CMS + MediaRoom / Business Wire
+# for press releases + Chorus Call for webcasts) with no clean structured API and
+# aggressive anti-bot — so neither the Q4 path nor the generic HTML scrape
+# reliably yields their earnings webcast link (the scrape returns wrong times and
+# junk nav/JSON-LD URLs on these multi-item pages). FMP/yfinance still carry an
+# accurate report DATE for them; only the webcast link is missing. This is a
+# hand-verified map of each one's IR earnings/webcast LANDING page — always the
+# current quarter, never a quarter-specific URL that would go stale. Dates/times
+# are intentionally NOT curated; those keep coming from the live sources, so a
+# stale entry here can never produce a wrong number. Each URL was verified to
+# resolve on 2026-06-29 (or, for fully bot-walled sites, is the canonical IR
+# domain). All are non-Q4 AND in the bank universe — State Street/USB/Fifth
+# Third/Regions ARE Q4 (the Q4 path covers them cleanly), and Goldman/Morgan
+# Stanley are SIC 6211 broker-dealers that the universe's bank-SIC filter excludes,
+# so all four are deliberately omitted.
+CURATED_WEBCASTS: dict[str, str] = {
+    "JPM": "https://www.jpmorganchase.com/ir/quarterly-earnings",
+    "BAC": "https://investor.bankofamerica.com/quarterly-earnings",
+    "WFC": "https://www.wellsfargo.com/about/investor-relations/quarterly-earnings/",
+    "C":   "https://www.citigroup.com/global/investors/quarterly-earnings",
+    "PNC": "https://pnc.mediaroom.com/",
+    "BK":  "https://www.bny.com/corporate/global/en/investor-relations/events-and-presentations.html",
+    "TFC": "https://ir.truist.com/",
+    "COF": "https://investor.capitalone.com/",
+}
+
+
+def get_curated_call_info() -> dict[str, dict]:
+    """{ticker: {"webcast_url": url}} for the bespoke non-Q4 megabanks whose
+    earnings webcast link neither the Q4 API nor the HTML scrape reaches. ONLY the
+    stable webcast landing page is supplied — never a release/call date or time
+    (those stay live from FMP/yfinance/PR), so this map can never ship a wrong
+    number. URLs are filtered through the news-feed safety check, same as every
+    other webcast source."""
+    from data.events.wire_base import is_safe_news_url
+    return {tk: {"webcast_url": u} for tk, u in CURATED_WEBCASTS.items()
+            if is_safe_news_url(u)}
+
+
 class IRSiteAdapter(SourceAdapter):
     """Generic IR-page scraper. Watchlist-only."""
 

@@ -228,5 +228,47 @@ class TestQ4Announcement(unittest.TestCase):
         self.assertIsNone(ir._q4_announcement("https://x", "2026-06-29"))
 
 
+class TestCuratedWebcasts(unittest.TestCase):
+    """The hand-verified non-Q4 megabank webcast map — the bespoke-IR fallback for
+    banks neither the Q4 API nor the HTML scrape reaches reliably."""
+
+    def setUp(self):
+        self._cim, self._pr, self._q4 = (
+            ec.call_info_map, ec.get_pr_call_details, ir.get_q4_call_details)
+        ec.get_pr_call_details = lambda: {}      # isolate from any cached snapshot
+        ir.get_q4_call_details = lambda: {}
+
+    def tearDown(self):
+        ec.call_info_map = self._cim
+        ec.get_pr_call_details = self._pr
+        ir.get_q4_call_details = self._q4
+
+    def test_only_webcast_url_safe_https(self):
+        from data.events.wire_base import is_safe_news_url
+        info = ir.get_curated_call_info()
+        self.assertTrue(info)                                  # non-empty
+        for tk, d in info.items():
+            # Webcast link ONLY — never a release/call date or time, so a stale
+            # entry can't ship a wrong number.
+            self.assertEqual(set(d), {"webcast_url"})
+            url = d["webcast_url"]
+            self.assertTrue(url.startswith("https://"), url)
+            self.assertTrue(is_safe_news_url(url), url)
+
+    def test_curated_fills_megabank_and_overrides_junk_scrape(self):
+        # PNC's scrape yielded a JUNK webcast (a nav link) + a real release date.
+        ec.call_info_map = lambda: {
+            "PNC": {"webcast_url": "https://www.pnc.com/corporate-profile",
+                    "release_date": "2026-07-16"},
+        }
+        m = ec.merged_call_info()
+        # JPM had no other source → gets the curated link.
+        self.assertEqual(m["JPM"]["webcast_url"], ir.CURATED_WEBCASTS["JPM"])
+        # PNC's junk scraped webcast is overridden by the curated link …
+        self.assertEqual(m["PNC"]["webcast_url"], ir.CURATED_WEBCASTS["PNC"])
+        # … but its real date is left untouched (curated carries no dates).
+        self.assertEqual(m["PNC"]["release_date"], "2026-07-16")
+
+
 if __name__ == "__main__":
     unittest.main()
