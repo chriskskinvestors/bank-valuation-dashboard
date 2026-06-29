@@ -29,6 +29,26 @@ class TestAnnouncedReleaseDate(unittest.TestCase):
 
     T = "2026-06-26"
 
+    def test_weekday_dates_and_body_release(self):
+        from data.earnings_call import (_parse_on_date, _parse_release_date,
+                                         _is_earnings_announcement)
+        # A weekday before the month must parse (the common PR-body format that
+        # was silently breaking call/release date extraction).
+        self.assertEqual(_parse_on_date("on Thursday, July 23, 2026"), "2026-07-23")
+        self.assertEqual(_parse_on_date("on July 14, 2026"), "2026-07-14")
+        # Announcement headlines with NO inline date are still recognized (the
+        # date lives in the body).
+        self.assertTrue(_is_earnings_announcement(
+            "SB Financial Group Announces Schedule for Second Quarter 2026 Results"))
+        self.assertTrue(_is_earnings_announcement(
+            "Heritage Financial Announces Earnings Release Date and Conference Call"))
+        self.assertFalse(_is_earnings_announcement(
+            "Acme Bancorp Announces Quarterly Cash Dividend"))
+        # Release date pulled from the body near a release/report cue.
+        body = ("will release its second quarter 2026 results on Thursday, "
+                "July 23, 2026, after the close. Conference call on July 24.")
+        self.assertEqual(_parse_release_date(body, self.T), "2026-07-23")
+
     def test_announcement_headlines(self):
         f = _announced_release_date
         self.assertEqual(f("Equity Bancshares, Inc. Will Announce Second Quarter "

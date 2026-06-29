@@ -131,10 +131,40 @@ _MONTHS = {m: i for i, m in enumerate(
     ("january", "february", "march", "april", "may", "june", "july", "august",
      "september", "october", "november", "december"), 1)}
 _ON_DATE_RE = re.compile(
-    r"\b(?:on|for)\s+(?:or\s+about\s+)?([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})", re.I)
+    r"\b(?:on|for)\s+(?:or\s+about\s+)?"
+    r"(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s+)?"   # optional weekday: "Thursday,"
+    r"([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})", re.I)
 _ANNOUNCE_CUES = ("announce", "will report", "to report", "will release",
                   "to release", "schedule", "set date", "sets date",
                   "will host", "to host")
+_EARNINGS_KW = ("results", "earnings")
+
+
+def _is_earnings_announcement(headline: str) -> bool:
+    """True for an UPCOMING-earnings announcement headline — an announcement cue
+    plus an earnings/results keyword — whether or not it states the date inline
+    ('… Announces Schedule for Second Quarter 2026 Results', '… Announces Earnings
+    Release Date and Conference Call'). Used to pick which PRs to body-fetch; the
+    date itself is then parsed from the body."""
+    hl = (headline or "").lower()
+    return (any(c in hl for c in _ANNOUNCE_CUES)
+            and any(k in hl for k in _EARNINGS_KW))
+
+
+_RELEASE_CUE_RE = re.compile(r"\b(?:release|report|announce|issue|publish)\b", re.I)
+
+
+def _parse_release_date(text: str, today_iso: str) -> str | None:
+    """Earnings-RELEASE date from a PR body — a future '… on <date>' shortly after
+    a release/report cue (e.g. 'release its Q2 results on Thursday, July 23').
+    None if not found."""
+    if not text:
+        return None
+    for m in _RELEASE_CUE_RE.finditer(text):
+        d = _parse_on_date(text[m.start():m.start() + 130])
+        if d and d >= today_iso:
+            return d
+    return None
 
 
 def _parse_on_date(text: str) -> str | None:
@@ -279,15 +309,17 @@ def refresh_pr_call_snapshot(max_fetch: int = 200, max_workers: int = 8) -> dict
     except Exception:
         return {}
     today_iso = date.today().isoformat()
-    # One announcement PR per ticker — the newest whose headline announces an
-    # upcoming release date or whose snippet states a call date (i.e. a forward
-    # announcement, not a results recap).
+    # One announcement PR per ticker — the newest earnings-announcement headline
+    # (cue + results/earnings), even when the date isn't in the headline. Many
+    # banks title it "Announces Schedule for Q2 Results" / "Announces Earnings
+    # Release Date and Conference Call" and put the dates only in the body — which
+    # is exactly why we fetch the body below.
     picked: dict = {}
     for r in rows:                                    # newest-first
         tk, url = r.get("ticker"), r.get("url")
         if not tk or not url or tk in picked:
             continue
-        if (_announced_release_date(r.get("headline") or "", today_iso)
+        if (_is_earnings_announcement(r.get("headline") or "")
                 or _parse_call_date(r.get("summary") or "", today_iso)):
             picked[tk] = r
 
@@ -301,7 +333,9 @@ def refresh_pr_call_snapshot(max_fetch: int = 200, max_workers: int = 8) -> dict
         if wc and not is_safe_news_url(wc):
             ci["webcast_url"] = None
         info = {k: v for k, v in ci.items() if v}
-        rd = _announced_release_date(r.get("headline") or "", today_iso)
+        # Release date from the headline if stated there, else from the body.
+        rd = (_announced_release_date(r.get("headline") or "", today_iso)
+              or _parse_release_date(body, today_iso))
         cd = _parse_call_date(body, today_iso)
         if rd:
             info["release_date"] = rd

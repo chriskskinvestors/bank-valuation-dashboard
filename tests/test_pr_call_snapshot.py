@@ -75,6 +75,26 @@ class TestRefreshPrCallSnapshot(unittest.TestCase):
         self.assertEqual(out["BANR"]["call_time"], "11:00a PT")
         self.assertEqual(cap.get("pr_call_snap", {}).get("value"), out)
 
+    def test_no_date_headline_is_picked_and_body_parsed(self):
+        # "Announces Schedule for … Results" — no date in the headline; it must
+        # still be picked and the dates parsed from the body (the SBFG/HFWA case).
+        self._store.get_events_by_type = lambda et, limit=800: [
+            {"ticker": "SBFG", "url": "http://pr/sbfg",
+             "headline": "SB Financial Group Announces Schedule for Second "
+                         "Quarter 2026 Results", "summary": ""},
+        ]
+        ec._fetch_pr_body = lambda url: (
+            "expects to release its second quarter 2026 results on Thursday, "
+            "July 23, 2026, after the close. The company will hold a conference "
+            "call on Friday, July 24, 2026 at 11:00 a.m. EDT. "
+            "Webcast: https://events.q4inc.com/sbfg")
+        self._dc.put = lambda k, v: None
+        out = ec.refresh_pr_call_snapshot()
+        self.assertIn("SBFG", out)
+        self.assertEqual(out["SBFG"]["release_date"], "2026-07-23")
+        self.assertEqual(out["SBFG"]["call_date"], "2026-07-24")
+        self.assertEqual(out["SBFG"]["webcast_url"], "https://events.q4inc.com/sbfg")
+
 
 class TestMergedLayering(unittest.TestCase):
     def setUp(self):
