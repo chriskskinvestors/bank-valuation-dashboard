@@ -2064,6 +2064,29 @@ def _cr_highlights_by_year(ticker):
     except Exception:
         cap_by_year = {}
 
+    # FDIC Call Report ratios for what the as-reported statements don't break out
+    # (NIM, NPL/loans, NCO/loans) and to backfill capital years the filer didn't
+    # tag — the same source the Templated highlights use. FDIC ratios are percents;
+    # the dict stores fractions, so divide by 100. Keyed by fiscal year (Dec FY-end).
+    fdic_by_year = {}
+    try:
+        from data import fdic_client
+        if cert:
+            _fh = fdic_client.get_historical_financials(cert, quarters=44)
+            if _fh is not None and not _fh.empty:
+                _fh = _fh.copy()
+                _fh["_d"] = pd.to_datetime(_fh["REPDTE"], errors="coerce")
+                for _, _r in _fh[_fh["_d"].dt.month == 12].iterrows():
+                    if pd.notna(_r["_d"]):
+                        fdic_by_year[int(_r["_d"].year)] = _r
+    except Exception:
+        fdic_by_year = {}
+
+    def _fpct(yr, field):
+        _r = fdic_by_year.get(yr)
+        v = None if _r is None else _num(_r.get(field))
+        return (v / 100.0) if v is not None else None
+
     _EQUITY = ["total shareholders' equity", "total stockholders' equity"]
     dicts = []
     for k, year in enumerate(bal_years):
@@ -2141,7 +2164,7 @@ def _cr_highlights_by_year(ticker):
             "roaa": _ratio(ni, avg_assets),
             "roae": _ratio(ni, avg_equity),
             "roatce": _ratio(ni, tce_avg if (tce_avg and tce_avg > 0) else None),
-            "nim": None,            # not cleanly in the as-reported statements → n/a
+            "nim": _fpct(year, "NIMY"),          # FDIC (not broken out in filings)
             "efficiency": _ratio(nonix, (nii + nonii)
                                  if (nii is not None and nonii is not None) else None),
             "loans_deposits": _ratio(nl, dep),
@@ -2149,12 +2172,15 @@ def _cr_highlights_by_year(ticker):
             "equity_assets": _ratio(eq, ta),
             "tce_ta": _ratio(tce_cur,
                              (ta - (gw or 0.0) - (intang or 0.0)) if ta is not None else None),
-            "npl_loans": None,      # not in the statements → n/a
-            "nco_loans": None,      # not in the statements → n/a
+            "npl_loans": _fpct(year, "NCLNLSR"),  # FDIC noncurrent loans / loans
+            "nco_loans": _fpct(year, "NTLNLSR"),  # FDIC net charge-offs / loans
             "reserves_loans": _ratio(acl, nl),
-            "cet1": cap.get("cet1_ratio"),
-            "total_capital": cap.get("total_ratio"),
-            "leverage": cap.get("lev_ratio"),
+            "cet1": cap.get("cet1_ratio") if cap.get("cet1_ratio") is not None
+                    else _fpct(year, "IDT1CER"),
+            "total_capital": cap.get("total_ratio") if cap.get("total_ratio") is not None
+                             else _fpct(year, "RBCRWAJ"),
+            "leverage": cap.get("lev_ratio") if cap.get("lev_ratio") is not None
+                        else _fpct(year, "RBCT1JR"),
         }
         dicts.append(d)
 
@@ -2288,9 +2314,9 @@ def _render_financial_highlights(ticker):
         f"Source: company 10-K filings ([latest]({src})); {len(periods)} fiscal "
         "years stitched from the bank's own income, balance sheet and regulatory "
         "capital tables. Dollar lines \\$-compact; ratios on average balances "
-        "where a prior year is in view. Blank = not cleanly derivable from the "
-        "as-reported statements (NIM, NPLs and net charge-offs are not in these "
-        "statements; capital ratios only where the filer tags them).")
+        "where a prior year is in view. NIM, NPL and charge-off ratios — and any "
+        "capital-ratio years the filer didn't tag — come from the FDIC Call "
+        "Report (the same source the Templated highlights use).")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
