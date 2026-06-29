@@ -506,3 +506,48 @@ the two structural bugs (non-Dec FYE, PNC word-order) the wider net exposed. Tho
 five items are the next defect queue.
 
 Re-run: `python -m tools.cr_coverage_report` (53-ticker `SAMPLE`; cached, fast).
+
+### RESOLUTION (2026-06-29, sec_filing_scraper backlog items #2/#3/#4)
+
+- **#2 non-December FYE — FIXED.** `securities_/fair_value_/segments_multiyear_for`
+  no longer hard-filter `period[5:7]=="12"`; they derive the filer's real FY-end
+  month from the filing's own annual-duration facts (`_fye_month_from_facts`, cached
+  per accession via `_fye_month_for`) and gate on that. Verified live: AX returns
+  securities at `2025-06-30…2021-06-30`; WAFD & CASH at `2025-09-30…2021-09-30`
+  (AC/FV/net all sane — CASH AFS −$0.19B underwater). December filers (ABCB/CFG)
+  unchanged. Pinned by `TestFyeMonth` + `test_non_december_fye_accepted` /
+  `test_september_fye_accepted` in each multiyear test class.
+
+- **#4 segments recoverable slice — FIXED (ZION 7-seg, VLY 2-seg).** When a filer
+  tags NO per-segment NetIncomeLoss/ProfitLoss but DOES tag a reconciling
+  per-segment dollar measure, `extract_segments` now surfaces the table on that
+  measure (priority: pre-tax income → total revenue → net interest income),
+  `ni_measure=None` + `disclosed_*` keys, clearly labelled (never relabelled net
+  income). Only OperatingSegments leaf members enter the sum (`_seg_of`), so
+  totals/eliminations can't double-count; the same residual-< consolidated gate
+  applies. Verified live: ZION 7 segments on pre-tax income, Σ(1203M)+residual(−28M)
+  = consolidated 1175M (delta 0); VLY 2 segments Σ(762M)+residual(−18M) = 744M
+  (delta 0). The clean-OperatingSegments filter yields 2 (not 3) for VLY this year —
+  honest. Single-segment banks (PNFP/GBCI/BKU/BANR/HWC) stay n/a. Renderer
+  (`ui/financials_statements.py::_render_segments`) updated to title the band by the
+  disclosed measure and pull residual/consolidated from the disclosed keys.
+
+- **#3 fair-value per-line tagging — INVESTIGATED, LEFT n/a (genuine, by the
+  cardinal rule).** Confirmed the empties split into two non-recoverable shapes:
+  (a) RF/ONB tag `AssetsFairValueDisclosure` ONLY as nonrecurring per-instrument
+  Level-3 sub-rows (RF: CRE $93M + ResidentialMortgage $970M with a
+  FinancialInstrumentAxis member) — correctly rejected, no clean recurring rollup
+  (already pinned by `test_instrument_only_rows_yield_na`); (b) HBAN/WAL/EWBC tag
+  ZERO `Assets/LiabilitiesFairValueDisclosure` facts — the recurring hierarchy is
+  tagged entirely per-line under individual class concepts. A per-line
+  reconstruction is NOT shippable: there is **no recurring grand total tagged to
+  tie against** (the plan's own "ship only when it ties" bar can't be met), the
+  leaf set **mixes asset and liability concepts** and **mixes ASC 820 recurring
+  with the ASC 825 fair-value-OF-financial-instruments disclosure** (loans/long-term
+  debt — billions the extractor already guards against surfacing as recurring
+  marks), and **leaf-vs-subtotal can't be distinguished without the presentation
+  linkbase** (WAL: 0 clean single-axis leaf classes; HBAN: a naive single-axis sum
+  wrongly folds in $1.16B long-term debt + $0.52B derivative liabilities). Any
+  reconstruction would risk a double-counted / wrong-entity total → n/a is correct.
+  So #3 is **mostly genuine non-recoverability** at the tie-or-n/a bar, not a parser
+  miss we can safely close.

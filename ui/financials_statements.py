@@ -2957,13 +2957,33 @@ def _render_segments(ticker):
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
            f"{m['accession']}/{m['doc']}")
     cols = [f"FY{p[:4]}" for p in periods]
-    measures = sorted({seg_data[p]["ni_measure"] for p in periods})
+    # A filer either tags per-segment NET INCOME (ni_measure set) or, for the ASC
+    # 280 disaggregated-expense filers that don't, a DISCLOSED measure (pretax
+    # income / revenue / NII) surfaced AS-IS — never relabelled net income.
+    ni_periods = [p for p in periods if seg_data[p].get("ni_measure")]
+    disclosed_periods = [p for p in periods if not seg_data[p].get("ni_measure")]
+    if ni_periods:
+        measures = sorted({seg_data[p]["ni_measure"] for p in ni_periods})
+        primary_title = "Net income ($)"
+        primary_key = "net_income"
+        primary_consol_label = "Consolidated net income"
+        measure_note = (f"Segment net income is the {' / '.join(measures)} measure; "
+                        f"the residual reconciles reportable segments to the "
+                        f"consolidated total.")
+    else:
+        disc_labels = sorted({seg_data[p].get("disclosed_label") or "disclosed measure"
+                              for p in disclosed_periods})
+        primary_title = disc_labels[0] if len(disc_labels) == 1 else "Disclosed measure ($)"
+        primary_key = "disclosed"
+        primary_consol_label = "Consolidated"
+        measure_note = (f"This filer does not tag per-segment net income; the table "
+                        f"shows the disclosed per-segment {' / '.join(l.split(' (')[0].lower() for l in disc_labels)} "
+                        f"(not net income), with a residual reconciling reportable "
+                        f"segments to the consolidated total.")
     st.caption(
         f"Source: company 10-K filings — latest [10-K filed {m['date']}]({src}); "
         f"{len(periods)} fiscal year(s) stitched from {len(filings)} filing(s). "
-        f"Segment net income is the {' / '.join(measures)} measure; the residual "
-        f"reconciles reportable segments to the consolidated total. "
-        f"Blank = segment not separately reported that year.")
+        f"{measure_note} Blank = segment not separately reported that year.")
 
     def _b(v):
         return "n/a" if v is None else _cr_usd(v)
@@ -2993,18 +3013,28 @@ def _render_segments(ticker):
         if not body and not (residual or consolidated):
             return []                                # metric untagged across all years
         rows += body
+        # Residual / consolidated come from whichever measure this period carries
+        # (NI for NI-tagged filers, the disclosed measure otherwise) so the rows
+        # always tie the SAME column they reconcile.
+        def _resid(p):
+            d = seg_data[p]
+            return d["reconciling_residual"] if d.get("ni_measure") else d.get("disclosed_residual")
+
+        def _consol(p):
+            d = seg_data[p]
+            return d["consolidated_net_income"] if d.get("ni_measure") else d.get("disclosed_consolidated")
         if residual:
             rows.append({"label": "Corporate / other & reconciling items",
-                         "values": [_b(seg_data[p]["reconciling_residual"]) for p in periods],
+                         "values": [_b(_resid(p)) for p in periods],
                          "kind": "data"})
         if consolidated:
-            rows.append({"label": "Consolidated net income",
-                         "values": [_b(seg_data[p]["consolidated_net_income"]) for p in periods],
+            rows.append({"label": primary_consol_label,
+                         "values": [_b(_consol(p)) for p in periods],
                          "kind": "data"})
         return rows
 
     grid_rows = []
-    grid_rows += _band("Net income ($)", "net_income", residual=True, consolidated=True)
+    grid_rows += _band(primary_title, primary_key, residual=True, consolidated=True)
     grid_rows += _band("Revenue ($)", "revenue")
     grid_rows += _band("Total assets ($)", "assets")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"

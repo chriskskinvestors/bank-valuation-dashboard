@@ -556,10 +556,11 @@ class TestSecuritiesMultiyear(unittest.TestCase):
     def _meta(self, date, acc):
         return {"accession": acc, "doc": f"d-{acc}.htm", "date": date, "cik": 99}
 
-    def _run(self, metas, extracts, n_years=5):
+    def _run(self, metas, extracts, n_years=5, fye="12"):
         from data import sec_filing_scraper as S
         with mock.patch("data.sec_statements._recent_10k_metas",
                         return_value=metas), \
+             mock.patch.object(S, "_fye_month_for", return_value=fye), \
              mock.patch.object(S, "_securities_extract_cached",
                                side_effect=lambda m: extracts[m["accession"]]):
             return S.securities_multiyear_for(99, n_years=n_years)
@@ -595,6 +596,27 @@ class TestSecuritiesMultiyear(unittest.TestCase):
         extracts = {"A": {"2025-09-30": {"afs": {"amortized_cost": 95.0}}}}
         self.assertIsNone(self._run(metas, extracts))
 
+    def test_non_december_fye_accepted(self):
+        # A June fiscal-year-end filer (AX) tags FY-ends 06-30; the multi-year
+        # stitch must accept them (not assume December) and DROP the off-cycle
+        # December stub. Regression for the hardcoded period[5:7]=="12" gate.
+        metas = [self._meta("2025-08-21", "A")]
+        extracts = {"A": {"2025-06-30": {"afs": {"amortized_cost": 100.0}},
+                          "2024-06-30": {"afs": {"amortized_cost": 80.0}},
+                          "2024-12-31": {"afs": {"amortized_cost": 88.0}}}}  # stub
+        res = self._run(metas, extracts, fye="06")
+        self.assertEqual(sorted(res["securities"], reverse=True),
+                         ["2025-06-30", "2024-06-30"])
+        self.assertNotIn("2024-12-31", res["securities"])   # non-FYE stub dropped
+
+    def test_september_fye_accepted(self):
+        # WAFD/CASH (Sep-30 FYE).
+        metas = [self._meta("2025-11-20", "A")]
+        extracts = {"A": {"2025-09-30": {"afs": {"amortized_cost": 50.0}},
+                          "2024-09-30": {"afs": {"amortized_cost": 45.0}}}}
+        res = self._run(metas, extracts, fye="09")
+        self.assertEqual(list(res["securities"]), ["2025-09-30", "2024-09-30"])
+
     def test_no_filings_returns_none(self):
         self.assertIsNone(self._run([], {}))
 
@@ -618,10 +640,11 @@ class TestSegmentsMultiyear(unittest.TestCase):
                 "reconciling_residual": consol - sum(ni for _, ni in segs),
                 "ni_measure": measure}
 
-    def _run(self, metas, extracts, n_years=5):
+    def _run(self, metas, extracts, n_years=5, fye="12"):
         from data import sec_filing_scraper as S
         with mock.patch("data.sec_statements._recent_10k_metas",
                         return_value=metas), \
+             mock.patch.object(S, "_fye_month_for", return_value=fye), \
              mock.patch.object(S, "_segments_extract_cached",
                                side_effect=lambda m: extracts[m["accession"]]):
             return S.segments_multiyear_for(99, n_years=n_years)
@@ -674,6 +697,13 @@ class TestSegmentsMultiyear(unittest.TestCase):
         res = self._run(metas, {"A": {}})
         self.assertIsNone(res)
 
+    def test_non_december_fye_accepted(self):
+        # A non-December FYE segment breakdown (e.g. a Sep-30 filer) must be kept.
+        metas = [self._meta("2025-11-20", "A")]
+        extracts = {"A": {"2025-09-30": self._yr(110.0, [("Bank", 90.0), ("Wealth", 15.0)])}}
+        res = self._run(metas, extracts, fye="09")
+        self.assertEqual(list(res["segments"]), ["2025-09-30"])
+
     def test_no_filings_returns_none(self):
         self.assertIsNone(self._run([], {}))
 
@@ -697,10 +727,11 @@ class TestFairValueMultiyear(unittest.TestCase):
                 "netting": None if grand is None else grand - total,
                 "_reconciles": recon}
 
-    def _run(self, metas, extracts, n_years=5):
+    def _run(self, metas, extracts, n_years=5, fye="12"):
         from data import sec_filing_scraper as S
         with mock.patch("data.sec_statements._recent_10k_metas",
                         return_value=metas), \
+             mock.patch.object(S, "_fye_month_for", return_value=fye), \
              mock.patch.object(S, "_fair_value_extract_cached",
                                side_effect=lambda m: extracts[m["accession"]]):
             return S.fair_value_multiyear_for(99, n_years=n_years)
@@ -770,6 +801,15 @@ class TestFairValueMultiyear(unittest.TestCase):
         metas = [self._meta("2026-02-26", "A")]
         extracts = {"A": {"2025-09-30": {"assets": self._side(95.0, 48.0, 1.0)}}}
         self.assertIsNone(self._run(metas, extracts))
+
+    def test_non_december_fye_accepted(self):
+        # A Sep-30 FYE filer's hierarchy must be kept (not dropped as a "stub").
+        metas = [self._meta("2025-11-20", "A")]
+        extracts = {"A": {"2025-09-30": {"assets": self._side(100.0, 50.0, 1.0)},
+                          "2024-09-30": {"assets": self._side(80.0, 40.0, 1.0)}}}
+        res = self._run(metas, extracts, fye="09")
+        self.assertEqual(sorted(res["fair_value"], reverse=True),
+                         ["2025-09-30", "2024-09-30"])
 
     def test_no_filings_returns_none(self):
         self.assertIsNone(self._run([], {}))
@@ -1312,6 +1352,40 @@ class TestFinancialHighlights(unittest.TestCase):
             extract_financial_highlights([self._dur("us-gaap:NetIncomeLoss", 100 * self.M)]), {})
 
 
+class TestFyeMonth(unittest.TestCase):
+    """_fye_month_from_facts derives the filer's fiscal-year-end month from its own
+    annual-duration facts (the modal ~one-year period-end month) — so off-cycle
+    filers (Jun/Sep) are no longer dropped by a hardcoded-December FY-end gate."""
+
+    def _ann(self, end, start):
+        return Fact("us-gaap:NetIncomeLoss", 1.0, end, start, {}, "usd")
+
+    def test_june_fye(self):
+        from data.sec_filing_scraper import _fye_month_from_facts
+        facts = [self._ann("2025-06-30", "2024-07-01"),
+                 self._ann("2024-06-30", "2023-07-01")]
+        self.assertEqual(_fye_month_from_facts(facts), "06")
+
+    def test_september_fye(self):
+        from data.sec_filing_scraper import _fye_month_from_facts
+        facts = [self._ann("2025-09-30", "2024-10-01")]
+        self.assertEqual(_fye_month_from_facts(facts), "09")
+
+    def test_modal_month_ignores_stub_quarter(self):
+        # Three Dec annuals + one 3-month stub: modal month is December.
+        from data.sec_filing_scraper import _fye_month_from_facts
+        facts = [self._ann("2025-12-31", "2025-01-01"),
+                 self._ann("2024-12-31", "2024-01-01"),
+                 self._ann("2023-12-31", "2023-01-01"),
+                 Fact("us-gaap:NetIncomeLoss", 1.0, "2025-09-30", "2025-07-01", {}, "usd")]
+        self.assertEqual(_fye_month_from_facts(facts), "12")
+
+    def test_no_annual_duration_returns_none(self):
+        from data.sec_filing_scraper import _fye_month_from_facts
+        facts = [Fact("us-gaap:Assets", 1.0, "2025-12-31", None, {}, "usd")]  # instant only
+        self.assertIsNone(_fye_month_from_facts(facts))
+
+
 class TestSegments(unittest.TestCase):
     """Business-segment reconstruction (extract_segments). Pins the OperatingSegments
     member filter (eliminations/totals excluded), the consolidated reconciling
@@ -1365,6 +1439,84 @@ class TestSegments(unittest.TestCase):
         facts = [self._cons("us-gaap:NetIncomeLoss", 98 * self.M),
                  self._seg("us-gaap:NetIncomeLoss", 100 * self.M, "x:CommunityBankingMember", self.OPSEG),
                  self._seg("us-gaap:NetIncomeLoss", 98 * self.M, "x:CorporateMember", self.OPSEG)]
+        self.assertEqual(extract_segments(facts), {})
+
+    # ── disclosed-measure fallback (ZION/VLY: no per-segment NI tagged) ──
+    PRETAX = "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"
+
+    def test_disclosed_pretax_recovered_when_no_segment_ni(self):
+        # ZION shape: no per-segment NetIncomeLoss, but per-segment PRETAX income
+        # IS tagged and reconciles. The table is surfaced on pretax, labelled as
+        # the disclosed measure (ni_measure None), residual = consol − Σ segments.
+        facts = [
+            self._cons("us-gaap:NetIncomeLoss", 900 * self.M),     # consolidated NI (no seg NI)
+            self._cons(self.PRETAX, 1175 * self.M),
+            self._seg(self.PRETAX, 344 * self.M, "x:ZionsBankSegmentMember", self.OPSEG),
+            self._seg(self.PRETAX, 287 * self.M, "x:CaliforniaBankSegmentMember", self.OPSEG),
+            self._seg(self.PRETAX, 281 * self.M, "x:AmegySegmentMember", self.OPSEG),
+        ]
+        d = extract_segments(facts)["2025-12-31"]
+        self.assertIsNone(d["ni_measure"])                          # NOT relabelled net income
+        self.assertEqual(d["consolidated_net_income"], None)
+        self.assertEqual(d["disclosed_label"], "Pre-tax income ($)")
+        self.assertAlmostEqual(d["disclosed_consolidated"], 1175 * self.M)
+        self.assertAlmostEqual(d["disclosed_residual"], (1175 - (344 + 287 + 281)) * self.M)
+        self.assertEqual(len(d["segments"]), 3)
+        # Σ reportable + residual ties the disclosed consolidated total.
+        self.assertAlmostEqual(
+            sum(s["disclosed"] for s in d["segments"]) + d["disclosed_residual"],
+            d["disclosed_consolidated"])
+
+    def test_disclosed_fallback_excludes_eliminations_no_double_count(self):
+        # A total/elimination row on the segment axis must NOT enter the sum — only
+        # OperatingSegments members do (via _seg_of), so no double counting.
+        facts = [
+            self._cons(self.PRETAX, 600 * self.M),
+            self._seg(self.PRETAX, 400 * self.M, "x:ASegmentMember", self.OPSEG),
+            self._seg(self.PRETAX, 250 * self.M, "x:BSegmentMember", self.OPSEG),
+            self._seg(self.PRETAX, -50 * self.M, "x:ASegmentMember", self.ELIM),   # elimination
+            self._seg(self.PRETAX, 600 * self.M, "x:TotalSegmentMember", "us-gaap:CorporateNonSegmentMember"),
+        ]
+        d = extract_segments(facts)["2025-12-31"]
+        self.assertEqual(len(d["segments"]), 2)                     # only A, B
+        self.assertAlmostEqual(sum(s["disclosed"] for s in d["segments"]), 650 * self.M)
+        self.assertAlmostEqual(d["disclosed_residual"], (600 - 650) * self.M)
+
+    def test_segment_ni_preferred_over_disclosed(self):
+        # When BOTH per-segment NI and per-segment pretax are tagged, NI wins
+        # (ni_measure set, no disclosed_* keys).
+        facts = [
+            self._cons("us-gaap:NetIncomeLoss", 7000 * self.M),
+            self._seg("us-gaap:NetIncomeLoss", 5000 * self.M, "x:RetailBankingSegmentMember", self.OPSEG),
+            self._seg("us-gaap:NetIncomeLoss", 4000 * self.M, "x:CorporateBankingSegmentMember", self.OPSEG),
+            self._cons(self.PRETAX, 9000 * self.M),
+            self._seg(self.PRETAX, 6000 * self.M, "x:RetailBankingSegmentMember", self.OPSEG),
+            self._seg(self.PRETAX, 5000 * self.M, "x:CorporateBankingSegmentMember", self.OPSEG),
+        ]
+        d = extract_segments(facts)["2025-12-31"]
+        self.assertEqual(d["ni_measure"], "NetIncomeLoss")
+        self.assertNotIn("disclosed_label", d)
+
+    def test_disclosed_revenue_fallback_when_no_pretax(self):
+        # No NI, no pretax — but per-segment Revenues tagged → revenue surfaced.
+        facts = [
+            self._cons("us-gaap:Revenues", 662 * self.M),
+            self._seg("us-gaap:Revenues", 300 * self.M, "x:ASegmentMember", self.OPSEG),
+            self._seg("us-gaap:Revenues", 250 * self.M, "x:BSegmentMember", self.OPSEG),
+        ]
+        d = extract_segments(facts)["2025-12-31"]
+        self.assertIsNone(d["ni_measure"])
+        self.assertEqual(d["disclosed_label"], "Total revenue ($)")
+        self.assertAlmostEqual(d["disclosed_consolidated"], 662 * self.M)
+
+    def test_disclosed_large_residual_rejected(self):
+        # Disclosed-measure path obeys the SAME reconcile gate: residual exceeding
+        # the consolidated total → n/a, never a misleading breakdown.
+        facts = [
+            self._cons(self.PRETAX, 98 * self.M),
+            self._seg(self.PRETAX, 100 * self.M, "x:ASegmentMember", self.OPSEG),
+            self._seg(self.PRETAX, 98 * self.M, "x:BSegmentMember", self.OPSEG),
+        ]
         self.assertEqual(extract_segments(facts), {})
 
 

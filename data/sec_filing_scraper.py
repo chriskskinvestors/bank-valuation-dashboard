@@ -484,6 +484,45 @@ def instance_facts(meta: dict) -> list[Fact]:
     return parse_inline_xbrl_documentset(blobs)
 
 
+def _fye_month_from_facts(facts: list[Fact]) -> str | None:
+    """The filer's fiscal-year-end month ("01".."12"), derived from the filing's
+    OWN annual-duration facts: the modal month among ~one-year period-ends. This is
+    the filing's authoritative fiscal calendar (a June filer's annual facts all end
+    in June), so it correctly identifies the FY-end month for off-cycle filers
+    (AX = Jun, WAFD/CASH = Sep) instead of assuming December. None when the filing
+    tags no annual duration."""
+    from collections import Counter
+    months: Counter = Counter()
+    for f in facts:
+        if f.period_start and 330 <= _days(f.period_start, f.period_end) <= 400:
+            months[f.period_end[5:7]] += 1
+    if not months:
+        return None
+    return months.most_common(1)[0][0]
+
+
+def _fye_month_for(meta: dict) -> str | None:
+    """Cached fiscal-year-end month for one filing (keyed per accession, sharing the
+    parsed-facts cost with the extractors). Used to gate FY-end-only multi-year
+    stitching on the filer's real fiscal calendar rather than a hardcoded December.
+    None (→ caller falls back to December) when it cannot be derived."""
+    from data import cache
+    ckey = f"fyemonth:v1:{meta['accession']}"
+    mon = cache.get(ckey)
+    if mon is None:
+        try:
+            mon = _fye_month_from_facts(instance_facts(meta)) or ""
+            try:
+                cache.put(ckey, mon)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[sec_scraper] fye-month failed for cik {meta.get('cik')}: "
+                  f"{type(e).__name__}: {e}")
+            mon = ""
+    return mon or None
+
+
 def fetch_facts(cik, forms=("10-K",)) -> tuple[dict | None, list[Fact]]:
     """Locate the latest filing among `forms`, fetch it, and parse its iXBRL
     (multi-document aware). Returns (filing_meta, facts); filing_meta is None when
@@ -782,9 +821,10 @@ def fair_value_multiyear_for(cik, n_years: int = 5) -> dict | None:
     used_filings: list = []
     for m in metas:                                  # newest-first
         fv = _fair_value_extract_cached(m)
+        fye = _fye_month_for(m) or "12"              # filer's real FY-end month
         contributed = False
         for period in sorted(fv.keys(), reverse=True):
-            if period[5:7] != "12":                  # FY-ends only (skip stub quarters)
+            if period[5:7] != fye:                   # FY-ends only (skip stub quarters)
                 continue
             if period in fair_value:                 # newer filing already supplied it
                 continue
@@ -1015,9 +1055,10 @@ def securities_multiyear_for(cik, n_years: int = 5) -> dict | None:
     used_filings: list = []
     for m in metas:                                  # newest-first
         sec = _securities_extract_cached(m)
+        fye = _fye_month_for(m) or "12"              # filer's real FY-end month
         contributed = False
         for period in sorted(sec.keys(), reverse=True):
-            if period[5:7] != "12":                  # FY-ends only (skip stub quarters)
+            if period[5:7] != fye:                   # FY-ends only (skip stub quarters)
                 continue
             if period in securities:                 # newer filing already supplied it
                 continue
@@ -1974,6 +2015,26 @@ def _seg_label(qname: str) -> str:
     return s.strip() or qname
 
 
+# Disclosed per-segment measures to fall back to when a filer tags NO per-segment
+# net income (ZION, VLY: the new ASC 280 disaggregated-expense disclosure tags
+# per-segment revenue/expense/pretax under the segment axis but not a segment NI
+# line). Tried in this priority order; the FIRST that has ≥2 clean per-segment
+# facts AND a consolidated total AND reconciles (corporate/other residual smaller
+# than the consolidated) is surfaced — clearly labelled as the disclosed measure,
+# never relabelled "net income". Dollar measures only (no ratios/percentages).
+# Each entry: (human label, (concept aliases…)).
+_SEG_FALLBACK_MEASURES = (
+    ("Pre-tax income ($)", (
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments")),
+    ("Total revenue ($)", (
+        "Revenues", "RevenuesNetOfInterestExpense")),
+    ("Net interest income ($)", (
+        "InterestIncomeExpenseNet", "InterestIncomeExpenseAfterProvisionForLoanLoss")),
+)
+
+
 def extract_segments(facts: list[Fact]) -> dict:
     """{fiscal_year_end: {"segments": [...], ...}} — the as-reported business-segment
     net income (with revenue and assets when tagged) reconstructed from a filing's
@@ -1981,7 +2042,13 @@ def extract_segments(facts: list[Fact]) -> dict:
     plus an explicit 'Corporate / other & reconciling items' residual (consolidated
     − Σ reportable) so the segments tie the consolidated total. The net-income
     measure (NetIncomeLoss or ProfitLoss) is chosen to match the consolidated tag.
-    n/a unless ≥2 reportable segments and a consolidated total are tagged for the
+
+    When a filer tags NO per-segment net income but DOES tag a reconciling
+    per-segment dollar measure (pretax income, revenue, or net interest income —
+    the ASC 280 disaggregated-expense filers like ZION/VLY), the segment table is
+    surfaced on that disclosed measure instead, clearly labelled as what it is
+    (`ni_measure` is None; `disclosed_*` keys carry the measure). n/a unless ≥2
+    reportable segments and a reconciling consolidated total are tagged for the
     latest fiscal year."""
     fy_end = None
     for f in facts:
@@ -1990,35 +2057,48 @@ def extract_segments(facts: list[Fact]) -> dict:
             if fy_end is None or f.period_end > fy_end:
                 fy_end = f.period_end
     if fy_end is None:
-        return {}
+        # No undimensioned annual NI — derive the FY-end from the modal annual
+        # period so the disclosed-measure fallback can still find its segments.
+        fye_mon = _fye_month_from_facts(facts)
+        if not fye_mon:
+            return {}
+        for f in facts:
+            if (f.period_start and f.period_end[5:7] == fye_mon
+                    and 330 <= _days(f.period_start, f.period_end) <= 400):
+                if fy_end is None or f.period_end > fy_end:
+                    fy_end = f.period_end
+        if fy_end is None:
+            return {}
 
     def _annual(f):
         return f.period_start and f.period_end == fy_end and 330 <= _days(f.period_start, fy_end) <= 400
 
-    # Choose the NI concept that the consolidated total uses, then read segments
-    # with the SAME concept so the residual is consistent.
-    for ni_concept in ("NetIncomeLoss", "ProfitLoss"):
-        consol = None
-        for f in facts:
-            if f.concept.split(":")[-1] == ni_concept and not f.members and _annual(f):
-                consol = f.value
-                break
-        if consol is None:
-            continue
-        seg_ni: dict = {}
-        for f in facts:
-            if f.concept.split(":")[-1] == ni_concept and _annual(f):
+    def _seg_values(concepts):
+        """{seg_member: value} for the first concept in `concepts` tagged for ≥2
+        clean reportable segments at fy_end, plus its undimensioned consolidated
+        total (or None). ({}, None) if none qualifies."""
+        for concept in concepts:
+            segvals: dict = {}
+            consol = None
+            for f in facts:
+                if f.concept.split(":")[-1] != concept or not _annual(f):
+                    continue
                 seg = _seg_of(f.members)
                 if seg:
-                    seg_ni.setdefault(seg, f.value)
-        if len(seg_ni) < 2:
-            continue
-        # Optional per-segment revenue and assets (same segment marker).
+                    segvals.setdefault(seg, f.value)
+                elif not f.members and consol is None:
+                    consol = f.value
+            if len(segvals) >= 2:
+                return segvals, consol
+        return {}, None
+
+    def _aux(seg_keys):
+        """Optional per-segment revenue and assets for the given segment set."""
         seg_rev: dict = {}
         seg_assets: dict = {}
         for f in facts:
             seg = _seg_of(f.members)
-            if not seg or seg not in seg_ni:
+            if not seg or seg not in seg_keys:
                 continue
             c = f.concept.split(":")[-1]
             if c in ("Revenues", "RevenuesNetOfInterestExpense") and _annual(f):
@@ -2027,6 +2107,16 @@ def extract_segments(facts: list[Fact]) -> dict:
                 seg_assets.setdefault(seg, f.value)
             elif c == "AssetsAverageOutstanding" and _annual(f):
                 seg_assets.setdefault(seg, f.value)
+        return seg_rev, seg_assets
+
+    # Primary path: per-segment net income. Choose the NI concept the consolidated
+    # total uses, then read segments with the SAME concept so the residual is
+    # consistent.
+    for ni_concept in ("NetIncomeLoss", "ProfitLoss"):
+        seg_ni, consol = _seg_values((ni_concept,))
+        if not seg_ni or consol is None:
+            continue
+        seg_rev, seg_assets = _aux(seg_ni)
         segments = [{
             "label": _seg_label(s), "net_income": v,
             "revenue": seg_rev.get(s), "assets": seg_assets.get(s),
@@ -2037,13 +2127,40 @@ def extract_segments(facts: list[Fact]) -> dict:
         # consolidated total. A residual exceeding it means the segment set is
         # unreliable — typically a member that is itself the total/parent
         # double-counted (CTBI tags a "Corporate" segment = consolidated NI; BOTJ
-        # an "All Other" = consolidated) → reject (try the other measure, else n/a),
-        # never a misleading breakdown.
+        # an "All Other" = consolidated) → reject (try the other measure, else
+        # the disclosed-measure fallback, else n/a), never a misleading breakdown.
         if consol and abs(residual) > abs(consol):
             continue
         return {fy_end: {
             "segments": segments, "consolidated_net_income": consol,
             "reconciling_residual": residual, "ni_measure": ni_concept,
+        }}
+
+    # Fallback path: no per-segment NI tagged. Surface the highest-priority
+    # disclosed per-segment dollar measure that reconciles (residual smaller than
+    # the consolidated). The per-segment values are tagged leaf facts on the
+    # segment axis (OperatingSegments only, via _seg_of) — totals/eliminations are
+    # excluded — so summing them does NOT double-count; the residual is the
+    # explicit corporate/other reconciling item. Labelled as the disclosed measure,
+    # never as net income.
+    for label, concepts in _SEG_FALLBACK_MEASURES:
+        seg_vals, consol = _seg_values(concepts)
+        if not seg_vals or consol is None:
+            continue
+        residual = consol - sum(seg_vals.values())
+        if consol and abs(residual) > abs(consol):
+            continue
+        seg_rev, seg_assets = _aux(seg_vals)
+        segments = [{
+            "label": _seg_label(s), "net_income": None, "disclosed": v,
+            "revenue": seg_rev.get(s), "assets": seg_assets.get(s),
+        } for s, v in seg_vals.items()]
+        segments.sort(key=lambda x: -(x["disclosed"] if x["disclosed"] is not None else 0))
+        return {fy_end: {
+            "segments": segments, "consolidated_net_income": None,
+            "reconciling_residual": None, "ni_measure": None,
+            "disclosed_label": label, "disclosed_consolidated": consol,
+            "disclosed_residual": residual,
         }}
     return {}
 
@@ -2109,9 +2226,10 @@ def segments_multiyear_for(cik, n_years: int = 5) -> dict | None:
     used_filings: list = []
     for m in metas:                                  # newest-first
         seg = _segments_extract_cached(m)
+        fye = _fye_month_for(m) or "12"              # filer's real FY-end month
         contributed = False
         for period in sorted(seg.keys(), reverse=True):
-            if period[5:7] != "12":                  # FY-ends only (skip any stub)
+            if period[5:7] != fye:                   # FY-ends only (skip any stub)
                 continue
             if period in segments:                   # newer filing already supplied it
                 continue
