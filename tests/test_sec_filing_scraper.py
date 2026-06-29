@@ -546,6 +546,58 @@ class TestSecuritiesPortfolio(unittest.TestCase):
         self.assertEqual(extract_securities(facts), {})
 
 
+class TestSecuritiesMultiyear(unittest.TestCase):
+    """securities_multiyear_for stitches FY-end-only bridges across recent 10-Ks:
+    NEWEST-FIRST periods, FY-ends only (stub quarters dropped), de-duplicated so a
+    period shared by two filings keeps the value from the NEWER one. No live
+    fetch — _recent_10k_metas and the per-filing extract are stubbed."""
+
+    def _meta(self, date, acc):
+        return {"accession": acc, "doc": f"d-{acc}.htm", "date": date, "cik": 99}
+
+    def _run(self, metas, extracts, n_years=5):
+        from data import sec_filing_scraper as S
+        with mock.patch("data.sec_statements._recent_10k_metas",
+                        return_value=metas), \
+             mock.patch.object(S, "_securities_extract_cached",
+                               side_effect=lambda m: extracts[m["accession"]]):
+            return S.securities_multiyear_for(99, n_years=n_years)
+
+    def test_stitch_fy_ends_newest_first_dedup(self):
+        # Two 10-Ks: the FY2025 10-K tags FY2025+FY2024; the FY2024 10-K tags
+        # FY2024+FY2023. FY2024 shared → newer filing's value wins.
+        metas = [self._meta("2026-02-26", "A"), self._meta("2025-02-28", "B")]
+        extracts = {
+            "A": {"2025-12-31": {"afs": {"amortized_cost": 100.0}},
+                  "2024-12-31": {"afs": {"amortized_cost": 80.0}}},   # newer FY2024
+            "B": {"2024-12-31": {"afs": {"amortized_cost": 79.0}},    # older FY2024
+                  "2023-12-31": {"afs": {"amortized_cost": 60.0}}},
+        }
+        res = self._run(metas, extracts)
+        sec = res["securities"]
+        self.assertEqual(sorted(sec, reverse=True),
+                         ["2025-12-31", "2024-12-31", "2023-12-31"])
+        self.assertEqual(sec["2024-12-31"]["afs"]["amortized_cost"], 80.0)  # newer wins
+        self.assertEqual([f["accession"] for f in res["filings"]], ["A", "B"])
+        self.assertEqual(res["meta"]["accession"], "A")
+
+    def test_stub_quarter_periods_dropped(self):
+        # A 10-Q-style mid-year period must never enter a FY-end stitch.
+        metas = [self._meta("2026-02-26", "A")]
+        extracts = {"A": {"2025-12-31": {"afs": {"amortized_cost": 100.0}},
+                          "2025-09-30": {"afs": {"amortized_cost": 95.0}}}}
+        res = self._run(metas, extracts)
+        self.assertEqual(list(res["securities"]), ["2025-12-31"])
+
+    def test_no_fy_ends_returns_none(self):
+        metas = [self._meta("2026-02-26", "A")]
+        extracts = {"A": {"2025-09-30": {"afs": {"amortized_cost": 95.0}}}}
+        self.assertIsNone(self._run(metas, extracts))
+
+    def test_no_filings_returns_none(self):
+        self.assertIsNone(self._run([], {}))
+
+
 class TestCreditQuality(unittest.TestCase):
     """The CECL allowance & asset-quality summary (extract_credit_quality). Pins the
     loans/ACL reconcile gate, the net-charge-off derivation, and — critically —

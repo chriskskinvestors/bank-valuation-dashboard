@@ -894,6 +894,68 @@ def securities_for(cik) -> dict | None:
     return None
 
 
+def _securities_extract_cached(meta: dict) -> dict:
+    """extract_securities for one filing, cached per accession (shared key with
+    securities_for). {} on failure (never cache a transient None)."""
+    from data import cache
+    ckey = f"securities:v1:{meta['accession']}"
+    sec = cache.get(ckey)
+    if sec is None:
+        try:
+            sec = extract_securities(instance_facts(meta))
+            try:
+                cache.put(ckey, sec)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[sec_scraper] securities failed for cik {meta.get('cik')}: "
+                  f"{type(e).__name__}: {e}")
+            sec = {}
+    return sec or {}
+
+
+def securities_multiyear_for(cik, n_years: int = 5) -> dict | None:
+    """Multi-year AFS/HTM amortized-cost → fair-value bridge, stitched FY-end-only
+    from the bank's recent 10-Ks. Each 10-K tags its FY-end + the prior FY-end, so
+    a handful of filings yield up to `n_years` fiscal year-ends. Returns
+    {"meta": <latest 10-K>, "filings": [...], "securities": {fy_period: {...}}}
+    (newest-first periods), or None when no FY-end portfolio is tagged.
+
+    Each period/portfolio entry is exactly what extract_securities produced — i.e.
+    already reconcile-gated: the amortized-cost candidate had to bridge fair value
+    (or fall in a plausible net band), and the gross gain/loss split is carried
+    only when it ties the bridge (_reconciles). Periods are de-duplicated keeping
+    the value from the NEWEST filing that tagged them (filings agree on shared
+    comparatives; newest is the as-finally-reported figure)."""
+    if not cik:
+        return None
+    from data.sec_statements import _recent_10k_metas
+    # ~2 FY-ends per 10-K → reach back enough filings to cover n_years.
+    metas = _recent_10k_metas(cik, n_years)
+    if not metas:
+        return None
+    securities: dict = {}
+    used_filings: list = []
+    for m in metas:                                  # newest-first
+        sec = _securities_extract_cached(m)
+        contributed = False
+        for period in sorted(sec.keys(), reverse=True):
+            if period[5:7] != "12":                  # FY-ends only (skip stub quarters)
+                continue
+            if period in securities:                 # newer filing already supplied it
+                continue
+            securities[period] = sec[period]
+            contributed = True
+        if contributed:
+            used_filings.append(m)
+        # Stop once we have the requested span of fiscal years.
+        if len({p[:4] for p in securities}) >= n_years:
+            break
+    if not securities:
+        return None
+    return {"meta": metas[0], "filings": used_filings, "securities": securities}
+
+
 # ── Credit quality / allowance (ACL) ─────────────────────────────────────────
 # The CECL allowance and asset-quality figures the loan footnote tags
 # undimensioned: allowance for credit losses on loans, gross/net loans, nonaccrual

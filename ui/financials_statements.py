@@ -1883,68 +1883,144 @@ def _render_fair_value_hierarchy(ticker):
                    "counterparty/collateral arrangements (shown as a reconciling line).")
 
 
+# Securities (AFS/HTM) sub-tab: (portfolio data-key, section band label,
+# [(row label, dict key, fmt)]). fmt: "usd" = $-compact dollars; "pct" = signed
+# % (fraction → %). Gross gain/loss are blanked per-year where that period's
+# bridge doesn't reconcile (gross split untagged) — the ac/fv/net trio is always
+# shown when present.
+_SEC_ROWS = [
+    ("Amortized cost", "amortized_cost", "usd"),
+    ("Gross unrealized gain", "unrealized_gain", "usd"),
+    ("Gross unrealized loss", "unrealized_loss", "usd"),
+    ("Fair value", "fair_value", "usd"),
+    ("Net unrealized gain / (loss)", "net_unrealized", "usd"),
+    ("Net unrealized, % of amortized cost", "underwater_pct", "pct"),
+]
+_CR_SECURITIES_SECTIONS = [
+    ("afs", "Available-for-sale", _SEC_ROWS),
+    ("htm", "Held-to-maturity", _SEC_ROWS),
+]
+
+
 def _render_securities_portfolio(ticker):
-    """As-reported AFS / HTM debt-securities amortized-cost → fair-value bridge,
-    scraped from the HOLDING COMPANY's own latest 10-Q/10-K inline XBRL. The HTM
-    unrealized loss never touches the balance sheet or AOCI — this is the
-    'underwater bonds' picture. n/a when the filer doesn't tag a reconciling
-    amortized-cost + fair-value pair (never a guessed total)."""
+    """Multi-year (up to 5 FY) Company-Reported AFS / HTM debt-securities
+    amortized-cost → fair-value bridge, stitched FY-end-only from the HOLDING
+    COMPANY's own recent 10-Ks (data.sec_filing_scraper.securities_multiyear_for).
+    The HTM unrealized loss never touches the balance sheet or AOCI — this is the
+    'underwater bonds' picture across years. Each period/portfolio is reconcile-
+    gated by the extractor (the amortized-cost candidate had to bridge fair value);
+    the gross gain/loss split is blanked for a year that doesn't tag a tying split
+    (never a guess). A row n/a for every year is dropped. Company-reported,
+    never FDIC."""
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
         return
     try:
-        from data.sec_filing_scraper import securities_for
-        res = securities_for(cik)
+        from data.sec_filing_scraper import securities_multiyear_for
+        res = securities_multiyear_for(cik, n_years=5)
     except Exception:
         res = None
     st.markdown("---")
     st.subheader("Investment Securities — AFS / HTM (Company Reported)")
     if not res or not res.get("securities"):
         st.caption("AFS/HTM amortized-cost → fair-value bridge not tagged in this "
-                   "filer's latest filing — n/a.")
+                   "filer's 10-Ks — n/a.")
         return
     meta, sec = res["meta"], res["securities"]
-    period = max(sec)
-    pdat = sec[period]
-    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+    periods = sorted(sec, reverse=True)[::-1]          # oldest → newest (FY-ends)
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
            f"{meta['accession']}/{meta['doc']}")
-    y, mo = period[:4], period[5:7]
-    plab = f"FY{y}" if mo == "12" else f"Q{(int(mo) - 1) // 3 + 1} '{y[2:]}"
+    cols = [f"FY{p[:4]}" for p in periods]
+
+    def _cell(period, port, key, fmt):
+        """Formatted cell, or None (blank) when the year doesn't disclose it."""
+        d = (sec.get(period) or {}).get(port)
+        if not d:
+            return None
+        v = d.get(key)
+        if v is None:
+            return None
+        if fmt == "pct":
+            return f"{v * 100:+.1f}%"
+        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+
+    any_gross_gated = False
+    rows = []
+    for port, band, metrics in _CR_SECURITIES_SECTIONS:
+        sec_rows = []
+        for label, key, fmt in metrics:
+            vals = [_cell(p, port, key, fmt) for p in periods]
+            if any(v is not None for v in vals):       # drop rows n/a every year
+                sec_rows.append({"label": label, "values": vals, "kind": "data"})
+        if sec_rows:
+            rows.append({"label": band, "values": [], "kind": "header"})
+            rows.extend(sec_rows)
+        # Flag if any in-view period tagged this portfolio but not a tying split.
+        for p in periods:
+            d = (sec.get(p) or {}).get(port)
+            if d and not d.get("_reconciles"):
+                any_gross_gated = True
+
+    if not rows:
+        st.caption("AFS/HTM amortized-cost → fair-value bridge not tagged in this "
+                   "filer's 10-Ks — n/a.")
+        return
+
     st.caption(
-        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — debt securities "
-        f"at {plab}. Net unrealized = fair value − amortized cost; HTM losses are "
-        f"NOT reflected on the balance sheet or in AOCI. Updates as the company files.")
+        f"Source: company 10-K filings — latest [{meta['date']}]({src}); "
+        f"{len(periods)} fiscal year-ends stitched from {len(res['filings'])} filings. "
+        "Net unrealized = fair value − amortized cost; HTM losses are NOT reflected "
+        "on the balance sheet or in AOCI. Company-reported, never FDIC.")
 
-    afs, htm = pdat.get("afs"), pdat.get("htm")
-
-    def _b(v):
-        return "n/a" if v is None else _cr_usd(v)
-
-    def _pct(v):
-        return "n/a" if v is None else f"{v * 100:+.1f}%"
-
-    def _col(s, key, fmt):
-        if not s or s.get(key) is None:
-            return "n/a"
-        return fmt(s[key])
-
-    rows = [
-        ("Amortized cost", "amortized_cost", _b),
-        ("Gross unrealized gain", "unrealized_gain", _b),
-        ("Gross unrealized loss", "unrealized_loss", _b),
-        ("Fair value", "fair_value", _b),
-        ("Net unrealized gain / (loss)", "net_unrealized", _b),
-        ("Net unrealized, % of amortized cost", "underwater_pct", _pct),
-    ]
-    grid_rows = [{"label": lab, "values": [_col(afs, k, fmt), _col(htm, k, fmt)],
-                  "kind": "data"} for lab, k, fmt in rows]
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(["Available-for-sale", "Held-to-maturity"], grid_rows,
-                  entity=entity, src=src)
-    if (afs and not afs.get("_reconciles")) or (htm and not htm.get("_reconciles")):
-        st.caption("Gross gain/loss split shown only where it ties the amortized-cost "
-                   "→ fair-value bridge; otherwise only the (directly tagged) net is shown.")
+    _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+    with _lt:
+        _cr_component(cols, rows, entity=entity, src=src)
+        if any_gross_gated:
+            st.caption("Gross gain/loss split shown only for a year that tags a split "
+                       "tying the amortized-cost → fair-value bridge; otherwise blank "
+                       "(the net is the directly tagged fair value − amortized cost).")
+    with _rt:
+        _cr_securities_trends(periods, sec, ticker, "crsec")
+
+
+def _cr_securities_trends(periods, sec, ticker, key_prefix):
+    """Right-hand trend charts for multi-year Company-Reported Securities: net
+    unrealized as % of amortized cost (the underwater %), one single-line chart per
+    portfolio (AFS, HTM). Same plotting style as _cr_credit_trends; a portfolio
+    n/a for every year is skipped; ≥3 points to render."""
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+    xs = [f"FY{p[:4]}" for p in periods]               # already oldest → newest
+    charts = []
+    for title, port in (("AFS net unrealized, % of amortized cost", "afs"),
+                        ("HTM net unrealized, % of amortized cost", "htm")):
+        ys = []
+        for p in periods:
+            d = (sec.get(p) or {}).get(port)
+            uw = d.get("underwater_pct") if d else None
+            ys.append(uw * 100 if uw is not None else None)
+        if sum(1 for y in ys if y is not None) >= 3:
+            charts.append((title, ys))
+    if not charts:
+        return
+    st.markdown("##### Trends")
+    for r in range(0, len(charts), 2):
+        cols = st.columns(2)
+        for j, (col, (title, ys)) in enumerate(zip(cols, charts[r:r + 2])):
+            with col:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, mode="lines+markers", connectgaps=True,
+                    line=dict(color=CATEGORICAL_PALETTE[0], width=2),
+                    marker=dict(size=5)))
+                apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                                      yaxis_title="%", show_legend=False)
+                tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
+                st.plotly_chart(fig, use_container_width=True,
+                                key=f"{key_prefix}_sectr_{ticker}_{r + j}")
 
 
 def render_fair_value(ticker):
