@@ -2064,6 +2064,19 @@ def _cr_highlights_by_year(ticker):
     except Exception:
         cap_by_year = {}
 
+    # NIM / NPLs / net-charge-offs scraped from the bank's OWN 10-Ks (not in the
+    # primary income/balance statements; data.sec_filing_scraper parses the MD&A
+    # average-balance table + the allowance rollforward). Keyed by fiscal year,
+    # values are fractions or None — company-reported, never FDIC.
+    aq_by_year = {}
+    try:
+        from data.sec_filing_scraper import company_asset_quality_nim
+        _aq = company_asset_quality_nim(cik)
+        if _aq:
+            aq_by_year = _aq.get("by_year", {}) or {}
+    except Exception:
+        aq_by_year = {}
+
     _EQUITY = ["total shareholders' equity", "total stockholders' equity"]
     dicts = []
     for k, year in enumerate(bal_years):
@@ -2141,7 +2154,7 @@ def _cr_highlights_by_year(ticker):
             "roaa": _ratio(ni, avg_assets),
             "roae": _ratio(ni, avg_equity),
             "roatce": _ratio(ni, tce_avg if (tce_avg and tce_avg > 0) else None),
-            "nim": None,            # not cleanly in the as-reported statements → n/a
+            "nim": aq_by_year.get(year, {}).get("nim"),     # scraped from the 10-K MD&A
             "efficiency": _ratio(nonix, (nii + nonii)
                                  if (nii is not None and nonii is not None) else None),
             "loans_deposits": _ratio(nl, dep),
@@ -2149,8 +2162,8 @@ def _cr_highlights_by_year(ticker):
             "equity_assets": _ratio(eq, ta),
             "tce_ta": _ratio(tce_cur,
                              (ta - (gw or 0.0) - (intang or 0.0)) if ta is not None else None),
-            "npl_loans": None,      # not in the statements → n/a
-            "nco_loans": None,      # not in the statements → n/a
+            "npl_loans": aq_by_year.get(year, {}).get("npl_loans"),   # scraped 10-K asset quality
+            "nco_loans": aq_by_year.get(year, {}).get("nco_loans"),   # scraped allowance rollforward
             "reserves_loans": _ratio(acl, nl),
             "cet1": cap.get("cet1_ratio"),
             "total_capital": cap.get("total_ratio"),
@@ -2291,11 +2304,11 @@ def _render_financial_highlights(ticker):
 
     st.caption(
         f"Source: company 10-K filings ([latest]({src})); {len(periods)} fiscal "
-        "years stitched from the bank's own income, balance sheet and regulatory "
-        "capital tables. Dollar lines \\$-compact; ratios on average balances "
-        "where a prior year is in view. Blank = not cleanly derivable from the "
-        "as-reported statements (NIM, NPLs and net charge-offs are not in these "
-        "statements; capital ratios only where the filer tags them).")
+        "years stitched from the bank's own income, balance sheet, asset-quality "
+        "and regulatory-capital disclosures. Dollar lines \\$-compact; ratios on "
+        "average balances where a prior year is in view. NIM, NPL and charge-off "
+        "ratios are scraped from the 10-K (MD&A average-balance table + allowance "
+        "rollforward); blank where a filing doesn't disclose a clean figure.")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
