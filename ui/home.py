@@ -178,7 +178,7 @@ _AF_CSS = r"""
 /* Rates · Credit board, 10 cols: Instrument | Level | 1D bp | 1W bp | 1W range |
    1M bp | 1M range | YTD bp | YTD range | 52wk. Each window is two SEPARATE
    columns — a bp number ('bp' header) and a range bar ('range' header). */
-.afwrap .erow.r10{grid-template-columns:1.4fr .56fr .42fr .42fr .48fr .42fr .48fr .44fr .48fr .56fr;column-gap:4px;padding:0 10px;}
+.afwrap .erow.r10{grid-template-columns:.92fr .54fr .4fr .44fr .52fr .44fr .52fr .46fr .52fr .56fr;column-gap:12px;padding:0 10px;}
 .afwrap .erow.r10 .num{font-size:var(--fs-grid-10);}
 .afwrap .h.rh{text-align:center;}
 .afwrap .rsec{font-size:var(--fs-grid-8);font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#1e3a8a;background:#f7f9fc;padding:4px 10px 3px;border-bottom:1px solid #eef1f5;}
