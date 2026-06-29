@@ -178,6 +178,12 @@ IR_URLS = {
     "FMNB":  "https://www.farmersbankgroup.com/investor-relations",
     "HFWA":  "https://ir.hf-wa.com/",
     "CBAN":  "https://ir.colony.bank/",
+    # Q4 IR site the nightly subdomain probe should have found off the FDIC
+    # webaddr but didn't (missing/mismatched webaddr or a transient Q4-detect
+    # miss). Curated as the reliable fix — without it CBSH's first-party releases
+    # (the Nolan acquisition, dividends, buybacks) reached only Google News,
+    # which the Home feed hides. Verified: Q4 API returns the releases.
+    "CBSH":  "https://investor.commercebank.com/",
     "FRME":  "https://www.firstmerchants.com/investor-relations",
     "WAL":   "https://ir.westernalliancebancorporation.com/",
     "BKU":   "https://ir.bankunited.com/",
