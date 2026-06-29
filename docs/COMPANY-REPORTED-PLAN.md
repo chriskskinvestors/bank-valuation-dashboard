@@ -4,12 +4,15 @@ Tracked plan for the **Company Reported** basis of the Financials section: an
 inventory of the 12 sub-tabs as they exist today, and the build order to bring
 every one to full, multi-year, trend-charted, timely coverage.
 
-> Status note (2026-06-29): the multi-year Financial-Highlights rebuild and the
-> new `company_asset_quality_nim()` extractor were authored this session in a
-> sibling worktree (`agent-ac69165…`) and are **not yet merged** into the branch
-> this doc lives on. The inventory below records the *current shipped* behavior
-> on this branch, and flags the in-flight rebuild inline so the build phases
-> below don't re-plan work already done.
+> Status note (2026-06-29, on `main`): the multi-year **Financial Highlights**
+> rebuild **is SHIPPED** — it now renders 5 FY with section bands + trend charts
+> (ROAA/ROAE/Efficiency/ROATCE), and NIM / NPLs / net-charge-offs fill from the
+> bank's own 10-K via `company_asset_quality_nim()` (`data/sec_filing_scraper.py`),
+> company-scraped, never FDIC. So in the inventory below, the "Financial
+> Highlights = single-period / in-flight" notes are **superseded** (that row is
+> DONE), and Phase 2's NIM/NPL/NCO extractor already **exists** — Phase 2 is now
+> just *wiring* it into Performance Analysis + Credit Quality. Everything else in
+> the inventory is current.
 
 ---
 
