@@ -2760,7 +2760,11 @@ def _render_preliminary_quarter(ticker, cik):
 
     def _fmt(v, kind):
         if kind == "usd":
-            return _cr_usd(v)
+            # This banner goes through st.markdown, where an unescaped "$" pairs
+            # with the next one and Streamlit renders the span between as LaTeX
+            # (mangling "$28.11B · Total deposits $22.64B"). Escape it like the EPS
+            # branch already does. The HTML-iframe table (_cr_component) is exempt.
+            return _cr_usd(v).replace("$", "\\$")
         if kind == "eps":
             return f"\\${v:,.2f}"
         return f"{v:.2f}%"                              # as-printed percent

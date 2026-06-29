@@ -689,6 +689,11 @@ def _tce_ta_builder(recs, asof, fdic_link, P):
 
 def _build_component(head_html, body_html, cells, entity, fdic_link, sec_link):
     data = json.dumps(cells)
+    # FDIC is cited only when an fdic_link is supplied (Templated). Company-Reported
+    # tables pass fdic_link=None — they are scraped purely from SEC filings and must
+    # never cite FDIC, so the source line shows SEC EDGAR alone.
+    fdic_src = (f'<a href="{fdic_link}" target="_blank">FDIC BankFind</a> · '
+                if fdic_link else "")
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
 * {{ box-sizing:border-box; }}
 body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
@@ -752,8 +757,7 @@ td.val:hover {{ background:rgba(30,64,175,0.14) !important; text-decoration:unde
 </style></head><body>
 <table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>
 <div class="foot">Source:
-  <a href="{fdic_link}" target="_blank">FDIC BankFind</a> ·
-  <a href="{sec_link}" target="_blank">SEC EDGAR</a> — click any value for its calculation.</div>
+  {fdic_src}<a href="{sec_link}" target="_blank">SEC EDGAR</a> — click any value for its calculation.</div>
 <div id="ov"><div id="card"></div></div>
 <script>
 const CELLS = {data};
