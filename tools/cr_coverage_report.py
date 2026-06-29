@@ -31,9 +31,17 @@ import traceback
 # Fixed, hand-picked sample: big + small, money-center + regional, different
 # filers/auditors. Order roughly large->small. Banks without a CIK are skipped.
 SAMPLE = [
+    # ── original 24-bank sample (2026-06-29 first run) ──
     "ABCB", "PNFP", "FFIN", "WSFS", "CBSH", "FHN", "WAL", "CFR", "ONB", "UMBF",
     "BOKF", "SNV", "HWC", "ASB", "FNB", "VLY", "WTFC", "COLB", "GBCI", "TFC",
     "FITB", "RF", "KEY", "ZION", "EWBC",
+    # ── broader re-measure additions (2026-06-29 second run): megacaps,
+    #    Puerto-Rico charters, thrifts/WAFD-style, small regionals, a
+    #    non-December fiscal-year-end filer (FHB? no — these are all Dec;
+    #    AX = Axos has a JUNE fiscal-year-end, the one off-cycle filer) ──
+    "USB", "PNC", "MTB", "CMA", "WBS", "OZK", "HOMB", "FHB", "BPOP", "CADE",
+    "UCBI", "TBBK", "AX", "NBHC", "FBP", "INDB", "WAFD", "BANR", "PPBI", "TCBI",
+    "SFNC", "FBK", "CASH", "AUB", "FULT", "BKU", "CFG", "HBAN",
 ]
 
 # Latest-year key metrics for the two per-metric functions. A non-None value

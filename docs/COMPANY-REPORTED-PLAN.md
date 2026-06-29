@@ -333,3 +333,176 @@ NIM** landing in `company_asset_quality_nim`.
 Re-run anytime: `python -m tools.cr_coverage_report`
 (`--slow-sub N` caps the slow extractors at the first N banks; a comma-separated
 ticker list as argv[1] overrides the sample). Scrapers cache, so re-runs are fast.
+
+---
+
+## 6. Universe coverage re-measure (47 banks, 2026-06-29)
+
+Re-ran `tools/cr_coverage_report.py` over a **broader, more diverse sample** after
+the statement-stitch, table-NIM, prose-NIM and KEY performance-status-nonaccrual
+fixes shipped, to surface parser misses the original 24-bank sample hid. The
+`SAMPLE` list in the tool was expanded to **53 tickers** spanning megacaps → small,
+multiple regions/charters, and — critically — **non-December fiscal-year-end
+filers** (AX = Jun-30; WAFD, CASH = Sep-30). Six tickers had no CIK from
+`get_bank_info` and were skipped (**SNV, CMA, OZK, CADE, UCBI, PPBI**), leaving
+**47 banks measured**. Each extractor call is try/except-wrapped — a per-bank
+failure is recorded, never fatal. MEASURE + CLASSIFY only; **no scraper/renderer
+edits this run** (the parser-miss backlog below is the next defect queue).
+
+| function | n | multiyr | single | empty | error |
+|---|---|---|---|---|---|
+| `_cr_highlights_by_year` | 47 | 98% | 0% | 2% | 0% |
+| `company_asset_quality_nim` | 47 | 100% | 0% | 0% | 0% |
+| `as_reported_statement(income)` | 47 | 98% | 0% | 2% | 0% |
+| `as_reported_statement(balance)` | 47 | 100% | 0% | 0% | 0% |
+| `securities_multiyear_for` | 47 | 94% | 0% | 6% | 0% |
+| `fair_value_multiyear_for` | 47 | 57% | 0% | 43% | 0% |
+| `segments_multiyear_for` | 47 | 47% | 2% | 51% | 0% |
+| `compositions_for` | 47 | 89% | 2% | 9% | 0% |
+
+**ERROR banks (real bugs):** **none** — no extractor raised on any of the 47 banks.
+The multi-year scrapers stay crash-clean at this breadth.
+
+**Latest-year metric fill (per-metric functions):**
+
+- `_cr_highlights_by_year`: latest-year fill **259/322 (80%)** across 46 non-empty
+  banks (was 68% on the 24-bank run). Most-missing: efficiency(31), roaa(8),
+  cet1(8), net_income(6), npl_loans(5), total_assets(3), **nim(2)**.
+- `company_asset_quality_nim`: latest-year fill **125/141 (89%)** across 47 banks
+  (was 62%). Most-missing: nco_loans(8), npl_loans(6), **nim(2)**.
+
+**What the fixes cleared (vs the 24-bank run):** the NIM fixes WORKED — latest-year
+NIM, the worst offender before (missing for 14/17 banks), is now missing for **just
+2**. `company_asset_quality_nim` went 96%→**100%** non-empty. The statement-stitch
+fix cleared **KEY** (previously empty on income, balance AND highlights — now
+OK-multiyear on all three). Income/balance/highlights emptiness collapsed from
+8/12/21% to **2/0/2%**.
+
+### EMPTY classification — PARSER-MISS BACKLOG vs GENUINE NON-DISCLOSURE
+
+Empties were spot-checked against the actual filings (FilingSummary R-files and raw
+iXBRL facts). Full empty lists per function:
+- highlights: PNC · income: PNC · balance: none · asset-quality-NIM: none
+- securities: AX, WAFD, CASH
+- fair_value (20): FFIN, WAL, CFR, ONB, UMBF, BOKF, RF, EWBC, HOMB, FHB, AX, FBP,
+  INDB, WAFD, TCBI, SFNC, FBK, CASH, AUB, HBAN
+- segments (24): PNFP, FFIN, WSFS, CBSH, ONB, HWC, VLY, COLB, GBCI, ZION, HOMB,
+  BPOP, AX, NBHC, FBP, INDB, WAFD, BANR, TCBI, FBK, CASH, AUB, FULT, BKU
+- compositions: MTB, BANR, FBK, CASH
+
+#### PARSER-MISS BACKLOG (bugs to fix next — data IS in the filing)
+
+1. **PNC income statement — ShortName word-order miss** (clears income + highlights).
+   PNC names its income statement R-file **"Consolidated Income Statement"** (R3.htm,
+   confirmed in FilingSummary). The matcher `_STMT_PATTERNS["income"]` =
+   `statements?\s+of\s+(income|operations|earnings)` requires the "statement **of**
+   income" word order and does NOT match "Income Statement". Its balance sheet
+   ("Consolidated Balance Sheet") matches fine — which is exactly why PNC is empty on
+   income+highlights but OK on balance. Fix: widen the income pattern to also match
+   `income\s+statement`. Evidence: regex returns False on the literal ShortName
+   "Consolidated Income Statement"; R3.htm exists and is the income statement.
+
+2. **Non-December fiscal-year-end filers dropped by the `period[5:7]=="12"` FY-end
+   filter** (securities, and contributes to fair-value/segments empties). The
+   securities/fair-value/segments multi-year stitchers hard-filter
+   `if period[5:7] != "12": continue` (sec_filing_scraper.py lines 1020, 787, 2114),
+   i.e. **December year-ends only**. The extractors DO return the data:
+   - **AX** (Axos, Jun-30 FYE): securities periods `2025-06-30, 2024-06-30` — both
+     dropped by the `=="12"` filter → EMPTY.
+   - **WAFD** (Sep-30): `2025-09-30, 2024-09-30` → dropped.
+   - **CASH** (Pathward, Sep-30): `2025-09-30, 2024-09-30` → dropped.
+   Fix: derive each filer's fiscal-year-end month from its 10-K cover/period instead
+   of assuming December (the per-filing extractors already produce the right
+   periods; only the multi-year FY-end gate is wrong). This is the cleanest,
+   highest-value fix — it's a one-assumption bug affecting every off-cycle filer.
+
+3. **Fair-value recurring hierarchy not tagged under the rollup concept the extractor
+   keys on** (the largest empty bucket — 20/47, incl. large disclosers RF, EWBC,
+   WAL, HBAN, ONB). `extract_fair_value` requires `Assets/Liabilities
+   FairValueDisclosure[Recurring]` tagged with ONLY the hierarchy-level axis. Two
+   sub-patterns found in the empties:
+   - **RF**: tags `AssetsFairValueDisclosure` only as **nonrecurring** Level-3
+     sub-rows (CommercialRealEstate $93M / ResidentialMortgage $970M, each carrying
+     a `FinancialInstrumentAxis` member) — correctly rejected by `_fv_clean_total`;
+     no clean recurring rollup under that concept.
+   - **EWBC**: **zero** `AssetsFairValueDisclosure*` facts at all — tags the recurring
+     hierarchy per-line (AFS securities, derivatives, …) sliced by the hierarchy
+     axis, with no rollup concept.
+   In both the recurring ASC 820 table IS disclosed in the 10-K; the extractor's
+   concept list just doesn't reach it. This is the documented "filers tagging only
+   per-instrument sub-rows (RF) … yield n/a" limitation (sec_filing_scraper.py:566).
+   Recoverable but HARDER (needs a per-line-concept × hierarchy-axis reconstruction
+   with a reconcile gate). Big coverage prize given the count.
+
+4. **Segments — multi-segment banks whose per-segment profit is NOT tagged as
+   NetIncomeLoss/ProfitLoss** (ZION, VLY confirmed; check the rest). `extract_segments`
+   keys on per-segment `NetIncomeLoss`/`ProfitLoss` (≥2 segments). The new ASC 280
+   disaggregated-expense disclosure makes some filers tag segment **revenue and
+   expense lines** under the segment axis but NOT a segment net-income line:
+   - **ZION**: 7 segment members (Amegy, California B&T, NBAZ, Nevada State Bank,
+     Vectra, …) with per-segment Revenues / NoninterestIncome / InterestIncomeExpense
+     Net / labor & occupancy expense tagged — but **0** per-segment NetIncomeLoss
+     facts → EMPTY.
+   - **VLY**: 3 segment members (Commercial Banking, Consumer Banking, Consumer
+     Lending) with per-segment NII / noninterest income / expenses tagged — **0**
+     per-segment NetIncomeLoss → EMPTY.
+   The segment table IS disclosed; profit just isn't the tagged measure. Recoverable
+   (sum tagged components under a reconcile gate) but moderate difficulty.
+
+5. **Loan/deposit composition note-picker misses a clean by-type table** (BANR, FBK,
+   CASH; MTB borderline). The filings disclose a by-type composition the
+   `_note_rfile` picker didn't select:
+   - **BANR**: has "LOANS RECEIVABLE … (**Loans by Type**) (Details)" and "DEPOSITS
+     (**Deposit Liabilities**) (Details)" — both clean composition tables. "Loans by
+     Type" doesn't match any `prefer` pattern (`composition of loan|loan portfolio|
+     portfolio by|by loan class`), so the picker fell to a wrong/rejected sibling.
+   - **FBK**: has "Schedule of **Loans Outstanding by Class** of Financing
+     Receivable (Details)" (clean loan composition) — missed; deposit side genuinely
+     only maturities.
+   - **CASH**: has "LOANS AND LEASES, NET - **Summary of Loans** (Details)" — missed;
+     deposit side only time-certificate maturities (genuine n/a on deposits).
+   Fix: broaden the `prefer` synonym set ("by type", "loans by type", "summary of
+   loans", "loans outstanding by class") for the loan note picker, re-gate.
+   - **MTB**: borderline — its FilingSummary exposes only lease-related loan Details
+     R-files and zero deposit Details; M&T's by-type loan composition likely lives in
+     a differently-named/primary-note table. Needs a deeper look before classifying
+     firmly; lean parser-miss (the data is certainly disclosed in a $200B+ filer).
+
+#### GENUINE NON-DISCLOSURE (acceptable n/a — by design)
+
+- **Single-segment banks** (segments empty, no segment axis tagged at all,
+  confirmed `seg-axis members=0`): **PNFP, GBCI, BKU, BANR, HWC** (and, by the same
+  pattern, the community/regional names among FFIN, WSFS, CBSH, ONB, COLB, HOMB,
+  BPOP, NBHC, FBP, INDB, WAFD, TCBI, FBK, CASH, AUB — most run a single reportable
+  segment). The extractor requires ≥2 reportable segments + a consolidated total;
+  one-segment banks correctly render n/a. **FULT** is borderline-genuine — it tags a
+  single aggregated `ReportableSegmentMember`, not ≥2 distinct named segments.
+- **Deposit composition where only a maturity ladder is disclosed**: FBK and CASH
+  disclose no by-type deposit-mix table (only time-deposit maturities) — correct n/a
+  on the deposit side (their LOAN side is the parser miss in backlog item 5).
+
+### Honest read — are parser misses eliminated at this breadth?
+
+**Mostly, for the near-universal metrics; the wider net found two real new buckets.**
+The fixes verifiably landed: income/balance/highlights are now ~98-100% multi-year
+(KEY cleared), `company_asset_quality_nim` is 100% non-empty, and latest-year NIM —
+the prior worst miss — is down to 2 banks. Those are essentially solved.
+
+The broader, more diverse sample DID surface misses the 24-bank set hid, all
+concentrated in three extractors:
+1. **Non-December FYE filers** (AX/WAFD/CASH) — a clean, previously-invisible bug
+   because the original 24 were all December filers. Highest-value, easiest fix.
+2. **PNC income ShortName word-order** — only surfaced because PNC entered the
+   sample; a one-line regex widening.
+3. **Fair-value (43% empty) and segments (51% empty)** remain the two soft spots.
+   Segments is *largely genuine* (single-segment banks) with a real recoverable
+   tail (ZION/VLY-style component-only tagging). Fair-value is *mostly parser-miss*
+   (the recurring table is disclosed but tagged per-line, not under the rollup
+   concept) and is the biggest remaining coverage prize.
+
+So: parser misses are **eliminated for the headline statement/highlights/NIM
+metrics**, but **not** for fair-value and (the recoverable slice of) segments, plus
+the two structural bugs (non-Dec FYE, PNC word-order) the wider net exposed. Those
+five items are the next defect queue.
+
+Re-run: `python -m tools.cr_coverage_report` (53-ticker `SAMPLE`; cached, fast).
