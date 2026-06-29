@@ -1968,64 +1968,335 @@ def _render_credit_quality(ticker):
                   entity=entity, src=src)
 
 
+def _cr_hl_norm(s):
+    """Normalize an as-reported statement label for matching (same convention as
+    _cr_statement_trends: collapse whitespace, lowercase, fold curly apostrophes)."""
+    import re
+    return re.sub(r"\s+", " ", (s or "")).strip().lower().replace(
+        "’", "'").replace("‘", "'")
+
+
+def _cr_hl_series(stmt):
+    """{normalized label -> [values newest-first]} for a multi-year as-reported
+    statement's DATA rows (headers skipped). Raw dollars, as the statement carries
+    them (units already de-scaled by the parser)."""
+    return {_cr_hl_norm(r["label"]): r["values"]
+            for r in stmt["rows"] if not r["header"]}
+
+
+def _cr_highlights_by_year(ticker):
+    """Per-fiscal-year Company-Reported highlights, NEWEST-FIRST, derived from the
+    bank's own multi-year income + balance statements (data.sec_statements) and its
+    holdco regulatory-capital table (data.sec_filing_scraper). Returns
+    (years, dicts, src) — years = ["FY2025",…] newest-first; dicts a parallel list
+    of {metric: value-or-None}; src = the latest 10-K link. Returns (None, …) when
+    the statements aren't available.
+
+    Levels are raw dollars; ratios are FRACTIONS (0.015 = 1.5%). ROAA/ROAE/ROATCE
+    use AVERAGE balances ((beginning+ending)/2) where a prior year is in view — the
+    same convention the Company-Reported Performance tab and financial_highlights_for
+    use, so the latest year ties to that snapshot — falling back to the period-end
+    balance for the OLDEST year (no prior in view). A metric whose inputs are
+    missing for a year is None (blank), never a guess."""
+    import re
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    if not cik:
+        return None, None, None
+    try:
+        from data.sec_statements import as_reported_statement_multiyear
+        inc = as_reported_statement_multiyear(cik, "income", 5)
+        bal = as_reported_statement_multiyear(cik, "balance", 5)
+    except Exception:
+        inc = bal = None
+    if not inc or not bal:
+        return None, None, None
+
+    inc_s, bal_s = inc["statement"], bal["statement"]
+    # Drive the year set off the BALANCE periods (totals every metric anchors to),
+    # newest-first. Join the income statement by fiscal-year integer.
+    def _yr(p):
+        m = re.search(r"\d{4}", p or "")
+        return int(m.group()) if m else None
+
+    bal_years = [_yr(p) for p in bal_s["periods"]]
+    inc_years = [_yr(p) for p in inc_s["periods"]]
+    bin_ = _cr_hl_series(bal_s)
+    iinc = _cr_hl_series(inc_s)
+
+    def _b(label_alts, year):
+        """Balance value for a year by label (first matching alt)."""
+        if year not in bal_years:
+            return None
+        ci = bal_years.index(year)
+        for a in label_alts:
+            vals = bin_.get(_cr_hl_norm(a))
+            if vals and ci < len(vals) and vals[ci] is not None:
+                return vals[ci]
+        return None
+
+    def _i(label_alts, year):
+        if year not in inc_years:
+            return None
+        ci = inc_years.index(year)
+        for a in label_alts:
+            vals = iinc.get(_cr_hl_norm(a))
+            if vals and ci < len(vals) and vals[ci] is not None:
+                return vals[ci]
+        return None
+
+    # Holdco regulatory capital, keyed by fiscal-year int (period_end "YYYY-MM-DD").
+    cap_by_year = {}
+    try:
+        from data.sec_filing_scraper import holdco_capital_for
+        from data.bank_mapping import get_fdic_cert
+        cert = None
+        try:
+            cert = get_fdic_cert(ticker)
+        except Exception:
+            cert = info.get("fdic_cert") if info else None
+        cap_res = holdco_capital_for(cik, cert)
+        if cap_res:
+            for period, d in cap_res["capital"].items():
+                y = _yr(period)
+                if y is not None:
+                    cap_by_year[y] = d
+    except Exception:
+        cap_by_year = {}
+
+    _EQUITY = ["total shareholders' equity", "total stockholders' equity"]
+    dicts = []
+    for k, year in enumerate(bal_years):
+        prior = bal_years[k + 1] if k + 1 < len(bal_years) else None
+
+        def _avg(label_alts):
+            """(beginning+ending)/2 over this year and the prior IN-VIEW year;
+            period-end alone for the oldest column (no prior)."""
+            cur = _b(label_alts, year)
+            if cur is None:
+                return None
+            if prior is not None:
+                pv = _b(label_alts, prior)
+                if pv is not None:
+                    return (cur + pv) / 2.0
+            return cur
+
+        ta = _b(["total assets"], year)
+        nl = _b(["loans, net", "total loans, net", "net loans"], year)
+        dep = _b(["total deposits"], year)
+        eq = _b(_EQUITY, year)
+        afs = _b(["debt securities available-for-sale, at fair value, "
+                  "net of allowance for credit losses"], year)
+        htm = _b(["debt securities held-to-maturity, at amortized cost, "
+                  "net of allowance for credit losses"], year)
+        # AFS / HTM labels embed year-varying allowance amounts — match on a prefix.
+        if afs is None or htm is None:
+            for nlab, vals in bin_.items():
+                if year in bal_years and bal_years.index(year) < len(vals):
+                    vv = vals[bal_years.index(year)]
+                    if afs is None and nlab.startswith("debt securities available-for-sale"):
+                        afs = vv
+                    elif htm is None and nlab.startswith("debt securities held-to-maturity"):
+                        htm = vv
+        securities = None
+        if afs is not None or htm is not None:
+            securities = (afs or 0.0) + (htm or 0.0)
+        gw = _b(["goodwill"], year)
+        intang = _b(["other intangible assets, net"], year)
+        acl = _b(["allowance for credit losses"], year)
+        acl = abs(acl) if acl is not None else None   # filed as a contra (negative)
+
+        ni = _i(["net income"], year)
+        nii = _i(["net interest income"], year)
+        nonii = _i(["total noninterest income"], year)
+        nonix = _i(["total noninterest expense"], year)
+
+        # Tangible common equity (period-end and average).
+        def _tce(at_year):
+            e = _b(_EQUITY, at_year)
+            if e is None:
+                return None
+            g = _b(["goodwill"], at_year) or 0.0
+            it = _b(["other intangible assets, net"], at_year) or 0.0
+            return e - g - it
+
+        tce_cur = _tce(year)
+        tce_avg = tce_cur
+        if tce_cur is not None and prior is not None:
+            tce_pv = _tce(prior)
+            if tce_pv is not None:
+                tce_avg = (tce_cur + tce_pv) / 2.0
+
+        avg_assets = _avg(["total assets"])
+        avg_equity = _avg(_EQUITY)
+
+        def _ratio(num, den):
+            return (num / den) if (num is not None and den not in (None, 0)) else None
+
+        cap = cap_by_year.get(year, {})
+        d = {
+            "total_assets": ta, "net_loans": nl, "total_deposits": dep,
+            "total_equity": eq, "securities": securities,
+            "net_income": ni,
+            "roaa": _ratio(ni, avg_assets),
+            "roae": _ratio(ni, avg_equity),
+            "roatce": _ratio(ni, tce_avg if (tce_avg and tce_avg > 0) else None),
+            "nim": None,            # not cleanly in the as-reported statements → n/a
+            "efficiency": _ratio(nonix, (nii + nonii)
+                                 if (nii is not None and nonii is not None) else None),
+            "loans_deposits": _ratio(nl, dep),
+            "securities_assets": _ratio(securities, ta),
+            "equity_assets": _ratio(eq, ta),
+            "tce_ta": _ratio(tce_cur,
+                             (ta - (gw or 0.0) - (intang or 0.0)) if ta is not None else None),
+            "npl_loans": None,      # not in the statements → n/a
+            "nco_loans": None,      # not in the statements → n/a
+            "reserves_loans": _ratio(acl, nl),
+            "cet1": cap.get("cet1_ratio"),
+            "total_capital": cap.get("total_ratio"),
+            "leverage": cap.get("lev_ratio"),
+        }
+        dicts.append(d)
+
+    years = [f"FY{y}" if y else "" for y in bal_years]
+    latest = inc["meta"]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(latest['cik'])}/"
+           f"{latest['accession']}/{latest['doc']}")
+    return years, dicts, src
+
+
+# Financial-Highlights sections: (section name, [(row label, metric key, fmt)]).
+# fmt: "usd" = $-compact dollars; "pct2" = x.xx%. A None value renders blank.
+_CR_HL_SECTIONS = [
+    ("Balance Sheet", [
+        ("Total assets", "total_assets", "usd"),
+        ("Net loans", "net_loans", "usd"),
+        ("Total deposits", "total_deposits", "usd"),
+        ("Total equity", "total_equity", "usd"),
+        ("Securities", "securities", "usd"),
+    ]),
+    ("Profitability", [
+        ("Net income", "net_income", "usd"),
+        ("ROAA", "roaa", "pct2"),
+        ("ROAE", "roae", "pct2"),
+        ("ROATCE", "roatce", "pct2"),
+        ("Net interest margin", "nim", "pct2"),
+        ("Efficiency ratio", "efficiency", "pct2"),
+    ]),
+    ("Balance Sheet Ratios", [
+        ("Loans/deposits", "loans_deposits", "pct2"),
+        ("Securities/assets", "securities_assets", "pct2"),
+        ("Equity/assets", "equity_assets", "pct2"),
+        ("Tang. common equity/tang. assets", "tce_ta", "pct2"),
+    ]),
+    ("Asset Quality", [
+        ("NPLs/loans", "npl_loans", "pct2"),
+        ("Net charge-offs/loans", "nco_loans", "pct2"),
+        ("Loan-loss reserves/loans", "reserves_loans", "pct2"),
+    ]),
+    ("Capital Adequacy", [
+        ("CET1", "cet1", "pct2"),
+        ("Total capital", "total_capital", "pct2"),
+        ("Leverage", "leverage", "pct2"),
+    ]),
+]
+
+# Highlights trend charts: (title, metric key). One % series per chart; CET1 is
+# dropped at render time when n/a for every year (capital not disclosed).
+_CR_HL_TRENDS = [
+    ("ROAA (%)", "roaa"),
+    ("ROAE (%)", "roae"),
+    ("Efficiency ratio (%)", "efficiency"),
+    ("CET1 (%)", "cet1"),
+]
+
+
+def _cr_highlights_trends(years, dicts, ticker, key_prefix):
+    """Right-hand trend charts for the multi-year Financial Highlights: one
+    single-line % chart per metric (ROAA, ROAE, efficiency, CET1). xs are the FY
+    labels oldest→newest; a chart whose metric is n/a for every year is skipped.
+    Reuses the _cr_statement_trends plotting style (apply_standard_layout +
+    tighten_yaxis, CHART_HEIGHT_COMPACT)."""
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+    xs = years[::-1]                                    # oldest → newest
+    charts = []
+    for title, key in _CR_HL_TRENDS:
+        ys = [(d.get(key) * 100 if d.get(key) is not None else None)
+              for d in dicts][::-1]
+        if any(y is not None for y in ys):
+            charts.append((title, ys))
+    if not charts:
+        return
+    st.markdown("##### Trends")
+    for r in range(0, len(charts), 2):
+        cols = st.columns(2)
+        for j, (col, (title, ys)) in enumerate(zip(cols, charts[r:r + 2])):
+            with col:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, mode="lines+markers", connectgaps=True,
+                    line=dict(color=CATEGORICAL_PALETTE[0], width=2),
+                    marker=dict(size=5)))
+                apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                                      yaxis_title="%", show_legend=False)
+                tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
+                st.plotly_chart(fig, use_container_width=True,
+                                key=f"{key_prefix}_hltr_{ticker}_{r + j}")
+
+
 def _render_financial_highlights(ticker):
-    """One-page Company-Reported snapshot from the latest 10-K: balance-sheet
-    totals, profitability headline, CET1 and asset-quality — each value sourced
-    from the same reconcile-gated extractors behind the detailed tabs."""
+    """Multi-year (up to 5 FY) Company-Reported Financial Highlights, mirroring the
+    Templated Financial Highlights: section bands (Balance Sheet, Profitability,
+    Balance Sheet Ratios, Asset Quality, Capital Adequacy) with the table on the
+    LEFT and % trend charts on the RIGHT. Every number is derived from the bank's
+    OWN multi-year statements + holdco capital table; a metric whose inputs aren't
+    cleanly derivable for a year renders blank (never a guess)."""
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
         return
-    anchor = None
     try:
-        from data.sec_filing_scraper import financial_highlights_for, _fdic_cet1
-        from data.bank_mapping import get_fdic_cert
-        try:
-            anchor = _fdic_cet1(get_fdic_cert(ticker))
-        except Exception:
-            anchor = None
-        res = financial_highlights_for(cik, anchor_cet1=anchor)
+        years, dicts, src = _cr_highlights_by_year(ticker)
     except Exception:
-        res = None
+        years = dicts = src = None
     st.markdown("---")
     st.subheader("Financial Highlights — Company Reported")
-    if not res or not res.get("highlights"):
-        st.caption("Headline figures not tagged in this filer's latest 10-K — n/a.")
+    if not years or not dicts:
+        st.caption("Company-reported statements not available from this filer's "
+                   "10-Ks — n/a.")
         return
-    meta, h = res["meta"], res["highlights"]
-    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
-           f"{meta['accession']}/{meta['doc']}")
-    fy = h.get("fy")
+    periods = years[::-1]                               # oldest → newest (Templated)
+    order = list(range(len(years)))[::-1]               # column order, oldest-first
+
+    def _fmt(v, kind):
+        if v is None:
+            return None
+        if kind == "usd":
+            return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+        return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
+
+    rows = []
+    for sec_name, metrics in _CR_HL_SECTIONS:
+        rows.append({"label": sec_name, "values": [], "kind": "header"})
+        for label, key, kind in metrics:
+            vals = [_fmt(dicts[i].get(key), kind) for i in order]
+            rows.append({"label": label, "values": vals, "kind": "data"})
+
     st.caption(
-        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — balance sheet at "
-        f"{h['period']}" + (f", income for FY{fy[:4]}" if fy else "") +
-        ". Each figure comes from the detailed Company-Reported tab of the same name.")
-
-    def _hb(v):
-        return "n/a" if v is None else _cr_usd(v)
-
-    def _hpct(v):
-        return "n/a" if v is None else f"{v * 100:.1f}%"
-
-    def _heps(v):
-        return "n/a" if v is None else f"${v:,.2f}"
-
-    rows = [
-        ("Total assets", _hb(h["assets"])), ("Total loans (gross)", _hb(h["loans"])),
-        ("Total deposits", _hb(h["deposits"])), ("Total equity", _hb(h["equity"])),
-        ("Net income (FY)", _hb(h["net_income"])), ("Total revenue (FY)", _hb(h["revenue"])),
-        ("Diluted EPS (FY)", _heps(h["eps_diluted"])),
-        ("Return on average assets", _hpct(h["roa"])),
-        ("Return on average equity", _hpct(h["roe"])),
-        ("Efficiency ratio", _hpct(h["efficiency"])),
-        ("CET1 ratio", _hpct(h["cet1"])),
-        ("ACL / total loans", _hpct(h["acl_to_loans"])),
-        ("Nonaccrual / total loans", _hpct(h["nonaccrual_to_loans"])),
-    ]
+        f"Source: company 10-K filings ([latest]({src})); {len(periods)} fiscal "
+        "years stitched from the bank's own income, balance sheet and regulatory "
+        "capital tables. Dollar lines \\$-compact; ratios on average balances "
+        "where a prior year is in view. Blank = not cleanly derivable from the "
+        "as-reported statements (NIM, NPLs and net charge-offs are not in these "
+        "statements; capital ratios only where the filer tags them).")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(["Value"],
-                  [{"label": lab, "values": [val], "kind": "data"} for lab, val in rows],
-                  entity=entity, src=src)
+    _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+    with _lt:
+        _cr_component(periods, rows, entity=entity, src=src)
+    with _rt:
+        _cr_highlights_trends(years, dicts, ticker, "crhl")
 
 
 def _render_performance(ticker):
