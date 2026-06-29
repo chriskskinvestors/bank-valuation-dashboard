@@ -175,16 +175,14 @@ _AF_CSS = r"""
 .afwrap .erow.m1 .num{font-size:var(--fs-grid-10);}
 .afwrap .erow.v1{grid-template-columns:1.45fr .58fr .95fr .66fr .72fr .98fr;column-gap:5px;padding:0 12px;}
 .afwrap .erow.v1 .num{font-size:var(--fs-grid-10);}
-/* Rates · Credit board, 7 cols: Instrument | Level | 1D bp | 1W | 1M | YTD | 52w.
-   Each 1W/1M/YTD cell (.wc) is a tight unit: the bp number + a short fixed-width
-   mini range bar beside it. The 52-week bar fills its own column. */
-.afwrap .erow.r7{grid-template-columns:1.32fr .58fr .44fr .68fr .68fr .68fr .76fr;column-gap:5px;padding:0 10px;}
-.afwrap .erow.r7 .num{font-size:var(--fs-grid-10);}
-.afwrap .wc{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;}
-.afwrap .wc .num{flex:0 0 auto;}
+/* Rates · Credit board, 10 cols: Instrument | Level | 1D bp | 1W bp | 1W range |
+   1M bp | 1M range | YTD bp | YTD range | 52wk. Each window is two SEPARATE
+   columns — a bp number ('bp' header) and a range bar ('range' header). */
+.afwrap .erow.r10{grid-template-columns:1.4fr .56fr .42fr .42fr .48fr .42fr .48fr .44fr .48fr .56fr;column-gap:4px;padding:0 10px;}
+.afwrap .erow.r10 .num{font-size:var(--fs-grid-10);}
+.afwrap .h.rh{text-align:center;}
 .afwrap .rsec{font-size:var(--fs-grid-8);font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#1e3a8a;background:#f7f9fc;padding:4px 10px 3px;border-bottom:1px solid #eef1f5;}
 .afwrap .rng{position:relative;height:4px;width:100%;border-radius:0;background:#eef2f7;align-self:center;}
-.afwrap .wc .rng{flex:0 0 32px;width:32px;}
 .afwrap .rng .rngdot{position:absolute;top:50%;width:5px;height:5px;border-radius:50%;background:#1e3a8a;transform:translate(-50%,-50%);}
 .afwrap .h{font-size:var(--fs-grid-8_5);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9aa6b4;}
 .afwrap .num{text-align:right;font-family:var(--mono);font-size:var(--fs-grid-11);font-variant-numeric:tabular-nums;letter-spacing:-.02em;color:#1f2937;}
@@ -464,14 +462,16 @@ def _af_rates_table() -> str:
         ly = {}
     bundle = _rates_bundle()
 
-    # 1W/1M/YTD each render as one tight cell: the bp number + a short mini range
-    # bar (where the level sits in that window's hi–lo). 1D stays a number only
-    # (no intraday hi/lo in daily FRED); the 52-week bar gets its own column.
-    head = ('<div class="erow r7 eh"><span class="h">Instrument</span>'
+    # Each of 1W/1M/YTD is two SEPARATE columns: a bp-change number with a 'bp'
+    # header, and a range bar (where the level sits in that window's hi–lo) with a
+    # 'range' header. 1D is a number only (no intraday hi/lo in daily FRED); 52wk
+    # is the long-run range bar.
+    head = ('<div class="erow r10 eh"><span class="h">Instrument</span>'
             '<span class="num h">Level %</span><span class="num h">1D bp</span>'
-            '<span class="num h">1W bp</span><span class="num h">1M bp</span>'
-            '<span class="num h">YTD bp</span>'
-            '<span class="h" style="text-align:center">52wk</span></div>')
+            '<span class="num h">1W bp</span><span class="h rh">range</span>'
+            '<span class="num h">1M bp</span><span class="h rh">range</span>'
+            '<span class="num h">YTD bp</span><span class="h rh">range</span>'
+            '<span class="h rh">52wk</span></div>')
     body = ""
     for section, rows in _AF_RATES_SECTIONS:
         is_spread = section == "Spreads"
@@ -482,8 +482,8 @@ def _af_rates_table() -> str:
             dot = ('<span class="dotc" style="background:#059669;margin-right:4px;"'
                    ' title="live ~15m"></span>') if is_live else ""
             if lv is None:
-                body += (f'<div class="erow r7 ed"><span class="nm">{dot}{label}</span>'
-                         + '<span class="num mut">—</span>' * 6 + '</div>')
+                body += (f'<div class="erow r10 ed"><span class="nm">{dot}{label}</span>'
+                         + '<span class="num mut">—</span>' * 9 + '</div>')
                 continue
             lvl = f'{lv:+.2f}' if is_spread else f'{lv:.2f}'
 
@@ -492,17 +492,17 @@ def _af_rates_table() -> str:
                         if anchor is not None else ("—", "mut"))
 
             def _win(anchor, lo, hi, wlabel):
-                # bp number + short mini range bar, as one right-aligned cell
+                # bp number cell + its own range-bar cell (two grid columns)
                 txt, cls = _bp(anchor)
                 bar = _af_range_bar(lv, lo, hi, wlabel)
-                return f'<span class="wc"><span class="num {cls}">{txt}</span>{bar}</span>'
+                return f'<span class="num {cls}">{txt}</span>{bar}'
 
             d1t, d1c = _bp(an.get("d1"))
             wc_w = _win(an.get("w1"), an.get("w_lo"), an.get("w_hi"), "1W")
             wc_m = _win(an.get("m1"), an.get("m_lo"), an.get("m_hi"), "1M")
             wc_y = _win(an.get("ytd"), an.get("y_lo"), an.get("y_hi"), "YTD")
             rng = _af_range_bar(lv, an.get("lo"), an.get("hi"))
-            body += (f'<div class="erow r7 ed"><span class="nm">{dot}{label}</span>'
+            body += (f'<div class="erow r10 ed"><span class="nm">{dot}{label}</span>'
                      f'<span class="num">{lvl}</span>'
                      f'<span class="num {d1c}">{d1t}</span>'
                      f'{wc_w}{wc_m}{wc_y}{rng}</div>')
