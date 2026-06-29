@@ -110,10 +110,12 @@ RATES_FRED_SERIES = [
 
 
 def rate_anchors_live(series_id: str) -> dict | None:
-    """{level, d1, w1, m1, ytd, lo, hi} for a daily FRED series from one year of
-    history (one fetch_series call). d1/w1/m1 are the ~1-business-day, ~1-week,
-    ~1-month-ago observations; ytd is the first obs of the current calendar
-    year; lo/hi are the trailing-52-week min/max. None on any failure — the
+    """{level, d1, w1, m1, ytd, lo, hi} + per-window min/max for a daily FRED
+    series from one year of history (one fetch_series call). d1/w1/m1 are the
+    ~1-business-day, ~1-week, ~1-month-ago observations; ytd is the first obs of
+    the current calendar year; lo/hi are the trailing-52-week min/max. The
+    {w,m,y}_{lo,hi} pairs are the min/max over the trailing 1-week / 1-month /
+    year-to-date windows, for the board's range bars. None on any failure — the
     caller renders '—', never a guess."""
     try:
         from data.fred_client import fetch_series
@@ -127,11 +129,20 @@ def rate_anchors_live(series_id: str) -> dict | None:
         import datetime as _dt
         jan1 = _dt.datetime(_dt.date.today().year, 1, 1)
         ytd = None
+        ytd_vals = []
         for d, v in zip(df["date"].tolist(), vals):
             dd = d.to_pydatetime() if hasattr(d, "to_pydatetime") else d
             if dd >= jan1:
-                ytd = v
-                break
+                if ytd is None:
+                    ytd = v
+                ytd_vals.append(v)
+
+        def _mm(seq):
+            return (min(seq), max(seq)) if seq else (None, None)
+
+        w_lo, w_hi = _mm(vals[-6:])    # ~last 5 business days (1W)
+        m_lo, m_hi = _mm(vals[-22:])   # ~last 22 business days (1M)
+        y_lo, y_hi = _mm(ytd_vals)
         return {
             "level": vals[-1],
             "d1": vals[-2] if len(vals) >= 2 else None,
@@ -140,6 +151,9 @@ def rate_anchors_live(series_id: str) -> dict | None:
             "ytd": ytd,
             "lo": min(vals),
             "hi": max(vals),
+            "w_lo": w_lo, "w_hi": w_hi,
+            "m_lo": m_lo, "m_hi": m_hi,
+            "y_lo": y_lo, "y_hi": y_hi,
         }
     except Exception:
         return None
