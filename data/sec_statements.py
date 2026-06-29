@@ -445,6 +445,361 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
     return {"periods": all_periods, "rows": rows, "units_scale": parsed[0]["units_scale"]}
 
 
+# ── Multi-quarter stitching (Company Reported — discrete single quarters) ────
+# Audit invariant A21: a discrete-quarter income/cashflow figure must be a TRUE
+# single quarter, NEVER a year-to-date cumulative mislabeled as a quarter. A
+# 10-Q's income statement renders a "Three Months Ended <q-end>" column whose
+# duration is ~one quarter — that column IS the discrete quarter (no math). Q4
+# has no 10-Q, so Q4 = FY (10-K "12 Months") − 9M (that fiscal year's Q3 10-Q
+# "9 Months" YTD), within one fiscal year. Balance sheets are point-in-time:
+# each quarter-end column is the snapshot, stitched newest-first with no
+# differencing. When the discrete-quarter column can't be cleanly identified for
+# a period, that period is omitted (renders blank) — never a guessed number.
+
+_MONTHS_ENDED = re.compile(r"(\d+)\s+Months?\s+Ended", re.I)
+_YEAR_ENDED = re.compile(r"Years?\s+Ended", re.I)
+_MONTH_ABBR = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+               "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
+
+def _period_key(p: str) -> tuple | None:
+    """(year, month) of a rendered period-end like 'Sep. 30, 2025'. None if it
+    doesn't parse — used to align a discrete-quarter column to its quarter-end
+    and to match a Q3 10-Q's nine-month column to the 10-K's fiscal year."""
+    if not p:
+        return None
+    m = re.search(r"([A-Za-z]{3})[a-z]*\.?\s+\d{1,2},\s+(\d{4})", p)
+    if not m:
+        return None
+    mon = _MONTH_ABBR.get(m.group(1)[:3].lower())
+    return (int(m.group(2)), mon) if mon else None
+
+
+def _column_meta(html_bytes: bytes, ncol: int) -> list | None:
+    """Per-value-column (duration_months | None, period_end_str) for a statement
+    R-file, aligned to the `ncol` value columns parse_rfile produced. Duration
+    comes from the "N Months Ended" / "Year(s) Ended" header band and the
+    period-end from the date header row, each expanded by its colspans so a
+    column's duration is read from period/duration METADATA, not column position.
+    Year-Ended is treated as 12 months. Returns None when the expanded header
+    width doesn't match ncol (an unrecognized layout — the caller then yields no
+    discrete quarter rather than guess)."""
+    h = lhtml.fromstring(html_bytes)
+    trs = h.xpath("//table//tr")
+    if not trs:
+        return None
+
+    # Mirror parse_rfile EXACTLY: column-header rows are built entirely of <th>
+    # tags; data rows carry a <td> label cell (and some filers a spacer <td
+    # class="th">). Classifying by TAG — not the class string 'th' — is what
+    # keeps a spacer-bearing data row out of the header band (KEY/ZION), so this
+    # metadata stays aligned to the value columns parse_rfile emits.
+    header_rows = []
+    for tr in trs:
+        cells = tr.xpath("./th|./td")
+        if cells and all(c.tag == "th" for c in cells):
+            header_rows.append(tr)
+    if not header_rows:
+        return None
+
+    def expand(cells):
+        out = []
+        for c in cells:
+            txt = " ".join(c.text_content().split())
+            out += [txt] * max(1, int(c.get("colspan") or 1))
+        return out
+
+    # The date header row and any duration band are pure-<th> rows. Drop the
+    # leading title ('tl') cell so its colspan doesn't shift alignment; the
+    # remaining cells expand (by colspan) to one entry per value column.
+    def _drop_title(cells):
+        return [c for c in cells if "tl" not in (c.get("class") or "").split()]
+
+    # Duration band: the pure-<th> row carrying "N Months Ended" / "Year Ended".
+    # Absent (balance sheets, some 10-K layouts) → treat every column as point-
+    # in-time / 12-month (no discrete-quarter claim is made on those).
+    dur_cells = None
+    for tr in header_rows:
+        cells = tr.xpath("./th|./td")
+        if any(_MONTHS_ENDED.search(" ".join(c.text_content().split()))
+               or _YEAR_ENDED.search(" ".join(c.text_content().split()))
+               for c in cells):
+            dur_cells = _drop_title(cells)
+            break
+    date_cells = _drop_title(header_rows[-1].xpath("./th|./td"))
+    dates = expand(date_cells)
+
+    def _dur_months(txt):
+        m = _MONTHS_ENDED.search(txt)
+        if m:
+            return int(m.group(1))
+        return 12 if _YEAR_ENDED.search(txt) else None
+
+    if dur_cells is not None:
+        durs = [_dur_months(t) for t in expand(dur_cells)]
+    else:
+        durs = [12] * len(dates)
+    # Both bands must expand to the same width AND to ncol, or the layout isn't
+    # one we can map cell-for-cell — bail (caller yields no discrete quarter).
+    if not (len(durs) == len(dates) == ncol):
+        return None
+    return [(durs[i], dates[i]) for i in range(ncol)]
+
+
+def _discrete_quarter_index(meta: list, q_end: tuple) -> int | None:
+    """Index of the unique value column that is BOTH ~3 months (a single
+    quarter; 2–4 mo tolerates 13-week fiscal quarters) AND ends at q_end —
+    the discrete quarter, told apart from the YTD column that shares the same
+    period-end. None (→ n/a) if no such column, or if it's ambiguous."""
+    hits = [i for i, (d, p) in enumerate(meta)
+            if d is not None and 2 <= d <= 4 and _period_key(p) == q_end]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _recent_10q_metas(cik, n: int) -> list:
+    """Up to n most-recent 10-Q filings {accession, doc, date, cik}, newest
+    first — parallels _recent_10k_metas, filtering form == '10-Q'."""
+    cik10 = str(int(cik)).zfill(10)
+    data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
+    rec = data.get("filings", {}).get("recent", {})
+    out = []
+    for i, form in enumerate(rec.get("form", [])):
+        if form == "10-Q":
+            out.append({"accession": rec["accessionNumber"][i].replace("-", ""),
+                        "doc": rec["primaryDocument"][i],
+                        "date": rec["filingDate"][i], "cik": int(cik)})
+            if len(out) >= n:
+                break
+    return out
+
+
+def _column_values(stmt: dict, idx: int) -> dict:
+    """{norm_key: value} for one column index of a parsed statement (data rows
+    only) — the per-period slice used to stitch and to difference FY − 9M."""
+    return {(_norm_label(r["label"]), r["header"]):
+            (r["values"][idx] if idx < len(r["values"]) else None)
+            for r in stmt["rows"] if not r["header"]}
+
+
+def _q_label(q_end: tuple) -> str:
+    """Compact column label for a quarter-end (year, month): 'Q3'25'."""
+    year, mon = q_end
+    return f"Q{(mon - 1) // 3 + 1}'{str(year)[2:]}"
+
+
+def _minus_quarter(qe: tuple) -> tuple:
+    """The (year, month) quarter-end exactly 3 months before qe — the nine-month
+    YTD end that pairs with a fiscal year-end for Q4 = FY − 9M."""
+    y, m = qe
+    m -= 3
+    while m <= 0:
+        m += 12
+        y -= 1
+    return (y, m)
+
+
+def _quarter_ends_desc(latest_q: tuple, n: int) -> list:
+    """The n fiscal-quarter-ends newest-first starting at latest_q (year, month),
+    stepping back 3 months each time. Generic over fiscal-year-end (the bank's
+    own quarter-end month set is preserved, e.g. Mar/Jun/Sep/Dec or off-cycle)."""
+    out, (y, m) = [], latest_q
+    for _ in range(n):
+        out.append((y, m))
+        m -= 3
+        while m <= 0:
+            m += 12
+            y -= 1
+    return out
+
+
+def _assemble(parsed: list, col: dict, periods: list) -> dict | None:
+    """Build the stitched statement dict from a period→{key:value} map, using
+    _merge_row_order for the union label order (newest filing's display label)."""
+    have = [p for p in periods if p in col]
+    if not have:
+        return None
+    rows = []
+    for key, label, header in _merge_row_order(parsed):
+        if header:
+            rows.append({"label": label, "header": True, "values": []})
+        else:
+            rows.append({"label": label, "header": False,
+                         "values": [col.get(p, {}).get(key) for p in periods]})
+    return {"periods": [_q_label(p) for p in periods], "rows": rows,
+            "units_scale": parsed[0]["units_scale"]}
+
+
+def _stitch_balance_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> dict | None:
+    """Point-in-time balance-sheet stitch over quarter-ends (newest first). Each
+    10-Q balance column is a quarter-end snapshot; the 10-K supplies year-end
+    (Q4) columns. No differencing. Each (line, q-end) cell is taken from the
+    newest filing reporting that exact quarter-end; blank where a line wasn't
+    broken out — the company's own absence, never a guess."""
+    sources = parsed_q + parsed_k        # 10-Qs (newest first) then 10-Ks
+    col: dict = {}                       # q_end -> {norm_key: value}
+    for qe in q_ends:
+        for f in sources:
+            mc = f["_colmeta"]
+            # Balance columns are point-in-time: pick the column whose period-end
+            # matches this quarter-end (balance R-files carry date-only headers).
+            idx = next((i for i, (_, p) in enumerate(mc)
+                        if _period_key(p) == qe), None)
+            if idx is not None:
+                col[qe] = _column_values(f, idx)
+                break
+    return _assemble(sources, col, q_ends)
+
+
+def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> dict | None:
+    """Discrete-quarter stitch for a FLOW statement (income / cash flow). Q1–Q3
+    are the "three months ended" column lifted straight from each 10-Q (no math,
+    per A21). Q4 = FY (10-K 12-month column) − 9M (that fiscal year's Q3 10-Q
+    nine-month YTD column), both ending at the same fiscal year-end; emitted only
+    when BOTH are present, else that quarter is omitted (blank, never guessed).
+    The differencing never crosses a fiscal year and never uses a single-quarter
+    column on either side."""
+    q_by_qend: dict = {}                 # q_end -> (parsed, discrete_idx)
+    nine_by_end: dict = {}               # nine-month-END (year, month) -> (parsed, idx)
+    for f in parsed_q:
+        mc = f["_colmeta"]
+        # This filing's own quarter-end = the latest period-end carrying a
+        # ~3-month duration column.
+        cand = sorted({_period_key(p) for d, p in mc
+                       if d is not None and 2 <= d <= 4 and _period_key(p)},
+                      reverse=True)
+        if cand:
+            qe = cand[0]
+            di = _discrete_quarter_index(mc, qe)
+            if di is not None and qe not in q_by_qend:
+                q_by_qend[qe] = (f, di)
+        # A nine-month column (Q3 10-Q) anchors Q4 = FY − 9M: keyed by its own
+        # period-end, which is exactly the fiscal year-end minus one quarter.
+        for i, (d, p) in enumerate(mc):
+            if d == 9 and _period_key(p):
+                nine_by_end.setdefault(_period_key(p), (f, i))
+    k_by_fy: dict = {}                   # fiscal-year-end (year, month) -> (parsed, 12mo_idx)
+    for f in parsed_k:
+        mc = f["_colmeta"]
+        for i, (d, p) in enumerate(mc):
+            pk = _period_key(p)
+            if d == 12 and pk:
+                k_by_fy.setdefault(pk, (f, i))
+
+    sources = parsed_q + parsed_k
+    col: dict = {}
+    for qe in q_ends:
+        if qe in q_by_qend:
+            f, di = q_by_qend[qe]
+            col[qe] = _column_values(f, di)      # discrete quarter, as reported
+            continue
+        # No 10-Q for this quarter: it is a fiscal year-end (Q4) iff a 10-K
+        # reports a 12-month column ending here. Derive Q4 = FY − 9M, where the
+        # 9-month YTD ends exactly one quarter (3 months) earlier — same fiscal
+        # year, so the difference never crosses a year boundary.
+        nine_end = _minus_quarter(qe)
+        if qe in k_by_fy and nine_end in nine_by_end:
+            fk, ik = k_by_fy[qe]
+            fq, iq = nine_by_end[nine_end]
+            fy = _column_values(fk, ik)
+            nine = _column_values(fq, iq)
+            diff = {}
+            for k in set(fy) | set(nine):
+                a, b = fy.get(k), nine.get(k)
+                diff[k] = (a - b) if (a is not None and b is not None) else None
+            col[qe] = diff
+        # else: omit (blank) — cannot derive a clean discrete quarter.
+    return _assemble(sources, col, q_ends)
+
+
+def as_reported_statement_multiquarter(cik, stype: str = "income",
+                                       n_quarters: int = 12) -> dict | None:
+    """Cached multi-QUARTER Company-Reported statement (stype = "income" |
+    "balance" | "cashflow") stitched from the bank's recent 10-Qs (+ 10-Ks for
+    the Q4/year-end column), reaching back n_quarters. Discrete single quarters
+    only (audit A21): Q1–Q3 are each 10-Q's "three months ended" column; Q4 =
+    FY 10-K − nine-month 10-Q; a quarter that can't be cleanly derived is blank,
+    never guessed. Balance sheets are point-in-time quarter-end snapshots. Cached
+    by the latest 10-Q accession; a transient fetch failure is never cached.
+    Returns {"meta", "filings", "statement"} or None."""
+    if not cik:
+        return None
+    from data import cache
+    # 12 quarters ≈ 3 years: ~7 recent 10-Qs (3-month + YTD columns) plus
+    # ~3 recent 10-Ks (the FY/year-end columns and Q4 derivation).
+    q_metas = _recent_10q_metas(cik, 7)
+    k_metas = _recent_10k_metas(cik, 3)
+    if not q_metas:
+        return None
+    ckey = f"asreported_mq:v1:{stype}:{q_metas[0]['accession']}:{n_quarters}"
+    cached = cache.get(ckey)
+    if cached is not None:
+        return cached or None
+
+    def _parse_with_meta(metas):
+        out = []
+        for m in metas:
+            base = _filing_base(m["cik"], m["accession"])
+            fn = _statement_rfiles(base).get(stype)
+            if not fn:
+                continue
+            raw = _get(base + fn)
+            stmt = parse_rfile(raw)
+            if not (stmt and stmt["rows"]):
+                continue
+            ncol = max((len(r["values"]) for r in stmt["rows"]
+                        if not r["header"]), default=0)
+            meta = _column_meta(raw, ncol) if ncol else None
+            if meta is None:
+                continue                         # unrecognized layout → skip filing
+            stmt["_colmeta"] = meta
+            stmt["_meta"] = m
+            out.append(stmt)
+        return out
+
+    try:
+        parsed_q = _parse_with_meta(q_metas)
+        parsed_k = _parse_with_meta(k_metas)
+    except Exception as e:
+        print(f"[sec_statements] multiquarter {stype} failed for cik {cik}: "
+              f"{type(e).__name__}: {e}")
+        return None                              # transient — don't cache
+    if not parsed_q:
+        return None
+
+    # Newest quarter-end anchors the 12-quarter window. For flow statements it's
+    # the most recent ~3-month (discrete-quarter) column; for the point-in-time
+    # balance sheet there is no duration band, so it's the most recent period-end
+    # any 10-Q reports (the filing's own quarter-end snapshot).
+    latest = None
+    for f in parsed_q:
+        for d, p in f["_colmeta"]:
+            pk = _period_key(p)
+            if not pk:
+                continue
+            if stype != "balance" and not (d is not None and 2 <= d <= 4):
+                continue
+            if latest is None or pk > latest:
+                latest = pk
+    if latest is None:
+        return None
+    q_ends = _quarter_ends_desc(latest, n_quarters)
+
+    if stype == "balance":
+        stitched = _stitch_balance_quarters(parsed_q, parsed_k, q_ends)
+    else:
+        stitched = _stitch_flow_quarters(parsed_q, parsed_k, q_ends)
+    if not stitched:
+        return None
+    used = parsed_q + parsed_k
+    result = {"meta": q_metas[0], "filings": [f["_meta"] for f in used],
+              "statement": stitched}
+    try:
+        cache.put(ckey, result)
+    except Exception:
+        pass
+    return result
+
+
 def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5) -> dict | None:
     """Cached multi-year Company-Reported statement (stype = "income" |
     "balance" | "cashflow"), stitched from the bank's recent 10-K R-files. Cached

@@ -1535,16 +1535,30 @@ def _cr_usd(raw):
 
 
 def _render_company_statement(ticker: str, stype: str):
-    """Multi-year Company-Reported statement (stype = "income" | "balance"),
-    stitched from the bank's recent 10-Ks. Faithful to the company's own line
-    items; blank where a line wasn't reported that year. The income per-share /
-    weighted-share trailer is omitted pending per-share unit handling."""
-    import re
+    """Company-Reported statement (stype = "income" | "balance"), stitched from
+    the bank's own SEC filings. An Annual/Quarterly toggle switches between the
+    multi-year 10-K stitch (default) and the discrete-single-quarter 10-Q stitch
+    (12 quarters). Faithful to the company's own line items; blank where a line
+    wasn't reported that period."""
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
         st.info("No SEC filer mapping for this bank.")
         return
+    view = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                    key=f"cr_period_{stype}_{ticker}", label_visibility="collapsed")
+    if view == "Quarterly":
+        _render_company_statement_quarterly(ticker, stype, cik, info)
+        return
+    _render_company_statement_annual(ticker, stype, cik, info)
+
+
+def _render_company_statement_annual(ticker, stype, cik, info):
+    """Multi-year Company-Reported statement, stitched from the bank's recent
+    10-Ks. Faithful to the company's own line items; blank where a line wasn't
+    reported that year. The income per-share / weighted-share trailer is omitted
+    pending per-share unit handling."""
+    import re
     try:
         from data.sec_statements import as_reported_statement_multiyear
         res = as_reported_statement_multiyear(cik, stype, n_years=5)
@@ -1602,6 +1616,70 @@ def _render_company_statement(ticker: str, stype: str):
                              _CR_INCOME_TRENDS if stype == "income" else _CR_BALANCE_TRENDS)
 
 
+def _render_company_statement_quarterly(ticker, stype, cik, info):
+    """Discrete-quarter Company-Reported statement (12 quarters), stitched from
+    the bank's own 10-Qs (and 10-Ks for the year-end column). Income/cash-flow
+    columns are TRUE single quarters: Q1–Q3 are each 10-Q's "three months ended"
+    figure; Q4 = annual 10-K minus the nine-month 10-Q (audit invariant A21 — a
+    quarter is never a YTD cumulative). Balance-sheet columns are point-in-time
+    quarter-end snapshots. A quarter that can't be cleanly derived is left blank,
+    never guessed. All figures are as-reported and company-sourced (never FDIC)."""
+    import re
+    try:
+        from data.sec_statements import as_reported_statement_multiquarter
+        res = as_reported_statement_multiquarter(cik, stype, n_quarters=12)
+    except Exception:
+        res = None
+    if not res:
+        st.caption("Company-reported quarterly statement not available from this "
+                   "filer's 10-Qs — n/a.")
+        return
+    stmt, filings, latest = res["statement"], res["filings"], res["meta"]
+    src = (f"https://www.sec.gov/Archives/edgar/data/{int(latest['cik'])}/"
+           f"{latest['accession']}/{latest['doc']}")
+
+    _eps = re.compile(r"per share|per common share", re.I)
+    _shares = re.compile(r"\(in shares\)|in shares", re.I)
+    _has_persh = any(_eps.search(r["label"]) or _shares.search(r["label"])
+                     for r in stmt["rows"] if not r["header"])
+    _persh_note = " EPS in \\$/share, shares in millions;" if _has_persh else ""
+    _q4 = ("" if stype == "balance"
+           else " Discrete quarters — Q4 = annual 10-K minus the nine-month 10-Q.")
+    st.caption(f"Source: stitched from the bank's 10-Qs — latest [{latest['date']}]"
+               f"({src}); {len(stmt['periods'])} quarters from {len(filings)} filings."
+               f"{_q4} As-reported, company-sourced (never FDIC). Dollar lines "
+               f"\\$-compact;{_persh_note} blank = not cleanly derivable.")
+    periods = stmt["periods"][::-1]            # oldest → newest (matches Annual)
+    cols = list(periods)                       # already compact "Q3'25" labels
+
+    def _m(label, v):
+        if v is None:
+            return ""
+        if _eps.search(label):
+            return f"${v:,.2f}"
+        if _shares.search(label):
+            return f"{v / 1e6:,.1f}M"
+        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+
+    rows = []
+    for r in stmt["rows"]:
+        if r["header"]:
+            rows.append({"label": r["label"], "values": [], "kind": "header"})
+        else:
+            vals = r["values"][::-1]
+            rows.append({"label": r["label"],
+                         "values": [_m(r["label"], v) for v in vals],
+                         "kind": "data"})
+
+    entity = f"{(info or {}).get('name') or ticker} ({ticker})"
+    _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+    with _lt:
+        _cr_component(cols, rows, entity=entity, src=src)
+    with _rt:
+        _cr_statement_trends(stmt, ticker, f"crq{stype}",
+                             _CR_INCOME_TRENDS if stype == "income" else _CR_BALANCE_TRENDS)
+
+
 # Company-Reported statement trend charts. The scraped statement is ANNUAL (5 FY),
 # so these are clean year-over-year lines (no FDIC YTD sawtooth). Each series is
 # matched to a stmt row by its as-reported label; groups hold like-magnitude lines
@@ -1652,10 +1730,12 @@ def _cr_statement_trends(stmt, ticker, key_prefix, groups):
     by_label = {_norm(r["label"]): r["values"][::-1]
                 for r in stmt["rows"] if not r["header"]}
 
-    def _year(p):
-        m = re.search(r"\d{4}", p or "")
-        return m.group() if m else (p or "")
-    xs = [f"FY{_year(p)}" for p in stmt["periods"][::-1]]
+    def _xlab(p):
+        # Annual periods carry a 4-digit year -> "FY2025". Quarterly periods are
+        # already compact ("Q3'25") -> shown verbatim.
+        m = re.search(r"\b\d{4}\b", p or "")
+        return f"FY{m.group()}" if m else (p or "")
+    xs = [_xlab(p) for p in stmt["periods"][::-1]]
 
     charts = []
     for title, div, unit, series in groups:

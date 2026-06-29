@@ -417,5 +417,190 @@ class TestLoanComposition(unittest.TestCase):
                          ["Total loans", "Commercial and industrial loans"])
 
 
+# ── Multi-quarter (discrete single quarters; audit invariant A21) ────────────
+# A Q3 10-Q income R-file modeled on the real ZION layout: a "3 Months Ended"
+# band over the first two columns and a "9 Months Ended" YTD band over the next
+# two — same period-end dates, told apart by DURATION, not column position.
+_Q3_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED STATEMENTS OF INCOME $ in Millions</th>'
+    b'<th class="th" colspan="2">3 Months Ended</th>'
+    b'<th class="th" colspan="2">9 Months Ended</th></tr>'
+    b'<tr><th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th>'
+    b'<th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th></tr>'
+    b'<tr><td class="pl">Net interest income</td>'
+    b'<td class="nump">600</td><td class="nump">560</td>'
+    b'<td class="nump">1,750</td><td class="nump">1,650</td></tr>'
+    b'<tr><td class="pl">Net income</td>'
+    b'<td class="nump">222</td><td class="nump">214</td>'
+    b'<td class="nump">636</td><td class="nump">568</td></tr>'
+    b'</table>')
+
+# A 10-K income R-file: "12 Months Ended" over three fiscal years.
+_FY_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED STATEMENTS OF INCOME $ in Millions</th>'
+    b'<th class="th" colspan="3">12 Months Ended</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th>'
+    b'<th class="th">Dec. 31, 2023</th></tr>'
+    b'<tr><td class="pl">Net interest income</td>'
+    b'<td class="nump">2,400</td><td class="nump">2,200</td><td class="nump">2,000</td></tr>'
+    b'<tr><td class="pl">Net income</td>'
+    b'<td class="nump">899</td><td class="nump">784</td><td class="nump">680</td></tr>'
+    b'</table>')
+
+# A balance R-file with a KEY/ZION-style empty spacer <td class="th"> in every
+# data row — point-in-time, two date columns, no duration band.
+_BS_QUARTER = (
+    b'<table class="report">'
+    b'<tr><th class="tl" colspan="2">CONSOLIDATED BALANCE SHEETS $ in Millions</th>'
+    b'<th class="th">Sep. 30, 2025</th><th class="th">Dec. 31, 2024</th></tr>'
+    b'<tr><td class="pl">Total assets</td><td class="th"></td>'
+    b'<td class="nump">88,500</td><td class="nump">88,800</td></tr>'
+    b'<tr><td class="pl">Total deposits</td><td class="th"></td>'
+    b'<td class="nump">75,100</td><td class="nump">74,900</td></tr>'
+    b'</table>')
+
+
+def _parsed(html, meta_acc):
+    """parse_rfile + _column_meta on synthetic bytes, packaged like the stitcher
+    inputs (with _colmeta and _meta)."""
+    from data.sec_statements import parse_rfile, _column_meta
+    stmt = parse_rfile(html)
+    ncol = max((len(r["values"]) for r in stmt["rows"] if not r["header"]), default=0)
+    stmt["_colmeta"] = _column_meta(html, ncol)
+    stmt["_meta"] = {"accession": meta_acc}
+    return stmt
+
+
+class TestQuarterColumnIdentification(unittest.TestCase):
+    """The discrete-quarter column is identified by DURATION metadata, never by
+    position — the 3-month and 9-month columns share the same period-end date."""
+
+    def test_column_meta_tags_each_column_with_duration(self):
+        from data.sec_statements import parse_rfile, _column_meta
+        p = parse_rfile(_Q3_INCOME)
+        ncol = max(len(r["values"]) for r in p["rows"] if not r["header"])
+        meta = _column_meta(_Q3_INCOME, ncol)
+        self.assertEqual(meta, [(3, "Sep. 30, 2025"), (3, "Sep. 30, 2024"),
+                                (9, "Sep. 30, 2025"), (9, "Sep. 30, 2024")])
+
+    def test_discrete_index_picks_three_month_not_ytd(self):
+        from data.sec_statements import _column_meta, _discrete_quarter_index, parse_rfile
+        p = parse_rfile(_Q3_INCOME)
+        ncol = max(len(r["values"]) for r in p["rows"] if not r["header"])
+        meta = _column_meta(_Q3_INCOME, ncol)
+        idx = _discrete_quarter_index(meta, (2025, 9))
+        self.assertEqual(idx, 0)                       # the 3-month column, not col 2 (9-month)
+        # The value at that column is the discrete quarter (222), NOT the YTD (636).
+        ni = next(r for r in p["rows"] if r["label"] == "Net income")
+        self.assertEqual(ni["values"][idx], 222e6)
+        self.assertNotEqual(ni["values"][idx], 636e6)  # A21: never the YTD
+
+    def test_balance_meta_handles_spacer_and_no_duration_band(self):
+        from data.sec_statements import parse_rfile, _column_meta
+        p = parse_rfile(_BS_QUARTER)
+        ncol = max(len(r["values"]) for r in p["rows"] if not r["header"])
+        meta = _column_meta(_BS_QUARTER, ncol)
+        # Spacer <td class="th"> dropped; two point-in-time date columns, no
+        # duration band -> default 12 (unused for the point-in-time stitch).
+        self.assertEqual(ncol, 2)
+        self.assertEqual([d for _, d in meta], ["Sep. 30, 2025", "Dec. 31, 2024"])
+
+    def test_unidentifiable_layout_returns_none(self):
+        # A header whose expanded width can't be mapped to the value columns
+        # yields no column metadata (caller then emits no discrete quarter).
+        from data.sec_statements import _column_meta
+        bad = (b'<table class="report">'
+               b'<tr><th class="tl">X $ in Millions</th>'
+               b'<th class="th" colspan="2">3 Months Ended</th></tr>'
+               b'<tr><th class="th">Sep. 30, 2025</th></tr>'   # only 1 date for 2 value cols
+               b'<tr><td class="pl">Net income</td>'
+               b'<td class="nump">10</td><td class="nump">20</td></tr>'
+               b'</table>')
+        from data.sec_statements import parse_rfile
+        p = parse_rfile(bad)
+        ncol = max(len(r["values"]) for r in p["rows"] if not r["header"])
+        self.assertIsNone(_column_meta(bad, ncol))
+
+
+class TestFlowQuarterStitch(unittest.TestCase):
+    """Discrete-quarter income stitch: Q1–Q3 are the as-reported 3-month column;
+    Q4 = FY (10-K) − 9M (Q3 10-Q); no quarter is ever a YTD value (A21)."""
+
+    def _build(self):
+        from data.sec_statements import _stitch_flow_quarters
+        pq = [_parsed(_Q3_INCOME, "Q3ACC")]
+        pk = [_parsed(_FY_INCOME, "KACC")]
+        # Window: Q4'25 (Dec) and Q3'25 (Sep) suffice to exercise both paths.
+        q_ends = [(2025, 12), (2025, 9)]
+        return _stitch_flow_quarters(pq, pk, q_ends)
+
+    def test_q3_is_three_month_value(self):
+        st = self._build()
+        self.assertEqual(st["periods"], ["Q4'25", "Q3'25"])
+        ni = next(r for r in st["rows"] if r["label"] == "Net income")
+        # periods order: [Q4'25, Q3'25]; Q3'25 = the 3-month column value 222.
+        self.assertEqual(ni["values"][1], 222e6)
+        nii = next(r for r in st["rows"] if r["label"] == "Net interest income")
+        self.assertEqual(nii["values"][1], 600e6)      # 3-month, not 1,750 YTD
+
+    def test_q4_equals_fy_minus_nine_month(self):
+        # Hand-computed: FY net income 899 − 9M 636 = 263 ($ in millions).
+        st = self._build()
+        ni = next(r for r in st["rows"] if r["label"] == "Net income")
+        self.assertEqual(ni["values"][0], (899 - 636) * 1e6)   # Q4'25 = 263M
+        nii = next(r for r in st["rows"] if r["label"] == "Net interest income")
+        self.assertEqual(nii["values"][0], (2400 - 1750) * 1e6)  # 650M
+
+    def test_a21_no_quarter_equals_a_ytd_value(self):
+        # Guard the audit invariant directly: no emitted quarter cell may equal a
+        # YTD figure that appears in the source filings (636 9M, 1,750 9M, 568 9M).
+        st = self._build()
+        ytd = {636e6, 1750e6, 568e6, 1650e6}
+        for r in st["rows"]:
+            if r["header"]:
+                continue
+            for v in r["values"]:
+                self.assertNotIn(v, ytd)
+
+    def test_q4_blank_when_nine_month_missing(self):
+        # FY (10-K) present but the fiscal year's 9-month 10-Q absent: Q4 cannot
+        # be derived (FY − 9M needs both), so that quarter is blank, never a
+        # guess — even though a discrete Q3 exists to anchor the window.
+        from data.sec_statements import _stitch_flow_quarters
+        # parsed_q carries ONLY the Q3 discrete quarter (drop the 9-month band by
+        # using a 3-month-only filing); parsed_k carries the FY.
+        q3_only = (
+            b'<table class="report">'
+            b'<tr><th class="tl">CONSOLIDATED STATEMENTS OF INCOME $ in Millions</th>'
+            b'<th class="th" colspan="2">3 Months Ended</th></tr>'
+            b'<tr><th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th></tr>'
+            b'<tr><td class="pl">Net income</td>'
+            b'<td class="nump">222</td><td class="nump">214</td></tr>'
+            b'</table>')
+        pq = [_parsed(q3_only, "Q3ACC")]
+        pk = [_parsed(_FY_INCOME, "KACC")]
+        st = _stitch_flow_quarters(pq, pk, [(2025, 12), (2025, 9)])
+        ni = next(r for r in st["rows"] if r["label"] == "Net income")
+        self.assertEqual(st["periods"], ["Q4'25", "Q3'25"])
+        self.assertIsNone(ni["values"][0])             # Q4 blank: no 9-month source
+        self.assertEqual(ni["values"][1], 222e6)       # Q3 still the 3-month value
+
+
+class TestBalanceQuarterStitch(unittest.TestCase):
+    """Balance sheet is point-in-time: each quarter-end column is a snapshot
+    taken straight from the filing, never a difference of two columns."""
+
+    def test_point_in_time_snapshots(self):
+        from data.sec_statements import _stitch_balance_quarters
+        pq = [_parsed(_BS_QUARTER, "Q3ACC")]
+        st = _stitch_balance_quarters(pq, [], [(2025, 9), (2024, 12)])
+        self.assertEqual(st["periods"], ["Q3'25", "Q4'24"])
+        ta = next(r for r in st["rows"] if r["label"] == "Total assets")
+        # Snapshot values, NOT a difference (88,500 and 88,800), in raw dollars.
+        self.assertEqual(ta["values"], [88500e6, 88800e6])
+
+
 if __name__ == "__main__":
     unittest.main()
