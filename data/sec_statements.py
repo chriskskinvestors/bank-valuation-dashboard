@@ -21,11 +21,17 @@ from lxml import etree, html as lhtml
 from data.sec_filing_scraper import latest_filing, _get
 
 # Match a statement type to its FilingSummary ShortName. (want, reject) — the
-# reject pattern keeps 'comprehensive income' and parentheticals out of the
-# primary income statement / balance sheet.
+# reject pattern keeps 'comprehensive income', cash flows and parentheticals out
+# of the primary income statement / balance sheet.
+# Income accepts BOTH word orders: "statement(s) of income/operations/earnings"
+# AND "income statement(s)" — PNC titles its primary income R-file "Consolidated
+# Income Statement", which the "statement OF income" order alone misses. The
+# reject still drops the comprehensive-income and cash-flow siblings (a
+# "comprehensive income" title contains "income" but is not the income statement).
 _STMT_PATTERNS = {
-    "income": (re.compile(r"statements?\s+of\s+(income|operations|earnings)", re.I),
-               re.compile(r"comprehensive|parenthetical", re.I)),
+    "income": (re.compile(r"statements?\s+of\s+(income|operations|earnings)|"
+                          r"\bincome\s+statements?\b", re.I),
+               re.compile(r"comprehensive|parenthetical|cash\s+flow", re.I)),
     "balance": (re.compile(r"balance\s+sheet|financial\s+position|financial\s+condition", re.I),
                 re.compile(r"parenthetical", re.I)),
     "cashflow": (re.compile(r"statements?\s+of\s+cash\s+flows", re.I),

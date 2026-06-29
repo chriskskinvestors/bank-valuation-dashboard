@@ -21,6 +21,7 @@ import unittest
 from data.sec_filing_scraper import Fact
 from data.sec_composition import (
     extract_loan_composition, extract_deposit_composition, _finest_partition,
+    _collapse_equal_value, _unique_reconciling_subset,
 )
 
 LOAN_CONCEPT = "us-gaap:FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss"
@@ -240,6 +241,123 @@ class TestLoanComposition(unittest.TestCase):
         comp = extract_loan_composition(facts, labels, {})
         self.assertEqual(set(comp), {"2025-12-31", "2024-12-31"})    # 2023 dropped
         self.assertNotIn("2023-12-31", comp)
+
+    def test_equal_value_synonym_collapse_BANR(self):
+        """BANR tags two categories under TWO member qnames each, whose DISPLAY
+        labels DIFFER (so `_dedup_synonyms`, which keys on the label, misses them):
+        SmallBalance...RealEstateLoans + SmallBalanceCRE both = 1212.357M, and
+        Land-and-Land-Development + Land-and-Land-Improvements both = 433.678M. The
+        un-collapsed members sum to 1646.035M OVER the total (the two dups double-
+        counted); equal-value collapse removes the double-count and the set
+        reconciles EXACTLY to the disclosed book."""
+        # Exact values from BANR's FY2025 10-K (NotesReceivableGross x class axis).
+        c = LOAN_CONCEPT
+        facts = [
+            total_fact(c, 11721687000),
+            member_fact(c, 1701413000, "x:InvestmentPropertiesCommericalRealEstateMember", CLASS_AXIS),
+            member_fact(c, 1573191000, "x:OneToFourFamilyResidentialMember", CLASS_AXIS),
+            member_fact(c, 1225108000, "x:CommercialBusinessMember", CLASS_AXIS),
+            # synonym pair #1 — same value, DIFFERENT label
+            member_fact(c, 1212357000, "x:SmallBalanceCommercialRealEstateLoansMember", CLASS_AXIS),
+            member_fact(c, 1212357000, "x:SmallBalanceCREMember", CLASS_AXIS),
+            member_fact(c, 1187360000, "x:SmallCreditScoredBusinessLoansMember", CLASS_AXIS),
+            member_fact(c, 1138298000, "x:OwnerOccupiedCommercialRealEstateMember", CLASS_AXIS),
+            member_fact(c, 850789000, "x:MultifamilyRealEstateMember", CLASS_AXIS),
+            member_fact(c, 679489000, "x:HomeEquityMember", CLASS_AXIS),
+            member_fact(c, 607447000, "x:OneToFourFamilyConstructionMember", CLASS_AXIS),
+            member_fact(c, 514330000, "x:MultifamilyConstructionMember", CLASS_AXIS),
+            # synonym pair #2 — same value, DIFFERENT label
+            member_fact(c, 433678000, "x:LandandLandDevelopmentTypeMember", CLASS_AXIS),
+            member_fact(c, 433678000, "x:LandAndLandImprovementsMember", CLASS_AXIS),
+            member_fact(c, 353152000, "x:AgriculturalBusinessMember", CLASS_AXIS),
+            member_fact(c, 156021000, "x:CommercialConstructionMember", CLASS_AXIS),
+            member_fact(c, 89054000, "x:ConsumerLoanMember", CLASS_AXIS),
+        ]
+        labels = {
+            "InvestmentPropertiesCommericalRealEstateMember": "Commercial real estate - investment",
+            "OneToFourFamilyResidentialMember": "One- to four-family residential",
+            "CommercialBusinessMember": "Commercial business",
+            "SmallBalanceCommercialRealEstateLoansMember": "Small Balance Commercial Real Estate Loans",
+            "SmallBalanceCREMember": "Small Balance CRE",
+            "SmallCreditScoredBusinessLoansMember": "Small Credit-Scored Business Loans",
+            "OwnerOccupiedCommercialRealEstateMember": "Owner-occupied Commercial Real Estate",
+            "MultifamilyRealEstateMember": "Multifamily real estate",
+            "HomeEquityMember": "Home Equity Line of Credit",
+            "OneToFourFamilyConstructionMember": "One-to four-family construction",
+            "MultifamilyConstructionMember": "Multifamily construction",
+            "LandandLandDevelopmentTypeMember": "Land and Land Development Type",
+            "LandAndLandImprovementsMember": "Land and Land Improvements",
+            "AgriculturalBusinessMember": "Agricultural Business",
+            "CommercialConstructionMember": "Commercial Construction",
+            "ConsumerLoanMember": "Consumer Loan",
+        }
+        total, rows = rows_of(extract_loan_composition(facts, labels, {}))
+        self.assertEqual(total, 11721687000)
+        self.assertEqual(len(rows), 14)                                 # 16 members, 2 dups collapsed
+        self.assertEqual(sum(rows.values()), 11721687000)               # reconciles EXACTLY
+
+    def test_collapse_equal_value_helper(self):
+        # Same value -> one representative; distinct values -> all kept.
+        out = _collapse_equal_value({"a": 100.0, "b": 100.0, "c": 50.0})
+        self.assertEqual(sorted(out.values()), [50.0, 100.0])           # one of a/b dropped
+        self.assertEqual(len(out), 2)
+
+    def test_two_genuine_equal_value_leaves_not_falsely_collapsed(self):
+        """SAFETY: two GENUINELY distinct categories that happen to share a balance
+        must NOT be collapsed to a wrong number. The collapse is reconcile-gated, so
+        dropping a needed leaf makes the sum fall short and the candidate is
+        rejected — here the only valid composition keeps both, via a clean partition
+        of distinct values, never the collapsed (short) set."""
+        c = LOAN_CONCEPT
+        facts = [
+            total_fact(c, 1000.0 * M),
+            member_fact(c, 300.0 * M, "x:CommercialMember", CLASS_AXIS),     # equal value,
+            member_fact(c, 300.0 * M, "x:ConsumerMember", CLASS_AXIS),       # DISTINCT category
+            member_fact(c, 400.0 * M, "x:RealEstateMember", CLASS_AXIS),
+        ]
+        labels = {"CommercialMember": "Commercial", "ConsumerMember": "Consumer",
+                  "RealEstateMember": "Real Estate"}
+        total, rows = rows_of(extract_loan_composition(facts, labels, {}))
+        self.assertEqual(total, 1000.0 * M)
+        # both 300M leaves survive (collapsing one -> sum 700M, gate would reject)
+        self.assertEqual(set(rows), {"Commercial", "Consumer", "Real Estate"})
+        self.assertAlmostEqual(sum(rows.values()), 1000.0 * M, delta=M)
+
+    def test_unique_reconciling_subset_flat_aggregate_partial_children_FBK(self):
+        """FBK flat-tags a coarse 2-way book — TotalCommercial (9165.158M) +
+        TotalConsumer (3218.468M) = the 12383.626M total — PLUS three commercial
+        SUB-types (Commercial, Construction, Consumer-and-other) that do NOT fully
+        decompose the commercial total. No finest partition exists; exactly ONE
+        subset reconciles, so the unique-subset resolver recovers the 2-way split.
+        Components sum to the disclosed book."""
+        # Exact values from FBK's FY2025 10-K (gross-loan concept x segment axis).
+        c = LOAN_CONCEPT
+        facts = [
+            total_fact(c, 12383626000),
+            member_fact(c, 9165158000, "x:TotalCommercialLoansMember"),
+            member_fact(c, 3218468000, "x:ConsumerPortfolioSegmentMember"),
+            member_fact(c, 2181935000, "x:CommercialPortfolioSegmentMember"),
+            member_fact(c, 1188494000, "x:ConstructionPortfolioSegmentMember"),
+            member_fact(c, 639037000, "x:ConsumerAndOtherPortfolioSegmentMember"),
+        ]
+        labels = {"TotalCommercialLoansMember": "Total commercial loan types",
+                  "ConsumerPortfolioSegmentMember": "Total consumer type loans",
+                  "CommercialPortfolioSegmentMember": "Commercial and industrial",
+                  "ConstructionPortfolioSegmentMember": "Construction",
+                  "ConsumerAndOtherPortfolioSegmentMember": "Consumer and other"}
+        total, rows = rows_of(extract_loan_composition(facts, labels, {}))
+        self.assertEqual(total, 12383626000)
+        self.assertEqual(set(rows),
+                         {"Total commercial loan types", "Total consumer type loans"})
+        self.assertEqual(sum(rows.values()), 12383626000)               # reconciles EXACTLY
+
+    def test_unique_reconciling_subset_ambiguous_returns_none(self):
+        """If more than one subset reconciles, the resolver can't tell which split
+        is real -> None (never a guess)."""
+        M2 = M
+        # {a,b}=300 and {a,c}=300 both reconcile to 300 (b==c) -> ambiguous
+        self.assertIsNone(_unique_reconciling_subset(
+            {"a": 200 * M2, "b": 100 * M2, "c": 100 * M2}, 300 * M2))
 
     def test_largest_reconciling_candidate_wins(self):
         """Gross (before-allowance) and net (after-allowance) both reconcile; the

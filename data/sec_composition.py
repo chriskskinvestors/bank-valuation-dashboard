@@ -344,14 +344,83 @@ def _dedup_synonyms(rows: dict, labels: dict) -> dict:
     return out
 
 
+def _collapse_equal_value(rows: dict) -> dict:
+    """Collapse members carrying the EXACT SAME value to one representative — a
+    filer tagging the SAME category under two member qnames whose labels DIFFER
+    (BANR: SmallBalanceCommercialRealEstateLoansMember and SmallBalanceCREMember,
+    both 1,212,357,000; 'Land and Land Development Type' and 'Land and Land
+    Improvements', both 433,678,000). `_dedup_synonyms` keys on the DISPLAY label
+    and so misses these; equal value is the only reliable synonym signal here.
+    Caller is reconcile-gated: collapsing two genuinely-distinct equal-value leaves
+    would drop a needed value and the sum would fall short of the total, so the
+    candidate is rejected — only a true double-count survives the gate."""
+    by_value: dict = defaultdict(list)
+    for m, v in rows.items():
+        by_value[v].append(m)
+    return {ms[0]: v for v, ms in by_value.items()}
+
+
+def _unique_reconciling_subset(rows: dict, total: float, budget: int = 200000) -> dict | None:
+    """The subset of `rows` (>=2 members) that sums to `total` — but ONLY when it
+    is the UNIQUE such subset across all cardinalities. Recovers a flat-tagged
+    parent+PARTIAL-children set that `_finest_partition` can't: FBK tags
+    TotalCommercialLoansMember (9.17B) + ConsumerPortfolioSegmentMember (3.22B) =
+    the 12.38B book, PLUS three commercial sub-types (Commercial, Construction,
+    Consumer-and-other) that do NOT fully decompose the commercial total — so no
+    finest partition exists, but exactly one subset {commercial-total,
+    consumer-total} reconciles. Uniqueness is the safety: a coincidental wrong
+    subset almost never is the SOLE reconciling one, and any ambiguity (e.g. equal
+    members that can swap) returns None. Bounded by a step budget (exhaust -> None,
+    the safe default)."""
+    items = sorted(((k, v) for k, v in rows.items() if v > 0), key=lambda kv: kv[1])
+    keys = [k for k, _ in items]
+    arr = [v for _, v in items]
+    n = len(arr)
+    if n < 2 or not total:
+        return None
+    suffix = [0.0] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        suffix[i] = suffix[i + 1] + arr[i]
+    # TIGHT tol (matches _finest_partition): iXBRL values are exact, so a true
+    # subset ties the total to well within 0.01%. A loose band would let near-equal
+    # members swap in and out and make the reconciling subset spuriously ambiguous.
+    tol = max(abs(total) * 1e-4, 5e5)
+    found: list = []
+    steps = [budget]
+
+    def dfs(i: int, rem: float, chosen: tuple) -> bool:
+        steps[0] -= 1
+        if steps[0] < 0:
+            return True                       # budget exhausted — abort
+        if abs(rem) <= tol and len(chosen) >= 2:
+            found.append(chosen)
+            return len(found) > 1             # a 2nd solution => ambiguous, stop
+        if i >= n or rem < -tol or suffix[i] < rem - tol:
+            return False
+        if arr[i] <= rem + tol and dfs(i + 1, rem - arr[i], chosen + (i,)):
+            return True
+        return dfs(i + 1, rem, chosen)
+
+    dfs(0, total, ())
+    if steps[0] < 0 or len(found) != 1:
+        return None                           # exhausted / ambiguous => safe n/a
+    return {keys[i]: arr[i] for i in found[0]}
+
+
 def _resolve_rows(allrows: dict, total: float, labels: dict, children: dict) -> dict | None:
     """Reduce a raw {member: value} breakdown to the reconciling leaf set, or None.
-    Staged: blocklist -> synonym dedup -> linkbase-descendant drop (reconcile?) ->
-    + value-aggregate drop (reconcile?)."""
+    Staged (each reconcile-gated; first reconciling candidate wins):
+    blocklist -> synonym dedup -> equal-value collapse -> linkbase-descendant drop
+    -> value-finest-partition -> unique-reconciling-subset."""
     work = {m: v for m, v in allrows.items() if not _NON_COMP_MEMBER.search(m)}
     work = _dedup_synonyms(work, labels)
     if len(work) < 2:
         return None
+    # Collapse same-value, different-label synonym duplicates (BANR). Gated: if the
+    # collapse over-merges a genuine leaf the sum falls short and the gate rejects.
+    collapsed = _collapse_equal_value(work)
+    if len(collapsed) >= 2 and _reconciles(collapsed, total):
+        return collapsed
     present = set(work)
     r1 = {m: v for m, v in work.items()
           if not _has_present_descendant(m, present, children)}
@@ -361,6 +430,11 @@ def _resolve_rows(allrows: dict, total: float, labels: dict, children: dict) -> 
     part = _finest_partition(work, total)
     if part and _reconciles(part, total):
         return part
+    # flat-tagged aggregate + PARTIAL children (FBK): no finest partition, but a
+    # single subset reconciles — accept it ONLY when it is provably unique.
+    uniq = _unique_reconciling_subset(work, total)
+    if uniq and _reconciles(uniq, total):
+        return uniq
     return None
 
 

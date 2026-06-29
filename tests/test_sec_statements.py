@@ -135,6 +135,45 @@ class TestStatementMatching(unittest.TestCase):
         self.assertEqual(out.get("balance"), "R2.htm")   # parenthetical companion rejected
         self.assertNotIn("cashflow", out)
 
+    def test_income_statement_word_order_matched_not_comprehensive_or_cashflow(self):
+        # PNC titles its primary income R-file "Consolidated Income Statement" (the
+        # "income statement" word order, NOT "statement of income") and the matcher
+        # must select it — while STILL rejecting the comprehensive-income and
+        # cash-flow siblings that also contain the word "income"/"statement". First
+        # matching Report wins, so the income statement (R3) must precede the
+        # comprehensive companion in the summary and still be the one chosen.
+        summary = (b'<?xml version="1.0"?><FilingSummary><MyReports>'
+                   b'<Report><ShortName>Cover Page</ShortName><HtmlFileName>R1.htm</HtmlFileName></Report>'
+                   b'<Report><ShortName>Consolidated Balance Sheet</ShortName><HtmlFileName>R2.htm</HtmlFileName></Report>'
+                   b'<Report><ShortName>Consolidated Income Statement</ShortName><HtmlFileName>R3.htm</HtmlFileName></Report>'
+                   b'<Report><ShortName>Consolidated Statement of Comprehensive Income</ShortName><HtmlFileName>R4.htm</HtmlFileName></Report>'
+                   b'<Report><ShortName>Consolidated Statement of Cash Flows</ShortName><HtmlFileName>R5.htm</HtmlFileName></Report>'
+                   b'</MyReports></FilingSummary>')
+        import data.sec_statements as s
+        with mock.patch.object(s, "_get", return_value=summary):
+            out = _statement_rfiles("base/")
+        self.assertEqual(out.get("income"), "R3.htm")     # "Income Statement" matched
+        self.assertEqual(out.get("balance"), "R2.htm")
+        self.assertEqual(out.get("cashflow"), "R5.htm")
+        self.assertNotEqual(out.get("income"), "R4.htm")  # NOT comprehensive income
+
+    def test_income_pattern_rejects_comprehensive_and_cashflow_directly(self):
+        # The (want, reject) pair itself: "income statement" matches; the
+        # comprehensive-income and cash-flow titles are rejected even though they
+        # carry "income"/"statement".
+        import data.sec_statements as s
+        want, reject = s._STMT_PATTERNS["income"]
+        for title in ("Consolidated Income Statement", "Income Statement",
+                      "Consolidated Statements of Income",
+                      "Consolidated Statements of Operations",
+                      "Consolidated Statement of Earnings"):
+            self.assertTrue(want.search(title) and not reject.search(title), title)
+        for title in ("Consolidated Statement of Comprehensive Income",
+                      "Consolidated Statements of Comprehensive Income",
+                      "Consolidated Statement of Cash Flows",
+                      "Consolidated Statements of Cash Flows"):
+            self.assertTrue(bool(reject.search(title)), title)   # rejected
+
 
 class TestStitchIncome(unittest.TestCase):
     """Multi-year stitch (data.sec_statements._stitch_income): union of labels
