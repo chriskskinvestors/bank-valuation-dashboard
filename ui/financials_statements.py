@@ -1910,62 +1910,84 @@ def render_fair_value(ticker):
 
 
 def _render_credit_quality(ticker):
-    """As-reported CECL allowance & asset-quality summary, scraped from the HOLDING
-    COMPANY's own latest 10-Q/10-K inline XBRL: allowance for credit losses, the
-    ACL coverage ratio, nonaccrual loans, net charge-offs and provision. n/a when
-    the filer doesn't tag a reconciling allowance + gross-loans pair (never a
-    guessed ratio)."""
+    """Multi-year (up to 5 FY) Company-Reported Credit Quality / Allowance, mirroring
+    the Company-Reported Performance tab: section bands (Allowance & Loans, Asset-
+    quality ratios, Coverage) with the table on the LEFT and % trend charts (ACL/
+    loans, nonaccrual/loans, net charge-offs/loans) on the RIGHT. Every figure is
+    derived from the bank's OWN multi-year statements + 10-K asset-quality table and
+    allowance rollforward — never FDIC. ACL coverage of nonaccrual = acl ÷ (nonaccrual
+    $), where nonaccrual $ = npl_loans × net_loans (both company-reported). A metric
+    whose inputs aren't cleanly disclosed for a year renders blank (never a guess);
+    a row n/a for every year is dropped."""
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
         return
-    try:
-        from data.sec_filing_scraper import credit_quality_for
-        res = credit_quality_for(cik)
-    except Exception:
-        res = None
     st.markdown("---")
     st.subheader("Credit Quality / Allowance — Company Reported")
-    if not res or not res.get("credit_quality"):
-        st.caption("Allowance / loan asset-quality figures not tagged as a reconciling "
-                   "pair in this filer's latest filing — n/a.")
+    try:
+        years, dicts, src = _cr_highlights_by_year(ticker)
+    except Exception:
+        years = dicts = src = None
+    if not years or not dicts:
+        st.caption("Company-reported allowance / asset-quality figures not available "
+                   "from this filer's 10-Ks — n/a.")
         return
-    meta, cq = res["meta"], res["credit_quality"]
-    period = max(cq)
-    d = cq[period]
-    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
-           f"{meta['accession']}/{meta['doc']}")
-    y, mo = period[:4], period[5:7]
-    plab = f"FY{y}" if mo == "12" else f"Q{(int(mo) - 1) // 3 + 1} '{y[2:]}"
+    periods = years[::-1]                               # oldest → newest
+    order = list(range(len(years)))[::-1]               # column order, oldest-first
+
+    # ACL coverage of nonaccrual (x): acl ÷ nonaccrual$, where nonaccrual$ =
+    # npl_loans × net_loans. Computed per year; None when any input is missing.
+    def _cov(d):
+        acl, npl, nl = d.get("acl"), d.get("npl_loans"), d.get("net_loans")
+        if acl is None or npl is None or nl in (None, 0):
+            return None
+        denom = npl * nl
+        return acl / denom if denom else None
+
+    for d in dicts:
+        d["_acl_cov_na"] = _cov(d)
+
+    def _fmt(v, kind):
+        if v is None:
+            return None
+        if kind == "usd":
+            return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+        if kind == "x":
+            return f"{v:.2f}x"
+        return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
+
+    rows = []
+    for sec_name, metrics in _CR_CREDIT_SECTIONS:
+        sec_rows = []
+        for label, key, kind in metrics:
+            vals = [_fmt(dicts[i].get(key), kind) for i in order]
+            # Drop a row that is n/a for every year; keep if any year has data.
+            if any(v is not None for v in vals):
+                sec_rows.append({"label": label, "values": vals, "kind": "data"})
+        if sec_rows:
+            rows.append({"label": sec_name, "values": [], "kind": "header"})
+            rows.extend(sec_rows)
+
+    if not rows:
+        st.caption("Company-reported allowance / asset-quality figures not available "
+                   "from this filer's 10-Ks — n/a.")
+        return
+
     st.caption(
-        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — allowance for "
-        f"credit losses (CECL) and asset quality at {plab}. Ratios are against "
-        f"period-end gross loans. Updates as the company files.")
-
-    def _b(v):
-        return "n/a" if v is None else _cr_usd(v)
-
-    def _pct(v):
-        return "n/a" if v is None else f"{v * 100:.2f}%"
-
-    def _x(v):
-        return "n/a" if v is None else f"{v * 100:.0f}%"
-
-    rows = [
-        ("Total loans (gross)", _b(d["loans_gross"])),
-        ("Allowance for credit losses (ACL)", _b(d["acl"])),
-        ("ACL / total loans", _pct(d["acl_to_loans"])),
-        ("Nonaccrual loans", _b(d["nonaccrual"])),
-        ("Nonaccrual / total loans", _pct(d["nonaccrual_to_loans"])),
-        ("ACL coverage of nonaccruals", _x(d["acl_coverage_nonaccrual"])),
-        ("Net charge-offs (period)", _b(d["nco"])),
-        ("Net charge-offs / loans", _pct(d["nco_to_loans"])),
-        ("Provision for credit losses (period)", _b(d["provision"])),
-    ]
+        f"Source: company 10-K filings ([latest]({src})); {len(periods)} fiscal "
+        "years from the bank's own asset-quality table and allowance rollforward — "
+        "allowance for credit losses, gross loans (loans net of unearned income), "
+        "provision, and the ACL/loan, nonaccrual/loan and net charge-off/loan ratios. "
+        "Ratios are against net loans, as the company reports them; coverage = ACL ÷ "
+        "nonaccrual loans. Company-reported throughout — never FDIC. Blank where a "
+        "filing doesn't disclose a clean figure.")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(["Value"],
-                  [{"label": lab, "values": [val], "kind": "data"} for lab, val in rows],
-                  entity=entity, src=src)
+    _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+    with _lt:
+        _cr_component(periods, rows, entity=entity, src=src)
+    with _rt:
+        _cr_credit_trends(years, dicts, ticker, "crcq")
 
 
 def _cr_hl_norm(s):
@@ -2096,6 +2118,11 @@ def _cr_highlights_by_year(ticker):
 
         ta = _b(["total assets"], year)
         nl = _b(["loans, net", "total loans, net", "net loans"], year)
+        # Gross loans = the pre-allowance carrying line ("Loans, net of unearned
+        # income"). Distinct key from "Loans, net" (exact-match _b), so no collision.
+        loans_gross = _b(["loans, net of unearned income",
+                          "loans, net of unearned fees and costs",
+                          "total loans"], year)
         dep = _b(["total deposits"], year)
         eq = _b(_EQUITY, year)
         afs = _b(["debt securities available-for-sale, at fair value, "
@@ -2179,6 +2206,8 @@ def _cr_highlights_by_year(ticker):
             "npl_loans": aq_by_year.get(year, {}).get("npl_loans"),   # scraped 10-K asset quality
             "nco_loans": aq_by_year.get(year, {}).get("nco_loans"),   # scraped allowance rollforward
             "reserves_loans": _ratio(acl, nl),
+            "acl": acl,                          # abs allowance dollars (contra de-signed)
+            "loans_gross": loans_gross,          # "Loans, net of unearned income" (pre-allowance)
             "cet1": cap.get("cet1_ratio"),
             "total_capital": cap.get("total_ratio"),
             "leverage": cap.get("lev_ratio"),
@@ -2307,6 +2336,71 @@ def _cr_perf_trends(years, dicts, ticker, key_prefix):
                 tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
                 st.plotly_chart(fig, use_container_width=True,
                                 key=f"{key_prefix}_perftr_{ticker}_{r + j}")
+
+
+# Credit-Quality sections: (section name, [(row label, metric key, fmt)]).
+# Drives the multi-year Company-Reported Credit Quality table. Keys come from
+# _cr_highlights_by_year (acl/loans_gross/provision dollars; reserves_loans/npl_loans/
+# nco_loans fractions; _acl_cov_na = ACL coverage of nonaccrual, computed in render).
+_CR_CREDIT_SECTIONS = [
+    ("Allowance & Loans", [
+        ("Allowance for credit losses", "acl", "usd"),
+        ("Gross loans (net of unearned income)", "loans_gross", "usd"),
+        ("Provision for credit losses", "provision", "usd"),
+    ]),
+    ("Asset-quality ratios", [
+        ("ACL / loans", "reserves_loans", "pct2"),
+        ("Nonaccrual / loans", "npl_loans", "pct2"),
+        ("Net charge-offs / loans", "nco_loans", "pct2"),
+    ]),
+    ("Coverage", [
+        ("ACL coverage of nonaccrual", "_acl_cov_na", "x"),
+    ]),
+]
+
+# Credit-Quality trend charts (right side): one % series each, ≥3 points to render,
+# cap 4. ACL/loans, nonaccrual/loans, net charge-offs/loans.
+_CR_CREDIT_TRENDS = [
+    ("ACL / loans (%)", "reserves_loans"),
+    ("Nonaccrual / loans (%)", "npl_loans"),
+    ("Net charge-offs / loans (%)", "nco_loans"),
+]
+
+
+def _cr_credit_trends(years, dicts, ticker, key_prefix):
+    """Right-hand trend charts for multi-year Company-Reported Credit Quality: one
+    single-line % chart per asset-quality ratio (ACL/loans, nonaccrual/loans, net
+    charge-offs/loans). Same plotting style as _cr_perf_trends; a metric n/a for
+    every year is skipped; ≥3 points to render, capped at 4 charts."""
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+    xs = years[::-1]                                    # oldest → newest
+    charts = []
+    for title, key in _CR_CREDIT_TRENDS:
+        ys = [(d.get(key) * 100 if d.get(key) is not None else None)
+              for d in dicts][::-1]
+        if sum(1 for y in ys if y is not None) >= 3:
+            charts.append((title, ys))
+        if len(charts) >= 4:
+            break
+    if not charts:
+        return
+    st.markdown("##### Trends")
+    for r in range(0, len(charts), 2):
+        cols = st.columns(2)
+        for j, (col, (title, ys)) in enumerate(zip(cols, charts[r:r + 2])):
+            with col:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, mode="lines+markers", connectgaps=True,
+                    line=dict(color=CATEGORICAL_PALETTE[0], width=2),
+                    marker=dict(size=5)))
+                apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                                      yaxis_title="%", show_legend=False)
+                tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
+                st.plotly_chart(fig, use_container_width=True,
+                                key=f"{key_prefix}_cqtr_{ticker}_{r + j}")
 
 
 def _cr_highlights_trends(years, dicts, ticker, key_prefix):
