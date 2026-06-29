@@ -133,14 +133,13 @@ def main() -> int:
         # bank's latest 8-Ks. FMP press releases are now batched (symbols=...),
         # so they cover the WHOLE universe in ~18 calls — broad, not watchlist.
         narrow_adapters = []
+        deferred_adapters = []
         broad_adapters = [SEC8KRecentAdapter(), PRNewswireAdapter(),
                           GlobeNewswireAdapter(), FMPPressReleaseAdapter()]
     else:
         # Order matters: cheap, high-yield, RELIABLE sources first so they always
         # fit in budget. FMP (batched, ~18 calls, the broadest press-release
-        # source) runs right after SEC 8-K — never starved behind Google News,
-        # which is per-ticker, often 503-rate-limited from datacenter IPs, and
-        # burns its full 240s cap, so it stays LAST where it can be abandoned.
+        # source) runs right after SEC 8-K.
         broad_adapters = [
             SEC8KAdapter(),
             # FMP press releases: batched over the universe (symbols=...), the
@@ -152,15 +151,20 @@ def main() -> int:
             # Topic feeds for the Home page's categorized overnight news (Macro /
             # Geopolitical / Domestic / Markets) — ONE query per topic, not per-bank.
             GoogleNewsTopicAdapter(),
-            # Google News: per-ticker, parallelized; the slow/flaky one — LAST.
-            GoogleNewsAdapter(),
         ]
         narrow_adapters = [YFinanceNewsAdapter(), IRSiteAdapter()]
+        # Google News is DEFERRED to dead-last — AFTER the first-party IR/Yahoo
+        # narrow adapters. It's per-ticker, often 503-rate-limited from datacenter
+        # IPs, and burns its full 240s cap; running it last means a task-budget
+        # shortfall abandons THIS flaky third-party source, not the first-party IR
+        # feed (which previously sat behind it and got starved — the CBSH gap).
+        deferred_adapters = [GoogleNewsAdapter()]
 
-    adapters = broad_adapters + narrow_adapters
+    adapters = broad_adapters + narrow_adapters + deferred_adapters
 
     print(f"▶ Polling [{profile}] — broad: {len(broad_adapters)} sources × {len(universe)} tickers, "
-          f"narrow: {len(narrow_adapters)} sources × {len(watchlist)} tickers")
+          f"narrow: {len(narrow_adapters)} sources × {len(watchlist)} tickers, "
+          f"deferred: {len(deferred_adapters)}")
     t0 = time.time()
     crashes = 0
     timeouts = 0
