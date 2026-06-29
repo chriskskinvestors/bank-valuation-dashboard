@@ -487,6 +487,25 @@ def get_company_name(ticker: str) -> str | None:
     return name or None
 
 
+def get_company_website(ticker: str) -> str | None:
+    """The FMP `profile` website (e.g. 'https://www.commercebank.com'). Used by
+    IR-site discovery as a domain fallback when FDIC carries no WEBADDR for a
+    bank (the subdomain probe then has nothing to work from — the CBSH gap).
+    None when FMP is unconfigured or the lookup fails."""
+    if not _has_key():
+        return None
+    ticker = ticker.upper()
+    cache_key = f"fmp_profile_website:{ticker}"
+    cached = _cache_get(cache_key, PROFILE_TTL_SECONDS)
+    if cached is not None:
+        return cached or None
+    data = _get("profile", {"symbol": ticker})
+    row = _first_row(data)
+    site = (row.get("website") if row else None) or ""
+    _cache_put(cache_key, site)
+    return site or None
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Public API — historical price chart
 # ──────────────────────────────────────────────────────────────────────────

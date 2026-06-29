@@ -354,8 +354,18 @@ def refresh_q4_ir_endpoints(universe: dict | None = None,
             except Exception:
                 pass
             return tk, curated
+        webaddr = info.get("webaddr") or ""
+        if not webaddr:
+            # FDIC carries no website for this bank (e.g. CBSH), so the subdomain
+            # probe has nothing to work from and the IR site is never discovered.
+            # Fall back to the FMP-listed company website.
+            try:
+                from data.fmp_client import get_company_website
+                webaddr = get_company_website(tk) or ""
+            except Exception:
+                webaddr = ""
         try:
-            return tk, discover_q4_ir_url(info.get("webaddr") or "")
+            return tk, discover_q4_ir_url(webaddr)
         except Exception:
             return tk, None
 
