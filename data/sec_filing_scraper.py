@@ -551,45 +551,94 @@ def _has_capital(cap: dict) -> bool:
     return bool(cap) and any("cet1_ratio" in d or d.get("_cblr") for d in cap.values())
 
 
-def holdco_capital_for(cik, cert=None) -> dict | None:
-    """Cached holdco regulatory capital for a company, from its own SEC filing.
+def _holdco_capital_extract_cached(meta: dict, anchor: float | None) -> dict:
+    """extract_holdco_capital for one filing, cached per accession. {} on a
+    fetch/parse failure (never cache a transient exception). The FDIC anchor is
+    NOT part of the key — it is the bank's (stable) latest CET1, used only to
+    disambiguate within-band; the same parsed filing is reused across calls.
 
-    Prefers the FRESHEST filing that actually carries the capital table: tries
-    the latest 10-Q first (timeliest), and falls back to the latest 10-K when
-    the 10-Q doesn't tag the full table (many banks tag capital only annually).
-    Scrapes the filing's inline XBRL and anchors to the bank's FDIC CET1. Cached
-    by accession — the ~7 MB fetch+parse runs once per filing, and an empty
-    result is cached too so a capital-less 10-Q isn't re-fetched. Returns
-    {"meta": {...}, "capital": {period: {...}}} or None."""
+    Version the key (v3): the prior v2 entries predate the multi-year stitch and
+    are abandoned so the freshly-extracted capital is always served, never stale."""
+    from data import cache
+    ckey = f"holdco_cap:v3:{meta['accession']}"
+    cap = cache.get(ckey)
+    if cap is None:
+        try:
+            cap = extract_holdco_capital(instance_facts(meta), anchor_cet1=anchor)
+            try:
+                cache.put(ckey, cap)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[sec_scraper] holdco capital failed for cik {meta.get('cik')}: "
+                  f"{type(e).__name__}: {e}")
+            cap = {}
+    return cap or {}
+
+
+def holdco_capital_for(cik, cert=None) -> dict | None:
+    """Cached holdco regulatory capital for a company, stitched across its own SEC
+    filings into a multi-year window.
+
+    The freshest period comes from the latest 10-Q (timeliest) when it tags the
+    full capital table, else the latest 10-K (many banks tag capital only
+    annually). The FISCAL-YEAR history then fills from the recent 10-Ks: each 10-K
+    tags its FY-end + the prior FY-end, so a handful of filings cover up to
+    _MAX_YEARS fiscal years — without this, the Financial-Highlights capital rows
+    populated only the latest filing's 1-2 years (FY2021-2023 blank for ABCB).
+
+    FY-ends are taken newest-first and de-duplicated: a year shared by two filings
+    keeps the NEWER filing's value (filings agree on shared comparatives; newest is
+    the as-finally-reported figure). Every filing is anchored to the bank's FDIC
+    CET1 and reconcile-gated by extract_holdco_capital — the stitch only widens the
+    window, it never loosens a gate. The latest-filing periods are kept as-is
+    (including a 10-Q quarter-end), so capital_dynamics still shows the timeliest
+    quarter. Returns {"meta": <latest filing>, "capital": {period: {...}}} or None.
+    """
     if not cik:
         return None
     anchor = _fdic_cet1(cert)
-    from data import cache
+    # 1) Freshest filing carrying the table (timeliest quarter / latest FY). Keep its
+    #    NEWEST period (the timeliest figure — a 10-Q's quarter-end or the latest
+    #    FY-end) plus its FY-end columns; drop any other stub quarter so the annual
+    #    series stays clean (a non-December filer's 10-K can carry an off-cycle stub).
+    latest_meta = None
+    capital: dict = {}
     for forms in (("10-Q",), ("10-K",)):
         meta = latest_filing(cik, forms)
         if not meta:
             continue
-        # Version the key: bump when the extraction shape changes so old cache
-        # entries (e.g. pre-walk) are abandoned and re-extracted, never served
-        # stale. v2 = added the regulatory-capital walk (_walk/_walk_reconciles).
-        ckey = f"holdco_cap:v2:{meta['accession']}"
-        cap = cache.get(ckey)
-        if cap is None:
-            try:
-                cap = extract_holdco_capital(instance_facts(meta), anchor_cet1=anchor)
-                # Cache only a successful parse; a transient fetch/parse exception
-                # is never cached (else one SEC hiccup pins the bank to an older
-                # filing / n/a until the cache version bumps).
-                try:
-                    cache.put(ckey, cap)
-                except Exception:
-                    pass
-            except Exception as e:
-                print(f"[sec_scraper] holdco capital failed for cik {cik}: {type(e).__name__}: {e}")
-                cap = {}
+        cap = _holdco_capital_extract_cached(meta, anchor)
         if _has_capital(cap):
-            return {"meta": meta, "capital": cap}
-    return None
+            latest_meta = meta
+            fye = _fye_month_for(meta) or "12"
+            newest = max(cap)
+            capital = {p: d for p, d in cap.items()
+                       if p == newest or p[5:7] == fye}
+            break
+    if latest_meta is None:
+        return None
+    # 2) Stitch the FY-end history from the recent 10-Ks (newest first). Keep only
+    #    FY-end periods (the filer's real fiscal-year-end month) so stub quarters of
+    #    a 10-K never enter the annual series; never overwrite a period the latest
+    #    filing (or a newer 10-K) already supplied.
+    for meta in _list_10k_filings(cik, _MAX_YEARS):
+        if meta["accession"] == latest_meta["accession"]:
+            cap = capital                      # already extracted (latest is this 10-K)
+        else:
+            cap = _holdco_capital_extract_cached(meta, anchor)
+        if not _has_capital(cap):
+            continue
+        fye = _fye_month_for(meta) or "12"
+        for period in sorted(cap, reverse=True):
+            if period[5:7] != fye or period in capital:
+                continue
+            capital[period] = cap[period]
+        if len({p[:4] for p in capital}) >= _MAX_YEARS:
+            break
+    if not _has_capital(capital):
+        return None
+    return {"meta": latest_meta, "capital": capital}
 
 
 # ── Fair-value hierarchy (ASC 820) extraction ───────────────────────────────
@@ -1669,11 +1718,16 @@ def _list_10k_filings(cik, limit: int) -> list[dict]:
     return out
 
 
-# How many recent 10-Ks to merge. Each tags ~2 comparative years of nonaccrual and
-# ~3 of NIM/charge-offs, so 3 filings comfortably cover a 5-year trend with overlap
-# (overlap is the consistency check — newest filing wins on any shared year).
-_HISTORY_FILINGS = 3
+# How many recent 10-Ks to merge. Many filers (ABCB) tag only the current + ONE
+# prior comparative year of nonaccrual AND of the charge-off rollforward — so each
+# 10-K contributes at most one NEW fiscal year beyond the overlap, and three
+# filings reach only FY..FY-3, leaving the oldest in-window year (FY-4) n/a even
+# though it IS disclosed (in the FY-3 10-K's prior-year column / the FY-4 10-K's
+# own column). Fetch _MAX_YEARS filings so the full _MAX_YEARS window is covered
+# in that worst case; NIM/charge-off years that overlap are the consistency check
+# (newest filing wins on any shared year). Truncated to _MAX_YEARS after merge.
 _MAX_YEARS = 5
+_HISTORY_FILINGS = _MAX_YEARS
 
 
 def extract_asset_quality_nim(metas_and_docs: list[tuple]) -> dict:
@@ -1729,9 +1783,11 @@ def company_asset_quality_nim(cik) -> dict | None:
     if not filings:
         return None
     latest = filings[0]
-    # v3: prose-NIM fallback + performance-status nonaccrual + WriteOffs casing now
-    # fill years/banks the v2 extractor left empty — old cached results are stale.
-    ckey = f"asset_quality_nim:v3:{latest['accession']}:{_HISTORY_FILINGS}"
+    # v4: deeper filing window (_HISTORY_FILINGS = _MAX_YEARS) recovers the oldest
+    # in-window year's NPL/NCO that the 3-filing window dropped. v3: prose-NIM
+    # fallback + performance-status nonaccrual + WriteOffs casing. (_HISTORY_FILINGS
+    # is in the key, so the depth bump alone already invalidates old entries.)
+    ckey = f"asset_quality_nim:v4:{latest['accession']}:{_HISTORY_FILINGS}"
     by_year = cache.get(ckey)
     if by_year is None:
         bundle: list[tuple] = []

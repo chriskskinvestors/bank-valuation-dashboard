@@ -1579,5 +1579,211 @@ class TestFairValueCaching(unittest.TestCase):
         self.assertTrue(all(v == {} for _, v in puts))
 
 
+class TestHoldcoCapitalMultiyear(unittest.TestCase):
+    """holdco_capital_for stitches the FY-end regulatory-capital table across the
+    recent 10-Ks so the Financial-Highlights / Capital-Adequacy rows fill the whole
+    _MAX_YEARS window — not just the latest filing's 1-2 years (the ABCB FY2021-2023
+    blank bug). The freshest filing's periods are kept as-is (including a 10-Q
+    quarter-end); older FY-ends fill newest-first, de-duplicated so a year two
+    filings both tag keeps the NEWER one. No live fetch — latest_filing,
+    _list_10k_filings, the per-filing extract, _fdic_cet1 and _fye_month_for are
+    stubbed."""
+
+    def _meta(self, date, acc, form):
+        return {"accession": acc, "doc": f"d-{acc}.htm", "date": date,
+                "cik": 99, "form": form}
+
+    def _cap(self, cet1, total=None, lev=None):
+        d = {"cet1_ratio": cet1}
+        if total is not None:
+            d["total_ratio"] = total
+        if lev is not None:
+            d["lev_ratio"] = lev
+        return d
+
+    def _run(self, latest_q, latest_k, tenk_list, extracts, fye="12", n=5):
+        import data.sec_filing_scraper as S
+
+        def _latest(cik, forms):
+            return {("10-Q",): latest_q, ("10-K",): latest_k}[forms]
+
+        with mock.patch.object(S, "_fdic_cet1", return_value=None), \
+             mock.patch.object(S, "latest_filing", side_effect=_latest), \
+             mock.patch.object(S, "_list_10k_filings",
+                               side_effect=lambda cik, limit: tenk_list[:limit]), \
+             mock.patch.object(S, "_fye_month_for", return_value=fye), \
+             mock.patch.object(S, "_holdco_capital_extract_cached",
+                               side_effect=lambda m, anchor: extracts[m["accession"]]):
+            return S.holdco_capital_for(99)
+
+    def test_stitches_five_fiscal_years_from_10ks(self):
+        # Each ABCB-style 10-K tags only its FY-end + the prior FY-end. The latest
+        # 10-K alone yields 2 years; the stitch must reach back through the 10-K set
+        # to fill FY2021-FY2025 (the exact bug: FY2021-2023 were blank).
+        ks = [self._meta("2026-02-26", "K25", "10-K"),
+              self._meta("2025-02-28", "K24", "10-K"),
+              self._meta("2024-02-28", "K23", "10-K"),
+              self._meta("2023-02-28", "K22", "10-K"),
+              self._meta("2022-02-28", "K21", "10-K")]
+        extracts = {
+            "K25": {"2025-12-31": self._cap(0.1317), "2024-12-31": self._cap(0.1265)},
+            "K24": {"2024-12-31": self._cap(0.1265), "2023-12-31": self._cap(0.1123)},
+            "K23": {"2023-12-31": self._cap(0.1123), "2022-12-31": self._cap(0.0986)},
+            "K22": {"2022-12-31": self._cap(0.0986), "2021-12-31": self._cap(0.1046)},
+            "K21": {"2021-12-31": self._cap(0.1046), "2020-12-31": self._cap(0.1114)},
+        }
+        # No 10-Q with capital → falls back to the latest 10-K for the freshest period.
+        res = self._run(None, ks[0], ks, extracts)
+        cap = res["capital"]
+        self.assertEqual(sorted(cap, reverse=True),
+                         ["2025-12-31", "2024-12-31", "2023-12-31",
+                          "2022-12-31", "2021-12-31"])
+        self.assertAlmostEqual(cap["2025-12-31"]["cet1_ratio"], 0.1317)
+        self.assertAlmostEqual(cap["2021-12-31"]["cet1_ratio"], 0.1046)  # the recovered tail
+        self.assertEqual(res["meta"]["accession"], "K25")
+
+    def test_latest_10q_quarter_kept_and_fy_history_stitched(self):
+        # A 10-Q tags the full table → its quarter-end is the timeliest period and
+        # is kept as-is; the FY history still fills from the 10-Ks.
+        q = self._meta("2026-05-01", "Q1", "10-Q")
+        ks = [self._meta("2026-02-26", "K25", "10-K"),
+              self._meta("2025-02-28", "K24", "10-K")]
+        extracts = {
+            "Q1": {"2026-03-31": self._cap(0.1407)},
+            "K25": {"2025-12-31": self._cap(0.1317), "2024-12-31": self._cap(0.1265)},
+            "K24": {"2024-12-31": self._cap(0.1265), "2023-12-31": self._cap(0.1123)},
+        }
+        res = self._run(q, ks[0], ks, extracts)
+        cap = res["capital"]
+        self.assertIn("2026-03-31", cap)                       # 10-Q quarter retained
+        self.assertEqual(sorted(cap, reverse=True)[:2],
+                         ["2026-03-31", "2025-12-31"])
+        self.assertAlmostEqual(cap["2023-12-31"]["cet1_ratio"], 0.1123)  # stitched FY
+
+    def test_shared_year_keeps_newer_filing(self):
+        # Two 10-Ks both tag FY2024 (a restated comparative). The newer filing's
+        # value wins — the stitch never overwrites an already-supplied period.
+        ks = [self._meta("2026-02-26", "K25", "10-K"),
+              self._meta("2025-02-28", "K24", "10-K")]
+        extracts = {
+            "K25": {"2025-12-31": self._cap(0.1317), "2024-12-31": self._cap(0.1265)},
+            "K24": {"2024-12-31": self._cap(0.9999), "2023-12-31": self._cap(0.1123)},  # restated
+        }
+        res = self._run(None, ks[0], ks, extracts)
+        self.assertAlmostEqual(res["capital"]["2024-12-31"]["cet1_ratio"], 0.1265)  # newer
+
+    def test_non_december_fye_drops_stub_quarter(self):
+        # A Sep-30 FYE filer: only the 09-30 FY-ends enter the stitch; an off-cycle
+        # December period a 10-K happens to tag is a stub, not a fiscal year.
+        ks = [self._meta("2025-11-20", "K25", "10-K")]
+        extracts = {"K25": {"2025-09-30": self._cap(0.1100),
+                            "2024-09-30": self._cap(0.1050),
+                            "2024-12-31": self._cap(0.1080)}}  # stub
+        res = self._run(None, ks[0], ks, extracts, fye="09")
+        self.assertEqual(sorted(res["capital"], reverse=True),
+                         ["2025-09-30", "2024-09-30"])
+        self.assertNotIn("2024-12-31", res["capital"])
+
+    def test_no_capital_anywhere_returns_none(self):
+        ks = [self._meta("2026-02-26", "K25", "10-K")]
+        # _has_capital is False for an empty dict → no filing qualifies.
+        res = self._run(None, ks[0], ks, {"K25": {}})
+        self.assertIsNone(res)
+
+
+class TestAssetQualityNimWindow(unittest.TestCase):
+    """company_asset_quality_nim must fetch a deep enough 10-K window that the
+    OLDEST in-window fiscal year's NPL/NCO is recovered (the ABCB FY2021 drop) —
+    each 10-K tags only ~2 comparative years, so a 3-filing window left FY-4 blank.
+    A year disclosed by NO filing genuinely stays None (cardinal rule). No live
+    fetch — _list_10k_filings and the per-filing fetch/parse are stubbed."""
+
+    GROSS = "us-gaap:FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss"
+    NACC = "us-gaap:FinancingReceivableRecordedInvestmentNonaccrualStatus"
+    WO = "us-gaap:FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoff"
+    RECOV = "us-gaap:FinancingReceivableAllowanceForCreditLossesRecovery"
+    M = 1e6
+
+    def _year_facts(self, year, npl_bp, nco_bp):
+        # A single year's nonaccrual instant + charge-off rollforward, sized so
+        # npl_loans≈npl_bp/10000 and nco_loans≈nco_bp/10000 against a 20,000M book.
+        gross = 20000 * self.M
+        facts = [Fact(self.GROSS, gross, f"{year}-12-31", None, {}, "usd"),
+                 Fact(self.NACC, gross * npl_bp / 10000.0, f"{year}-12-31", None, {}, "usd"),
+                 Fact(self.WO, gross * nco_bp / 10000.0, f"{year}-12-31",
+                      f"{year}-01-01", {}, "usd"),
+                 Fact(self.RECOV, 0.0, f"{year}-12-31", f"{year}-01-01", {}, "usd")]
+        return facts
+
+    def _filing(self, fy):
+        return {"accession": f"K{fy}", "doc": f"d-{fy}.htm",
+                "date": f"{fy + 1}-02-26", "cik": 99}
+
+    def test_oldest_year_recovered_from_deep_window(self):
+        # Five FY 10-Ks, each tagging only its own year here. With the OLD 3-filing
+        # window FY2021 (the 5th-oldest) was never fetched → blank. The deepened
+        # window reaches it.
+        filings = [self._filing(fy) for fy in (2025, 2024, 2023, 2022, 2021)]
+        facts = {f"K{fy}": self._year_facts(fy, npl_bp=50, nco_bp=10)
+                 for fy in (2025, 2024, 2023, 2022, 2021)}
+        res = company_asset_quality_nim_via(self, filings, facts)
+        by = res["by_year"]
+        self.assertEqual(set(by), {2025, 2024, 2023, 2022, 2021})
+        for yr in (2025, 2021):
+            self.assertAlmostEqual(by[yr]["npl_loans"], 0.0050, places=4)
+            self.assertAlmostEqual(by[yr]["nco_loans"], 0.0010, places=4)
+
+    def test_year_disclosed_by_no_filing_stays_none(self):
+        # FY2021's facts are tagged by NO filing (CFR-style: older 10-Ks dropped the
+        # nonaccrual/charge-off XBRL). FY2021 NPL/NCO genuinely stays None — never
+        # fabricated — while the disclosed years populate.
+        filings = [self._filing(fy) for fy in (2025, 2024, 2023, 2022, 2021)]
+        facts = {f"K{fy}": self._year_facts(fy, npl_bp=50, nco_bp=10)
+                 for fy in (2025, 2024)}
+        facts.update({f"K{fy}": [] for fy in (2023, 2022, 2021)})  # nothing tagged
+        res = company_asset_quality_nim_via(self, filings, facts)
+        by = res["by_year"]
+        self.assertAlmostEqual(by[2025]["npl_loans"], 0.0050, places=4)
+        self.assertIsNone(by.get(2021, {}).get("npl_loans"))
+        self.assertIsNone(by.get(2021, {}).get("nco_loans"))
+
+
+def company_asset_quality_nim_via(test, filings, facts_by_acc):
+    """Drive company_asset_quality_nim with a stubbed filing list + per-filing facts.
+
+    _get returns real HTML bytes carrying the accession (so the MD&A NIM-table
+    parser, which runs lxml over them, gets a valid empty document); parse_inline_xbrl
+    and instance_facts map a filing back to its stubbed facts list. The facts lists
+    are short, so instance_facts is consulted — both paths return the same facts."""
+    import data.sec_filing_scraper as S
+    from data import cache
+
+    def _acc_for_url(url):
+        for f in filings:
+            if f["doc"] in url:
+                return f["accession"]
+        return None
+
+    def _get_html(url):
+        acc = _acc_for_url(url)
+        return f"<html><!--{acc}--></html>".encode()
+
+    def _parse(html):
+        import re as _re
+        m = _re.search(rb"<!--(.*?)-->", html)
+        acc = m.group(1).decode() if m else None
+        return facts_by_acc.get(acc, [])
+
+    with mock.patch.object(S, "_list_10k_filings",
+                           side_effect=lambda cik, n: filings[:n]), \
+         mock.patch.object(S, "_get", side_effect=_get_html), \
+         mock.patch.object(S, "parse_inline_xbrl", side_effect=_parse), \
+         mock.patch.object(S, "instance_facts",
+                           side_effect=lambda m: facts_by_acc[m["accession"]]), \
+         mock.patch.object(cache, "get", return_value=None), \
+         mock.patch.object(cache, "put", return_value=None):
+        return S.company_asset_quality_nim(99)
+
+
 if __name__ == "__main__":
     unittest.main()
