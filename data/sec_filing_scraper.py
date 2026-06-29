@@ -1379,32 +1379,61 @@ def _row_numbers(cells: list[str]) -> list[float]:
     return out
 
 
+def _num_cell(c: str):
+    """Parse one cell to a float ('3.21%', '(0.05)', '1,398') or None for a
+    non-numeric/empty cell. Parentheses → negative; '%','$',commas stripped."""
+    c = c.strip().replace("%", "").replace("$", "").strip()
+    if not _NUM_CELL.match(c):
+        return None
+    neg = c.startswith("(")
+    try:
+        v = float(c.strip("()").replace(",", ""))
+    except ValueError:
+        return None
+    return -v if neg else v
+
+
+def _year_columns(rows: list[list[str]]) -> list[tuple[int, int]]:
+    """[(column_index, fiscal_year), …] for the table's year header. The header row
+    is the one with the MOST standalone 4-digit year cells (≥2). Real MD&A tables
+    carry a leading label cell and often a '2025/2024 Change' column alongside the
+    year labels, so the header row is NOT pure years — pick by year-cell count and
+    keep each year's COLUMN INDEX so the NIM row is read positionally, never by a
+    strip-then-zip that an interleaved blank or a 'Change' column would misalign."""
+    best: list[tuple[int, int]] = []
+    for r in rows:
+        yc = [(i, int(c.strip())) for i, c in enumerate(r)
+              if re.fullmatch(r"(19|20)\d{2}", c.strip())]
+        if len(yc) > len(best):
+            best = yc
+    return best if len(best) >= 2 else []
+
+
 def extract_nim_by_year(html_bytes: bytes) -> dict:
     """{fiscal_year:int -> nim_fraction} from the MD&A average-balance table HTML.
 
     The table is not inline-XBRL-tagged, so it's read from the rendered HTML: find
     the table containing a 'Net interest margin' row, read the column years from
-    its header row(s), and zip the NIM row's percentages to those years. When the
-    explicit NIM line is absent but the table states net interest income and total
-    interest-earning assets (average), NIM is computed = NII ÷ avg earning assets.
-    Percentages are returned as fractions (3.79% → 0.0379). {} if no such table."""
+    its header row(s), and align the NIM row's percentages to those year COLUMNS by
+    position. When the explicit NIM line is absent but the table states net interest
+    income and total interest-earning assets (average), NIM is computed = NII ÷ avg
+    earning assets. Percentages are returned as fractions (3.79% → 0.0379). {} if
+    no such table."""
     from lxml import html as lhtml
     root = lhtml.fromstring(html_bytes)
     for tbl in root.iter("table"):
-        if not re.search(r"net\s+interest\s+margin", tbl.text_content(), re.I):
+        # Gate on the NIM line OR its synonym 'net yield on … earning assets'
+        # (CBSH and others state the margin only under that name, in a table that
+        # never says 'net interest margin' — gating on that phrase alone skipped it).
+        if not re.search(r"net\s+interest\s+margin|net\s+yield\s+on\b",
+                         tbl.text_content(), re.I):
             continue
         rows = [[re.sub(r"\s+", " ", td.text_content()).strip()
                  for td in tr.iter("td", "th")] for tr in tbl.iter("tr")]
-        # Column years: the header row listing standalone 4-digit years (2025 2024 …),
-        # in left→right order. Pick the first row that is purely such year labels.
-        years: list[int] = []
-        for r in rows:
-            yrs = [int(c) for c in r if re.fullmatch(r"(19|20)\d{2}", c.strip())]
-            if len(yrs) >= 2 and len(yrs) == len([c for c in r if c.strip()]):
-                years = yrs
-                break
-        if not years:
+        year_cols = _year_columns(rows)
+        if not year_cols:
             continue
+        years = [y for _, y in year_cols]
 
         def _row(label_pat):
             for r in rows:
@@ -1412,15 +1441,34 @@ def extract_nim_by_year(html_bytes: bytes) -> dict:
                     return r
             return None
 
+        # The headline NIM row: a label STARTING with 'net interest margin'
+        # (allowing '(FTE)', '- TE', 'on an FTE basis', footnote refs like '(3)',
+        # 'on average interest-earning assets') OR its exact synonym 'net yield on
+        # interest-earning assets' (CBSH/others state NIM under that name — same
+        # ratio, NII ÷ avg earning assets). The leading anchor rejects the
+        # lookalikes — 'Percentage increase … in net interest margin' (CBSH) and
+        # 'Information on net interest income and net interest margin:' (BOKF
+        # header) — and a bare fullmatch missed every filer that suffixes the
+        # label, which is why the latest FY's NIM kept landing n/a.
+        _NIM_LABEL = re.compile(
+            r"net\s+interest\s+margin\b|"
+            r"net\s+yield\s+on\s+(average\s+|total\s+)?(interest[- ]?earning|earning)\s+assets",
+            re.I)
+        nim_row = next((r for r in rows if r and _NIM_LABEL.match(r[0].strip())
+                        and "trading activities" not in r[0].lower()), None)
+
         nims: dict[int, float] = {}
-        nim_row = _row(r"net\s+interest\s+margin")
         if nim_row is not None:
-            vals = _row_numbers(nim_row[1:])
-            # The NIM row holds one percentage per year column, in order.
-            if len(vals) >= len(years):
-                for yr, v in zip(years, vals[:len(years)]):
-                    if 0 < v < 15:              # a NIM in % is small & positive
-                        nims[yr] = v / 100.0
+            # One NIM percentage per year, left→right. SEC renders a percent as one
+            # cell ('3.21%') or two ('3.21','%'); _num_cell parses both. Zip to the
+            # years ONLY when the count matches exactly — an off-count means the row
+            # carries an extra figure (a 'Change' column value) we can't position
+            # safely, so n/a rather than a misaligned guess.
+            vals = [v for v in (_num_cell(c) for c in nim_row[1:])
+                    if v is not None and 0 < v < 15]
+            if len(vals) == len(years):
+                for yr, v in zip(years, vals):
+                    nims[yr] = v / 100.0
         if not nims:
             # Fallback: NII ÷ average earning assets, both from this same table.
             nii_row = _row(r"net\s+interest\s+income")
@@ -1519,7 +1567,7 @@ def company_asset_quality_nim(cik) -> dict | None:
     if not filings:
         return None
     latest = filings[0]
-    ckey = f"asset_quality_nim:v1:{latest['accession']}:{_HISTORY_FILINGS}"
+    ckey = f"asset_quality_nim:v2:{latest['accession']}:{_HISTORY_FILINGS}"
     by_year = cache.get(ckey)
     if by_year is None:
         bundle: list[tuple] = []

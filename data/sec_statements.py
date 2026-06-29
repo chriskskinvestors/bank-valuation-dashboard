@@ -186,14 +186,23 @@ def _rfile_for(base: str, stype: str) -> str | None:
     return _statement_rfiles(base).get(stype)
 
 
+_SCALE_WORD = {"thousands": 1e3, "millions": 1e6, "billions": 1e9}
+
+
 def _units_scale(title: str) -> float:
+    """Dollar scale from a statement title. The DOLLAR magnitude is the one in
+    the '$ in <unit>' phrase; a separate 'shares in Thousands' clause governs
+    share COUNTS, not dollars (KEY's income title is '… shares in Thousands,
+    $ in Millions' — keying off the first 'in thousands' would wrongly scale
+    every dollar line by 1e3 instead of 1e6). Prefer the explicit '$ in <unit>',
+    then fall back to a bare 'in <unit>' for titles that omit the '$'."""
     t = title.lower()
-    if "in thousands" in t:
-        return 1e3
-    if "in millions" in t:
-        return 1e6
-    if "in billions" in t:
-        return 1e9
+    m = re.search(r"\$\s*in\s+(thousands|millions|billions)", t)
+    if m:
+        return _SCALE_WORD[m.group(1)]
+    m = re.search(r"\bin\s+(thousands|millions|billions)", t)
+    if m:
+        return _SCALE_WORD[m.group(1)]
     return 1.0
 
 
@@ -222,22 +231,34 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
     title = " ".join(tl[0].text_content().split()) if tl else ""
     scale = _units_scale(title)
 
-    def classes(tr):
-        return " ".join((c.get("class") or "") for c in tr.xpath("./th|./td"))
-
     header_rows, body = [], []
     for tr in trs:
-        cls = classes(tr)
-        # Column-header rows use class 'th'; the title row uses 'tl'. Data/label
-        # rows use 'pl'/'pr'/'nump'/'num'/'text' (none contain 'th' or 'tl').
-        if re.search(r"\bth\b|\btl\b", cls):
+        cells = tr.xpath("./th|./td")
+        if not cells:
+            continue
+        # Column-header rows (title row + the date header) are built ENTIRELY of
+        # <th> tags; data/label rows always carry at least one <td> (the 'pl'
+        # label cell). Some filers (e.g. KEY) insert an empty spacer <td
+        # class="th"> into every data row, so keying off the CLASS string 'th'
+        # mis-routes every data row into the header — classify by TAG instead.
+        if all(c.tag == "th" for c in cells):
             header_rows.append(tr)
         else:
             body.append(tr)
 
+    def _has_th_class(cell) -> bool:
+        return "th" in (cell.get("class") or "").split()
+
+    def _valcells(cells):
+        """Value cells of a data row: everything after the label cell, minus the
+        empty spacer <td class="th"> some filers (KEY) insert between the label
+        and the numbers. Dropping it keeps each value aligned to its period
+        column; a genuine blank value cell (class 'text'/'num') is preserved."""
+        return [c for c in cells[1:] if not _has_th_class(c)]
+
     ncol = 0
     for tr in body:
-        ncol = max(ncol, len(tr.xpath("./th|./td")) - 1)
+        ncol = max(ncol, len(_valcells(tr.xpath("./th|./td"))))
 
     periods: list = []
     if header_rows:
@@ -260,7 +281,7 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
         label = " ".join(cells[0].text_content().split())
         if not label:
             continue
-        valcells = cells[1:]
+        valcells = _valcells(cells)
         texts = [" ".join(c.text_content().split()) for c in valcells]
         rscale = 1.0 if _PERSHARE.search(label) else scale
         parsed = [_num(t, rscale) for t in texts]
@@ -377,15 +398,37 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
         return None
     all_periods = sorted({p for f in parsed for p in f["periods"]},
                          key=_period_year, reverse=True)[:n_years]
+    def _column(f, period):
+        idx = f["periods"].index(period)
+        return {(_norm_label(r["label"]), r["header"]):
+                (r["values"][idx] if idx < len(r["values"]) else None)
+                for r in f["rows"] if not r["header"]}
+
+    # Per period, the OWNING filing is the newest one that lists the period; its
+    # rows define which lines the company broke out for that year (a line the
+    # owner doesn't carry stays BLANK — the company's own absence, never
+    # backfilled from an older filing). But the owner can list a line yet leave
+    # THAT period's cell blank (KEY's latest balance sheet carries Dec-31-2023 as
+    # a third date but fills only a few rows — Total assets is blank); such a hole
+    # is backfilled from the newest OLDER filing that reports a number for that
+    # exact (line, period). Never overwrites a real owner value.
     col: dict = {}                              # period -> {norm_key: value}
     for period in all_periods:
-        for f in parsed:                        # newest first wins
-            if period in f["periods"]:
-                idx = f["periods"].index(period)
-                col[period] = {(_norm_label(r["label"]), r["header"]):
-                               (r["values"][idx] if idx < len(r["values"]) else None)
-                               for r in f["rows"] if not r["header"]}
-                break
+        owner_idx = next((i for i, f in enumerate(parsed)
+                          if period in f["periods"]), None)
+        if owner_idx is None:
+            col[period] = {}
+            continue
+        merged = _column(parsed[owner_idx], period)   # owner defines present lines
+        for key, val in list(merged.items()):
+            if val is None:                           # a hole in an existing line
+                for f in parsed[owner_idx + 1:]:      # older filings, newest first
+                    if period in f["periods"]:
+                        older = _column(f, period).get(key)
+                        if older is not None:
+                            merged[key] = older
+                            break
+        col[period] = merged
     rows = []
     for key, label, header in _merge_row_order(parsed):
         if header:
@@ -409,7 +452,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     metas = _recent_10k_metas(cik, 6 if (stype == "balance" or stype in _NOTE_SPECS) else 4)
     if not metas:
         return None
-    ckey = f"asreported_my:v4:{stype}:{metas[0]['accession']}:{n_years}"
+    ckey = f"asreported_my:v5:{stype}:{metas[0]['accession']}:{n_years}"
     cached = cache.get(ckey)
     if cached is not None:
         return cached or None

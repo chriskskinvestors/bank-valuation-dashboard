@@ -952,6 +952,80 @@ class TestAssetQualityNim(unittest.TestCase):
     def test_no_nim_table_yields_empty(self):
         self.assertEqual(extract_nim_by_year(b"<table><tr><td>nothing</td></tr></table>"), {})
 
+    def test_latest_year_captured_with_change_column(self):
+        # ZION: the year header carries a leading label AND a '2025/2024 Change'
+        # column alongside the years, and the NIM cell glues the percent ('3.21%').
+        # The old pure-years header check rejected this row, so the latest FY's NIM
+        # landed n/a (or was read off the prior year). Detect the header by year
+        # count and align the 3 NIM values to the 3 years.
+        html = (b"<table>"
+                b"<tr><td>(Dollar amounts in millions)</td><td>2025/2024 Change</td>"
+                b"<td>2025</td><td>2024</td><td>2023</td></tr>"
+                b"<tr><td>Net interest margin</td><td></td>"
+                b"<td>3.21%</td><td>3.00%</td><td>3.02%</td></tr>"
+                b"</table>")
+        out = extract_nim_by_year(html)
+        self.assertAlmostEqual(out[2025], 0.0321)
+        self.assertAlmostEqual(out[2024], 0.0300)
+        self.assertAlmostEqual(out[2023], 0.0302)
+
+    def test_latest_year_captured_when_values_not_column_aligned(self):
+        # WSFS/FITB: header years sit in early columns but each NIM value is pushed
+        # far right by colspans, so positional column lookup fails — an ordered zip
+        # of the NIM row's numeric values to the years (counts match) is what lands
+        # the latest FY. Suffix '(FTE)' on the label must still match.
+        html = (b"<table>"
+                b"<tr><td>For the years ended</td><td>2025</td><td>2024</td><td>2023</td></tr>"
+                b"<tr><td>Net interest margin (FTE)</td>"
+                b"<td>3.11</td><td>%</td><td></td><td>2.90</td><td>%</td>"
+                b"<td></td><td>3.05</td><td>%</td></tr>"
+                b"</table>")
+        out = extract_nim_by_year(html)
+        self.assertAlmostEqual(out[2025], 0.0311)
+        self.assertAlmostEqual(out[2024], 0.0290)
+        self.assertAlmostEqual(out[2023], 0.0305)
+
+    def test_net_yield_on_earning_assets_synonym(self):
+        # CBSH states NIM as 'Net yield on interest earning assets' in a table that
+        # never says 'net interest margin'. That synonym is the same ratio and must
+        # be captured (a 5-year selected-data row).
+        html = (b"<table>"
+                b"<tr><td></td><td>2025</td><td>2024</td><td>2023</td></tr>"
+                b"<tr><td>Net yield on interest earning assets (tax equivalent)</td>"
+                b"<td>3.63%</td><td>3.47%</td><td>3.16%</td></tr>"
+                b"</table>")
+        out = extract_nim_by_year(html)
+        self.assertAlmostEqual(out[2025], 0.0363)
+        self.assertAlmostEqual(out[2024], 0.0347)
+        self.assertAlmostEqual(out[2023], 0.0316)
+
+    def test_lookalike_percentage_change_row_not_taken_as_nim(self):
+        # 'Percentage increase (decrease) … in net interest margin' is a DELTA row,
+        # not the margin — the leading-anchor matcher must skip it and find the real
+        # NIM row below.
+        html = (b"<table>"
+                b"<tr><td></td><td>2025</td><td>2024</td></tr>"
+                b"<tr><td>Percentage increase (decrease) in net interest margin "
+                b"compared to the prior year</td><td>6.86%</td><td>4.25%</td></tr>"
+                b"<tr><td>Net interest margin (FTE)</td><td>3.63%</td><td>3.47%</td></tr>"
+                b"</table>")
+        out = extract_nim_by_year(html)
+        self.assertAlmostEqual(out[2025], 0.0363)
+        self.assertAlmostEqual(out[2024], 0.0347)
+
+    def test_off_count_nim_row_yields_na_not_misaligned(self):
+        # If the NIM row's numeric-value count doesn't match the year count, an
+        # ordered zip would misalign — so it's left n/a rather than shipping a
+        # wrong number (cardinal rule). Here 2 years but 3 numeric values.
+        html = (b"<table>"
+                b"<tr><td></td><td>2025</td><td>2024</td></tr>"
+                b"<tr><td>Net interest margin</td>"
+                b"<td>3.21%</td><td>3.00%</td><td>2.95%</td></tr>"
+                b"</table>")
+        # Falls through to the NII/earning-assets compute path, which is absent
+        # here → empty, never a guessed alignment.
+        self.assertEqual(extract_nim_by_year(html), {})
+
     def test_merge_newest_filing_wins_and_truncates(self):
         # Two filings overlapping on 2024: the newer (first) filing's value wins.
         newer_facts = [

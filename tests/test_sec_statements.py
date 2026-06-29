@@ -79,6 +79,38 @@ class TestParseRfile(unittest.TestCase):
             vals["Basic earnings per common share (in dollars per share)"], 6.02)
         self.assertEqual(vals["Basic (in shares)"], 68_448_812.0)  # not scaled
 
+    def test_spacer_td_th_does_not_swallow_data_rows(self):
+        # KEY (and peers) insert an empty spacer <td class="th"> into EVERY data
+        # row. Classifying a row as a header by the CLASS string 'th' then routed
+        # every data row into the header — periods/rows came back empty. Rows must
+        # be told apart by TAG (all-<th> = header), and the spacer dropped so each
+        # value stays aligned to its period.
+        rf = (b'<table class="report">'
+              b'<tr><th class="tl">Consolidated Statements of Income - USD ($) '
+              b'shares in Thousands, $ in Millions</th><th class="th">12 Months Ended</th></tr>'
+              b'<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th>'
+              b'<th class="th">Dec. 31, 2023</th></tr>'
+              b'<tr><td class="pl">Loans</td><td class="th"> </td>'
+              b'<td class="nump">$ 5,749</td><td class="nump">6,026</td>'
+              b'<td class="nump">6,219</td></tr>'
+              b'</table>')
+        p = parse_rfile(rf)
+        self.assertEqual(p["periods"],
+                         ["Dec. 31, 2025", "Dec. 31, 2024", "Dec. 31, 2023"])
+        loans = [r for r in p["rows"] if r["label"] == "Loans"][0]
+        self.assertFalse(loans["header"])
+        # $ in Millions governs the dollar scale (NOT 'shares in Thousands'); the
+        # spacer cell is dropped so values map 1:1 to the three periods.
+        self.assertEqual(loans["values"], [5_749e6, 6_026e6, 6_219e6])
+
+    def test_units_scale_dollar_phrase_beats_shares_clause(self):
+        # 'shares in Thousands, $ in Millions' must scale dollars by 1e6 — the
+        # '$ in …' phrase wins over a leading 'shares in Thousands' clause.
+        self.assertEqual(
+            _units_scale("Income - USD ($) shares in Thousands, $ in Millions"), 1e6)
+        self.assertEqual(_units_scale("Balance - USD ($) $ in Millions"), 1e6)
+        self.assertEqual(_units_scale("Income - USD ($) $ in Thousands"), 1e3)
+
     def test_xbrl_definition_footnotes_truncated(self):
         # SEC R-files append an element-definition footnote block after the
         # statement (no period values) — it must be dropped, not rendered.
@@ -155,6 +187,37 @@ class TestStitchIncome(unittest.TestCase):
         self.assertEqual(len(afs), 1)                                  # not fragmented
         self.assertEqual(afs[0]["label"], "AFS securities, net of allowance of $75 and $69")
         self.assertEqual(afs[0]["values"], [2207.0, 1671.0, 1402.0])   # FY2025, FY2024, FY2023
+
+    def test_blank_cell_in_owner_column_backfills_from_older(self):
+        # KEY's latest balance sheet lists Dec-31-2023 as a third date but leaves
+        # most of that column blank (Total assets = None) — the line EXISTS in the
+        # owner, just the cell is empty. That hole must backfill from the older
+        # filing that DOES report it (188.3), not stay None.
+        from data.sec_statements import _stitch_statement
+        newer = self._filing(["Dec. 31, 2025", "Dec. 31, 2024", "Dec. 31, 2023"], [
+            ("Total assets", False, [184.4, 187.2, None]),   # 2023 cell blank
+        ])
+        older = self._filing(["Dec. 31, 2024", "Dec. 31, 2023"], [
+            ("Total assets", False, [187.2, 188.3]),
+        ])
+        out = _stitch_statement([newer, older], n_years=3)
+        ta = [r for r in out["rows"] if r["label"] == "Total assets"][0]
+        self.assertEqual(ta["values"], [184.4, 187.2, 188.3])
+
+    def test_line_absent_from_owner_stays_blank(self):
+        # The flip side: a line the OWNER filing doesn't carry for a period stays
+        # BLANK (the company's own absence), never backfilled from an older filing.
+        from data.sec_statements import _stitch_statement
+        newer = self._filing(["Dec. 31, 2025", "Dec. 31, 2024"], [
+            ("Interest", False, [100.0, 90.0]),
+        ])
+        older = self._filing(["Dec. 31, 2024", "Dec. 31, 2023"], [
+            ("Interest", False, [90.0, 80.0]),
+            ("SBA gain", False, [5.0, 4.0]),     # owner of 2024 has no SBA-gain line
+        ])
+        out = _stitch_statement([newer, older], n_years=3)
+        sba = [r for r in out["rows"] if r["label"] == "SBA gain"][0]
+        self.assertEqual(sba["values"], [None, None, 4.0])   # 2024 NOT backfilled to 5.0
 
 
 _DEP_SUMMARY = b"""<?xml version="1.0"?>

@@ -2340,7 +2340,11 @@ def _cr_highlights_by_year(ticker):
         acl = _b(["allowance for credit losses"], year)
         acl = abs(acl) if acl is not None else None   # filed as a contra (negative)
 
-        ni = _i(["net income"], year)
+        # "net income (loss)" covers filers (KEY) whose headline line is labelled
+        # 'NET INCOME (LOSS)'; the longer 'attributable to …' lines never match
+        # these exact keys, so the consolidated total is taken, not a subtotal.
+        ni = _i(["net income", "net income (loss)", "net income (loss) available "
+                 "to common shareholders"], year)
         nii = _i(["net interest income"], year)
         nonii = _i(["total noninterest income"], year)
         nonix = _i(["total noninterest expense"], year)
