@@ -1076,6 +1076,10 @@ _CQ_CONCEPTS = {
                    "FinancingReceivableRecordedInvestmentNonaccrualStatus"),
     "writeoff": ("FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoff",
                  "FinancingReceivableAllowanceForCreditLossesWriteoff",
+                 # KEY tags the rollforward charge-off with a different casing/plural
+                 # ('WriteOffs', capital O) than the singular concept above; without
+                 # it KEY's NCO came back None even though the value is cleanly tagged.
+                 "FinancingReceivableAllowanceForCreditLossesWriteOffs",
                  "AllowanceForLoanAndLeaseLossesWriteOffs"),
     "recovery": ("FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossRecovery",
                  "FinancingReceivableAllowanceForCreditLossesRecovery",
@@ -1315,6 +1319,35 @@ def _gross_loans_at(facts: list[Fact], period_end: str):
     return _sec_pick(facts, _CQ_CONCEPTS["loans_gross"], period_end)
 
 
+# Performance-status axis + nonperforming member: the dimension a filer uses to
+# tag its loan total split between performing and nonperforming, rather than a
+# dedicated nonaccrual concept (KEY does this — no
+# FinancingReceivableRecordedInvestmentNonaccrualStatus exists in its instance).
+_PERF_STATUS_AXIS = "FinancialInstrumentPerformanceStatusAxis"
+_NONPERF_MEMBER = re.compile(r"nonperform|nonaccrual", re.I)
+
+
+def _nonaccrual_via_perf_status(facts: list[Fact], period_end: str):
+    """Total nonaccrual/nonperforming loans at `period_end` for a filer that tags
+    it ONLY as the gross-loans concept sliced by the performance-status axis
+    (member = Nonperforming), with no portfolio/class member — i.e. the single
+    performance-status total, NOT a per-segment slice. None if not tagged this way
+    or if more than one such total is present (ambiguous → never guess)."""
+    hits = []
+    for f in facts:
+        if (f.concept.split(":")[-1] in _CQ_CONCEPTS["loans_gross"]
+                and f.period_start is None and f.period_end == period_end
+                and len(f.members) == 1):
+            axis, member = next(iter(f.members.items()))
+            if (axis.split(":")[-1] == _PERF_STATUS_AXIS
+                    and _NONPERF_MEMBER.search(member.split(":")[-1])
+                    and f.value is not None):
+                hits.append(f.value)
+    if len(hits) == 1:
+        return hits[0]
+    return None
+
+
 def extract_npl_nco_by_year(facts: list[Fact]) -> dict:
     """{fiscal_year:int -> {"npl_loans":…, "nco_loans":…}} from ONE filing's iXBRL.
 
@@ -1339,6 +1372,25 @@ def extract_npl_nco_by_year(facts: list[Fact]) -> dict:
         year = int(f.period_end[:4])
         ratio = npl / gross
         if 0.0 <= ratio <= 0.25:                # sane NPL band; else parse error → skip
+            out.setdefault(year, {}).setdefault("npl_loans", ratio)
+
+    # NPL fallback: filers that tag no dedicated nonaccrual concept (KEY) state the
+    # nonperforming TOTAL as the gross-loans concept sliced by the performance-status
+    # axis. For every balance-sheet date that has a gross-loan denominator but no
+    # npl_loans yet, take that performance-status total (single, unambiguous) ÷ gross.
+    bs_dates = {f.period_end for f in facts
+                if f.concept.split(":")[-1] in _CQ_CONCEPTS["loans_gross"]
+                and not f.members and f.period_start is None}
+    for period_end in bs_dates:
+        year = int(period_end[:4])
+        if out.get(year, {}).get("npl_loans") is not None:
+            continue
+        npl = _nonaccrual_via_perf_status(facts, period_end)
+        gross = _gross_loans_at(facts, period_end)
+        if npl is None or not gross:
+            continue
+        ratio = npl / gross
+        if 0.0 <= ratio <= 0.25:
             out.setdefault(year, {}).setdefault("npl_loans", ratio)
 
     # NCO: each full-year rollforward period; denominator = gross loans at year-end.
@@ -1407,6 +1459,67 @@ def _year_columns(rows: list[list[str]]) -> list[tuple[int, int]]:
         if len(yc) > len(best):
             best = yc
     return best if len(best) >= 2 else []
+
+
+# ── Prose-stated NIM fallback ────────────────────────────────────────────────
+# Some filers (CFR, RF, ASB, COLB, KEY) state net interest margin only in MD&A
+# NARRATIVE prose — "net interest margin … was 3.61 percent in 2025" — never in a
+# year-headed table row, so the table parser above finds nothing. These patterns
+# pull the value AND its fiscal year from the sentence, strictly, so a wrong number
+# is never extracted (the cardinal rule): the value must be bound to the margin
+# phrase by a verb/preposition, an explicit year must sit right next to it, and the
+# value must fall in a sane NIM band. Percentage-CHANGE deltas ("increased 12 basis
+# points") and net-interest-SPREAD/INCOME sentences are rejected.
+_PCT = r"(?:%|\bpercent\b)"
+# A different metric grabbing the value between the margin phrase and the number.
+_NIM_PROSE_BREAK = re.compile(
+    r"net\s+interest\s+(?:spread|income)|funding\s+cost|average\s+yield|"
+    r"\byield\s+on|return\s+on|noninterest|efficiency", re.I)
+# Value-then-year: "net interest margin … was/of/to X.XX% … in/during/for YYYY"
+# (RF, ASB, COLB, and CFR's "…increased 13 bp from 3.53% during 2024 to 3.66%
+# during 2025" — the verb 'to' binds the 3.66% and "during 2025" names its year;
+# 'from 3.53%' has no binding verb so the prior-year value is not picked up).
+_NIM_PROSE_A = re.compile(
+    r"net\s+interest\s+margin\b(?P<mid>.{0,55}?)"
+    r"\b(?:was|of|to|at|:)\s*(?P<val>\d\.\d{1,2})\s*" + _PCT +
+    r"(?P<after>.{0,55})", re.I)
+# The year tie after the value: a temporal preposition then the year within a small
+# window — wide enough for 'for the year ended December 31, YYYY' (COLB), tight
+# enough that it can't reach a different sentence's year.
+_NIM_PROSE_YR_AFTER = re.compile(r"\b(?:in|during|for)\b.{0,40}?((?:19|20)\d{2})", re.I)
+# Year-before-value: "for/in YYYY … net interest margin was X.XX%" (KEY states
+# "Net interest income (TE) for 2025 was $4.7 billion, and the net interest margin
+# was 2.69%"). Bounded so the year and the value stay in the same clause.
+_NIM_PROSE_B = re.compile(
+    r"\b(?:in|during|for)\b.{0,15}?((?:19|20)\d{2})"
+    r".{0,90}?net\s+interest\s+margin\b.{0,25}?\b(?:was|of|to|at)\s*"
+    r"(\d\.\d{1,2})\s*" + _PCT, re.I)
+
+
+def extract_nim_prose(html_bytes: bytes) -> dict:
+    """{fiscal_year:int -> nim_fraction} from MD&A narrative prose (see above).
+
+    Only values in the 1.00%–6.00% band that are bound to the margin phrase AND to
+    an explicit fiscal year are returned; everything else is dropped (n/a, never a
+    guess). The first confident statement for a year wins."""
+    from lxml import html as lhtml
+    text = re.sub(r"\s+", " ", lhtml.fromstring(html_bytes).text_content())
+    out: dict[int, float] = {}
+    for m in _NIM_PROSE_A.finditer(text):
+        if _NIM_PROSE_BREAK.search(m.group("mid")):   # a different metric owns the value
+            continue
+        val = float(m.group("val"))
+        if not (1.0 <= val <= 6.0):
+            continue
+        ym = _NIM_PROSE_YR_AFTER.search(m.group("after"))
+        if not ym:
+            continue
+        out.setdefault(int(ym.group(1)), val / 100.0)
+    for m in _NIM_PROSE_B.finditer(text):
+        val = float(m.group(2))
+        if 1.0 <= val <= 6.0:
+            out.setdefault(int(m.group(1)), val / 100.0)
+    return out
 
 
 def extract_nim_by_year(html_bytes: bytes) -> dict:
@@ -1486,8 +1599,16 @@ def extract_nim_by_year(html_bytes: bytes) -> dict:
                             if ea[i]:
                                 nims[yr] = nii[i] / ea[i]
         if nims:
-            return nims
-    return {}
+            table_nims = nims
+            break
+    else:
+        table_nims = {}
+    # Prose fills only the years the table didn't yield (table value preferred when
+    # both exist). Filers that state NIM only in narrative prose (no table row) get
+    # their whole series from here; the rest get nothing extra.
+    merged = dict(extract_nim_prose(html_bytes))
+    merged.update(table_nims)
+    return merged
 
 
 def _list_10k_filings(cik, limit: int) -> list[dict]:
@@ -1567,7 +1688,9 @@ def company_asset_quality_nim(cik) -> dict | None:
     if not filings:
         return None
     latest = filings[0]
-    ckey = f"asset_quality_nim:v2:{latest['accession']}:{_HISTORY_FILINGS}"
+    # v3: prose-NIM fallback + performance-status nonaccrual + WriteOffs casing now
+    # fill years/banks the v2 extractor left empty — old cached results are stale.
+    ckey = f"asset_quality_nim:v3:{latest['accession']}:{_HISTORY_FILINGS}"
     by_year = cache.get(ckey)
     if by_year is None:
         bundle: list[tuple] = []

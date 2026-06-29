@@ -17,6 +17,7 @@ from data.sec_filing_scraper import (
     extract_securities, extract_credit_quality, extract_performance,
     extract_financial_highlights, extract_segments, extract_rate_risk,
     extract_npl_nco_by_year, extract_nim_by_year, extract_asset_quality_nim,
+    extract_nim_prose,
     Fact)
 
 
@@ -1045,6 +1046,178 @@ class TestAssetQualityNim(unittest.TestCase):
         self.assertAlmostEqual(merged[2024]["npl_loans"], 90 / 19000, places=5)  # newer wins
         self.assertAlmostEqual(merged[2023]["npl_loans"], 80 / 18000, places=5)
         self.assertEqual(set(merged), {2025, 2024, 2023})
+
+
+class TestNimProseFallback(unittest.TestCase):
+    """Filers that state NIM only in MD&A narrative prose (CFR/RF/ASB/COLB/KEY),
+    never in a year-headed table row, are read by extract_nim_prose. The value must
+    bind to the margin phrase AND to an explicit fiscal year and fall in the
+    1.00%-6.00% band; deltas, spreads, out-of-band and untied values are dropped."""
+
+    def _html(self, sentence: str) -> bytes:
+        return ("<p>" + sentence + "</p>").encode()
+
+    def _assertNim(self, out, expected):
+        """Compare {year: fraction} with float tolerance and an exact key set."""
+        self.assertEqual(set(out), set(expected))
+        for y, v in expected.items():
+            self.assertAlmostEqual(out[y], v, places=6)
+
+    def test_value_then_year(self):
+        # RF / ASB / COLB phrasing: '… was/of X.XX% … in/for YYYY'.
+        self._assertNim(
+            extract_nim_prose(self._html(
+                "The net interest margin (taxable-equivalent basis) was 3.61 "
+                "percent in 2025, reflecting a 7 basis point increase from 2024.")),
+            {2025: 0.0361})
+        # The current year binds via 'of'; the prior year's 2.78% sits behind 'from'
+        # (a delta clause, no binding verb) so it is deliberately NOT extracted —
+        # the comparative comes from that year's own current-year statement instead.
+        self._assertNim(
+            extract_nim_prose(self._html(
+                "Net interest margin of 3.03% in 2025 increased 25 bp from 2.78% "
+                "in 2024.")),
+            {2025: 0.0303})
+        # COLB: only the value bound to the (single) 'net interest margin' phrase is
+        # taken — 3.83% for FY2025. The comparative 3.57% hangs off 'compared to',
+        # not a fresh margin phrase, so it is not attributed here (it lands from that
+        # year's own statement). 'for the year ended December 31, 2025' year-tie.
+        self._assertNim(
+            extract_nim_prose(self._html(
+                "Net interest margin, on a tax equivalent basis, was 3.83% for the "
+                "year ended December 31, 2025, compared to 3.57% for the year ended "
+                "December 31, 2024.")),
+            {2025: 0.0383})
+
+    def test_year_before_value(self):
+        # KEY phrasing: year named first, value after.
+        self._assertNim(
+            extract_nim_prose(self._html(
+                "Net interest income (TE) for 2025 was $4.7 billion, and the net "
+                "interest margin was 2.69%. Compared to 2024, net interest income "
+                "increased.")),
+            {2025: 0.0269})
+
+    def test_change_delta_form_takes_bound_value_not_prior(self):
+        # CFR: '… increased 13 basis points from 3.53% during 2024 to 3.66% during
+        # 2025'. The 3.66% binds via 'to' and ties to 2025; 3.53% has no binding
+        # verb so the prior-year value is NOT (mis)attributed, and '13 basis points'
+        # is never read as a margin.
+        out = extract_nim_prose(self._html(
+            "As a result, the taxable-equivalent net interest margin increased 13 "
+            "basis points from 3.53% during 2024 to 3.66% during 2025."))
+        self._assertNim(out, {2025: 0.0366})
+
+    def test_net_interest_spread_rejected(self):
+        # A 'net interest spread' sentence must never be read as the margin.
+        self.assertEqual(
+            extract_nim_prose(self._html(
+                "The net interest spread was 2.66% in 2024.")),
+            {})
+
+    def test_net_interest_income_between_phrase_and_value_rejected(self):
+        # A value owned by 'net interest income' (different metric) sitting between
+        # the margin phrase and the number must not be misread as the margin.
+        self.assertEqual(
+            extract_nim_prose(self._html(
+                "Net interest margin remained stable while net interest income "
+                "was 3.20% higher in 2025.")),
+            {})
+
+    def test_out_of_band_value_rejected(self):
+        # A value outside 1.00%-6.00% can't be a NIM (parse error) → dropped.
+        self.assertEqual(
+            extract_nim_prose(self._html(
+                "Net interest margin was 0.45% in 2025.")),
+            {})
+        self.assertEqual(
+            extract_nim_prose(self._html(
+                "Net interest margin was 8.50% in 2025.")),
+            {})
+
+    def test_value_with_no_year_dropped(self):
+        # No explicit fiscal year tied to the value → n/a (never assume the FY).
+        self.assertEqual(
+            extract_nim_prose(self._html(
+                "Net interest margin was 3.40% during the period.")),
+            {})
+
+
+class TestKeyStyleAssetQuality(unittest.TestCase):
+    """KEY does not tag the standard nonaccrual concept; it states the nonaccrual
+    TOTAL as the gross-loans concept sliced by the performance-status axis, and tags
+    its rollforward charge-off under the 'WriteOffs' (capital-O) casing. Both must be
+    recognized so KEY's npl_loans/nco_loans land, without loosening the sanity gates."""
+
+    GROSS = "us-gaap:FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss"
+    PERF_AXIS = "us-gaap:FinancialInstrumentPerformanceStatusAxis"
+    NONPERF = "us-gaap:NonperformingFinancingReceivableMember"
+    SEG = "us-gaap:FinancingReceivablePortfolioSegmentAxis"
+    WO_KEY = "us-gaap:FinancingReceivableAllowanceForCreditLossesWriteOffs"  # capital O
+    RECOV = "us-gaap:FinancingReceivableAllowanceForCreditLossesRecovery"
+    B = 1e9
+    M = 1e6
+
+    def _instant(self, c, v, period, members=None):
+        return Fact(c, v, period, None, members or {}, "usd")
+
+    def _dur(self, c, v, year, members=None):
+        return Fact(c, v, f"{year}-12-31", f"{year}-01-01", members or {}, "usd")
+
+    def test_nonaccrual_via_performance_status_member(self):
+        # KEY FY2025: nonaccrual total = gross-loans concept sliced ONLY by the
+        # performance-status axis (Nonperforming member); the per-segment slices must
+        # be ignored (they'd double-count). npl = 0.615B / 106.541B ~= 0.577%.
+        facts = [
+            self._instant(self.GROSS, 106.541 * self.B, "2025-12-31"),
+            self._instant(self.GROSS, 0.615 * self.B, "2025-12-31",
+                          {self.PERF_AXIS: self.NONPERF}),                       # total
+            self._instant(self.GROSS, 0.420 * self.B, "2025-12-31",
+                          {self.SEG: "us-gaap:CommercialPortfolioSegmentMember",
+                           self.PERF_AXIS: self.NONPERF}),                       # segment
+            self._instant(self.GROSS, 0.195 * self.B, "2025-12-31",
+                          {self.SEG: "us-gaap:ConsumerPortfolioSegmentMember",
+                           self.PERF_AXIS: self.NONPERF}),                       # segment
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertAlmostEqual(out[2025]["npl_loans"], 0.615 / 106.541, places=5)
+
+    def test_writeoffs_capital_o_casing_recognized(self):
+        # KEY tags the charge-off as 'WriteOffs' (capital O) — the singular-lowercase
+        # concept alone left NCO None. nco = (0.517B - 0.087B) / 106.541B ~= 0.404%.
+        facts = [
+            self._instant(self.GROSS, 106.541 * self.B, "2025-12-31"),
+            self._dur(self.WO_KEY, 0.517 * self.B, 2025),
+            self._dur(self.RECOV, 0.087 * self.B, 2025),
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertAlmostEqual(out[2025]["nco_loans"], (0.517 - 0.087) / 106.541, places=5)
+
+    def test_perf_status_total_ambiguous_yields_na(self):
+        # Two competing performance-status totals (no single unambiguous total) →
+        # never guess which is the nonaccrual total; npl_loans is n/a.
+        facts = [
+            self._instant(self.GROSS, 100 * self.B, "2025-12-31"),
+            self._instant(self.GROSS, 0.6 * self.B, "2025-12-31",
+                          {self.PERF_AXIS: self.NONPERF}),
+            self._instant(self.GROSS, 0.7 * self.B, "2025-12-31",
+                          {self.PERF_AXIS: "us-gaap:NonaccrualMember"}),
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertNotIn("npl_loans", out.get(2025, {}))
+
+    def test_standard_nonaccrual_concept_still_preferred(self):
+        # The dedicated nonaccrual concept, when present, must still drive npl and the
+        # perf-status fallback must not override it.
+        facts = [
+            self._instant(self.GROSS, 100 * self.B, "2025-12-31"),
+            self._instant("us-gaap:FinancingReceivableRecordedInvestmentNonaccrualStatus",
+                          0.5 * self.B, "2025-12-31"),
+            self._instant(self.GROSS, 0.9 * self.B, "2025-12-31",
+                          {self.PERF_AXIS: self.NONPERF}),   # would-be fallback, must lose
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertAlmostEqual(out[2025]["npl_loans"], 0.5 / 100, places=6)
 
 
 class TestPerformance(unittest.TestCase):
