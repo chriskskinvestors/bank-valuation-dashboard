@@ -1098,6 +1098,320 @@ def credit_quality_for(cik) -> dict | None:
     return None
 
 
+# ── Multi-year company-reported asset quality + NIM (10-K back-history) ───────
+# The "Company Reported → Financial Highlights" tab wants a multi-year (≤5y)
+# trend of three ratios sourced ONLY from the bank's own SEC filings — never
+# FDIC. A single 10-K discloses two-to-three comparative years per metric, so we
+# fetch the latest few 10-Ks and merge by fiscal year (the NEWEST filing that
+# covers a year wins, so a restated comparative is superseded by the year it was
+# the current-year figure). The three metrics live in three different filing
+# structures:
+#   • NPL/loans  — nonaccrual (or nonperforming) loans ÷ gross loans, both tagged
+#     undimensioned in the loan footnote (current + one comparative per filing).
+#   • NCO/loans  — (gross charge-offs − recoveries) ÷ gross loans, from the ACL
+#     rollforward. Charge-offs/recoveries are tagged as full-year durations, but
+#     a filer may tag the TOTAL only under a "total loans" portfolio member in the
+#     current year and undimensioned in the comparative — take whichever is the
+#     reconciled total, never a per-segment sum (double-counts the total row).
+#   • NIM        — the MD&A average-balance table states "Net interest margin" per
+#     year (FTE). This table is NOT inline-XBRL-tagged (no NetInterestMargin /
+#     AverageEarningAssets concept exists in the instance), so it is parsed from
+#     the filing HTML: read the year-label header row and the "Net interest
+#     margin" row, zip them positionally. Falls back to NII ÷ avg earning assets
+#     (both stated in the same table) only when the explicit NIM line is absent.
+# Every metric/year that doesn't cleanly disclose/reconcile → None (blank). The
+# denominator for both credit ratios is period-end gross loans (self-contained in
+# the same XBRL the numerators come from); average loans from the MD&A table are
+# intentionally not mixed in, keeping each ratio from one consistent source.
+_NONPERF_CONCEPTS = (
+    "FinancingReceivableExcludingAccruedInterestNonaccrual",
+    "FinancingReceivableRecordedInvestmentNonaccrualStatus",
+    # Some filers tag a nonperforming-loans total rather than nonaccrual.
+    "FinancingReceivableNonperformingLoans",
+)
+# Member-name markers that identify the TOTAL row of a by-segment charge-off /
+# recovery disclosure (so we take the reconciled total, never sum the segments).
+_LOAN_TOTAL_MEMBER = re.compile(
+    r"TotalLoans|TotalFinancingReceivable|AllLoans|LoansReceivable|"
+    r"PortfolioSegmentDomain|FinancingReceivableMember", re.I)
+
+
+def _flow_total_for_period(facts: list[Fact], concepts: tuple, period_end: str):
+    """Full-year (≈12-month) total of a charge-off / recovery flow ending at
+    `period_end`. Prefers the undimensioned total; falls back to a single-member
+    fact whose member is the loan-book TOTAL (TotalLoansMember, …). NEVER sums the
+    per-segment rows (the total row would double-count). None if neither tagged."""
+    undim = None
+    total_mem = None
+    for f in facts:
+        if f.concept.split(":")[-1] not in concepts:
+            continue
+        if f.period_end != period_end or not f.period_start:
+            continue
+        if not (330 <= _days(f.period_start, period_end) <= 400):
+            continue
+        if not f.members:
+            undim = f.value
+        elif len(f.members) == 1 and _LOAN_TOTAL_MEMBER.search(
+                next(iter(f.members.values())).split(":")[-1]):
+            total_mem = f.value
+    return undim if undim is not None else total_mem
+
+
+def _annual_periods(facts: list[Fact]) -> list[str]:
+    """Period-end dates (newest first) that carry an undimensioned full-year flow
+    in the ACL rollforward — the fiscal years this filing reports charge-offs for."""
+    ends: set = set()
+    flows = set(_CQ_CONCEPTS["writeoff"]) | set(_CQ_CONCEPTS["recovery"])
+    for f in facts:
+        if (f.concept.split(":")[-1] in flows and f.period_start
+                and 330 <= _days(f.period_start, f.period_end) <= 400):
+            ends.add(f.period_end)
+    return sorted(ends, reverse=True)
+
+
+def _gross_loans_at(facts: list[Fact], period_end: str):
+    """Undimensioned gross loans (before allowance) at `period_end`, via the same
+    priority list the credit-quality extractor uses. None if untagged."""
+    return _sec_pick(facts, _CQ_CONCEPTS["loans_gross"], period_end)
+
+
+def extract_npl_nco_by_year(facts: list[Fact]) -> dict:
+    """{fiscal_year:int -> {"npl_loans":…, "nco_loans":…}} from ONE filing's iXBRL.
+
+    npl_loans = nonaccrual (or nonperforming) loans ÷ gross loans at each tagged
+    balance-sheet date; nco_loans = (charge-offs − recoveries) ÷ gross loans for
+    each full-year rollforward period. Each ratio is emitted only when its
+    numerator AND a positive gross-loan denominator are both cleanly tagged for
+    that year; otherwise that cell is None (never guessed, never FDIC)."""
+    out: dict[int, dict] = {}
+
+    # NPL: every balance-sheet date with an undimensioned nonaccrual/nonperforming
+    # total and a gross-loan denominator.
+    for f in facts:
+        if f.concept.split(":")[-1] not in _NONPERF_CONCEPTS or f.members:
+            continue
+        if f.period_start is not None:          # instant only
+            continue
+        npl = f.value
+        gross = _gross_loans_at(facts, f.period_end)
+        if npl is None or not gross:
+            continue
+        year = int(f.period_end[:4])
+        ratio = npl / gross
+        if 0.0 <= ratio <= 0.25:                # sane NPL band; else parse error → skip
+            out.setdefault(year, {}).setdefault("npl_loans", ratio)
+
+    # NCO: each full-year rollforward period; denominator = gross loans at year-end.
+    for period_end in _annual_periods(facts):
+        wo = _flow_total_for_period(facts, _CQ_CONCEPTS["writeoff"], period_end)
+        rec = _flow_total_for_period(facts, _CQ_CONCEPTS["recovery"], period_end)
+        if wo is None or rec is None:
+            continue
+        gross = _gross_loans_at(facts, period_end)
+        if not gross:
+            continue
+        nco = wo - rec
+        ratio = nco / gross
+        if -0.05 <= ratio <= 0.25:              # net recoveries can be slightly <0
+            out.setdefault(int(period_end[:4]), {}).setdefault("nco_loans", ratio)
+    return out
+
+
+# Numeric cell in the average-balance table ("3.79", "1,398,314", "(0.05)").
+_NUM_CELL = re.compile(r"^\(?-?\d[\d,]*\.?\d*\)?$")
+
+
+def _row_numbers(cells: list[str]) -> list[float]:
+    """The numeric values of a table row, left→right (skips '', '%', '$', labels).
+    Parentheses → negative; commas stripped."""
+    out: list[float] = []
+    for c in cells:
+        c = c.strip()
+        if not _NUM_CELL.match(c):
+            continue
+        neg = c.startswith("(")
+        v = c.strip("()").replace(",", "")
+        try:
+            fv = float(v)
+        except ValueError:
+            continue
+        out.append(-fv if neg else fv)
+    return out
+
+
+def extract_nim_by_year(html_bytes: bytes) -> dict:
+    """{fiscal_year:int -> nim_fraction} from the MD&A average-balance table HTML.
+
+    The table is not inline-XBRL-tagged, so it's read from the rendered HTML: find
+    the table containing a 'Net interest margin' row, read the column years from
+    its header row(s), and zip the NIM row's percentages to those years. When the
+    explicit NIM line is absent but the table states net interest income and total
+    interest-earning assets (average), NIM is computed = NII ÷ avg earning assets.
+    Percentages are returned as fractions (3.79% → 0.0379). {} if no such table."""
+    from lxml import html as lhtml
+    root = lhtml.fromstring(html_bytes)
+    for tbl in root.iter("table"):
+        if not re.search(r"net\s+interest\s+margin", tbl.text_content(), re.I):
+            continue
+        rows = [[re.sub(r"\s+", " ", td.text_content()).strip()
+                 for td in tr.iter("td", "th")] for tr in tbl.iter("tr")]
+        # Column years: the header row listing standalone 4-digit years (2025 2024 …),
+        # in left→right order. Pick the first row that is purely such year labels.
+        years: list[int] = []
+        for r in rows:
+            yrs = [int(c) for c in r if re.fullmatch(r"(19|20)\d{2}", c.strip())]
+            if len(yrs) >= 2 and len(yrs) == len([c for c in r if c.strip()]):
+                years = yrs
+                break
+        if not years:
+            continue
+
+        def _row(label_pat):
+            for r in rows:
+                if r and re.fullmatch(label_pat, r[0].strip(), re.I):
+                    return r
+            return None
+
+        nims: dict[int, float] = {}
+        nim_row = _row(r"net\s+interest\s+margin")
+        if nim_row is not None:
+            vals = _row_numbers(nim_row[1:])
+            # The NIM row holds one percentage per year column, in order.
+            if len(vals) >= len(years):
+                for yr, v in zip(years, vals[:len(years)]):
+                    if 0 < v < 15:              # a NIM in % is small & positive
+                        nims[yr] = v / 100.0
+        if not nims:
+            # Fallback: NII ÷ average earning assets, both from this same table.
+            nii_row = _row(r"net\s+interest\s+income")
+            ea_row = next((r for r in rows if r and re.search(
+                r"total\s+interest[- ]earning\s+assets", r[0].strip(), re.I)), None)
+            if nii_row is not None and ea_row is not None:
+                nii = _row_numbers(nii_row[1:])
+                # The earning-assets row is (avg balance, interest, yield) per year;
+                # take the first value of each year-triplet = average balance.
+                ea_all = _row_numbers(ea_row[1:])
+                if len(ea_all) >= 3 * len(years):
+                    ea = [ea_all[i * 3] for i in range(len(years))]
+                    if len(nii) >= len(years):
+                        for i, yr in enumerate(years):
+                            if ea[i]:
+                                nims[yr] = nii[i] / ea[i]
+        if nims:
+            return nims
+    return {}
+
+
+def _list_10k_filings(cik, limit: int) -> list[dict]:
+    """Up to `limit` most-recent 10-K filing metas (newest first), each shaped like
+    latest_filing()'s return so instance_facts()/filing_url() consume them as-is."""
+    cik10 = str(int(cik)).zfill(10)
+    data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
+    rec = data.get("filings", {}).get("recent", {})
+    out: list[dict] = []
+    for i, f in enumerate(rec.get("form", [])):
+        if f == "10-K":
+            out.append({"accession": rec["accessionNumber"][i].replace("-", ""),
+                        "doc": rec["primaryDocument"][i],
+                        "date": rec["filingDate"][i], "form": f, "cik": int(cik)})
+            if len(out) >= limit:
+                break
+    return out
+
+
+# How many recent 10-Ks to merge. Each tags ~2 comparative years of nonaccrual and
+# ~3 of NIM/charge-offs, so 3 filings comfortably cover a 5-year trend with overlap
+# (overlap is the consistency check — newest filing wins on any shared year).
+_HISTORY_FILINGS = 3
+_MAX_YEARS = 5
+
+
+def extract_asset_quality_nim(metas_and_docs: list[tuple]) -> dict:
+    """Merge per-year {npl_loans, nco_loans, nim} across several 10-Ks.
+
+    `metas_and_docs` is [(meta, facts, html_bytes), …] NEWEST FIRST. For each
+    fiscal year a metric is filled by the FIRST (newest) filing that cleanly
+    discloses it, so a current-year figure supersedes the same year's later
+    restated comparative. Returns {year:int -> {"npl_loans","nco_loans","nim"}}
+    truncated to the newest _MAX_YEARS years."""
+    merged: dict[int, dict] = {}
+
+    def _set(year, key, val):
+        if val is None:
+            return
+        merged.setdefault(int(year), {}).setdefault(key, val)  # first (newest) wins
+
+    for _meta, facts, html_bytes in metas_and_docs:
+        cr = extract_npl_nco_by_year(facts)
+        for yr, d in cr.items():
+            _set(yr, "npl_loans", d.get("npl_loans"))
+            _set(yr, "nco_loans", d.get("nco_loans"))
+        if html_bytes:
+            for yr, nim in extract_nim_by_year(html_bytes).items():
+                _set(yr, "nim", nim)
+
+    # Normalise every year to all three keys (None where a metric is absent) and
+    # keep only the newest _MAX_YEARS years.
+    out: dict[int, dict] = {}
+    for yr in sorted(merged, reverse=True)[:_MAX_YEARS]:
+        d = merged[yr]
+        out[yr] = {"npl_loans": d.get("npl_loans"),
+                   "nco_loans": d.get("nco_loans"),
+                   "nim": d.get("nim")}
+    return out
+
+
+def company_asset_quality_nim(cik) -> dict | None:
+    """Company-REPORTED multi-year asset-quality & NIM trend from a bank's own
+    10-K filings (NEVER FDIC), for the Financial-Highlights tab.
+
+    Fetches the latest few 10-Ks, scrapes each one's nonaccrual/loans, net-charge-
+    offs/loans (ACL rollforward) and MD&A net-interest-margin, and merges them by
+    fiscal year (newest filing wins). Returns
+    {"meta": <latest 10-K meta>, "by_year": {2025: {"npl_loans","nco_loans","nim"},
+    …}} keyed by fiscal-year int with values as FRACTIONS (0.0053 = 0.53%), or None
+    when no 10-K is found. Each fetched filing is cached by accession; the merged
+    result is cached under the latest accession + the history depth."""
+    if not cik:
+        return None
+    from data import cache
+    filings = _list_10k_filings(cik, _HISTORY_FILINGS)
+    if not filings:
+        return None
+    latest = filings[0]
+    ckey = f"asset_quality_nim:v1:{latest['accession']}:{_HISTORY_FILINGS}"
+    by_year = cache.get(ckey)
+    if by_year is None:
+        bundle: list[tuple] = []
+        for meta in filings:
+            try:
+                html_bytes = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
+                facts = parse_inline_xbrl(html_bytes)
+                if len(facts) < _MULTIDOC_FACT_THRESHOLD:
+                    facts = instance_facts(meta)   # split filer — fetch the doc set
+                bundle.append((meta, facts, html_bytes))
+            except Exception as e:
+                print(f"[sec_scraper] asset_quality_nim filing {meta.get('accession')} "
+                      f"failed for cik {cik}: {type(e).__name__}: {e}")
+        try:
+            by_year = extract_asset_quality_nim(bundle)
+        except Exception as e:
+            print(f"[sec_scraper] asset_quality_nim failed for cik {cik}: {type(e).__name__}: {e}")
+            by_year = {}
+        # JSON cache coerces int keys to str — keep raw dict in memory; cache a
+        # str-keyed copy that we re-coerce on read.
+        try:
+            cache.put(ckey, {str(k): v for k, v in by_year.items()})
+        except Exception:
+            pass
+    else:
+        by_year = {int(k): v for k, v in by_year.items()}
+    if by_year:
+        return {"meta": latest, "by_year": by_year}
+    return None
+
+
 # ── Performance analysis (as-reported profitability) ─────────────────────────
 def _days(start: str, end: str) -> int:
     try:

@@ -15,7 +15,9 @@ from unittest import mock
 from data.sec_filing_scraper import (
     parse_inline_xbrl, extract_holdco_capital, extract_fair_value,
     extract_securities, extract_credit_quality, extract_performance,
-    extract_financial_highlights, extract_segments, extract_rate_risk, Fact)
+    extract_financial_highlights, extract_segments, extract_rate_risk,
+    extract_npl_nco_by_year, extract_nim_by_year, extract_asset_quality_nim,
+    Fact)
 
 
 def _f(concept, val, members=None, period="2025-12-31"):
@@ -627,6 +629,120 @@ class TestCreditQuality(unittest.TestCase):
         d = extract_credit_quality(facts, comp_loan_total=8158 * self.M)["2025-12-31"]
         self.assertAlmostEqual(d["loans_gross"], 8158 * self.M)
         self.assertAlmostEqual(d["acl"], 106 * self.M)
+
+
+class TestAssetQualityNim(unittest.TestCase):
+    """Multi-year company-reported NPL/loans, NCO/loans and NIM (the inputs the
+    Financial-Highlights tab fills from the bank's OWN 10-K, never FDIC). Pins the
+    ABCB FY2025 shape: nonaccrual ÷ gross loans, the charge-off TOTAL chosen over
+    the per-segment rows, and the MD&A average-balance NIM-row parse."""
+
+    GROSS = "us-gaap:FinancingReceivableExcludingAccruedInterestBeforeAllowanceForCreditLoss"
+    NACC = "us-gaap:FinancingReceivableRecordedInvestmentNonaccrualStatus"
+    WO = "us-gaap:FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoff"
+    RECOV = "us-gaap:FinancingReceivableAllowanceForCreditLossesRecovery"
+    SEG = "us-gaap:FinancingReceivablePortfolioSegmentAxis"
+    M = 1e6
+
+    def _instant(self, c, v, period):
+        return Fact(c, v, period, None, {}, "usd")
+
+    def _dur(self, c, v, year, members=None):
+        return Fact(c, v, f"{year}-12-31", f"{year}-01-01", members or {}, "usd")
+
+    def test_npl_per_year(self):
+        # nonaccrual ÷ gross loans at each balance-sheet date.
+        facts = [
+            self._instant(self.NACC, 109.058 * self.M, "2025-12-31"),
+            self._instant(self.GROSS, 21513.522 * self.M, "2025-12-31"),
+            self._instant(self.NACC, 102.218 * self.M, "2024-12-31"),
+            self._instant(self.GROSS, 20739.906 * self.M, "2024-12-31"),
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertAlmostEqual(out[2025]["npl_loans"], 109.058 / 21513.522, places=5)
+        self.assertAlmostEqual(out[2024]["npl_loans"], 102.218 / 20739.906, places=5)
+
+    def test_nco_uses_total_member_not_segment_sum(self):
+        # ABCB FY2025: charge-offs tagged per segment PLUS a TotalLoansMember total;
+        # the extractor must use the 62.816 total, never the 125.632 segment double-sum.
+        facts = [
+            self._instant(self.GROSS, 21513.522 * self.M, "2025-12-31"),
+            self._dur(self.WO, 42.023 * self.M, 2025, {self.SEG: "us-gaap:CommercialPortfolioSegmentMember"}),
+            self._dur(self.WO, 20.793 * self.M, 2025, {self.SEG: "us-gaap:ConsumerPortfolioSegmentMember"}),
+            self._dur(self.WO, 62.816 * self.M, 2025, {self.SEG: "us-gaap:TotalLoansMember"}),
+            self._dur(self.RECOV, 25.467 * self.M, 2025),
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertAlmostEqual(out[2025]["nco_loans"], (62.816 - 25.467) / 21513.522, places=5)
+
+    def test_nco_prefers_undimensioned_total(self):
+        facts = [
+            self._instant(self.GROSS, 20739.906 * self.M, "2024-12-31"),
+            self._dur(self.WO, 68.114 * self.M, 2024),       # undimensioned
+            self._dur(self.RECOV, 29.257 * self.M, 2024),
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertAlmostEqual(out[2024]["nco_loans"], (68.114 - 29.257) / 20739.906, places=5)
+
+    def test_no_loan_total_yields_na(self):
+        # Charge-offs tagged ONLY by segment (no total) → NCO is n/a, never a guess.
+        facts = [
+            self._instant(self.GROSS, 21000 * self.M, "2025-12-31"),
+            self._dur(self.WO, 40 * self.M, 2025, {self.SEG: "us-gaap:CommercialPortfolioSegmentMember"}),
+            self._dur(self.RECOV, 25 * self.M, 2025),
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertNotIn("nco_loans", out.get(2025, {}))
+
+    _NIM_HTML = b"""<table>
+      <tr><td></td><td></td><td>Year Ended December 31,</td></tr>
+      <tr><td></td><td>2025</td><td>2024</td><td>2023</td></tr>
+      <tr><td>Total interest-earning assets</td><td>24,836,731</td><td>1,398,314</td><td>5.63</td>
+          <td>23,968,054</td><td>1,382,114</td><td>5.77</td>
+          <td>23,259,072</td><td>1,284,215</td><td>5.52</td></tr>
+      <tr><td>Net interest income</td><td>940,712</td><td>853,020</td><td>838,824</td></tr>
+      <tr><td>Net interest margin</td><td>3.79</td><td>%</td><td>3.56</td><td>%</td><td>3.61</td><td>%</td></tr>
+    </table>"""
+
+    def test_nim_row_parsed_per_year(self):
+        out = extract_nim_by_year(self._NIM_HTML)
+        self.assertAlmostEqual(out[2025], 0.0379)
+        self.assertAlmostEqual(out[2024], 0.0356)
+        self.assertAlmostEqual(out[2023], 0.0361)
+
+    def test_nim_computed_when_row_absent(self):
+        # The table mentions net interest margin (caption) but has NO parseable
+        # margin ROW → compute NII ÷ avg earning assets from the same table.
+        html = self._NIM_HTML.replace(
+            b"<tr><td>Net interest margin</td><td>3.79</td><td>%</td>"
+            b"<td>3.56</td><td>%</td><td>3.61</td><td>%</td></tr>",
+            b"<tr><td>Yield and net interest margin summary</td></tr>")
+        out = extract_nim_by_year(html)
+        self.assertAlmostEqual(out[2025], 940712 / 24836731, places=5)
+        self.assertAlmostEqual(out[2024], 853020 / 23968054, places=5)
+
+    def test_no_nim_table_yields_empty(self):
+        self.assertEqual(extract_nim_by_year(b"<table><tr><td>nothing</td></tr></table>"), {})
+
+    def test_merge_newest_filing_wins_and_truncates(self):
+        # Two filings overlapping on 2024: the newer (first) filing's value wins.
+        newer_facts = [
+            self._instant(self.NACC, 100 * self.M, "2025-12-31"),
+            self._instant(self.GROSS, 20000 * self.M, "2025-12-31"),
+            self._instant(self.NACC, 90 * self.M, "2024-12-31"),
+            self._instant(self.GROSS, 19000 * self.M, "2024-12-31"),
+        ]
+        older_facts = [
+            self._instant(self.NACC, 999 * self.M, "2024-12-31"),   # restated, must lose
+            self._instant(self.GROSS, 19000 * self.M, "2024-12-31"),
+            self._instant(self.NACC, 80 * self.M, "2023-12-31"),
+            self._instant(self.GROSS, 18000 * self.M, "2023-12-31"),
+        ]
+        merged = extract_asset_quality_nim([
+            ({}, newer_facts, None), ({}, older_facts, None)])
+        self.assertAlmostEqual(merged[2024]["npl_loans"], 90 / 19000, places=5)  # newer wins
+        self.assertAlmostEqual(merged[2023]["npl_loans"], 80 / 18000, places=5)
+        self.assertEqual(set(merged), {2025, 2024, 2023})
 
 
 class TestPerformance(unittest.TestCase):
