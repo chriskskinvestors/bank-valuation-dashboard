@@ -193,6 +193,54 @@ class TestLoanComposition(unittest.TestCase):
         labels = {"CommercialRealEstateMember": "CRE", "ConsumerPortfolioSegmentMember": "Consumer"}
         self.assertIsNone(extract_loan_composition(facts, labels, {}))
 
+    def test_multiyear_periods_returned_newest_first(self):
+        """A 10-K tags the current FY plus prior comparatives. Every period whose
+        members reconcile is returned, keyed newest-first, so the UI can build a
+        categories x FY table."""
+        c = LOAN_CONCEPT
+        facts = [
+            total_fact(c, 1000.0, "2024-12-31"),
+            member_fact(c, 600.0, "us-gaap:CommercialRealEstateMember", period="2024-12-31"),
+            member_fact(c, 400.0, "us-gaap:ConsumerPortfolioSegmentMember", period="2024-12-31"),
+            total_fact(c, 900.0, "2023-12-31"),
+            member_fact(c, 500.0, "us-gaap:CommercialRealEstateMember", period="2023-12-31"),
+            member_fact(c, 400.0, "us-gaap:ConsumerPortfolioSegmentMember", period="2023-12-31"),
+        ]
+        labels = {"CommercialRealEstateMember": "CRE", "ConsumerPortfolioSegmentMember": "Consumer"}
+        comp = extract_loan_composition(facts, labels, {})
+        self.assertEqual(list(comp), ["2024-12-31", "2023-12-31"])   # newest first
+        self.assertEqual(comp["2024-12-31"]["total"], 1000.0)
+        self.assertEqual(comp["2023-12-31"]["total"], 900.0)
+        for d in comp.values():
+            self.assertAlmostEqual(sum(v for _l, v in d["rows"]), d["total"], places=1)
+
+    def test_bad_coverage_period_is_dropped_ABCB2023(self):
+        """ABCB's 2025 10-K tags the full ~$21.5B book undimensioned only for
+        2025/2024; for the 2023 comparative the ONLY undimensioned loan-balance
+        total tagged is a tiny ~$20M modified-loans subtotal that happens to
+        reconcile to its own members. Measured against the LARGEST clean book in
+        the filing it's a sub-slice, so the 2023 period must be DROPPED entirely —
+        never shipped as a $20M 'loan composition'. The good years still render."""
+        c = LOAN_CONCEPT
+        facts = [
+            # 2025 + 2024: the real book (~1000) reconciles
+            total_fact(c, 1000.0, "2025-12-31"),
+            member_fact(c, 600.0, "us-gaap:CommercialRealEstateMember", period="2025-12-31"),
+            member_fact(c, 400.0, "us-gaap:ConsumerPortfolioSegmentMember", period="2025-12-31"),
+            total_fact(c, 980.0, "2024-12-31"),
+            member_fact(c, 590.0, "us-gaap:CommercialRealEstateMember", period="2024-12-31"),
+            member_fact(c, 390.0, "us-gaap:ConsumerPortfolioSegmentMember", period="2024-12-31"),
+            # 2023: only a tiny $20 sub-line is tagged undimensioned (and its two
+            # members reconcile to it) — but $20 << 0.5 * 1000, so it is gated out.
+            total_fact(c, 20.0, "2023-12-31"),
+            member_fact(c, 12.0, "us-gaap:CommercialRealEstateMember", period="2023-12-31"),
+            member_fact(c, 8.0, "us-gaap:ConsumerPortfolioSegmentMember", period="2023-12-31"),
+        ]
+        labels = {"CommercialRealEstateMember": "CRE", "ConsumerPortfolioSegmentMember": "Consumer"}
+        comp = extract_loan_composition(facts, labels, {})
+        self.assertEqual(set(comp), {"2025-12-31", "2024-12-31"})    # 2023 dropped
+        self.assertNotIn("2023-12-31", comp)
+
     def test_largest_reconciling_candidate_wins(self):
         """Gross (before-allowance) and net (after-allowance) both reconcile; the
         larger gross book is preferred."""
@@ -247,6 +295,32 @@ class TestDepositComposition(unittest.TestCase):
         total, rows = rows_of(extract_deposit_composition(facts, self._labels(), {}))
         self.assertEqual(total, 2892 * M)
         self.assertEqual(set(rows), {"Noninterest-bearing", "Interest-bearing"})
+
+    def test_deposit_multiyear_changing_granularity(self):
+        """Filers change deposit granularity year to year: a coarse interest-bearing
+        2-way one period and the full product split the next. Each reconciling
+        period is returned (newest-first); the UI unions the differing category sets
+        and leaves blanks where a year didn't report a line — never carry-forward."""
+        facts = [
+            # 2025: full product split  (dollar magnitudes — the tol has a $0.5M+
+            # absolute floor tuned for real iXBRL values)
+            total_fact("us-gaap:Deposits", 100 * M, "2025-12-31"),
+            total_fact("us-gaap:NoninterestBearingDepositLiabilities", 40 * M, "2025-12-31"),
+            total_fact("us-gaap:InterestBearingDomesticDepositSavings", 35 * M, "2025-12-31"),
+            total_fact("us-gaap:TimeDeposits", 25 * M, "2025-12-31"),
+            # 2024: only the interest 2-way is tagged
+            total_fact("us-gaap:Deposits", 90 * M, "2024-12-31"),
+            total_fact("us-gaap:NoninterestBearingDepositLiabilities", 36 * M, "2024-12-31"),
+            total_fact("us-gaap:InterestBearingDepositLiabilities", 54 * M, "2024-12-31"),
+        ]
+        comp = extract_deposit_composition(facts, self._labels(), {})
+        self.assertEqual(list(comp), ["2025-12-31", "2024-12-31"])    # newest first
+        self.assertEqual(set(dict(comp["2025-12-31"]["rows"])),
+                         {"Noninterest-bearing", "Savings", "Time deposits"})
+        self.assertEqual(set(dict(comp["2024-12-31"]["rows"])),
+                         {"Noninterest-bearing", "Interest-bearing"})
+        for d in comp.values():
+            self.assertAlmostEqual(sum(v for _l, v in d["rows"]), d["total"], places=1)
 
     def test_deposit_non_reconciling_returns_none(self):
         facts = [

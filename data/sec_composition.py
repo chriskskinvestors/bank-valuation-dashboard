@@ -384,10 +384,19 @@ _BOOK_COVERAGE_MIN = 0.5
 
 
 def _extract_member_composition(facts, labels, children, concept_ok, axis_ok) -> dict | None:
-    """Shared member-axis composition extractor (loans). Picks the largest
-    reconciling candidate across concepts/periods/axes; ties break to more rows.
-    Rejects a candidate that reconciles only a small slice of the disclosed book."""
-    best = None  # (total, n_rows, period, rows)
+    """Shared member-axis composition extractor (loans). Returns the by-category
+    composition for EVERY fiscal period the filing tags one (a 10-K carries the
+    current FY plus prior comparatives), keyed newest-first, or None.
+
+    Per period: the largest reconciling candidate across concepts/axes wins (ties
+    break to more rows). A period is then KEPT only if its chosen total covers at
+    least `_BOOK_COVERAGE_MIN` of the LARGEST clean loan-balance total disclosed
+    ANYWHERE in the filing — so a period that tags only a sub-line (e.g. a
+    comparative year where the full book isn't tagged undimensioned but a tiny
+    modified-loans subtotal is) is dropped rather than shipped as a wrong number.
+    A dropped period renders n/a, never a guess."""
+    # period -> best (total, n_rows, rows); plus the global largest clean total.
+    best_by_period: dict = {}
     book_max = 0.0  # largest clean undimensioned loan-balance total in the filing
     for concept, fs in _facts_by_concept(facts).items():
         if not concept_ok(concept):
@@ -411,15 +420,19 @@ def _extract_member_composition(facts, labels, children, concept_ok, axis_ok) ->
                 rows = _resolve_rows(allrows, total, labels, children)
                 if not rows:
                     continue
-                cand = (total, len(rows), period, rows)
-                if best is None or cand[0] > best[0] or (cand[0] == best[0] and cand[1] > best[1]):
-                    best = cand
-    if not best or abs(best[0]) < _BOOK_COVERAGE_MIN * book_max:
-        return None                       # nothing reconciled, or only a sub-slice
-    total, _n, period, rows = best
-    ordered = sorted(rows.items(), key=lambda kv: -kv[1])
-    return {period: {"total": total,
-                     "rows": [(labels.get(m, m), v) for m, v in ordered]}}
+                cand = (total, len(rows), rows)
+                cur = best_by_period.get(period)
+                if cur is None or cand[0] > cur[0] or (cand[0] == cur[0] and cand[1] > cur[1]):
+                    best_by_period[period] = cand
+    out = {}
+    for period in sorted(best_by_period, reverse=True):       # newest period first
+        total, _n, rows = best_by_period[period]
+        if abs(total) < _BOOK_COVERAGE_MIN * book_max:
+            continue                       # sub-slice for this period → drop it
+        ordered = sorted(rows.items(), key=lambda kv: -kv[1])
+        out[period] = {"total": total,
+                       "rows": [(labels.get(m, m), v) for m, v in ordered]}
+    return out or None
 
 
 # ── DEPOSIT composition ──────────────────────────────────────────────────────
@@ -462,14 +475,19 @@ def _deposit_rows_for_total(vals: dict, total: float) -> list | None:
 def extract_deposit_composition(facts, labels: dict, children: dict) -> dict | None:
     """{period_end: {"total": v, "rows": [(label, value), …]}} — the deposit
     composition reconstructed from the per-product deposit concepts that reconcile
-    to the disclosed total. None when nothing reconciles."""
+    to the disclosed total, for EVERY fiscal period the filing tags one (a 10-K
+    carries the current FY plus prior comparatives), keyed newest-first. None when
+    no period reconciles. Each period is independently reconcile-gated, so a year
+    that doesn't tag a clean product split renders n/a, never a guess (filers
+    routinely change granularity year to year — e.g. a coarse interest-bearing
+    2-way one year and a full product split the next)."""
     undim: dict = defaultdict(dict)          # period -> {concept_local: value}
     for f in facts:
         if f.members or not f.value:
             continue
         undim[f.period_end].setdefault(f.concept.split(":")[-1], f.value)
 
-    best = None  # (total, n_rows, period, rows[(concept, value)])
+    best_by_period: dict = {}  # period -> (total, n_rows, rows[(concept, value)])
     for period, vals in undim.items():
         for total_concept in _DEPOSIT_TOTALS:
             total = vals.get(total_concept)
@@ -478,15 +496,19 @@ def extract_deposit_composition(facts, labels: dict, children: dict) -> dict | N
             rows = _deposit_rows_for_total(vals, total)
             if not rows or not _reconciles(dict(rows), total):
                 continue
-            cand = (total, len(rows), period, rows)
-            if best is None or cand[0] > best[0] or (cand[0] == best[0] and cand[1] > best[1]):
-                best = cand
-    if not best:
+            cand = (total, len(rows), rows)
+            cur = best_by_period.get(period)
+            if cur is None or cand[0] > cur[0] or (cand[0] == cur[0] and cand[1] > cur[1]):
+                best_by_period[period] = cand
+    if not best_by_period:
         return None
-    total, _n, period, rows = best
-    ordered = sorted(rows, key=lambda cv: -cv[1])
-    return {period: {"total": total,
-                     "rows": [(labels.get(c, c), v) for c, v in ordered]}}
+    out = {}
+    for period in sorted(best_by_period, reverse=True):       # newest period first
+        total, _n, rows = best_by_period[period]
+        ordered = sorted(rows, key=lambda cv: -cv[1])
+        out[period] = {"total": total,
+                       "rows": [(labels.get(c, c), v) for c, v in ordered]}
+    return out
 
 
 # ── public per-CIK entry points ──────────────────────────────────────────────
@@ -525,7 +547,8 @@ def compositions_for(cik) -> dict | None:
     fetch (the ~7 MB fetch+parse runs once, not twice). Returns
     {"meta", "loan": comp|None, "deposit": comp|None} or None when the filing has
     no usable iXBRL. Each `comp` is {period: {"total", "rows": [(label, value)]}}
-    or None (n/a). This is the entry point for UI wiring."""
+    over EVERY fiscal period the filing reconciles (newest-first), or None (n/a).
+    This is the entry point for UI wiring (the multi-year composition tables)."""
     got = _fetch(cik)
     if not got:
         return None
@@ -536,13 +559,15 @@ def compositions_for(cik) -> dict | None:
 
 
 def loan_composition_for(cik) -> dict | None:
-    """As-reported loan composition for a company's latest 10-K. n/a if nothing
+    """As-reported loan composition for a company's latest 10-K, keyed by period
+    newest-first (the current FY plus any reconciling comparatives). n/a if nothing
     reconciles to the disclosed total."""
     return _composition_for(cik, extract_loan_composition)
 
 
 def deposit_composition_for(cik) -> dict | None:
-    """As-reported deposit composition for a company's latest 10-K. n/a if nothing
+    """As-reported deposit composition for a company's latest 10-K, keyed by period
+    newest-first (the current FY plus any reconciling comparatives). n/a if nothing
     reconciles to the disclosed total."""
     return _composition_for(cik, extract_deposit_composition)
 

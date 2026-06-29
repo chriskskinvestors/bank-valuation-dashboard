@@ -1715,11 +1715,23 @@ def _compositions_cached(cik):
     return res or None
 
 
+def _comp_norm_label(label) -> str:
+    """Normalised key for matching the SAME category across periods: lowercase,
+    trimmed, curly apostrophes folded to straight, internal whitespace collapsed.
+    Used only for row alignment — the DISPLAYED label is the filer's own text."""
+    s = str(label).replace("’", "'").replace("‘", "'")
+    return " ".join(s.lower().split())
+
+
 def _render_company_composition(ticker, kind):
     """As-reported loan/deposit composition (kind = "loan" | "deposit") from the
     bank's OWN 10-K inline XBRL — each line the filer's own category label, the set
-    reconciled to the disclosed total (data/sec_composition). n/a when the bank
-    doesn't disclose a clean, reconciling composition (never a forced number)."""
+    reconciled to the disclosed total (data/sec_composition). Multi-year: one $
+    column per fiscal year the filing reconciles (oldest→newest, up to 5 FY), the
+    row set the UNION of categories across those years matched by normalised label,
+    blank where a category wasn't reported that year (never carried forward). n/a
+    when the bank doesn't disclose a clean, reconciling composition."""
+    import re
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
@@ -1735,23 +1747,57 @@ def _render_company_composition(ticker, kind):
                    f"clean, reconciling table in this filer's latest 10-K — n/a.")
         return
     meta = res["meta"]
-    period, d = next(iter(comp.items()))
-    total = d["total"]
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
            f"{meta['accession']}/{meta['doc']}")
-    st.caption(f"Source: company 10-K [{meta['date']}]({src}) — as reported at "
-               f"{period}. Each line is the company's own category; the lines "
-               f"reconcile to the disclosed total of \\${total / 1e6:,.0f}M.")
+
+    # comp is {period: {"total", "rows": [(label, value)]}} newest-first; take the
+    # most recent 5 FY and render oldest→newest (matching the multi-year statements).
+    periods = list(comp)[:5][::-1]            # oldest → newest
+
+    def _yr(p):
+        m = re.search(r"\d{4}", p or "")
+        return m.group() if m else (p or "")
+
+    cols = [f"FY{_yr(p)}" for p in periods]
+
+    # Union the category labels across the in-view periods, matched by normalised
+    # label; keep the first-seen display text. A category is a row even if only one
+    # period reports it (blank elsewhere — filers rename/add/drop lines year to
+    # year; never guess or carry a value forward).
+    order, display, per_val = [], {}, {}       # norm-key order, key->label, key->{period:value}
+    for p in periods:
+        for label, v in comp[p]["rows"]:
+            key = _comp_norm_label(label)
+            if key not in per_val:
+                order.append(key)
+                display[key] = str(label)
+                per_val[key] = {}
+            per_val[key][p] = v
+
+    # Order rows by the latest period's value (largest first), trailing any category
+    # absent from the latest period; keeps the table reading like the latest year.
+    latest = periods[-1]
+    order.sort(key=lambda k: (-(per_val[k].get(latest) or -1), display[k].lower()))
+
     rows = []
-    for row in d["rows"]:
-        label, v = row[0], row[1]
-        pct = (v / total * 100) if total else 0.0
-        rows.append({"label": str(label),
-                     "values": [_cr_usd(v), f"{pct:.1f}%"], "kind": "data"})
-    rows.append({"label": "Total", "values": [_cr_usd(total), "100.0%"],
-                 "kind": "data"})
+    for key in order:
+        vals = [_cr_usd(per_val[key].get(p)) if per_val[key].get(p) is not None else None
+                for p in periods]
+        if all(v is None for v in vals):
+            continue                         # category None for every in-view period
+        rows.append({"label": display[key], "values": vals, "kind": "data"})
+    rows.append({"label": "Total",
+                 "values": [_cr_usd(comp[p]["total"]) for p in periods], "kind": "data"})
+
+    latest_total = comp[latest]["total"]
+    st.caption(f"Source: company 10-K [{meta['date']}]({src}) — as reported, "
+               f"{len(periods)} fiscal year{'s' if len(periods) != 1 else ''} "
+               f"(latest {latest}). Each line is the company's own category; the "
+               f"lines reconcile to the disclosed total each year "
+               f"(latest \\${latest_total / 1e6:,.0f}M). Blank = not separately "
+               f"reported that year.")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(["$", "% of total"], rows, entity=entity, src=src)
+    _cr_component(cols, rows, entity=entity, src=src)
 
 
 def render_income_statement(ticker):
