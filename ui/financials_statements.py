@@ -2772,50 +2772,88 @@ def _render_performance(ticker):
 
 def _render_segments(ticker):
     """As-reported business-segment net income (with revenue/assets), scraped from
-    the HOLDING COMPANY's own latest 10-K. Each segment's figures are directly
-    tagged; a 'Corporate / other & reconciling items' residual (consolidated − Σ
-    reportable) ties them to the consolidated total, exactly as the segment
-    footnote presents it. n/a when the filer tags fewer than two reportable
-    segments."""
+    the HOLDING COMPANY's recent 10-Ks and stitched across up to 5 fiscal years.
+    Each segment's figures are directly tagged; a 'Corporate / other & reconciling
+    items' residual (consolidated − Σ reportable) ties net income to the
+    consolidated total, exactly as the segment footnote presents it. Rendered as
+    section bands per metric (Net income / Revenue / Total assets), one row per
+    segment with FY columns oldest→newest. Segments are unioned across years by
+    their as-reported label (filers rename/restructure → blanks, never a carry-
+    forward); a period whose breakdown doesn't reconcile is gated out at the data
+    layer. n/a when the filer tags fewer than two reportable segments (single-
+    segment banks report no segment breakdown)."""
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
         return
     try:
-        from data.sec_filing_scraper import segments_for
-        res = segments_for(cik)
+        from data.sec_filing_scraper import segments_multiyear_for
+        res = segments_multiyear_for(cik, n_years=5)
     except Exception:
         res = None
     st.markdown("---")
     st.subheader("Segment Reporting — Company Reported")
     if not res or not res.get("segments"):
-        st.caption("Reportable business segments not tagged in this filer's latest "
-                   "10-K — n/a. (Single-segment banks report no segment breakdown.)")
+        st.caption("Reportable business segments not tagged in this filer's recent "
+                   "10-Ks — n/a. (Single-segment banks report no segment breakdown.)")
         return
-    m, seg_data = res["meta"], res["segments"]
-    period = max(seg_data)
-    d = seg_data[period]
+    m, seg_data, filings = res["meta"], res["segments"], res["filings"]
+    periods = sorted(seg_data)                       # oldest → newest
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
            f"{m['accession']}/{m['doc']}")
+    cols = [f"FY{p[:4]}" for p in periods]
+    measures = sorted({seg_data[p]["ni_measure"] for p in periods})
     st.caption(
-        f"Source: SEC [{m['form']} filed {m['date']}]({src}) — reportable segments, "
-        f"FY{period[:4]}. Segment net income is the {d['ni_measure']} measure; the "
-        f"residual reconciles reportable segments to the consolidated total.")
+        f"Source: company 10-K filings — latest [10-K filed {m['date']}]({src}); "
+        f"{len(periods)} fiscal year(s) stitched from {len(filings)} filing(s). "
+        f"Segment net income is the {' / '.join(measures)} measure; the residual "
+        f"reconciles reportable segments to the consolidated total. "
+        f"Blank = segment not separately reported that year.")
 
     def _b(v):
         return "n/a" if v is None else _cr_usd(v)
 
-    grid_rows = [{"label": s["label"],
-                  "values": [_b(s["net_income"]), _b(s["revenue"]), _b(s["assets"])],
-                  "kind": "data"} for s in d["segments"]]
-    grid_rows.append({"label": "Corporate / other & reconciling items",
-                      "values": [_b(d["reconciling_residual"]), "", ""], "kind": "data"})
-    grid_rows.append({"label": "Consolidated net income",
-                      "values": [_b(d["consolidated_net_income"]), "", ""],
-                      "kind": "data"})
+    # Union of segment labels in as-reported order, newest year first (so the
+    # current structure leads); a renamed/dropped segment simply blanks in the
+    # years it is absent — never carried forward.
+    seg_order: list = []
+    for p in periods[::-1]:
+        for s in seg_data[p]["segments"]:
+            if s["label"] not in seg_order:
+                seg_order.append(s["label"])
+
+    def _band(title, key, *, residual=False, consolidated=False):
+        """One metric section: a header row, one row per segment across the FY
+        columns, and (net income only) the reconciling residual + consolidated
+        rows. A segment row that is n/a in every year is dropped."""
+        rows = [{"label": title, "values": [], "kind": "header"}]
+        body = []
+        for lbl in seg_order:
+            vals = []
+            for p in periods:
+                seg = next((s for s in seg_data[p]["segments"] if s["label"] == lbl), None)
+                vals.append(_b(seg[key]) if seg is not None and seg.get(key) is not None else "")
+            if any(v not in ("", "n/a") for v in vals):
+                body.append({"label": lbl, "values": vals, "kind": "data"})
+        if not body and not (residual or consolidated):
+            return []                                # metric untagged across all years
+        rows += body
+        if residual:
+            rows.append({"label": "Corporate / other & reconciling items",
+                         "values": [_b(seg_data[p]["reconciling_residual"]) for p in periods],
+                         "kind": "data"})
+        if consolidated:
+            rows.append({"label": "Consolidated net income",
+                         "values": [_b(seg_data[p]["consolidated_net_income"]) for p in periods],
+                         "kind": "data"})
+        return rows
+
+    grid_rows = []
+    grid_rows += _band("Net income ($)", "net_income", residual=True, consolidated=True)
+    grid_rows += _band("Revenue ($)", "revenue")
+    grid_rows += _band("Total assets ($)", "assets")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(["Net income", "Revenue", "Assets"], grid_rows,
-                  entity=entity, src=src)
+    _cr_component(cols, grid_rows, entity=entity, src=src)
 
 
 def _render_rate_risk(ticker):

@@ -598,6 +598,85 @@ class TestSecuritiesMultiyear(unittest.TestCase):
         self.assertIsNone(self._run([], {}))
 
 
+class TestSegmentsMultiyear(unittest.TestCase):
+    """segments_multiyear_for stitches the per-filing segment breakdown FY-end-only
+    across recent 10-Ks. extract_segments reports a SINGLE FY-end per filing, so
+    each 10-K contributes one fiscal year; periods are NEWEST-FIRST, FY-ends only
+    (any stub dropped), de-duplicated so a year shared by two filings keeps the
+    NEWER filing's value. No live fetch — _recent_10k_metas and the per-filing
+    extract are stubbed."""
+
+    def _meta(self, date, acc):
+        return {"accession": acc, "doc": f"d-{acc}.htm", "date": date, "cik": 99}
+
+    def _yr(self, consol, segs, measure="NetIncomeLoss"):
+        # segs: list of (label, ni). residual = consolidated - Σ reportable ni.
+        segments = [{"label": l, "net_income": ni, "revenue": None, "assets": None}
+                    for l, ni in segs]
+        return {"segments": segments, "consolidated_net_income": consol,
+                "reconciling_residual": consol - sum(ni for _, ni in segs),
+                "ni_measure": measure}
+
+    def _run(self, metas, extracts, n_years=5):
+        from data import sec_filing_scraper as S
+        with mock.patch("data.sec_statements._recent_10k_metas",
+                        return_value=metas), \
+             mock.patch.object(S, "_segments_extract_cached",
+                               side_effect=lambda m: extracts[m["accession"]]):
+            return S.segments_multiyear_for(99, n_years=n_years)
+
+    def test_stitch_fy_ends_newest_first_dedup(self):
+        # FY2025 10-K tags FY2025; FY2024 10-K tags FY2024; FY2023 10-K tags FY2023.
+        metas = [self._meta("2026-02-26", "A"), self._meta("2025-02-28", "B"),
+                 self._meta("2024-02-28", "C")]
+        extracts = {
+            "A": {"2025-12-31": self._yr(110.0, [("Bank", 90.0), ("Wealth", 15.0)])},
+            "B": {"2024-12-31": self._yr(100.0, [("Bank", 82.0), ("Wealth", 13.0)])},
+            "C": {"2023-12-31": self._yr(90.0, [("Bank", 75.0), ("Wealth", 11.0)])},
+        }
+        res = self._run(metas, extracts)
+        seg = res["segments"]
+        self.assertEqual(sorted(seg, reverse=True),
+                         ["2025-12-31", "2024-12-31", "2023-12-31"])
+        self.assertEqual([f["accession"] for f in res["filings"]], ["A", "B", "C"])
+        self.assertEqual(res["meta"]["accession"], "A")
+        # Each surviving period reconciles: Σ reportable + residual == consolidated.
+        for p, d in seg.items():
+            self.assertAlmostEqual(
+                sum(s["net_income"] for s in d["segments"]) + d["reconciling_residual"],
+                d["consolidated_net_income"])
+
+    def test_shared_year_keeps_newer_filing(self):
+        # Two filings both tag FY2024 (overlapping comparative) → newer wins.
+        metas = [self._meta("2026-02-26", "A"), self._meta("2025-02-28", "B")]
+        extracts = {
+            "A": {"2024-12-31": self._yr(100.0, [("Bank", 85.0), ("Wealth", 13.0)])},
+            "B": {"2024-12-31": self._yr(99.0, [("Bank", 84.0), ("Wealth", 12.0)])},
+        }
+        res = self._run(metas, extracts)
+        self.assertEqual(list(res["segments"]), ["2024-12-31"])
+        self.assertEqual(res["segments"]["2024-12-31"]["consolidated_net_income"], 100.0)
+        # Only the contributing (newer) filing is recorded.
+        self.assertEqual([f["accession"] for f in res["filings"]], ["A"])
+
+    def test_stub_period_dropped(self):
+        # A non-December period must never enter a FY-end stitch.
+        metas = [self._meta("2026-02-26", "A")]
+        extracts = {"A": {"2025-12-31": self._yr(110.0, [("Bank", 90.0), ("Wealth", 15.0)]),
+                          "2025-09-30": self._yr(80.0, [("Bank", 65.0), ("Wealth", 10.0)])}}
+        res = self._run(metas, extracts)
+        self.assertEqual(list(res["segments"]), ["2025-12-31"])
+
+    def test_single_segment_filing_yields_none(self):
+        # extract_segments returns {} for a single-segment filer → no breakdown.
+        metas = [self._meta("2026-02-26", "A")]
+        res = self._run(metas, {"A": {}})
+        self.assertIsNone(res)
+
+    def test_no_filings_returns_none(self):
+        self.assertIsNone(self._run([], {}))
+
+
 class TestFairValueMultiyear(unittest.TestCase):
     """fair_value_multiyear_for stitches the FY-end-only ASC 820 hierarchy across
     recent 10-Ks: NEWEST-FIRST periods, FY-ends only (stub quarters dropped),

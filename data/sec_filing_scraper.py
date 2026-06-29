@@ -1877,15 +1877,10 @@ def extract_segments(facts: list[Fact]) -> dict:
     return {}
 
 
-def segments_for(cik) -> dict | None:
-    """Cached business-segment summary for a company from its own latest 10-K.
-    Returns {"meta": {...}, "segments": {...}} or None."""
-    if not cik:
-        return None
+def _segments_extract_cached(meta: dict) -> dict:
+    """extract_segments for one filing, cached per accession (shared key with
+    segments_for). {} on failure (never cache a transient None)."""
     from data import cache
-    meta = latest_filing(cik, ("10-K",))
-    if not meta:
-        return None
     ckey = f"segments:v1:{meta['accession']}"
     seg = cache.get(ckey)
     if seg is None:
@@ -1896,11 +1891,69 @@ def segments_for(cik) -> dict | None:
             except Exception:
                 pass
         except Exception as e:
-            print(f"[sec_scraper] segments failed for cik {cik}: {type(e).__name__}: {e}")
+            print(f"[sec_scraper] segments failed for cik {meta.get('cik')}: "
+                  f"{type(e).__name__}: {e}")
             seg = {}
+    return seg or {}
+
+
+def segments_for(cik) -> dict | None:
+    """Cached business-segment summary for a company from its own latest 10-K.
+    Returns {"meta": {...}, "segments": {...}} or None."""
+    if not cik:
+        return None
+    meta = latest_filing(cik, ("10-K",))
+    if not meta:
+        return None
+    seg = _segments_extract_cached(meta)
     if seg:
         return {"meta": meta, "segments": seg}
     return None
+
+
+def segments_multiyear_for(cik, n_years: int = 5) -> dict | None:
+    """Multi-year business-segment summary, stitched FY-end-only from the bank's
+    recent 10-Ks. extract_segments reports a SINGLE FY-end (the filing's own latest
+    fiscal year), so each 10-K contributes one fiscal year; reaching back a handful
+    of filings yields up to `n_years` fiscal year-ends. Returns
+    {"meta": <latest 10-K>, "filings": [...], "segments": {fy_period: {...}}}
+    (newest-first periods), or None when no FY-end segment breakdown is tagged.
+
+    Each period entry is exactly what extract_segments produced — i.e. already
+    reconcile-gated: ≥2 reportable segments + a consolidated total were tagged and
+    the corporate/other residual (consolidated − Σ reportable) is SMALLER than the
+    consolidated total (a residual exceeding it means a double-counted parent member
+    → that filing's period is dropped, n/a, never a misleading breakdown). Periods
+    are de-duplicated keeping the value from the NEWEST filing that tagged them
+    (filings agree on shared comparatives; newest is the as-finally-reported figure).
+    Segments are unioned across years by their as-reported label at render time —
+    nothing is carried forward here."""
+    if not cik:
+        return None
+    from data.sec_statements import _recent_10k_metas
+    metas = _recent_10k_metas(cik, n_years)
+    if not metas:
+        return None
+    segments: dict = {}
+    used_filings: list = []
+    for m in metas:                                  # newest-first
+        seg = _segments_extract_cached(m)
+        contributed = False
+        for period in sorted(seg.keys(), reverse=True):
+            if period[5:7] != "12":                  # FY-ends only (skip any stub)
+                continue
+            if period in segments:                   # newer filing already supplied it
+                continue
+            segments[period] = seg[period]
+            contributed = True
+        if contributed:
+            used_filings.append(m)
+        # Stop once we have the requested span of fiscal years.
+        if len({p[:4] for p in segments}) >= n_years:
+            break
+    if not segments:
+        return None
+    return {"meta": metas[0], "filings": used_filings, "segments": segments}
 
 
 # ── Interest-rate risk (embedded, from securities marks vs capital) ───────────
