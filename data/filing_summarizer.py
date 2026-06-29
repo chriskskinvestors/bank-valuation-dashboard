@@ -47,7 +47,19 @@ def _strip_sec_boilerplate(text: str) -> str:
     Remove SEC filing boilerplate (cover page, legal headers) to get
     to the actual substance of the filing.
     """
-    # Common markers that signal the start of real content
+    # Drop the forward-looking-statements / safe-harbor disclaimer and everything
+    # after it. It's pure boilerplate AND — because it literally reads "...the
+    # statements contained in this news release..." — it used to trick the
+    # content-marker scan below into skipping TO the disclaimer and discarding the
+    # actual release above it (dividend / merger / other-event 8-Ks summarized to
+    # nothing). Keep it only when it sits at the very top (then it's all there is).
+    _fls = re.search(r"\bforward[\s-]*looking\s+statements\b", text, re.IGNORECASE)
+    if _fls and _fls.start() > 200:
+        text = text[: _fls.start()].rstrip()
+
+    # Common markers that signal the start of real content. NOTE: "press release"
+    # / "news release" are intentionally NOT here — they match the disclaimer
+    # boilerplate ("...in this news release...") and mis-anchored the strip.
     content_markers = [
         # Press releases / earnings
         "reports fourth quarter", "reports third quarter",
@@ -63,7 +75,6 @@ def _strip_sec_boilerplate(text: str) -> str:
         "management's discussion",
         # 8-K content
         "item 2.02", "item 1.01", "item 5.02",
-        "press release", "news release",
         # General
         "highlights", "selected financial data",
     ]

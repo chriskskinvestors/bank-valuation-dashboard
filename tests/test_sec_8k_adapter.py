@@ -178,6 +178,39 @@ class TestCleanSummary(unittest.TestCase):
         self.assertEqual(_clean_summary(s), s)
 
 
+class TestStripBoilerplateFLS(unittest.TestCase):
+    """The forward-looking-statements disclaimer says '...in this news release...',
+    which used to anchor the content-strip ONTO the disclaimer and discard the
+    real release — dividend/merger 8-Ks summarized to nothing (CLST/DCOM)."""
+
+    _strip = staticmethod(filing_summarizer._strip_sec_boilerplate)
+
+    def test_substance_kept_disclaimer_dropped(self):
+        # Substance must exceed the 200-char top-guard, as in a real release.
+        text = (
+            "Dime Commercial Bancshares, Inc. (NYSE: DCOM), the holding company for "
+            "Dime Commercial Bank, announced today that its Board of Directors has "
+            "declared a quarterly cash dividend of $0.25 per share of common stock, "
+            "payable on July 24, 2026 to common stockholders of record as of July 17, "
+            "2026. The Company continues its long trend of uninterrupted dividends. "
+            "FORWARD-LOOKING STATEMENTS Statements contained in this news release "
+            "that are not historical facts are forward-looking statements.")
+        out = self._strip(text)
+        self.assertIn("quarterly cash dividend of $0.25", out)
+        self.assertNotIn("historical facts", out)
+
+    def test_fls_at_top_is_kept(self):
+        # When the disclaimer is all there is (leads the doc), don't nuke it.
+        text = ("Forward-Looking Statements " + "This release contains projections "
+                "and assumptions about future results. " * 6)
+        self.assertGreater(len(self._strip(text)), 200)
+
+    def test_no_disclaimer_unaffected(self):
+        text = ("Acme Bancorp today reported net income of $5 million, up 10% YoY; "
+                "diluted EPS was $1.20.")
+        self.assertIn("net income", self._strip(text).lower())
+
+
 class TestResolve8KDocUrl(unittest.TestCase):
     """An 8-K filing URL must resolve to its body document (EX-99.1 press release
     if present, else the primary cover doc) so the summarizer reads real text
