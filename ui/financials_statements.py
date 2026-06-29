@@ -2123,6 +2123,18 @@ def _cr_highlights_by_year(ticker):
         nii = _i(["net interest income"], year)
         nonii = _i(["total noninterest income"], year)
         nonix = _i(["total noninterest expense"], year)
+        prov = _i(["provision for credit losses", "provision for loan losses",
+                   "(reversal of) provision for credit losses"], year)
+        eps_dil = _i(["diluted earnings per common share (in dollars per share)",
+                      "diluted earnings per share (in dollars per share)",
+                      "diluted earnings per common share",
+                      "diluted earnings per share",
+                      "earnings per common share - diluted (in dollars per share)"],
+                     year)
+        # PPNR = NII + noninterest income − noninterest expense (all three present).
+        ppnr = (nii + nonii - nonix
+                if (nii is not None and nonii is not None and nonix is not None)
+                else None)
 
         # Tangible common equity (period-end and average).
         def _tce(at_year):
@@ -2150,6 +2162,8 @@ def _cr_highlights_by_year(ticker):
         d = {
             "total_assets": ta, "net_loans": nl, "total_deposits": dep,
             "total_equity": eq, "securities": securities,
+            "nii": nii, "noninterest_income": nonii, "noninterest_expense": nonix,
+            "provision": prov, "ppnr": ppnr, "eps_diluted": eps_dil,
             "net_income": ni,
             "roaa": _ratio(ni, avg_assets),
             "roae": _ratio(ni, avg_equity),
@@ -2223,6 +2237,76 @@ _CR_HL_TRENDS = [
     ("ROATCE (%)", "roatce"),
     ("CET1 (%)", "cet1"),
 ]
+
+
+# Performance-Analysis sections: (section name, [(row label, metric key, fmt)]).
+# Drives the multi-year Company-Reported Performance table. All keys come straight
+# from _cr_highlights_by_year (income-statement levels + ratios on average balances).
+_CR_PERF_SECTIONS = [
+    ("Earnings", [
+        ("Net interest income", "nii", "usd"),
+        ("Noninterest income", "noninterest_income", "usd"),
+        ("Noninterest expense", "noninterest_expense", "usd"),
+        ("Pre-provision net revenue (PPNR)", "ppnr", "usd"),
+        ("Provision for credit losses", "provision", "usd"),
+        ("Net income", "net_income", "usd"),
+    ]),
+    ("Profitability", [
+        ("ROAA", "roaa", "pct2"),
+        ("ROAE", "roae", "pct2"),
+        ("ROATCE", "roatce", "pct2"),
+        ("Net interest margin", "nim", "pct2"),
+        ("Efficiency ratio", "efficiency", "pct2"),
+    ]),
+    ("Per share", [
+        ("Diluted EPS", "eps_diluted", "eps"),
+    ]),
+]
+
+# Performance trend charts (right side): one % series each, ≥3 points to render,
+# cap 4. NIM leads, then ROAA/ROAE/Efficiency.
+_CR_PERF_TRENDS = [
+    ("Net interest margin (%)", "nim"),
+    ("ROAA (%)", "roaa"),
+    ("ROAE (%)", "roae"),
+    ("Efficiency ratio (%)", "efficiency"),
+]
+
+
+def _cr_perf_trends(years, dicts, ticker, key_prefix):
+    """Right-hand trend charts for multi-year Company-Reported Performance: one
+    single-line % chart per metric (NIM, ROAA, ROAE, efficiency). Same plotting
+    style as _cr_highlights_trends; a metric n/a for every year is skipped; ≥3
+    points to render, capped at 4 charts."""
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+    xs = years[::-1]                                    # oldest → newest
+    charts = []
+    for title, key in _CR_PERF_TRENDS:
+        ys = [(d.get(key) * 100 if d.get(key) is not None else None)
+              for d in dicts][::-1]
+        if sum(1 for y in ys if y is not None) >= 3:
+            charts.append((title, ys))
+        if len(charts) >= 4:
+            break
+    if not charts:
+        return
+    st.markdown("##### Trends")
+    for r in range(0, len(charts), 2):
+        cols = st.columns(2)
+        for j, (col, (title, ys)) in enumerate(zip(cols, charts[r:r + 2])):
+            with col:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, mode="lines+markers", connectgaps=True,
+                    line=dict(color=CATEGORICAL_PALETTE[0], width=2),
+                    marker=dict(size=5)))
+                apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                                      yaxis_title="%", show_legend=False)
+                tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
+                st.plotly_chart(fig, use_container_width=True,
+                                key=f"{key_prefix}_perftr_{ticker}_{r + j}")
 
 
 def _cr_highlights_trends(years, dicts, ticker, key_prefix):
@@ -2318,20 +2402,17 @@ def _render_financial_highlights(ticker):
 
 
 def _render_performance(ticker):
-    """As-reported full-year profitability, scraped from the HOLDING COMPANY's own
-    latest 10-K inline XBRL: revenue, NII, PPNR, net income, EPS, and the
-    efficiency ratio / ROA / ROE. Every figure is a directly tagged income-statement
-    line or a transparent combination; ROA/ROE use average balances. n/a when the
-    core income lines aren't tagged for the latest fiscal year."""
+    """Multi-year (up to 5 FY) Company-Reported Performance Analysis, mirroring the
+    Company-Reported Financial Highlights: section bands (Earnings, Profitability,
+    Per share) with the table on the LEFT and % trend charts (NIM, ROAA, ROAE,
+    efficiency) on the RIGHT. Every figure is derived from the bank's OWN multi-year
+    income statement (levels, EPS) plus ratios on average balances and NIM scraped
+    from the 10-K MD&A — never FDIC. A metric whose inputs aren't cleanly disclosed
+    for a year renders blank (never a guess); a row n/a for every year is dropped."""
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
         return
-    try:
-        from data.sec_filing_scraper import performance_for
-        res = performance_for(cik)
-    except Exception:
-        res = None
     st.markdown("---")
     st.subheader("Performance Analysis — Company Reported")
 
@@ -2353,48 +2434,52 @@ def _render_performance(ticker):
             f"({_fresh['url']}), ahead of the next 10-Q. Unaudited; the filed figure "
             f"supersedes it once published.")
 
-    if not res or not res.get("performance"):
-        st.caption("Full-year income-statement lines not tagged in this filer's "
-                   "latest 10-K — n/a.")
+    try:
+        years, dicts, src = _cr_highlights_by_year(ticker)
+    except Exception:
+        years = dicts = src = None
+    if not years or not dicts:
+        st.caption("Company-reported income-statement lines not available from this "
+                   "filer's 10-Ks — n/a.")
         return
-    meta, perf = res["meta"], res["performance"]
-    period = max(perf)
-    d = perf[period]
-    src = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
-           f"{meta['accession']}/{meta['doc']}")
-    note = (" Average balances for ROA/ROE are the mean of beginning and ending "
-            "balance-sheet amounts." if d.get("_avg_computed") else "")
+    periods = years[::-1]                               # oldest → newest
+    order = list(range(len(years)))[::-1]               # column order, oldest-first
+
+    def _fmt(v, kind):
+        if v is None:
+            return None
+        if kind == "usd":
+            return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+        if kind == "eps":
+            return f"$({abs(v):,.2f})" if v < 0 else f"${v:,.2f}"
+        return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
+
+    rows = []
+    for sec_name, metrics in _CR_PERF_SECTIONS:
+        sec_rows = []
+        for label, key, kind in metrics:
+            vals = [_fmt(dicts[i].get(key), kind) for i in order]
+            # Drop a row that is n/a for every year; keep if any year has data.
+            if any(v is not None for v in vals):
+                sec_rows.append({"label": label, "values": vals, "kind": "data"})
+        if sec_rows:
+            rows.append({"label": sec_name, "values": [], "kind": "header"})
+            rows.extend(sec_rows)
+
     st.caption(
-        f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — full year "
-        f"FY{period[:4]}. Efficiency = noninterest expense ÷ revenue; PPNR = revenue "
-        f"− noninterest expense.{note} Updates as the company files.")
-
-    def _b(v):
-        return "n/a" if v is None else _cr_usd(v)
-
-    def _pct(v):
-        return "n/a" if v is None else f"{v * 100:.1f}%"
-
-    def _eps(v):
-        return "n/a" if v is None else f"${v:,.2f}"
-
-    rows = [
-        ("Total revenue", _b(d["revenue"])),
-        ("Net interest income", _b(d["nii"])),
-        ("Noninterest income", _b(d["noninterest_income"])),
-        ("Noninterest expense", _b(d["noninterest_expense"])),
-        ("Pre-provision net revenue (PPNR)", _b(d["ppnr"])),
-        ("Provision for credit losses", _b(d["provision"])),
-        ("Net income", _b(d["net_income"])),
-        ("Diluted EPS", _eps(d["eps_diluted"])),
-        ("Efficiency ratio", _pct(d["efficiency"])),
-        ("Return on average assets (ROA)", _pct(d["roa"])),
-        ("Return on average equity (ROE)", _pct(d["roe"])),
-    ]
+        f"Source: company 10-K filings ([latest]({src})); {len(periods)} fiscal "
+        "years from the bank's own income statement (NII, noninterest income/expense, "
+        "provision, net income, diluted EPS) with ROAA/ROAE/ROATCE and efficiency on "
+        "average balances; PPNR = NII + noninterest income − noninterest expense. NIM "
+        "is the company's net interest margin scraped from the 10-K MD&A average-"
+        "balance table — never FDIC. Blank where a filing doesn't disclose a clean "
+        "figure.")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component([f"FY{period[:4]}"],
-                  [{"label": lab, "values": [val], "kind": "data"} for lab, val in rows],
-                  entity=entity, src=src)
+    _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+    with _lt:
+        _cr_component(periods, rows, entity=entity, src=src)
+    with _rt:
+        _cr_perf_trends(years, dicts, ticker, "crperf")
 
 
 def _render_segments(ticker):
