@@ -2597,6 +2597,84 @@ def _cr_credit_trends(years, dicts, ticker, key_prefix):
                                 key=f"{key_prefix}_cqtr_{ticker}_{r + j}")
 
 
+def _cr_capital_trends(ticker, key_prefix):
+    """Company-Reported-only trend charts for Regulatory Capital — holding company.
+
+    Re-reads the SAME scraped holdco capital dict that _render_holdco_capital's
+    table uses (data.sec_filing_scraper.holdco_capital_for → {period: {cet1_ratio,
+    t1_ratio, total_ratio, lev_ratio, rwa, ...}}; ratios are fractions, rwa is raw
+    dollars). Renders a 2×2 of CET1 (%), Tier 1 — or Total when Tier 1 is sparse —
+    (%), Leverage (%) and RWA ($B), oldest→newest. Company-scraped only, NEVER
+    FDIC. ≥3 disclosed points to draw a line, else the chart is skipped; no
+    periods / a single period / no chart with ≥3 points → renders nothing, no
+    crash. Same plotting style as _cr_perf_trends. Called ONLY from the
+    Company-Reported wrapper (_cr_reg_capital) — never the Templated page, which
+    shares _render_holdco_capital's table but not these charts."""
+    from data.bank_mapping import get_cik, get_fdic_cert
+    cik = get_cik(ticker)
+    if not cik:
+        return
+    try:
+        from data.sec_filing_scraper import holdco_capital_for
+        res = holdco_capital_for(cik, get_fdic_cert(ticker))
+    except Exception:
+        res = None
+    if not res or not res.get("capital"):
+        return
+    cap = res["capital"]
+    periods = sorted(cap)[:6][-5:]                      # oldest → newest, last 5
+    if len(periods) < 3:
+        return
+
+    def _plab(p):
+        y, m = p[:4], p[5:7]
+        return f"FY{y}" if m == "12" else f"Q{(int(m) - 1) // 3 + 1} '{y[2:]}"
+
+    def _ser(key):
+        return [(cap[p].get(key) * 100 if cap[p].get(key) is not None else None)
+                for p in periods]
+
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+    xs = [_plab(p) for p in periods]
+
+    # 2nd chart: prefer Tier 1; fall back to Total capital when Tier 1 is too sparse.
+    t1 = _ser("t1_ratio")
+    tot = _ser("total_ratio")
+    second = (("Tier 1 capital ratio (%)", t1, "%")
+              if sum(1 for y in t1 if y is not None) >= 3
+              else ("Total capital ratio (%)", tot, "%"))
+    rwa = [(cap[p].get("rwa") / 1e9 if cap[p].get("rwa") is not None else None)
+           for p in periods]
+    candidates = [
+        ("CET1 ratio (%)", _ser("cet1_ratio"), "%"),
+        second,
+        ("Tier 1 leverage ratio (%)", _ser("lev_ratio"), "%"),
+        ("Risk-weighted assets ($B)", rwa, "$B"),
+    ]
+    charts = [(t, ys, u) for t, ys, u in candidates
+              if sum(1 for y in ys if y is not None) >= 3]
+    if not charts:
+        return
+
+    st.markdown("##### Trends")
+    for r in range(0, len(charts), 2):
+        cols = st.columns(2)
+        for j, (col, (title, ys, unit)) in enumerate(zip(cols, charts[r:r + 2])):
+            with col:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=xs, y=ys, mode="lines+markers", connectgaps=True,
+                    line=dict(color=CATEGORICAL_PALETTE[0], width=2),
+                    marker=dict(size=5)))
+                apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                                      yaxis_title=unit, show_legend=False)
+                tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
+                st.plotly_chart(fig, use_container_width=True,
+                                key=f"{key_prefix}_captr_{ticker}_{r + j}")
+
+
 def _cr_highlights_trends(years, dicts, ticker, key_prefix):
     """Right-hand trend charts for the multi-year Financial Highlights: one
     single-line % chart per metric (ROAA, ROAE, efficiency, CET1). xs are the FY

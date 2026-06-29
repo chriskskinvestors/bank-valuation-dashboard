@@ -292,10 +292,14 @@ def _cr_rate_risk(t, ctx):
 
 
 def _cr_reg_capital(t, ctx):
-    from ui.financials_statements import _cr_title
+    from ui.financials_statements import _cr_title, _cr_capital_trends
     from ui.capital_dynamics import _render_holdco_capital
     _cr_title(t, "Regulatory Capital — Company Reported")
-    _render_holdco_capital(t)
+    _render_holdco_capital(t)        # shared table (unchanged; also used Templated)
+    # CR-only: ratio/RWA trend charts below the table. Re-reads the same scraped
+    # holdco capital dict; renders nothing when <3 disclosed periods. Deliberately
+    # NOT inside _render_holdco_capital so the Templated page stays chart-free.
+    _cr_capital_trends(t, "crreg")
 
 
 def _cr_todo(label):
