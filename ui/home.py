@@ -178,9 +178,9 @@ _AF_CSS = r"""
 /* Rates · Credit board, 7 cols: Instrument | Level | 1D bp | 1W | 1M | YTD | 52w.
    Each 1W/1M/YTD cell (.wc) is a tight unit: the bp number + a short fixed-width
    mini range bar beside it. The 52-week bar fills its own column. */
-.afwrap .erow.r7{grid-template-columns:1.45fr .6fr .45fr .6fr .6fr .6fr .78fr;column-gap:5px;padding:0 10px;}
+.afwrap .erow.r7{grid-template-columns:1.32fr .58fr .44fr .68fr .68fr .68fr .76fr;column-gap:5px;padding:0 10px;}
 .afwrap .erow.r7 .num{font-size:var(--fs-grid-10);}
-.afwrap .wc{display:flex;align-items:center;justify-content:flex-end;gap:4px;min-width:0;}
+.afwrap .wc{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;}
 .afwrap .wc .num{flex:0 0 auto;}
 .afwrap .rsec{font-size:var(--fs-grid-8);font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#1e3a8a;background:#f7f9fc;padding:4px 10px 3px;border-bottom:1px solid #eef1f5;}
 .afwrap .rng{position:relative;height:4px;width:100%;border-radius:0;background:#eef2f7;align-self:center;}
