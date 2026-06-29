@@ -2207,6 +2207,7 @@ _CR_HL_TRENDS = [
     ("ROAA (%)", "roaa"),
     ("ROAE (%)", "roae"),
     ("Efficiency ratio (%)", "efficiency"),
+    ("ROATCE (%)", "roatce"),
     ("CET1 (%)", "cet1"),
 ]
 
@@ -2225,8 +2226,12 @@ def _cr_highlights_trends(years, dicts, ticker, key_prefix):
     for title, key in _CR_HL_TRENDS:
         ys = [(d.get(key) * 100 if d.get(key) is not None else None)
               for d in dicts][::-1]
-        if any(y is not None for y in ys):
+        # need >=3 points to read as a trend — skips e.g. a 2-year capital series
+        # (its 2-dot line looked broken). Cap at 4 charts (2x2 grid).
+        if sum(1 for y in ys if y is not None) >= 3:
             charts.append((title, ys))
+        if len(charts) >= 4:
+            break
     if not charts:
         return
     st.markdown("##### Trends")
