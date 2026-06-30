@@ -122,7 +122,7 @@ BANK_MAP = {
     # Post-Umpqua merger (Mar 2023) the official SEC CIK is 887343, not 1166928.
     "COLB":  {"name": "Columbia Banking System",            "fdic_cert": 17266,  "cik": 887343},
     "BOKF":  {"name": "BOK Financial Corp.",                "fdic_cert": 4214,   "cik": 875357},
-    "BOH":   {"name": "Bank of Hawaii Corp.",               "fdic_cert": 18053,  "cik": 46640},
+    "BOH":   {"name": "Bank of Hawaii Corp.",               "fdic_cert": 18053,  "cik": 46195},
 
     # OTC-traded thrift: SEC CIK 942895 has no XBRL data, files only D + 13G.
     # FDIC cert 31028 = HomeTown Bank, MN (holdco REDWOOD FINANCIAL INC).
