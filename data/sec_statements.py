@@ -447,7 +447,8 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
         # non-monetary and keeps scale 1.0 — scaling it ×1000 would inflate the
         # number 1000×. When the R-file carries no type (older/odd filers), fall
         # back to the per-share/in-shares LABEL heuristic.
-        etype = el_types.get(_row_element_id(cells[0]), "")
+        element_id = _row_element_id(cells[0])
+        etype = el_types.get(element_id, "")
         if etype:
             rscale = scale if _MONETARY_TYPE.search(etype) else 1.0
         else:
@@ -460,6 +461,10 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
             # The row's XBRL element data type, carried downstream so the stitch
             # can tell a per-share / share-count row from an additive $ flow.
             "etype": etype,
+            # The us-gaap element id (defref) this row reports. Two rows sharing it
+            # are definitionally the SAME concept — used by _consolidate_variants
+            # to fold a renamed twin (a relabeled same-element line) into one row.
+            "element_id": element_id,
             "values": [] if is_header else (parsed + [None] * ncol)[:ncol],
         })
     # SEC R-files append an XBRL element-definition footnote block below the
@@ -987,6 +992,62 @@ def _variant_compatible(a: str, b: str) -> bool:
     return bool(_PERSHARE.search(a)) and bool(_PERSHARE.search(b))
 
 
+def _is_orphan(values) -> bool:
+    """True when a data row is blank in EVERY displayed period — an all-empty
+    'twin' that carries no number. Absorbing it into a populated near-synonym (or
+    dropping it) can never produce a wrong value."""
+    return not any(v is not None for v in values)
+
+
+# Tokens that mark a near-synonym 'twin' of the SAME economic line — drop them so
+# a renamed line's token set matches its sibling: a leading qualifier ('total'),
+# the income-statement 'interest'/'fees'/'dividends'/'on'/'income' connectives a
+# filer shuffles ('Loans, including fees' ⇄ 'Interest and fees on loans'), and the
+# 'securities'/'taxable'/'exempt' tax-status words ('Taxable securities' ⇄
+# 'Taxable'). Used ONLY for the GUARDED orphan-absorption tier, never the stitch
+# key — and every absorption still requires the absorbed twin be a true all-blank
+# orphan AND the same statement section, so a loose token overlap can never
+# combine two lines that each carry data.
+_SYNONYM_DROP = re.compile(
+    r"\btotal\b|\binterest\b|\bfees\b|\bfee\b|\bdividends?\b|\bincome\b|\bon\b|"
+    r"\bincluding\b|\band\b|\bsecurities\b|\bsecurity\b|\bnet\b", re.I)
+
+
+def _synonym_tokens(label: str) -> frozenset:
+    """Token set for orphan near-synonym matching: the variant tokens minus the
+    shuffled connective/qualifier words a filer reorders when renaming a line. A
+    STRICTER signal than _variant_tokens (which keeps those words) — used only to
+    decide whether an all-blank orphan may be absorbed into a populated twin."""
+    return frozenset(w for w in _variant_tokens(label)
+                     if not _SYNONYM_DROP.match(w))
+
+
+def _orphan_synonym(o: str, r: str) -> bool:
+    """True when labels o and r are near-synonym twins of the SAME line for the
+    GUARDED orphan tier: their synonym-token sets overlap strongly (subset relation
+    after the shuffled connectives are dropped) and at least one distinctive token
+    survives. Only ever consulted when one of the two rows is a true all-blank
+    orphan AND they share a statement section — so it can absorb an empty twin into
+    a populated line, never combine two populated lines."""
+    ta, tb = _synonym_tokens(o), _synonym_tokens(r)
+    if not ta or not tb:
+        return False
+    return ta <= tb or tb <= ta
+
+
+def _section_ids(rows: list) -> list:
+    """Section id per row: the index of the most recent header row above it (−1
+    before any header). Two data rows with the same id sit under the same section
+    heading — the gate that keeps the orphan tier from absorbing a same-named twin
+    across statement sections."""
+    ids, cur = [], -1
+    for i, r in enumerate(rows):
+        if r["header"]:
+            cur = i
+        ids.append(cur)
+    return ids
+
+
 def _consolidate_variants(stmt: dict | None) -> dict | None:
     """Fold cross-filing WORDING VARIANTS of the same line into one row, AFTER the
     strict-key stitch. Renamed lines otherwise fragment into blank-duplicate rows:
@@ -995,27 +1056,56 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
     'Total Huntington shareholders' equity'↔'…Bancshares Inc…' and 'Total
     liabilities and shareholders' equity'↔'Total liabilities and equity'.
 
-    CARDINAL over-merge guard: two rows merge ONLY if they NEVER both hold a
-    non-blank value in the SAME period. If both are populated in any shared period
-    they are DISTINCT lines (e.g. 'Net income' vs 'Net income attributable to
-    noncontrolling interests', or 'Total equity' vs 'Total liabilities and
-    equity') and stay separate — a merge can never overwrite or invent a value.
-    The surviving row keeps the label whose values reach the NEWEST (leftmost)
-    period; absorbed values fill only its blank cells. Header rows never merge.
-    The injected 'shares issued not disclosed' placeholder is dropped outright."""
+    Three tiers fold a twin (safest first):
+      1. SAFE — same us-gaap element id (defref): two rows sharing it are
+         definitionally the SAME concept (a relabeled same-element line), so they
+         merge regardless of wording. Risk-free.
+      2. GUARDED — different element ids, near-synonym labels: merge only when the
+         absorbed twin is a TRUE all-blank orphan (no value in any displayed
+         period), the two sit in the SAME statement section, and their synonym
+         token sets overlap. Absorbing an empty row into a populated one can never
+         invent a value.
+      3. The pre-existing variant tier (_variant_compatible): subset/synonym
+         wording overlap, used for partially-populated renamed lines.
+
+    CARDINAL over-merge guard (applies to ALL tiers): two rows merge ONLY if they
+    NEVER both hold a non-blank value in the SAME period. If both are populated in
+    any shared period they are DISTINCT lines (e.g. 'Net income' vs 'Net income
+    attributable to noncontrolling interests', or 'Total equity' vs 'Total
+    liabilities and equity') and stay separate — a merge can never overwrite or
+    invent a value. The surviving row keeps the label whose values reach the NEWEST
+    (leftmost) period; absorbed values fill only its blank cells. Header rows never
+    merge. The injected 'shares issued not disclosed' placeholder is dropped."""
     if not stmt or not stmt.get("rows"):
         return stmt
     rows = [r for r in stmt["rows"]
             if r["header"] or not _PLACEHOLDER_LABEL.search(r["label"])]
+    sect = _section_ids(rows)
     n = len(stmt.get("periods") or [])
     out: list = []
-    for r in rows:
+    out_sect: list = []                         # section id parallel to `out`
+    for ri, r in enumerate(rows):
         if r["header"]:
             out.append(dict(r))
+            out_sect.append(sect[ri])
             continue
+        r_eid = r.get("element_id", "")
+        r_orphan = _is_orphan(r["values"])
         target = None
-        for o in out:
-            if o["header"] or not _variant_compatible(o["label"], r["label"]):
+        for oi, o in enumerate(out):
+            if o["header"]:
+                continue
+            o_eid = o.get("element_id", "")
+            same_element = bool(r_eid) and r_eid == o_eid
+            # Tier 2 orphan absorption: a true all-blank orphan (on either side),
+            # same section, near-synonym labels.
+            orphan_pair = (
+                out_sect[oi] == sect[ri]
+                and (r_orphan or _is_orphan(o["values"]))
+                and _orphan_synonym(o["label"], r["label"]))
+            if not (same_element
+                    or _variant_compatible(o["label"], r["label"])
+                    or orphan_pair):
                 continue
             # Guard: skip if ANY period already holds a value in BOTH rows.
             if any(o["values"][i] is not None and r["values"][i] is not None
@@ -1025,6 +1115,7 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
             break
         if target is None:
             out.append(dict(r))
+            out_sect.append(sect[ri])
             continue
         merged = [target["values"][i] if (i < len(target["values"])
                   and target["values"][i] is not None)
@@ -1035,6 +1126,8 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
             return next((i for i, v in enumerate(vals) if v is not None), n)
         if _first(r["values"]) < _first(target["values"]):
             target["label"] = r["label"]      # newer wording reaches a newer period
+            if r_eid:
+                target["element_id"] = r_eid  # keep the surviving line's element id
         target["values"] = merged
     return {**stmt, "rows": out}
 
@@ -1042,8 +1135,8 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
 def _merge_row_order(parsed: list) -> list:
     """Union of rows across filings (newest first), preserving each filing's
     internal order. Rows are matched on the NORMALIZED label so a line whose
-    label carries changing numbers stays one row; the DISPLAY label is the newest
-    filing's. Returns [(norm_key, display_label, header), …]."""
+    label carries changing numbers stays one row; the DISPLAY label and element id
+    are the newest filing's. Returns [(norm_key, display_label, header, element_id), …]."""
     merged: list = []
     keys: list = []                            # parallel norm keys for .index
     for f in parsed:
@@ -1054,7 +1147,7 @@ def _merge_row_order(parsed: list) -> list:
                 prev = keys.index(k)
             else:
                 prev += 1
-                merged.insert(prev, (k, r["label"], r["header"]))
+                merged.insert(prev, (k, r["label"], r["header"], r.get("element_id", "")))
                 keys.insert(prev, k)
     return merged
 
@@ -1098,11 +1191,11 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
                             break
         col[period] = merged
     rows = []
-    for key, label, header in _merge_row_order(parsed):
+    for key, label, header, element_id in _merge_row_order(parsed):
         if header:
             rows.append({"label": label, "header": True, "values": []})
         else:
-            rows.append({"label": label, "header": False,
+            rows.append({"label": label, "header": False, "element_id": element_id,
                          "values": [col.get(p, {}).get(key) for p in all_periods]})
     return _consolidate_variants(
         {"periods": all_periods, "rows": rows,
@@ -1312,11 +1405,11 @@ def _assemble(parsed: list, col: dict, periods: list) -> dict | None:
     if not have:
         return None
     rows = []
-    for key, label, header in _merge_row_order(parsed):
+    for key, label, header, element_id in _merge_row_order(parsed):
         if header:
             rows.append({"label": label, "header": True, "values": []})
         else:
-            rows.append({"label": label, "header": False,
+            rows.append({"label": label, "header": False, "element_id": element_id,
                          "values": [col.get(p, {}).get(key) for p in periods]})
     return _consolidate_variants(
         {"periods": [_q_label(p) for p in periods], "rows": rows,

@@ -1633,6 +1633,109 @@ class TestNearSynonymMerge(unittest.TestCase):
         self.assertEqual(len(out["rows"]), 2)
 
 
+class TestTwinOrphanConsolidation(unittest.TestCase):
+    """Cosmetic twin-orphan fix: a near-synonym 'twin' that leaves an all-blank
+    orphan row next to its populated sibling is folded away — tier 1 (same us-gaap
+    element id), tier 2 (different ids, near-synonym, all-blank orphan, same
+    section) — while distinct populated lines and standalone all-blank disclosed
+    lines are untouched (PGC/CPF/AUBN/CFR/FSBC/GCBC/WTBA slice-6 audit)."""
+
+    def _stmt(self, rows, periods=("25", "24", "23", "22", "21")):
+        out = []
+        for x in rows:
+            if x[1] is None:                         # (label, None) -> header
+                out.append({"label": x[0], "header": True, "values": []})
+            else:
+                label, vals = x[0], x[1]
+                eid = x[2] if len(x) > 2 else ""
+                out.append({"label": label, "header": False,
+                            "element_id": eid, "values": vals})
+        return {"periods": list(periods), "units_scale": 1e3, "rows": out}
+
+    def test_tier1_same_element_id_different_label_merges(self):
+        # SAFE tier: two rows sharing the us-gaap element id are the SAME concept;
+        # 'Loans, including fees' (older, orphan) ⇄ 'Interest and fees on loans'
+        # (newer, populated) fold to one row regardless of the wording difference.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Interest income", None),
+            ("Loans, including fees", [None, None, None, None, 100.0],
+             "us-gaap_InterestAndFeeIncomeLoansAndLeases"),
+            ("Interest and fees on loans", [120.0, 115.0, 110.0, 105.0, None],
+             "us-gaap_InterestAndFeeIncomeLoansAndLeases"),
+        ]))
+        data = [r for r in out["rows"] if not r["header"]]
+        self.assertEqual(len(data), 1)               # one merged row
+        self.assertEqual(data[0]["label"], "Interest and fees on loans")  # newest
+        self.assertEqual(data[0]["values"], [120.0, 115.0, 110.0, 105.0, 100.0])
+
+    def test_tier1_same_element_id_same_period_both_populated_stays_separate(self):
+        # Even with a shared element id, the cardinal over-merge guard holds: two
+        # rows both populated in a shared period are NOT merged (no value can be
+        # overwritten or invented).
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Interest and fees on loans", [120.0, 115.0, None, None, None], "eid_X"),
+            ("Loans, including fees", [130.0, None, 110.0, 105.0, 100.0], "eid_X"),
+        ]))
+        self.assertEqual(len([r for r in out["rows"] if not r["header"]]), 2)
+
+    def test_tier2_all_blank_orphan_absorbed_into_populated_synonym(self):
+        # GUARDED tier: 'Taxable securities' is an all-blank orphan, same section
+        # as the populated near-synonym 'Taxable' — the empty twin is absorbed and
+        # the populated line (with its values) remains.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Interest income", None),
+            ("Taxable securities", [None, None, None, None, None], "eid_A"),
+            ("Taxable", [50.0, 48.0, 46.0, 44.0, 42.0], "eid_B"),
+        ]))
+        data = [r for r in out["rows"] if not r["header"]]
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["values"], [50.0, 48.0, 46.0, 44.0, 42.0])
+
+    def test_tier2_orphan_does_not_merge_across_sections(self):
+        # The same orphan/populated pair in DIFFERENT statement sections must NOT
+        # merge — the section gate keeps a same-named twin apart across sections.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("ASSETS", None),
+            ("Taxable", [None, None, None, None, None], "eid_A"),
+            ("INTEREST INCOME", None),
+            ("Taxable securities", [50.0, 48.0, 46.0, 44.0, 42.0], "eid_B"),
+        ]))
+        labels = [r["label"] for r in out["rows"] if not r["header"]]
+        self.assertEqual(len(labels), 2)             # both kept
+        self.assertIn("Taxable", labels)
+        self.assertIn("Taxable securities", labels)
+
+    def test_standalone_all_blank_disclosed_line_not_dropped(self):
+        # A genuinely all-blank disclosed line with NO populated near-synonym twin
+        # in its section is KEPT (it may be a real disclosed-but-n/a line) — never
+        # silently suppressed.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Interest income", None),
+            ("Trading account interest", [None, None, None, None, None], "eid_Z"),
+            ("Loans", [100.0, 99.0, 98.0, 97.0, 96.0], "eid_W"),
+        ]))
+        labels = [r["label"] for r in out["rows"] if not r["header"]]
+        self.assertIn("Trading account interest", labels)
+        self.assertIn("Loans", labels)
+        self.assertEqual(len(labels), 2)
+
+    def test_two_populated_synonyms_never_merge(self):
+        # The orphan tier only ever absorbs a TRUE all-blank orphan: two populated
+        # near-synonyms in one section both carry data and must stay separate.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Interest income", None),
+            ("Taxable securities", [10.0, 9.0, None, None, None], "eid_A"),
+            ("Taxable", [50.0, 48.0, 46.0, 44.0, 42.0], "eid_B"),
+        ]))
+        self.assertEqual(len([r for r in out["rows"] if not r["header"]]), 2)
+
+
 class TestOvlyTotalAssetsRewording(unittest.TestCase):
     """Fix 9: OVLY's total-assets row reworded across years between the us-gaap
     ShortName 'Assets' (FY23-25 10-Ks) and 'Assets, Total' (FY21-22). Both are
