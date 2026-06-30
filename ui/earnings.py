@@ -1047,9 +1047,9 @@ def _cell(value, cls: str = "") -> str:
 
 # ── Earnings Calendar ──────────────────────────────────────────────────
 
-def _cal_tr(r: dict, yf_by_tk: dict, soon: bool) -> str:
-    """One <tr> for the combined earnings-calendar grid (date/call + estimates +
-    analyst columns). `yf_by_tk` supplies the analyst consensus per ticker."""
+def _cal_tr(r: dict, soon: bool) -> str:
+    """One <tr> for the combined earnings-calendar grid (report date/timing + the
+    conference call + the estimates)."""
     days = r["days_until"]
     days_str = "Today" if days == 0 else f"{days}d"
     date_str = r["date"] if r["confirmed"] else f"{r['date']} (proj.)"
@@ -1059,13 +1059,6 @@ def _cal_tr(r: dict, yf_by_tk: dict, soon: bool) -> str:
                    f'target="_blank" rel="noopener">▶ Listen</a></td>')
     else:
         webcast = '<td class="mut">—</td>'
-    # yfinance returns "none" for unrated names — render "—", never "None".
-    yc = yf_by_tk.get(r["ticker"]) or {}
-    rec = (yc.get("recommendation") or "").strip()
-    rec_display = (rec.replace("_", " ").title()
-                   if rec and rec.lower() != "none" else None)
-    ac = yc.get("analyst_count")             # None / 0 → "—"
-    tp = yc.get("target_price")
     cells = [
         _tk_cell(r["ticker"]),
         _cell(get_name(r["ticker"]), "nm"),
@@ -1078,9 +1071,6 @@ def _cal_tr(r: dict, yf_by_tk: dict, soon: bool) -> str:
         _cell(r.get("dial_in")),
         _cell(f"${r['eps_est']:.2f}" if r.get("eps_est") else None),
         _cell(_fmt_rev_est(r.get("rev_est"))),
-        _cell(f"${tp:.2f}" if tp else None),
-        _cell(rec_display),
-        _cell(str(ac) if ac else None),
     ]
     tr_cls = ' class="soon"' if soon else ""
     return f"<tr{tr_cls}>" + "".join(cells) + "</tr>"
@@ -1133,10 +1123,6 @@ def _render_earnings_calendar(watchlist: list[str]):
         st.info("No upcoming bank earnings found in the next 75 days.")
         return
 
-    # Analyst context (price target, rating, coverage) per ticker — carried on the
-    # yfinance calendar rows; joined onto the date/call agenda below.
-    yf_by_tk = {r.get("ticker"): r for r in (yf_cal or [])}
-
     all_rows = [r for b in agenda for r in b["rows"]]
     n_week = sum(1 for r in all_rows if r["days_until"] <= 7)
     n_confirmed = sum(1 for r in all_rows if r["confirmed"])
@@ -1156,19 +1142,17 @@ def _render_earnings_calendar(watchlist: list[str]):
         "has published its earnings call — others are **(proj.)**), and **Call** = "
         "the conference-call date + time (often a "
         "different day — e.g. release after close, call next morning), with "
-        "**Webcast / Dial-in**, all from the bank's own IR announcement. "
-        "**Target / Rating / Cov** are the yfinance analyst consensus. '—' "
-        "wherever a value isn't available yet.")
+        "**Webcast / Dial-in**, all from the bank's own IR announcement, plus the "
+        "**EPS / Rev** estimates. '—' wherever a value isn't available yet.")
 
     headers = [("Ticker", ""), ("Bank", "nm"), ("Release", ""), ("✓", ""),
                ("In", ""), ("When", ""), ("Call", ""), ("Webcast", ""),
-               ("Dial-in", ""), ("EPS Est", ""), ("Rev Est", ""),
-               ("Target", ""), ("Rating", ""), ("Cov", "")]
+               ("Dial-in", ""), ("EPS Est", ""), ("Rev Est", "")]
     # Per-column widths (sum ≈ 100%) so each table fills its container exactly and
     # the two side-by-side halves line up — text columns (Bank, Dial-in) absorb the
     # slack and ellipsis-truncate rather than widening the table past its half.
-    col_widths = ["6%", "13%", "11%", "3%", "4%", "7%", "10%", "7%",
-                  "11%", "6%", "6%", "6%", "6%", "4%"]
+    col_widths = ["7%", "18%", "13%", "4%", "5%", "9%", "13%", "8%",
+                  "14%", "5%", "4%"]
 
     # Tables render at NATURAL height (no inner scrollbox — the page scrolls). A
     # long week is split into two balanced tables side by side so it fills the
@@ -1179,7 +1163,7 @@ def _render_earnings_calendar(watchlist: list[str]):
         header = f"{bucket['label']} · {len(rows)} report{'s' if len(rows) != 1 else ''}"
         st.markdown(f"##### {'🔴 ' if soon else ''}{header}")
 
-        trs = [_cal_tr(r, yf_by_tk, soon) for r in rows]
+        trs = [_cal_tr(r, soon) for r in rows]
         if len(trs) > 20:
             mid = (len(trs) + 1) // 2
             left, right = trs[:mid], trs[mid:]
