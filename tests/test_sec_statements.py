@@ -79,6 +79,45 @@ class TestParseRfile(unittest.TestCase):
             vals["Basic earnings per common share (in dollars per share)"], 6.02)
         self.assertEqual(vals["Basic (in shares)"], 68_448_812.0)  # not scaled
 
+    def test_share_count_row_typed_by_xbrl_not_label_unscaled(self):
+        # AFBI bug: the weighted-average-shares row is labelled bare "Basic" /
+        # "Diluted" (no "in shares" hint), so the LABEL heuristic missed it and
+        # the "$ in Thousands" multiplier inflated the 6.3M share count to 6.3B.
+        # The fix reads each row's XBRL element data type (xbrli:sharesItemType /
+        # perShareItemType / monetaryItemType) from the R-file's authRefData
+        # blocks and scales ONLY monetary rows. Pin: a typed share row is NOT
+        # ×1000-scaled, the typed dollar row in the SAME statement IS, and the
+        # per-share row is unaffected.
+        def ar(eid, dtype):
+            return (b'<table class="authRefData" id="defref_' + eid + b'">'
+                    b'<tr><td><strong> Data Type:</strong></td><td>' + dtype
+                    + b'</td></tr></table>')
+        rf = (b'<table class="report">'
+              b'<tr><th class="tl">Statements of Income - USD ($) $ in Thousands</th>'
+              b'<th class="th">12 Months Ended</th></tr>'
+              b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+              b'<tr><td class="pl"><a onclick="Show.showAR( this, '
+              b"'defref_us-gaap_NetIncomeLoss', window );\">Net income</a></td>"
+              b'<td class="nump">2,500</td></tr>'
+              b'<tr><td class="pl"><a onclick="Show.showAR( this, '
+              b"'defref_us-gaap_EarningsPerShareBasic', window );\">Basic</a></td>"
+              b'<td class="nump">$ 1.33</td></tr>'
+              b'<tr><td class="pl"><a onclick="Show.showAR( this, '
+              b"'defref_us-gaap_WeightedAverageNumberOfSharesOutstandingBasic', "
+              b'window );">Basic</a></td>'
+              b'<td class="nump">6,277,003</td></tr>'
+              b'</table>'
+              + ar(b'us-gaap_NetIncomeLoss', b'xbrli:monetaryItemType')
+              + ar(b'us-gaap_EarningsPerShareBasic', b'dtr-types:perShareItemType')
+              + ar(b'us-gaap_WeightedAverageNumberOfSharesOutstandingBasic',
+                   b'xbrli:sharesItemType'))
+        rows = [r for r in parse_rfile(rf)["rows"] if not r["header"]]
+        ni = next(r for r in rows if r["label"] == "Net income")
+        eps, shares = (r for r in rows if r["label"] == "Basic")
+        self.assertEqual(ni["values"][0], 2_500_000.0)        # monetary -> x1000
+        self.assertAlmostEqual(eps["values"][0], 1.33)        # per-share -> unscaled
+        self.assertEqual(shares["values"][0], 6_277_003.0)    # shares -> NOT x1000
+
     def test_spacer_td_th_does_not_swallow_data_rows(self):
         # KEY (and peers) insert an empty spacer <td class="th"> into EVERY data
         # row. Classifying a row as a header by the CLASS string 'th' then routed

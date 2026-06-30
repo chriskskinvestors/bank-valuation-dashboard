@@ -65,7 +65,20 @@ _NOISE_LABEL = re.compile(
     r"\[extensible\s+enumeration\]|^\s*\[\d+\]\s*$", re.I)
 # Per-share amounts ($/share) and share counts are reported in their OWN units,
 # NOT the statement's "$ in Thousands/Millions" — so they must not be scaled.
+# This LABEL heuristic is the fallback for filers whose R-file omits the XBRL
+# element-type metadata; the primary signal is the per-row data type (see below).
 _PERSHARE = re.compile(r"per share|per common share|\(in shares\)|in shares", re.I)
+# Each statement row maps to one XBRL element. The R-file embeds that element id
+# in the label cell's Show.showAR(...,'defref_<elementid>',...) onclick, and a
+# hidden <table class="authRefData" id="defref_<elementid>"> block declares its
+# 'Data Type:' (e.g. xbrli:monetaryItemType, xbrli:sharesItemType,
+# dtr-types:perShareItemType). The "$ in <unit>" thousands/millions multiplier is
+# a DOLLAR scale and must apply ONLY to monetary rows — a share-count row carries
+# its own (raw) unit, so scaling it ×1000 inflates the count 1000× (audit: AFBI
+# weighted-average shares rendered as 6.3 BILLION instead of 6.3 MILLION). We read
+# the type per row and gate the multiplier on monetaryItemType.
+_DEFREF = re.compile(r"defref_([A-Za-z0-9_.\-]+)")
+_MONETARY_TYPE = re.compile(r"monetaryItemType", re.I)
 
 # As-reported NOTE tables (the SNL-depth disclosures past the primary statements).
 # Notes are rendered as their own "(Details)" R-files; we pick the by-type
@@ -264,6 +277,37 @@ def _num(text: str, scale: float):
         return None
 
 
+def _element_types(tree) -> dict:
+    """Map XBRL element id -> declared 'Data Type' from the R-file's hidden
+    authRefData blocks (id='defref_<elementid>'). Used to tell a monetary row
+    (which the '$ in <unit>' scale applies to) from a share-count / per-share row
+    (which carries its own raw unit and must NOT be ×1000 scaled)."""
+    types = {}
+    for tbl in tree.xpath("//table[contains(@class,'authRefData')]"):
+        eid = tbl.get("id") or ""
+        if not eid.startswith("defref_"):
+            continue
+        dtype = ""
+        for tr in tbl.xpath(".//tr"):
+            cells = tr.xpath("./td")
+            if len(cells) == 2 and "Data Type:" in cells[0].text_content():
+                dtype = " ".join(cells[1].text_content().split())
+                break
+        if dtype:
+            types[eid[len("defref_"):]] = dtype
+    return types
+
+
+def _row_element_id(label_cell) -> str:
+    """The XBRL element id a data row reports, read from the label cell's
+    Show.showAR(this,'defref_<elementid>',...) onclick. '' when absent."""
+    for a in label_cell.xpath(".//a[@onclick]"):
+        m = _DEFREF.search(a.get("onclick") or "")
+        if m:
+            return m.group(1)
+    return ""
+
+
 def parse_rfile(html_bytes: bytes) -> dict | None:
     """Parse a statement R-file into {title, units_scale, periods, basis, rows}.
     Each row: {label, header (section title, no values), values (aligned to
@@ -276,6 +320,7 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
     tl = h.xpath("//th[contains(concat(' ', normalize-space(@class), ' '), ' tl ')]")
     title = " ".join(tl[0].text_content().split()) if tl else ""
     scale = _units_scale(title)
+    el_types = _element_types(h)
 
     header_rows, body = [], []
     for tr in trs:
@@ -329,7 +374,17 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
             continue                                  # XBRL metadata, not a line
         valcells = _valcells(cells)
         texts = [" ".join(c.text_content().split()) for c in valcells]
-        rscale = 1.0 if _PERSHARE.search(label) else scale
+        # The "$ in <unit>" multiplier is a DOLLAR scale: it applies only to
+        # monetary rows. Drive that off the row's XBRL element type (the unit
+        # the value is actually reported in); a share-count or per-share row is
+        # non-monetary and keeps scale 1.0 — scaling it ×1000 would inflate the
+        # number 1000×. When the R-file carries no type (older/odd filers), fall
+        # back to the per-share/in-shares LABEL heuristic.
+        etype = el_types.get(_row_element_id(cells[0]), "")
+        if etype:
+            rscale = scale if _MONETARY_TYPE.search(etype) else 1.0
+        else:
+            rscale = 1.0 if _PERSHARE.search(label) else scale
         parsed = [_num(t, rscale) for t in texts]
         is_header = bool(texts) and all(t in ("", "\xa0") for t in texts)
         rows.append({
