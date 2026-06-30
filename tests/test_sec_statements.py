@@ -157,21 +157,28 @@ class TestStatementMatching(unittest.TestCase):
         self.assertEqual(out.get("cashflow"), "R5.htm")
         self.assertNotEqual(out.get("income"), "R4.htm")  # NOT comprehensive income
 
-    def test_income_pattern_rejects_comprehensive_and_cashflow_directly(self):
-        # The (want, reject) pair itself: "income statement" matches; the
-        # comprehensive-income and cash-flow titles are rejected even though they
-        # carry "income"/"statement".
+    def test_income_pattern_accepts_income_and_comprehensive_titles(self):
+        # The (want, reject) pair is a CANDIDATE-gathering first cut: "income
+        # statement" matches AND every "comprehensive income/loss" title matches
+        # too — a filer may title its PRIMARY income statement that way (NFBK,
+        # BSVN, CVBF, AMTB, TCBIO). The CONTENT guard (_is_income_body) at
+        # selection time, not the title, rejects a standalone pure-OCI statement.
+        # Only cash-flow and parenthetical siblings are title-rejected.
         import data.sec_statements as s
         want, reject = s._STMT_PATTERNS["income"]
         for title in ("Consolidated Income Statement", "Income Statement",
                       "Consolidated Statements of Income",
                       "Consolidated Statements of Operations",
-                      "Consolidated Statement of Earnings"):
-            self.assertTrue(want.search(title) and not reject.search(title), title)
-        for title in ("Consolidated Statement of Comprehensive Income",
+                      "Consolidated Statement of Earnings",
+                      "Consolidated Statements of (Loss) Income",      # GLBZ
+                      "Consolidated Statement of Comprehensive Income",  # NFBK/BSVN
                       "Consolidated Statements of Comprehensive Income",
-                      "Consolidated Statement of Cash Flows",
-                      "Consolidated Statements of Cash Flows"):
+                      "Earnings and Comprehensive Income",             # CVBF
+                      "Operations and Comprehensive (Loss) Income"):   # AMTB
+            self.assertTrue(want.search(title) and not reject.search(title), title)
+        for title in ("Consolidated Statement of Cash Flows",
+                      "Consolidated Statements of Cash Flows",
+                      "Consolidated Statements of Income (Parenthetical)"):
             self.assertTrue(bool(reject.search(title)), title)   # rejected
 
 
@@ -247,15 +254,19 @@ class TestCombinedIncomeComprehensive(unittest.TestCase):
     discriminator is CONTENT (income lines above net income), not the title."""
 
     def test_combined_title_accepted_standalone_oci_rejected(self):
-        # Title-level first cut: 'income and comprehensive income' survives the
-        # reject; a bare 'comprehensive income' does not.
+        # Title-level first cut: BOTH a combined 'income and comprehensive income'
+        # AND a standalone 'comprehensive income' title now survive as CANDIDATES
+        # (the title no longer gates on word order — a filer may title its primary
+        # income statement either way). The standalone pure-OCI body is rejected by
+        # the CONTENT guard at selection (see test_income_parse_rejects_standalone_
+        # oci_only), not by the title. The parenthetical companion is still rejected.
         import data.sec_statements as s
         want, reject = s._STMT_PATTERNS["income"]
         combined = "Consolidated Statements of Income and Comprehensive Income (unaudited)"
         self.assertTrue(want.search(combined) and not reject.search(combined))
         for oci in ("Consolidated Statements of Comprehensive Income",
                     "CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME"):
-            self.assertTrue(bool(reject.search(oci)), oci)
+            self.assertTrue(want.search(oci) and not reject.search(oci), oci)
         # The combined statement's own parenthetical companion is still rejected.
         self.assertTrue(bool(reject.search(combined + " (Parenthetical)")))
 
@@ -967,6 +978,350 @@ class TestXbrlNoiseRows(unittest.TestCase):
             b'</table>')
         labels = [r["label"] for r in parse_rfile(rf)["rows"]]
         self.assertEqual(labels, ["Net income"])       # both noise rows dropped
+
+
+# ── P0 statement-fidelity fixes (200-bank audit) ─────────────────────────────
+# Each fixture is shaped like the real R-file that triggered a "whole statement
+# missing or wrong" defect, so the content-aware selector / guards are pinned to
+# the exact failure they fix.
+
+# A comprehensive-titled PRIMARY income statement (NFBK/BSVN/CVBF shape): real
+# revenue/expense lines ABOVE net income, then the OCI continuation. Body IS an
+# income statement and must be ACCEPTED on content despite the 'comprehensive'
+# title.
+_COMPREHENSIVE_TITLED_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Consolidated Statements of Comprehensive Income - '
+    b'USD ($) $ in Thousands</th><th class="th">12 Months Ended</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th></tr>'
+    b'<tr><td class="pl">Total interest income</td>'
+    b'<td class="nump">100,000</td><td class="nump">90,000</td></tr>'
+    b'<tr><td class="pl">Total interest expense</td>'
+    b'<td class="nump">30,000</td><td class="nump">25,000</td></tr>'
+    b'<tr><td class="pl">Provision for credit losses</td>'
+    b'<td class="nump">5,000</td><td class="nump">4,000</td></tr>'
+    b'<tr><td class="pl">Net income</td>'
+    b'<td class="nump">20,000</td><td class="nump">18,000</td></tr>'
+    b'<tr><td class="pl">Other comprehensive income</td>'
+    b'<td class="text"> </td><td class="text"> </td></tr>'
+    b'<tr><td class="pl">Comprehensive income</td>'
+    b'<td class="nump">22,000</td><td class="nump">19,000</td></tr>'
+    b'</table>')
+
+# A net-LOSS income statement (PNBK shape): bottom line "Net loss" plus a leading
+# parenthetical "Net (loss) income" form (GLBZ) — both must register as the
+# bottom line so a loss year passes _is_income_body.
+_NET_LOSS_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Consolidated Statements of (Loss) Income - '
+    b'USD ($) $ in Thousands</th><th class="th">12 Months Ended</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><td class="pl">Total interest income</td><td class="nump">50,000</td></tr>'
+    b'<tr><td class="pl">Total noninterest expense</td><td class="nump">60,000</td></tr>'
+    b'<tr><td class="pl">Net (loss) income</td><td class="num">(12,710)</td></tr>'
+    b'</table>')
+
+# A real Statement of Condition (CBU/OBT term) with a Total assets row that ties
+# to total liabilities + equity.
+_STATEMENT_OF_CONDITION = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED STATEMENTS OF CONDITION - '
+    b'USD ($) $ in Thousands</th><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><td class="pl">Cash and due from banks</td><td class="nump">10,000</td></tr>'
+    b'<tr><td class="pl">Total assets</td><td class="nump">100,000</td></tr>'
+    b'<tr><td class="pl">Total deposits</td><td class="nump">80,000</td></tr>'
+    b'<tr><td class="pl">Total liabilities</td><td class="nump">90,000</td></tr>'
+    b'<tr><td class="pl">Total stockholders\x92 equity</td><td class="nump">10,000</td></tr>'
+    b'<tr><td class="pl">Total liabilities and stockholders\x92 equity</td>'
+    b'<td class="nump">100,000</td></tr>'
+    b'</table>')
+
+# A balance sheet (EWBC shape) whose assets total is a bare "TOTAL" — no
+# "Total assets" text — recognized via the liabilities+equity structure.
+_BARE_TOTAL_BALANCE = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED BALANCE SHEETS - USD ($) $ in Thousands</th>'
+    b'<th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><td class="pl">Cash and due from banks</td><td class="nump">5,000</td></tr>'
+    b'<tr><td class="pl">Other assets</td><td class="nump">95,000</td></tr>'
+    b'<tr><td class="pl">TOTAL</td><td class="nump">100,000</td></tr>'
+    b'<tr><td class="pl">Total liabilities</td><td class="nump">90,000</td></tr>'
+    b'<tr><td class="pl">Total stockholders\x92 equity</td><td class="nump">10,000</td></tr>'
+    b'<tr><td class="pl">TOTAL</td><td class="nump">100,000</td></tr>'
+    b'</table>')
+
+# A parent-company-only Schedule II income statement (BMRC shape): the "equity in
+# undistributed net income of subsidiary" signature line means it is NOT the
+# consolidated income statement and must be rejected.
+_PARENT_ONLY_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Parent Company Financial Information - Statements of '
+    b'Income - USD ($) $ in Thousands</th><th class="th">12 Months Ended</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><td class="pl">Dividends from bank subsidiary</td><td class="nump">5,000</td></tr>'
+    b'<tr><td class="pl">Equity in undistributed net income of subsidiary</td>'
+    b'<td class="nump">10,000</td></tr>'
+    b'<tr><td class="pl">Net income</td><td class="nump">15,000</td></tr>'
+    b'</table>')
+
+# An off-balance-sheet note (OBT shape): no Total assets / liabilities / equity
+# structure — rejected as a balance sheet by the positive guard, NOT by a bare
+# "off-balance sheet" string (which is also a legit income line).
+_OFF_BALANCE_NOTE = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Financial Instruments with Off-Balance Sheet Risk - '
+    b'USD ($) $ in Thousands</th><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><td class="pl">Commitments to extend credit</td><td class="nump">40,000</td></tr>'
+    b'<tr><td class="pl">Standby letters of credit</td><td class="nump">2,000</td></tr>'
+    b'</table>')
+
+# A pension footnote (CBU shape) sharing a 'financial condition'-ish title but
+# carrying no balance structure — must be rejected as a balance sheet.
+_PENSION_NOTE = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Defined Benefit Plan Financial Condition - '
+    b'USD ($) $ in Thousands</th><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+    b'<tr><td class="pl">Benefit obligation at beginning of year</td>'
+    b'<td class="nump">30,000</td></tr>'
+    b'<tr><td class="pl">Benefit obligation at end of year</td>'
+    b'<td class="nump">32,000</td></tr>'
+    b'</table>')
+
+
+class TestP0IncomeSelectionByContent(unittest.TestCase):
+    """Fix 1/2/6: income is chosen by CONTENT (_is_income_body), so a
+    comprehensive-titled primary income statement is ACCEPTED, a net-loss bottom
+    line is recognized, a standalone pure-OCI statement is rejected, and a
+    parent-only Schedule II is rejected."""
+
+    def test_comprehensive_titled_income_accepted_by_content(self):
+        from data.sec_statements import _income_parse, _is_income_body, parse_rfile
+        p = parse_rfile(_COMPREHENSIVE_TITLED_INCOME)
+        self.assertTrue(_is_income_body(p))            # content, not title
+        out = _income_parse(_COMPREHENSIVE_TITLED_INCOME)
+        labels = [r["label"] for r in out["rows"]]
+        self.assertIn("Net income", labels)
+        self.assertIn("Total interest income", labels)
+        self.assertNotIn("Comprehensive income", labels)   # OCI stripped
+
+    def test_standalone_oci_only_still_rejected(self):
+        from data.sec_statements import _is_income_body, parse_rfile
+        self.assertFalse(_is_income_body(parse_rfile(_OCI_ONLY)))
+
+    def test_net_loss_bottom_line_recognized(self):
+        from data.sec_statements import _income_parse, _NET_INCOME
+        self.assertTrue(_NET_INCOME.match("Net loss"))
+        self.assertTrue(_NET_INCOME.match("Net (loss) income"))
+        self.assertTrue(_NET_INCOME.match("NET (LOSS) INCOME"))
+        out = _income_parse(_NET_LOSS_INCOME)
+        self.assertIsNotNone(out)                       # loss year not dropped
+        ni = next(r for r in out["rows"] if r["label"] == "Net (loss) income")
+        self.assertEqual(ni["values"][0], -12_710_000.0)
+
+    def test_net_income_on_sale_not_mistaken_for_bottom_line(self):
+        # A realized-gain component line ("Net loss on sale of …") must NOT match
+        # the bottom-line pattern, or _is_income_body's net-income anchor lands too
+        # early and a real statement is wrongly rejected.
+        from data.sec_statements import _NET_INCOME
+        self.assertIsNone(_NET_INCOME.match("Net loss on sale of available-for-sale securities"))
+        self.assertIsNone(_NET_INCOME.match("Net gain on sale of loans"))
+
+    def test_parent_only_schedule_ii_rejected_as_income(self):
+        from data.sec_statements import _is_income_body, parse_rfile
+        self.assertFalse(_is_income_body(parse_rfile(_PARENT_ONLY_INCOME)))
+
+
+class TestP0BalanceContentGuard(unittest.TestCase):
+    """Fix 3/4: a balance candidate is accepted only when its body is a real
+    Statement of Condition (Total assets, or Total liabilities + equity, ties),
+    rejecting pension / off-balance-sheet / parent-only footnotes."""
+
+    def test_statements_of_condition_title_matches(self):
+        import data.sec_statements as s
+        want, reject = s._STMT_PATTERNS["balance"]
+        for t in ("Consolidated Statements of Condition",
+                  "Statement of Condition", "Consolidated Balance Sheets",
+                  "Consolidated Statements of Financial Position"):
+            self.assertTrue(want.search(t) and not reject.search(t), t)
+
+    def test_real_statement_of_condition_accepted(self):
+        from data.sec_statements import _is_balance_body, _balance_parse
+        self.assertTrue(_is_balance_body(_balance_parse(_STATEMENT_OF_CONDITION)))
+
+    def test_bare_total_balance_accepted_via_liab_equity(self):
+        # EWBC labels its assets total a bare "TOTAL" — accepted via the
+        # liabilities+equity structure, not a "Total assets" string.
+        from data.sec_statements import _is_balance_body, _balance_parse
+        self.assertTrue(_is_balance_body(_balance_parse(_BARE_TOTAL_BALANCE)))
+
+    def test_pension_note_rejected_as_balance(self):
+        from data.sec_statements import _is_balance_body, parse_rfile
+        self.assertFalse(_is_balance_body(parse_rfile(_PENSION_NOTE)))
+
+    def test_off_balance_note_rejected_as_balance(self):
+        from data.sec_statements import _is_balance_body, parse_rfile
+        self.assertFalse(_is_balance_body(parse_rfile(_OFF_BALANCE_NOTE)))
+
+    def test_off_balance_string_not_a_reject_signal_for_income(self):
+        # "Provision for off-balance sheet credit exposures" is a legitimate
+        # income line (BANF) — it must NOT flag the statement as a note.
+        from data.sec_statements import _is_parent_only_or_note
+        rf = (b'<table class="report">'
+              b'<tr><th class="tl">Consolidated Statements of Comprehensive Income - '
+              b'USD ($) $ in Thousands</th><th class="th">12 Months Ended</th></tr>'
+              b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+              b'<tr><td class="pl">Total interest income</td><td class="nump">100,000</td></tr>'
+              b'<tr><td class="pl">Provision for off-balance sheet credit exposures</td>'
+              b'<td class="nump">500</td></tr>'
+              b'<tr><td class="pl">Net income</td><td class="nump">20,000</td></tr>'
+              b'</table>')
+        from data.sec_statements import parse_rfile, _is_income_body
+        self.assertFalse(_is_parent_only_or_note(parse_rfile(rf)))
+        self.assertTrue(_is_income_body(parse_rfile(rf)))
+
+
+class TestP0SelectorPicksRightCandidate(unittest.TestCase):
+    """The content-aware selector walks title candidates in document order and
+    returns the first whose body passes the guard — rejecting an OCI-only or
+    parent-only sibling that title-matches."""
+
+    def _summary(self, pairs):
+        rows = b"".join(
+            b"<Report><ShortName>" + s + b"</ShortName>"
+            b"<HtmlFileName>" + f + b"</HtmlFileName></Report>"
+            for s, f in pairs)
+        return (b'<?xml version="1.0"?><FilingSummary><MyReports>'
+                + rows + b'</MyReports></FilingSummary>')
+
+    def test_income_selector_skips_oci_only_picks_real_income(self):
+        import data.sec_statements as s
+        summary = self._summary([
+            (b"Consolidated Statement of Comprehensive (Loss) Income", b"R5.htm"),  # OCI-only
+            (b"Consolidated Statements of (Loss) Income", b"R4.htm"),               # real
+        ])
+
+        def fake_get(url):
+            if url.endswith("FilingSummary.xml"):
+                return summary
+            if url.endswith("R5.htm"):
+                return _OCI_ONLY
+            if url.endswith("R4.htm"):
+                return _COMPREHENSIVE_TITLED_INCOME
+            raise AssertionError(url)
+
+        with mock.patch.object(s, "_get", side_effect=fake_get):
+            fn, parsed = s._select_primary_rfile("base/", "income")
+        self.assertEqual(fn, "R4.htm")                 # real income, not OCI-only
+        self.assertIsNotNone(parsed)
+
+    def test_balance_selector_skips_off_balance_picks_condition(self):
+        import data.sec_statements as s
+        summary = self._summary([
+            (b"Consolidated Statements of Condition", b"R2.htm"),
+            (b"Financial Instruments with Off-Balance Sheet Risk", b"R24.htm"),
+        ])
+
+        def fake_get(url):
+            if url.endswith("FilingSummary.xml"):
+                return summary
+            if url.endswith("R2.htm"):
+                return _STATEMENT_OF_CONDITION
+            if url.endswith("R24.htm"):
+                return _OFF_BALANCE_NOTE
+            raise AssertionError(url)
+
+        with mock.patch.object(s, "_get", side_effect=fake_get):
+            fn, parsed = s._select_primary_rfile("base/", "balance")
+        self.assertEqual(fn, "R2.htm")
+        self.assertIsNotNone(parsed)
+
+    def test_selector_returns_none_when_no_valid_candidate(self):
+        # Only a parent-only income schedule exists → honest n/a, never that table.
+        import data.sec_statements as s
+        summary = self._summary([
+            (b"Parent Company Financial Information - Statements of Income (Details)",
+             b"R88.htm"),
+        ])
+
+        def fake_get(url):
+            if url.endswith("FilingSummary.xml"):
+                return summary
+            return _PARENT_ONLY_INCOME
+
+        with mock.patch.object(s, "_get", side_effect=fake_get):
+            fn, parsed = s._select_primary_rfile("base/", "income")
+        self.assertIsNone(fn)
+        self.assertIsNone(parsed)
+
+
+class TestP0ColumnMetaHeaderTolerance(unittest.TestCase):
+    """Fix 5: _column_meta must tolerate a trailing footnote-[N] <th> (FCBC) and a
+    colspan=2 date header where each period yields one value column (BANC), instead
+    of bailing (None) and dropping the whole quarterly statement."""
+
+    # FCBC: date header carries a trailing "[1]" footnote <th>; ncol = 2.
+    _FCBC_BALANCE = (
+        b'<table class="report">'
+        b'<tr><th class="tl">Condensed Consolidated Balance Sheets</th>'
+        b'<th class="th">Mar. 31, 2026</th><th class="th">Dec. 31, 2025</th>'
+        b'<th class="th">[1]</th></tr>'
+        b'<tr><td class="pl">Total assets</td>'
+        b'<td class="nump">3,644,947</td><td class="nump">3,259,643</td></tr>'
+        b'<tr><td class="pl">Total liabilities</td>'
+        b'<td class="nump">3,300,000</td><td class="nump">2,900,000</td></tr>'
+        b'<tr><td class="pl">Total stockholders equity</td>'
+        b'<td class="nump">344,947</td><td class="nump">359,643</td></tr>'
+        b'</table>')
+
+    # BANC: each date header <th> has colspan="2"; each period yields ONE value
+    # column (ncol = 2).
+    _BANC_BALANCE = (
+        b'<table class="report">'
+        b'<tr><th class="tl" colspan="2">Condensed Consolidated Balance Sheets</th>'
+        b'<th class="th" colspan="2">Mar. 31, 2026</th>'
+        b'<th class="th" colspan="2">Dec. 31, 2025</th></tr>'
+        b'<tr><td class="pl">Total assets</td>'
+        b'<td class="nump">34,724,241</td><td class="nump">34,500,000</td></tr>'
+        b'<tr><td class="pl">Total liabilities</td>'
+        b'<td class="nump">30,000,000</td><td class="nump">29,800,000</td></tr>'
+        b'<tr><td class="pl">Total stockholders equity</td>'
+        b'<td class="nump">4,724,241</td><td class="nump">4,700,000</td></tr>'
+        b'</table>')
+
+    def _ncol(self, raw):
+        from data.sec_statements import parse_rfile
+        p = parse_rfile(raw)
+        return max((len(r["values"]) for r in p["rows"] if not r["header"]), default=0)
+
+    def test_trailing_footnote_th_stripped(self):
+        from data.sec_statements import _column_meta
+        raw = self._FCBC_BALANCE
+        meta = _column_meta(raw, self._ncol(raw))
+        self.assertIsNotNone(meta)                     # was None (bailed) before fix
+        self.assertEqual([p for _, p in meta], ["Mar. 31, 2026", "Dec. 31, 2025"])
+
+    def test_colspan_date_header_reconciled(self):
+        from data.sec_statements import _column_meta
+        raw = self._BANC_BALANCE
+        meta = _column_meta(raw, self._ncol(raw))
+        self.assertIsNotNone(meta)                     # was None (bailed) before fix
+        self.assertEqual([p for _, p in meta], ["Mar. 31, 2026", "Dec. 31, 2025"])
+
+    def test_clean_quarterly_balance_not_regressed(self):
+        # A plain two-period header (ZION/USB/PNC shape) still maps cleanly.
+        from data.sec_statements import _column_meta
+        raw = (b'<table class="report">'
+               b'<tr><th class="tl">Consolidated Balance Sheets</th>'
+               b'<th class="th">Mar. 31, 2026</th><th class="th">Dec. 31, 2025</th></tr>'
+               b'<tr><td class="pl">Total assets</td>'
+               b'<td class="nump">100,000</td><td class="nump">99,000</td></tr>'
+               b'</table>')
+        meta = _column_meta(raw, self._ncol(raw))
+        self.assertEqual([p for _, p in meta], ["Mar. 31, 2026", "Dec. 31, 2025"])
 
 
 if __name__ == "__main__":

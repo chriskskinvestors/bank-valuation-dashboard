@@ -21,29 +21,36 @@ from lxml import etree, html as lhtml
 from data.sec_filing_scraper import latest_filing, _get
 
 # Match a statement type to its FilingSummary ShortName. (want, reject) — the
-# reject pattern keeps 'comprehensive income', cash flows and parentheticals out
-# of the primary income statement / balance sheet.
+# title is only a FIRST CUT that gathers CANDIDATES; CONTENT discriminators
+# (_is_income_body for income, _primary_balance's Total-assets/A≈L+E guard for
+# balance) make the final pick at SELECTION time (_select_primary_rfile).
+#
 # Income accepts BOTH word orders: "statement(s) of income/operations/earnings"
 # AND "income statement(s)" — PNC titles its primary income R-file "Consolidated
-# Income Statement", which the "statement OF income" order alone misses. The
-# reject still drops the comprehensive-income and cash-flow siblings (a
-# "comprehensive income" title contains "income" but is not the income statement).
+# Income Statement", which the "statement OF income" order alone misses. It ALSO
+# accepts ANY "comprehensive income/loss" title: many filers title their PRIMARY
+# income statement "Statements of Comprehensive Income" (NFBK, BSVN), "Earnings
+# and Comprehensive Income" (CVBF), "Operations and Comprehensive (Loss) Income"
+# (AMTB), "Income and Other Comprehensive Income" (TCBIO). Gating income
+# selection on the exact title wording dropped the whole income statement for
+# those filers; instead the title gathers every plausible candidate and
+# _is_income_body (real revenue/expense lines ABOVE the bottom line) accepts the
+# right one while rejecting a STANDALONE pure-OCI statement (starts AT net income,
+# no income lines above). So the income 'reject' drops only cash-flow and
+# parenthetical siblings — 'comprehensive' is NOT title-rejected.
 #
-# COMBINED income+comprehensive: some filers (e.g. ABCB) fold the full income
-# statement into a single "Statements of Income AND Comprehensive Income" R-file
-# (interest income/expense, provision, noninterest income/expense, net income —
-# then an OCI continuation). That IS the income statement and must be ACCEPTED,
-# so the reject spares 'comprehensive' when it follows 'income and' (the combined
-# title). A STANDALONE "Statements of Comprehensive Income" (OCI-only: starts at
-# net income, no revenue/expense lines) is still rejected by the bare
-# 'comprehensive'. Title is only a first cut — a content check (_is_income_body)
-# is the true discriminator applied after parsing.
+# Balance accepts the traditional bank term "Statement(s) of Condition" (CBU, OBT)
+# in addition to balance sheet / financial position / financial condition; the
+# Total-assets content guard then rejects a footnote/pension table that slipped in.
 _STMT_PATTERNS = {
-    "income": (re.compile(r"statements?\s+of\s+(income|operations|earnings)|"
-                          r"\bincome\s+statements?\b", re.I),
-               re.compile(r"(?i:(?<!income and )comprehensive)|"
-                          r"parenthetical|cash\s+flow", re.I)),
-    "balance": (re.compile(r"balance\s+sheet|financial\s+position|financial\s+condition", re.I),
+    "income": (re.compile(r"statements?\s+of\s+(\(loss\)\s+|loss\s+)?"
+                          r"(income|operations|earnings)|"
+                          r"\bincome\s+statements?\b|"
+                          r"comprehensive\s+(income|loss|\(loss\))|"
+                          r"\b(operations|earnings)\s+and\s+comprehensive", re.I),
+               re.compile(r"parenthetical|cash\s+flow", re.I)),
+    "balance": (re.compile(r"balance\s+sheet|financial\s+position|"
+                           r"financial\s+condition|statements?\s+of\s+condition", re.I),
                 re.compile(r"parenthetical", re.I)),
     "cashflow": (re.compile(r"statements?\s+of\s+cash\s+flows", re.I),
                  re.compile(r"parenthetical", re.I)),
@@ -119,13 +126,28 @@ def _iter_reports(base: str):
 
 
 def _statement_rfiles(base: str) -> dict:
-    """statement_type -> R-file name, from FilingSummary.xml (first match wins)."""
+    """statement_type -> R-file name, from FilingSummary.xml (first match wins).
+    Title-only: the right first cut for cash flows (one obvious title). For income
+    and balance, where several titles (a standalone OCI statement, a parent-only
+    schedule, a footnote) can match, prefer the CONTENT-aware _select_primary_rfile
+    — first-match-by-title can land on the wrong table."""
     out: dict = {}
     for short, fn in _iter_reports(base):
         for stype, (want, reject) in _STMT_PATTERNS.items():
             if stype not in out and want.search(short) and not reject.search(short):
                 out[stype] = fn
     return out
+
+
+def _candidate_rfiles(base: str, stype: str) -> list:
+    """ALL FilingSummary R-files whose ShortName title-matches stype (want, not
+    reject), in document order. The content-aware selector parses each and keeps
+    the one whose BODY is the real primary statement — so a standalone OCI
+    statement, a parent-only condensed schedule, or a footnote that shares the
+    title word is rejected on content, never rendered as the statement."""
+    want, reject = _STMT_PATTERNS[stype]
+    return [fn for short, fn in _iter_reports(base)
+            if want.search(short) and not reject.search(short)]
 
 
 def _specific(short: str) -> str:
@@ -342,12 +364,21 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
 
 # A net-income line (the income statement's bottom line). Accepts the "net
 # earnings" wording (FFIN titles its bottom line "Net earnings", not "Net
-# income") as well as "net income". Excludes the OCI "comprehensive income"
-# total and "other comprehensive income" rows, and the EPS line (FFIN's "NET
-# EARNINGS PER SHARE, BASIC") via the trailing per-share lookahead — so the
-# bottom-line match never lands on a per-share row.
+# income") as well as "net income", AND the loss forms a loss-making filer reports:
+# bare "Net loss" (PNBK), trailing "Net income (loss)" / "Net earnings (loss)",
+# and the LEADING parenthetical "Net (Loss) Income" (GLBZ). Without these a loss
+# year fails _is_income_body and the whole income statement is dropped. Excludes
+# the OCI "comprehensive income" total and "other comprehensive income" rows, and
+# the EPS line (FFIN's "NET EARNINGS PER SHARE, BASIC") via the trailing per-share
+# lookahead — so the bottom-line match never lands on a per-share row.
 _NET_INCOME = re.compile(
-    r"^\s*net\s+(income|earnings)(\s+\(loss\))?\b(?!.*comprehensive)(?!.*per\s+share)",
+    r"^\s*net\s+(\(loss\)\s+|loss\s+)?(income|earnings|loss)(\s+\(loss\))?\b"
+    # Not an intermediate "net loss/gain ON sale of securities" or "net gains FROM
+    # …": the bottom line is "Net income/earnings/loss" optionally qualified by
+    # "(loss)/(income)", "available/attributable to common", or end-of-label —
+    # never followed by "on"/"from" (which make it a realized-gain component line).
+    r"(?!\s+(on|from)\b)"
+    r"(?!.*comprehensive)(?!.*per\s+share)",
     re.I)
 # Income-statement lines that only ever appear ABOVE net income (revenue, cost,
 # tax) — their presence proves a body is a real income statement, not OCI-only.
@@ -364,15 +395,50 @@ _INCOME_LINE = re.compile(
 _OCI_START = re.compile(r"^\s*other\s+comprehensive\s+(income|loss)", re.I)
 _OCI_TOTAL = re.compile(r"^\s*(total\s+)?comprehensive\s+(income|loss)\b", re.I)
 
+# Parent-company-only condensed schedules (Schedule II) must NEVER render as the
+# consolidated primary statement. A parent-only schedule carries signature lines
+# that only exist when the HoldCo reports on a stand-alone basis: "Dividends from
+# bank subsidiary", "Equity in undistributed net income of subsidiar(y/ies)",
+# "Investment in subsidiar(y/ies)", or a "Condensed Parent-Company / Parent
+# Company Only" caption. When a candidate body matches these it is rejected in
+# favour of the consolidated statement (BMRC income, TMP/TFSL/OBT balance — each
+# lists a parent-only condensed statement alongside the real one).
+#
+# NOTE: an off-balance-sheet note (OBT) is rejected by the POSITIVE guards, not
+# here — it carries no 'Total assets' (balance) and no net-income-with-income-
+# lines-above (income), so _is_balance_body/_is_income_body drop it. A bare
+# "off-balance sheet" string is NOT a reject signal: it appears as a legitimate
+# income line ("Provision for off-balance sheet credit exposures", BANF).
+_PARENT_ONLY = re.compile(
+    r"equity\s+in\s+(undistributed\s+)?(net\s+)?(income|earnings|loss)\s+of\s+"
+    r"(bank\s+)?subsidiar|"
+    r"dividends?\s+from\s+(bank\s+)?subsidiar|"
+    r"investment\s+in\s+(bank\s+)?subsidiar|"
+    r"condensed\s+(parent[- ]company|financial\s+statements?,?\s+captions)|"
+    r"parent\s+company\s+only", re.I)
+
+
+def _is_parent_only_or_note(parsed: dict | None) -> bool:
+    """True when a candidate body is a parent-company-only condensed schedule
+    (Schedule II) — NOT the consolidated statement. Used to reject such a table as
+    the primary income/balance statement so the selector prefers the real
+    consolidated one."""
+    if not parsed or not parsed.get("rows"):
+        return False
+    return any(_PARENT_ONLY.search(r["label"]) for r in parsed["rows"])
+
 
 def _is_income_body(parsed: dict | None) -> bool:
-    """True iff a parsed R-file is a real income statement: it has a net-income
-    line AND at least one revenue/expense line ABOVE it. A standalone OCI-only
+    """True iff a parsed R-file is a real CONSOLIDATED income statement: it has a
+    net-income line AND at least one revenue/expense line ABOVE it, and is NOT a
+    parent-only Schedule II / off-balance-sheet note. A standalone OCI-only
     'Statements of Comprehensive Income' (which STARTS at net income, with no
     income lines above) fails this — the content discriminator the title cannot
     make. A non-income statement (balance, cash flow) has no net-income line and
     also fails, so this guard is only meaningful for income candidates."""
     if not parsed or not parsed.get("rows"):
+        return False
+    if _is_parent_only_or_note(parsed):
         return False
     ni_idx = next((i for i, r in enumerate(parsed["rows"])
                    if not r["header"] and _NET_INCOME.match(r["label"])), None)
@@ -407,6 +473,62 @@ def _strip_oci(parsed: dict) -> dict:
 # match loosely between "and" and "equity".
 _BALANCE_END = re.compile(
     r"^\s*total\s+liabilities\s+and\b.{0,40}\bequity\b", re.I)
+# The "Total assets" subtotal a balance sheet carries. Anchored so it does not
+# match "Total assets acquired", "Average total assets", or a ratio line; the
+# optional ':' tolerates "Total assets:". Some filers (EWBC) instead label the
+# assets-section grand total a bare "TOTAL" — caught by the liabilities+equity
+# structure check below, not this pattern.
+_TOTAL_ASSETS = re.compile(r"^\s*total\s+assets\s*:?\s*$", re.I)
+# The two sides of the balance equation, used to recognize a balance sheet whose
+# assets total is labeled bare "TOTAL" (no "Total assets" text): a real balance
+# sheet has BOTH a total-liabilities row AND a total-equity row. Pension /
+# off-balance-sheet / fair-value footnotes (CBU 'Benefit obligation', OBT
+# 'Off-Balance Sheet Risk') have NEITHER, so requiring both rejects them.
+_TOTAL_LIAB = re.compile(r"^\s*total\s+liabilities\s*:?\s*$", re.I)
+_TOTAL_EQUITY = re.compile(
+    r"^\s*total\b.{0,40}\b(stockholders|shareholders|members|"
+    r"shareowners)\W*\s+equity\b|^\s*total\s+equity\s*:?\s*$", re.I)
+
+
+def _pos_row(rows, pat):
+    """The first data row matching pat that carries at least one positive value
+    (a real subtotal, not a header or an all-blank/zero stub)."""
+    for r in rows:
+        if pat.match(r["label"]) and any(v is not None and v > 0 for v in r["values"]):
+            return r
+    return None
+
+
+def _is_balance_body(parsed: dict | None) -> bool:
+    """True iff a parsed R-file is a real CONSOLIDATED balance sheet / Statement
+    of Condition: NOT a parent-only Schedule II, and carrying the balance
+    structure — EITHER a positive 'Total assets' subtotal, OR both a positive
+    'Total liabilities' AND a positive total-equity row (for filers like EWBC that
+    label the assets total a bare 'TOTAL'). When BOTH a total-assets value and the
+    'Total liabilities and … equity' grand total are present they must tie
+    (A ≈ L+E within 1%). This rejects the footnote tables that share a balance-ish
+    title (CBU's pension 'Benefit obligation' schedule; OBT's 'Off-Balance Sheet
+    Risk' note — neither has the liabilities+equity structure) so the selector
+    renders the genuine Statement of Condition, never a plausible-wrong table.
+    Used at SELECTION time across title candidates."""
+    if not parsed or not parsed.get("rows"):
+        return False
+    if _is_parent_only_or_note(parsed):
+        return False
+    rows = [r for r in parsed["rows"] if not r["header"]]
+    ta = _pos_row(rows, _TOTAL_ASSETS)
+    liab = _pos_row(rows, _TOTAL_LIAB)
+    eq = _pos_row(rows, _TOTAL_EQUITY)
+    if ta is None and not (liab is not None and eq is not None):
+        return False
+    # A ≈ L+E tie, when a total-assets value and the grand-total both render.
+    end = _pos_row(rows, _BALANCE_END)
+    if ta is not None and end is not None:
+        for i, a in enumerate(ta["values"]):
+            b = end["values"][i] if i < len(end["values"]) else None
+            if a is not None and b is not None and a and abs(a - b) / abs(a) > 0.01:
+                return False
+    return True
 
 
 def _primary_balance(parsed: dict | None) -> dict | None:
@@ -465,6 +587,30 @@ def _income_parse(html_bytes: bytes) -> dict | None:
     return _strip_oci(parsed)
 
 
+# Content discriminator + parser per primary statement type, for the selector.
+_PRIMARY_PARSE = {"income": _income_parse, "balance": _balance_parse}
+_PRIMARY_GUARD = {"income": _is_income_body, "balance": _is_balance_body}
+
+
+def _select_primary_rfile(base: str, stype: str):
+    """Pick the RIGHT primary income/balance R-file for a filing by CONTENT, not
+    title. Walks every title-candidate (_candidate_rfiles, in document order),
+    parses each, and returns the (fn, parsed) of the FIRST whose body passes the
+    type's content guard (_is_income_body / _is_balance_body): a real consolidated
+    statement, never a standalone OCI statement, a parent-only Schedule II, or a
+    footnote/off-balance-sheet table that shares the title word. Returns
+    (None, None) when no candidate has the right content — honest n/a, never a
+    plausible-wrong table. cashflow (and any non-primary type) is not routed here;
+    it has one unambiguous title, served by _statement_rfiles."""
+    parse = _PRIMARY_PARSE[stype]
+    guard = _PRIMARY_GUARD[stype]
+    for fn in _candidate_rfiles(base, stype):
+        parsed = parse(_get(base + fn))
+        if parsed and parsed.get("rows") and guard(parsed):
+            return fn, parsed
+    return None, None
+
+
 def as_reported_statements_for(cik) -> dict | None:
     """Cached As-Reported primary statements (income, balance sheet, cash flows)
     for a company, from its latest 10-K's SEC-rendered R-files. Returns
@@ -483,14 +629,17 @@ def as_reported_statements_for(cik) -> dict | None:
     base = _filing_base(meta["cik"], meta["accession"])
     try:
         stmts = {}
-        for stype, fn in _statement_rfiles(base).items():
-            raw = _get(base + fn)
-            if stype == "income":
-                parsed = _income_parse(raw)
-            elif stype == "balance":
-                parsed = _balance_parse(raw)
-            else:
-                parsed = parse_rfile(raw)
+        # Income/balance are chosen by CONTENT across title candidates; cashflow
+        # (and any other titled statement) by its unambiguous title.
+        for stype in ("income", "balance"):
+            _, parsed = _select_primary_rfile(base, stype)
+            if parsed and parsed["rows"]:
+                stmts[stype] = parsed
+        title_map = _statement_rfiles(base)
+        for stype, fn in title_map.items():
+            if stype in ("income", "balance"):
+                continue
+            parsed = parse_rfile(_get(base + fn))
             if parsed and parsed["rows"]:
                 stmts[stype] = parsed
     except Exception as e:
@@ -780,6 +929,33 @@ def _column_meta(html_bytes: bytes, ncol: int) -> list | None:
     def _drop_title(cells):
         return [c for c in cells if "tl" not in (c.get("class") or "").split()]
 
+    # A trailing footnote marker <th> ('[1]', '[2]', …) carries a reference, not a
+    # period — FCBC appends one to its date header, inflating the expanded width
+    # past ncol so the whole quarterly statement was silently dropped. Drop any
+    # <th> whose entire text is a bare [N] marker before the width check.
+    def _drop_footnotes(cells):
+        return [c for c in cells
+                if not _NOISE_LABEL.search(" ".join(c.text_content().split()))]
+
+    # Reconcile colspan: most filers give the date <th> a colspan ("Dec. 31, 2025"
+    # spanning a value column + a unit/symbol column), so expanding by colspan
+    # yields one entry per value column. But BANC's date headers carry colspan="2"
+    # while each period still yields ONE value column (parse_rfile's _valcells
+    # collapses the pair) — expanding then doubles the width and bailed the whole
+    # statement. So: when the count of DATE-bearing <th> cells already equals ncol,
+    # use one entry per cell (ignore colspan); otherwise expand by colspan. This
+    # keeps the colspan="1 value + symbol" layouts working while accepting the
+    # clean one-value-per-period layout BANC uses.
+    def _cols(cells):
+        cells = _drop_footnotes(cells)
+        expanded = expand(cells)
+        if len(expanded) == ncol:
+            return expanded
+        per_cell = [" ".join(c.text_content().split()) for c in cells]
+        if len(per_cell) == ncol:
+            return per_cell
+        return expanded
+
     # Duration band: the pure-<th> row carrying "N Months Ended" / "Year Ended".
     # Absent (balance sheets, some 10-K layouts) → treat every column as point-
     # in-time / 12-month (no discrete-quarter claim is made on those).
@@ -791,8 +967,7 @@ def _column_meta(html_bytes: bytes, ncol: int) -> list | None:
                for c in cells):
             dur_cells = _drop_title(cells)
             break
-    date_cells = _drop_title(header_rows[-1].xpath("./th|./td"))
-    dates = expand(date_cells)
+    dates = _cols(_drop_title(header_rows[-1].xpath("./th|./td")))
 
     def _dur_months(txt):
         m = _MONTHS_ENDED.search(txt)
@@ -801,10 +976,10 @@ def _column_meta(html_bytes: bytes, ncol: int) -> list | None:
         return 12 if _YEAR_ENDED.search(txt) else None
 
     if dur_cells is not None:
-        durs = [_dur_months(t) for t in expand(dur_cells)]
+        durs = [_dur_months(t) for t in _cols(dur_cells)]
     else:
         durs = [12] * len(dates)
-    # Both bands must expand to the same width AND to ncol, or the layout isn't
+    # Both bands must align to the same width AND to ncol, or the layout isn't
     # one we can map cell-for-cell — bail (caller yields no discrete quarter).
     if not (len(durs) == len(dates) == ncol):
         return None
@@ -1005,7 +1180,13 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
         out = []
         for m in metas:
             base = _filing_base(m["cik"], m["accession"])
-            fn = _statement_rfiles(base).get(stype)
+            # Income/balance: pick the right R-file by CONTENT across candidates;
+            # cashflow by its unambiguous title. _column_meta needs the raw bytes,
+            # so resolve fn first, then fetch once.
+            if stype in ("income", "balance"):
+                fn = _select_primary_rfile(base, stype)[0]
+            else:
+                fn = _statement_rfiles(base).get(stype)
             if not fn:
                 continue
             raw = _get(base + fn)
@@ -1092,15 +1273,14 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     for m in metas:
         base = _filing_base(m["cik"], m["accession"])
         try:
-            fn = _rfile_for(base, stype)
-            if not fn:
-                stmt = None
-            elif stype == "income":
-                stmt = _income_parse(_get(base + fn))   # strip OCI / guard non-income
-            elif stype == "balance":
-                stmt = _balance_parse(_get(base + fn))  # isolate primary balance table
+            if stype in ("income", "balance"):
+                # CONTENT-aware selection across title candidates (rejects a
+                # standalone OCI statement, a parent-only Schedule II, or a
+                # footnote that shares the title word).
+                stmt = _select_primary_rfile(base, stype)[1]
             else:
-                stmt = parse_rfile(_get(base + fn))
+                fn = _rfile_for(base, stype)
+                stmt = parse_rfile(_get(base + fn)) if fn else None
             if stmt and stype in _NOTE_TRANSFORM:
                 stmt = _NOTE_TRANSFORM[stype](stmt)   # e.g. collapse loan dimensions
         except Exception as e:
