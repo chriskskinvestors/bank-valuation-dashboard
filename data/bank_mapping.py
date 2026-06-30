@@ -55,6 +55,13 @@ BANK_MAP = {
     # FSRL is "First Reliance Bancshares" (not First Savings Financial).
     # OTC-only, no SEC XBRL. FDIC cert 35214 = First Reliance Bank, SC.
     "FSRL":  {"name": "First Reliance Bancshares, Inc.",    "fdic_cert": 35214,  "cik": None},
+    # TowneBank files its periodic reports with the Federal Reserve under
+    # Securities Exchange Act §12(i) (it's a VA state bank that is its own
+    # holding company), so it is ABSENT from SEC's company_tickers.json /
+    # EDGAR entirely — the universe builder seeds candidates from that file,
+    # so TOWN was never discovered. FDIC-only coverage (cert 35095 = TowneBank,
+    # Portsmouth VA, ~$22B assets); SEC-XBRL HoldCo metrics correctly n/a.
+    "TOWN":  {"name": "TowneBank",                          "fdic_cert": 35095,  "cik": None},
     "BANR":  {"name": "Banner Corp.",                       "fdic_cert": 28489,  "cik": 946673},
     # MCBI (Mountain Commerce Bancshares) was acquired 04/01/2026 — FDIC
     # cert 4931 is ACTIVE=0. The universe filter would drop it anyway via
