@@ -395,6 +395,17 @@ _INCOME_LINE = re.compile(
 _OCI_START = re.compile(r"^\s*other\s+comprehensive\s+(income|loss)", re.I)
 _OCI_TOTAL = re.compile(r"^\s*(total\s+)?comprehensive\s+(income|loss)\b", re.I)
 
+# An XBRL dimension-member CAPTION that leaks a revenue-disaggregation note table
+# into the income R-file: a label ending in '[Member]' (e.g. WFC 'Investment
+# banking fees [Member]', TBBK 'Consumer Credit Fintech Fees [Member]', TYFG
+# 'Mortgage Banking [Member]'). SEC renders the ASC-606 disaggregation-of-revenue
+# table AFTER the per-share section as a run of {'<topic> [Member]' header, a
+# duplicate section header, a generic value row ('Fee income' / 'Total fintech
+# fees')}. None of those are primary-statement lines — the whole tail is dropped
+# at the first [Member] caption (always trailing; a [Member] caption never names
+# an economic line, so nothing real is above its first occurrence).
+_MEMBER_DIM = re.compile(r"\[member\]\s*$", re.I)
+
 # Parent-company-only condensed schedules (Schedule II) must NEVER render as the
 # consolidated primary statement. A parent-only schedule carries signature lines
 # that only exist when the HoldCo reports on a stand-alone basis: "Dividends from
@@ -466,28 +477,101 @@ def _strip_oci(parsed: dict) -> dict:
     return {**parsed, "rows": kept}
 
 
+def _strip_member_dimensions(parsed: dict) -> dict:
+    """Drop the XBRL dimension-member disaggregation tail that leaks into an income
+    R-file: everything from the FIRST '[Member]'-suffixed caption row to the end.
+    SEC appends an ASC-606 revenue-disaggregation table after the income
+    statement's per-share section, rendered as repeated {'<topic> [Member]'
+    caption, duplicate section header, generic value row} units — none of which
+    are primary-statement lines. A '[Member]' caption never names an economic line,
+    so the tail is contiguous-to-end; a statement with no '[Member]' row is
+    returned unchanged."""
+    rows = parsed["rows"]
+    cut = next((i for i, r in enumerate(rows) if _MEMBER_DIM.search(r["label"])), None)
+    if cut is None:
+        return parsed
+    return {**parsed, "rows": rows[:cut]}
+
+
 # The grand-total row that ENDS a consolidated balance sheet: total assets =
 # total liabilities + equity. Filers word the equity side "stockholders'",
 # "shareholders'", "members'", or omit the qualifier ("Total liabilities and
 # equity"); the apostrophe frequently renders as the cp1252 replacement char, so
-# match loosely between "and" and "equity".
+# match loosely between "and" and "equity". SEC also renders the us-gaap STANDARD
+# LABEL when a filer omits a custom one — word-order-reversed with a trailing
+# ', Total' ("Liabilities and Equity, Total" for "Total liabilities and equity",
+# "Assets, Total" for "Total assets"); accept that form too (EFSCP, OVLY).
 _BALANCE_END = re.compile(
-    r"^\s*total\s+liabilities\s+and\b.{0,40}\bequity\b", re.I)
+    r"^\s*total\s+liabilities\s+and\b.{0,40}\bequity\b|"
+    r"^\s*liabilities\s+and\b.{0,40}\bequity,\s*total\b", re.I)
 # The "Total assets" subtotal a balance sheet carries. Anchored so it does not
 # match "Total assets acquired", "Average total assets", or a ratio line; the
-# optional ':' tolerates "Total assets:". Some filers (EWBC) instead label the
-# assets-section grand total a bare "TOTAL" — caught by the liabilities+equity
-# structure check below, not this pattern.
-_TOTAL_ASSETS = re.compile(r"^\s*total\s+assets\s*:?\s*$", re.I)
+# optional ':' tolerates "Total assets:". Accepts the us-gaap standard-label form
+# "Assets, Total" (OVLY's recent filings reword it across years). Some filers
+# (EWBC) instead label the assets-section grand total a bare "TOTAL" — caught by
+# the liabilities+equity structure check below, not this pattern.
+_TOTAL_ASSETS = re.compile(r"^\s*total\s+assets\s*:?\s*$|^\s*assets,\s*total\s*$", re.I)
 # The two sides of the balance equation, used to recognize a balance sheet whose
 # assets total is labeled bare "TOTAL" (no "Total assets" text): a real balance
 # sheet has BOTH a total-liabilities row AND a total-equity row. Pension /
 # off-balance-sheet / fair-value footnotes (CBU 'Benefit obligation', OBT
-# 'Off-Balance Sheet Risk') have NEITHER, so requiring both rejects them.
-_TOTAL_LIAB = re.compile(r"^\s*total\s+liabilities\s*:?\s*$", re.I)
+# 'Off-Balance Sheet Risk') have NEITHER, so requiring both rejects them. The
+# trailing ', Total' alternatives accept the us-gaap standard-label forms.
+_TOTAL_LIAB = re.compile(
+    r"^\s*total\s+liabilities\s*:?\s*$|^\s*liabilities,\s*total\s*$", re.I)
 _TOTAL_EQUITY = re.compile(
     r"^\s*total\b.{0,40}\b(stockholders|shareholders|members|"
-    r"shareowners)\W*\s+equity\b|^\s*total\s+equity\s*:?\s*$", re.I)
+    r"shareowners)\W*\s+equity\b|^\s*total\s+equity\s*:?\s*$|"
+    r"^\s*(stockholders|shareholders|members|shareowners)\W*\s+equity,\s*total\s*$|"
+    r"^\s*equity,\s*total\s*$|"
+    r"^\s*equity,\s*attributable\s+to\s+parent,\s*total\s*$", re.I)
+
+
+# A us-gaap STANDARD-LABEL ShortName for a debt-securities balance line, which SEC
+# renders when a filer omits a custom label: 'Debt Securities, Held-to-Maturity,
+# Excluding Accrued Interest, after Allowance for Credit Loss' (HTM) / 'Debt
+# Securities, Available-for-Sale, Excluding Accrued Interest' (AFS). EFSCP's HTM
+# line is this ShortName in recent filings but the filer's 'Securities
+# held-to-maturity, net' in older ones — token-subset can't bridge them ('net' vs
+# the verbose taxonomy words). Anchoring on the held-to-maturity / available-for-
+# sale CONCEPT does; merging is still gated by the same-period guard (so two HTM
+# sub-lines populated in one period never collapse).
+_HTM_TAXONOMY = re.compile(r"^\s*debt\s+securities,\s*held-to-maturity\b", re.I)
+_AFS_TAXONOMY = re.compile(r"^\s*debt\s+securities,\s*available-for-sale\b", re.I)
+_HTM_LINE = re.compile(r"securit.*held[- ]to[- ]maturity|held[- ]to[- ]maturity.*securit", re.I)
+_AFS_LINE = re.compile(r"securit.*available[- ]for[- ]sale|available[- ]for[- ]sale.*securit", re.I)
+
+
+def _debt_security_class(label: str) -> str | None:
+    """'htm' / 'afs' if a label names a held-to-maturity / available-for-sale debt-
+    securities BALANCE line, else None. Used ONLY to reconcile the us-gaap taxonomy
+    ShortName with a filer's own wording (one side must be the taxonomy ShortName),
+    never to link two arbitrary filer lines — see _variant_compatible."""
+    if _HTM_LINE.search(label):
+        return "htm"
+    if _AFS_LINE.search(label):
+        return "afs"
+    return None
+
+
+def _structural_total_class(label: str) -> str | None:
+    """The balance-sheet GRAND-TOTAL concept a label names, or None. A consolidated
+    balance sheet carries exactly ONE of each, so two rows that name the SAME class
+    are the SAME line even when their wording shares no distinctive token — the
+    case token-subset matching can't catch: a filer's custom label vs the us-gaap
+    standard-label ShortName ('Total stockholders' equity' ↔ 'Equity, Attributable
+    to Parent, Total'; 'Total liabilities and equity' ↔ 'Liabilities and Equity,
+    Total'). Checked grand-total FIRST (it contains 'equity', so must win over the
+    equity class). NOT a total row → None (never links two ordinary line items)."""
+    if _BALANCE_END.match(label):
+        return "balance_end"
+    if _TOTAL_ASSETS.match(label):
+        return "assets"
+    if _TOTAL_LIAB.match(label):
+        return "liab"
+    if _TOTAL_EQUITY.match(label):
+        return "equity"
+    return None
 
 
 def _pos_row(rows, pat):
@@ -584,7 +668,7 @@ def _income_parse(html_bytes: bytes) -> dict | None:
     parsed = parse_rfile(html_bytes)
     if not (parsed and parsed["rows"]) or not _is_income_body(parsed):
         return None
-    return _strip_oci(parsed)
+    return _strip_member_dimensions(_strip_oci(parsed))
 
 
 # Content discriminator + parser per primary statement type, for the selector.
@@ -704,35 +788,69 @@ _VARIANT_DROP = re.compile(
     r"\binc\b|\bincorporated\b|\bcorp\b|\bcorporation\b|\bcompany\b|\bco\b|"
     r"\bbancshares\b|\bbancorp\b|\bbancorporation\b|\band\b|\bthe\b|\bof\b|\bat\b",
     re.I)
+# SIGN-DIRECTION qualifiers on a single P&L line: a filer rewords the SAME realized
+# gain/loss line between fiscal years by which side it landed on — CZFS 'Available
+# for sale security (losses) gains, net' (2021) vs 'Available for sale security
+# losses, net' (2022+). Dropping gain(s)/loss(es) makes those token sets equal so
+# they fold to one row; the same-period guard still blocks merging two lines that
+# coexist (e.g. a separate realized-gains and realized-losses line in one filing).
+_DIRECTION_DROP = re.compile(r"\bgains?\b|\blosses\b|\bloss\b", re.I)
+
+
+# The us-gaap STANDARD-LABEL suffix SEC appends when a filer omits a custom label:
+# the line name with a trailing ', Total' in reversed word order ('Assets, Total'
+# for 'Total assets', 'Liabilities and Equity, Total'). Stripped before tokenizing
+# so the standard-label and the filer's 'Total <x>' wording yield the SAME token
+# set (OVLY 'Assets' ↔ 'Assets, Total'). The leading-'Total' form is untouched.
+_SHORTNAME_TOTAL_SUFFIX = re.compile(r",\s*total\s*$", re.I)
 
 
 def _variant_tokens(label: str) -> frozenset:
-    """Token SET for variant matching: drop parentheticals, embedded numbers, the
-    cp1252-mangled apostrophe, punctuation, and registrant-name / connective
-    filler. Two labels are variant-compatible when one token set is a subset of
-    the other (a wording superset/subset of the SAME line)."""
-    s = re.sub(r"\([^)]*\)", " ", label)               # drop parentheticals
+    """Token SET for variant matching: drop the us-gaap ', Total' standard-label
+    suffix, parentheticals, embedded numbers, the cp1252-mangled apostrophe,
+    punctuation, and registrant-name / connective filler. Two labels are
+    variant-compatible when one token set is a subset of the other (a wording
+    superset/subset of the SAME line)."""
+    s = _SHORTNAME_TOTAL_SUFFIX.sub(" ", label)        # drop us-gaap ', Total'
+    s = re.sub(r"\([^)]*\)", " ", s)                   # drop parentheticals
     s = re.sub(r"[\d,]+", " ", s)                       # drop embedded numbers
     s = s.replace("�", " ").replace("'", " ").replace("’", " ")
     s = re.sub(r"[^\w\s]", " ", s)                      # drop punctuation
     s = _VARIANT_DROP.sub(" ", s)
+    s = _DIRECTION_DROP.sub(" ", s)                     # drop gain/loss direction
     return frozenset(w for w in s.lower().split() if w)
 
 
 def _variant_compatible(a: str, b: str) -> bool:
     """True when labels a and b are wording variants of the SAME line: their
     variant-token sets are in a subset relation (equal, or one a subset of the
-    other). A single-token subset (e.g. 'Basic' ⊂ 'Basic earnings per common
+    other). A single-token SUBSET (e.g. 'Basic' ⊂ 'Basic earnings per common
     share' — PNC renames its EPS rows) is allowed ONLY when BOTH are per-share
-    rows; otherwise a lone shared word ('total') would over-link unrelated
-    subtotals. The same-period guard in _consolidate_variants is the final
-    safeguard against merging two genuinely-distinct lines."""
+    rows; otherwise a lone shared word would over-link unrelated subtotals. A
+    single-token EQUALITY (ta == tb, e.g. 'Assets' ↔ 'Assets, Total' after the
+    standard-label suffix is stripped) is NOT a fragment — the labels are
+    wording-identical — so it merges. The same-period guard in
+    _consolidate_variants is the final safeguard against merging two
+    genuinely-distinct lines."""
+    # Concept anchor: two balance-sheet grand-total rows of the SAME class are the
+    # same line regardless of wording (a filer label vs the us-gaap ShortName).
+    ca = _structural_total_class(a)
+    if ca is not None and ca == _structural_total_class(b):
+        return True
+    # Concept anchor for HTM/AFS debt-securities lines, but ONLY to bridge the
+    # us-gaap taxonomy ShortName with a filer's own wording (one side must be the
+    # ShortName) — never to link two filer lines on a fuzzy securities overlap.
+    da = _debt_security_class(a)
+    if da is not None and da == _debt_security_class(b) and (
+            _HTM_TAXONOMY.match(a) or _HTM_TAXONOMY.match(b)
+            or _AFS_TAXONOMY.match(a) or _AFS_TAXONOMY.match(b)):
+        return True
     ta, tb = _variant_tokens(a), _variant_tokens(b)
     if not ta or not tb:
         return False
     if not (ta <= tb or tb <= ta):
         return False
-    if min(len(ta), len(tb)) >= 2:
+    if min(len(ta), len(tb)) >= 2 or ta == tb:
         return True
     return bool(_PERSHARE.search(a)) and bool(_PERSHARE.search(b))
 
