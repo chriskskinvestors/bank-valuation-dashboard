@@ -79,6 +79,73 @@ _PERSHARE = re.compile(r"per share|per common share|\(in shares\)|in shares", re
 # the type per row and gate the multiplier on monetaryItemType.
 _DEFREF = re.compile(r"defref_([A-Za-z0-9_.\-]+)")
 _MONETARY_TYPE = re.compile(r"monetaryItemType", re.I)
+_PERSHARE_TYPE = re.compile(r"perShareItemType", re.I)
+_SHARES_TYPE = re.compile(r"sharesItemType", re.I)
+# Per-share / share-count LABEL signals, the fallback when an R-file omits the
+# XBRL element type. "per share" → per-share; "(in shares)" / "in shares" /
+# "weighted average … shares" → a share count.
+_PERSHARE_LABEL = re.compile(r"per\s+share|per\s+common\s+share", re.I)
+_SHARES_LABEL = re.compile(r"\(in\s+shares\)|\bin\s+shares\b|"
+                           r"weighted[- ]average.*shares|shares\s+outstanding", re.I)
+
+
+def _row_kind(label: str, etype: str) -> str:
+    """Coarse value KIND of a statement row — 'monetary' (an additive $ flow or
+    balance), 'pershare' (EPS, $/share), 'shares' (a point-in-time share count),
+    or 'other'. Driven by the row's XBRL element data type when the R-file carries
+    it (perShareItemType / sharesItemType / monetaryItemType); when it doesn't,
+    falls back to the label. The kind disambiguates two rows a filer labels the
+    SAME bare word ('Basic' EPS vs 'Basic' weighted-average shares — PGC) so they
+    don't collapse to one stitch key, AND gates Q4 = FY − 9M differencing to
+    additive flows only (a per-share or share-count value is NOT YTD-cumulative —
+    differencing it yields garbage, e.g. PGC Q4 EPS rendered as a negative share
+    count)."""
+    if etype:
+        if _PERSHARE_TYPE.search(etype):
+            return "pershare"
+        if _SHARES_TYPE.search(etype):
+            return "shares"
+        if _MONETARY_TYPE.search(etype):
+            return "monetary"
+        return "other"
+    if _PERSHARE_LABEL.search(label):
+        return "pershare"
+    if _SHARES_LABEL.search(label):
+        return "shares"
+    return "monetary"
+
+
+# A normalized label (lowercased, digits stripped — see _norm_label) of a row
+# whose VALUE is a per-share amount. Used only by the type-missing magnitude
+# fallback below; typed filers are already classified by _row_kind.
+_PERSHARE_NORM = re.compile(r"per share|per common share|earnings per", re.I)
+
+
+def _eps_magnitude_swap(norm_label: str, fy_value) -> bool:
+    """True when an EPS/per-share-LABELED row carries a value far too large to be
+    a per-share amount (|value| ≫ 100) — the signature of a share count that got
+    keyed onto an EPS row because the R-file omitted XBRL types and the filer
+    labeled both rows the same bare word. Differencing such a value (FY − 9M)
+    yields a negative share-count garbage cell, so the caller must NOT difference
+    it. A genuine EPS value (a few dollars) never trips this; a typed filer never
+    reaches here (its share row is already kind='shares')."""
+    if fy_value is None or not _PERSHARE_NORM.search(norm_label or ""):
+        return False
+    return abs(fy_value) > 100
+
+
+def _row_key(r: dict) -> tuple:
+    """Stitch/identity key for a parsed row: (normalized label, header, value
+    kind). The value KIND (from _row_kind) keeps an EPS row and a weighted-
+    average-share row a filer labels with the SAME bare word ('Basic'/'Diluted',
+    PGC) as DISTINCT lines — without it both normalize to the same (label, header)
+    and the later row silently overwrites the earlier one's value in the per-period
+    slice (the share count clobbering the EPS). Header rows carry no value, so
+    their kind is fixed to '' (a header never disambiguates by value type)."""
+    label = r["label"]
+    header = r["header"]
+    kind = "" if header else _row_kind(label, r.get("etype", ""))
+    return (_norm_label(label), header, kind)
 
 # As-reported NOTE tables (the SNL-depth disclosures past the primary statements).
 # Notes are rendered as their own "(Details)" R-files; we pick the by-type
@@ -390,6 +457,9 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
         rows.append({
             "label": label,
             "header": is_header,
+            # The row's XBRL element data type, carried downstream so the stitch
+            # can tell a per-share / share-count row from an additive $ flow.
+            "etype": etype,
             "values": [] if is_header else (parsed + [None] * ncol)[:ncol],
         })
     # SEC R-files append an XBRL element-definition footnote block below the
@@ -979,7 +1049,7 @@ def _merge_row_order(parsed: list) -> list:
     for f in parsed:
         prev = -1
         for r in f["rows"]:
-            k = (_norm_label(r["label"]), r["header"])
+            k = _row_key(r)
             if k in keys:
                 prev = keys.index(k)
             else:
@@ -998,7 +1068,7 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
                          key=_period_year, reverse=True)[:n_years]
     def _column(f, period):
         idx = f["periods"].index(period)
-        return {(_norm_label(r["label"]), r["header"]):
+        return {_row_key(r):
                 (r["values"][idx] if idx < len(r["values"]) else None)
                 for r in f["rows"] if not r["header"]}
 
@@ -1194,9 +1264,12 @@ def _recent_10q_metas(cik, n: int) -> list:
 
 
 def _column_values(stmt: dict, idx: int) -> dict:
-    """{norm_key: value} for one column index of a parsed statement (data rows
-    only) — the per-period slice used to stitch and to difference FY − 9M."""
-    return {(_norm_label(r["label"]), r["header"]):
+    """{row_key: value} for one column index of a parsed statement (data rows
+    only) — the per-period slice used to stitch and to difference FY − 9M. The
+    key carries the value KIND (_row_key), so a per-share / share-count row never
+    shares a key with — and is never overwritten by — an additive $ flow, and the
+    Q4 = FY − 9M derivation can gate differencing on that kind."""
+    return {_row_key(r):
             (r["values"][idx] if idx < len(r["values"]) else None)
             for r in stmt["rows"] if not r["header"]}
 
@@ -1326,7 +1399,19 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> dict 
             diff = {}
             for k in set(fy) | set(nine):
                 a, b = fy.get(k), nine.get(k)
-                diff[k] = (a - b) if (a is not None and b is not None) else None
+                # Q4 = FY − 9M is valid ONLY for an additive YTD-cumulative FLOW
+                # (a monetary income line). A per-share (EPS) or share-count row
+                # is NOT YTD-cumulative — differencing it is meaningless and yields
+                # garbage (PGC: a Q4 EPS cell rendered as a negative share count).
+                # The only Q4 source here is the 10-K's 12-MONTH column (no Q4
+                # 10-Q exists), and a 12-month EPS / point-in-time share count is
+                # NOT the discrete fourth quarter — so the Q4 cell is left blank
+                # (n/a), never a differenced number and never the full-year value
+                # mislabeled as a quarter.
+                if k[2] == "monetary" and not _eps_magnitude_swap(k[0], a):
+                    diff[k] = (a - b) if (a is not None and b is not None) else None
+                else:
+                    diff[k] = None            # non-additive → no clean discrete Q4
             col[qe] = diff
         # else: omit (blank) — cannot derive a clean discrete quarter.
     return _assemble(sources, col, q_ends)

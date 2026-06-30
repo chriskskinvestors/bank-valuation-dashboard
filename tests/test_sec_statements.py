@@ -789,6 +789,137 @@ class TestFlowQuarterStitch(unittest.TestCase):
         self.assertEqual(ni["values"][1], 222e6)       # Q3 still the 3-month value
 
 
+# ── PGC: per-share / share-count rows must NOT be Q4 YTD-differenced ──────────
+# PGC labels BOTH its EPS rows and its weighted-average-share rows with the bare
+# words "Basic"/"Diluted" (no "(in shares)" / "(per share)" disambiguator), under
+# separate "EARNINGS PER SHARE" / "WEIGHTED AVERAGE NUMBER OF SHARES OUTSTANDING"
+# headers. The two rows are told apart ONLY by their XBRL element data type
+# (perShareItemType vs sharesItemType). Without that, both normalize to the same
+# stitch key and the share count silently overwrites the EPS, then Q4 = FY − 9M
+# differences a non-additive value into a NEGATIVE share count.
+def _ar(eid, dtype):
+    return (b'<table class="authRefData" id="defref_' + eid + b'">'
+            b'<tr><td><strong> Data Type:</strong></td><td>' + dtype
+            + b'</td></tr></table>')
+
+
+def _pgc_row(eid, label, *vals):
+    cells = b''.join(b'<td class="nump">' + v + b'</td>' for v in vals)
+    return (b'<tr><td class="pl"><a onclick="Show.showAR( this, '
+            b"'defref_" + eid + b"', window );\">" + label + b'</a></td>' + cells
+            + b'</tr>')
+
+
+# A Q3 10-Q income R-file (PGC shape): a 3-month band + a 9-month YTD band, with
+# bare 'Basic'/'Diluted' EPS (perShare) AND bare 'Basic'/'Diluted' weighted-
+# average shares (sharesItemType) — same labels, told apart by XBRL type only.
+_PGC_Q3_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED STATEMENTS OF INCOME - USD ($) '
+    b'$ in Thousands</th>'
+    b'<th class="th" colspan="2">3 Months Ended</th>'
+    b'<th class="th" colspan="2">9 Months Ended</th></tr>'
+    b'<tr><th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th>'
+    b'<th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th></tr>'
+    + _pgc_row(b'us-gaap_NetIncomeLoss', b'NET INCOME',
+               b'9,631', b'7,587', b'30,167', b'22,704')
+    + _pgc_row(b'us-gaap_EarningsPerShareBasic', b'Basic',
+               b'0.55', b'0.43', b'1.71', b'1.29')
+    + _pgc_row(b'us-gaap_EarningsPerShareDiluted', b'Diluted',
+               b'0.54', b'0.43', b'1.70', b'1.28')
+    + _pgc_row(b'us-gaap_WeightedAverageNumberOfSharesOutstandingBasic', b'Basic',
+               b'17,576,899', b'17,616,046', b'17,630,000', b'17,650,000')
+    + _pgc_row(b'us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding', b'Diluted',
+               b'17,686,979', b'17,700,042', b'17,740,000', b'17,760,000')
+    + b'</table>'
+    + _ar(b'us-gaap_NetIncomeLoss', b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_EarningsPerShareBasic', b'dtr-types:perShareItemType')
+    + _ar(b'us-gaap_EarningsPerShareDiluted', b'dtr-types:perShareItemType')
+    + _ar(b'us-gaap_WeightedAverageNumberOfSharesOutstandingBasic',
+          b'xbrli:sharesItemType')
+    + _ar(b'us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding',
+          b'xbrli:sharesItemType'))
+
+# The matching 10-K income R-file (12-month FY column). PGC's 10-K income R-file
+# carries EPS but NOT the weighted-average-share rows; net income is the only
+# additive FY value the Q4 = FY − 9M derivation can use.
+_PGC_FY_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED STATEMENTS OF INCOME - USD ($) '
+    b'$ in Thousands</th><th class="th">12 Months Ended</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+    + _pgc_row(b'us-gaap_NetIncomeLoss', b'NET INCOME', b'42,326')
+    + _pgc_row(b'us-gaap_EarningsPerShareBasic', b'Basic', b'2.12')
+    + _pgc_row(b'us-gaap_EarningsPerShareDiluted', b'Diluted', b'2.10')
+    + b'</table>'
+    + _ar(b'us-gaap_NetIncomeLoss', b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_EarningsPerShareBasic', b'dtr-types:perShareItemType')
+    + _ar(b'us-gaap_EarningsPerShareDiluted', b'dtr-types:perShareItemType'))
+
+
+class TestPerShareShareRowsNotDifferenced(unittest.TestCase):
+    """PGC cardinal-rule fix: in the discrete-quarter stitch a per-share (EPS) or
+    share-count row carries its as-reported quarter value and is NEVER put through
+    Q4 = FY − 9M differencing (which is valid only for additive monetary flows);
+    its Q4 cell is n/a, never a difference and never the 12-month value. An EPS row
+    a filer labels the same bare word as its weighted-average-share row stays a
+    DISTINCT line — the share count never overwrites the EPS."""
+
+    def _build(self):
+        from data.sec_statements import _stitch_flow_quarters
+        pq = [_parsed(_PGC_Q3_INCOME, "Q3ACC")]
+        pk = [_parsed(_PGC_FY_INCOME, "KACC")]
+        return _stitch_flow_quarters(pq, pk, [(2025, 12), (2025, 9)])
+
+    def test_eps_and_shares_rows_are_distinct_not_swapped(self):
+        # Two 'Basic' rows survive (EPS + weighted-average shares), each carrying
+        # its OWN kind of value — the share count never clobbers the EPS.
+        st = self._build()
+        basics = [r for r in st["rows"] if r["label"] == "Basic"]
+        self.assertEqual(len(basics), 2)
+        eps = next(r for r in basics if r["values"][1] is not None
+                   and abs(r["values"][1]) < 100)          # per-share magnitude
+        shares = next(r for r in basics if r["values"][1] is not None
+                      and r["values"][1] > 1000)           # share-count magnitude
+        self.assertAlmostEqual(eps["values"][1], 0.55)     # Q3'25 EPS (3-month col)
+        self.assertEqual(shares["values"][1], 17_576_899.0)  # Q3'25 shares (3-month)
+        # The EPS row is a per-share number, NEVER a share count.
+        self.assertLess(abs(eps["values"][1]), 100)
+
+    def test_q3_eps_is_three_month_not_ytd(self):
+        # Q3'25 EPS is the as-reported 3-month value (0.55), NOT the 9-month YTD
+        # (1.71) — A21 holds for per-share rows too.
+        st = self._build()
+        eps = next(r for r in st["rows"]
+                   if r["label"] == "Basic" and r["values"][1] is not None
+                   and abs(r["values"][1]) < 100)
+        self.assertAlmostEqual(eps["values"][1], 0.55)
+        for r in st["rows"]:
+            for v in r["values"]:
+                self.assertNotEqual(v, 1.71)               # never the YTD EPS
+
+    def test_q4_per_share_and_share_rows_are_na_never_differenced(self):
+        # Q4 = FY − 9M is non-additive for EPS/shares: the Q4 cell is n/a, never a
+        # difference (which would be NEGATIVE: 2.12 − 1.71, or 17,576k − 17,630k),
+        # and never the 12-month FY value (2.12) mislabeled as a quarter.
+        st = self._build()
+        self.assertEqual(st["periods"], ["Q4'25", "Q3'25"])
+        for r in st["rows"]:
+            if r["label"] in ("Basic", "Diluted"):
+                self.assertIsNone(r["values"][0])          # Q4 EPS / shares = n/a
+                self.assertNotEqual(r["values"][0], 2.12)  # not the FY value
+                # No negative cell anywhere on a per-share / share row.
+                self.assertFalse(any(v is not None and v < 0 for v in r["values"]))
+
+    def test_monetary_flow_row_is_differenced_for_q4(self):
+        # The additive monetary flow (NET INCOME) IS differenced: Q4 = FY − 9M =
+        # 42,326 − 30,167 = 12,159 (thousands → raw dollars).
+        st = self._build()
+        ni = next(r for r in st["rows"] if r["label"] == "NET INCOME")
+        self.assertEqual(ni["values"][0], (42_326 - 30_167) * 1e3)   # Q4'25
+        self.assertEqual(ni["values"][1], 9_631_000.0)               # Q3'25 (3-month)
+
+
 class TestBalanceQuarterStitch(unittest.TestCase):
     """Balance sheet is point-in-time: each quarter-end column is a snapshot
     taken straight from the filing, never a difference of two columns."""
