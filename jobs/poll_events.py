@@ -470,6 +470,17 @@ _REFUSAL_RE = re.compile(
 )
 
 
+def _is_auth_error(e: Exception) -> bool:
+    """True for an Anthropic auth/permission rejection (invalid/revoked key) —
+    distinguishes 'rotate the key' from a transient rate-limit/timeout, so the
+    summarizer stops retrying Claude per-event and degrades to extractive."""
+    if type(e).__name__ in ("AuthenticationError", "PermissionDeniedError"):
+        return True
+    code = (getattr(e, "status_code", None)
+            or getattr(getattr(e, "response", None), "status_code", None))
+    return code in (401, 403)
+
+
 def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int:
     """
     Backfill summaries on the most-recently-ingested events that don't have
@@ -506,7 +517,7 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
 
     try:
         import anthropic
-        from data.filing_summarizer import fetch_filing_text
+        from data.filing_summarizer import fetch_filing_text, _extractive_summary
     except ImportError:
         return 0
 
@@ -514,6 +525,7 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
     # call wedge the whole job.
     client = anthropic.Anthropic(timeout=20.0, max_retries=1)
     n = 0
+    auth_failed = False   # set once a 401/403 proves the key is dead this run
     deadline = _t.monotonic() + max_seconds
 
     for r in rows:
@@ -539,29 +551,52 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
             # 8-K filings can be huge; truncate to first ~10K chars
             text_body = text_body[:10000]
 
-            msg = client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=300,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"You are summarizing a company news item / SEC filing for {r['ticker']}.\n"
-                        f"Source: {r['source']}. Headline: {r['headline']}\n\n"
-                        "In 1-2 tight sentences, summarize the substance for a bank "
-                        "analyst — dollar amounts, dates, people, and impact. Skip "
-                        "boilerplate, disclaimers, and forward-looking-statement language.\n\n"
-                        "Reply with ONLY the summary sentences — no title, no heading, "
-                        "no markdown, no bullet points, and no 'Summary:' label. If the "
-                        "text has no substantive content (only filing metadata/exhibits), "
-                        "reply with exactly: NONE\n\n"
-                        f"TEXT:\n{text_body}"
-                    ),
-                }],
-            )
-            raw = "".join(b.text for b in msg.content if b.type == "text")
-            summary = _clean_summary(raw)
-            if not summary:
-                continue
+            summary, claude_ok = "", False
+            if not auth_failed:
+                try:
+                    msg = client.messages.create(
+                        model="claude-haiku-4-5",
+                        max_tokens=300,
+                        messages=[{
+                            "role": "user",
+                            "content": (
+                                f"You are summarizing a company news item / SEC filing for {r['ticker']}.\n"
+                                f"Source: {r['source']}. Headline: {r['headline']}\n\n"
+                                "In 1-2 tight sentences, summarize the substance for a bank "
+                                "analyst — dollar amounts, dates, people, and impact. Skip "
+                                "boilerplate, disclaimers, and forward-looking-statement language.\n\n"
+                                "Reply with ONLY the summary sentences — no title, no heading, "
+                                "no markdown, no bullet points, and no 'Summary:' label. If the "
+                                "text has no substantive content (only filing metadata/exhibits), "
+                                "reply with exactly: NONE\n\n"
+                                f"TEXT:\n{text_body}"
+                            ),
+                        }],
+                    )
+                    summary = _clean_summary(
+                        "".join(b.text for b in msg.content if b.type == "text"))
+                    claude_ok = True
+                except Exception as ce:
+                    if _is_auth_error(ce):
+                        if not auth_failed:   # LOUD, once — a dead key, not a blip
+                            print("  [summarizer] ⚠️  ANTHROPIC_API_KEY REJECTED "
+                                  f"({type(ce).__name__}) — the key is invalid/revoked. "
+                                  "Falling back to EXTRACTIVE summaries for this run; "
+                                  "rotate the 'anthropic-api-key' secret.", flush=True)
+                        auth_failed = True
+                    else:
+                        print(f"    [summarize {r['ticker']}] claude "
+                              f"{type(ce).__name__}: {ce}")
+            if claude_ok:
+                if not summary:
+                    continue   # Claude returned NONE — genuinely no substance
+            else:
+                # Claude unavailable (auth/transient) — degrade gracefully to an
+                # extractive summary so the 8-K shows real content, not the bare
+                # item. (Only fires on FAILURE; a working key still wins.)
+                summary = _clean_summary(_extractive_summary(text_body, "8-K"))
+                if not summary:
+                    continue
             with eng.begin() as conn:
                 conn.execute(text("UPDATE events SET summary = :s WHERE id = :id"),
                              {"s": summary[:20000], "id": r["id"]})

@@ -30,6 +30,7 @@ from data.events.wire_base import RSSItem  # noqa: E402
 import data.filing_summarizer as filing_summarizer  # noqa: E402
 from jobs.poll_events import (  # noqa: E402
     _is_high_signal_8k, _clean_summary, _resolve_8k_doc_url, _primary_doc_url,
+    _is_auth_error,
 )
 
 PAST = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -176,6 +177,23 @@ class TestCleanSummary(unittest.TestCase):
     def test_clean_summary_passes_through(self):
         s = "Truist named a new CEO effective July 1, 2026."
         self.assertEqual(_clean_summary(s), s)
+
+
+class TestAuthErrorDetection(unittest.TestCase):
+    """A revoked/invalid ANTHROPIC_API_KEY (401/403) must be distinguished from a
+    transient rate-limit/timeout so the summarizer degrades to extractive + logs
+    loudly, rather than silently failing per-event."""
+
+    def test_auth_errors_detected(self):
+        self.assertTrue(_is_auth_error(type("AuthenticationError", (Exception,), {})()))
+        self.assertTrue(_is_auth_error(type("E", (Exception,), {"status_code": 401})()))
+        resp = type("R", (), {"status_code": 403})()
+        self.assertTrue(_is_auth_error(type("E", (Exception,), {"response": resp})()))
+
+    def test_transient_and_generic_not_auth(self):
+        self.assertFalse(_is_auth_error(type("E", (Exception,), {"status_code": 429})()))
+        self.assertFalse(_is_auth_error(TimeoutError("slow")))
+        self.assertFalse(_is_auth_error(ValueError("x")))
 
 
 class TestStripBoilerplateFLS(unittest.TestCase):
