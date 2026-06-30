@@ -526,6 +526,7 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
             ORDER BY published_at DESC
             LIMIT :w
         """), {"w": max(limit * 3, limit)}).mappings().all()
+    print(f"  [summarizer] queued {len(rows)} unsummarized 8-Ks", flush=True)
     if not rows:
         return 0
 
@@ -544,6 +545,8 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
     # call wedge the whole job.
     client = anthropic.Anthropic(timeout=20.0, max_retries=1)
     n = 0
+    skipped_notext = 0    # filing body couldn't be fetched / < 200 chars
+    skipped_none = 0      # Claude returned NONE / a rejected (garbage) summary
     auth_failed = False   # set once a 401/403 proves the key is dead this run
     deadline = _t.monotonic() + max_seconds
 
@@ -566,6 +569,7 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
                     if len(alt_body) > len(text_body):
                         text_body = alt_body
             if not text_body or len(text_body) < 200:
+                skipped_notext += 1
                 continue
             # 8-K filings can be huge; truncate to first ~10K chars
             text_body = text_body[:10000]
@@ -611,6 +615,7 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
             # which beats a garbage extractive guess (filing scaffolding, contact
             # lines, mid-sentence fragments).
             if not summary:
+                skipped_none += 1
                 continue
             with eng.begin() as conn:
                 conn.execute(text("UPDATE events SET summary = :s WHERE id = :id"),
@@ -619,6 +624,8 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
         except Exception as e:
             print(f"    [summarize {r['ticker']}] {type(e).__name__}: {e}")
             continue
+    print(f"  [summarizer] wrote {n}, skipped {skipped_notext} no-text, "
+          f"{skipped_none} empty/NONE (of {len(rows)} queued)", flush=True)
     return n
 
 
