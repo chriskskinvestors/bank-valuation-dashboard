@@ -1509,5 +1509,175 @@ class TestOvlyTotalAssetsRewording(unittest.TestCase):
         self.assertIn("Other assets", labels)
 
 
+# ── EFSCP (Enterprise Financial Services Corp) — standard-label statements ───
+# EFSCP renders its PRIMARY income/balance statements with us-gaap STANDARD
+# labels, not custom wording: the income bottom line is "Net Income (Loss)
+# Attributable to Parent, Total"; revenue/expense lines are "Interest Income,
+# Securities, …" / "Interest Expense, Deposits"; the balance total-assets row is
+# "Assets, Total" and the grand total "Liabilities and Equity, Total". The income
+# R-file sits beside a STANDALONE "Statements of Comprehensive Income" sibling
+# (pure OCI) and a PARENT-ONLY "Statements of Operations (Details)" sibling; the
+# balance R-file beside a "Fair Value … Reported on the Balance Sheets (Details)"
+# footnote and a parent-only "Condensed Balance Sheets (Details)". A 200-bank
+# audit reported EFSCP returning None for BOTH statements (whole statement
+# missing). These pin that the CONTENT guards recognize the standard-label bottom
+# lines and that the selector picks the real consolidated statement over the OCI /
+# parent-only / footnote siblings — verified against EFSCP's FY2025 10-K
+# (NetIncomeLoss 201,374 thousand; Assets 17,300,884 thousand; A = L + E).
+
+_EFSCP_INCOME = b"""<table class="report">
+<tr><th class="tl">Consolidated Statements of Income - USD ($) $ in Thousands</th><th class="th" colspan="3">12 Months Ended</th></tr>
+<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th><th class="th">Dec. 31, 2023</th></tr>
+<tr><td class="pl">Interest and Fee Income, Loans and Leases</td><td class="nump">754,459</td><td class="nump">754,930</td><td class="nump">687,852</td></tr>
+<tr><td class="pl">Interest Income, Securities, Operating, Taxable</td><td class="nump">81,644</td><td class="nump">51,352</td><td class="nump">39,510</td></tr>
+<tr><td class="pl">Interest Expense, Deposits</td><td class="nump">241,098</td><td class="nump">264,608</td><td class="nump">183,723</td></tr>
+<tr><td class="pl">Provision for loan losses not covered under FDIC loss share</td><td class="nump">26,337</td><td class="nump">21,508</td><td class="nump">36,605</td></tr>
+<tr><td class="pl">Income Tax Expense (Benefit)</td><td class="nump">82,343</td><td class="nump">45,978</td><td class="nump">52,467</td></tr>
+<tr><td class="pl">Net Income (Loss) Attributable to Parent, Total</td><td class="nump">201,374</td><td class="nump">185,266</td><td class="nump">194,059</td></tr>
+<tr><td class="pl">Basic (usd per share)</td><td class="nump">5.34</td><td class="nump">4.86</td><td class="nump">5.09</td></tr>
+</table>"""
+
+# Standalone OCI sibling: starts AT net income, no revenue/expense lines above.
+_EFSCP_OCI = b"""<table class="report">
+<tr><th class="tl">Consolidated Statements of Comprehensive Income - USD ($) $ in Thousands</th><th class="th" colspan="3">12 Months Ended</th></tr>
+<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th><th class="th">Dec. 31, 2023</th></tr>
+<tr><td class="pl">Net Income (Loss) Attributable to Parent, Total</td><td class="nump">201,374</td><td class="nump">185,266</td><td class="nump">194,059</td></tr>
+<tr><td class="pl">Other Comprehensive Income (Loss), Net of Tax</td><td class="nump">62,131</td><td class="nump">(13,000)</td><td class="nump">9,000</td></tr>
+<tr><td class="pl">Comprehensive Income (Loss), Net of Tax, Attributable to Parent</td><td class="nump">263,505</td><td class="nump">172,266</td><td class="nump">203,059</td></tr>
+</table>"""
+
+# Parent-only "Statements of Operations" sibling (Schedule II): carries the
+# "Equity in undistributed net income of subsidiaries" tell.
+_EFSCP_PARENT_OPS = b"""<table class="report">
+<tr><th class="tl">Parent Company Only Condensed Financial Statements - Condensed Statements of Operations (Details) - USD ($) $ in Thousands</th><th class="th" colspan="3">12 Months Ended</th></tr>
+<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th><th class="th">Dec. 31, 2023</th></tr>
+<tr><td class="pl">Dividends from subsidiaries</td><td class="nump">120,000</td><td class="nump">110,000</td><td class="nump">100,000</td></tr>
+<tr><td class="pl">Equity in undistributed net income of subsidiaries</td><td class="nump">81,374</td><td class="nump">75,266</td><td class="nump">94,059</td></tr>
+<tr><td class="pl">Net Income (Loss) Attributable to Parent, Total</td><td class="nump">201,374</td><td class="nump">185,266</td><td class="nump">194,059</td></tr>
+</table>"""
+
+_EFSCP_BALANCE = b"""<table class="report">
+<tr><th class="tl">Consolidated Balance Sheets - USD ($) $ in Thousands</th><th class="th" colspan="2"> </th></tr>
+<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th></tr>
+<tr><td class="pl">Cash and Due from Banks</td><td class="nump">208,080</td><td class="nump">270,975</td></tr>
+<tr><td class="pl">Financing Receivable, Excluding Accrued Interest, after Allowance for Credit Loss, Total</td><td class="nump">11,660,316</td><td class="nump">11,082,405</td></tr>
+<tr><td class="pl">Goodwill</td><td class="nump">416,968</td><td class="nump">365,164</td></tr>
+<tr><td class="pl">Assets, Total</td><td class="nump">17,300,884</td><td class="nump">15,596,431</td></tr>
+<tr><td class="pl">Deposits, Total</td><td class="nump">14,609,342</td><td class="nump">13,146,492</td></tr>
+<tr><td class="pl">Liabilities, Total</td><td class="nump">15,261,498</td><td class="nump">13,772,429</td></tr>
+<tr><td class="pl">Equity, Attributable to Parent, Total</td><td class="nump">2,039,386</td><td class="nump">1,824,002</td></tr>
+<tr><td class="pl">Liabilities and Equity, Total</td><td class="nump">17,300,884</td><td class="nump">15,596,431</td></tr>
+</table>"""
+
+# Fair-value footnote sibling that title-matches "balance sheets": a list of
+# instruments with carrying amounts, no Total-assets / liabilities+equity total.
+_EFSCP_FV_NOTE = b"""<table class="report">
+<tr><th class="tl">Fair Value Measurements - Summary of Carrying Amount and Fair Values of Financial Instruments Reported on the Balance Sheets (Details) - USD ($) $ in Thousands</th><th class="th" colspan="2"> </th></tr>
+<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th></tr>
+<tr><td class="pl">Held-to-maturity securities, carrying amount</td><td class="nump">1,074,957</td><td class="nump">928,935</td></tr>
+<tr><td class="pl">Loans, carrying amount</td><td class="nump">11,660,316</td><td class="nump">11,082,405</td></tr>
+</table>"""
+
+
+class TestEfscpStandardLabelStatements(unittest.TestCase):
+    """EFSCP root cause: primary income/balance carry us-gaap STANDARD labels and
+    sit beside OCI / parent-only / footnote siblings. The content guards must
+    recognize the standard-label bottom lines, and the selector must pick the real
+    consolidated statement — never None, never the wrong sibling."""
+
+    def _summary(self, pairs):
+        rows = b"".join(
+            b"<Report><ShortName>" + s + b"</ShortName>"
+            b"<HtmlFileName>" + f + b"</HtmlFileName></Report>"
+            for s, f in pairs)
+        return (b'<?xml version="1.0"?><FilingSummary><MyReports>'
+                + rows + b'</MyReports></FilingSummary>')
+
+    def test_standard_label_net_income_is_income_body(self):
+        # "Net Income (Loss) Attributable to Parent, Total" + standard-label income
+        # lines above it ("Interest Income, Securities…", "Interest Expense…") must
+        # be recognized as a real income body.
+        from data.sec_statements import _is_income_body, parse_rfile
+        self.assertTrue(_is_income_body(parse_rfile(_EFSCP_INCOME)))
+
+    def test_standalone_oci_sibling_rejected(self):
+        # The "Statements of Comprehensive Income" sibling (no income lines above
+        # net income) must be rejected — never rendered as the income statement.
+        from data.sec_statements import _is_income_body, parse_rfile
+        self.assertFalse(_is_income_body(parse_rfile(_EFSCP_OCI)))
+
+    def test_parent_only_operations_sibling_rejected(self):
+        # The parent-only "Statements of Operations" Schedule II must be rejected.
+        from data.sec_statements import _is_income_body, parse_rfile
+        self.assertFalse(_is_income_body(parse_rfile(_EFSCP_PARENT_OPS)))
+
+    def test_income_selector_picks_real_income_over_oci_and_parent_only(self):
+        import data.sec_statements as s
+        summary = self._summary([
+            (b"Consolidated Statements of Income", b"R5.htm"),                       # real
+            (b"Consolidated Statements of Comprehensive Income", b"R7.htm"),         # OCI-only
+            (b"Parent Company Only Condensed Financial Statements - "
+             b"Condensed Statements of Operations (Details)", b"R103.htm"),          # parent-only
+        ])
+
+        def fake_get(url):
+            if url.endswith("FilingSummary.xml"):
+                return summary
+            if url.endswith("R5.htm"):
+                return _EFSCP_INCOME
+            if url.endswith("R7.htm"):
+                return _EFSCP_OCI
+            if url.endswith("R103.htm"):
+                return _EFSCP_PARENT_OPS
+            raise AssertionError(url)
+
+        with mock.patch.object(s, "_get", side_effect=fake_get):
+            fn, parsed = s._select_primary_rfile("base/", "income")
+        self.assertEqual(fn, "R5.htm")
+        self.assertIsNotNone(parsed)
+        ni = next(r for r in parsed["rows"]
+                  if not r["header"]
+                  and r["label"] == "Net Income (Loss) Attributable to Parent, Total")
+        # Net income ties EFSCP's FY2025 10-K (us-gaap NetIncomeLoss, $thousands).
+        self.assertEqual(ni["values"][0], 201_374_000.0)
+
+    def test_standard_label_assets_total_is_balance_body(self):
+        # "Assets, Total" recognized as the balance total; A ≈ L + E ties via
+        # "Liabilities and Equity, Total".
+        from data.sec_statements import _is_balance_body, _balance_parse
+        self.assertTrue(_is_balance_body(_balance_parse(_EFSCP_BALANCE)))
+
+    def test_fair_value_footnote_rejected_as_balance(self):
+        from data.sec_statements import _is_balance_body, parse_rfile
+        self.assertFalse(_is_balance_body(parse_rfile(_EFSCP_FV_NOTE)))
+
+    def test_balance_selector_picks_real_balance_over_footnote(self):
+        import data.sec_statements as s
+        summary = self._summary([
+            (b"Consolidated Balance Sheets", b"R3.htm"),                              # real
+            (b"Fair Value Measurements - Summary of Carrying Amount and Fair Values "
+             b"of Financial Instruments Reported on the Balance Sheets (Details)",
+             b"R101.htm"),                                                            # footnote
+        ])
+
+        def fake_get(url):
+            if url.endswith("FilingSummary.xml"):
+                return summary
+            if url.endswith("R3.htm"):
+                return _EFSCP_BALANCE
+            if url.endswith("R101.htm"):
+                return _EFSCP_FV_NOTE
+            raise AssertionError(url)
+
+        with mock.patch.object(s, "_get", side_effect=fake_get):
+            fn, parsed = s._select_primary_rfile("base/", "balance")
+        self.assertEqual(fn, "R3.htm")
+        self.assertIsNotNone(parsed)
+        ta = next(r for r in parsed["rows"]
+                  if not r["header"] and r["label"] == "Assets, Total")
+        # Total assets ties EFSCP's FY2025 10-K (us-gaap Assets, $thousands).
+        self.assertEqual(ta["values"][0], 17_300_884_000.0)
+
+
 if __name__ == "__main__":
     unittest.main()
