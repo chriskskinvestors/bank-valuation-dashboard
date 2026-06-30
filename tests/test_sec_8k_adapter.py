@@ -210,6 +210,20 @@ class TestStripBoilerplateFLS(unittest.TestCase):
                 "diluted EPS was $1.20.")
         self.assertIn("net income", self._strip(text).lower())
 
+    def test_cover_doc_skips_to_item_narrative(self):
+        # A cover-only 8-K (no EX-99.1) for an item the literal markers miss
+        # (8.01 / 5.07 / 3.02): skip the SEC form header to the item narrative.
+        text = (
+            "UNITED STATES SECURITIES AND EXCHANGE COMMISSION Washington, D.C. 20549 "
+            "FORM 8-K CURRENT REPORT Pursuant to Section 13 or 15(d) of the Securities "
+            "Exchange Act of 1934. Pathfinder Bancorp, Inc. (Exact name of registrant "
+            "as specified in its charter). New York 001-00000 00-0000000. "
+            "Item 8.01 Other Events. On June 29, 2026, the Company announced that its "
+            "Board of Directors declared a quarterly cash dividend of $0.10 per share.")
+        out = self._strip(text).lower()
+        self.assertIn("quarterly cash dividend", out)
+        self.assertNotIn("securities and exchange commission", out)
+
 
 class TestResolve8KDocUrl(unittest.TestCase):
     """An 8-K filing URL must resolve to its body document (EX-99.1 press release

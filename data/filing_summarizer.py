@@ -87,6 +87,17 @@ def _strip_sec_boilerplate(text: str) -> str:
         if pos != -1 and pos < best_pos:
             best_pos = pos
 
+    # 8-K cover docs with NO EX-99.1 exhibit carry the event narrative under the
+    # item header ("Item 8.01 Other Events. On June 30, 2026 ... declared a
+    # dividend", "Item 5.07 ... final vote results"). The literal markers above
+    # only list a few item codes, so for the others (8.01 / 5.07 / 3.02 / 2.01 …)
+    # nothing matched and the SEC form-cover boilerplate was returned. Match ANY
+    # item code and skip the cover boilerplate before it. (EX-99.1 press releases
+    # don't contain "Item X.XX", so this is a no-op for them.)
+    mi = re.search(r"\bitem\s+\d+\.\d{2}\b", text_lower)
+    if mi and mi.start() < best_pos:
+        best_pos = mi.start()
+
     # If we found a content marker, back up to the start of its sentence
     if best_pos < len(text):
         # Go back to find sentence/paragraph start
