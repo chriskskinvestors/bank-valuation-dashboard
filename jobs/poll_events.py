@@ -574,7 +574,7 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
             if not auth_failed:
                 try:
                     msg = client.messages.create(
-                        model="claude-haiku-4-5",
+                        model="claude-haiku-4-5-20251001",
                         max_tokens=300,
                         messages=[{
                             "role": "user",
