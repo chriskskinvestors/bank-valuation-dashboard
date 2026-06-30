@@ -450,7 +450,26 @@ def _clean_summary(text: str) -> str:
     # catches a real summary that happens to say "unable to <do X>".
     if not out or low == "none" or low.startswith("none") or _REFUSAL_RE.search(out):
         return ""
+    # Reject extraction garbage (filing-form scaffolding, exhibit/file headers,
+    # contact lines, mid-sentence fragments) — noise, not a summary. Also nulls
+    # any such rows already stored, via the _reclean_summaries pass, so they fall
+    # back to the clean item label (or re-summarize once Claude is back).
+    if _GARBAGE_SUMMARY_RE.search(out) or out[0] in "☐•(),.;:-–—":
+        return ""
     return out
+
+
+# Extraction garbage that must never reach the feed AS a summary: 8-K cover-form
+# scaffolding, EX-99 exhibit / document-filename headers, and leaked contact
+# phone numbers. (A real summary is a sentence that starts with a name/date.)
+_GARBAGE_SUMMARY_RE = re.compile(
+    r"^\s*item\s+\d+\.\d{2}\b"                       # raw "Item 5.02 ..." header
+    r"|\bex-?99(?:\.\d)?\b"                          # exhibit header "EX-99.1 2 ..."
+    r"|\.html?\b"                                    # a document filename leaked in
+    r"|pursuant\s+to\s+section\s+13\s+or\s+15\(d\)"  # 8-K cover boilerplate
+    r"|\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b",       # a contact phone number
+    re.IGNORECASE,
+)
 
 
 # Phrasings the summarizer uses when it can't summarize (the fetched 8-K text
@@ -517,7 +536,7 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
 
     try:
         import anthropic
-        from data.filing_summarizer import fetch_filing_text, _extractive_summary
+        from data.filing_summarizer import fetch_filing_text
     except ImportError:
         return 0
 
@@ -551,7 +570,7 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
             # 8-K filings can be huge; truncate to first ~10K chars
             text_body = text_body[:10000]
 
-            summary, claude_ok = "", False
+            summary = ""
             if not auth_failed:
                 try:
                     msg = client.messages.create(
@@ -575,28 +594,24 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
                     )
                     summary = _clean_summary(
                         "".join(b.text for b in msg.content if b.type == "text"))
-                    claude_ok = True
                 except Exception as ce:
                     if _is_auth_error(ce):
                         if not auth_failed:   # LOUD, once — a dead key, not a blip
                             print("  [summarizer] ⚠️  ANTHROPIC_API_KEY REJECTED "
                                   f"({type(ce).__name__}) — the key is invalid/revoked. "
-                                  "Falling back to EXTRACTIVE summaries for this run; "
-                                  "rotate the 'anthropic-api-key' secret.", flush=True)
+                                  "No summaries this run; rotate the 'anthropic-api-key' "
+                                  "secret. 8-Ks show their item label until it's fixed.",
+                                  flush=True)
                         auth_failed = True
                     else:
                         print(f"    [summarize {r['ticker']}] claude "
                               f"{type(ce).__name__}: {ce}")
-            if claude_ok:
-                if not summary:
-                    continue   # Claude returned NONE — genuinely no substance
-            else:
-                # Claude unavailable (auth/transient) — degrade gracefully to an
-                # extractive summary so the 8-K shows real content, not the bare
-                # item. (Only fires on FAILURE; a working key still wins.)
-                summary = _clean_summary(_extractive_summary(text_body, "8-K"))
-                if not summary:
-                    continue
+            # Write ONLY a real LLM summary. When Claude is unavailable or returns
+            # NONE, leave the row empty — the feed shows the clean item label,
+            # which beats a garbage extractive guess (filing scaffolding, contact
+            # lines, mid-sentence fragments).
+            if not summary:
+                continue
             with eng.begin() as conn:
                 conn.execute(text("UPDATE events SET summary = :s WHERE id = :id"),
                              {"s": summary[:20000], "id": r["id"]})

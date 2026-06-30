@@ -178,11 +178,34 @@ class TestCleanSummary(unittest.TestCase):
         s = "Truist named a new CEO effective July 1, 2026."
         self.assertEqual(_clean_summary(s), s)
 
+    def test_extraction_garbage_dropped(self):
+        # Filing scaffolding / exhibit headers / contact lines / fragments are
+        # noise, not a summary — drop them (also nulls already-stored matches via
+        # the reclean pass so the feed shows the clean item label).
+        for g in [
+            "☐ Item 5.02 Departure of Directors or Principal Officers; Election",
+            "EX-99.1 2 bayfirsta22026earningscall.htm EX-99.1 Contacts: Alfred McKim",
+            '(the "Bank"), today announced that the Bank has completed the sale',
+            "EO, (315) 343-0057 Pathfinder Bancorp, Inc. Declares Dividend OSWEGO",
+            "☐ Item 3.02 Unregistered Sales of Equity Securities On June 29, 2026",
+        ]:
+            with self.subTest(g=g):
+                self.assertEqual(_clean_summary(g), "")
+
+    def test_real_summary_survives_garbage_guard(self):
+        for s in [
+            "Pathfinder Bancorp declared a quarterly cash dividend of $0.10 per share.",
+            "Capital Bancorp appointed Jane Smith as Chief Financial Officer July 1.",
+            "On June 29, 2026, Rhinebeck Bancorp announced approval of its conversion.",
+        ]:
+            with self.subTest(s=s):
+                self.assertTrue(_clean_summary(s))
+
 
 class TestAuthErrorDetection(unittest.TestCase):
     """A revoked/invalid ANTHROPIC_API_KEY (401/403) must be distinguished from a
-    transient rate-limit/timeout so the summarizer degrades to extractive + logs
-    loudly, rather than silently failing per-event."""
+    transient rate-limit/timeout so the summarizer logs ONE loud warning and
+    stops hammering Claude, rather than failing silently per-event."""
 
     def test_auth_errors_detected(self):
         self.assertTrue(_is_auth_error(type("AuthenticationError", (Exception,), {})()))
