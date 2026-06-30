@@ -118,6 +118,43 @@ BANK_MAP = {
     "ARBV":    {"name": "American Riviera Bancorp",                      "fdic_cert": 58281,  "cik": None},
     "PBNC":    {"name": "PB Financial Corporation",                      "fdic_cert": 58239,  "cik": None},
     "PONT":    {"name": "Pontiac Bancorp, Inc.",                         "fdic_cert": 16982,  "cik": None},
+    # ── §12(i) / SEC-index gap banks, $100–150M tranche (sweep 2026-06-30) ─
+    # Same class as the block above, extended down to $100M mkt cap: 30 more
+    # banks (FXLG / FS Bancorp NM deferred — no confident active FDIC match).
+    # Each cert verified ACTIVE + matched on holding-company name; several
+    # required state-filtered re-lookup (PPBN=Pinnacle Bankshares VA not
+    # Pinnacle Financial TN; PBNK=Pinnacle Bank Gilroy CA; CNBW=CNB Corp/SC
+    # Conway not CNB Financial PA). 7 self-filers carry a verified CIK.
+    "SOMC":   {"name": "Southern Michigan Bancorp, Inc.",               "fdic_cert": 5019,   "cik": None},
+    "FMBN":   {"name": "Farmers & Merchants Bancshares, Inc.",          "fdic_cert": 1895,   "cik": None},
+    "DIMC":   {"name": "Dimeco, Inc.",                                  "fdic_cert": 9888,   "cik": 898037},
+    "PRMY":   {"name": "Primary Bank",                                  "fdic_cert": 59086,  "cik": None},
+    "CMRB":   {"name": "First Commerce Bank",                           "fdic_cert": 58054,  "cik": None},
+    "FFDF":   {"name": "FFD Financial Corporation",                     "fdic_cert": 29787,  "cik": 1006177},
+    "CBBI":   {"name": "CBB Bancorp, Inc.",                             "fdic_cert": 57873,  "cik": None},
+    "BNCC":   {"name": "BNCCORP, Inc.",                                 "fdic_cert": 57197,  "cik": 945434},
+    "BLHK":   {"name": "Blueharbor Bank",                               "fdic_cert": 58691,  "cik": None},
+    "CNBW":   {"name": "CNB Corp.",                                     "fdic_cert": 2102,   "cik": 764581},
+    "PBCO":   {"name": "PBCO Financial Corporation",                    "fdic_cert": 34685,  "cik": None},
+    "BBNA":   {"name": "Bonvenu Bancorp, Inc.",                         "fdic_cert": 26381,  "cik": None},
+    "CHBH":   {"name": "Croghan Bancshares, Inc.",                      "fdic_cert": 13341,  "cik": 887149},
+    "PPBN":   {"name": "Pinnacle Bankshares Corporation",               "fdic_cert": 6811,   "cik": None},
+    "JFBC":   {"name": "Jeffersonville Bancorp",                        "fdic_cert": 7123,   "cik": 874495},
+    "JDVB":   {"name": "JD Bancshares, Inc.",                           "fdic_cert": 16546,  "cik": None},
+    "AMBK":   {"name": "American Bank Incorporated",                    "fdic_cert": 34422,  "cik": None},
+    "CWBK":   {"name": "CW Bancorp",                                    "fdic_cert": 57176,  "cik": None},
+    "CNBP":   {"name": "Cornerstone Bancorp Inc.",                      "fdic_cert": 57061,  "cik": None},
+    "KTHN":   {"name": "Katahdin Bankshares Corp.",                     "fdic_cert": 12874,  "cik": None},
+    "MPCB":   {"name": "Mountain Pacific Bancorp Inc",                  "fdic_cert": 58341,  "cik": None},
+    "PBNK":   {"name": "Pinnacle Bank",                                 "fdic_cert": 58297,  "cik": None},
+    "OXBC":   {"name": "Oxford Bank Corporation",                       "fdic_cert": 9719,   "cik": None},
+    "PPLL":   {"name": "Peoples Ltd.",                                  "fdic_cert": 444,    "cik": None},
+    "TYBT":   {"name": "Trinity Bank, N.A.",                            "fdic_cert": 57543,  "cik": None},
+    "BORT":   {"name": "Bank of Botetourt",                             "fdic_cert": 6137,   "cik": None},
+    "OFED":   {"name": "Oconee Federal Financial Corp.",                "fdic_cert": 30111,  "cik": 1501078},
+    "BYLB":   {"name": "Boyle Bancorp, Inc.",                           "fdic_cert": 2740,   "cik": None},
+    "CNBB":   {"name": "CNB Community Bancorp, Inc.",                   "fdic_cert": 14073,  "cik": None},
+    "FTFI":   {"name": "First Berlin Bancorp, Inc.",                    "fdic_cert": 5286,   "cik": None},
     "BANR":  {"name": "Banner Corp.",                       "fdic_cert": 28489,  "cik": 946673},
     # MCBI (Mountain Commerce Bancshares) was acquired 04/01/2026 — FDIC
     # cert 4931 is ACTIVE=0. The universe filter would drop it anyway via
