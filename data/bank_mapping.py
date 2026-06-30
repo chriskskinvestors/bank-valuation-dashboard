@@ -62,6 +62,62 @@ BANK_MAP = {
     # so TOWN was never discovered. FDIC-only coverage (cert 35095 = TowneBank,
     # Portsmouth VA, ~$22B assets); SEC-XBRL HoldCo metrics correctly n/a.
     "TOWN":  {"name": "TowneBank",                          "fdic_cert": 35095,  "cik": None},
+    # ── §12(i) / SEC-index gap banks (sweep 2026-06-30) ──────────────────
+    # 47 publicly-traded US banks ≥$150M mkt cap that were absent from the
+    # universe because SEC's company_tickers.json (the discovery seed) omits
+    # them — either they file with the Fed/FDIC/OCC under §12(i) (no SEC
+    # filings → FDIC-only, cik=None) or they self-file 10-Ks but their OTC
+    # ticker isn't in SEC's exchange index (seeding gap → cik present, full
+    # coverage). Every fdic_cert verified ACTIVE against the live institution
+    # and matched on holding-company name; FXLG (FS Bancorp NM) deferred — no
+    # confident active match. See TOWN above for the canonical case.
+    "FINN":    {"name": "First National of Nebraska, Inc.",              "fdic_cert": 5452,   "cik": None},
+    "UNPA":    {"name": "UNB Corp.",                                     "fdic_cert": 7631,   "cik": None},
+    "FMBL":    {"name": "Farmers & Merchants Bank of Long Beach",        "fdic_cert": 1225,   "cik": None},
+    "NBN":     {"name": "Northeast Bank",                                "fdic_cert": 19690,  "cik": 811831},
+    "WTBFB":   {"name": "W.T.B. Financial Corporation",                  "fdic_cert": 1281,   "cik": None},
+    "SBNC":    {"name": "Southern BancShares (N.C.), Inc.",              "fdic_cert": 15359,  "cik": None},
+    "FFMR":    {"name": "First Farmers Financial Corporation",           "fdic_cert": 12839,  "cik": None},
+    "HIFS":    {"name": "Hingham Institution for Savings",               "fdic_cert": 90211,  "cik": None},
+    "THVB":    {"name": "Thomasville Bancshares, Inc.",                  "fdic_cert": 34068,  "cik": None},
+    "AMBZ":    {"name": "American Business Bank",                        "fdic_cert": 34788,  "cik": None},
+    "RCBC":    {"name": "River City Bank",                               "fdic_cert": 18983,  "cik": None},
+    "WCCB":    {"name": "West Coast Community Bancorp",                  "fdic_cert": 57591,  "cik": None},
+    "DBIN":    {"name": "Dacotah Banks, Inc.",                           "fdic_cert": 17437,  "cik": None},
+    "PBAM":    {"name": "Private Bancorp of America, Inc.",              "fdic_cert": 58291,  "cik": None},
+    "FAHE":    {"name": "The Fahey Banking Company",                     "fdic_cert": 2068,   "cik": None},
+    "SNLC":    {"name": "Security National Corporation",                 "fdic_cert": 19213,  "cik": None},
+    "BFCC":    {"name": "BankFirst Capital Corporation",                 "fdic_cert": 8870,   "cik": None},
+    "MFGI":    {"name": "Merchants Financial Group, Inc.",               "fdic_cert": 8866,   "cik": None},
+    "MSBC":    {"name": "Mission Bancorp",                               "fdic_cert": 34805,  "cik": None},
+    "CYFL":    {"name": "Century Financial Corporation",                 "fdic_cert": 28362,  "cik": None},
+    "CSHX":    {"name": "Cashmere Valley Bank",                          "fdic_cert": 1265,   "cik": None},
+    "NASB":    {"name": "NASB Financial, Inc.",                          "fdic_cert": 29708,  "cik": 1059131},
+    "EXSR":    {"name": "Exchange Bank (Santa Rosa, CA)",                "fdic_cert": 8468,   "cik": None},
+    "LRBI":    {"name": "Lake Ridge Bancorp Inc.",                       "fdic_cert": 15091,  "cik": None},
+    "TRUX":    {"name": "Truxton Corporation",                           "fdic_cert": 57825,  "cik": None},
+    "FFBB":    {"name": "FFB Bancorp",                                   "fdic_cert": 58090,  "cik": None},
+    "FFMH":    {"name": "First Farmers and Merchants Corporation",       "fdic_cert": 1487,   "cik": 703329},
+    "MLGF":    {"name": "Malaga Financial Corporation",                  "fdic_cert": 32282,  "cik": None},
+    "CBTN":    {"name": "Citizens Bancorp Investment, Inc.",             "fdic_cert": 1711,   "cik": None},
+    "PSBQ":    {"name": "PSB Holdings, Inc.",                            "fdic_cert": 18569,  "cik": None},
+    "HONT":    {"name": "Honat Bancorp, Inc.",                           "fdic_cert": 7526,   "cik": None},
+    "SABK":    {"name": "South Atlantic Bancshares, Inc.",               "fdic_cert": 58689,  "cik": None},
+    "LYBC":    {"name": "Lyons Bancorp Inc.",                            "fdic_cert": 7151,   "cik": None},
+    "BKGM":    {"name": "BankGuam Holding Co.",                          "fdic_cert": 20884,  "cik": None},
+    "PLQC":    {"name": "Plains Acquisition Corporation",                "fdic_cert": 17739,  "cik": None},
+    "PFLC":    {"name": "Pacific Financial Corporation",                 "fdic_cert": 17308,  "cik": None},
+    "MNAT":    {"name": "Marquette National Corporation",                "fdic_cert": 16250,  "cik": None},
+    "SBKO":    {"name": "Summit Bank Group, Inc.",                       "fdic_cert": 57706,  "cik": None},
+    "UBAB":    {"name": "United Bancorporation of Alabama, Inc.",        "fdic_cert": 58,     "cik": 704561},
+    "TRCY":    {"name": "Tri City Bankshares Corporation",               "fdic_cert": 18922,  "cik": 313337},
+    "SFIGA":   {"name": "STAR Financial Group, Inc.",                    "fdic_cert": 27235,  "cik": None},
+    "TYCB":    {"name": "Calvin B. Taylor Bankshares, Inc.",             "fdic_cert": 5874,   "cik": 1003986},
+    "MSWV":    {"name": "Main Street Financial Services Corp.",          "fdic_cert": 29847,  "cik": None},
+    "BKUTK":   {"name": "Bank of Utica",                                 "fdic_cert": 13397,  "cik": None},
+    "ARBV":    {"name": "American Riviera Bancorp",                      "fdic_cert": 58281,  "cik": None},
+    "PBNC":    {"name": "PB Financial Corporation",                      "fdic_cert": 58239,  "cik": None},
+    "PONT":    {"name": "Pontiac Bancorp, Inc.",                         "fdic_cert": 16982,  "cik": None},
     "BANR":  {"name": "Banner Corp.",                       "fdic_cert": 28489,  "cik": 946673},
     # MCBI (Mountain Commerce Bancshares) was acquired 04/01/2026 — FDIC
     # cert 4931 is ACTIVE=0. The universe filter would drop it anyway via
