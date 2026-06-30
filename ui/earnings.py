@@ -1151,8 +1151,8 @@ def _render_earnings_calendar(watchlist: list[str]):
     # Per-column widths (sum ≈ 100%) so each table fills its container exactly and
     # the two side-by-side halves line up — text columns (Bank, Dial-in) absorb the
     # slack and ellipsis-truncate rather than widening the table past its half.
-    col_widths = ["7%", "18%", "13%", "4%", "5%", "9%", "13%", "8%",
-                  "14%", "5%", "4%"]
+    col_widths = ["7%", "18%", "11%", "4%", "5%", "7%", "11%", "8%",
+                  "20%", "5%", "4%"]
 
     # Tables render at NATURAL height (no inner scrollbox — the page scrolls). A
     # long week is split into two balanced tables side by side so it fills the
