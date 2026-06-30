@@ -258,7 +258,11 @@ div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"] [data-testid="stEl
 div[class*="st-key-afpane"] [data-testid="stButtonGroup"]{gap:2px!important;}
 div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"]{min-height:0!important;height:22px!important;padding:0 9px!important;border-radius:0!important;}
 div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"] p{font-size:var(--fs-grid-10)!important;line-height:1!important;font-weight:600!important;}
-div[class*="st-key-afpane"] [data-baseweb="select"]>div{min-height:26px!important;}
+/* Match the Size dropdown to the 22px segmented-control pills: force the height
+   and kill BaseWeb's ~7.5px inner vertical padding (that padding, not min-height,
+   is what inflates the select to ~38px). */
+div[class*="st-key-afpane"] [data-baseweb="select"]>div{min-height:22px!important;height:22px!important;}
+div[class*="st-key-afpane"] [data-baseweb="select"]>div>div{padding-top:0!important;padding-bottom:0!important;}
 div[class*="st-key-afpane"] [data-baseweb="select"] *{font-size:var(--fs-grid-10_5)!important;}
 </style>
 """
