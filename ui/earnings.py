@@ -986,7 +986,8 @@ def _tk_cell(ticker: str) -> str:
             f'target="_self">{tk}</a></td>')
 
 
-def _render_earnings_grid(headers, body_rows, height: int | None = None):
+def _render_earnings_grid(headers, body_rows, height: int | None = None,
+                          col_widths: list[str] | None = None):
     """Render an SNL-style `ksk-grid` HTML table (design-system look used across
     the site) — hairline grid, small-caps headers, tabular right-aligned cells.
     Replaces st.dataframe here, which can't carry per-row links and renders a
@@ -994,18 +995,30 @@ def _render_earnings_grid(headers, body_rows, height: int | None = None):
     is "" (right-aligned, default) or "nm" (left-aligned text); `body_rows` is a
     list of pre-built <tr>…</tr> strings.
 
+    `col_widths`, when given, is a per-column width list (e.g. "11%") emitted as a
+    <colgroup>. With it the table is locked to `table-layout:fixed; width:100%`, so
+    it fills its container EXACTLY and never overruns — the fix for two side-by-side
+    week tables overflowing their halves and colliding at the seam. Wide cells
+    (Bank, Dial-in) then ellipsis-truncate instead of pushing the table wider.
+
     `height` None (default) → NATURAL height: the table grows to fit every row and
     the PAGE scrolls — no inner, separately-scrolling box (the row-height estimate
     that fed a fixed box always under/over-shot and left a scrollbar). An explicit
     px height gives the legacy fixed scroll box with a sticky header."""
     head = "<tr>" + "".join(
         f'<th class="{cls}">{_html.escape(lbl)}</th>' for lbl, cls in headers) + "</tr>"
+    colgroup = ("<colgroup>" + "".join(f'<col style="width:{w}">'
+                for w in col_widths) + "</colgroup>") if col_widths else ""
     css = (
         ".ern-wrap{border:0.5px solid var(--grid-head);}"
         ".ern-wrap.scroll{overflow:auto;}"
         ".ern-wrap.scroll thead th{position:sticky;top:0;z-index:2;}"
-        ".ern-grid td.nm,.ern-grid th.nm{text-align:left;color:var(--text-secondary);"
-        "max-width:230px;overflow:hidden;text-overflow:ellipsis;}"
+        # Fixed layout + full width so each table is clamped to its column (the two
+        # side-by-side week tables can no longer overrun and collide); overflowing
+        # text clips with an ellipsis rather than widening the table.
+        ".ern-grid{width:100%;table-layout:fixed;}"
+        ".ern-grid td,.ern-grid th{overflow:hidden;text-overflow:ellipsis;}"
+        ".ern-grid td.nm,.ern-grid th.nm{text-align:left;color:var(--text-secondary);}"
         ".ern-grid a.tk{font-weight:700;text-decoration:none;color:var(--brand-primary);}"
         ".ern-grid a.lnk{text-decoration:none;color:var(--brand-primary);font-weight:600;}"
         ".ern-grid td.mut{color:var(--text-muted);}"
@@ -1018,7 +1031,7 @@ def _render_earnings_grid(headers, body_rows, height: int | None = None):
     st.markdown(
         f"<style>{css}</style>{wrap}"
         f'<table class="ksk-grid ern-grid">'
-        f'<thead>{head}</thead><tbody>{"".join(body_rows)}</tbody></table></div>',
+        f'{colgroup}<thead>{head}</thead><tbody>{"".join(body_rows)}</tbody></table></div>',
         unsafe_allow_html=True)
 
 
@@ -1151,6 +1164,11 @@ def _render_earnings_calendar(watchlist: list[str]):
                ("In", ""), ("When", ""), ("Call", ""), ("Webcast", ""),
                ("Dial-in", ""), ("EPS Est", ""), ("Rev Est", ""),
                ("Target", ""), ("Rating", ""), ("Cov", "")]
+    # Per-column widths (sum ≈ 100%) so each table fills its container exactly and
+    # the two side-by-side halves line up — text columns (Bank, Dial-in) absorb the
+    # slack and ellipsis-truncate rather than widening the table past its half.
+    col_widths = ["6%", "13%", "11%", "3%", "4%", "7%", "10%", "7%",
+                  "11%", "6%", "6%", "6%", "6%", "4%"]
 
     # Tables render at NATURAL height (no inner scrollbox — the page scrolls). A
     # long week is split into two balanced tables side by side so it fills the
@@ -1165,13 +1183,13 @@ def _render_earnings_calendar(watchlist: list[str]):
         if len(trs) > 20:
             mid = (len(trs) + 1) // 2
             left, right = trs[:mid], trs[mid:]
-            c1, c2 = st.columns(2, gap="small")
+            c1, c2 = st.columns(2, gap="medium")     # gutter between the two tables
             with c1:
-                _render_earnings_grid(headers, left)
+                _render_earnings_grid(headers, left, col_widths=col_widths)
             with c2:
-                _render_earnings_grid(headers, right)
+                _render_earnings_grid(headers, right, col_widths=col_widths)
         else:
-            _render_earnings_grid(headers, trs)
+            _render_earnings_grid(headers, trs, col_widths=col_widths)
 
     table_export(pd.DataFrame(all_rows), "earnings_calendar",
                  key="exp_earnings_calendar")
