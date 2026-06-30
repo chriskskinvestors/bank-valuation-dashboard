@@ -506,11 +506,18 @@ _BALANCE_END = re.compile(
     r"^\s*liabilities\s+and\b.{0,40}\bequity,\s*total\b", re.I)
 # The "Total assets" subtotal a balance sheet carries. Anchored so it does not
 # match "Total assets acquired", "Average total assets", or a ratio line; the
-# optional ':' tolerates "Total assets:". Accepts the us-gaap standard-label form
-# "Assets, Total" (OVLY's recent filings reword it across years). Some filers
-# (EWBC) instead label the assets-section grand total a bare "TOTAL" — caught by
-# the liabilities+equity structure check below, not this pattern.
-_TOTAL_ASSETS = re.compile(r"^\s*total\s+assets\s*:?\s*$|^\s*assets,\s*total\s*$", re.I)
+# optional ':' tolerates "Total assets:". Accepts the us-gaap standard-label forms
+# "Assets, Total" AND the bare ShortName "Assets" (us-gaap:Assets, rendered when a
+# filer omits a custom label) — OVLY rewords its total-assets row ACROSS YEARS,
+# 'Assets, Total' in FY21-22 10-Ks and a bare 'Assets' in FY23-25, so without the
+# bare form the most load-bearing line fragments and goes blank for 4 of 5 years.
+# 'Assets' alone (whole label) is unambiguous: the section HEADER 'ASSETS' is a
+# header row (no values, excluded from data-row matching), and ordinary lines read
+# 'Other assets' / 'Total assets' — never a bare 'Assets'. Some filers (EWBC)
+# instead label the assets total a bare "TOTAL" — caught by the liabilities+equity
+# structure check below, not this pattern.
+_TOTAL_ASSETS = re.compile(
+    r"^\s*total\s+assets\s*:?\s*$|^\s*assets,\s*total\s*$|^\s*assets\s*$", re.I)
 # The two sides of the balance equation, used to recognize a balance sheet whose
 # assets total is labeled bare "TOTAL" (no "Total assets" text): a real balance
 # sheet has BOTH a total-liabilities row AND a total-equity row. Pension /

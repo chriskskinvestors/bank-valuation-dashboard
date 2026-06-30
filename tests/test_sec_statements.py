@@ -1324,5 +1324,190 @@ class TestP0ColumnMetaHeaderTolerance(unittest.TestCase):
         self.assertEqual([p for _, p in meta], ["Mar. 31, 2026", "Dec. 31, 2025"])
 
 
+# ── P1 cleanliness pass — pinning the already-shipped fixes (7, 8) + OVLY (9) ─
+# These backfill tests pin behavior the audit shipped without tests:
+#   7  strip the XBRL [Member] revenue-disaggregation tail from an income R-file
+#   8  fold cross-filing near-synonym label rewordings into one row, with the
+#      over-merge guard holding two genuinely-distinct lines apart
+#   9  OVLY: the total-assets value fills every disclosed year even when the row
+#      is reworded between the us-gaap ShortName 'Assets' and 'Assets, Total'
+
+# An income R-file with the ASC-606 disaggregation-of-revenue table leaking in
+# after the real statement: a run of {'<topic> [Member]' caption, a duplicate
+# section header, a generic value row}. The real income lines precede it.
+_MEMBER_TAIL_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Consolidated Statements of Income - '
+    b'USD ($) $ in Thousands</th><th class="th">12 Months Ended</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th></tr>'
+    b'<tr><td class="pl">Total interest income</td>'
+    b'<td class="nump">100,000</td><td class="nump">90,000</td></tr>'
+    b'<tr><td class="pl">Noninterest income</td>'
+    b'<td class="nump">8,000</td><td class="nump">7,000</td></tr>'
+    b'<tr><td class="pl">Net income</td>'
+    b'<td class="nump">20,000</td><td class="nump">18,000</td></tr>'
+    # ── disaggregation tail (must be dropped from the first [Member] on) ──
+    b'<tr><td class="pl">Mortgage Banking [Member]</td>'
+    b'<td class="text"> </td><td class="text"> </td></tr>'
+    b'<tr><td class="pl">Disaggregation of Revenue [Line Items]</td>'
+    b'<td class="text"> </td><td class="text"> </td></tr>'
+    b'<tr><td class="pl">Mortgage banking fee income</td>'
+    b'<td class="nump">1,200</td><td class="nump">1,100</td></tr>'
+    b'</table>')
+
+
+class TestStripMemberTail(unittest.TestCase):
+    """Fix 7: a '[Member]' dimension caption (and the disaggregation tail it
+    opens) is dropped from the income statement; real line items survive."""
+
+    def test_member_tail_dropped_real_lines_kept(self):
+        from data.sec_statements import _income_parse
+        out = _income_parse(_MEMBER_TAIL_INCOME)
+        labels = [r["label"] for r in out["rows"]]
+        # The [Member] caption and everything after it are gone.
+        self.assertNotIn("Mortgage Banking [Member]", labels)
+        self.assertFalse(any(l.endswith("[Member]") for l in labels))
+        self.assertNotIn("Mortgage banking fee income", labels)   # tail value row
+        self.assertNotIn("Disaggregation of Revenue [Line Items]", labels)
+        # Real income lines above the tail are kept.
+        self.assertIn("Total interest income", labels)
+        self.assertIn("Net income", labels)
+
+    def test_no_member_row_statement_unchanged(self):
+        from data.sec_statements import _strip_member_dimensions, parse_rfile
+        p = parse_rfile(_INCOME)
+        before = [r["label"] for r in p["rows"]]
+        after = [r["label"] for r in _strip_member_dimensions(p)["rows"]]
+        self.assertEqual(before, after)                  # no [Member] → untouched
+
+
+class TestNearSynonymMerge(unittest.TestCase):
+    """Fix 8: near-synonym label rewordings of the SAME line fold to ONE row
+    carrying the populated values, while the over-merge guard keeps two lines
+    that both hold a value in a shared period apart."""
+
+    def _stmt(self, rows, periods=("25", "24", "23", "22", "21")):
+        return {"periods": list(periods), "units_scale": 1e3,
+                "rows": [{"label": l, "header": False, "values": v} for l, v in rows]}
+
+    def test_direction_losses_gains_variant_merges(self):
+        # CZFS: 'Available for sale security (losses) gains, net' (2021) vs
+        # 'Available for sale security losses, net' (2022+) — same realized line.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Available for sale security losses, net",
+             [5.0, 8.0, 6.0, None, None]),
+            ("Available for sale security (losses) gains, net",
+             [None, None, None, 7.0, 9.0]),
+        ]))
+        self.assertEqual(len(out["rows"]), 1)
+        self.assertEqual(out["rows"][0]["values"], [5.0, 8.0, 6.0, 7.0, 9.0])
+
+    def test_stockholders_shareholders_equity_variant_merges(self):
+        # A filer rewords its equity total 'stockholders'' ↔ 'shareholders'' —
+        # the same grand total, merged via the structural-total concept anchor.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Total stockholders' equity", [None, None, 300.0, 290.0, 280.0]),
+            ("Total shareholders' equity", [350.0, 320.0, None, None, None]),
+        ]))
+        self.assertEqual(len(out["rows"]), 1)
+        self.assertEqual(out["rows"][0]["values"], [350.0, 320.0, 300.0, 290.0, 280.0])
+
+    def test_shortname_total_suffix_variant_merges(self):
+        # us-gaap ShortName 'Liabilities and Equity, Total' ↔ the filer's
+        # 'Total liabilities and equity' — the balance-sheet grand total.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Total liabilities and equity", [None, None, 900.0, 880.0, 860.0]),
+            ("Liabilities and Equity, Total", [950.0, 920.0, None, None, None]),
+        ]))
+        self.assertEqual(len(out["rows"]), 1)
+        self.assertEqual(out["rows"][0]["values"], [950.0, 920.0, 900.0, 880.0, 860.0])
+
+    def test_over_merge_guard_same_period_distinct_lines_stay_separate(self):
+        # Two DISTINCT realized lines that coexist in one filing (both populated
+        # in 2025-2023) must NOT collapse, even though _DIRECTION_DROP makes
+        # their token sets equal — the same-period guard blocks the merge.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Realized gains, net", [10.0, 12.0, 11.0, None, None]),
+            ("Realized losses, net", [4.0, 5.0, 3.0, None, None]),
+        ]))
+        labels = [r["label"] for r in out["rows"]]
+        self.assertEqual(len(labels), 2)                 # NOT merged
+        self.assertIn("Realized gains, net", labels)
+        self.assertIn("Realized losses, net", labels)
+
+    def test_over_merge_guard_distinct_per_share_common_lines(self):
+        # USB shape: 'Basic'/'Diluted' earnings-per-common-share are DISTINCT
+        # lines (no subset relation, and both populated every year) — separate.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Basic earnings per common share (in dollars per share)",
+             [4.10, 3.90, 3.80, 3.70, 3.60]),
+            ("Diluted earnings per common share (in dollars per share)",
+             [4.05, 3.85, 3.75, 3.65, 3.55]),
+        ]))
+        self.assertEqual(len(out["rows"]), 2)            # distinct lines kept
+
+    def test_different_section_lines_never_merge(self):
+        # A balance-sheet 'Total assets' grand total and an income-statement
+        # 'Total interest and dividend income' share only the over-linkable token
+        # 'total' — they must stay two rows (no subset relation either way).
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Total assets", [1000.0, 950.0, 900.0, 880.0, 860.0]),
+            ("Total interest and dividend income", [50.0, 48.0, 46.0, 44.0, 42.0]),
+        ]))
+        self.assertEqual(len(out["rows"]), 2)
+
+
+class TestOvlyTotalAssetsRewording(unittest.TestCase):
+    """Fix 9: OVLY's total-assets row reworded across years between the us-gaap
+    ShortName 'Assets' (FY23-25 10-Ks) and 'Assets, Total' (FY21-22). Both are
+    the us-gaap:Assets grand total — they must fold to ONE row so the most load-
+    bearing balance line fills every disclosed year, not blank for 4 of 5."""
+
+    def _stmt(self, rows, periods=("25", "24", "23", "22", "21")):
+        return {"periods": list(periods), "units_scale": 1e3,
+                "rows": [{"label": l, "header": False, "values": v} for l, v in rows]}
+
+    def test_bare_assets_recognized_as_total_assets_concept(self):
+        from data.sec_statements import _structural_total_class, _TOTAL_ASSETS
+        self.assertEqual(_structural_total_class("Assets"), "assets")
+        self.assertEqual(_structural_total_class("Assets, Total"), "assets")
+        self.assertEqual(_structural_total_class("Total assets"), "assets")
+        # Anchored: ordinary asset lines and the section header are NOT the total.
+        self.assertIsNone(_TOTAL_ASSETS.match("Other assets"))
+        self.assertIsNone(_TOTAL_ASSETS.match("Interest receivable and other assets"))
+        self.assertIsNone(_TOTAL_ASSETS.match("Total assets acquired"))
+
+    def test_assets_and_assets_total_fold_to_one_filled_row(self):
+        from data.sec_statements import _consolidate_variants
+        # FY25-22 carry the bare 'Assets' (newer filings); FY21 carries the older
+        # 'Assets, Total'. Real OVLY values (us-gaap:Assets, $ thousands).
+        out = _consolidate_variants(self._stmt([
+            ("Assets", [2023116.0, 1900604.0, 1842422.0, 1968346.0, None]),
+            ("Assets, Total", [None, None, None, None, 1964478.0]),
+        ]))
+        self.assertEqual(len(out["rows"]), 1)            # ONE total-assets row
+        self.assertEqual(out["rows"][0]["values"],
+                         [2023116.0, 1900604.0, 1842422.0, 1968346.0, 1964478.0])
+
+    def test_assets_does_not_merge_into_an_ordinary_asset_line(self):
+        # The bare-'Assets' total must not absorb 'Other assets' (different
+        # concept, no structural-total class) — they stay separate.
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Assets", [2023116.0, 1900604.0, None, None, None]),
+            ("Other assets", [41538.0, 35906.0, 33000.0, 31000.0, 29000.0]),
+        ]))
+        labels = [r["label"] for r in out["rows"]]
+        self.assertEqual(len(labels), 2)
+        self.assertIn("Assets", labels)
+        self.assertIn("Other assets", labels)
+
+
 if __name__ == "__main__":
     unittest.main()
