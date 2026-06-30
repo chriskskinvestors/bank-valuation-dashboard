@@ -49,6 +49,13 @@ _STMT_PATTERNS = {
                  re.compile(r"parenthetical", re.I)),
 }
 _DATE = re.compile(r"[A-Z][a-z]{2}\.?\s+\d{1,2},\s+\d{4}")
+# XBRL metadata rows that are NOT economic line items and must never render as a
+# statement line: an '[Extensible Enumeration]' tag (RF renders its
+# defined-benefit-plan enumeration this way — a labelled row with no period
+# value), and a bare footnote marker like '[1]' (a reference, not a line). These
+# carry no number; dropping them keeps the rendered statement to real lines.
+_NOISE_LABEL = re.compile(
+    r"\[extensible\s+enumeration\]|^\s*\[\d+\]\s*$", re.I)
 # Per-share amounts ($/share) and share counts are reported in their OWN units,
 # NOT the statement's "$ in Thousands/Millions" — so they must not be scaled.
 _PERSHARE = re.compile(r"per share|per common share|\(in shares\)|in shares", re.I)
@@ -296,8 +303,8 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
         if not cells:
             continue
         label = " ".join(cells[0].text_content().split())
-        if not label:
-            continue
+        if not label or _NOISE_LABEL.search(label):
+            continue                                  # XBRL metadata, not a line
         valcells = _valcells(cells)
         texts = [" ".join(c.text_content().split()) for c in valcells]
         rscale = 1.0 if _PERSHARE.search(label) else scale
@@ -333,9 +340,15 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
 # lines) is by CONTENT, not title — _is_income_body requires real income lines
 # ABOVE net income, which a pure-OCI statement lacks.
 
-# A net-income line (the income statement's bottom line). Excludes the OCI
-# "comprehensive income" total and "other comprehensive income" rows.
-_NET_INCOME = re.compile(r"^\s*net\s+income(\s+\(loss\))?\b(?!.*comprehensive)", re.I)
+# A net-income line (the income statement's bottom line). Accepts the "net
+# earnings" wording (FFIN titles its bottom line "Net earnings", not "Net
+# income") as well as "net income". Excludes the OCI "comprehensive income"
+# total and "other comprehensive income" rows, and the EPS line (FFIN's "NET
+# EARNINGS PER SHARE, BASIC") via the trailing per-share lookahead — so the
+# bottom-line match never lands on a per-share row.
+_NET_INCOME = re.compile(
+    r"^\s*net\s+(income|earnings)(\s+\(loss\))?\b(?!.*comprehensive)(?!.*per\s+share)",
+    re.I)
 # Income-statement lines that only ever appear ABOVE net income (revenue, cost,
 # tax) — their presence proves a body is a real income statement, not OCI-only.
 _INCOME_LINE = re.compile(
@@ -387,6 +400,59 @@ def _strip_oci(parsed: dict) -> dict:
     return {**parsed, "rows": kept}
 
 
+# The grand-total row that ENDS a consolidated balance sheet: total assets =
+# total liabilities + equity. Filers word the equity side "stockholders'",
+# "shareholders'", "members'", or omit the qualifier ("Total liabilities and
+# equity"); the apostrophe frequently renders as the cp1252 replacement char, so
+# match loosely between "and" and "equity".
+_BALANCE_END = re.compile(
+    r"^\s*total\s+liabilities\s+and\b.{0,40}\bequity\b", re.I)
+
+
+def _primary_balance(parsed: dict | None) -> dict | None:
+    """Isolate the PRIMARY consolidated balance sheet within an R-file that also
+    carries supplemental tables. JPM folds a "VIEs consolidated by the Firm"
+    block + a footnote-[1] narrative + a 'December 31, (in millions) | 2025'
+    year-as-value garbage row into the same R-file; USB folds a loan-composition
+    table after the statement. parse_rfile ingests ALL of it, so the stitch sees
+    duplicate 'Total assets'/'Total loans' subtotals (the VIE 43,295 / per-class
+    loan totals) that corrupt the real values.
+
+    The primary statement ENDS at its grand-total row 'Total liabilities and …
+    equity' (= total assets); everything after it belongs to a supplemental
+    table and is dropped. A supplemental table also widens the value grid:
+    parse_rfile pads EVERY row to the max column count, which the wider VIE table
+    / garbage row inflates (JPM: 11 cols for a 2-period balance sheet). That
+    width mismatch makes _column_meta bail (it requires the header width to equal
+    ncol) and drops the whole filing — JPM's QUARTERLY balance came back empty.
+    So each kept row's values are trimmed to the real period count, restoring the
+    header↔value alignment.
+
+    When no grand-total row is present we do NOT truncate — never drop a real
+    line on a guess (single-table balance sheets with no grand-total, or an
+    unexpected layout, pass through unchanged)."""
+    if not parsed or not parsed.get("rows"):
+        return parsed
+    rows = parsed["rows"]
+    end = next((i for i, r in enumerate(rows)
+                if not r["header"] and _BALANCE_END.match(r["label"])), None)
+    if end is None:
+        return parsed
+    n = len(parsed.get("periods") or [])
+    sliced = rows[:end + 1]
+    if n:
+        sliced = [r if r["header"] else {**r, "values": r["values"][:n]}
+                  for r in sliced]
+    return {**parsed, "rows": sliced}
+
+
+def _balance_parse(html_bytes: bytes) -> dict | None:
+    """parse_rfile for a BALANCE R-file, then isolate the primary statement so a
+    supplemental table sharing the R-file (JPM VIEs, USB loan composition) cannot
+    inject duplicate subtotals or narrative/footnote rows."""
+    return _primary_balance(parse_rfile(html_bytes))
+
+
 def _income_parse(html_bytes: bytes) -> dict | None:
     """parse_rfile for an INCOME R-file, then strip any OCI continuation (combined
     'Income and Comprehensive Income' statements). Returns None if the parsed body
@@ -410,7 +476,7 @@ def as_reported_statements_for(cik) -> dict | None:
     meta = latest_filing(cik, ("10-K",))
     if not meta:
         return None
-    ckey = f"asreported:v1:{meta['accession']}"
+    ckey = f"asreported:v2:{meta['accession']}"
     cached = cache.get(ckey)
     if cached is not None:
         return {"meta": meta, "statements": cached} if cached else None
@@ -419,7 +485,12 @@ def as_reported_statements_for(cik) -> dict | None:
         stmts = {}
         for stype, fn in _statement_rfiles(base).items():
             raw = _get(base + fn)
-            parsed = _income_parse(raw) if stype == "income" else parse_rfile(raw)
+            if stype == "income":
+                parsed = _income_parse(raw)
+            elif stype == "balance":
+                parsed = _balance_parse(raw)
+            else:
+                parsed = parse_rfile(raw)
             if parsed and parsed["rows"]:
                 stmts[stype] = parsed
     except Exception as e:
@@ -467,6 +538,106 @@ def _norm_label(s: str) -> str:
     e.g. 'AFS securities, net of allowance of $75 and $69'."""
     s = re.sub(r"[\d,]+", "", s).replace("$", "").replace("—", "").replace("–", "")
     return re.sub(r"\s+", " ", s).strip().lower()
+
+
+# An injected XBRL standard-label placeholder, NOT an economic line: SEC renders
+# 'Common Stock Shares Issued Not Disclosed' (TFC's latest 10-K) when a filer
+# tags a share-count concept with no value. It carries no number — render the
+# real line or nothing, never the placeholder.
+_PLACEHOLDER_LABEL = re.compile(r"shares?\s+issued\s+not\s+disclosed", re.I)
+
+# Wording that VARIES across filings without changing a line's identity: a
+# registrant's name spliced into an equity subtotal ('Total Huntington' vs
+# 'Total Huntington Bancshares Inc'), and grammatical connectives. Stripped only
+# to DETECT mergeable variants (NOT the stitch key — that stays _norm_label), and
+# every candidate merge is still gated by the same-period guard below.
+_VARIANT_DROP = re.compile(
+    r"\binc\b|\bincorporated\b|\bcorp\b|\bcorporation\b|\bcompany\b|\bco\b|"
+    r"\bbancshares\b|\bbancorp\b|\bbancorporation\b|\band\b|\bthe\b|\bof\b|\bat\b",
+    re.I)
+
+
+def _variant_tokens(label: str) -> frozenset:
+    """Token SET for variant matching: drop parentheticals, embedded numbers, the
+    cp1252-mangled apostrophe, punctuation, and registrant-name / connective
+    filler. Two labels are variant-compatible when one token set is a subset of
+    the other (a wording superset/subset of the SAME line)."""
+    s = re.sub(r"\([^)]*\)", " ", label)               # drop parentheticals
+    s = re.sub(r"[\d,]+", " ", s)                       # drop embedded numbers
+    s = s.replace("�", " ").replace("'", " ").replace("’", " ")
+    s = re.sub(r"[^\w\s]", " ", s)                      # drop punctuation
+    s = _VARIANT_DROP.sub(" ", s)
+    return frozenset(w for w in s.lower().split() if w)
+
+
+def _variant_compatible(a: str, b: str) -> bool:
+    """True when labels a and b are wording variants of the SAME line: their
+    variant-token sets are in a subset relation (equal, or one a subset of the
+    other). A single-token subset (e.g. 'Basic' ⊂ 'Basic earnings per common
+    share' — PNC renames its EPS rows) is allowed ONLY when BOTH are per-share
+    rows; otherwise a lone shared word ('total') would over-link unrelated
+    subtotals. The same-period guard in _consolidate_variants is the final
+    safeguard against merging two genuinely-distinct lines."""
+    ta, tb = _variant_tokens(a), _variant_tokens(b)
+    if not ta or not tb:
+        return False
+    if not (ta <= tb or tb <= ta):
+        return False
+    if min(len(ta), len(tb)) >= 2:
+        return True
+    return bool(_PERSHARE.search(a)) and bool(_PERSHARE.search(b))
+
+
+def _consolidate_variants(stmt: dict | None) -> dict | None:
+    """Fold cross-filing WORDING VARIANTS of the same line into one row, AFTER the
+    strict-key stitch. Renamed lines otherwise fragment into blank-duplicate rows:
+    PNC 'Net income (loss)'(2021)↔'Net income'(2022-25); 'Basic earnings per
+    common share'↔'Basic'; KEY's two 'Common Shares, $1 par value…' rows; HBAN
+    'Total Huntington shareholders' equity'↔'…Bancshares Inc…' and 'Total
+    liabilities and shareholders' equity'↔'Total liabilities and equity'.
+
+    CARDINAL over-merge guard: two rows merge ONLY if they NEVER both hold a
+    non-blank value in the SAME period. If both are populated in any shared period
+    they are DISTINCT lines (e.g. 'Net income' vs 'Net income attributable to
+    noncontrolling interests', or 'Total equity' vs 'Total liabilities and
+    equity') and stay separate — a merge can never overwrite or invent a value.
+    The surviving row keeps the label whose values reach the NEWEST (leftmost)
+    period; absorbed values fill only its blank cells. Header rows never merge.
+    The injected 'shares issued not disclosed' placeholder is dropped outright."""
+    if not stmt or not stmt.get("rows"):
+        return stmt
+    rows = [r for r in stmt["rows"]
+            if r["header"] or not _PLACEHOLDER_LABEL.search(r["label"])]
+    n = len(stmt.get("periods") or [])
+    out: list = []
+    for r in rows:
+        if r["header"]:
+            out.append(dict(r))
+            continue
+        target = None
+        for o in out:
+            if o["header"] or not _variant_compatible(o["label"], r["label"]):
+                continue
+            # Guard: skip if ANY period already holds a value in BOTH rows.
+            if any(o["values"][i] is not None and r["values"][i] is not None
+                   for i in range(min(len(o["values"]), len(r["values"])))):
+                continue
+            target = o
+            break
+        if target is None:
+            out.append(dict(r))
+            continue
+        merged = [target["values"][i] if (i < len(target["values"])
+                  and target["values"][i] is not None)
+                  else (r["values"][i] if i < len(r["values"]) else None)
+                  for i in range(n)]
+
+        def _first(vals):
+            return next((i for i, v in enumerate(vals) if v is not None), n)
+        if _first(r["values"]) < _first(target["values"]):
+            target["label"] = r["label"]      # newer wording reaches a newer period
+        target["values"] = merged
+    return {**stmt, "rows": out}
 
 
 def _merge_row_order(parsed: list) -> list:
@@ -534,7 +705,9 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
         else:
             rows.append({"label": label, "header": False,
                          "values": [col.get(p, {}).get(key) for p in all_periods]})
-    return {"periods": all_periods, "rows": rows, "units_scale": parsed[0]["units_scale"]}
+    return _consolidate_variants(
+        {"periods": all_periods, "rows": rows,
+         "units_scale": parsed[0]["units_scale"]})
 
 
 # ── Multi-quarter stitching (Company Reported — discrete single quarters) ────
@@ -717,8 +890,9 @@ def _assemble(parsed: list, col: dict, periods: list) -> dict | None:
         else:
             rows.append({"label": label, "header": False,
                          "values": [col.get(p, {}).get(key) for p in periods]})
-    return {"periods": [_q_label(p) for p in periods], "rows": rows,
-            "units_scale": parsed[0]["units_scale"]}
+    return _consolidate_variants(
+        {"periods": [_q_label(p) for p in periods], "rows": rows,
+         "units_scale": parsed[0]["units_scale"]})
 
 
 def _stitch_balance_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> dict | None:
@@ -822,7 +996,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v1:{stype}:{q_metas[0]['accession']}:{n_quarters}"
+    ckey = f"asreported_mq:v2:{stype}:{q_metas[0]['accession']}:{n_quarters}"
     cached = cache.get(ckey)
     if cached is not None:
         return cached or None
@@ -835,7 +1009,12 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
             if not fn:
                 continue
             raw = _get(base + fn)
-            stmt = _income_parse(raw) if stype == "income" else parse_rfile(raw)
+            if stype == "income":
+                stmt = _income_parse(raw)
+            elif stype == "balance":
+                stmt = _balance_parse(raw)
+            else:
+                stmt = parse_rfile(raw)
             if not (stmt and stmt["rows"]):
                 continue
             ncol = max((len(r["values"]) for r in stmt["rows"]
@@ -905,7 +1084,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     metas = _recent_10k_metas(cik, 6 if (stype == "balance" or stype in _NOTE_SPECS) else 4)
     if not metas:
         return None
-    ckey = f"asreported_my:v5:{stype}:{metas[0]['accession']}:{n_years}"
+    ckey = f"asreported_my:v6:{stype}:{metas[0]['accession']}:{n_years}"
     cached = cache.get(ckey)
     if cached is not None:
         return cached or None
@@ -918,6 +1097,8 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
                 stmt = None
             elif stype == "income":
                 stmt = _income_parse(_get(base + fn))   # strip OCI / guard non-income
+            elif stype == "balance":
+                stmt = _balance_parse(_get(base + fn))  # isolate primary balance table
             else:
                 stmt = parse_rfile(_get(base + fn))
             if stmt and stype in _NOTE_TRANSFORM:

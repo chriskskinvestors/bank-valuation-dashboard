@@ -753,5 +753,221 @@ class TestBalanceQuarterStitch(unittest.TestCase):
         self.assertEqual(ta["values"], [88500e6, 88800e6])
 
 
+# ── P0-A: "Net earnings" bottom line (FFIN) ──────────────────────────────────
+# FFIN titles its income statement "Consolidated Statements of Earnings"; the
+# bottom line is "Net earnings" (FY2025 $253,579K) and the EPS rows read
+# "NET EARNINGS PER SHARE, BASIC". The content discriminator must recognize "net
+# earnings" as the bottom line WITHOUT matching the per-share rows, or the whole
+# income statement is rejected and FFIN income renders n/a.
+_FFIN_EARNINGS = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Consolidated Statements of Earnings - USD ($) $ in Thousands</th>'
+    b'<th class="th">12 Months Ended</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th></tr>'
+    b'<tr><td class="pl">Total interest income</td>'
+    b'<td class="nump">700,000</td><td class="nump">650,000</td></tr>'
+    b'<tr><td class="pl">Provision for credit losses</td>'
+    b'<td class="nump">20,000</td><td class="nump">18,000</td></tr>'
+    b'<tr><td class="pl">Earnings before income taxes</td>'
+    b'<td class="nump">309,603</td><td class="nump">271,846</td></tr>'
+    b'<tr><td class="pl">Net earnings</td>'
+    b'<td class="nump">253,579</td><td class="nump">223,511</td></tr>'
+    b'<tr><td class="pl">NET EARNINGS PER SHARE, BASIC (in dollars per share)</td>'
+    b'<td class="nump">$ 1.77</td><td class="nump">1.56</td></tr>'
+    b'</table>')
+
+
+class TestNetEarningsBottomLine(unittest.TestCase):
+    """FFIN's 'Net earnings' bottom line must be recognized as a real income
+    statement, with the bottom-line match landing on 'Net earnings' (the value)
+    and NOT on 'NET EARNINGS PER SHARE' (the EPS row)."""
+
+    def test_net_earnings_recognized_and_per_share_excluded(self):
+        from data.sec_statements import (parse_rfile, _is_income_body,
+                                          _income_parse, _NET_INCOME)
+        p = parse_rfile(_FFIN_EARNINGS)
+        self.assertTrue(_is_income_body(p))            # was False → income dropped
+        matches = [r["label"] for r in p["rows"]
+                   if not r["header"] and _NET_INCOME.match(r["label"])]
+        self.assertEqual(matches, ["Net earnings"])    # not the PER SHARE row
+        ip = _income_parse(_FFIN_EARNINGS)
+        self.assertIsNotNone(ip)
+        ni = next(r for r in ip["rows"] if r["label"] == "Net earnings")
+        self.assertEqual(ni["values"][0], 253_579_000.0)   # ties FFIN FY2025
+
+    def test_plain_net_income_still_recognized(self):
+        # The relaxation must not regress the original 'net income' wording.
+        from data.sec_statements import _is_income_body
+        self.assertTrue(_is_income_body(parse_rfile(_INCOME)))
+
+
+# ── P0-B: multi-table balance R-file — keep only the PRIMARY statement (JPM) ──
+# JPM's balance R-file holds the primary Consolidated Balance Sheet (Total assets
+# 4,424,900 $M) AND a 'VIEs consolidated by the Firm' supplemental table (its own
+# 'Total assets' 43,295 subtotal), a footnote-[1] narrative paragraph, and a
+# 'December 31, (in millions) | 2025' year-as-value garbage row. parse_rfile also
+# pads every row to the widest column count the supplemental table produces.
+_JPM_BALANCE = (
+    b'<table class="report">'
+    b'<tr><th class="tl">Consolidated Balance Sheets - USD ($) $ in Millions</th>'
+    b'<th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th></tr>'
+    b'<tr><td class="pl">Total assets</td>'
+    b'<td class="nump">4,424,900</td><td class="nump">4,002,814</td></tr>'
+    b'<tr><td class="pl">Total liabilities</td>'
+    b'<td class="nump">4,062,462</td><td class="nump">3,658,056</td></tr>'
+    b'<tr><td class="pl">Total stockholders\xe2\x80\x99 equity</td>'
+    b'<td class="nump">362,438</td><td class="nump">344,758</td></tr>'
+    b'<tr><td class="pl">Total liabilities and stockholders\xe2\x80\x99 equity</td>'
+    b'<td class="nump">4,424,900</td><td class="nump">4,002,814</td></tr>'
+    # --- supplemental VIE table + narrative + garbage row: ALL must be dropped ---
+    b'<tr><td class="pl">Total assets</td>'
+    b'<td class="nump">43,295</td><td class="nump">41,076</td></tr>'
+    b'<tr><td class="pl">Total liabilities</td>'
+    b'<td class="nump">28,642</td><td class="nump">27,777</td></tr>'
+    b'<tr><td class="pl">[1] The following table presents information on assets</td>'
+    b'<td class="text"> </td><td class="text"> </td></tr>'
+    b'<tr><td class="pl">December 31, (in millions)</td>'
+    b'<td class="nump">2,025</td><td class="nump">2,024</td></tr>'
+    b'</table>')
+
+
+class TestPrimaryBalanceIsolation(unittest.TestCase):
+    """A multi-table balance R-file must keep ONLY the primary statement (through
+    its 'Total liabilities and … equity' grand total); the VIE subtotal table,
+    the footnote narrative, and the year-as-value garbage row are dropped."""
+
+    def test_jpm_keeps_primary_drops_supplemental(self):
+        from data.sec_statements import _balance_parse
+        p = _balance_parse(_JPM_BALANCE)
+        labels = [r["label"] for r in p["rows"]]
+        # Primary 'Total assets' is the ONLY one, and it's JPM's real figure.
+        ta = [r for r in p["rows"] if r["label"] == "Total assets"]
+        self.assertEqual(len(ta), 1)
+        self.assertEqual(ta[0]["values"], [4_424_900e6, 4_002_814e6])
+        # A = L + E reconciles on the primary statement.
+        end = next(r for r in p["rows"]
+                   if r["label"].startswith("Total liabilities and"))
+        self.assertEqual(end["values"][0], 4_424_900e6)
+        # The supplemental narrative / garbage rows are gone.
+        self.assertNotIn("December 31, (in millions)", labels)
+        self.assertFalse(any(l.startswith("[1]") for l in labels))
+        # Every kept row is trimmed to the two real period columns.
+        for r in p["rows"]:
+            if not r["header"]:
+                self.assertEqual(len(r["values"]), 2)
+
+    def test_single_table_balance_unchanged(self):
+        # A balance sheet with no trailing supplemental table passes through
+        # unchanged (truncation at the grand total is a no-op).
+        from data.sec_statements import _balance_parse, parse_rfile
+        single = (
+            b'<table class="report">'
+            b'<tr><th class="tl">Consolidated Balance Sheets $ in Millions</th>'
+            b'<th class="th">Dec. 31, 2025</th><th class="th">Dec. 31, 2024</th></tr>'
+            b'<tr><td class="pl">Total assets</td>'
+            b'<td class="nump">88,990</td><td class="nump">88,775</td></tr>'
+            b'<tr><td class="pl">Total liabilities and shareholders equity</td>'
+            b'<td class="nump">88,990</td><td class="nump">88,775</td></tr>'
+            b'</table>')
+        self.assertEqual([r["label"] for r in _balance_parse(single)["rows"]],
+                         [r["label"] for r in parse_rfile(single)["rows"]])
+
+
+# ── P1: union-split — wording variants merge to one row, distinct lines stay ──
+class TestConsolidateVariants(unittest.TestCase):
+    """Cross-filing wording variants of the SAME line collapse to one row; two
+    genuinely-distinct lines (both populated in a shared period) stay separate."""
+
+    def _stmt(self, rows, periods=("25", "24", "23", "22", "21")):
+        return {"periods": list(periods), "units_scale": 1e3,
+                "rows": [{"label": l, "header": False, "values": v} for l, v in rows]}
+
+    def test_net_income_loss_variant_merges_keeps_distinct_separate(self):
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Net income (loss)", [None, None, None, None, 5725.0]),
+            ("Net income", [6997.0, 5953.0, 5647.0, 6113.0, None]),
+            ("Net income attributable to common shareholders",
+             [6619.0, 5529.0, 5153.0, 5735.0, 5436.0]),
+        ]))
+        byl = {r["label"]: r["values"] for r in out["rows"]}
+        # 'Net income (loss)' and 'Net income' → ONE row (newest label kept).
+        self.assertNotIn("Net income (loss)", byl)
+        self.assertEqual(byl["Net income"], [6997.0, 5953.0, 5647.0, 6113.0, 5725.0])
+        # The attributable line is DISTINCT and survives untouched.
+        self.assertEqual(byl["Net income attributable to common shareholders"],
+                         [6619.0, 5529.0, 5153.0, 5735.0, 5436.0])
+
+    def test_over_merge_guard_same_period_both_populated(self):
+        from data.sec_statements import _consolidate_variants
+        # 'Total equity' (all years) vs 'Total Huntington shareholders equity'
+        # (token-subset) MUST stay separate — they overlap in 2025-2023.
+        out = _consolidate_variants(self._stmt([
+            ("Total Huntington shareholders equity",
+             [24342.0, 19740.0, 19353.0, None, None]),
+            ("Total equity", [24379.0, 19782.0, 19398.0, 17769.0, 19318.0]),
+        ]))
+        labels = [r["label"] for r in out["rows"]]
+        self.assertEqual(len(labels), 2)               # NOT merged
+        self.assertIn("Total equity", labels)
+
+    def test_registrant_name_equity_variant_merges(self):
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Total Huntington Bancshares Inc shareholders equity",
+             [None, None, None, 17731.0, 19297.0]),
+            ("Total Huntington shareholders equity",
+             [24342.0, 19740.0, 19353.0, None, None]),
+        ]))
+        self.assertEqual(len(out["rows"]), 1)          # name variant collapses
+        self.assertEqual(out["rows"][0]["values"],
+                         [24342.0, 19740.0, 19353.0, 17731.0, 19297.0])
+
+    def test_eps_basic_variant_merges_but_shares_stays_separate(self):
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Basic earnings per common share (in dollars per share)",
+             [None, None, None, None, 12.71]),
+            ("Basic (in dollars per share)", [16.6, 13.76, 12.8, 13.86, None]),
+            ("Basic (shares)", [396.0, 399.0, 401.0, 412.0, 426.0]),
+        ]))
+        byl = {r["label"]: r["values"] for r in out["rows"]}
+        # Single-token EPS variant merges (both per-share); the share-COUNT row,
+        # populated every year, never merges into the per-share row.
+        self.assertEqual(len(out["rows"]), 2)
+        self.assertEqual(byl["Basic (in dollars per share)"],
+                         [16.6, 13.76, 12.8, 13.86, 12.71])
+        self.assertEqual(byl["Basic (shares)"], [396.0, 399.0, 401.0, 412.0, 426.0])
+
+    def test_placeholder_label_dropped(self):
+        from data.sec_statements import _consolidate_variants
+        out = _consolidate_variants(self._stmt([
+            ("Common stock, $5 par value", [6312.0, 6580.0, 6669.0, 6634.0, 6639.0]),
+            ("Common Stock Shares Issued Not Disclosed",
+             [None, None, None, None, None]),
+        ]))
+        labels = [r["label"] for r in out["rows"]]
+        self.assertNotIn("Common Stock Shares Issued Not Disclosed", labels)
+        self.assertIn("Common stock, $5 par value", labels)
+
+
+# ── P2: XBRL noise rows ('[Extensible Enumeration]', bare '[1]' footnote) ─────
+class TestXbrlNoiseRows(unittest.TestCase):
+    def test_extensible_enumeration_and_footnote_marker_filtered(self):
+        rf = (
+            b'<table class="report">'
+            b'<tr><th class="tl">Statements of Income - USD ($) $ in Thousands</th>'
+            b'<th class="th">12 Months Ended</th></tr>'
+            b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+            b'<tr><td class="pl">Net income</td><td class="nump">2,156,000</td></tr>'
+            b'<tr><td class="pl">Defined Benefit Plan, Net Periodic Benefit Cost, '
+            b'Statement of Income [Extensible Enumeration]</td>'
+            b'<td class="text"> </td></tr>'
+            b'<tr><td class="pl">[1]</td><td class="text"> </td></tr>'
+            b'</table>')
+        labels = [r["label"] for r in parse_rfile(rf)["rows"]]
+        self.assertEqual(labels, ["Net income"])       # both noise rows dropped
+
+
 if __name__ == "__main__":
     unittest.main()
