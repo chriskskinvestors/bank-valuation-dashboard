@@ -215,6 +215,28 @@ class TestUniverseRecentScoping(unittest.TestCase):
         rows = store.get_universe_recent(limit=50)
         self.assertEqual(sorted(r["ticker"] for r in rows), ["PNC"])
 
+    def test_cross_source_duplicate_collapsed_on_read(self):
+        # A bank's IR-site copy + its Business Wire copy of one release (ir_site is
+        # exempt from ingest dedup, so both are stored) collapse to ONE feed row.
+        self.bu._UNIVERSE_CACHE = None   # dedup runs regardless of universe build
+        h = "BayFirst Announces Second Quarter 2026 Conference Call and Webcast"
+        store.insert_events_returning_new([
+            _ev("BAFN", "ir_site", h, "ir-1"),
+            _ev("BAFN", "businesswire", h, "bw-1"),
+        ])
+        rows = store.get_universe_recent(limit=50)
+        self.assertEqual(sum(1 for r in rows if r["ticker"] == "BAFN"), 1)
+
+    def test_distinct_8ks_not_collapsed_on_read(self):
+        # Two distinct 8-Ks share the generic item headline — both must survive.
+        self.bu._UNIVERSE_CACHE = None
+        store.insert_events_returning_new([
+            _ev("PNC", "sec_8k", "8-K · Other Material Event", "acc-1"),
+            _ev("PNC", "sec_8k", "8-K · Other Material Event", "acc-2"),
+        ])
+        rows = store.get_universe_recent(limit=50, sources=["sec_8k"])
+        self.assertEqual(sum(1 for r in rows if r["ticker"] == "PNC"), 2)
+
     def test_skip_tickers_drop_even_when_universe_not_built(self):
         # Skip-listed tickers are a STATIC set — they must drop from the feed even
         # when the universe isn't cached (and AFTER the nightly rebuild removes

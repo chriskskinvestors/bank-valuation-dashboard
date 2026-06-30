@@ -425,7 +425,24 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
             out = kept
     except Exception:
         pass
-    return out
+
+    # Collapse cross-source duplicates of the SAME release at display time — e.g.
+    # a bank's IR-site copy AND its Business Wire / FMP copy of one announcement.
+    # ir_site (and sec_8k) are exempt from the ingest-time content dedup, so once
+    # the IR adapter runs reliably both copies are stored; collapse them here by
+    # (ticker, normalized headline), keeping the first (newest, since ordered
+    # DESC). sec_8k is EXEMPT — its headlines are generic ("8-K · Other Material
+    # Event") and would falsely collapse two distinct filings.
+    seen_ck: set[str] = set()
+    deduped: list[dict] = []
+    for r in out:
+        if (r.get("source") or "") != "sec_8k":
+            ck = _content_key(r.get("ticker") or "", r.get("headline") or "")
+            if ck in seen_ck:
+                continue
+            seen_ck.add(ck)
+        deduped.append(r)
+    return deduped
 
 
 def get_events_by_type(event_type: str, limit: int = 600) -> list[dict]:
