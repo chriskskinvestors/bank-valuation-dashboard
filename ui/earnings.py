@@ -1155,11 +1155,12 @@ def _render_earnings_calendar(watchlist: list[str]):
                   "20%", "5%", "4%"]
 
     # Tables render at NATURAL height (no inner scrollbox — the page scrolls). A
-    # long week is split into two balanced tables side by side so it fills the
+    # heavy day is split into two balanced tables side by side so it fills the
     # horizontal space instead of running down one tall column.
     for bucket in agenda:
         rows = bucket["rows"]
-        soon = bucket["label"] == "This week"
+        # Highlight today's / tomorrow's reports.
+        soon = (date.fromisoformat(bucket["date"]) - today).days <= 1
         header = f"{bucket['label']} · {len(rows)} report{'s' if len(rows) != 1 else ''}"
         st.markdown(f"##### {'🔴 ' if soon else ''}{header}")
 

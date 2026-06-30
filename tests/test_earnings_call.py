@@ -181,7 +181,7 @@ class TestEarningsTimingMap(unittest.TestCase):
 class TestBuildCallsAgenda(unittest.TestCase):
     """build_calls_agenda — merge the yfinance date spine with FMP timing/
     revenue/confirmed overlays, universe-filter, dedupe to soonest per ticker,
-    join call info, and bucket by Monday-started week for Calls & Webcasts."""
+    join call info, and bucket by report day for the calendar."""
 
     # JPM, BKSC, WFC report; FMPONLY only appears in FMP; FAR is past horizon.
     UNIVERSE = {"JPM", "BKSC", "WFC", "FMPONLY", "FAR", "OLD"}
@@ -212,13 +212,19 @@ class TestBuildCallsAgenda(unittest.TestCase):
     def test_merges_sources_and_buckets(self):
         agenda = build_calls_agenda(
             self._yf(), self._fmp(), self.UNIVERSE, self.CALLS, date(2026, 7, 13))
-        self.assertEqual([b["label"] for b in agenda], ["This week", "Next week"])
-        self.assertEqual(agenda[0]["week_start"], "2026-07-13")
+        # One bucket per report DAY, soonest-first; near days get relative labels.
+        self.assertEqual([b["date"] for b in agenda],
+                         ["2026-07-14", "2026-07-16", "2026-07-20", "2026-07-21"])
+        self.assertEqual([b["label"] for b in agenda],
+                         ["Tomorrow", "Thu, Jul 16", "Mon, Jul 20", "Tue, Jul 21"])
+        # Each day holds only its own reports.
+        self.assertEqual([r["ticker"] for r in agenda[0]["rows"]], ["JPM"])
+        self.assertEqual([r["ticker"] for r in agenda[1]["rows"]], ["BKSC"])
+        self.assertEqual([r["ticker"] for r in agenda[2]["rows"]], ["FMPONLY"])
+        self.assertEqual([r["ticker"] for r in agenda[3]["rows"]], ["WFC"])
 
-        wk1 = {r["ticker"]: r for r in agenda[0]["rows"]}
-        self.assertEqual([r["ticker"] for r in agenda[0]["rows"]], ["JPM", "BKSC"])
-
-        jpm = wk1["JPM"]                                  # in BOTH sources
+        rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
+        jpm = rows["JPM"]                                 # in BOTH sources
         self.assertEqual(jpm["date"], "2026-07-14")       # yfinance date wins over FMP's 08-06
         self.assertEqual(jpm["days_until"], 1)
         self.assertEqual(jpm["when"], "Before open")      # overlaid from FMP
@@ -229,16 +235,14 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertEqual(jpm["dial_in"], "1-800-555-0100")
         self.assertNotIn("_date", jpm)                    # internal key not leaked
 
-        bksc = wk1["BKSC"]                                # yfinance-only
+        bksc = rows["BKSC"]                               # yfinance-only
         self.assertIsNone(bksc["when"])                   # no FMP overlay
         self.assertFalse(bksc["confirmed"])               # yfinance carries no confirmed flag
         self.assertEqual(bksc["eps_est"], 0.07)
         self.assertIsNone(bksc["rev_est"])
         self.assertIsNone(bksc["call_time"])              # no PR info → None, not faked
 
-        wk2 = {r["ticker"]: r for r in agenda[1]["rows"]}
-        self.assertEqual(sorted(wk2), ["FMPONLY", "WFC"])
-        fmponly = wk2["FMPONLY"]                          # FMP-only extends coverage
+        fmponly = rows["FMPONLY"]                         # FMP-only extends coverage
         self.assertEqual(fmponly["date"], "2026-07-20")
         self.assertEqual(fmponly["when"], "After close")
         self.assertEqual(fmponly["rev_est"], 5.0e8)

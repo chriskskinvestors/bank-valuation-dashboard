@@ -432,12 +432,6 @@ def merged_call_info() -> dict:
 _WHEN_LABEL = {"bmo": "Before open", "amc": "After close", "dmh": "Midday"}
 
 
-def _week_monday(d):
-    """The Monday that starts d's calendar week."""
-    from datetime import timedelta
-    return d - timedelta(days=d.weekday())
-
-
 def _iso_date(s):
     """Parse an ISO 'YYYY-MM-DD' string to a date; None on anything unparseable."""
     from datetime import date
@@ -473,7 +467,7 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
     coverage to any bank yfinance is missing). Per universe ticker we take the
     soonest real date (yfinance preferred, FMP fallback) and overlay FMP's
     timing/confirmed/revenue and the parsed call info. Banks reporting in
-    [today, today+horizon_days] are grouped into Monday-started weekly buckets.
+    [today, today+horizon_days] are grouped into per-DAY buckets.
 
     Pure / unit-tested. `universe` is any container of upper-case tickers;
     `call_info` is {ticker: {call_time, webcast_url, dial_in}} (may be empty).
@@ -482,9 +476,9 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
     callers mark unconfirmed dates as projected. Nothing is fabricated. Returns
     [] when nothing qualifies.
 
-    Returns: [{"label": str, "week_start": "YYYY-MM-DD", "rows": [row, ...]}],
-    week buckets ordered soonest-first; rows within a bucket ordered by date
-    then ticker. Each row:
+    Returns: [{"label": str, "date": "YYYY-MM-DD", "rows": [row, ...]}],
+    one bucket per report DAY ordered soonest-first (label "Today"/"Tomorrow"/
+    "Thu, Jul 16"); rows within a day ordered by ticker. Each row:
         {ticker, date, days_until, when, confirmed, eps_est, rev_est,
          period_ending, call_time, webcast_url, dial_in}
     """
@@ -545,21 +539,21 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         }
 
     rows = sorted(seen.values(), key=lambda x: (x["_date"], x["ticker"]))
-    this_monday = _week_monday(today)
     buckets: dict = {}
     for row in rows:
-        buckets.setdefault(_week_monday(row.pop("_date")), []).append(row)
+        buckets.setdefault(row.pop("_date"), []).append(row)
 
     out = []
-    for wk in sorted(buckets):
-        if wk == this_monday:
-            label = "This week"
-        elif wk == this_monday + timedelta(days=7):
-            label = "Next week"
+    for day in sorted(buckets):
+        delta = (day - today).days
+        if delta == 0:
+            label = "Today"
+        elif delta == 1:
+            label = "Tomorrow"
         else:
-            label = f"Week of {wk.isoformat()}"
-        out.append({"label": label, "week_start": wk.isoformat(),
-                    "rows": buckets[wk]})
+            label = day.strftime("%a, %b ") + str(day.day)   # "Thu, Jul 16"
+        out.append({"label": label, "date": day.isoformat(),
+                    "rows": buckets[day]})
     return out
 
 
