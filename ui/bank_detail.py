@@ -655,6 +655,45 @@ def _render_valuation_panel(ticker: str, info: dict):
             st.caption("Valuation history unavailable for this bank.")
 
 
+def _prefetch_profile_data(ticker: str, info: dict) -> None:
+    """First-visit speed: warm the independent per-bank caches CONCURRENTLY so
+    the serial render phases below hit warm caches instead of paying each
+    fetch's latency in series (sum-of-latencies → max-of-latencies). Repeat
+    visits already hit the 1h memos; this only matters on a cold bank.
+
+    Strictly best-effort — every task is wrapped so any failure (including a
+    worker-thread ScriptRunContext quirk) just means that phase pays its own
+    cost, exactly as before; the page render is never affected. All targets are
+    @st.cache_data(show_spinner=False), so there is no spinner-from-thread
+    issue, and even if a thread can't populate the st.cache_data memo it still
+    warms the underlying Postgres/HTTP cache the memo reads."""
+    cert = info.get("fdic_cert") if info else None
+    cik = info.get("cik") if info else None
+    from data.fmp_client import get_history
+
+    def _safe(fn):
+        try:
+            fn()
+        except Exception:
+            pass
+
+    tasks = []
+    if cert:
+        tasks.append(lambda: fdic_client.get_latest_financials(cert))
+        tasks.append(lambda: fdic_client.get_historical_financials(cert, quarters=44))
+    if cik:
+        tasks.append(lambda: sec_client.fetch_company_facts(cik))
+    tasks.append(lambda: get_history(ticker, "1Y"))  # price + val default window
+    if len(tasks) < 2:
+        return  # nothing to parallelize
+    from concurrent.futures import ThreadPoolExecutor
+    # `with` exit calls shutdown(wait=True), so this blocks until every fetch
+    # completes — cost is the slowest single fetch, not their sum.
+    with ThreadPoolExecutor(max_workers=len(tasks)) as ex:
+        for t in tasks:
+            ex.submit(_safe, t)
+
+
 def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     """Overview ▸ Corporate Profile — identity snapshot, market + company data,
     quick links, and the valuation/performance key-stat cards."""
@@ -666,6 +705,10 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
         st.info("No metrics available for this bank yet.")
         return
     row = bank_row.iloc[0]
+    # Warm the independent per-bank fetches in parallel before the serial render
+    # phases below each read them one at a time (see _prefetch_profile_data).
+    with timed("cp.prefetch"):
+        _prefetch_profile_data(ticker, info)
     # Fetch the latest FDIC record once and share it — the snapshot's Company
     # Profile and the Performance table both read from it (live, not the batch
     # metrics row which can drop FDIC fields on a transient API failure).
