@@ -116,6 +116,14 @@ def _download_company_facts(cik: int) -> dict:
         return {}
 
 
+# In-process memo (1h) on top of the Postgres/SQLite store: the persistent
+# cache already spares the ~30s SEC download, but a warm cache HIT still pays a
+# DB round-trip + slim-dict deserialization on EVERY rerun. This function feeds
+# many Company tabs (valuation history, financial highlights, Company Reported
+# extractors), so memoizing the parsed dict makes every tab switch that reads
+# SEC facts skip that repeat cost. Companyfacts is quarterly — 1h staleness is
+# invisible to values. Same pattern as get_latest_fundamentals below.
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_company_facts(cik: int) -> dict:
     """
     Fetch the XBRL facts the dashboard uses for a company, cached for

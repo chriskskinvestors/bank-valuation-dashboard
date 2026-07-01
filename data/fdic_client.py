@@ -278,6 +278,11 @@ def build_fdic_provenance(cert: int, field: str, repdte) -> dict:
     )
 
 
+# In-process memo (1h): the multi-quarter FDIC pull feeds the valuation-history
+# chart (44Q), historicals, and trend tabs — re-fetched every rerun otherwise.
+# Quarterly data, so 1h staleness is invisible to values. Mirrors the
+# get_latest_financials memo above.
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_historical_financials(cert: int, quarters: int = 20) -> pd.DataFrame:
     """Fetch historical quarterly data for trend charts."""
     return fetch_financials(cert, limit=quarters)
