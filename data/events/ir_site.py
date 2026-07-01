@@ -194,6 +194,36 @@ def _parse_q4_date(s: str) -> datetime | None:
     return None
 
 
+_Q4_PR_ENDPOINT = "/feed/PressRelease.svc/GetPressReleaseList"
+
+
+def _q4_api_probe(host: str) -> bool:
+    """FUNCTIONAL Q4 test: does <host>/feed/PressRelease.svc return a Q4 press-
+    release payload? The homepage marker (q4cdn/q4inc/…) is a heuristic that
+    silently drops Q4 sites whose homepage doesn't inline it — a modern/JS build,
+    or a WAF-fronted page (e.g. Glacier at www.<domain>). Hitting the API keyless
+    and checking for the GetPressReleaseListResult envelope is definitive: only a
+    Q4 site answers this path. `host` is scheme://netloc. False on anything else."""
+    host = host.rstrip("/")
+    if not host.startswith("http"):
+        return False
+    try:
+        resp = requests.get(
+            host + _Q4_PR_ENDPOINT,
+            params={"apiKey": "", "LanguageId": 1, "bodyType": 0,
+                    "pressReleaseDateFilter": 3, "categoryId": "", "tagList": "",
+                    "includeTags": "true", "year": 0, "excludeSelection": 1,
+                    "pageSize": 1, "pageNumber": 0},
+            timeout=8,
+            headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)",
+                     "Accept": "application/json"})
+        if resp.status_code != 200:
+            return False
+        return isinstance(resp.json().get("GetPressReleaseListResult"), list)
+    except Exception:
+        return False
+
+
 def _q4_site(ir_home: str) -> tuple[bool, str | None]:
     """(is_q4, apiKey) for an IR home. is_q4 ← the homepage carries a Q4 marker
     (q4cdn/q4inc/…); apiKey is extracted ONLY when inlined. Modern Q4 sites omit
@@ -204,7 +234,9 @@ def _q4_site(ir_home: str) -> tuple[bool, str | None]:
     Cached per host 7d; (False, None) records a known non-Q4 site so we don't
     refetch its homepage every cycle."""
     host = urlparse(ir_home).netloc
-    ck = f"q4_site:{host}"
+    # v2: invalidates cached negatives from the marker-only era so the functional
+    # API probe re-evaluates markerless/WAF'd hosts on the next discovery pass.
+    ck = f"q4_site:v2:{host}"
     cache = None
     try:
         from data import cache as _c
@@ -222,6 +254,14 @@ def _q4_site(ir_home: str) -> tuple[bool, str | None]:
         m = _Q4_APIKEY_RE.search(html)
         if m:
             key = m.group(1)
+    else:
+        # No homepage marker — fall back to the functional API probe so a
+        # markerless / WAF-fronted Q4 site (e.g. Glacier at www.<domain>) is still
+        # detected instead of being silently treated as non-Q4.
+        parsed = urlparse(ir_home)
+        scheme = parsed.scheme or "https"
+        if parsed.netloc and _q4_api_probe(f"{scheme}://{parsed.netloc}"):
+            is_q4 = True
     try:
         if cache is not None:
             cache.put(ck, {"is_q4": is_q4, "apiKey": key,
@@ -304,9 +344,12 @@ def discover_q4_ir_url(webaddr: str) -> str | None:
     root = _domain_root(webaddr)
     if not root:
         return None
-    # Method 1 — subdomain probe (cheap; DNS miss is instant).
-    for sub in _IR_SUBDOMAINS:
-        url = f"https://{sub}.{root}/"
+    # Method 1 — subdomain probe (cheap; DNS miss is instant), then the main
+    # www/root host itself: Q4 increasingly serves the primary domain rather than
+    # an ir. subdomain (e.g. Glacier's IR + press-release API live on www.<domain>),
+    # which the subdomain-only probe missed entirely.
+    for url in ([f"https://{sub}.{root}/" for sub in _IR_SUBDOMAINS]
+                + [f"https://www.{root}/", f"https://{root}/"]):
         try:
             if _q4_site(url)[0]:
                 return url

@@ -26,13 +26,14 @@ class TestQ4SiteDetection(unittest.TestCase):
 
     def setUp(self):
         import data.cache as dc
-        self._fetch, self._dc = ir._fetch, dc
+        self._fetch, self._dc, self._probe = ir._fetch, dc, ir._q4_api_probe
         self._get, self._put = dc.get, dc.put
         dc.get = lambda k: None          # force fresh detection (no cache hit)
         dc.put = lambda k, v: None
+        ir._q4_api_probe = lambda host: False   # no network in the marker tests
 
     def tearDown(self):
-        ir._fetch = self._fetch
+        ir._fetch, ir._q4_api_probe = self._fetch, self._probe
         self._dc.get, self._dc.put = self._get, self._put
 
     def test_marker_without_apikey_is_still_q4(self):
@@ -49,6 +50,62 @@ class TestQ4SiteDetection(unittest.TestCase):
     def test_non_q4_site(self):
         ir._fetch = lambda url, timeout=5: "<html>just a plain IR page</html>"
         self.assertEqual(ir._q4_site("https://investor.x.com"), (False, None))
+
+    def test_markerless_but_api_answers_is_q4(self):
+        # No homepage marker (modern/WAF'd build, e.g. Glacier on www.<domain>) —
+        # the functional API probe still identifies it as Q4.
+        ir._fetch = lambda url, timeout=5: "<html>no marker here</html>"
+        ir._q4_api_probe = lambda host: True
+        self.assertEqual(ir._q4_site("https://www.glacierbancorp.com"), (True, None))
+
+    def test_markerless_and_api_silent_is_not_q4(self):
+        ir._fetch = lambda url, timeout=5: "<html>plain</html>"
+        ir._q4_api_probe = lambda host: False
+        self.assertEqual(ir._q4_site("https://www.plainbank.com"), (False, None))
+
+
+class TestQ4ApiProbe(unittest.TestCase):
+    """The functional Q4 detector — hits /feed/PressRelease.svc and checks for the
+    Q4 envelope, so markerless / WAF'd Q4 sites aren't silently dropped."""
+
+    def setUp(self):
+        self._req = ir.requests
+
+    def tearDown(self):
+        ir.requests = self._req
+
+    def _patch(self, status, payload):
+        class _R:
+            @staticmethod
+            def get(url, params=None, timeout=None, headers=None):
+                class _Resp:
+                    status_code = status
+                    @staticmethod
+                    def json():
+                        if payload is None:
+                            raise ValueError("no json")
+                        return payload
+                return _Resp()
+        ir.requests = _R
+
+    def test_valid_q4_payload_is_true(self):
+        self._patch(200, {"GetPressReleaseListResult": [{"Headline": "x"}]})
+        self.assertTrue(ir._q4_api_probe("https://www.glacierbancorp.com"))
+
+    def test_empty_result_list_still_true(self):
+        self._patch(200, {"GetPressReleaseListResult": []})   # Q4 site, no PRs in window
+        self.assertTrue(ir._q4_api_probe("https://www.x.com"))
+
+    def test_non_200_is_false(self):
+        self._patch(404, None)
+        self.assertFalse(ir._q4_api_probe("https://www.x.com"))
+
+    def test_non_q4_json_is_false(self):
+        self._patch(200, {"something": "else"})
+        self.assertFalse(ir._q4_api_probe("https://www.x.com"))
+
+    def test_non_http_host_is_false(self):
+        self.assertFalse(ir._q4_api_probe("not-a-url"))       # no network attempted
 
 
 class _Resp:
