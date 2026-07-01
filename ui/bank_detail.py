@@ -543,6 +543,7 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
     return fig
 
 
+@st.fragment
 def _render_price_panel(ticker: str):
     """Interactive price + volume chart. One header row: the price readout
     (ticker · last · period move) on the left, a flat Koyfin-style timeframe strip
@@ -603,6 +604,7 @@ def _render_price_panel(ticker: str):
                         use_container_width=True, key=f"ov_price_{ticker}")
 
 
+@st.fragment
 def _render_valuation_panel(ticker: str, info: dict):
     """Daily valuation. Mirrors the price card: a hairline box whose header row
     carries a metric selector (P/TBV / P/E / Both, left) and the 1W…ALL timeframe
