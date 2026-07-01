@@ -21,6 +21,7 @@ from data.earnings_call import (  # noqa: E402
     mid_label,
     build_calls_agenda,
     _announced_release_date,
+    _parse_release_timing,
 )
 
 
@@ -154,6 +155,34 @@ class TestParseCallInfo(unittest.TestCase):
             "10:00a ET · webcast ↗")
         self.assertEqual(mid_label({"call_time": "10:00a ET"}), "10:00a ET")
         self.assertEqual(mid_label({"dial_in": "1-800-555-1234"}), "call")
+
+
+class TestReleaseTiming(unittest.TestCase):
+    """Report timing read from the bank's own announcement — fills the When column
+    for banks FMP's before/after-open flag doesn't cover."""
+
+    def test_after_close(self):
+        self.assertEqual(_parse_release_timing(
+            "will report results after the market closes on July 23, 2026."),
+            "After close")
+        self.assertEqual(_parse_release_timing(
+            "results will be issued after the close of trading"), "After close")
+
+    def test_before_open(self):
+        self.assertEqual(_parse_release_timing(
+            "will release results before the market opens"), "Before open")
+        self.assertEqual(_parse_release_timing(
+            "to report before the opening of U.S. markets"), "Before open")
+
+    def test_none_when_no_timing_phrase(self):
+        self.assertIsNone(_parse_release_timing(
+            "will host a conference call at 9:00 a.m. ET"))
+        self.assertIsNone(_parse_release_timing(""))
+
+    def test_flows_through_parse_call_info(self):
+        info = parse_call_info(
+            "will report after the market closes; webcast at https://x.com/ir")
+        self.assertEqual(info.get("when"), "After close")
 
 
 class TestEarningsTimingMap(unittest.TestCase):
@@ -293,6 +322,18 @@ class TestBuildCallsAgenda(unittest.TestCase):
         bksc = rows["BKSC"]
         self.assertEqual(bksc["date"], "2026-07-15")        # announced date wins
         self.assertTrue(bksc["confirmed"])                  # announced ⇒ confirmed
+
+    def test_announcement_timing_fills_when_fmp_still_wins(self):
+        # BKSC has no FMP row (no before/after-open flag) but its PR stated the
+        # timing → the When column is filled from the announcement. JPM has an FMP
+        # flag, which still takes precedence over any announcement timing.
+        calls = dict(self.CALLS)
+        calls["BKSC"] = {"when": "After close"}
+        agenda = build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
+        rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
+        self.assertEqual(rows["BKSC"]["when"], "After close")   # from the PR
+        self.assertEqual(rows["JPM"]["when"], "Before open")    # FMP flag wins
 
     def test_horizon_days_bounds_window(self):
         # FMPONLY reports 2026-07-20 — inside 75 days, outside a tight 5-day window.

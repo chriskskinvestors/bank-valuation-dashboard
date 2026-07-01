@@ -556,6 +556,7 @@ def _q4_announcement(ir_home: str, today_iso: str) -> dict | None:
             "call_time": ci.get("call_time"),
             "webcast_url": wc,
             "dial_in": ci.get("dial_in"),
+            "when": ci.get("when"),          # "after the market closes" → After close
         }
         info = {k: v for k, v in info.items() if v}
         if info:

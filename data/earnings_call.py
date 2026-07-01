@@ -103,6 +103,7 @@ def parse_call_info(text: str) -> dict:
         "call_time": _parse_call_time(text),
         "webcast_url": _parse_webcast_url(text),
         "dial_in": _parse_dial_in(text),
+        "when": _parse_release_timing(text),
     }
     return info if any(info.values()) else {}
 
@@ -212,6 +213,29 @@ def _parse_call_date(text: str, today_iso: str) -> str | None:
     return None
 
 
+# Report timing stated in the announcement itself ("… will report results after
+# the market closes …" / "… before the market opens …"). This is the same
+# Before-open/After-close signal as FMP's flag, but read straight from the bank's
+# own PR — so it fills the calendar's "When" column for banks FMP doesn't cover.
+_BEFORE_OPEN_RE = re.compile(
+    r"before\s+(?:the\s+)?(?:u\.?s\.?\s+)?(?:market|markets?)?\s*open", re.I)
+_AFTER_CLOSE_RE = re.compile(
+    r"after\s+(?:the\s+)?(?:u\.?s\.?\s+)?(?:market|markets?)?\s*clos", re.I)
+
+
+def _parse_release_timing(text: str) -> str | None:
+    """'Before open' / 'After close' if the PR states when the release drops
+    ('after the market closes', 'before the market opens'). None otherwise — the
+    label matches _WHEN_LABEL's values so it slots straight into the When column."""
+    if not text:
+        return None
+    if _BEFORE_OPEN_RE.search(text):
+        return "Before open"
+    if _AFTER_CLOSE_RE.search(text):
+        return "After close"
+    return None
+
+
 def call_info_map() -> dict:
     """{ticker: {call_time, webcast_url, dial_in, call_date, release_date}} parsed
     from each bank's earnings-announcement press release.
@@ -248,7 +272,7 @@ def call_info_map() -> dict:
                 url = ci.get("webcast_url")
                 if url and not is_safe_news_url(url):
                     ci["webcast_url"] = None
-                for k in ("call_time", "webcast_url", "dial_in"):
+                for k in ("call_time", "webcast_url", "dial_in", "when"):
                     if ci.get(k):
                         cur[k] = ci[k]
             # Conference-call date from the body (when stated up front).
@@ -408,14 +432,15 @@ def merged_call_info() -> dict:
             base[tk] = cur
 
     _overlay(get_pr_call_details(),
-             ("call_time", "webcast_url", "dial_in", "call_date", "release_date"))
+             ("call_time", "webcast_url", "dial_in", "call_date", "release_date",
+              "when"))
     try:
         from data.events.ir_site import get_q4_call_details
         q4 = get_q4_call_details()
     except Exception:
         q4 = {}
     _overlay(q4, ("call_time", "webcast_url", "call_date", "dial_in",
-                  "release_date"))
+                  "release_date", "when"))
     # Curated megabank webcast links last: only the webcast_url field, only for
     # the non-Q4 megabanks (so it overrides the junk webcast the HTML scrape
     # produces for them, and never touches a date/time or a Q4 bank).
@@ -517,9 +542,12 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         call_d = _iso_date(ci.get("call_date")) if ci.get("call_date") else None
         confirmed = bool(rel_d) or bool(frow.get("confirmed")) or (
             call_d is not None and 0 <= (call_d - d).days <= 4)
-        # Report timing: FMP's before/after-open code, else inferred — a call the
-        # NEXT morning means the release went out after close the day before.
+        # Report timing: FMP's before/after-open code; else the timing the bank
+        # stated in its own announcement ("after the market closes"); else inferred
+        # — a call the NEXT morning means the release went out after close.
         when = _WHEN_LABEL.get((frow.get("time") or "").lower())
+        if when is None:
+            when = ci.get("when")
         if when is None and call_d is not None and (call_d - d).days == 1:
             when = "After close"
         seen[tk] = {
