@@ -15,7 +15,7 @@ from analysis.peer_groups import (
     asset_size_tier, business_mix_tier, compute_peer_percentile,
 )
 from utils.formatting import format_value
-from ui.chrome import table_export, status_dot
+from ui.chrome import table_export, status_dot, lazy_tabs
 
 
 # Curated metric sets per category (focused on what analysts actually look at).
@@ -287,17 +287,17 @@ def render_peer_comparison(all_metrics: list[dict]):
     _render_highlights(display_peers)
 
     # ── View tabs ──────────────────────────────────────────────────────
-    view_tab, scatter_tab, radar_tab = st.tabs([
-        "Metrics Table", "Scatter Plots", "Radar Chart"])
-    with view_tab:
+    _pc_tabs = ["Metrics Table", "Scatter Plots", "Radar Chart"]
+    _pc_sel = lazy_tabs(_pc_tabs, key="peercompare")
+    if _pc_sel == _pc_tabs[0]:
         _cell_mode = st.radio(
             "Cell display", ["Value", "Δ vs median"], horizontal=True,
             key="compare_cellmode", label_visibility="collapsed")
         _render_metrics_table(cohort, display_peers, categories, scores,
                               delta=_cell_mode.startswith("Δ"))
-    with scatter_tab:
+    elif _pc_sel == _pc_tabs[1]:
         _render_peer_scatters(cohort)
-    with radar_tab:
+    elif _pc_sel == _pc_tabs[2]:
         _render_peer_radar(cohort)
 
     # ── Peer group composition ─────────────────────────────────────────

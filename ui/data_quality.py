@@ -12,6 +12,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
+from ui.chrome import lazy_tabs
+
 from data.bank_mapping import get_cik, get_fdic_cert, get_name
 from data.fdic_client import fetch_financials, build_fdic_provenance
 from data import sec_client
@@ -96,13 +98,11 @@ def render_data_quality(ticker: str):
 
     st.markdown("---")
 
-    tab_findings, tab_provenance = st.tabs([
-        f"Validation Findings ({len(findings)})",
-        "Source Traceability",
-    ])
+    _dq_tabs = [f"Validation Findings ({len(findings)})", "Source Traceability"]
+    _dq_sel = lazy_tabs(_dq_tabs, key="dataquality")
 
     # ── Findings tab ───────────────────────────────────────────────────
-    with tab_findings:
+    if _dq_sel == _dq_tabs[0]:
         if not findings:
             st.info("No issues detected. Every value is within expected ranges and sources check out.")
         else:
@@ -149,7 +149,7 @@ def render_data_quality(ticker: str):
             """)
 
     # ── Provenance / Source traceability tab ────────────────────────────
-    with tab_provenance:
+    elif _dq_sel == _dq_tabs[1]:
         st.markdown("##### SEC HoldCo Sources")
         if sec_with_prov:
             sec_rows = []

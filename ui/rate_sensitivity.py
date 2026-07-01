@@ -28,7 +28,7 @@ from utils.chart_style import (
     apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT,
     COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING, COLOR_PRIMARY,
 )
-from ui.chrome import ledger, title_bar
+from ui.chrome import ledger, title_bar, lazy_tabs
 
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
@@ -237,23 +237,24 @@ def render_rate_sensitivity(ticker: str):
     # explicitly documents as wrong (~1.4x inflated) — so the same screen
     # showed two different "historical" betas. The phased/curve tabs are the
     # supported model.
-    tab_phased, tab_named, tab_matrix, tab_backtest = st.tabs([
+    _rs_tabs = [
         "Multi-Year Impact (phased)",
         "Named Curve Scenarios",
         "Curve Matrix (3M × 5Y)",
         "Historical Fit",
-    ])
+    ]
+    _rs_sel = lazy_tabs(_rs_tabs, key="ratesens")
 
-    with tab_phased:
+    if _rs_sel == _rs_tabs[0]:
         _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta)
 
-    with tab_named:
+    elif _rs_sel == _rs_tabs[1]:
         _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta)
 
-    with tab_matrix:
+    elif _rs_sel == _rs_tabs[2]:
         _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta)
 
-    with tab_backtest:
+    elif _rs_sel == _rs_tabs[3]:
         _render_backtest(ticker, hist, mode_key, custom_beta)
 
     # ── Methodology ─────────────────────────────────────────────────────

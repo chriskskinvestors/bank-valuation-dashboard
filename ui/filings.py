@@ -15,7 +15,7 @@ from data.filing_summarizer import (
     find_press_release_url,
     summarize_filing,
 )
-from ui.chrome import table_export, title_bar
+from ui.chrome import table_export, title_bar, lazy_tabs
 
 
 def _flush_html(html: str) -> str:
@@ -288,26 +288,27 @@ def _render_filings_core(ticker: str):
             press_releases.append({**f, "press_release_url": pr_url})
 
     # ── Tabs ─────────────────────────────────────────────────────────────
-    tab_all, tab_press, tab_earnings, tab_annual, tab_insider = st.tabs([
+    _fl_tabs = [
         f"All Filings ({len(filings)})",
         f"Press Releases ({len(press_releases)})",
         "Earnings Releases",
         "Annual & Quarterly",
         "Insider Activity",
-    ])
+    ]
+    _fl_sel = lazy_tabs(_fl_tabs, key="filings")
 
-    with tab_all:
+    if _fl_sel == _fl_tabs[0]:
         _render_filings_section(filings, show_filters=True, key_prefix="all",
                                  ticker=ticker, cik=raw_cik)
 
-    with tab_press:
+    elif _fl_sel == _fl_tabs[1]:
         _render_press_releases(press_releases, ticker, raw_cik)
 
-    with tab_insider:
+    elif _fl_sel == _fl_tabs[4]:
         from ui.insider_activity import render_insider_activity
         render_insider_activity(ticker, show_title=False)
 
-    with tab_earnings:
+    elif _fl_sel == _fl_tabs[2]:
         earnings = [f for f in filings if f.get("is_earnings")]
         if earnings:
             st.markdown(
@@ -319,7 +320,7 @@ def _render_filings_core(ticker: str):
         else:
             st.info("No earnings releases found in recent filings.")
 
-    with tab_annual:
+    elif _fl_sel == _fl_tabs[3]:
         annual_quarterly = [
             f for f in filings
             if f["form"] in ("10-K", "10-K/A", "10-Q", "10-Q/A")

@@ -15,7 +15,7 @@ from data.sod_client import (
 )
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
-from ui.chrome import ledger, table_export, title_bar
+from ui.chrome import ledger, table_export, title_bar, lazy_tabs
 
 
 def render_deposits_for_ticker(ticker: str):
@@ -192,9 +192,10 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     msa_options = msa_options.dropna(subset=["MSABR"])
     msa_options = msa_options[msa_options["MSABR"] > 0]
 
-    tab1, tab2 = st.tabs(["By County", "By MSA"])
+    _dl_tabs = ["By County", "By MSA"]
+    _dl_sel = lazy_tabs(_dl_tabs, key="deposit")
 
-    with tab1:
+    if _dl_sel == _dl_tabs[0]:
         if county_options.empty:
             st.info("No county data available.")
         else:
@@ -251,7 +252,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                 else:
                     st.warning("Could not load market share data for this county.")
 
-    with tab2:
+    elif _dl_sel == _dl_tabs[1]:
         if msa_options.empty:
             st.info("No MSA data available.")
         else:

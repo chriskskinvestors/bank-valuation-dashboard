@@ -13,7 +13,7 @@ from utils.chart_style import (
     COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING,
     COLOR_FILL_DANGER, apply_standard_layout,
 )
-from ui.chrome import table_export
+from ui.chrome import table_export, lazy_tabs
 
 
 # Metrics to pull from FDIC for historical view
@@ -141,10 +141,11 @@ def render_historicals(ticker: str):
     annual_df = _annualize(df)
 
     # Three sections
-    tab1, tab2, tab3 = st.tabs(["Trend Charts", "Quarterly Detail", "Annual Summary"])
+    _h_tabs = ["Trend Charts", "Quarterly Detail", "Annual Summary"]
+    _h_sel = lazy_tabs(_h_tabs, key="historicals")
 
     # ── TAB 1: Trend Charts ──────────────────────────────────────────────
-    with tab1:
+    if _h_sel == _h_tabs[0]:
         periods = df["Period"].tolist()[::-1]  # chronological
 
         # Chart 1: Profitability
@@ -202,7 +203,7 @@ def render_historicals(ticker: str):
         st.plotly_chart(fig3, use_container_width=True)
 
     # ── TAB 2: Quarterly Detail ──────────────────────────────────────────
-    with tab2:
+    elif _h_sel == _h_tabs[1]:
         st.caption(f"Last {len(df)} quarters · amounts in thousands ($K)")
 
         # Build display table — periods as columns, metrics as rows
@@ -237,7 +238,7 @@ def render_historicals(ticker: str):
                          key=f"exp_historicals_quarterly_{ticker}")
 
     # ── TAB 3: Annual Summary ────────────────────────────────────────────
-    with tab3:
+    elif _h_sel == _h_tabs[2]:
         if annual_df.empty:
             st.info("Not enough data for annual summary.")
             return

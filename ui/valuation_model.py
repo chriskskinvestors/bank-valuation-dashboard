@@ -18,7 +18,7 @@ from analysis.deposit_dynamics import summarize_bank_deposits  # reuse helpers
 from data.consensus import list_consensus, compile_consensus
 from utils.formatting import fmt_dollars
 from utils.chart_style import COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY
-from ui.chrome import ledger, title_bar
+from ui.chrome import ledger, title_bar, lazy_tabs
 
 
 # Shared loader (data/loaders); this tab keeps its lower history threshold
@@ -448,15 +448,16 @@ def render_valuation_model(ticker: str):
     st.markdown("---")
 
     # ── Sensitivity Tabs ───────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    _vm_tabs = [
         "CoE × Terminal Growth",
         "ROATCE × CoE (Warranted P/TBV)",
         "Bull / Base / Bear",
         "Tornado + Implied IRR",
         "Peer Warranted P/TBV",
-    ])
+    ]
+    _vm_sel = lazy_tabs(_vm_tabs, key="valmodel")
 
-    with tab1:
+    if _vm_sel == _vm_tabs[0]:
         st.markdown("**DCF Fair Value under different discount & growth assumptions**")
         coe_range = [cost_of_equity - 2, cost_of_equity - 1, cost_of_equity,
                      cost_of_equity + 1, cost_of_equity + 2]
@@ -495,7 +496,7 @@ def render_valuation_model(ticker: str):
                 "Rows = cost of equity, columns = terminal growth."
             )
 
-    with tab2:
+    elif _vm_sel == _vm_tabs[1]:
         st.markdown("**Warranted P/TBV Fair Price under different ROATCE & CoE**")
         roatce_range = [roatce_pct - 4, roatce_pct - 2, roatce_pct,
                         roatce_pct + 2, roatce_pct + 4]
@@ -516,7 +517,7 @@ def render_valuation_model(ticker: str):
                 f"Holding terminal growth at {terminal_growth:.2f}% and TBV/share at ${tbvps:.2f}."
             )
 
-    with tab3:
+    elif _vm_sel == _vm_tabs[2]:
         st.markdown("**Bull / Base / Bear Scenario Comparison**")
         sc_col1, sc_col2 = st.columns(2)
 
@@ -595,11 +596,11 @@ def render_valuation_model(ticker: str):
         st.plotly_chart(fig, use_container_width=True)
 
     # ── Tab 4: Tornado + Implied IRR ──────────────────────────────────
-    with tab4:
+    elif _vm_sel == _vm_tabs[3]:
         _render_tornado_and_irr(base_params, price)
 
     # ── Tab 5: Peer-Relative Warranted P/TBV ──────────────────────────
-    with tab5:
+    elif _vm_sel == _vm_tabs[4]:
         _render_peer_warranted(ticker, cost_of_equity, terminal_growth)
 
     # ── Consensus vs Model comparison (below tabs) ──────────────────
