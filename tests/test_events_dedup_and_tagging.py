@@ -215,6 +215,60 @@ class TestUniverseRecentScoping(unittest.TestCase):
         rows = store.get_universe_recent(limit=50)
         self.assertEqual(sorted(r["ticker"] for r in rows), ["PNC"])
 
+    def _ma(self, ticker, source, headline, summary, ext, age_min=1):
+        return Event(ticker=ticker, source=source, event_type="m_and_a",
+                     headline=headline, summary=summary,
+                     published_at=NOW - timedelta(minutes=age_min),
+                     url=f"https://x/{ext}", external_id=ext)
+
+    def test_ma_event_dedup_collapses_same_deal(self):
+        # One merger, per ticker: the bank's 8-K (summary) + the wire headline —
+        # different wording, so text-dedup misses it; event-dedup collapses it.
+        self.bu._UNIVERSE_CACHE = None
+        store.insert_events_returning_new([
+            self._ma("PB", "sec_8k", "8-K · Acquisition / Disposition Completed",
+                     "Prosperity Bancshares completed its merger with Stellar "
+                     "Bancorp on July 1, 2026, acquiring $5B in assets.", "pb-8k", 1),
+            self._ma("PB", "businesswire",
+                     "Prosperity Bancshares, Inc. Completes Merger with Stellar "
+                     "Bancorp, Inc.", "", "pb-bw", 6),
+            self._ma("STEL", "sec_8k", "8-K · Acquisition / Disposition Completed",
+                     "Stellar Bancorp merged into Prosperity Bancshares effective "
+                     "July 1, 2026.", "stel-8k", 2),
+            self._ma("STEL", "businesswire",
+                     "Prosperity Bancshares, Inc. Completes Merger with Stellar "
+                     "Bancorp, Inc.", "", "stel-bw", 7),
+        ])
+        rows = store.get_universe_recent(limit=50)
+        self.assertEqual(sum(1 for r in rows if r["ticker"] == "PB"), 1)
+        self.assertEqual(sum(1 for r in rows if r["ticker"] == "STEL"), 1)
+
+    def test_ma_different_deals_kept(self):
+        # Two DIFFERENT deals by one acquirer share only the acquirer → keep both.
+        self.bu._UNIVERSE_CACHE = None
+        store.insert_events_returning_new([
+            self._ma("PB", "businesswire",
+                     "Prosperity Bancshares Completes Merger with Stellar Bancorp",
+                     "", "d1", 1),
+            self._ma("PB", "businesswire",
+                     "Prosperity Bancshares Completes Merger with Veritex Holdings",
+                     "", "d2", 6),
+        ])
+        rows = store.get_universe_recent(limit=50)
+        self.assertEqual(sum(1 for r in rows if r["ticker"] == "PB"), 2)
+
+    def test_non_ma_not_touched_by_event_dedup(self):
+        # Q1 vs Q2 earnings (non-M&A) share generic tokens but must both survive.
+        self.bu._UNIVERSE_CACHE = None
+        store.insert_events_returning_new([
+            _ev("PB", "businesswire",
+                "Prosperity Bancshares Reports First Quarter 2026 Results", "q1"),
+            _ev("PB", "businesswire",
+                "Prosperity Bancshares Reports Second Quarter 2026 Results", "q2"),
+        ])
+        rows = store.get_universe_recent(limit=50)
+        self.assertEqual(sum(1 for r in rows if r["ticker"] == "PB"), 2)
+
     def test_cross_source_duplicate_collapsed_on_read(self):
         # A bank's IR-site copy + its Business Wire copy of one release (ir_site is
         # exempt from ingest dedup, so both are stored) collapse to ONE feed row.

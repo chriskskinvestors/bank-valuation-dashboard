@@ -346,6 +346,54 @@ def get_recent_events(ticker: str, limit: int = 20) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+# ── Event-level M&A dedup (display) ──────────────────────────────────────
+# The same deal surfaces per ticker as its OWN 8-K summary AND a wire headline
+# (different wording), and the wire is tagged to BOTH parties — so PB and STEL
+# each show the merger twice. Text-match dedup can't collapse differently-worded
+# rows; this collapses a ticker's M&A rows that name the SAME companies.
+_MA_RE = re.compile(
+    r"\b(?:merger|acquisition|acquir\w+|merged\s+(?:in|into|with)|"
+    r"completes?\s+(?:its\s+)?(?:merger|acquisition|combination)|"
+    r"definitive\s+(?:merger|agreement)|business\s+combination|to\s+acquire)\b",
+    re.IGNORECASE)
+_MA_DEDUP_DAYS = 3
+# Stopwords so the tokens that remain are DISTINCTIVE brand cores (prosperity,
+# stellar) — bank-name suffixes, the generic adjectives shared by many banks
+# (first/community/citizens/…), M&A verbs, generic words and months are dropped.
+_MA_STOPWORDS = frozenset({
+    "bank", "banks", "bancorp", "bancshares", "banc", "financial", "holdings",
+    "holding", "group", "corporation", "corp", "company", "incorporated",
+    "trust", "savings", "national", "first", "community", "citizens", "united",
+    "american", "merger", "mergers", "merged", "merges", "acquisition",
+    "acquisitions", "acquire", "acquires", "acquiring", "acquired", "completes",
+    "completed", "complete", "completion", "definitive", "agreement",
+    "combination", "transaction", "announces", "announced", "announcement",
+    "effective", "approximately", "billion", "million", "assets",
+    "stockholders", "shareholders", "common", "stock", "shares", "under",
+    "with", "into", "from", "that", "which", "been", "have", "will", "today",
+    "expanding", "expand", "january", "february", "march", "april", "june",
+    "july", "august", "september", "october", "november", "december",
+})
+
+
+def _significant_tokens(text: str) -> set:
+    """Distinctive brand tokens for M&A dedup — 4+ char words minus bank-name
+    suffixes, generic bank adjectives, M&A verbs and months, so what's left is
+    the company brand cores (e.g. {'prosperity', 'stellar'})."""
+    return {w for w in re.findall(r"[a-z]{4,}", (text or "").lower())
+            if w not in _MA_STOPWORDS}
+
+
+def _parse_ts(p):
+    if p is None:
+        return None
+    try:
+        return p if hasattr(p, "year") else datetime.fromisoformat(
+            str(p).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
 def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> list[dict]:
     """Most recent events across all tickers."""
     from sqlalchemy import text
@@ -434,13 +482,32 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
     # DESC). sec_8k is EXEMPT — its headlines are generic ("8-K · Other Material
     # Event") and would falsely collapse two distinct filings.
     seen_ck: set[str] = set()
+    ma_kept: dict[str, list] = {}   # ticker -> [(brand_tokens, ts)] of kept M&A rows
     deduped: list[dict] = []
     for r in out:
+        tk = (r.get("ticker") or "").upper()
+        head = r.get("headline") or ""
+        summ = r.get("summary") or ""
+        # (1) exact cross-source duplicate (sec_8k exempt — generic headlines).
         if (r.get("source") or "") != "sec_8k":
-            ck = _content_key(r.get("ticker") or "", r.get("headline") or "")
+            ck = _content_key(tk, head)
             if ck in seen_ck:
                 continue
             seen_ck.add(ck)
+        # (2) event-level M&A dedup: one deal shows up per ticker as its 8-K
+        # summary AND a wire headline (different wording), and the wire is tagged
+        # to BOTH parties. Collapse a ticker's M&A rows that name the SAME
+        # companies — ≥2 shared brand tokens (so BOTH acquirer and target match;
+        # two different deals sharing only the acquirer are NOT collapsed) within
+        # a few days — keeping the newest. Non-M&A rows are never touched.
+        if r.get("event_type") == "m_and_a" or _MA_RE.search(head) or _MA_RE.search(summ):
+            toks = _significant_tokens(summ or head)
+            ts = _parse_ts(r.get("published_at"))
+            if any(len(toks & pt) >= 2
+                   and not (ts and pts and abs((ts - pts).days) > _MA_DEDUP_DAYS)
+                   for (pt, pts) in ma_kept.get(tk, [])):
+                continue
+            ma_kept.setdefault(tk, []).append((toks, ts))
         deduped.append(r)
     return deduped
 
