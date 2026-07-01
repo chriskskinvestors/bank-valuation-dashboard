@@ -23,6 +23,9 @@ HEADERS = {"User-Agent": "KSK Investors research kris@kskinvestors.com"}
 BANKS = {
     "JPM":  19617,
     "BAC":  70858,
+    "WFC":  72971,
+    "C":    831001,
+    "USB":  36104,
     "PNC":  713676,
     "HBAN": 49196,
     "SFST": 1090009,
@@ -37,6 +40,16 @@ INTAN_TAGS = [
     "FiniteLivedIntangibleAssetsNet",
     "OtherIntangibleAssetsNet",
 ]
+# Preferred carrying-value tags, in the same resolution order the pipeline uses.
+# A par-only tag reading exactly 0 (PNC) is treated as unresolved, not $0.
+PREFERRED_VALUE_TAGS = [
+    "PreferredStockValue",
+    "PreferredStockIncludingAdditionalPaidInCapital",
+    "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount",
+    "PreferredStockValueOutstanding",
+    "PreferredStockLiquidationPreferenceValue",
+]
+PREFERRED_SHARE_TAGS = ["PreferredStockSharesOutstanding", "PreferredStockSharesIssued"]
 
 
 def fetch_facts(cik: int) -> dict:
@@ -99,6 +112,48 @@ def latest_instant(rows: list[dict]) -> tuple[float | None, str]:
     return best_val, best_end
 
 
+def latest_current(rows: list[dict], max_age_days: int = 400) -> tuple[float | None, str]:
+    """Like latest_instant but rejects end-dates older than max_age_days from
+    today — mirrors the pipeline's max_age_years=1 staleness guard so stale tags
+    (PNC's 2016 intangibles, USB's 2013 preferred) don't leak in."""
+    cutoff = date.today().isoformat()
+    best_end, best_val = "", None
+    for r in rows:
+        e, v = r.get("end"), r.get("val")
+        if not e or v is None:
+            continue
+        if _days(e, cutoff) > max_age_days:
+            continue
+        if e >= best_end:
+            best_end, best_val = e, v
+    return best_val, best_end
+
+
+def resolve_preferred(facts: dict) -> tuple[float | None, bool, str]:
+    """(carrying_value, has_preferred, source_tag). A value tag reading exactly
+    0 (par-only, PNC) is treated as 'keep looking', never a resolved $0."""
+    value, src = None, ""
+    for tag in PREFERRED_VALUE_TAGS:
+        v, _ = latest_current(usd_facts(facts, tag))
+        if v:  # nonzero
+            value, src = v, tag
+            break
+    pref_sh = 0.0
+    for tag in PREFERRED_SHARE_TAGS:
+        node = facts.get("facts", {}).get("us-gaap", {}).get(tag)
+        if not node:
+            continue
+        rows = [r for u in node.get("units", {}).values() for r in u]
+        v, _ = latest_current(rows)
+        if v:
+            pref_sh = v
+            break
+    has_preferred = bool(value) or (pref_sh > 0)
+    if not has_preferred:
+        return 0.0, False, ""
+    return value, True, src  # value None => unresolved (cardinal-rule n/a)
+
+
 def shares_outstanding(facts: dict) -> tuple[float | None, str]:
     node = facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding")
     if not node:
@@ -123,10 +178,11 @@ def main() -> int:
         gw, gw_end = latest_instant(usd_facts(facts, GOODWILL_TAGS[0]))
         intan, intan_tag, intan_end = None, None, ""
         for tag in INTAN_TAGS:
-            v, e = latest_instant(usd_facts(facts, tag))
+            v, e = latest_current(usd_facts(facts, tag))
             if v is not None:
                 intan, intan_tag, intan_end = v, tag, e
                 break
+        pref, pref_present, pref_src = resolve_preferred(facts)
         sh, sh_end = shares_outstanding(facts)
 
         print(f"  NetIncomeLoss quarters: "
@@ -144,12 +200,26 @@ def main() -> int:
             print(f"  Intangibles ({intan_tag}) = {intan/1e9:.3f}B   as of {intan_end}")
         else:
             print("  Intangibles           = (no tag found; 0 assumed)")
+        if pref_present:
+            if pref is not None:
+                print(f"  Preferred ({pref_src}) = {pref/1e9:.3f}B")
+            else:
+                print("  Preferred             = present but UNRESOLVED (par-zero/stale) -> n/a")
+        else:
+            print("  Preferred             = none")
         print(f"  Shares outstanding    = {sh:,.0f}   as of {sh_end}")
 
         if eq is not None and sh:
-            tce = eq - (gw or 0) - (intan or 0)
-            print(f"  -> TCE                = {tce/1e9:.3f}B")
-            print(f"  -> TBVPS              = {tce/sh:.2f}")
+            # COMMON tangible book: subtract preferred first, then full intangibles.
+            preferred_unresolved = pref_present and pref is None
+            common_eq = eq - (pref or 0)
+            tce = common_eq - (gw or 0) - (intan or 0)
+            print(f"  -> Common equity      = {common_eq/1e9:.3f}B")
+            print(f"  -> Common TCE         = {tce/1e9:.3f}B")
+            if preferred_unresolved:
+                print("  -> COMMON TBVPS       = n/a (preferred present but unresolved)")
+            else:
+                print(f"  -> COMMON TBVPS       = {tce/sh:.2f}")
             if ni_ttm is not None:
                 print(f"  -> ROATCE (NI/TCE)    = {ni_ttm/tce*100:.2f}%")
     return 0

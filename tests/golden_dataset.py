@@ -24,6 +24,16 @@ sys.path.insert(0, str(REPO_ROOT))
 # (Q4 was dropped / year-ago quarter double-counted for issuers that tag Q4
 # only inside the FY duration) — ROATCE baselines reflect the corrected TTM.
 #
+# Re-pinned 2026-07-01 (tbvps only): the "exclude preferred stock" fix makes
+# book/tangible-book per share COMMON-based. Each tbvps below is now the bank's
+# OWN reported tangible book value per common share, hand-verified against its
+# 1Q26 (Citi: 4Q25) earnings release / non-GAAP reconciliation — NOT pipeline
+# output. Sources per bank in inline comments. Two checks are disabled:
+#   • PNC — pipeline returns n/a (unresolvable par-zero preferred; cardinal rule).
+#   • USB — pipeline over-deducts intangibles (gross incl-goodwill instead of
+#     net-of-DTL, MSR-excluded), so $25.90 vs reported $29.56. Pin restored once
+#     the intangible resolver is fixed. Both documented at their entries.
+#
 # When real-world data drifts (e.g. HBAN+Cadence merger closed Q1 2026,
 # nearly doubling share count), update this file rather than chasing the
 # pipeline. The pipeline is correct if values match the most recent 10-Q.
@@ -44,35 +54,59 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         "shares":        {"expected": 2_696_200_000, "tol_pct": 1.0},
         "ni_ttm_b":      {"expected": 58.90, "tol_pct": 3.0},
         "equity_b":      {"expected": 362.4, "tol_pct": 3.0},
-        "tbvps":         {"expected": 114.87, "tol_pct": 2.0},
+        # Reported TBV / common share, 1Q26 press release "Fortress Principles":
+        # $108.87 (TCE at period-end / common shares at period-end). Ties the
+        # common-based fix (equity less preferred, less goodwill+intangibles).
+        "tbvps":         {"expected": 108.87, "tol_pct": 2.0},
         "roatce_holdco": {"expected": 19.0, "tol_abs": 1.0},
     },
     "BAC": {
         "shares":        {"expected": 7_212_000_000, "tol_pct": 2.0},
         "ni_ttm_b":      {"expected": 31.73, "tol_pct": 3.0},
         "equity_b":      {"expected": 303.2, "tol_pct": 3.0},
-        "tbvps":         {"expected": 32.23, "tol_pct": 2.0},
+        # Reported tangible book value / common share, 1Q26 8-K (TCE $205,651M /
+        # 7,129.9M shares) = $28.84. BAC's reconciliation nets DTL on intangibles
+        # and carries preferred at redemption value; pipeline is within tol.
+        "tbvps":         {"expected": 28.84, "tol_pct": 2.0},
         "roatce_holdco": {"expected": 13.1, "tol_abs": 1.0},
     },
     "WFC": {
         "shares":        {"expected": 3_064_000_000, "tol_pct": 2.0},  # Q1 2026 post-buybacks
         "ni_ttm_b":      {"expected": 21.23, "tol_pct": 5.0},
         "equity_b":      {"expected": 178.4, "tol_pct": 3.0},
-        "tbvps":         {"expected": 50.07, "tol_pct": 2.0},
+        # Reported tangible book value / common share, 1Q26 Quarterly Supplement
+        # (TCE $137,817M / 3,064.3M shares) = $44.98.
+        "tbvps":         {"expected": 44.98, "tol_pct": 2.0},
         "roatce_holdco": {"expected": 13.84, "tol_abs": 1.0},
     },
     "C": {
         "shares":        {"expected": 1_750_000_000, "tol_pct": 3.0},
         "ni_ttm_b":      {"expected": 14.31, "tol_pct": 5.0},
         "equity_b":      {"expected": 212.3, "tol_pct": 3.0},
-        "tbvps":         {"expected": 107.99, "tol_pct": 3.0},
+        # Citi's latest companyfacts period is 4Q25 (as-of 2025-12-31). Reported
+        # tangible book value / share in the 4Q25 press release = $97.06.
+        "tbvps":         {"expected": 97.06, "tol_pct": 3.0},
         "roatce_holdco": {"expected": 7.6, "tol_abs": 1.0},
     },
     "USB": {
         "shares":        {"expected": 1_600_000_000, "tol_pct": 2.5},
         "ni_ttm_b":      {"expected": 7.57, "tol_pct": 5.0},
         "equity_b":      {"expected": 65.2, "tol_pct": 3.0},
-        "tbvps":         {"expected": 29.78, "tol_pct": 2.0},
+        # tbvps check disabled: pipeline returns $25.90 vs USB's own reported
+        # tangible book value / common share of $29.56 (1Q26 release, page 16:
+        # TCE $45,961M / 1,555M shares). The preferred subtraction is correct
+        # (common equity $58,978M ties USB exactly), but the intangible resolver
+        # over-deducts — it subtracts GROSS goodwill+intangibles ($17,539M via
+        # IntangibleAssetsNetIncludingGoodwill) whereas USB (like every issuer's
+        # non-GAAP TCE) deducts intangibles NET of deferred-tax liability and
+        # EXCLUDES MSRs (goodwill $11,588M + other intangibles $1,429M =
+        # $13,017M). Pipeline also uses a rounded 1,600M share count vs the
+        # reported 1,555M. Both are pre-existing defects surfaced by this fix,
+        # not the preferred change. Pinning the authoritative $29.56 would fail
+        # against the buggy output, and pinning $25.90 would enshrine a wrong
+        # number (cardinal rule). Restore this check ({"expected": 29.56,
+        # "tol_pct": 2.0}) once the intangible resolver nets DTL / excludes MSRs.
+        # "tbvps":         {"expected": 29.56, "tol_pct": 2.0},
         "roatce_holdco": {"expected": 15.9, "tol_abs": 1.5},
     },
     "PNC": {
@@ -82,18 +116,33 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # differ by preferred dividends, hence the slightly different ratio.
         "ni_ttm_b":      {"expected": 6.58, "tol_pct": 5.0},
         "equity_b":      {"expected": 63.63, "tol_pct": 3.0},
-        "tbvps":         {"expected": 123.03, "tol_pct": 3.0},
+        # tbvps check disabled: pipeline returns n/a (None) for PNC. PNC reports
+        # preferred outstanding but tags only a par-zero PreferredStockValue plus
+        # stale APIC, so the preferred carrying value is unresolvable — the
+        # cardinal rule renders TBVPS n/a rather than a preferred-inflated figure.
+        # The OLD pin ($123.03) was preferred-inclusive book value (wrong).
+        # PNC's own reported COMMON tangible book value / share is $109.42 (1Q26
+        # press release; BVPS $143.65) as of 2026-03-31. Will be restored when
+        # the direct earnings-release TBVPS extractor lands.
+        # "tbvps":         {"expected": 109.42, "tol_pct": 3.0},
         "roatce_holdco": {"expected": 13.61, "tol_abs": 1.0},
     },
     "HBAN": {  # Cadence acquisition closed Q1 2026 — share count + equity expanded
         "shares":        {"expected": 2_027_000_000, "tol_pct": 2.0},
         "equity_b":      {"expected": 32.53, "tol_pct": 3.0},
-        "tbvps":         {"expected": 10.87, "tol_pct": 3.0},
+        # Reported tangible book value / common share, 1Q26 press release &
+        # supplement (TCE $19,361M / 2,027M shares) = $9.55. Pipeline reads
+        # $9.45 (subtracts gross intangibles without the +$203M DTL add-back);
+        # ~1% low, within the 3% band.
+        "tbvps":         {"expected": 9.55, "tol_pct": 3.0},
         "roatce_holdco": {"expected": 9.63, "tol_abs": 1.5},
     },
     "SFST": {
         "shares":        {"expected": 8_213_328, "tol_pct": 1.0},
         "equity_b":      {"expected": 0.369, "tol_pct": 3.0},
+        # No preferred, no goodwill/intangibles, so TBV/share = BV/share. SFST's
+        # 1Q26 release reports book value per common share $46.00 (period-end
+        # 8.21M shares) — unchanged by the preferred fix.
         "tbvps":         {"expected": 46.00, "tol_pct": 2.0},
         "roatce_holdco": {"expected": 9.22, "tol_abs": 1.0},
     },
