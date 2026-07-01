@@ -377,19 +377,22 @@ def refresh_pr_call_snapshot(max_fetch: int = 200, max_workers: int = 8) -> dict
         body = _fetch_pr_body(r.get("url") or "")
         if not body:
             return tk, None
+        # Release date from the headline if stated there, else from the body.
+        rd = (_announced_release_date(r.get("headline") or "", today_iso)
+              or _parse_release_date(body, today_iso))
+        cd = _parse_call_date(body, today_iso)
+        # Stale-leak guard: no FUTURE date → this is a past-quarter results release,
+        # not an upcoming-call announcement; don't surface its stale call logistics.
+        if not (rd or cd):
+            return tk, None
         ci = parse_call_info(body)
         wc = ci.get("webcast_url")
         if wc and not is_safe_news_url(wc):
             ci["webcast_url"] = None
         info = {k: v for k, v in ci.items() if v}
-        # Release date from the headline if stated there, else from the body.
-        rd = (_announced_release_date(r.get("headline") or "", today_iso)
-              or _parse_release_date(body, today_iso))
-        cd = _parse_call_date(body, today_iso)
-        if rd:
-            info["release_date"] = rd
-        if cd:
-            info["call_date"] = cd
+        info["release_date"] = rd
+        info["call_date"] = cd
+        info = {k: v for k, v in info.items() if v}
         return tk, (info or None)
 
     out: dict = {}

@@ -548,14 +548,22 @@ def _q4_announcement(ir_home: str, today_iso: str) -> dict | None:
         body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw))
         if not body:
             continue
+        rel = (_announced_release_date(hl, today_iso)
+               or _parse_release_date(body, today_iso))
+        cd = _parse_call_date(body, today_iso)
+        # Stale-leak guard: a matching PR with NO future release/call date is a
+        # past-quarter results release (e.g. EGBN's "Announces Q1 Results"), not an
+        # upcoming-call announcement. Skip it so its stale call time/webcast never
+        # bleed onto the next quarter's row — a plausible-wrong value.
+        if not (rel or cd):
+            continue
         ci = parse_call_info(body)
         wc = ci.get("webcast_url")
         if wc and not is_safe_news_url(wc):
             wc = None
         info = {
-            "release_date": (_announced_release_date(hl, today_iso)
-                             or _parse_release_date(body, today_iso)),
-            "call_date": _parse_call_date(body, today_iso),
+            "release_date": rel,
+            "call_date": cd,
             "call_time": ci.get("call_time"),
             "webcast_url": wc,
             "dial_in": ci.get("dial_in"),

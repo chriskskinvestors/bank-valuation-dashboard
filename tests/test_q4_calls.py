@@ -280,6 +280,24 @@ class TestQ4Announcement(unittest.TestCase):
         self.assertEqual(info["call_time"], "11:00a ET")
         self.assertEqual(info["dial_in"], "888-555-1212")
 
+    def test_skips_stale_results_release(self):
+        # A past-quarter RESULTS release matches _is_earnings_announcement
+        # ("Announces Q1 Results") but has NO future date — its stale call
+        # time/webcast must not leak onto the upcoming row (the EGBN bug).
+        payload = {"GetPressReleaseListResult": [{
+            "Headline": "Acme Bancorp, Inc. Announces First Quarter 2026 Results",
+            "Body": "<p>Acme reported Q1 results. A conference call was held at "
+                    "10:00 a.m. ET on Tuesday, April 22, 2025. Webcast: "
+                    "https://events.q4inc.com/x</p>"}]}
+
+        class _R:
+            @staticmethod
+            def get(url, params=None, timeout=None, headers=None):
+                return _Resp(payload)
+        ir.requests = _R
+        self.assertIsNone(
+            ir._q4_announcement("https://investor.acme.com", "2026-06-29"))
+
     def test_non_q4_returns_none(self):
         ir._q4_site = lambda home: (False, None)
         self.assertIsNone(ir._q4_announcement("https://x", "2026-06-29"))
