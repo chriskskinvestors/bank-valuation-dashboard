@@ -872,6 +872,11 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
     return result
 
 
+# 1h memo: called per-concept in a loop by data/sec_per_share (valuation-history
+# path). fetch_company_facts below is already memoized, so the repeat cost is the
+# _extract_time_series parse — cache it too. cik+concept are hashable; DataFrame
+# return is copied by st.cache_data so callers can't corrupt the memo.
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_historical_fundamentals(cik: int, concept: str = "EarningsPerShareDiluted") -> pd.DataFrame:
     """Get historical time series for a specific concept."""
     facts = fetch_company_facts(cik)
@@ -960,6 +965,13 @@ FILING_FORM_TYPES = {
 }
 
 
+# 15-min memo: this SEC-submissions fetch is called on several render paths and
+# up to 3× within a single Company page (bank_detail) plus the Filings tab, each
+# an uncached HTTP round-trip for the SAME cik. Memoizing dedupes those to one
+# fetch and makes repeat renders instant. Short TTL keeps a newly-filed 8-K
+# visible within ~15 min; the in-render dedup holds at any TTL. Only ui/ render
+# paths call this (no universe-loop job), so no job-memory concern.
+@st.cache_data(ttl=900, show_spinner=False)
 def get_filing_info(cik: int, max_filings: int = 50) -> dict:
     """
     Get filing metadata with direct EDGAR links and earnings flagging.
