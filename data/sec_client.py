@@ -58,6 +58,10 @@ SLIM_USGAAP_CONCEPTS = {
     "InterestIncome", "InterestExpense",
     "Goodwill", "IntangibleAssetsNetExcludingGoodwill",
     "IntangibleAssetsNetIncludingGoodwill", "FiniteLivedIntangibleAssetsNet",
+    # Mortgage servicing rights — kept in tangible equity (TCE convention), so
+    # netted back out of any MSR-inclusive intangibles rollup (data/sec_client
+    # _resolve_intangible_adjustment). Must be slimmed in or it reads as None.
+    "ServicingAssetAtFairValueAmount",
     # Preferred stock — subtracted from total equity so book/tangible-book per
     # share are COMMON-based (else every preferred issuer overstates them).
     # Big banks (BAC/USB/JPM) tag carrying value as par+APIC, not PreferredStockValue.
@@ -507,6 +511,25 @@ def get_latest_fundamentals(cik: int) -> dict:
         facts, "CommonStockDividendsPerShareDeclared")
     result["dividends_per_share_ttm"] = result["dividends_per_share"]
 
+    # Rounded-placeholder guard for the primary CommonStockSharesOutstanding.
+    # A few issuers tag the cover-page count rounded to whole hundred-millions
+    # (USB: exactly 1,600,000,000 for 3 straight years while the real count is
+    # ~1,555M), which is a plausible-wrong ~3% error in book/tangible-book per
+    # share. A real outstanding count is never an exact multiple of 100M. When
+    # we spot one, prefer the precise same-period issued − treasury derivation
+    # (matches the balance-sheet date the equity is from); if that isn't
+    # available, drop the placeholder so the fallback chain below resolves it.
+    sh0 = result.get("shares_outstanding")
+    if sh0 and sh0 % 100_000_000 == 0:
+        equity_end = _latest_end_date(facts, "StockholdersEquity")
+        issued, iss_end = _val_end(facts, "CommonStockSharesIssued")
+        treasury, tre_end = _val_end(facts, "TreasuryStockCommonShares")
+        if (issued and issued > 0 and iss_end == equity_end
+                and tre_end == equity_end):
+            result["shares_outstanding"] = issued - (treasury or 0)
+        else:
+            result["shares_outstanding"] = None
+
     # Share-count fallback chain — some issuers (e.g., Citi) stopped
     # reporting CommonStockSharesOutstanding years ago. Fall back in order:
     # 1. CommonStockSharesOutstanding (primary)
@@ -603,50 +626,107 @@ def get_latest_fundamentals(cik: int) -> dict:
     return result
 
 
+def _val_end(facts: dict, concept: str, max_age_years: int = 1) -> tuple[float | None, str | None]:
+    """(value, period-end-date) for a concept's latest 10-K/10-Q fact, or
+    (None, None) if stale/missing. Thin wrapper over the provenance extractor,
+    used where the TCE resolver must compare period-end dates across tags
+    (e.g. is this MSR reported as-of the same date as the intangibles it would
+    be netted from)."""
+    tup = _extract_latest_value_with_source(facts, concept, max_age_years=max_age_years)
+    if tup is None:
+        return None, None
+    return tup[0], tup[1]
+
+
 def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
     """
     Return the total goodwill + other-intangibles to subtract from common
-    equity for tangible book value, robust to inconsistent XBRL tagging.
+    equity for tangible book value, following the standard non-GAAP TCE
+    convention and robust to inconsistent XBRL tagging.
+
+    TCE convention: deduct goodwill + other intangibles but KEEP mortgage
+    servicing rights (MSRs) in tangible equity — they are a servicing asset,
+    not an intangible the market strips out. Some issuers (e.g. USB) bundle
+    MSRs inside the broad `IntangibleAssetsNet…Goodwill` rollups; when they do,
+    net the separately-tagged MSR back out so we don't over-deduct.
 
     Resolution order:
       1. other-intangibles: `IntangibleAssetsNetExcludingGoodwill`, else
-         `FiniteLivedIntangibleAssetsNet` (current only).
-      2. If `Goodwill` is current → adjustment = Goodwill + other-intangibles.
-      3. Else if `IntangibleAssetsNetIncludingGoodwill` is current → use it
-         directly (it already bundles goodwill + intangibles).
-      4. Else → just the other-intangibles (or 0).
+         `FiniteLivedIntangibleAssetsNet` (current only). The first is an
+         MSR-INCLUSIVE rollup for some banks; the second (finite-lived only)
+         never contains MSRs. MSRs are netted back out of any rollup tag.
+      2. When a same-period `IntangibleAssetsNetIncludingGoodwill` combined tag
+         exists, back its other-intangibles out (combined − goodwill) and take
+         the larger of that and the explicit tag — so we never miss intangibles
+         a bank tags only in the combined figure. A combined tag STALER than
+         goodwill is ignored (its pre-acquisition sum would understate).
+      3. adjustment = Goodwill + other-intangibles (goodwill current), else the
+         combined tag, else just the other-intangibles (or 0).
 
-    Updates result["goodwill"], result["intangibles"], and stores
-    result["intangible_adjustment"] for traceability.
+    Updates result["goodwill"], result["intangibles"], result["mortgage_srv_rights"],
+    and stores result["intangible_adjustment"] for traceability.
     """
     goodwill = result.get("goodwill")  # plain `Goodwill`, current only
+    _, gw_end = _val_end(facts, "Goodwill")
+
+    # other-intangibles: IntangibleAssetsNetExcludingGoodwill is an MSR-inclusive
+    # rollup for some banks; FiniteLivedIntangibleAssetsNet never holds MSRs.
     intangibles = result.get("intangibles")  # IntangibleAssetsNetExcludingGoodwill
+    intangibles_is_rollup = intangibles is not None
+    _, intang_end = _val_end(facts, "IntangibleAssetsNetExcludingGoodwill")
     if intangibles is None:
-        intangibles = _extract_latest_value(
+        intangibles, intang_end = _val_end(
             facts, "FiniteLivedIntangibleAssetsNet", max_age_years=1)
         result["intangibles"] = intangibles
 
-    incl = _extract_latest_value(
-        facts, "IntangibleAssetsNetIncludingGoodwill", max_age_years=1)
+    incl, incl_end = _val_end(facts, "IntangibleAssetsNetIncludingGoodwill")
+
+    # Mortgage servicing rights (fair value). These STAY in tangible equity, so
+    # net them out of any rollup tag that bundles them in. Only the broad
+    # `IntangibleAssetsNet…Goodwill` rollups ever include MSRs; the finite-lived
+    # tag does not (MSRs are servicing assets, not finite-lived intangibles).
+    msr, msr_end = _val_end(facts, "ServicingAssetAtFairValueAmount")
+    result["mortgage_srv_rights"] = msr
+
+    def _strip_msr(val: float | None, end: str | None, is_rollup: bool) -> float | None:
+        """Net MSR out of a rollup intangible only when it is unambiguously
+        bundled: same balance-sheet date AND small enough to fit inside the
+        tag (0 < MSR < value). Same-period guard avoids netting a stale MSR
+        (FBIZ: MSR 2025-12-31 vs intangibles 2026-03-31); the fit guard avoids
+        banks that tag MSRs SEPARATELY (FITB: MSR $1,583M > intangibles $1,233M)."""
+        if val is None or not is_rollup or not msr:
+            return val
+        if msr_end == end and 0 < msr < val:
+            return val - msr
+        return val
+
+    intangibles_s = _strip_msr(intangibles, intang_end, intangibles_is_rollup)
+    incl_s = _strip_msr(incl, incl_end, True)  # IInclGW is always a rollup
 
     # Guard: goodwill alone cannot exceed goodwill+intangibles. When the plain
     # `Goodwill` tag is larger than the combined figure, that tag is stale or
     # dimensional (e.g. PNFP reads $3.48B goodwill vs $1.88B combined) — trust
     # the combined figure.
     if goodwill is not None and incl is not None and goodwill > incl * 1.05:
-        adjustment = incl
+        adjustment = incl_s
+    elif goodwill is not None:
+        # Other-intangibles = the larger of the explicit tag and (same-period
+        # combined − goodwill). Backing the combined tag out captures banks that
+        # tag other-intangibles ONLY in the combined figure (FBIZ), while the
+        # same-period gate ignores a stale pre-acquisition combined tag whose
+        # other-intangibles the fresh explicit tag already carries (USB: stale
+        # $17.5B combined at 2025-12-31 vs fresh $12.6B goodwill + $1.6B other
+        # at 2026-03-31).
+        other = intangibles_s or 0.0
+        if incl_s is not None and (not gw_end or not incl_end or incl_end >= gw_end):
+            other = max(other, incl_s - goodwill)
+        adjustment = goodwill + other
+    elif incl is not None:
+        adjustment = incl_s
+    elif intangibles is not None:
+        adjustment = intangibles_s
     else:
-        # Otherwise take the MAX of the company's combined figure and our
-        # piecewise (goodwill + other-intangibles) sum, so we never miss
-        # intangibles whichever way the bank tags them.
-        candidates = []
-        if incl is not None:
-            candidates.append(incl)
-        if goodwill is not None:
-            candidates.append(goodwill + (intangibles or 0))
-        elif intangibles is not None:
-            candidates.append(intangibles)
-        adjustment = max(candidates) if candidates else 0.0
+        adjustment = 0.0
 
     result["intangible_adjustment"] = adjustment
     return adjustment

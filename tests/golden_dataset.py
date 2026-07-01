@@ -30,9 +30,12 @@ sys.path.insert(0, str(REPO_ROOT))
 # 1Q26 (Citi: 4Q25) earnings release / non-GAAP reconciliation — NOT pipeline
 # output. Sources per bank in inline comments. Two checks are disabled:
 #   • PNC — pipeline returns n/a (unresolvable par-zero preferred; cardinal rule).
-#   • USB — pipeline over-deducts intangibles (gross incl-goodwill instead of
-#     net-of-DTL, MSR-excluded), so $25.90 vs reported $29.56. Pin restored once
-#     the intangible resolver is fixed. Both documented at their entries.
+#   • USB — MSR-exclusion + correct-share fixes moved the reconstruction from
+#     $25.90 to $28.76 (was gross incl-goodwill + a rounded 1,600M share count).
+#     The only remaining gap to reported $29.56 is DTL netting on intangibles
+#     (~2.7%), which we don't source from a reliable tag — so the tbvps check
+#     stays disabled rather than pin a documented-incomplete figure. Both
+#     documented at their entries.
 #
 # When real-world data drifts (e.g. HBAN+Cadence merger closed Q1 2026,
 # nearly doubling share count), update this file rather than chasing the
@@ -89,23 +92,25 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         "roatce_holdco": {"expected": 7.6, "tol_abs": 1.0},
     },
     "USB": {
-        "shares":        {"expected": 1_600_000_000, "tol_pct": 2.5},
+        # Period-end common shares outstanding, 1Q26 (2026-03-31): the pipeline
+        # now derives issued − treasury (2,125,725,742 − 571,140,185 =
+        # 1,554,585,557) because CommonStockSharesOutstanding is a rounded
+        # 1,600,000,000 cover-page placeholder. Ties USB's reported ~1,555M.
+        "shares":        {"expected": 1_554_585_557, "tol_pct": 1.0},
         "ni_ttm_b":      {"expected": 7.57, "tol_pct": 5.0},
         "equity_b":      {"expected": 65.2, "tol_pct": 3.0},
-        # tbvps check disabled: pipeline returns $25.90 vs USB's own reported
-        # tangible book value / common share of $29.56 (1Q26 release, page 16:
-        # TCE $45,961M / 1,555M shares). The preferred subtraction is correct
-        # (common equity $58,978M ties USB exactly), but the intangible resolver
-        # over-deducts — it subtracts GROSS goodwill+intangibles ($17,539M via
-        # IntangibleAssetsNetIncludingGoodwill) whereas USB (like every issuer's
-        # non-GAAP TCE) deducts intangibles NET of deferred-tax liability and
-        # EXCLUDES MSRs (goodwill $11,588M + other intangibles $1,429M =
-        # $13,017M). Pipeline also uses a rounded 1,600M share count vs the
-        # reported 1,555M. Both are pre-existing defects surfaced by this fix,
-        # not the preferred change. Pinning the authoritative $29.56 would fail
-        # against the buggy output, and pinning $25.90 would enshrine a wrong
-        # number (cardinal rule). Restore this check ({"expected": 29.56,
-        # "tol_pct": 2.0}) once the intangible resolver nets DTL / excludes MSRs.
+        # tbvps check still disabled — but the gap is now down to the DTL residual.
+        # The MSR-exclusion + correct-share fixes moved the reconstruction from
+        # $25.90 to $28.76 (TCE convention): common equity $58,978M − (goodwill
+        # $12,625M + other-intangibles-EX-MSR $1,647M = $14,272M) = $44,706M /
+        # 1,554,585,557 shares = $28.76. USB's own reported common TBV/share is
+        # $29.56 (1Q26 release: TCE $45,961M / 1,555M). The remaining 2.7% is the
+        # deferred-tax-liability netting on intangibles (~$1,255M) that USB nets
+        # but we don't source from a specific reliable tag (cardinal rule: don't
+        # guess it). $28.76 is outside a 2% band, so the check stays disabled;
+        # re-enable ({"expected": 29.56, "tol_pct": 2.0}) only if the DTL netting
+        # is later sourced from a specific tag. Pinning $28.76 would enshrine the
+        # documented-incomplete figure, so it is intentionally left unpinned.
         # "tbvps":         {"expected": 29.56, "tol_pct": 2.0},
         "roatce_holdco": {"expected": 15.9, "tol_abs": 1.5},
     },

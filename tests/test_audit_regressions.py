@@ -289,6 +289,152 @@ class TestTtmOrNoneInvariant(unittest.TestCase):
         self.assertEqual(check_shares_cover({"shares_cover_divergence_pct": 2.0}), [])
 
 
+class TestTceIntangibleConvention(unittest.TestCase):
+    """Fallback TBVPS/BVPS reconstruction follows the standard tangible-common-
+    equity convention: deduct goodwill + other intangibles but KEEP mortgage
+    servicing rights (MSRs) in tangible equity, and use the true period-end
+    common-share count (not a rounded cover-page placeholder).
+
+    Pins the USB Q1-2026 defects: (1) the intangible resolver deducted GROSS
+    goodwill+intangibles via IntangibleAssetsNetIncludingGoodwill, bundling in
+    ~$3.15B of MSRs that TCE keeps; (2) shares_outstanding read a rounded
+    1,600,000,000 placeholder instead of the ~1,555M actually outstanding."""
+
+    # A recent as-of within the 1-year staleness window so extractors accept it.
+    from datetime import date as _date
+    AS_OF = (_date.today().replace(day=1)).isoformat()  # 1st of this month
+    PRIOR = "2025-12-31"                                 # stale prior year-end
+    FILED = _date.today().isoformat()
+
+    def _facts(self, usgaap: dict) -> dict:
+        return {"facts": {"us-gaap": usgaap, "dei": {}}}
+
+    def _pt(self, end, val, form="10-Q"):
+        """Point-in-time balance-sheet fact row."""
+        return {"end": end, "val": val, "form": form, "filed": self.FILED}
+
+    def _usb_like_facts(self):
+        """USB-shaped: goodwill + MSR-inclusive IntangibleAssetsNetExcludingGoodwill
+        rollup (same period), a stale MSR-inclusive combined tag, a rounded
+        share placeholder, and precise issued/treasury at the equity date."""
+        A = self.AS_OF
+        return self._facts({
+            "StockholdersEquity": {"units": {"USD": [self._pt(A, 65_786_000_000)]}},
+            # preferred carried as par+APIC (USB's tag)
+            "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount": {
+                "units": {"USD": [self._pt(A, 6_808_000_000)]}},
+            "Goodwill": {"units": {"USD": [self._pt(A, 12_625_000_000)]}},
+            # rollup that BUNDLES the MSR (4,799 includes the 3,152 MSR)
+            "IntangibleAssetsNetExcludingGoodwill": {
+                "units": {"USD": [self._pt(A, 4_799_000_000)]}},
+            # stale pre-acquisition combined tag — must NOT win over fresh pieces
+            "IntangibleAssetsNetIncludingGoodwill": {
+                "units": {"USD": [self._pt(self.PRIOR, 17_539_000_000, "10-K")]}},
+            "ServicingAssetAtFairValueAmount": {
+                "units": {"USD": [self._pt(A, 3_152_000_000)]}},
+            # rounded cover placeholder (exact 1.6B) instead of the real count
+            "CommonStockSharesOutstanding": {
+                "units": {"shares": [self._pt(self.PRIOR, 1_600_000_000, "10-K")]}},
+            "CommonStockSharesIssued": {
+                "units": {"shares": [self._pt(A, 2_125_725_742)]}},
+            "TreasuryStockCommonShares": {
+                "units": {"shares": [self._pt(A, 571_140_185)]}},
+        })
+
+    def test_msr_excluded_from_intangible_deduction(self):
+        from data.sec_client import _resolve_intangible_adjustment
+        facts = self._usb_like_facts()
+        result = {"goodwill": 12_625_000_000, "intangibles": 4_799_000_000}
+        adj = _resolve_intangible_adjustment(facts, result)
+        # Deduction = goodwill 12,625 + (other-intangibles 4,799 − MSR 3,152)
+        #           = 12,625 + 1,647 = 14,272M. NOT the gross 17,539M rollup
+        #           (which also bundles the MSR) and NOT 17,539−3,152.
+        self.assertEqual(adj, 14_272_000_000)
+        self.assertEqual(result["mortgage_srv_rights"], 3_152_000_000)
+
+    def test_rounded_share_placeholder_replaced_by_issued_minus_treasury(self):
+        from unittest.mock import patch
+        from data import sec_client
+        facts = self._usb_like_facts()
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            result = sec_client.get_latest_fundamentals(1)
+        # 1,600,000,000 is an exact 100M multiple → placeholder → replaced by
+        # issued − treasury at the equity date = 2,125,725,742 − 571,140,185.
+        self.assertEqual(result["shares_outstanding"], 1_554_585_557)
+
+    def test_usb_tbvps_matches_tce_convention(self):
+        from unittest.mock import patch
+        from data import sec_client
+        facts = self._usb_like_facts()
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            result = sec_client.get_latest_fundamentals(1)
+        # common equity = 65,786 − 6,808 = 58,978M; TCE = 58,978 − 14,272 =
+        # 44,706M; / 1,554,585,557 shares = $28.76. Reported $29.56 (2.7% off,
+        # residual = DTL-on-intangibles netting, documented & intentionally not
+        # guessed). The pre-fix reconstruction was $25.90 (MSR over-deducted +
+        # rounded shares) — a plausible-wrong ~14% miss.
+        self.assertAlmostEqual(result["tangible_book_value_per_share"], 28.76, places=1)
+        # Sanity: closes most of the gap to the reported figure.
+        self.assertLess(abs(result["tangible_book_value_per_share"] - 29.56) / 29.56, 0.03)
+
+    def test_finite_lived_intangibles_never_lose_msr(self):
+        """A bank that tags MSRs SEPARATELY (FITB-shape: MSR > FiniteLived
+        intangibles, and other-intangibles come from FiniteLivedIntangibleAssetsNet
+        which never contains MSRs) must deduct the FULL goodwill + intangibles —
+        the MSR stays out of the deduction because it was never in it."""
+        from data.sec_client import _resolve_intangible_adjustment
+        A = self.AS_OF
+        facts = self._facts({
+            "Goodwill": {"units": {"USD": [self._pt(A, 9_966_000_000)]}},
+            # IExGW == FiniteLived (1,233M); MSR (1,583M) is tagged separately and
+            # is LARGER than the intangibles, so it cannot be bundled inside them.
+            "IntangibleAssetsNetExcludingGoodwill": {
+                "units": {"USD": [self._pt(A, 1_233_000_000)]}},
+            "ServicingAssetAtFairValueAmount": {
+                "units": {"USD": [self._pt(A, 1_583_000_000)]}},
+        })
+        result = {"goodwill": 9_966_000_000, "intangibles": 1_233_000_000}
+        adj = _resolve_intangible_adjustment(facts, result)
+        # Full deduction, MSR untouched: 9,966 + 1,233 = 11,199M.
+        self.assertEqual(adj, 11_199_000_000)
+
+    def test_no_msr_bank_deduction_unchanged(self):
+        """A plain bank (goodwill + finite-lived intangibles, no MSR) deducts
+        goodwill + intangibles exactly — the MSR machinery is a no-op."""
+        from data.sec_client import _resolve_intangible_adjustment
+        A = self.AS_OF
+        facts = self._facts({
+            "Goodwill": {"units": {"USD": [self._pt(A, 253_805_000)]}},
+            "IntangibleAssetsNetExcludingGoodwill": {
+                "units": {"USD": [self._pt(A, 145_985_000)]}},
+        })
+        result = {"goodwill": 253_805_000, "intangibles": 145_985_000}
+        adj = _resolve_intangible_adjustment(facts, result)
+        self.assertEqual(adj, 253_805_000 + 145_985_000)
+        self.assertIsNone(result["mortgage_srv_rights"])
+
+    def test_genuine_share_count_not_flagged_as_placeholder(self):
+        """A precise (non-round) CommonStockSharesOutstanding is kept as-is even
+        when dated at a prior period — only exact 100M multiples are placeholders
+        (guards JPM: 2,696,200,000 is genuine, not a rounded 100M placeholder)."""
+        from unittest.mock import patch
+        from data import sec_client
+        A = self.AS_OF
+        facts = self._facts({
+            "StockholdersEquity": {"units": {"USD": [self._pt(A, 362_400_000_000)]}},
+            "CommonStockSharesOutstanding": {
+                "units": {"shares": [self._pt(self.PRIOR, 2_696_200_000, "10-K")]}},
+            # issued/treasury present but must NOT override the genuine count
+            "CommonStockSharesIssued": {
+                "units": {"shares": [self._pt(A, 3_400_000_000)]}},
+            "TreasuryStockCommonShares": {
+                "units": {"shares": [self._pt(A, 720_488_582)]}},
+        })
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            result = sec_client.get_latest_fundamentals(1)
+        self.assertEqual(result["shares_outstanding"], 2_696_200_000)
+
+
 class TestUsDomicileFilter(unittest.TestCase):
     """Universe scope is US-domiciled filers only. Two signals required
     because foreign issuers can carry an EMPTY stateOfIncorporation (HSBC)."""
