@@ -315,6 +315,9 @@ IR_URLS = {
     "COF":   "https://ir.capitalone.com/",
     "GS":    "https://www.goldmansachs.com/investor-relations/",
     "MS":    "https://www.morganstanley.com/about-us-ir",
+    # Q4 IR site on a holdco domain that differs from the FDIC bank WEBADDR, so
+    # auto-discovery (which derives the host from WEBADDR) never reaches it.
+    "STBA":  "https://www.stbancorp.com/",
 }
 
 

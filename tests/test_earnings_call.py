@@ -22,6 +22,9 @@ from data.earnings_call import (  # noqa: E402
     build_calls_agenda,
     _announced_release_date,
     _parse_release_timing,
+    _parse_release_date,
+    _parse_call_date,
+    _parse_on_date,
 )
 
 
@@ -155,6 +158,40 @@ class TestParseCallInfo(unittest.TestCase):
             "10:00a ET · webcast ↗")
         self.assertEqual(mid_label({"call_time": "10:00a ET"}), "10:00a ET")
         self.assertEqual(mid_label({"dial_in": "1-800-555-1234"}), "call")
+
+
+class TestCommaWeekdayDates(unittest.TestCase):
+    """S&T Bancorp (STBA) writes dates as '…1:00 pm ET, Thursday, July 23, 2026'
+    (comma/weekday-led, no 'on'/'for'). The date parser must catch these, while a
+    bare PRNewswire dateline ('July 1, 2026', no weekday) must NOT be mistaken for
+    the release date; and the PR's own wire link is not the webcast."""
+
+    STBA = (
+        "INDIANA, Pa., July 1, 2026 /PRNewswire/ -- S&T Bancorp, Inc. (NASDAQ: STBA) "
+        "announced today that a conference call detailing the company's second quarter "
+        "earnings will be held live via webcast at 1:00 pm ET, Thursday, July 23, 2026. "
+        "S&T Bancorp, Inc. intends to release its second quarter earnings before the "
+        "market opens, Thursday, July 23, 2026. View original content: "
+        "https://www.prnewswire.com/news-releases/st-bancorp-302815884.html"
+    )
+
+    def test_weekday_led_dates_parse(self):
+        self.assertEqual(_parse_on_date("held Thursday, July 23, 2026"), "2026-07-23")
+        self.assertEqual(_parse_on_date("results on July 14, 2026"), "2026-07-14")
+
+    def test_bare_dateline_not_matched(self):
+        # No weekday and no on/for → not a date we anchor on (avoids the dateline).
+        self.assertIsNone(_parse_on_date("Pa., July 1, 2026 /PRNewswire/"))
+
+    def test_stba_release_and_call_dates(self):
+        self.assertEqual(_parse_release_date(self.STBA, "2026-07-01"), "2026-07-23")
+        self.assertEqual(_parse_call_date(self.STBA, "2026-07-01"), "2026-07-23")
+
+    def test_stba_time_timing_and_no_wire_webcast(self):
+        info = parse_call_info(self.STBA)
+        self.assertEqual(info["call_time"], "1:00p ET")
+        self.assertEqual(info["when"], "Before open")
+        self.assertIsNone(info["webcast_url"])   # prnewswire link is NOT the webcast
 
 
 class TestReleaseTiming(unittest.TestCase):

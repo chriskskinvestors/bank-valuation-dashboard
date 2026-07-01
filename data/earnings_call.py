@@ -35,6 +35,12 @@ _TZ_ABBR = {"eastern": "ET", "central": "CT", "mountain": "MT", "pacific": "PT"}
 _URL_RE = re.compile(r"https?://[^\s\"'<>)\]]+")
 _WEBCAST_CUES = ("webcast", "listen", "live audio", "audio of the call",
                  "investor", "ir.", "/investor")
+# PR-distribution wires: a release's own syndication URL sits near "webcast" text
+# but is NOT the webcast (S&T's body links to prnewswire, not the event) — never
+# surface one as the webcast link.
+_WIRE_HOSTS = ("prnewswire.com", "businesswire.com", "globenewswire.com",
+               "accesswire.com", "prweb.com", "newswire.com", "einpresswire.com",
+               "einnews.com")
 
 _PHONE_RE = re.compile(
     r"(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}")
@@ -65,9 +71,12 @@ def _parse_webcast_url(text: str) -> str | None:
     None if no contextually-webcast URL is present."""
     low = text.lower()
     for m in _URL_RE.finditer(text):
+        url = m.group(0).rstrip(".,;)]\"'")
+        if any(w in url.lower() for w in _WIRE_HOSTS):
+            continue                        # the PR's own wire link, not the webcast
         ctx = low[max(0, m.start() - 90): m.end() + 10]
         if any(cue in ctx for cue in _WEBCAST_CUES):
-            return m.group(0).rstrip(".,;)]\"'")
+            return url
     return None
 
 
@@ -131,9 +140,12 @@ def mid_label(ci: dict | None) -> str:
 _MONTHS = {m: i for i, m in enumerate(
     ("january", "february", "march", "april", "may", "june", "july", "august",
      "september", "october", "november", "december"), 1)}
+_WD = r"(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s+"   # "Thursday, " / "Fri "
 _ON_DATE_RE = re.compile(
-    r"\b(?:on|for)\s+(?:or\s+about\s+)?"
-    r"(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s+)?"   # optional weekday: "Thursday,"
+    r"\b(?:"
+    r"(?:on|for)\s+(?:or\s+about\s+)?(?:" + _WD + r")?"    # "on [Thursday,] July 23, 2026"
+    r"|" + _WD +                                           # or weekday-led: ", Thursday, July 23, 2026"
+    r")"
     r"([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})", re.I)
 _ANNOUNCE_CUES = ("announce", "will report", "to report", "will release",
                   "to release", "schedule", "set date", "sets date",

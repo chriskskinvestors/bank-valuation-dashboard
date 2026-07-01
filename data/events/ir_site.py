@@ -542,7 +542,10 @@ def _q4_announcement(ir_home: str, today_iso: str) -> dict | None:
         hl = it.get("Headline") or ""
         if not _is_earnings_announcement(hl):
             continue
-        body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", it.get("Body") or ""))
+        # Strip <style>/<script> CONTENTS first — the Q4 body inlines a CSS block
+        # (.q4default { … }) that would otherwise leak in as text after tag removal.
+        raw = re.sub(r"(?is)<(style|script)\b.*?</\1>", " ", it.get("Body") or "")
+        body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw))
         if not body:
             continue
         ci = parse_call_info(body)
