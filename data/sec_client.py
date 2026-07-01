@@ -58,6 +58,14 @@ SLIM_USGAAP_CONCEPTS = {
     "InterestIncome", "InterestExpense",
     "Goodwill", "IntangibleAssetsNetExcludingGoodwill",
     "IntangibleAssetsNetIncludingGoodwill", "FiniteLivedIntangibleAssetsNet",
+    # Preferred stock — subtracted from total equity so book/tangible-book per
+    # share are COMMON-based (else every preferred issuer overstates them).
+    # Big banks (BAC/USB/JPM) tag carrying value as par+APIC, not PreferredStockValue.
+    "PreferredStockValue", "PreferredStockValueOutstanding",
+    "PreferredStockIncludingAdditionalPaidInCapital",
+    "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount",
+    "PreferredStockLiquidationPreferenceValue",
+    "PreferredStockSharesOutstanding", "PreferredStockSharesIssued",
     # Period-matched actuals for the consensus comparison (data/sec_period.py):
     # bank income-statement flows, net interest income, provision, and the
     # balance-sheet stocks brokers estimate.
@@ -555,11 +563,31 @@ def get_latest_fundamentals(cik: int) -> dict:
     # Resolve the full goodwill + other-intangibles adjustment via fallbacks.
     intangible_adjustment = _resolve_intangible_adjustment(facts, result)
 
-    if equity and shares and shares > 0:
-        result["book_value_per_share"] = equity / shares
+    # Preferred stock — book/tangible-book per share are per COMMON share, so
+    # subtract preferred from total StockholdersEquity first. Skipping this
+    # overstates both for every bank with preferred outstanding (FBIZ's $12M
+    # pfd is ~$1.44/sh of common book). preferred_present says the filer HAS
+    # preferred; preferred_stock is its carrying value (None if unresolved).
+    preferred_stock, preferred_present = _resolve_preferred_stock(facts)
+    result["preferred_stock"] = preferred_stock
+    result["preferred_present"] = preferred_present
+
+    # CARDINAL RULE: the filer reports preferred but we can't resolve its value.
+    # A preferred-inclusive figure labeled "common tangible book" is a
+    # plausible-wrong number — render n/a instead.
+    preferred_unresolved = preferred_present and preferred_stock is None
+    if equity is not None and preferred_unresolved:
+        result["common_equity"] = None
+        result["book_value_per_share"] = None
+        result["tangible_book_value_per_share"] = None
+    elif equity and shares and shares > 0:
+        common_equity = equity - (preferred_stock or 0)
+        result["common_equity"] = common_equity
+        result["book_value_per_share"] = common_equity / shares
         result["tangible_book_value_per_share"] = (
-            equity - intangible_adjustment) / shares
+            common_equity - intangible_adjustment) / shares
     else:
+        result["common_equity"] = None
         result["book_value_per_share"] = None
         result["tangible_book_value_per_share"] = None
 
@@ -622,6 +650,60 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
 
     result["intangible_adjustment"] = adjustment
     return adjustment
+
+
+def _resolve_preferred_stock(facts: dict) -> tuple[float | None, bool]:
+    """
+    Return (preferred_carrying_value, filer_has_preferred).
+
+    Book / tangible-book per share are per-COMMON-share, so preferred equity
+    must be removed from total StockholdersEquity first. This resolves the
+    dollar value to subtract and, separately, whether the filer even has
+    preferred (so the caller can honor the cardinal rule: preferred present but
+    value unresolved → render n/a rather than a preferred-inflated figure).
+
+    Value fallbacks (current-only; the staleness guard in _extract_latest_value
+    rejects abandoned tags, e.g. FBIZ's 2022 PreferredStockValueOutstanding,
+    USB's 2013 PreferredStockValue). We want the CARRYING value in the equity
+    section — par-only for simple issuers, par+APIC for the big banks:
+      1. PreferredStockValue                                   (FBIZ, HBAN, C…)
+      2. PreferredStockIncludingAdditionalPaidInCapital        (BAC)
+      3. PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount (USB, JPM)
+      4. PreferredStockValueOutstanding
+      5. PreferredStockLiquidationPreferenceValue  (redemption value; last resort)
+
+    "Has preferred" is true when a current PreferredStock* value tag resolves,
+    or current PreferredStockShares(Outstanding|Issued) > 0. A filer with no
+    preferred at all yields (0.0, False) → common_equity == equity, unchanged.
+    """
+    value = None
+    for concept in (
+        "PreferredStockValue",
+        "PreferredStockIncludingAdditionalPaidInCapital",
+        "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount",
+        "PreferredStockValueOutstanding",
+        "PreferredStockLiquidationPreferenceValue",
+    ):
+        # A par-only tag can read exactly 0 while the real carrying value sits
+        # in an untagged APIC line (PNC: PreferredStockValue $0 but ~$4B pfd
+        # outstanding). Treat 0 as "keep looking" — never as a resolved value.
+        v = _extract_latest_value(facts, concept, max_age_years=1)
+        if v:
+            value = v
+            break
+
+    shares = (
+        _extract_latest_value(facts, "PreferredStockSharesOutstanding", max_age_years=1)
+        or _extract_latest_value(facts, "PreferredStockSharesIssued", max_age_years=1)
+    )
+    has_preferred = bool(value) or bool(shares and shares > 0)
+
+    if not has_preferred:
+        # No preferred outstanding — subtract nothing.
+        return 0.0, False
+    # Filer has preferred; value is None when only a par-zero/stale tag exists
+    # (unresolved → caller renders n/a per the cardinal rule).
+    return value, True
 
 
 def _latest_end_date(facts: dict, concept: str) -> str | None:
@@ -743,22 +825,32 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
     goodwill = result["goodwill"]["value"] or 0
     intangibles = result["intangibles"]["value"] or 0
 
-    if equity and shares and shares > 0:
-        tbvps = (equity - goodwill - intangibles) / shares
-        bvps = equity / shares
+    # Preferred stock — book/tangible-book are per COMMON share, so subtract
+    # preferred equity first (same resolution as get_latest_fundamentals).
+    preferred_stock, preferred_present = _resolve_preferred_stock(facts)
+    preferred_tup = _extract_latest_value_with_source(
+        facts, "PreferredStockValue", max_age_years=1)
+    result["preferred_stock"] = _wrap("preferred_stock", preferred_tup, "PreferredStockValue")
+    preferred_unresolved = preferred_present and preferred_stock is None
+
+    if equity and shares and shares > 0 and not preferred_unresolved:
+        common_equity = equity - (preferred_stock or 0)
+        tbvps = (common_equity - goodwill - intangibles) / shares
+        bvps = common_equity / shares
         # Provenance of a computed value: combine the parents
         parents = (
             result["book_value_total"]["source"],
             result["shares_outstanding"]["source"],
             result["goodwill"]["source"],
             result["intangibles"]["source"],
+            result["preferred_stock"]["source"],
         )
         result["book_value_per_share"] = {
             "value": bvps,
             "source": Source(
                 origin="COMPUTED", concept="book_value_per_share",
-                derived_from=tuple(p for p in parents[:2]),
-                notes="= StockholdersEquity / SharesOutstanding",
+                derived_from=(parents[0], parents[1], parents[4]),
+                notes="= (StockholdersEquity − Preferred) / SharesOutstanding",
             ),
         }
         result["tangible_book_value_per_share"] = {
@@ -766,12 +858,16 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
             "source": Source(
                 origin="COMPUTED", concept="tangible_book_value_per_share",
                 derived_from=parents,
-                notes="= (StockholdersEquity − Goodwill − Intangibles) / SharesOutstanding",
+                notes="= (StockholdersEquity − Preferred − Goodwill − Intangibles) / SharesOutstanding",
             ),
         }
     else:
-        result["book_value_per_share"] = {"value": None, "source": Source(origin="COMPUTED", concept="book_value_per_share", notes="Insufficient inputs")}
-        result["tangible_book_value_per_share"] = {"value": None, "source": Source(origin="COMPUTED", concept="tangible_book_value_per_share", notes="Insufficient inputs")}
+        # Cardinal rule: preferred present but unresolved → n/a, not a
+        # preferred-inflated "common" figure.
+        note = ("Preferred present but value unresolved"
+                if preferred_unresolved else "Insufficient inputs")
+        result["book_value_per_share"] = {"value": None, "source": Source(origin="COMPUTED", concept="book_value_per_share", notes=note)}
+        result["tangible_book_value_per_share"] = {"value": None, "source": Source(origin="COMPUTED", concept="tangible_book_value_per_share", notes=note)}
 
     return result
 

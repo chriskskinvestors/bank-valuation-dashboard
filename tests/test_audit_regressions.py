@@ -964,5 +964,159 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
         self.assertIn("itemized lines exceed total", h)
 
 
+class TestPreferredStockExcludedFromBookValue(unittest.TestCase):
+    """Book / tangible-book per share are per-COMMON-share, so preferred equity
+    must be subtracted from total StockholdersEquity first.
+
+    The bug shipped once: bvps/tbvps used total equity, overstating both for
+    every bank with preferred outstanding. FBIZ Q1-2026 (real numbers below)
+    read tbvps $44.11 instead of its earnings-release $42.68 — a CARDINAL-RULE
+    plausible-wrong number on the Overview 'TBV / Share' and 'P/TBV'.
+    """
+
+    # FBIZ 2026-03-31 (CIK 1521951): total equity $380.08M includes $11.992M
+    # preferred; common shares 8,343,519; goodwill $10.7M; combined
+    # goodwill+intangibles (IntangibleAssetsNetIncludingGoodwill) $12.011M.
+    END = "2026-03-31"
+    FILED = "2026-05-01"
+
+    @staticmethod
+    def _facts(equity, shares, *, goodwill=None, incl_intang=None,
+               preferred_value=None, preferred_shares=None):
+        """Build a slim-shaped companyfacts blob. Only the instant balance-sheet
+        concepts bvps/tbvps read; None args omit the tag entirely."""
+        end, filed = TestPreferredStockExcludedFromBookValue.END, \
+            TestPreferredStockExcludedFromBookValue.FILED
+
+        def usd(v):
+            return {"units": {"USD": [
+                {"end": end, "val": v, "form": "10-Q", "filed": filed}]}}
+
+        def sh(v):
+            return {"units": {"shares": [
+                {"end": end, "val": v, "form": "10-Q", "filed": filed}]}}
+
+        ug = {
+            "StockholdersEquity": usd(equity),
+            "CommonStockSharesOutstanding": sh(shares),
+        }
+        if goodwill is not None:
+            ug["Goodwill"] = usd(goodwill)
+        if incl_intang is not None:
+            ug["IntangibleAssetsNetIncludingGoodwill"] = usd(incl_intang)
+        if preferred_value is not None:
+            ug["PreferredStockValue"] = usd(preferred_value)
+        if preferred_shares is not None:
+            ug["PreferredStockSharesOutstanding"] = sh(preferred_shares)
+        return {"facts": {"us-gaap": ug, "dei": {}}}
+
+    def _fundamentals(self, facts):
+        from unittest.mock import patch
+        # A sibling test class may have swapped sys.modules["streamlit"] for a
+        # bare stub lacking cache_data; restore the decorator shim so importing
+        # data.sec_client (module-level @st.cache_data) succeeds under any order.
+        import sys
+        if not hasattr(sys.modules.get("streamlit"), "cache_data"):
+            sys.modules["streamlit"] = _st
+        from data import sec_client
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            return sec_client.get_latest_fundamentals(1)
+
+    def test_preferred_subtracted_common_based(self):
+        # FBIZ real numbers → ties the Q1-2026 earnings release.
+        r = self._fundamentals(self._facts(
+            equity=380_080_000, shares=8_343_519,
+            goodwill=10_700_000, incl_intang=12_011_000,
+            preferred_value=11_992_000, preferred_shares=12_500))
+        self.assertTrue(r["preferred_present"])
+        self.assertEqual(r["preferred_stock"], 11_992_000)
+        self.assertEqual(r["common_equity"], 368_088_000)
+        # bvps = (380.08M − 11.992M) / 8,343,519 = $44.12
+        self.assertAlmostEqual(r["book_value_per_share"], 44.1166, places=3)
+        # tbvps = (368.088M − 12.011M) / 8,343,519 = $42.68 (earnings release)
+        self.assertAlmostEqual(r["tangible_book_value_per_share"], 42.6771, places=3)
+        # Downstream P/TBV at $64.44 → 1.51 (CapIQ).
+        from analysis.valuation import compute_ptbv_ratio
+        self.assertAlmostEqual(
+            compute_ptbv_ratio(64.44, r["tangible_book_value_per_share"]),
+            1.51, places=2)
+
+    def test_no_preferred_unchanged(self):
+        # No PreferredStock* tag at all → common_equity == equity, values are
+        # the pure equity-based figures (unchanged from before the fix).
+        r = self._fundamentals(self._facts(
+            equity=4_082_127_000, shares=67_292_503,
+            goodwill=1_000_000_000, incl_intang=1_070_470_000))
+        self.assertFalse(r["preferred_present"])
+        self.assertEqual(r["preferred_stock"], 0.0)
+        self.assertEqual(r["common_equity"], 4_082_127_000)
+        self.assertAlmostEqual(r["book_value_per_share"], 60.6624, places=3)
+        self.assertAlmostEqual(
+            r["tangible_book_value_per_share"], 44.7547, places=3)
+
+    def test_preferred_present_but_unresolvable_renders_na(self):
+        # Preferred SHARES outstanding prove the filer has preferred, but no
+        # PreferredStockValue* tag resolves → cardinal rule: n/a, never a
+        # preferred-inflated "common" figure.
+        r = self._fundamentals(self._facts(
+            equity=380_080_000, shares=8_343_519,
+            goodwill=10_700_000, incl_intang=12_011_000,
+            preferred_value=None, preferred_shares=12_500))
+        self.assertTrue(r["preferred_present"])
+        self.assertIsNone(r["preferred_stock"])
+        self.assertIsNone(r["common_equity"])
+        self.assertIsNone(r["book_value_per_share"])
+        self.assertIsNone(r["tangible_book_value_per_share"])
+
+    def test_stale_preferred_value_ignored_shares_trigger_na(self):
+        # A PreferredStockValue tag exists but is abandoned (>1yr stale, like
+        # FBIZ's 2022 PreferredStockValueOutstanding): the staleness guard drops
+        # it, current preferred shares still flag preferred → n/a, not a stale
+        # or preferred-inclusive number.
+        facts = self._facts(
+            equity=380_080_000, shares=8_343_519,
+            goodwill=10_700_000, incl_intang=12_011_000,
+            preferred_shares=12_500)
+        facts["facts"]["us-gaap"]["PreferredStockValue"] = {"units": {"USD": [
+            {"end": "2022-12-31", "val": 12_500_000,
+             "form": "10-K", "filed": "2023-03-01"}]}}
+        r = self._fundamentals(facts)
+        self.assertTrue(r["preferred_present"])
+        self.assertIsNone(r["preferred_stock"])
+        self.assertIsNone(r["tangible_book_value_per_share"])
+
+    def test_par_zero_preferred_value_renders_na(self):
+        # PNC-style: PreferredStockValue reads exactly $0 (preferred carried in
+        # an untagged APIC line) with real preferred shares outstanding. A $0
+        # deduction would overstate common book — treat 0 as unresolved → n/a.
+        facts = self._facts(
+            equity=63_630_000_000, shares=397_000_000,
+            goodwill=10_987_000_000, incl_intang=12_500_000_000,
+            preferred_value=0, preferred_shares=58_000)
+        r = self._fundamentals(facts)
+        self.assertTrue(r["preferred_present"])
+        self.assertIsNone(r["preferred_stock"])
+        self.assertIsNone(r["tangible_book_value_per_share"])
+
+    def test_preferred_apic_carrying_value_used(self):
+        # BAC-style: no PreferredStockValue, carrying value tagged as par+APIC
+        # under PreferredStockIncludingAdditionalPaidInCapital.
+        from unittest.mock import patch
+        from data import sec_client
+        facts = self._facts(
+            equity=300_668_000_000, shares=7_129_908_032,
+            goodwill=68_951_000_000, incl_intang=70_821_000_000,
+            preferred_shares=3_951_164)
+        facts["facts"]["us-gaap"]["PreferredStockIncludingAdditionalPaidInCapital"] = {
+            "units": {"USD": [{"end": self.END, "val": 25_992_000_000,
+                               "form": "10-Q", "filed": self.FILED}]}}
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            r = sec_client.get_latest_fundamentals(1)
+        self.assertEqual(r["preferred_stock"], 25_992_000_000)
+        self.assertEqual(r["common_equity"], 274_676_000_000)
+        # tbvps = (274.676B − 70.821B) / 7,129,908,032 = $28.59
+        self.assertAlmostEqual(r["tangible_book_value_per_share"], 28.59, places=1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
