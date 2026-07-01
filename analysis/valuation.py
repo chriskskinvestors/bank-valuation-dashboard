@@ -382,7 +382,12 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
 
     eps = sec_data.get("eps")
     bvps = sec_data.get("book_value_per_share")
-    tbvps = sec_data.get("tangible_book_value_per_share")
+    # Company-Reported principle: prefer the bank's OWN reported tangible book
+    # value per common share (from its earnings release) over our reconstruction.
+    # The reconstruction is the FALLBACK when the bank doesn't disclose or the
+    # reported figure fails a sanity gate. See _resolve_tbvps.
+    reconstructed_tbvps = sec_data.get("tangible_book_value_per_share")
+    tbvps = _resolve_tbvps(ticker, reconstructed_tbvps, bvps)
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
 
@@ -536,6 +541,34 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         # ── Capital Return Attribution (SEC XBRL: divs + buybacks + shares) ──
         **_compute_capital_return_for_ticker(ticker, price_data, sec_data),
     }
+
+
+def _resolve_tbvps(
+    ticker: str | None,
+    reconstructed: float | None,
+    bvps: float | None,
+) -> float | None:
+    """Tangible book value per common share, preferring the bank's OWN reported
+    figure (earnings-release non-GAAP line) over our reconstruction.
+
+    Company-Reported principle: take the disclosed number when it's cleanly found
+    AND ties out (see data.sec_earnings_8k.reported_tbvps gates); otherwise fall
+    back to `reconstructed` (data.sec_client's corrected reconstruction). If the
+    reported extractor errors or CIK can't be resolved, the reconstruction stands
+    — never a regression. Returns None only when both are None (→ n/a upstream)."""
+    if ticker:
+        try:
+            from data.bank_mapping import get_cik
+            from data.sec_earnings_8k import reported_tbvps
+            cik = get_cik(ticker)
+            if cik:
+                reported = reported_tbvps(cik, reconstructed=reconstructed, bvps=bvps)
+                if reported is not None:
+                    return reported
+        except Exception as e:
+            print(f"[valuation] reported_tbvps lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    return reconstructed
 
 
 def _compute_capital_return_for_ticker(ticker: str | None, price_data: dict, sec_data: dict) -> dict:

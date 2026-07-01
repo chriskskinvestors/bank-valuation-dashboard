@@ -13,9 +13,11 @@ press-release HTML:
 Run: python -m unittest tests.test_sec_earnings_8k
 """
 import unittest
+import unittest.mock
 
 from data.sec_earnings_8k import (
     extract_earnings_figures, _num, _clean_label, _table_rows, _detect_scale,
+    extract_reported_tbvps, _match_tbvps_label,
 )
 
 
@@ -135,6 +137,174 @@ class TestExtraction(unittest.TestCase):
         self.assertIsNone(out["net_income"])
         self.assertIsNone(out["net_interest_income"])
         self.assertAlmostEqual(out["roaa"], 1.62)
+
+
+class TestReportedTbvpsLabelMatch(unittest.TestCase):
+    """The non-GAAP TBVPS label variants match; a plain book-value or per-share
+    EPS label does NOT (that's the reconstruction's job / a wrong figure)."""
+
+    def test_label_variants_match(self):
+        for lbl in (
+            "Tangible book value per share",
+            "Tangible book value per common share",
+            "Tangible common book value per share",
+            "Tangible common equity per share",
+            "Tangible book value per share (non-GAAP)",
+            "Tangible book value per common share (Non-GAAP)",
+        ):
+            self.assertTrue(_match_tbvps_label(_clean_label(lbl)), lbl)
+
+    def test_non_tbvps_labels_do_not_match(self):
+        for lbl in (
+            "Book value per share",            # NOT tangible → reconstruction
+            "Book value per common share",
+            "Diluted earnings per share",
+            "Dividends declared per share",
+            "Tangible common equity",          # not per-share
+        ):
+            self.assertFalse(_match_tbvps_label(_clean_label(lbl)), lbl)
+
+
+class TestReportedTbvpsExtraction(unittest.TestCase):
+    """extract_reported_tbvps — Company-Reported number, gated by the cardinal
+    rule (positive per-share, tangible < book, within 15% of the reconstruction).
+    Deterministic, no network."""
+
+    def _rel(self, tbvps_cell, bvps_cell="52.10"):
+        # A realistic non-GAAP reconciliation snippet: book, then tangible.
+        return _html(
+            _row("Book value per common share", bvps_cell)
+            + _row("Tangible book value per common share", tbvps_cell)
+        )
+
+    def test_clean_reported_value_ties_reconstruction(self):
+        """FBIZ-style: reported $42.68 ties the reconstruction ($42.68) and is
+        < book ($52.10) → taken as reported."""
+        html = self._rel("42.68", bvps_cell="52.10")
+        v = extract_reported_tbvps(html, reconstructed=42.68, bvps=52.10)
+        self.assertAlmostEqual(v, 42.68)
+
+    def test_within_gate_band_accepted(self):
+        # 41.00 vs reconstruction 42.68 → |Δ|/recon ≈ 3.9% < 15% → accepted.
+        html = self._rel("41.00")
+        v = extract_reported_tbvps(html, reconstructed=42.68, bvps=52.10)
+        self.assertAlmostEqual(v, 41.00)
+
+    def test_too_high_vs_reconstruction_rejected(self):
+        # A preferred-inflated / wrong-column value 60.00 vs recon 42.68 → >15%
+        # AND it would also fail tangible<book → None (fallback to reconstruction).
+        html = self._rel("60.00")
+        self.assertIsNone(
+            extract_reported_tbvps(html, reconstructed=42.68, bvps=52.10))
+
+    def test_eps_value_in_slot_rejected(self):
+        """An EPS-magnitude value (1.63) mis-grabbed into the TBVPS row is >15%
+        off the reconstruction → None, never shipped as tangible book."""
+        html = self._rel("1.63")
+        self.assertIsNone(
+            extract_reported_tbvps(html, reconstructed=42.68, bvps=52.10))
+
+    def test_tangible_not_less_than_book_rejected(self):
+        """Tangible must be < book. A value ≥ bvps is a mis-aligned row → None,
+        even when no reconstruction anchor is present."""
+        html = self._rel("55.00", bvps_cell="52.10")
+        self.assertIsNone(
+            extract_reported_tbvps(html, reconstructed=None, bvps=52.10))
+
+    def test_negative_or_zero_rejected(self):
+        html = self._rel("(3.20)")
+        self.assertIsNone(
+            extract_reported_tbvps(html, reconstructed=42.68, bvps=52.10))
+
+    def test_no_anchor_and_no_bvps_anywhere_not_trusted(self):
+        """Nothing to tie the raw match to — no reconstruction, no passed bvps,
+        and the release itself has NO book-value line → None. The label matched,
+        but the cardinal rule forbids an unanchored guess."""
+        html = _html(_row("Tangible book value per common share", "42.68"))
+        self.assertIsNone(
+            extract_reported_tbvps(html, reconstructed=None, bvps=None))
+
+    def test_in_release_bvps_anchors_when_caller_has_none(self):
+        """PNC case: no reconstruction and no passed bvps, but the release
+        discloses BOTH book ($143.65) and tangible-book ($109.42) per common
+        share → the in-release book value anchors the tangible < book check and
+        the reported figure is taken."""
+        html = _html(
+            _row("Book value per common share", "143.65")
+            + _row("Tangible book value per common share (non-GAAP)", "109.42")
+        )
+        v = extract_reported_tbvps(html, reconstructed=None, bvps=None)
+        self.assertAlmostEqual(v, 109.42)
+
+    def test_period_end_footnote_label_matches(self):
+        """USB/ABCB style: a '(period end)(a)' footnote suffix must not defeat the
+        label match."""
+        html = _html(
+            _row("Book value per common share", "36.86")
+            + _row("Tangible book value per common share (period end)(a)", "29.56")
+        )
+        v = extract_reported_tbvps(html, reconstructed=25.90, bvps=36.86)
+        self.assertAlmostEqual(v, 29.56)
+
+    def test_bvps_only_cross_check_accepts(self):
+        """No reconstruction (bank the reconstruction couldn't resolve, e.g.
+        unresolvable preferred) but bvps IS disclosed and tangible < book → the
+        reported figure is taken. This is the PNC-style win."""
+        html = self._rel("48.00", bvps_cell="52.10")
+        v = extract_reported_tbvps(html, reconstructed=None, bvps=52.10)
+        self.assertAlmostEqual(v, 48.00)
+
+    def test_not_disclosed_returns_none(self):
+        """A release with NO tangible-book line → None → caller falls back to the
+        reconstruction (no regression)."""
+        html = _html(
+            _row("Book value per common share", "52.10")
+            + _row("Diluted earnings per share", "1.63")
+        )
+        self.assertIsNone(
+            extract_reported_tbvps(html, reconstructed=42.68, bvps=52.10))
+
+
+class TestResolveTbvpsFallback(unittest.TestCase):
+    """analysis.valuation._resolve_tbvps prefers the reported figure, falls back
+    to the reconstruction, and never regresses on error."""
+
+    def test_prefers_reported_when_available(self):
+        import analysis.valuation as val
+        called = {}
+
+        def fake_reported(cik, reconstructed=None, bvps=None):
+            called["args"] = (cik, reconstructed, bvps)
+            return 42.68
+
+        with unittest.mock.patch("data.bank_mapping.get_cik", return_value=1521951), \
+             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", fake_reported):
+            out = val._resolve_tbvps("FBIZ", reconstructed=42.68, bvps=52.10)
+        self.assertAlmostEqual(out, 42.68)
+        self.assertEqual(called["args"], (1521951, 42.68, 52.10))
+
+    def test_falls_back_to_reconstruction_when_reported_none(self):
+        import analysis.valuation as val
+        with unittest.mock.patch("data.bank_mapping.get_cik", return_value=1521951), \
+             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", return_value=None):
+            out = val._resolve_tbvps("ABCB", reconstructed=37.50, bvps=50.0)
+        self.assertAlmostEqual(out, 37.50)
+
+    def test_error_does_not_regress(self):
+        import analysis.valuation as val
+
+        def boom(cik, reconstructed=None, bvps=None):
+            raise RuntimeError("network")
+
+        with unittest.mock.patch("data.bank_mapping.get_cik", return_value=999), \
+             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", boom):
+            out = val._resolve_tbvps("XXXX", reconstructed=30.0, bvps=45.0)
+        self.assertAlmostEqual(out, 30.0)   # reconstruction stands
+
+    def test_no_ticker_returns_reconstruction(self):
+        import analysis.valuation as val
+        self.assertAlmostEqual(
+            val._resolve_tbvps(None, reconstructed=30.0, bvps=45.0), 30.0)
 
 
 if __name__ == "__main__":

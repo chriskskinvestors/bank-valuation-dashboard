@@ -195,6 +195,123 @@ def _first_match(rows: list[tuple], labels: set):
     return None
 
 
+# ── Company-Reported tangible book value per COMMON share ────────────────────
+# TBVPS is a NON-GAAP, free-form line — no XBRL tag. Banks label it several ways;
+# all denote per-COMMON-share tangible common equity. A "(non-GAAP)" qualifier is
+# a suffix on the same figure, so it is stripped before matching (unlike the
+# balanced "(TE)" qualifier that _clean_label deliberately preserves).
+_TBVPS_LABELS: frozenset = frozenset({
+    "tangible book value per share",
+    "tangible book value per common share",
+    "tangible common book value per share",
+    "tangible common equity per share",
+    "tangible common equity per common share",
+    "tangible book value per common share outstanding",
+})
+
+# Reported (GAAP) book value per COMMON share — the in-release cross-check anchor
+# when the caller has no reconstruction/bvps to tie against (e.g. PNC, whose
+# reconstruction is n/a on unresolvable preferred but which DOES disclose both
+# book and tangible-book per common share in its release).
+_BVPS_LABELS: frozenset = frozenset({
+    "book value per share",
+    "book value per common share",
+})
+
+# Trailing qualifier / footnote groups that ride on the SAME line as the figure
+# and must be stripped before matching — a "(non-gaap)" or "(period end)"
+# qualifier, or a short footnote token like "(b)", "(1)", "(a)", "(b)/(f)",
+# "(i/c)". These sit inside a balanced paren, so _clean_label (which keeps a
+# trailing ")") leaves them intact; we peel them here. A meaningful qualifier
+# like "(te)" is NOT in this set, so it is preserved.
+_TRAIL_QUALIFIER = re.compile(
+    r"\s*\((?:non[- ]?gaap|period[- ]end|[a-z0-9]{1,3}(?:/[a-z0-9]{1,3})?)\)\s*$"
+)
+
+
+def _strip_trailing_qualifiers(cl: str) -> str:
+    """Peel trailing '(non-gaap)' / '(period end)' / short footnote groups (in any
+    order, repeatedly) from a cleaned label so the core label can be matched."""
+    prev = None
+    while prev != cl:
+        prev = cl
+        cl = _TRAIL_QUALIFIER.sub("", cl).strip()
+    return cl
+
+
+def _match_tbvps_label(cl: str) -> bool:
+    """True when a cleaned row label denotes tangible book value per COMMON share,
+    ignoring trailing '(non-GAAP)' / '(period end)' / footnote qualifiers — e.g.
+    'tangible book value per common share (period end)(a)'."""
+    return _strip_trailing_qualifiers(cl) in _TBVPS_LABELS
+
+
+def _match_bvps_label(cl: str) -> bool:
+    """True when a cleaned row label denotes (GAAP) book value per COMMON share."""
+    return _strip_trailing_qualifiers(cl) in _BVPS_LABELS
+
+
+def extract_reported_tbvps(
+    ex991_html: bytes,
+    reconstructed: float | None = None,
+    bvps: float | None = None,
+) -> float | None:
+    """The bank's OWN reported tangible book value per common share from one
+    EX-99.1 document, or None when not cleanly disclosed / fails a sanity gate.
+
+    Company-Reported principle: take the disclosed number, don't rebuild it. The
+    caller supplies the corrected reconstruction (`reconstructed`, from
+    data.sec_client) and, when available, the reported book value per share
+    (`bvps`) so the extracted figure can be cross-checked.
+
+    Cardinal rule — never emit a plausible-wrong number. The matched value must:
+      • be a positive per-share number in a sane band (0 < x < 10 000);
+      • be LESS than reported book value per share (tangible < book), when bvps
+        is known — this also rejects a book-value row mismatched into the slot;
+      • land within 15% of the reconstruction, when the reconstruction resolved —
+        this rejects an EPS/dividend value mis-grabbed into the TBVPS slot and a
+        wrong-period/wrong-column pick.
+    If no reconstruction anchor AND no bvps is passed in, the release's OWN
+    reported book value per common share is used as the tangible-<-book anchor
+    (the PNC case: reconstruction n/a on unresolvable preferred, but both book
+    and tangible-book per common share are disclosed in the release). Only when
+    NOTHING ties the match — no reconstruction, no passed bvps, no in-release
+    book value — is the raw match rejected. Take the FIRST numeric column
+    (releases lead every table with the most-recent period).
+    """
+    rows = _table_rows(ex991_html)
+    # In-release reported book value per common share, the fallback cross-check
+    # anchor when the caller had none (same first-column / most-recent period).
+    if bvps is None:
+        for cl, nums in rows:
+            if _match_bvps_label(cl):
+                bvps = nums[0]
+                break
+    for cl, nums in rows:
+        if not _match_tbvps_label(cl):
+            continue
+        v = nums[0]
+        # Positive, per-share magnitude (rejects a $-thousands equity total or a
+        # negative/zero cell mis-aligned into the row).
+        if not (0 < v < 10_000):
+            return None
+        # Tangible < book, when book value per share is disclosed.
+        if bvps is not None and bvps > 0 and not (v < bvps):
+            return None
+        # Tie to the corrected reconstruction within a tight band. This is the
+        # primary defense against an EPS/dividend value grabbed into the slot.
+        if reconstructed is not None and reconstructed > 0:
+            if abs(v - reconstructed) / reconstructed >= 0.15:
+                return None
+            return v
+        # No reconstruction anchor: accept only if it cleared the book-value
+        # cross-check (something real to tie to); otherwise nothing anchors it.
+        if bvps is not None and bvps > 0:
+            return v
+        return None
+    return None
+
+
 def _detect_scale(rows: list[tuple], anchor: dict):
     """The dollar scale (1e3 thousands / 1e6 millions / 1.0 raw) for this release,
     found by matching its total-assets or total-deposits cell to the prior 10-Q
@@ -328,3 +445,70 @@ def latest_earnings_8k_figures(cik) -> dict | None:
             return None
 
     return payload or None
+
+
+def _fetch_ex991_html(cik) -> bytes | None:
+    """Raw EX-99.1 press-release bytes for the latest earnings 8-K, or None.
+    Locates the exhibit the same deterministic way as latest_earnings_8k_figures
+    (index exhibit-TYPE table, never a guessed filename)."""
+    f8k = _latest_earnings_8k(cik)
+    if not f8k:
+        return None
+    doc = _ex991_document(cik, f8k["accession_dash"])
+    if not doc:
+        return None
+    url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{f8k['accession']}/{doc}")
+    return _get(url)
+
+
+def reported_tbvps(
+    cik,
+    reconstructed: float | None = None,
+    bvps: float | None = None,
+) -> float | None:
+    """The bank's OWN reported tangible book value per common share, read straight
+    from its latest earnings release (8-K EX-99.1), or None when it isn't cleanly
+    disclosed / fails a sanity gate (→ caller falls back to the reconstruction).
+
+    Company-Reported principle: prefer the disclosed number over a rebuild. Pass
+    the corrected reconstruction (`reconstructed`, data.sec_client's
+    tangible_book_value_per_share) and reported book value per share (`bvps`) so
+    the extracted figure is cross-checked before it is trusted (see
+    extract_reported_tbvps for the gates).
+
+    Cached by 8-K accession + the anchors it was gated against (a different
+    reconstruction/bvps must re-gate). A None result is cached so a
+    non-disclosing release isn't re-fetched; a transient fetch/parse EXCEPTION is
+    never cached (returns None without poisoning the cache)."""
+    if not cik:
+        return None
+    from data import cache
+
+    f8k = _latest_earnings_8k(cik)
+    if not f8k:
+        return None
+
+    # Fold the anchors into the key: the same release gated against a different
+    # reconstruction/bvps is a different question and must not reuse a stale None.
+    rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
+    bk = f"{bvps:.4f}" if bvps is not None else "na"
+    ckey = f"reported_tbvps:v2:{f8k['accession']}:{rk}:{bk}"
+    cached = cache.get(ckey)
+    if cached is not None:
+        # {"value": float|None}; None values are cached as {"value": None}.
+        return cached.get("value")
+
+    try:
+        html = _fetch_ex991_html(cik)
+        value = (extract_reported_tbvps(html, reconstructed=reconstructed, bvps=bvps)
+                 if html else None)
+        try:
+            cache.put(ckey, {"value": value})
+        except Exception:
+            pass
+        return value
+    except Exception as e:
+        print(f"[sec_earnings_8k] reported_tbvps failed for cik {cik}: "
+              f"{type(e).__name__}: {e}")
+        return None
