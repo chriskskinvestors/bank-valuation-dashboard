@@ -239,6 +239,14 @@ def build_name_index() -> list[tuple[str, str]]:
         elif not _is_too_generic(normname):
             unique.append((normname, cands[0]))
 
+    # Apply curated ambiguous overrides (real same-name banks the auto-detection
+    # misses): drop the over-broad / unmatchable unique entries for the shared
+    # brand and route it to the disambiguation pass instead.
+    for _cn, _cc in _CURATED_AMBIGUOUS.items():
+        unique = [(n, t) for (n, t) in unique
+                  if not (n == _cn or (n.startswith(_cn + " ") and t in _cc))]
+        ambiguous[_cn] = list(_cc)
+
     unique.sort(key=lambda x: -len(x[0]))
     _AMBIGUOUS_INDEX = ambiguous
     return unique
@@ -259,6 +267,22 @@ _AMBIGUOUS_GEO: dict[str, list[str]] = {
     "FBP":  ["PUERTO RICO", "SAN JUAN"],        # First BanCorp (NYSE: FBP)
     "FNLC": ["MAINE", "DAMARISCOTTA"],          # The First Bancorp (NASDAQ: FNLC)
     "INDB": ["MASSACHUSETTS", "ROCKLAND"],      # Independent Bank Corp / Rockland Trust
+    # "Independent Bank Corp" is TWO different real banks — IBCP (Michigan) and
+    # INBC (Rockland Trust, Massachusetts) — indistinguishable except by ticker
+    # or state. Without this a bare "Independent Bank Corporation ..." headline
+    # (e.g. IBCP's HCB/Highpoint acquisition) silently tagged the wrong one (INBC).
+    "IBCP": ["MICHIGAN", "GRAND RAPIDS", "IONIA"],
+    "INBC": ["MASSACHUSETTS", "ROCKLAND"],
+}
+
+# Curated ambiguous collisions the auto-detection misses because a curated
+# state-suffix keeps the normalized names DISTINCT in the index ("Independent
+# Bank Corp. (MI)" → IBCP vs "Independent Bank Corp." → INBC), so instead of
+# being flagged ambiguous one silently wins the other's news. Force the shared
+# brand into the disambiguation pass. Keyed by normalized shared name → the real
+# distinct candidate tickers.
+_CURATED_AMBIGUOUS: dict[str, list[str]] = {
+    "INDEPENDENT BANK": ["IBCP", "INBC"],
 }
 
 
