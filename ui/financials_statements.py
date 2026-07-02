@@ -1880,16 +1880,25 @@ def _render_company_composition(ticker, kind):
     _cr_component(cols, rows, entity=entity, src=src)
 
 
+# @st.fragment on the three statement pages: the Annual/Quarterly toggle +
+# trend-timeframe selectors inside render_statement used to rerun the WHOLE
+# Company page to redraw one statement. Scoping each page to a fragment reruns
+# only that statement. Fragmenting the dispatched wrappers (not the shared
+# render_statement helper) keeps the boundary at the page level and matches the
+# other Company-module fragments. Fragments render fully on a full rerun.
+@st.fragment
 def render_income_statement(ticker):
     render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True,
                      trends=_INCOME_TRENDS, side_by_side=True)
 
 
+@st.fragment
 def render_balance_sheet(ticker):
     render_statement(ticker, "bs", "Balance Sheet", _BALANCE, trends=_BS_TRENDS,
                      side_by_side=True)
 
 
+@st.fragment
 def render_performance_analysis(ticker):
     render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE,
                      with_persh=True, with_dep_cost=True, with_fte=True,
