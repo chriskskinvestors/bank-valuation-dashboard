@@ -14,6 +14,9 @@ import unittest
 _st = types.ModuleType("streamlit")
 _st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
 _st.cache_resource = _st.cache_data
+# The statement pages decorate at module load with @st.fragment (bare and
+# @st.fragment(run_every=...)); the identity-decorator lambda covers both.
+_st.fragment = _st.cache_data
 sys.modules.setdefault("streamlit", _st)
 _c = types.ModuleType("streamlit.components")
 _c1 = types.ModuleType("streamlit.components.v1")
