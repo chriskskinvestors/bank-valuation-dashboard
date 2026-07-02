@@ -555,6 +555,14 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         # confirms it, or a published call event is consistent with it (same day,
         # or a few days before a next-morning call).
         call_d = _iso_date(ci.get("call_date")) if ci.get("call_date") else None
+        call_time = ci.get("call_time")
+        dial_in = ci.get("dial_in")
+        # A call date wildly inconsistent with the report date is stale/mis-parsed
+        # (e.g. next year's Q1 call scraped onto this quarter — PNC showed "Apr 15"
+        # on a Jul 15 row). A real earnings call sits within a few days of the
+        # release, so drop the call date/time/dial-in when it doesn't fit.
+        if call_d is not None and not (-2 <= (call_d - d).days <= 7):
+            call_d = call_time = dial_in = None
         confirmed = bool(rel_d) or bool(frow.get("confirmed")) or (
             call_d is not None and 0 <= (call_d - d).days <= 4)
         # Report timing: FMP's before/after-open code; else the timing the bank
@@ -575,10 +583,10 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
             "eps_est": eps,
             "rev_est": frow.get("revenueEstimated"),
             "period_ending": frow.get("periodEnding"),
-            "call_time": ci.get("call_time"),
-            "call_date": ci.get("call_date"),   # announced call day (may differ)
+            "call_time": call_time,
+            "call_date": call_d.isoformat() if call_d else None,  # gated: stale dropped
             "webcast_url": ci.get("webcast_url"),
-            "dial_in": ci.get("dial_in"),
+            "dial_in": dial_in,
         }
 
     rows = sorted(seen.values(), key=lambda x: (x["_date"], x["ticker"]))

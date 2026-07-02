@@ -372,6 +372,32 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertEqual(rows["BKSC"]["when"], "After close")   # from the PR
         self.assertEqual(rows["JPM"]["when"], "Before open")    # FMP flag wins
 
+    def test_stale_far_call_date_suppressed(self):
+        # A call date months from the report date (a mis-parsed next-year date —
+        # PNC showed "Apr 15" on a Jul 15 row) is dropped: call date/time/dial-in
+        # cleared and it does not confirm the row. The webcast link is kept.
+        calls = dict(self.CALLS)
+        calls["BKSC"] = {"call_date": "2027-04-15", "call_time": "10:00a ET",
+                         "dial_in": "1-800-000-0000", "webcast_url": "https://x/wc"}
+        agenda = build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
+        bksc = {r["ticker"]: r for b in agenda for r in b["rows"]}["BKSC"]
+        self.assertIsNone(bksc["call_date"])
+        self.assertIsNone(bksc["call_time"])
+        self.assertIsNone(bksc["dial_in"])
+        self.assertFalse(bksc["confirmed"])
+        self.assertEqual(bksc["webcast_url"], "https://x/wc")
+
+    def test_near_call_date_kept(self):
+        calls = dict(self.CALLS)
+        calls["BKSC"] = {"call_date": "2026-07-17", "call_time": "9:00a ET"}  # +1d
+        agenda = build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
+        bksc = {r["ticker"]: r for b in agenda for r in b["rows"]}["BKSC"]
+        self.assertEqual(bksc["call_date"], "2026-07-17")
+        self.assertEqual(bksc["call_time"], "9:00a ET")
+        self.assertTrue(bksc["confirmed"])
+
     def test_horizon_days_bounds_window(self):
         # FMPONLY reports 2026-07-20 — inside 75 days, outside a tight 5-day window.
         agenda = build_calls_agenda(
