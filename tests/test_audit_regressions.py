@@ -17,6 +17,10 @@ import pandas as pd
 _st = types.ModuleType("streamlit")
 _st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
 _st.cache_resource = _st.cache_data
+# ui.financials_statements decorates its statement pages with @st.fragment (both
+# bare `@st.fragment` and `@st.fragment(run_every=...)`); the identity-decorator
+# lambda handles both forms just like cache_data above.
+_st.fragment = _st.cache_data
 sys.modules.setdefault("streamlit", _st)
 # ui.financials_statements does `import streamlit.components.v1` at module load.
 # The balance-sheet render tests below reload that module and, in their finally
@@ -1035,6 +1039,18 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
             _Ctx() for _ in range(spec if isinstance(spec, int) else len(spec))]
         st.spinner = lambda *a, **k: _Ctx()
         st.radio = lambda label, options=None, **k: "Quarterly"
+        # The Trends timeframe selector: mirror "nothing clicked" by returning
+        # the widget's default (render code falls back to "5Y" on a falsy value).
+        st.segmented_control = lambda *a, **k: k.get("default")
+        # @st.fragment on the statement pages (bare + run_every= forms).
+        st.fragment = lambda *a, **k: (
+            a[0] if a and callable(a[0]) else (lambda f: f))
+        # reload(fs) can re-trigger a fresh `data.fdic_client` import, which
+        # decorates at module load with @st.cache_data — the stub must carry
+        # every import-time decorator or the stripped module leaks to later
+        # classes (they then fail on the missing attribute, not this test).
+        st.cache_data = st.fragment
+        st.cache_resource = st.fragment
         for n in ("markdown", "caption", "write", "info", "warning", "error",
                   "divider", "plotly_chart", "html"):
             setattr(st, n, lambda *a, **k: None)
