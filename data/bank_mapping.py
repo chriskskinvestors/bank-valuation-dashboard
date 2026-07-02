@@ -65,16 +65,19 @@ BANK_MAP = {
     # ── §12(i) / SEC-index gap banks (sweep 2026-06-30) ──────────────────
     # 47 publicly-traded US banks ≥$150M mkt cap that were absent from the
     # universe because SEC's company_tickers.json (the discovery seed) omits
-    # them — either they file with the Fed/FDIC/OCC under §12(i) (no SEC
-    # filings → FDIC-only, cik=None) or they self-file 10-Ks but their OTC
-    # ticker isn't in SEC's exchange index (seeding gap → cik present, full
-    # coverage). Every fdic_cert verified ACTIVE against the live institution
-    # and matched on holding-company name; FXLG (FS Bancorp NM) deferred — no
+    # them. Every fdic_cert verified ACTIVE against the live institution and
+    # matched on holding-company name; FXLG (FS Bancorp NM) deferred — no
     # confident active match. See TOWN above for the canonical case.
+    # ALL cik=None (FDIC-only): these banks stopped filing XBRL with the SEC
+    # years ago (2012-2023) — a few keep an old CIK, but its companyfacts is
+    # 3-14 yrs stale, so attaching it would show decade-old SEC data instead of
+    # fresh FFIEC. The refresh-universe reconciliation gate caught this
+    # (2026-07-02: "sec_filings: Data is 3836 days old"). FDIC-only is correct
+    # and fresh; SEC-XBRL HoldCo metrics render n/a by design.
     "FINN":    {"name": "First National of Nebraska, Inc.",              "fdic_cert": 5452,   "cik": None},
     "UNPA":    {"name": "UNB Corp.",                                     "fdic_cert": 7631,   "cik": None},
     "FMBL":    {"name": "Farmers & Merchants Bank of Long Beach",        "fdic_cert": 1225,   "cik": None},
-    "NBN":     {"name": "Northeast Bank",                                "fdic_cert": 19690,  "cik": 811831},
+    "NBN":     {"name": "Northeast Bank",                                "fdic_cert": 19690,  "cik": None},
     "WTBFB":   {"name": "W.T.B. Financial Corporation",                  "fdic_cert": 1281,   "cik": None},
     "SBNC":    {"name": "Southern BancShares (N.C.), Inc.",              "fdic_cert": 15359,  "cik": None},
     "FFMR":    {"name": "First Farmers Financial Corporation",           "fdic_cert": 12839,  "cik": None},
@@ -92,12 +95,12 @@ BANK_MAP = {
     "MSBC":    {"name": "Mission Bancorp",                               "fdic_cert": 34805,  "cik": None},
     "CYFL":    {"name": "Century Financial Corporation",                 "fdic_cert": 28362,  "cik": None},
     "CSHX":    {"name": "Cashmere Valley Bank",                          "fdic_cert": 1265,   "cik": None},
-    "NASB":    {"name": "NASB Financial, Inc.",                          "fdic_cert": 29708,  "cik": 1059131},
+    "NASB":    {"name": "NASB Financial, Inc.",                          "fdic_cert": 29708,  "cik": None},
     "EXSR":    {"name": "Exchange Bank (Santa Rosa, CA)",                "fdic_cert": 8468,   "cik": None},
     "LRBI":    {"name": "Lake Ridge Bancorp Inc.",                       "fdic_cert": 15091,  "cik": None},
     "TRUX":    {"name": "Truxton Corporation",                           "fdic_cert": 57825,  "cik": None},
     "FFBB":    {"name": "FFB Bancorp",                                   "fdic_cert": 58090,  "cik": None},
-    "FFMH":    {"name": "First Farmers and Merchants Corporation",       "fdic_cert": 1487,   "cik": 703329},
+    "FFMH":    {"name": "First Farmers and Merchants Corporation",       "fdic_cert": 1487,   "cik": None},
     "MLGF":    {"name": "Malaga Financial Corporation",                  "fdic_cert": 32282,  "cik": None},
     "CBTN":    {"name": "Citizens Bancorp Investment, Inc.",             "fdic_cert": 1711,   "cik": None},
     "PSBQ":    {"name": "PSB Holdings, Inc.",                            "fdic_cert": 18569,  "cik": None},
@@ -109,10 +112,10 @@ BANK_MAP = {
     "PFLC":    {"name": "Pacific Financial Corporation",                 "fdic_cert": 17308,  "cik": None},
     "MNAT":    {"name": "Marquette National Corporation",                "fdic_cert": 16250,  "cik": None},
     "SBKO":    {"name": "Summit Bank Group, Inc.",                       "fdic_cert": 57706,  "cik": None},
-    "UBAB":    {"name": "United Bancorporation of Alabama, Inc.",        "fdic_cert": 58,     "cik": 704561},
-    "TRCY":    {"name": "Tri City Bankshares Corporation",               "fdic_cert": 18922,  "cik": 313337},
+    "UBAB":    {"name": "United Bancorporation of Alabama, Inc.",        "fdic_cert": 58,     "cik": None},
+    "TRCY":    {"name": "Tri City Bankshares Corporation",               "fdic_cert": 18922,  "cik": None},
     "SFIGA":   {"name": "STAR Financial Group, Inc.",                    "fdic_cert": 27235,  "cik": None},
-    "TYCB":    {"name": "Calvin B. Taylor Bankshares, Inc.",             "fdic_cert": 5874,   "cik": 1003986},
+    "TYCB":    {"name": "Calvin B. Taylor Bankshares, Inc.",             "fdic_cert": 5874,   "cik": None},
     "MSWV":    {"name": "Main Street Financial Services Corp.",          "fdic_cert": 29847,  "cik": None},
     "BKUTK":   {"name": "Bank of Utica",                                 "fdic_cert": 13397,  "cik": None},
     "ARBV":    {"name": "American Riviera Bancorp",                      "fdic_cert": 58281,  "cik": None},
@@ -124,22 +127,23 @@ BANK_MAP = {
     # Each cert verified ACTIVE + matched on holding-company name; several
     # required state-filtered re-lookup (PPBN=Pinnacle Bankshares VA not
     # Pinnacle Financial TN; PBNK=Pinnacle Bank Gilroy CA; CNBW=CNB Corp/SC
-    # Conway not CNB Financial PA). 7 self-filers carry a verified CIK.
+    # Conway not CNB Financial PA). ALL cik=None — see the note above; the
+    # CIKs first attached here had 3-14 yr stale XBRL, so FDIC-only is correct.
     "SOMC":   {"name": "Southern Michigan Bancorp, Inc.",               "fdic_cert": 5019,   "cik": None},
     "FMBN":   {"name": "Farmers & Merchants Bancshares, Inc.",          "fdic_cert": 1895,   "cik": None},
-    "DIMC":   {"name": "Dimeco, Inc.",                                  "fdic_cert": 9888,   "cik": 898037},
+    "DIMC":   {"name": "Dimeco, Inc.",                                  "fdic_cert": 9888,   "cik": None},
     "PRMY":   {"name": "Primary Bank",                                  "fdic_cert": 59086,  "cik": None},
     "CMRB":   {"name": "First Commerce Bank",                           "fdic_cert": 58054,  "cik": None},
-    "FFDF":   {"name": "FFD Financial Corporation",                     "fdic_cert": 29787,  "cik": 1006177},
+    "FFDF":   {"name": "FFD Financial Corporation",                     "fdic_cert": 29787,  "cik": None},
     "CBBI":   {"name": "CBB Bancorp, Inc.",                             "fdic_cert": 57873,  "cik": None},
-    "BNCC":   {"name": "BNCCORP, Inc.",                                 "fdic_cert": 57197,  "cik": 945434},
+    "BNCC":   {"name": "BNCCORP, Inc.",                                 "fdic_cert": 57197,  "cik": None},
     "BLHK":   {"name": "Blueharbor Bank",                               "fdic_cert": 58691,  "cik": None},
-    "CNBW":   {"name": "CNB Corp.",                                     "fdic_cert": 2102,   "cik": 764581},
+    "CNBW":   {"name": "CNB Corp.",                                     "fdic_cert": 2102,   "cik": None},
     "PBCO":   {"name": "PBCO Financial Corporation",                    "fdic_cert": 34685,  "cik": None},
     "BBNA":   {"name": "Bonvenu Bancorp, Inc.",                         "fdic_cert": 26381,  "cik": None},
-    "CHBH":   {"name": "Croghan Bancshares, Inc.",                      "fdic_cert": 13341,  "cik": 887149},
+    "CHBH":   {"name": "Croghan Bancshares, Inc.",                      "fdic_cert": 13341,  "cik": None},
     "PPBN":   {"name": "Pinnacle Bankshares Corporation",               "fdic_cert": 6811,   "cik": None},
-    "JFBC":   {"name": "Jeffersonville Bancorp",                        "fdic_cert": 7123,   "cik": 874495},
+    "JFBC":   {"name": "Jeffersonville Bancorp",                        "fdic_cert": 7123,   "cik": None},
     "JDVB":   {"name": "JD Bancshares, Inc.",                           "fdic_cert": 16546,  "cik": None},
     "AMBK":   {"name": "American Bank Incorporated",                    "fdic_cert": 34422,  "cik": None},
     "CWBK":   {"name": "CW Bancorp",                                    "fdic_cert": 57176,  "cik": None},
@@ -151,7 +155,7 @@ BANK_MAP = {
     "PPLL":   {"name": "Peoples Ltd.",                                  "fdic_cert": 444,    "cik": None},
     "TYBT":   {"name": "Trinity Bank, N.A.",                            "fdic_cert": 57543,  "cik": None},
     "BORT":   {"name": "Bank of Botetourt",                             "fdic_cert": 6137,   "cik": None},
-    "OFED":   {"name": "Oconee Federal Financial Corp.",                "fdic_cert": 30111,  "cik": 1501078},
+    "OFED":   {"name": "Oconee Federal Financial Corp.",                "fdic_cert": 30111,  "cik": None},
     "BYLB":   {"name": "Boyle Bancorp, Inc.",                           "fdic_cert": 2740,   "cik": None},
     "CNBB":   {"name": "CNB Community Bancorp, Inc.",                   "fdic_cert": 14073,  "cik": None},
     "FTFI":   {"name": "First Berlin Bancorp, Inc.",                    "fdic_cert": 5286,   "cik": None},
