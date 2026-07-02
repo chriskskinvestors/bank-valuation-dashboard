@@ -1564,7 +1564,7 @@ def _fig_mortgage_10y(window="5Y"):
     return fig
 
 
-@st.fragment
+@st.fragment(run_every="60s")
 def _render_rates_charts():
     """Timeframe selector + 2×2 grid of bordered chart cards (in a fragment so
     changing the timeframe re-runs only the charts, not the board)."""
@@ -1593,6 +1593,36 @@ def _render_rates_charts():
             st.plotly_chart(_fig_mortgage_10y(window), use_container_width=True)
 
 
+@st.fragment(run_every="60s")
+def _render_rates_board_live():
+    """The rates board table + caption, auto-refreshed every ~60s so the live
+    CBOE tenors tick in place without a page reload. live_yields is 90s-cached,
+    so a refresh is a cheap no-op until new market data lands; on a cold instance
+    or dropped WebSocket it simply renders once (no breakage)."""
+    rows, live_asof = _rates_board_rows_live()
+    st.markdown(_rates_board_table(rows), unsafe_allow_html=True)
+    if live_asof is not None:
+        try:
+            from zoneinfo import ZoneInfo
+            et = live_asof.astimezone(ZoneInfo("America/New_York"))
+            h12 = et.hour % 12 or 12
+            ampm = "AM" if et.hour < 12 else "PM"
+            stamp = f"{et.strftime('%b')} {et.day}, {h12}:{et.minute:02d} {ampm} ET"
+        except Exception:
+            stamp = str(live_asof)
+        st.caption(
+            f"3M / 5Y / 10Y / 30Y are live market yields (CBOE indices via "
+            f"Yahoo, ~15-min delayed) as of {stamp}; 2-Year, Δ1W / Δ3M, "
+            "vs hist & history via FRED. Δ in bps; vs hist = z-score vs ~10y."
+        )
+    else:
+        st.caption(
+            "Latest level per instrument; Δ 1W / Δ 3M in basis points; vs hist = "
+            "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
+            "Source: FRED."
+        )
+
+
 def _render_rates_curve():
     # Lead with the dense, scannable part (rates board + chart grid). Under the
     # board, two bordered cards: the Fed policy strip on top, the SEP table +
@@ -1610,28 +1640,7 @@ def _render_rates_curve():
     board_col, chart_col = st.columns([1.5, 2.5])
     with board_col:
         st.markdown("**Rates & curve board**")
-        rows, live_asof = _rates_board_rows_live()
-        st.markdown(_rates_board_table(rows), unsafe_allow_html=True)
-        if live_asof is not None:
-            try:
-                from zoneinfo import ZoneInfo
-                et = live_asof.astimezone(ZoneInfo("America/New_York"))
-                h12 = et.hour % 12 or 12
-                ampm = "AM" if et.hour < 12 else "PM"
-                stamp = f"{et.strftime('%b')} {et.day}, {h12}:{et.minute:02d} {ampm} ET"
-            except Exception:
-                stamp = str(live_asof)
-            st.caption(
-                f"3M / 5Y / 10Y / 30Y are live market yields (CBOE indices via "
-                f"Yahoo, ~15-min delayed) as of {stamp}; 2-Year, Δ1W / Δ3M, "
-                "vs hist & history via FRED. Δ in bps; vs hist = z-score vs ~10y."
-            )
-        else:
-            st.caption(
-                "Latest level per instrument; Δ 1W / Δ 3M in basis points; vs hist = "
-                "z-score of the level vs ~10y of its own history (±σ, bold if |z|≥2). "
-                "Source: FRED."
-            )
+        _render_rates_board_live()
         with st.container(border=True, key="fedcard"):
             _render_fed_policy_strip()
             _render_sep_block()
