@@ -393,5 +393,40 @@ class TestIRappAdapter(unittest.TestCase):
             ir._irapp_announcement("https://investors.acme.com/", "2026-06-30"))
 
 
+class TestIRappDiscovery(unittest.TestCase):
+    """Auto-discovery of IRapp sites via the functional RSS probe — so IRapp banks
+    are found without a curated IR_URLS entry (as Q4 sites already are)."""
+
+    def setUp(self):
+        import data.cache as dc
+        self._dc, self._get, self._put = dc, dc.get, dc.put
+        self._req, self._q4, self._ia = ir.requests, ir._q4_site, ir._irapp_site
+        dc.get = lambda k: None          # force fresh probe (no cache hit)
+        dc.put = lambda k, v: None
+
+    def tearDown(self):
+        self._dc.get, self._dc.put = self._get, self._put
+        ir.requests, ir._q4_site, ir._irapp_site = self._req, self._q4, self._ia
+
+    def _rss(self, status, text):
+        resp = type("R", (), {"status_code": status, "text": text})()
+        ir.requests = type("Req", (), {"get": staticmethod(lambda *a, **k: resp)})
+
+    def test_irapp_site_true_on_rss_items(self):
+        self._rss(200, "<rss><channel><item><title>x</title></item></channel></rss>")
+        self.assertTrue(ir._irapp_site("https://investors.acme.com/"))
+
+    def test_irapp_site_false_on_404(self):
+        self._rss(404, "Not Found")
+        self.assertFalse(ir._irapp_site("https://investors.acme.com/"))
+
+    def test_discover_finds_irapp_subdomain(self):
+        # Not a Q4 site; the investors. subdomain answers the IRapp RSS → found.
+        ir._q4_site = lambda url: (False, None)
+        ir._irapp_site = lambda url: url == "https://investors.acme.com/"
+        self.assertEqual(ir.discover_q4_ir_url("acme.com"),
+                         "https://investors.acme.com/")
+
+
 if __name__ == "__main__":
     unittest.main()

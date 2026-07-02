@@ -335,26 +335,34 @@ def _domain_root(webaddr: str) -> str:
     return d if ("." in d and " " not in d) else ""
 
 
+def _is_ir_platform(url: str) -> bool:
+    """True if `url` is one of the structured IR platforms we can extract — Q4
+    (functional API / marker) or IRapp/BusinessWire (functional RSS). The snapshot
+    builder tries both extractors per host, so discovery just needs to find a host
+    that answers either."""
+    try:
+        return _q4_site(url)[0] or _irapp_site(url)
+    except Exception:
+        return False
+
+
 def discover_q4_ir_url(webaddr: str) -> str | None:
-    """Find a bank's Q4 IR site from its website. Two methods: (1) probe standard
-    IR subdomains (investorrelations./ir./investors./investor.<domain>); (2) if
-    none hit, pull the "Investor Relations" link off the bank's main page and
-    check it (catches Q4 sites at non-standard URLs, e.g. Zions). Returns the Q4
-    home URL (apiKey cache warmed) or None. DNS misses fail fast."""
+    """Find a bank's structured IR site from its website — Q4 OR IRapp/BusinessWire.
+    Two methods: (1) probe standard IR subdomains (investorrelations./ir./investors./
+    investor.<domain>) plus the www/root host; (2) if none hit, follow the
+    "Investor Relations" link off the bank's main page (catches IR sites at
+    non-standard URLs, e.g. Zions). Returns the IR home URL or None. DNS misses
+    fail fast."""
     root = _domain_root(webaddr)
     if not root:
         return None
     # Method 1 — subdomain probe (cheap; DNS miss is instant), then the main
-    # www/root host itself: Q4 increasingly serves the primary domain rather than
-    # an ir. subdomain (e.g. Glacier's IR + press-release API live on www.<domain>),
-    # which the subdomain-only probe missed entirely.
+    # www/root host itself: a platform increasingly serves the primary domain
+    # rather than an ir. subdomain (e.g. Glacier at www.<domain>).
     for url in ([f"https://{sub}.{root}/" for sub in _IR_SUBDOMAINS]
                 + [f"https://www.{root}/", f"https://{root}/"]):
-        try:
-            if _q4_site(url)[0]:
-                return url
-        except Exception:
-            continue
+        if _is_ir_platform(url):
+            return url
     # Method 2 — follow the main site's investor-relations link.
     try:
         html = _fetch(f"https://{root}/", timeout=6)
@@ -367,7 +375,7 @@ def discover_q4_ir_url(webaddr: str) -> str | None:
                 if url in seen:
                     continue
                 seen.add(url)
-                if _q4_site(url)[0]:
+                if _is_ir_platform(url):
                     return url
                 if len(seen) >= 4:   # bound: don't chase every investor-ish link
                     break
@@ -592,6 +600,42 @@ def _rss_tag(item: str, tag: str) -> str | None:
         return None
     import html as _html
     return _html.unescape(m.group(1)).strip() or None
+
+
+def _irapp_site(ir_home: str) -> bool:
+    """True if the host is an IRapp/BusinessWire IR site — its press-release RSS
+    (/news-events/press-releases/rss) returns feed items. Functional + cached 7d,
+    same as _q4_site, so discovery auto-finds these without a curated entry."""
+    parsed = urlparse(ir_home)
+    host = parsed.netloc
+    if not host:
+        return False
+    ck = f"irapp_site:v1:{host}"
+    cache = None
+    try:
+        from data import cache as _c
+        from data.freshness import is_fresh
+        cache = _c
+        hit = _c.get(ck)
+        if hit and is_fresh(hit, 7 * 24 * 3600):
+            return bool(hit.get("is_irapp"))
+    except Exception:
+        pass
+    is_irapp = False
+    try:
+        resp = requests.get(
+            f"{parsed.scheme or 'https'}://{host}{_IRAPP_RSS_PATH}", timeout=8,
+            headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
+        is_irapp = resp.status_code == 200 and "<item>" in resp.text
+    except Exception:
+        is_irapp = False
+    try:
+        if cache is not None:
+            cache.put(ck, {"is_irapp": is_irapp,
+                           "cached_at": datetime.now().isoformat()})
+    except Exception:
+        pass
+    return is_irapp
 
 
 def _irapp_announcement(ir_home: str, today_iso: str) -> dict | None:
