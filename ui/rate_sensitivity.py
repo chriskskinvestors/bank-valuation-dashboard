@@ -166,8 +166,15 @@ def _render_rate_context(ff, t3m, t5, curve_5y_3m):
     render_traceable_cards(cards, key="nim_rate_context", columns=4)
 
 
+@st.fragment
 def render_rate_sensitivity(ticker: str):
-    """Render the NIM Sensitivity panel for a bank."""
+    """Render the NIM Sensitivity panel for a bank.
+
+    @st.fragment: this page is a wall of beta/duration sliders and scenario
+    toggles — each one used to rerun the ENTIRE Company page (~2.9s) just to
+    recompute the NIM model. As a fragment, a knob change reruns only this
+    panel. Fragments render fully on a full rerun (bank switch), so no
+    regression."""
     hist = _load_hist(ticker)
     if not hist:
         st.info("No FDIC history available for rate-sensitivity analysis.")

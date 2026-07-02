@@ -249,8 +249,14 @@ def _render_verdict_banner(price, blended, dcf_fv, w_fair_price, irr, coe_pct):
     st.markdown(banner, unsafe_allow_html=True)
 
 
+@st.fragment
 def render_valuation_model(ticker: str):
-    """Render the full valuation model panel."""
+    """Render the full valuation model panel.
+
+    @st.fragment: the model is driven by EPS/growth/payout sliders and a
+    consensus toggle — each previously reran the whole Company page to redo the
+    DCF. As a fragment those knobs rerun only this panel. Renders fully on a
+    full rerun (bank switch), so no regression."""
     hist = _load_hist(ticker)
     sec = _load_sec(ticker)
     price = _load_price(ticker)

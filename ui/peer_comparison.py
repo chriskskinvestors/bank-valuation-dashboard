@@ -176,8 +176,15 @@ def _render_scorecard(scores: dict, order: list[str]):
     )
 
 
+@st.fragment
 def render_peer_comparison(all_metrics: list[dict]):
-    """Render the Peer Comparison page — dense, all-category side-by-side."""
+    """Render the Peer Comparison page — dense, all-category side-by-side.
+
+    @st.fragment: scope / rank / category / cell-mode selectors each recompute
+    the cohort — previously via a full-page rerun. As a fragment they rerun
+    only this page. The one-shot Screen→Compare handoff (session_state pop) runs
+    on the full arrival rerun, so scoping it here is safe. Renders fully on a
+    full rerun."""
     if not all_metrics:
         st.warning("No bank data loaded. Check your watchlist.")
         return
