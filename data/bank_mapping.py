@@ -318,6 +318,8 @@ IR_URLS = {
     # Q4 IR site on a holdco domain that differs from the FDIC bank WEBADDR, so
     # auto-discovery (which derives the host from WEBADDR) never reaches it.
     "STBA":  "https://www.stbancorp.com/",
+    # IRapp / BusinessWire platform (RSS at /news-events/press-releases/rss).
+    "AUB":   "https://investors.atlanticunionbank.com/",
 }
 
 

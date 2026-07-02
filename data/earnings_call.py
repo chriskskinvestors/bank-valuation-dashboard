@@ -53,9 +53,18 @@ _ID_RE = re.compile(
 
 
 def _parse_call_time(text: str) -> str | None:
-    """First time-with-zone in the release (the call time), normalized to a
-    compact label like '10:00a ET' / '9a CT'. None if absent."""
-    m = _TIME_RE.search(text)
+    """The conference-call time, normalized to a compact label like '10:00a ET'.
+    Prefer a time-with-zone right after a call cue ("…conference call at 9:00 a.m.
+    ET…") over the first time in the body — a scraped PR often leads with its
+    publication timestamp ("June 30, 2026 7:29am EDT"), which is NOT the call time.
+    Falls back to the first time-with-zone. None if absent."""
+    m = None
+    for cue in _CALL_CUE_RE.finditer(text or ""):
+        m = _TIME_RE.search(text, cue.start(), cue.start() + 160)
+        if m:
+            break
+    if not m:
+        m = _TIME_RE.search(text or "")
     if not m:
         return None
     hour, minute, ap, tz = m.group(1), m.group(2), m.group(3).lower(), m.group(4).lower()

@@ -126,6 +126,15 @@ class TestParseCallInfo(unittest.TestCase):
         self.assertIsNone(info["webcast_url"])
         self.assertIsNone(info["dial_in"])
 
+    def test_call_time_skips_publication_timestamp(self):
+        # A scraped BusinessWire/IRapp body leads with the PR's own publish stamp
+        # ("June 30, 2026 7:29am EDT"). The call time must come from the conference-
+        # call sentence, not that leading timestamp.
+        body = ("Acme To Release Results June 30, 2026 7:29am EDT Download as PDF "
+                "Acme will host a conference call at 9:00 a.m. Eastern Time on "
+                "Tuesday, July 21, 2026.")
+        self.assertEqual(parse_call_info(body)["call_time"], "9:00a ET")
+
     def test_by_phone_cue_no_minutes(self):
         text = ("The call begins at 8 a.m. CT. Listen via the live audio webcast "
                 "at https://ir.examplebank.com/q2 or by phone at 1-800-555-1234.")

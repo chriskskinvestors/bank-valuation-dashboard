@@ -575,6 +575,72 @@ def _q4_announcement(ir_home: str, today_iso: str) -> dict | None:
     return None
 
 
+# ── Second IR platform: BusinessWire / IRapp (d1io3yog0oux5 CloudFront) ───────
+# The largest non-Q4 cluster (e.g. Atlantic Union / AUB) runs on the IRapp
+# platform: press releases at /news-events/press-releases/detail/<id>/ with a
+# clean RSS feed at /news-events/press-releases/rss, bodies syndicated via
+# BusinessWire. The RSS carries the headline + link (no body); the detail page
+# carries the release/call text, which our existing parsers handle. This mirrors
+# the Q4 path (functional detection + structured feed + shared body parsers).
+_IRAPP_RSS_PATH = "/news-events/press-releases/rss"
+
+
+def _rss_tag(item: str, tag: str) -> str | None:
+    """Text of <tag> inside an RSS <item>, CDATA-unwrapped and entity-decoded."""
+    m = re.search(rf"<{tag}>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</{tag}>", item, re.S)
+    if not m:
+        return None
+    import html as _html
+    return _html.unescape(m.group(1)).strip() or None
+
+
+def _irapp_announcement(ir_home: str, today_iso: str) -> dict | None:
+    """Parse an IRapp/BusinessWire IR site's latest earnings-ANNOUNCEMENT from its
+    press-release RSS + detail page: release/call dates, time, webcast, dial-in,
+    timing. Same shape as _q4_announcement. Functional detection — a non-IRapp
+    host's RSS path 404s / isn't RSS, returning None. None when nothing found."""
+    from data.events.wire_base import is_safe_news_url
+    from data.earnings_call import (parse_call_info, _parse_release_date,
+                                    _parse_call_date, _is_earnings_announcement,
+                                    _announced_release_date, _fetch_pr_body)
+    parsed = urlparse(ir_home)
+    host = f"{parsed.scheme or 'https'}://{parsed.netloc}"
+    if not host.startswith("http"):
+        return None
+    try:
+        resp = requests.get(
+            host + _IRAPP_RSS_PATH, timeout=10,
+            headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
+        if resp.status_code != 200 or "<item>" not in resp.text:
+            return None                      # not this platform
+        items = re.findall(r"<item>(.*?)</item>", resp.text, re.S)
+    except Exception:
+        return None
+    for it in items:                                  # newest-first
+        title = _rss_tag(it, "title") or ""
+        link = _rss_tag(it, "link")
+        if not link or not _is_earnings_announcement(title):
+            continue
+        body = _fetch_pr_body(link)
+        if not body:
+            continue
+        rel = (_announced_release_date(title, today_iso)
+               or _parse_release_date(body, today_iso))
+        cd = _parse_call_date(body, today_iso)
+        if not (rel or cd):                  # stale-leak guard (past results release)
+            continue
+        ci = parse_call_info(body)
+        wc = ci.get("webcast_url")
+        if wc and not is_safe_news_url(wc):
+            wc = None
+        info = {"release_date": rel, "call_date": cd, "call_time": ci.get("call_time"),
+                "webcast_url": wc, "dial_in": ci.get("dial_in"), "when": ci.get("when")}
+        info = {k: v for k, v in info.items() if v}
+        if info:
+            return info
+    return None
+
+
 def refresh_q4_calls_snapshot(universe: dict | None = None, max_workers: int = 12,
                               horizon_days: int = 120) -> dict[str, dict]:
     """Pull each Q4-hosted bank's NEXT earnings call and persist {ticker: {…}} as
@@ -601,6 +667,8 @@ def refresh_q4_calls_snapshot(universe: dict | None = None, max_workers: int = 1
         try:
             evs = _q4_events(url)
             ann = _q4_announcement(url, today_iso)
+            if not ann and not evs:      # not a Q4 site → try the IRapp RSS platform
+                ann = _irapp_announcement(url, today_iso)
         except Exception:
             return tk, None
         upcoming = sorted((e for e in (evs or []) if grace <= e["start"] <= horizon),

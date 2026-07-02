@@ -345,5 +345,53 @@ class TestCuratedWebcasts(unittest.TestCase):
         self.assertEqual(m["PNC"]["release_date"], "2026-07-16")
 
 
+class TestIRappAdapter(unittest.TestCase):
+    """The second IR platform — BusinessWire / IRapp: press-release RSS + detail
+    page, parsed with the shared body parsers (covers AUB and its cluster)."""
+
+    def setUp(self):
+        self._req, self._fetch = ir.requests, ec._fetch_pr_body
+
+    def tearDown(self):
+        ir.requests, ec._fetch_pr_body = self._req, self._fetch
+
+    def _rss(self, status, text):
+        resp = type("R", (), {"status_code": status, "text": text})()
+        ir.requests = type("Req", (), {"get": staticmethod(lambda *a, **k: resp)})
+
+    def test_parses_announcement_from_rss_and_detail(self):
+        self._rss(200,
+            "<rss><channel><item>"
+            "<title>Acme Corp To Release Second Quarter 2026 Financial Results</title>"
+            "<link>https://investors.acme.com/news-events/press-releases/detail/9/x</link>"
+            "</item></channel></rss>")
+        ec._fetch_pr_body = lambda url: (
+            "Acme will release second quarter 2026 financial results before the market "
+            "opens on Tuesday, July 21, 2026. The Company will host a conference call at "
+            "9:00 a.m. Eastern Time on Tuesday, July 21, 2026. Webcast: "
+            "https://edge.media-server.com/mmc/p/x")
+        info = ir._irapp_announcement("https://investors.acme.com/", "2026-06-30")
+        self.assertEqual(info["release_date"], "2026-07-21")
+        self.assertEqual(info["call_date"], "2026-07-21")
+        self.assertEqual(info["call_time"], "9:00a ET")
+        self.assertEqual(info["when"], "Before open")
+        self.assertEqual(info["webcast_url"], "https://edge.media-server.com/mmc/p/x")
+
+    def test_non_rss_host_returns_none(self):
+        self._rss(404, "Not Found")     # not the IRapp platform
+        self.assertIsNone(ir._irapp_announcement("https://x.com/", "2026-06-30"))
+
+    def test_skips_stale_results_item(self):
+        # A past-quarter RESULTS item (no future date) must not leak its stale call.
+        self._rss(200,
+            "<item><title>Acme Corp Announces First Quarter 2026 Results</title>"
+            "<link>https://investors.acme.com/detail/8/x</link></item>")
+        ec._fetch_pr_body = lambda url: (
+            "Acme reported Q1 results. A call was held at 9:00 a.m. ET on "
+            "Tuesday, April 22, 2025.")
+        self.assertIsNone(
+            ir._irapp_announcement("https://investors.acme.com/", "2026-06-30"))
+
+
 if __name__ == "__main__":
     unittest.main()
