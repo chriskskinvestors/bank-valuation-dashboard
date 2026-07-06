@@ -211,7 +211,7 @@ jobs:
       - name: Ensure scheduler invoker bindings on scheduled jobs
         run: |
           INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               echo "  Ensuring invoker binding on $job..."
               gcloud run jobs add-iam-policy-binding "$job" \
@@ -234,7 +234,7 @@ jobs:
         run: |
           INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
           missing=""
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               if ! gcloud run jobs get-iam-policy "$job" --region="${{ env.REGION }}" \
                     --format="value(bindings.members)" 2>/dev/null | grep -q "$INVOKER"; then
