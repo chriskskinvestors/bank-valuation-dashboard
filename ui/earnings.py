@@ -649,7 +649,7 @@ def render_earnings_overview(watchlist: list[str]):
     # segmented_control renders only the selected section, so each tab's fetches
     # run only when you're on it.
     SECTIONS = [
-        "Calendar", "Surprise Heat-Map", "Beat / Miss",
+        "Calendar", "Results", "Surprise Heat-Map", "Beat / Miss",
         "Estimates", "Biggest Surprises", "Sector Aggregates", "Upload / Input",
     ]
     active = st.segmented_control(
@@ -658,6 +658,8 @@ def render_earnings_overview(watchlist: list[str]):
 
     if active == "Calendar":
         _render_earnings_calendar(watchlist)
+    elif active == "Results":
+        _render_results_board()
     elif active == "Surprise Heat-Map":
         _render_surprise_heatmap(watchlist)
     elif active == "Beat / Miss":
@@ -1258,6 +1260,100 @@ def _fmp_earnings_window(from_iso: str, to_iso: str):
     if rows is None:
         raise RuntimeError("FMP earnings calendar unavailable")
     return rows
+
+
+# ── Results board (reported this season) ──────────────────────────────
+
+def _signed_pct_cell(v, live: bool = False) -> str:
+    """Signed percent cell, green/red by sign; '· live' marks an intraday
+    stand-in (session close not posted yet). Muted '—' when None."""
+    if v is None:
+        return '<td class="mut">—</td>'
+    cls = "pos" if v >= 0 else "neg"
+    suffix = " · live" if live else ""
+    return f'<td class="{cls}">{v:+.1f}%{suffix}</td>'
+
+
+def _results_tr(r: dict) -> str:
+    """One <tr> for the Results board grid."""
+    try:
+        from datetime import date as _date
+        rep = _date.fromisoformat(r["date"]).strftime("%b %d")
+    except (KeyError, ValueError):
+        rep = r.get("date")
+    eps_act = f"${r['eps_act']:.2f}" if r.get("eps_act") is not None else None
+    eps_est = f"${r['eps_est']:.2f}" if r.get("eps_est") is not None else None
+    url = r.get("pr_url")
+    if url:
+        title = _html.escape(r.get("pr_headline") or "", quote=True)
+        release = (f'<td><a class="lnk" href="{_html.escape(url, quote=True)}" '
+                   f'title="{title}" target="_blank" rel="noopener">Release ↗</a></td>')
+    else:
+        release = '<td class="mut">—</td>'
+    return "<tr>" + "".join([
+        _tk_cell(r["ticker"]),
+        _cell(get_name(r["ticker"]), "nm"),
+        _cell(rep),
+        _cell(r.get("when")),
+        _cell(r.get("period_ending")),
+        _cell(eps_act),
+        _cell(eps_est),
+        _signed_pct_cell(r.get("eps_surprise")),
+        _cell(_fmt_rev_est(r.get("rev_act"))),
+        _cell(_fmt_rev_est(r.get("rev_est"))),
+        _signed_pct_cell(r.get("rev_surprise")),
+        _signed_pct_cell(r.get("px_react"), live=bool(r.get("px_react_live"))),
+        release,
+    ]) + "</tr>"
+
+
+def _render_results_board():
+    """Reported results this season, one row per bank: actual vs estimated
+    EPS/revenue with surprise %, the release-session price reaction, and the
+    results press release — compiled from FMP actuals (same-day), the events
+    feed and EOD history. Fills as banks report; 15-min refresh."""
+    from data.earnings_results import results_board
+
+    st.subheader("Reported Results")
+    with st.spinner("Loading reported results..."):
+        rows = results_board()
+
+    if not rows:
+        st.info("No universe bank has reported in the trailing 30 days yet — "
+                "this board fills as results land.")
+        return
+
+    eps_rows = [r for r in rows if r.get("eps_surprise") is not None]
+    beats = sum(1 for r in eps_rows if r["eps_surprise"] >= 0)
+    reacts = [r["px_react"] for r in rows if r.get("px_react") is not None]
+    ledger("Results Season", [
+        ("Reported", str(len(rows))),
+        ("EPS Beats", str(beats)),
+        ("EPS Misses", str(len(eps_rows) - beats)),
+        ("Beat Rate", f"{beats / len(eps_rows) * 100:.0f}%" if eps_rows else "—"),
+        ("Avg EPS Surprise", f"{sum(r['eps_surprise'] for r in eps_rows) / len(eps_rows):+.1f}%"
+         if eps_rows else "—"),
+        ("Avg Px Reaction", f"{sum(reacts) / len(reacts):+.1f}%" if reacts else "—"),
+    ])
+    st.caption(
+        "Every universe bank that has **reported** in the trailing 30 days, "
+        "newest first — actual vs estimated **EPS / Revenue** with the surprise "
+        "(FMP, filled the day results land), **Px React** = the release "
+        "session's close-over-prior-close move (after-close reports react the "
+        "NEXT session; *live* marks today's in-progress session), and the "
+        "results press **Release** from the news feed. '—' wherever a value "
+        "isn't available yet. Refreshes ~15 min.")
+
+    headers = [("Ticker", ""), ("Bank", "nm"), ("Reported", ""), ("When", ""),
+               ("Period", ""), ("EPS Act", ""), ("EPS Est", ""), ("EPS Δ", ""),
+               ("Rev Act", ""), ("Rev Est", ""), ("Rev Δ", ""),
+               ("Px React", ""), ("Release", "")]
+    col_widths = ["6%", "16%", "7%", "8%", "8%", "6%", "6%", "7%",
+                  "7%", "7%", "7%", "8%", "7%"]
+    _render_earnings_grid(headers, [_results_tr(r) for r in rows],
+                          col_widths=col_widths)
+    table_export(pd.DataFrame(rows), "earnings_results",
+                 key="exp_earnings_results")
 
 
 # ── Beat / Miss Summary ───────────────────────────────────────────────
