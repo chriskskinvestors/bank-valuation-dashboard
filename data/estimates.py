@@ -25,6 +25,10 @@ CACHE_TTL_SECONDS = 21600
 # Shared freshness check (data/freshness) bound to this module's TTL.
 def _is_fresh_data(data: dict | None) -> bool:
     from data.freshness import is_fresh
+    # Failures are never fresh: an {"error": ...} payload persisted by an older
+    # build (before failures stopped being cached) must not suppress a real retry.
+    if not data or data.get("error"):
+        return False
     return is_fresh(data, CACHE_TTL_SECONDS)
 
 
@@ -56,6 +60,14 @@ def fetch_estimates(ticker: str) -> dict:
         return cached
 
     result = _fetch_from_yfinance(ticker)
+
+    # Failures are NEVER cached (data-layer honesty). A throttled/failed yfinance
+    # call returns an {"error": ...} payload; persisting it would stamp it fresh
+    # for CACHE_TTL_SECONDS and silently drop the ticker from the earnings
+    # calendar until expiry. Return it un-persisted so the next call retries.
+    if result.get("error"):
+        return result
+
     result["cached_at"] = datetime.now().isoformat()
 
     try:
