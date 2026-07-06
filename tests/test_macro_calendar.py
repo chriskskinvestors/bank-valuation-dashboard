@@ -93,7 +93,8 @@ class TestGetUpcomingPrints(unittest.TestCase):
         by_name = {e["name"]: e for e in out}
         cpi = by_name["CPI"]
         self.assertEqual(cpi, {"date": _iso(2), "name": "CPI", "release_id": 10,
-                               "kind": "print", "importance": "high"})
+                               "kind": "print", "importance": "high",
+                               "time": "8:30 ET"})  # BLS 8:30am ET release
         self.assertEqual(by_name["PCE (Personal Income & Outlays)"]["importance"], "high")
         self.assertEqual(by_name["Employment Situation (NFP)"]["importance"], "high")
         self.assertEqual(by_name["Retail Sales"]["importance"], "medium")
@@ -129,7 +130,8 @@ class TestGetUpcomingPrints(unittest.TestCase):
         fomc = [e for e in out if e["kind"] == "fomc"]
         self.assertEqual(fomc, [{"date": _iso(3), "name": "FOMC Rate Decision",
                                  "release_id": None, "kind": "fomc",
-                                 "importance": "high"}])
+                                 "importance": "high",
+                                 "time": "2:00 ET"}])  # FOMC statement drop
         # Same day as CPI: both high, alphabetical → CPI first.
         self.assertEqual([e["name"] for e in out],
                          ["CPI", "FOMC Rate Decision"])
@@ -242,7 +244,8 @@ class TestGetPrintsForDate(unittest.TestCase):
             out = macro_calendar.get_prints_for_date(_iso(5))
         self.assertEqual(out, [{"date": _iso(5), "name": "FOMC Rate Decision",
                                 "release_id": None, "kind": "fomc",
-                                "importance": "high"}])
+                                "importance": "high",
+                                "time": "2:00 ET"}])  # FOMC statement drop
 
     @patch("data.http.get_with_retry")
     @patch("data.cache.get", return_value=None)
