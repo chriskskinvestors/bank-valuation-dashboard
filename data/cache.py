@@ -58,8 +58,16 @@ def _get_engine():
 # Public API — identical signature whether SQLite or Postgres
 # ──────────────────────────────────────────────────────────────────────────
 
-def get(key: str) -> dict | None:
-    """Get cached value if it exists and is not expired."""
+def get(key: str, max_age_s: float | None = TTL_SECONDS) -> dict | None:
+    """Get cached value if it exists and is younger than ``max_age_s``.
+
+    ``max_age_s=None`` disables the age check — for callers that apply their
+    own freshness policy and are DESIGNED to serve stale data (the universe
+    snapshot's stale-fallback), where the default TTL turning "stale" into
+    "missing" silently disables that fallback right when it's needed (a
+    failed/late nightly refresh puts the ~6.5-min live build back on the
+    request path — the 2026-06-13 hang mode).
+    """
     from sqlalchemy import text
     eng = _get_engine()
     with eng.connect() as conn:
@@ -70,7 +78,7 @@ def get(key: str) -> dict | None:
     if row is None:
         return None
     value, ts = row
-    if time.time() - float(ts) > TTL_SECONDS:
+    if max_age_s is not None and time.time() - float(ts) > max_age_s:
         return None  # Expired
     try:
         return json.loads(value)

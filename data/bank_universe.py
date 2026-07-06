@@ -221,7 +221,11 @@ def _load_lastgood() -> tuple[dict | None, bool]:
     (treated as present-but-stale)."""
     from data import cache as _cache
     from data.freshness import is_fresh
-    snap = _cache.get("bank_universe_lastgood")
+    # max_age_s=None: freshness is judged HERE (26h window below); the store's
+    # default 24h TTL would turn an older snapshot into "missing" and make the
+    # documented serve-stale fallback unreachable exactly when the nightly
+    # refresh fails — the one moment it exists for.
+    snap = _cache.get("bank_universe_lastgood", max_age_s=None)
     if not snap:
         return None, False
     if isinstance(snap, dict) and "universe" in snap:

@@ -419,14 +419,22 @@ def _universe_snapshot_map() -> dict[str, dict]:
     if _SNAPSHOT_MAP is None:
         try:
             from data import cache
-            snap = cache.get("bank_universe_lastgood") or {}
+            # max_age_s=None: the snapshot resolves tickers at any age (the
+            # nightly job owns refresh); the store's default 24h TTL would
+            # blank this tier whenever the job ran late.
+            snap = cache.get("bank_universe_lastgood", max_age_s=None) or {}
             uni = snap.get("universe", snap)  # stamped or legacy format
-            _SNAPSHOT_MAP = {
+            found = {
                 t: v for t, v in (uni or {}).items() if isinstance(v, dict)
             }
+            if not found:
+                # No snapshot yet (fresh DB) — retry on the next call rather
+                # than pinning this tier empty for the process lifetime.
+                return {}
+            _SNAPSHOT_MAP = found
         except Exception as e:
             print(f"[bank_mapping] snapshot tier unavailable: {type(e).__name__}: {e}")
-            _SNAPSHOT_MAP = {}
+            return {}  # transient (DB hiccup) — retry on the next call
     return _SNAPSHOT_MAP
 
 
