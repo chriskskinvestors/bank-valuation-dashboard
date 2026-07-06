@@ -647,6 +647,7 @@ def earnings_timing_map() -> dict:
         return out
 
     try:
-        return _cache.served_snapshot("earnings_timing_map_v1", 21600, _build) or {}
+        # v2: v1 snapshots were built from field-less rows (no includeReportTimes).
+        return _cache.served_snapshot("earnings_timing_map_v2", 21600, _build) or {}
     except Exception:
         return {}

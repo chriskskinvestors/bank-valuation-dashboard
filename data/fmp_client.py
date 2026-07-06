@@ -624,14 +624,21 @@ def get_earnings_calendar(from_date: str, to_date: str) -> list[dict] | None:
     body on each load, so the Calls & Webcasts tab's whole-market 75-day fetch ran
     live on every Earnings open. Failures are never cached (house pattern), so a
     transient FMP error retries rather than poisoning the cache with None.
+
+    includeReportTimes=true is REQUIRED: without it the stable endpoint silently
+    omits time/confirmed/periodEnding entirely (every calendar date rendered as
+    "(proj.)" and the When column stayed empty — 2026-07-06). Cache key carries
+    :v2 so field-less rows cached before the fix can never serve.
     """
     if not _has_key():
         return None
-    key = f"fmp_earn_cal:{from_date}:{to_date}"
+    key = f"fmp_earn_cal:v2:{from_date}:{to_date}"
     cached = _cache_get(key, 3600)
     if cached is not None:
         return cached
-    data = _get("earnings-calendar", {"from": from_date, "to": to_date}, timeout=15)
+    data = _get("earnings-calendar",
+                {"from": from_date, "to": to_date, "includeReportTimes": "true"},
+                timeout=15)
     out = data if isinstance(data, list) else None
     if out is not None:
         _cache_put(key, out)

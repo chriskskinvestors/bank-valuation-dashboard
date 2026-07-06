@@ -58,6 +58,15 @@ class TestEarningsCalendarCache(unittest.TestCase):
         self.assertEqual(second, [{"symbol": "JPM"}])
         self.assertEqual(len(calls), 2, "a None failure must retry, never be cached")
 
+    def test_request_asks_for_report_times(self):
+        """includeReportTimes=true must be on the request: without it FMP's stable
+        endpoint omits time/confirmed/periodEnding entirely, so every calendar
+        date rendered as unconfirmed "(proj.)" (2026-07-06 regression)."""
+        seen = {}
+        fmp._get = lambda path, params, timeout=10: (seen.update(params), [])[1]
+        fmp.get_earnings_calendar("2026-07-01", "2026-07-31")
+        self.assertEqual(seen.get("includeReportTimes"), "true")
+
     def test_no_key_returns_none_without_fetch(self):
         fmp._has_key = lambda: False
         fmp._get = lambda *a, **k: self.fail("must not fetch when no FMP key")
