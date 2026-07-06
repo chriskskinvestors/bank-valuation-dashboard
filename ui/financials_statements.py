@@ -1192,13 +1192,15 @@ _INCOME = [
         ("Provision for credit losses", "dollar", "ELNATR"),
     ]),
     ("Non-Interest Income", [
-        ("Trading account income", "dollar", "TRADE"),
+        # ITRADE = trading revenue (RI income line); NOT TRADE, which is the
+        # balance-sheet trading-account ASSET used on the Balance Sheet tab.
+        ("Trading account income", "dollar", "ITRADE"),
         ("Trust / fiduciary revenue", "dollar", "IFIDUC"),
         ("Service charges on deposits", "dollar", "ISERCHG"),
         ("Insurance revenue", "dollar", "IINSOTH"),
         ("Investment banking fees", "dollar", "IINVFEE"),
         ("Other non-interest income", "noniother",
-         "TRADE", "IFIDUC", "ISERCHG", "IINSOTH", "IINVFEE"),
+         "ITRADE", "IFIDUC", "ISERCHG", "IINSOTH", "IINVFEE"),
         ("Total non-interest income", "dollar", "NONII"),
         ("Realized gain (loss) on securities", "dollar", "IGLSEC"),
     ]),

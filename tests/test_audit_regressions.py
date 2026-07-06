@@ -1280,5 +1280,62 @@ class TestPreferredStockExcludedFromBookValue(unittest.TestCase):
         self.assertAlmostEqual(r["tangible_book_value_per_share"], 28.59, places=1)
 
 
+class TestAudit0702P0FieldMislabels(unittest.TestCase):
+    """2026-07-02 audit P0 #1-2: wrong FDIC field wired under a right label.
+
+    #1 Income Statement showed TRADE (balance-sheet trading-account ASSET,
+       ~$B) as "Trading account income" and subtracted it in the "Other
+       non-interest income" residual, driving that residual hugely negative
+       for any bank with a trading book. The income field is ITRADE.
+    #2 Historical Financials showed ELNATR (provision for credit losses) under
+       "Net Charge-Offs ($K)". The net-charge-off dollar field is NTLNLS;
+       reserve-building banks showed provision as a fake, larger NCO.
+    """
+
+    def test_is_trading_row_uses_income_field_not_balance_sheet_asset(self):
+        from ui.financials_statements import _INCOME
+        noni = dict(_INCOME)["Non-Interest Income"]
+        trad = [r for r in noni if r[0] == "Trading account income"]
+        self.assertEqual(len(trad), 1)
+        # field (index 2) must be ITRADE (RI trading revenue), never TRADE.
+        self.assertEqual(trad[0][2], "ITRADE")
+
+    def test_no_balance_sheet_trade_field_leaks_into_is_income_rows(self):
+        from ui.financials_statements import _INCOME
+        noni = dict(_INCOME)["Non-Interest Income"]
+        for row in noni:
+            fields = row[2:]  # everything after (label, kind)
+            self.assertNotIn(
+                "TRADE", fields,
+                f"balance-sheet TRADE leaked into IS income row {row[0]!r}")
+
+    def test_itrade_is_actually_fetched(self):
+        from data.fdic_client import _BASE_FINANCIALS_FIELDS
+        # The row would render '—' forever if the field were never requested.
+        self.assertIn("ITRADE", _BASE_FINANCIALS_FIELDS)
+
+    def test_historicals_nco_row_uses_ntlnls_not_provision(self):
+        from ui.historicals import HIST_METRICS, HIST_FIELDS
+        nco = [m for m in HIST_METRICS if m[1] == "Net Charge-Offs ($K)"]
+        self.assertEqual(len(nco), 1)
+        self.assertEqual(nco[0][0], "NTLNLS")  # not ELNATR
+        self.assertIn("NTLNLS", HIST_FIELDS)
+
+    def test_annualize_nco_takes_q4_ytd_ntlnls(self):
+        # Two quarters of FY2025 (BANR actuals, cert 28489, probed live):
+        #   Q2 YTD NTLNLS 3,770 / ELNATR 7,934; Q4 YTD NTLNLS 6,882 / ELNATR 13,045.
+        # Annual NCO must be the Q4 YTD net-charge-off (6,882) — NOT provision.
+        from ui.historicals import _annualize
+        df = pd.DataFrame([
+            {"REPDTE": 20251231, "NTLNLS": 6882, "ELNATR": 13045, "NETINC": 100},
+            {"REPDTE": 20250630, "NTLNLS": 3770, "ELNATR": 7934, "NETINC": 50},
+        ])
+        ann = _annualize(df)
+        row = ann[ann["Period"] == "2025"].iloc[0]
+        self.assertEqual(row["NTLNLS"], 6882)
+        # provision is no longer promoted into the annual (NCO) frame.
+        self.assertNotIn("ELNATR", ann.columns)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

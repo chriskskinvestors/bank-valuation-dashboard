@@ -21,7 +21,7 @@ HIST_FIELDS = (
     "CERT,REPDTE,ASSET,DEP,LNLSNET,EQTOT,NETINC,NIM,NIMY,ROA,ROE,"
     "EEFFR,NCLNLSR,IDT1CER,INTINCY,INTEXPY,NONIIAY,NONIXAY,"
     "LNRE,LNCI,SC,COREDEP,BRO,INTINC,EINTEXP,NONII,NONIX,"
-    "ELNATR,LNLSGR,DEPDOM,EQCDIV,INTANGW"
+    "ELNATR,NTLNLS,LNLSGR,DEPDOM,EQCDIV,INTANGW"
 )
 
 # Display configuration: (fdic_field, display_name, format, category)
@@ -45,7 +45,7 @@ HIST_METRICS = [
     ("BRO",      "Brokered Deposits ($K)","${:,.0f}", "Balance Sheet"),
     # Credit Quality
     ("NCLNLSR",  "NPL Ratio (%)",        "{:.2f}%",  "Credit"),
-    ("ELNATR",   "Net Charge-Offs ($K)", "${:,.0f}",  "Credit"),
+    ("NTLNLS",   "Net Charge-Offs ($K)", "${:,.0f}",  "Credit"),
     # Capital
     ("IDT1CER",  "CET1 Ratio (%)",       "{:.2f}%",  "Capital"),
     # NIM Components
@@ -101,7 +101,7 @@ def _annualize(df: pd.DataFrame) -> pd.DataFrame:
     # For stock metrics (ratios, %): average the year's quarters
     avg_fields = ["ROA", "NIMY", "EEFFR", "NCLNLSR", "IDT1CER", "INTINCY", "INTEXPY", "NONIIAY", "NONIXAY"]
     # For flow metrics ($): use Q4 value (YTD annual)
-    q4_fields = ["NETINC", "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR"]
+    q4_fields = ["NETINC", "INTINC", "EINTEXP", "NONII", "NONIX", "NTLNLS"]
     # For point-in-time: use Q4 value
     pit_fields = ["ASSET", "LNLSNET", "DEP", "EQTOT", "SC", "COREDEP", "BRO", "LNLSGR"]
 
