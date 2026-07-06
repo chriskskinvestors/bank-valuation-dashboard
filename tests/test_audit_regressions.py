@@ -84,6 +84,35 @@ class TestA12TceConvention(unittest.TestCase):
         self.assertIn('"INTAN"', roatce_block)
 
 
+class TestValuationEngineTceConvention(unittest.TestCase):
+    """(AUDIT-2026-07-02 P2 #24) The FDIC ROATCE engine in analysis/valuation.py
+    must subtract INTAN (total intangibles) — the same house convention the
+    Financials tab, Capital Dynamics, and the golden hand-check use, and the one
+    CLAUDE.md declares. It previously subtracted INTANGW (goodwill only), so the
+    Valuation tab and the Financials tab reported a DIFFERENT ROATCE for the same
+    bank/quarter. Behavioral pin: EQTOT 1000, goodwill 100, total intangibles 300
+    → TCE denominator must be 1000−300=700 (INTAN), not 1000−100=900 (INTANGW)."""
+
+    def test_compute_roatce_subtracts_total_intangibles(self):
+        from analysis.valuation import compute_roatce
+        # Q4 (REPDTE 20251231) → YTD annualization ×1, so ROATCE = NI / TCE × 100.
+        rec = {"NETINC": 70, "EQTOT": 1000, "INTAN": 300, "INTANGW": 100,
+               "REPDTE": "20251231"}
+        got = compute_roatce(rec)
+        self.assertAlmostEqual(got, 70 / 700 * 100, places=2)      # 10.0% — INTAN
+        self.assertNotAlmostEqual(got, 70 / 900 * 100, places=2)   # 7.78% — INTANGW
+
+    def test_compute_roatce_4q_subtracts_total_intangibles(self):
+        from analysis.valuation import compute_roatce_4q
+        # 4 Q1 records (different years) → each quarterly NI = its YTD, count=4
+        # (no scale-up): ttm_ni = 4×17.5 = 70, avg_tce = 1000−300 = 700 → 10.0%.
+        recs = [{"NETINC": 17.5, "EQTOT": 1000, "INTAN": 300, "INTANGW": 100,
+                 "REPDTE": f"{y}0331"} for y in (2025, 2024, 2023, 2022)]
+        got = compute_roatce_4q(recs)
+        self.assertAlmostEqual(got, 70 / 700 * 100, places=2)      # 10.0% — INTAN
+        self.assertNotAlmostEqual(got, 70 / 900 * 100, places=2)   # 7.78% — INTANGW
+
+
 class TestAudit0702AvgEquityDenominators(unittest.TestCase):
     """(AUDIT-2026-07-02 P1 #12) roatce/roate/roace are labeled and popup-
     documented as returns on AVERAGE equity but were computed on the period-END

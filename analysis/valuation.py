@@ -132,19 +132,21 @@ def compute_roatce(fdic_data: dict) -> float | None:
     Compute annualized Return on Average Tangible Common Equity from FDIC data.
 
     ROATCE = (Annualized Net Income) / TCE × 100
-    TCE = Total Equity − Goodwill.
+    TCE = Total Equity − Total Intangibles (INTAN, incl. goodwill) — the house
+    convention (CLAUDE.md; matches the Financials tab, Capital Dynamics, and the
+    golden hand-check). INTANGW = goodwill only, which understated intangibles.
 
     NETINC is YTD (cumulative within calendar year). We annualize by multiplying
     by (4 / quarter_number) so mid-year numbers are comparable to Q4.
     """
     net_income = fdic_data.get("NETINC")
     equity = fdic_data.get("EQTOT")
-    goodwill = fdic_data.get("INTANGW") or 0
+    intangibles = fdic_data.get("INTAN") or 0
 
     if net_income is None or equity is None:
         return None
 
-    tce = equity - goodwill
+    tce = equity - intangibles
     if tce <= 0:
         return None
 
@@ -215,11 +217,11 @@ def compute_roatce_4q(fdic_hist: list[dict]) -> float | None:
     for i in range(min(4, len(fdic_hist))):
         ni_q = _derive_quarterly_value("NETINC", fdic_hist, i)
         eq = fdic_hist[i].get("EQTOT")
-        gw = fdic_hist[i].get("INTANGW") or 0
+        intan = fdic_hist[i].get("INTAN") or 0  # total intangibles (house TCE convention)
         if ni_q is None or eq is None:
             continue
         ttm_ni += ni_q
-        tce_values.append(eq - gw)
+        tce_values.append(eq - intan)
         count += 1
 
     if count == 0 or not tce_values:
