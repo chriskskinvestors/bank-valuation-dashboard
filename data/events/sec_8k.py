@@ -102,7 +102,16 @@ class SEC8KAdapter(SourceAdapter):
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
         out: list[Event] = []
-        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        # `since` (the source-wide MAX(published_at)) is deliberately ignored:
+        # this source name is shared with SEC8KRecentAdapter, whose feed entries
+        # carry intraday times, while this adapter stamps filings at midnight
+        # UTC of the filing date. Any intraday `since` therefore compares AFTER
+        # every filing dated that day, and the newest-first scan below breaks
+        # immediately — blinding the can't-miss backstop (and the 10-K/10-Q
+        # fundamentals invalidation only this adapter emits). Re-scanning the
+        # full window is safe: the store dedups on (source, accession), and the
+        # per-CIK HTTP fetch is the same single call either way.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS)
 
         for ticker in tickers:
             try:
@@ -276,7 +285,11 @@ class SEC8KRecentAdapter(SourceAdapter):
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
         from data.events.wire_base import fetch_rss
-        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        # Same contract as SEC8KAdapter: ignore `since` (mixed-granularity
+        # timestamps under the shared source name) and take the full lookback —
+        # the feed is one fetch of ~100 entries and the store dedups, so a
+        # tighter cutoff buys nothing and can drop late-listed entries.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS)
 
         # CIK -> primary-common ticker for the banks we track (offline lookup).
         # Collapses shared-CIK siblings (preferreds / bank-issued ETNs) onto the

@@ -14,7 +14,7 @@ import json
 import sys
 import types
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 # Stub streamlit before importing data modules (house pattern).
@@ -34,7 +34,10 @@ from jobs.poll_events import (  # noqa: E402
 )
 
 PAST = datetime(2020, 1, 1, tzinfo=timezone.utc)
-NOW = datetime(2026, 6, 18, 12, 0, tzinfo=timezone.utc)
+# Dynamic: poll() scans a fixed lookback window ending at the real "now"
+# (it deliberately ignores `since` — see TestBackstopIgnoresSince), so feed
+# fixtures must carry recent timestamps to land inside the window.
+NOW = datetime.now(timezone.utc)
 
 
 class _FakeResp:
@@ -135,6 +138,55 @@ class TestRecentFeedAdapter(unittest.TestCase):
         evs = self._poll([_entry("0000123456", "Item 1.01: Material Agreement",
                                  "0000123456-26-000005")])
         self.assertEqual(evs[0].source, "sec_8k")
+
+
+class TestBackstopIgnoresSince(unittest.TestCase):
+    """(AUDIT-2026-07-02 P1 #4) The runner passes since = the source-wide
+    MAX(published_at). The fast Atom feed stores intraday times under the same
+    'sec_8k' source, while the per-CIK backstop stamps filings at midnight UTC
+    of the filing date — so an intraday `since` made the newest-first scan
+    break on its very first (today-dated) filing, blinding the can't-miss
+    backstop and the 10-K/10-Q fundamentals invalidation only it emits. Both
+    adapters must scan their full lookback regardless of `since`; the store's
+    (source, accession) dedup absorbs the re-scan."""
+
+    @staticmethod
+    def _recent_payload():
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        return {"filings": {"recent": {
+            "form": ["8-K", "10-Q"],
+            "filingDate": [yesterday, yesterday],
+            "accessionNumber": ["0001-26-000101", "0001-26-000102"],
+            "primaryDocument": ["doc8k.htm", "doc10q.htm"],
+            "items": ["2.02", ""],
+        }}}
+
+    def test_per_cik_backstop_ingests_despite_intraday_since(self):
+        intraday_since = datetime.now(timezone.utc)  # newest stored event: now
+        with patch.object(sec_8k, "get_cik", return_value=320193), \
+             patch.object(sec_8k.requests, "get",
+                          return_value=_FakeResp(self._recent_payload())):
+            evs = SEC8KAdapter().poll(["TEST"], since=intraday_since)
+        self.assertEqual(len(evs), 2,
+                         "yesterday's filings must be ingested even when `since` "
+                         "is an intraday timestamp newer than their midnight stamp")
+        forms = {e.raw["form"] for e in evs}
+        self.assertIn("10-Q", forms,
+                      "periodic filings drive fundamentals invalidation — the "
+                      "backstop must keep emitting them")
+
+    def test_recent_feed_keeps_entries_older_than_since(self):
+        two_hours_ago = datetime.now(timezone.utc) - timedelta(hours=2)
+        entry = _entry("0000123456", "Item 2.02: Results of Operations",
+                       "0000123456-26-000201", pub=two_hours_ago)
+        with patch.object(sec_8k, "get_cik",
+                          side_effect=lambda t: 123456 if t.upper() == "TBNK" else None), \
+             patch.object(wire_base, "fetch_rss", return_value=[entry]):
+            evs = SEC8KRecentAdapter().poll(["TBNK"],
+                                            since=datetime.now(timezone.utc))
+        self.assertEqual(len(evs), 1,
+                         "a feed entry published before `since` must not be "
+                         "dropped — dedup, not the cutoff, handles re-ingest")
 
 
 class TestCleanSummary(unittest.TestCase):
