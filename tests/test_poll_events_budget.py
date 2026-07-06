@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import itertools
 import sys
 import types
 import unittest
@@ -89,8 +90,14 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=No
     if env:
         stack.enter_context(mock.patch.dict("os.environ", env, clear=False))
     if time_values is not None:
+        # Infinite tail: repeat the last timestamp forever. main() gains new
+        # time.time() call sites over time (adapters, timing prints); a finite
+        # list rots into StopIteration the moment one is added (2026-07 audit
+        # P2 #44), while the frozen tail keeps the scenario intent intact.
+        vals = list(time_values)
+        seq = itertools.chain(vals, itertools.repeat(vals[-1]))
         stack.enter_context(mock.patch.object(pe.time, "time",
-                                              side_effect=list(time_values)))
+                                              side_effect=seq.__next__))
     # Capture the job's stdout — its ▶/× progress glyphs can't encode to the
     # Windows cp1252 test console (Cloud Run runs UTF-8).
     with contextlib.redirect_stdout(io.StringIO()):
