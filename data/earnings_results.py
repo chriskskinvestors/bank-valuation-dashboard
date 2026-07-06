@@ -186,6 +186,41 @@ def _fill_price_reactions(rows, today, max_workers: int = 8) -> None:
         list(ex.map(_one, rows))
 
 
+def release_matches_report(filed_iso, report_iso) -> bool:
+    """True when an 8-K's filing date belongs to THIS report: same day through
+    +5 days (the 8-K can trail the wire PR slightly; EDGAR acceptance after
+    16:00 ET stamps the next day, and a weekend can add two more). A release
+    filed BEFORE the report date is last quarter's — never attached."""
+    f, r = _iso_date(filed_iso), _iso_date(report_iso)
+    if f is None or r is None:
+        return False
+    return 0 <= (f - r).days <= 5
+
+
+def _fill_release_metrics(rows, max_workers: int = 6) -> None:
+    """Attach each row's release-extracted metrics in place (`rel` = {metrics,
+    capital, url} or None): the per-CIK cached 8-K extraction, attached ONLY
+    when the release's filing date matches the row's report date — a stale
+    prior-quarter release never shows on a new report row."""
+    from concurrent.futures import ThreadPoolExecutor
+    from data.bank_mapping import get_cik
+    from data.release_metrics import release_metrics
+
+    def _one(row):
+        row["rel"] = None
+        try:
+            rm = release_metrics(get_cik(row["ticker"]))
+        except Exception:
+            return
+        if rm and release_matches_report(rm.get("filed_date"), row["date"]):
+            row["rel"] = {"metrics": rm.get("metrics") or {},
+                          "capital": rm.get("capital") or {},
+                          "url": rm.get("url")}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        list(ex.map(_one, rows))
+
+
 def results_board(days_back: int = 30) -> list[dict]:
     """The Results board rows, cross-instance cached 15 min (earnings-week
     freshness without per-render fetch storms). Empty list when nothing has
@@ -217,10 +252,12 @@ def results_board(days_back: int = 30) -> list[dict]:
         rows = build_results_rows(fmp_rows, universe, events, today,
                                   days_back=days_back)
         _fill_price_reactions(rows, today)
+        _fill_release_metrics(rows)
         return rows
 
     try:
-        return _cache.served_snapshot(f"earnings_results_board_v1:{days_back}",
+        # v2: v1 rows predate the attached release metrics (`rel`).
+        return _cache.served_snapshot(f"earnings_results_board_v2:{days_back}",
                                       900, _build) or []
     except Exception:
         return []

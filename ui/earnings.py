@@ -1274,8 +1274,48 @@ def _signed_pct_cell(v, live: bool = False) -> str:
     return f'<td class="{cls}">{v:+.1f}%{suffix}</td>'
 
 
-def _results_tr(r: dict) -> str:
-    """One <tr> for the Results board grid."""
+# Release-metric keys → compact labels, in display order. Percent keys render
+# "x.xx%"; per-share keys ($) render "$x.xx". Values come from the bank's own
+# release via data/release_metrics (prose-confirmed or None — never guessed).
+_REL_METRICS = [
+    ("nim", "NIM", "%"), ("efficiency", "Efficiency", "%"),
+    ("roa", "ROA", "%"), ("roe", "ROE", "%"), ("rotce", "ROTCE", "%"),
+    ("cet1_ratio", "CET1", "%"), ("t1_ratio", "Tier 1", "%"),
+    ("total_ratio", "Total Cap", "%"), ("lev_ratio", "Leverage", "%"),
+    ("tbv_ps", "TBV/sh", "$"), ("div_ps", "Div/sh", "$"),
+    ("nco_ratio", "NCOs", "%"), ("npa_assets", "NPAs/Assets", "%"),
+    ("acl_loans", "ACL/Loans", "%"),
+]
+
+
+def _rel_detail_tr(r: dict, ncols: int) -> str:
+    """The hidden expansion <tr> under a bank's row: every release-extracted
+    metric as a dense label:value strip, '—' where the release didn't
+    confirmably state it."""
+    rel = r.get("rel") or {}
+    vals = {**(rel.get("metrics") or {}), **(rel.get("capital") or {})}
+    parts = []
+    for key, label, unit in _REL_METRICS:
+        v = vals.get(key)
+        if v is None:
+            sval = '<span class="mut">—</span>'
+        elif unit == "$":
+            sval = f"${v:,.2f}"
+        else:
+            sval = f"{v:.2f}%"
+        parts.append(f'<span class="rl">{label}</span> {sval}')
+    src = rel.get("url")
+    if src:
+        parts.append(f'<a class="lnk" href="{_html.escape(src, quote=True)}" '
+                     f'target="_blank" rel="noopener">release ↗</a>')
+    return (f'<tr class="det"><td class="dt" colspan="{ncols}">'
+            + " · ".join(parts) + "</td></tr>")
+
+
+def _results_tr(r: dict, ncols: int) -> str:
+    """A bank's Results rows: the main <tr> (with the ▸ expander toggle when
+    release metrics are attached) immediately followed by its hidden detail
+    <tr> — the CSS `tr:has(:checked) + tr.det` pair contract."""
     try:
         from datetime import date as _date
         rep = _date.fromisoformat(r["date"]).strftime("%b %d")
@@ -1290,7 +1330,12 @@ def _results_tr(r: dict) -> str:
                    f'title="{title}" target="_blank" rel="noopener">Release ↗</a></td>')
     else:
         release = '<td class="mut">—</td>'
-    return "<tr>" + "".join([
+    has_rel = bool(r.get("rel"))
+    toggle = ('<td class="tg"><label><input type="checkbox">'
+              '<span class="xa"></span></label></td>'
+              if has_rel else '<td class="mut"></td>')
+    main = "<tr>" + "".join([
+        toggle,
         _tk_cell(r["ticker"]),
         _cell(get_name(r["ticker"]), "nm"),
         _cell(rep),
@@ -1305,6 +1350,7 @@ def _results_tr(r: dict) -> str:
         _signed_pct_cell(r.get("px_react"), live=bool(r.get("px_react_live"))),
         release,
     ]) + "</tr>"
+    return main + (_rel_detail_tr(r, ncols) if has_rel else "")
 
 
 def _render_results_board():
@@ -1341,18 +1387,44 @@ def _render_results_board():
         "(FMP, filled the day results land), **Px React** = the release "
         "session's close-over-prior-close move (after-close reports react the "
         "NEXT session; *live* marks today's in-progress session), and the "
-        "results press **Release** from the news feed. '—' wherever a value "
-        "isn't available yet. Refreshes ~15 min.")
+        "results press **Release** from the news feed. A **▸** expands the "
+        "release's own metrics (NIM, efficiency, returns, capital, TBV, "
+        "credit) — each parsed from the bank's release prose and shown only "
+        "when confidently confirmed; '—' otherwise, never a guess. "
+        "Refreshes ~15 min.")
 
-    headers = [("Ticker", ""), ("Bank", "nm"), ("Reported", ""), ("When", ""),
-               ("Period", ""), ("EPS Act", ""), ("EPS Est", ""), ("EPS Δ", ""),
-               ("Rev Act", ""), ("Rev Est", ""), ("Rev Δ", ""),
+    headers = [("", ""), ("Ticker", ""), ("Bank", "nm"), ("Reported", ""),
+               ("When", ""), ("Period", ""), ("EPS Act", ""), ("EPS Est", ""),
+               ("EPS Δ", ""), ("Rev Act", ""), ("Rev Est", ""), ("Rev Δ", ""),
                ("Px React", ""), ("Release", "")]
-    col_widths = ["6%", "16%", "7%", "8%", "8%", "6%", "6%", "7%",
-                  "7%", "7%", "7%", "8%", "7%"]
-    _render_earnings_grid(headers, [_results_tr(r) for r in rows],
+    col_widths = ["3%", "6%", "14%", "7%", "8%", "8%", "6%", "6%", "7%",
+                  "7%", "7%", "6%", "8%", "7%"]
+    # Expansion CSS: the detail row directly follows its main row; checking the
+    # toggle shows it (Chrome-first `:has()`, the house pattern). The checkbox
+    # itself is hidden — the ▸/▾ arrow is the visible affordance.
+    st.markdown(
+        "<style>"
+        ".ern-grid tr.det{display:none;}"
+        ".ern-grid tr:has(td.tg input:checked)+tr.det{display:table-row;}"
+        ".ern-grid td.tg{cursor:pointer;text-align:center;}"
+        ".ern-grid td.tg label{cursor:pointer;display:block;}"
+        ".ern-grid td.tg input{display:none;}"
+        ".ern-grid td.tg .xa::after{content:'▸';color:var(--brand-primary);}"
+        ".ern-grid tr:has(td.tg input:checked) .xa::after{content:'▾';}"
+        ".ern-grid td.dt{text-align:left;background:var(--surface-raised,rgba(0,0,0,0.03));"
+        "white-space:normal;}"
+        ".ern-grid td.dt .rl{color:var(--text-muted);font-size:0.85em;"
+        "text-transform:uppercase;letter-spacing:0.03em;}"
+        "</style>", unsafe_allow_html=True)
+    _render_earnings_grid(headers, [_results_tr(r, len(headers)) for r in rows],
                           col_widths=col_widths)
-    table_export(pd.DataFrame(rows), "earnings_results",
+    export_rows = [{**{k: v for k, v in r.items() if k != "rel"},
+                    **{f"rel_{key}": ((r.get("rel") or {}).get("metrics", {}) |
+                                      (r.get("rel") or {}).get("capital", {})
+                                      ).get(key)
+                       for key, _, _ in _REL_METRICS}}
+                   for r in rows]
+    table_export(pd.DataFrame(export_rows), "earnings_results",
                  key="exp_earnings_results")
 
 

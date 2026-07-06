@@ -20,8 +20,25 @@ from data.earnings_results import (
     pick_release_pr,
     price_reaction,
     reaction_session,
+    release_matches_report,
     surprise_pct,
 )
+
+
+class TestReleaseMatchesReport(unittest.TestCase):
+    def test_same_day_through_five_days_match(self):
+        self.assertTrue(release_matches_report("2026-07-14", "2026-07-14"))
+        self.assertTrue(release_matches_report("2026-07-19", "2026-07-14"))
+
+    def test_prior_quarter_release_never_attaches(self):
+        # An 8-K filed BEFORE the report date is last quarter's release.
+        self.assertFalse(release_matches_report("2026-04-15", "2026-07-14"))
+        self.assertFalse(release_matches_report("2026-07-13", "2026-07-14"))
+
+    def test_too_late_or_unparseable_never_attaches(self):
+        self.assertFalse(release_matches_report("2026-07-20", "2026-07-14"))
+        self.assertFalse(release_matches_report(None, "2026-07-14"))
+        self.assertFalse(release_matches_report("2026-07-14", None))
 
 
 class TestSurprisePct(unittest.TestCase):
