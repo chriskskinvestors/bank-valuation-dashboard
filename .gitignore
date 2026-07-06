@@ -42,3 +42,6 @@ tools/_*.json
 tools/_*.jsonl
 tools/_*.md
 tools/_*.log
+
+# Timestamped backups written by tools/resolve_all_mappings.py before an overwrite
+data/bank_map_resolved.bak-*.json

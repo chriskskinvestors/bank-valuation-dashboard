@@ -257,8 +257,27 @@ def resolve(ticker: str) -> dict:
 # Main
 # ──────────────────────────────────────────────────────────────────────────
 
+def _merge_resolved(existing: dict, fresh: dict, *, overwrite: bool) -> dict:
+    """Combine a freshly re-resolved mapping with the on-disk one.
+
+    Default (overwrite=False): PRESERVE every existing entry exactly — the
+    on-disk file carries hand-curated wrong-entity fixes and §12(i) cik=None
+    overrides that the heuristic resolver would otherwise silently revert
+    (AUDIT-2026-07-02 P1 #18). Only tickers absent from the existing file are
+    added. With overwrite=True the fresh mapping fully replaces it; the caller
+    writes a timestamped backup first so a mistaken run stays recoverable.
+    """
+    if overwrite:
+        return dict(fresh)
+    merged = dict(existing)
+    for ticker, info in fresh.items():
+        merged.setdefault(ticker, info)
+    return merged
+
+
 def main():
     import warnings; warnings.filterwarnings("ignore")
+    overwrite = "--overwrite" in sys.argv
     from data.bank_universe import get_universe_tickers
     from data.bank_mapping import BANK_MAP
 
@@ -296,12 +315,29 @@ def main():
     from utils.formatting import format_bank_name
     results.sort(key=lambda r: r["ticker"])
     out_path = REPO_ROOT / "data" / "bank_map_resolved.json"
-    payload = {r["ticker"]: {"cik": r["cik"], "fdic_cert": r["cert"],
-                              "name": format_bank_name(r["name"], r["ticker"]),
-                              "fdic_score": r["fdic_score"]}
-               for r in results}
-    out_path.write_text(json.dumps(payload, indent=1, sort_keys=True))
-    print(f"\nWrote {out_path}")
+    fresh = {r["ticker"]: {"cik": r["cik"], "fdic_cert": r["cert"],
+                           "name": format_bank_name(r["name"], r["ticker"]),
+                           "fdic_score": r["fdic_score"]}
+             for r in results}
+    existing = json.loads(out_path.read_text()) if out_path.exists() else {}
+    merged = _merge_resolved(existing, fresh, overwrite=overwrite)
+
+    # Never clobber the curated file irrecoverably: back it up before writing.
+    if out_path.exists():
+        backup = out_path.with_name(
+            f"{out_path.stem}.bak-{time.strftime('%Y%m%d-%H%M%S')}.json")
+        backup.write_text(out_path.read_text())
+        print(f"Backed up existing mapping -> {backup.name}")
+
+    out_path.write_text(json.dumps(merged, indent=1, sort_keys=True))
+    if overwrite:
+        print(f"\nWrote {out_path} (OVERWRITE: {len(merged)} entries, "
+              f"full re-resolution replacing curated data)")
+    else:
+        added = len(merged) - len(existing)
+        print(f"\nWrote {out_path} (MERGE: {len(existing)} existing entries "
+              f"preserved, {added} new added — re-run with --overwrite to "
+              f"force a full re-resolution)")
 
     # Print residual no-data tickers (will help curate manual overrides)
     no_data = [r["ticker"] for r in results if not r["cik"] and not r["cert"]]
