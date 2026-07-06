@@ -131,6 +131,22 @@ def _render_phased_inputs(ticker, latest, inputs, tax_rate):
     render_traceable_cards(cards, key=f"nim_phased_inputs_{ticker}", columns=5)
 
 
+def _slope_regime(curve_5y_3m):
+    """Regime label for the 5Y−3M curve slope, or None when unavailable.
+
+    Explicit `is not None` semantics (AUDIT-2026-07-02 #16): the old
+    truthiness chain sent BOTH a FRED-outage None AND an exactly-flat
+    0.00pp slope to "Inverted". n/a-over-guess: no number → no label.
+    """
+    if curve_5y_3m is None:
+        return None
+    if curve_5y_3m > 0.5:
+        return "Steep"
+    if abs(curve_5y_3m) <= 0.5:
+        return "Flat"
+    return "Inverted"
+
+
 def _render_rate_context(ff, t3m, t5, curve_5y_3m):
     """Macro rate strip — values from FRED (daily). Click for source."""
     from ui.source_trace import render_traceable_cards, make_calc
@@ -143,9 +159,10 @@ def _render_rate_context(ff, t3m, t5, curve_5y_3m):
                                   definition=definition, terms=[{"label": label, "val": value}],
                                   reported=True, link="https://fred.stlouisfed.org/series/" + series)}
 
-    slope_label = "Steep" if (curve_5y_3m and curve_5y_3m > 0.5) else (
-        "Flat" if (curve_5y_3m and abs(curve_5y_3m) <= 0.5) else "Inverted")
+    slope_label = _slope_regime(curve_5y_3m)
     slope_val = (f"{curve_5y_3m:+.2f}pp" if curve_5y_3m is not None else "—")
+    slope_display = (f"{slope_val}  ({slope_label})" if slope_label is not None
+                     else slope_val)
     cards = [
         rate_card("Fed Funds", (f"{ff:.2f}%" if ff is not None else "—"),
                   "Effective federal funds rate — the overnight policy rate.", "DFF"),
@@ -153,7 +170,7 @@ def _render_rate_context(ff, t3m, t5, curve_5y_3m):
                   "3-month Treasury bill yield — drives short-term funding costs.", "DGS3MO"),
         rate_card("5Y Treasury", (f"{t5:.2f}%" if t5 is not None else "—"),
                   "5-year Treasury yield — a proxy for asset-reinvestment rates.", "DGS5"),
-        {"label": "5Y − 3M Slope", "value": f"{slope_val}  ({slope_label})",
+        {"label": "5Y − 3M Slope", "value": slope_display,
          "calc": make_calc("5Y − 3M curve slope", slope_val, entity="US Treasury",
                            source="FRED — Federal Reserve daily data", asof="latest daily", unit="pp",
                            ref="DGS5 − DGS3MO",
@@ -1067,7 +1084,9 @@ def _render_historical_nim_scatter(hist: list[dict]):
     from data.fred_client import latest_value
     current_5y = latest_value("DGS5")
     current_3m = latest_value("DGS3MO")
-    current_slope = (current_5y - current_3m) if (current_5y and current_3m) else None
+    current_slope = ((current_5y - current_3m)
+                     if (current_5y is not None and current_3m is not None)
+                     else None)
 
     fig = go.Figure()
 

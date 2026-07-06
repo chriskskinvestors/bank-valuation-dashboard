@@ -90,6 +90,26 @@ def fetch_historical(cert: int, quarters: int = 12) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# Ratio fields (%): FDIC reports these either YTD-annualized (ROA, NIMY,
+# EEFFR, INTINCY, INTEXPY, NONIIAY, NONIXAY — cumulative, so the year's last
+# quarter IS the annual figure) or point-in-time (NCLNLSR, IDT1CER — annual
+# convention is the year-end value). Both kinds: take the year's last
+# reported quarter, never a quarterly average.
+RATIO_FIELDS = ["ROA", "NIMY", "EEFFR", "NCLNLSR", "IDT1CER", "INTINCY", "INTEXPY", "NONIIAY", "NONIXAY"]
+# Flow metrics ($): FDIC income items are YTD-cumulative → last quarter = annual
+# (for an in-progress year that's the YTD figure; the column label says so).
+FLOW_FIELDS = ["NETINC", "INTINC", "EINTEXP", "NONII", "NONIX", "NTLNLS"]
+# Point-in-time balances: use the year's last reported quarter
+PIT_FIELDS = ["ASSET", "LNLSNET", "DEP", "EQTOT", "SC", "COREDEP", "BRO", "LNLSGR"]
+
+
+def _year_label(year: str, latest_repdte) -> str:
+    """Annual column label: bare year for a complete year (latest report is
+    12/31), '<year> YTD' for an in-progress year — a YTD flow value must
+    never be presented as a full-year figure."""
+    return year if str(latest_repdte).endswith("1231") else f"{year} YTD"
+
+
 def _annualize(df: pd.DataFrame) -> pd.DataFrame:
     """Group quarterly data into annual summaries."""
     if df.empty:
@@ -98,24 +118,18 @@ def _annualize(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["Year"] = df["REPDTE"].apply(lambda d: str(d)[:4])
 
-    # For stock metrics (ratios, %): average the year's quarters
-    avg_fields = ["ROA", "NIMY", "EEFFR", "NCLNLSR", "IDT1CER", "INTINCY", "INTEXPY", "NONIIAY", "NONIXAY"]
-    # For flow metrics ($): use Q4 value (YTD annual)
-    q4_fields = ["NETINC", "INTINC", "EINTEXP", "NONII", "NONIX", "NTLNLS"]
-    # For point-in-time: use Q4 value
-    pit_fields = ["ASSET", "LNLSNET", "DEP", "EQTOT", "SC", "COREDEP", "BRO", "LNLSGR"]
-
     annual_rows = []
     for year, group in df.groupby("Year", sort=False):
-        row = {"Period": year}
-        for f in avg_fields:
-            if f in group.columns:
-                row[f] = group[f].mean()
-        # Q4 = largest REPDTE in the year
-        q4 = group.sort_values("REPDTE", ascending=False).iloc[0]
-        for f in q4_fields + pit_fields:
-            if f in group.columns:
-                row[f] = q4[f]
+        g = group.sort_values("REPDTE", ascending=False)
+        latest = g.iloc[0]  # Q4 for a complete year, latest quarter otherwise
+        row = {"Period": _year_label(year, latest["REPDTE"])}
+        for f in RATIO_FIELDS:
+            if f in g.columns:
+                non_null = g[f].dropna()
+                row[f] = non_null.iloc[0] if not non_null.empty else None
+        for f in FLOW_FIELDS + PIT_FIELDS:
+            if f in g.columns:
+                row[f] = latest[f]
         annual_rows.append(row)
 
     result = pd.DataFrame(annual_rows)

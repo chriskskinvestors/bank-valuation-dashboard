@@ -508,15 +508,20 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                             {"label": "Intangibles (incl. goodwill)", "val": _thou(intan) + " ($000)"}],
                            "Total equity − total intangibles", False)
         if kind == "roatce":
-            ni = _num(rec.get("NETINC")); eq = _num(rec.get("EQTOT"))
-            intan = _num(rec.get("INTAN")) or 0
+            # Denominator is the 2-point AVERAGE ((begin+end)/2 via _avg), like
+            # every other avg-denominated kind (netopex, costfunds, core_roae):
+            # period-END equity understated the return for a bank that raised
+            # equity mid-period while the popup claimed an average.
+            ni = _num(rec.get("NETINC")); eq = _avg(ci, "EQTOT")
+            intan = _avg(ci, "INTAN") or 0
             tce = (eq - intan) if eq is not None else None
             v = f"{ni*f/tce*100:.2f}%" if (ni is not None and tce and tce > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
                              "val": _thou(round(ni*f)) + " ($000)" if ni is not None else "—"},
-                            {"label": "Tangible common equity", "val": _thou(tce) + " ($000)"}],
-                           "Net income ÷ tangible common equity × 100", False)
+                            {"label": "Avg tangible common equity (EQTOT − INTAN)",
+                             "val": _thou(round(tce)) + " ($000)" if tce is not None else "—"}],
+                           "Net income ÷ avg tangible common equity × 100", False)
         if kind == "marginrev":   # flow ÷ total revenue × 100 (both YTD, no annualizing)
             fl = args[0]; n = _num(rec.get(fl)); rev = _revenue(rec)
             v = f"{n/rev*100:.2f}%" if (n is not None and rev) else "—"
@@ -549,8 +554,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                             {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
                            f"({af_} − {bf_}) ÷ avg {df_} × 100", False)
         if kind == "roate":       # Return on avg tangible (total) equity
-            ni = _num(rec.get("NETINC")); eq = _num(rec.get("EQTOT"))
-            intan = _num(rec.get("INTAN")) or 0
+            # 2-point average denominator — see roatce.
+            ni = _num(rec.get("NETINC")); eq = _avg(ci, "EQTOT")
+            intan = _avg(ci, "INTAN") or 0
             te = (eq - intan) if eq is not None else None
             v = f"{ni*f/te*100:.2f}%" if (ni is not None and te and te > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
@@ -560,9 +566,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                              "val": _thou(round(te)) + " ($000)" if te is not None else "—"}],
                            "Net income ÷ tangible equity × 100", False)
         if kind == "roace":       # Return on avg COMMON equity
-            ni = _num(rec.get("NETINC")); eq = _num(rec.get("EQTOT"))
+            # 2-point average denominator — see roatce. The preferred guard
+            # below keys off the CURRENT period's EQPP (outstanding now).
+            ni = _num(rec.get("NETINC")); eq = _avg(ci, "EQTOT")
             pfd = _num(rec.get("EQPP")) or 0
-            ce = (eq - pfd) if eq is not None else None
+            ce = (eq - (_avg(ci, "EQPP") or 0)) if eq is not None else None
             if pfd > 0:
                 # NI-to-common needs preferred dividends (FFIEC Schedule RI-A),
                 # which the FDIC SDI feed does not carry. Dividing total NI by
@@ -991,22 +999,36 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             return _usd(v), calc(label, _usd(v), asof, "Computed from Call Report",
                                  terms, op, False)
         if kind == "growth":
-            # Annualized YoY growth (%) of a $000 field from the prior column.
-            # First column has no prior year → n/a (not 0%).
+            # Annualized growth (%) of a $000 balance vs the prior column.
+            # Annual view: prior column is the prior FY, so YoY is already an
+            # annual rate. Quarterly view: prior column is the prior QUARTER —
+            # the raw QoQ change must be compounded ((1+QoQ)^4 − 1) to match
+            # the "Annualized Growth Rates" header (was shown raw, ~4× off).
+            # First column has no prior period → n/a (not 0%).
+            quarterly = (period == "Quarterly")
             fl = args[0]; cur = _num(rec.get(fl))
+            op = (f"(({fl}_t ÷ {fl}_t−1)^4 − 1) × 100 — "
+                  "QoQ compounded to an annual rate" if quarterly
+                  else f"({fl}_t ÷ {fl}_t−1 − 1) × 100")
             if ci == 0:
                 return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
                                    [{"label": label,
                                      "val": "n/a — no prior period in view"}],
-                                   f"({fl}_t ÷ {fl}_t−1 − 1) × 100", False)
+                                   op, False)
             prev = _num(recs_list[ci - 1].get(fl))
             terms = [{"label": f"{fl} (current)", "val": _term000(cur)},
-                     {"label": f"{fl} (prior period)", "val": _term000(prev)}]
-            op = f"({fl}_t ÷ {fl}_t−1 − 1) × 100"
+                     {"label": f"{fl} (prior quarter)" if quarterly
+                      else f"{fl} (prior year)", "val": _term000(prev)}]
             if cur is None or not prev:
                 return "n/a", calc(label, "n/a", asof, "Computed from Call Report",
                                    terms, op, False)
-            g = (cur / prev - 1.0) * 100.0
+            ratio = cur / prev
+            if ratio <= 0:
+                # A non-positive balance ratio is a data problem, and it has no
+                # real compounded rate — n/a over a fabricated number.
+                return "n/a", calc(label, "n/a — non-positive balance ratio",
+                                   asof, "Computed from Call Report", terms, op, False)
+            g = ((ratio ** 4 - 1.0) if quarterly else (ratio - 1.0)) * 100.0
             return f"{g:.2f}%", calc(label, f"{g:.2f}%", asof,
                                      "Computed from Call Report", terms, op, False)
         # ── Per-share (SEC holding-company filings) ──────────────────────

@@ -775,6 +775,57 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict):
 
 # ── Surprise Heat-Map ──────────────────────────────────────────────────
 
+# Labels show the FISCAL quarter the results cover — the most recent
+# completed calendar quarter before the announcement date. (Binning the
+# raw announcement date shifted every column one quarter late: Q4-2025
+# results announced 2026-01 were labeled "2026Q1".)
+def _quarter_label(date_str: str) -> str:
+    if not date_str:
+        return "—"
+    try:
+        y, m = int(date_str[:4]), int(date_str[5:7])
+        ann_q = (m - 1) // 3 + 1   # calendar quarter of the announcement
+        fy, fq = (y, ann_q - 1) if ann_q > 1 else (y - 1, 4)
+        return f"{fy}Q{fq}"
+    except Exception:
+        return date_str[:7] if date_str else "—"
+
+
+def _heatmap_columns(bank_data: dict) -> tuple[list[str], dict]:
+    """
+    Bucket each bank's surprise rows by FISCAL quarter and keep the 8 most
+    recent quarter buckets. Returns (chronological quarter labels, per-ticker
+    {quarter label → latest row announced in that bucket}).
+
+    Joining on the exact announcement date scattered one earnings season
+    across ~8 single-day columns: banks announce on different days, so most
+    rows populated one cell and several date columns collapsed onto the
+    same quarter label.
+    """
+    all_quarters = set()
+    for history in bank_data.values():
+        for e in history:
+            q = _quarter_label(e.get("date"))
+            if q != "—":   # undated rows can't be bucketed — skip, don't guess
+                all_quarters.add(q)
+
+    # YYYYQn labels sort lexicographically in time order; keep last 8.
+    col_labels = sorted(all_quarters, reverse=True)[:8]
+    col_labels.reverse()  # chronological left→right
+    keep = set(col_labels)
+
+    placed = {}
+    for ticker, history in bank_data.items():
+        chosen = {}  # quarter label → latest announcement in that bucket
+        for e in history:
+            q = _quarter_label(e.get("date"))
+            if q in keep and (q not in chosen
+                              or e.get("date") > chosen[q].get("date")):
+                chosen[q] = e
+        placed[ticker] = chosen
+    return col_labels, placed
+
+
 def _render_surprise_heatmap(watchlist: list[str]):
     """
     Heat-map: rows = banks, columns = last 8 quarters, cells = EPS surprise %.
@@ -787,8 +838,7 @@ def _render_surprise_heatmap(watchlist: list[str]):
         estimates = fetch_all_estimates(tuple(watchlist))
 
     # Build rows (banks) × columns (quarters) matrix of surprise %
-    # Collect all quarters across all banks, then take most recent 8
-    all_quarters = set()
+    # Bucket rows by FISCAL quarter, then take the most recent 8 buckets
     bank_data = {}
     for ticker, est in estimates.items():
         history = est.get("earnings_history", []) or []
@@ -797,37 +847,16 @@ def _render_surprise_heatmap(watchlist: list[str]):
         if not history:
             continue
         bank_data[ticker] = history
-        for e in history:
-            all_quarters.add(e.get("date"))
 
-    if not bank_data:
+    col_labels, placed = _heatmap_columns(bank_data)
+    if not bank_data or not col_labels:
         st.info(
             "No earnings history available yet. Visit a few banks to populate "
             "the cache, or upload consensus files."
         )
         return
 
-    # Sort quarters, keep last 8
-    sorted_quarters = sorted(all_quarters, reverse=True)[:8]
-    sorted_quarters.reverse()  # chronological left→right
-
-    # Labels show the FISCAL quarter the results cover — the most recent
-    # completed calendar quarter before the announcement date. (Binning the
-    # raw announcement date shifted every column one quarter late: Q4-2025
-    # results announced 2026-01 were labeled "2026Q1".)
-    def _quarter_label(date_str: str) -> str:
-        if not date_str:
-            return "—"
-        try:
-            y, m = int(date_str[:4]), int(date_str[5:7])
-            ann_q = (m - 1) // 3 + 1   # calendar quarter of the announcement
-            fy, fq = (y, ann_q - 1) if ann_q > 1 else (y - 1, 4)
-            return f"{fy}Q{fq}"
-        except Exception:
-            return date_str[:7] if date_str else "—"
-
-    col_labels = [_quarter_label(d) for d in sorted_quarters]
-    quarter_to_idx = {d: i for i, d in enumerate(sorted_quarters)}
+    quarter_to_idx = {q: i for i, q in enumerate(col_labels)}
 
     # Sort banks by most recent surprise (descending)
     def _sort_key(item):
@@ -840,20 +869,17 @@ def _render_surprise_heatmap(watchlist: list[str]):
     # Build matrix
     tickers_list = list(bank_data.keys())
     n_banks = len(tickers_list)
-    n_qtrs = len(sorted_quarters)
+    n_qtrs = len(col_labels)
     matrix = [[None] * n_qtrs for _ in range(n_banks)]
     actual_matrix = [[None] * n_qtrs for _ in range(n_banks)]
     est_matrix = [[None] * n_qtrs for _ in range(n_banks)]
 
     for i, ticker in enumerate(tickers_list):
-        history = bank_data[ticker]
-        for e in history:
-            d = e.get("date")
-            if d in quarter_to_idx:
-                j = quarter_to_idx[d]
-                matrix[i][j] = e.get("surprise_pct")
-                actual_matrix[i][j] = e.get("eps_actual")
-                est_matrix[i][j] = e.get("eps_estimate")
+        for q, e in placed[ticker].items():
+            j = quarter_to_idx[q]
+            matrix[i][j] = e.get("surprise_pct")
+            actual_matrix[i][j] = e.get("eps_actual")
+            est_matrix[i][j] = e.get("eps_estimate")
 
     # Bank labels with name
     row_labels = [f"{t}" for t in tickers_list]
@@ -1385,6 +1411,16 @@ def _render_beat_miss_summary(all_consensus: dict):
 
 # ── Surprise Rankings ──────────────────────────────────────────────────
 
+def _surprise_line(s: dict) -> str:
+    """One Biggest Beats/Misses markdown line. Consensus/Actual arrive
+    pre-formatted ("$3.10"), so the pair must be \\$-escaped or Streamlit
+    renders the $…$ span as LaTeX."""
+    return (
+        f"**{s['Ticker']}** {s['Metric']}: {s['Surprise %']:+.1f}% "
+        f"({s['Consensus']} → {s['Actual']})"
+    ).replace("$", "\\$")
+
+
 def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
     """Rank banks by biggest beats and misses."""
     st.subheader("Surprise Magnitude Rankings")
@@ -1512,17 +1548,11 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
         with bc1:
             st.markdown("##### Biggest Beats")
             for s in top_beats:
-                st.markdown(
-                    f"**{s['Ticker']}** {s['Metric']}: {s['Surprise %']:+.1f}% "
-                    f"({s['Consensus']} → {s['Actual']})"
-                )
+                st.markdown(_surprise_line(s))
         with bc2:
             st.markdown("##### Biggest Misses")
             for s in top_misses:
-                st.markdown(
-                    f"**{s['Ticker']}** {s['Metric']}: {s['Surprise %']:+.1f}% "
-                    f"({s['Consensus']} → {s['Actual']})"
-                )
+                st.markdown(_surprise_line(s))
     else:
         st.info("No surprises match the current filter.")
 

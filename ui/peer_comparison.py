@@ -83,7 +83,9 @@ def _percentile_color(pct: float | None, higher_better: bool = True) -> str:
 # Best-in-class call-outs across the compared banks (label, metric_key, min|max).
 _HIGHLIGHTS = [
     ("Cheapest P/TBV", "ptbv_ratio", "min"),
-    ("Biggest discount", "ptbv_discount", "min"),
+    # ptbv_discount is positive-when-undervalued (analysis/valuation.py), so the
+    # biggest discount is the MAX — "min" here picked the most overvalued bank.
+    ("Biggest discount", "ptbv_discount", "max"),
     ("Highest ROATCE", "roatce_normalized", "max"),
     ("Best efficiency", "efficiency_ratio", "min"),
     ("Highest NIM", "nim", "max"),
@@ -890,6 +892,23 @@ _RADAR_METRICS = [
 ]
 
 
+def _radar_r_values(bank: dict, metric_data: list[dict]) -> list[float | None]:
+    """Effective percentile (0-100, higher = better) per radar metric, via the
+    shared Hazen compute_peer_percentile so the radar agrees with the table.
+    None when the bank has no value — missing data must NOT plot as 0
+    (0th percentile reads as worst-in-group, indistinguishable from truly worst)."""
+    r_values = []
+    for m in metric_data:
+        val = bank.get(m["key"])
+        pct = (compute_peer_percentile(val, m["numeric"])
+               if isinstance(val, (int, float)) else None)
+        if pct is None:
+            r_values.append(None)
+        else:
+            r_values.append(pct if m["higher_better"] else (100 - pct))
+    return r_values
+
+
 def _render_peer_radar(selected_peers: list[dict]):
     """Render a radar chart comparing banks on 8 key metrics by percentile rank."""
     import plotly.graph_objects as go
@@ -951,23 +970,19 @@ def _render_peer_radar(selected_peers: list[dict]):
         if not bank:
             continue
 
-        # Compute percentile rank for each metric (0-100)
-        r_values = []
-        for m in metric_data:
-            val = bank.get(m["key"])
-            if val is None:
-                r_values.append(0)
-                continue
-            numeric = m["numeric"]
-            below = sum(1 for v in numeric if v < val)
-            pct = (below / len(numeric)) * 100 if numeric else 0
-            # Invert if lower-is-better
-            effective_pct = pct if m["higher_better"] else (100 - pct)
-            r_values.append(effective_pct)
+        # Effective percentile per metric (0-100, higher = better); None = no
+        # data. Drop the missing spokes for this bank rather than plotting a
+        # None gap — a gap breaks the toself fill into disconnected fragments.
+        r_values = _radar_r_values(bank, metric_data)
+        pts = [(r, c) for r, c in zip(r_values, categories) if r is not None]
+        if not pts:
+            continue
+        r_pts = [r for r, _ in pts]
+        cat_pts = [c for _, c in pts]
 
         # Close the polygon
-        r_closed = r_values + [r_values[0]]
-        cats_closed = categories + [categories[0]]
+        r_closed = r_pts + [r_pts[0]]
+        cats_closed = cat_pts + [cat_pts[0]]
 
         color = colors[i % len(colors)]
         fill = fill_colors[i % len(fill_colors)]
@@ -1008,5 +1023,6 @@ def _render_peer_radar(selected_peers: list[dict]):
     st.caption(
         "Each axis = percentile rank of that metric within the full peer group "
         "(higher = better for this metric; lower-is-better metrics inverted). "
-        "Bigger polygon = stronger overall."
+        "Bigger polygon = stronger overall. Metrics a bank has no data for are "
+        "omitted from its polygon, not plotted as 0."
     )

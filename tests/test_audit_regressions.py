@@ -84,6 +84,67 @@ class TestA12TceConvention(unittest.TestCase):
         self.assertIn('"INTAN"', roatce_block)
 
 
+class TestAudit0702AvgEquityDenominators(unittest.TestCase):
+    """(AUDIT-2026-07-02 P1 #12) roatce/roate/roace are labeled and popup-
+    documented as returns on AVERAGE equity but were computed on the period-END
+    balance — understating the return for a bank that raised equity
+    mid-period. They must use the same 2-point _avg denominator as the other
+    avg-denominated kinds (netopex, costfunds, core_roae)."""
+
+    @staticmethod
+    def _block(kind):
+        from pathlib import Path
+        src = (Path(__file__).parent.parent / "ui" /
+               "financials_statements.py").read_text(encoding="utf-8")
+        return src.split(f'if kind == "{kind}":')[1].split('if kind ==')[0]
+
+    def test_avg_kinds_use_avg_equity(self):
+        for kind in ("roatce", "roate", "roace"):
+            with self.subTest(kind=kind):
+                block = self._block(kind)
+                self.assertIn('_avg(ci, "EQTOT")', block,
+                              f"{kind} must average equity over the period")
+                self.assertNotIn('_num(rec.get("EQTOT"))', block,
+                                 f"{kind} must not use period-end equity")
+
+    def test_roatce_still_total_intangibles_averaged(self):
+        block = self._block("roatce")
+        self.assertIn('_avg(ci, "INTAN")', block)
+        self.assertNotIn('"INTANGW"', block)
+
+
+class TestAudit0702QuarterlyGrowthAnnualized(unittest.TestCase):
+    """(AUDIT-2026-07-02 P1 #11) the 'Annualized Growth Rates (%)' section
+    showed raw QoQ in Quarterly view (~4x off vs its header). Quarterly view
+    must compound QoQ to an annual rate ((1+g)^4 - 1); Annual view stays plain
+    YoY. Owner decision 2026-07-06: annualize the number, not the label."""
+
+    @staticmethod
+    def _growth_block():
+        from pathlib import Path
+        src = (Path(__file__).parent.parent / "ui" /
+               "financials_statements.py").read_text(encoding="utf-8")
+        return src.split('if kind == "growth":')[1].split('if kind ==')[0]
+
+    def test_quarterly_compounds_to_annual(self):
+        block = self._growth_block()
+        self.assertIn('period == "Quarterly"', block,
+                      "growth must branch on the view's period mode")
+        self.assertIn("ratio ** 4", block,
+                      "quarterly growth must compound QoQ to an annual rate")
+
+    def test_math_pins(self):
+        # The compounding the block implements, pinned by hand: +2% QoQ
+        # annualizes to +8.2432%; a plain YoY stays as-is.
+        self.assertAlmostEqual((1.02 ** 4 - 1.0) * 100.0, 8.243216, places=5)
+
+    def test_non_positive_ratio_is_na_not_number(self):
+        block = self._growth_block()
+        self.assertIn("ratio <= 0", block,
+                      "a non-positive balance ratio must render n/a, never a "
+                      "fabricated compounded rate")
+
+
 class TestA13PastDueDenominator(unittest.TestCase):
     """Missing total_loans must skip the ratio, not divide by 1."""
 
@@ -1112,8 +1173,10 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
         self.assertIn("$760.8M", h)
         # » Total Cash & Securities = 3,418,233 ($000) → $3.42B.
         self.assertIn("$3.42B", h)
-        # Asset Growth = (16,338,071 / 16,347,870 − 1) × 100 = −0.06%.
-        self.assertIn("-0.06%", h)
+        # Asset Growth, Quarterly view: QoQ compounded to an annual rate
+        # (AUDIT-2026-07-02 P1 #11) — ((16,338,071 ÷ 16,347,870)^4 − 1) × 100
+        # = −0.24% (raw QoQ would be −0.06%).
+        self.assertIn("-0.24%", h)
         # n/a lines carry a reason (never $0).
         self.assertIn("EQUPTOT is not AOCI", h)
 

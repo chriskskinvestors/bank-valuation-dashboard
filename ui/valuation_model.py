@@ -4,6 +4,8 @@ Valuation Model UI — FCFE DCF + Warranted P/TBV + Scenarios + Sensitivity Grid
 Renders in Company Analysis > Valuation sub-tab.
 """
 
+import re
+
 import streamlit as st
 import pandas as pd
 
@@ -60,6 +62,22 @@ def _load_price(ticker: str) -> float | None:
             return p["price"]
     except Exception:
         pass
+    return None
+
+
+def _consensus_annualizer(period: str) -> float | None:
+    """Multiplier that annualizes a per-share figure (EPS/DPS) from a stored
+    consensus period: 4.0 for a quarterly label ("2026Q2"), 1.0 for an annual
+    one ("2026") — the two canonical forms data/consensus.normalize_period
+    emits. Broker-model uploads carry BOTH kinds, so blanket ×4 seeded Base EPS
+    at 4× the annual figure (audit 2026-07-02 #6/#7). None when the label
+    matches neither form (legacy free-text period) — callers must then skip
+    the pre-fill/comparison rather than guess the basis."""
+    p = (period or "").strip().upper()
+    if re.fullmatch(r"\d{4}Q[1-4]", p):
+        return 4.0
+    if re.fullmatch(r"\d{4}", p):
+        return 1.0
     return None
 
 
@@ -297,13 +315,24 @@ def render_valuation_model(ticker: str):
                 key=f"dcf_use_consensus_{ticker}",
             )
             if use_consensus:
-                consensus = compile_consensus(ticker, available[sel_idx]["period"])
-                if consensus:
-                    for m in consensus.get("metrics", []):
-                        if m.get("key") == "eps" and m.get("value"):
-                            defaults["base_eps"] = float(m["value"]) * 4  # quarterly × 4
-                        if m.get("key") == "dps" and m.get("value") and defaults.get("base_eps"):
-                            defaults["payout_ratio"] = min(0.95, float(m["value"]) * 4 / defaults["base_eps"])
+                sel_period = available[sel_idx]["period"]
+                # Quarterly period → ×4 to annualize; annual period → as-is.
+                # Blanket ×4 seeded Base EPS at 4× an annual estimate (#6).
+                annualize = _consensus_annualizer(sel_period)
+                if annualize is None:
+                    st.caption(
+                        f"Period '{sel_period}' is neither a recognized quarter "
+                        "nor a year — can't tell whether its estimates are "
+                        "quarterly or annual, so nothing was pre-filled."
+                    )
+                else:
+                    consensus = compile_consensus(ticker, sel_period)
+                    if consensus:
+                        for m in consensus.get("metrics", []):
+                            if m.get("key") == "eps" and m.get("value"):
+                                defaults["base_eps"] = float(m["value"]) * annualize
+                            if m.get("key") == "dps" and m.get("value") and defaults.get("base_eps"):
+                                defaults["payout_ratio"] = min(0.95, float(m["value"]) * annualize / defaults["base_eps"])
 
     # ── Input controls ────────────────────────────────────────────────
     with st.expander("Model inputs (click to edit)", expanded=False):
@@ -887,9 +916,17 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
     actual_roe = fdic_latest.get("ROE")
     actual_npl = fdic_latest.get("NCLNLSR")
 
-    # Model's Year-1 quarterly EPS (if projected 5Y annual, split by 4)
+    # Model's Year-1 EPS is ANNUAL — put it on the selected period's basis
+    # before comparing: quarterly period → ÷4, annual period → as-is. An
+    # unrecognized period label means the basis is unknown, so the EPS row is
+    # skipped rather than compared across bases (#7: annual consensus vs a
+    # ÷4 model rendered a confident Δ≈−75% "Below consensus" verdict).
+    annualize = _consensus_annualizer(available[sel_idx]["period"])
     model_eps_annual_y1 = projected_eps[0] if projected_eps else None
-    model_eps_quarterly = (model_eps_annual_y1 / 4) if model_eps_annual_y1 else None
+    model_eps_period = (
+        (model_eps_annual_y1 / annualize)
+        if (model_eps_annual_y1 and annualize) else None
+    )
 
     rows = []
     for m in consensus.get("metrics", []):
@@ -904,7 +941,7 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
         model_val = None
         actual_val = None
         if key == "eps":
-            model_val = model_eps_quarterly
+            model_val = model_eps_period
             # Trailing EPS not readily available — skip actual
         elif key == "nim":
             model_val = None  # nim not in projection, use trailing

@@ -365,6 +365,19 @@ def _screen_restore_cfg(ss, cfg, tk):
         ss[f"custom_cols_{tk}"] = cfg["columns"]
 
 
+def _subtab_key(sec, basis=None):
+    """Session-state key for a Company section's sub-tab radio.
+
+    THE single builder shared by the ?tab= deep-link pre-seed and the radio
+    widget itself, so the two can never diverge (audit 2026-07-02 #10: the
+    pre-seed wrote `company_subtab::{sec}` while the flat-section widget key
+    was `company_subtab::{sec}::None`, so a refresh/shared link landed on the
+    section's FIRST tab). Financials passes its real basis string; flat
+    sections pass None and get the literal `::None` the widget always used.
+    """
+    return f"company_subtab::{sec}::{basis}"
+
+
 if section == "Screen & Compare" and sc_sub == "Screen":
     # Single flat Table picker — Theme is folded in (only two themes), so tables
     # are listed grouped by theme order under one "Table" control. screen_tab_key
@@ -470,9 +483,9 @@ elif section == "Company":
                           next((b for b, leaves in _sec_nav.items() if _goto in leaves),
                                next(iter(_sec_nav))))
                 st.session_state[f"company_basis::{_sec}"] = _basis
-                st.session_state[f"company_subtab::{_sec}::{_basis}"] = _goto
+                st.session_state[_subtab_key(_sec, _basis)] = _goto
             else:
-                st.session_state[f"company_subtab::{_sec}"] = _goto
+                st.session_state[_subtab_key(_sec)] = _goto
 
 
 
@@ -1566,7 +1579,7 @@ elif section == "Company":
             with st.container(key="company_subtab_nav"):
                 company_subtab = st.radio(
                     "View", _subs,
-                    key=f"company_subtab::{company_section}::{company_basis}",
+                    key=_subtab_key(company_section, company_basis),
                     horizontal=True, label_visibility="collapsed",
                 )
         else:
