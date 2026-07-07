@@ -423,37 +423,37 @@ def _render_auto_estimates(ticker: str, estimates: dict):
     st.markdown('<div class="ec-sec">Analyst Estimates</div>', unsafe_allow_html=True)
     _kpi_strip([(l, v, d, None) for l, v, d in kpis], cols=5)
 
-    # Offer to auto-populate consensus from estimates
-    if estimates.get("earnings_history"):
-        past = [e for e in estimates["earnings_history"] if e.get("eps_estimate") is not None]
-        if past:
-            with st.expander("Past Earnings Surprises (from Yahoo Finance)"):
-                trs = []
-                for e in past[:8]:
-                    surprise = e.get("surprise_pct")
-                    if surprise is None:
-                        result = '<td class="mut">—</td>'
-                    elif surprise > 1:
-                        result = f'<td class="beat">{_BEAT_LABEL}</td>'
-                    elif surprise < -1:
-                        result = f'<td class="miss">{_MISS_LABEL}</td>'
-                    else:
-                        result = f"<td>{_INLINE_LABEL}</td>"
-                    trs.append("<tr>" + "".join([
-                        _cell(e.get("date"), "nm"),
-                        _cell(_usd_str(e.get("eps_estimate"))),
-                        _cell(_usd_str(e.get("eps_actual"))),
-                        _signed_pct_cell(surprise),
-                        result,
-                    ]) + "</tr>")
-                _render_earnings_grid(
-                    [("Date", "nm"), ("EPS Est", ""), ("EPS Act", ""),
-                     ("Surprise", ""), ("Result", "")], trs,
-                    col_widths=["28%", "18%", "18%", "18%", "18%"])
-                # Underlying numeric history (unformatted EPS / surprise)
-                table_export(pd.DataFrame(past[:8]),
-                             f"earnings_surprises_{ticker}",
-                             key=f"exp_earnings_surprises_{ticker}")
+
+def _render_surprise_history_grid(ticker: str, past: list[dict]):
+    """The past-surprises table (est / act / surprise / beat-miss per quarter)
+    — rendered beside the surprise chart so the visual and the precise numbers
+    read together."""
+    trs = []
+    for e in past[:8]:
+        surprise = e.get("surprise_pct")
+        if surprise is None:
+            result = '<td class="mut">—</td>'
+        elif surprise > 1:
+            result = f'<td class="beat">{_BEAT_LABEL}</td>'
+        elif surprise < -1:
+            result = f'<td class="miss">{_MISS_LABEL}</td>'
+        else:
+            result = f"<td>{_INLINE_LABEL}</td>"
+        trs.append("<tr>" + "".join([
+            _cell(e.get("date"), "nm"),
+            _cell(_usd_str(e.get("eps_estimate"))),
+            _cell(_usd_str(e.get("eps_actual"))),
+            _signed_pct_cell(surprise),
+            result,
+        ]) + "</tr>")
+    _render_earnings_grid(
+        [("Date", "nm"), ("EPS Est", ""), ("EPS Act", ""),
+         ("Surprise", ""), ("Result", "")], trs,
+        col_widths=["28%", "18%", "18%", "18%", "18%"])
+    # Underlying numeric history (unformatted EPS / surprise)
+    table_export(pd.DataFrame(past[:8]),
+                 f"earnings_surprises_{ticker}",
+                 key=f"exp_earnings_surprises_{ticker}")
 
 
 def _render_manual_input(ticker: str):
@@ -551,14 +551,21 @@ def _render_manual_input(ticker: str):
 
 
 def _render_earnings_history_chart(ticker: str, estimates: dict):
-    """Render earnings surprise trend chart."""
+    """Earnings surprise history: chart (left half) beside the per-quarter
+    est/act/surprise table (right half) — the chart at full page width dwarfed
+    8 bars, and the table was hidden in an expander."""
     history = estimates.get("earnings_history", [])
     past = [e for e in history if e.get("eps_actual") is not None and e.get("eps_estimate") is not None]
 
     if not past:
         return
 
-    st.subheader("Earnings Surprise History")
+    st.markdown('<div class="ec-sec">Earnings Surprise History</div>',
+                unsafe_allow_html=True)
+    chart_col, table_col = st.columns(2, gap="medium")
+    with table_col:
+        tbl = [e for e in history if e.get("eps_estimate") is not None]
+        _render_surprise_history_grid(ticker, tbl)
 
     import plotly.graph_objects as go
 
@@ -599,7 +606,8 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
     # Secondary chart → compact height (300px full read as oversized here).
     apply_standard_layout(fig, height=CHART_HEIGHT_COMPACT, yaxis_title="EPS ($)")
 
-    st.plotly_chart(fig, use_container_width=True)
+    with chart_col:
+        st.plotly_chart(fig, use_container_width=True)
 
 
 
