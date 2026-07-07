@@ -91,25 +91,166 @@ def _ec_cell(s):
     return _html.escape(str(s)).replace("$", "&#36;")
 
 
-def _kpi_strip(items, cols):
+def _kpi_strip(items, cols, html_values: bool = False):
     """Boxless hairline KPI grid (design system: no boxed cards / shadows).
 
     items: list of (label, value, tooltip, link). A non-empty ``link`` adds a
     small ↗ to the source document; ``tooltip`` becomes the cell's title. Used
     for both the analyst-estimate strip and the reported-metrics strip so they
-    read identically."""
+    read identically. ``html_values=True`` passes values through as prebuilt
+    HTML (colored deltas) — the caller escapes then."""
     cells = []
     for label, value, tip, link in items:
         src = (f'<a class="src" href="{_html.escape(str(link), quote=True)}" '
                f'target="_blank" title="View source document">↗</a>') if link else ""
         ttl = f' title="{_html.escape(str(tip), quote=True)}"' if tip else ""
+        val = value if html_values else _ec_cell(value)
         cells.append(
             f'<div class="ec-kpi-cell"{ttl}>'
             f'<div class="ec-kpi-l">{_html.escape(str(label))}{src}</div>'
-            f'<div class="ec-kpi-v">{_ec_cell(value)}</div></div>')
+            f'<div class="ec-kpi-v">{val}</div></div>')
     st.markdown(
         f'<div class="ec-kpi" style="grid-template-columns:repeat({cols},1fr)">'
         + "".join(cells) + "</div>", unsafe_allow_html=True)
+
+
+def _delta_html(v, live: bool = False) -> str:
+    """Signed percent as colored HTML for ledger/KPI values; muted '—' when
+    None. '· live' marks an intraday stand-in."""
+    if v is None:
+        return '<span style="color:var(--text-muted)">—</span>'
+    color = "var(--success)" if v >= 0 else "var(--danger)"
+    return (f'<span style="color:{color};font-weight:600">{v:+.1f}%'
+            f'{" · live" if live else ""}</span>')
+
+
+def _usd_str(v) -> str | None:
+    """$X.XX with the sign leading ('-$0.29', never '$-0.29'); None passthrough."""
+    return None if v is None else (f"-${-v:.2f}" if v < 0 else f"${v:.2f}")
+
+
+def _render_next_report_strip(ticker: str):
+    """This bank's row from the earnings-calendar merge: release date with the
+    confirmed flag, timing, conference-call date/time, webcast + dial-in, and
+    the EPS/Rev estimates. All inputs are the calendar's own cached pipelines —
+    no new fetches on the company page."""
+    from datetime import date, timedelta
+
+    st.markdown('<div class="ec-sec">Next Report</div>', unsafe_allow_html=True)
+    today = date.today()
+    try:
+        from data.bank_universe import get_universe
+        uni = set(get_universe().keys())
+        yf_cal = fetch_earnings_calendar(tuple(sorted(uni)))
+    except Exception:
+        yf_cal = []
+    try:
+        fmp_cal = _fmp_earnings_window(
+            today.isoformat(), (today + timedelta(days=75)).isoformat())
+    except Exception:
+        fmp_cal = None
+    try:
+        from data import earnings_call as _ecall
+        agenda = _ecall.build_calls_agenda(
+            yf_cal, fmp_cal, {ticker}, _ecall.merged_call_info(), today,
+            horizon_days=75)
+    except Exception:
+        agenda = []
+    row = agenda[0]["rows"][0] if agenda and agenda[0].get("rows") else None
+    if row is None:
+        st.caption("No report scheduled within the next 75 days.")
+        return
+    try:
+        rel_lbl = date.fromisoformat(row["date"]).strftime("%b %d, %Y")
+    except (KeyError, ValueError):
+        rel_lbl = row.get("date") or "—"
+    rel_lbl += " ✓" if row.get("confirmed") else " (proj.)"
+    days = row.get("days_until")
+    in_lbl = "Today" if days == 0 else (f"{days}d" if days is not None else "—")
+    call_lbl = _call_label(row.get("call_date"), row.get("call_time")) or "—"
+    _kpi_strip([
+        ("Release", rel_lbl,
+         "Announced by the bank (✓) or projected from FMP/yfinance.", None),
+        ("In", in_lbl, "Days until the release.", None),
+        ("When", row.get("when") or "—", "Before/after market open.", None),
+        ("Call", call_lbl, "Conference-call date and time.", None),
+        ("Webcast", "Listen" if row.get("webcast_url") else "—", "Live webcast.",
+         row.get("webcast_url")),
+        ("Dial-in", row.get("dial_in") or "—", "Conference-call dial-in.", None),
+        ("EPS Est", _usd_str(row.get("eps_est")) or "—",
+         "Consensus EPS estimate.", None),
+        ("Rev Est", _fmt_rev_est(row.get("rev_est")),
+         "Consensus revenue estimate.", None),
+    ], cols=8)
+
+
+def _render_reported_panel(ticker: str):
+    """Last reported quarter (when within the Results board's 30-day window):
+    actual vs estimate with colored surprises, the release-session price
+    reaction, the release link — and the bank's own release-day metrics strip.
+    Renders nothing when the bank hasn't reported recently."""
+    try:
+        from data.earnings_results import results_board
+        row = next((r for r in results_board() if r["ticker"] == ticker), None)
+    except Exception:
+        row = None
+    if row is None:
+        return
+    st.markdown('<div class="ec-sec">Last Reported Quarter</div>',
+                unsafe_allow_html=True)
+    try:
+        from datetime import date as _date
+        rep = _date.fromisoformat(row["date"]).strftime("%b %d, %Y")
+    except (KeyError, ValueError):
+        rep = row.get("date") or "—"
+    if row.get("when"):
+        rep += f" · {row['when']}"
+    rel_url = row.get("pr_url") or (row.get("rel") or {}).get("url")
+
+    def _vs(act, est):
+        a, e = _usd_str(act), _usd_str(est)
+        if act is None and est is None:
+            return "—"
+        return f"{a or '—'} vs {e or '—'} est"
+
+    def _rev_vs(act, est):
+        if act is None and est is None:
+            return "—"
+        return f"{_fmt_rev_est(act)} vs {_fmt_rev_est(est)} est"
+
+    _kpi_strip([
+        ("Reported", _ec_cell(rep), "Report date and timing.", None),
+        ("EPS", _ec_cell(_vs(row.get("eps_act"), row.get("eps_est"))),
+         "Actual vs consensus estimate.", None),
+        ("EPS Surprise", _delta_html(row.get("eps_surprise")),
+         "Actual vs estimate, % of estimate.", None),
+        ("Revenue", _ec_cell(_rev_vs(row.get("rev_act"), row.get("rev_est"))),
+         "Actual vs consensus estimate.", None),
+        ("Rev Surprise", _delta_html(row.get("rev_surprise")),
+         "Actual vs estimate, % of estimate.", None),
+        ("Px Reaction", _delta_html(row.get("px_react"),
+                                    live=bool(row.get("px_react_live"))),
+         "Release session close-over-prior-close move.", None),
+        ("Release", "Open" if rel_url else "—",
+         "The results press release / SEC 8-K.", rel_url),
+    ], cols=7, html_values=True)
+
+    vals = {**((row.get("rel") or {}).get("metrics") or {}),
+            **((row.get("rel") or {}).get("capital") or {})}
+    if any(v is not None for v in vals.values()):
+        items = []
+        for key, label, unit in _REL_METRICS:
+            v = vals.get(key)
+            if v is None:
+                s = "—"
+            else:
+                s = f"${v:,.2f}" if unit == "$" else f"{v:.2f}%"
+            items.append((label, s,
+                          "As stated in the bank's own earnings release; '—' "
+                          "when not confidently confirmed.", None))
+        st.markdown('<div class="ec-sec">From the Release</div>',
+                    unsafe_allow_html=True)
+        _kpi_strip(items, cols=7)
 
 
 def _format_val(val, unit: str) -> str:
@@ -159,6 +300,11 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
     bank_name = get_name(ticker)
     title_bar(f"{bank_name} ({ticker})", "Earnings vs Consensus", ids_html="")
     st.markdown(_EC_CSS, unsafe_allow_html=True)
+
+    # ── This bank's upcoming report + last reported quarter ──────────────
+    with st.spinner("Loading earnings data..."):
+        _render_next_report_strip(ticker)
+        _render_reported_panel(ticker)
 
     # ── Auto-populated estimates from yfinance ──────────────────────────
     with st.spinner("Loading analyst estimates..."):
@@ -252,72 +398,63 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
 
 
 def _render_auto_estimates(ticker: str, estimates: dict):
-    """Show auto-populated analyst estimates from yfinance."""
-    ned = estimates.get("next_earnings_date")
-    eps_est = estimates.get("eps_estimate"); eps_fwd = estimates.get("eps_fwd_annual")
+    """Show auto-populated analyst estimates from yfinance. (The next report
+    date / next-quarter EPS moved to the Next Report strip above — this strip
+    carries the coverage/valuation view.)"""
+    eps_fwd = estimates.get("eps_fwd_annual")
     target = estimates.get("target_price"); analysts = estimates.get("analyst_count")
+    t_low, t_high = estimates.get("target_low"), estimates.get("target_high")
+    rec = estimates.get("recommendation")
 
     # Boxless KPI strip (design system: no boxed cards) — small-caps label over
     # the value, hairline-separated; each cell keeps its definition as a tooltip.
     kpis = [
-        ("Next Earnings", (ned if ned else "Unknown"),
-         "Estimated date of the next quarterly earnings release."),
-        ("EPS Est (Next Qtr)", (f"${eps_est:.2f}" if eps_est else "—"),
-         "Consensus analyst estimate for next-quarter diluted EPS."),
         ("EPS Est (Annual)", (f"${eps_fwd:.2f}" if eps_fwd else "—"),
          "Consensus analyst estimate for forward annual diluted EPS."),
         ("Avg Price Target", (f"${target:.2f}" if target else "—"),
          "Average of analysts' 12-month price targets."),
+        ("Target Range", (f"${t_low:.2f} – ${t_high:.2f}" if t_low and t_high
+                          else "—"),
+         "Low–high of analysts' 12-month price targets."),
+        ("Consensus Rating", (rec.replace("_", " ").title() if rec else "—"),
+         "Analyst consensus recommendation."),
         ("Analyst Coverage", (str(analysts) if analysts else "—"),
          "Number of sell-side analysts contributing estimates."),
     ]
     st.markdown('<div class="ec-sec">Analyst Estimates</div>', unsafe_allow_html=True)
     _kpi_strip([(l, v, d, None) for l, v, d in kpis], cols=5)
 
-    # Price target range
-    t_low = estimates.get("target_low")
-    t_high = estimates.get("target_high")
-    rec = estimates.get("recommendation")
-    if t_low and t_high:
-        st.caption(
-            (f"Price target range: ${t_low:.2f} – ${t_high:.2f}"
-             + (f" · Consensus: {rec.replace('_', ' ').title()}" if rec else "")
-             ).replace("$", "\\$")  # avoid $X – $Y rendering as LaTeX
-        )
-
     # Offer to auto-populate consensus from estimates
     if estimates.get("earnings_history"):
         past = [e for e in estimates["earnings_history"] if e.get("eps_estimate") is not None]
         if past:
             with st.expander("Past Earnings Surprises (from Yahoo Finance)"):
-                hist_rows = []
+                trs = []
                 for e in past[:8]:
                     surprise = e.get("surprise_pct")
-                    if surprise is not None:
-                        if surprise > 1:
-                            result = _BEAT_LABEL
-                        elif surprise < -1:
-                            result = _MISS_LABEL
-                        else:
-                            result = _INLINE_LABEL
+                    if surprise is None:
+                        result = '<td class="mut">—</td>'
+                    elif surprise > 1:
+                        result = f'<td class="beat">{_BEAT_LABEL}</td>'
+                    elif surprise < -1:
+                        result = f'<td class="miss">{_MISS_LABEL}</td>'
                     else:
-                        result = _NA_LABEL
-
-                    hist_rows.append({
-                        "Date": e.get("date", "—"),
-                        "EPS Estimate": f"${e['eps_estimate']:.2f}" if e.get("eps_estimate") is not None else "—",
-                        "EPS Actual": f"${e['eps_actual']:.2f}" if e.get("eps_actual") is not None else "—",
-                        "Surprise %": f"{surprise:+.1f}%" if surprise is not None else "—",
-                        "Result": result,
-                    })
-
-                if hist_rows:
-                    df = pd.DataFrame(hist_rows)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    # Underlying numeric history (unformatted EPS / surprise)
-                    table_export(pd.DataFrame(past[:8]),
-                                 f"earnings_surprises_{ticker}",
-                                 key=f"exp_earnings_surprises_{ticker}")
+                        result = f"<td>{_INLINE_LABEL}</td>"
+                    trs.append("<tr>" + "".join([
+                        _cell(e.get("date"), "nm"),
+                        _cell(_usd_str(e.get("eps_estimate"))),
+                        _cell(_usd_str(e.get("eps_actual"))),
+                        _signed_pct_cell(surprise),
+                        result,
+                    ]) + "</tr>")
+                _render_earnings_grid(
+                    [("Date", "nm"), ("EPS Est", ""), ("EPS Act", ""),
+                     ("Surprise", ""), ("Result", "")], trs,
+                    col_widths=["28%", "18%", "18%", "18%", "18%"])
+                # Underlying numeric history (unformatted EPS / surprise)
+                table_export(pd.DataFrame(past[:8]),
+                             f"earnings_surprises_{ticker}",
+                             key=f"exp_earnings_surprises_{ticker}")
 
 
 def _render_manual_input(ticker: str):
