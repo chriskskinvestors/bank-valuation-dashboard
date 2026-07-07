@@ -1321,11 +1321,16 @@ def _results_tr(r: dict, ncols: int) -> str:
         rep = _date.fromisoformat(r["date"]).strftime("%b %d")
     except (KeyError, ValueError):
         rep = r.get("date")
-    eps_act = f"${r['eps_act']:.2f}" if r.get("eps_act") is not None else None
-    eps_est = f"${r['eps_est']:.2f}" if r.get("eps_est") is not None else None
-    url = r.get("pr_url")
+    def _usd(v):
+        return None if v is None else (f"-${-v:.2f}" if v < 0 else f"${v:.2f}")
+    eps_act, eps_est = _usd(r.get("eps_act")), _usd(r.get("eps_est"))
+    # Release link: the wire/IR press release when the events feed has it;
+    # else the SEC 8-K EX-99.1 already located for the metrics expansion
+    # (micro-caps often file with EDGAR without ever hitting a wire).
+    url = r.get("pr_url") or (r.get("rel") or {}).get("url")
     if url:
-        title = _html.escape(r.get("pr_headline") or "", quote=True)
+        title = _html.escape(r.get("pr_headline") or "SEC 8-K earnings release",
+                             quote=True)
         release = (f'<td><a class="lnk" href="{_html.escape(url, quote=True)}" '
                    f'title="{title}" target="_blank" rel="noopener">Release ↗</a></td>')
     else:

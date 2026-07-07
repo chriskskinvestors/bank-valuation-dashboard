@@ -129,12 +129,19 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             continue                                  # keep the newest report
         when = _WHEN_LABEL.get((r.get("time") or "").lower())
         pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
+        # FMP's periodEnding is unreliable for fiscal-year-odd banks (CARV
+        # showed a period ending AFTER its report date; CPBI one a year old).
+        # A real earnings report lands ~1-5 weeks after the period closes —
+        # anything outside [7, 150] days is FMP junk → '—', never displayed.
+        pe = _iso_date(r.get("periodEnding"))
+        period = (pe.isoformat() if pe is not None and 7 <= (d - pe).days <= 150
+                  else None)
         best[tk] = {
             "_d": d,
             "ticker": tk,
             "date": d.isoformat(),
             "when": when,
-            "period_ending": r.get("periodEnding"),
+            "period_ending": period,
             "eps_act": eps_act,
             "eps_est": r.get("epsEstimated"),
             "eps_surprise": surprise_pct(eps_act, r.get("epsEstimated")),

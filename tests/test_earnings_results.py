@@ -152,6 +152,24 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertEqual([(r["ticker"], r["date"]) for r in rows],
                          [("B2", "2026-07-14"), ("A1", "2026-07-10")])
 
+    def test_implausible_fmp_period_is_dropped(self):
+        """FMP periodEnding junk (2026-07-07 prod catch): CARV showed a period
+        ending AFTER its report date, CPBI one ~a year old. A real report
+        lands 7-150 days after the period closes; outside that → None."""
+        fmp = [
+            {"symbol": "JPM", "date": "2026-07-14", "epsActual": 5.8,
+             "periodEnding": "2026-06-30"},                  # 14d — plausible
+            {"symbol": "CARV", "date": "2026-06-29", "epsActual": -0.29,
+             "periodEnding": "2026-06-30"},                  # ends AFTER report
+            {"symbol": "CPBI", "date": "2026-06-18", "epsActual": 0.25,
+             "periodEnding": "2025-06-30"},                  # ~a year old
+        ]
+        rows = {r["ticker"]: r for r in build_results_rows(
+            fmp, {"JPM", "CARV", "CPBI"}, {}, self.TODAY)}
+        self.assertEqual(rows["JPM"]["period_ending"], "2026-06-30")
+        self.assertIsNone(rows["CARV"]["period_ending"])
+        self.assertIsNone(rows["CPBI"]["period_ending"])
+
     def test_pr_link_attached_from_events(self):
         fmp = [{"symbol": "JPM", "date": "2026-07-14", "epsActual": 5.8}]
         events = {"JPM": [{"headline": "JPM Reports Q2", "url": "https://x/pr",
