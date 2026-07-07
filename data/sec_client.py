@@ -487,6 +487,13 @@ def get_latest_fundamentals(cik: int) -> dict:
     result["net_income_ttm"] = ni_ttm
     result["net_income_is_ttm"] = ni_ttm is not None
 
+    # NI available to COMMON (TTM) — the correct ROATCE numerator for preferred
+    # issuers (ROATCE = return on tangible COMMON equity). None when the filer
+    # doesn't tag it; compute_roatce_holdco falls back to total NI only when the
+    # bank has no preferred (then to-common == total).
+    result["net_income_to_common_ttm"] = _extract_ttm_value(
+        facts, "NetIncomeLossAvailableToCommonStockholdersBasic")
+
     # Same TTM treatment for EPS — quarterly Q1/Q2/Q3 filings would otherwise
     # give a single-period EPS, producing P/E values 4× too high.
     # (e.g. WAL Q1 EPS $1.65 → P/E = $79/$1.65 = 48x; real TTM EPS ≈ $7,

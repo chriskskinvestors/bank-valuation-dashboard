@@ -113,6 +113,51 @@ class TestValuationEngineTceConvention(unittest.TestCase):
         self.assertNotAlmostEqual(got, 70 / 900 * 100, places=2)   # 7.78% — INTANGW
 
 
+class TestHoldcoRoatcePreferredCommonBasis(unittest.TestCase):
+    """(AUDIT-2026-07-02 preferred follow-up) compute_roatce_holdco must be
+    COMMON-basis: NI-available-to-common ÷ (common equity − intangibles). It used
+    total NI ÷ (total equity − intangibles), overstating the denominator by
+    preferred and mislabeling ROATCE (the C = common). Honors the cardinal rule:
+    preferred present but unresolved → n/a."""
+
+    def test_common_basis_subtracts_preferred_both_sides(self):
+        from analysis.valuation import compute_roatce_holdco
+        # total equity 1000, preferred 200, intangibles 100, NI-to-common 60,
+        # total NI 72. Correct = 60 / (1000-200-100) = 60/700 = 8.571%.
+        sd = {"book_value_total": 1000, "preferred_present": True,
+              "preferred_stock": 200, "intangible_adjustment": 100,
+              "net_income_to_common_ttm": 60, "net_income": 72}
+        got = compute_roatce_holdco(sd)
+        self.assertAlmostEqual(got, 60 / 700 * 100, places=2)        # common-basis
+        self.assertNotAlmostEqual(got, 72 / 900 * 100, places=2)     # NOT total/total
+
+    def test_no_preferred_falls_back_to_total_ni(self):
+        from analysis.valuation import compute_roatce_holdco
+        # No preferred → to-common == total; missing the to-common tag is fine.
+        sd = {"book_value_total": 500, "preferred_present": False,
+              "preferred_stock": 0, "intangible_adjustment": 50,
+              "net_income_to_common_ttm": None, "net_income": 45}
+        got = compute_roatce_holdco(sd)
+        self.assertAlmostEqual(got, 45 / 450 * 100, places=2)        # 45/(500-50)
+
+    def test_unresolved_preferred_is_na(self):
+        from analysis.valuation import compute_roatce_holdco
+        # Preferred present but carrying value unresolved (PNC-class) → n/a.
+        sd = {"book_value_total": 800, "preferred_present": True,
+              "preferred_stock": None, "intangible_adjustment": 100,
+              "net_income_to_common_ttm": 50, "net_income": 55}
+        self.assertIsNone(compute_roatce_holdco(sd))
+
+    def test_preferred_present_but_no_to_common_is_na(self):
+        from analysis.valuation import compute_roatce_holdco
+        # Has resolvable preferred but the filer never tags NI-to-common → no
+        # honest common return, so n/a beats a preferred-inflated one.
+        sd = {"book_value_total": 900, "preferred_present": True,
+              "preferred_stock": 100, "intangible_adjustment": 100,
+              "net_income_to_common_ttm": None, "net_income": 70}
+        self.assertIsNone(compute_roatce_holdco(sd))
+
+
 class TestAudit0702AvgEquityDenominators(unittest.TestCase):
     """(AUDIT-2026-07-02 P1 #12) roatce/roate/roace are labeled and popup-
     documented as returns on AVERAGE equity but were computed on the period-END

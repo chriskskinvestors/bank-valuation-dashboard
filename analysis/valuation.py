@@ -164,22 +164,46 @@ def compute_roatce_holdco(sec_data: dict) -> float | None:
     banking, asset management) that aren't in the FDIC subsidiary-bank data.
     Using HoldCo metrics is the institutional standard for stock valuation.
 
-    ROATCE = Net Income / Tangible Common Equity × 100
-    TCE = StockholdersEquity − (goodwill + other intangibles)
+    ROATCE = Return on Average Tangible COMMON Equity:
+        (NI available to common) / (common equity − goodwill − intangibles) × 100
+
+    BOTH sides are common-basis. Subtract preferred from the numerator (use
+    NI-to-common, not total NI) AND the denominator (common equity, not total
+    equity). Using total NI over total equity leaves two offsetting errors that
+    only partially cancel; the common basis is the metric's actual definition and
+    ties TBV/share and the golden hand-check. Cardinal rule: when the filer HAS
+    preferred but its carrying value is unresolved (par-zero/stale), the common
+    basis is unknowable → return None (n/a), never a preferred-inflated ROATCE.
     """
     if not sec_data:
         return None
-    ni = sec_data.get("net_income")
     equity = sec_data.get("book_value_total")
-    if ni is None or equity is None:
+    if equity is None:
         return None
-    # Use the robust intangible adjustment (goodwill + intangibles resolved
-    # across alternate XBRL tags) so TCE matches the tangible-book calc. Fall
-    # back to the raw fields only if the adjustment wasn't computed.
+
+    preferred_present = sec_data.get("preferred_present")
+    preferred_stock = sec_data.get("preferred_stock")
+    if preferred_present and preferred_stock is None:
+        return None  # preferred present but unresolved → common basis unknowable
+
+    # Numerator: NI available to common. For preferred issuers use the to-common
+    # TTM; with no preferred, to-common == total NI, so fall back to it.
+    ni = sec_data.get("net_income_to_common_ttm")
+    if ni is None:
+        if preferred_present:
+            return None  # has preferred but no to-common figure → no honest common return
+        ni = sec_data.get("net_income")
+    if ni is None:
+        return None
+
+    # Denominator: common tangible equity. Use the robust intangible adjustment
+    # (goodwill + intangibles resolved across alternate XBRL tags, MSR-excluded)
+    # so TCE matches the tangible-book calc; fall back to raw fields.
+    common_equity = equity - (preferred_stock or 0)
     adj = sec_data.get("intangible_adjustment")
     if adj is None:
         adj = (sec_data.get("goodwill") or 0) + (sec_data.get("intangibles") or 0)
-    tce = equity - adj
+    tce = common_equity - adj
     if tce <= 0:
         return None
     return (ni / tce) * 100

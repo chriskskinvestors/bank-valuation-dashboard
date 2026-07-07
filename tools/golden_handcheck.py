@@ -220,8 +220,20 @@ def main() -> int:
                 print("  -> COMMON TBVPS       = n/a (preferred present but unresolved)")
             else:
                 print(f"  -> COMMON TBVPS       = {tce/sh:.2f}")
-            if ni_ttm is not None:
-                print(f"  -> ROATCE (NI/TCE)    = {ni_ttm/tce*100:.2f}%")
+            # ROATCE = return on tangible COMMON equity: NI-available-to-common
+            # over common TCE (both common-basis). n/a when preferred is present
+            # but unresolved (common basis unknowable) or the to-common TTM is
+            # unavailable. No preferred → NI-to-common == NI, so fall back to it.
+            if preferred_unresolved:
+                print("  -> ROATCE             = n/a (preferred present but unresolved)")
+            elif tce <= 0:
+                print("  -> ROATCE             = n/a (non-positive TCE)")
+            elif nic_ttm is not None:
+                print(f"  -> ROATCE (NIC/TCE)   = {nic_ttm / tce * 100:.2f}%")
+            elif ni_ttm is not None and not pref_present:
+                print(f"  -> ROATCE (NI/TCE)    = {ni_ttm / tce * 100:.2f}%")
+            else:
+                print("  -> ROATCE             = n/a (NI-to-common unavailable)")
     return 0
 
 

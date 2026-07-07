@@ -47,7 +47,8 @@ sys.path.insert(0, str(REPO_ROOT))
 #   ni_ttm        = TTM HoldCo net income ($B)
 #   equity        = HoldCo stockholders' equity ($B)
 #   tbvps         = HoldCo tangible book value / share ($)
-#   roatce_holdco = HoldCo ROATCE (% — ni_ttm / tce_avg × 100)
+#   roatce_holdco = HoldCo ROATCE (% — NI-to-common TTM ÷ common TCE × 100;
+#                   common-basis, re-pinned 2026-07-07 from tools/golden_handcheck.py)
 #
 # Tolerances are intentionally tight: 5% on dollar amounts, 50bps on ratios.
 # If any value drifts outside tolerance, the pipeline changed and we need
@@ -61,7 +62,10 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # $108.87 (TCE at period-end / common shares at period-end). Ties the
         # common-based fix (equity less preferred, less goodwill+intangibles).
         "tbvps":         {"expected": 108.87, "tol_pct": 2.0},
-        "roatce_holdco": {"expected": 19.0, "tol_abs": 1.0},
+        # Re-pinned 2026-07-07 to the COMMON-basis ROATCE (NI-to-common TTM ÷
+        # common tangible equity) from the independent hand-check
+        # (tools/golden_handcheck.py). Old 19.0 was preferred-INCLUSIVE.
+        "roatce_holdco": {"expected": 19.83, "tol_abs": 1.0},
     },
     "BAC": {
         "shares":        {"expected": 7_212_000_000, "tol_pct": 2.0},
@@ -71,7 +75,8 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # 7,129.9M shares) = $28.84. BAC's reconciliation nets DTL on intangibles
         # and carries preferred at redemption value; pipeline is within tol.
         "tbvps":         {"expected": 28.84, "tol_pct": 2.0},
-        "roatce_holdco": {"expected": 13.1, "tol_abs": 1.0},
+        # Re-pinned 2026-07-07 (common-basis; hand-check). Old 13.1 preferred-inclusive.
+        "roatce_holdco": {"expected": 14.84, "tol_abs": 1.0},
     },
     "WFC": {
         "shares":        {"expected": 3_064_000_000, "tol_pct": 2.0},  # Q1 2026 post-buybacks
@@ -80,7 +85,8 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # Reported tangible book value / common share, 1Q26 Quarterly Supplement
         # (TCE $137,817M / 3,064.3M shares) = $44.98.
         "tbvps":         {"expected": 44.98, "tol_pct": 2.0},
-        "roatce_holdco": {"expected": 13.84, "tol_abs": 1.0},
+        # Re-pinned 2026-07-07 (common-basis; hand-check). Old 13.84 preferred-inclusive.
+        "roatce_holdco": {"expected": 14.97, "tol_abs": 1.0},
     },
     "C": {
         "shares":        {"expected": 1_750_000_000, "tol_pct": 3.0},
@@ -89,7 +95,8 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # Citi's latest companyfacts period is 4Q25 (as-of 2025-12-31). Reported
         # tangible book value / share in the 4Q25 press release = $97.06.
         "tbvps":         {"expected": 97.06, "tol_pct": 3.0},
-        "roatce_holdco": {"expected": 7.6, "tol_abs": 1.0},
+        # Re-pinned 2026-07-07 (common-basis; hand-check). Old 7.6 preferred-inclusive.
+        "roatce_holdco": {"expected": 7.71, "tol_abs": 1.0},
     },
     "USB": {
         # Period-end common shares outstanding, 1Q26 (2026-03-31): the pipeline
@@ -112,7 +119,12 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # is later sourced from a specific tag. Pinning $28.76 would enshrine the
         # documented-incomplete figure, so it is intentionally left unpinned.
         # "tbvps":         {"expected": 29.56, "tol_pct": 2.0},
-        "roatce_holdco": {"expected": 15.9, "tol_abs": 1.5},
+        # Re-pinned 2026-07-07 to common-basis ROATCE. Old 15.9 was preferred-
+        # inclusive. The independent hand-check reads 17.89% but with GROSS
+        # (MSR-inclusive) intangibles; the documented MSR-excluded common TCE
+        # ($44,706M — see the tbvps note above) with NI-to-common TTM $7,432M
+        # gives 16.62%. Band ±1.5 brackets both that and the DTL residual.
+        "roatce_holdco": {"expected": 16.6, "tol_abs": 1.5},
     },
     "PNC": {
         "shares":        {"expected": 403_000_000, "tol_pct": 2.0},
@@ -130,7 +142,12 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # press release; BVPS $143.65) as of 2026-03-31. Will be restored when
         # the direct earnings-release TBVPS extractor lands.
         # "tbvps":         {"expected": 109.42, "tol_pct": 3.0},
-        "roatce_holdco": {"expected": 13.61, "tol_abs": 1.0},
+        # roatce_holdco disabled 2026-07-07 (same reason as tbvps): the common-
+        # basis ROATCE needs common equity, but PNC's preferred carrying value is
+        # unresolvable, so compute_roatce_holdco returns n/a (cardinal rule). The
+        # OLD pin (13.61) was the preferred-INCLUSIVE figure (wrong). Restore with
+        # a common-basis expected only when the preferred value is sourced.
+        # "roatce_holdco": {"expected": 13.61, "tol_abs": 1.0},
     },
     "HBAN": {  # Cadence acquisition closed Q1 2026 — share count + equity expanded
         "shares":        {"expected": 2_027_000_000, "tol_pct": 2.0},
@@ -140,7 +157,8 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # $9.45 (subtracts gross intangibles without the +$203M DTL add-back);
         # ~1% low, within the 3% band.
         "tbvps":         {"expected": 9.55, "tol_pct": 3.0},
-        "roatce_holdco": {"expected": 9.63, "tol_abs": 1.5},
+        # Re-pinned 2026-07-07 (common-basis; hand-check). Old 9.63 preferred-inclusive.
+        "roatce_holdco": {"expected": 10.80, "tol_abs": 1.5},
     },
     "SFST": {
         "shares":        {"expected": 8_213_328, "tol_pct": 1.0},
