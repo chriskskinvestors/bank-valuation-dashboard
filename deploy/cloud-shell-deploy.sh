@@ -18,6 +18,22 @@ SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 AR_REPO="${AR_REPO:-bank-dashboard}"
 RUN_SERVICE="${RUN_SERVICE:-bank-dashboard}"
 
+# ─────────────────────────────────────────────────────────────────────────
+# GUARD: this is a LEGACY manual/bootstrap deploy path. The canonical deploy is
+# the "Deploy to Cloud Run" GitHub Actions workflow (.github/workflows/deploy.yml)
+# — hardened with a required-secret gate, scheduler-invoker bindings, and job
+# image sync that this script does NOT replicate. Running this against prod
+# replays the 2026-06-24 outage: `gcloud run deploy --set-secrets` REPLACES the
+# whole secret set, so an incomplete list silently drops the FMP/FFIEC mounts
+# (blank prices app-wide). Refuse to touch the prod project unless the operator
+# explicitly opts in.
+if [[ "${PROJECT_ID}" == "ace-beanbag-486220-a8" && "${ALLOW_MANUAL_PROD_DEPLOY:-}" != "1" ]]; then
+    echo "ERROR: refusing a manual deploy to the PROD project (${PROJECT_ID})." >&2
+    echo "       Canonical deploy = the GitHub Actions 'Deploy to Cloud Run' workflow (push to main)." >&2
+    echo "       For a genuine break-glass manual prod deploy, re-run with ALLOW_MANUAL_PROD_DEPLOY=1." >&2
+    exit 1
+fi
+
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${RUN_SERVICE}:$(date +%Y%m%d-%H%M%S)"
 INSTANCE_CONN=$(gcloud sql instances describe "${SQL_INSTANCE}" --format="value(connectionName)")
 
@@ -39,19 +55,30 @@ gcloud builds submit --tag "${IMAGE}" --quiet
 DB_PASSWORD=$(gcloud secrets versions access latest --secret=db-password)
 DATABASE_URL="postgresql+psycopg2://${SQL_USER}:${DB_PASSWORD}@/${SQL_DB_NAME}?host=/cloudsql/${INSTANCE_CONN}"
 
-# Build the --set-secrets argument from only the secrets that actually exist.
-# This lets the user skip secrets during bootstrap without breaking deploy.
+# Build --set-secrets. Because --set-secrets REPLACES the entire secret set, a
+# missing REQUIRED secret ships a half-keyed service (the 2026-06-24 outage:
+# blank prices when FMP_API_KEY was dropped). Mirror deploy.yml — fail loudly on
+# any missing required secret rather than silently skipping it.
 SECRETS_ARG=""
-for SECRET_NAME in anthropic-api-key fred-api-key; do
+MISSING=""
+for SECRET_NAME in anthropic-api-key fred-api-key fmp-api-key ffiec-username ffiec-jwt-token; do
     if gcloud secrets describe "${SECRET_NAME}" --quiet >/dev/null 2>&1; then
         ENV_VAR=$(echo "${SECRET_NAME}" | tr '[:lower:]-' '[:upper:]_')
-        if [[ -z "${SECRETS_ARG}" ]]; then
-            SECRETS_ARG="${ENV_VAR}=${SECRET_NAME}:latest"
-        else
-            SECRETS_ARG="${SECRETS_ARG},${ENV_VAR}=${SECRET_NAME}:latest"
-        fi
+        SECRETS_ARG="${SECRETS_ARG:+${SECRETS_ARG},}${ENV_VAR}=${SECRET_NAME}:latest"
     else
-        echo "  (skipping secret ${SECRET_NAME} — not in Secret Manager)"
+        MISSING="${MISSING} ${SECRET_NAME}"
+    fi
+done
+if [[ -n "${MISSING}" ]]; then
+    echo "ERROR: required secret(s) not in Secret Manager — refusing to deploy a half-keyed service:${MISSING}" >&2
+    exit 1
+fi
+# OPTIONAL secrets — mounted if present, skipped silently otherwise (the
+# external-access gate stays dormant until the secret exists).
+for SECRET_NAME in external-access-password; do
+    if gcloud secrets describe "${SECRET_NAME}" --quiet >/dev/null 2>&1; then
+        ENV_VAR=$(echo "${SECRET_NAME}" | tr '[:lower:]-' '[:upper:]_')
+        SECRETS_ARG="${SECRETS_ARG:+${SECRETS_ARG},}${ENV_VAR}=${SECRET_NAME}:latest"
     fi
 done
 
