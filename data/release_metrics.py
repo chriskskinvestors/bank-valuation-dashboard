@@ -73,11 +73,16 @@ _PINNED_SPECS = {
 }
 
 # A qualifier in the ~30 chars before the label disqualifies the candidate:
-# prior-period comparisons and non-GAAP variants.
+# prior-period comparisons, non-GAAP variants, and SEGMENT qualifiers — "Card
+# Services net charge-off rate of 3.47%" is a segment figure, not firmwide
+# (JPM, caught in the 2026-07-06 ground-truth pass). Over-exclusion is safe
+# (n/a); a mis-scoped figure is not.
 _EXCLUDE_BEFORE = re.compile(
     r"\b(?:adjusted|core|operating|non-?gaap|normalized|underlying|pro forma|"
     r"compared (?:to|with)|versus|vs\.?|year[- ]ago|prior[- ](?:year|quarter)|"
-    r"linked[- ]quarter|from|down from|up from)\s*(?:an?\s+|the\s+)?$", re.I)
+    r"linked[- ]quarter|from|down from|up from|"
+    r"card(?: services)?|consumer|wholesale|commercial|mortgage|auto|"
+    r"banking|lending|segment(?:'s)?)\s*(?:an?\s+|the\s+)?$", re.I)
 # ", excluding …" / ", on an adjusted basis" right after the value → non-GAAP.
 _EXCLUDE_AFTER = re.compile(
     r"^[\s,(]*(?:excluding|adjusted|as adjusted|non-?gaap|core|operating|"
@@ -190,11 +195,14 @@ def _dollar_metric(text: str, pats, band) -> float | None:
     return _clean(text, _gen(), band, _AGREE_USD)
 
 
-def extract_release_metrics(html: str) -> dict:
+def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict:
     """{nim, efficiency, roa, roe, rotce, nco_ratio, npa_assets, acl_loans,
-    tbv_ps, div_ps} from an earnings release — each the agreed prose value or
-    None (never guessed). Percent keys are percents (3.42 = 3.42%); per-share
-    keys are dollars."""
+    tbv_ps, div_ps} from an earnings release — never guessed. Prose first
+    (the narrated value is the bank's own headline); where prose gives None
+    and `expected_qend` is known, a structurally-parsed TABLE value fills the
+    gap (see extract_table_metrics — the current-quarter column is identified
+    by its period HEADER, never by position luck). Percent keys are percents
+    (3.42 = 3.42%); per-share keys are dollars."""
     text = _flat_text(html)
     out = {}
     for key, (label, band) in _PCT_SPECS.items():
@@ -203,6 +211,161 @@ def extract_release_metrics(html: str) -> dict:
         out[key] = _pinned_metric(text, label, denom, band)
     out["tbv_ps"] = _dollar_metric(text, _TBV_PATS, _TBV_BAND)
     out["div_ps"] = _dollar_metric(text, _DIV_PATS, _DIV_BAND)
+    if expected_qend and any(v is None for v in out.values()):
+        tab = extract_table_metrics(html, expected_qend)
+        for k, v in tab.items():
+            if out.get(k) is None:
+                out[k] = v
+    return out
+
+
+# ── Table extraction (v2) ───────────────────────────────────────────────────
+# For table-style releases (PNC/MTB/WFC narrate little): parse each <table>'s
+# structure, find its PERIOD HEADER row, and read a metric row's cell in the
+# column whose header equals the release's own quarter-end. Deterministic by
+# construction — refused (n/a) whenever the structure is ambiguous:
+#   - no period row, or the expected quarter absent from it → skip table
+#   - expected quarter appears TWICE (quarter vs year-to-date columns) → skip
+#   - a row's value count ≠ the period count (colspan drift) → skip row
+#   - an adjusted/core label → skip row; disagreeing tables → None (as prose).
+
+_MONTHS3 = {m[:3]: i for i, m in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july", "august",
+     "september", "october", "november", "december"), 1)}
+_Q_END = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
+_QTOK = re.compile(r"\b([1-4])Q\s?(\d{2}|\d{4})\b", re.I)
+_QWORD = re.compile(r"\b(first|second|third|fourth)\s+quarter,?\s+(\d{4})", re.I)
+_QNUM = {"first": 1, "second": 2, "third": 3, "fourth": 4}
+_DTOK = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})")
+
+
+def _period_qend(cell: str) -> str | None:
+    """A header cell's period as an ISO quarter-end date, or None. Accepts
+    '1Q26' / 'Q1 2026'-less common '1Q 2026', 'First Quarter 2026', and a
+    full date ('March 31, 2026'). Bare years are NOT periods (a 'Three months
+    ended <date>' colspan above bare '2026 | 2025' cells is unresolvable at
+    the cell level — the table is skipped instead)."""
+    from datetime import date as _date
+    m = _QTOK.search(cell)
+    if m:
+        q, y = int(m.group(1)), int(m.group(2))
+        y += 2000 if y < 100 else 0
+        mo, dy = _Q_END[q]
+        return _date(y, mo, dy).isoformat()
+    m = _QWORD.search(cell)
+    if m:
+        mo, dy = _Q_END[_QNUM[m.group(1).lower()]]
+        return _date(int(m.group(2)), mo, dy).isoformat()
+    m = _DTOK.search(cell)
+    if m:
+        mon = _MONTHS3.get(m.group(1)[:3].lower())
+        if mon:
+            try:
+                return _date(int(m.group(3)), mon, int(m.group(2))).isoformat()
+            except ValueError:
+                return None
+    return None
+
+
+def _table_rows(table_html: str) -> list[list[str]]:
+    """One <table>'s cells as [[cell_text, ...], ...] (tags stripped,
+    entities unescaped, whitespace collapsed)."""
+    rows = []
+    for tr in re.findall(r"(?is)<tr[^>]*>(.*?)</tr>", table_html):
+        cells = re.findall(r"(?is)<t[dh][^>]*>(.*?)</t[dh]>", tr)
+        rows.append([re.sub(r"\s+", " ",
+                            _h.unescape(re.sub(r"(?s)<[^>]+>", " ", c))).strip()
+                     for c in cells])
+    return rows
+
+
+_FOOTNOTE = re.compile(r"^\(\d\)$")
+_CELL_NUM = re.compile(r"\(?\$?\s?(\d{1,3}(?:,\d{3})*\.?\d{0,4})\)?")
+
+
+def _row_values(cells: list[str]) -> list[float]:
+    """Numeric values across a row's non-label cells, in order. Footnote
+    markers ('(1)') and symbol-only cells are skipped; a parenthesized
+    decimal is negative; thousands separators are stripped."""
+    vals = []
+    for c in cells[1:]:
+        if not c or _FOOTNOTE.match(c) or c in ("%", "$"):
+            continue
+        for m in _CELL_NUM.finditer(c):
+            try:
+                v = float(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            raw = m.group(0)
+            if raw.startswith("(") and "." in m.group(1):
+                v = -v
+            elif _FOOTNOTE.match(raw):
+                continue
+            vals.append(v)
+    return vals
+
+
+# Table-row label anchors (matched at the START of the row's first cell) with
+# the value kind: '%' rows must carry a percent sign somewhere, '$' rows a
+# dollar sign — a same-named row in a different unit never qualifies.
+_TABLE_SPECS = {
+    "nim": (r"net interest margin", "%", (0.5, 8.0)),
+    "efficiency": (r"efficiency ratio", "%", (20.0, 110.0)),
+    "roa": (r"return on (?:average )?(?:total )?assets", "%", (0.05, 4.0)),
+    "roe": (r"return on (?:average )?(?:common )?(?:shareholders'?,? )?equity",
+            "%", (0.5, 40.0)),
+    "rotce": (r"return on (?:average )?tangible common (?:shareholders'?,? )?equity",
+              "%", (0.5, 60.0)),
+    "nco_ratio": (r"net (?:loan )?charge-?offs?(?: \(recoveries\))?"
+                  r"(?: (?:to|/) average (?:total )?loans| ratio)", "%", (0.0, 5.0)),
+    "npa_assets": (r"non-?performing assets (?:to|/) total assets", "%", (0.0, 10.0)),
+    "acl_loans": (r"allowance for credit losses (?:to|/) total loans", "%",
+                  (0.1, 6.0)),
+    "tbv_ps": (r"tangible book value per (?:common )?share", "$", (1.0, 500.0)),
+    "div_ps": (r"(?:cash )?dividends?(?: declared| paid)? per (?:common )?share",
+               "$", (0.005, 10.0)),
+}
+
+
+def extract_table_metrics(html: str, expected_qend: str) -> dict:
+    """Metric values read from the release's structured tables at the column
+    whose PERIOD HEADER equals `expected_qend` (ISO quarter-end). All the
+    ambiguity refusals documented above apply; candidates across tables must
+    agree (as prose) or the metric is None."""
+    cands: dict = {k: [] for k in _TABLE_SPECS}
+    for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
+        rows = _table_rows(thtml)
+        qends, hdr_i = None, None
+        for i, cells in enumerate(rows[:8]):
+            found = [q for c in cells if (q := _period_qend(c))]
+            if len(found) >= 2:
+                qends, hdr_i = found, i
+                break
+        if not qends or qends.count(expected_qend) != 1:
+            continue                      # no/ambiguous period row → skip table
+        col = qends.index(expected_qend)
+        for cells in rows[hdr_i + 1:]:
+            if not cells or not cells[0]:
+                continue
+            label = cells[0]
+            if _CONNECTOR_EXCLUDE.search(label):
+                continue                  # adjusted/core variant row
+            row_text = " ".join(cells)
+            vals = _row_values(cells)
+            if len(vals) != len(qends):
+                continue                  # colspan drift → alignment unproven
+            for key, (lab_re, kind, band) in _TABLE_SPECS.items():
+                if not re.match(r"\s*" + lab_re, label, re.I):
+                    continue
+                if kind not in row_text:
+                    continue
+                v = vals[col]
+                if band[0] <= v <= band[1]:
+                    cands[key].append(v)
+    out = {}
+    for key, vs in cands.items():
+        tol = _AGREE_USD if _TABLE_SPECS[key][1] == "$" else _AGREE_PCT
+        out[key] = vs[0] if vs and (max(vs) - min(vs)) <= tol else None
     return out
 
 
@@ -237,7 +400,7 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    key = f"release_metrics:v1:{int(cik)}"
+    key = f"release_metrics:v2:{int(cik)}"     # v2: + table extraction
     try:
         cached = _cache.get(key)
     except Exception:
@@ -262,7 +425,7 @@ def release_metrics(cik) -> dict | None:
     if prev and prev.get("accession") == acc:
         return _stamp(prev)                     # same release — nothing new
 
-    from data.ir_provider import (extract_capital_ratios,
+    from data.ir_provider import (_quarter_end_before, extract_capital_ratios,
                                   latest_earnings_release)
     try:
         rel = latest_earnings_release(cik)
@@ -270,8 +433,9 @@ def release_metrics(cik) -> dict | None:
         rel = None
     if not rel:
         return _stamp(prev) if prev else None
+    qend = _quarter_end_before(rel.get("filed_date") or "")
     val = {
-        "metrics": extract_release_metrics(rel["html"]),
+        "metrics": extract_release_metrics(rel["html"], expected_qend=qend),
         "capital": extract_capital_ratios(rel["html"]),
         "url": rel.get("url"),
         "filed_date": rel.get("filed_date"),

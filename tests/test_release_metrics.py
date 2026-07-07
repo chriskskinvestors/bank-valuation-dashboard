@@ -13,11 +13,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from data.release_metrics import extract_release_metrics
+from data.release_metrics import extract_release_metrics, extract_table_metrics
 
 
 def x(html: str) -> dict:
     return extract_release_metrics(html)
+
+
+def _tbl(header_cells, *data_rows):
+    """Build a fixture <table> from a header cell list + data-row cell lists."""
+    def tr(cells):
+        return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+    return "<table>" + tr(header_cells) + "".join(tr(r) for r in data_rows) + "</table>"
 
 
 class TestPercentMetrics(unittest.TestCase):
@@ -61,6 +68,17 @@ class TestPercentMetrics(unittest.TestCase):
         m = x("<p>Net charge-offs were $12.3 million, or 0.25% of average "
               "loans, annualized.</p>")
         self.assertEqual(m["nco_ratio"], 0.25)
+
+    def test_segment_qualified_figure_never_captured(self):
+        # JPM: "Card Services net charge-off rate of 3.47%" is a SEGMENT rate,
+        # not firmwide (2026-07-06 ground-truth catch).
+        m = x("<p>Card Services net charge-off rate of 3.47%.</p>")
+        self.assertIsNone(m["nco_ratio"])
+
+    def test_firmwide_survives_next_to_segment_figure(self):
+        m = x("<p>Net charge-offs were 0.62% of average loans. Card Services "
+              "net charge-off rate of 3.47%.</p>")
+        self.assertEqual(m["nco_ratio"], 0.62)
 
     def test_band_rejects_implausible(self):
         self.assertIsNone(x("<p>Net interest margin of 34.2%.</p>")["nim"])
@@ -158,6 +176,82 @@ class TestPerShare(unittest.TestCase):
         m = x("<p>A quarterly cash dividend of $0.23 per share and a special "
               "dividend of $1.00 per share.</p>")
         self.assertEqual(m["div_ps"], 0.23)   # special is excluded, not merged
+
+
+class TestTableExtraction(unittest.TestCase):
+    Q = "2026-03-31"
+
+    def test_quarter_token_headers_pick_current_column(self):
+        h = _tbl(["", "1Q26", "4Q25", "1Q25"],
+                 ["Net interest margin", "3.71 %", "3.69 %", "3.66 %"],
+                 ["Efficiency ratio (1)", "58.3", "55.1", "60.5"])
+        m = extract_table_metrics(h, self.Q)
+        self.assertEqual(m["nim"], 3.71)
+        # efficiency row has no % sign anywhere → unit unproven → None.
+        self.assertIsNone(m["efficiency"])
+
+    def test_full_date_headers_current_not_first_column(self):
+        # Oldest-first column order: header mapping, not position, must decide.
+        h = _tbl(["", "March 31, 2025", "December 31, 2025", "March 31, 2026"],
+                 ["Tangible book value per share (non-GAAP)", "$13.15", "$14.60",
+                  "$14.87"],
+                 ["Dividends per share", "$0.195", "$0.20", "$0.21"])
+        m = extract_table_metrics(h, self.Q)
+        self.assertEqual(m["tbv_ps"], 14.87)
+        self.assertEqual(m["div_ps"], 0.21)
+
+    def test_expected_quarter_absent_skips_table(self):
+        h = _tbl(["", "4Q25", "3Q25"], ["Net interest margin", "3.69 %", "3.60 %"])
+        self.assertIsNone(extract_table_metrics(h, self.Q)["nim"])
+
+    def test_duplicate_period_column_is_ambiguous(self):
+        # Quarter + year-to-date columns both headed "June 30, 2026" → skip.
+        h = _tbl(["", "June 30, 2026", "March 31, 2026", "June 30, 2026"],
+                 ["Return on average assets", "1.20 %", "1.15 %", "1.18 %"])
+        self.assertIsNone(extract_table_metrics(h, "2026-06-30")["roa"])
+
+    def test_value_count_mismatch_skips_row(self):
+        h = _tbl(["", "1Q26", "4Q25", "1Q25"],
+                 ["Net interest margin", "3.71 %", "3.69 %"])   # one cell short
+        self.assertIsNone(extract_table_metrics(h, self.Q)["nim"])
+
+    def test_footnote_cells_do_not_break_alignment(self):
+        h = _tbl(["", "1Q26", "4Q25", "1Q25"],
+                 ["Efficiency ratio", "(1)", "58.3 %", "55.1 %", "60.5 %"])
+        self.assertEqual(extract_table_metrics(h, self.Q)["efficiency"], 58.3)
+
+    def test_adjusted_label_row_skipped(self):
+        h = _tbl(["", "1Q26", "4Q25"],
+                 ["Efficiency ratio, as adjusted", "52.1 %", "50.0 %"],
+                 ["Efficiency ratio", "58.3 %", "55.1 %"])
+        self.assertEqual(extract_table_metrics(h, self.Q)["efficiency"], 58.3)
+
+    def test_disagreeing_tables_yield_none(self):
+        h = (_tbl(["", "1Q26", "4Q25"], ["Net interest margin", "3.71 %", "3.69 %"])
+             + _tbl(["", "1Q26", "4Q25"], ["Net interest margin", "3.55 %", "3.50 %"]))
+        self.assertIsNone(extract_table_metrics(h, self.Q)["nim"])
+
+    def test_roe_row_never_matches_rotce_row(self):
+        h = _tbl(["", "1Q26", "4Q25"],
+                 ["Return on average tangible common equity", "15.20 %", "14.80 %"],
+                 ["Return on average common equity", "12.40 %", "12.10 %"])
+        m = extract_table_metrics(h, self.Q)
+        self.assertEqual(m["rotce"], 15.2)
+        self.assertEqual(m["roe"], 12.4)
+
+    def test_prose_wins_table_fills_gaps(self):
+        html = ("<p>Net interest margin of 3.42%.</p>"
+                + _tbl(["", "1Q26", "4Q25"],
+                       ["Net interest margin", "3.71 %", "3.69 %"],
+                       ["Return on average assets", "1.15 %", "1.10 %"]))
+        m = extract_release_metrics(html, expected_qend=self.Q)
+        self.assertEqual(m["nim"], 3.42)     # prose stays authoritative
+        self.assertEqual(m["roa"], 1.15)     # table fills the prose gap
+
+    def test_no_expected_qend_means_no_table_extraction(self):
+        html = _tbl(["", "1Q26", "4Q25"],
+                    ["Net interest margin", "3.71 %", "3.69 %"])
+        self.assertIsNone(extract_release_metrics(html)["nim"])
 
 
 class TestRealisticComposite(unittest.TestCase):
