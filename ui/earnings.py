@@ -329,6 +329,11 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
 
     st.markdown("---")
 
+    # ── Key reported metrics (as-filed actuals) ──────────────────────────
+    _render_key_metrics(ticker, actual_metrics)
+
+    st.markdown("---")
+
     # ── Historical earnings surprises ───────────────────────────────────
     if estimates and estimates.get("earnings_history"):
         _render_earnings_history_chart(ticker, estimates)
@@ -392,8 +397,6 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
             f"No consensus data for {ticker} yet. "
             "Enter estimates manually or upload a consensus file above."
         )
-
-    _render_key_metrics(ticker, actual_metrics)
 
 
 def _render_auto_estimates(ticker: str, estimates: dict):
