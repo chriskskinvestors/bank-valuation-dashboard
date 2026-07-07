@@ -91,6 +91,26 @@ def _search_13f_for_ticker(ticker: str, limit: int = 40) -> list[dict]:
     return results
 
 
+def _issuer_matches(target: str, name_upper: str) -> bool:
+    """Token-boundary match of a search term against a 13F issuer name.
+
+    NOT a naive substring: a bare ticker like "KEY" or "BANC" must match the
+    whole issuer word "KEY"/"BANC" and never bleed into "KEYSIGHT" or
+    "BANCOLOMBIA". The issuer name is split into upper-cased alphanumeric word
+    tokens and the target must equal one of them (or the full name). A
+    multi-word company-name search term matches only when its exact phrase
+    appears in the issuer name.
+    """
+    target_upper = target.upper()
+    if not target_upper:
+        return False
+    if target_upper == name_upper:
+        return True
+    if " " in target_upper:
+        return target_upper in name_upper
+    return target_upper in set(re.findall(r"[A-Z0-9]+", name_upper))
+
+
 def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str) -> list[dict]:
     """
     Parse the 13F infoTable.xml to extract holdings for a specific ticker/CUSIP.
@@ -165,11 +185,7 @@ def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str) -> list[
         name_upper = name.upper()
         class_upper = (class_ or "").upper()
 
-        is_match = (
-            target_ticker.upper() in name_upper
-            or target_ticker.upper() == name_upper
-        )
-        if not is_match:
+        if not _issuer_matches(target_ticker, name_upper):
             continue
 
         # Exclude non-common instruments
