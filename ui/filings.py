@@ -5,6 +5,8 @@ press releases, and regulatory documents for any bank in the watchlist.
 Includes AI-generated summaries when Anthropic API key is configured.
 """
 
+import html as _html
+
 import streamlit as st
 import pandas as pd
 
@@ -36,6 +38,17 @@ def _no_latex(s: str) -> str:
     whole table as raw text. The HTML entity renders as a literal '$' that KaTeX
     can't see, in both HTML and plain-markdown contexts."""
     return s.replace("$", "&#36;") if s else s
+
+
+def _safe(s) -> str:
+    """Escape data-derived text for a `unsafe_allow_html` sink: HTML-escape FIRST
+    (so '<', '>', '"', '&' in an AI summary can't inject markup), THEN neutralize
+    '$' for KaTeX. Order matters — escaping after the &#36; substitution would
+    double-escape the entity. Use this, never _no_latex, for anything going into
+    an unsafe_allow_html table cell."""
+    if not s:
+        return ""
+    return _html.escape(str(s)).replace("$", "&#36;")
 
 
 # ── Color badges for form types ─────────────────────────────────────────
@@ -431,6 +444,10 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
         st.info("No filings match the current filters.")
         return
 
+    # One shared URL-safety gate (rejects javascript:/data:/social/shorteners),
+    # same as every other feed surface. Local import mirrors ui.bank_detail.
+    from data.events.wire_base import is_safe_news_url
+
     summaries = _event_summaries(ticker) if ticker else {}
 
     rows_html = []
@@ -443,29 +460,33 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
         items = f.get("items", "")
         acc = (f.get("accession") or "").strip()
 
-        # Plain-English headline (better than raw item codes).
-        primary = _no_latex(_filing_primary(f["form"], items, f.get("is_earnings", False)))
+        # Plain-English headline (better than raw item codes). _safe escapes for
+        # the unsafe_allow_html sink below (defense-in-depth even for internal text).
+        primary = _safe(_filing_primary(f["form"], items, f.get("is_earnings", False)))
         # The actual content summary (Claude, from the events table) if we have it.
+        # AI-generated → the untrusted sink; MUST be HTML-escaped, not just _no_latex.
         summ = summaries.get(acc, "")
         if summ and len(summ) > 220:
             summ = summ[:217].rstrip() + "…"
-        summ = _no_latex(summ)
+        summ = _safe(summ)
         summ_html = (f'<div style="color:var(--text-secondary);font-size:0.86em;margin-top:2px;'
                      f'line-height:1.4;">{summ}</div>') if summ else ""
         # Item chips as faint supporting detail (8-Ks only).
         chips_html = ""
         if items and f["form"] in ("8-K", "8-K/A"):
-            chips = _no_latex(_items_description(items))
+            chips = _safe(_items_description(items))
             if chips:
                 chips_html = (f'<div style="color:var(--text-muted);font-size:0.74em;'
                               f'margin-top:2px;">{chips}</div>')
 
+        # Validate the scheme/host (rejects javascript:/data: — empty host → False)
+        # and escape the href, so a crafted url can't break out of the attribute.
         link_html = ""
-        if url:
-            link_html = (f'<a href="{url}" target="_blank" '
+        if url and is_safe_news_url(url):
+            link_html = (f'<a href="{_html.escape(str(url))}" target="_blank" '
                          f'style="color:var(--brand-accent);text-decoration:none;">View</a>')
-            if index_url:
-                link_html += (f' · <a href="{index_url}" target="_blank" '
+            if index_url and is_safe_news_url(index_url):
+                link_html += (f' · <a href="{_html.escape(str(index_url))}" target="_blank" '
                               f'style="color:var(--text-secondary);text-decoration:none;">Index</a>')
 
         zebra = "background:rgba(148,163,184,0.045);" if i % 2 else ""
