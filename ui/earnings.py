@@ -43,7 +43,6 @@ from utils.chart_style import (
     COLOR_WARNING,
     COLOR_DANGER,
     apply_standard_layout,
-    CHART_HEIGHT_FULL,
     CHART_HEIGHT_COMPACT,
 )
 from ui.chrome import table_export, title_bar, ledger
@@ -597,7 +596,8 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
             font=dict(size=10, color=COLOR_SUCCESS if s >= 0 else COLOR_DANGER),
         )
 
-    apply_standard_layout(fig, height=CHART_HEIGHT_FULL, yaxis_title="EPS ($)")
+    # Secondary chart → compact height (300px full read as oversized here).
+    apply_standard_layout(fig, height=CHART_HEIGHT_COMPACT, yaxis_title="EPS ($)")
 
     st.plotly_chart(fig, use_container_width=True)
 

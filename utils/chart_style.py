@@ -97,9 +97,14 @@ def apply_standard_layout(fig, title: str = None, height: int = CHART_HEIGHT_FUL
     margin = dict(CHART_MARGIN_WIDE_LEFT if wide_left_margin else CHART_MARGIN)
     if show_legend:
         margin = dict(margin, b=margin["b"] + _LEGEND_BOTTOM_PAD)
+    # Title only when given: update_layout(title=None) serializes to a null
+    # title that plotly.js renders as a literal "undefined" above the plot
+    # (caught on the earnings surprise chart, 2026-07-07).
+    title_kw = dict(title=dict(
+        text=title, font=dict(size=13, color=_TEXT_PRIMARY),
+        x=0, xanchor="left", y=0.98, yanchor="top")) if title else {}
     fig.update_layout(
-        title=dict(text=title, font=dict(size=13, color=_TEXT_PRIMARY),
-                   x=0, xanchor="left", y=0.98, yanchor="top") if title else None,
+        **title_kw,
         height=height,
         margin=margin,
         yaxis_title=yaxis_title,
