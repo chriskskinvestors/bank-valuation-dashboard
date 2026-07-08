@@ -7,8 +7,14 @@ FROM python:3.11-slim@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839
 
 WORKDIR /app
 
-# Install curl for health checks
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+# curl for health checks; chromium + fonts for filing→PDF rendering
+# (data/filing_pdf.py — Recent Documents "Download PDF", owner-approved
+# prototype 2026-07-08). fonts-liberation covers the Times/Arial metrics
+# EDGAR filings assume.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl chromium fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+ENV CHROMIUM_BIN=/usr/bin/chromium
 
 # Install dependencies
 COPY requirements.txt .

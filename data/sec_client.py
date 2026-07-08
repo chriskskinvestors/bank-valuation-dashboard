@@ -1055,6 +1055,11 @@ FILING_FORM_TYPES = {
     "S-1", "S-1/A", "S-3", "S-3/A",
     "SC 13D", "SC 13D/A", "SC 13G", "SC 13G/A",
     "4", "3",
+    # Recent Documents panels (2026-07-08): benefit plans / annual reports,
+    # merger paper, proxy variants, delisting & deregistration notices.
+    "11-K", "ARS",
+    "S-4", "S-4/A", "425", "DEFM14A", "PRE 14A",
+    "25", "25-NSE", "15-12B", "15-12G",
 }
 
 

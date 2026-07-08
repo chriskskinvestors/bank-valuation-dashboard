@@ -38,8 +38,9 @@ COMPANY_NAV = {
     },
     "Valuation": ["Valuation Model", "Peer Rank", "Price & Trends"],
     "Estimates / Earnings": ["Earnings"],
-    "News & Filings": ["Filings & Reports", "Key Exhibits", "Press Releases",
-                       "Transcripts & Presentations", "Events Calendar"],
+    "News & Filings": ["Recent Documents", "Filings & Reports", "Key Exhibits",
+                       "Press Releases", "Transcripts & Presentations",
+                       "Events Calendar"],
     "Market Analysis": ["Market Share & Branches"],
     "Ownership": ["Institutional (13F)", "Insider Activity", "Executive Compensation"],
 }
@@ -165,6 +166,11 @@ def _peer_rank(t, ctx):
 def _earnings(t, ctx):
     from ui.earnings import render_earnings_consensus
     render_earnings_consensus(t, ctx["load_metrics"](t))
+
+
+def _recent_documents(t, ctx):
+    from ui.recent_documents import render_recent_documents
+    render_recent_documents(t)
 
 
 def _filings(t, ctx):
@@ -327,6 +333,7 @@ _RENDERERS = {
     "Valuation Model": _valuation_model,
     "Peer Rank": _peer_rank,
     "Earnings": _earnings,
+    "Recent Documents": _recent_documents,
     "Filings & Reports": _filings,
     "Key Exhibits": _key_exhibits,
     "Press Releases": _press_releases,
