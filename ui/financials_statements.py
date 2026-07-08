@@ -187,6 +187,39 @@ def _prior_quarter_end(dt):
     return (pd.Timestamp(dt).normalize() - pd.offsets.QuarterEnd(1))
 
 
+def _decum_flow(rec, field, quarterly, hist_by_date):
+    """Span-consistent numerator for the flow ÷ avg-balance rate kinds (audit #26).
+
+    FDIC income flows are YTD-cumulative while the rate kinds' denominator is a
+    single-period 2-point average, so the numerator must cover the SAME span:
+      • Annual view: rows are 12/31 records — the YTD figure IS the full year
+        (factor 1.0; unchanged behavior).
+      • Quarterly view: de-cumulate to the single quarter (Q1: the YTD IS the
+        quarter; otherwise current YTD − the prior quarter's YTD, looked up in
+        the FULL history rather than just the displayed columns) and annualize
+        ×4 — matching the single-quarter denominator. The old behavior
+        annualized the YTD directly, putting a months-1..N average flow over a
+        latest-quarter balance — tens of bps off in rising-rate regimes.
+
+    Returns (value, factor); (None, None) when the field is absent or the
+    prior-quarter row is missing (cannot de-cumulate — "—" beats a mixed-span
+    number, cardinal rule).
+    """
+    cur = _num(rec.get(field))
+    if cur is None:
+        return None, None
+    dt = pd.Timestamp(rec.get("REPDTE")).normalize()
+    if not quarterly:
+        return cur, 12.0 / dt.month
+    if dt.month == 3:
+        return cur, 4.0
+    prev = hist_by_date.get(_prior_quarter_end(dt))
+    pv = _num(prev.get(field)) if prev is not None else None
+    if pv is None:
+        return None, None
+    return cur - pv, 4.0
+
+
 def _dep_cost_by_date(cert):
     """{normalized report date → stored deposit-cost split dict}
     (data/call_report_store, ffiec_client.get_deposit_cost_detail shape).
@@ -422,6 +455,39 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 seen = True
         return tot if seen else None
 
+    # Span-consistent flow numerators for the rate kinds (audit #26): quarterly
+    # columns de-cumulate YTD flows to the single quarter (×4) so numerator and
+    # single-quarter avg denominator cover the same months. Date-keyed over the
+    # FULL history so the first displayed column can still reach its prior
+    # quarter (same trick as _dep_cost_by_date).
+    _quarterly_view = (period == "Quarterly")
+    _hist_by_date = {pd.Timestamp(r["REPDTE"]).normalize(): r
+                     for r in hist.to_dict("records")}
+
+    def _flow(ci, field):
+        return _decum_flow(recs_list[ci], field, _quarterly_view, _hist_by_date)
+
+    def _core_flow(ci):
+        """De-cumulated core income + factor (quarterly spans matched, #26 —
+        see _core_income for the definition). Absent IGLSEC/EXTRA legitimately
+        mean zero; present but un-decumulatable → (None, None). The effective
+        tax rate is the current YTD ratio — a rate, not a flow, so no span mix."""
+        rec = recs_list[ci]
+        ni, fq = _flow(ci, "NETINC")
+        if ni is None:
+            return None, None
+        parts = {}
+        for fld in ("IGLSEC", "EXTRA"):
+            if _num(rec.get(fld)) is None:
+                parts[fld] = 0.0
+                continue
+            qv, _ = _flow(ci, fld)
+            if qv is None:
+                return None, None
+            parts[fld] = qv
+        t = _eff_tax(rec)
+        return ni - parts["IGLSEC"] * (1 - t) - parts["EXTRA"], fq
+
     def _revenue(rec):
         ii, ie, noni = _num(rec.get("INTINC")), _num(rec.get("EINTEXP")), _num(rec.get("NONII"))
         return (ii - ie + noni) if None not in (ii, ie, noni) else None
@@ -512,13 +578,13 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             # every other avg-denominated kind (netopex, costfunds, core_roae):
             # period-END equity understated the return for a bank that raised
             # equity mid-period while the popup claimed an average.
-            ni = _num(rec.get("NETINC")); eq = _avg(ci, "EQTOT")
+            ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             intan = _avg(ci, "INTAN") or 0
             tce = (eq - intan) if eq is not None else None
-            v = f"{ni*f/tce*100:.2f}%" if (ni is not None and tce and tce > 0) else "—"
+            v = f"{ni*fq/tce*100:.2f}%" if (ni is not None and tce and tce > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(ni*f)) + " ($000)" if ni is not None else "—"},
+                           [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
                             {"label": "Avg tangible common equity (EQTOT − INTAN)",
                              "val": _thou(round(tce)) + " ($000)" if tce is not None else "—"}],
                            "Net income ÷ avg tangible common equity × 100", False)
@@ -537,38 +603,38 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            [{"label": args[0], "val": _pct(a)},
                             {"label": args[1], "val": _pct(b)}], f"{args[0]} − {args[1]}", False)
         if kind == "yield":       # flow (annualized) ÷ avg balance × 100
-            nf, df_ = args; n = _num(rec.get(nf)); d = _avg(ci, df_)
-            v = f"{n*f/d*100:.2f}%" if (n is not None and d) else "—"
+            nf, df_ = args; n, fq = _flow(ci, nf); d = _avg(ci, df_)
+            v = f"{n*fq/d*100:.2f}%" if (n is not None and d) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": nf + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(n*f)) + " ($000)" if n is not None else "—"},
+                           [{"label": nf + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(n*fq)) + " ($000)" if n is not None else "—"},
                             {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
                            f"{nf} ÷ avg {df_} × 100", False)
         if kind == "yield2":      # (A − B) annualized ÷ avg balance × 100
             af_, bf_, df_ = args
-            a, b, d = _num(rec.get(af_)), _num(rec.get(bf_)), _avg(ci, df_)
-            v = f"{(a-b)*f/d*100:.2f}%" if (a is not None and b is not None and d) else "—"
+            a, fq = _flow(ci, af_); b, _fb = _flow(ci, bf_); d = _avg(ci, df_)
+            v = f"{(a-b)*fq/d*100:.2f}%" if (a is not None and b is not None and d) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": f"{af_} − {bf_}" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round((a-b)*f)) + " ($000)" if (a is not None and b is not None) else "—"},
+                           [{"label": f"{af_} − {bf_}" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round((a-b)*fq)) + " ($000)" if (a is not None and b is not None) else "—"},
                             {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
                            f"({af_} − {bf_}) ÷ avg {df_} × 100", False)
         if kind == "roate":       # Return on avg tangible (total) equity
             # 2-point average denominator — see roatce.
-            ni = _num(rec.get("NETINC")); eq = _avg(ci, "EQTOT")
+            ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             intan = _avg(ci, "INTAN") or 0
             te = (eq - intan) if eq is not None else None
-            v = f"{ni*f/te*100:.2f}%" if (ni is not None and te and te > 0) else "—"
+            v = f"{ni*fq/te*100:.2f}%" if (ni is not None and te and te > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(ni*f)) + " ($000)" if ni is not None else "—"},
+                           [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
                             {"label": "Avg tangible equity (EQTOT − INTAN)",
                              "val": _thou(round(te)) + " ($000)" if te is not None else "—"}],
                            "Net income ÷ tangible equity × 100", False)
         if kind == "roace":       # Return on avg COMMON equity
             # 2-point average denominator — see roatce. The preferred guard
             # below keys off the CURRENT period's EQPP (outstanding now).
-            ni = _num(rec.get("NETINC")); eq = _avg(ci, "EQTOT")
+            ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             pfd = _num(rec.get("EQPP")) or 0
             ce = (eq - (_avg(ci, "EQPP") or 0)) if eq is not None else None
             if pfd > 0:
@@ -583,42 +649,42 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                     {"label": label,
                                      "val": "n/a — needs RI-A preferred dividends (later phase)"}],
                                    "(Net income − preferred dividends) ÷ avg common equity × 100", False)
-            v = f"{ni*f/ce*100:.2f}%" if (ni is not None and ce and ce > 0) else "—"
+            v = f"{ni*fq/ce*100:.2f}%" if (ni is not None and ce and ce > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(ni*f)) + " ($000)" if ni is not None else "—"},
+                           [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
                             {"label": "Avg common equity (EQTOT − EQPP)",
                              "val": _thou(round(ce)) + " ($000)" if ce is not None else "—"}],
                            "Net income ÷ common equity × 100 (no preferred outstanding)", False)
         if kind == "netopex":     # Net operating expense ÷ avg assets
-            nonx, noni = _num(rec.get("NONIX")), _num(rec.get("NONII"))
+            nonx, fq = _flow(ci, "NONIX"); noni, _fb = _flow(ci, "NONII")
             a = _avg(ci, "ASSET")
             net = (nonx - noni) if (nonx is not None and noni is not None) else None
-            v = f"{net*f/a*100:.2f}%" if (net is not None and a) else "—"
+            v = f"{net*fq/a*100:.2f}%" if (net is not None and a) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Net op. expense (NONIX − NONII)" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(net*f)) + " ($000)" if net is not None else "—"},
+                           [{"label": "Net op. expense (NONIX − NONII)" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(net*fq)) + " ($000)" if net is not None else "—"},
                             {"label": "Avg assets (ASSET)",
                              "val": _thou(round(a)) + " ($000)" if a else "—"}],
                            "(NONIX − NONII) ÷ avg assets × 100", False)
         if kind == "costfunds":   # Cost of funds: int exp ÷ avg total funding
-            ie = _num(rec.get("EINTEXP"))
+            ie, fq = _flow(ci, "EINTEXP")
             # SUBND is the sub-debt BALANCE (ESUBND is its interest expense —
             # never mix an expense into a balance denominator).
             fund = _avgsum(ci, ["DEP", "FREPP", "OTHBFHLB", "SUBND"])
-            v = f"{ie*f/fund*100:.2f}%" if (ie is not None and fund) else "—"
+            v = f"{ie*fq/fund*100:.2f}%" if (ie is not None and fund) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Total interest expense (EINTEXP)" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(ie*f)) + " ($000)" if ie is not None else "—"},
+                           [{"label": "Total interest expense (EINTEXP)" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(ie*fq)) + " ($000)" if ie is not None else "—"},
                             {"label": "Avg funding (deposits + borrowings)",
                              "val": _thou(round(fund)) + " ($000)" if fund else "—"}],
                            "Total interest expense ÷ avg (deposits + borrowings) × 100", False)
         if kind == "costdebt":    # Cost of borrowings/debt
-            ie, ed = _num(rec.get("EINTEXP")), _num(rec.get("EDEP"))
+            ie, fq = _flow(ci, "EINTEXP"); ed, _fb = _flow(ci, "EDEP")
             borint = (ie - ed) if (ie is not None and ed is not None) else None
             # SUBND is the sub-debt BALANCE (not ESUBND, its interest expense).
             bor = _avgsum(ci, ["FREPP", "OTHBFHLB", "SUBND"])
-            rate = (borint * f / bor * 100) if (borint is not None and bor and bor >= 1000) else None
+            rate = (borint * fq / bor * 100) if (borint is not None and bor and bor >= 1000) else None
             # Borrowings swing intra-year while we only see the period-end
             # balance, so a real interest figure over a shrunk year-end balance
             # can overstate the rate. n/a outside a plausible band (0–8%) rather
@@ -633,8 +699,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                    "(EINTEXP − EDEP) ÷ avg borrowings × 100", False)
             v = f"{rate:.2f}%"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Borrowings interest (EINTEXP − EDEP)" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(borint*f)) + " ($000)" if borint is not None else "—"},
+                           [{"label": "Borrowings interest (EINTEXP − EDEP)" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(borint*fq)) + " ($000)" if borint is not None else "—"},
                             {"label": "Avg borrowings (FREPP + OTHBFHLB + SUBND)",
                              "val": _thou(round(bor)) + " ($000)"}],
                            "(EINTEXP − EDEP) ÷ avg borrowings × 100", False)
@@ -1064,19 +1130,19 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                              "val": _thou(round(igl*(1-_eff_tax(rec)))) + " ($000)"}],
                            "Net income − after-tax securities gains/losses", False)
         if kind == "core_roaa":
-            core = _core_income(rec); a = _avg(ci, "ASSET")
-            v = f"{core*f/a*100:.2f}%" if (core is not None and a) else "—"
+            core, fq = _core_flow(ci); a = _avg(ci, "ASSET")
+            v = f"{core*fq/a*100:.2f}%" if (core is not None and a) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Core income" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(core*f)) + " ($000)" if core is not None else "—"},
+                           [{"label": "Core income" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(core*fq)) + " ($000)" if core is not None else "—"},
                             {"label": "Avg assets", "val": _thou(round(a)) + " ($000)" if a else "—"}],
                            "Core income ÷ avg assets × 100", False)
         if kind == "core_roae":
-            core = _core_income(rec); e = _avg(ci, "EQTOT")
-            v = f"{core*f/e*100:.2f}%" if (core is not None and e) else "—"
+            core, fq = _core_flow(ci); e = _avg(ci, "EQTOT")
+            v = f"{core*fq/e*100:.2f}%" if (core is not None and e) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Core income" + (" (annualized)" if f != 1 else ""),
-                             "val": _thou(round(core*f)) + " ($000)" if core is not None else "—"},
+                           [{"label": "Core income" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(core*fq)) + " ($000)" if core is not None else "—"},
                             {"label": "Avg equity", "val": _thou(round(e)) + " ($000)" if e else "—"}],
                            "Core income ÷ avg equity × 100", False)
         if kind == "core_eps":

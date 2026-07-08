@@ -158,6 +158,70 @@ class TestHoldcoRoatcePreferredCommonBasis(unittest.TestCase):
         self.assertIsNone(compute_roatce_holdco(sd))
 
 
+class TestQuarterlyFlowDecumulation(unittest.TestCase):
+    """(AUDIT-2026-07-02 P2 #26) Quarterly rate kinds annualized the YTD-
+    cumulative flow (×12/m) but divided by a SINGLE-QUARTER 2-point average —
+    a months-1..N average flow over a latest-quarter balance, tens of bps off
+    in rising-rate regimes. _decum_flow must return the de-cumulated single
+    quarter ×4 in the Quarterly view (Q1 = the YTD itself), the untouched
+    full-year figure in the Annual view, and (None, None) when the prior
+    quarter is missing (a mixed-span number is never rendered).
+
+    Hand-computed: Q2 YTD INTINC 250, Q1 YTD 100 → Q2 flow 150 ×4 = 600
+    annualized. Old behavior: 250 × (12/6) = 500 — on a 5,000 avg balance
+    that's 10.0% rendered where the true quarter run-rate is 12.0%."""
+
+    @staticmethod
+    def _mk(date, **fields):
+        return {"REPDTE": pd.Timestamp(date), **fields}
+
+    def _hist(self):
+        rows = [self._mk("2025-03-31", INTINC=100),
+                self._mk("2025-06-30", INTINC=250)]
+        return {r["REPDTE"].normalize(): r for r in rows}
+
+    def test_q2_decumulates_and_annualizes_x4(self):
+        from ui.financials_statements import _decum_flow
+        hist = self._hist()
+        rec = hist[pd.Timestamp("2025-06-30")]
+        val, fq = _decum_flow(rec, "INTINC", True, hist)
+        self.assertEqual((val, fq), (150, 4.0))          # 250 − 100, ×4
+        self.assertNotEqual(val * fq, 250 * 2)           # old YTD×(12/6) = 500
+
+    def test_q1_ytd_is_the_quarter(self):
+        from ui.financials_statements import _decum_flow
+        hist = self._hist()
+        rec = hist[pd.Timestamp("2025-03-31")]
+        self.assertEqual(_decum_flow(rec, "INTINC", True, hist), (100, 4.0))
+
+    def test_missing_prior_quarter_is_none(self):
+        from ui.financials_statements import _decum_flow
+        rec = self._mk("2025-12-31", INTINC=400)         # Q4; Q3 not in hist
+        self.assertEqual(_decum_flow(rec, "INTINC", True, self._hist()),
+                         (None, None))
+
+    def test_annual_view_unchanged(self):
+        from ui.financials_statements import _decum_flow
+        rec = self._mk("2025-12-31", INTINC=500)
+        val, fq = _decum_flow(rec, "INTINC", False, {})
+        self.assertEqual((val, fq), (500, 1.0))          # FY figure, factor 1
+
+    def test_absent_field_is_none(self):
+        from ui.financials_statements import _decum_flow
+        rec = self._mk("2025-06-30")
+        self.assertEqual(_decum_flow(rec, "INTINC", True, self._hist()),
+                         (None, None))
+
+    def test_rate_kinds_use_flow_not_raw_ytd(self):
+        # Structural: every flow ÷ avg-balance kind must draw its numerator
+        # from _flow/_core_flow, never annualize a raw YTD with the old `f`.
+        from pathlib import Path
+        src = (Path(__file__).parent.parent / "ui" /
+               "financials_statements.py").read_text(encoding="utf-8")
+        self.assertNotIn("*f/", src.split("def cell(")[1],
+                         "no rate kind may annualize a raw YTD numerator")
+
+
 class TestHistoricalsFailureNotCached(unittest.TestCase):
     """(AUDIT-2026-07-02 P2 #27) fetch_historical must PROPAGATE a transient
     FDIC failure instead of catching it and returning an empty DataFrame:
