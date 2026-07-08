@@ -283,13 +283,17 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
             sh, sh_date = shares[key], key
         else:
             sh_date, sh = _nearest_kv(shares, d)
-        gw = goodwill.get(key)
-        other = intang.get(key)
+        # Align intangibles to the SAME balance-sheet date as equity (eq_date),
+        # not the requested column end (key). On an equity date-miss these lists
+        # would otherwise not join, silently zeroing the intangible adjustment
+        # and collapsing TBVPS onto BVPS (goodwill never subtracted).
+        gw = goodwill.get(eq_date)
+        other = intang.get(eq_date)
         if gw is not None:
             adj = gw + (other or 0)
             adj_basis = "goodwill + other intangibles" if other else "goodwill"
         else:
-            adj = incl.get(key)
+            adj = incl.get(eq_date)
             adj_basis = "intangibles incl. goodwill"
         bvps = (eq / sh) if (eq and sh) else None
         tbvps = ((eq - adj) / sh) if (eq and sh and adj is not None) else bvps
@@ -311,7 +315,7 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
             "eps_before_amort": eps_before_amort, "_amort": amort,
             "bvps": bvps, "tbvps": tbvps, "shares": sh,
             "_eq": eq, "_eq_date": eq_date, "_sh_date": sh_date,
-            "_adj": adj, "_gw": gw, "_other": other, "_incl": incl.get(key),
+            "_adj": adj, "_gw": gw, "_other": other, "_incl": incl.get(eq_date),
             "_adj_basis": adj_basis,
             "_eq_prov": eq_prov.get(eq_date) if eq_date else None,
             "_sh_prov": sh_prov.get(sh_date) if sh_date else None,
