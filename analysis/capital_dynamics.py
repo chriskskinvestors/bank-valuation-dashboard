@@ -38,7 +38,13 @@ def build_capital_timeline(hist_records: list[dict], shares_outstanding: float |
         if date is None:
             continue
 
-        equity = r.get("EQTOT") or 0      # thousands
+        # Cardinal rule: a quarter with no reported equity has no defined capital
+        # metrics. Coercing a missing EQTOT to 0 fabricates a negative tangible
+        # book (0 − intangibles) and poisons every downstream QoQ diff, retention
+        # ratio, and capital alert — skip the quarter instead of guessing.
+        equity = r.get("EQTOT")
+        if equity is None:
+            continue
         goodwill = r.get("INTANGW") or 0  # thousands (goodwill only)
         intangibles = r.get("INTAN") or 0  # thousands (total intangibles incl goodwill)
         net_income = r.get("NETINC") or 0  # thousands (YTD)
