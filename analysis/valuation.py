@@ -123,8 +123,12 @@ def _derive_quarterly_value(field: str, fdic_hist: list[dict], idx: int) -> floa
             if prior_ytd is None:
                 return None
             return curr_ytd - prior_ytd
-    # Prior quarter not available — fall back to YTD
-    return curr_ytd
+    # Prior quarter missing from history (a data gap). We CANNOT recover the
+    # single-quarter value — returning the cumulative YTD here would report a
+    # 6-/9-month figure as one quarter, inflating TTM net income and the
+    # fair-P/TBV "undervalued" flag it drives. n/a beats a guess (cardinal rule);
+    # both callers skip a None quarter and annualize from the ones they have.
+    return None
 
 
 def compute_roatce(fdic_data: dict) -> float | None:
