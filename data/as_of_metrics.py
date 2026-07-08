@@ -100,6 +100,11 @@ TREND_KEYS = [k for k, _ in TREND_METRICS]
 # Pre-warmed all-banks grids are stable day-to-day; allow a generous TTL so the
 # Trends view stays instant between nightly refreshes even if one is missed.
 _GRID_TTL_S = 36 * 3600
+# Minimum fraction of the requested cohort that must yield rows before a built
+# grid is PERSISTED (audit #46). Measured baseline 2026-07-08: 99.7% of universe
+# certs return FDIC data over the trailing window; 90% mirrors the
+# refresh_prices coverage gate.
+_MIN_GRID_COVERAGE = 0.90
 
 
 def _cohort_key(certs) -> str:
@@ -166,8 +171,25 @@ def quarterly_series(cert_to_id: dict, n_quarters: int = _WINDOW, *,
         if any_val:
             rows.append({"ticker": id_, "_fdic_cert": c, "series": series})
 
-    payload = {"labels": labels, "rows": rows,
+    # Coverage gate (audit #46): a partial FDIC response (429s return empty
+    # pages) silently drops banks from `rows`; persisting that under the STABLE
+    # key clobbers the last complete grid until the next nightly run. Measured
+    # baseline 2026-07-08: 99.7% of universe certs return data over the trailing
+    # window, so 90% (the refresh_prices gate) is far below normal variation but
+    # catches catastrophic partials. Below the gate: return the partial payload
+    # (the caller can still render it) but do NOT persist — stale-but-complete
+    # beats fresh-but-shrunken. Tiny scoped cohorts can dip below 90% with a
+    # couple of legitimately data-less banks; they just rebuild next rerun.
+    coverage = len(rows) / max(1, len(cert_to_id))
+    payload = {"labels": labels, "rows": rows, "coverage": round(coverage, 3),
                "cached_at": pd.Timestamp.today().isoformat()}
+    if coverage < _MIN_GRID_COVERAGE:
+        print(f"[trends] coverage {len(rows)}/{len(cert_to_id)} "
+              f"({coverage * 100:.0f}%) below the {_MIN_GRID_COVERAGE * 100:.0f}% gate "
+              f"— NOT persisting under {key}", flush=True)
+        payload["persisted"] = False
+        return payload
+    payload["persisted"] = True
     cache.put(key, payload)
     return payload
 

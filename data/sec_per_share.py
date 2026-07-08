@@ -168,7 +168,18 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
         if any(v is not None for vs in series.values() for v in vs):
             rows.append({"ticker": id_, "_fdic_cert": None, "series": series})
 
-    payload = {"labels": labels, "rows": rows,
+    # Coverage OBSERVE-ONLY (audit #46): same shrunken-grid exposure as the FDIC
+    # grid, but this baseline is UNMEASURED (per-CIK companyfacts with retries —
+    # legitimately-empty CIKs unknown), so per the verify-baseline-before-arming
+    # rule we log low coverage and still persist. Harden to a hard gate (mirror
+    # as_of_metrics._MIN_GRID_COVERAGE) only after nightly logs show a stable
+    # baseline comfortably above the would-be threshold.
+    coverage = len(rows) / max(1, len(cik_to_id))
+    if coverage < 0.90:
+        print(f"[sec-pershare] coverage {len(rows)}/{len(cik_to_id)} "
+              f"({coverage * 100:.0f}%) below 90% — persisting anyway (observe-only; "
+              "see audit #46)", flush=True)
+    payload = {"labels": labels, "rows": rows, "coverage": round(coverage, 3),
                "cached_at": pd.Timestamp.today().isoformat()}
     cache.put(key, payload)
     return payload

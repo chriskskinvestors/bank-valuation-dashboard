@@ -38,9 +38,17 @@ def main() -> int:
           flush=True)
     t0 = time.time()
     data = quarterly_series(cert_to_id, 20, build_if_missing=True, scope_id="ALLBANKS")
-    if data and data.get("rows"):
-        print(f"✓ FDIC grid: {len(data['rows'])} banks in {time.time() - t0:.0f}s",
-              flush=True)
+    if data and data.get("rows") and data.get("persisted", True):
+        print(f"✓ FDIC grid: {len(data['rows'])} banks "
+              f"({data.get('coverage', 1) * 100:.0f}% coverage) in "
+              f"{time.time() - t0:.0f}s", flush=True)
+    elif data and data.get("rows"):
+        # Coverage gate tripped (audit #46): partial FDIC response — the build
+        # was NOT persisted, the last complete grid still serves. Fail the job
+        # so the alert policy pages instead of silently serving stale data.
+        print(f"✗ FDIC grid coverage gate: only {len(data['rows'])}/"
+              f"{len(cert_to_id)} banks — partial grid NOT persisted", flush=True)
+        rc = 1
     else:
         print("✗ FDIC grid returned no rows", flush=True)
         rc = 1
