@@ -37,6 +37,24 @@ _CREDIT_FIELDS = {
 }
 
 
+def _reserve_coverage(rec: dict) -> float | None:
+    """Reserves/NPL coverage % for one FDIC record.
+
+    Computed from the constituent ratios (LNATRESR reserves/loans ÷ NCLNLSR
+    NPL/loans) because FDIC's pre-computed IDERNCVR has holding-company scaling
+    issues; IDERNCVR is used only as a fallback when the constituents are
+    unavailable. Shared by the per-bank timeline AND the peer median so the two
+    sides of the thin-reserves alert are always the same quantity (P3 #33 — the
+    peer median previously read raw IDERNCVR while the bank used the computed
+    value, comparing apples to oranges).
+    """
+    rtl = rec.get("LNATRESR")
+    npl = rec.get("NCLNLSR")
+    if rtl is not None and npl is not None and npl > 0:
+        return rtl / npl * 100
+    return rec.get("IDERNCVR")
+
+
 def build_credit_timeline(hist_records: list[dict]) -> pd.DataFrame:
     """
     Build a quarterly credit-metric timeline from FDIC history.
@@ -66,13 +84,9 @@ def build_credit_timeline(hist_records: list[dict]) -> pd.DataFrame:
             if row.get("past_due_90") is not None:
                 row["past_due_90_pct"] = row["past_due_90"] / total_loans * 100
 
-        # Compute reserve coverage from constituent ratios — more reliable than
-        # FDIC's IDERNCVR field which has scaling issues at holding-company level.
-        # coverage % = (reserve / loans) / (NPL / loans) * 100
-        rtl = row.get("reserve_to_loans")
-        npl = row.get("npl_ratio")
-        if rtl is not None and npl is not None and npl > 0:
-            row["reserve_coverage"] = rtl / npl * 100
+        # Reserve coverage via the shared helper (computed from constituent
+        # ratios, IDERNCVR fallback) — same quantity the peer median uses.
+        row["reserve_coverage"] = _reserve_coverage(r)
 
         rows.append(row)
 
@@ -215,7 +229,7 @@ def compute_peer_reserve_median(all_bank_hist: dict[str, list[dict]]) -> float |
         if not hist:
             continue
         latest = hist[0] if hist else {}
-        cov = latest.get("IDERNCVR")
+        cov = _reserve_coverage(latest)   # same computed basis as the timeline
         if cov is not None and cov > 0:
             coverages.append(cov)
     if not coverages:
