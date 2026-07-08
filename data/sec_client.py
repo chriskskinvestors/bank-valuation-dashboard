@@ -432,9 +432,15 @@ def _extract_time_series(facts: dict, concept: str) -> pd.DataFrame:
 
     df = pd.DataFrame(all_entries)
     df["end"] = pd.to_datetime(df["end"], errors="coerce")
-    df = df.dropna(subset=["end"]).sort_values("end", ascending=False)
-    # Deduplicate by end date (keep most recently filed)
-    df = df.drop_duplicates(subset=["end"], keep="first")
+    df = df.dropna(subset=["end"])
+    # Deduplicate by end date, keeping the MOST-RECENTLY-FILED value — a later
+    # 10-K/10-Q restates the same period-end and supersedes the as-first-reported
+    # figure. Sorting on `end` alone left the winner to array order (often the
+    # original), so restatements were silently dropped. Sort by (end, filed) and
+    # keep the last; None `filed` sorts first so a dated filing always wins.
+    df = df.sort_values(["end", "filed"], na_position="first")
+    df = df.drop_duplicates(subset=["end"], keep="last")
+    df = df.sort_values("end", ascending=False).reset_index(drop=True)
     return df
 
 
