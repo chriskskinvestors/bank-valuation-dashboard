@@ -158,6 +158,49 @@ class TestHoldcoRoatcePreferredCommonBasis(unittest.TestCase):
         self.assertIsNone(compute_roatce_holdco(sd))
 
 
+class TestHistoricalsFailureNotCached(unittest.TestCase):
+    """(AUDIT-2026-07-02 P2 #27) fetch_historical must PROPAGATE a transient
+    FDIC failure instead of catching it and returning an empty DataFrame:
+    st.cache_data does not cache exceptions, but it happily memoizes an empty
+    frame for the full 1h TTL — a process-global blank Historicals tab. The
+    caller shows the error and the next rerun retries."""
+
+    def test_fetch_error_raises_instead_of_empty_frame(self):
+        from unittest import mock
+        import requests
+        import ui.historicals as H
+        with mock.patch.object(requests, "get",
+                               side_effect=requests.exceptions.ConnectionError("FDIC down")):
+            with self.assertRaises(Exception):
+                H.fetch_historical(3510, quarters=4)
+
+
+class TestConsensusRoatceNotRoe(unittest.TestCase):
+    """(AUDIT-2026-07-02 P2 #31) the Model-vs-Consensus 'roatce' row compared
+    street ROATCE against FDIC ROE — return on TOTAL equity with no intangible
+    deduction, a different (lower) definition, so the Δ/verdict was
+    cross-definition. It must use compute_roatce (annualized NETINC ÷
+    (EQTOT − INTAN), the house convention) or skip the row."""
+
+    @staticmethod
+    def _fn_src():
+        from pathlib import Path
+        src = (Path(__file__).parent.parent / "ui" /
+               "valuation_model.py").read_text(encoding="utf-8")
+        return src.split("def _render_consensus_vs_model")[1].split("\ndef ")[0]
+
+    def test_roatce_row_uses_computed_roatce(self):
+        fn = self._fn_src()
+        block = fn.split('elif key == "roatce":')[1].split("elif key ==")[0]
+        self.assertIn("actual_roatce", block,
+                      "roatce row must compare against a computed ROATCE")
+        self.assertNotIn("actual_roe", block,
+                         "roatce row must not be wired to FDIC ROE")
+        self.assertIn("compute_roatce(fdic_latest)", fn)
+        self.assertNotIn('fdic_latest.get("ROE")', fn,
+                         "no raw-ROE actual should remain in this comparison")
+
+
 class TestAudit0702AvgEquityDenominators(unittest.TestCase):
     """(AUDIT-2026-07-02 P1 #12) roatce/roate/roace are labeled and popup-
     documented as returns on AVERAGE equity but were computed on the period-END

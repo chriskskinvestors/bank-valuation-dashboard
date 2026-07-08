@@ -66,28 +66,29 @@ def fetch_historical(cert: int, quarters: int = 12) -> pd.DataFrame:
         "sort_order": "DESC",
         "limit": quarters,
     }
-    try:
-        resp = requests.get(
-            "https://banks.data.fdic.gov/api/financials",
-            params=params, timeout=20,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        rows = [r["data"] for r in data.get("data", [])]
-        if not rows:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(rows)
-        # Convert REPDTE to readable period labels
-        df["Period"] = df["REPDTE"].apply(lambda d: f"{str(d)[:4]}Q{(int(str(d)[4:6])-1)//3+1}")
-        # Convert numeric columns
-        for col in df.columns:
-            if col not in ("CERT", "REPDTE", "Period", "ID"):
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        return df
-    except Exception as e:
-        st.error(f"Error loading historical data: {e}")
+    # No try/except here ON PURPOSE (audit #27): st.cache_data does NOT cache
+    # exceptions, so letting a transient FDIC failure propagate means the next
+    # rerun retries. The old catch-and-return-empty memoized a BLANK frame
+    # process-global for the full 1h TTL. The caller shows the error.
+    resp = requests.get(
+        "https://banks.data.fdic.gov/api/financials",
+        params=params, timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    rows = [r["data"] for r in data.get("data", [])]
+    if not rows:
+        # Legitimate "no rows for this cert" — cacheable, distinct from failure.
         return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    # Convert REPDTE to readable period labels
+    df["Period"] = df["REPDTE"].apply(lambda d: f"{str(d)[:4]}Q{(int(str(d)[4:6])-1)//3+1}")
+    # Convert numeric columns
+    for col in df.columns:
+        if col not in ("CERT", "REPDTE", "Period", "ID"):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
 
 
 # Ratio fields (%): FDIC reports these either YTD-annualized (ROA, NIMY,
@@ -146,8 +147,13 @@ def render_historicals(ticker: str):
         st.warning(f"No FDIC data available for {ticker}.")
         return
 
-    # Fetch data
-    df = fetch_historical(cert, quarters=20)
+    # Fetch data. Failures raise (not cached — audit #27): show the error and
+    # bail; the next rerun retries instead of serving a 1h-cached blank tab.
+    try:
+        df = fetch_historical(cert, quarters=20)
+    except Exception as e:
+        st.error(f"Error loading historical data: {e}")
+        return
     if df.empty:
         st.warning("No historical data found.")
         return

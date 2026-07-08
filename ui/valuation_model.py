@@ -913,7 +913,13 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
     actual_nim = fdic_latest.get("NIMY")
     actual_eff = fdic_latest.get("EEFFR")
     actual_roa = fdic_latest.get("ROA")
-    actual_roe = fdic_latest.get("ROE")
+    # Street "roatce" must be compared to an actual ROATCE, not FDIC ROE —
+    # ROE is return on TOTAL equity with no intangible deduction, a different
+    # (lower) definition, so the Δ/verdict was cross-definition (audit #31).
+    # compute_roatce = annualized NETINC ÷ (EQTOT − INTAN), the house
+    # convention. None → the row is skipped rather than compared dishonestly.
+    from analysis.valuation import compute_roatce
+    actual_roatce = compute_roatce(fdic_latest)
     actual_npl = fdic_latest.get("NCLNLSR")
 
     # Model's Year-1 EPS is ANNUAL — put it on the selected period's basis
@@ -951,7 +957,7 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
         elif key == "roaa":
             actual_val = actual_roa
         elif key == "roatce":
-            actual_val = actual_roe
+            actual_val = actual_roatce
         elif key == "npl_ratio":
             actual_val = actual_npl
 
