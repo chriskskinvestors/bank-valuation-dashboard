@@ -124,7 +124,12 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     loans_per_share = (loans[0] * 1000 / shares) if (loans and shares > 0) else 0
 
     return {
-        "base_eps": base_eps if base_eps else 2.00,
+        # None (not a $2 placeholder) when SEC EPS is missing — a fabricated
+        # seed produced a confident DCF/warranted headline off made-up inputs
+        # (AUDIT-2026-07-02 #30). The input widget renders empty; the model
+        # refuses to compute a headline until a real (derived or typed) value
+        # exists. Same for tbvps below (None when shares are unavailable).
+        "base_eps": base_eps if base_eps else None,
         "roatce_pct": roatce_pct,
         "tbvps": tbvps,
         "loan_growth_trailing_pct": loan_growth_trailing,
@@ -342,14 +347,18 @@ def render_valuation_model(ticker: str):
             st.markdown("**Starting point**")
             base_eps = st.number_input(
                 "Base EPS ($, annual)",
-                value=float(defaults.get("base_eps") or 2.0),
+                value=(float(defaults["base_eps"])
+                       if defaults.get("base_eps") is not None else None),
                 step=0.10, format="%.2f",
+                placeholder="Not in filings — enter to model",
                 key=f"dcf_base_eps_{ticker}",
             )
             tbvps = st.number_input(
                 "TBV / Share ($)",
-                value=float(defaults.get("tbvps") or 20.0),
+                value=(float(defaults["tbvps"])
+                       if defaults.get("tbvps") is not None else None),
                 step=0.10, format="%.2f",
+                placeholder="Not in filings — enter to model",
                 key=f"dcf_tbvps_{ticker}",
             )
             loans_ps = st.number_input(
@@ -398,6 +407,27 @@ def render_valuation_model(ticker: str):
                 min_value=7.0, max_value=14.0, value=10.0, step=0.5,
                 key=f"dcf_cet1_{ticker}",
             )
+
+    # Cardinal rule (AUDIT #30): both the DCF (needs EPS) and the warranted
+    # price (needs TBV/share) are headline fair values — never compute them off
+    # a fabricated placeholder. If either couldn't be derived and the user
+    # hasn't typed one, stop here with an honest message instead of a made-up
+    # verdict. Requiring TBV/share also guarantees a real share count, so every
+    # downstream per-share input (loans/share) is real too.
+    if base_eps is None or tbvps is None:
+        missing = []
+        if base_eps is None:
+            missing.append("trailing EPS")
+        if tbvps is None:
+            missing.append("tangible book value per share")
+        st.warning(
+            "Cannot compute a DCF fair value or warranted price — "
+            + " and ".join(missing)
+            + " could not be derived from SEC/FDIC filings for this bank. "
+            "Enter the missing value(s) under **Model inputs** above to run the "
+            "model manually."
+        )
+        return
 
     # ── Run base case DCF ──────────────────────────────────────────────
     eps_growth_rates = [eps_growth_avg / 100] * 5

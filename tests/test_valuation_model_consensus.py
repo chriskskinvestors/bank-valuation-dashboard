@@ -35,7 +35,7 @@ for _attr in ("cache_data", "cache_resource", "fragment"):
     if not hasattr(_reg, _attr):
         setattr(_reg, _attr, _st.cache_data)
 
-from ui.valuation_model import _consensus_annualizer  # noqa: E402
+from ui.valuation_model import _consensus_annualizer, _derive_defaults  # noqa: E402
 
 _SRC = (Path(__file__).parent.parent / "ui" /
         "valuation_model.py").read_text(encoding="utf-8")
@@ -108,6 +108,48 @@ class TestRenderSitesUseAnnualizer(unittest.TestCase):
         # The Model-vs-Consensus EPS value must be gated on the annualizer so
         # an unknown-basis period yields no row instead of a wrong verdict.
         self.assertIn("if (model_eps_annual_y1 and annualize) else None", _SRC)
+
+
+class TestNoPlaceholderSeed(unittest.TestCase):
+    """AUDIT-2026-07-02 #30 — the model must not seed a $2 EPS / $20 TBV
+    placeholder when SEC fundamentals are missing (a confident DCF / warranted
+    price off made-up inputs). Missing → None (empty input); the render path
+    then refuses to compute a headline until real values exist."""
+
+    # A minimal FDIC history: goodwill-adjusted TCE = EQTOT − INTANGW =
+    # 1,000,000 − 200,000 = 800,000 ($000) = $800M.
+    _HIST = [{"REPDTE": "20260331", "EQTOT": 1_000_000, "INTANGW": 200_000,
+              "NETINC": 30_000, "LNLSNET": 5_000_000}]
+
+    def test_missing_sec_yields_none_not_placeholder(self):
+        d = _derive_defaults("XYZ", self._HIST, {})   # no SEC data
+        self.assertIsNone(d["base_eps"],
+                          "missing EPS must be None, never a $2 placeholder")
+        self.assertIsNone(d["tbvps"],
+                          "no share count must be None, never a $20 placeholder")
+
+    def test_present_sec_yields_real_values(self):
+        sec = {"eps": 3.50, "shares_outstanding": 40_000_000}
+        d = _derive_defaults("XYZ", self._HIST, sec)
+        self.assertAlmostEqual(d["base_eps"], 3.50)
+        # $800M TCE / 40M shares = $20.00 / share (hand-computed).
+        self.assertAlmostEqual(d["tbvps"], 20.00)
+
+
+class TestHeadlineGuardOnMissingInputs(unittest.TestCase):
+    """The render path must stop with an honest message (never a fabricated
+    verdict) when EPS or TBV/share is missing — source-inspection, house
+    pattern (the panel is a Streamlit fragment, not unit-renderable)."""
+
+    def test_no_fabricated_placeholder_defaults_remain(self):
+        self.assertNotIn("or 2.0)", _SRC,
+                         "Base EPS input must not fall back to a $2 placeholder")
+        self.assertNotIn("or 20.0)", _SRC,
+                         "TBV/share input must not fall back to a $20 placeholder")
+
+    def test_guard_returns_before_computing_headline(self):
+        self.assertIn("if base_eps is None or tbvps is None:", _SRC,
+                      "missing headline inputs must be guarded before the DCF run")
 
 
 if __name__ == "__main__":
