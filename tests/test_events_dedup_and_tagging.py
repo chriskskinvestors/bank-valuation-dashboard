@@ -167,6 +167,47 @@ class TestCrossSourceDedup(unittest.TestCase):
         self.assertEqual(len(new), 1)
         self.assertEqual(self._sources("SBNC"), ["fmp_news"])
 
+
+class TestWireUpgradeUniqueCollision(unittest.TestCase):
+    """The upgrade path retargets a stored aggregator row's (source,
+    external_id) onto the incoming wire copy's — but when the wire copy ALREADY
+    exists as its own row, that UPDATE hits the UNIQUE constraint and rolled
+    back the WHOLE adapter batch (audit P3). Routine now that adapters re-scan
+    their full lookback (P2 #21): a wire item published just outside the 5-day
+    content-dedup window, whose aggregator twin sits inside it, is re-emitted
+    every cycle — without the guard the wire source would stop ingesting
+    entirely until the twin ages out."""
+
+    def setUp(self):
+        _fresh_db()
+
+    def test_existing_wire_row_skips_upgrade_and_batch_survives(self):
+        h = "JPMorgan Chase Declares Quarterly Common Stock Dividend"
+        wire = Event(ticker="JPM", source="businesswire",
+                     event_type="press_release", headline=h,
+                     published_at=NOW - timedelta(days=6),   # OUTSIDE 5d window
+                     url="https://businesswire/x", external_id="bw-guid-1")
+        agg = Event(ticker="JPM", source="fmp_news",
+                    event_type="press_release", headline=h,
+                    published_at=NOW - timedelta(days=4),    # INSIDE 5d window
+                    url="https://fmp/x", external_id="fmp-guid-1")
+        # Both copies end up stored: the wire row is invisible to the window
+        # query when the aggregator twin arrives.
+        self.assertEqual(len(store.insert_events_returning_new([wire])), 1)
+        self.assertEqual(len(store.insert_events_returning_new([agg])), 1)
+        # Full-lookback re-scan re-emits the wire copy, batched with an
+        # unrelated fresh event: must NOT raise, must NOT lose the fresh
+        # event, and must leave both stored rows intact.
+        fresh = _ev("BAC", "prnewswire", "Bank of America Names New CFO", "prn-9")
+        out = store.insert_events_returning_new([wire, fresh])
+        self.assertEqual([e.external_id for e in out], ["prn-9"],
+                         "the colliding upgrade is skipped; the batch survives")
+        from sqlalchemy import text as _sql
+        with store._get_engine().connect() as conn:
+            n = conn.execute(_sql("SELECT COUNT(*) FROM events")).scalar()
+        self.assertEqual(n, 3)
+
+
 class TestUniverseRecentScoping(unittest.TestCase):
     """get_universe_recent enriches the universe-wide feed at READ time, but only
     when the universe is already built (never a cold build on the read path):

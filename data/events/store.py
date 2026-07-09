@@ -265,6 +265,21 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
                     # one retained copy is first-party — and surfaced on Home.
                     old = existing_rows.get(ck)
                     if old is not None:
+                        # If the wire copy ALREADY exists as its own row (e.g.
+                        # published just outside the content-dedup window while
+                        # the aggregator twin sits inside — routine now that
+                        # adapters re-scan their full lookback, P2 #21), the
+                        # retarget below would hit UNIQUE (source, external_id)
+                        # and roll back the WHOLE adapter batch (audit P3).
+                        # Nothing to upgrade to — the first-party row is
+                        # already stored; record it as the key's best and move on.
+                        dup = conn.execute(text(
+                            "SELECT 1 FROM events WHERE source = :s AND external_id = :x"
+                        ), {"s": e.source, "x": e.external_id[:255]}).fetchone()
+                        if dup is not None:
+                            existing_rows[ck] = (e.source, e.external_id[:255])
+                            best_rank[ck] = incoming_rank
+                            continue
                         conn.execute(upgrade_stmt, {
                             "source": e.source,
                             "event_type": e.event_type,
