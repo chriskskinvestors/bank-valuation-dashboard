@@ -83,6 +83,25 @@ class TestEarningsCalendarNonBlocking(unittest.TestCase):
         self._patch_cache(None)
         self.assertEqual(self.est.fetch_earnings_calendar(("WAL",)), [])
 
+    def test_available_true_when_snapshot_present(self):
+        # AUDIT-2026-07-02 #34 — a snapshot with rows means data exists.
+        self._patch_cache({"cached_at": "2026-06-13T08:00:00", "guard": 1,
+                           "value": [{"ticker": "WAL",
+                                      "next_earnings_date": "2026-06-20"}]})
+        self.assertTrue(self.est.earnings_calendar_available())
+
+    def test_available_true_for_genuinely_empty_snapshot(self):
+        # Snapshot exists but empty → genuinely no upcoming earnings; the "0
+        # reporting" KPI is honest here (available, so NOT an outage).
+        self._patch_cache({"cached_at": "2026-06-13T08:00:00", "guard": 1,
+                           "value": []})
+        self.assertTrue(self.est.earnings_calendar_available())
+
+    def test_available_false_when_snapshot_absent(self):
+        # No snapshot → feed unavailable; the KPI must show "unavailable", not 0.
+        self._patch_cache(None)
+        self.assertFalse(self.est.earnings_calendar_available())
+
     def test_refresh_helper_does_build_and_persist(self):
         # The background helper IS allowed to build; verify it persists the
         # served shape.

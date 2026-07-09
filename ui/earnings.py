@@ -855,8 +855,15 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict):
     # — that's a confident wrong number; show unavailable instead.
     cal_failed = False
     try:
-        from data.estimates import fetch_earnings_calendar
+        from data.estimates import (fetch_earnings_calendar,
+                                    earnings_calendar_available)
         cal = fetch_earnings_calendar(tuple(watchlist))
+        # fetch_earnings_calendar returns [] for BOTH "genuinely no upcoming
+        # earnings" and "snapshot missing / unreadable". Only the latter is an
+        # outage — distinguish via the snapshot-presence check so a feed outage
+        # shows "unavailable", not a confident "0 reporting" (AUDIT #34).
+        if not cal and not earnings_calendar_available():
+            cal_failed = True
     except Exception as e:
         print(f"[earnings] calendar fetch failed: {type(e).__name__}: {e}")
         cal = []

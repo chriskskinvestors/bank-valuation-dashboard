@@ -229,6 +229,25 @@ def fetch_earnings_calendar(tickers: tuple) -> list[dict]:
     return []
 
 
+def earnings_calendar_available() -> bool:
+    """Whether an earnings-calendar snapshot has been built at all.
+
+    fetch_earnings_calendar() returns [] BOTH when the snapshot is genuinely
+    empty (no upcoming earnings) AND when it is missing/unreadable, so an empty
+    result alone can't tell a real "0 reporting" from an unbuilt/failed
+    snapshot. Callers that must show "unavailable" instead of a confident
+    "0 reporting" (AUDIT-2026-07-02 #34) check this: True = a snapshot exists
+    (an empty list is then genuine), False = no snapshot yet (feed unavailable).
+    Never rebuilds — a pure snapshot-presence read, same non-blocking contract
+    as fetch_earnings_calendar."""
+    from data import cache as _cache
+    try:
+        snap = _cache.get("earnings_calendar_snap")
+    except Exception:
+        return False
+    return bool(snap and isinstance(snap.get("value"), list))
+
+
 def refresh_earnings_calendar_snapshot(tickers: tuple) -> list[dict]:
     """Build the earnings calendar live and persist the cross-instance
     snapshot. Background-only (nightly refresh-universe job) — NEVER call
