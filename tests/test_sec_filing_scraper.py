@@ -1309,6 +1309,29 @@ class TestPerformance(unittest.TestCase):
                  self._dur("us-gaap:InterestIncomeExpenseNet", 5982 * self.M)]
         self.assertEqual(extract_performance(facts), {})
 
+    def test_no_prior_year_balance_yields_na_roa_roe(self):
+        # AUDIT-2026-07-02 #23 — only the ENDING balance is tagged (no prior
+        # year-end instant), so no real (begin+end)/2 average can be formed.
+        # ROA/ROE must be n/a, never computed on the single period-end balance
+        # and flagged identically to a true average.
+        facts = [
+            self._dur("us-gaap:InterestIncomeExpenseNet", 5982 * self.M),
+            self._dur("us-gaap:NoninterestIncome", 3035 * self.M),
+            self._dur("us-gaap:NoninterestExpense", 5144 * self.M),
+            self._dur("us-gaap:ProvisionForLoanLeaseAndOtherLosses", 662 * self.M),
+            self._dur("us-gaap:IncomeTaxExpenseBenefit", 689 * self.M),
+            self._dur("us-gaap:NetIncomeLoss", 2522 * self.M),
+            # Ending balances only — prior-year (2024-12-31) instants absent.
+            self._inst("us-gaap:Assets", 210000 * self.M, self.Y1),
+            self._inst("us-gaap:StockholdersEquity", 21000 * self.M, self.Y1),
+        ]
+        d = extract_performance(facts)["2025-12-31"]
+        self.assertIsNone(d["roa"], "ROA on a single period-end balance is not "
+                                    "an average — must be n/a")
+        self.assertIsNone(d["roe"])
+        # The faithfully-tagged income lines still render.
+        self.assertAlmostEqual(d["revenue"], (5982 + 3035) * self.M)
+
 
 class TestFinancialHighlights(unittest.TestCase):
     """The one-page snapshot (extract_financial_highlights) composes the balance-

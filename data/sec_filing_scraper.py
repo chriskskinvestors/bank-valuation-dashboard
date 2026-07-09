@@ -1916,7 +1916,11 @@ def extract_performance(facts: list[Fact]) -> dict:
         prior = _instant(instant_concept, py) if py else None
         if cur is not None and prior is not None:
             return (cur + prior) / 2.0, True
-        return (cur, True) if cur is not None else (None, True)
+        # No prior-year instant → we cannot form a real (begin+end)/2 average.
+        # A single period-END balance is NOT an average; ROA/ROE computed on it
+        # would be a different, overstated metric flagged identically to a true
+        # average (AUDIT-2026-07-02 #23). n/a over that mislabel (cardinal rule).
+        return (None, True)
 
     avg_assets, a_comp = avg(("AssetsAverageOutstanding",), "Assets")
     avg_equity, e_comp = avg(("StockholdersEquityAverageOutstanding",), "StockholdersEquity")
