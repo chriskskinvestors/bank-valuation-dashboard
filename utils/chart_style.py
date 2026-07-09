@@ -1,6 +1,6 @@
 """
 Shared chart styling for dashboards — consistent heights, margins, colors, fonts.
-Premium dark theme matching the KSK design system.
+Light institutional theme matching the KSK design system (ui/styles.py tokens).
 """
 
 # Standard chart dimensions — institutional density: small, high signal-per-pixel.

@@ -1209,7 +1209,8 @@ def _cecl_acl_sum(facts: list[Fact], period: str):
     return total if total > 0 else None
 
 
-def extract_credit_quality(facts: list[Fact], comp_loan_total=None) -> dict:
+def extract_credit_quality(facts: list[Fact], comp_loan_total=None,
+                           comp_loan_period=None) -> dict:
     """{period_end: {...}} — the as-reported CECL allowance & asset-quality summary
     from a filing's iXBRL: allowance for credit losses (ACL), gross/net loans,
     nonaccrual loans, net charge-offs (writeoff − recovery, or the directly tagged
@@ -1224,7 +1225,12 @@ def extract_credit_quality(facts: list[Fact], comp_loan_total=None) -> dict:
     `comp_loan_total` (the reconcile-gated composition loan total from
     data.sec_composition) stands in for the gross loans of a filer that tags loans
     ONLY by segment with no undimensioned total (FFIN); the ACL then comes from the
-    per-segment CECL split and the ratio is plausibility-gated."""
+    per-segment CECL split and the ratio is plausibility-gated. `comp_loan_period`
+    is the period-end the composition total is dated at: when supplied it must
+    equal the filing's current anchor period or the stand-in is REFUSED (n/a) —
+    a current-quarter ACL divided by a prior-FY loan total is a plausible-wrong
+    ratio, never rendered. When omitted (None) the caller vouches for the period
+    (legacy direct calls); the production caller always passes it."""
     # Use ONLY the filing's current (latest) loan-footnote date — never fall back
     # to a prior-year comparative, which would surface stale figures as current.
     periods: set = set()
@@ -1254,8 +1260,13 @@ def extract_credit_quality(facts: list[Fact], comp_loan_total=None) -> dict:
             acl = (coll + indiv) if (coll is not None and indiv is not None) else _cecl_acl_sum(facts, period)
         gross = _sec_pick(facts, _CQ_CONCEPTS["loans_gross"], period)
         # Dimensional fallback: the reconcile-gated composition total stands in for an
-        # untagged undimensioned gross (a filer that reports loans only by segment).
-        if gross in (None, 0) and comp_loan_total:
+        # untagged undimensioned gross (a filer that reports loans only by segment) —
+        # but ONLY when the composition total is dated at this same period end.
+        # Dividing the current period's ACL by a PRIOR-period loan total is a
+        # plausible-wrong ratio (audit P3) → period mismatch means n/a, never a
+        # cross-period divide.
+        if gross in (None, 0) and comp_loan_total and (
+                comp_loan_period is None or comp_loan_period == period):
             gross = comp_loan_total
         net = _sec_pick(facts, _CQ_CONCEPTS["loans_net"], period)
         # A tagged net far from gross is a wrong-concept match (FFIN's tiny
@@ -1314,11 +1325,18 @@ def credit_quality_for(cik) -> dict | None:
                         from data.sec_composition import compositions_for
                         comp = compositions_for(cik)
                         loan = comp.get("loan") if comp else None
-                        total = loan[max(loan)]["total"] if loan else None
+                        comp_period = max(loan) if loan else None
+                        total = loan[comp_period]["total"] if loan else None
                     except Exception:
-                        total = None
+                        comp_period = total = None
                     if total:
-                        cq = extract_credit_quality(facts, comp_loan_total=total)
+                        # Pass the composition total WITH its period end — the
+                        # extractor refuses the stand-in unless it matches the
+                        # filing's current period (never current-Q ACL ÷ a
+                        # prior-FY loan total).
+                        cq = extract_credit_quality(
+                            facts, comp_loan_total=total,
+                            comp_loan_period=comp_period)
                 try:
                     cache.put(ckey, cq)
                 except Exception:
@@ -1680,14 +1698,23 @@ def extract_nim_by_year(html_bytes: bytes) -> dict:
             if nii_row is not None and ea_row is not None:
                 nii = _row_numbers(nii_row[1:])
                 # The earning-assets row is (avg balance, interest, yield) per year;
-                # take the first value of each year-triplet = average balance.
+                # take the first value of each year-triplet = average balance. That
+                # triplet is a POSITIONAL assumption, so require both counts to
+                # match EXACTLY — any extra figure (a 'Change' column, a stray
+                # footnote number) shifts the indexing and would divide the wrong
+                # cells → n/a rather than a misaligned guess (audit P3).
                 ea_all = _row_numbers(ea_row[1:])
-                if len(ea_all) >= 3 * len(years):
-                    ea = [ea_all[i * 3] for i in range(len(years))]
-                    if len(nii) >= len(years):
-                        for i, yr in enumerate(years):
-                            if ea[i]:
-                                nims[yr] = nii[i] / ea[i]
+                if len(ea_all) == 3 * len(years) and len(nii) == len(years):
+                    for i, yr in enumerate(years):
+                        ea = ea_all[i * 3]
+                        if not ea:
+                            continue
+                        v = nii[i] / ea
+                        # Plausibility band: a real NIM is 0–10%. Outside means a
+                        # mis-picked numerator/denominator (e.g. the interest
+                        # column taken as the balance) → n/a, never a wrong margin.
+                        if 0 < v < 0.10:
+                            nims[yr] = v
         if nims:
             table_nims = nims
             break
@@ -2332,7 +2359,11 @@ def extract_rate_risk(facts: list[Fact], anchor_cet1=None) -> dict:
     if equity is None or equity == 0:
         return {}
     cap = extract_holdco_capital(facts, anchor_cet1=anchor_cet1)
-    cet1_cap = cap[max(cap)].get("cet1_cap") if cap else None
+    # Period-matched only (audit P3): the unrealized marks are measured at
+    # `period`; CET1 capital tagged only at a DIFFERENT period end (e.g. a
+    # prior-FY comparative in the capital table) must not denominate them —
+    # the CET1 share renders n/a rather than a cross-period mix.
+    cet1_cap = (cap.get(period) or {}).get("cet1_cap") if cap else None
     return {period: {
         "afs_unrealized": afs_net, "htm_unrealized": htm_net,
         "total_unrealized": total, "equity": equity, "cet1_capital": cet1_cap,

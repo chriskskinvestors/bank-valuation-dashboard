@@ -502,7 +502,9 @@ def render_financial_highlights(ticker: str):
     def sec_bvps(k):
         ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
         eq_doc = _sec_doc(cik, ps.get("_eq_prov")); sh_doc = _sec_doc(cik, ps.get("_sh_prov"))
-        terms = [{"label": "Total common equity", "val": _thou((eq or 0) / 1000) + " ($000)",
+        # Missing equity renders the honest "—", never a fake "0 ($000)" (audit P3).
+        terms = [{"label": "Total common equity",
+                  "val": f"{_thou(eq / 1000)} ($000)" if eq is not None else "—",
                   "sub": f"as of {ps.get('_eq_date') or '—'} · XBRL StockholdersEquity",
                   "doc": eq_doc},
                  {"label": "Shares outstanding", "val": _count(sh),
@@ -518,9 +520,11 @@ def render_financial_highlights(ticker: str):
         adj = ps.get("_adj"); tce = (eq - adj) if (eq is not None and adj is not None) else None
         basis = ps.get("_adj_basis", "intangibles")
         eq_doc = _sec_doc(cik, ps.get("_eq_prov")); sh_doc = _sec_doc(cik, ps.get("_sh_prov"))
-        terms = [{"label": "Tangible common equity", "val": _thou((tce or 0) / 1000) + " ($000)",
-                  "sub": (f"Equity {_thou((eq or 0)/1000)} − {basis} "
-                          f"{_thou((adj or 0)/1000)} ($000)"), "doc": eq_doc},
+        # Missing inputs render the honest "—" (_thou(None)), never "0 ($000)".
+        terms = [{"label": "Tangible common equity",
+                  "val": f"{_thou(tce / 1000)} ($000)" if tce is not None else "—",
+                  "sub": (f"Equity {_thou(eq / 1000 if eq is not None else None)} − {basis} "
+                          f"{_thou(adj / 1000 if adj is not None else None)} ($000)"), "doc": eq_doc},
                  {"label": "Shares outstanding", "val": _count(sh),
                   "sub": f"as of {ps.get('_sh_date') or '—'}", "doc": sh_doc}]
         return P(_dollars_ps(ps.get("tbvps")), "Tangible BV / share",

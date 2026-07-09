@@ -565,8 +565,6 @@ def search_fdic_by_name(name: str, min_similarity: float = 0.5) -> int | None:
     if not name:
         return None
 
-    import urllib.parse
-
     try:
         clean = _clean_name(name)
         if not clean:
@@ -599,10 +597,12 @@ def search_fdic_by_name(name: str, min_similarity: float = 0.5) -> int | None:
 
         all_candidates = []
         for phrase in phrases:
-            quoted = f'"{phrase}"'
-            encoded = urllib.parse.quote(quoted)
+            # Quote the phrase (bare spaces are OR to the FDIC API) but do NOT
+            # pre-encode it: requests URL-encodes params exactly once, so a
+            # urllib.parse.quote() here double-encodes ("%2522...") and the
+            # phrase filter matches nothing (audit P3).
             params = {
-                "filters": f"NAMEHCR:{encoded}",
+                "filters": f'NAMEHCR:"{phrase}"',
                 "fields": "CERT,NAME,NAMEHCR,ASSET,ACTIVE",
                 "sort_by": "ASSET",
                 "sort_order": "DESC",

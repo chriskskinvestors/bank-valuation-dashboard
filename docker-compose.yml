@@ -4,7 +4,9 @@ services:
   dashboard:
     build: .
     ports:
-      - "8501:8501"
+      # The Dockerfile entrypoint serves on ${PORT} (default 8080) — map the
+      # familiar local 8501 onto it (host:container).
+      - "8501:8080"
     environment:
       # IBKR TWS/Gateway connection — point to host machine or remote server
       - IBKR_HOST=${IBKR_HOST:-host.docker.internal}

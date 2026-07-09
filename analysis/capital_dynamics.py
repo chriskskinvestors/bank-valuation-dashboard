@@ -333,7 +333,7 @@ def compute_capital_screening_metrics(
         return {
             "cet1_current": None, "cet1_qoq_pp": None,
             "tbv_cagr_1y": None, "payout_ratio_4q": None,
-            "buyback_capacity_k": None, "capital_alerts_count": None,
+            "buyback_capacity_usd": None, "capital_alerts_count": None,
         }
 
     timeline = build_capital_timeline(hist_records, shares_outstanding)
@@ -341,7 +341,7 @@ def compute_capital_screening_metrics(
         return {
             "cet1_current": None, "cet1_qoq_pp": None,
             "tbv_cagr_1y": None, "payout_ratio_4q": None,
-            "buyback_capacity_k": None, "capital_alerts_count": 0,
+            "buyback_capacity_usd": None, "capital_alerts_count": 0,
         }
 
     latest = timeline.iloc[-1]

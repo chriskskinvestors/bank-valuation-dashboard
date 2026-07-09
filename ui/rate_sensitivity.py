@@ -784,6 +784,13 @@ only input for trade sizing — pair with the bank's own ALM disclosures.
 
 # ── Historical Backtest ───────────────────────────────────────────────
 
+# Minimum FDIC quarters required to run the backtest (mirrors the
+# len(fdic_hist) < 8 gate inside analysis.rate_sensitivity.backtest_bank).
+# The loader supplies UP TO 20 quarters — the copy below must not promise
+# a fixed 20 (audit P3: it hardcoded "20 quarters" while the gate is ≥8).
+_BACKTEST_MIN_QUARTERS = 8
+
+
 def _render_backtest(ticker, hist, mode_key, custom_beta):
     """
     Replay the rate cycle through the phased model and compare predicted
@@ -792,14 +799,15 @@ def _render_backtest(ticker, hist, mode_key, custom_beta):
     """
     st.markdown(
         "**Honest model self-test.** Walks forward through this bank's "
-        "20 quarters of FDIC history, predicts NIM one year out from each "
+        "available FDIC history (up to 20 quarters, minimum "
+        f"{_BACKTEST_MIN_QUARTERS}), predicts NIM one year out from each "
         "baseline using the actual FedFunds rate change, then compares "
         "to the bank's reported NIM."
     )
 
-    if not hist or len(hist) < 8:
-        st.warning("Need at least 8 quarters of FDIC history to backtest. "
-                   "This bank has fewer.")
+    if not hist or len(hist) < _BACKTEST_MIN_QUARTERS:
+        st.warning(f"Need at least {_BACKTEST_MIN_QUARTERS} quarters of "
+                   "FDIC history to backtest. This bank has fewer.")
         return
 
     from analysis.rate_sensitivity import backtest_bank
@@ -886,7 +894,7 @@ def _render_backtest(ticker, hist, mode_key, custom_beta):
     with st.expander("How to read this backtest"):
         st.markdown("""
 **What the backtest is doing:**
-1. Takes each quarter t in the bank's 20-quarter history
+1. Takes each quarter t in the bank's available FDIC history (up to 20 quarters)
 2. Goes back 4 quarters (to t-4) as a baseline
 3. Computes the actual FedFunds change from t-4 to t
 4. Runs the phased model with that rate change, 1-year horizon

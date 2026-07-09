@@ -132,26 +132,50 @@ def _clean_label(s: str) -> str:
 
 def _table_rows(html_bytes: bytes) -> list[tuple]:
     """Every (clean_label, [numeric cells…]) row across the document's tables, in
-    document order. A row needs a non-numeric label and ≥1 numeric cell."""
+    document order. A row needs a non-numeric label and ≥1 numeric cell.
+
+    COLUMN ALIGNMENT (audit P3): positions are preserved within each table. The
+    value list is read from the table's VALUE COLUMNS — the (colspan-expanded)
+    td columns that carry a number in at least one row — so a blank cell in a
+    value column stays None instead of letting the next (prior-period) column
+    shift left into its place. Consumers take nums[0] as the latest quarter, and
+    a blank latest-quarter cell must render n/a, never a prior period's figure.
+    Columns that never carry a number anywhere in the table (spacers, '$'/'%'
+    decoration, footnote refs) are dropped for every row alike, exactly as the
+    old cell-filtering did."""
     from lxml import html as lhtml
     root = lhtml.fromstring(html_bytes)
     rows: list[tuple] = []
     for table in root.findall(".//table"):
+        # Colspan-expanded text grid: cell index == table column on every row.
+        grid: list[list[str]] = []
         for tr in table.findall(".//tr"):
-            cells = [c.text_content().strip().replace("\xa0", " ")
-                     for c in tr.findall(".//td")]
-            cells = [c for c in cells if c.strip()]
-            if len(cells) < 2:
+            row: list[str] = []
+            for c in tr.findall(".//td"):
+                txt = c.text_content().strip().replace("\xa0", " ")
+                try:
+                    span = max(1, int(c.get("colspan") or 1))
+                except (TypeError, ValueError):
+                    span = 1
+                row.append(txt)
+                row.extend([""] * (span - 1))
+            grid.append(row)
+        # A value column is any column with a numeric cell in ANY row.
+        num_cols = sorted({i for row in grid for i, c in enumerate(row)
+                           if _num(c) is not None})
+        for row in grid:
+            label_idx = next((i for i, c in enumerate(row) if c.strip()), None)
+            if label_idx is None:
                 continue
-            nums = [_num(c) for c in cells[1:]]
-            nums = [n for n in nums if n is not None]
-            if not nums:
-                continue
-            label = cells[0]
+            label = row[label_idx]
             if _num(label) is not None:        # a number, not a label
                 continue
             cl = _clean_label(label)
             if not cl:
+                continue
+            nums = [_num(row[i]) if i < len(row) else None
+                    for i in num_cols if i > label_idx]
+            if not any(n is not None for n in nums):
                 continue
             rows.append((cl, nums))
     return rows
@@ -189,6 +213,8 @@ _RATIO = ("nim", "roaa", "roae")                         # 0–60 (%)
 
 
 def _first_match(rows: list[tuple], labels: set):
+    # nums[0] is the latest-quarter COLUMN; a blank cell there is None (the row's
+    # prior-period values must never shift into the current slot) → n/a upstream.
     for cl, nums in rows:
         if cl in labels:
             return nums[0]
@@ -284,13 +310,19 @@ def extract_reported_tbvps(
     # anchor when the caller had none (same first-column / most-recent period).
     if bvps is None:
         for cl, nums in rows:
-            if _match_bvps_label(cl):
+            # A blank latest-quarter book-value cell is None — it must not
+            # anchor (its prior-period value is a different date's book value).
+            if _match_bvps_label(cl) and nums[0] is not None:
                 bvps = nums[0]
                 break
     for cl, nums in rows:
         if not _match_tbvps_label(cl):
             continue
         v = nums[0]
+        # Blank latest-quarter cell → n/a; never serve the prior column as
+        # the current quarter (audit P3).
+        if v is None:
+            return None
         # Positive, per-share magnitude (rejects a $-thousands equity total or a
         # negative/zero cell mis-aligned into the row).
         if not (0 < v < 10_000):

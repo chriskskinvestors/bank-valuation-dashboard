@@ -252,9 +252,12 @@ def format_value(value, fmt: str, decimals: int = 2) -> str:
         else:
             return f"{sign}${abs_v:,.0f}"
     elif fmt == "number":
-        if value >= 1e6:
+        # Tier by |value| so large NEGATIVE numbers scale too (-2,500,000 →
+        # "-2.5M", not "-2,500,000.00") — matching the branches above (audit P3).
+        abs_v = abs(value)
+        if abs_v >= 1e6:
             return f"{value / 1e6:,.1f}M"
-        elif value >= 1e3:
+        elif abs_v >= 1e3:
             return f"{value / 1e3:,.1f}K"
         return f"{value:,.{decimals}f}"
     return str(value)

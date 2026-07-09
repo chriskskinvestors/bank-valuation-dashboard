@@ -118,6 +118,8 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
     roatce_v = disp("roatce_blended")
     if roatce_v is None and fdic_rec:
         ni = _num(fdic_rec.get("NETINC")); eq = _num(fdic_rec.get("EQTOT"))
+        # INTAN = total intangibles — the house TCE convention (P2 #24, matches
+        # analysis/valuation.compute_roatce). Never INTANGW (goodwill only).
         intan = _num(fdic_rec.get("INTAN")) or 0
         mo = 12
         try:
@@ -187,8 +189,10 @@ def _render_financial_highlights_table(ticker, info):
         ("Net Loans", bil(prior, "LNLSNET"), bil(latest, "LNLSNET")),
         ("Total Equity", bil(prior, "EQTOT"), bil(latest, "EQTOT")),
         ("TCE / Tangible Assets", tce_ta(prior), tce_ta(latest)),
-        ("LTM ROAA", pct(prior, "ROA"), pct(latest, "ROA")),
-        ("LTM ROAE", pct(prior, "ROE"), pct(latest, "ROE")),
+        # FDIC ROA/ROE are annualized YTD ratios — only equal to LTM at Q4,
+        # so the label says what the number actually is (audit P3).
+        ("ROAA (Ann. YTD)", pct(prior, "ROA"), pct(latest, "ROA")),
+        ("ROAE (Ann. YTD)", pct(prior, "ROE"), pct(latest, "ROE")),
         ("Net Interest Margin", pct(prior, "NIMY"), pct(latest, "NIMY")),
         ("Efficiency Ratio", pct(prior, "EEFFR"), pct(latest, "EEFFR")),
         ("CET1 Ratio", pct(prior, "IDT1CER"), pct(latest, "IDT1CER")),

@@ -17,6 +17,8 @@ Business-mix groups (based on dominant balance-sheet exposure):
 
 from __future__ import annotations
 
+import pandas as pd
+
 
 # Asset size thresholds (raw $)
 COMMUNITY_CAP = 10e9
@@ -178,9 +180,13 @@ def metric_percentile_context(ticker: str, all_metrics: list[dict],
     out = {"_meta": {"tier": tier, "cohort_size": len(cohort), "mode": mode}}
     for k in (metric_keys or CONTEXT_METRIC_KEYS):
         v = self_m.get(k)
-        if v is None:
+        # NaN is missing data, not a value — a pandas round-trip turns None
+        # into NaN, which passes `is not None` and would otherwise rank as
+        # 0th percentile (every comparison against NaN is False).
+        if v is None or pd.isna(v):
             continue
-        peer_vals = [m.get(k) for m in cohort if m.get(k) is not None]
+        peer_vals = [m.get(k) for m in cohort
+                     if m.get(k) is not None and not pd.isna(m.get(k))]
         if len(peer_vals) < min_peers:
             continue
         raw = compute_peer_percentile(v, peer_vals)
@@ -214,9 +220,9 @@ def compute_peer_percentile(bank_value: float | None, peer_values: list[float]) 
     Formula: percentile = (n_below + 0.5 * n_equal) / n_total * 100
     This is the Hazen method — robust, commonly used in statistics packages.
     """
-    if bank_value is None:
-        return None
-    valid = [v for v in peer_values if v is not None]
+    if bank_value is None or pd.isna(bank_value):
+        return None  # NaN = missing data → no percentile, never 0th
+    valid = [v for v in peer_values if v is not None and not pd.isna(v)]
     if not valid:
         return None
     below = sum(1 for v in valid if v < bank_value)

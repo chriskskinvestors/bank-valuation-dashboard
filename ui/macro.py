@@ -1040,7 +1040,7 @@ def _cached_trend_fig(series_id: str, basis: str, label: str, years: int = 8):
 
 def _render_economy_calendar():
     import html as _html
-    from datetime import date as _date, datetime as _dt
+    from datetime import datetime as _dt
     from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
 
@@ -1099,7 +1099,11 @@ def _render_economy_calendar():
             st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
                     "mounted in production). Unavailable in this environment.")
         else:
-            today_iso = _date.today().isoformat()
+            # Rows carry ET dates/times ("· ET times" caption) — key "Today"
+            # to ET as well. The server clock is UTC, which rolls over at
+            # ~8pm ET and would highlight tomorrow's rows (audit P3).
+            from zoneinfo import ZoneInfo
+            today_iso = _dt.now(ZoneInfo("America/New_York")).date().isoformat()
             urows = ""
             for e in up:
                 d = _dt.strptime(e["date"], "%Y-%m-%d").date()

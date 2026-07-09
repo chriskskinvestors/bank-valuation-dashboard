@@ -315,7 +315,7 @@ def _normalized_earnings_factor(fdic_hist: list[dict] | None) -> float:
     ROATCE to 21.6% and fair value to $49 vs a ~$23 normalized value).
 
     Method: winsorize each of the 4 most-recent single-quarter net incomes at
-    2× the trailing-8-quarter median, then return normalized_TTM / raw_TTM.
+    3× the trailing-8-quarter median, then return normalized_TTM / raw_TTM.
     Returns 1.0 (no change) for banks with steady earnings.
     """
     if not fdic_hist or len(fdic_hist) < 5:
@@ -457,8 +457,10 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     ln_ci_pct = _pct(lnci, loans_gross)
     ln_consumer_pct = _pct(lncon, loans_gross)
 
-    # CRE concentration: regulators flag at 300% of capital
-    cre_to_capital = _pct(lnrenres, eq) if (lnrenres and eq and eq > 0) else None
+    # CRE concentration: regulators flag at 300% of capital. No falsy-zero
+    # wrapper (audit P3, owner call): a genuine $0 CRE book is DATA — it renders
+    # 0% and classifies as no-CRE; _pct already handles None/zero-denominator.
+    cre_to_capital = _pct(lnrenres, eq)
 
     # ── Securities composition ───────────────────────────────────────────
     sc_total = fdic_data.get("SC")

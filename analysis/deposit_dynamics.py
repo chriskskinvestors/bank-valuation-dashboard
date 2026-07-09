@@ -109,9 +109,12 @@ def build_deposit_timeline(hist_records: list[dict]) -> pd.DataFrame:
         brokered = r.get("BRO")
         cod = _cost_of_funding(r)
 
-        nonint_pct = (nonint / total * 100) if total and nonint else None
-        uninsured_pct = (uninsured / total * 100) if total and uninsured else None
-        brokered_pct = (brokered / total * 100) if total and brokered else None
+        # `is not None` numerators (audit P3, owner call): a genuine $0 (e.g.
+        # zero brokered deposits) is data and renders 0%, never n/a. A falsy
+        # total still yields None (zero denominator).
+        nonint_pct = (nonint / total * 100) if (total and nonint is not None) else None
+        uninsured_pct = (uninsured / total * 100) if (total and uninsured is not None) else None
+        brokered_pct = (brokered / total * 100) if (total and brokered is not None) else None
 
         rows.append({
             "date": pd.to_datetime(date, errors="coerce") if date is not None else None,

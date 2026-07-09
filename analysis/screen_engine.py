@@ -22,6 +22,8 @@ off an optional history provider — see docs/SCREEN-COMPARE-OVERHAUL.md (B5).
 """
 from __future__ import annotations
 
+import pandas as pd
+
 from analysis.peer_groups import compute_peer_percentile
 
 OPS = ("<", "≤", ">", "≥", "=")
@@ -42,12 +44,17 @@ def _cmp(v: float, op: str, fv: float) -> bool:
 
 
 def _as_float(x):
+    """Numeric value or None. NaN is MISSING data (→ None → the bank is
+    excluded as no-data), never a comparable value — a bare float(x) would let
+    NaN through, and every comparison against NaN is False, silently scoring
+    the bank as FAIL (audit P3: NaN passes `is not None`)."""
     if x is None:
         return None
     try:
-        return float(x)
+        f = float(x)
     except (TypeError, ValueError):
         return None
+    return None if pd.isna(f) else f
 
 
 def _passes(bank: dict, spec: dict, pct_lookup: dict) -> bool | None:

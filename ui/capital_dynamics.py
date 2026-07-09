@@ -24,6 +24,14 @@ from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
 from ui.chrome import ledger, title_bar
 
 
+def _absmax(series) -> float:
+    """abs().max() with an all-NaN column neutralized to 0.0 (audit P3):
+    `.max() or 0` does NOT catch NaN — NaN is truthy — so one all-missing
+    column poisoned the chart scale pick into NaN."""
+    m = pd.to_numeric(series, errors="coerce").abs().max()
+    return 0.0 if pd.isna(m) else float(m)
+
+
 def _kg_table(col0, period_labels, rows):
     """Render rows as a design-system .ksk-grid table (SNL spreadsheet look).
     rows: list of (label, [cell strings]). '$' is neutralised so Streamlit's
@@ -319,9 +327,8 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     # Chart 3: Capital return mix — auto-scaled
     # Coerce to numeric first: columns may contain None from stale/missing FDIC
     # rows (e.g., banks right after their cert becomes active).
-    _ni = pd.to_numeric(timeline["net_income_k_qtr"], errors="coerce")
-    _cr = pd.to_numeric(timeline["capital_returned_k"], errors="coerce")
-    max_val = max(_ni.abs().max() or 0, _cr.abs().max() or 0)
+    max_val = max(_absmax(timeline["net_income_k_qtr"]),
+                  _absmax(timeline["capital_returned_k"]))
     scale, unit = _pick_scale(max_val * 1000)
     ni_scaled = timeline["net_income_k_qtr"] * 1000 / scale
     cr_scaled = timeline["capital_returned_k"] * 1000 / scale
@@ -1004,12 +1011,8 @@ def _render_capital_return_attribution(ticker: str):
         _div = pd.to_numeric(df["dividends_q"], errors="coerce")
         _bb = pd.to_numeric(df["buybacks_q"], errors="coerce")
         _ni = pd.to_numeric(df["net_income_q"], errors="coerce")
-        # Pick scale
-        max_abs = max(
-            _div.abs().max() or 0,
-            _bb.abs().max() or 0,
-            _ni.abs().max() or 0,
-        )
+        # Pick scale (NaN-safe via _absmax — `or 0` doesn't catch NaN)
+        max_abs = max(_absmax(_div), _absmax(_bb), _absmax(_ni))
         if max_abs >= 1e9:
             scale, unit = 1e9, "B"
         elif max_abs >= 1e6:

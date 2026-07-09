@@ -112,7 +112,10 @@ def get_us_calendar(back_days: int = 10, fwd_days: int = 14) -> list[dict]:
     from data import cache
     from data.freshness import is_fresh
 
-    cached = cache.get(CACHE_KEY)
+    # Key includes the window: different (back, fwd) windows fetch different
+    # date ranges and must never serve each other's cached payloads.
+    key = f"{CACHE_KEY}:{back_days}:{fwd_days}"
+    cached = cache.get(key)
     if is_fresh(cached, CACHE_TTL_SECONDS) and cached.get("events") is not None:
         return cached["events"]
 
@@ -131,7 +134,7 @@ def get_us_calendar(back_days: int = 10, fwd_days: int = 14) -> list[dict]:
     if not any(isinstance(r, list) for r in responses):
         return []
     events = merge_us_events(responses)
-    cache.put(CACHE_KEY, {"cached_at": datetime.now().isoformat(), "events": events})
+    cache.put(key, {"cached_at": datetime.now().isoformat(), "events": events})
     return events
 
 
