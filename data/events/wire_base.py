@@ -129,6 +129,11 @@ _BRAND_ALIASES: dict[str, list[str]] = {
     # only other Provident in the universe (PROV) trades as "Provident Savings
     # Bank", so the exact phrase "Provident Bank" can't collide.
     "PFS":  ["Provident Bank"],
+    # Resolved name is the bare word "Meridian" (now in _COMMON_NAME_WORDS, so
+    # a bare match needs a corporate suffix or the exchange ticker). Releases
+    # branded by the subsidiary still match via this alias; MRBK is the only
+    # Meridian in the universe, so the phrase can't collide.
+    "MRBK": ["Meridian Bank"],
 }
 
 
@@ -373,6 +378,10 @@ _COMMON_NAME_WORDS = {
     "BUSINESS", "AMERICAN", "SOUTHERN", "NORTHERN",
     "HORIZON", "ALLIANCE", "CAPITAL", "PARTNERS", "PROGRESS", "PREFERRED",
     "EQUITY", "GUARANTY", "HOMETOWN", "PATRIOT", "SERVICE", "SELECT",
+    # "Meridian" (MRBK) collides with Meridian Health Plan / Bioscience /
+    # Energy / Audio — a bare match tagged Centene's Medicaid PR to the bank
+    # (live mis-tag 2026-07-09). The alias "Meridian Bank" keeps recall.
+    "MERIDIAN",
 }
 
 # A name whose entire core is a single common word OR a short initialism is

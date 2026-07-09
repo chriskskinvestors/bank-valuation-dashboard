@@ -91,6 +91,10 @@ _SKIP_TICKERS = {
     "GDOT",  # Green Dot — fintech / prepaid (SIC 6199)
     "LC",    # LendingClub — fintech consumer lender (SIC 6141)
     "CASS",  # Cass Information Systems — freight/utility payments (SIC 7389)
+    "MAIN",  # Main Street Capital — a BDC (SIC 6726), not a bank. Leaked in via
+             # a wrong-entity fuzzy join to FDIC cert 6592 ("The First National
+             # Bank of Germantown", OH — unrelated), which also fed the news
+             # feed BDC loan-portfolio releases (live mis-tag 2026-07-09).
 }
 
 # US-domiciled only (explicit scope: US banks traded on exchanges or OTC).

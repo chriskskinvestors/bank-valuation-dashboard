@@ -124,7 +124,8 @@ def _is_subject(ticker: str, text_blob: str) -> bool:
     blob = " " + " ".join(_canon_tokens(text_blob)) + " "
 
     from data.bank_mapping import get_name
-    from data.events.wire_base import phrase_in_text
+    from data.events.wire_base import (phrase_in_text, _word_after,
+                                        _has_exchange_ticker, _SUFFIX_TOKENS)
     name = (get_name(ticker) or "").strip()
     if name and name.upper() != ticker.upper():
         phrase = _subject_phrase(name, ticker)
@@ -134,7 +135,23 @@ def _is_subject(ticker: str, text_blob: str) -> bool:
             # Word-boundary match that rejects a brand core swallowed by a larger
             # proper noun ("First United" vs "first United Arab Emirates").
             if phrase_in_text(blob, phrase):
-                return True
+                # A phrase that IS a bare common word — get_name display-
+                # normalizes "Meridian Corporation" to "Meridian", so the
+                # whole phrase can be one COMMON word — collides with
+                # unrelated companies ("MERIDIAN HEALTH PLAN" tagged MRBK,
+                # live 2026-07-09). Same bar as the wire matcher's risky-
+                # single guard: the bank's corporate suffix must follow it
+                # ("Meridian Corporation ...") or the issuer's exchange
+                # ticker must appear. Subsidiary-brand releases ("Meridian
+                # Bank ...") confirm via the alias loop below.
+                risky = (len(toks) == 1 and toks[0] in _COMMON_NAME_WORDS
+                         and not _ticker_related(toks[0], ticker))
+                if not risky:
+                    return True
+                suffixes = {t.rstrip(".") for t in _SUFFIX_TOKENS}
+                if (_word_after(blob, phrase).rstrip(".") in suffixes
+                        or _has_exchange_ticker(text_blob, "", ticker)):
+                    return True
 
     for alias in _BRAND_ALIASES.get(ticker.upper(), []):
         a = " ".join(_canon_tokens(alias))

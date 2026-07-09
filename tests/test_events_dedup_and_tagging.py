@@ -498,6 +498,62 @@ class TestSingleTokenCollisionGuard(unittest.TestCase):
             "Freedom Holding Corp. (NASDAQ: FRHC) today reported fiscal 2026 results."))
 
 
+class TestMeridianCollisionGuard(unittest.TestCase):
+    """MRBK's resolved name is the bare word 'Meridian', which tagged Centene's
+    'MERIDIAN HEALTH PLAN OF ILLINOIS' Medicaid PR to the bank (live feed
+    mis-tag 2026-07-09). 'MERIDIAN' is now a risky single (in
+    _COMMON_NAME_WORDS): a bare match needs a corporate suffix or the exchange
+    ticker; the 'Meridian Bank' alias keeps subsidiary-brand recall. Injects
+    the exact prod index entries to skip the slow universe build."""
+
+    def setUp(self):
+        import data.events.wire_base as wb
+        # The injected entries must mirror what build_name_index produces —
+        # tie them to the real inputs so this suite can't drift.
+        self.assertIn("MERIDIAN", wb._COMMON_NAME_WORDS)
+        self.assertIn("Meridian Bank", wb._BRAND_ALIASES.get("MRBK", []))
+        self._wb = wb
+        self._saved = (wb._NAME_INDEX, wb._AMBIGUOUS_INDEX)
+        wb._NAME_INDEX = [("MERIDIAN BANK", "MRBK"), ("MERIDIAN", "MRBK")]
+        wb._AMBIGUOUS_INDEX = {}
+
+    def tearDown(self):
+        self._wb._NAME_INDEX, self._wb._AMBIGUOUS_INDEX = self._saved
+
+    def test_meridian_health_plan_not_tagged_mrbk(self):
+        self.assertEqual(match_tickers(
+            "CENTENE SUBSIDIARY MERIDIAN HEALTH PLAN OF ILLINOIS AWARDED "
+            "ILLINOIS MEDICAID CONTRACT",
+            "Centene Corporation (NYSE: CNC) announced that Meridian Health "
+            "Plan of Illinois was awarded a Medicaid contract."), [])
+
+    def test_meridian_corporation_release_kept(self):
+        # Corporate suffix confirms the risky single ('Citizens Holding' rule).
+        self.assertEqual(match_tickers(
+            "Meridian Corporation Reports Second Quarter 2026 Results"), ["MRBK"])
+
+    def test_meridian_bank_brand_release_kept(self):
+        # Subsidiary-brand alias — two tokens, not a risky single.
+        self.assertEqual(match_tickers(
+            "Meridian Bank Announces New Chief Lending Officer"), ["MRBK"])
+
+    def test_bare_meridian_kept_via_exchange_tag(self):
+        self.assertEqual(match_tickers(
+            "Meridian Declares Quarterly Dividend",
+            "Meridian (NASDAQ: MRBK) today announced a dividend."), ["MRBK"])
+
+
+class TestBusinessScopeSkips(unittest.TestCase):
+    def test_main_street_capital_skip_listed(self):
+        # Main Street Capital is a BDC wrong-entity-joined to FDIC cert 6592
+        # ('The First National Bank of Germantown') — its 8-K/PR loan-portfolio
+        # releases polluted the feed (2026-07-09). The read-time _SKIP_TICKERS
+        # filter (pinned by TestUniverseRecentScoping) hides stored rows and
+        # coverage_excluded() stops future polls.
+        from data.bank_universe import _SKIP_TICKERS
+        self.assertIn("MAIN", _SKIP_TICKERS)
+
+
 class TestGoogleNewsCircuitBreaker(unittest.TestCase):
     """When news.google.com 5xx-blocks the datacenter IP, the adapter probes
     once and skips the 435-ticker sweep instead of burning the 240s cap."""

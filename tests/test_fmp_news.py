@@ -152,6 +152,39 @@ class TestIsSubjectGuard(unittest.TestCase):
                     self.assertFalse(_is_subject(ticker, junk), f"{ticker}: junk must drop")
                     self.assertTrue(_is_subject(ticker, real), f"{ticker}: real must keep")
 
+    def test_meridian_requires_suffix_ticker_or_alias(self):
+        # Live 2026-07-09 mis-tag: get_name display-normalizes "Meridian
+        # Corporation" to the bare common word "Meridian" (format_bank_name
+        # strips the suffix), which matched Centene's "MERIDIAN HEALTH PLAN
+        # OF ILLINOIS" Medicaid PR. A single-common-word phrase now needs a
+        # corporate suffix right after it or the issuer's exchange ticker;
+        # the "Meridian Bank" subsidiary-brand alias keeps recall.
+        with patch.object(bank_mapping, "get_name", return_value="Meridian"):
+            self.assertFalse(_is_subject(
+                "MRBK", "CENTENE SUBSIDIARY MERIDIAN HEALTH PLAN OF ILLINOIS "
+                        "AWARDED ILLINOIS MEDICAID CONTRACT."))
+            self.assertTrue(_is_subject(
+                "MRBK", "Meridian Corporation Reports Second Quarter 2026 Results."))
+            self.assertTrue(_is_subject(
+                "MRBK", "Meridian Bank Announces New Chief Lending Officer."))
+            self.assertTrue(_is_subject(
+                "MRBK", "Meridian Declares Quarterly Dividend. Meridian "
+                        "(NASDAQ: MRBK) today announced a cash dividend."))
+        # Were the resolver ever to serve the full legal name, the phrase must
+        # NOT collapse back to the bare common word.
+        self.assertEqual(_subject_phrase("Meridian Corporation", "MRBK"),
+                         "MERIDIAN CORPORATION")
+
+    def test_meridian_poll_end_to_end(self):
+        # Unmocked get_name — reads the updated bank_map_resolved.json entry.
+        evs = _poll("MRBK", [
+            _row("CENTENE SUBSIDIARY MERIDIAN HEALTH PLAN OF ILLINOIS "
+                 "AWARDED ILLINOIS MEDICAID CONTRACT"),
+            _row("Meridian Corporation Reports Second Quarter 2026 Results"),
+        ])
+        self.assertEqual([e.headline for e in evs],
+                         ["Meridian Corporation Reports Second Quarter 2026 Results"])
+
     def test_short_core_kept_only_when_ticker_related(self):
         # "UMB" (ticker UMBF) is a trustworthy short core; "CITY" (vs CHCO) is not.
         self.assertEqual(_subject_phrase("UMB FINANCIAL CORP", "UMBF"), "UMB")
