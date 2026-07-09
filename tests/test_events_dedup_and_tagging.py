@@ -608,16 +608,21 @@ class TestDisambiguateUnit(unittest.TestCase):
             ["FBP", "FNLC"], self._hay("FBP vs FNLC: which bank wins")))
 
     def test_independent_bank_mi_vs_ma(self):
-        # "Independent Bank Corp" = IBCP (Michigan) AND INBC (Rockland, MA).
+        # "Independent Bank Corp" = IBCP (Michigan) AND INDB (Rockland, MA).
+        # (Was routed to INBC — a mapping error; ticker INBC is InBankshares
+        # Corp / InBank NM, fixed in the 2026-07-09 wrong-entity sweep.)
         self.assertEqual(self.wb._disambiguate(
-            ["IBCP", "INBC"], self._hay("Grand Rapids, Michigan (Nasdaq: IBCP)")), "IBCP")
+            ["IBCP", "INDB"], self._hay("Grand Rapids, Michigan (Nasdaq: IBCP)")), "IBCP")
         self.assertEqual(self.wb._disambiguate(
-            ["IBCP", "INBC"], self._hay("Independent Bank, Grand Rapids, Michigan")), "IBCP")
+            ["IBCP", "INDB"], self._hay("Independent Bank, Grand Rapids, Michigan")), "IBCP")
         self.assertEqual(self.wb._disambiguate(
-            ["IBCP", "INBC"], self._hay("Rockland, Massachusetts (Nasdaq: INBC)")), "INBC")
+            ["IBCP", "INDB"], self._hay("Rockland, Massachusetts (Nasdaq: INDB)")), "INDB")
         # A bare headline with no ticker/state cue tags NEITHER (no wrong tag).
         self.assertIsNone(self.wb._disambiguate(
-            ["IBCP", "INBC"], self._hay("Independent Bank Corporation announces acquisition")))
+            ["IBCP", "INDB"], self._hay("Independent Bank Corporation announces acquisition")))
+        # The curated routing itself must point at INDB, never INBC.
+        self.assertEqual(self.wb._CURATED_AMBIGUOUS["INDEPENDENT BANK"],
+                         ["IBCP", "INDB"])
 
 
 class TestAmbiguousNameDisambiguation(unittest.TestCase):

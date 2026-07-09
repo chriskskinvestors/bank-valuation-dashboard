@@ -95,6 +95,10 @@ _SKIP_TICKERS = {
              # a wrong-entity fuzzy join to FDIC cert 6592 ("The First National
              # Bank of Germantown", OH — unrelated), which also fed the news
              # feed BDC loan-portfolio releases (live mis-tag 2026-07-09).
+    "FBSI",  # First Bancshares Inc /MO/ — defunct (its First Home Bank cert
+             # 30364 inactive since 10/2017); still in SEC's ticker file, so
+             # phase-1 fuzzy-matches Centier Bank's ACTIVE cert (12854, whose
+             # private holdco shares the name) every rebuild. Skip at source.
 }
 
 # US-domiciled only (explicit scope: US banks traded on exchanges or OTC).

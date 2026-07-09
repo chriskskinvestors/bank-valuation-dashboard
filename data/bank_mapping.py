@@ -130,7 +130,10 @@ BANK_MAP = {
     # Conway not CNB Financial PA). ALL cik=None — see the note above; the
     # CIKs first attached here had 3-14 yr stale XBRL, so FDIC-only is correct.
     "SOMC":   {"name": "Southern Michigan Bancorp, Inc.",               "fdic_cert": 5019,   "cik": None},
-    "FMBN":   {"name": "Farmers & Merchants Bancshares, Inc.",          "fdic_cert": 1895,   "cik": None},
+    # FMBN is the IOWA Farmers & Merchants Bancshares (Burlington; F&M Bank &
+    # Trust, cert 13737) — cert 1895 is the MARYLAND same-name company, which
+    # trades as FMFG (SEC cik 1698022). Sweep 2026-07-09.
+    "FMBN":   {"name": "Farmers & Merchants Bancshares, Inc. (IA)",      "fdic_cert": 13737,  "cik": None},
     "DIMC":   {"name": "Dimeco, Inc.",                                  "fdic_cert": 9888,   "cik": None},
     "PRMY":   {"name": "Primary Bank",                                  "fdic_cert": 59086,  "cik": None},
     "CMRB":   {"name": "First Commerce Bank",                           "fdic_cert": 58054,  "cik": None},
@@ -169,7 +172,10 @@ BANK_MAP = {
     "FSBW":  {"name": "FS Bancorp Inc.",                    "fdic_cert": 57633,  "cik": 1530249},
     "SPFI":  {"name": "South Plains Financial Inc.",        "fdic_cert": 25103,  "cik": 1163668},
     "ALRS":  {"name": "Alerus Financial Corp.",             "fdic_cert": 3931,   "cik": 903419},
-    "FMNB":  {"name": "Farmers National Banc Corp.",        "fdic_cert": 3732,   "cik": 709337},
+    # Cert 3732 was "Farmers National Bank" of Prophetstown IL (a different
+    # company). FMNB's bank = The Farmers National Bank of Canfield OH, whose
+    # FDIC NAMEHCR is literally FARMERS NATIONAL BANC CORP (sweep 2026-07-09).
+    "FMNB":  {"name": "Farmers National Banc Corp.",        "fdic_cert": 6540,   "cik": 709337},
     "HFWA":  {"name": "Heritage Financial Corp.",           "fdic_cert": 29012,  "cik": 1046025},
     "BAFN":  {"name": "BayFirst Financial Corp.",           "fdic_cert": 34997,  "cik": 1649739},
     "CBAN":  {"name": "Colony Bankcorp Inc.",               "fdic_cert": 22257,  "cik": 711669},
@@ -183,7 +189,12 @@ BANK_MAP = {
     "PGC":   {"name": "Peapack-Gladstone Financial",        "fdic_cert": 11035,  "cik": 1050743},
     "SBFG":  {"name": "SB Financial Group",                 "fdic_cert": 13339,  "cik": 767405},
     "FNWB":  {"name": "First Northwest Bancorp",            "fdic_cert": 28405,  "cik": 1556727},
-    "INBC":  {"name": "Independent Bank Corp.",             "fdic_cert": 9712,   "cik": None},
+    # Ticker INBC is InBankshares, Corp. (OTCQX; InBank, Raton NM, cert 11492,
+    # NAMEHCR INBANKSHARES CORP). The old entry duplicated INDB — "Independent
+    # Bank Corp." with Rockland Trust's cert 9712 — so INBC pages showed
+    # Rockland's data. Rockland Trust's parent trades as INDB. Not SEC-listed
+    # → cik None (FDIC-only path).
+    "INBC":  {"name": "InBankshares, Corp.",                "fdic_cert": 11492,  "cik": None},
     "CCNB":  {"name": "Coastal Carolina Bancshares",        "fdic_cert": 58864,  "cik": 1437213},
     "JMSB":  {"name": "John Marshall Bancorp",              "fdic_cert": 58243,  "cik": 1710482},
     "RVSB":  {"name": "Riverview Bancorp Inc.",             "fdic_cert": 29922,  "cik": 1041368},
@@ -207,7 +218,10 @@ BANK_MAP = {
     "UBSI":  {"name": "United Bankshares Inc.",             "fdic_cert": 22858,  "cik": 729986},
     "FBNC":  {"name": "First Bancorp (NC)",                 "fdic_cert": 15019,  "cik": 811589},
     "FFWM":  {"name": "First Foundation Inc.",              "fdic_cert": 58647,  "cik": 1413837},
-    "FFIN":  {"name": "First Financial Bankshares",         "fdic_cert": 19440,  "cik": 36029},
+    # Cert 19440 was a $246M Bessemer AL bank (HCR: an unrelated ESOP). FFIN's
+    # lead bank = First Financial Bank, Abilene TX, $15.3B, NAMEHCR FIRST
+    # FINANCIAL BANKSHARES INC (sweep 2026-07-09).
+    "FFIN":  {"name": "First Financial Bankshares",         "fdic_cert": 3066,   "cik": 36029},
     "HOMB":  {"name": "Home BancShares Inc.",               "fdic_cert": 11241,  "cik": 1331520},
     "EGBN":  {"name": "Eagle Bancorp Inc.",                 "fdic_cert": 34742,  "cik": 1050441},
     "ISBA":  {"name": "Isabella Bank Corp.",                "fdic_cert": 1005,   "cik": 842517},
@@ -217,7 +231,11 @@ BANK_MAP = {
     "KEY":   {"name": "KeyCorp",                            "fdic_cert": 17534,  "cik": 91576},
     "HBAN":  {"name": "Huntington Bancshares",              "fdic_cert": 6560,   "cik": 49196},
     "ZION":  {"name": "Zions Bancorporation",               "fdic_cert": 2270,   "cik": 109380},
-    "FNB":   {"name": "FNB Corp.",                          "fdic_cert": 2107,   "cik": 37808},
+    # Cert 2107 was First National Bank of SOUTH CAROLINA (Holly Hill SC,
+    # $310M — its holdco is a different, private "FNB Corp"). NYSE FNB =
+    # F.N.B. Corp (PA); its bank = First National Bank of Pennsylvania,
+    # cert 7888, $50.4B, NAMEHCR F N B CORP (sweep 2026-07-09).
+    "FNB":   {"name": "FNB Corp.",                          "fdic_cert": 7888,   "cik": 37808},
     # OZK is defined above as cik=None (National Bank, no SEC XBRL).
     # Cert 32469 is UCBH's failed predecessor. East West Bank's real cert is 31628.
     # CIK 806279 was wrong (another entity). Official SEC CIK for EWBC is 1069157.
@@ -227,6 +245,32 @@ BANK_MAP = {
     "COLB":  {"name": "Columbia Banking System",            "fdic_cert": 17266,  "cik": 887343},
     "BOKF":  {"name": "BOK Financial Corp.",                "fdic_cert": 4214,   "cik": 875357},
     "BOH":   {"name": "Bank of Hawaii Corp.",               "fdic_cert": 18053,  "cik": 46195},
+
+    # ── Wrong-entity joins fixed by the FDIC NAMEHCR sweep (2026-07-09) ────
+    # Each ticker below was fuzzy-joined to ANOTHER bank's cert (its pages
+    # served that bank's FDIC data). Every cert here was verified against the
+    # FDIC institution's own NAMEHCR (regulatory high holder) matching the
+    # SEC registrant. Duplicate-cert claims were the tell: e.g. CFG, FCBM and
+    # FCNCA all claimed 11063 (First-Citizens' bank).
+    "CFG":   {"name": "Citizens Financial Group",           "fdic_cert": 57957,  "cik": 759944},   # was 11063 = First-Citizens (FCNCA)
+    "BNY":   {"name": "Bank of New York Mellon Corp",       "fdic_cert": 639,    "cik": 1390777},  # was 3510 = Bank of America NA
+    "MBIN":  {"name": "Merchants Bancorp",                  "fdic_cert": 8056,   "cik": 1629019},  # was 4365 = First Merchants (FRME)
+    "FMCB":  {"name": "Farmers & Merchants Bancorp",        "fdic_cert": 1331,   "cik": 1085913},  # Lodi CA; was 6540 = Canfield OH (FMNB)
+    "FMFG":  {"name": "Farmers & Merchants Bancshares",     "fdic_cert": 1895,   "cik": 1698022},  # Upperco MD; was 6540 = Canfield OH (FMNB)
+    "CTBI":  {"name": "Community Trust Bancorp",            "fdic_cert": 2720,   "cik": 350852},   # Pikeville KY; was 6989 = Community Bank NA (CBU)
+    "FCBM":  {"name": "First Carolina Financial Services",  "fdic_cert": 35530,  "cik": 1531193},  # Rocky Mount NC; was 11063 = First-Citizens (FCNCA)
+    "HBCP":  {"name": "Home Bancorp",                       "fdic_cert": 28094,  "cik": 1436425},  # Lafayette LA; was 11241 = Centennial (HOMB)
+    "HFBL":  {"name": "Home Federal Bancorp, Inc. of Louisiana", "fdic_cert": 27654, "cik": 1500375},  # Shreveport LA; was 11241 = Centennial (HOMB)
+    "UBCP":  {"name": "United Bancorp",                     "fdic_cert": 9463,   "cik": 731653},   # Martins Ferry OH; was 22858 = United Bank (UBSI)
+    "UBOH":  {"name": "United Bancshares Inc/OH",           "fdic_cert": 12969,  "cik": 1087456},  # Columbus Grove OH; was 22858 = United Bank (UBSI)
+    "BCAL":  {"name": "California BanCorp",                 "fdic_cert": 57044,  "cik": 1795815},  # San Diego; was 24045 = Banc of California (BANC)
+    "FCBC":  {"name": "First Community Bankshares",         "fdic_cert": 13012,  "cik": 859070},   # Bluefield VA; was 3850 = Xenia IL namesake ($57M)
+    # FBSI (First Bancshares Inc /MO/): its bank First Home Bank (Mountain
+    # Grove MO, cert 30364) has been INACTIVE since 10/2017 — the company is
+    # defunct; the fuzzy join grabbed Centier Bank's cert (12854, a $10B
+    # Indiana bank whose PRIVATE holdco is also named "First Bancshares Inc").
+    # All-None = intentionally excluded (also in _SKIP_TICKERS).
+    "FBSI":  {"name": "First Bancshares Inc /MO/ (defunct)", "fdic_cert": None,  "cik": None},
 
     # OTC-traded thrift: SEC CIK 942895 has no XBRL data, files only D + 13G.
     # FDIC cert 31028 = HomeTown Bank, MN (holdco REDWOOD FINANCIAL INC).

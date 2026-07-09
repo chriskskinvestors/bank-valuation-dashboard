@@ -273,21 +273,22 @@ _AMBIGUOUS_GEO: dict[str, list[str]] = {
     "FNLC": ["MAINE", "DAMARISCOTTA"],          # The First Bancorp (NASDAQ: FNLC)
     "INDB": ["MASSACHUSETTS", "ROCKLAND"],      # Independent Bank Corp / Rockland Trust
     # "Independent Bank Corp" is TWO different real banks — IBCP (Michigan) and
-    # INBC (Rockland Trust, Massachusetts) — indistinguishable except by ticker
+    # INDB (Rockland Trust, Massachusetts) — indistinguishable except by ticker
     # or state. Without this a bare "Independent Bank Corporation ..." headline
-    # (e.g. IBCP's HCB/Highpoint acquisition) silently tagged the wrong one (INBC).
+    # (e.g. IBCP's HCB/Highpoint acquisition) silently tagged the wrong one.
+    # (Ticker INBC is InBankshares Corp / InBank NM — a distinct name, no
+    # ambiguity; the old INBC-as-Rockland entry was a mapping error.)
     "IBCP": ["MICHIGAN", "GRAND RAPIDS", "IONIA"],
-    "INBC": ["MASSACHUSETTS", "ROCKLAND"],
 }
 
 # Curated ambiguous collisions the auto-detection misses because a curated
 # state-suffix keeps the normalized names DISTINCT in the index ("Independent
-# Bank Corp. (MI)" → IBCP vs "Independent Bank Corp." → INBC), so instead of
+# Bank Corp. (MI)" → IBCP vs "Independent Bank Corp." → INDB), so instead of
 # being flagged ambiguous one silently wins the other's news. Force the shared
 # brand into the disambiguation pass. Keyed by normalized shared name → the real
 # distinct candidate tickers.
 _CURATED_AMBIGUOUS: dict[str, list[str]] = {
-    "INDEPENDENT BANK": ["IBCP", "INBC"],
+    "INDEPENDENT BANK": ["IBCP", "INDB"],
 }
 
 
