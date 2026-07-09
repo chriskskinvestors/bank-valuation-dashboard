@@ -162,6 +162,31 @@ class TestCalibratedConstantsPinned(unittest.TestCase):
         self.assertEqual(rs.TEXTBOOK_INT_BEARING_BETA, 0.50)
 
 
+class TestMissingNimIsNaNotZero(unittest.TestCase):
+    """AUDIT-2026-07-02 #29 — a missing FDIC NIM must stay None at the input
+    boundary (not _safe() to 0.0, which the panel rendered as a 0.00% current
+    NIM and a $0 scenario base). The render path guards on it and refuses to
+    run scenarios rather than anchoring them on a fabricated zero."""
+
+    def test_build_inputs_preserves_missing_nim_as_none(self):
+        from analysis.rate_sensitivity import build_rate_sensitivity_inputs
+        inputs = build_rate_sensitivity_inputs({"ASSET": 1_000_000})  # no NIMY
+        self.assertIsNone(inputs["current_nim_pct"],
+                          "missing NIMY must remain None, never coerced to 0")
+
+    def test_present_nim_passes_through(self):
+        from analysis.rate_sensitivity import build_rate_sensitivity_inputs
+        inputs = build_rate_sensitivity_inputs({"ASSET": 1_000_000, "NIMY": 3.25})
+        self.assertAlmostEqual(inputs["current_nim_pct"], 3.25)
+
+    def test_render_guards_on_missing_nim(self):
+        from pathlib import Path
+        src = (Path(__file__).parent.parent / "ui" /
+               "rate_sensitivity.py").read_text(encoding="utf-8")
+        self.assertIn('if latest.get("NIMY") is None:', src,
+                      "the panel must guard on a missing anchor NIM")
+
+
 class TestCurveScenarioBps(unittest.TestCase):
     """Hand-computed basis-point values for apply_curve_scenario - the NIM
     model was previously only shape/monotonicity-tested (audit section E gap).

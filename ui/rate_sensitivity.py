@@ -200,6 +200,20 @@ def render_rate_sensitivity(ticker: str):
     latest = hist[0]
 
     title_bar(f"{get_name(ticker)} ({ticker})", "Interest Rate Risk")
+
+    # Every scenario anchors on the current net interest margin (FDIC NIMY):
+    # the NII base is earning assets × NIM and each scenario is NIM ± a modeled
+    # delta. A missing NIMY would _safe() to 0.0 — a "0.00%" current NIM and a
+    # $0 NII base (AUDIT-2026-07-02 #29) — making every scenario meaningless.
+    # n/a over a fabricated zero (cardinal rule).
+    if latest.get("NIMY") is None:
+        st.warning(
+            "Current net interest margin (FDIC NIMY) is unavailable for the "
+            "latest reporting period, so the rate-sensitivity scenarios — which "
+            "anchor on it — can't be computed for this bank."
+        )
+        return
+
     st.markdown('<div class="ksk-sec">NIM Rate Sensitivity</div>',
                 unsafe_allow_html=True)
     st.caption(
