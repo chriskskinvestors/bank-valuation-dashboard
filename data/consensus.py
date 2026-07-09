@@ -628,6 +628,96 @@ def parse_consensus_excel(file_bytes: bytes, ticker: str, period: str, filename:
         }
 
 
+_CANON_PERIOD = re.compile(r"(?:19|20)\d{2}(?:Q[1-4])?$")
+
+
+def _period_of_header(cell) -> str | None:
+    """A header cell's forecast period as canonical 'YYYYQn'/'YYYY', or None.
+    Accepts broker notations (2Q26E, Q2'26, 2026Q2, FY26, 2026E) via
+    normalize_period, plus date-form headers — an Excel date header (Timestamp
+    or 6/30/2026 / 2026-06-30 text) is the quarter it falls in."""
+    if cell is None or (isinstance(cell, float) and math.isnan(cell)):
+        return None
+    if hasattr(cell, "year") and hasattr(cell, "month"):     # Timestamp/date
+        return f"{cell.year}Q{(cell.month - 1) // 3 + 1}"
+    s = str(cell).strip()
+    if not s:
+        return None
+    m = re.fullmatch(r"(\d{1,2})/\d{1,2}/(\d{2,4})", s)     # 6/30/2026
+    mo = yr = None
+    if m:
+        mo, yr = int(m.group(1)), int(m.group(2))
+    else:
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})-\d{1,2}", s)   # 2026-06-30
+        if m:
+            yr, mo = int(m.group(1)), int(m.group(2))
+    if mo is not None:
+        yr += 2000 if yr < 100 else 0
+        return f"{yr}Q{(mo - 1) // 3 + 1}" if 1 <= mo <= 12 else None
+    canon = normalize_period(s)
+    return canon if _CANON_PERIOD.fullmatch(canon) else None
+
+
+def _cell_float(x) -> float | None:
+    """A grid cell as a finite float — strips $/%/commas/parens (negatives)
+    from text cells; None for anything non-numeric (never fabricated)."""
+    if isinstance(x, str):
+        s = x.strip().replace("$", "").replace("%", "").replace(",", "")
+        if s.startswith("(") and s.endswith(")"):
+            s = "-" + s[1:-1]
+        x = s
+    return _finite_float(x)
+
+
+def parse_consensus_excel_periods(file_bytes: bytes, filename: str = "") -> dict:
+    """Parse a broker-model Excel/CSV laid out as METRIC ROWS × PERIOD COLUMNS
+    (the standard research-model shape) into every forecast period at once —
+    the user never picks a period; the sheet declares them.
+
+    The header row is FOUND, not assumed: the first of the leading rows with
+    ≥2 period-parsing cells (title/blank rows above are skipped). Metric names
+    come from the first column; each period column's value joins that period's
+    metric list. Unknown metric names are kept by display name (as the other
+    parsers do). Returns {"periods": [{"period", "metrics"}...], "error"} —
+    empty `periods` (no error) when the sheet has no period columns, so the
+    caller can fall back to the single-period path.
+    """
+    try:
+        if filename.endswith(".csv"):
+            df = pd.read_csv(pd.io.common.BytesIO(file_bytes), header=None)
+        else:
+            df = pd.read_excel(pd.io.common.BytesIO(file_bytes), header=None)
+        header_i, col_periods = None, {}
+        for i in range(min(8, len(df))):
+            found = {j: p for j in range(1, df.shape[1])
+                     if (p := _period_of_header(df.iat[i, j]))}
+            if len(found) >= 2:
+                header_i, col_periods = i, found
+                break
+        if header_i is None:
+            return {"periods": [], "error": None}
+
+        by_period: dict[str, list] = {}
+        for i in range(header_i + 1, len(df)):
+            name = df.iat[i, 0]
+            name = "" if pd.isna(name) else str(name).strip()
+            if not name or name.lower() == "nan":
+                continue
+            key = _normalize_key(name)
+            unit = METRIC_UNITS.get(key, "")
+            for j, per in col_periods.items():
+                val = _cell_float(df.iat[i, j])
+                if val is None:
+                    continue
+                by_period.setdefault(per, []).append(
+                    {"name": name, "key": key, "value": val, "unit": unit})
+        periods = [{"period": p, "metrics": m}
+                   for p, m in sorted(by_period.items()) if m]
+        return {"periods": periods, "error": None}
+    except Exception as e:
+        return {"periods": [], "error": str(e)}
+
+
 # ── Bulk Multi-Bank Parsing ─────────────────────────────────────────────
 
 def parse_bulk_consensus(file_bytes: bytes, period: str, filename: str = "",

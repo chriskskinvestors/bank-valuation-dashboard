@@ -18,6 +18,7 @@ import pandas as pd
 from data.bank_mapping import get_name, get_fdic_cert, get_cik
 from data.consensus import (
     parse_consensus_excel,
+    parse_consensus_excel_periods,
     detect_and_parse_pdf,
     parse_bulk_consensus,
     parse_bulk_consensus_pdf,
@@ -1479,6 +1480,8 @@ def _results_tr(r: dict, ncols: int) -> str:
     def _usd(v):
         return None if v is None else (f"-${-v:.2f}" if v < 0 else f"${v:.2f}")
     eps_act, eps_est = _usd(r.get("eps_act")), _usd(r.get("eps_est"))
+    if r.get("pending") and eps_act is None:
+        eps_act = "pending"           # release is out; FMP actuals not posted yet
     # Release link: the wire/IR press release when the events feed has it;
     # else the SEC 8-K EX-99.1 already located for the metrics expansion
     # (micro-caps often file with EDGAR without ever hitting a wire).
@@ -1532,8 +1535,10 @@ def _render_results_board():
     eps_rows = [r for r in rows if r.get("eps_surprise") is not None]
     beats = sum(1 for r in eps_rows if r["eps_surprise"] >= 0)
     reacts = [r["px_react"] for r in rows if r.get("px_react") is not None]
+    n_pending = sum(1 for r in rows if r.get("pending"))
     ledger("Results Season", [
         ("Reported", str(len(rows))),
+        ("Awaiting Actuals", str(n_pending)),
         ("EPS Beats", str(beats)),
         ("EPS Misses", str(len(eps_rows) - beats)),
         ("Beat Rate", f"{beats / len(eps_rows) * 100:.0f}%" if eps_rows else "—"),
@@ -1547,7 +1552,9 @@ def _render_results_board():
         "(FMP, filled the day results land), **Px React** = the release "
         "session's close-over-prior-close move (after-close reports react the "
         "NEXT session; *live* marks today's in-progress session), and the "
-        "results press **Release** from the news feed. A **▸** expands the "
+        "results press **Release** from the news feed. A bank whose release "
+        "is out but whose actuals haven't posted to the consensus feed yet "
+        "shows **pending** (micro-caps can lag). A **▸** expands the "
         "release's own metrics (NIM, efficiency, returns, capital, TBV, "
         "credit) — each parsed from the bank's release prose and shown only "
         "when confidently confirmed; '—' otherwise, never a guess. "
@@ -2099,10 +2106,17 @@ def _render_firm_upload(default_ticker: str = "", kp: str = "ovr"):
             if is_pdf:
                 ss[k_det] = detect_and_parse_pdf(file_bytes, filename)
             else:
-                ex = parse_consensus_excel(file_bytes, "", "", filename)
+                # Broker models are metric-rows × period-columns: parse EVERY
+                # period from the sheet's own headers (no period asked). Only
+                # a sheet without period columns falls back to the manual-
+                # period single-value path.
+                grid = parse_consensus_excel_periods(file_bytes, filename)
+                ex = ({} if grid.get("periods")
+                      else parse_consensus_excel(file_bytes, "", "", filename))
                 ss[k_det] = {"detected_ticker": "", "detected_firm": "",
+                             "periods": grid.get("periods") or [],
                              "excel_metrics": ex.get("metrics", []),
-                             "error": ex.get("error")}
+                             "error": grid.get("error") or ex.get("error")}
         ss[k_sig] = sig
         for k in field_keys:
             ss.pop(k, None)                    # re-seed fields from the new file
@@ -2127,21 +2141,24 @@ def _render_firm_upload(default_ticker: str = "", kp: str = "ovr"):
                              placeholder="e.g. Brean Capital",
                              key=f"{kp}_firm").strip()
 
-    # ── PDF: many forecast periods; Excel: one period entered by hand ──
-    if is_pdf:
-        periods = det.get("periods", [])
-        if not periods:
-            st.warning("No forecast-period estimates found in the document.")
-            return
+    # ── Multi-period grid (PDF always; Excel when the sheet has period
+    # columns): every forecast period auto-detected, nothing typed. Excel
+    # without period columns falls back to one hand-entered period.
+    periods = det.get("periods", [])
+    if periods:
         by_period = {p["period"]: p["metrics"] for p in periods}
         labels = list(by_period)
         total = sum(len(m) for m in by_period.values())
         st.caption(
-            (f"Auto-detected firm **{det_firm or '—'}** · **{len(labels)}** forecast "
-             f"period(s) · **{total}** estimates. Pick which periods to save:"))
+            ((f"Auto-detected firm **{det_firm or '—'}** · " if is_pdf else "")
+             + f"**{len(labels)}** forecast period(s) · **{total}** estimates "
+             "(from the file's own period columns). Pick which periods to save:"))
         chosen = st.multiselect("Periods to save", labels, default=labels,
                                 key=f"{kp}_periods")
         to_save = [(p, by_period[p]) for p in chosen]
+    elif is_pdf:
+        st.warning("No forecast-period estimates found in the document.")
+        return
     else:
         period = st.text_input("Period", placeholder="e.g. 2026Q2",
                                key=f"{kp}_per").strip()
@@ -2149,7 +2166,8 @@ def _render_firm_upload(default_ticker: str = "", kp: str = "ovr"):
         if not em:
             st.warning("No consensus metrics found in the file.")
             return
-        st.caption(f"{len(em)} metric(s) found.")
+        st.caption(f"{len(em)} metric(s) found — no period columns detected in "
+                   "the sheet, so enter the one period these apply to.")
         to_save = [(period, em)] if period else []
 
     if st.button("Save Estimates", type="primary", key=f"{kp}_save"):

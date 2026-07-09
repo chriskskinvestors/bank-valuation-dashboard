@@ -23,6 +23,7 @@ fabricated (see CLAUDE.md).
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 
 # Matches _WHEN_LABEL in data/earnings_call.py (bmo/amc/dmh).
@@ -97,11 +98,24 @@ def pick_release_pr(events: list[dict], report_date: date) -> dict | None:
     return None
 
 
+# Headline cues marking an UPCOMING-earnings date announcement — such a PR
+# near a projected date must not mark the bank "reported" (the results PR
+# says "Reports Q2 Results"; the announcement says "Will Report … on July 23").
+_UPCOMING_CUE_RE = re.compile(
+    r"\b(?:will (?:report|announce|release|host)|to (?:report|announce|release|"
+    r"host)|schedul|sets? (?:the )?date)", re.I)
+
+
 def build_results_rows(fmp_rows, universe, events_by_ticker, today,
                        days_back: int = 30) -> list[dict]:
-    """Pure row builder for the Results board. One row per universe ticker that
-    has a reported (actual ≠ None) FMP calendar entry dated within
-    [today − days_back, today], newest report first then ticker.
+    """Pure row builder for the Results board, one row per universe ticker
+    dated within [today − days_back, today], newest report first then ticker:
+      - FMP actuals present → a reported row, OR
+      - actuals still null BUT a results press release exists on/after the
+        scheduled date → a `pending` row (BKSC-class micro-caps: FMP actuals
+        lag or never fill; deregistered banks have no 8-K — the bank's own PR
+        in the news feed is the only same-day signal). Estimate/actual cells
+        fill whenever FMP catches up.
 
     `fmp_rows`: raw FMP earnings-calendar rows (must carry the actuals fields).
     `events_by_ticker`: {ticker: [earnings-typed events, newest-first]}.
@@ -109,7 +123,8 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
     `reaction_session` for the caller to fill `px_react` against real closes.
 
     Row: {ticker, date, when, period_ending, eps_act, eps_est, eps_surprise,
-          rev_act, rev_est, rev_surprise, reaction_session, pr_headline, pr_url}
+          rev_act, rev_est, rev_surprise, reaction_session, pr_headline,
+          pr_url, pending}
     """
     uni = set(universe or ())
     floor = today - timedelta(days=days_back)
@@ -122,13 +137,18 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
         if d is None or not (floor <= d <= today):
             continue
         eps_act, rev_act = r.get("epsActual"), r.get("revenueActual")
+        pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
+        pending = False
         if eps_act is None and rev_act is None:
-            continue                                  # not reported yet
+            # No FMP actuals: reported anyway IF the bank's own results PR is
+            # out (never an upcoming-date announcement) — else not reported.
+            if pr is None or _UPCOMING_CUE_RE.search(pr.get("headline") or ""):
+                continue
+            pending = True
         prev = best.get(tk)
         if prev is not None and prev["_d"] >= d:
             continue                                  # keep the newest report
         when = _WHEN_LABEL.get((r.get("time") or "").lower())
-        pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
         # FMP's periodEnding is unreliable for fiscal-year-odd banks (CARV
         # showed a period ending AFTER its report date; CPBI one a year old).
         # A real earnings report lands ~1-5 weeks after the period closes —
@@ -151,6 +171,7 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             "reaction_session": reaction_session(d, when).isoformat(),
             "pr_headline": (pr or {}).get("headline"),
             "pr_url": (pr or {}).get("url"),
+            "pending": pending,
         }
     rows = sorted(best.values(), key=lambda x: (-x["_d"].toordinal(), x["ticker"]))
     for r in rows:
@@ -263,8 +284,8 @@ def results_board(days_back: int = 30) -> list[dict]:
         return rows
 
     try:
-        # v2: v1 rows predate the attached release metrics (`rel`).
-        return _cache.served_snapshot(f"earnings_results_board_v2:{days_back}",
+        # v3: rows gained `pending` (PR-signaled reports without FMP actuals).
+        return _cache.served_snapshot(f"earnings_results_board_v3:{days_back}",
                                       900, _build) or []
     except Exception:
         return []

@@ -152,6 +152,43 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertEqual([(r["ticker"], r["date"]) for r in rows],
                          [("B2", "2026-07-14"), ("A1", "2026-07-10")])
 
+    def test_pr_signaled_report_included_pending_before_fmp_actuals(self):
+        """BKSC-class catch (2026-07-09): FMP actuals lag/never fill for
+        micro-caps and deregistered banks have no 8-K — the bank's own results
+        PR on/after the scheduled date must surface the row as pending."""
+        fmp = [{"symbol": "BKSC", "date": "2026-07-09", "epsActual": None,
+                "revenueActual": None, "epsEstimated": None}]
+        events = {"BKSC": [{"headline": "Bank of South Carolina Reports Q2 "
+                            "2026 Results", "url": "https://x/pr",
+                            "published_at": "2026-07-09T09:00:00"}]}
+        rows = build_results_rows(fmp, {"BKSC"}, events, self.TODAY)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["pending"])
+        self.assertEqual(rows[0]["pr_url"], "https://x/pr")
+        self.assertIsNone(rows[0]["eps_act"])
+
+    def test_no_pr_and_no_actuals_still_excluded(self):
+        fmp = [{"symbol": "GS", "date": "2026-07-14", "epsActual": None,
+                "revenueActual": None}]
+        self.assertEqual(build_results_rows(fmp, {"GS"}, {}, self.TODAY), [])
+
+    def test_upcoming_announcement_pr_never_marks_reported(self):
+        # A date-announcement PR published near the projected date is NOT a
+        # results release.
+        fmp = [{"symbol": "ABCB", "date": "2026-07-14", "epsActual": None,
+                "revenueActual": None}]
+        events = {"ABCB": [{"headline": "Ameris Bancorp Will Report Second "
+                            "Quarter 2026 Results on July 23",
+                            "url": "https://x/announce",
+                            "published_at": "2026-07-14T09:00:00"}]}
+        self.assertEqual(build_results_rows(fmp, {"ABCB"}, events, self.TODAY), [])
+
+    def test_actuals_row_is_not_pending(self):
+        fmp = [{"symbol": "JPM", "date": "2026-07-14", "epsActual": 5.8,
+                "periodEnding": "2026-06-30"}]
+        rows = build_results_rows(fmp, {"JPM"}, {}, self.TODAY)
+        self.assertFalse(rows[0]["pending"])
+
     def test_implausible_fmp_period_is_dropped(self):
         """FMP periodEnding junk (2026-07-07 prod catch): CARV showed a period
         ending AFTER its report date, CPBI one ~a year old. A real report
