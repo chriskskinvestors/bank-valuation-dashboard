@@ -71,7 +71,9 @@ def _render_credit_headline(ticker, hist, summary, peer_median):
     npl = latest.get("npl_ratio"); nco = latest.get("nco_ratio")
     rc = latest.get("reserve_coverage"); pd89 = latest.get("past_due_30_89_pct")
     rtl = latest.get("reserve_to_loans")
-    p3 = _num(rec.get("P3ASSET")); loans = _num(rec.get("LNLSNET"))
+    # Loans past due (P3LNLS) over GROSS loans (LNLSGR) — see AUDIT #32; the
+    # total-asset fields P3ASSET/P9ASSET add past-due securities/other assets.
+    p3 = _num(rec.get("P3LNLS")); loans = _num(rec.get("LNLSGR"))
     cov_val = f"{rc:.0f}%" if rc is not None else "—"
 
     cards = [
@@ -246,10 +248,10 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
             ("NPLs / loans", "pct", "NCLNLSR"),
             ("Net charge-offs / loans", "pct", "NTLNLSR"),
             ("Loan-loss reserves / loans", "pct", "LNATRESR"),
-            ("30–89 days past due / loans", "ratio", "P3ASSET", "LNLSNET",
-             "30–89 days past due", "Net loans"),
-            ("90+ days past due / loans", "ratio", "P9ASSET", "LNLSNET",
-             "90+ days past due", "Net loans"),
+            ("30–89 days past due / loans", "ratio", "P3LNLS", "LNLSGR",
+             "Loans 30–89 days past due", "Total loans (gross)"),
+            ("90+ days past due / loans", "ratio", "P9LNLS", "LNLSGR",
+             "Loans 90+ days past due", "Total loans (gross)"),
         ]),
     ]
     _left, _right = st.columns([1, 1])

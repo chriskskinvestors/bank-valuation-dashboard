@@ -330,9 +330,11 @@ class TestA13PastDueDenominator(unittest.TestCase):
     """Missing total_loans must skip the ratio, not divide by 1."""
 
     def test_missing_loans_skips_past_due_pct(self):
-        from analysis.credit_dynamics import build_credit_timeline
-        recs = [{"REPDTE": "2025-12-31", "P3ASSET": 5_000,  # $5M past due ($000)
-                 "LNLSNET": None}]
+        from analysis.credit_dynamics import build_credit_timeline, _CREDIT_FIELDS
+        pd3089_field = _CREDIT_FIELDS["past_due_30_89"]
+        loans_field = _CREDIT_FIELDS["total_loans"]
+        recs = [{"REPDTE": "2025-12-31", pd3089_field: 5_000,  # $5M past due ($000)
+                 loans_field: None}]
         df = build_credit_timeline(recs)
         if "past_due_30_89_pct" in df.columns:
             self.assertTrue(df["past_due_30_89_pct"].isna().all(),
@@ -341,12 +343,41 @@ class TestA13PastDueDenominator(unittest.TestCase):
 
     def test_present_loans_computes_normally(self):
         from analysis.credit_dynamics import build_credit_timeline, _CREDIT_FIELDS
-        loans_field = _CREDIT_FIELDS.get("total_loans", "LNLSNET")
-        pd3089_field = _CREDIT_FIELDS.get("past_due_30_89", "P3ASSET")
+        loans_field = _CREDIT_FIELDS["total_loans"]
+        pd3089_field = _CREDIT_FIELDS["past_due_30_89"]
         recs = [{"REPDTE": "2025-12-31", loans_field: 1_000_000,
                  pd3089_field: 10_000}]
         df = build_credit_timeline(recs)
         self.assertAlmostEqual(float(df["past_due_30_89_pct"].iloc[0]), 1.0)
+
+
+class TestPastDueLoansNotAssets(unittest.TestCase):
+    """AUDIT-2026-07-02 #32 — past-due ratios must use LOAN past-due fields
+    (P3LNLS/P9LNLS) over GROSS loans (LNLSGR), not total-asset past-due
+    (P3ASSET/P9ASSET) over net loans (LNLSNET). Total-asset past-due adds
+    past-due securities/other assets and overstates loan delinquency."""
+
+    def test_credit_fields_use_loan_and_gross_fields(self):
+        from analysis.credit_dynamics import _CREDIT_FIELDS
+        self.assertEqual(_CREDIT_FIELDS["past_due_30_89"], "P3LNLS")
+        self.assertEqual(_CREDIT_FIELDS["past_due_90"], "P9LNLS")
+        self.assertEqual(_CREDIT_FIELDS["total_loans"], "LNLSGR")
+
+    def test_uses_loan_numerator_and_gross_denominator(self):
+        # A record where the total-asset and net-loan fields DIVERGE from the
+        # loan-only and gross-loan fields. Correct ratio must pick loans+gross.
+        from analysis.credit_dynamics import build_credit_timeline
+        recs = [{"REPDTE": "2025-12-31",
+                 "P3LNLS": 8_000, "P9LNLS": 2_000, "LNLSGR": 400_000,
+                 "P3ASSET": 10_000, "P9ASSET": 3_000, "LNLSNET": 380_000}]
+        df = build_credit_timeline(recs)
+        # 8,000 / 400,000 * 100 = 2.0%   (loans over gross)
+        self.assertAlmostEqual(float(df["past_due_30_89_pct"].iloc[0]), 2.0)
+        # 2,000 / 400,000 * 100 = 0.5%
+        self.assertAlmostEqual(float(df["past_due_90_pct"].iloc[0]), 0.5)
+        # The old wrong path (P3ASSET/LNLSNET) would have been 2.6316% — reject.
+        self.assertNotAlmostEqual(float(df["past_due_30_89_pct"].iloc[0]),
+                                  10_000 / 380_000 * 100, places=3)
 
 
 class TestA19FedFunds(unittest.TestCase):

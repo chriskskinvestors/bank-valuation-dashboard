@@ -30,10 +30,16 @@ _CREDIT_FIELDS = {
     "reserve_to_loans": "LNATRESR",  # Reserves / loans %
     "reserve_coverage": "IDERNCVR",   # Reserves / NPL (coverage ratio)
     "allowance_loans": "ELNANTR",     # ALLL / loans
-    # Dollar amounts (in thousands)
-    "past_due_30_89": "P3ASSET",
-    "past_due_90": "P9ASSET",
-    "total_loans": "LNLSNET",
+    # Dollar amounts (in thousands). Past-due ratios are LOANS past due over
+    # GROSS loans (AUDIT-2026-07-02 #32): the loan-only past-due fields P3LNLS/
+    # P9LNLS — NOT the total-asset fields P3ASSET/P9ASSET, which add past-due
+    # securities/other assets and overstate loan delinquency (BofA 2026-Q1:
+    # P3ASSET 5,567M vs P3LNLS 5,117M). Denominator is gross loans LNLSGR (not
+    # net-of-allowance LNLSNET) to match the FDIC-computed NPL ratio NCLNLSR
+    # shown alongside these rows.
+    "past_due_30_89": "P3LNLS",
+    "past_due_90": "P9LNLS",
+    "total_loans": "LNLSGR",
 }
 
 
