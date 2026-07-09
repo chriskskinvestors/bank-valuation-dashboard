@@ -25,7 +25,11 @@ class PRNewswireAdapter(SourceAdapter):
     LOOKBACK_DAYS = 7
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
-        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        # `since` is deliberately ignored — the feed fetch returns the same
+        # items either way, the store dedups on (source, external_id) + the
+        # cross-source content key, and a MAX(published_at) cutoff permanently
+        # dropped late-syndicated items (AUDIT-2026-07-02 P2 #21).
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS)
         in_universe = set(tickers)
         out: list[Event] = []
         seen_guids: set[str] = set()

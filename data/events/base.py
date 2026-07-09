@@ -44,8 +44,11 @@ class SourceAdapter:
 
         Args:
             tickers: List of bank tickers (e.g. ['JPM', 'BAC']).
-            since:   Optional UTC timestamp. Adapters should skip events
-                     with published_at <= since when this is provided.
+            since:   Accepted for interface compatibility but IGNORED by every
+                     adapter (AUDIT-2026-07-02 P2 #21): each adapter re-scans
+                     its own full LOOKBACK window and relies on the store's
+                     dedup — a MAX(published_at) cutoff permanently dropped
+                     late-syndicated items for zero fetch savings.
 
         Returns:
             List of Event objects to be inserted. Returning duplicates is

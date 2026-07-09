@@ -814,7 +814,11 @@ class IRSiteAdapter(SourceAdapter):
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
         import time as _t
         from data.events.wire_base import is_junk_news, is_safe_news_url
-        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        # `since` is deliberately ignored — the IR page/Q4-API fetch pulls the
+        # same payload either way, the store dedups on (source, url), and a
+        # MAX(published_at) cutoff permanently dropped items missed on a failed
+        # or budget-abandoned scrape (AUDIT-2026-07-02 P2 #21).
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS)
         out: list[Event] = []
         seen_urls: set[str] = set()
         deadline = _t.monotonic() + self.MAX_POLL_SECONDS

@@ -571,24 +571,3 @@ def get_topic_news(category: str, hours: int = 24, limit: int = 50) -> list[dict
                 pass
         out.append(d)
     return out
-
-
-def last_seen_published(source: str, ticker: str | None = None) -> datetime | None:
-    """
-    Return the most recent published_at for a source (optionally narrowed
-    by ticker). Used by adapters to skip events they've already ingested.
-    """
-    from sqlalchemy import text
-    eng = _get_engine()
-    if ticker:
-        sql = """
-            SELECT MAX(published_at) AS last_seen
-            FROM events WHERE source = :s AND ticker = :t
-        """
-        params = {"s": source, "t": ticker.upper()}
-    else:
-        sql = "SELECT MAX(published_at) AS last_seen FROM events WHERE source = :s"
-        params = {"s": source}
-    with eng.connect() as conn:
-        row = conn.execute(text(sql), params).fetchone()
-    return row[0] if row and row[0] else None

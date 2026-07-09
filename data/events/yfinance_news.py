@@ -27,7 +27,10 @@ class YFinanceNewsAdapter(SourceAdapter):
     LOOKBACK_DAYS = 14  # Yahoo only returns the last ~10-30 items per ticker
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
-        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        # `since` is deliberately ignored — Yahoo returns its last ~10-30 items
+        # per ticker either way, the store dedups, and a MAX(published_at)
+        # cutoff permanently dropped late-syndicated items (P2 #21).
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS)
         out: list[Event] = []
 
         try:

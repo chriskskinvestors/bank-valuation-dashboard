@@ -132,7 +132,10 @@ class GoogleNewsAdapter(SourceAdapter):
             return False
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
-        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        # `since` is deliberately ignored — each per-ticker RSS query returns
+        # the same items either way, the store dedups, and a MAX(published_at)
+        # cutoff permanently dropped late-syndicated items (P2 #21).
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS)
         if self._blocked():
             print("[google_news] news.google.com 5xx-blocking this datacenter IP "
                   "— skipping the per-ticker sweep this cycle (catches up when "
@@ -222,7 +225,9 @@ class GoogleNewsTopicAdapter(SourceAdapter):
 
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
         # `tickers` is ignored — topics aren't per-bank; one query per topic.
-        cutoff = since or (datetime.now(timezone.utc) - timedelta(hours=self.LOOKBACK_HOURS))
+        # `since` is ignored too (P2 #21): same fetch either way; dedup absorbs
+        # the re-scan, and a MAX cutoff dropped late-listed items permanently.
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.LOOKBACK_HOURS)
         out: list[Event] = []
         for category, query in TOPIC_QUERIES.items():
             out.extend(self._fetch_topic(category, query, cutoff))

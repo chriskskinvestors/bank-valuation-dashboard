@@ -180,7 +180,11 @@ class FMPPressReleaseAdapter(SourceAdapter):
             print(f"[{self.name}] FMP_API_KEY not set; skipping")
             return []
 
-        cutoff = since or (datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS))
+        # `since` is deliberately ignored — the batched FMP calls return the
+        # same limit=250 payload either way, the store dedups on (source,
+        # external_id) + the cross-source content key, and a MAX(published_at)
+        # cutoff permanently dropped late-syndicated items (P2 #21).
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS)
         out: list[Event] = []
         seen: set[str] = set()
         uni = {t.upper() for t in tickers}

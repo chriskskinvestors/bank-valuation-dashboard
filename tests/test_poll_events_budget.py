@@ -79,7 +79,6 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=No
     stack.enter_context(mock.patch.object(ev, "init_schema"))
     stack.enter_context(mock.patch.object(ev, "insert_events_returning_new",
                                           side_effect=lambda evs: list(evs)))
-    stack.enter_context(mock.patch.object(ev, "last_seen_published", return_value=None))
     stack.enter_context(mock.patch.object(pe, "_invalidate_fundamentals_for_filings"))
     stack.enter_context(mock.patch.object(pe, "_purge_junk_events", return_value=0))
     stack.enter_context(mock.patch.object(pe, "_summarize_recent_events", return_value=0))

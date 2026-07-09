@@ -88,7 +88,7 @@ def main() -> int:
 
     from data.bank_universe import get_universe, coverage_excluded
     from config import DEFAULT_WATCHLIST
-    from data.events import init_schema, insert_events_returning_new, last_seen_published
+    from data.events import init_schema, insert_events_returning_new
     from data.events.sec_8k import SEC8KAdapter, SEC8KRecentAdapter
     from data.events.businesswire import BusinessWireAdapter
     from data.events.prnewswire import PRNewswireAdapter
@@ -182,14 +182,19 @@ def main() -> int:
             break
         # Narrow adapters (per-ticker APIs) only run against the watchlist.
         scope = watchlist if adapter in narrow_adapters else universe
-        since = last_seen_published(adapter.name)
         cap = min(_PER_ADAPTER_S, remaining)
-        print(f"  [{adapter.name}] scope={len(scope)} tickers since={since} cap={cap:.0f}s")
+        print(f"  [{adapter.name}] scope={len(scope)} tickers cap={cap:.0f}s")
         try:
+            # No `since` cutoff: every adapter re-scans its own full lookback
+            # window each cycle. The fetch volume is identical either way (the
+            # cutoff only ever filtered post-fetch) and the store dedups, while
+            # the old since = MAX(published_at) permanently dropped items
+            # syndicated late or missed on a failed/abandoned fetch
+            # (AUDIT-2026-07-02 P2 #21; same class as P1 #4).
             # Hard per-adapter cap: one slow/hanging source (e.g. Google News at
             # full universe) is abandoned, never blocking past the task kill.
             events = _run_with_timeout(
-                adapter.name, lambda: adapter.poll(scope, since=since), cap)
+                adapter.name, lambda: adapter.poll(scope), cap)
             newly = insert_events_returning_new(events)
             new_events.extend(newly)
             total_new += len(newly)
