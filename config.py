@@ -1177,8 +1177,6 @@ TABS = [
     },
 ]
 
-TAB_LABELS = [t["label"] for t in TABS]
-
 # Screen table grouping — theme + one-line description per table, so the picker
 # groups the (otherwise flat) tables by what an analyst is actually looking for.
 # Keyed by tab "key"; THEME_ORDER fixes the display order of the theme groups.
