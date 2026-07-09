@@ -23,15 +23,17 @@ source); **n/a** = honest gap, shown as such.
 > - **BUILT (Templated-only or Company-Reported-only by design):** Asset Quality by
 >   Loan Type (FDIC RC-N), Fair Value Analysis (Company Reported, ASC 820 L1/L2/L3 with
 >   ASC 825-disclosure guard), Securities Portfolio, Segment Reporting.
-> - **GENUINELY OPEN:** (a) whole-portfolio criticized/classified from 10-K **MD&A HTML**
->   (XBRL commercial-grade version ships; MD&A parser deferred — needs a user decision on
->   scope); (b) Interest Rate Risk source choice — phased-NIM model vs 10-K MD&A scrape
->   (**user decision**); (c) expanded **Overview** (only Corporate Profile built),
+> - **DECIDED 2026-07-09 (owner):** (a) criticized/classified stays **XBRL-only** — the
+>   MD&A HTML parser is DEFERRED indefinitely (fragile per-bank HTML for incremental
+>   coverage; revisit only if coverage gaps bite). (b) Interest Rate Risk source =
+>   **phased-NIM model** (built, backtested, FFIEC-ladder-driven; consistent across the
+>   universe) — no MD&A rate-shock scrape. Both plan questions are CLOSED.
+> - **GENUINELY OPEN:** (c) expanded **Overview** (only Corporate Profile built),
 >   expanded **Market Analysis** (only Market Share & Branches), expanded **Ownership**
->   (13F + Insider only), and a top-level **Transactions** tab (not in nav) — all deferred;
->   (d) **Census client** needs `CENSUS_API_KEY` (user signup). The per-tab line-item
->   tables below remain the reference for field mapping; treat their build status as
->   "shipped unless listed under GENUINELY OPEN."
+>   (13F + Insider only), and a top-level **Transactions** tab (not in nav) — all deferred
+>   pending owner content decisions; (d) **Census client** needs `CENSUS_API_KEY` (user
+>   signup). The per-tab line-item tables below remain the reference for field mapping;
+>   treat their build status as "shipped unless listed under GENUINELY OPEN."
 
 ## 1. Income Statement
 | SNL line | Source |
