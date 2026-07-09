@@ -888,17 +888,33 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
                    "notes": "Fallback — using weighted-average shares"}
             )
 
-    # Net income fallback chain
-    if result["net_income"]["value"] is None:
-        for fallback in ["NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"]:
-            tup = _extract_latest_value_with_source(facts, fallback, max_age_years=1)
-            if tup:
-                result["net_income"] = _wrap("net_income", tup, fallback)
-                result["net_income"]["source"] = Source(
-                    **{**result["net_income"]["source"].__dict__,
-                       "notes": f"Fallback — primary NetIncomeLoss stale/missing; using {fallback}"}
-                )
-                break
+    # Net income must be TTM to match the DISPLAY path (audit #22): the app
+    # serves a trailing-12-month figure (A21 invariant), so tracing the latest
+    # single filed period here showed ~¼ of the displayed number. Same concept
+    # fallback chain as get_latest_fundamentals; the latest-period value stays
+    # traceable under net_income_latest_period.
+    result["net_income_latest_period"] = result["net_income"]
+    ni_ttm, ni_concept = None, "NetIncomeLoss"
+    for concept in ("NetIncomeLoss",
+                    "NetIncomeLossAvailableToCommonStockholdersBasic",
+                    "ProfitLoss"):
+        ni_ttm = _extract_ttm_value(facts, concept)
+        if ni_ttm is not None:
+            ni_concept = concept
+            break
+    result["net_income"] = {
+        "value": ni_ttm,
+        "source": Source(
+            origin="COMPUTED", identifier=str(cik), concept=ni_concept,
+            as_of=_latest_end_date(facts, ni_concept) or "",
+            derived_from=(result["net_income_latest_period"]["source"],),
+            notes=("Trailing 12 months (4 consecutive quarters, YTD-difference "
+                   "derived where needed) — matches the displayed TTM figure"
+                   if ni_ttm is not None else
+                   "No honest TTM window — the display shows n/a too, never a "
+                   "single quarter (A21 invariant)"),
+        ),
+    }
 
     # StockholdersEquity fallback
     if result["book_value_total"]["value"] is None:
@@ -915,34 +931,74 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
     # Derived values
     equity = result["book_value_total"]["value"]
     shares = result["shares_outstanding"]["value"]
-    goodwill = result["goodwill"]["value"] or 0
-    intangibles = result["intangibles"]["value"] or 0
+
+    # Intangible deduction via the SAME resolver the display path uses (audit
+    # #22): raw Goodwill/IntangibleAssetsNetExcludingGoodwill are None for
+    # BKU-class filers (combined-tag only), which made the traced TBVPS equal
+    # BVPS; the resolver also nets MSRs back out of MSR-inclusive rollups.
+    intangible_adjustment = _resolve_intangible_adjustment(
+        facts, {"goodwill": result["goodwill"]["value"],
+                "intangibles": result["intangibles"]["value"]})
+    result["intangible_adjustment"] = {
+        "value": intangible_adjustment,
+        "source": Source(
+            origin="COMPUTED", identifier=str(cik), concept="intangible_adjustment",
+            derived_from=(result["goodwill"]["source"],
+                          result["intangibles"]["source"]),
+            notes="Goodwill + other intangibles resolved across alternate XBRL "
+                  "tags, MSRs kept in tangible equity — same resolver as the "
+                  "displayed TBV/share",
+        ),
+    }
 
     # Preferred stock — book/tangible-book are per COMMON share, so subtract
     # preferred equity first (same resolution as get_latest_fundamentals).
+    # The traced value must be the LADDER-resolved number the math uses (audit
+    # #22 class): BAC/USB/JPM tag carrying value as par+APIC, so wrapping only
+    # PreferredStockValue showed a source contradicting the derived numbers.
     preferred_stock, preferred_present = _resolve_preferred_stock(facts)
-    preferred_tup = _extract_latest_value_with_source(
-        facts, "PreferredStockValue", max_age_years=1)
-    result["preferred_stock"] = _wrap("preferred_stock", preferred_tup, "PreferredStockValue")
+    pref_tup, pref_concept = None, "PreferredStockValue"
+    for tag in ("PreferredStockValue",
+                "PreferredStockIncludingAdditionalPaidInCapital",
+                "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount",
+                "PreferredStockValueOutstanding",
+                "PreferredStockLiquidationPreferenceValue"):
+        tup = _extract_latest_value_with_source(facts, tag, max_age_years=2)
+        if tup and tup[0] and tup[0] == preferred_stock:
+            pref_tup, pref_concept = tup, tag
+            break
+    if pref_tup is not None:
+        result["preferred_stock"] = _wrap("preferred_stock", pref_tup, pref_concept)
+    else:
+        result["preferred_stock"] = {
+            "value": preferred_stock,
+            "source": Source(
+                origin="SEC", identifier=str(cik), concept="PreferredStock*",
+                notes=("Resolved via the preferred carrying-value tag ladder"
+                       if preferred_stock is not None else
+                       ("Preferred present but carrying value unresolved "
+                        "(par-zero/stale tags)" if preferred_present
+                        else "No preferred outstanding")),
+            ),
+        }
     preferred_unresolved = preferred_present and preferred_stock is None
 
     if equity and shares and shares > 0 and not preferred_unresolved:
         common_equity = equity - (preferred_stock or 0)
-        tbvps = (common_equity - goodwill - intangibles) / shares
+        tbvps = (common_equity - intangible_adjustment) / shares
         bvps = common_equity / shares
         # Provenance of a computed value: combine the parents
         parents = (
             result["book_value_total"]["source"],
             result["shares_outstanding"]["source"],
-            result["goodwill"]["source"],
-            result["intangibles"]["source"],
+            result["intangible_adjustment"]["source"],
             result["preferred_stock"]["source"],
         )
         result["book_value_per_share"] = {
             "value": bvps,
             "source": Source(
                 origin="COMPUTED", concept="book_value_per_share",
-                derived_from=(parents[0], parents[1], parents[4]),
+                derived_from=(parents[0], parents[1], parents[3]),
                 notes="= (StockholdersEquity − Preferred) / SharesOutstanding",
             ),
         }
@@ -951,7 +1007,7 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
             "source": Source(
                 origin="COMPUTED", concept="tangible_book_value_per_share",
                 derived_from=parents,
-                notes="= (StockholdersEquity − Preferred − Goodwill − Intangibles) / SharesOutstanding",
+                notes="= (StockholdersEquity − Preferred − resolved Goodwill&Intangibles) / SharesOutstanding",
             ),
         }
     else:

@@ -158,6 +158,64 @@ class TestHoldcoRoatcePreferredCommonBasis(unittest.TestCase):
         self.assertIsNone(compute_roatce_holdco(sd))
 
 
+class TestProvenanceMatchesDisplay(unittest.TestCase):
+    """(AUDIT-2026-07-02 P2 #22) The provenance/trace path must compute the SAME
+    numbers as the display path: it served the latest SINGLE-period net income
+    where the app shows TTM (~4× apart), and its TBVPS skipped
+    _resolve_intangible_adjustment, so BKU-class filers (combined
+    IntangibleAssetsNetIncludingGoodwill tag only, no plain Goodwill) traced
+    TBVPS == BVPS. Fixture: 4 contiguous quarters NI 10+11+12+13 (TTM 46,
+    latest single period 13); equity 1000, shares 100, combined intangibles 200
+    → BVPS 10.00, TBVPS (1000−200)/100 = 8.00."""
+
+    END, FILED = "2025-12-31", "2026-02-15"
+
+    def _facts(self):
+        def usd_i(v):
+            return {"units": {"USD": [
+                {"end": self.END, "val": v, "form": "10-K", "filed": self.FILED}]}}
+        ni = [("2025-01-01", "2025-03-31", 10, "10-Q", "2025-05-01"),
+              ("2025-04-01", "2025-06-30", 11, "10-Q", "2025-08-01"),
+              ("2025-07-01", "2025-09-30", 12, "10-Q", "2025-11-01"),
+              ("2025-10-01", "2025-12-31", 13, "10-K", "2026-02-15")]
+        return {"facts": {"us-gaap": {
+            "StockholdersEquity": usd_i(1000),
+            "CommonStockSharesOutstanding": {"units": {"shares": [
+                {"end": self.END, "val": 100, "form": "10-K", "filed": self.FILED}]}},
+            "IntangibleAssetsNetIncludingGoodwill": usd_i(200),
+            "NetIncomeLoss": {"units": {"USD": [
+                {"start": s, "end": e, "val": v, "form": f, "filed": d}
+                for s, e, v, f, d in ni]}},
+        }, "dei": {}}}
+
+    def _both_paths(self):
+        from unittest.mock import patch
+        from data import sec_client
+        with patch.object(sec_client, "fetch_company_facts",
+                          return_value=self._facts()):
+            display = sec_client.get_latest_fundamentals(1)
+            trace = sec_client.get_fundamentals_with_provenance(1)
+        return display, trace
+
+    def test_net_income_is_ttm_matching_display(self):
+        display, trace = self._both_paths()
+        self.assertEqual(trace["net_income"]["value"], 46)      # TTM, not 13
+        self.assertEqual(trace["net_income"]["value"], display["net_income"])
+        # the single filed period stays traceable under its own key
+        self.assertEqual(trace["net_income_latest_period"]["value"], 13)
+
+    def test_tbvps_uses_resolved_intangibles_matching_display(self):
+        display, trace = self._both_paths()
+        self.assertAlmostEqual(trace["tangible_book_value_per_share"]["value"],
+                               8.0, places=6)                    # not == BVPS
+        self.assertAlmostEqual(trace["book_value_per_share"]["value"],
+                               10.0, places=6)
+        self.assertAlmostEqual(trace["tangible_book_value_per_share"]["value"],
+                               display["tangible_book_value_per_share"], places=6)
+        self.assertAlmostEqual(trace["intangible_adjustment"]["value"],
+                               display["intangible_adjustment"], places=6)
+
+
 class TestQuarterlyFlowDecumulation(unittest.TestCase):
     """(AUDIT-2026-07-02 P2 #26) Quarterly rate kinds annualized the YTD-
     cumulative flow (×12/m) but divided by a SINGLE-QUARTER 2-point average —
