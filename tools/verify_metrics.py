@@ -112,12 +112,34 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
     # Computed metrics.
     out["market_cap"] = price * shares if (price and shares) else None
     out["pe_ratio"] = (price / eps) if (price and eps and eps > 0) else None
-    out["ptbv_ratio"] = (price / tbvps) if (price and tbvps and tbvps > 0) else None
     out["dividend_yield"] = ((dps / price) * 100) if (price and dps and price > 0) else None
 
-    out["roatce_holdco"] = (ni / tce * 100) if (ni is not None and tce and tce > 0) else None
+    # ROATCE — house COMMON basis (owner call 2026-07-07, audit #24b): NI
+    # available to common ÷ (common equity − intangible adjustment). Re-derived
+    # here from the primary fields so it still catches wiring bugs, but on the
+    # SAME convention the dashboard displays — the old total-NI ÷ total-equity
+    # oracle diverged on 116 banks purely by convention after the fix.
+    # Preferred present but unresolved → None (the dashboard renders n/a;
+    # _rel_close treats None==None as OK).
+    pref_present = sec.get("preferred_present")
+    pref = sec.get("preferred_stock")
+    ni_common = sec.get("net_income_to_common_ttm")
+    if pref_present and pref is None:
+        out["roatce_holdco"] = None
+    else:
+        num = ni_common if ni_common is not None else (None if pref_present else ni)
+        common_eq = (equity - (pref or 0)) if equity is not None else None
+        tce_common = (common_eq - adj) if (common_eq is not None and adj is not None) else None
+        out["roatce_holdco"] = (num / tce_common * 100) if (
+            num is not None and tce_common and tce_common > 0) else None
 
-    return out
+    # P/TBV moves to the WARN tier in verify_ticker: the dashboard prefers the
+    # bank's own REPORTED TBVPS (Company-Reported principle) while this oracle
+    # reconstructs from XBRL — a legitimate reported-vs-reconstructed gap, so
+    # material drift is surfaced, not failed.
+    out_warn = {"ptbv_ratio": (price / tbvps) if (price and tbvps and tbvps > 0) else None}
+
+    return out, out_warn
 
 
 def verify_ticker(ticker: str) -> dict:
@@ -165,7 +187,7 @@ def verify_ticker(ticker: str) -> dict:
         row["note"] = f"{type(e).__name__}: {str(e)[:80]}"
         return row
 
-    oracle = _oracle(fdic, sec, price)
+    oracle, oracle_warn = _oracle(fdic, sec, price)
 
     for key, oref in oracle.items():
         dval = dash.get(key)
@@ -178,35 +200,51 @@ def verify_ticker(ticker: str) -> dict:
                 "oracle": oref,
             })
 
-    # Third independent source: FMP's pre-computed TTM fundamentals. Cross-check
-    # only (we keep computing from filings). These isolate OUR SEC-derivation —
-    # TTM-EPS, goodwill/intangible handling, share count — against a pro source.
+    # ── WARN tier: cross-SOURCE / cross-CONVENTION drift ─────────────────
+    # These compare against a DIFFERENT source or basis, so disagreement is a
+    # look-at-me signal, not a derivation failure — they never fail the job
+    # (2026-07-09: the hard exit-1 on FMP-convention drift made the nightly
+    # alert cry wolf; red must mean a real regression).
+    row["warnings"] = []
+
+    def _warn(label, ours, other):
+        if ours is None or other is None:
+            return
+        denom = max(abs(ours), abs(other), 1e-9)
+        if abs(ours - other) / denom > FMP_REL_TOL:
+            row["warnings"].append({"metric": label, "dashboard": ours,
+                                    "oracle": other})
+
+    # Reported-vs-reconstructed P/TBV (dashboard prefers the bank's own
+    # reported TBVPS; the oracle reconstructs from XBRL).
+    _warn("ptbv_ratio", dash.get("ptbv_ratio"), oracle_warn.get("ptbv_ratio"))
+
+    # Third source: FMP's pre-computed TTM fundamentals. These isolate OUR
+    # SEC-derivation — TTM-EPS, goodwill/intangible handling, share count —
+    # against a pro source. FMP's tangible book is TOTAL-basis (no preferred
+    # subtraction), so it's compared against our total-basis reconstruction,
+    # not the displayed common-basis TBVPS.
     try:
         from data import fmp_client
         fmp = fmp_client.get_fundamentals(ticker)
     except Exception:
         fmp = {}
     if fmp:
-        # TBV (tangible book) is the figure that matters for banks — compare
-        # TBV-vs-TBV. (Plain book value is deliberately not cross-checked.)
-        fmp_checks = [
-            ("fmp:tbvps", fmp.get("tbvps"), sec.get("tangible_book_value_per_share")),
-            ("fmp:pe_ratio", fmp.get("pe_ratio"), dash.get("pe_ratio")),
-            ("fmp:dividend_yield", fmp.get("dividend_yield"), dash.get("dividend_yield")),
-        ]
-        for label, fval, ourval in fmp_checks:
-            if fval is None or ourval is None:
-                continue
-            denom = max(abs(fval), abs(ourval), 1e-9)
-            if abs(fval - ourval) / denom > FMP_REL_TOL:
-                row["divergences"].append({
-                    "metric": label,
-                    "dashboard": ourval,
-                    "oracle": fval,   # FMP's value
-                })
+        equity = sec.get("book_value_total")
+        adj = sec.get("intangible_adjustment")
+        shares = sec.get("shares_outstanding")
+        tbvps_total = ((equity - adj) / shares
+                       if (equity is not None and adj is not None and shares)
+                       else None)
+        _warn("fmp:tbvps", tbvps_total, fmp.get("tbvps"))
+        _warn("fmp:pe_ratio", dash.get("pe_ratio"), fmp.get("pe_ratio"))
+        _warn("fmp:dividend_yield", dash.get("dividend_yield"),
+              fmp.get("dividend_yield"))
 
     if row["divergences"]:
         row["status"] = "DIVERGENCE"
+    elif row["warnings"]:
+        row["status"] = "WARN"
     return row
 
 
@@ -232,6 +270,7 @@ def run(tickers: list[str]) -> int:
         by_status[r["status"]] = by_status.get(r["status"], 0) + 1
 
     diverged = [r for r in results if r["status"] == "DIVERGENCE"]
+    warned = [r for r in results if r.get("warnings")]
 
     print("\n" + "=" * 68)
     print("METRIC VERIFICATION RESULTS")
@@ -259,19 +298,35 @@ def run(tickers: list[str]) -> int:
             if shown >= 15:
                 break
 
+    if warned:
+        # Cross-source / cross-convention drift — surfaced, never job-failing.
+        from collections import Counter
+        warn_counts = Counter(
+            d["metric"] for r in warned for d in r.get("warnings", []))
+        print("\nCross-source drift (WARN-only, does not fail the job):")
+        for metric, n in warn_counts.most_common():
+            print(f"  {metric:<22} {n:>4}")
+
     out_path = Path(__file__).parent.parent / "tests" / "verify_metrics_report.csv"
     with open(out_path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["ticker", "status", "metric", "dashboard", "oracle", "note"])
+        w.writerow(["ticker", "status", "tier", "metric", "dashboard", "oracle", "note"])
         for r in sorted(results, key=lambda x: (x["status"], x["ticker"])):
-            if r["divergences"]:
-                for d in r["divergences"]:
-                    w.writerow([r["ticker"], r["status"], d["metric"],
-                                d["dashboard"], d["oracle"], r.get("note", "")])
-            else:
-                w.writerow([r["ticker"], r["status"], "", "", "", r.get("note", "")])
+            wrote = False
+            for d in r["divergences"]:
+                w.writerow([r["ticker"], r["status"], "FAIL", d["metric"],
+                            d["dashboard"], d["oracle"], r.get("note", "")])
+                wrote = True
+            for d in r.get("warnings", []):
+                w.writerow([r["ticker"], r["status"], "WARN", d["metric"],
+                            d["dashboard"], d["oracle"], r.get("note", "")])
+                wrote = True
+            if not wrote:
+                w.writerow([r["ticker"], r["status"], "", "", "", "", r.get("note", "")])
     print(f"\nFull report: {out_path}")
 
+    # Only DERIVATION divergences fail the job; WARN-tier drift never does —
+    # the nightly alert (audit #42) must mean a real regression.
     return 1 if diverged else 0
 
 
