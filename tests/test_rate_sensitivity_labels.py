@@ -88,10 +88,14 @@ from ui.rate_sensitivity import _render_rate_context, _slope_regime  # noqa: E40
 
 
 class TestSlopeRegime(unittest.TestCase):
-    """The pure label decision — explicit None checks, not truthiness."""
+    """The pure label decision — explicit None checks, not truthiness.
+
+    Sign convention (AUDIT #36, owner call 2026-07-09): the slope is 3M − 5Y
+    (shorter tenor FIRST, matching Home/Macro), so an upward-sloping curve
+    reads NEGATIVE (Steep) and an inverted one POSITIVE."""
 
     def test_none_slope_has_no_regime_label(self):
-        # FRED outage: _load fallback sets curve_5y_3m = None. Must NOT
+        # FRED outage: _load fallback sets the slope = None. Must NOT
         # produce any regime call — especially not "Inverted".
         self.assertIsNone(_slope_regime(None))
 
@@ -99,30 +103,31 @@ class TestSlopeRegime(unittest.TestCase):
         # 0.0 is falsy — the old truthiness chain sent it to "Inverted".
         self.assertEqual(_slope_regime(0.0), "Flat")
 
-    def test_negative_slope_still_inverted(self):
-        self.assertEqual(_slope_regime(-1.25), "Inverted")
+    def test_positive_slope_is_inverted_short_minus_long(self):
+        # 3M − 5Y = +1.25pp means short rates above long — inverted.
+        self.assertEqual(_slope_regime(1.25), "Inverted")
 
-    def test_steep_and_boundaries_unchanged(self):
-        # Existing vocabulary: > 0.5 Steep, |x| <= 0.5 Flat, else Inverted.
-        self.assertEqual(_slope_regime(1.0), "Steep")
-        self.assertEqual(_slope_regime(0.5), "Flat")
+    def test_steep_and_boundaries_short_minus_long(self):
+        # Vocabulary under #36: < -0.5 Steep, |x| <= 0.5 Flat, else Inverted.
+        self.assertEqual(_slope_regime(-1.0), "Steep")
         self.assertEqual(_slope_regime(-0.5), "Flat")
-        self.assertEqual(_slope_regime(-0.51), "Inverted")
+        self.assertEqual(_slope_regime(0.5), "Flat")
+        self.assertEqual(_slope_regime(0.51), "Inverted")
 
 
 class TestSlopeCardRendering(unittest.TestCase):
     """The card value string actually rendered by _render_rate_context."""
 
-    def _slope_card_value(self, curve_5y_3m, t3m=None, t5=None):
+    def _slope_card_value(self, curve_3m_5y, t3m=None, t5=None):
         captured = {}
 
         def _capture(cards, **k):
             captured["cards"] = cards
 
         with patch("ui.source_trace.render_traceable_cards", _capture):
-            _render_rate_context(None, t3m, t5, curve_5y_3m)
+            _render_rate_context(None, t3m, t5, curve_3m_5y)
         slope_cards = [c for c in captured["cards"]
-                       if c["label"] == "5Y − 3M Slope"]
+                       if c["label"] == "3M − 5Y Slope"]
         self.assertEqual(len(slope_cards), 1)
         return slope_cards[0]["value"]
 
@@ -137,9 +142,55 @@ class TestSlopeCardRendering(unittest.TestCase):
         self.assertEqual(val, "+0.00pp  (Flat)")
         self.assertNotIn("Inverted", val)
 
-    def test_negative_slope_renders_inverted(self):
-        val = self._slope_card_value(-1.10, t3m=5.3, t5=4.2)
-        self.assertEqual(val, "-1.10pp  (Inverted)")
+    def test_positive_slope_renders_inverted(self):
+        # 3M 5.3% vs 5Y 4.2% → 3M − 5Y = +1.10pp: inverted.
+        val = self._slope_card_value(1.10, t3m=5.3, t5=4.2)
+        self.assertEqual(val, "+1.10pp  (Inverted)")
+
+    def test_negative_slope_renders_steep(self):
+        val = self._slope_card_value(-1.10, t3m=3.1, t5=4.2)
+        self.assertEqual(val, "-1.10pp  (Steep)")
+
+
+class TestSpreadConventionShortMinusLong(unittest.TestCase):
+    """(AUDIT-2026-07-02 #36, owner call) ONE spread convention everywhere:
+    shorter tenor first (short − long), matching Home's 2Y−10Y/3M−10Y panes.
+    Macro's board/chart and the recession factors previously showed the same
+    spread with the OPPOSITE sign (raw FRED long−short)."""
+
+    def test_macro_board_labels_and_negation(self):
+        import ui.macro as M
+        labels = {sid: label for _, sid, label, _ in M._RATE_BOARD}
+        self.assertEqual(labels["T10Y2Y"], "2Y − 10Y")
+        self.assertEqual(labels["T10Y3M"], "3M − 10Y")
+        # the negate set is what flips the fetched series (values, deltas,
+        # sparkline, z-score all downstream of it)
+        self.assertEqual(M._SHORT_LONG_NEGATE, {"T10Y2Y", "T10Y3M"})
+
+    def test_macro_spread_chart_flipped(self):
+        src = (Path(__file__).parent.parent / "ui" / "macro.py").read_text(
+            encoding="utf-8")
+        block = src.split("def _fig_curve_spreads")[1].split("\ndef ")[0]
+        self.assertIn('y=-d["value"]', block)          # series negated
+        self.assertIn("above 0 = inverted", block)     # title matches the flip
+        self.assertIn("y0=0, y1=4", block)             # shading on positive side
+        self.assertIn("2Y − 10Y", block)
+        self.assertNotIn('"10Y − 2Y"', block)
+
+    def test_recession_factors_short_minus_long(self):
+        import data.fred_client as F
+        import pandas as pd
+        vals = {"T10Y2Y": -0.75, "T10Y3M": -0.60}
+        with patch.object(F, "latest_value",
+                          side_effect=lambda s: vals.get(s)), \
+             patch.object(F, "fetch_series",
+                          return_value=pd.DataFrame(columns=["date", "value"])):
+            out = F.recession_probability()
+        text = " ".join(out["factors"])
+        # raw FRED −0.75 (long−short) renders as short−long +0.75
+        self.assertIn("2Y-10Y inverted +0.75pp", text)
+        self.assertIn("3M-10Y inverted +0.60pp", text)
+        self.assertNotIn("10Y-2Y", text)
 
 
 if __name__ == "__main__":

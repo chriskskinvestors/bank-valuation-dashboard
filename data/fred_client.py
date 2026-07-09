@@ -174,28 +174,29 @@ def recession_probability() -> dict:
     factors = []
     score = 0  # out of 100
 
-    # 10Y-2Y spread
+    # 10Y-2Y spread (raw FRED long−short drives the thresholds; the factor
+    # STRINGS present short − long per the house spread convention, #36)
     spread_2y = latest_value("T10Y2Y")
     if spread_2y is not None:
         if spread_2y < -0.50:
             score += 40
-            factors.append(f"10Y-2Y inverted {spread_2y:.2f}pp — strong recession signal")
+            factors.append(f"2Y-10Y inverted {-spread_2y:+.2f}pp — strong recession signal")
         elif spread_2y < 0:
             score += 20
-            factors.append(f"10Y-2Y inverted {spread_2y:.2f}pp — moderate signal")
+            factors.append(f"2Y-10Y inverted {-spread_2y:+.2f}pp — moderate signal")
         elif spread_2y < 0.50:
             score += 5
-            factors.append(f"10Y-2Y narrow at {spread_2y:.2f}pp")
+            factors.append(f"2Y-10Y narrow at {-spread_2y:+.2f}pp")
 
     # 10Y-3M spread (NY Fed's favorite)
     spread_3m = latest_value("T10Y3M")
     if spread_3m is not None:
         if spread_3m < -0.50:
             score += 30
-            factors.append(f"10Y-3M inverted {spread_3m:.2f}pp — NY Fed indicator")
+            factors.append(f"3M-10Y inverted {-spread_3m:+.2f}pp — NY Fed indicator")
         elif spread_3m < 0:
             score += 15
-            factors.append(f"10Y-3M inverted {spread_3m:.2f}pp")
+            factors.append(f"3M-10Y inverted {-spread_3m:+.2f}pp")
 
     # Unemployment trend (Sahm rule: 3mo avg up 0.5pp from 12mo low)
     unrate_df = fetch_series("UNRATE", years=2)

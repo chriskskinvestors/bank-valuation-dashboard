@@ -67,31 +67,21 @@ def _band_word(p: float):
 
 
 def _resolve_cohort(all_metrics: list[dict] | None) -> list[dict]:
-    """Use the passed cohort, else pull (and lazily load) the watchlist cohort so
-    Peer Rank works even if a caller hands us nothing."""
-    if all_metrics:
-        return all_metrics
-    try:
-        from app import get_watchlist_cohort
-        return get_watchlist_cohort() or []
-    except Exception:
-        return []
+    """Use the passed cohort; empty stays empty (rendered as an honest empty
+    state). The old `from app import get_watchlist_cohort` fallback could never
+    succeed in production — importing app re-executes the whole script, whose
+    module-level st.set_page_config raises mid-render — so it always fell into
+    the swallowed except (audit #37). The one real caller (company_nav) always
+    passes the cohort."""
+    return all_metrics or []
 
 
 def _ensure_self(all_metrics: list[dict], ticker: str) -> list[dict]:
-    """Make sure the subject bank is in the cohort (ad-hoc tickers aren't in the
-    watchlist metrics)."""
-    metrics = list(all_metrics or [])
-    if any(m.get("ticker") == ticker for m in metrics):
-        return metrics
-    try:
-        from app import load_single_bank_metrics_cached
-        single = load_single_bank_metrics_cached(ticker)
-        if single:
-            metrics.append(single)
-    except Exception:
-        pass
-    return metrics
+    """Make sure the subject bank is in the cohort. If it isn't, we render
+    without it rather than trying to load it here: the old `from app import
+    load_single_bank_metrics_cached` fallback could never succeed (same
+    whole-script re-execution hazard as _get_cohort, audit #37)."""
+    return list(all_metrics or [])
 
 
 def _metric_row(key: str, d: dict) -> str:

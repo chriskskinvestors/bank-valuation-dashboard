@@ -1277,7 +1277,9 @@ def _render_regime():
         return f'<span class="ksk-dot {level if level in ("ok", "warn", "bad") else "warn"}"></span>'
 
     curve_state = curve["shape"] + (f", {curve['direction']}" if curve["direction"] else "")
-    curve_detail = (f"10Y−2Y {s2:+.2f}pp · 10Y−3M {s3m:+.2f}pp"
+    # House spread convention (#36): shorter tenor FIRST (short − long), so the
+    # raw FRED long−short readings are negated for display — matches Home.
+    curve_detail = (f"2Y−10Y {-s2:+.2f}pp · 3M−10Y {-s3m:+.2f}pp"
                     if (s2 is not None and s3m is not None) else "n/a")
     credit_detail = f"HY OAS {hy * 100:.0f} bps" if hy is not None else "n/a"
     if path["change"] is not None and ff is not None:
@@ -1336,12 +1338,17 @@ _RATE_BOARD = [
     ("Treasury", "DGS5",         "5-Year",       "%"),
     ("Treasury", "DGS10",        "10-Year",      "%"),
     ("Treasury", "DGS30",        "30-Year",      "%"),
-    ("Spreads",  "T10Y2Y",       "10Y − 2Y",     "pp"),
-    ("Spreads",  "T10Y3M",       "10Y − 3M",     "pp"),
+    ("Spreads",  "T10Y2Y",       "2Y − 10Y",     "pp"),
+    ("Spreads",  "T10Y3M",       "3M − 10Y",     "pp"),
     # HY OAS lives in the Credit section below (same tab); no need to duplicate
     # it here now that Rates and Credit share one subtab.
     ("Consumer", "MORTGAGE30US", "30-Yr Mortgage", "%"),
 ]
+
+# House spread convention (#36): shorter tenor FIRST. FRED stores these
+# long − short, so the whole series is negated at fetch — then the latest,
+# deltas, sparkline and z-score all stay self-consistent (z(−x) = −z(x)).
+_SHORT_LONG_NEGATE = {"T10Y2Y", "T10Y3M"}
 
 
 def _fmt_rate(v, unit) -> str:
@@ -1372,6 +1379,8 @@ def _rates_board_rows():
         df = fetch_series(sid, years=11)
         d = (df.dropna(subset=["value"]).sort_values("date")
              if df is not None and not df.empty else None)
+        if d is not None and sid in _SHORT_LONG_NEGATE:
+            d = d.assign(value=-d["value"])
         latest = as_of = d1w = d3m = z = None
         spark = []
         if d is not None and not d.empty:
@@ -1532,15 +1541,17 @@ def _fig_rate_history(window="5Y"):
 def _fig_curve_spreads(window="5Y"):
     import plotly.graph_objects as go
     fig = go.Figure()
-    fig.add_hrect(y0=-4, y1=0, fillcolor="rgba(220,38,38,0.07)", line_width=0, layer="below")
-    for sid, label, color, w in [("T10Y2Y", "10Y − 2Y", "#93c5fd", 1.8),
-                                 ("T10Y3M", "10Y − 3M (recession signal)", "#dc2626", 2.6)]:
+    # Short − long convention (#36): inversion = spread ABOVE zero, so the
+    # danger shading sits on the positive side.
+    fig.add_hrect(y0=0, y1=4, fillcolor="rgba(220,38,38,0.07)", line_width=0, layer="below")
+    for sid, label, color, w in [("T10Y2Y", "2Y − 10Y", "#93c5fd", 1.8),
+                                 ("T10Y3M", "3M − 10Y (recession signal)", "#dc2626", 2.6)]:
         d = _win(fetch_series(sid, years=_FETCH_YEARS), window)
         if d is not None and not d.empty:
-            fig.add_trace(go.Scatter(x=d["date"], y=d["value"], name=label,
+            fig.add_trace(go.Scatter(x=d["date"], y=-d["value"], name=label,
                 mode="lines", line=dict(color=color, width=w)))
     fig.add_hline(y=0, line_color="#94a3b8", line_width=1, line_dash="dash")
-    apply_standard_layout(fig, title=f"Curve spreads ({window}) — below 0 = inverted",
+    apply_standard_layout(fig, title=f"Curve spreads ({window}) — above 0 = inverted",
                           height=_RATE_GRID_H, yaxis_title="Spread")
     fig.update_yaxes(ticksuffix="pp")
     return fig

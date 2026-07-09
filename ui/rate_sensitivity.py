@@ -131,23 +131,27 @@ def _render_phased_inputs(ticker, latest, inputs, tax_rate):
     render_traceable_cards(cards, key=f"nim_phased_inputs_{ticker}", columns=5)
 
 
-def _slope_regime(curve_5y_3m):
-    """Regime label for the 5Y−3M curve slope, or None when unavailable.
+def _slope_regime(curve_3m_5y):
+    """Regime label for the 3M−5Y curve slope, or None when unavailable.
+
+    House spread convention (#36): shorter tenor FIRST (3M − 5Y), so an
+    upward-sloping curve reads NEGATIVE (steep) and an inverted one POSITIVE —
+    matching Home and the Macro tab.
 
     Explicit `is not None` semantics (AUDIT-2026-07-02 #16): the old
     truthiness chain sent BOTH a FRED-outage None AND an exactly-flat
     0.00pp slope to "Inverted". n/a-over-guess: no number → no label.
     """
-    if curve_5y_3m is None:
+    if curve_3m_5y is None:
         return None
-    if curve_5y_3m > 0.5:
+    if curve_3m_5y < -0.5:
         return "Steep"
-    if abs(curve_5y_3m) <= 0.5:
+    if abs(curve_3m_5y) <= 0.5:
         return "Flat"
     return "Inverted"
 
 
-def _render_rate_context(ff, t3m, t5, curve_5y_3m):
+def _render_rate_context(ff, t3m, t5, curve_3m_5y):
     """Macro rate strip — values from FRED (daily). Click for source."""
     from ui.source_trace import render_traceable_cards, make_calc
     FRED = "FRED — Federal Reserve daily data"
@@ -159,8 +163,8 @@ def _render_rate_context(ff, t3m, t5, curve_5y_3m):
                                   definition=definition, terms=[{"label": label, "val": value}],
                                   reported=True, link="https://fred.stlouisfed.org/series/" + series)}
 
-    slope_label = _slope_regime(curve_5y_3m)
-    slope_val = (f"{curve_5y_3m:+.2f}pp" if curve_5y_3m is not None else "—")
+    slope_label = _slope_regime(curve_3m_5y)
+    slope_val = (f"{curve_3m_5y:+.2f}pp" if curve_3m_5y is not None else "—")
     slope_display = (f"{slope_val}  ({slope_label})" if slope_label is not None
                      else slope_val)
     cards = [
@@ -170,15 +174,16 @@ def _render_rate_context(ff, t3m, t5, curve_5y_3m):
                   "3-month Treasury bill yield — drives short-term funding costs.", "DGS3MO"),
         rate_card("5Y Treasury", (f"{t5:.2f}%" if t5 is not None else "—"),
                   "5-year Treasury yield — a proxy for asset-reinvestment rates.", "DGS5"),
-        {"label": "5Y − 3M Slope", "value": slope_display,
-         "calc": make_calc("5Y − 3M curve slope", slope_val, entity="US Treasury",
+        {"label": "3M − 5Y Slope", "value": slope_display,
+         "calc": make_calc("3M − 5Y curve slope", slope_val, entity="US Treasury",
                            source="FRED — Federal Reserve daily data", asof="latest daily", unit="pp",
-                           ref="DGS5 − DGS3MO",
-                           definition="Yield-curve slope between the 5-year and 3-month points. "
-                                       "Positive = steep, negative = inverted.",
-                           terms=[{"label": "5Y Treasury (DGS5)", "val": (f"{t5:.2f}%" if t5 is not None else "—")},
-                                  {"label": "3M Treasury (DGS3MO)", "val": (f"{t3m:.2f}%" if t3m is not None else "—")}],
-                           op="5Y yield − 3M yield")},
+                           ref="DGS3MO − DGS5",
+                           definition="Yield-curve slope between the 3-month and 5-year points "
+                                       "(shorter tenor first, the house spread convention). "
+                                       "Negative = steep/upward-sloping, positive = inverted.",
+                           terms=[{"label": "3M Treasury (DGS3MO)", "val": (f"{t3m:.2f}%" if t3m is not None else "—")},
+                                  {"label": "5Y Treasury (DGS5)", "val": (f"{t5:.2f}%" if t5 is not None else "—")}],
+                           op="3M yield − 5Y yield")},
     ]
     render_traceable_cards(cards, key="nim_rate_context", columns=4)
 
@@ -228,11 +233,12 @@ def render_rate_sensitivity(ticker: str):
         ff = latest_value("FEDFUNDS")
         t3m = latest_value("DGS3MO")
         t5 = latest_value("DGS5")
-        curve_5y_3m = (t5 - t3m) if (t5 is not None and t3m is not None) else None
+        # Shorter tenor first (house convention #36): 3M − 5Y.
+        curve_3m_5y = (t3m - t5) if (t5 is not None and t3m is not None) else None
     except Exception:
-        ff, t3m, t5, curve_5y_3m = None, None, None, None
+        ff, t3m, t5, curve_3m_5y = None, None, None, None
 
-    _render_rate_context(ff, t3m, t5, curve_5y_3m)
+    _render_rate_context(ff, t3m, t5, curve_3m_5y)
 
     # ── Beta selector (shared across tabs) ─────────────────────────────
     bc1, bc2 = st.columns([2, 3])
