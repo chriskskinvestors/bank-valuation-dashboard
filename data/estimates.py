@@ -142,13 +142,23 @@ def _fetch_from_yfinance(ticker: str) -> dict:
                     history.append(entry)
                 result["earnings_history"] = history
 
-                # Set quarterly EPS estimate and next earnings date from first entry
-                if history:
-                    first = history[0]
-                    if first.get("eps_actual") is None:
-                        result["eps_estimate"] = first.get("eps_estimate")
-                        if not result["next_earnings_date"]:
-                            result["next_earnings_date"] = first["date"]
+                # Quarterly EPS estimate + next earnings date come from the
+                # NEAREST upcoming unreported row (eps_actual None, dated
+                # today or later). get_earnings_dates lists newest-first, so
+                # history[0] is the FARTHEST future quarter when several
+                # future rows exist — the old first-entry pick showed a date
+                # (and estimate) two-plus quarters out instead of the next
+                # report. A stale past-dated unreported row is never a
+                # candidate: it can't be the "next" earnings date.
+                today = datetime.now().date().isoformat()
+                upcoming = [h for h in history
+                            if h.get("eps_actual") is None
+                            and (h.get("date") or "")[:10] >= today]
+                if upcoming:
+                    nearest = min(upcoming, key=lambda h: (h.get("date") or "")[:10])
+                    result["eps_estimate"] = nearest.get("eps_estimate")
+                    if not result["next_earnings_date"]:
+                        result["next_earnings_date"] = nearest["date"]
         except Exception:
             pass
 

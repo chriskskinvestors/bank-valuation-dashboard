@@ -50,7 +50,7 @@ class _FakeAdapter:
 
 def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=None):
     """Drive poll_events.main with every adapter + network/DB call mocked.
-    `adapters` are the 8 fakes in main()'s construction order. `env` sets extra
+    `adapters` are the 9 fakes in main()'s construction order. `env` sets extra
     os.environ keys (e.g. POLL_PROFILE). Returns (exit_code, cert_is_active_mock)."""
     import jobs.poll_events as pe
     import data.events as ev
@@ -58,7 +58,9 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=No
     import data.fdic_client as fc
 
     it = iter(adapters)
-    # Patch each adapter class to hand back the next fake in order.
+    # Patch each adapter class to hand back the next fake in order. FMP is
+    # patched too — leaving it real made every main() call poll FMP live
+    # (network + retry backoff), the bulk of this suite's old ~85s runtime.
     for modpath, clsname in [
         ("data.events.sec_8k", "SEC8KAdapter"),
         ("data.events.sec_8k", "SEC8KRecentAdapter"),
@@ -69,6 +71,7 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=No
         ("data.events.google_news", "GoogleNewsTopicAdapter"),
         ("data.events.yfinance_news", "YFinanceNewsAdapter"),
         ("data.events.ir_site", "IRSiteAdapter"),
+        ("data.events.fmp_news", "FMPPressReleaseAdapter"),
     ]:
         stack.enter_context(mock.patch(f"{modpath}.{clsname}",
                                        side_effect=lambda *a, **k: next(it)))
@@ -81,7 +84,15 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=No
                                           side_effect=lambda evs: list(evs)))
     stack.enter_context(mock.patch.object(pe, "_invalidate_fundamentals_for_filings"))
     stack.enter_context(mock.patch.object(pe, "_purge_junk_events", return_value=0))
+    stack.enter_context(mock.patch.object(pe, "_reclean_summaries", return_value=0))
     stack.enter_context(mock.patch.object(pe, "_summarize_recent_events", return_value=0))
+    # main()'s post-loop call-detail refresh (Q4 events + PR detail fetches)
+    # hits the real store/IR endpoints — ~15s of live I/O per test, and not
+    # what this suite asserts. Patched at the source modules main imports from.
+    stack.enter_context(mock.patch("data.events.ir_site.refresh_q4_calls_snapshot",
+                                   return_value=[]))
+    stack.enter_context(mock.patch("data.earnings_call.refresh_pr_call_snapshot",
+                                   return_value={}))
     stack.enter_context(mock.patch.dict("os.environ", {}, clear=False))
     if "ANTHROPIC_API_KEY" in __import__("os").environ:
         stack.enter_context(mock.patch.dict("os.environ",
@@ -108,7 +119,7 @@ class TestPollEventsUniverse(unittest.TestCase):
     def test_universe_build_does_not_hit_per_ticker_fdic(self):
         # The regression: building the universe must NOT call cert_is_active
         # (the live, rate-limited per-ticker FDIC check that blew the timeout).
-        fakes = [_FakeAdapter(f"a{i}") for i in range(8)]
+        fakes = [_FakeAdapter(f"a{i}") for i in range(9)]
         with ExitStack() as stack:
             rc, cert = _run_main(stack, fakes)
         self.assertEqual(rc, 0)
@@ -119,7 +130,7 @@ class TestPollEventsUniverse(unittest.TestCase):
         # Once the overall task budget is spent, remaining sources are skipped
         # (committed-as-we-go), never the hard 900s task kill.
         import jobs.poll_events as pe
-        fakes = [_FakeAdapter(f"a{i}") for i in range(8)]
+        fakes = [_FakeAdapter(f"a{i}") for i in range(9)]
         # time.time() calls: t0, then the remaining-budget check before each
         # adapter, then the final elapsed. Make the check before adapter #2
         # land past the budget so the loop breaks.
@@ -136,7 +147,7 @@ class TestPollEventsUniverse(unittest.TestCase):
         # timeout) and the rest still run — the run finishes 0, never the 900s
         # task kill. Pin with a tiny cap and a first adapter that sleeps past it.
         import jobs.poll_events as pe
-        fakes = [_FakeAdapter("slow", sleep=0.3)] + [_FakeAdapter(f"a{i}") for i in range(7)]
+        fakes = [_FakeAdapter("slow", sleep=0.3)] + [_FakeAdapter(f"a{i}") for i in range(8)]
         with ExitStack() as stack:
             stack.enter_context(mock.patch.object(pe, "_PER_ADAPTER_S", 0.05))
             rc, _ = _run_main(stack, fakes)   # real clock; tiny cap trips timeout
@@ -149,15 +160,15 @@ class TestFastProfile(unittest.TestCase):
         # POLL_PROFILE=fast must run ONLY SEC 8-K + the two cheap wire feeds +
         # FMP, skipping the slow full-universe Google News / Yahoo / IR scrape so
         # the job stays sub-minute and safe at a 1–5 min cadence.
-        fakes = [_FakeAdapter(f"a{i}") for i in range(8)]
+        fakes = [_FakeAdapter(f"a{i}") for i in range(9)]
         with ExitStack() as stack:
             rc, _ = _run_main(stack, fakes, env={"POLL_PROFILE": "fast"})
         self.assertEqual(rc, 0)
-        # Construction order in fast mode: FMP (real/unpatched), then SEC8K,
-        # PRNewswire, GlobeNewswire — so fakes 0,1,2 are those three and poll.
-        self.assertTrue(fakes[0].polled and fakes[1].polled and fakes[2].polled,
-                        "8-K + the two wire feeds must run in fast mode")
-        self.assertFalse(any(f.polled for f in fakes[3:]),
+        # Construction order in fast mode: SEC8KRecent, PRNewswire,
+        # GlobeNewswire, FMP — fakes 0-3 are those four and all must poll.
+        self.assertTrue(all(f.polled for f in fakes[:4]),
+                        "8-K + the two wire feeds + FMP must run in fast mode")
+        self.assertFalse(any(f.polled for f in fakes[4:]),
                          "Google News / Yahoo / IR must NOT run in fast mode")
 
 

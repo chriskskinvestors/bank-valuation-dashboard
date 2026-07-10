@@ -36,6 +36,45 @@ from data.events.wire_base import (  # noqa: E402
 
 NOW = datetime.now(timezone.utc)
 
+# ── Module-wide network guard ────────────────────────────────────────────────
+# The real-index tests build the name index via get_universe_tickers(), whose
+# _resolves() fires a LIVE FDIC cert_is_active per FDIC-only ticker. That call
+# is cached in data.cache with a 1-week TTL, so on a warm box this suite runs
+# in <1s — but with a cold/expired fdic_active:* cache, FDIC throttles the
+# burst and get_with_retry backoff-sleeps (up to 30s/attempt, 3 attempts) per
+# ticker, per index build: the observed ~10-minute runs. cert_is_active's own
+# documented FDIC-outage fallback is "assume active" (and the persisted
+# universe snapshot only contains ACTIVE:1 banks by construction), so a
+# constant True is the honest offline answer for snapshot members — the index
+# the tests assert against is identical to a warm-cache run.
+_MODULE_PATCHES: list = []
+
+
+def setUpModule():
+    import data.fdic_client as fc
+    p = patch.object(fc, "cert_is_active", lambda *a, **k: True)
+    p.start()
+    _MODULE_PATCHES.append(p)
+
+
+def tearDownModule():
+    while _MODULE_PATCHES:
+        _MODULE_PATCHES.pop().stop()
+
+
+def _require_universe_snapshot(tc: unittest.TestCase):
+    """The real-index tests read the persisted universe snapshot. Without one
+    (fresh DB), get_universe() would bootstrap the ~6.5-minute LIVE SEC×FDIC
+    build inside a unit test — skip loudly instead."""
+    from data.bank_universe import _load_lastgood
+    try:
+        snap = _load_lastgood()[0]
+    except Exception:
+        snap = None
+    if not snap:
+        tc.skipTest("no persisted universe snapshot — real-index test would "
+                    "trigger a live universe build")
+
 
 def _fresh_db():
     """Private in-memory SQLite so tests never touch cache.db / Postgres."""
@@ -406,11 +445,16 @@ class TestSubsidiaryNameIndexing(unittest.TestCase):
     def setUp(self):
         import data.events.wire_base as wb
         self.wb = wb
+        self._saved = (wb._NAME_INDEX, wb._AMBIGUOUS_INDEX)
         wb._NAME_INDEX, wb._AMBIGUOUS_INDEX = [], {}
 
     def tearDown(self):
-        # Drop the test-built index so other tests rebuild the real one.
-        self.wb._NAME_INDEX, self.wb._AMBIGUOUS_INDEX = [], {}
+        # RESTORE the previously built index (don't clear to []): clearing
+        # forced every later match_tickers caller into a full index rebuild —
+        # each one a fresh get_universe_tickers() pass (the suite's wall-clock
+        # sink on a cold cache). Restoring keeps the same real index those
+        # tests would have rebuilt.
+        self.wb._NAME_INDEX, self.wb._AMBIGUOUS_INDEX = self._saved
 
     def _build(self, names, universe):
         import data.bank_universe as bu
@@ -439,6 +483,9 @@ class TestSubsidiaryNameIndexing(unittest.TestCase):
 
 
 class TestNameMatchingCoverage(unittest.TestCase):
+    def setUp(self):
+        _require_universe_snapshot(self)
+
     def test_one_word_jpmorganchase_brand(self):
         self.assertIn("JPM", match_tickers(
             "JPMorganChase Expands Security and Resiliency Initiative to Canada"))
@@ -630,6 +677,9 @@ class TestAmbiguousNameDisambiguation(unittest.TestCase):
     recovered via ticker/geo in the body, without regressing share-class
     siblings (First Niles) or distinguishable collisions (Citizens Holding)."""
 
+    def setUp(self):
+        _require_universe_snapshot(self)
+
     def test_only_same_name_diff_cik_is_ambiguous(self):
         from data.events import wire_base as wb
         wb.build_name_index()
@@ -670,6 +720,11 @@ class TestAmbiguousNameDisambiguation(unittest.TestCase):
 class TestWireTitleOnlyTagging(unittest.TestCase):
     """Wire adapters must tag on the TITLE only — a bank named in the body as an
     investor/underwriter/advisor is not the subject and must not be tagged."""
+
+    def setUp(self):
+        # The adapter's match_tickers lazily builds the REAL name index when
+        # it isn't already populated (e.g. running this class standalone).
+        _require_universe_snapshot(self)
 
     def _run(self, items, universe):
         from data.events.globenewswire import GlobeNewswireAdapter
