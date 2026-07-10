@@ -42,7 +42,7 @@ COMPANY_NAV = {
                        "Press Releases", "Transcripts & Presentations",
                        "Events Calendar"],
     "Market Analysis": ["Market Share & Branches"],
-    "Ownership": ["Institutional (13F)", "Insider Activity", "Executive Compensation"],
+    "Ownership": ["Institutional (13F)", "Holder History", "Insider Activity", "Executive Compensation"],
 }
 
 
@@ -215,6 +215,11 @@ def _ownership_13f(t, ctx):
     render_ownership(t)
 
 
+def _holder_history(t, ctx):
+    from ui.ownership import render_holder_history
+    render_holder_history(t)
+
+
 def _insider_activity(t, ctx):
     from ui.insider_activity import render_insider_activity
     render_insider_activity(t)
@@ -342,6 +347,7 @@ _RENDERERS = {
     "Deposit Trends": _deposit_trends,
     "Market Share & Branches": _market_share,
     "Institutional (13F)": _ownership_13f,
+    "Holder History": _holder_history,
     "Insider Activity": _insider_activity,
     "Executive Compensation": _executive_compensation,
 }

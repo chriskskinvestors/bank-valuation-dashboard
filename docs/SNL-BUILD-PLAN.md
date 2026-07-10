@@ -212,7 +212,7 @@ Ownership Crossholdings (still name-only) · Insider Activity.
 | Summary: Float Summary walk (insider + state + untraded → excluded → free float → float %) | calc from the above; click-through formula |
 | Summary view sub-tabs (Top Holders, Top MF Holders, Owner Type, Country, Style, Mkt Cap, Turnover, Top Buyers/Sellers, Activity) | 13F agg + holder-metadata analytics (below) |
 | Detailed: holder table (shares, %CSO, mkt val, Δshares/%, position date, source, turnover cat+%, orientation Active/Passive, equity assets, city/state, style, cap emphasis) — 370 holders | 13F (HAVE) + N-PORT mutual-fund agg (NEW ingest) + holder-book analytics: SNL computes style/turnover from each holder's FULL 13F book — phase 1: light versions from our-universe positions; phase 2: per-holder full-filing fetch |
-| History: holder × quarter matrix, 5y, expandable (shares, %CSO, mkt val, Δ, %Δ) | 13F store with QUARTERLY HISTORY RETENTION (store change) |
+| History: holder × quarter matrix, 5y, expandable (shares, %CSO, mkt val, Δ, %Δ) | ✅ PHASE 1 SHIPPED 2026-07-10: "Holder History" sub-tab (holder × quarter shares matrix from the quarterly snapshots + QoQ Top Buyers/Sellers incl. New/Exited, honest sample caveats). History accumulates forward; EDGAR backfill + %CSO/mkt-val columns = phase 2 |
 | Insider Activity: volume/price graph w/ buy-sell markers, 3M/1Y/5Y aggregates (value bought/sold, buyers:sellers), full Form 4 table w/ filing links | Form 4 ingest (HAVE) + price store (HAVE) — computation + layout |
 Crossholdings remains inferred (cross-join of 13F across our universe).
 Plus 13D/G for activist panel.

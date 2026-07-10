@@ -134,3 +134,137 @@ def render_ownership(ticker: str):
         "only (not derivatives), and are filed 45 days after quarter-end. Δ QoQ compares each "
         "filer's share count to their previous 13F-HR."
     )
+
+
+def _qoq_moves(hist: dict, q1: str, q0: str) -> list[dict]:
+    """Per-holder share change between two stored snapshot quarters (q1 =
+    latest, q0 = prior). 'New' = present in q1 only; 'Exited' = present in q0
+    only (presence in the stored SAMPLE, not proof of a market exit);
+    unchanged positions are omitted. Pure — unit-tested directly."""
+    moves = []
+    for h, m in hist.items():
+        cur_sh = (m.get(q1) or {}).get("shares")
+        prev_sh = (m.get(q0) or {}).get("shares")
+        if cur_sh is None and prev_sh is None:
+            continue
+        if prev_sh is None:
+            status, delta = "New", cur_sh
+        elif cur_sh is None:
+            status, delta = "Exited", -prev_sh
+        else:
+            status, delta = "", cur_sh - prev_sh
+        if not delta:
+            continue
+        pct = (delta / prev_sh * 100) if prev_sh else None
+        moves.append({"Institution": h, "Status": status,
+                      "Δ Shares": delta, "Δ %": pct})
+    return moves
+
+
+def render_holder_history(ticker: str):
+    """Holder × quarter matrix from the stored 13F quarterly snapshots, plus a
+    QoQ Top Buyers / Sellers ranking (SNL 'Ownership History' — phase 1: light
+    versions built from our-universe positions). History accumulates going
+    forward from when quarterly retention shipped; EDGAR backfill of older
+    quarters is a planned later task — sparse early history is honest, not a bug."""
+    from data.form13f_client import get_holder_history
+
+    name = get_name(ticker)
+    title_bar(f"{name} ({ticker})", "Holder History")
+    st.subheader("Institutional Holder History (13F)")
+    st.caption(
+        "Share positions of the largest reporting institutions by calendar "
+        "quarter, assembled from stored 13F-HR snapshots (a sample of the "
+        "biggest filers found, not the complete institutional base)."
+    )
+
+    with st.spinner("Reading stored 13F quarter snapshots..."):
+        hist = get_holder_history(ticker, quarters=20)
+
+    if not hist:
+        st.info(
+            "No stored 13F quarter snapshots for this bank yet. History "
+            "accumulates as the quarterly 13F refresh runs — open the "
+            "Institutional (13F) tab once to seed the current quarter."
+        )
+        return
+
+    quarters = sorted({q for m in hist.values() for q in m}, reverse=True)
+    shown = quarters[:8]                      # cap the matrix width
+
+    def _latest_value(m: dict) -> float:
+        for q in quarters:
+            v = (m.get(q) or {}).get("value_usd")
+            if v:
+                return v
+        return 0.0
+
+    holders = sorted(hist, key=lambda h: -_latest_value(hist[h]))
+
+    # ── Matrix: holders (rows) × stored quarters (columns), shares ──────
+    rows = []
+    for h in holders:
+        row = {"Institution": h}
+        for q in shown:
+            cell = hist[h].get(q)
+            sh = (cell or {}).get("shares")
+            row[q] = f"{sh:,.0f}" if sh is not None else "—"
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    st.dataframe(df, use_container_width=True, hide_index=True,
+                 height=min(640, 36 + 35 * len(df)))
+    # Raw holder × quarter records (unformatted shares / value_usd)
+    flat = [{"institution": h, "quarter": q, **(hist[h][q] or {})}
+            for h in holders for q in sorted(hist[h], reverse=True)]
+    table_export(pd.DataFrame(flat), f"holder_history_{ticker}",
+                 key=f"exp_holder_history_{ticker}")
+
+    # ── Top Buyers / Sellers: latest stored quarter vs the prior one ────
+    if len(quarters) < 2:
+        st.caption(
+            f"Only **{quarters[0]}** is stored so far — the Top Buyers / "
+            "Sellers ranking appears once two quarters have accumulated."
+        )
+        return
+
+    q1, q0 = quarters[0], quarters[1]         # latest, prior
+    moves = _qoq_moves(hist, q1, q0)
+
+    if not moves:
+        st.caption(f"No position changes between {q0} and {q1} among stored holders.")
+        return
+
+    def _fmt(rows_):
+        return [{"Institution": r["Institution"],
+                 "Status": r["Status"] or "—",
+                 "Δ Shares": f"{r['Δ Shares']:+,.0f}",
+                 "Δ %": (f"{r['Δ %']:+.0f}%" if r["Δ %"] is not None else
+                         ("New" if r["Status"] == "New" else "—"))}
+                for r in rows_]
+
+    buyers = sorted([m for m in moves if m["Δ Shares"] > 0],
+                    key=lambda m: -m["Δ Shares"])[:10]
+    sellers = sorted([m for m in moves if m["Δ Shares"] < 0],
+                     key=lambda m: m["Δ Shares"])[:10]
+
+    st.markdown(f"**Top Buyers / Sellers — {q1} vs {q0}** (sampled filers)")
+    bc, sc = st.columns(2)
+    with bc:
+        st.markdown("**Buyers**")
+        if buyers:
+            st.dataframe(pd.DataFrame(_fmt(buyers)), use_container_width=True,
+                         hide_index=True, height=36 + 35 * len(buyers))
+        else:
+            st.caption("No adds among stored holders.")
+    with sc:
+        st.markdown("**Sellers**")
+        if sellers:
+            st.dataframe(pd.DataFrame(_fmt(sellers)), use_container_width=True,
+                         hide_index=True, height=36 + 35 * len(sellers))
+        else:
+            st.caption("No trims/exits among stored holders.")
+    st.caption(
+        "Δ compares each institution's stored share count between the two most "
+        "recent snapshot quarters. 'New'/'Exited' reflect presence in the stored "
+        "sample — a holder can drop out of the sample without selling."
+    )
