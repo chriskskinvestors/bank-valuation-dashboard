@@ -60,5 +60,48 @@ class TestQoqMoves(unittest.TestCase):
         self.assertNotIn("Ancient Hold", self.by_name)
 
 
+class TestInsiderWindowAggregates(unittest.TestCase):
+    """Pins ui/insider_activity._window_aggregates (SNL spec 3M/1Y windows):
+    P/S market trades only, trailing-window cutoff, distinct buyer/seller
+    counts. Deterministic via the injected `today`."""
+
+    TODAY = __import__("datetime").date(2026, 7, 10)
+
+    TXS = [
+        {"date": "2026-07-01", "code": "P", "direction": "Buy",
+         "insider": "CEO", "value_usd": 100_000.0},
+        {"date": "2026-06-20", "code": "S", "direction": "Sell",
+         "insider": "CFO", "value_usd": 40_000.0},
+        {"date": "2026-02-01", "code": "P", "direction": "Buy",
+         "insider": "Director A", "value_usd": 25_000.0},   # inside 1Y, outside 3M
+        {"date": "2026-07-05", "code": "A", "direction": "Buy",
+         "insider": "CEO", "value_usd": 999_999.0},          # grant — excluded
+        {"date": "2024-01-01", "code": "P", "direction": "Buy",
+         "insider": "Old Guy", "value_usd": 77_000.0},       # outside 1Y
+    ]
+
+    def test_3m_window(self):
+        from ui.insider_activity import _window_aggregates
+        w = _window_aggregates(self.TXS, 91, today=self.TODAY)
+        self.assertEqual(w["buys_usd"], 100_000.0)   # grant + Feb buy excluded
+        self.assertEqual(w["sells_usd"], 40_000.0)
+        self.assertEqual((w["buyers"], w["sellers"]), (1, 1))
+        self.assertEqual(w["net_usd"], 60_000.0)
+
+    def test_1y_window_includes_feb_excludes_2024(self):
+        from ui.insider_activity import _window_aggregates
+        w = _window_aggregates(self.TXS, 365, today=self.TODAY)
+        self.assertEqual(w["buys_usd"], 125_000.0)
+        self.assertEqual(w["buyers"], 2)
+
+    def test_filing_url_shape(self):
+        from ui.insider_activity import _filing_url
+        url = _filing_url(19617, "0000019617-26-000123")
+        self.assertEqual(url, "https://www.sec.gov/Archives/edgar/data/19617/"
+                              "000001961726000123/0000019617-26-000123-index.htm")
+        self.assertIsNone(_filing_url(19617, None))
+        self.assertIsNone(_filing_url(None, "x"))
+
+
 if __name__ == "__main__":
     unittest.main()

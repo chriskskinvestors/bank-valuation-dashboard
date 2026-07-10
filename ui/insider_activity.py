@@ -10,8 +10,42 @@ from datetime import datetime, timedelta
 from data.bank_mapping import get_cik, get_name
 from data.form4_client import fetch_insider_trades, summarize_insider_activity
 from utils.formatting import fmt_dollars
-from utils.chart_style import apply_standard_layout, CHART_HEIGHT_COMPACT
+from utils.chart_style import (apply_standard_layout, CHART_HEIGHT_COMPACT,
+                               COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY)
 from ui.chrome import table_export, ledger, title_bar
+
+
+def _window_aggregates(txs: list[dict], days: int, today=None) -> dict:
+    """Open-market (P/S) aggregates over a trailing window: value bought/sold,
+    distinct buyer/seller counts, net. Pure — unit-tested directly. Mirrors the
+    6M summary's convention (only P/S market trades count; grants, withholdings
+    and exercises are excluded)."""
+    today = today or datetime.now().date()
+    cutoff = (today - timedelta(days=days)).isoformat()
+    buys = sells = 0.0
+    buyers, sellers = set(), set()
+    for t in txs:
+        if t.get("code") not in ("P", "S"):
+            continue
+        d, v = t.get("date"), t.get("value_usd")
+        if not d or d < cutoff or not v:
+            continue
+        if t.get("direction") == "Buy":
+            buys += v
+            buyers.add(t.get("insider"))
+        elif t.get("direction") == "Sell":
+            sells += v
+            sellers.add(t.get("insider"))
+    return {"buys_usd": buys, "sells_usd": sells, "net_usd": buys - sells,
+            "buyers": len(buyers), "sellers": len(sellers)}
+
+
+def _filing_url(cik, accession: str | None) -> str | None:
+    """EDGAR filing-index URL for a Form 4 accession."""
+    if not accession or not cik:
+        return None
+    return (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+            f"{accession.replace('-', '')}/{accession}-index.htm")
 
 
 def render_insider_activity(ticker: str, show_title: bool = True):
@@ -61,6 +95,64 @@ def render_insider_activity(ticker: str, show_title: bool = True):
         ("Net Flow (6M)", _net_val),
         ("Buy/Sell Ratio", _ratio_val),
     ])
+
+    # ── Windowed aggregates (SNL spec: value bought/sold, buyers:sellers) ──
+    win_rows = []
+    for label, days in [("3M", 91), ("6M", 182), ("1Y", 365)]:
+        w = _window_aggregates(txs, days)
+        win_rows.append({
+            "Window": label,
+            "Bought": fmt_dollars(w["buys_usd"], 2) if w["buys_usd"] else "—",
+            "Sold": fmt_dollars(w["sells_usd"], 2) if w["sells_usd"] else "—",
+            "Net": fmt_dollars(w["net_usd"], 2) if (w["buys_usd"] or w["sells_usd"]) else "—",
+            "Buyers : Sellers": (f"{w['buyers']} : {w['sellers']}"
+                                 if (w["buyers"] or w["sellers"]) else "—"),
+        })
+    st.dataframe(pd.DataFrame(win_rows), use_container_width=True,
+                 hide_index=True, height=36 + 35 * len(win_rows))
+    st.caption(
+        "Open-market P/S trades only. The 12-month fetch reads each CIK's 30 "
+        "most recent Form 4s, so very active filers may truncate the older "
+        "window; the 5Y aggregate needs the deeper EDGAR backfill (phase 2)."
+    )
+
+    # ── Price graph with buy/sell markers (SNL spec) ────────────────────
+    try:
+        from data.fmp_client import get_history
+        import plotly.graph_objects as go
+        hist_px = get_history(ticker, "1Y")
+    except Exception:
+        hist_px = None
+    if hist_px is not None and not hist_px.empty:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=hist_px["date"], y=hist_px["close"], name="Price", mode="lines",
+            line=dict(color=COLOR_PRIMARY, width=1.6)))
+        mk = [t for t in txs if t.get("code") in ("P", "S")
+              and t.get("date") and t.get("price")]
+        buys_m = [t for t in mk if t.get("direction") == "Buy"]
+        sells_m = [t for t in mk if t.get("direction") == "Sell"]
+        if buys_m:
+            fig.add_trace(go.Scatter(
+                x=[t["date"] for t in buys_m], y=[t["price"] for t in buys_m],
+                name="Buy", mode="markers",
+                marker=dict(symbol="triangle-up", size=9, color=COLOR_SUCCESS),
+                text=[f"{t['insider']}: +{t['shares']:,.0f} sh" for t in buys_m],
+                hovertemplate="%{text}<br>%{x} @ $%{y:.2f}<extra>Buy</extra>"))
+        if sells_m:
+            fig.add_trace(go.Scatter(
+                x=[t["date"] for t in sells_m], y=[t["price"] for t in sells_m],
+                name="Sell", mode="markers",
+                marker=dict(symbol="triangle-down", size=9, color=COLOR_DANGER),
+                text=[f"{t['insider']}: −{t['shares']:,.0f} sh" for t in sells_m],
+                hovertemplate="%{text}<br>%{x} @ $%{y:.2f}<extra>Sell</extra>"))
+        apply_standard_layout(fig, title="Price with insider buys / sells (1Y)",
+                              height=CHART_HEIGHT_COMPACT, show_legend=True)
+        fig.update_yaxes(tickprefix="$")
+        st.plotly_chart(fig, use_container_width=True)
+        if not mk:
+            st.caption("No open-market trades in the window — markers appear "
+                       "when insiders buy or sell at market.")
 
     st.markdown("---")
 
@@ -114,6 +206,7 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                 "Price": f"${t['price']:.2f}" if t.get("price") else "—",
                 "Value": fmt_dollars(t.get("value_usd"), 2) if t.get("value_usd") else "—",
                 "Shares After": f"{t['shares_after']:,.0f}" if t.get("shares_after") else "—",
+                "Filing": _filing_url(cik, t.get("accession")),
             })
 
         df = pd.DataFrame(rows)
@@ -134,6 +227,11 @@ def render_insider_activity(ticker: str, show_title: bool = True):
         st.dataframe(
             styled, use_container_width=True, hide_index=True,
             height=min(600, 50 + 30 * len(df)),
+            column_config={
+                "Filing": st.column_config.LinkColumn(
+                    "Filing", help="Open the source Form 4 on SEC EDGAR",
+                    display_text="SEC ↗", width="small"),
+            },
         )
         # Underlying numeric transactions (unformatted shares/price/value)
         table_export(pd.DataFrame(filtered[:limit]),
