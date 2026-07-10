@@ -27,26 +27,26 @@ remaining levers, in priority order. The nightly shift may pick items.
    Applied to the three measured costs: earnings calendar (6h, job-warmed
    nightly), FRED home-rates bundle (30 min), insider alerts (30 min).
 
-## Remaining levers (priority order)
-1. **st.fragment per heavy section** (Home sections, statement tables):
-   section-level reruns instead of whole-script; also enables partial
-   refresh UX. Verify fragment behavior with our radio-as-tabs CSS first.
-2. **Precompute-at-write**: move remaining read-time aggregates into jobs
-   (screening table frames, peer percentile contexts, sector medians) and
-   serve stamped snapshots like the Home aggregate.
-3. **FRED snapshot table**: get_macro_snapshot + chart series persisted by
-   a 15-min job slice instead of live FRED calls on first paint (FRED is
-   the slowest external dependency; one timeout = +15s on a section).
-4. **Single-bank prefetch**: when a bank is picked, prefetch its other
-   tabs' data in the background (st.cache warming thread) so tab switches
-   are instant.
-5. **Cloud Run**: startup CPU boost on; consider min-instances=2 during
-   market hours (scheduler-driven) so deploys never leave zero warm
-   instances; measure container import time (heavy pandas/plotly imports
-   — consider lazy plotly import per page).
-6. **Measure, don't guess**: add a lightweight per-section timing log
-   (print path + ms) so prod logs show where seconds actually go; review
-   before each next lever.
+## Remaining levers (status reconciled 2026-07-10 — most SHIPPED)
+1. **st.fragment per heavy section** — ✅ DONE (perf tab-switch track:
+   @st.fragment on the price/valuation panels + statement pages;
+   chrome.lazy_tabs renders one pane, not all).
+2. **Precompute-at-write** (screening table frames, peer percentile
+   contexts, sector medians) — OPEN; belongs to the Screen & Compare track
+   (its worktree/lane). The Trends grids + Home aggregate already follow
+   this pattern.
+3. **FRED snapshot** — ✅ DONE (jobs/refresh_macro.py, scheduled */30,
+   warms fetch_series' cross-instance cache for the full series set; render
+   threads do cache reads only).
+4. **Single-bank prefetch** — ✅ DONE (_prefetch_profile_data ThreadPool
+   warm of the company tabs on bank pick, ui/bank_detail.py).
+5. **Cloud Run** — startup CPU boost ON; min-instances=2 during market
+   hours DECIDED-NOT-TAKEN (owner, 2026-07-10): pre-warm-per-deploy + the
+   */15 snapshot job cover the common case at current cost levels — revisit
+   only if users report cold-start pain after go-live. (Container import
+   timing / lazy plotly stays a nice-to-have.)
+6. **Measure, don't guess** — ✅ DONE (utils/timing `?perf=1` per-section
+   profiler; MEASURE-FIRST is the house rule for every perf change).
 
 ## Rules
 - Freshness stays honest: every served snapshot carries its as-of stamp;

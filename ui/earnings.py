@@ -463,6 +463,11 @@ def _render_surprise_history_grid(ticker: str, past: list[dict]):
 def _render_manual_input(ticker: str):
     """Manual consensus input form — stored as ONE firm's view (a broker, or the
     user's own model) so it aggregates with other firms into the consensus."""
+    # Confirmation persisted across the save's st.rerun (owner call, the final
+    # audit item): the rerun previously wiped the success feedback instantly.
+    saved_msg = st.session_state.pop("consensus_saved_msg", None)
+    if saved_msg:
+        st.success(saved_msg)
     st.markdown("**Enter estimates manually (one firm / your own model):**")
 
     pcol, fcol = st.columns(2)
@@ -549,8 +554,11 @@ def _render_manual_input(ticker: str):
                 st.error("Please enter at least one metric.")
             else:
                 save_manual_consensus(ticker, period, metrics, firm or "My model")
-                st.success(f"Saved {len(metrics)} estimates for {ticker} {period} "
-                           f"({firm or 'My model'})")
+                # Stash the confirmation so it SURVIVES the rerun (displayed
+                # and popped at the top of this form on the next pass).
+                st.session_state["consensus_saved_msg"] = (
+                    f"Saved {len(metrics)} estimates for {ticker} {period} "
+                    f"({firm or 'My model'})")
                 st.rerun()
 
 

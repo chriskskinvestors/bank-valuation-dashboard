@@ -66,7 +66,7 @@ BANK_MAP = {
     # 47 publicly-traded US banks ≥$150M mkt cap that were absent from the
     # universe because SEC's company_tickers.json (the discovery seed) omits
     # them. Every fdic_cert verified ACTIVE against the live institution and
-    # matched on holding-company name; FXLG (FS Bancorp NM) deferred — no
+    # matched on holding-company name; FXLG CLOSED 2026-07-10 — verified no
     # confident active match. See TOWN above for the canonical case.
     # ALL cik=None (FDIC-only): these banks stopped filing XBRL with the SEC
     # years ago (2012-2023) — a few keep an old CIK, but its companyfacts is
@@ -123,7 +123,11 @@ BANK_MAP = {
     "PONT":    {"name": "Pontiac Bancorp, Inc.",                         "fdic_cert": 16982,  "cik": None},
     # ── §12(i) / SEC-index gap banks, $100–150M tranche (sweep 2026-06-30) ─
     # Same class as the block above, extended down to $100M mkt cap: 30 more
-    # banks (FXLG / FS Bancorp NM deferred — no confident active FDIC match).
+    # banks. FXLG ("FS Bancorp NM" per the FMP screener) CLOSED 2026-07-10:
+    # a full census of all 29 ACTIVE New Mexico institutions shows NO such
+    # holdco, and FXLG is absent from SEC's ticker index — the screener row
+    # was bad FMP metadata. Permanently omitted (better omitted than wrong);
+    # don't re-attempt without new evidence of a real entity.
     # Each cert verified ACTIVE + matched on holding-company name; several
     # required state-filtered re-lookup (PPBN=Pinnacle Bankshares VA not
     # Pinnacle Financial TN; PBNK=Pinnacle Bank Gilroy CA; CNBW=CNB Corp/SC
