@@ -1679,6 +1679,12 @@
   "fdic_score": 0.5,
   "name": "New Peoples Bankshares"
  },
+ "OAKC": {
+  "cik": null,
+  "fdic_cert": 58783,
+  "fdic_score": 1.0,
+  "name": "Oakworth Capital"
+ },
  "OAKV": {
   "cik": null,
   "fdic_cert": 58827,
@@ -2004,7 +2010,7 @@
   "name": "ServisFirst Bancshares"
  },
  "SFCO": {
-  "cik": 1831523,
+  "cik": null,
   "fdic_cert": 16288,
   "fdic_score": 1.0,
   "name": "Southern Financial"
@@ -2376,7 +2382,7 @@
   "name": "Western New England Bancorp"
  },
  "WRIV": {
-  "cik": 1328409,
+  "cik": null,
   "fdic_cert": 89,
   "fdic_score": 1.0,
   "name": "White River Bancshares"

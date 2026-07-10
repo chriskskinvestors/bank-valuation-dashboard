@@ -508,20 +508,27 @@ def search_sec_by_ticker(ticker: str) -> tuple[int | None, str | None]:
         return None, None
 
 
+# Suffix WORDS dropped for matching — token-based, never substring (2026-07-10):
+# the old substring replace glued names: " CORP" ate the middle of
+# " CORPORATION" ("…BANKSHARESORATION") and " CO" the head of " COMMUNITY"/
+# " COMPANY"/" COLUMBIA" ("MMUNITY…"), corrupting the Jaccard word sets. It
+# mostly "worked" only because BOTH sides of a comparison were corrupted
+# identically.
+_SUFFIX_WORDS = {"INC", "CORP", "CO", "LTD", "CORPORATION", "HOLDINGS",
+                 "FINANCIAL", "BANCORP", "BANCORPORATION", "GROUP", "LLC"}
+
+
 def _clean_name(name: str) -> str:
     """Normalize a holding-company name for matching."""
     if not name:
         return ""
     s = name.upper()
-    for suffix in [", INC.", ", INC", " INC.", " INC", " CORP.", " CORP",
-                   " CO.", " CO", " LTD.", " LTD", " CORPORATION",
-                   " HOLDINGS", " FINANCIAL", " BANCORP", " BANCORPORATION",
-                   " GROUP", " LLC", "/DE", "/MD", "/NJ", "/RI", "/PA", "/OH", "/NC"]:
-        s = s.replace(suffix, "")
-    # Strip punctuation
+    for state_tag in ["/DE", "/MD", "/NJ", "/RI", "/PA", "/OH", "/NC"]:
+        s = s.replace(state_tag, "")
+    # Strip punctuation, then drop suffix words at TOKEN boundaries.
     for p in [",", ".", "'", "&"]:
         s = s.replace(p, " ")
-    return " ".join(s.split())  # collapse multi-space
+    return " ".join(w for w in s.split() if w not in _SUFFIX_WORDS)
 
 
 def _name_similarity(a: str, b: str) -> float:

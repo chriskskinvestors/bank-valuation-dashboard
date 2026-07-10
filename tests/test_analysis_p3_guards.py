@@ -215,5 +215,31 @@ class TestFdicPhraseSearchSingleEncoded(unittest.TestCase):
         self.assertEqual(result, 33011)
 
 
+class TestCleanNameTokenBoundary(unittest.TestCase):
+    """(2026-07-10, surfaced during the P3 batch) _clean_name used SUBSTRING
+    replaces, so " CORP" ate the middle of " CORPORATION"
+    ("…BANKSHARESORATION") and " CO" the head of " COMMUNITY"/" COMPANY"/
+    " COLUMBIA" ("MMUNITY…"). Suffix words must be dropped at TOKEN boundaries
+    only — non-suffix words survive intact."""
+
+    def test_corporation_not_glued(self):
+        from data.bank_mapping import _clean_name
+        self.assertEqual(_clean_name("Atlantic Union Bankshares Corporation"),
+                         "ATLANTIC UNION BANKSHARES")
+
+    def test_community_and_columbia_survive(self):
+        from data.bank_mapping import _clean_name
+        self.assertEqual(_clean_name("First Community Corp"), "FIRST COMMUNITY")
+        self.assertEqual(_clean_name("Columbia Banking System, Inc."),
+                         "COLUMBIA BANKING SYSTEM")
+
+    def test_suffix_words_still_dropped(self):
+        from data.bank_mapping import _clean_name
+        self.assertEqual(_clean_name("CVB Financial Corp."), "CVB")
+        self.assertEqual(_clean_name("Southern Financial Corp"), "SOUTHERN")
+        self.assertEqual(_clean_name("White River Bancshares Co /DE"),
+                         "WHITE RIVER BANCSHARES")
+
+
 if __name__ == "__main__":
     unittest.main()
