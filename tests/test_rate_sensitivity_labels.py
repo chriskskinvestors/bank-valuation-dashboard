@@ -193,5 +193,27 @@ class TestSpreadConventionShortMinusLong(unittest.TestCase):
         self.assertNotIn("10Y-2Y", text)
 
 
+class TestAssetBetaSliderScopedToConsumingTabs(unittest.TestCase):
+    """(AUDIT P3, 2026-07-10) The 'Asset repricing speed' slider rendered as a
+    global control but the DEFAULT (phased) tab ignored it — that tab derives
+    its repricing pace from the FFIEC ladder with its own levers. The slider
+    must render only when a consuming tab (Named Scenarios / Curve Matrix) is
+    selected, so no visible control is silently disconnected."""
+
+    def test_slider_gated_on_consuming_tabs(self):
+        src = (Path(__file__).parent.parent / "ui" /
+               "rate_sensitivity.py").read_text(encoding="utf-8")
+        body = src.split("def render_rate_sensitivity")[1]
+        pills = body.index("lazy_tabs(_rs_tabs")
+        gate = body.index("if _rs_sel in (_rs_tabs[1], _rs_tabs[2])")
+        slider = body.index("Asset repricing speed")
+        # tabs are selected first, then the slider renders inside the gate
+        self.assertLess(pills, gate)
+        self.assertLess(gate, slider)
+        # the phased pane call passes NO asset beta (it has its own levers)
+        self.assertIn("_render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta)",
+                      body)
+
+
 if __name__ == "__main__":
     unittest.main()

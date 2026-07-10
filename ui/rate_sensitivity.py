@@ -240,7 +240,24 @@ def render_rate_sensitivity(ticker: str):
 
     _render_rate_context(ff, t3m, t5, curve_3m_5y)
 
-    # ── Beta selector (shared across tabs) ─────────────────────────────
+    # ── Tabs ────────────────────────────────────────────────────────────
+    # The "Parallel Shift (legacy)" tab was removed: its model divided the
+    # historical cycle beta by ib_weight — a convention _resolve_deposit_beta
+    # explicitly documents as wrong (~1.4x inflated) — so the same screen
+    # showed two different "historical" betas. The phased/curve tabs are the
+    # supported model. Tabs render BEFORE the beta strip so the strip can show
+    # only the controls the selected tab actually consumes (audit P3: the
+    # asset-repricing slider looked global but the phased tab ignored it —
+    # that tab derives its pace from the FFIEC ladder + its own levers).
+    _rs_tabs = [
+        "Multi-Year Impact (phased)",
+        "Named Curve Scenarios",
+        "Curve Matrix (3M × 5Y)",
+        "Historical Fit",
+    ]
+    _rs_sel = lazy_tabs(_rs_tabs, key="ratesens")
+
+    # ── Beta selector (deposit beta: all tabs; asset beta: curve tabs only) ──
     bc1, bc2 = st.columns([2, 3])
     with bc1:
         beta_mode = st.radio(
@@ -250,6 +267,7 @@ def render_rate_sensitivity(ticker: str):
             horizontal=True,
         )
     custom_beta = None
+    asset_beta = 1.0
     with bc2:
         if beta_mode == "Custom":
             custom_beta = st.slider(
@@ -262,32 +280,23 @@ def render_rate_sensitivity(ticker: str):
         else:
             st.caption(f"Industry-standard {TEXTBOOK_INT_BEARING_BETA*100:.0f}% pass-through.")
 
-        asset_beta = st.slider(
-            "Asset repricing speed (5Y pass-through to yields)",
-            min_value=0.3, max_value=1.0, value=1.0, step=0.05,
-            key=f"asset_beta_{ticker}",
-            help="1.0 = full 5Y rate change flows to asset yields. Lower for banks with long fixed-rate books.",
-        )
+        # Only the curve tabs consume the blunt 5Y pass-through beta; the
+        # phased tab derives repricing pace from the bank's actual FFIEC
+        # ladder (with its own floating-share / duration levers), and the
+        # backtest fits measured history.
+        if _rs_sel in (_rs_tabs[1], _rs_tabs[2]):
+            asset_beta = st.slider(
+                "Asset repricing speed (5Y pass-through to yields)",
+                min_value=0.3, max_value=1.0, value=1.0, step=0.05,
+                key=f"asset_beta_{ticker}",
+                help="1.0 = full 5Y rate change flows to asset yields. Lower for banks with long fixed-rate books.",
+            )
 
     mode_key = (
         "historical" if beta_mode.startswith("Historical")
         else "textbook" if beta_mode.startswith("Textbook")
         else "custom"
     )
-
-    # ── Tabs ────────────────────────────────────────────────────────────
-    # The "Parallel Shift (legacy)" tab was removed: its model divided the
-    # historical cycle beta by ib_weight — a convention _resolve_deposit_beta
-    # explicitly documents as wrong (~1.4x inflated) — so the same screen
-    # showed two different "historical" betas. The phased/curve tabs are the
-    # supported model.
-    _rs_tabs = [
-        "Multi-Year Impact (phased)",
-        "Named Curve Scenarios",
-        "Curve Matrix (3M × 5Y)",
-        "Historical Fit",
-    ]
-    _rs_sel = lazy_tabs(_rs_tabs, key="ratesens")
 
     if _rs_sel == _rs_tabs[0]:
         _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta)
