@@ -45,6 +45,60 @@ def _ffill(d: dict, all_ends) -> dict:
     return out
 
 
+def _ffill_origin(d: dict, all_ends) -> dict:
+    """Forward-fill carrying the ORIGIN end: {end: (val, origin_end)}. The
+    intangible adjustment mixes several forward-filled series; vintage guards
+    (same-origin MSR stripping, combined-not-staler-than-goodwill) need to know
+    WHICH quarter each carried value actually came from."""
+    out, last = {}, None
+    for q in sorted(all_ends):
+        if d.get(q) is not None:
+            last = (d[q], q)
+        out[q] = last
+    return out
+
+
+def _intangible_adj_at(q, gwo, exo, fino, inclo, msro):
+    """Per-END goodwill+intangibles deduction, mirroring the audited main path
+    (sec_client._resolve_intangible_adjustment) on forward-filled series
+    (AUDIT-2026-07-02 #5 residual):
+      • other-intangibles: the MSR-inclusive `…ExcludingGoodwill` rollup first,
+        else `FiniteLivedIntangibleAssetsNet` (never contains MSRs).
+      • MSRs STAY in tangible equity — net them out of a rollup only when
+        unambiguously bundled: same ORIGIN quarter and 0 < MSR < tag.
+      • A combined `…IncludingGoodwill` tag fills gaps: back goodwill out and
+        take the larger other-intangibles, or stand alone when no goodwill tag
+        exists. A combined value STALER than goodwill is ignored (its
+        pre-acquisition sum would understate).
+    Each argument is a forward-filled {end: (val, origin_end)} map."""
+    def _get(m):
+        pair = m.get(q)
+        return pair if pair else (None, None)
+
+    gw, gw_o = _get(gwo)
+    ex, ex_o = _get(exo)
+    fin, _ = _get(fino)
+    incl, incl_o = _get(inclo)
+    msr, msr_o = _get(msro)
+
+    def _strip(val, val_origin):
+        if val and msr and msr_o == val_origin and 0 < msr < val:
+            return val - msr
+        return val
+
+    other = _strip(ex, ex_o) if ex is not None else fin
+
+    if incl:
+        if gw:
+            if incl_o >= gw_o:                    # staler combined ignored
+                backed = _strip(incl, incl_o)
+                backed = max((backed or 0) - gw, 0)
+                other = max(other or 0, backed)
+            return gw + (other or 0)
+        return max(_strip(incl, incl_o) or 0, other or 0)
+    return (gw or 0) + (other or 0)
+
+
 # Preferred carrying-value ladder — same order and semantics as
 # sec_client._resolve_preferred_stock: equity-section carrying value first
 # (par-only for simple issuers, par+APIC for the big banks), liquidation
@@ -88,14 +142,26 @@ def _bank_per_share(cik: int, ends: list) -> dict:
     treasury = _series(cik, ["TreasuryStockCommonShares"])
     wavg = _series(cik, ["WeightedAverageNumberOfDilutedSharesOutstanding"])
     gw = _series(cik, ["Goodwill"])
-    it = _series(cik, ["IntangibleAssetsNetExcludingGoodwill",
-                       "FiniteLivedIntangibleAssetsNet"])
+    # Separate ladders (AUDIT #5 residual): rollup-ness matters for MSR
+    # stripping, and the combined tag fills BKU-class filers that tag only
+    # IntangibleAssetsNetIncludingGoodwill (old behavior: TBVPS == BVPS).
+    it_ex = _series(cik, ["IntangibleAssetsNetExcludingGoodwill"])
+    it_fin = _series(cik, ["FiniteLivedIntangibleAssetsNet"])
+    incl = _series(cik, ["IntangibleAssetsNetIncludingGoodwill"])
+    msr = _series(cik, ["ServicingAssetAtFairValueAmount"])
     pfd = _merged_series(cik, _PREFERRED_VALUE_CONCEPTS)
     pfd_sh = _merged_series(cik, ["PreferredStockSharesOutstanding",
                                   "PreferredStockSharesIssued"])
-    universe = (set(eq) | set(sh) | set(issued) | set(wavg) | set(gw) | set(it)
+    universe = (set(eq) | set(sh) | set(issued) | set(wavg) | set(gw)
+                | set(it_ex) | set(it_fin) | set(incl) | set(msr)
                 | set(pfd) | set(pfd_sh) | set(ends))
-    gwf, itf = _ffill(gw, universe), _ffill(it, universe)   # slow items only
+    # Slow balance-sheet items forward-fill WITH their origin end so the
+    # adjustment's vintage guards hold across carried values.
+    gwo = _ffill_origin(gw, universe)
+    exo = _ffill_origin(it_ex, universe)
+    fino = _ffill_origin(it_fin, universe)
+    inclo = _ffill_origin(incl, universe)
+    msro = _ffill_origin(msr, universe)
     pfdf = _ffill(pfd, universe)
     # Presence forward-fills WITH the value: a filer that tags preferred only
     # annually must not read as preferred-free in the off-quarters.
@@ -132,8 +198,8 @@ def _bank_per_share(cik: int, ends: list) -> dict:
             out[q] = {"tbvps_hist": None, "bvps_hist": None}
             continue
         ce = e - (pfdf.get(q) or 0)
-        g, i = (gwf.get(q) or 0), (itf.get(q) or 0)
-        out[q] = {"tbvps_hist": (ce - g - i) / s, "bvps_hist": ce / s}
+        adj = _intangible_adj_at(q, gwo, exo, fino, inclo, msro)
+        out[q] = {"tbvps_hist": (ce - adj) / s, "bvps_hist": ce / s}
     return out
 
 
@@ -149,10 +215,11 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     n = max(int(n_quarters), 1)
     ends = [pd.Timestamp(e).normalize() for e in recent_quarter_ends(n)]
     labels = [quarter_label(e) for e in ends]
-    # v2: per-common-share conventions (preferred subtracted, placeholder
-    # share counts derived) — the bump invalidates pre-warmed v1 grids so the
-    # old preferred-inflated values don't serve until the next nightly run.
-    key = f"sec_pershare:v2:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
+    # v3: intangible adjustment now mirrors the main path (combined-tag filers
+    # + MSR netting, AUDIT #5 residual) — the bump invalidates pre-warmed v2
+    # grids so stale BKU/USB-class TBVPS values don't serve until re-warmed.
+    # (v2 was the per-common-share conventions bump.)
+    key = f"sec_pershare:v3:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
     cached = cache.get(key)
     if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached

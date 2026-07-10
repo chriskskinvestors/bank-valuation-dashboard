@@ -481,14 +481,23 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # Cost of funds — prefer FDIC's pre-computed INTEXPY (annualized cost of
     # interest-bearing liabilities). Only fall back to a manual calculation
     # if INTEXPY is unavailable, and annualize properly from YTD EINTEXP.
+    # The fallback denominator must cover the SAME base as INTEXPY — ALL
+    # interest-bearing liabilities (IB deposits + fed funds/repo + FHLB/other
+    # borrowings + sub-debt), not IB deposits alone: EINTEXP includes borrowing
+    # interest, so the deposits-only denominator overstated the rate (measured
+    # 2026-07-10: median +3.5%, p90 +13.8%, max +37% across the universe;
+    # latent — INTEXPY was present for all 324 banks that quarter).
     cost_of_funds = intexpy
     if cost_of_funds is None:
         eintexp = fdic_data.get("EINTEXP")
-        int_bear_dep = fdic_data.get("DEPIDOM")
-        if eintexp is not None and int_bear_dep and int_bear_dep > 0:
+        ib_liabs = fdic_data.get("DEPIDOM")
+        if ib_liabs and ib_liabs > 0:
+            ib_liabs += sum(fdic_data.get(f) or 0
+                            for f in ("FREPO", "OTHBFHLB", "SUBND"))
+        if eintexp is not None and ib_liabs and ib_liabs > 0:
             quarter = _infer_quarter(fdic_data.get("REPDTE"))
             eintexp_annualized = _annualize_ytd(eintexp, quarter)
-            cost_of_funds = (eintexp_annualized / int_bear_dep) * 100
+            cost_of_funds = (eintexp_annualized / ib_liabs) * 100
 
     # Non-interest burden = non-int expense - non-int income, as % of assets
     nonint_burden = None

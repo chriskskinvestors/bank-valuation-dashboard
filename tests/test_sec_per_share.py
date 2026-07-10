@@ -168,5 +168,75 @@ class TestMergedSeriesLadder(unittest.TestCase):
         self.assertEqual(merged[Q1], 4_000.0)
 
 
+class TestIntangibleAdjustmentMirrorsMainPath(unittest.TestCase):
+    """(AUDIT-2026-07-02 #5 RESIDUAL, closed 2026-07-10) The trends path used
+    raw Goodwill + ExcludingGoodwill tags, so BKU-class filers (combined
+    IncludingGoodwill tag only) got TBVPS == BVPS, and USB-class MSR-inclusive
+    rollups over-deducted. Per-END adjustment now mirrors
+    sec_client._resolve_intangible_adjustment with origin-vintage guards."""
+
+    def _tbvps(self, data, q=Q1):
+        with _mock_hist(data):
+            per = sps._bank_per_share(1, [q])
+        return per[q]["tbvps_hist"], per[q]["bvps_hist"]
+
+    def test_bku_class_combined_tag_only(self):
+        # equity 1000, shares 100, ONLY the combined tag (200): old behavior
+        # deducted nothing (TBVPS == BVPS == 10.0); now TBVPS = 8.0.
+        data = {"StockholdersEquity": [(Q1, 1000.0)],
+                "CommonStockSharesOutstanding": [(Q1, 101.0)],
+                "IntangibleAssetsNetIncludingGoodwill": [(Q1, 200.0)]}
+        tbv, bv = self._tbvps(data)
+        self.assertAlmostEqual(bv, 1000.0 / 101.0, places=6)
+        self.assertAlmostEqual(tbv, 800.0 / 101.0, places=6)
+        self.assertNotAlmostEqual(tbv, bv, places=6)
+
+    def test_usb_class_msr_netted_from_rollup(self):
+        # Rollup other-intangibles 160 INCLUDES a same-end MSR 60 → deduct
+        # goodwill 100 + (160 − 60) = 200, not 260.
+        data = {"StockholdersEquity": [(Q1, 1000.0)],
+                "CommonStockSharesOutstanding": [(Q1, 101.0)],
+                "Goodwill": [(Q1, 100.0)],
+                "IntangibleAssetsNetExcludingGoodwill": [(Q1, 160.0)],
+                "ServicingAssetAtFairValueAmount": [(Q1, 60.0)]}
+        tbv, _ = self._tbvps(data)
+        self.assertAlmostEqual(tbv, (1000.0 - 200.0) / 101.0, places=6)
+
+    def test_fitb_class_separate_msr_not_stripped(self):
+        # MSR (180) LARGER than the rollup (120) cannot be bundled inside it —
+        # no stripping; deduct goodwill 100 + 120.
+        data = {"StockholdersEquity": [(Q1, 1000.0)],
+                "CommonStockSharesOutstanding": [(Q1, 101.0)],
+                "Goodwill": [(Q1, 100.0)],
+                "IntangibleAssetsNetExcludingGoodwill": [(Q1, 120.0)],
+                "ServicingAssetAtFairValueAmount": [(Q1, 180.0)]}
+        tbv, _ = self._tbvps(data)
+        self.assertAlmostEqual(tbv, (1000.0 - 220.0) / 101.0, places=6)
+
+    def test_finite_lived_never_msr_stripped(self):
+        # FiniteLivedIntangibleAssetsNet (80) never contains MSRs — even a
+        # same-end smaller MSR (50) must NOT be netted out of it.
+        data = {"StockholdersEquity": [(Q1, 1000.0)],
+                "CommonStockSharesOutstanding": [(Q1, 101.0)],
+                "Goodwill": [(Q1, 100.0)],
+                "FiniteLivedIntangibleAssetsNet": [(Q1, 80.0)],
+                "ServicingAssetAtFairValueAmount": [(Q1, 50.0)]}
+        tbv, _ = self._tbvps(data)
+        self.assertAlmostEqual(tbv, (1000.0 - 180.0) / 101.0, places=6)
+
+    def test_stale_combined_ignored_when_goodwill_fresher(self):
+        # Combined tag last seen Q4 (150, pre-acquisition); goodwill re-tagged
+        # at Q1 (140 > combined-implied). The stale combined must be ignored:
+        # deduct goodwill 140 + explicit rollup 30 = 170 — NOT max() against a
+        # pre-acquisition combined that would understate.
+        data = {"StockholdersEquity": [(Q1, 1000.0)],
+                "CommonStockSharesOutstanding": [(Q1, 101.0)],
+                "Goodwill": [(Q4, 90.0), (Q1, 140.0)],
+                "IntangibleAssetsNetExcludingGoodwill": [(Q1, 30.0)],
+                "IntangibleAssetsNetIncludingGoodwill": [(Q4, 150.0)]}
+        tbv, _ = self._tbvps(data)
+        self.assertAlmostEqual(tbv, (1000.0 - 170.0) / 101.0, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

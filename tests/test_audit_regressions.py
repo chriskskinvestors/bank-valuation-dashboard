@@ -216,6 +216,41 @@ class TestProvenanceMatchesDisplay(unittest.TestCase):
                                display["intangible_adjustment"], places=6)
 
 
+class TestCostOfFundsFallbackDenominator(unittest.TestCase):
+    """(AUDIT-2026-07-02 P3, closed 2026-07-10) The cost-of-funds fallback
+    (INTEXPY missing) divided EINTEXP — which includes BORROWING interest — by
+    interest-bearing DEPOSITS alone, overstating the rate for any bank with
+    borrowings (measured: median +3.5%, p90 +13.8%, max +37%). The denominator
+    must span all interest-bearing liabilities, matching INTEXPY's base.
+
+    Hand-computed: Q4 EINTEXP 30 (already full-year, ×1); DEPIDOM 800,
+    FREPO 100, OTHBFHLB 80, SUBND 20 → 30/1000 = 3.00%, not 30/800 = 3.75%."""
+
+    def _fdic(self, **over):
+        base = {"INTEXPY": None, "EINTEXP": 30.0, "DEPIDOM": 800.0,
+                "FREPO": 100.0, "OTHBFHLB": 80.0, "SUBND": 20.0,
+                "REPDTE": "20251231"}
+        base.update(over)
+        return base
+
+    def _cof(self, fdic):
+        from analysis.valuation import compute_all_valuations
+        out = compute_all_valuations({}, {}, fdic)
+        return out.get("cost_of_funds")
+
+    def test_denominator_spans_all_ib_liabilities(self):
+        got = self._cof(self._fdic())
+        self.assertAlmostEqual(got, 3.00, places=4)          # 30 / 1000
+        self.assertNotAlmostEqual(got, 3.75, places=4)       # old: 30 / 800
+
+    def test_deposits_only_bank_unchanged(self):
+        got = self._cof(self._fdic(FREPO=None, OTHBFHLB=None, SUBND=None))
+        self.assertAlmostEqual(got, 3.75, places=4)          # 30 / 800
+
+    def test_intexpy_still_preferred(self):
+        self.assertAlmostEqual(self._cof(self._fdic(INTEXPY=2.5)), 2.5, places=4)
+
+
 class TestQuarterlyFlowDecumulation(unittest.TestCase):
     """(AUDIT-2026-07-02 P2 #26) Quarterly rate kinds annualized the YTD-
     cumulative flow (×12/m) but divided by a SINGLE-QUARTER 2-point average —
