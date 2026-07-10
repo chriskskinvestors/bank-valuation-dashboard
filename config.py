@@ -58,7 +58,10 @@ DEFAULT_WATCHLIST = [
     "HTB", "FRBA", "SMBK", "BFST", "TCBX", "FMBH", "HBNC", "PLBC",
     "FSRL", "BANR", "BRBS", "FSBW", "SPFI", "ALRS", "FMNB",  # MCBI removed (acquired 04/2026)
     "HFWA", "BAFN", "CBAN", "OVBC", "FRME", "LNKB", "WAL", "TSBK",
-    "BKU", "PGC", "SBFG", "FNWB", "INBC", "CCNB", "JMSB", "RVSB",
+    # INBC→INDB 2026-07-10: the intended bank is Independent Bank Corp
+    # (Rockland Trust) = INDB; ticker INBC is InBankshares Corp (InBank NM) —
+    # the old mapping had duplicated Rockland's cert under INBC.
+    "BKU", "PGC", "SBFG", "FNWB", "INDB", "CCNB", "JMSB", "RVSB",
     "SLBK", "INBK", "RMBI", "TFSL", "CBK", "IBTN", "FGBI", "PNFP",
     "OZK", "FHN", "UBSI", "FBNC", "FFWM", "FFIN", "HOMB", "EGBN",
     "ISBA", "BANC", "FLG", "VLY", "KEY", "HBAN", "ZION",
