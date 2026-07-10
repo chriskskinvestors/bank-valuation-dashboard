@@ -364,6 +364,65 @@ def get_holder_history(ticker: str, quarters: int = 20) -> dict[str, dict[str, d
     return history
 
 
+def get_crossholdings(ticker: str, top_holders: int = 25) -> dict:
+    """Inferred crossholdings (SNL plan §13): for the subject bank's largest
+    stored holders, which OTHER universe banks does each institution also hold?
+    Pure cross-join of the stored quarterly snapshots — no new fetches, so
+    coverage equals the set of banks whose 13F snapshots have been stored
+    (grows as 13F tabs are viewed; a universe-wide warm job is a later task).
+
+    Returns {"quarter": q, "coverage": n_banks_scanned, "rows": [
+        {"holder": name, "subject_value_usd": v,
+         "others": [{"ticker": tk, "shares": s, "value_usd": v}, ...]}]}
+    or {} when the subject has no stored snapshot.
+    """
+    if not ticker:
+        return {}
+    t = ticker.upper()
+    # Subject's latest stored quarter (same discovery as get_holder_history).
+    found = set()
+    for name in list_files(FORM13F_CACHE_PREFIX, f"{t}_*.json"):
+        m = _QUARTER_FILE_RE.search(name)
+        if m and name == _quarter_filename(t, m.group(1)):
+            found.add(m.group(1))
+    if not found:
+        return {}
+    quarter = max(found)
+    subj = load_json(FORM13F_CACHE_PREFIX, _quarter_filename(t, quarter)) or {}
+    subj_holders = sorted((h for h in subj.get("holders", []) if h.get("filer_name")),
+                          key=lambda h: -(h.get("value_usd") or 0))[:top_holders]
+    if not subj_holders:
+        return {}
+
+    # Every OTHER bank's snapshot for the same quarter → holder-name index.
+    by_holder: dict[str, list[dict]] = {}
+    scanned = 0
+    for name in list_files(FORM13F_CACHE_PREFIX, f"*_{quarter}.json"):
+        other = name[: -len(f"_{quarter}.json")]
+        if other == t or not other.isalpha():
+            continue
+        snap = load_json(FORM13F_CACHE_PREFIX, name) or {}
+        holders = snap.get("holders")
+        if not holders:
+            continue
+        scanned += 1
+        for h in holders:
+            hn = h.get("filer_name")
+            if hn:
+                by_holder.setdefault(hn, []).append(
+                    {"ticker": other, "shares": h.get("shares"),
+                     "value_usd": h.get("value_usd")})
+
+    rows = []
+    for h in subj_holders:
+        others = sorted(by_holder.get(h["filer_name"], []),
+                        key=lambda o: -(o.get("value_usd") or 0))
+        rows.append({"holder": h["filer_name"],
+                     "subject_value_usd": h.get("value_usd"),
+                     "others": others})
+    return {"quarter": quarter, "coverage": scanned, "rows": rows}
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def fetch_institutional_holdings(ticker: str, company_name: str = "",
                                    max_filers: int = 25,

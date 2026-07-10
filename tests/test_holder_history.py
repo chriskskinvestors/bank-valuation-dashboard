@@ -94,6 +94,44 @@ class TestInsiderWindowAggregates(unittest.TestCase):
         self.assertEqual(w["buys_usd"], 125_000.0)
         self.assertEqual(w["buyers"], 2)
 
+    def test_crossholdings_cross_join(self):
+        """get_crossholdings: subject's top holders joined against every OTHER
+        bank's same-quarter snapshot; others sorted by value; coverage counts
+        scanned banks."""
+        from unittest.mock import patch
+        import data.form13f_client as f13
+
+        files = {
+            "BANR_2026Q1.json": {"holders": [
+                {"filer_name": "Alpha Mgmt", "shares": 10.0, "value_usd": 500.0},
+                {"filer_name": "Beta Cap", "shares": 5.0, "value_usd": 300.0}]},
+            "JPM_2026Q1.json": {"holders": [
+                {"filer_name": "Alpha Mgmt", "shares": 99.0, "value_usd": 9_000.0}]},
+            "USB_2026Q1.json": {"holders": [
+                {"filer_name": "Alpha Mgmt", "shares": 42.0, "value_usd": 4_000.0},
+                {"filer_name": "Beta Cap", "shares": 7.0, "value_usd": 700.0}]},
+        }
+
+        def fake_list(prefix, pattern="*.json"):
+            import fnmatch
+            return [n for n in files if fnmatch.fnmatch(n, pattern)]
+
+        def fake_load(prefix, name):
+            return files.get(name)
+
+        with patch.object(f13, "list_files", side_effect=fake_list), \
+             patch.object(f13, "load_json", side_effect=fake_load):
+            x = f13.get_crossholdings("BANR")
+
+        self.assertEqual(x["quarter"], "2026Q1")
+        self.assertEqual(x["coverage"], 2)
+        self.assertEqual([r["holder"] for r in x["rows"]],
+                         ["Alpha Mgmt", "Beta Cap"])          # by subject value
+        alpha = x["rows"][0]["others"]
+        self.assertEqual([o["ticker"] for o in alpha], ["JPM", "USB"])  # value-desc
+        beta = x["rows"][1]["others"]
+        self.assertEqual([o["ticker"] for o in beta], ["USB"])
+
     def test_filing_url_shape(self):
         from ui.insider_activity import _filing_url
         url = _filing_url(19617, "0000019617-26-000123")

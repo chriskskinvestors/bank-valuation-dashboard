@@ -214,7 +214,10 @@ Ownership Crossholdings (still name-only) · Insider Activity.
 | Detailed: holder table (shares, %CSO, mkt val, Δshares/%, position date, source, turnover cat+%, orientation Active/Passive, equity assets, city/state, style, cap emphasis) — 370 holders | 13F (HAVE) + N-PORT mutual-fund agg (NEW ingest) + holder-book analytics: SNL computes style/turnover from each holder's FULL 13F book — phase 1: light versions from our-universe positions; phase 2: per-holder full-filing fetch |
 | History: holder × quarter matrix, 5y, expandable (shares, %CSO, mkt val, Δ, %Δ) | ✅ PHASE 1 SHIPPED 2026-07-10: "Holder History" sub-tab (holder × quarter shares matrix from the quarterly snapshots + QoQ Top Buyers/Sellers incl. New/Exited, honest sample caveats). History accumulates forward; EDGAR backfill + %CSO/mkt-val columns = phase 2 |
 | Insider Activity: volume/price graph w/ buy-sell markers, 3M/1Y/5Y aggregates (value bought/sold, buyers:sellers), full Form 4 table w/ filing links | Form 4 ingest (HAVE) + price store (HAVE) — computation + layout |
-Crossholdings remains inferred (cross-join of 13F across our universe).
+Crossholdings ✅ SHIPPED 2026-07-10 as designed — inferred cross-join of stored
+13F quarter snapshots ("Crossholdings" sub-tab: subject's top holders × other
+banks each also holds, coverage/sample caveats explicit; coverage grows with
+stored snapshots — a universe-wide 13F warm job is a later lever).
 Plus 13D/G for activist panel.
 
 ## 14. Transactions section (NEW top-level tab; user, 2026-06-12)

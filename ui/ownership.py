@@ -268,3 +268,59 @@ def render_holder_history(ticker: str):
         "recent snapshot quarters. 'New'/'Exited' reflect presence in the stored "
         "sample — a holder can drop out of the sample without selling."
     )
+
+
+def render_crossholdings(ticker: str):
+    """Inferred crossholdings (SNL 'Ownership Crossholdings'): for this bank's
+    largest stored 13F holders, which OTHER universe banks each institution
+    also holds — a pure cross-join of the stored quarterly snapshots."""
+    from data.form13f_client import get_crossholdings
+
+    name = get_name(ticker)
+    title_bar(f"{name} ({ticker})", "Crossholdings")
+    st.subheader("Institutional Crossholdings (inferred)")
+
+    with st.spinner("Cross-joining stored 13F snapshots..."):
+        x = get_crossholdings(ticker)
+
+    if not x or not x.get("rows"):
+        st.info(
+            "No stored 13F snapshot for this bank yet — open the "
+            "Institutional (13F) tab once to seed it. Crossholdings are "
+            "inferred from stored snapshots, so coverage grows as more banks' "
+            "13F tabs are viewed."
+        )
+        return
+
+    st.caption(
+        f"**{x['quarter']}** · cross-joined against **{x['coverage']}** other "
+        "universe banks with a stored snapshot for the same quarter. Inferred "
+        "from our stored sample of largest filers — an institution can hold "
+        "other banks not shown here."
+    )
+    if x["coverage"] == 0:
+        st.info("No other banks have a stored snapshot for this quarter yet — "
+                "the cross-join will populate as 13F tabs are viewed.")
+        return
+
+    rows = []
+    for r in x["rows"]:
+        others = r["others"]
+        tops = ", ".join(
+            f"{o['ticker']} ({fmt_dollars(o['value_usd'], 1)})"
+            for o in others[:5] if o.get("value_usd"))
+        rows.append({
+            "Institution": r["holder"],
+            f"Position here": fmt_dollars(r["subject_value_usd"], 2)
+                              if r.get("subject_value_usd") else "—",
+            "Other banks held": len(others),
+            "Largest other positions": tops or "—",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                 height=min(640, 36 + 35 * len(rows)))
+    flat = [{"holder": r["holder"], "ticker": o["ticker"],
+             "shares": o.get("shares"), "value_usd": o.get("value_usd")}
+            for r in x["rows"] for o in r["others"]]
+    if flat:
+        table_export(pd.DataFrame(flat), f"crossholdings_{ticker}",
+                     key=f"exp_crossholdings_{ticker}")
