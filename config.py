@@ -3,6 +3,8 @@ Central configuration for the Bank Valuation Dashboard.
 
 TO ADD A NEW METRIC: append a dict to the METRICS list below.
   • source "fdic" / "sec" / "ibkr": no other code changes needed.
+    ("ibkr" is the legacy name for market-price fields — in production these
+    come from FMP; IBKR is only a local-dev fallback when TWS is connected.)
   • source "computed": ALSO add the computation in analysis/valuation.py
     (compute_all_valuations) — the registry entry alone won't produce values.
 TO REMOVE A METRIC: delete or comment out its dict entry.
@@ -79,6 +81,8 @@ DEFAULT_PORTFOLIO = []  # User populates via sidebar
 #   key          – unique internal id
 #   label        – column header shown in the UI
 #   source       – "fdic" | "sec" | "ibkr" | "computed"
+#                  ("ibkr" = market price data; served by FMP in production,
+#                  IBKR only as a local-dev fallback)
 #   fdic_field   – (if source=fdic) FDIC API field name
 #   sec_concept  – (if source=sec) XBRL concept name
 #   format       – "pct" | "currency" | "ratio" | "number" | "millions" |
@@ -1204,6 +1208,3 @@ TAB_META = {
     "income":             ("Financials", "Income statement: revenue, expense, provisions and productivity."),
     "nim_metrics":        ("Financials", "Margin detail: asset yields, funding costs and spreads."),
 }
-
-# Legacy aliases
-DEFAULT_TABLE_COLUMNS = TABS[0]["columns"]
