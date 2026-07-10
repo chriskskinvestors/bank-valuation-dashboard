@@ -108,6 +108,18 @@ def main():
     snapshot = refresh_universe_snapshot()
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Snapshot: {len(snapshot)} banks", flush=True)
 
+    # Wrong-entity guard (OBSERVE-ONLY): corroborate every ticker↔cert join
+    # against the FDIC's own holding-company name (NAMEHCR) and flag duplicate
+    # cert claims — the two tells that caught the 18 wrong joins fixed
+    # 2026-07-09. Prints [namehcr-guard] lines; never fails the job. Harden to
+    # a gate only after the nightly logs show a stable clean baseline
+    # (verify-baseline-before-arming rule).
+    try:
+        from data.bank_universe import run_namehcr_guard
+        run_namehcr_guard(snapshot)
+    except Exception as e:
+        print(f"[warn] namehcr guard crashed: {type(e).__name__}: {e}", flush=True)
+
     universe = sorted(set(snapshot.keys()) | set(DEFAULT_WATCHLIST))
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Refreshing {len(universe)} banks", flush=True)
 

@@ -9,6 +9,7 @@ Two-phase discovery:
 The universe is cached for 24 hours via Streamlit's @st.cache_data.
 """
 
+import re
 import time
 import requests
 import streamlit as st
@@ -712,3 +713,233 @@ def get_universe_bank(ticker: str) -> dict | None:
         return {**resolved,
                 "name": format_bank_name(resolved.get("name") or ticker, ticker)}
     return None
+
+
+# ── NAMEHCR corroboration guard (observe-only) ──────────────────────────────
+# The 2026-07-09 sweep found 18 tickers fuzzy-joined to ANOTHER bank's FDIC
+# cert — their pages served that bank's financials (CFG showed First-Citizens',
+# FNB a $310M SC namesake, BNY Bank of America). Two tells caught every one:
+#   1. the cert's own NAMEHCR (regulatory high holder) did not corroborate the
+#      SEC registrant, and
+#   2. duplicate cert claims — a cert belongs to exactly ONE holdco (CFG/FCBM/
+#      FCNCA all claimed 11063; HBCP/HFBL/HOMB all claimed 11241).
+# run_namehcr_guard() re-runs both tells against every freshly built snapshot,
+# OBSERVE-ONLY (prints loud [namehcr-guard] lines, never fails the job) per the
+# verify-baseline-before-arming rule. Pure logic is separated from the fetch so
+# tests run offline.
+
+# FDIC HCR names use systematic abbreviations ("U S BCORP", "CITIZENS FINL
+# SERVICES INC", "FARMERS&MERCHANTS BCORP"). Canonicalize both sides so a legit
+# pair corroborates without hand-listing: token map + &→AND + drop filler.
+_HCR_TOKEN_CANON = {
+    "BCORP": "BANCORPORATION", "BANCORP": "BANCORPORATION",
+    "BANCORPORATION": "BANCORPORATION",
+    "BSHRS": "BANCSHARES", "BCSHRS": "BANCSHARES", "BANKSHARES": "BANCSHARES",
+    "FINL": "FINANCIAL", "FNCL": "FINANCIAL",
+    "SVGS": "SAVINGS", "HLDGS": "HOLDINGS", "NATL": "NATIONAL",
+    "CMTY": "COMMUNITY", "GRP": "GROUP", "CORP": "CORPORATION",
+    "SVCS": "SERVICES", "BUS": "BUSINESS",
+    # dropped outright (corporate filler that differs between registries)
+    "INC": "", "INCORPORATED": "", "THE": "", "CO": "", "COMPANY": "",
+    "MHC": "", "ESOP": "",
+}
+
+# Words too common across bank names to count as a distinctive-token match.
+_GENERIC_NAME_TOKENS = {
+    "BANK", "BANKS", "BANC", "BANCORPORATION", "BANCSHARES", "BANKING",
+    "FINANCIAL", "TRUST", "SAVINGS", "FEDERAL", "NATIONAL", "FIRST",
+    "CORPORATION", "HOLDINGS", "HOLDING", "GROUP", "OF", "AND", "NEW",
+    "STATE", "UNITED", "COMMUNITY", "CITIZENS", "FSB", "SSB", "NA",
+    "ASSOCIATION", "SERVICES", "SERVICE", "LOAN", "HOME", "MUTUAL",
+}
+
+# Pairs hand-verified as CORRECT despite failing both automatic tells (keyed
+# ticker -> cert so the entry self-expires if the join ever changes). TFSL's
+# HCR is the mutual-holding-company legal name, unrecognizable from "TFS
+# Financial Corp" by any token rule; FINN's NAMEHCR is the Lauritzen family
+# holding company that sits ABOVE the SEC registrant. Both verified in the
+# 2026-07-09/10 sweep.
+_NAMEHCR_VERIFIED_OK: dict[str, int] = {
+    "TFSL": 30012,   # THIRD FS&LA OF CLEVELAND MHC / Third Federal Savings
+    "FINN": 5452,    # LAURITZEN CORP (tier above First National of Nebraska) /
+                     # First National Bank of Omaha
+    "FGBI": 14028,   # SMITH&HOOD HOLDING CO LLC (control entity above First
+                     # Guaranty Bancshares) / First Guaranty Bank, Hammond LA
+}
+
+_SEC_STATE_SUFFIX_RE = re.compile(r"/[A-Z]{2,3}/?\s*$")
+
+
+def _hcr_tokens(name: str) -> list[str]:
+    """Canonical token list for holdco-name comparison (both SEC and FDIC
+    sides go through the identical transform)."""
+    up = _SEC_STATE_SUFFIX_RE.sub("", (name or "").upper())
+    up = up.replace("&", " AND ")
+    up = re.sub(r"[^A-Z0-9]+", " ", up)
+    out = []
+    for tok in up.split():
+        tok = _HCR_TOKEN_CANON.get(tok, tok)
+        if tok:
+            out.append(tok)
+    return out
+
+
+def _cmp_names(sec_name: str, cand: str, allow_prefix: bool) -> bool:
+    """Canonicalized name comparison, any test passes:
+      • a shared distinctive token (generic bank words excluded);
+      • collapsed-string containment, so "U.S. Bancorp" == "U S BCORP" and
+        "First Bancorp (NC)" ⊇ "FIRST BCORP" (min length 8 so a bare generic
+        core can't contain-match everything);
+      • when allow_prefix: a long shared prefix (≥80% of the shorter string,
+        min 12 chars) — registries truncate/abbreviate tails ("…BCORP INC OF
+        LA" vs "…Bancorp, Inc. of Louisiana")."""
+    sec_toks = _hcr_tokens(sec_name)
+    toks = _hcr_tokens(cand)
+    if not sec_toks or not toks:
+        return False
+    if (set(sec_toks) - _GENERIC_NAME_TOKENS) & (set(toks) - _GENERIC_NAME_TOKENS):
+        return True
+    a, b = "".join(sec_toks), "".join(toks)
+    short_len = min(len(a), len(b))
+    if short_len >= 8 and (a in b or b in a):
+        return True
+    if allow_prefix:
+        prefix = 0
+        for x, y in zip(a, b):
+            if x != y:
+                break
+            prefix += 1
+        if short_len >= 12 and prefix >= 0.8 * short_len:
+            return True
+    return False
+
+
+def _names_corroborate(sec_name: str, hcr: str, bank_name: str = "") -> bool:
+    """True when the SEC registrant is plausibly the company the FDIC record
+    belongs to. NAMEHCR (the regulatory high holder) is authoritative when
+    present — look-alike BANK names are exactly what the fuzzy join gets wrong
+    (Bessemer AL's "First Financial Bank" must not corroborate FFIN, nor
+    Prophetstown's "Farmers National Bank" FMNB). Escapes, in order:
+      • HCR corroborates (tokens / containment / prefix), or
+      • the bank's own name STRICTLY contains/equals the SEC name (containment
+        only, no token or prefix tolerance) — the "high holder above the
+        listed entity" pattern, where HCR is a family trust/LLC (Doyle Trust
+        over Exchange Bank, Palomar Enterprises over F&M Long Beach) but the
+        listed entity IS the bank, or
+      • HCR empty (bank is its own holdco / de novo): the bank name compares
+        with normal tolerance (tokens + containment, no prefix)."""
+    if _hcr_tokens(hcr):
+        if _cmp_names(sec_name, hcr, allow_prefix=True):
+            return True
+        a = "".join(_hcr_tokens(sec_name))
+        b = "".join(_hcr_tokens(bank_name))
+        return bool(a and b and min(len(a), len(b)) >= 8
+                    and (a in b or b in a))
+    return _cmp_names(sec_name, bank_name, allow_prefix=False)
+
+
+def namehcr_flags(snapshot: dict[str, dict],
+                  fdic_records: dict[int, dict]) -> dict[str, list]:
+    """Pure integrity check of a built snapshot against pre-fetched FDIC
+    institution records ({cert: {"NAME":…, "NAMEHCR":…}}). Returns:
+      • "mismatch": [(ticker, cert, sec_name, hcr, bank_name)] — NAMEHCR (and
+        the bank's own name) fail to corroborate the SEC registrant;
+      • "dup_cert": [(cert, [tickers])] — one cert claimed by 2+ tickers that
+        are neither same-CIK nor same-name share-class siblings;
+      • "missing": [(ticker, cert)] — cert absent from the ACTIVE-institution
+        records (acquired/closed → the MCBI-class staleness signal)."""
+    out: dict[str, list] = {"mismatch": [], "dup_cert": [], "missing": []}
+
+    by_cert: dict[int, list[str]] = {}
+    for t, v in sorted(snapshot.items()):
+        cert = v.get("fdic_cert")
+        if not cert:
+            continue
+        # Non-common share classes (preferred series, baby bonds) inherit
+        # whatever cert the fuzzy match gave their registrant's name; they are
+        # display-excluded and their cert never serves data, so auditing them
+        # only produces noise (e.g. MBINL/M/N still carrying a stale join).
+        if (v.get("share_class") or "common") != "common":
+            continue
+        cert = int(cert)
+        by_cert.setdefault(cert, []).append(t)
+
+        rec = fdic_records.get(cert)
+        if rec is None:
+            out["missing"].append((t, cert))
+            continue
+        if _NAMEHCR_VERIFIED_OK.get(t) == cert:
+            continue
+        sec_name = v.get("name") or ""
+        hcr = rec.get("NAMEHCR") or ""
+        bank = rec.get("NAME") or ""
+        if not _names_corroborate(sec_name, hcr, bank):
+            out["mismatch"].append((t, cert, sec_name, hcr, bank))
+
+    for cert, tickers in sorted(by_cert.items()):
+        if len(tickers) < 2:
+            continue
+        # Share-class siblings legitimately share a cert: same non-None CIK
+        # (FCNCA/FCNCP) or identical registrant name (FNFI/FNFPA, cik-less).
+        ciks = {snapshot[t].get("cik") for t in tickers}
+        names = {"".join(_hcr_tokens(snapshot[t].get("name") or "")) for t in tickers}
+        if (len(ciks) == 1 and None not in ciks) or len(names) == 1:
+            continue
+        out["dup_cert"].append((cert, tickers))
+    return out
+
+
+def fetch_fdic_records_for_certs(certs: list[int]) -> dict[int, dict]:
+    """Batched FDIC institutions lookup: {cert: {"NAME", "NAMEHCR"}}. ~7 calls
+    for the full universe (50 certs per OR-filter query). Raises on HTTP
+    failure — the caller treats that as 'guard skipped', never a job failure."""
+    records: dict[int, dict] = {}
+    uniq = sorted({int(c) for c in certs})
+    for i in range(0, len(uniq), 50):
+        chunk = uniq[i:i + 50]
+        flt = "CERT:(" + " OR ".join(str(c) for c in chunk) + ")"
+        resp = requests.get(
+            "https://banks.data.fdic.gov/api/institutions",
+            params={"filters": flt, "fields": "NAME,CERT,NAMEHCR",
+                    "limit": len(chunk)},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        for d in resp.json().get("data", []):
+            rec = d.get("data", d)
+            records[int(rec["CERT"])] = rec
+    return records
+
+
+def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
+    """Observe-only wrong-entity guard, run by jobs/refresh_universe after
+    every snapshot rebuild. Prints loud [namehcr-guard] lines for anything a
+    human should re-verify; NEVER raises and never fails the job — harden to a
+    gate only after the nightly logs show a stable clean baseline."""
+    try:
+        certs = [int(v["fdic_cert"]) for v in snapshot.values()
+                 if v.get("fdic_cert")]
+        records = fetch_fdic_records_for_certs(certs)
+        flags = namehcr_flags(snapshot, records)
+    except Exception as e:  # noqa: BLE001 — observe-only by contract
+        print(f"[namehcr-guard] skipped: {type(e).__name__}: {e}", flush=True)
+        return {"mismatch": [], "dup_cert": [], "missing": []}
+
+    n = sum(len(v) for v in flags.values())
+    if not n:
+        print(f"[namehcr-guard] OK — {len(certs)} cert joins corroborated, "
+              "no duplicate claims", flush=True)
+        return flags
+    print(f"[namehcr-guard] ⚠️  {n} finding(s) — possible wrong-entity joins; "
+          "verify each against FDIC NAMEHCR before trusting the numbers:",
+          flush=True)
+    for t, cert, sec_name, hcr, bank in flags["mismatch"]:
+        print(f"[namehcr-guard]   MISMATCH {t}: SEC='{sec_name}' vs cert {cert} "
+              f"NAMEHCR='{hcr}' bank='{bank}'", flush=True)
+    for cert, tickers in flags["dup_cert"]:
+        print(f"[namehcr-guard]   DUP-CERT {cert} claimed by {tickers} "
+              "(a cert belongs to exactly one holdco)", flush=True)
+    for t, cert in flags["missing"]:
+        print(f"[namehcr-guard]   MISSING {t}: cert {cert} not in ACTIVE "
+              "institutions (acquired/closed?)", flush=True)
+    return flags
