@@ -742,6 +742,16 @@ def refresh_q4_calls_snapshot(universe: dict | None = None, max_workers: int = 1
                 found[tk] = info
     try:
         from data import cache
+        if not found:
+            prev = cache.get(_Q4_CALLS_SNAP_KEY)
+            if prev and prev.get("value"):
+                # A transient all-fail scan must not clobber the last good
+                # snapshot with {} (audit P3): keep serving it — call dates
+                # expire naturally downstream. A legitimately-empty result
+                # only persists when there was no prior data.
+                print("[ir] q4 call scan found 0 — keeping previous snapshot",
+                      flush=True)
+                return found
         cache.put(_Q4_CALLS_SNAP_KEY,
                   {"value": found, "cached_at": datetime.now().isoformat()})
     except Exception as e:

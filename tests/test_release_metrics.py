@@ -284,5 +284,24 @@ class TestRealisticComposite(unittest.TestCase):
         self.assertEqual(m["div_ps"], 0.27)
 
 
+class TestBlankCurrentCellNeverShifts(unittest.TestCase):
+    """(2026-07-10, sec_earnings_8k P3 twin — verified GUARDED here) A blank
+    current-quarter cell must never let the prior period's value serve as
+    current. extract_table_metrics' `len(vals) != len(qends)` alignment guard
+    already covers it (row skipped → None); this pins that guard."""
+
+    def test_blank_current_cell_yields_none_not_prior(self):
+        html = _tbl(["", "March 31, 2026", "March 31, 2025"],
+                    ["Net interest margin", "", "3.10%"])
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertIsNone(m.get("nim"))          # never 3.10 (the prior period)
+
+    def test_populated_current_cell_still_extracts(self):
+        html = _tbl(["", "March 31, 2026", "March 31, 2025"],
+                    ["Net interest margin", "3.42%", "3.10%"])
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(m.get("nim"), 3.42)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

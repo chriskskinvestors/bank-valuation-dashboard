@@ -763,10 +763,12 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
                            source="SEC filing (10-K/10-Q)", asof=(eq_doc or {}).get("label", "latest filing"),
                            unit="$ / share", ref="(equity − intangibles) ÷ shares",
                            definition="Tangible common equity (equity − intangibles) ÷ shares outstanding.",
-                           terms=[{"label": "Tangible common equity", "val": (_thou((tce or 0) / 1000) + " ($000)"),
+                           terms=[{"label": "Tangible common equity",
+                                   # honest '—' for missing inputs — never a fake "0 ($000)" (audit P3)
+                                   "val": (_thou(tce / 1000) + " ($000)") if tce is not None else "—",
                                    "doc": eq_doc,
-                                   "sub": (f"Equity {_thou((equity or 0)/1000)} − intangibles "
-                                           f"{_thou((adj or 0)/1000)} ($000)")},
+                                   "sub": (f"Equity {_thou(equity/1000) if equity is not None else '—'} − intangibles "
+                                           f"{_thou(adj/1000) if adj is not None else '—'} ($000)")},
                                   {"label": "Shares outstanding",
                                    "val": (f"{shares:,.0f}" if shares else "—"), "doc": sh_doc}],
                            op="Tangible common equity ÷ shares")},

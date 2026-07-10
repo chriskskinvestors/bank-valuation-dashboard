@@ -688,7 +688,7 @@ def _af_calendar_table(watchlist: list[str]) -> str:
                 when = i["date"]
             wstyle = ' style="color:#1e3a8a;font-weight:700;"' if is_today else ""
             dot = "#1e3a8a" if i["kind"] == "earn" else "#b45309"
-            sym = (f' <span class="sym">&gt;{i["ticker"]}</span>' if i["ticker"] else "")
+            sym = (f' <span class="sym">&gt;{_esc(i["ticker"])}</span>' if i["ticker"] else "")
             ev = (f'<span class="evt"><span class="dotc" style="background:{dot};'
                   f'margin-right:7px;"></span>{_esc(i["name"][:30])}{sym}</span>')
             href = (f'?s=Company&bank={i["ticker"]}' if i["ticker"] else "?s=Home")
@@ -699,8 +699,8 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             rows += (
                 f'<a class="crow" href="{href}" target="{target}"{rel}{ttl}><div class="erow a4 ed">'
                 f'<span class="nm"{wstyle}>{when}</span>{ev}'
-                f'<span class="num mut">{i.get("mid") or "—"}</span>'
-                f'<span class="num mut">{i["detail"] or "—"}</span></div></a>')
+                f'<span class="num mut">{_esc(i.get("mid")) if i.get("mid") else "—"}</span>'
+                f'<span class="num mut">{_esc(i["detail"]) if i["detail"] else "—"}</span></div></a>')
         body = f'<div class="etf">{rows}</div>'
     return (_af_hd("Calendar",
                    '<span class="dotc" style="background:#1e3a8a;"></span>earnings'
@@ -966,12 +966,23 @@ def _af_overlay_svg(series) -> str:
             except Exception:
                 lbl = str(d)[:6]
             parts.append(f'<text x="{X(idx,n):.1f}" y="140" font-family="monospace" font-size="8" fill="#aab4c2" text-anchor="{anchor}">{lbl}</text>')
-    for tk, color, pcts, _d in series:
-        n = len(pcts)
-        pts = " ".join(f"{X(i,n):.1f},{Y(v):.1f}" for i, v in enumerate(pcts))
+    # Time-aligned x (audit P3): each point is positioned by its DATE on the
+    # longest series' span — a shorter/stale series ends mid-chart at its real
+    # last date instead of being index-stretched to the right edge (which read
+    # as current data).
+    t0, t1 = longest[0], longest[-1]
+    span = (t1 - t0).total_seconds() or 1.0
+
+    def XT(d):
+        frac = (d - t0).total_seconds() / span
+        return L + max(0.0, min(1.0, frac)) * (R - L)
+
+    for tk, color, pcts, dates in series:
+        pts = " ".join(f"{XT(d):.1f},{Y(v):.1f}" for d, v in zip(dates, pcts))
         last = pcts[-1]
+        x_last = XT(dates[len(pcts) - 1]) if len(dates) >= len(pcts) else R
         parts.append(f'<polyline fill="none" stroke="{color}" stroke-width="1.7" stroke-linejoin="round" points="{pts}"/>')
-        parts.append(f'<circle cx="{X(n-1,n):.1f}" cy="{Y(last):.1f}" r="2.2" fill="{color}"/>')
+        parts.append(f'<circle cx="{x_last:.1f}" cy="{Y(last):.1f}" r="2.2" fill="{color}"/>')
         parts.append(f'<text x="{R+3}" y="{Y(last)+2.5:.1f}" font-family="monospace" font-size="8.5" font-weight="700" fill="{color}">{last:+.1f}</text>')
     return ('<svg viewBox="0 0 460 150" preserveAspectRatio="xMidYMid meet">' + "".join(parts) + "</svg>")
 
