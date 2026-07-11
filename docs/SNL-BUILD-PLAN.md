@@ -197,7 +197,7 @@ Summary · Analyst Coverage · Compensation.
 | Corporate Governance | state-law reference table from state of incorporation (deterministic) + charter/bylaw provisions EXTRACTED from proxies/charters via the summarizer, labeled + source-linked (user approved) |
 | People Summary | roster from Form 3/4 + DEF 14A (ages/tenure/independence); per-person bios extracted via summarizer pipeline (user approved) |
 | Analyst Coverage | ✅ SHIPPED 2026-07-11 (ui/analyst_coverage.py): FMP price-target consensus + windowed summary + grade actions + composite rating (caveated as generic model) + compact yfinance street-consensus block; honest empty state for uncovered banks |
-| Compensation | CEO pay ratio + pay-versus-performance from proxy XBRL (ecd: namespace, 2023+); NEO summary-comp tables via proxy parse |
+| Compensation | ✅ SHIPPED 2026-07-11: merged page under Overview — NEO Summary Comp Table (moved from Ownership, was "Executive Compensation") + Pay-versus-Performance from proxy inline XBRL (data/sec_pvp.py: ecd taxonomy via slimmed companyfacts, newest-proxy-wins per year, multi-PEO years kept verbatim, net-income ladder NetIncomeLoss→ProfitLoss). CEO pay ratio NOT tagged in ecd XBRL — deliberately omitted (a text parse would be per-bank fragile; revisit only on ask). Some large filers (USB) have no ecd in companyfacts → honest empty note |
 
 Census client (data/census_client.py) built for tab 11 demographics —
 NEEDS CENSUS_API_KEY (free signup api.census.gov/data/key_signup.html;

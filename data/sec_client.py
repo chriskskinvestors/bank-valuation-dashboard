@@ -89,8 +89,13 @@ SLIM_USGAAP_CONCEPTS = {
 # the addition are bypassed (re-fetched with the new concept) instead of
 # silently returning n/a for it — the 2026-06-14 avg-diluted-shares bug.
 import hashlib as _hashlib
+# "|ns:ecd" marker: the slim projection also keeps the whole `ecd` namespace
+# (proxy pay-versus-performance, ~7 tags — tiny). Adding a NAMESPACE doesn't
+# change the concept set, so it must be versioned explicitly or pre-existing
+# cached blobs would return no ecd facts forever (same bug class the concept
+# hash guards against).
 _SLIM_VER = _hashlib.md5(
-    ",".join(sorted(SLIM_USGAAP_CONCEPTS)).encode()).hexdigest()[:8]
+    (",".join(sorted(SLIM_USGAAP_CONCEPTS)) + "|ns:ecd").encode()).hexdigest()[:8]
 
 
 def _slim_facts(facts: dict) -> dict:
@@ -107,6 +112,10 @@ def _slim_facts(facts: dict) -> dict:
         "facts": {
             "us-gaap": {k: v for k, v in ug.items() if k in SLIM_USGAAP_CONCEPTS},
             "dei": f.get("dei", {}),
+            # Proxy (DEF 14A) executive-comp disclosure taxonomy — the whole
+            # namespace is ~7 pay-versus-performance tags × ~5 years, so no
+            # per-concept slimming needed (data/sec_pvp.py reads it).
+            "ecd": f.get("ecd", {}) or {},
         },
     }
 

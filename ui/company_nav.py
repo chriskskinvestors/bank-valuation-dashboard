@@ -20,7 +20,8 @@ this module is cheap and safe for tests.
 from __future__ import annotations
 
 COMPANY_NAV = {
-    "Overview": ["Corporate Profile", "Stock Chart", "Analyst Coverage"],
+    "Overview": ["Corporate Profile", "Stock Chart", "Analyst Coverage",
+                 "Compensation"],
     "Financials": {
         # FDIC call-report fields — uniform across every bank. Default basis (first):
         # fully built + fast, while Company Reported is still being filled in.
@@ -42,7 +43,9 @@ COMPANY_NAV = {
                        "Press Releases", "Transcripts & Presentations",
                        "Events Calendar"],
     "Market Analysis": ["Market Share & Branches"],
-    "Ownership": ["Institutional (13F)", "Holder History", "Crossholdings", "Insider Activity", "Executive Compensation"],
+    # SNL nav puts compensation under Overview, not Ownership (plan §12/§13);
+    # the old "Executive Compensation" leaf moved there 2026-07-11.
+    "Ownership": ["Institutional (13F)", "Holder History", "Crossholdings", "Insider Activity"],
 }
 
 
@@ -240,7 +243,7 @@ def _insider_activity(t, ctx):
     render_insider_activity(t)
 
 
-def _executive_compensation(t, ctx):
+def _compensation(t, ctx):
     from ui.compensation import render_compensation
     render_compensation(t)
 
@@ -367,7 +370,7 @@ _RENDERERS = {
     "Holder History": _holder_history,
     "Crossholdings": _crossholdings,
     "Insider Activity": _insider_activity,
-    "Executive Compensation": _executive_compensation,
+    "Compensation": _compensation,
 }
 
 # Financials → Company Reported basis. Keyed by the same leaf names as the
