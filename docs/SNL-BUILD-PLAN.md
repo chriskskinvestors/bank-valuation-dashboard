@@ -192,7 +192,7 @@ Summary · Analyst Coverage · Compensation.
 | Sub-tab | Source / decision |
 |---|---|
 | Corporate Profile | our current Overview page re-homed unchanged |
-| Stock Chart | price chart + volume + peer overlays; KEEP BOTH (user): new here AND Price & Trends stays under Valuation |
+| Stock Chart | ✅ SHIPPED 2026-07-11 (ui/stock_chart.py): price+volume subplot, peer multiselect (nearest-by-assets first from peer_cohort) switching the price pane to indexed-% comparison, period stats ledger; KEEP BOTH honored — Price & Trends unchanged under Valuation |
 | Corporate Structure | Fed NIC bulk hierarchy CSVs (parent→subs, ownership %) + EX-21 cross-check |
 | Corporate Governance | state-law reference table from state of incorporation (deterministic) + charter/bylaw provisions EXTRACTED from proxies/charters via the summarizer, labeled + source-linked (user approved) |
 | People Summary | roster from Form 3/4 + DEF 14A (ages/tenure/independence); per-person bios extracted via summarizer pipeline (user approved) |
