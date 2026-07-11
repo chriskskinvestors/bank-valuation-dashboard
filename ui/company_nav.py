@@ -20,7 +20,7 @@ this module is cheap and safe for tests.
 from __future__ import annotations
 
 COMPANY_NAV = {
-    "Overview": ["Corporate Profile"],
+    "Overview": ["Corporate Profile", "Analyst Coverage"],
     "Financials": {
         # FDIC call-report fields — uniform across every bank. Default basis (first):
         # fully built + fast, while Company Reported is still being filled in.
@@ -87,6 +87,11 @@ def _corporate_profile(t, ctx):
     import pandas as pd
     from ui.bank_detail import render_corporate_profile
     render_corporate_profile(t, pd.DataFrame([ctx["load_metrics"](t)]))
+
+
+def _analyst_coverage(t, ctx):
+    from ui.analyst_coverage import render_analyst_coverage
+    render_analyst_coverage(t)
 
 
 def _price_trends(t, ctx):
@@ -328,6 +333,7 @@ def _cr_todo(label):
 
 _RENDERERS = {
     "Corporate Profile": _corporate_profile,
+    "Analyst Coverage": _analyst_coverage,
     "Price & Trends": _price_trends,
     "Financial Highlights": _financial_highlights,
     "Capital Adequacy": _capital_adequacy,
