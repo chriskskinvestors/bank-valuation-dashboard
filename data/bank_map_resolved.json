@@ -1403,6 +1403,12 @@
   "fdic_score": 1.0,
   "name": "Kearny Financial"
  },
+ "KSBI": {
+  "cik": null,
+  "fdic_cert": 29771,
+  "fdic_score": 1.0,
+  "name": "KS Bancorp"
+ },
  "LARK": {
   "cik": 1141688,
   "fdic_cert": null,
