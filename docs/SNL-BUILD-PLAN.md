@@ -193,7 +193,7 @@ Summary · Analyst Coverage · Compensation.
 |---|---|
 | Corporate Profile | our current Overview page re-homed unchanged |
 | Stock Chart | ✅ SHIPPED 2026-07-11 (ui/stock_chart.py): price+volume subplot, peer multiselect (nearest-by-assets first from peer_cohort) switching the price pane to indexed-% comparison, period stats ledger; KEEP BOTH honored — Price & Trends unchanged under Valuation |
-| Corporate Structure | Fed NIC bulk hierarchy CSVs (parent→subs, ownership %) + EX-21 cross-check |
+| Corporate Structure | ✅ SHIPPED 2026-07-11 (ui/corporate_structure.py on the pre-built data/nic_client): FDIC cert→FED_RSSD (new fdic_client.get_rssd_for_cert, 30d cache) → climb to top holder (cycle-safe) → full NIC tree with ownership %/control, subject bank highlighted, EX-21 cross-check pointer to Key Exhibits. NIC bulk fetch needs curl (python TLS 403s — client falls back automatically; curl is in the image). Per-RSSD trees cache 30d; first view per instance downloads ~9MB bulk (spinner). Pre-warm job = later lever if latency bites |
 | Corporate Governance | state-law reference table from state of incorporation (deterministic) + charter/bylaw provisions EXTRACTED from proxies/charters via the summarizer, labeled + source-linked (user approved) |
 | People Summary | roster from Form 3/4 + DEF 14A (ages/tenure/independence); per-person bios extracted via summarizer pipeline (user approved) |
 | Analyst Coverage | ✅ SHIPPED 2026-07-11 (ui/analyst_coverage.py): FMP price-target consensus + windowed summary + grade actions + composite rating (caveated as generic model) + compact yfinance street-consensus block; honest empty state for uncovered banks |

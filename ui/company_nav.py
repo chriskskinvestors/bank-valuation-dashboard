@@ -20,8 +20,8 @@ this module is cheap and safe for tests.
 from __future__ import annotations
 
 COMPANY_NAV = {
-    "Overview": ["Corporate Profile", "Stock Chart", "Analyst Coverage",
-                 "Compensation"],
+    "Overview": ["Corporate Profile", "Stock Chart", "Corporate Structure",
+                 "Analyst Coverage", "Compensation"],
     "Financials": {
         # FDIC call-report fields — uniform across every bank. Default basis (first):
         # fully built + fast, while Company Reported is still being filled in.
@@ -95,6 +95,11 @@ def _corporate_profile(t, ctx):
 def _stock_chart(t, ctx):
     from ui.stock_chart import render_stock_chart
     render_stock_chart(t, ctx["peer_cohort"]())
+
+
+def _corporate_structure(t, ctx):
+    from ui.corporate_structure import render_corporate_structure
+    render_corporate_structure(t)
 
 
 def _analyst_coverage(t, ctx):
@@ -342,6 +347,7 @@ def _cr_todo(label):
 _RENDERERS = {
     "Corporate Profile": _corporate_profile,
     "Stock Chart": _stock_chart,
+    "Corporate Structure": _corporate_structure,
     "Analyst Coverage": _analyst_coverage,
     "Price & Trends": _price_trends,
     "Financial Highlights": _financial_highlights,

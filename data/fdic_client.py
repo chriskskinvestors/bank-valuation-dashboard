@@ -192,6 +192,39 @@ def cert_is_active(cert: int, ttl_seconds: int = 7 * 86400) -> bool:
         return True
 
 
+def get_rssd_for_cert(cert: int, ttl_seconds: int = 30 * 86400) -> int | None:
+    """FED_RSSD for an FDIC cert — the key the Fed NIC hierarchy (and FFIEC)
+    use. An institution's RSSD never changes, so a long cache is safe; the
+    TTL only bounds tombstoned negatives."""
+    if not cert:
+        return None
+    from data import cache as _cache
+    key = f"fdic_rssd:{cert}"
+    cached = _cache.get(key)
+    if cached is not None:
+        ts = (cached or {}).get("_ts", 0)
+        if time.time() - float(ts) < ttl_seconds:
+            v = cached.get("_v")
+            return int(v) if v else None
+
+    try:
+        resp = _get_with_retry(FDIC_INSTITUTIONS_URL, {
+            "filters": f"CERT:{cert}",
+            "fields": "CERT,FED_RSSD",
+        })
+        rssd = None
+        if resp is not None:
+            data = resp.json().get("data", [])
+            if data:
+                raw = data[0].get("data", {}).get("FED_RSSD")
+                rssd = int(raw) if raw else None
+        _cache.put(key, {"_ts": time.time(), "_v": rssd})
+        return rssd
+    except Exception as e:
+        print(f"[FDIC] get_rssd_for_cert({cert}) failed: {e}")
+        return None
+
+
 def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     """
     Fetch recent quarterly financials for a bank by FDIC cert number.
