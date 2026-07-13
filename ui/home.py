@@ -355,7 +355,8 @@ def _af_etf_table() -> str:
     # The extended-hours column IS the pre-market move during 4:00–9:30 ET; label
     # it "Pre" then, "Aft" otherwise (after-hours / spread fallback).
     _ext_lbl = "Pre %" if is_premarket() else "Aft %"
-    sel = set(st.session_state.get("af_overlay") or _AF_DEFAULT_OVERLAY)
+    sel_list = list(st.session_state.get("af_overlay") or _AF_DEFAULT_OVERLAY)
+    sel = set(sel_list)
     # Headers carry the unit so $ moves (Chg) read distinctly from % moves
     # (day %, Pre/Aft, 1W, YTD).
     rows = ('<div class="erow e1 eh"><span class="h">Name</span>'
@@ -381,7 +382,21 @@ def _af_etf_table() -> str:
                         else ("—", "mut"))
         vol = _af_vol(q.get("volume"))
         sel_cls = " selrow" if t in sel else ""
+        # Row click toggles this ETF in the Overlay chart (owner call
+        # 2026-07-13). The link carries the EXACT resulting selection, not a
+        # toggle verb: an anchor navigation starts a fresh Streamlit session
+        # (session_state is wiped on page load), so a "toggle DIA" param
+        # would always toggle against the DEFAULT list — add works, remove
+        # never does (caught in preview). render_home applies ?overlay=
+        # verbatim before the widget instantiates, then strips it. ETFs have
+        # no Company page, so this is their "ticker link".
+        ttl = ("Remove from Overlay chart" if t in sel
+               else "Add to Overlay chart")
+        new_sel = ([x for x in sel_list if x != t] if t in sel
+                   else sel_list + [t])
         rows += (
+            f'<a class="crow" href="?s=Home&overlay={",".join(new_sel)}" '
+            f'target="_self" title="{ttl}">'
             f'<div class="erow e1 ed{sel_cls}">'
             f'<span class="nm">{name}</span><span class="tk">{t}</span>'
             f'<span class="num">{last}</span>'
@@ -390,7 +405,7 @@ def _af_etf_table() -> str:
             f'<span class="num {aft_c}">{aft_t}</span>'
             f'<span class="num {w1_c}">{w1_t}</span>'
             f'<span class="num {ytd_c}">{ytd_t}</span>'
-            f'<span class="num">{vol}</span></div>')
+            f'<span class="num">{vol}</span></div></a>')
     return (_af_hd("Markets · ETFs", '<span class="live"></span>Live')
             + f'<div class="body"><div class="etf">{rows}</div></div>')
 
@@ -1140,10 +1155,15 @@ def _af_pane_overlay(_all_metrics):
     syms = [t for t, _ in _AF_ETFS]
     sel0 = st.session_state.get("af_overlay") or list(_AF_DEFAULT_OVERLAY)
     _md(_af_hd("Overlay · Selected", f"{len(sel0)} of 11"))
+    # Omit `default` once the key exists in session state — the ETF pane's
+    # row-click toggle writes af_overlay via the Session State API, and
+    # passing a default alongside an externally-set value logs a Streamlit
+    # warning on every toggled rerun.
+    _kw = ({} if "af_overlay" in st.session_state
+           else {"default": list(_AF_DEFAULT_OVERLAY)})
     sel = st.segmented_control(
         "Overlay tickers", syms, selection_mode="multi",
-        default=list(_AF_DEFAULT_OVERLAY), key="af_overlay",
-        label_visibility="collapsed")
+        key="af_overlay", label_visibility="collapsed", **_kw)
     tf = _af_seg_single("Timeframe", _AF_TF_OPTS, "3M", "af_tf")
     _md(_af_overlay_table(list(sel or []), tf))
 
@@ -1200,6 +1220,22 @@ def _render_above_fold(all_metrics: list[dict], watchlist: list[str]):
 
 def render_home(all_metrics: list[dict], watchlist: list[str]):
     """Render the home/dashboard page."""
+
+    # ?overlay=SPY,QQQ,KRE (an ETF-pane row click) sets the Overlay chart
+    # selection to EXACTLY that list — the link precomputes the result, since
+    # an anchor navigation starts a fresh session (a relative toggle would
+    # always act on the default list; remove could never work). Must run
+    # BEFORE _af_grid so the session-state write lands before the af_overlay
+    # widget instantiates; the param is stripped after applying.
+    _ov = st.query_params.get("overlay")
+    if _ov is not None:
+        _valid = [t for t, _ in _AF_ETFS]
+        st.session_state["af_overlay"] = [
+            t for t in _ov.upper().split(",") if t in _valid]
+        try:
+            del st.query_params["overlay"]
+        except Exception:
+            pass
 
     # Drop the page a touch below the top nav so the title bar + data-source
     # freshness strip ("Live · FDIC …") clear the nav and aren't clipped.
