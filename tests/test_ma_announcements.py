@@ -88,14 +88,22 @@ def _doc_resp(body):
     return r
 
 
-def _wire(efts_hits, docs, efts_fail=False, doc_fail=()):
-    """requests.get side_effect: EFTS query then archive doc fetches.
-    docs: {doc_filename: html}; doc_fail: filenames that raise."""
+def _wire(efts_hits, docs, efts_fail=False, doc_fail=(), indexes=None):
+    """requests.get side_effect: EFTS query, filing-index pages (URLs ending
+    '/'), then archive doc fetches. docs: {doc_filename: html}; doc_fail:
+    filenames that raise; indexes: {accession_nodash: [doc filenames]}."""
+    indexes = indexes or {}
+
     def side_effect(url, params=None, headers=None, timeout=30):
         if "efts.sec.gov" in url:
             if efts_fail:
                 raise Exception("efts down")
             return _efts_resp(efts_hits)
+        if url.endswith("/"):
+            acc = url.rstrip("/").rsplit("/", 1)[-1]
+            links = "".join(f'<a href="/x/{n}">{n}</a>'
+                            for n in indexes.get(acc, []))
+            return _doc_resp(f"<html>{links}</html>")
         fn = url.rsplit("/", 1)[-1]
         if fn in doc_fail:
             raise Exception("doc down")
@@ -385,6 +393,109 @@ class TestResolveAnnouncement(unittest.TestCase):
         r, ok = resolve_announcement("Skagit Bank", "Banner Bank", "2018-11-01")
         self.assertTrue(ok and r)
         self.assertTrue(r["url"].endswith("announce.htm"))
+
+
+# ── Terminated-deal sweep fixtures (FHN/TD-shaped, live-verified 2026-07-13) ──
+
+TD_ANNOUNCE_PR = """
+<html><body><p>First Horizon Corporation (NYSE: FHN) and TD Bank Group
+(TSX and NYSE: TD) today announced that they have signed a definitive
+agreement for TD to acquire First Horizon in an all-cash transaction valued
+at US$13.4 billion.</p></body></html>
+"""
+
+TD_TERMINATION_PR = """
+<html><body><p>TD Bank Group (TSX and NYSE: TD) and First Horizon
+Corporation (NYSE: FHN) today announced a mutual agreement to terminate the
+Agreement and Plan of Merger.</p></body></html>
+"""
+
+TD_EXTENSION_8K = """
+<html><body><p>First Horizon and TD agreed to extend the previously
+announced Agreement and Plan of Merger, the definitive agreement under
+which TD will acquire First Horizon.</p></body></html>
+"""
+
+
+class TestFindTerminatedDeals(unittest.TestCase):
+
+    FHN = 36966
+
+    def _hits(self):
+        # Announcement (7.01, live FHN shape), a LATER extension 8-K (8.01),
+        # and the termination (1.02). Bodies matched the phrase; the PRs are
+        # index-discovered exhibits.
+        return [
+            _hit("0001-22-1", "2022-02-28", "ann_body.htm", file_type="8-K",
+                 cik="0000036966", items=["7.01", "9.01"]),
+            _hit("0001-23-1", "2023-02-10", "ext_body.htm", file_type="8-K",
+                 cik="0000036966", items=["8.01", "9.01"]),
+            _hit("0001-23-2", "2023-05-04", "term_body.htm", file_type="8-K",
+                 cik="0000036966", items=["1.02", "8.01", "9.01"]),
+        ]
+
+    def _docs(self):
+        return {"ann_body.htm": "<p>entry into an Agreement and Plan of "
+                                "Merger with The Toronto-Dominion Bank</p>",
+                "ann_ex99.htm": TD_ANNOUNCE_PR,
+                "ext_body.htm": TD_EXTENSION_8K,
+                "term_body.htm": "<p>terminated the Agreement and Plan of "
+                                 "Merger with TD</p>",
+                "term_ex99.htm": TD_TERMINATION_PR}
+
+    def _indexes(self):
+        return {"0001221": ["ann_body.htm", "ann_ex99.htm"],
+                "0001231": ["ext_body.htm"],
+                "0001232": ["term_body.htm", "term_ex99.htm"]}
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_happy_path_links_original_announcement(self, mock_get):
+        # The extension 8-K also cites the merger agreement — EARLIEST-first
+        # back-linking must pin the ORIGINAL 2022-02-28 announcement, and the
+        # stated US$13.4B value comes from its index-discovered EX-99 PR.
+        from data.ma_announcements import find_terminated_deals
+        mock_get.side_effect = _wire(self._hits(), self._docs(),
+                                     indexes=self._indexes())
+        deals, ok = find_terminated_deals(self.FHN, "First Horizon Bank")
+        self.assertTrue(ok)
+        self.assertEqual(len(deals), 1)
+        d = deals[0]
+        self.assertEqual(d["termination_date"], "2023-05-04")
+        self.assertEqual(d["announce_date"], "2022-02-28")
+        self.assertEqual(d["counterparty_name"], "TD Bank Group")
+        self.assertEqual(d["value_usd"], 13_400_000_000)
+        self.assertEqual(d["value_basis"], "stated")
+        self.assertIsNone(d["direction"])  # cash deal — honest n/a
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_unlinkable_termination_dropped(self, mock_get):
+        # Termination with NO prior announcement group -> dropped, never a
+        # counterparty guess.
+        from data.ma_announcements import find_terminated_deals
+        hits = [h for h in self._hits() if "1.02" in
+                (h["_source"].get("items") or [])]
+        mock_get.side_effect = _wire(hits, self._docs(),
+                                     indexes=self._indexes())
+        deals, ok = find_terminated_deals(self.FHN, "First Horizon Bank")
+        self.assertEqual(deals, [])
+        self.assertTrue(ok)
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_sweep_fetch_failure_uncacheable(self, mock_get):
+        from data.ma_announcements import find_terminated_deals
+        mock_get.side_effect = _wire(self._hits(), self._docs(),
+                                     indexes=self._indexes(),
+                                     doc_fail=("term_body.htm",))
+        deals, ok = find_terminated_deals(self.FHN, "First Horizon Bank")
+        self.assertEqual(deals, [])
+        self.assertFalse(ok)
+
+    def test_no_cik_returns_empty(self):
+        from data.ma_announcements import find_terminated_deals
+        self.assertEqual(find_terminated_deals(None, "X"), ([], True))
 
 
 if __name__ == "__main__":

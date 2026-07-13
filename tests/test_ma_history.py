@@ -49,17 +49,22 @@ COLUMBIA = 33826
 # The four announcement fields every deal dict now carries (None unless the
 # EFTS leg resolves them — patched out in these tests unless stated).
 ANN_NONE = {"announce_date": None, "value_usd": None, "value_basis": None,
-            "value_note": None, "announce_url": None}
+            "value_note": None, "announce_url": None,
+            "status": "completed", "termination_date": None}
 
 
 class _AnnPatched(unittest.TestCase):
-    """Base: announcement resolution patched to a cacheable n/a."""
+    """Base: announcement + termination resolution patched to cacheable n/a."""
 
     def setUp(self):
         self._ann = patch("data.ma_announcements.resolve_announcement",
                           return_value=(None, True))
         self.mock_ann = self._ann.start()
         self.addCleanup(self._ann.stop)
+        self._term = patch("data.ma_announcements.find_terminated_deals",
+                           return_value=([], True))
+        self.mock_term = self._term.start()
+        self.addCleanup(self._term.stop)
 
 
 def _resp(rows):
@@ -175,7 +180,7 @@ class TestWholeCompanyDeals(_AnnPatched):
         self.assertEqual(fin_call[0][1]["limit"], 1)
         # Cached under the documented key.
         key, payload = mock_cput.call_args[0]
-        self.assertEqual(key, f"ma_history:v3:{UMPQUA}")
+        self.assertEqual(key, f"ma_history:v4:{UMPQUA}:0")
         self.assertEqual(payload["deals"], deals)
 
     @patch("data.cache.put")
@@ -407,6 +412,69 @@ class TestAnnouncementEnrichment(_AnnPatched):
         deals = ma_history.get_ma_history(BANNER)
         self.assertEqual(len(deals), 1)
         self.mock_ann.assert_not_called()
+
+
+class TestTerminatedDeals(_AnnPatched):
+
+    TERM = {"termination_date": "2023-05-04", "announce_date": "2022-02-28",
+            "counterparty_name": "TD Bank Group", "value_usd": 13_400_000_000,
+            "value_basis": "stated", "value_note": None, "direction": None,
+            "announce_url": "https://sec.gov/a",
+            "termination_url": "https://sec.gov/t"}
+
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.http.get_with_retry")
+    def test_terminated_rows_merged_and_sorted(self, mock_get, _cg, mock_cput):
+        from data import ma_history
+        self.mock_term.return_value = ([dict(self.TERM)], True)
+        mock_get.side_effect = _route(
+            structure=[_merger_row("2024-01-01", COLUMBIA, "Columbia State Bank")],
+            fin={COLUMBIA: [_fin_row(COLUMBIA, "20221231", 20_258_988)]})
+        deals = ma_history.get_ma_history(UMPQUA, cik=36966)
+        self.assertEqual(len(deals), 2)
+        # Sorted by completion-or-termination date, newest first.
+        self.assertEqual([d["status"] for d in deals],
+                         ["completed", "terminated"])
+        t = deals[1]
+        self.assertIsNone(t["completion_date"])
+        self.assertEqual(t["termination_date"], "2023-05-04")
+        self.assertEqual(t["announce_date"], "2022-02-28")
+        self.assertEqual(t["counterparty"],
+                         {"name": "TD Bank Group", "cert": None})
+        self.assertEqual(t["value_usd"], 13_400_000_000)
+        self.assertEqual(t["event_desc"], "Merger agreement terminated")
+        self.mock_term.assert_called_once()
+        # Subject name derived from the structure rows (deal-time name).
+        self.assertEqual(self.mock_term.call_args[0][1], "Umpqua Bank")
+        # CIK-scoped cache key.
+        self.assertEqual(mock_cput.call_args[0][0],
+                         f"ma_history:v4:{UMPQUA}:36966")
+
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.http.get_with_retry")
+    def test_no_cik_skips_termination_sweep(self, mock_get, _cg, _cp):
+        from data import ma_history
+        mock_get.side_effect = _route(
+            structure=[_merger_row("2024-01-01", COLUMBIA, "Columbia State Bank")],
+            fin={COLUMBIA: [_fin_row(COLUMBIA, "20221231", 20_258_988)]})
+        deals = ma_history.get_ma_history(UMPQUA)
+        self.assertTrue(all(d["status"] == "completed" for d in deals))
+        self.mock_term.assert_not_called()
+
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.http.get_with_retry")
+    def test_termination_fetch_failure_skips_cache(self, mock_get, _cg, mock_cput):
+        from data import ma_history
+        self.mock_term.return_value = ([], False)
+        mock_get.side_effect = _route(
+            structure=[_merger_row("2024-01-01", COLUMBIA, "Columbia State Bank")],
+            fin={COLUMBIA: [_fin_row(COLUMBIA, "20221231", 20_258_988)]})
+        deals = ma_history.get_ma_history(UMPQUA, cik=36966)
+        self.assertEqual(len(deals), 1)
+        mock_cput.assert_not_called()
 
 
 class TestAssemblyAndCache(_AnnPatched):

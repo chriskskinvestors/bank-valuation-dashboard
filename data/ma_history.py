@@ -29,11 +29,14 @@ value_basis/value_note) from the announcement 8-K via EDGAR full-text
 search (data/ma_announcements; strict guards, n/a over guess; EFTS
 coverage is 2001+ so older deals honestly carry None). Branch deals are
 not enriched (announcement linkage is too noisy to guard — see that
-module). The terminated/withdrawn-deal sweep is the next increment
-(owner-approved 2026-07-13). FDIC history itself is completions only
-(EFFDATE).
+module). TERMINATED deals (announced, never completed — no FDIC anchor)
+come from find_terminated_deals when the caller supplies the holdco CIK:
+status='terminated' rows with termination + announce dates, counterparty
+and value (live-verified: FHN/TD $13.4B stated, announced 2022-02-28,
+terminated 2023-05-04). Completed rows carry status='completed'. FDIC
+history itself is completions only (EFFDATE).
 
-Cache: ``ma_history:v3:{cert}`` for 7 days — structure changes are rare;
+Cache: ``ma_history:v4:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
 the key is versioned so a deal-schema change never serves stale rows. Any
 fetch failure — history pages, a target-assets lookup, or an announcement
 fetch — skips the cache put so a transient outage is never frozen as a
@@ -193,7 +196,7 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
     return deals
 
 
-def get_ma_history(cert: int) -> list[dict]:
+def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
     """
     All completed structure deals for an FDIC cert, newest-first.
 
@@ -225,7 +228,9 @@ def get_ma_history(cert: int) -> list[dict]:
     cert = int(cert)
     from data import cache
 
-    key = f"ma_history:v3:{cert}"  # v3: computed-value note added 2026-07-13
+    # v4: terminated deals + status field (2026-07-13). The key carries the
+    # holdco CIK because the terminated leg only runs when one is supplied.
+    key = f"ma_history:v4:{cert}:{int(cik) if cik else 0}"
     cached = cache.get(key)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
@@ -244,6 +249,11 @@ def get_ma_history(cert: int) -> list[dict]:
 
     deals: list[dict] = []
     cache_ok = True
+    subject_name = next(
+        (d.get("ACQ_INSTNAME") or d.get("INSTNAME")
+         for d in structure
+         if to_cert(d.get("ACQ_CERT")) == cert or to_cert(d.get("CERT")) == cert),
+        "") or ""
 
     # Whole-company deals, both directions, from institution-level events.
     # Announcement enrichment (announce date + stated value via EDGAR
@@ -338,7 +348,37 @@ def get_ma_history(cert: int) -> list[dict]:
             "announce_url": None,
         })
 
-    deals.sort(key=lambda x: x["completion_date"], reverse=True)
+    for d in deals:
+        d["status"] = "completed"
+        d["termination_date"] = None
+
+    # Terminated / withdrawn deals (EFTS sweep) — only with a holdco CIK.
+    if cik:
+        from data.ma_announcements import find_terminated_deals
+        terminated, t_ok = find_terminated_deals(cik, subject_name)
+        cache_ok = cache_ok and t_ok
+        for t in terminated:
+            deals.append({
+                "completion_date": None,
+                "deal_kind": "whole_company",
+                "direction": t["direction"],
+                "counterparty": {"name": t["counterparty_name"], "cert": None},
+                "branch_count": None,
+                "event_code": None,
+                "event_desc": "Merger agreement terminated",
+                "target_assets": None,
+                "target_assets_repdte": None,
+                "announce_date": t["announce_date"],
+                "value_usd": t["value_usd"],
+                "value_basis": t["value_basis"],
+                "value_note": t["value_note"],
+                "announce_url": t["announce_url"],
+                "status": "terminated",
+                "termination_date": t["termination_date"],
+            })
+
+    deals.sort(key=lambda x: x["completion_date"] or x["termination_date"] or "",
+               reverse=True)
     if cache_ok:
         cache.put(key, {"deals": deals,
                         "cached_at": datetime.now().isoformat()})

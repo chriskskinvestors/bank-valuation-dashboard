@@ -106,11 +106,20 @@ def query_name(name: str) -> str:
 
 def brand_token(name: str) -> str | None:
     """The first distinctive brand token of a bank name ('Umpqua Bank' ->
-    'umpqua'), or None when every token is generic ('First National Bank')."""
+    'umpqua', 'TD Bank Group' -> 'td'), or None when every token is generic
+    ('First National Bank'). Match tokens with token_in (word-boundary) —
+    short brands like 'td' must never substring-match ('ltd')."""
     for w in re.findall(r"[a-z0-9&']+", (name or "").lower()):
-        if w not in _GENERIC and len(w) >= 3:
+        if w not in _GENERIC and len(w) >= 2:
             return w
     return None
+
+
+def token_in(tok: str | None, text: str) -> bool:
+    """Word-boundary presence of a brand token in already-lowered text."""
+    if not tok:
+        return False
+    return re.search("\\b" + re.escape(tok) + "\\b", text) is not None
 
 
 _ANNOUNCE_RE = re.compile(
@@ -133,7 +142,7 @@ _VALUE_RE = re.compile(
     r"(?:transaction\s+valued\s+at|valued\s+at|deal\s+valued\s+at|"
     r"aggregate\s+(?:transaction\s+)?value\s+of|total\s+(?:transaction|deal)\s+"
     r"value\s+of|purchase\s+price\s+of|aggregate\s+consideration\s+of)\s+"
-    r"(?:approximately\s+|about\s+)?\$\s?([\d][\d,]*(?:\.\d+)?)\s*"
+    r"(?:approximately\s+|about\s+)?(?:US)?\$\s?([\d][\d,]*(?:\.\d+)?)\s*"
     r"(billion|million)", re.IGNORECASE)
 
 
@@ -158,8 +167,8 @@ _RATIO_CONVERT_RE = re.compile(
     r"([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+)?stock")
 # "Columbia Banking System, Inc. (NASDAQ: COLB)" -> name/ticker pairs
 _PR_TICKER_RE = re.compile(
-    r"([A-Z][\w.,&'\- ]{2,60}?)\s*\(\s*(?:NYSE(?:\s+American)?|NASDAQ|Nasdaq)"
-    r"\s*:\s*([A-Z]{1,5})\s*\)")
+    r"([A-Z][\w.,&'\- ]{2,60}?)\s*\(\s*(?:[A-Z]{2,8}\s+and\s+)?"
+    r"(?:NYSE(?:\s+American)?|NASDAQ|Nasdaq)\s*:\s*([A-Z]{1,6})\s*\)")
 # EFTS display_names: "UMPQUA HOLDINGS CORP  (UMPQ)  (CIK 0001077771)".
 # DELISTED registrants lose the "(UMPQ)" part (live-verified), so the CIK
 # fallback below also matches on the display NAME's brand token.
@@ -193,7 +202,7 @@ def _ticker_for_side(side_phrase: str, pairs: list[tuple[str, str]]) -> str | No
     tok = brand_token(side_phrase)
     if not tok:
         return None
-    hits = {tick for name, tick in pairs if tok in name.lower()}
+    hits = {tick for name, tick in pairs if token_in(tok, name.lower())}
     return hits.pop() if len(hits) == 1 else None
 
 
@@ -273,7 +282,7 @@ def compute_stock_value(text: str, announce_date: str,
     tgt_cik = cik_by_ticker.get(tgt_tick)
     if not tgt_cik:
         tok = brand_token(tgt_side)
-        cands = {c for n, c in (name_ciks or []) if tok and tok in n}
+        cands = {c for n, c in (name_ciks or []) if token_in(tok, n)}
         if len(cands) == 1:
             tgt_cik = cands.pop()
     if not tgt_cik:
@@ -436,7 +445,7 @@ def resolve_announcement(target_name: str, acquirer_name: str,
         low = text.lower()
         if tq.lower() not in low:
             continue
-        if acq_tok and acq_tok not in low:
+        if acq_tok and not token_in(acq_tok, low):
             continue
         if _COMPLETED_RE.search(text):        # completion PR — not the announce
             continue
@@ -467,6 +476,197 @@ def resolve_announcement(target_name: str, acquirer_name: str,
     # Nothing classified as the announcement. Only claim a cacheable n/a if
     # every candidate was actually readable.
     return None, not fetch_failed
+
+
+# ── Terminated / withdrawn deals (EFTS sweep, owner-approved 2026-07-13) ──
+
+# Announced-but-never-completed deals have no FDIC anchor. Sweep the subject
+# HOLDCO's own 8-Ks (EFTS ciks filter) for "Agreement and Plan of Merger"
+# mentions: groups whose 8-K items include 1.02 (Termination of Material
+# Definitive Agreement) are termination candidates; each is back-linked to
+# the latest PRIOR announcement-classified 8-K by the same filer, which
+# supplies the counterparty (the PR ticker pair that isn't the subject),
+# announce date, and deal value via the increment-A/B machinery.
+
+_MERGER_PHRASE = '"Agreement and Plan of Merger"'
+_TERM_TEXT_RE = re.compile(r"\bterminat(?:e|ed|ion|ing)\b", re.IGNORECASE)
+_EX99_NAME_RE = re.compile(r"ex[-_.]?99|press", re.IGNORECASE)
+
+
+def _accession_text(cik, adsh: str, primary_doc: str) -> tuple[str | None, bool]:
+    """Primary document text PLUS the accession's EX-99 press-release
+    exhibits, fetched via the filing index — the PR usually lacks the exact
+    EFTS query phrase, so it is not among the phrase-matched documents, yet
+    it is where the "(NYSE: XXX)" party pairs and deal values live
+    (live-verified on FHN/TD). Returns (text, ok); ok=False on any fetch
+    failure so a partial read is never cached as a miss."""
+    base = _fetch_doc_text(cik, adsh, primary_doc)
+    if base is None:
+        return None, False
+    ok = True
+    extra: list[str] = []
+    try:
+        resp = requests.get(
+            f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+            f"{adsh.replace('-', '')}/", headers=_headers(), timeout=30)
+        resp.raise_for_status()
+        names = re.findall(r'href="[^"]*?([^"/]+\.htm)"', resp.text)
+    except Exception as e:
+        print(f"[ma_announce] index {adsh}: {type(e).__name__}: {e}")
+        return base, False
+    for n in dict.fromkeys(names):
+        if _EX99_NAME_RE.search(n) and n != primary_doc:
+            time.sleep(_PAUSE_S)
+            t = _fetch_doc_text(cik, adsh, n)
+            if t is None:
+                ok = False
+                continue
+            extra.append(t)
+            if len(extra) >= 2:
+                break
+    return " ".join([base] + extra), ok
+
+
+def find_terminated_deals(subject_cik, subject_name: str) -> tuple[list[dict], bool]:
+    """
+    Terminated M&A deals for a holdco CIK, newest-first.
+
+    Returns ([{termination_date, announce_date, counterparty_name,
+               value_usd, value_basis, value_note, direction | None,
+               announce_url, termination_url}], ok) — ok=False on any fetch
+    failure (caller must not cache). Strict: a termination 8-K with no
+    back-linkable announcement is DROPPED (never a counterparty guess).
+    """
+    if not subject_cik:
+        return [], True
+    cik10 = f"{int(subject_cik):010d}"
+    subj_tok = brand_token(subject_name)
+
+    try:
+        resp = requests.get(EDGAR_FTS, params={
+            "q": _MERGER_PHRASE, "forms": "8-K", "ciks": cik10,
+            "dateRange": "custom", "startdt": _EFTS_FLOOR,
+            "enddt": date.today().isoformat(),
+        }, headers=_headers(), timeout=30)
+        resp.raise_for_status()
+        hits = resp.json().get("hits", {}).get("hits", [])
+    except Exception as e:
+        print(f"[ma_announce] term sweep cik {cik10}: {type(e).__name__}: {e}")
+        return [], False
+
+    # Split the filer's merger-agreement 8-Ks: 1.02 groups = termination
+    # candidates; 1.01/8.01 groups = announcements (back-link targets).
+    # (_candidates isn't reusable here — it drops 1.02-only groups by design.)
+    terminations, announcements = [], []
+    by_adsh: dict[str, dict] = {}
+    for h in hits:
+        src = h.get("_source", {})
+        adsh = src.get("adsh") or (h.get("_id", "").split(":")[0])
+        if not adsh or not src.get("file_date"):
+            continue
+        items = {str(i) for i in (src.get("items") or [])}
+        is_ex99 = str(src.get("file_type") or "").upper().startswith("EX-99")
+        cur = by_adsh.setdefault(adsh, {
+            "adsh": adsh, "doc": h.get("_id", "").split(":")[-1],
+            "file_date": src.get("file_date"),
+            "cik": (src.get("ciks") or [None])[0],
+            "items": set(), "is_ex99": is_ex99})
+        cur["items"] |= items
+        if is_ex99 and not cur["is_ex99"]:
+            cur.update(doc=h.get("_id", "").split(":")[-1], is_ex99=True)
+    for g in by_adsh.values():
+        if "1.02" in g["items"]:
+            terminations.append(g)
+        elif g["items"] & _ANNOUNCE_ITEMS:
+            # Same item gate as the announcement leg — FHN/TD was announced
+            # under 7.01 (Reg FD) only, live-verified.
+            announcements.append(g)
+    terminations.sort(key=lambda g: g["file_date"], reverse=True)
+    announcements.sort(key=lambda g: g["file_date"])
+
+    deals, fetch_failed = [], False
+    for term in terminations:
+        time.sleep(_PAUSE_S)
+        term_text, t_ok = _accession_text(term["cik"], term["adsh"], term["doc"])
+        fetch_failed = fetch_failed or not t_ok
+        if term_text is None:
+            continue
+        if not _TERM_TEXT_RE.search(term_text):
+            continue
+        # Back-link: EARLIEST in-window prior announcement — the original
+        # announcement precedes the deal's extension/amendment 8-Ks, which
+        # also cite the merger agreement and would otherwise steal the date.
+        prior = [a for a in announcements
+                 if _EFTS_FLOOR <= a["file_date"] < term["file_date"]
+                 and (date.fromisoformat(term["file_date"])
+                      - date.fromisoformat(a["file_date"])).days <= _WINDOW_DAYS]
+        linked = None
+        for ann in prior:
+            time.sleep(_PAUSE_S)
+            ann_text, a_ok = _accession_text(ann["cik"], ann["adsh"], ann["doc"])
+            fetch_failed = fetch_failed or not a_ok
+            if ann_text is None:
+                continue
+            if _COMPLETED_RE.search(ann_text) or not _ANNOUNCE_RE.search(ann_text):
+                continue
+            # Counterparty = a non-subject PR ticker pair, drawn from BOTH
+            # documents' pairs — the announcement PR may render the
+            # counterparty in a form the pair regex can't read (TD's
+            # quoted-abbrev style) while the termination PR has it clean,
+            # and vice versa. Either way the counterparty's brand token
+            # must appear in BOTH documents.
+            pairs = (_pr_ticker_pairs(ann_text)
+                     + _pr_ticker_pairs(term_text))
+            others = [
+                (n, t) for n, t in pairs
+                if subj_tok and subj_tok not in n.lower()
+                and (brand_token(n) or "") != ""
+                and brand_token(n) in term_text.lower()
+                and brand_token(n) in ann_text.lower()
+            ]
+            if not others:
+                continue
+            linked = (ann, ann_text, others)
+            break
+        if not linked:
+            continue  # no guarded announcement — drop, never guess
+        ann, ann_text, others = linked
+        value = extract_stated_value(ann_text)
+        basis = "stated" if value else None
+        note = None
+        if value is None:
+            comp, ok = compute_stock_value(ann_text, ann["file_date"],
+                                           _cik_by_ticker(hits), _name_ciks(hits))
+            if not ok:
+                fetch_failed = True
+            if comp:
+                value, basis = comp["value_usd"], "computed"
+                note = comp["value_note"]
+        # Direction only when the ratio names the subject as the per-share
+        # (target) side; otherwise honest None.
+        direction = None
+        ratio_hit = extract_exchange_ratio(ann_text)
+        if ratio_hit and subj_tok:
+            if subj_tok in ratio_hit[2].lower():
+                direction = "sale"
+            elif subj_tok in ratio_hit[1].lower():
+                direction = "acquisition"
+        deals.append({
+            "termination_date": term["file_date"],
+            "announce_date": ann["file_date"],
+            "counterparty_name": others[0][0],
+            "value_usd": value,
+            "value_basis": basis,
+            "value_note": note,
+            "direction": direction,
+            "announce_url": (f"https://www.sec.gov/Archives/edgar/data/"
+                             f"{int(ann['cik'])}/{ann['adsh'].replace('-', '')}/"
+                             f"{ann['doc']}"),
+            "termination_url": (f"https://www.sec.gov/Archives/edgar/data/"
+                                f"{int(term['cik'])}/"
+                                f"{term['adsh'].replace('-', '')}/{term['doc']}"),
+        })
+    return deals, not fetch_failed
 
 
 if __name__ == "__main__":
@@ -506,4 +706,17 @@ if __name__ == "__main__":
     r, ok = resolve_announcement("Whatcom State Bank", "Banner Bank",
                                  "1999-01-04")
     assert r is None and ok
+
+    # Terminated-deal sweep — FHN/TD ground truth: announced 2022-02-28
+    # (US$13.4B all-cash stated), mutually terminated 2023-05-04.
+    terms, ok = find_terminated_deals(36966, "First Horizon Bank")
+    print("FHN terminations:", terms, ok)
+    assert ok and len(terms) == 1, terms
+    assert terms[0]["termination_date"] == "2023-05-04", terms
+    assert terms[0]["announce_date"] == "2022-02-28", terms
+    assert terms[0]["counterparty_name"] == "TD Bank Group", terms
+    assert terms[0]["value_usd"] == 13_400_000_000, terms
+    # Control: Banner Corp (CIK 946673) has no terminated deals.
+    terms, ok = find_terminated_deals(946673, "Banner Bank")
+    assert ok and terms == [], terms
     print("\nSMOKE OK: announcement resolution verified on known deals.")
