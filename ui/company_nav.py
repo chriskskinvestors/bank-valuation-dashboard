@@ -21,7 +21,7 @@ from __future__ import annotations
 
 COMPANY_NAV = {
     "Overview": ["Corporate Profile", "Stock Chart", "Corporate Structure",
-                 "Analyst Coverage", "Compensation"],
+                 "People Summary", "Analyst Coverage", "Compensation"],
     "Financials": {
         # FDIC call-report fields — uniform across every bank. Default basis (first):
         # fully built + fast, while Company Reported is still being filled in.
@@ -100,6 +100,11 @@ def _stock_chart(t, ctx):
 def _corporate_structure(t, ctx):
     from ui.corporate_structure import render_corporate_structure
     render_corporate_structure(t)
+
+
+def _people_summary(t, ctx):
+    from ui.people_summary import render_people_summary
+    render_people_summary(t)
 
 
 def _analyst_coverage(t, ctx):
@@ -348,6 +353,7 @@ _RENDERERS = {
     "Corporate Profile": _corporate_profile,
     "Stock Chart": _stock_chart,
     "Corporate Structure": _corporate_structure,
+    "People Summary": _people_summary,
     "Analyst Coverage": _analyst_coverage,
     "Price & Trends": _price_trends,
     "Financial Highlights": _financial_highlights,
