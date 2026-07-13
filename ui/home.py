@@ -191,6 +191,13 @@ _AF_CSS = r"""
 .afwrap .tk{font-size:var(--fs-grid-10_5);font-weight:700;letter-spacing:.03em;color:#1e3a8a;text-decoration:none;}
 .afwrap .up{color:#047857;}.afwrap .dn{color:#b91c1c;}.afwrap .mut{color:#aab4c2;}
 .afwrap a.crow{text-decoration:none;color:inherit;display:contents;}
+/* Movers/Volume/Calendar rows have always deep-linked to the Company page,
+   but display:contents anchors show NO affordance — nothing signals they're
+   clickable. Hover paints the inner row (the anchor itself has no box) and
+   underlines the ticker, matching the feed panes' visual language. */
+.afwrap a.crow .erow{cursor:pointer;}
+.afwrap a.crow:hover .erow{background:#f7f9fc;}
+.afwrap a.crow:hover .tk{text-decoration:underline;}
 .afwrap .cbx{width:11px;height:11px;border:1px solid #1e3a8a;border-radius:0;background:#1e3a8a;position:relative;display:inline-block;}
 .afwrap .cbx.off{background:#fff;}
 .afwrap .cbx:not(.off):after{content:"";position:absolute;left:3px;top:1px;width:2.5px;height:5.5px;border:solid #fff;border-width:0 1.4px 1.4px 0;transform:rotate(45deg);}
