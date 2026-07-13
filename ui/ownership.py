@@ -201,14 +201,22 @@ def render_holder_history(ticker: str):
 
     holders = sorted(hist, key=lambda h: -_latest_value(hist[h]))
 
-    # ── Matrix: holders (rows) × stored quarters (columns), shares ──────
+    # ── Matrix: holders (rows) × stored quarters (columns) ──────────────
+    # Both metrics come straight from the stored snapshots — value is each
+    # filing's own reported position value (SNL's mkt-val column, phase 2).
+    view = st.radio("Matrix values", ["Shares", "Reported value"],
+                    horizontal=True, key=f"hh_view_{ticker}")
     rows = []
     for h in holders:
         row = {"Institution": h}
         for q in shown:
-            cell = hist[h].get(q)
-            sh = (cell or {}).get("shares")
-            row[q] = f"{sh:,.0f}" if sh is not None else "—"
+            cell = hist[h].get(q) or {}
+            if view == "Shares":
+                v = cell.get("shares")
+                row[q] = f"{v:,.0f}" if v is not None else "—"
+            else:
+                v = cell.get("value_usd")
+                row[q] = fmt_dollars(v) if v is not None else "—"
         rows.append(row)
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, hide_index=True,
