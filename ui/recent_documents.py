@@ -158,37 +158,52 @@ def classify_filings(filings: list[dict]) -> dict[str, list[dict]]:
 
 _CSS = """
 <style>
-.rd-panel { margin-bottom: 14px; }
-.rd-panel-h { font-weight:700; font-size:0.85rem; color:var(--text-primary);
-  padding:6px 10px; background:rgba(241,245,249,0.85);
+.rd-panel { margin-bottom: 4px; }
+.rd-panel-h { font-weight:700; font-size:0.74rem; text-transform:uppercase;
+  letter-spacing:0.03em; color:var(--text-primary);
+  padding:2px 8px; background:rgba(241,245,249,0.85);
   border:1px solid rgba(148,163,184,0.3); border-bottom:none; }
 .rd-tbl { width:100%; table-layout:fixed; border-collapse:collapse;
-  font-size:12.5px; border:1px solid rgba(148,163,184,0.22); }
-.rd-tbl thead th { padding:5px 10px; text-align:left; color:var(--text-secondary);
-  font-weight:600; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.02em;
+  font-size:11.5px; line-height:1.25; border:1px solid rgba(148,163,184,0.22); }
+.rd-tbl thead th { padding:1px 8px; text-align:left; color:var(--text-secondary);
+  font-weight:600; font-size:0.64rem; text-transform:uppercase; letter-spacing:0.02em;
   border-bottom:1px solid rgba(148,163,184,0.3); background:rgba(241,245,249,0.6); }
-.rd-tbl tbody tr { border-bottom:1px solid rgba(148,163,184,0.12); }
+.rd-tbl tbody tr { border-bottom:1px solid rgba(148,163,184,0.10); }
 .rd-tbl tbody tr:hover td { background:rgba(37,99,235,0.05); }
-.rd-tbl td { padding:5px 10px; vertical-align:top; }
+.rd-tbl td { padding:1px 8px; vertical-align:top; }
 .rd-tbl td.rd-date { white-space:nowrap; color:var(--text-secondary); }
-/* The menu must NOT be clipped: ellipsis lives on the summary (label line)
-   only; the dropdown is the summary's sibling, free to overflow the cell. */
-.rd-dd { display:block; position:relative; }
-/* !important: styles.py has a global `details summary` color/size/weight rule
-   (expander styling) that must not win over the document-link look. */
-.rd-dd > summary { list-style:none; cursor:pointer;
+/* styles.py globally themes `details`/`details summary`/`details > div` as
+   EXPANDERS (elevated bg, border, overflow:hidden, 10px summary padding,
+   14px body padding — all !important). Every one of those must be beaten
+   here or the doc menu renders as a fat expander whose dropdown is CLIPPED
+   by the details' overflow:hidden. Keep this block in sync with the
+   "Expanders" section of styles.py. */
+.rd-dd { display:block; position:relative; background:transparent !important;
+  border:none !important; border-radius:0 !important; overflow:visible !important;
+  box-shadow:none !important; }
+.rd-dd > summary { list-style:none; cursor:pointer; padding:0 !important;
   color:var(--brand-accent) !important; font-weight:600 !important;
-  font-size:12.5px !important;
+  font-size:11.5px !important; line-height:1.25 !important;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rd-dd > summary::-webkit-details-marker { display:none; }
-.rd-dd > summary:hover { text-decoration:underline; }
-.rd-menu { position:absolute; left:0; top:calc(100% + 2px); z-index:60;
+.rd-dd > summary:hover { text-decoration:underline;
+  background:transparent !important; }
+.rd-dd[open] > summary { border-bottom:none !important; }
+.rd-dd > .rd-menu { position:absolute; left:0; top:100%; z-index:60;
   background:var(--bg-surface,#fff); border:1px solid rgba(148,163,184,0.45);
-  box-shadow:0 4px 14px rgba(15,23,42,0.18); min-width:180px; padding:3px 0; }
-.rd-menu a { display:block; padding:6px 14px; font-size:0.8rem;
+  box-shadow:0 4px 14px rgba(15,23,42,0.18); min-width:160px;
+  padding:2px 0 !important; }
+.rd-menu a { display:block; padding:3px 10px; font-size:0.74rem;
   color:var(--text-primary); text-decoration:none; white-space:nowrap; }
 .rd-menu a:hover { background:rgba(37,99,235,0.08); color:var(--brand-accent); }
-.rd-sub { color:var(--text-muted); font-weight:400; }
+.rd-sub { color:var(--text-muted); font-weight:400; font-size:0.92em; }
+/* Scoped compact chrome: the More/Show-all buttons and the date-range picker
+   inside this page only — global button/input styling stays untouched. */
+.st-key-rd_page .stButton > button { padding:0 8px !important; min-height:0 !important;
+  height:20px !important; font-size:0.68rem !important; line-height:1 !important; }
+.st-key-rd_page div[data-baseweb="select"] > div { min-height:24px !important;
+  padding-top:0 !important; padding-bottom:0 !important; font-size:0.74rem !important; }
+.st-key-rd_page [data-testid="stVerticalBlock"] { gap:0.15rem !important; }
 </style>
 """
 
@@ -219,7 +234,7 @@ def _panel_html(title: str, rows: list[str]) -> str:
         'selected date range</td><td class="rd-date"></td></tr>')
     return (f'<div class="rd-panel"><div class="rd-panel-h">{_safe(title)}</div>'
             f'<table class="rd-tbl"><thead><tr><th>Document</th>'
-            f'<th style="width:96px;">Filing Date</th></tr></thead>'
+            f'<th style="width:82px;">Filing Date</th></tr></thead>'
             f'<tbody>{body}</tbody></table></div>')
 
 
@@ -413,11 +428,25 @@ def render_recent_documents(ticker: str) -> None:
     name = get_name(ticker) or ticker
     title_bar(f"{name} ({ticker})", "Recent Documents")
 
-    # ── Filters row ──────────────────────────────────────────────────────
-    fcol, _sp = st.columns([1, 4])
+    # Keyed container scopes the compact button/select CSS to this page only.
+    with st.container(key="rd_page"):
+        _render_body(ticker, cik)
+
+
+def _render_body(ticker: str, cik: int) -> None:
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+    # ── Filters row (CapIQ-style, single slim line) ──────────────────────
+    flab, fcol, _sp = st.columns([0.55, 0.9, 5.2], vertical_alignment="center")
+    with flab:
+        st.markdown('<div style="font-size:0.66rem;font-weight:600;'
+                    'text-transform:uppercase;letter-spacing:0.03em;'
+                    'color:var(--text-secondary);">Filters · Date Range</div>',
+                    unsafe_allow_html=True)
     with fcol:
-        rng = st.selectbox("Date Range", list(_DATE_RANGES),
-                           index=2, key=f"rd_range_{ticker}")
+        rng = st.selectbox("Date Range", list(_DATE_RANGES), index=2,
+                           key=f"rd_range_{ticker}",
+                           label_visibility="collapsed")
 
     with st.spinner("Loading EDGAR submissions…"):
         info = get_filing_info(cik, max_filings=1000)
@@ -459,8 +488,7 @@ def render_recent_documents(ticker: str) -> None:
         else:
             key_exhibits.append(e)
 
-    st.markdown(_CSS, unsafe_allow_html=True)
-    left, right = st.columns(2, gap="medium")
+    left, right = st.columns(2, gap="small")
 
     # ── Left column ──────────────────────────────────────────────────────
     with left:
@@ -543,6 +571,5 @@ def render_recent_documents(ticker: str) -> None:
     if filings:
         table_export(pd.DataFrame(filings), f"recent_documents_{ticker}",
                      key=f"exp_rd_{ticker}")
-        st.caption(f"{len(filings)} EDGAR filings in range · click any document "
-                   "name for viewer / HTML / PDF options · PDFs are rendered "
-                   "from the EDGAR HTML on demand")
+        st.caption(f"{len(filings)} EDGAR filings in range · click a document "
+                   "for viewer / HTML / PDF")
