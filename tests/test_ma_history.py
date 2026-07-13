@@ -49,7 +49,7 @@ COLUMBIA = 33826
 # The four announcement fields every deal dict now carries (None unless the
 # EFTS leg resolves them — patched out in these tests unless stated).
 ANN_NONE = {"announce_date": None, "value_usd": None, "value_basis": None,
-            "announce_url": None}
+            "value_note": None, "announce_url": None}
 
 
 class _AnnPatched(unittest.TestCase):
@@ -175,7 +175,7 @@ class TestWholeCompanyDeals(_AnnPatched):
         self.assertEqual(fin_call[0][1]["limit"], 1)
         # Cached under the documented key.
         key, payload = mock_cput.call_args[0]
-        self.assertEqual(key, f"ma_history:v2:{UMPQUA}")
+        self.assertEqual(key, f"ma_history:v3:{UMPQUA}")
         self.assertEqual(payload["deals"], deals)
 
     @patch("data.cache.put")
@@ -350,15 +350,16 @@ class TestAnnouncementEnrichment(_AnnPatched):
         from data import ma_history
         self.mock_ann.return_value = ({
             "announce_date": "2021-10-12", "value_usd": 5_100_000_000,
-            "value_basis": "stated", "url": "https://sec.gov/x",
-            "accession": "0001-21-1"}, True)
+            "value_basis": "computed", "value_note": "computed: 0.5958 x ...",
+            "url": "https://sec.gov/x", "accession": "0001-21-1"}, True)
         mock_get.side_effect = _route(
             structure=[_merger_row("2023-03-01", COLUMBIA, "Columbia State Bank")],
             fin={COLUMBIA: [_fin_row(COLUMBIA, "20221231", 20_258_988)]})
         deals = ma_history.get_ma_history(UMPQUA)
         self.assertEqual(deals[0]["announce_date"], "2021-10-12")
         self.assertEqual(deals[0]["value_usd"], 5_100_000_000)
-        self.assertEqual(deals[0]["value_basis"], "stated")
+        self.assertEqual(deals[0]["value_basis"], "computed")
+        self.assertEqual(deals[0]["value_note"], "computed: 0.5958 x ...")
         self.assertEqual(deals[0]["announce_url"], "https://sec.gov/x")
         # Called with the names AT DEAL TIME from the structure row.
         self.mock_ann.assert_called_once_with(

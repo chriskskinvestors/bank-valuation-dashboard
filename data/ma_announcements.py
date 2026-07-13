@@ -19,14 +19,27 @@ announcement vs completion. Guards — all must pass, else n/a:
     definitive agreement", so completion rejection takes precedence.
     Prospective phrases ("upon/following completion of") don't trip it.
 
-Deal value: STRICT stated-value patterns only ("... valued at
-approximately $191.1 million") on the accepted announcement text; several
-DISTINCT candidate values -> n/a, never a guess. All-stock MOEs whose PR
-quotes only an exchange ratio return value None here — the computed
-ratio × price × shares leg is a separate increment (owner-approved plan,
-2026-07-13). Whole-company deals only: branch-package announcement
-linkage (both parties keep operating, so name queries are hopelessly
-noisy) is deferred, honest n/a.
+Deal value, two strict bases (n/a over guess, always labeled):
+  stated   — "... valued at approximately $191.1 million" phrasings on the
+             accepted announcement text; several DISTINCT candidate
+             values -> n/a.
+  computed — all-stock deals whose PR quotes only an exchange ratio
+             ("receive 0.5958 of a share of Columbia stock for each
+             Umpqua share"): value = target shares outstanding (SEC
+             companyfacts dei cover count nearest ≤ announce) × ratio ×
+             acquirer's last close BEFORE announce (FMP EOD — the press
+             convention; verified: Columbia/Umpqua computes $5.19B vs the
+             press-reported ~$5.2B). Party -> ticker via the PR's
+             "(NASDAQ: XXXX)" mentions; ticker -> CIK via the EFTS hits'
+             display names (works for delisted targets like UMPQ) with the
+             live bank mapping as fallback. Every leg strict: ambiguous
+             ratio, unmapped party, stale share count (>200d) or stale
+             price (>10d) -> value n/a; the announce DATE is kept either
+             way. ``value_note`` records the computed formula verbatim.
+
+Whole-company deals only: branch-package announcement linkage (both
+parties keep operating, so name queries are hopelessly noisy) is
+deferred, honest n/a.
 
 resolve_announcement returns (result | None, ok): ok=False means a FETCH
 failure (caller must not cache); ok=True with None means genuinely not
@@ -127,6 +140,188 @@ _VALUE_RE = re.compile(
 def _strip_html(raw: str) -> str:
     txt = re.sub(r"<[^>]+>", " ", raw)
     return re.sub(r"\s+", " ", _html.unescape(txt))
+
+
+# ── Computed all-stock value (ratio × acquirer price × target shares) ─────
+
+# "receive 0.5958 of a share of Columbia stock for each Umpqua share"
+_RATIO_RECEIVE_RE = re.compile(
+    r"receive\s+(\d?\.\d{2,4})\s+(?:of\s+a\s+share|shares?)\s+of\s+"
+    r"([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+)?stock\s+for\s+each(?:\s+share\s+"
+    r"of)?\s+([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+stock|shares?|stock)")
+# "each share of Umpqua common stock will be converted into ... 0.5958
+#  shares of Columbia common stock"
+_RATIO_CONVERT_RE = re.compile(
+    r"each\s+share\s+of\s+([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+)?stock\s+"
+    r"(?:will\s+be|shall\s+be|is)\s+converted\s+into\s+(?:the\s+right\s+to\s+"
+    r"receive\s+)?(\d?\.\d{2,4})\s+(?:of\s+a\s+share|shares?)\s+of\s+"
+    r"([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+)?stock")
+# "Columbia Banking System, Inc. (NASDAQ: COLB)" -> name/ticker pairs
+_PR_TICKER_RE = re.compile(
+    r"([A-Z][\w.,&'\- ]{2,60}?)\s*\(\s*(?:NYSE(?:\s+American)?|NASDAQ|Nasdaq)"
+    r"\s*:\s*([A-Z]{1,5})\s*\)")
+# EFTS display_names: "UMPQUA HOLDINGS CORP  (UMPQ)  (CIK 0001077771)".
+# DELISTED registrants lose the "(UMPQ)" part (live-verified), so the CIK
+# fallback below also matches on the display NAME's brand token.
+_DISPLAY_NAME_RE = re.compile(r"\(([A-Z]{1,5})\)\s+\(CIK\s+(\d+)\)")
+_DISPLAY_CIK_RE = re.compile(r"^(.*?)\s*(?:\([A-Z]{1,5}\)\s*)?\(CIK\s+(\d+)\)")
+
+_SHARES_MAX_AGE_DAYS = 200      # cover count must be within 2 quarters
+_PRICE_MAX_AGE_DAYS = 10        # last close must be a normal trading gap
+
+
+def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
+    """(ratio, acquirer-side phrase, target-side phrase) from the PR's
+    exchange-ratio sentence, or None. Several DISTINCT ratios -> None."""
+    found = []
+    for m in _RATIO_RECEIVE_RE.finditer(text):
+        found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
+    for m in _RATIO_CONVERT_RE.finditer(text):
+        found.append((float(m.group(2)), m.group(3).strip(), m.group(1).strip()))
+    if not found or len({r for r, _, _ in found}) != 1:
+        return None
+    return found[0]
+
+
+def _pr_ticker_pairs(text: str) -> list[tuple[str, str]]:
+    """[(company name phrase, ticker)] from '(NASDAQ: XXXX)' mentions."""
+    return [(m.group(1).strip(), m.group(2)) for m in _PR_TICKER_RE.finditer(text)]
+
+
+def _ticker_for_side(side_phrase: str, pairs: list[tuple[str, str]]) -> str | None:
+    """The PR ticker whose company name shares the side phrase's brand token."""
+    tok = brand_token(side_phrase)
+    if not tok:
+        return None
+    hits = {tick for name, tick in pairs if tok in name.lower()}
+    return hits.pop() if len(hits) == 1 else None
+
+
+def _shares_outstanding_asof(cik, asof: str) -> tuple[int | None, str | None, bool]:
+    """Target cover-page share count nearest ≤ ``asof`` from SEC companyfacts.
+    Returns (shares, as-of end date, ok) — ok=False on fetch failure."""
+    from data.sec_client import fetch_company_facts
+
+    facts = fetch_company_facts(int(cik))
+    if not facts:
+        return None, None, False        # fetch failed (helper logs + returns {})
+    dei = facts.get("facts", {}).get("dei", {}).get(
+        "EntityCommonStockSharesOutstanding", {})
+    rows = [r for u in dei.get("units", {}).values() for r in u
+            if (r.get("end") or "") <= asof and r.get("val")]
+    if not rows:
+        return None, None, True
+    best = max(rows, key=lambda r: (r.get("end", ""), r.get("filed", "")))
+    floor = (date.fromisoformat(asof)
+             - timedelta(days=_SHARES_MAX_AGE_DAYS)).isoformat()
+    if (best.get("end") or "") < floor:
+        return None, None, True         # too stale to price a deal — n/a
+    return int(best["val"]), best.get("end"), True
+
+
+def _close_before(ticker: str, asof: str) -> tuple[float | None, str | None, bool]:
+    """Acquirer's last close STRICTLY before ``asof`` (the press convention).
+    Returns (close, date, ok) — ok=False when the environment has no FMP key
+    (retry later); with a key, no data is a genuine, cacheable n/a."""
+    from data import fmp_client
+
+    if not fmp_client._has_key():
+        return None, None, False
+    try:
+        df = fmp_client.get_history(ticker, "ALL")
+    except Exception as e:
+        print(f"[ma_announce] price {ticker} error: {type(e).__name__}: {e}")
+        return None, None, False
+    if df is None or df.empty or "date" not in df or "close" not in df:
+        return None, None, True
+    rows = df[df["date"].astype(str).str[:10] < asof]
+    if rows.empty:
+        return None, None, True
+    last = rows.iloc[-1]
+    pdate = str(last["date"])[:10]
+    floor = (date.fromisoformat(asof)
+             - timedelta(days=_PRICE_MAX_AGE_DAYS)).isoformat()
+    if pdate < floor:
+        return None, None, True         # halted/stale tape — n/a
+    return float(last["close"]), pdate, True
+
+
+def compute_stock_value(text: str, announce_date: str,
+                        cik_by_ticker: dict[str, int],
+                        name_ciks: list[tuple[str, int]] = ()) -> tuple[dict | None, bool]:
+    """
+    Computed all-stock deal value from the announcement text, or None.
+
+    ``name_ciks``: [(EFTS display name lower-cased, cik)] — the fallback CIK
+    source for DELISTED targets whose display names carry no ticker.
+
+    Returns ({value_usd, value_note}, ok). Every leg is strict: ambiguous or
+    absent ratio, unmapped side, stale shares or price -> (None, True) — a
+    cacheable n/a. ok=False only when a lookup FAILED (no FMP key, SEC fetch
+    error) so the caller retries instead of freezing the miss.
+    """
+    ratio_hit = extract_exchange_ratio(text)
+    if not ratio_hit:
+        return None, True
+    ratio, acq_side, tgt_side = ratio_hit
+    pairs = _pr_ticker_pairs(text)
+    acq_tick = _ticker_for_side(acq_side, pairs)
+    tgt_tick = _ticker_for_side(tgt_side, pairs)
+    if not acq_tick or not tgt_tick or acq_tick == tgt_tick:
+        return None, True
+
+    tgt_cik = cik_by_ticker.get(tgt_tick)
+    if not tgt_cik:
+        tok = brand_token(tgt_side)
+        cands = {c for n, c in (name_ciks or []) if tok and tok in n}
+        if len(cands) == 1:
+            tgt_cik = cands.pop()
+    if not tgt_cik:
+        from data.bank_mapping import get_cik
+        tgt_cik = get_cik(tgt_tick)
+    if not tgt_cik:
+        return None, True
+
+    shares, shares_asof, ok = _shares_outstanding_asof(tgt_cik, announce_date)
+    if not ok:
+        return None, False
+    if not shares:
+        return None, True
+    price, price_date, ok = _close_before(acq_tick, announce_date)
+    if not ok:
+        return None, False
+    if not price:
+        return None, True
+
+    return {
+        "value_usd": int(round(shares * ratio * price)),
+        "value_note": (f"computed: {ratio} × {acq_tick} ${price:.2f} "
+                       f"({price_date}) × {shares:,} {tgt_tick} shares "
+                       f"({shares_asof})"),
+    }, True
+
+
+def _cik_by_ticker(hits: list[dict]) -> dict[str, int]:
+    """ticker -> CIK from the EFTS hits' display names (listed filers)."""
+    out: dict[str, int] = {}
+    for h in hits:
+        for dn in (h.get("_source", {}).get("display_names") or []):
+            m = _DISPLAY_NAME_RE.search(dn or "")
+            if m:
+                out.setdefault(m.group(1), int(m.group(2)))
+    return out
+
+
+def _name_ciks(hits: list[dict]) -> list[tuple[str, int]]:
+    """[(display name lower, cik)] from the EFTS hits — the CIK source for
+    DELISTED filers, whose display names carry no ticker (e.g. UMPQ)."""
+    out: dict[int, str] = {}
+    for h in hits:
+        for dn in (h.get("_source", {}).get("display_names") or []):
+            m = _DISPLAY_CIK_RE.match((dn or "").strip())
+            if m:
+                out.setdefault(int(m.group(2)), m.group(1).lower())
+    return [(n, c) for c, n in out.items()]
 
 
 def extract_stated_value(text: str) -> int | None:
@@ -247,15 +442,28 @@ def resolve_announcement(target_name: str, acquirer_name: str,
             continue
         if not _ANNOUNCE_RE.search(text):
             continue
-        return {
+        result = {
             "announce_date": cand["file_date"],
             "value_usd": extract_stated_value(text),
-            "value_basis": "stated" if extract_stated_value(text) else None,
+            "value_basis": None,
+            "value_note": None,
             "url": (f"https://www.sec.gov/Archives/edgar/data/"
                     f"{int(cand['cik'])}/{cand['adsh'].replace('-', '')}/"
                     f"{cand['doc']}"),
             "accession": cand["adsh"],
-        }, True
+        }
+        ok = True
+        if result["value_usd"] is not None:
+            result["value_basis"] = "stated"
+        else:
+            comp, ok = compute_stock_value(text, cand["file_date"],
+                                           _cik_by_ticker(hits),
+                                           _name_ciks(hits))
+            if comp:
+                result["value_usd"] = comp["value_usd"]
+                result["value_basis"] = "computed"
+                result["value_note"] = comp["value_note"]
+        return result, ok
     # Nothing classified as the announcement. Only claim a cacheable n/a if
     # every candidate was actually readable.
     return None, not fetch_failed
@@ -277,6 +485,17 @@ if __name__ == "__main__":
                                  "2023-03-01")
     print("Columbia State Bank:", r, ok)
     assert ok and r and r["announce_date"] == "2021-10-12", r
+    # All-stock MOE -> computed value (requires FMP_API_KEY in env):
+    # 0.5958 × COLB $39.57 prior close × 220,133,236 UMPQ cover shares
+    # ≈ $5.19B vs the press-reported ~$5.2B. Range-asserted (a data-vendor
+    # close restatement shouldn't fail the smoke); unit tests pin the math.
+    from data.fmp_client import _has_key
+    if _has_key():
+        assert r["value_basis"] == "computed", r
+        assert 5_000_000_000 < r["value_usd"] < 5_400_000_000, r
+        assert "0.5958" in (r["value_note"] or ""), r
+    else:
+        print("  (no FMP_API_KEY — computed-value leg not exercised)")
 
     r, ok = resolve_announcement("AmericanWest Bank", "Banner Bank",
                                  "2015-10-02")

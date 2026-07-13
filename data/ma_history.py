@@ -23,15 +23,17 @@ target assets (branch-level assets aren't in SDI) — n/a, never a guess.
 Non-SDI targets (e.g. trust-company affiliates) also render n/a.
 
 Whole-company deals are enriched with the deal's ANNOUNCEMENT — announce
-date + stated value from the announcement 8-K via EDGAR full-text search
-(data/ma_announcements; strict guards, n/a over guess; EFTS coverage is
-2001+ so older deals honestly carry None). Branch deals are not enriched
-(announcement linkage is too noisy to guard — see that module). The
-computed all-stock value (ratio × price × shares) and the
-terminated/withdrawn-deal sweep are the next increments (owner-approved
-2026-07-13). FDIC history itself is completions only (EFFDATE).
+date + deal value (stated in the PR, or computed for ratio-only all-stock
+deals: ratio × acquirer prior close × target cover shares, labeled via
+value_basis/value_note) from the announcement 8-K via EDGAR full-text
+search (data/ma_announcements; strict guards, n/a over guess; EFTS
+coverage is 2001+ so older deals honestly carry None). Branch deals are
+not enriched (announcement linkage is too noisy to guard — see that
+module). The terminated/withdrawn-deal sweep is the next increment
+(owner-approved 2026-07-13). FDIC history itself is completions only
+(EFFDATE).
 
-Cache: ``ma_history:v2:{cert}`` for 7 days — structure changes are rare;
+Cache: ``ma_history:v3:{cert}`` for 7 days — structure changes are rare;
 the key is versioned so a deal-schema change never serves stale rows. Any
 fetch failure — history pages, a target-assets lookup, or an announcement
 fetch — skips the cache put so a transient outage is never frozen as a
@@ -166,6 +168,7 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
             "announce_date": None,
             "value_usd": None,
             "value_basis": None,
+            "value_note": None,
             "announce_url": None,
         })
     for date, n in office_counts.items():
@@ -184,6 +187,7 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
                 "announce_date": None,
                 "value_usd": None,
                 "value_basis": None,
+                "value_note": None,
                 "announce_url": None,
             })
     return deals
@@ -206,8 +210,9 @@ def get_ma_history(cert: int) -> list[dict]:
               target_assets_repdte str | None,    # REPDTE ≤ completion;
                                                   # whole-company deals only
               announce_date str | None,           # announcement 8-K (EFTS);
-              value_usd int | None,               # stated value, RAW DOLLARS
-              value_basis 'stated' | None,
+              value_usd int | None,               # RAW DOLLARS
+              value_basis 'stated' | 'computed' | None,
+              value_note str | None,              # computed formula verbatim
               announce_url str | None}]           # all four: whole-company
                                                   # deals only, 2001+
 
@@ -220,7 +225,7 @@ def get_ma_history(cert: int) -> list[dict]:
     cert = int(cert)
     from data import cache
 
-    key = f"ma_history:v2:{cert}"  # v2: announcement fields added 2026-07-13
+    key = f"ma_history:v3:{cert}"  # v3: computed-value note added 2026-07-13
     cached = cache.get(key)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
@@ -287,6 +292,7 @@ def get_ma_history(cert: int) -> list[dict]:
             "announce_date": (ann or {}).get("announce_date"),
             "value_usd": (ann or {}).get("value_usd"),
             "value_basis": (ann or {}).get("value_basis"),
+            "value_note": (ann or {}).get("value_note"),
             "announce_url": (ann or {}).get("url"),
         })
 
@@ -328,6 +334,7 @@ def get_ma_history(cert: int) -> list[dict]:
             "announce_date": None,
             "value_usd": None,
             "value_basis": None,
+            "value_note": None,
             "announce_url": None,
         })
 
@@ -363,7 +370,12 @@ if __name__ == "__main__":
     assert col["target_assets"] == 20_258_988_000, col
     assert col["target_assets_repdte"] == "2022-12-31", col
     assert col["announce_date"] == "2021-10-12", col
-    assert col["value_usd"] is None, col  # MOE: ratio-only PR, honest n/a
+    # All-stock MOE: computed 0.5958 x COLB $39.57 (2021-10-11) x 220,133,236
+    # UMPQ shares ~= $5.19B vs press-reported ~$5.2B. Range-asserted (FMP
+    # could restate a close); the exact math is pinned in unit tests.
+    assert col["value_basis"] == "computed", col
+    assert 5_000_000_000 < col["value_usd"] < 5_400_000_000, col
+    assert "0.5958" in (col["value_note"] or ""), col
     ppb = next(x for x in deals
                if (x["counterparty"] or {}).get("cert") == 32172)
     assert ppb["completion_date"] == "2025-09-01", ppb

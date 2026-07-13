@@ -54,11 +54,24 @@ agreement and plan of merger.</p></body></html>
 
 
 def _hit(adsh, file_date, doc, file_type="EX-99.1", cik="0000946673",
-         items=None):
+         items=None, display_names=None):
     return {"_id": f"{adsh}:{doc}",
             "_source": {"adsh": adsh, "file_date": file_date, "ciks": [cik],
                         "file_type": file_type,
-                        **({"items": items} if items is not None else {})}}
+                        **({"items": items} if items is not None else {}),
+                        **({"display_names": display_names}
+                           if display_names is not None else {})}}
+
+
+# Columbia/Umpqua-style all-stock MOE announcement: exchange ratio, ticker
+# mentions, NO stated dollar value (live-verified phrasing, 2026-07-13).
+MOE_PR = """
+<html><body><p>Columbia Banking System, Inc. (NASDAQ: COLB) and Umpqua
+Holdings Corporation (NASDAQ: UMPQ), parent company of Columbia State Bank
+and Umpqua Bank, today announced a definitive agreement under which the
+companies will combine. Umpqua shareholders will receive 0.5958 of a share
+of Columbia stock for each Umpqua share they own.</p></body></html>
+"""
 
 
 def _efts_resp(hits):
@@ -127,6 +140,92 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(extract_stated_value(
             "valued at approximately $191.1 million ... again valued at "
             "approximately $191.1 million"), 191_100_000)
+
+
+class TestComputedStockValue(unittest.TestCase):
+
+    def test_ratio_extraction_both_forms_and_direction(self):
+        from data.ma_announcements import extract_exchange_ratio
+        r = extract_exchange_ratio(
+            "shareholders will receive 0.5958 of a share of Columbia stock "
+            "for each Umpqua share they own")
+        self.assertEqual(r[0], 0.5958)
+        self.assertIn("Columbia", r[1])   # stock received = acquirer side
+        self.assertIn("Umpqua", r[2])     # per-share side = target
+        r = extract_exchange_ratio(
+            "each share of Umpqua common stock will be converted into the "
+            "right to receive 0.5958 shares of Columbia common stock")
+        self.assertEqual((round(r[0], 4), "Umpqua" in r[2], "Columbia" in r[1]),
+                         (0.5958, True, True))
+        # Two DISTINCT ratios (collared deal) -> None, never a guess.
+        self.assertIsNone(extract_exchange_ratio(
+            "receive 0.5958 of a share of Columbia stock for each Umpqua "
+            "share ... receive 0.6100 of a share of Columbia stock for each "
+            "Umpqua share"))
+
+    @patch("data.fmp_client.get_history")
+    @patch("data.fmp_client._has_key", return_value=True)
+    @patch("data.sec_client.fetch_company_facts")
+    def test_computed_value_hand_math(self, mock_facts, _hk, mock_hist):
+        # 200,000,000 shares x 0.5958 x $40.00 = $4,766,400,000 (hand).
+        import pandas as pd
+        from data.ma_announcements import compute_stock_value
+        mock_facts.return_value = {"facts": {"dei": {
+            "EntityCommonStockSharesOutstanding": {"units": {"shares": [
+                {"end": "2021-09-30", "filed": "2021-10-01",
+                 "val": 200_000_000}]}}}}}
+        mock_hist.return_value = pd.DataFrame(
+            {"date": ["2021-10-08", "2021-10-11", "2021-10-12"],
+             "close": [41.0, 40.0, 38.0]})
+        text = ("Columbia Banking System, Inc. (NASDAQ: COLB) and Umpqua "
+                "Holdings Corporation (NASDAQ: UMPQ) ... will receive 0.5958 "
+                "of a share of Columbia stock for each Umpqua share they own")
+        comp, ok = compute_stock_value(text, "2021-10-12",
+                                       {"COLB": 887343, "UMPQ": 1077771})
+        self.assertTrue(ok)
+        self.assertEqual(comp["value_usd"], 4_766_400_000)
+        # Prior close (10-11, $40.00) used - NOT announce-day (10-12, $38).
+        self.assertIn("$40.00 (2021-10-11)", comp["value_note"])
+        self.assertIn("200,000,000 UMPQ shares", comp["value_note"])
+        mock_facts.assert_called_once_with(1077771)   # target CIK, not COLB
+
+    @patch("data.fmp_client.get_history")
+    @patch("data.fmp_client._has_key", return_value=True)
+    @patch("data.sec_client.fetch_company_facts")
+    def test_stale_share_count_is_na(self, mock_facts, _hk, mock_hist):
+        from data.ma_announcements import compute_stock_value
+        mock_facts.return_value = {"facts": {"dei": {
+            "EntityCommonStockSharesOutstanding": {"units": {"shares": [
+                {"end": "2020-06-30", "filed": "2020-08-01",
+                 "val": 200_000_000}]}}}}}
+        text = ("Columbia Banking System, Inc. (NASDAQ: COLB) and Umpqua "
+                "Holdings Corporation (NASDAQ: UMPQ) ... receive 0.5958 of a "
+                "share of Columbia stock for each Umpqua share")
+        comp, ok = compute_stock_value(text, "2021-10-12", {"UMPQ": 1077771})
+        self.assertIsNone(comp)
+        self.assertTrue(ok)          # cacheable n/a, not a fetch failure
+        mock_hist.assert_not_called()
+
+    @patch("data.fmp_client._has_key", return_value=False)
+    @patch("data.sec_client.fetch_company_facts")
+    def test_no_fmp_key_is_uncacheable(self, mock_facts, _hk):
+        from data.ma_announcements import compute_stock_value
+        mock_facts.return_value = {"facts": {"dei": {
+            "EntityCommonStockSharesOutstanding": {"units": {"shares": [
+                {"end": "2021-09-30", "filed": "2021-10-01",
+                 "val": 200_000_000}]}}}}}
+        text = ("Columbia Banking System, Inc. (NASDAQ: COLB) and Umpqua "
+                "Holdings Corporation (NASDAQ: UMPQ) ... receive 0.5958 of a "
+                "share of Columbia stock for each Umpqua share")
+        comp, ok = compute_stock_value(text, "2021-10-12", {"UMPQ": 1077771})
+        self.assertIsNone(comp)
+        self.assertFalse(ok)
+
+    def test_no_ratio_is_cacheable_na(self):
+        from data.ma_announcements import compute_stock_value
+        comp, ok = compute_stock_value("all cash transaction", "2021-10-12", {})
+        self.assertIsNone(comp)
+        self.assertTrue(ok)
 
 
 class TestResolveAnnouncement(unittest.TestCase):
@@ -243,6 +342,37 @@ class TestResolveAnnouncement(unittest.TestCase):
         self.assertTrue(ok)
         params = mock_get.call_args[1].get("params") or mock_get.call_args[0][1]
         self.assertEqual(params["startdt"], "2001-04-01")
+
+    @patch("data.fmp_client.get_history")
+    @patch("data.fmp_client._has_key", return_value=True)
+    @patch("data.sec_client.fetch_company_facts")
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_moe_gets_computed_value(self, mock_get, mock_facts, _hk, mock_hist):
+        # Ratio-only MOE: stated value absent -> computed, with the target
+        # CIK resolved from the EFTS display names (delisted UMPQ).
+        import pandas as pd
+        from data.ma_announcements import resolve_announcement
+        mock_get.side_effect = _wire(
+            [_hit("0001-21-1", "2021-10-12", "moe.htm",
+                  cik="0001077771",
+                  # REAL delisted shape: no "(UMPQ)" ticker in the display
+                  # name — exercises the name-brand-token CIK fallback.
+                  display_names=["UMPQUA HOLDINGS CORP  (CIK 0001077771)"])],
+            {"moe.htm": MOE_PR})
+        mock_facts.return_value = {"facts": {"dei": {
+            "EntityCommonStockSharesOutstanding": {"units": {"shares": [
+                {"end": "2021-09-30", "filed": "2021-10-01",
+                 "val": 200_000_000}]}}}}}
+        mock_hist.return_value = pd.DataFrame(
+            {"date": ["2021-10-11"], "close": [40.0]})
+        r, ok = resolve_announcement("Columbia State Bank", "Umpqua Bank",
+                                     "2023-03-01")
+        self.assertTrue(ok)
+        self.assertEqual(r["announce_date"], "2021-10-12")
+        self.assertEqual(r["value_usd"], 4_766_400_000)
+        self.assertEqual(r["value_basis"], "computed")
+        mock_facts.assert_called_once_with(1077771)
 
     @patch("data.ma_announcements.time.sleep", lambda *_: None)
     @patch("data.ma_announcements.requests.get")
