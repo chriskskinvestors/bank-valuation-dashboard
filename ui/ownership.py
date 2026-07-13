@@ -311,7 +311,7 @@ def render_crossholdings(ticker: str):
             for o in others[:5] if o.get("value_usd"))
         rows.append({
             "Institution": r["holder"],
-            f"Position here": fmt_dollars(r["subject_value_usd"], 2)
+            "Position here": fmt_dollars(r["subject_value_usd"], 2)
                               if r.get("subject_value_usd") else "—",
             "Other banks held": len(others),
             "Largest other positions": tops or "—",
@@ -324,3 +324,137 @@ def render_crossholdings(ticker: str):
     if flat:
         table_export(pd.DataFrame(flat), f"crossholdings_{ticker}",
                      key=f"exp_crossholdings_{ticker}")
+
+
+# ── Ownership Detailed (SNL plan §13, phase 1) ─────────────────────────
+
+def _detailed_rows(holders: list[dict], prior_shares: dict[str, float] | None,
+                   shares_out: float | None, price: float | None) -> list[dict]:
+    """Factual per-holder rows for the Detailed table. Derived cells render
+    ONLY when their inputs are sound: %CSO needs a positive share count,
+    market value a positive price, QoQ deltas a stored prior-quarter
+    snapshot (prior_shares None = no prior snapshot at all → deltas n/a;
+    holder absent from the prior snapshot → New position).
+
+    Phase 1 is deliberately facts-only — SNL's style/turnover/orientation
+    columns need each holder's full 13F book (phase 2)."""
+    rows = []
+    for h in holders:
+        shares = h.get("shares")
+        d_shares = d_pct = None
+        is_new = False
+        if prior_shares is not None and shares is not None:
+            prev = prior_shares.get(h.get("filer_name"))
+            if prev is None:
+                is_new = True
+            else:
+                d_shares = shares - prev
+                d_pct = (d_shares / prev * 100.0) if prev > 0 else None
+        pct_cso = (shares / shares_out * 100.0
+                   if shares is not None and isinstance(shares_out, (int, float))
+                   and shares_out > 0 else None)
+        mkt_value = (shares * price
+                     if shares is not None and isinstance(price, (int, float))
+                     and price > 0 else None)
+        rows.append({
+            "holder": h.get("filer_name"),
+            "filer_cik": h.get("filer_cik"),
+            "accession": h.get("accession"),
+            "shares": shares,
+            "d_shares": d_shares,
+            "d_pct": d_pct,
+            "is_new": is_new,
+            "pct_cso": pct_cso,
+            "mkt_value": mkt_value,
+            "reported_value": h.get("value_usd"),
+            "filed": h.get("date_filed"),
+        })
+    rows.sort(key=lambda r: r["shares"] or 0, reverse=True)
+    return rows
+
+
+def render_ownership_detailed(ticker: str, metrics: dict):
+    import html as _h
+    from data.form13f_client import get_holder_history
+    from data.fmp_client import get_quote
+    from data.sec_pvp import _filing_url
+
+    name = get_name(ticker)
+    title_bar(f"{name} ({ticker})", "Ownership Detailed")
+
+    with st.spinner("Loading 13F holders..."):
+        holders = fetch_institutional_holdings(ticker, name, max_filers=30)
+    if not holders:
+        st.info("No 13F holders found for this bank (limited institutional "
+                "coverage is normal for small banks).")
+        return
+
+    # Prior-quarter shares for QoQ deltas — needs ≥2 stored snapshots.
+    hist = get_holder_history(ticker, quarters=2)
+    quarters = sorted({q for by_q in hist.values() for q in by_q}, reverse=True)
+    prior_shares = None
+    prior_q = None
+    if len(quarters) >= 2:
+        prior_q = quarters[1]
+        prior_shares = {h: (by_q.get(prior_q) or {}).get("shares")
+                        for h, by_q in hist.items()
+                        if (by_q.get(prior_q) or {}).get("shares") is not None}
+
+    shares_out = (metrics or {}).get("shares_outstanding")
+    price = (get_quote(ticker) or {}).get("price")
+    rows = _detailed_rows(holders, prior_shares, shares_out, price)
+
+    def _n(v, fmt="{:,.0f}"):
+        return fmt.format(v) if v is not None else "n/a"
+
+    def _delta_cell(r):
+        if r["is_new"]:
+            return '<span style="color:#059669;font-weight:600;">New</span>'
+        if r["d_shares"] is None:
+            return "n/a"
+        color = "#059669" if r["d_shares"] >= 0 else "#dc2626"
+        pct = f' ({r["d_pct"]:+.0f}%)' if r["d_pct"] is not None else ""
+        return (f'<span style="color:{color};">{r["d_shares"]:+,.0f}{pct}</span>')
+
+    body = ""
+    for r in rows:
+        url = _filing_url(int(r["filer_cik"]), r["accession"]) \
+            if r.get("filer_cik") and r.get("accession") else None
+        holder = _h.escape(r["holder"] or "—")
+        if url:
+            holder = f'<a href="{url}" target="_blank">{holder}</a>'
+        body += ("<tr>"
+                 f'<td style="text-align:left;">{holder}</td>'
+                 f'<td style="text-align:right;">{_n(r["shares"])}</td>'
+                 f'<td style="text-align:right;">{_delta_cell(r)}</td>'
+                 f'<td style="text-align:right;">{_n(r["pct_cso"], "{:.2f}%")}</td>'
+                 f'<td style="text-align:right;">{fmt_dollars(r["mkt_value"]) if r["mkt_value"] is not None else "n/a"}</td>'
+                 f'<td style="text-align:right;">{fmt_dollars(r["reported_value"]) if r["reported_value"] is not None else "n/a"}</td>'
+                 f'<td style="text-align:left;">{_h.escape(r["filed"] or "n/a")}</td>'
+                 "</tr>")
+    st.markdown(
+        '<div class="ksk-grid"><table><thead><tr>'
+        '<th style="text-align:left;">Holder</th>'
+        '<th style="text-align:right;">Shares</th>'
+        '<th style="text-align:right;">&Delta; Shares (QoQ)</th>'
+        '<th style="text-align:right;">% CSO</th>'
+        '<th style="text-align:right;">Mkt Value</th>'
+        '<th style="text-align:right;">Reported (13F)</th>'
+        '<th style="text-align:left;">Filed</th>'
+        f"</tr></thead><tbody>{body}</tbody></table></div>",
+        unsafe_allow_html=True)
+
+    notes = ["Top 13F filers from EDGAR full-text search — a coverage sample, "
+             "not every institutional owner. Mkt Value = shares × current "
+             "price; Reported = the filing's own quarter-end value."]
+    if prior_q:
+        notes.append(f"QoQ deltas vs the stored {prior_q} snapshot.")
+    else:
+        notes.append("QoQ deltas need two stored quarterly snapshots — "
+                     "history accumulates from the quarterly 13F warm job.")
+    notes.append("Style / turnover / orientation columns need each holder's "
+                 "full 13F book (phase 2).")
+    st.caption(" ".join(notes))
+
+    table_export(pd.DataFrame(rows), f"ownership_detailed_{ticker}",
+                 key=f"exp_owndet_{ticker}")
