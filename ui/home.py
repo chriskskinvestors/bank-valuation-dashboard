@@ -212,11 +212,15 @@ _AF_CSS = r"""
 .afwrap .evt{font-size:var(--fs-grid-11);color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .afwrap .evt .sym{color:#64748b;font-weight:700;}
 .afwrap .fitem{display:grid;grid-template-columns:34px 1fr auto;align-items:center;column-gap:8px;height:19px;padding:0 12px;border-bottom:1px solid #f6f8fa;white-space:nowrap;text-decoration:none;}
-.afwrap a.fitem:hover{background:#f7f9fc;}
+.afwrap a.fitem:hover,.afwrap div.fitem:hover{background:#f7f9fc;}
 .afwrap .ftag{font-family:var(--mono);font-size:var(--fs-grid-8);font-weight:700;}
 .afwrap .ftag.ma{color:#1e3a8a;}.afwrap .ftag.k,.afwrap .ftag.pr,.afwrap .ftag.ex,.afwrap .ftag.tr{color:#9aa6b4;}
-.afwrap .fhl{font-size:var(--fs-grid-10_5);color:#1e3a8a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.afwrap .fhl{font-size:var(--fs-grid-10_5);color:#1e3a8a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px;}
 .afwrap .fhl .sym{color:#64748b;font-weight:700;}
+.afwrap .fhl a{text-decoration:none;}
+.afwrap .fhl a.symlink:hover{color:#1e3a8a;text-decoration:underline;}
+.afwrap .fhl a.fstory{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit;}
+.afwrap .fhl a.fstory:hover{text-decoration:underline;}
 .afwrap .fwhen{font-family:var(--mono);font-size:var(--fs-grid-8_5);color:#aab4c2;font-variant-numeric:tabular-nums;text-align:right;}
 .afwrap .cbar{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 12px 3px;}
 .afwrap .leg{display:flex;gap:10px;flex-wrap:wrap;}
@@ -821,23 +825,29 @@ def _af_feed_table(watchlist: list[str]) -> str:
         body = ""
         for it in items:
             tk = it.get("tk")
-            # Ticker label LEADS the headline (was trailing) — always visible
-            # even when a long headline ellipsizes inside .fhl.
-            sym = f'<span class="sym">&gt;{tk}</span> ' if tk else ""
             when = _relative_time(it.get("ts"))
-            # Link to the actual story / SEC filing (new tab); fall back to the
-            # in-app company page only when no source URL is available.
+            # Ticker label LEADS the headline (always visible even when a long
+            # headline ellipsizes) and deep-links to the Company page — same
+            # ?s=Company&bank= mechanism as the News & Research feed. The
+            # headline keeps linking to the story / SEC filing (new tab).
+            # Separate anchors in a div row: nesting <a> in <a> is invalid
+            # HTML and browsers split the outer one.
+            sym = (f'<a class="sym symlink" href="?s=Company&bank={_esc(str(tk))}"'
+                   f' target="_self" title="Open {_esc(str(tk))} company page">'
+                   f'&gt;{_esc(str(tk))}</a>' if tk else "")
             url = it.get("url")
             if url:
-                href, target, rel = _esc(url), "_blank", ' rel="noopener noreferrer"'
+                s_href, s_tgt, rel = _esc(url), "_blank", ' rel="noopener noreferrer"'
             else:
-                href = f'?s=Company&bank={tk}' if tk else "?s=Home"
-                target, rel = "_self", ""
+                # No source URL: the headline falls back to the company page.
+                s_href = f'?s=Company&bank={tk}' if tk else "?s=Home"
+                s_tgt, rel = "_self", ""
             body += (
-                f'<a class="fitem" href="{href}" target="{target}"{rel}>'
+                f'<div class="fitem">'
                 f'<span class="ftag {it["cls"]}">{_esc(it["tag"])}</span>'
-                f'<span class="fhl">{sym}{_esc(it["head"][:90])}</span>'
-                f'<span class="fwhen">{when}</span></a>')
+                f'<span class="fhl">{sym}<a class="fstory" href="{s_href}" '
+                f'target="{s_tgt}"{rel}>{_esc(it["head"][:90])}</a></span>'
+                f'<span class="fwhen">{when}</span></div>')
     return (_af_hd("Bank News Feed", "universe")
             + f'<div class="body">{body}</div>')
 
