@@ -637,12 +637,20 @@ def get_latest_fundamentals(cik: int) -> dict:
         result["tangible_book_value_per_share"] = None
 
     # Stamp the latest filing end-date so downstream staleness checks have an
-    # anchor. Use the equity concept (every bank reports it every quarter);
-    # fall back to total assets, then net income.
-    result["sec_as_of"] = (
-        _latest_end_date(facts, "StockholdersEquity")
-        or _latest_end_date(facts, "Assets")
-        or _latest_end_date(facts, "NetIncomeLoss")
+    # anchor: the FRESHEST end across the core concepts, not the first
+    # non-null. Filers migrate equity tags (TMP/AMAL moved to the
+    # IncludingNCI variant in 2025), so anchoring on plain StockholdersEquity
+    # alone flagged 13 active filers as years-stale on 2026-07-13 — the
+    # freshest of any core concept is the honest liveness signal.
+    result["sec_as_of"] = max(
+        (d for d in (
+            _latest_end_date(facts, "StockholdersEquity"),
+            _latest_end_date(facts,
+                             "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"),
+            _latest_end_date(facts, "Assets"),
+            _latest_end_date(facts, "NetIncomeLoss"),
+        ) if d),
+        default=None,
     )
 
     return result

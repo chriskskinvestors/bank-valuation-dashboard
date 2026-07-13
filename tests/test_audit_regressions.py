@@ -1705,5 +1705,47 @@ class TestAudit0702P0FieldMislabels(unittest.TestCase):
         self.assertNotIn("ELNATR", ann.columns)
 
 
+class TestSecAsOfFreshestAnchor(unittest.TestCase):
+    """Regression (2026-07-13 nightly): sec_as_of anchored on the FIRST
+    non-null concept (plain StockholdersEquity), so filers that migrated to
+    StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+    (TMP, AMAL, +11 more after an SEC reprocess) read as years-stale and
+    tripped the validation growth gate. The anchor must be the FRESHEST end
+    date across the core-concept ladder."""
+
+    @staticmethod
+    def _facts(se_end, se_ncl_end=None, assets_end=None):
+        def unit(end):
+            return {"units": {"USD": [
+                {"start": end[:4] + "-01-01", "end": end, "val": 1_000_000,
+                 "accn": "a", "form": "10-Q", "filed": end}]}}
+        ug = {}
+        if se_end:
+            ug["StockholdersEquity"] = unit(se_end)
+        if se_ncl_end:
+            ug["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"] = unit(se_ncl_end)
+        if assets_end:
+            ug["Assets"] = unit(assets_end)
+        return {"cik": 1, "entityName": "T", "facts": {"us-gaap": ug, "dei": {}}}
+
+    def _as_of(self, facts):
+        from unittest.mock import patch
+        import data.sec_client as sc
+        with patch.object(sc, "fetch_company_facts", return_value=facts):
+            return sc.get_latest_fundamentals(1).get("sec_as_of")
+
+    def test_tag_migration_uses_freshest(self):
+        # The TMP shape: plain SE stopped at FY2024, IncludingNCI current.
+        facts = self._facts("2024-12-31", se_ncl_end="2026-03-31",
+                            assets_end="2026-03-31")
+        self.assertEqual(self._as_of(facts), "2026-03-31")
+
+    def test_plain_se_only_still_works(self):
+        self.assertEqual(self._as_of(self._facts("2026-03-31")), "2026-03-31")
+
+    def test_no_core_concepts_is_none(self):
+        self.assertIsNone(self._as_of(self._facts(None)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -265,8 +265,8 @@
  },
  "BOTJ": {
   "cik": 1275101,
-  "fdic_cert": 33893,
-  "fdic_score": 0.5,
+  "fdic_cert": 35207,
+  "fdic_score": 1.0,
   "name": "Bank of the James Financial Group"
  },
  "BPRN": {
@@ -343,8 +343,8 @@
  },
  "BYFC": {
   "cik": 1001171,
-  "fdic_cert": 15797,
-  "fdic_score": 0.5,
+  "fdic_cert": 34352,
+  "fdic_score": 1.0,
   "name": "Broadway Financial Corp De"
  },
  "C": {
@@ -1888,6 +1888,12 @@
   "fdic_cert": 35583,
   "fdic_score": 0.67,
   "name": "Pinnacle Financial Partners"
+ },
+ "PNSB": {
+  "cik": 2087419,
+  "fdic_cert": 29517,
+  "fdic_score": 1.0,
+  "name": "PSB Financial"
  },
  "PRK": {
   "cik": 805676,
