@@ -220,6 +220,12 @@ banks each also holds, coverage/sample caveats explicit; coverage grows with
 stored snapshots — a universe-wide 13F warm job is a later lever).
 Plus 13D/G for activist panel.
 
+**DECIDED 2026-07-13 (owner):** (a) Transactions = the §14 five-sub-tab SNL
+structure, with the existing universe insider feed KEPT as its own sub-tab
+(nothing removed); (b) Ownership Summary (type breakdown + float walk) is
+HELD for phase 2 — don't ship sample-floor institution percentages; revisit
+after EDGAR 13F backfill makes coverage census-grade.
+
 ## 14. Transactions section (NEW top-level tab; user, 2026-06-12)
 SNL nav: Transactions Summary · Detailed M&A History · Detailed Offerings ·
 Private Equity Transactions · Comparable Deal Analysis.
