@@ -397,3 +397,39 @@ def get_branch_counts_by_ticker() -> pd.DataFrame:
         ORDER BY total_deposits DESC
     """
     return _q_to_df(sql, {})
+
+
+def get_market_participants(cert: int, kind: str = "county",
+                            year: int | None = None) -> pd.DataFrame:
+    """All banks' aggregates in every market where `cert` operates —
+    the input frame for the Deposit Market Share table (one row per
+    market × bank). kind: 'county' (stcntybr) or 'msa' (msa_code).
+    Deposits are SOD $thousands. Defaults to the latest stored year."""
+    key = "stcntybr" if kind == "county" else "msa_code"
+    label = ("MAX(b.county) || ', ' || MAX(b.state)" if kind == "county"
+             else "MAX(b.msa_name)")
+    params: dict = {"cert": int(cert)}
+    if year:
+        year_expr = ":year"
+        params["year"] = int(year)
+    else:
+        year_expr = "(SELECT MAX(year) FROM branches)"
+    sql = f"""
+        SELECT b.{key} AS market_key,
+               {label} AS market_label,
+               b.cert AS cert,
+               MAX(b.bank_name) AS bank_name,
+               MAX(b.ticker) AS ticker,
+               COUNT(*) AS n_branches,
+               SUM(b.deposits) AS deposits
+        FROM branches b
+        WHERE b.year = {year_expr}
+          AND b.{key} IS NOT NULL AND b.{key} NOT IN ('', '0')
+          AND b.{key} IN (
+              SELECT DISTINCT s.{key} FROM branches s
+              WHERE s.cert = :cert AND s.year = {year_expr}
+          )
+        GROUP BY b.{key}, b.cert
+        ORDER BY b.{key}, SUM(b.deposits) DESC
+    """
+    return _q_to_df(sql, params)

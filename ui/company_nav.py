@@ -43,7 +43,7 @@ COMPANY_NAV = {
     "News & Filings": ["Recent Documents", "Filings & Reports", "Key Exhibits",
                        "Press Releases", "Transcripts & Presentations",
                        "Events Calendar"],
-    "Market Analysis": ["Market Share & Branches"],
+    "Market Analysis": ["Market Share & Branches", "Deposit Market Share"],
     # SNL nav puts compensation under Overview, not Ownership (plan §12/§13);
     # the old "Executive Compensation" leaf moved there 2026-07-11.
     "Ownership": ["Institutional (13F)", "Detailed", "Holder History",
@@ -240,6 +240,11 @@ def _market_share(t, ctx):
     render_market_share_for_ticker(t)
 
 
+def _deposit_market_share(t, ctx):
+    from ui.deposit_market_share import render_deposit_market_share
+    render_deposit_market_share(t)
+
+
 def _ownership_13f(t, ctx):
     from ui.ownership import render_ownership
     render_ownership(t)
@@ -391,6 +396,7 @@ _RENDERERS = {
     "Events Calendar": _events_calendar,
     "Deposit Trends": _deposit_trends,
     "Market Share & Branches": _market_share,
+    "Deposit Market Share": _deposit_market_share,
     "Institutional (13F)": _ownership_13f,
     "Detailed": _ownership_detailed,
     "Holder History": _holder_history,

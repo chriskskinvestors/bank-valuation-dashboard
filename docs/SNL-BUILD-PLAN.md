@@ -178,7 +178,7 @@ U.S. Branch Analytics (Merger Planning/HHI, Market Share, Market Overlap).
 | Sub-tab | Source |
 |---|---|
 | Branch List / Map / Competitors / Proximity | FDIC SOD store (HAVE: branches table + geographic view) — geoqueries |
-| Deposit Market Share | SOD (HAVE: market share view) — extend to county/MSA tables |
+| Deposit Market Share | ✅ SHIPPED 2026-07-13 (ui/deposit_market_share.py + branches_store.get_market_participants): all-markets table per bank — every county + MSA with deposits, market total, share %, rank/of, market HHI (DOJ 0-10,000 scale), top competitor; SOD store, latest survey year; existing picker tab kept unchanged |
 | Merger Planning / HHI / Market Overlap | calc on SOD deposits (deposit HHI per market, pro-forma overlap) |
 | Market Demographics | Census API (new client) |
 | HMDA Mortgages / Mortgage Analytics | CFPB HMDA public API (new client) |
