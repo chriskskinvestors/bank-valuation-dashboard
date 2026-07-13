@@ -218,6 +218,11 @@ _AF_CSS = r"""
 .afwrap .dotc{width:7px;height:7px;border-radius:50%;display:inline-block;flex:0 0 auto;}
 .afwrap .evt{font-size:var(--fs-grid-11);color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .afwrap .evt .sym{color:#64748b;font-weight:700;}
+.afwrap .calrow:hover{background:#f7f9fc;}
+.afwrap .evt a.evlink{color:inherit;text-decoration:none;}
+.afwrap .evt a.evlink:hover{text-decoration:underline;}
+.afwrap .evt a.symlink{text-decoration:none;}
+.afwrap .evt a.symlink:hover{color:#1e3a8a;text-decoration:underline;}
 .afwrap .fitem{display:grid;grid-template-columns:34px 1fr auto;align-items:center;column-gap:8px;height:19px;padding:0 12px;border-bottom:1px solid #f6f8fa;white-space:nowrap;text-decoration:none;}
 .afwrap a.fitem:hover,.afwrap div.fitem:hover{background:#f7f9fc;}
 .afwrap .ftag{font-family:var(--mono);font-size:var(--fs-grid-8);font-weight:700;}
@@ -699,19 +704,32 @@ def _af_calendar_table(watchlist: list[str]) -> str:
                 when = i["date"]
             wstyle = ' style="color:#1e3a8a;font-weight:700;"' if is_today else ""
             dot = "#1e3a8a" if i["kind"] == "earn" else "#b45309"
-            sym = (f' <span class="sym">&gt;{_esc(i["ticker"])}</span>' if i["ticker"] else "")
-            ev = (f'<span class="evt"><span class="dotc" style="background:{dot};'
-                  f'margin-right:7px;"></span>{_esc(i["name"][:30])}{sym}</span>')
-            href = (f'?s=Company&bank={i["ticker"]}' if i["ticker"] else "?s=Home")
-            target, rel = "_self", ""
-            if i.get("webcast"):           # earnings row links to the call webcast
-                href, target, rel = _esc(i["webcast"]), "_blank", ' rel="noopener noreferrer"'
+            tk = i.get("ticker")
+            # Same split as the feed panes: the >TKR chip always deep-links to
+            # the Company page, the event name links to the call webcast when
+            # one exists (new tab) else the Company page too. Separate anchors
+            # in a div row — the old whole-row webcast anchor made the company
+            # page UNREACHABLE from a webcast row, and nesting <a> is invalid.
+            # Macro rows (no ticker) are plain text (was a useless ?s=Home link).
+            sym = (f' <a class="sym symlink" href="?s=Company&bank={_esc(str(tk))}"'
+                   f' target="_self" title="Open {_esc(str(tk))} company page">'
+                   f'&gt;{_esc(str(tk))}</a>' if tk else "")
+            name_txt = _esc(i["name"][:30])
             ttl = f' title="Dial-in: {_esc(i["dial_in"])}"' if i.get("dial_in") else ""
+            if i.get("webcast"):           # earnings row links to the call webcast
+                name_txt = (f'<a class="evlink" href="{_esc(i["webcast"])}" '
+                            f'target="_blank" rel="noopener noreferrer"{ttl}>'
+                            f'{name_txt}</a>')
+            elif tk:
+                name_txt = (f'<a class="evlink" href="?s=Company&bank={_esc(str(tk))}" '
+                            f'target="_self"{ttl}>{name_txt}</a>')
+            ev = (f'<span class="evt"><span class="dotc" style="background:{dot};'
+                  f'margin-right:7px;"></span>{name_txt}{sym}</span>')
             rows += (
-                f'<a class="crow" href="{href}" target="{target}"{rel}{ttl}><div class="erow a4 ed">'
+                f'<div class="erow a4 ed calrow">'
                 f'<span class="nm"{wstyle}>{when}</span>{ev}'
                 f'<span class="num mut">{_esc(i.get("mid")) if i.get("mid") else "—"}</span>'
-                f'<span class="num mut">{_esc(i["detail"]) if i["detail"] else "—"}</span></div></a>')
+                f'<span class="num mut">{_esc(i["detail"]) if i["detail"] else "—"}</span></div>')
         body = f'<div class="etf">{rows}</div>'
     return (_af_hd("Calendar",
                    '<span class="dotc" style="background:#1e3a8a;"></span>earnings'
