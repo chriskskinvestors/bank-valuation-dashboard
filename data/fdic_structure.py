@@ -16,8 +16,17 @@ Endpoint: https://api.fdic.gov/banks/history
     2xx  terminations — absorbed / failed / liquidated (on the dying cert)
     4xx  charter/class/insurance/org-type changes
     5xx  office name/location changes              ← branch noise, excluded
-    7xx  branch openings/closings/purchases        ← branch noise, excluded
+    7xx  branch events — excluded HERE; data/ma_history.py consumes
+         712 (Branch Purchased: one header row per deal on the BUYER's cert,
+         OUT_* = seller) and 722 (Branch Sold: per-office rows, also recorded
+         on the buyer's cert). 713 rows are the branch-level echo of a
+         whole-bank 810/811 absorption; 711/721 are organic open/close noise.
+         Sellers record NOTHING — a bank's branch sales are found by the
+         reverse query OUT_CERT:{cert} AND CHANGECODE:712.
+         (Verified live 2026-07-13: Umpqua 17266, Banner 28489 / the 2014
+         six-branch Umpqua-divestiture purchase, Meadows Bank 58722.)
     810  Participated in Absorbtion/Consolidation/Merger (on the survivor)
+    811/812  FDIC-assisted / RTC-assisted merger (on the survivor)
     820  Phantom (Interim) Corporate Reorganization
 
   Merger records carry three institution roles:
@@ -45,7 +54,7 @@ CACHE_TTL_SECONDS = 7 * 86400
 
 # Institution-level structure events only; 5xx/7xx office rows excluded
 # server-side (Banner: 416 raw history rows -> 19 structure events).
-_STRUCTURE_CODES = "(CHANGECODE:[100 TO 499] OR CHANGECODE:[800 TO 899])"
+STRUCTURE_CODES_FILTER = "(CHANGECODE:[100 TO 499] OR CHANGECODE:[800 TO 899])"
 _FIELDS = ",".join([
     "CERT", "INSTNAME", "EFFDATE", "CHANGECODE", "CHANGECODE_DESC",
     "OUT_CERT", "OUT_INSTNAME", "ACQ_CERT", "ACQ_INSTNAME",
@@ -60,7 +69,7 @@ def _is_fresh(cached: dict | None) -> bool:
     return is_fresh(cached, CACHE_TTL_SECONDS)
 
 
-def _to_cert(raw) -> int | None:
+def to_cert(raw) -> int | None:
     """Coerce a cert field to int; 0/None/'' (FDIC's 'no institution') -> None."""
     try:
         v = int(raw)
@@ -86,14 +95,14 @@ def _classify(cert: int, out_cert, acq_cert, sur_cert) -> str:
     return "other"
 
 
-def _parse_event(cert: int, d: dict) -> dict | None:
+def parse_event(cert: int, d: dict) -> dict | None:
     """One API record -> one event dict, or None if undated."""
     date = (d.get("EFFDATE") or "")[:10]
     if not date:
         return None
-    out_cert = _to_cert(d.get("OUT_CERT"))
-    acq_cert = _to_cert(d.get("ACQ_CERT"))
-    sur_cert = _to_cert(d.get("SUR_CERT"))
+    out_cert = to_cert(d.get("OUT_CERT"))
+    acq_cert = to_cert(d.get("ACQ_CERT"))
+    sur_cert = to_cert(d.get("SUR_CERT"))
     direction = _classify(cert, out_cert, acq_cert, sur_cert)
     if direction == "acquired":
         other = {"name": d.get("OUT_INSTNAME") or "", "cert": out_cert}
@@ -108,6 +117,44 @@ def _parse_event(cert: int, d: dict) -> dict | None:
         "other_institution": other,
         "direction": direction,
     }
+
+
+def fetch_history_rows(filters: str, fields: str = _FIELDS,
+                       log_tag: str = "fdic_structure") -> list[dict] | None:
+    """
+    All records matching an FDIC /banks/history filter expression, paginated.
+
+    Returns raw record dicts (the ``data`` inner object per row), or None on
+    fetch failure — callers distinguish "no rows" from "couldn't fetch" so a
+    transient outage is never cached as an empty history.
+    """
+    from data.http import get_with_retry
+
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        params = {
+            "filters": filters,
+            "fields": fields,
+            "sort_by": "EFFDATE",
+            "sort_order": "DESC",
+            "limit": _PAGE_SIZE,
+            "offset": offset,
+        }
+        try:
+            resp = get_with_retry(FDIC_HISTORY_URL, params, timeout=30)
+            if resp is None:
+                print(f"[{log_tag}] {filters}: retries exhausted (429)")
+                return None
+            page = resp.json().get("data", [])
+        except Exception as e:
+            print(f"[{log_tag}] {filters} error: {type(e).__name__}: {e}")
+            return None
+        rows.extend(r.get("data", {}) for r in page)
+        if len(page) < _PAGE_SIZE:
+            break
+        offset += _PAGE_SIZE
+    return rows
 
 
 def get_structure_events(cert: int) -> list[dict]:
@@ -130,34 +177,11 @@ def get_structure_events(cert: int) -> list[dict]:
     if _is_fresh(cached) and isinstance(cached.get("events"), list):
         return cached["events"]
 
-    from data.http import get_with_retry
+    rows = fetch_history_rows(f"CERT:{cert} AND {STRUCTURE_CODES_FILTER}")
+    if rows is None:
+        return []
 
-    rows: list[dict] = []
-    offset = 0
-    while True:
-        params = {
-            "filters": f"CERT:{cert} AND {_STRUCTURE_CODES}",
-            "fields": _FIELDS,
-            "sort_by": "EFFDATE",
-            "sort_order": "DESC",
-            "limit": _PAGE_SIZE,
-            "offset": offset,
-        }
-        try:
-            resp = get_with_retry(FDIC_HISTORY_URL, params, timeout=30)
-            if resp is None:
-                print(f"[fdic_structure] cert {cert}: retries exhausted (429)")
-                return []
-            page = resp.json().get("data", [])
-        except Exception as e:
-            print(f"[fdic_structure] cert {cert} error: {type(e).__name__}: {e}")
-            return []
-        rows.extend(r.get("data", {}) for r in page)
-        if len(page) < _PAGE_SIZE:
-            break
-        offset += _PAGE_SIZE
-
-    events = [e for e in (_parse_event(cert, d) for d in rows) if e]
+    events = [e for e in (parse_event(cert, d) for d in rows) if e]
     events.sort(key=lambda e: e["date"], reverse=True)
 
     cache.put(key, {"events": events, "cached_at": datetime.now().isoformat()})
