@@ -39,13 +39,18 @@ def _is_fresh(cached: dict | None) -> bool:
     return is_fresh(cached, CACHE_TTL_SECONDS)
 
 
-def _search_13f_for_ticker(ticker: str, limit: int = 40) -> list[dict]:
+def _search_13f_for_ticker(ticker: str, limit: int = 40,
+                           startdt: str | None = None,
+                           enddt: str | None = None) -> list[dict]:
     """
-    Search EDGAR full-text for recent 13F-HR filings mentioning the ticker.
-    Returns list of {cik, accession, filer_name, date_filed}.
+    Search EDGAR full-text for 13F-HR filings mentioning the ticker.
+    Returns list of {cik, accession, filer_name, date_filed}. Defaults to
+    the trailing ~130-day window (the current-holders path); pass explicit
+    startdt/enddt (YYYY-MM-DD) to search a past quarter's filing season
+    (the backfill path).
     """
-    since_date = (datetime.now() - timedelta(days=130)).strftime("%Y-%m-%d")
-    end_date = datetime.now().strftime("%Y-%m-%d")
+    since_date = startdt or (datetime.now() - timedelta(days=130)).strftime("%Y-%m-%d")
+    end_date = enddt or datetime.now().strftime("%Y-%m-%d")
 
     # Try quoted exact-match search first; fall back to unquoted for rare tickers
     attempts = [f'"{ticker}"', ticker]
@@ -424,29 +429,11 @@ def get_crossholdings(ticker: str, top_holders: int = 25) -> dict:
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def fetch_institutional_holdings(ticker: str, company_name: str = "",
-                                   max_filers: int = 25,
-                                   with_changes: bool = True) -> list[dict]:
-    """
-    Find 13F filings holding this ticker's stock, return list of holders.
-    """
-    if not ticker:
-        return []
-
-    cached = load_json(FORM13F_CACHE_PREFIX, f"{ticker.upper()}.json")
-    if _is_fresh(cached) and "holders" in cached:
-        return cached["holders"]
-
-    # Search for 13Fs mentioning this ticker (and optionally the company name)
-    search_term = ticker
-    if company_name:
-        # Strip generic suffixes
-        co_clean = re.sub(r"(Inc\.|Corp\.|Corporation|Company|Co\.|Ltd\.).*$", "", company_name).strip()
-        search_term = co_clean or ticker
-
-    candidates = _search_13f_for_ticker(search_term, limit=max_filers * 2)
-
-    # For each candidate, fetch the info table and filter to positions matching this ticker
+def _holders_from_candidates(candidates: list[dict], search_term: str,
+                             max_filers: int) -> list[dict]:
+    """Fetch + filter each candidate filer's info table into holder dicts,
+    value-desc sorted. Shared by the current-holders path and the backfill
+    path — no caching or QoQ side effects here."""
     all_holders = []
     seen_filers = set()
     for c in candidates:
@@ -500,8 +487,89 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
             "positions": positions,
         })
 
-    # Sort by value desc
     all_holders.sort(key=lambda h: h.get("value_usd", 0), reverse=True)
+    return all_holders
+
+
+def _quarter_filing_window(quarter: str) -> tuple[str, str] | None:
+    """Filing-season window for a report quarter: 13F-HRs covering quarter Q
+    are due 45 days after Q's end — search [end+1d, end+75d] (buffer for
+    late filers). Returns (startdt, enddt) or None on a malformed quarter."""
+    m = re.fullmatch(r"(\d{4})Q([1-4])", str(quarter).strip().upper())
+    if not m:
+        return None
+    year, q = int(m.group(1)), int(m.group(2))
+    end_month = q * 3
+    # Last day of the quarter's final month.
+    if end_month == 12:
+        q_end = datetime(year, 12, 31)
+    else:
+        q_end = datetime(year, end_month + 1, 1) - timedelta(days=1)
+    return ((q_end + timedelta(days=1)).strftime("%Y-%m-%d"),
+            (q_end + timedelta(days=75)).strftime("%Y-%m-%d"))
+
+
+def backfill_quarter(ticker: str, company_name: str = "",
+                     quarter: str = "", max_filers: int = 25) -> int | None:
+    """Backfill one past quarter's 13F snapshot from EDGAR (plan §13 phase 2).
+
+    Searches the quarter's own filing season and persists holders through the
+    same merge-only snapshot writer the live path uses. Merge-only contract:
+    a quarter that already has a stored snapshot is SKIPPED (returns None) —
+    backfill never overwrites accumulated history. Returns the number of
+    holders found (0 = quarter searched, no coverage — normal for small
+    banks; the empty result is not persisted so a retry stays possible).
+    """
+    if not ticker or not quarter:
+        return None
+    window = _quarter_filing_window(quarter)
+    if window is None:
+        print(f"[13F] backfill: malformed quarter {quarter!r}")
+        return None
+    existing = load_json(FORM13F_CACHE_PREFIX,
+                         _quarter_filename(ticker, quarter)) or {}
+    if existing.get("holders"):
+        return None  # already have history for this quarter — never clobber
+
+    search_term = ticker
+    if company_name:
+        co_clean = re.sub(r"(Inc\.|Corp\.|Corporation|Company|Co\.|Ltd\.).*$",
+                          "", company_name).strip()
+        search_term = co_clean or ticker
+
+    startdt, enddt = window
+    candidates = _search_13f_for_ticker(search_term, limit=max_filers * 2,
+                                        startdt=startdt, enddt=enddt)
+    holders = _holders_from_candidates(candidates, search_term, max_filers)
+    # Route strictly by each filing's own covered quarter (an amended or
+    # late-window filing lands in ITS quarter, never mislabeled into this one).
+    if holders:
+        _save_quarter_snapshots(ticker, holders)
+    return len(holders)
+
+
+def fetch_institutional_holdings(ticker: str, company_name: str = "",
+                                   max_filers: int = 25,
+                                   with_changes: bool = True) -> list[dict]:
+    """
+    Find 13F filings holding this ticker's stock, return list of holders.
+    """
+    if not ticker:
+        return []
+
+    cached = load_json(FORM13F_CACHE_PREFIX, f"{ticker.upper()}.json")
+    if _is_fresh(cached) and "holders" in cached:
+        return cached["holders"]
+
+    # Search for 13Fs mentioning this ticker (and optionally the company name)
+    search_term = ticker
+    if company_name:
+        # Strip generic suffixes
+        co_clean = re.sub(r"(Inc\.|Corp\.|Corporation|Company|Co\.|Ltd\.).*$", "", company_name).strip()
+        search_term = co_clean or ticker
+
+    candidates = _search_13f_for_ticker(search_term, limit=max_filers * 2)
+    all_holders = _holders_from_candidates(candidates, search_term, max_filers)
 
     # Quarter-over-quarter position change vs each filer's prior 13F-HR. Best
     # effort and bounded to what we display (one extra EDGAR fetch per filer).

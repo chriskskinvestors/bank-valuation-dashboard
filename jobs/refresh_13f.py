@@ -27,8 +27,59 @@ Exit codes:
 """
 from __future__ import annotations
 
+import argparse
 import sys
 import time
+
+
+def backfill(quarters: list[str]) -> int:
+    """EDGAR 13F backfill (plan §13 phase 2): one pass over the universe per
+    past quarter, searching that quarter's own filing season and persisting
+    through the merge-only snapshot writer. Idempotent + resumable: quarters
+    a ticker already has are skipped, so re-running after a timeout only
+    does the remaining work. Fire with an args override, one or more
+    quarters, oldest last (each quarter ≈ a full warm pass — size the
+    execution accordingly, e.g. one quarter per execution):
+
+      gcloud.cmd run jobs execute refresh-13f --region=us-central1 --args="-m,jobs.refresh_13f,--backfill,2026Q1"
+    """
+    from data.bank_universe import get_universe_tickers
+    from data.bank_mapping import get_name
+    from data.form13f_client import backfill_quarter
+
+    tickers = sorted(get_universe_tickers())
+    t0 = time.time()
+    grand_found = grand_skipped = 0
+    for quarter in quarters:
+        found = skipped = failed = 0
+        print(f"▶ Backfilling {quarter} 13F snapshots for {len(tickers)} banks",
+              flush=True)
+        for i, t in enumerate(tickers, 1):
+            try:
+                n = backfill_quarter(t, get_name(t) or "", quarter)
+                if n is None:
+                    skipped += 1
+                elif n > 0:
+                    found += 1
+            except Exception as e:
+                failed += 1
+                print(f"  {t} {quarter}: {type(e).__name__}: {str(e)[:80]}",
+                      flush=True)
+            if i % 25 == 0:
+                print(f"  {quarter} {i}/{len(tickers)} — {found} with holders, "
+                      f"{skipped} already stored, {failed} errors, "
+                      f"{time.time() - t0:.0f}s", flush=True)
+            time.sleep(0.3)  # same EDGAR pacing as the warm pass
+        print(f"✓ {quarter}: {found} banks backfilled, {skipped} already "
+              f"stored, {failed} errors", flush=True)
+        grand_found += found
+        grand_skipped += skipped
+    print(f"✓ Backfill done in {time.time() - t0:.0f}s", flush=True)
+    if grand_found == 0 and grand_skipped < len(tickers) * len(quarters) * 0.5:
+        # Nothing found AND little was pre-stored — outage, not completion.
+        print("✗ backfill yielded nothing — EDGAR outage?", flush=True)
+        return 1
+    return 0
 
 
 def main() -> int:
@@ -67,4 +118,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--backfill", default=None,
+                        help="comma-separated past quarters, e.g. 2026Q1,2025Q4")
+    args = parser.parse_args()
+    if args.backfill:
+        sys.exit(backfill([q.strip().upper()
+                           for q in args.backfill.split(",") if q.strip()]))
     sys.exit(main())
