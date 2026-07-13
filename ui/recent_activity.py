@@ -48,9 +48,16 @@ EVENT_TYPE_COLORS = {
 }
 
 
-def _fmt_ago(ts: datetime | None) -> str:
+def _fmt_ago(ts: datetime | str | None) -> str:
     if ts is None:
         return ""
+    # Local SQLite returns TIMESTAMP columns as ISO strings (prod Postgres
+    # returns datetimes) — parse rather than crash the whole feed in dev.
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return ""
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     delta = datetime.now(timezone.utc) - ts
@@ -71,6 +78,8 @@ _FEED_CSS = """
 .ev-row { padding: 6px 0 7px; border-bottom: 1px solid rgba(148,163,184,0.14); }
 .ev-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.2; }
 .ev-tk { font-weight: 700; color: var(--text-primary); font-size: 0.82rem; }
+a.ev-tk { text-decoration: none; }
+a.ev-tk:hover { color: var(--brand-accent); text-decoration: underline; }
 .ev-badge { font-size: 0.64rem; font-weight: 600; padding: 1px 7px; border-radius:0;
             background: rgba(107,114,128,0.12); color: #6b7280; white-space: nowrap; }
 .ev-ago { color: var(--text-muted); font-size: 0.72rem; margin-left: auto; white-space: nowrap; }
@@ -101,8 +110,15 @@ def _event_row(ev: dict, show_ticker: bool) -> str:
     ago = _fmt_ago(ev.get("published_at"))
     url = ev.get("url")
     link = f'<a class="ev-src" href="{_html.escape(str(url))}" target="_blank">↗</a>' if url else ""
-    tk = (f'<span class="ev-tk">{_html.escape(str(ev.get("ticker") or ""))}</span>'
-          if (show_ticker and ev.get("ticker")) else "")
+    # Ticker chip deep-links to the bank's Company page — same ?s=Company&bank=
+    # mechanism as the Home movers/feed rows (target=_self keeps it in-app).
+    # Feed tickers are already universe-scoped by get_universe_recent, so the
+    # link always resolves.
+    _tk_raw = str(ev.get("ticker") or "")
+    tk = (f'<a class="ev-tk" href="?s=Company&bank={_html.escape(_tk_raw)}" '
+          f'target="_self" title="Open {_html.escape(_tk_raw)} company page">'
+          f'{_html.escape(_tk_raw)}</a>'
+          if (show_ticker and _tk_raw) else "")
     headline = _html.escape(ev.get("headline") or "(no headline)")
     summ = _summary_text(ev)
     sum_html = f'<div class="ev-sum">{_html.escape(summ)}</div>' if summ else ""
