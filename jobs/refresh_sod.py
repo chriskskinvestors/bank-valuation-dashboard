@@ -25,14 +25,20 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
-def _refresh_one(cert: int, ticker: str | None) -> tuple[int, str | None, int, str]:
-    """Refresh SOD for one institution. Returns (cert, ticker, n_branches, err)."""
+def _refresh_one(cert: int, ticker: str | None,
+                 year: int) -> tuple[int, str | None, int, str]:
+    """Refresh SOD for one institution. Returns (cert, ticker, n_branches, err).
+
+    `year` is resolved ONCE by the caller: the per-cert default lookup ran
+    get_latest_sod_year 4,259 times per pass, doubling FDIC call volume —
+    on 2026-07-13 that amplified throttling until 28% of banks came back
+    empty and the job failed its coverage gate."""
     from data.sod_client import fetch_branches
     from data.branches_store import upsert_branches
     if not cert:
         return cert, ticker, 0, "no_cert"
     try:
-        df = fetch_branches(cert)
+        df = fetch_branches(cert, year=year)
         n = upsert_branches(ticker, cert, df)
         return cert, ticker, n, ""
     except Exception as e:
@@ -84,10 +90,14 @@ def main() -> int:
     success = 0
     workers = 4
 
+    from data.sod_client import get_latest_sod_year
+    sod_year = get_latest_sod_year()
+    print(f"  SOD survey year: {sod_year}", flush=True)
+
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {
             ex.submit(_refresh_one, int(inst["cert"]),
-                       cert_to_ticker.get(int(inst["cert"]))): inst
+                       cert_to_ticker.get(int(inst["cert"])), sod_year): inst
             for inst in institutions if inst.get("cert")
         }
         done = 0
