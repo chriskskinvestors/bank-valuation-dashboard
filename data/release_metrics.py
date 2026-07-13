@@ -237,6 +237,11 @@ _QTOK = re.compile(r"\b([1-4])Q\s?(\d{2}|\d{4})\b", re.I)
 _QWORD = re.compile(r"\b(first|second|third|fourth)\s+quarter,?\s+(\d{4})", re.I)
 _QNUM = {"first": 1, "second": 2, "third": 3, "fourth": 4}
 _DTOK = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})")
+# Month-year with NO day ("Jun 2026", "September 2025") — FBK-style column
+# headers (caught live 2026-07-13: every table skipped). Quarter-end months
+# only; "May 2026" is a monthly column, not a quarter period.
+_MONYR = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(20\d{2})\b")
+_QE_MONTH = {3: 31, 6: 30, 9: 30, 12: 31}
 
 
 def _period_qend(cell: str) -> str | None:
@@ -264,6 +269,11 @@ def _period_qend(cell: str) -> str | None:
                 return _date(int(m.group(3)), mon, int(m.group(2))).isoformat()
             except ValueError:
                 return None
+    m = _MONYR.search(cell)
+    if m:
+        mon = _MONTHS3.get(m.group(1)[:3].lower())
+        if mon and mon in _QE_MONTH:
+            return _date(int(m.group(2)), mon, _QE_MONTH[mon]).isoformat()
     return None
 
 
@@ -312,18 +322,37 @@ _TABLE_SPECS = {
     "nim": (r"net interest margin", "%", (0.5, 8.0)),
     "efficiency": (r"efficiency ratio", "%", (20.0, 110.0)),
     "roa": (r"return on (?:average )?(?:total )?assets", "%", (0.05, 4.0)),
-    "roe": (r"return on (?:average )?(?:common )?(?:shareholders'?,? )?equity",
+    "roe": (r"return on (?:average )?(?:common )?(?:shareholders['’]?,? )?equity",
             "%", (0.5, 40.0)),
-    "rotce": (r"return on (?:average )?tangible common (?:shareholders'?,? )?equity",
+    "rotce": (r"return on (?:average )?tangible common (?:shareholders['’]?,? )?equity",
               "%", (0.5, 60.0)),
     "nco_ratio": (r"net (?:loan )?charge-?offs?(?: \(recoveries\))?"
                   r"(?: (?:to|/) average (?:total )?loans| ratio)", "%", (0.0, 5.0)),
-    "npa_assets": (r"non-?performing assets (?:to|/) total assets", "%", (0.0, 10.0)),
-    "acl_loans": (r"allowance for credit losses (?:to|/) total loans", "%",
+    "npa_assets": (r"non-?performing assets (?:to|/|as a percentage of) "
+                   r"total assets", "%", (0.0, 10.0)),
+    "acl_loans": (r"allowance for credit losses(?: on loans(?: hfi)?,?)? "
+                  r"(?:to|/|as a percentage of) (?:total )?loans", "%",
                   (0.1, 6.0)),
     "tbv_ps": (r"tangible book value per (?:common )?share", "$", (1.0, 500.0)),
     "div_ps": (r"(?:cash )?dividends?(?: declared| paid)? per (?:common )?share",
                "$", (0.005, 10.0)),
+    # Actuals fill (2026-07-13, owner): EPS + total revenue from the release
+    # itself so the boards aren't blank while FMP's consensus feed lags a
+    # fresh report. GAAP diluted EPS here; the ADJUSTED variant (what street
+    # consensus usually compares to) is in _ADJ_TABLE_SPECS below.
+    "eps_diluted": (r"diluted (?:earnings|net income)(?: \(loss\))? per "
+                    r"(?:common )?share", "$", (0.01, 60.0)),
+    # "$K": magnitude row (reported in the table's stated unit — see the
+    # in-thousands/in-millions scale sniff in extract_table_metrics); band
+    # is in RAW dollars post-scale.
+    "total_revenue": (r"total revenues?\b", "$K", (5e6, 100e9)),
+}
+
+# Rows whose label is an "Adjusted …" variant are normally refused (the
+# core/adjusted exclusion) — these specs OPT IN to exactly those rows.
+_ADJ_TABLE_SPECS = {
+    "eps_adj": (r"adjusted diluted (?:earnings|net income)(?: \(loss\))? per "
+                r"(?:common )?share", "$", (0.01, 60.0)),
 }
 
 
@@ -332,7 +361,7 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
     whose PERIOD HEADER equals `expected_qend` (ISO quarter-end). All the
     ambiguity refusals documented above apply; candidates across tables must
     agree (as prose) or the metric is None."""
-    cands: dict = {k: [] for k in _TABLE_SPECS}
+    cands: dict = {k: [] for k in {**_TABLE_SPECS, **_ADJ_TABLE_SPECS}}
     for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
         rows = _table_rows(thtml)
         qends, hdr_i = None, None
@@ -344,29 +373,66 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
         if not qends or qends.count(expected_qend) != 1:
             continue                      # no/ambiguous period row → skip table
         col = qends.index(expected_qend)
+        # Magnitude sniff for "$K" specs: the table's own units statement
+        # (e.g. "(dollars in thousands, except per share data)"). No stated
+        # unit → magnitude rows are refused, never guessed from size.
+        head_text = " ".join(" ".join(c for c in cells if c)
+                             for cells in rows[:hdr_i + 1]).lower()
+        scale = (1_000 if "in thousands" in head_text
+                 else 1_000_000 if "in millions" in head_text else None)
+
+        def _try(specs, label, row_text, vals):
+            for key, (lab_re, kind, band) in specs.items():
+                if not re.match(r"\s*" + lab_re, label, re.I):
+                    continue
+                if kind == "$K":
+                    if scale is None:
+                        continue
+                    v = vals[col] * scale
+                elif kind not in row_text:
+                    continue
+                else:
+                    v = vals[col]
+                if band[0] <= v <= band[1]:
+                    cands[key].append(v)
+
         for cells in rows[hdr_i + 1:]:
             if not cells or not cells[0]:
                 continue
             label = cells[0]
-            if _CONNECTOR_EXCLUDE.search(label):
-                continue                  # adjusted/core variant row
             row_text = " ".join(cells)
             vals = _row_values(cells)
             if len(vals) != len(qends):
                 continue                  # colspan drift → alignment unproven
-            for key, (lab_re, kind, band) in _TABLE_SPECS.items():
-                if not re.match(r"\s*" + lab_re, label, re.I):
-                    continue
-                if kind not in row_text:
-                    continue
-                v = vals[col]
-                if band[0] <= v <= band[1]:
-                    cands[key].append(v)
+            if _CONNECTOR_EXCLUDE.search(label):
+                # adjusted/core variant row — only the opt-in specs may read it
+                _try(_ADJ_TABLE_SPECS, label, row_text, vals)
+                continue
+            _try(_TABLE_SPECS, label, row_text, vals)
     out = {}
     for key, vs in cands.items():
-        tol = _AGREE_USD if _TABLE_SPECS[key][1] == "$" else _AGREE_PCT
+        kind = {**_TABLE_SPECS, **_ADJ_TABLE_SPECS}[key][1]
+        if kind == "$K":
+            tol = max(_AGREE_USD, 0.002 * max(vs)) if vs else 0
+        else:
+            tol = _AGREE_USD if kind == "$" else _AGREE_PCT
         out[key] = vs[0] if vs and (max(vs) - min(vs)) <= tol else None
     return out
+
+
+def _prior_quarter_end(qend: str | None) -> str | None:
+    """ISO quarter-end immediately before `qend` (calendar quarters)."""
+    if not qend:
+        return None
+    try:
+        y, m, _ = (int(x) for x in qend.split("-"))
+    except ValueError:
+        return None
+    prior = {3: (-1, 12), 6: (0, 3), 9: (0, 6), 12: (0, 9)}.get(m)
+    if not prior:
+        return None
+    dy, pm = prior
+    return f"{y + dy}-{pm:02d}-{_QE_MONTH[pm]}"
 
 
 # ── Fetch/cache layer ──────────────────────────────────────────────────────
@@ -400,7 +466,12 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    key = f"release_metrics:v2:{int(cik)}"     # v2: + table extraction
+    # v3 (2026-07-13): month-year period headers, ROE curly-apostrophe +
+    # NPA/ACL phrasing fixes, EPS (GAAP + adjusted) + total-revenue specs,
+    # and prior-quarter extraction from the same document (Q/Q display).
+    # Extractions are immutable per accession, so spec improvements MUST
+    # bump this version or cached releases never re-extract.
+    key = f"release_metrics:v3:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:
@@ -434,8 +505,15 @@ def release_metrics(cik) -> dict | None:
     if not rel:
         return _stamp(prev) if prev else None
     qend = _quarter_end_before(rel.get("filed_date") or "")
+    prior_qend = _prior_quarter_end(qend)
     val = {
         "metrics": extract_release_metrics(rel["html"], expected_qend=qend),
+        # Q/Q from the SAME document's comparative column — same reporting
+        # basis as the current quarter, zero extra fetches. Table-only (the
+        # prose narrates the current quarter).
+        "prior_metrics": (extract_table_metrics(rel["html"], prior_qend)
+                          if prior_qend else {}),
+        "prior_qend": prior_qend,
         "capital": extract_capital_ratios(rel["html"]),
         "url": rel.get("url"),
         "filed_date": rel.get("filed_date"),

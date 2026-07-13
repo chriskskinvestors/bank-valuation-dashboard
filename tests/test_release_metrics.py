@@ -305,3 +305,82 @@ class TestBlankCurrentCellNeverShifts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestMonthYearHeaders(unittest.TestCase):
+    """FBK-style column headers ('Jun 2026') — caught live 2026-07-13 when
+    every table in FB Financial's release was skipped."""
+
+    def test_quarter_end_month_year(self):
+        from data.release_metrics import _period_qend
+        self.assertEqual(_period_qend("Jun 2026"), "2026-06-30")
+        self.assertEqual(_period_qend("Mar 2026"), "2026-03-31")
+        self.assertEqual(_period_qend("September 2025"), "2025-09-30")
+        self.assertEqual(_period_qend("Dec 2025"), "2025-12-31")
+
+    def test_non_quarter_end_month_is_not_a_period(self):
+        from data.release_metrics import _period_qend
+        self.assertIsNone(_period_qend("May 2026"))
+        self.assertIsNone(_period_qend("Jan 2026"))
+
+    def test_full_date_still_wins(self):
+        from data.release_metrics import _period_qend
+        self.assertEqual(_period_qend("March 31, 2026"), "2026-03-31")
+
+    def test_fbk_shaped_table_extracts(self):
+        html = _tbl(["(dollars in thousands, except per share data)",
+                     "Jun 2026", "Mar 2026", "Jun 2025"],
+                    ["Efficiency ratio", "52.3%", "55.2%", "105.7%"],
+                    ["Return on average shareholders’ equity",
+                     "11.8%", "11.9%", "0.74%"],
+                    ["Nonperforming assets as a percentage of total assets",
+                     "1.14%", "0.98%", "0.92%"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertEqual(m.get("efficiency"), 52.3)
+        self.assertEqual(m.get("roe"), 11.8)          # curly apostrophe
+        self.assertEqual(m.get("npa_assets"), 1.14)   # "as a percentage of"
+        p = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(p.get("efficiency"), 55.2)   # prior column, same doc
+
+
+class TestEpsRevenueSpecs(unittest.TestCase):
+    HDR = ["(dollars in thousands, except per share data)",
+           "Jun 2026", "Mar 2026"]
+
+    def test_gaap_and_adjusted_eps(self):
+        html = _tbl(self.HDR,
+                    ["Diluted earnings per common share", "$1.13", "$1.10"],
+                    ["Adjusted diluted earnings per common share*",
+                     "$1.14", "$1.12"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertEqual(m.get("eps_diluted"), 1.13)
+        self.assertEqual(m.get("eps_adj"), 1.14)   # adjusted opt-in row
+
+    def test_adjusted_row_still_refused_for_normal_specs(self):
+        html = _tbl(self.HDR,
+                    ["Adjusted efficiency ratio*", "52.0%", "54.3%"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("efficiency"))     # never the adjusted variant
+
+    def test_revenue_scaled_by_stated_thousands(self):
+        html = _tbl(self.HDR,
+                    ["Total revenue", "$174,752", "$172,340"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertEqual(m.get("total_revenue"), 174_752_000.0)
+
+    def test_revenue_refused_without_stated_unit(self):
+        html = _tbl(["", "Jun 2026", "Mar 2026"],
+                    ["Total revenue", "$174,752", "$172,340"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("total_revenue"))  # magnitude never guessed
+
+
+class TestPriorQuarterEnd(unittest.TestCase):
+    def test_transitions(self):
+        from data.release_metrics import _prior_quarter_end
+        self.assertEqual(_prior_quarter_end("2026-06-30"), "2026-03-31")
+        self.assertEqual(_prior_quarter_end("2026-03-31"), "2025-12-31")
+        self.assertEqual(_prior_quarter_end("2025-12-31"), "2025-09-30")
+        self.assertEqual(_prior_quarter_end("2025-09-30"), "2025-06-30")
+        self.assertIsNone(_prior_quarter_end(None))
+        self.assertIsNone(_prior_quarter_end("garbage"))

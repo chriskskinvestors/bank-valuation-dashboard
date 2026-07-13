@@ -217,3 +217,65 @@ class TestBuildResultsRows(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestReleaseActualsFill(unittest.TestCase):
+    """Actuals fill from the bank's own release when FMP lags (owner,
+    2026-07-13 — FBK reported after close, board stuck on 'pending')."""
+
+    @staticmethod
+    def _run_fill(row, metrics, prior=None):
+        from unittest.mock import patch
+        from data.earnings_results import _fill_release_metrics
+        rm = {"metrics": metrics, "prior_metrics": prior or {},
+              "prior_qend": "2026-03-31", "capital": {},
+              "url": "u", "filed_date": row["date"], "accession": "a"}
+        with patch("data.release_metrics.release_metrics", return_value=rm), \
+             patch("data.bank_mapping.get_cik", return_value=1):
+            _fill_release_metrics([row], max_workers=1)
+        return row
+
+    def test_adjusted_eps_preferred_and_pending_resolves(self):
+        row = {"ticker": "FBK", "date": "2026-07-13", "eps_act": None,
+               "eps_est": 1.14, "rev_act": None, "rev_est": 178e6,
+               "pending": True, "eps_surprise": None, "rev_surprise": None}
+        self._run_fill(row, {"eps_adj": 1.14, "eps_diluted": 1.13,
+                             "total_revenue": 174_752_000.0})
+        self.assertEqual(row["eps_act"], 1.14)          # adjusted, not GAAP
+        self.assertEqual(row["eps_act_src"], "release, adj.")
+        self.assertFalse(row["pending"])
+        self.assertAlmostEqual(row["eps_surprise"], 0.0)
+        self.assertEqual(row["rev_act"], 174_752_000.0)
+        self.assertEqual(row["rev_act_src"], "release")
+        # (174.752 - 178) / 178 = -1.82%
+        self.assertAlmostEqual(row["rev_surprise"], -1.8247, places=3)
+
+    def test_gaap_fallback_when_no_adjusted(self):
+        row = {"ticker": "T", "date": "2026-07-13", "eps_act": None,
+               "eps_est": 1.10, "pending": True, "eps_surprise": None}
+        self._run_fill(row, {"eps_diluted": 1.13})
+        self.assertEqual(row["eps_act"], 1.13)
+        self.assertEqual(row["eps_act_src"], "release, GAAP")
+
+    def test_fmp_actual_never_overwritten(self):
+        row = {"ticker": "T", "date": "2026-07-13", "eps_act": 1.20,
+               "eps_est": 1.10, "eps_surprise": 9.09, "pending": False}
+        self._run_fill(row, {"eps_adj": 1.14})
+        self.assertEqual(row["eps_act"], 1.20)          # FMP actual kept
+        self.assertNotIn("eps_act_src", row)
+
+    def test_stale_release_never_fills(self):
+        # A release filed BEFORE the report date is last quarter's.
+        from unittest.mock import patch
+        from data.earnings_results import _fill_release_metrics
+        row = {"ticker": "T", "date": "2026-07-13", "eps_act": None,
+               "eps_est": 1.10, "pending": True}
+        rm = {"metrics": {"eps_adj": 1.14}, "prior_metrics": {},
+              "prior_qend": None, "capital": {}, "url": "u",
+              "filed_date": "2026-04-15", "accession": "a"}
+        with patch("data.release_metrics.release_metrics", return_value=rm), \
+             patch("data.bank_mapping.get_cik", return_value=1):
+            _fill_release_metrics([row], max_workers=1)
+        self.assertIsNone(row["rel"])
+        self.assertIsNone(row["eps_act"])
+        self.assertTrue(row["pending"])

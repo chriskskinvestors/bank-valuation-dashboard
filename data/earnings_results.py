@@ -241,9 +241,36 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
         except Exception:
             return
         if rm and release_matches_report(rm.get("filed_date"), row["date"]):
-            row["rel"] = {"metrics": rm.get("metrics") or {},
+            metrics = rm.get("metrics") or {}
+            row["rel"] = {"metrics": metrics,
                           "capital": rm.get("capital") or {},
+                          "prior_metrics": rm.get("prior_metrics") or {},
+                          "prior_qend": rm.get("prior_qend"),
                           "url": rm.get("url")}
+            # Actuals fill (owner, 2026-07-13): FMP's consensus feed lags a
+            # fresh report ("pending") — the bank's own release already
+            # states EPS and total revenue, so fill from it, LABELED via
+            # *_src. Adjusted EPS preferred (the street's comparison basis);
+            # GAAP marked as such. Values are extraction-guarded upstream.
+            if row.get("eps_act") is None:
+                if metrics.get("eps_adj") is not None:
+                    row["eps_act"] = metrics["eps_adj"]
+                    row["eps_act_src"] = "release, adj."
+                elif metrics.get("eps_diluted") is not None:
+                    row["eps_act"] = metrics["eps_diluted"]
+                    row["eps_act_src"] = "release, GAAP"
+                if row.get("eps_act") is not None:
+                    row["pending"] = False
+                    if row.get("eps_surprise") is None:
+                        row["eps_surprise"] = surprise_pct(
+                            row["eps_act"], row.get("eps_est"))
+            if row.get("rev_act") is None and \
+                    metrics.get("total_revenue") is not None:
+                row["rev_act"] = metrics["total_revenue"]
+                row["rev_act_src"] = "release"
+                if row.get("rev_surprise") is None:
+                    row["rev_surprise"] = surprise_pct(
+                        row["rev_act"], row.get("rev_est"))
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         list(ex.map(_one, rows))

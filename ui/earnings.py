@@ -218,14 +218,19 @@ def _render_reported_panel(ticker: str):
             return "—"
         return f"{_fmt_rev_est(act)} vs {_fmt_rev_est(est)} est"
 
+    eps_mark = "*" if row.get("eps_act_src") else ""
+    rev_mark = "*" if row.get("rev_act_src") else ""
     _kpi_strip([
         ("Reported", _ec_cell(rep), "Report date and timing.", None),
-        ("EPS", _ec_cell(_vs(row.get("eps_act"), row.get("eps_est"))),
-         "Actual vs consensus estimate.", None),
+        ("EPS", _ec_cell(_vs(row.get("eps_act"), row.get("eps_est")) + eps_mark),
+         "Actual vs consensus estimate. * = actual taken from the bank's own "
+         "release while the consensus feed catches up.", None),
         ("EPS Surprise", _delta_html(row.get("eps_surprise")),
          "Actual vs estimate, % of estimate.", None),
-        ("Revenue", _ec_cell(_rev_vs(row.get("rev_act"), row.get("rev_est"))),
-         "Actual vs consensus estimate.", None),
+        ("Revenue", _ec_cell(_rev_vs(row.get("rev_act"), row.get("rev_est"))
+                             + rev_mark),
+         "Actual vs consensus estimate. * = actual taken from the bank's own "
+         "release while the consensus feed catches up.", None),
         ("Rev Surprise", _delta_html(row.get("rev_surprise")),
          "Actual vs estimate, % of estimate.", None),
         ("Px Reaction", _delta_html(row.get("px_react"),
@@ -235,22 +240,21 @@ def _render_reported_panel(ticker: str):
          "The results press release / SEC 8-K.", rel_url),
     ], cols=7, html_values=True)
 
-    vals = {**((row.get("rel") or {}).get("metrics") or {}),
-            **((row.get("rel") or {}).get("capital") or {})}
+    rel_all = row.get("rel") or {}
+    vals = {**(rel_all.get("metrics") or {}), **(rel_all.get("capital") or {})}
+    prior = rel_all.get("prior_metrics") or {}
     if any(v is not None for v in vals.values()):
+        pq = rel_all.get("prior_qend")
         items = []
         for key, label, unit in _REL_METRICS:
-            v = vals.get(key)
-            if v is None:
-                s = "—"
-            else:
-                s = f"${v:,.2f}" if unit == "$" else f"{v:.2f}%"
-            items.append((label, s,
-                          "As stated in the bank's own earnings release; '—' "
-                          "when not confidently confirmed.", None))
+            items.append((label,
+                          _rel_qq_html(key, vals.get(key), prior.get(key), unit),
+                          "As stated in the bank's own earnings release, with "
+                          f"the move vs its prior-quarter column ({pq or 'n/a'})"
+                          "; '—' when not confidently confirmed.", None))
         st.markdown('<div class="ec-sec">From the Release</div>',
                     unsafe_allow_html=True)
-        _kpi_strip(items, cols=7)
+        _kpi_strip(items, cols=7, html_values=True)
 
 
 def _format_val(val, unit: str) -> str:
@@ -1444,6 +1448,8 @@ def _signed_pct_cell(v, live: bool = False) -> str:
 # "x.xx%"; per-share keys ($) render "$x.xx". Values come from the bank's own
 # release via data/release_metrics (prose-confirmed or None — never guessed).
 _REL_METRICS = [
+    ("eps_adj", "EPS adj", "$"), ("eps_diluted", "EPS GAAP", "$"),
+    ("total_revenue", "Revenue", "$M"),
     ("nim", "NIM", "%"), ("efficiency", "Efficiency", "%"),
     ("roa", "ROA", "%"), ("roe", "ROE", "%"), ("rotce", "ROTCE", "%"),
     ("cet1_ratio", "CET1", "%"), ("t1_ratio", "Tier 1", "%"),
@@ -1453,23 +1459,62 @@ _REL_METRICS = [
     ("acl_loans", "ACL/Loans", "%"),
 ]
 
+# Q/Q delta coloring must respect direction: a FALLING efficiency ratio /
+# NCO / NPA is the good print. ACL movement is ambiguous → muted.
+_REL_LOWER_BETTER = {"efficiency", "nco_ratio", "npa_assets"}
+_REL_NEUTRAL = {"acl_loans"}
+
+
+def _rel_val_str(v, unit: str) -> str:
+    if unit == "$":
+        return f"${v:,.2f}"
+    if unit == "$M":
+        return f"${v / 1e6:,.0f}M"
+    return f"{v:.2f}%"
+
+
+def _rel_qq_html(key: str, cur, prior, unit: str) -> str:
+    """One metric cell: current value + colored Q/Q delta vs the release's
+    own prior-quarter column (same reporting basis). Current-only when no
+    prior; muted dash when the release didn't confirmably state it."""
+    if cur is None:
+        return '<span class="mut">—</span>'
+    s = _rel_val_str(cur, unit)
+    if prior is None:
+        return s
+    d = cur - prior
+    if unit == "%":
+        ds = f"{d:+.2f}"                      # percentage points
+    elif unit == "$":
+        ds = f"{d:+.2f}"
+    else:                                     # $M: relative move
+        ds = f"{(cur / prior - 1) * 100:+.1f}%" if prior > 0 else ""
+    if not ds:
+        return s
+    if key in _REL_NEUTRAL or d == 0:
+        cls = "mut"
+    else:
+        good = (d < 0) if key in _REL_LOWER_BETTER else (d > 0)
+        cls = "pos" if good else "neg"
+    return f'{s} <span class="{cls}">{ds}</span>'
+
 
 def _rel_detail_tr(r: dict, ncols: int) -> str:
     """The hidden expansion <tr> under a bank's row: every release-extracted
-    metric as a dense label:value strip, '—' where the release didn't
-    confirmably state it."""
+    metric with its Q/Q move vs the release's own prior-quarter column
+    (label CUR ±Δ), '—' where the release didn't confirmably state it."""
     rel = r.get("rel") or {}
     vals = {**(rel.get("metrics") or {}), **(rel.get("capital") or {})}
+    prior = rel.get("prior_metrics") or {}
     parts = []
     for key, label, unit in _REL_METRICS:
-        v = vals.get(key)
-        if v is None:
-            sval = '<span class="mut">—</span>'
-        elif unit == "$":
-            sval = f"${v:,.2f}"
-        else:
-            sval = f"{v:.2f}%"
-        parts.append(f'<span class="rl">{label}</span> {sval}')
+        parts.append(f'<span class="rl">{label}</span> '
+                     + _rel_qq_html(key, vals.get(key), prior.get(key), unit))
+    pq = rel.get("prior_qend")
+    if pq:
+        parts.append(f'<span class="mut">Δ vs {pq[:7]}</span>')
+    if r.get("eps_act_src") or r.get("rev_act_src"):
+        parts.append('<span class="mut">* actuals from the release</span>')
     src = rel.get("url")
     if src:
         parts.append(f'<a class="lnk" href="{_html.escape(src, quote=True)}" '
@@ -1490,6 +1535,8 @@ def _results_tr(r: dict, ncols: int) -> str:
     def _usd(v):
         return None if v is None else (f"-${-v:.2f}" if v < 0 else f"${v:.2f}")
     eps_act, eps_est = _usd(r.get("eps_act")), _usd(r.get("eps_est"))
+    if eps_act is not None and r.get("eps_act_src"):
+        eps_act += "*"                # filled from the bank's own release
     if r.get("pending") and eps_act is None:
         eps_act = "pending"           # release is out; FMP actuals not posted yet
     # Release link: the wire/IR press release when the events feed has it;
@@ -1517,7 +1564,9 @@ def _results_tr(r: dict, ncols: int) -> str:
         _cell(eps_act),
         _cell(eps_est),
         _signed_pct_cell(r.get("eps_surprise")),
-        _cell(_fmt_rev_est(r.get("rev_act"))),
+        _cell(_fmt_rev_est(r.get("rev_act"))
+              + ("*" if r.get("rev_act") is not None and r.get("rev_act_src")
+                 else "")),
         _cell(_fmt_rev_est(r.get("rev_est"))),
         _signed_pct_cell(r.get("rev_surprise")),
         _signed_pct_cell(r.get("px_react"), live=bool(r.get("px_react_live"))),
