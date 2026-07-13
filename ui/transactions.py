@@ -20,6 +20,14 @@ they are BUILT — no empty placeholders:
       dates + stated/computed values from EDGAR announcements, terminated
       deals via the per-holdco EFTS sweep. First uncached load fetches
       live (seconds; serial acquirers tens of seconds) then caches 7 days.
+  Detailed Offerings — per-bank registered offerings + private
+      placements (data/offerings): 424B covers classified per document
+      (ECM / DCM / merger prospectus / preliminary / selling-holder
+      resale), S-1/S-3 shelf registrations, and 8-K Item 3.02 private
+      placements (3.02+2.01 skipped — acquisition consideration). Gross
+      amounts strict-extracted from covers; layout owner-confirmed
+      2026-07-13. The Summary pie reuses this classification to split
+      its Offerings bucket.
   Insider Activity — the pre-existing universe-wide open-market insider
       feed (unchanged; reads the Home-snapshot aggregate, zero per-bank
       I/O on render).
@@ -47,11 +55,14 @@ from utils.formatting import fmt_dollars
 def render_transactions():
     st.markdown("### Transactions")
     sel = lazy_tabs(["Transactions Summary", "Detailed M&A History",
-                     "Insider Activity"], key="transactions")
+                     "Detailed Offerings", "Insider Activity"],
+                    key="transactions")
     if sel == "Transactions Summary":
         _render_summary()
     elif sel == "Detailed M&A History":
         _render_ma_history()
+    elif sel == "Detailed Offerings":
+        _render_offerings()
     else:
         _render_insider_feed()
 
@@ -73,11 +84,11 @@ def _render_summary():
 
     st.caption("Per-bank transaction aggregates: M&A deals (FDIC structure "
                "history + EDGAR announcements), shelf registrations "
-               "(S-1/S-3 family) and 424B offering takedowns (ECM/DCM "
-               "unsplit until the Detailed Offerings build), and "
-               "buyback-program 8-Ks (EDGAR full-text 2001+, earnings "
-               "filings excluded) — type classification is our own from "
-               "filing types and item codes.")
+               "(S-1/S-3 family) and 424B offering takedowns (the pie "
+               "splits ECM/DCM/private placements via the Detailed "
+               "Offerings classification), and buyback-program 8-Ks "
+               "(EDGAR full-text 2001+, earnings filings excluded) — type "
+               "classification is our own from filing types and item codes.")
 
     ticker = _bank_picker()
     if not ticker:
@@ -201,9 +212,24 @@ def _render_summary():
                     and d["status"] == "completed")
         branch = sum(1 for d in deals if d["deal_kind"] == "branch")
         term = sum(1 for d in deals if d["status"] == "terminated")
+        # Offerings split by the Detailed Offerings classification when it
+        # loads (merger prospectuses excluded there — they ARE the M&A
+        # slices); honest unsplit-count fallback if that fetch failed.
+        from data.offerings import get_offerings
+        orows = get_offerings(cik) if cik else None
+        if orows is not None:
+            off_slices = [
+                ("ECM offerings",
+                 sum(1 for r in orows if r["kind"] == "ECM")),
+                ("DCM offerings",
+                 sum(1 for r in orows if r["kind"] == "DCM")),
+                ("Private placements",
+                 sum(1 for r in orows if r["kind"] == "Private placement")),
+            ]
+        else:
+            off_slices = [("Offerings (424B, ECM/DCM unsplit)", off_total)]
         labels_vals = [("Whole-company M&A", whole), ("Branch deals", branch),
-                       ("Terminated M&A", term),
-                       ("Offerings (424B, ECM/DCM unsplit)", off_total),
+                       ("Terminated M&A", term), *off_slices,
                        ("Shelf registrations", shelf_total),
                        ("Buyback 8-Ks (2001+)", len(buybacks))]
         labels_vals = [(lv, v) for lv, v in labels_vals if v > 0]
@@ -244,6 +270,90 @@ def _render_summary():
                    "classification from filing type and item codes. "
                    "Authorized amounts land with the Detailed Offerings "
                    "build.")
+
+
+# ── Detailed Offerings ────────────────────────────────────────────────────
+
+_RAISE_KINDS = ("ECM", "DCM", "Private placement")
+
+
+def _render_offerings():
+    from data.bank_mapping import get_cik
+    from data.offerings import get_offerings
+
+    st.caption("Registered offerings and private placements from the "
+               "holdco's EDGAR history: 424B prospectus covers classified "
+               "per document (ECM equity / DCM debt / merger prospectuses / "
+               "preliminary / selling-holder resales), S-1/S-3 shelf "
+               "registrations, and 8-K Item 3.02 private placements. Gross "
+               "amounts are strict-extracted from the cover — n/a when not "
+               "stated, never estimated. Classification is our own from "
+               "filing type and cover text.")
+
+    ticker = _bank_picker()
+    if not ticker:
+        st.info("Pick a bank to load its offerings history.")
+        return
+    cik = get_cik(ticker)
+    if not cik:
+        st.warning(f"No SEC CIK resolved for {ticker} — offerings "
+                   "unavailable.")
+        return
+    with st.spinner("Reading the EDGAR filing history and prospectus "
+                    "covers (cached 7 days)…"):
+        rows = get_offerings(cik)
+    if rows is None:
+        st.warning("EDGAR is temporarily unavailable — retry shortly.")
+        return
+    if not rows:
+        st.info(f"No registered offerings on record for {get_name(ticker)}.")
+        return
+
+    raised = sum(r["gross_usd"] or 0 for r in rows
+                 if r["kind"] in _RAISE_KINDS)
+    n_ecm = sum(1 for r in rows if r["kind"] == "ECM")
+    n_dcm = sum(1 for r in rows if r["kind"] == "DCM")
+    n_pp = sum(1 for r in rows if r["kind"] == "Private placement")
+    n_shelf = sum(1 for r in rows if r["kind"] == "Shelf registration")
+    pill_row([
+        stat_pill("KNOWN GROSS RAISED", _fmt_bn(raised) if raised else "—"),
+        stat_pill("ECM", f"{n_ecm:,}"),
+        stat_pill("DCM", f"{n_dcm:,}"),
+        stat_pill("PRIVATE PLACEMENTS", f"{n_pp:,}"),
+        stat_pill("SHELF REGISTRATIONS", f"{n_shelf:,}"),
+    ], margin="2px 0 12px")
+
+    body = ""
+    for r in rows:
+        form = _h.escape(r["form"])
+        form_cell = (f'<a href="{_h.escape(r["url"])}" target="_blank">{form}</a>'
+                     if r.get("url") else form)
+        px = r.get("price_per_share")
+        body += (
+            "<tr>"
+            f'<td style="text-align:left;">{_h.escape(r["date"])}</td>'
+            f'<td style="text-align:left;">{form_cell}</td>'
+            f'<td style="text-align:left;">{_h.escape(r["kind"])}</td>'
+            f'<td style="text-align:left;">{_h.escape(r["security"] or "—")}</td>'
+            f'<td style="text-align:right;">{_fmt_bn(r["gross_usd"])}</td>'
+            f'<td style="text-align:right;">{f"${px:,.2f}" if px else "—"}</td>'
+            "</tr>")
+    st.markdown(
+        '<div class="ksk-grid"><table><thead><tr>'
+        '<th style="text-align:left;">Filed</th>'
+        '<th style="text-align:left;">Form</th>'
+        '<th style="text-align:left;">Kind</th>'
+        '<th style="text-align:left;">Security</th>'
+        '<th style="text-align:right;">Gross</th>'
+        '<th style="text-align:right;">Price/share</th>'
+        "</tr></thead><tbody>" + body + "</tbody></table></div>",
+        unsafe_allow_html=True)
+    st.caption(f"{len(rows):,} filings · newest first · merger prospectuses "
+               "(deal documents — see Detailed M&A History), preliminary "
+               "supplements and selling-holder resales are shown but "
+               "excluded from raise totals. Pre-2001 text-only filings can "
+               "be Unclassified (no fetchable cover). ECM vs DCM split "
+               "feeds the Summary pie.")
 
 
 # ── Detailed M&A History ──────────────────────────────────────────────────

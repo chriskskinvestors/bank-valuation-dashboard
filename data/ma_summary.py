@@ -58,31 +58,34 @@ def _bucket(form: str) -> str | None:
     return None
 
 
-def _count_filing_pages(cik: int) -> tuple[dict, bool]:
-    """{year: {shelf: n, offerings: n}} over the FULL submissions history
-    (recent block + archived pages). (counts, ok) — ok=False on any failure."""
+def iter_submission_filings(cik: int) -> tuple[list[dict], bool]:
+    """Every filing in the FULL submissions history (recent block + archived
+    pages) as [{form, date, accession, doc, items}]. (rows, ok) — ok=False on
+    any fetch failure. Shared by this module and data/offerings.py."""
     cik10 = f"{int(cik):010d}"
-    counts: dict[int, dict] = {}
+    rows: list[dict] = []
 
-    def _tally(block: dict):
+    def _collect(block: dict):
         forms = block.get("form", [])
         dates = block.get("filingDate", [])
+        accs = block.get("accessionNumber", [])
+        docs = block.get("primaryDocument", [])
+        items = block.get("items", [])
         for i, form in enumerate(forms):
-            b = _bucket(form)
-            if not b or i >= len(dates):
-                continue
-            try:
-                yr = int(str(dates[i])[:4])
-            except (TypeError, ValueError):
-                continue
-            counts.setdefault(yr, {"shelf": 0, "offerings": 0})[b] += 1
+            rows.append({
+                "form": (form or "").strip().upper(),
+                "date": str(dates[i]) if i < len(dates) else "",
+                "accession": accs[i] if i < len(accs) else "",
+                "doc": docs[i] if i < len(docs) else "",
+                "items": str(items[i]) if i < len(items) else "",
+            })
 
     try:
         resp = requests.get(f"https://data.sec.gov/submissions/CIK{cik10}.json",
                             headers=_headers(), timeout=30)
         resp.raise_for_status()
         data = resp.json()
-        _tally(data.get("filings", {}).get("recent", {}))
+        _collect(data.get("filings", {}).get("recent", {}))
         for page in data.get("filings", {}).get("files", []):
             name = page.get("name")
             if not name:
@@ -91,11 +94,28 @@ def _count_filing_pages(cik: int) -> tuple[dict, bool]:
             r2 = requests.get(f"https://data.sec.gov/submissions/{name}",
                               headers=_headers(), timeout=30)
             r2.raise_for_status()
-            _tally(r2.json())
+            _collect(r2.json())
     except Exception as e:
         print(f"[ma_summary] submissions cik {cik}: {type(e).__name__}: {e}")
-        return counts, False
-    return counts, True
+        return rows, False
+    return rows, True
+
+
+def _count_filing_pages(cik: int) -> tuple[dict, bool]:
+    """{year: {shelf: n, offerings: n}} over the FULL submissions history.
+    (counts, ok) — ok=False on any failure."""
+    rows, ok = iter_submission_filings(cik)
+    counts: dict[int, dict] = {}
+    for r in rows:
+        b = _bucket(r["form"])
+        if not b:
+            continue
+        try:
+            yr = int(r["date"][:4])
+        except (TypeError, ValueError):
+            continue
+        counts.setdefault(yr, {"shelf": 0, "offerings": 0})[b] += 1
+    return counts, ok
 
 
 def _buyback_8ks(cik: int) -> tuple[list[dict], bool]:

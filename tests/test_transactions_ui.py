@@ -3,8 +3,8 @@ Transactions section render guard (docs/SNL-BUILD-PLAN.md §14).
 
 Runs app.py headlessly via AppTest, switches to the Transactions section,
 and asserts the owner-decided structure renders: the lazy_tabs pill bar
-with the built sub-tabs (Transactions Summary, Detailed M&A History, and
-the kept Insider Activity), and the shared bank picker in its no-selection
+with the built sub-tabs (Transactions Summary, Detailed M&A History,
+Detailed Offerings, and the kept Insider Activity), and the shared bank picker in its no-selection
 state (index=None — no network fan-out happens until a bank is picked, so
 this test never touches FDIC/EDGAR).
 
@@ -39,7 +39,7 @@ class TestTransactionsSection(unittest.TestCase):
         tab_bar = next((r for r in at.radio
                         if list(map(str, r.options)) ==
                         ["Transactions Summary", "Detailed M&A History",
-                         "Insider Activity"]), None)
+                         "Detailed Offerings", "Insider Activity"]), None)
         self.assertIsNotNone(
             tab_bar,
             "Transactions lazy_tabs bar missing. Radios: "
