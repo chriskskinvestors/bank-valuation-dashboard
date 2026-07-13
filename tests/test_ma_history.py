@@ -180,7 +180,7 @@ class TestWholeCompanyDeals(_AnnPatched):
         self.assertEqual(fin_call[0][1]["limit"], 1)
         # Cached under the documented key.
         key, payload = mock_cput.call_args[0]
-        self.assertEqual(key, f"ma_history:v4:{UMPQUA}:0")
+        self.assertEqual(key, f"ma_history:v5:{UMPQUA}:0")
         self.assertEqual(payload["deals"], deals)
 
     @patch("data.cache.put")
@@ -362,6 +362,12 @@ class TestAnnouncementEnrichment(_AnnPatched):
             fin={COLUMBIA: [_fin_row(COLUMBIA, "20221231", 20_258_988)]})
         deals = ma_history.get_ma_history(UMPQUA)
         self.assertEqual(deals[0]["announce_date"], "2021-10-12")
+        # Assets re-anchored at the ANNOUNCE date (spec: at announcement) —
+        # the second financials call is bounded by it.
+        fin_bounds = [c[0][1]["filters"] for c in mock_get.call_args_list
+                      if "financials" in c[0][0]]
+        self.assertIn(f"CERT:{COLUMBIA} AND REPDTE:[19000101 TO 20211012]",
+                      fin_bounds)
         self.assertEqual(deals[0]["value_usd"], 5_100_000_000)
         self.assertEqual(deals[0]["value_basis"], "computed")
         self.assertEqual(deals[0]["value_note"], "computed: 0.5958 x ...")
@@ -449,7 +455,7 @@ class TestTerminatedDeals(_AnnPatched):
         self.assertEqual(self.mock_term.call_args[0][1], "Umpqua Bank")
         # CIK-scoped cache key.
         self.assertEqual(mock_cput.call_args[0][0],
-                         f"ma_history:v4:{UMPQUA}:36966")
+                         f"ma_history:v5:{UMPQUA}:36966")
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)

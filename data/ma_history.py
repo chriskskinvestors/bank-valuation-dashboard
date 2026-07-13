@@ -15,8 +15,10 @@ Assembles, per FDIC cert, every COMPLETED structure deal in both directions:
       own cert; the header + offices live on the buyer's cert)
 
 Each whole-company deal carries TARGET TOTAL ASSETS at the last FDIC REPDTE
-on or before completion (FDIC financials survive for dead certs — verified:
-Columbia State Bank 33826 still reports 2022Q4 ASSET after its 2023 death).
+on or before the ANNOUNCE date when one resolved (the SNL convention),
+else on or before completion — target_assets_repdte says which anchor was
+used. FDIC financials survive for dead certs (verified: Columbia State
+Bank 33826 still reports after its 2023 death).
 Assets are converted $thousands -> raw dollars AT THIS BOUNDARY (the units
 contract: downstream *_assets are always raw dollars). Branch deals get no
 target assets (branch-level assets aren't in SDI) — n/a, never a guess.
@@ -36,7 +38,7 @@ and value (live-verified: FHN/TD $13.4B stated, announced 2022-02-28,
 terminated 2023-05-04). Completed rows carry status='completed'. FDIC
 history itself is completions only (EFFDATE).
 
-Cache: ``ma_history:v4:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
+Cache: ``ma_history:v5:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
 the key is versioned so a deal-schema change never serves stale rows. Any
 fetch failure — history pages, a target-assets lookup, or an announcement
 fetch — skips the cache put so a transient outage is never frozen as a
@@ -228,9 +230,9 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
     cert = int(cert)
     from data import cache
 
-    # v4: terminated deals + status field (2026-07-13). The key carries the
+    # v5: announce-anchored target assets (2026-07-13). The key carries the
     # holdco CIK because the terminated leg only runs when one is supplied.
-    key = f"ma_history:v4:{cert}:{int(cik) if cik else 0}"
+    key = f"ma_history:v5:{cert}:{int(cik) if cik else 0}"
     cached = cache.get(key)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
@@ -277,18 +279,29 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
             acquirer_name = d.get("SUR_INSTNAME") or d.get("ACQ_INSTNAME") or ""
         else:
             continue
+        # A probe fetch at completion decides announcement eligibility:
+        # linkage only for targets that were REAL operating banks (SDI
+        # financials exist). Non-SDI targets are affiliate consolidations
+        # (trust companies, phantom reorgs) whose "match" would be a
+        # main-merger 8-K merely mentioning them — the verified Columbia
+        # Trust Company mislinkage. n/a over a plausible-wrong date.
         assets, repdte, ok = _assets_before(target_cert, ev["date"])
         cache_ok = cache_ok and ok
-        # Announcement linkage only for targets that were REAL operating
-        # banks (SDI financials exist). Non-SDI targets are affiliate
-        # consolidations (trust companies, phantom reorgs) whose "match"
-        # would be a main-merger 8-K merely mentioning them — the verified
-        # Columbia Trust Company mislinkage. n/a over a plausible-wrong date.
         ann, ann_ok = (None, True)
         if assets is not None and ok:
             ann, ann_ok = resolve_announcement(target_name, acquirer_name,
                                                ev["date"])
             cache_ok = cache_ok and ann_ok
+            # Spec: target assets AT ANNOUNCEMENT. Re-anchor at the announce
+            # date when one resolved (the completion-anchored probe already
+            # proved SDI coverage); deals with no announcement keep the
+            # completion anchor — target_assets_repdte says which.
+            if (ann or {}).get("announce_date"):
+                a_assets, a_repdte, a_ok = _assets_before(
+                    target_cert, ann["announce_date"])
+                cache_ok = cache_ok and a_ok
+                if a_ok and a_assets is not None:
+                    assets, repdte = a_assets, a_repdte
         deals.append({
             "completion_date": ev["date"],
             "deal_kind": "whole_company",
@@ -388,8 +401,8 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
 if __name__ == "__main__":
     # LIVE smoke — hand-verified ground truth (2026-07-13 probes):
     #   Umpqua/Columbia cert 17266: whole-company acquisition of Columbia
-    #   State Bank (33826) completed 2023-03-01, target assets $20,258,988
-    #   thousand at REPDTE 2022-12-31; Pacific Premier absorbed 2025-09-01;
+    #   State Bank (33826) completed 2023-03-01, target assets $18,597,100
+    #   thousand at 2021-09-30 (announce-anchored); Pacific Premier 2025-09-01;
     #   a branch SALE of six Oregon branches to Banner Bank 2014-06-20.
     #   Banner cert 28489: the same deal as a branch PURCHASE, count 6.
     #   Announcements: Columbia announced 2021-10-12 (all-stock MOE, no
@@ -407,8 +420,9 @@ if __name__ == "__main__":
                if (x["counterparty"] or {}).get("cert") == 33826)
     assert col["deal_kind"] == "whole_company" and col["direction"] == "acquisition"
     assert col["completion_date"] == "2023-03-01", col
-    assert col["target_assets"] == 20_258_988_000, col
-    assert col["target_assets_repdte"] == "2022-12-31", col
+    # Announcement-anchored (2021-09-30 ≤ announce 2021-10-12), hand-verified.
+    assert col["target_assets"] == 18_597_100_000, col
+    assert col["target_assets_repdte"] == "2021-09-30", col
     assert col["announce_date"] == "2021-10-12", col
     # All-stock MOE: computed 0.5958 x COLB $39.57 (2021-10-11) x 220,133,236
     # UMPQ shares ~= $5.19B vs press-reported ~$5.2B. Range-asserted (FMP
