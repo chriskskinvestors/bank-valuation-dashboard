@@ -25,14 +25,41 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 # Stub streamlit before importing data modules that may touch st decorators.
+# Full house stub (see tests/test_audit_regressions.py): a minimal stub that
+# wins the sys.modules setdefault race would break later suites needing
+# st.fragment / streamlit.components.v1 at module load (the stub-rot trap,
+# memory 2026-07-02).
 _st = types.ModuleType("streamlit")
 _st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
 _st.cache_resource = _st.cache_data
+_st.fragment = _st.cache_data
+_st_components = types.ModuleType("streamlit.components")
+_st_components_v1 = types.ModuleType("streamlit.components.v1")
+_st_components_v1.html = lambda *a, **k: None
+_st_components.v1 = _st_components_v1
+_st.components = _st_components
 sys.modules.setdefault("streamlit", _st)
+sys.modules.setdefault("streamlit.components", _st_components)
+sys.modules.setdefault("streamlit.components.v1", _st_components_v1)
 
 UMPQUA = 17266
 BANNER = 28489
 COLUMBIA = 33826
+
+# The four announcement fields every deal dict now carries (None unless the
+# EFTS leg resolves them — patched out in these tests unless stated).
+ANN_NONE = {"announce_date": None, "value_usd": None, "value_basis": None,
+            "announce_url": None}
+
+
+class _AnnPatched(unittest.TestCase):
+    """Base: announcement resolution patched to a cacheable n/a."""
+
+    def setUp(self):
+        self._ann = patch("data.ma_announcements.resolve_announcement",
+                          return_value=(None, True))
+        self.mock_ann = self._ann.start()
+        self.addCleanup(self._ann.stop)
 
 
 def _resp(rows):
@@ -116,7 +143,7 @@ def _route(structure=(), branch=(), sold=(), buyers=None, fin=None,
     return side_effect
 
 
-class TestWholeCompanyDeals(unittest.TestCase):
+class TestWholeCompanyDeals(_AnnPatched):
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)
@@ -139,6 +166,7 @@ class TestWholeCompanyDeals(unittest.TestCase):
             # $20,258,988 thousand -> raw dollars (units contract at boundary)
             "target_assets": 20_258_988_000,
             "target_assets_repdte": "2022-12-31",
+            **ANN_NONE,
         })
         # Assets query bounded at the completion date, newest-first, limit 1.
         fin_call = next(c for c in mock_get.call_args_list
@@ -147,7 +175,7 @@ class TestWholeCompanyDeals(unittest.TestCase):
         self.assertEqual(fin_call[0][1]["limit"], 1)
         # Cached under the documented key.
         key, payload = mock_cput.call_args[0]
-        self.assertEqual(key, f"ma_history:{UMPQUA}")
+        self.assertEqual(key, f"ma_history:v2:{UMPQUA}")
         self.assertEqual(payload["deals"], deals)
 
     @patch("data.cache.put")
@@ -209,7 +237,7 @@ class TestWholeCompanyDeals(unittest.TestCase):
         self.assertEqual(ma_history.get_ma_history(UMPQUA), [])
 
 
-class TestBranchDeals(unittest.TestCase):
+class TestBranchDeals(_AnnPatched):
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)
@@ -232,6 +260,7 @@ class TestBranchDeals(unittest.TestCase):
             "event_desc": "Branch Purchased",
             "target_assets": None,
             "target_assets_repdte": None,
+            **ANN_NONE,
         })
 
     @patch("data.cache.put")
@@ -312,7 +341,74 @@ class TestBranchDeals(unittest.TestCase):
         mock_cput.assert_not_called()
 
 
-class TestAssemblyAndCache(unittest.TestCase):
+class TestAnnouncementEnrichment(_AnnPatched):
+
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.http.get_with_retry")
+    def test_announcement_merged_with_deal_time_names(self, mock_get, _cg, mock_cput):
+        from data import ma_history
+        self.mock_ann.return_value = ({
+            "announce_date": "2021-10-12", "value_usd": 5_100_000_000,
+            "value_basis": "stated", "url": "https://sec.gov/x",
+            "accession": "0001-21-1"}, True)
+        mock_get.side_effect = _route(
+            structure=[_merger_row("2023-03-01", COLUMBIA, "Columbia State Bank")],
+            fin={COLUMBIA: [_fin_row(COLUMBIA, "20221231", 20_258_988)]})
+        deals = ma_history.get_ma_history(UMPQUA)
+        self.assertEqual(deals[0]["announce_date"], "2021-10-12")
+        self.assertEqual(deals[0]["value_usd"], 5_100_000_000)
+        self.assertEqual(deals[0]["value_basis"], "stated")
+        self.assertEqual(deals[0]["announce_url"], "https://sec.gov/x")
+        # Called with the names AT DEAL TIME from the structure row.
+        self.mock_ann.assert_called_once_with(
+            "Columbia State Bank", "Umpqua Bank", "2023-03-01")
+        mock_cput.assert_called_once()
+
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.http.get_with_retry")
+    def test_announcement_fetch_failure_keeps_row_skips_cache(
+            self, mock_get, _cg, mock_cput):
+        from data import ma_history
+        self.mock_ann.return_value = (None, False)
+        mock_get.side_effect = _route(
+            structure=[_merger_row("2023-03-01", COLUMBIA, "Columbia State Bank")],
+            fin={COLUMBIA: [_fin_row(COLUMBIA, "20221231", 20_258_988)]})
+        deals = ma_history.get_ma_history(UMPQUA)
+        self.assertEqual(len(deals), 1)
+        self.assertIsNone(deals[0]["announce_date"])
+        mock_cput.assert_not_called()
+
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.http.get_with_retry")
+    def test_non_sdi_target_not_enriched(self, mock_get, _cg, _cp):
+        # Affiliate consolidations (no SDI financials) must never reach the
+        # announcement resolver — the Columbia Trust mislinkage guard.
+        from data import ma_history
+        mock_get.side_effect = _route(
+            structure=[_merger_row("2024-01-01", 34227, "Columbia Trust Company")],
+            fin={})
+        deals = ma_history.get_ma_history(UMPQUA)
+        self.assertEqual(len(deals), 1)
+        self.assertIsNone(deals[0]["announce_date"])
+        self.mock_ann.assert_not_called()
+
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.http.get_with_retry")
+    def test_branch_deals_not_enriched(self, mock_get, _cg, _cp):
+        from data import ma_history
+        mock_get.side_effect = _route(
+            branch=[_hdr712("2014-06-20", UMPQUA, "Umpqua Bank")] +
+                   [_off722("2014-06-20", 205 + i, f"BR {i}") for i in range(6)])
+        deals = ma_history.get_ma_history(BANNER)
+        self.assertEqual(len(deals), 1)
+        self.mock_ann.assert_not_called()
+
+
+class TestAssemblyAndCache(_AnnPatched):
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)
@@ -346,7 +442,8 @@ class TestAssemblyAndCache(unittest.TestCase):
         cached = [{"completion_date": "2023-03-01", "deal_kind": "whole_company",
                    "direction": "acquisition", "counterparty": None,
                    "branch_count": None, "event_code": 810, "event_desc": "x",
-                   "target_assets": None, "target_assets_repdte": None}]
+                   "target_assets": None, "target_assets_repdte": None,
+                   **ANN_NONE}]
         mock_cget.return_value = {"deals": cached,
                                   "cached_at": datetime.now().isoformat()}
         self.assertEqual(ma_history.get_ma_history(UMPQUA), cached)

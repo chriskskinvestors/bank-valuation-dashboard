@@ -22,14 +22,24 @@ contract: downstream *_assets are always raw dollars). Branch deals get no
 target assets (branch-level assets aren't in SDI) — n/a, never a guess.
 Non-SDI targets (e.g. trust-company affiliates) also render n/a.
 
-Announce dates, deal values, and terminated/withdrawn deals come from the
-events-store / 8-K / S-4 announcement leg — a separate increment; FDIC
-history is completions only (EFFDATE).
+Whole-company deals are enriched with the deal's ANNOUNCEMENT — announce
+date + stated value from the announcement 8-K via EDGAR full-text search
+(data/ma_announcements; strict guards, n/a over guess; EFTS coverage is
+2001+ so older deals honestly carry None). Branch deals are not enriched
+(announcement linkage is too noisy to guard — see that module). The
+computed all-stock value (ratio × price × shares) and the
+terminated/withdrawn-deal sweep are the next increments (owner-approved
+2026-07-13). FDIC history itself is completions only (EFFDATE).
 
-Cache: ``ma_history:{cert}`` for 7 days (structure changes are rare). Any
-fetch failure — history pages or a target-assets lookup — skips the cache
-put so a transient outage is never frozen as a wrong/empty table; history
-failure returns [] (never a partial table missing a whole deal class).
+Cache: ``ma_history:v2:{cert}`` for 7 days — structure changes are rare;
+the key is versioned so a deal-schema change never serves stale rows. Any
+fetch failure — history pages, a target-assets lookup, or an announcement
+fetch — skips the cache put so a transient outage is never frozen as a
+wrong/empty table; history failure returns [] (never a partial table
+missing a whole deal class). First uncached render for a serial acquirer
+does one EFTS query + a few document fetches per whole-company deal
+(~seconds; Umpqua-scale worst case tens of seconds) — a warm job is the
+later lever if that bites.
 """
 
 from __future__ import annotations
@@ -153,6 +163,10 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
             "event_desc": h["desc"],
             "target_assets": None,
             "target_assets_repdte": None,
+            "announce_date": None,
+            "value_usd": None,
+            "value_basis": None,
+            "announce_url": None,
         })
     for date, n in office_counts.items():
         if date not in by_date:  # orphan office group — headerless old record
@@ -167,6 +181,10 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
                 "event_desc": desc,
                 "target_assets": None,
                 "target_assets_repdte": None,
+                "announce_date": None,
+                "value_usd": None,
+                "value_basis": None,
+                "announce_url": None,
             })
     return deals
 
@@ -185,18 +203,24 @@ def get_ma_history(cert: int) -> list[dict]:
               branch_count int | None,            # branch deals only
               event_code int, event_desc str,     # FDIC CHANGECODE verbatim
               target_assets int | None,           # RAW DOLLARS at the last
-              target_assets_repdte str | None}]   # REPDTE ≤ completion;
+              target_assets_repdte str | None,    # REPDTE ≤ completion;
                                                   # whole-company deals only
+              announce_date str | None,           # announcement 8-K (EFTS);
+              value_usd int | None,               # stated value, RAW DOLLARS
+              value_basis 'stated' | None,
+              announce_url str | None}]           # all four: whole-company
+                                                  # deals only, 2001+
 
     [] on any history-fetch failure (never a partial deal list); a failed
-    assets lookup renders that deal's assets n/a and skips the cache put.
+    assets or announcement lookup renders that deal's fields n/a and skips
+    the cache put.
     """
     if not cert:
         return []
     cert = int(cert)
     from data import cache
 
-    key = f"ma_history:{cert}"
+    key = f"ma_history:v2:{cert}"  # v2: announcement fields added 2026-07-13
     cached = cache.get(key)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
@@ -211,23 +235,45 @@ def get_ma_history(cert: int) -> list[dict]:
     if structure is None or branch is None or sold is None:
         return []
 
+    from data.ma_announcements import resolve_announcement
+
     deals: list[dict] = []
-    assets_ok = True
+    cache_ok = True
 
     # Whole-company deals, both directions, from institution-level events.
-    for ev in (parse_event(cert, d) for d in structure):
+    # Announcement enrichment (announce date + stated value via EDGAR
+    # full-text search) uses the PARTY NAMES FROM THE ROW — the names at
+    # deal time, which survive later renamings (South Umpqua Bank ->
+    # Umpqua Bank -> Columbia Bank). Branch deals are not enriched (see
+    # data/ma_announcements docstring) — honest n/a.
+    for d in structure:
+        ev = parse_event(cert, d)
         if not ev or not ev["other_institution"]:
             continue
         if ev["direction"] == "acquired":
             target_cert = ev["other_institution"]["cert"]
             direction = "acquisition"
+            target_name = d.get("OUT_INSTNAME") or ""
+            acquirer_name = d.get("ACQ_INSTNAME") or d.get("SUR_INSTNAME") or ""
         elif ev["direction"] == "was_acquired":
             target_cert = cert  # we are the target; counterparty = survivor
             direction = "sale"
+            target_name = d.get("OUT_INSTNAME") or ""
+            acquirer_name = d.get("SUR_INSTNAME") or d.get("ACQ_INSTNAME") or ""
         else:
             continue
         assets, repdte, ok = _assets_before(target_cert, ev["date"])
-        assets_ok = assets_ok and ok
+        cache_ok = cache_ok and ok
+        # Announcement linkage only for targets that were REAL operating
+        # banks (SDI financials exist). Non-SDI targets are affiliate
+        # consolidations (trust companies, phantom reorgs) whose "match"
+        # would be a main-merger 8-K merely mentioning them — the verified
+        # Columbia Trust Company mislinkage. n/a over a plausible-wrong date.
+        ann, ann_ok = (None, True)
+        if assets is not None and ok:
+            ann, ann_ok = resolve_announcement(target_name, acquirer_name,
+                                               ev["date"])
+            cache_ok = cache_ok and ann_ok
         deals.append({
             "completion_date": ev["date"],
             "deal_kind": "whole_company",
@@ -238,6 +284,10 @@ def get_ma_history(cert: int) -> list[dict]:
             "event_desc": ev["description"],
             "target_assets": assets,
             "target_assets_repdte": repdte,
+            "announce_date": (ann or {}).get("announce_date"),
+            "value_usd": (ann or {}).get("value_usd"),
+            "value_basis": (ann or {}).get("value_basis"),
+            "announce_url": (ann or {}).get("url"),
         })
 
     # Branch-package purchases (712/722 rows on this cert).
@@ -258,7 +308,7 @@ def get_ma_history(cert: int) -> list[dict]:
         buyer_rows = buyer_cache[buyer_cert]
         count = None
         if buyer_rows is None:
-            assets_ok = False  # count unknown due to fetch failure — don't cache
+            cache_ok = False  # count unknown due to fetch failure — don't cache
         else:
             count = next((p["branch_count"]
                           for p in _branch_purchases(buyer_rows, buyer_cert)
@@ -275,10 +325,14 @@ def get_ma_history(cert: int) -> list[dict]:
             "event_desc": d.get("CHANGECODE_DESC") or "",
             "target_assets": None,
             "target_assets_repdte": None,
+            "announce_date": None,
+            "value_usd": None,
+            "value_basis": None,
+            "announce_url": None,
         })
 
     deals.sort(key=lambda x: x["completion_date"], reverse=True)
-    if assets_ok:
+    if cache_ok:
         cache.put(key, {"deals": deals,
                         "cached_at": datetime.now().isoformat()})
     return deals
@@ -291,13 +345,16 @@ if __name__ == "__main__":
     #   thousand at REPDTE 2022-12-31; Pacific Premier absorbed 2025-09-01;
     #   a branch SALE of six Oregon branches to Banner Bank 2014-06-20.
     #   Banner cert 28489: the same deal as a branch PURCHASE, count 6.
+    #   Announcements: Columbia announced 2021-10-12 (all-stock MOE, no
+    #   stated value); Banner/Skagit announced 2018-07-26 at $191.1M stated.
     deals = get_ma_history(17266)
     print(f"Umpqua/Columbia (17266): {len(deals)} deals")
     for x in deals:
         cp = x["counterparty"] or {}
         print(f"  {x['completion_date']}  {x['deal_kind']:<13} {x['direction']:<11}"
               f" {cp.get('name', '—'):<32} branches={x['branch_count']}"
-              f" assets={x['target_assets']}")
+              f" assets={x['target_assets']} ann={x['announce_date']}"
+              f" value={x['value_usd']}")
 
     col = next(x for x in deals
                if (x["counterparty"] or {}).get("cert") == 33826)
@@ -305,9 +362,20 @@ if __name__ == "__main__":
     assert col["completion_date"] == "2023-03-01", col
     assert col["target_assets"] == 20_258_988_000, col
     assert col["target_assets_repdte"] == "2022-12-31", col
+    assert col["announce_date"] == "2021-10-12", col
+    assert col["value_usd"] is None, col  # MOE: ratio-only PR, honest n/a
     ppb = next(x for x in deals
                if (x["counterparty"] or {}).get("cert") == 32172)
     assert ppb["completion_date"] == "2025-09-01", ppb
+    # PR sentence hand-verified 2026-07-13: "The merger is valued at
+    # approximately $2.0 billion, or $20.83 per Pacific Premier share".
+    assert ppb["announce_date"] == "2025-04-23", ppb
+    assert ppb["value_usd"] == 2_000_000_000 and ppb["value_basis"] == "stated", ppb
+    # Non-SDI affiliate consolidation (trust company): never linked to an
+    # announcement — the guard against the verified 2023-01-10 mislinkage.
+    trust = next(x for x in deals
+                 if (x["counterparty"] or {}).get("cert") == 34227)
+    assert trust["announce_date"] is None and trust["target_assets"] is None, trust
     sale = next(x for x in deals if x["direction"] == "sale"
                 and (x["counterparty"] or {}).get("cert") == 28489)
     assert sale["deal_kind"] == "branch"
@@ -319,9 +387,15 @@ if __name__ == "__main__":
         cp = x["counterparty"] or {}
         print(f"  {x['completion_date']}  {x['deal_kind']:<13} {x['direction']:<11}"
               f" {cp.get('name', '—'):<32} branches={x['branch_count']}"
-              f" assets={x['target_assets']}")
+              f" assets={x['target_assets']} ann={x['announce_date']}"
+              f" value={x['value_usd']}")
     buy = next(x for x in banner
                if x["deal_kind"] == "branch" and x["direction"] == "acquisition"
                and (x["counterparty"] or {}).get("cert") == 17266)
     assert buy["completion_date"] == "2014-06-20" and buy["branch_count"] == 6, buy
+    skagit = next(x for x in banner
+                  if (x["counterparty"] or {}).get("cert") == 17874)
+    assert skagit["announce_date"] == "2018-07-26", skagit
+    assert skagit["value_usd"] == 191_100_000, skagit
+    assert skagit["value_basis"] == "stated", skagit
     print("\nSMOKE OK: Umpqua/Columbia + Banner deals verified against probes.")
