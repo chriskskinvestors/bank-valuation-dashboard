@@ -1004,10 +1004,14 @@ def _render_insider_feed():
         act = ('<span style="color:var(--success,#059669);font-weight:600;">Buy</span>'
                if buy else
                '<span style="color:var(--danger,#dc2626);font-weight:600;">Sell</span>')
+        # Universal linking rule: the ticker deep-links to the Company page
+        # (this was the one Transactions table with a bare ticker cell).
+        tk_cell = (f'<a href="?s=Company&bank={_h.escape(tk)}" target="_self">'
+                   f'{_h.escape(tk)}</a>') if tk else "—"
         body += (
             "<tr>"
             f'<td style="text-align:left;">{_h.escape(str(r.get("date") or ""))}</td>'
-            f'<td style="text-align:left;font-weight:600;">{_h.escape(tk)}</td>'
+            f'<td style="text-align:left;font-weight:600;">{tk_cell}</td>'
             f'<td style="text-align:left;">{_h.escape(nm)}</td>'
             f'<td style="text-align:left;">{_h.escape(who)}</td>'
             f'<td style="text-align:left;">{_h.escape(role)}</td>'
