@@ -91,6 +91,7 @@ _PRESENTATION_WORDS = ("presentation", "investor deck", "slide", "supplemental")
 #   sec|<archives-path>          an exhibit URL we listed (path under sec.gov)
 #   tx|<year>|<quarter>          FMP transcript rendered from text
 #   call|<MMDDYYYY>              FFIEC call-report facsimile (quarter-end date)
+#   y9c|<MMDDYYYY>               FR Y-9C facsimile (holdco, quarter-end date)
 _ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 _DOCNAME_RE = re.compile(r"^[\w.\-]+$")
 _SECPATH_RE = re.compile(r"^Archives/edgar/data/[\w./\-]+$")
@@ -121,6 +122,9 @@ def parse_pdf_param(raw: str) -> dict | None:
     elif kind == "call" and len(parts) == 2:
         if _QEND_RE.match(parts[1]):
             return {"kind": "call", "period": parts[1]}
+    elif kind == "y9c" and len(parts) == 2:
+        if _QEND_RE.match(parts[1]):
+            return {"kind": "y9c", "period": parts[1]}
     return None
 
 
@@ -305,6 +309,37 @@ def _pdf_from_url(url: str) -> bytes | None:
     return filing_url_to_pdf_bytes(url)
 
 
+@st.cache_data(ttl=30 * 86400, show_spinner=False)
+def _holdco_rssd(ticker: str) -> int | None:
+    """Top-of-chain holding-company RSSD for a ticker's bank, or None when
+    the bank has no separate holdco. Reuses Corporate Structure's NIC climb
+    (per-RSSD parent lookups are 30-day cached in data.cache)."""
+    from data.fdic_client import get_rssd_for_cert
+    from ui.corporate_structure import _top_holder_rssd
+    cert = get_fdic_cert(ticker)
+    rssd = get_rssd_for_cert(cert) if cert else None
+    if not rssd:
+        return None
+    try:
+        top, _chain = _top_holder_rssd(int(rssd))
+        return int(top) if top and int(top) != int(rssd) else None
+    except Exception as e:
+        print(f"[recent_docs] holdco climb failed for {ticker}: {e}")
+        return None
+
+
+@st.cache_data(ttl=30 * 86400, max_entries=8, show_spinner=False)
+def _pdf_from_y9c(ticker: str, period_mmddyyyy: str) -> bytes | None:
+    """FR Y-9C facsimile PDF from NPW (immutable once filed — 30d TTL so
+    repeat clicks never re-hit NPW's touchy bot management)."""
+    from data.nic_client import fetch_y9c_pdf
+    rssd = _holdco_rssd(ticker)
+    if not rssd:
+        return None
+    p = period_mmddyyyy
+    return fetch_y9c_pdf(rssd, f"{p[4:]}{p[:2]}{p[2:4]}")
+
+
 @st.cache_data(ttl=86400, max_entries=8, show_spinner=False)
 def _pdf_from_call_report(ticker: str, period_mmddyyyy: str) -> bytes | None:
     """FFIEC call-report facsimile PDF (filed facsimiles are immutable —
@@ -399,6 +434,18 @@ def _handle_pdf_request(ticker: str, cik: int, filings: list[dict]) -> None:
                          "hasn't filed this period. Use \"View on FFIEC CDR\" "
                          "from the document menu instead.")
                 return
+        elif req["kind"] == "y9c":
+            p = req["period"]
+            fname = f"{ticker}_FR_Y-9C_{p[4:]}-{p[:2]}-{p[2:4]}.pdf"
+            with st.spinner("Fetching FR Y-9C facsimile from the Fed's NIC…"):
+                pdf = _pdf_from_y9c(ticker, p)
+            if not pdf:
+                st.error("FR Y-9C unavailable for this period — smaller "
+                         "holding companies file the semiannual FR Y-9SP "
+                         "instead, and brand-new quarters may not be "
+                         "published yet. Use \"View on NIC\" from the "
+                         "document menu instead.")
+                return
         elif req["kind"] == "tx":
             fname = f"{ticker}_Q{req['quarter']}_{req['year']}_transcript.pdf"
             with st.spinner("Rendering transcript to PDF…"):
@@ -415,6 +462,7 @@ def _handle_pdf_request(ticker: str, cik: int, filings: list[dict]) -> None:
             st.download_button("Download PDF", pdf, file_name=fname,
                                mime="application/pdf", type="primary")
             src = {"call": "official FFIEC CDR facsimile",
+                   "y9c": "official Fed NIC facsimile",
                    "tx": "rendered from the FMP transcript text",
                    }.get(req["kind"], "rendered from the EDGAR HTML by the "
                                       "dashboard's print engine")
@@ -570,6 +618,7 @@ def _render_body(ticker: str, cik: int) -> None:
         if cert:
             from data.ffiec_client import (latest_reporting_period,
                                            _previous_quarter)
+            holdco = _holdco_rssd(ticker)  # None → bank has no Y-9C filer
             period = latest_reporting_period()
             for _ in range(8):
                 m, d, y = period.split("/")
@@ -582,6 +631,18 @@ def _render_body(ticker: str, cik: int) -> None:
                          ("Download PDF", _pdf_href(ticker, f"call|{m}{d}{y}"))]
                 reg_rows.append(
                     (iso, _menu_html(f"Call Report (FFIEC) — Q{q} {y}", items)))
+                if holdco:
+                    # NPW serves the PDF directly to a real browser; only
+                    # server-side fetches need the curl fallback.
+                    nic_pdf = (f"https://www.ffiec.gov/npw/FinancialReport/"
+                               f"ReturnFinancialReportPDF?rpt=FRY9C"
+                               f"&id={holdco}&dt={y}{m}{d}")
+                    items = [("View on NIC", nic_pdf),
+                             ("Download PDF",
+                              _pdf_href(ticker, f"y9c|{m}{d}{y}"))]
+                    reg_rows.append(
+                        (iso, _menu_html(f"FR Y-9C (Holding Co) — Q{q} {y}",
+                                         items)))
                 period = _previous_quarter(period)
         reg_rows.sort(key=lambda r: r[0], reverse=True)
         rows = [_row_html(cell, dt) for dt, cell in
@@ -594,7 +655,7 @@ def _render_body(ticker: str, cik: int) -> None:
             nic = (f'<a href="https://www.ffiec.gov/npw/Institution/Profile?id='
                    f'{rssd}" target="_blank">NIC profile</a> · ') if rssd else ""
             st.caption(
-                f'FR Y-9C (holding co) lives on the Fed\'s NIC: {nic}'
+                f'Sources: FFIEC CDR (call reports) · Fed NIC (FR Y-9C) · {nic}'
                 f'<a href="https://www.fdic.gov/analysis/bank-research/bankfind/'
                 f'index.html?CERT={cert}" target="_blank">FDIC BankFind</a>',
                 unsafe_allow_html=True)

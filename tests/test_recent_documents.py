@@ -55,11 +55,14 @@ class TestParsePdfParam(unittest.TestCase):
     def test_valid_call_report_quarter_ends_only(self):
         self.assertEqual(RD.parse_pdf_param("call|03312026"),
                          {"kind": "call", "period": "03312026"})
+        self.assertEqual(RD.parse_pdf_param("y9c|12312025"),
+                         {"kind": "y9c", "period": "12312025"})
         for raw in ("call|03302026",   # not a quarter-end day
                     "call|13312026",   # month 13
                     "call|3312026",    # 7 digits
                     "call|03312026|x", # arity
-                    "call|03/31/2026"):  # separators not allowed
+                    "call|03/31/2026", # separators not allowed
+                    "y9c|03302026", "y9c|20260331"):  # y9c: same shape rules
             self.assertIsNone(RD.parse_pdf_param(raw), raw)
 
     def test_rejects_malformed(self):

@@ -160,11 +160,31 @@ def _bulk_path(name: str) -> Path | None:
         return path if path.exists() else None
 
 
+def _curl_fetch(url: str, name: str, magic: bytes) -> bytes | None:
+    """curl-subprocess fetch with browser UA, validated against `magic`
+    (b"PK" zips, b"%PDF-" facsimiles). HTML error pages never returned."""
+    curl = shutil.which("curl")
+    if not curl:
+        print(f"[nic] {name}: no curl on PATH — download unavailable")
+        return None
+    try:
+        proc = subprocess.run(
+            [curl, "-sS", "--fail", "-L", "-A", USER_AGENT,
+             "--max-time", "240", url],
+            capture_output=True, timeout=300)
+        if proc.returncode == 0 and proc.stdout.startswith(magic):
+            return proc.stdout
+        print(f"[nic] {name}: curl failed (rc={proc.returncode}, "
+              f"{(proc.stderr or proc.stdout)[:80]!r})")
+    except Exception as e:
+        print(f"[nic] {name} curl error: {type(e).__name__}: {e}")
+    return None
+
+
 def _download(url: str, name: str) -> bytes | None:
-    """Fetch one bulk zip. requests first (shared retry policy), curl
-    subprocess as the Cloudflare-fingerprint fallback (see module doc).
-    Returns validated zip bytes or None — HTML error pages are never
-    saved as data."""
+    """Fetch one bulk zip. requests first (shared retry policy, in case the
+    Cloudflare rules relax — cheap at monthly cadence), curl subprocess as
+    the fingerprint fallback (see module doc)."""
     try:
         from data.http import get_with_retry
         resp = get_with_retry(url, headers={"User-Agent": USER_AGENT},
@@ -177,23 +197,25 @@ def _download(url: str, name: str) -> bytes | None:
     except Exception as e:
         print(f"[nic] {name}: requests failed ({type(e).__name__}: {e})"
               " — trying curl")
+    return _curl_fetch(url, name, b"PK")
 
-    curl = shutil.which("curl")
-    if not curl:
-        print(f"[nic] {name}: no curl on PATH — download unavailable")
+
+def fetch_y9c_pdf(rssd_id: int, yyyymmdd: str) -> bytes | None:
+    """FR Y-9C facsimile PDF for a HOLDING COMPANY RSSD and quarter-end
+    (Recent Documents → Regulatory Filings). NPW serves these publicly but
+    behind Cloudflare bot management that ALWAYS 403s python's TLS
+    fingerprint and scores failed hits against the IP — so this goes
+    curl-only (no requests attempt: a guaranteed 403 would just burn bot
+    score; a probe burst 2026-07-14 got the IP temp-blocked exactly that
+    way). None when blocked or the holdco didn't file the period (small
+    holdcos file FR Y-9SP) — callers show an honest error with the
+    "View on NIC" browser link as the fallback."""
+    rssd_id = _int(rssd_id)
+    if not rssd_id or not str(yyyymmdd).isdigit() or len(str(yyyymmdd)) != 8:
         return None
-    try:
-        proc = subprocess.run(
-            [curl, "-sS", "--fail", "-L", "-A", USER_AGENT,
-             "--max-time", "240", url],
-            capture_output=True, timeout=300)
-        if proc.returncode == 0 and proc.stdout.startswith(b"PK"):
-            return proc.stdout
-        print(f"[nic] {name}: curl failed (rc={proc.returncode}, "
-              f"{(proc.stderr or proc.stdout)[:80]!r})")
-    except Exception as e:
-        print(f"[nic] {name} curl error: {type(e).__name__}: {e}")
-    return None
+    url = (f"{NIC_BASE}/ReturnFinancialReportPDF?rpt=FRY9C"
+           f"&id={rssd_id}&dt={yyyymmdd}")
+    return _curl_fetch(url, f"y9c_{rssd_id}_{yyyymmdd}", magic=b"%PDF-")
 
 
 # ──────────────────────────────────────────────────────────────────────────
