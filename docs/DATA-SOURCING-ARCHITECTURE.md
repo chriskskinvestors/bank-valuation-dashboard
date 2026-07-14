@@ -74,3 +74,62 @@ RC-R walk stays as a labeled complement.
 - Prefer n/a + provenance over a guess.
 - Multi-bank robustness: filing layouts vary; the iXBRL tag/member match must be
   tolerant, and a bank whose filing can't be parsed renders n/a, never wrong.
+
+---
+
+## Ops runbook: NIC / FR Y-9C mirror refresh (manual, dev-box only)
+
+The Corporate Structure sub-tab (`data/nic_client.py`) and the Regulatory
+Filings Y-9C download (`fetch_y9c_pdf`) source from the Fed NIC / NPW site
+(`ffiec.gov/npw`). NPW sits behind Cloudflare bot management that **403s Cloud
+Run egress AND GitHub-hosted-runner egress outright** (curl included, proven
+2026-07-14: prod logs + `refresh-nic-bulk` run 29357551545 — every fetch
+403'd, first request from a fresh runner IP). There is no unblocked egress in
+our cloud, so **production and CI can never download from NPW.**
+
+**Architecture.** Prod reads two GCS mirrors under `gs://ksk-bank-dashboard-data/`:
+- `nic_bulk/{attributes_active,relationships}.zip` — the org-hierarchy bulk
+  files (`nic_client._bulk_path` ladder: local `/tmp` → GCS mirror → NPW
+  direct → stale copies; NPW leg only ever succeeds off-cloud).
+- `y9c/{rssd}_{yyyymmdd}.pdf` — latest-quarter FR Y-9C facsimiles
+  (`fetch_y9c_pdf`; on Cloud Run it never falls through to NPW — per-click
+  403s burn the per-IP bot score).
+
+Both serve the **stale** mirror indefinitely when a refresh is overdue, so a
+late refresh degrades gracefully and is never an outage.
+
+**Refresh procedure** — run from the dev box (the only network proven
+unblocked; back-to-back NPW hits trip bot scoring, so the tools space fetches
+≥30s and retry a 403 once):
+
+```powershell
+# gcloud on this box is PowerShell-blocked as gcloud.ps1 — use gcloud.cmd.
+# ADC (not the gcloud CLI creds) is what the Python GCS client uses; refresh
+# it interactively when it expires (Workspace reauth blocks non-interactive):
+gcloud.cmd auth application-default login
+$env:GCS_BUCKET = 'ksk-bank-dashboard-data'
+python -m tools.refresh_nic_bulk     # ~2 zips, seconds
+python -m tools.refresh_y9c_mirror   # ~370 PDFs first run of a quarter (~3h); later runs skip mirrored, minutes
+```
+
+Both tools **validate before uploading** (bulk: CSV header vs the exact
+columns the parser needs; Y-9C: `%PDF-` magic), so a Cloudflare challenge page
+or truncated fetch can never clobber a good mirror object.
+
+**Cadence.** Org structure and Y-9C filings change slowly — refresh monthly,
+plus once ~mid-Feb/May/Aug/Nov (just after each Y-9C filing deadline) to pick
+up the new quarter. `.github/workflows/refresh-nic-bulk.yml` is kept
+**`workflow_dispatch`-only** (its scheduled crons were removed — they would
+only spam red failures since the runner can't fetch NPW); it exists so that
+IF Cloudflare ever unblocks GitHub egress, re-adding a `schedule:` block
+restores automation in one line.
+
+**Verify after a refresh.** The workflow's last step deploys+executes the
+`nic-mirror-verify` Cloud Run job (live service image, wiped `/tmp`) which
+must serve+parse both bulk files AND one Y-9C from the mirrors
+(`tools/verify_nic_mirror.py`) — this step does **not** touch NPW, so it runs
+fine from CI or via `gcloud.cmd run jobs execute nic-mirror-verify --wait`.
+Locally you can prove the bulk read path with an empty `/tmp` against the real
+mirror (ADC): wipe `nic_client._BULK_DIR`, call `_bulk_path(...)`, and build a
+known tree — Banner Corp (RSSD 2126977) should render holdco → statutory
+trusts + Banner Bank → subsidiaries.

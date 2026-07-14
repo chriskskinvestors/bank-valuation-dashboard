@@ -1,25 +1,32 @@
 name: Refresh NIC bulk mirror
 
-# NPW (ffiec.gov/npw) sits behind Cloudflare bot management that 403s Cloud
-# Run egress IPs outright — production can never download from it (prod logs
-# 2026-07-14). GitHub-hosted runners use different egress, so this workflow
-# mirrors everything the app needs from NPW into GCS:
-#   1. the two NIC bulk zips (nic_bulk/ — Corporate Structure sub-tab); the
-#      zips change slowly, so monthly matches nic_client's 30-day TTL
+# Mirrors everything the app needs from NPW (ffiec.gov/npw) into GCS so
+# production never has to reach NPW:
+#   1. the two NIC bulk zips (nic_bulk/ — Corporate Structure sub-tab)
 #   2. the latest filed quarter of FR Y-9C facsimile PDFs (y9c/ — Recent
-#      Documents → Regulatory Filings "Download via dashboard"); the extra
-#      cron on the 16th of Feb/May/Aug/Nov lands right after each Y-9C
-#      filing deadline (40-45 days after quarter-end) so a new quarter is
-#      mirrored within days of the facsimiles appearing, and the monthly
-#      run catches late filers (already-mirrored PDFs are skipped)
-# If Cloudflare ever blocks GitHub's IPs too, this fails loudly (red run)
-# and the fallback is running tools/refresh_nic_bulk.py and
-# tools/refresh_y9c_mirror.py from any unblocked machine (e.g. the dev
-# box); nic_client keeps serving the stale mirror in the meantime.
+#      Documents → Regulatory Filings "Download via dashboard")
+#
+# DISPATCH-ONLY, NOT SCHEDULED — and the fetch steps below FAIL from GitHub.
+# NPW's Cloudflare bot management 403s Cloud Run egress AND GitHub-hosted
+# runner egress outright (curl included), proven 2026-07-14: prod logs +
+# this workflow's own run 29357551545 (every fetch 403'd, first request from
+# a fresh runner IP). So there is NO source of unblocked egress in CI, and a
+# scheduled run would only spam red failures. The mirror is instead refreshed
+# MANUALLY from an unblocked machine (the dev box) — see the runbook in
+# docs/DATA-SOURCING-ARCHITECTURE.md ("NIC / FR Y-9C mirror refresh"):
+#
+#     gcloud.cmd auth application-default login   # once per ADC expiry
+#     $env:GCS_BUCKET='ksk-bank-dashboard-data'
+#     python -m tools.refresh_nic_bulk            # bulk zips
+#     python -m tools.refresh_y9c_mirror          # Y-9C facsimiles
+#
+# nic_client / fetch_y9c_pdf serve the stale mirror until then, so a late
+# refresh degrades gracefully (never an outage). This workflow is kept as a
+# manual trigger purely so that IF Cloudflare ever unblocks GitHub egress,
+# restoring automation is a one-line `schedule:` re-add — until then, expect
+# a dispatch to fail at the first NPW fetch. (The Cloud Run verify step at
+# the end does NOT depend on NPW and is separately useful — see its comment.)
 on:
-  schedule:
-    - cron: "17 6 3 * *"          # 06:17 UTC on the 3rd of each month
-    - cron: "17 6 16 2,5,8,11 *"  # just after each FR Y-9C filing deadline
   workflow_dispatch:
 
 env:
@@ -50,8 +57,9 @@ jobs:
 
       - name: Fetch bulk zips from NPW, validate, upload to the GCS mirror
         run: |
-          # Only what the two refresh tools' import chains need — not the
-          # full requirements.txt (this runs on a monthly cron).
+          # NOTE: 403s from GitHub egress (see header) — the dev-box tools are
+          # the real refresh path. Only what the two refresh tools' import
+          # chains need — not the full requirements.txt.
           python -m pip install --quiet google-cloud-storage pandas requests
           python -m tools.refresh_nic_bulk
 
