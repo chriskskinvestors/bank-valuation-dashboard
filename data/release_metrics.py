@@ -82,7 +82,11 @@ _EXCLUDE_BEFORE = re.compile(
     r"compared (?:to|with)|versus|vs\.?|year[- ]ago|prior[- ](?:year|quarter)|"
     r"linked[- ]quarter|from|down from|up from|"
     r"card(?: services)?|consumer|wholesale|commercial|mortgage|auto|"
-    r"banking|lending|segment(?:'s)?)\s*(?:an?\s+|the\s+)?$", re.I)
+    r"banking|lending|segment(?:'s)?)\s*(?:an?\s+|the\s+)?"
+    # A label word may sit between the qualifier and the match ("Adjusted
+    # Diluted EPS*" where the bare-EPS pattern anchors at "EPS" — FBK,
+    # caught live 2026-07-14 pm: 1.14 adjusted shipped as GAAP).
+    r"(?:diluted\s+|basic\s+)?$", re.I)
 # ", excluding …" / ", on an adjusted basis" right after the value → non-GAAP.
 _EXCLUDE_AFTER = re.compile(
     r"^[\s,(]*(?:excluding|adjusted|as adjusted|non-?gaap|core|operating|"
@@ -186,6 +190,28 @@ _DIV_PATS = [
 ]
 _DIV_BAND = (0.005, 10.0)
 
+# Diluted EPS from prose — mega-cap releases narrate it but hide the number
+# from table extraction (BAC renders its highlights as positioned <div>s with
+# zero <table> markup; GS uses single-period KPI stacks; caught live
+# 2026-07-14). LABEL-LED forms only, protected by _clean's guards (adjusted/
+# compared-with exclusion, first-$ discipline, disagreement→None):
+#   BAC: "Diluted earnings per share (EPS) of $1.21 compared to $0.90"
+#   GS:  "Earnings Per Common Share of $ 20.98"   MS: "EPS of $3.43"
+# The value-led "…, or $X.XX per diluted share" form is deliberately ABSENT:
+# in "compared with $4.3 billion, or $2.60 per diluted share" the comparison
+# marker sits outside the before-label window, and a release narrating
+# per-share ONLY in that comparison clause would ship the year-ago EPS as a
+# lone clean candidate.
+_EPS_PATS = [
+    re.compile(r"diluted (?:earnings per share|eps)(?:\s*\(eps\))?"
+               r"[^$%]{0,40}?(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})",
+               re.I),
+    re.compile(r"(?:\beps\b|earnings per (?:diluted|common) share)"
+               r"[^$%]{0,30}?(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})",
+               re.I),
+]
+_EPS_BAND = (0.01, 60.0)
+
 
 def _dollar_metric(text: str, pats, band) -> float | None:
     def _gen():
@@ -211,6 +237,7 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
         out[key] = _pinned_metric(text, label, denom, band)
     out["tbv_ps"] = _dollar_metric(text, _TBV_PATS, _TBV_BAND)
     out["div_ps"] = _dollar_metric(text, _DIV_PATS, _DIV_BAND)
+    out["eps_diluted"] = _dollar_metric(text, _EPS_PATS, _EPS_BAND)
     if expected_qend and any(v is None for v in out.values()):
         tab = extract_table_metrics(html, expected_qend)
         for k, v in tab.items():
@@ -350,12 +377,14 @@ _TABLE_SPECS = {
     # itself so the boards aren't blank while FMP's consensus feed lags a
     # fresh report. GAAP diluted EPS here; the ADJUSTED variant (what street
     # consensus usually compares to) is in _ADJ_TABLE_SPECS below.
-    # Prefix ("Diluted EPS") and postfix ("Earnings per share - diluted",
-    # JPM) label forms.
+    # Prefix ("Diluted EPS"), postfix ("Earnings per share - diluted", JPM)
+    # and mid-form ("Earnings per diluted share", MS) label forms.
     "eps_diluted": (r"(?:diluted (?:eps\b|(?:earnings|net income)(?: \(loss\))? "
                     r"per (?:common )?share)"
                     r"|(?:earnings|net income)(?: \(loss\))? per (?:common )?"
-                    r"share\s*[-–—]\s*diluted\b)", "$", (0.01, 60.0)),
+                    r"share\s*[-–—]\s*diluted\b"
+                    r"|(?:earnings|net income)(?: \(loss\))? per diluted "
+                    r"(?:common )?share)", "$", (0.01, 60.0)),
     # "$K": magnitude row (reported in the table's stated unit — see the
     # in-thousands/in-millions scale sniff in extract_table_metrics); band
     # is in RAW dollars post-scale.
@@ -565,15 +594,13 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v6 (2026-07-14): mega-cap deterministic shapes caught live on JPM/C
-    # report morning — banner-row header advance, O/(U) change columns,
-    # "($ millions" scale, curly-quote periods (2Q’26), zero-width-space
-    # cells, postfix "- diluted" EPS, reported-basis / net-of-interest-
-    # expense revenue labels. v5 added the guarded-AI fill (data/release_ai);
-    # v4 the year-ago column. Extractions are immutable per accession, so
-    # spec improvements MUST bump this version or cached releases never
-    # re-extract.
-    key = f"release_metrics:v6:{int(cik)}"
+    # v7 (2026-07-14 pm): prose diluted-EPS spec (BAC's zero-<table> release,
+    # GS KPI stacks, MS headline) + the "per diluted share" mid-form table
+    # label. v6 (am) fixed the JPM/C table shapes; v5 added the guarded-AI
+    # fill (data/release_ai); v4 the year-ago column. Extractions are
+    # immutable per accession, so spec improvements MUST bump this version
+    # or cached releases never re-extract.
+    key = f"release_metrics:v7:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:

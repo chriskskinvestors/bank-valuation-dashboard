@@ -548,6 +548,73 @@ class TestMegaCapTableShapes(unittest.TestCase):
         self.assertIsNone(m.get("total_revenue"))
 
 
+class TestProseEps(unittest.TestCase):
+    """Prose diluted-EPS (2026-07-14 pm): BAC renders its highlights table as
+    positioned <div>s (zero <table> markup) and GS uses single-period KPI
+    stacks — for both, prose is the only deterministic EPS source."""
+
+    def test_bac_label_form_with_trailing_comparison(self):
+        m = x("<p>Net income of $9.1 billion compared to $7.2 billion, up 27% "
+              "– Diluted earnings per share (EPS) of $1.21 compared to "
+              "$0.90</p>")
+        self.assertEqual(m.get("eps_diluted"), 1.21)
+
+    def test_gs_headline_per_common_share(self):
+        m = x("<p>Goldman Sachs Reports Second Quarter Earnings Per Common "
+              "Share of $ 20.98 and Increases the Quarterly Dividend</p>")
+        self.assertEqual(m.get("eps_diluted"), 20.98)
+
+    def test_ms_bare_eps_headline(self):
+        m = x("<p>Morgan Stanley Reports Net Revenues of $20.6 Billion, EPS "
+              "of $3.43 and ROTCE of 27.1%. Net income applicable to Morgan "
+              "Stanley was $5.6 billion, or $3.43 per diluted share, compared "
+              "with $4.3 billion, or $2.60 per diluted share, a year ago.</p>")
+        self.assertEqual(m.get("eps_diluted"), 3.43)
+
+    def test_value_led_comparison_clause_never_captured(self):
+        # A release narrating per-share ONLY inside the year-ago comparison
+        # clause must extract NOTHING — the value-led "or $X.XX per diluted
+        # share" form is deliberately unsupported (its comparison marker sits
+        # outside the before-label window).
+        m = x("<p>Net income was $5.6 billion, compared with $4.3 billion, "
+              "or $2.60 per diluted share, a year ago.</p>")
+        self.assertIsNone(m.get("eps_diluted"))
+
+    def test_adjusted_eps_never_captured(self):
+        m = x("<p>Adjusted EPS of $1.14 improved on strong fees.</p>")
+        self.assertIsNone(m.get("eps_diluted"))
+
+    def test_fbk_gaap_and_adjusted_headline_refuses_prose_table_fills(self):
+        # "Q2 Diluted EPS of $1.13, Adjusted Diluted EPS* of $1.14" (FBK,
+        # live 2026-07-14 pm): the bare-EPS pattern anchored at the TAIL of
+        # "Adjusted Diluted EPS" and 1.14 shipped as GAAP. Prose must refuse
+        # BOTH (the honest 1.13 trails into the next label's "Adjusted");
+        # the table supplies the GAAP figure.
+        headline = ("<p>Reports Q2 Diluted EPS of $1.13, Adjusted Diluted "
+                    "EPS* of $1.14</p>")
+        self.assertIsNone(x(headline).get("eps_diluted"))
+        html = headline + _tbl(
+            ["(dollars in thousands, except per share data)",
+             "Jun 2026", "Mar 2026"],
+            ["Diluted earnings per common share", "$1.13", "$1.10"])
+        m = extract_release_metrics(html, expected_qend="2026-06-30")
+        self.assertEqual(m.get("eps_diluted"), 1.13)
+
+    def test_disagreeing_clean_candidates_refused(self):
+        m = x("<p>Diluted earnings per share of $1.21 grew strongly. Later "
+              "the firm noted diluted earnings per share of $1.35.</p>")
+        self.assertIsNone(m.get("eps_diluted"))
+
+    def test_ms_mid_form_table_label(self):
+        html = _tbl(["Firm ($ millions, except per share data)",
+                     "1Q 2026", "1Q 2025"],
+                    ["Earnings per diluted share 1", "$3.43", "$2.60"])
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(m.get("eps_diluted"), 3.43)
+        y = extract_table_metrics(html, "2025-03-31")
+        self.assertEqual(y.get("eps_diluted"), 2.60)
+
+
 class TestFifteenMinuteRecheck(unittest.TestCase):
     def test_ttl_is_900(self):
         # Report-morning freshness: a fetch minutes before the 8-K lands
