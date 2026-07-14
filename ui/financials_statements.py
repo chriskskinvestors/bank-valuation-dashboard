@@ -2899,6 +2899,7 @@ def render_fair_value(ticker):
                "deposits, debt), are next on the roadmap.")
 
 
+@st.fragment
 def _render_credit_quality(ticker):
     """Multi-year (up to 5 FY) Company-Reported Credit Quality / Allowance, mirroring
     the Company-Reported Performance tab: section bands (Allowance & Loans, Asset-
@@ -2915,14 +2916,21 @@ def _render_credit_quality(ticker):
         return
     st.markdown("---")
     st.subheader("Credit Quality / Allowance — Company Reported")
+    _q = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                  key=f"crcq_period_{ticker}",
+                  label_visibility="collapsed") == "Quarterly"
     try:
-        years, dicts, src = _cr_highlights_by_year(ticker)
+        years, dicts, src = _cr_highlights_by_year(ticker, quarterly=_q)
     except Exception:
         years = dicts = src = None
     if not years or not dicts:
         st.caption("Company-reported allowance / asset-quality figures not available "
-                   "from this filer's 10-Ks — n/a.")
+                   f"from this filer's {'10-Qs' if _q else '10-Ks'} — n/a.")
         return
+    if _q:
+        st.caption("Quarterly basis: nonaccrual / net charge-off rates come from "
+                   "10-K-only disclosures (allowance rollforward, MD&A) and are "
+                   "blank here — switch to Annual for them.")
     periods = years[::-1]                               # oldest → newest
     order = list(range(len(years)))[::-1]               # column order, oldest-first
 
@@ -2996,13 +3004,23 @@ def _cr_hl_series(stmt):
             for r in stmt["rows"] if not r["header"]}
 
 
-def _cr_highlights_by_year(ticker):
+def _cr_highlights_by_year(ticker, quarterly: bool = False):
     """Per-fiscal-year Company-Reported highlights, NEWEST-FIRST, derived from the
     bank's own multi-year income + balance statements (data.sec_statements) and its
     holdco regulatory-capital table (data.sec_filing_scraper). Returns
     (years, dicts, src) — years = ["FY2025",…] newest-first; dicts a parallel list
     of {metric: value-or-None}; src = the latest 10-K link. Returns (None, …) when
     the statements aren't available.
+
+    quarterly=True switches to the DISCRETE-QUARTER basis (8 quarters from the
+    10-Q/10-K multiquarter stitch): columns are quarter labels ("Q1'26"), the
+    income↔balance join is by identical label (both come from _q_label),
+    ROAA/ROAE/ROATCE annualize the single-quarter income ×4 over the 2-point
+    average balance, and the ANNUAL-ONLY disclosures — NIM, NPL/loans and
+    NCO/loans (MD&A average-balance table + allowance rollforward, only in
+    10-Ks) — are None (blank), never a stale annual value. Holdco capital
+    joins by quarter-end label (only quarters whose filing tagged the capital
+    table populate — typically the latest).
 
     Levels are raw dollars; ratios are FRACTIONS (0.015 = 1.5%). ROAA/ROAE/ROATCE
     use AVERAGE balances ((beginning+ending)/2) where a prior year is in view — the
@@ -3016,23 +3034,34 @@ def _cr_highlights_by_year(ticker):
     if not cik:
         return None, None, None
     try:
-        from data.sec_statements import as_reported_statement_multiyear
-        inc = as_reported_statement_multiyear(cik, "income", 5)
-        bal = as_reported_statement_multiyear(cik, "balance", 5)
+        if quarterly:
+            from data.sec_statements import as_reported_statement_multiquarter
+            inc = as_reported_statement_multiquarter(cik, "income", 8)
+            bal = as_reported_statement_multiquarter(cik, "balance", 8)
+        else:
+            from data.sec_statements import as_reported_statement_multiyear
+            inc = as_reported_statement_multiyear(cik, "income", 5)
+            bal = as_reported_statement_multiyear(cik, "balance", 5)
     except Exception:
         inc = bal = None
     if not inc or not bal:
         return None, None, None
 
     inc_s, bal_s = inc["statement"], bal["statement"]
-    # Drive the year set off the BALANCE periods (totals every metric anchors to),
-    # newest-first. Join the income statement by fiscal-year integer.
+    # Drive the column set off the BALANCE periods (totals every metric anchors
+    # to), newest-first. Annual: join the income statement by fiscal-year
+    # integer (the two statements label periods differently). Quarterly: both
+    # period lists are _q_label outputs — join by the identical label.
     def _yr(p):
         m = re.search(r"\d{4}", p or "")
         return int(m.group()) if m else None
 
-    bal_years = [_yr(p) for p in bal_s["periods"]]
-    inc_years = [_yr(p) for p in inc_s["periods"]]
+    if quarterly:
+        bal_years = list(bal_s["periods"])
+        inc_years = list(inc_s["periods"])
+    else:
+        bal_years = [_yr(p) for p in bal_s["periods"]]
+        inc_years = [_yr(p) for p in inc_s["periods"]]
     bin_ = _cr_hl_series(bal_s)
     iinc = _cr_hl_series(inc_s)
 
@@ -3070,9 +3099,17 @@ def _cr_highlights_by_year(ticker):
         cap_res = holdco_capital_for(cik, cert)
         if cap_res:
             for period, d in cap_res["capital"].items():
-                y = _yr(period)
-                if y is not None:
-                    cap_by_year[y] = d
+                if quarterly:
+                    # Key by the same _q_label form the statement columns use.
+                    try:
+                        _q = (int(period[5:7]) - 1) // 3 + 1
+                        cap_by_year[f"Q{_q}'{period[2:4]}"] = d
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    y = _yr(period)
+                    if y is not None:
+                        cap_by_year[y] = d
     except Exception:
         cap_by_year = {}
 
@@ -3081,13 +3118,17 @@ def _cr_highlights_by_year(ticker):
     # average-balance table + the allowance rollforward). Keyed by fiscal year,
     # values are fractions or None — company-reported, never FDIC.
     aq_by_year = {}
-    try:
-        from data.sec_filing_scraper import company_asset_quality_nim
-        _aq = company_asset_quality_nim(cik)
-        if _aq:
-            aq_by_year = _aq.get("by_year", {}) or {}
-    except Exception:
-        aq_by_year = {}
+    if not quarterly:
+        # NIM / NPL / NCO come from 10-K-only disclosures (MD&A average-balance
+        # table + allowance rollforward) — no quarterly source; blank, never a
+        # stale annual figure in a quarterly column.
+        try:
+            from data.sec_filing_scraper import company_asset_quality_nim
+            _aq = company_asset_quality_nim(cik)
+            if _aq:
+                aq_by_year = _aq.get("by_year", {}) or {}
+        except Exception:
+            aq_by_year = {}
 
     _EQUITY = ["total shareholders' equity", "total stockholders' equity"]
     dicts = []
@@ -3141,16 +3182,22 @@ def _cr_highlights_by_year(ticker):
         # these exact keys, so the consolidated total is taken, not a subtotal.
         ni = _i(["net income", "net income (loss)", "net income (loss) available "
                  "to common shareholders"], year)
+        # Hyphenation varies by filing (10-Qs often render "non-interest") and
+        # the unit note varies "(in dollars…)" vs "(in USD…)": both forms are
+        # listed so the quarterly stitch matches too.
         nii = _i(["net interest income"], year)
-        nonii = _i(["total noninterest income"], year)
-        nonix = _i(["total noninterest expense"], year)
+        nonii = _i(["total noninterest income", "total non-interest income"], year)
+        nonix = _i(["total noninterest expense", "total non-interest expense"], year)
         prov = _i(["provision for credit losses", "provision for loan losses",
                    "(reversal of) provision for credit losses"], year)
         eps_dil = _i(["diluted earnings per common share (in dollars per share)",
                       "diluted earnings per share (in dollars per share)",
+                      "diluted earnings per common share (in usd per share)",
+                      "diluted earnings per share (in usd per share)",
                       "diluted earnings per common share",
                       "diluted earnings per share",
-                      "earnings per common share - diluted (in dollars per share)"],
+                      "earnings per common share - diluted (in dollars per share)",
+                      "earnings per common share - diluted (in usd per share)"],
                      year)
         # PPNR = NII + noninterest income − noninterest expense (all three present).
         ppnr = (nii + nonii - nonix
@@ -3179,6 +3226,12 @@ def _cr_highlights_by_year(ticker):
         def _ratio(num, den):
             return (num / den) if (num is not None and den not in (None, 0)) else None
 
+        # Quarterly columns hold a SINGLE quarter's income — annualize the
+        # return ratios (×4) so ROAA/ROAE/ROATCE stay comparable to the
+        # annual view. Efficiency is flow÷flow (same span) — never annualized.
+        _ann = 4.0 if quarterly else 1.0
+        ni_ann = ni * _ann if ni is not None else None
+
         cap = cap_by_year.get(year, {})
         d = {
             "total_assets": ta, "net_loans": nl, "total_deposits": dep,
@@ -3186,9 +3239,9 @@ def _cr_highlights_by_year(ticker):
             "nii": nii, "noninterest_income": nonii, "noninterest_expense": nonix,
             "provision": prov, "ppnr": ppnr, "eps_diluted": eps_dil,
             "net_income": ni,
-            "roaa": _ratio(ni, avg_assets),
-            "roae": _ratio(ni, avg_equity),
-            "roatce": _ratio(ni, tce_avg if (tce_avg and tce_avg > 0) else None),
+            "roaa": _ratio(ni_ann, avg_assets),
+            "roae": _ratio(ni_ann, avg_equity),
+            "roatce": _ratio(ni_ann, tce_avg if (tce_avg and tce_avg > 0) else None),
             "nim": aq_by_year.get(year, {}).get("nim"),     # scraped from the 10-K MD&A
             "efficiency": _ratio(nonix, (nii + nonii)
                                  if (nii is not None and nonii is not None) else None),
@@ -3208,7 +3261,10 @@ def _cr_highlights_by_year(ticker):
         }
         dicts.append(d)
 
-    years = [f"FY{y}" if y else "" for y in bal_years]
+    if quarterly:
+        years = list(bal_years)            # already "Qn'yy" labels
+    else:
+        years = [f"FY{y}" if y else "" for y in bal_years]
     latest = inc["meta"]
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(latest['cik'])}/"
            f"{latest['accession']}/{latest['doc']}")
@@ -3587,6 +3643,7 @@ def _render_preliminary_quarter(ticker, cik):
     st.markdown("---")
 
 
+@st.fragment
 def _render_financial_highlights(ticker):
     """Multi-year (up to 5 FY) Company-Reported Financial Highlights, mirroring the
     Templated Financial Highlights: section bands (Balance Sheet, Profitability,
@@ -3598,20 +3655,27 @@ def _render_financial_highlights(ticker):
     cik = info.get("cik") if info else None
     if not cik:
         return
-    try:
-        years, dicts, src = _cr_highlights_by_year(ticker)
-    except Exception:
-        years = dicts = src = None
     st.markdown("---")
     st.subheader("Financial Highlights — Company Reported")
+    _q = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                  key=f"crhl_period_{ticker}",
+                  label_visibility="collapsed") == "Quarterly"
     # Timeliness layer: the latest quarter's as-released figures from the earnings
     # 8-K (EX-99.1), labeled preliminary and visually separate — never merged into
     # the audited FY columns below, never overwriting an audited figure.
     _render_preliminary_quarter(ticker, cik)
+    try:
+        years, dicts, src = _cr_highlights_by_year(ticker, quarterly=_q)
+    except Exception:
+        years = dicts = src = None
     if not years or not dicts:
         st.caption("Company-reported statements not available from this filer's "
-                   "10-Ks — n/a.")
+                   f"{'10-Qs' if _q else '10-Ks'} — n/a.")
         return
+    if _q:
+        st.caption("Quarterly basis: ROAA/ROAE/ROATCE annualize the single "
+                   "quarter ×4; NIM and the asset-quality rates are 10-K-only "
+                   "disclosures and are blank here.")
     periods = years[::-1]                               # oldest → newest (Templated)
     order = list(range(len(years)))[::-1]               # column order, oldest-first
 
@@ -3644,6 +3708,7 @@ def _render_financial_highlights(ticker):
         _cr_highlights_trends(years, dicts, ticker, "crhl")
 
 
+@st.fragment
 def _render_performance(ticker):
     """Multi-year (up to 5 FY) Company-Reported Performance Analysis, mirroring the
     Company-Reported Financial Highlights: section bands (Earnings, Profitability,
@@ -3677,14 +3742,21 @@ def _render_performance(ticker):
             f"({_fresh['url']}), ahead of the next 10-Q. Unaudited; the filed figure "
             f"supersedes it once published.")
 
+    _qtr = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                    key=f"crperf_period_{ticker}",
+                    label_visibility="collapsed") == "Quarterly"
     try:
-        years, dicts, src = _cr_highlights_by_year(ticker)
+        years, dicts, src = _cr_highlights_by_year(ticker, quarterly=_qtr)
     except Exception:
         years = dicts = src = None
     if not years or not dicts:
         st.caption("Company-reported income-statement lines not available from this "
-                   "filer's 10-Ks — n/a.")
+                   f"filer's {'10-Qs' if _qtr else '10-Ks'} — n/a.")
         return
+    if _qtr:
+        st.caption("Quarterly basis: dollar lines are discrete single quarters; "
+                   "ROAA/ROAE/ROATCE annualize ×4; NIM is a 10-K-only MD&A "
+                   "disclosure and is blank here.")
     periods = years[::-1]                               # oldest → newest
     order = list(range(len(years)))[::-1]               # column order, oldest-first
 
