@@ -15,6 +15,9 @@ Columbia/Umpqua press releases, 2026-07-13):
   • pre-2001 completion (EFTS floor) -> (None, True) with zero network
   • EFTS failure -> (None, False); unreadable candidate doc -> ok=False
     unless a later candidate positively matches
+  • HTTP 404 on an archive document is a PERMANENT gap -> cacheable
+    (None, True), while a 503 stays an uncacheable fetch failure — the
+    nightly job must not refetch immutable-archive 404s forever
 """
 import sys
 import types
@@ -88,10 +91,21 @@ def _doc_resp(body):
     return r
 
 
-def _wire(efts_hits, docs, efts_fail=False, doc_fail=(), indexes=None):
+def _http_error(status):
+    """requests.HTTPError as raise_for_status() raises it, with the
+    response's status_code attached (what is_http_404 inspects)."""
+    import requests
+    resp = MagicMock()
+    resp.status_code = status
+    return requests.HTTPError(f"{status} error", response=resp)
+
+
+def _wire(efts_hits, docs, efts_fail=False, doc_fail=(), indexes=None,
+          doc_http=None):
     """requests.get side_effect: EFTS query, filing-index pages (URLs ending
     '/'), then archive doc fetches. docs: {doc_filename: html}; doc_fail:
-    filenames that raise; indexes: {accession_nodash: [doc filenames]}."""
+    filenames that raise; indexes: {accession_nodash: [doc filenames]};
+    doc_http: {doc_filename: HTTP status} raising that HTTPError."""
     indexes = indexes or {}
 
     def side_effect(url, params=None, headers=None, timeout=30):
@@ -107,6 +121,8 @@ def _wire(efts_hits, docs, efts_fail=False, doc_fail=(), indexes=None):
         fn = url.rsplit("/", 1)[-1]
         if fn in doc_fail:
             raise Exception("doc down")
+        if fn in (doc_http or {}):
+            raise _http_error(doc_http[fn])
         return _doc_resp(docs[fn])
     return side_effect
 
@@ -309,6 +325,46 @@ class TestResolveAnnouncement(unittest.TestCase):
 
     @patch("data.ma_announcements.time.sleep", lambda *_: None)
     @patch("data.ma_announcements.requests.get")
+    def test_404_candidate_is_cacheable_na(self, mock_get):
+        # An archive 404 is PERMANENT (2001-vintage accessions missing the
+        # document, e.g. 829281/000090951801000405/0001.txt) — the miss must
+        # cache, or the nightly job refetches the same 404 forever.
+        from data.ma_announcements import resolve_announcement
+        mock_get.side_effect = _wire(
+            [_hit("0001-01-1", "2001-06-22", "0001.txt", items=["5"])],
+            {}, doc_http={"0001.txt": 404})
+        r, ok = resolve_announcement("Skagit Bank", "Banner Bank", "2001-12-31")
+        self.assertIsNone(r)
+        self.assertTrue(ok)
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_503_candidate_stays_uncacheable(self, mock_get):
+        # A transient outage must NOT freeze the miss into the cache.
+        from data.ma_announcements import resolve_announcement
+        mock_get.side_effect = _wire(
+            [_hit("0001-18-1", "2018-07-26", "announce.htm")],
+            {}, doc_http={"announce.htm": 503})
+        r, ok = resolve_announcement("Skagit Bank", "Banner Bank", "2018-11-01")
+        self.assertIsNone(r)
+        self.assertFalse(ok)
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_404_candidate_does_not_block_later_match(self, mock_get):
+        # A 404'd older candidate is skipped; a later readable announcement
+        # still resolves with ok=True.
+        from data.ma_announcements import resolve_announcement
+        mock_get.side_effect = _wire(
+            [_hit("0001-18-0", "2018-07-01", "gone.htm"),
+             _hit("0001-18-1", "2018-07-26", "announce.htm")],
+            {"announce.htm": ANNOUNCE_PR}, doc_http={"gone.htm": 404})
+        r, ok = resolve_announcement("Skagit Bank", "Banner Bank", "2018-11-01")
+        self.assertTrue(ok and r)
+        self.assertEqual(r["announce_date"], "2018-07-26")
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
     def test_non_announce_items_skipped_without_fetch(self, mock_get):
         # A routine earnings 8-K (items 2.02/9.01) mentioning the target must
         # not burn the candidate budget — no document fetch at all for it.
@@ -495,6 +551,19 @@ class TestFindTerminatedDeals(unittest.TestCase):
         deals, ok = find_terminated_deals(self.FHN, "First Horizon Bank")
         self.assertEqual(deals, [])
         self.assertFalse(ok)
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_404_term_doc_is_cacheable(self, mock_get):
+        # Permanent archive gap on the termination 8-K: no deal surfaces,
+        # but the empty result is cacheable — unlike the 503 case above.
+        from data.ma_announcements import find_terminated_deals
+        mock_get.side_effect = _wire(self._hits(), self._docs(),
+                                     indexes=self._indexes(),
+                                     doc_http={"term_body.htm": 404})
+        deals, ok = find_terminated_deals(self.FHN, "First Horizon Bank")
+        self.assertEqual(deals, [])
+        self.assertTrue(ok)
 
     def test_no_cik_returns_empty(self):
         from data.ma_announcements import find_terminated_deals

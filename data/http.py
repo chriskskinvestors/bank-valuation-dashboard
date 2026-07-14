@@ -19,6 +19,15 @@ import time
 import requests
 
 
+def is_http_404(exc: Exception) -> bool:
+    """True when ``exc`` is an HTTP 404. Clients that cache fetch results
+    use this to tell a permanent gap (a document that will never exist —
+    cacheable n/a) from a transient failure (must retry next run)."""
+    return (isinstance(exc, requests.HTTPError)
+            and exc.response is not None
+            and exc.response.status_code == 404)
+
+
 def get_with_retry(url: str, params: dict | None = None,
                    headers: dict | None = None, timeout: int = 15,
                    max_attempts: int = 3) -> requests.Response | None:

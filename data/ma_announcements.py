@@ -44,7 +44,11 @@ deferred, honest n/a.
 resolve_announcement returns (result | None, ok): ok=False means a FETCH
 failure (caller must not cache); ok=True with None means genuinely not
 found (cacheable n/a — e.g. pre-2001 deals, private targets with no
-EDGAR-filed PR).
+EDGAR-filed PR). An HTTP 404 on an archive document counts as NOT FOUND,
+not as a fetch failure: EDGAR archives are immutable, so a missing document
+(routine on 2001-vintage accessions) 404s identically on every retry —
+treating it as transient kept those deals perpetually uncached and
+re-fetched by every nightly refresh-deal-comps run.
 """
 
 from __future__ import annotations
@@ -55,6 +59,8 @@ import time
 from datetime import date, timedelta
 
 import requests
+
+from data.http import is_http_404
 
 EDGAR_FTS = "https://efts.sec.gov/LATEST/search-index"
 _EFTS_FLOOR = "2001-04-01"      # EDGAR full-text coverage starts 2001; a
@@ -415,19 +421,23 @@ def _candidates(hits: list[dict]) -> list[dict]:
     return sorted(by_adsh.values(), key=lambda c: c["file_date"])
 
 
-def _fetch_doc_text(cik, adsh: str, doc: str) -> str | None:
-    """One EDGAR archive document as flattened text; None on failure."""
+def _fetch_doc_text(cik, adsh: str, doc: str) -> tuple[str | None, bool]:
+    """One EDGAR archive document as flattened text. Returns (text, ok):
+    ok=False only on a TRANSIENT failure (timeout, 5xx — caller must not
+    cache the miss). An HTTP 404 is (None, True): archives are immutable,
+    the document will never appear, a cacheable honest gap. Unresolvable
+    coordinates (no cik/adsh/doc) are equally permanent -> (None, True)."""
     if not cik or not adsh or not doc:
-        return None
+        return None, True
     url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
            f"{adsh.replace('-', '')}/{doc}")
     try:
         resp = requests.get(url, headers=_headers(), timeout=30)
         resp.raise_for_status()
-        return _strip_html(resp.text)
+        return _strip_html(resp.text), True
     except Exception as e:
         print(f"[ma_announce] doc {adsh}/{doc} error: {type(e).__name__}: {e}")
-        return None
+        return None, is_http_404(e)
 
 
 def resolve_announcement(target_name: str, acquirer_name: str,
@@ -462,9 +472,9 @@ def resolve_announcement(target_name: str, acquirer_name: str,
     fetch_failed = False
     for cand in _candidates(hits)[:_MAX_CANDIDATES]:
         time.sleep(_PAUSE_S)
-        text = _fetch_doc_text(cand["cik"], cand["adsh"], cand["doc"])
+        text, t_ok = _fetch_doc_text(cand["cik"], cand["adsh"], cand["doc"])
         if text is None:
-            fetch_failed = True
+            fetch_failed = fetch_failed or not t_ok
             continue
         low = text.lower()
         if tq.lower() not in low:
@@ -524,12 +534,12 @@ def _accession_text(cik, adsh: str, primary_doc: str) -> tuple[str | None, bool]
     exhibits, fetched via the filing index — the PR usually lacks the exact
     EFTS query phrase, so it is not among the phrase-matched documents, yet
     it is where the "(NYSE: XXX)" party pairs and deal values live
-    (live-verified on FHN/TD). Returns (text, ok); ok=False on any fetch
-    failure so a partial read is never cached as a miss."""
-    base = _fetch_doc_text(cik, adsh, primary_doc)
+    (live-verified on FHN/TD). Returns (text, ok); ok=False on any TRANSIENT
+    fetch failure so a partial read is never cached as a miss — an HTTP 404
+    (document permanently absent from the immutable archive) keeps ok=True."""
+    base, ok = _fetch_doc_text(cik, adsh, primary_doc)
     if base is None:
-        return None, False
-    ok = True
+        return None, ok
     extra: list[str] = []
     try:
         resp = requests.get(
@@ -539,13 +549,13 @@ def _accession_text(cik, adsh: str, primary_doc: str) -> tuple[str | None, bool]
         names = re.findall(r'href="[^"]*?([^"/]+\.htm)"', resp.text)
     except Exception as e:
         print(f"[ma_announce] index {adsh}: {type(e).__name__}: {e}")
-        return base, False
+        return base, is_http_404(e)
     for n in dict.fromkeys(names):
         if _EX99_NAME_RE.search(n) and n != primary_doc:
             time.sleep(_PAUSE_S)
-            t = _fetch_doc_text(cik, adsh, n)
+            t, t_ok = _fetch_doc_text(cik, adsh, n)
             if t is None:
-                ok = False
+                ok = ok and t_ok
                 continue
             extra.append(t)
             if len(extra) >= 2:
@@ -710,13 +720,16 @@ if __name__ == "__main__":
     r, ok = resolve_announcement("Columbia State Bank", "Umpqua Bank",
                                  "2023-03-01")
     print("Columbia State Bank:", r, ok)
-    assert ok and r and r["announce_date"] == "2021-10-12", r
+    assert r and r["announce_date"] == "2021-10-12", r
     # All-stock MOE -> computed value (requires FMP_API_KEY in env):
     # 0.5958 × COLB $39.57 prior close × 220,133,236 UMPQ cover shares
     # ≈ $5.19B vs the press-reported ~$5.2B. Range-asserted (a data-vendor
     # close restatement shouldn't fail the smoke); unit tests pin the math.
+    # Without the key this leg reports ok=False BY DESIGN (price lookup
+    # unavailable — retry later), so ok is only asserted key-in-hand.
     from data.fmp_client import _has_key
     if _has_key():
+        assert ok, r
         assert r["value_basis"] == "computed", r
         assert 5_000_000_000 < r["value_usd"] < 5_400_000_000, r
         assert "0.5958" in (r["value_note"] or ""), r

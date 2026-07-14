@@ -38,6 +38,7 @@ from datetime import datetime
 
 import requests
 
+from data.http import is_http_404
 from data.ma_summary import _SHELF_FORMS, iter_submission_filings
 
 CACHE_TTL_SECONDS = 7 * 86400
@@ -104,8 +105,10 @@ def _num(s: str) -> float | None:
 
 def _fetch_cover(cik: int, accession: str, doc: str) -> tuple[str | None, bool]:
     """(cover text, ok). A MISSING primary document (routine on old archived
-    filings) is (None, True) — a data gap, not a fetch failure; only an HTTP
-    error is (None, False)."""
+    filings) is (None, True) — a data gap, not a fetch failure — whether its
+    name is absent from the submissions index or the URL 404s (EDGAR archives
+    are immutable, the 404 is permanent). Only a TRANSIENT failure (timeout,
+    5xx) is (None, False)."""
     if not accession or not doc:
         return None, True
     url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
@@ -117,7 +120,7 @@ def _fetch_cover(cik: int, accession: str, doc: str) -> tuple[str | None, bool]:
         return re.sub(r"\s+", " ", _html.unescape(txt))[:_COVER_CHARS], True
     except Exception as e:
         print(f"[offerings] doc {accession}/{doc}: {type(e).__name__}: {e}")
-        return None, False
+        return None, is_http_404(e)
 
 
 def classify_424b(cover: str) -> dict:

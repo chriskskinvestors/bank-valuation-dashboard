@@ -11,7 +11,8 @@ verbatim from live-verified Banner documents, 2026-07-13):
   • 8-K Item 3.02 = private placement; 3.02 + 2.01 SKIPPED (acquisition
     consideration, not a raise); PP gross ambiguity -> n/a
   • missing primary document (old archived filings) -> honest row, still
-    cached; an HTTP failure -> None, nothing cached
+    cached; a TRANSIENT HTTP failure -> None, nothing cached; an HTTP 404
+    is a PERMANENT archive gap -> honest row, still cached
 """
 import sys
 import types
@@ -121,6 +122,37 @@ class TestPPGross(unittest.TestCase):
             "sold $25,000,000 of notes and issued $10,000,000 of warrants"))
 
 
+def _http_error(status):
+    """requests.HTTPError as raise_for_status() raises it, with the
+    response's status_code attached (what is_http_404 inspects)."""
+    import requests
+    resp = MagicMock()
+    resp.status_code = status
+    return requests.HTTPError(f"{status} error", response=resp)
+
+
+class TestFetchCover(unittest.TestCase):
+
+    @patch("data.offerings.requests.get")
+    def test_404_is_cacheable_gap(self, mock_get):
+        # EDGAR archives are immutable — a 404'd document never appears, so
+        # the gap must be (None, True) or the cover is refetched every load.
+        from data.offerings import _fetch_cover
+        mock_get.side_effect = _http_error(404)
+        cover, ok = _fetch_cover(CIK, "0001-20-1", "gone.htm")
+        self.assertIsNone(cover)
+        self.assertTrue(ok)
+
+    @patch("data.offerings.requests.get")
+    def test_503_is_uncacheable(self, mock_get):
+        # A transient outage must not freeze the miss into the 7-day cache.
+        from data.offerings import _fetch_cover
+        mock_get.side_effect = _http_error(503)
+        cover, ok = _fetch_cover(CIK, "0001-20-1", "cover.htm")
+        self.assertIsNone(cover)
+        self.assertFalse(ok)
+
+
 def _filings(rows):
     return [{"form": f, "date": d, "accession": a, "doc": doc, "items": it}
             for f, d, a, doc, it in rows]
@@ -128,11 +160,14 @@ def _filings(rows):
 
 class TestGetOfferings(unittest.TestCase):
 
-    def _wire(self, docs, fail=()):
+    def _wire(self, docs, fail=(), http=None):
         def side_effect(url, params=None, headers=None, timeout=30):
             for frag in fail:
                 if frag in url:
                     raise Exception("down")
+            for frag, status in (http or {}).items():
+                if frag in url:
+                    raise _http_error(status)
             fn = url.rsplit("/", 1)[-1]
             r = MagicMock()
             r.text = docs[fn]
@@ -185,6 +220,22 @@ class TestGetOfferings(unittest.TestCase):
         mock_get.side_effect = self._wire({}, fail=("dcm.htm",))
         self.assertIsNone(offerings.get_offerings(CIK))
         mock_cput.assert_not_called()
+
+    @patch("data.offerings.time.sleep", lambda *_: None)
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.offerings.requests.get")
+    @patch("data.offerings.iter_submission_filings")
+    def test_404_doc_rows_still_cache(self, mock_iter, mock_get, _cg, mock_cput):
+        # 404'd primary document (permanent archive gap): honest Unclassified
+        # row and the result still caches — unlike the transient case above.
+        from data import offerings
+        mock_iter.return_value = (_filings([
+            ("424B2", "2020-06-26", "0001-20-1", "gone.htm", "")]), True)
+        mock_get.side_effect = self._wire({}, http={"gone.htm": 404})
+        rows = offerings.get_offerings(CIK)
+        self.assertEqual([r["kind"] for r in rows], ["Unclassified"])
+        mock_cput.assert_called_once()
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)
