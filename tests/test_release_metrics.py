@@ -548,6 +548,69 @@ class TestMegaCapTableShapes(unittest.TestCase):
         self.assertIsNone(m.get("total_revenue"))
 
 
+class TestOrdinalQuarterHeaders(unittest.TestCase):
+    """CFR/TCBI shapes from the 2026-07-14 week-ahead sweep (CFR extracted
+    0/13, TCBI 2/13): ordinal-quarter header cells with the year in the
+    same cell, on the next row, or on the PREVIOUS row."""
+
+    def test_single_cell_ordinal_quarter(self):
+        from data.release_metrics import _period_qend
+        self.assertEqual(_period_qend("1st Quarter 2026"), "2026-03-31")
+        self.assertEqual(_period_qend("4th Qtr 2025"), "2025-12-31")
+        self.assertEqual(_period_qend("First Quarter 2026"), "2026-03-31")
+
+    def test_tcbi_ordinals_over_years_with_units_label(self):
+        # Years row leads with the units cell — ignored as the label slot.
+        def tr(cells):
+            return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+        html = ("<table>"
+                + tr(["", "1st Quarter", "", "4th Quarter", "", "1st Quarter"])
+                + tr(["(dollars in thousands except per share data)",
+                      "2026", "", "2025", "", "2025"])
+                + tr(["Net interest margin", "3.43", "%", "3.38", "%",
+                      "3.19", "%"])
+                + "</table>")
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(m.get("nim"), 3.43)
+        p = extract_table_metrics(html, "2025-12-31")
+        self.assertEqual(p.get("nim"), 3.38)
+
+    def test_cfr_years_over_descending_ordinals(self):
+        # "2026 | 2025" above "1st Qtr | 4th | 3rd | 2nd | 1st Qtr": one
+        # strictly-descending ordinal run per year proves the assignment.
+        def tr(cells):
+            return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+        html = ("<table>"
+                + tr(["(In thousands, except per share data)", "", ""])
+                + tr(["", "2026", "", "2025"])
+                + tr(["", "1st Qtr", "", "4th Qtr", "", "3rd Qtr", "",
+                      "2nd Qtr", "", "1st Qtr"])
+                + tr(["Return on average common equity", "15.15", "14.80",
+                      "16.72", "15.64", "15.54"])
+                + "</table>")
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(m.get("roe"), 15.15)      # 1st Qtr under 2026
+        p = extract_table_metrics(html, "2025-12-31")
+        self.assertEqual(p.get("roe"), 14.80)      # 4th Qtr under 2025
+        y = extract_table_metrics(html, "2025-03-31")
+        self.assertEqual(y.get("roe"), 15.54)      # trailing 1st Qtr = 2025
+
+    def test_ascending_ordinals_refused(self):
+        # Oldest-first ordinals don't form one descending run per year —
+        # the assignment is unprovable and the table must be skipped.
+        def tr(cells):
+            return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+        html = ("<table>"
+                + tr(["", "2025", "", "2026"])
+                + tr(["", "1st Qtr", "", "2nd Qtr", "", "3rd Qtr", "",
+                      "4th Qtr", "", "1st Qtr"])
+                + tr(["Return on average common equity", "15.54", "15.64",
+                      "16.72", "14.80", "15.15"])
+                + "</table>")
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertIsNone(m.get("roe"))
+
+
 class TestProseEps(unittest.TestCase):
     """Prose diluted-EPS (2026-07-14 pm): BAC renders its highlights table as
     positioned <div>s (zero <table> markup) and GS uses single-period KPI

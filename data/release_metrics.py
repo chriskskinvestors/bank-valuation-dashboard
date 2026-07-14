@@ -261,8 +261,13 @@ _MONTHS3 = {m[:3]: i for i, m in enumerate(
      "september", "october", "november", "december"), 1)}
 _Q_END = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
 _QTOK = re.compile(r"\b([1-4])Q\s?['’]?(\d{2}|\d{4})\b", re.I)
-_QWORD = re.compile(r"\b(first|second|third|fourth)\s+quarter,?\s+(\d{4})", re.I)
-_QNUM = {"first": 1, "second": 2, "third": 3, "fourth": 4}
+_QWORD = re.compile(r"\b(first|1st|second|2nd|third|3rd|fourth|4th)\s+"
+                    r"(?:quarter|qtr\.?),?\s+(\d{4})", re.I)
+_QNUM = {"first": 1, "1st": 1, "second": 2, "2nd": 2,
+         "third": 3, "3rd": 3, "fourth": 4, "4th": 4}
+# A bare ordinal-quarter header cell ("1st Qtr", "4th Quarter") — year on a
+# separate row (TCBI/CFR split headers, caught in the 2026-07-14 sweep).
+_QORD = re.compile(r"^\s*(1st|2nd|3rd|4th)\s+(?:quarter|qtr\.?)\s*$", re.I)
 _DTOK = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})")
 # Month-year with NO day ("Jun 2026", "September 2025") — FBK-style column
 # headers (caught live 2026-07-13: every table skipped). Quarter-end months
@@ -463,6 +468,54 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                                  for m, y in zip(months, years)]
                         hdr_i, n_change = i + 1, len(extras)
                         break
+            # TCBI-style split: ordinal-quarter row ("1st Quarter | 4th
+            # Quarter | …") over a years row — pair 1:1 like months. A
+            # leading non-year cell on the year row is the units/label slot
+            # and is ignored; trailing extras must all be change tokens.
+            if i + 1 < len(rows):
+                ords = [_QORD.match(c) for c in cells if c.strip()]
+                if len(ords) >= 2 and all(ords):
+                    nxt = [c.strip() for c in rows[i + 1] if c.strip()]
+                    if nxt and not re.fullmatch(r"20\d{2}", nxt[0]) \
+                            and not _CHANGE_COL.search(nxt[0]):
+                        nxt = nxt[1:]
+                    years = [int(c) for c in nxt if re.fullmatch(r"20\d{2}", c)]
+                    extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
+                    if (len(years) >= len(ords)
+                            and all(_CHANGE_COL.search(c) for c in extras)):
+                        from datetime import date as _date
+                        qends = []
+                        for om, y in zip(ords, years):
+                            mo, dy = _Q_END[_QNUM[om.group(1).lower()]]
+                            qends.append(_date(y, mo, dy).isoformat())
+                        hdr_i, n_change = i + 1, len(extras)
+                        break
+            # CFR-style INVERTED split: a years row ("2026 | 2025") ABOVE the
+            # ordinal-quarter row ("1st Qtr | 4th | 3rd | 2nd | 1st Qtr").
+            # Colspans are lost in cell extraction, so year assignment is
+            # provable only when the ordinals form exactly one strictly-
+            # descending run per year (the standard descending-recency
+            # layout) — any other arrangement is refused, never guessed.
+            nz = [c.strip() for c in cells if c.strip()]
+            if nz and all(re.fullmatch(r"20\d{2}", c) for c in nz) \
+                    and i + 1 < len(rows):
+                years = [int(c) for c in nz]
+                qs = [_QORD.match(c) for c in rows[i + 1] if c.strip()]
+                if len(qs) >= 2 and all(qs):
+                    ordinals = [_QNUM[m.group(1).lower()] for m in qs]
+                    run_idx, ridx = [], 0
+                    for j, q in enumerate(ordinals):
+                        if j and q >= ordinals[j - 1]:
+                            ridx += 1
+                        run_idx.append(ridx)
+                    if ridx + 1 == len(years):
+                        from datetime import date as _date
+                        qends = []
+                        for q, ri in zip(ordinals, run_idx):
+                            mo, dy = _Q_END[q]
+                            qends.append(_date(years[ri], mo, dy).isoformat())
+                        hdr_i = i + 1
+                        break
         if not qends or qends.count(expected_qend) != 1:
             continue                      # no/ambiguous period row → skip table
         col = qends.index(expected_qend)
@@ -594,13 +647,14 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v7 (2026-07-14 pm): prose diluted-EPS spec (BAC's zero-<table> release,
-    # GS KPI stacks, MS headline) + the "per diluted share" mid-form table
-    # label. v6 (am) fixed the JPM/C table shapes; v5 added the guarded-AI
-    # fill (data/release_ai); v4 the year-ago column. Extractions are
-    # immutable per accession, so spec improvements MUST bump this version
-    # or cached releases never re-extract.
-    key = f"release_metrics:v7:{int(cik)}"
+    # v8 (2026-07-14 pm): ordinal-quarter headers — "1st Quarter 2026"
+    # single-cell (_QWORD), TCBI ordinals-over-years split, CFR years-over-
+    # ordinals inverted split (descending-runs proof). v7 added the prose
+    # diluted-EPS spec; v6 the JPM/C table shapes; v5 the guarded-AI fill
+    # (data/release_ai). Extractions are immutable per accession, so spec
+    # improvements MUST bump this version or cached releases never
+    # re-extract.
+    key = f"release_metrics:v8:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:
