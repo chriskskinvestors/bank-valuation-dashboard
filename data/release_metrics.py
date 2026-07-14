@@ -553,7 +553,22 @@ def release_metrics(cik) -> dict | None:
         # outage doesn't turn into a re-check storm); nothing if we had nothing.
         return _stamp(prev) if prev else None
     if prev and prev.get("accession") == acc:
-        return _stamp(prev)                     # same release — nothing new
+        # Same release. A COMPLETE extraction is immutable — but an AI fill
+        # that failed at extraction time must NOT be locked in for the
+        # quarter (Jul-14: one bad window on report morning left the six
+        # megabank exhibits deterministic-only, permanently). Retry the AI
+        # fill against the same accession, bounded.
+        if prev.get("ai_state") == "ok" or prev.get("ai_attempts", 0) >= 8:
+            return _stamp(prev)
+        from data.ir_provider import latest_earnings_release as _ler
+        try:
+            rel = _ler(cik)
+        except Exception:
+            rel = None
+        if rel and rel.get("accession") == acc:
+            prev["ai_state"] = _ai_fill(prev, cik, rel)
+        prev["ai_attempts"] = prev.get("ai_attempts", 0) + 1
+        return _stamp(prev)
 
     from data.ir_provider import (_quarter_end_before, extract_capital_ratios,
                                   latest_earnings_release)
@@ -582,26 +597,31 @@ def release_metrics(cik) -> dict | None:
         "filed_date": rel.get("filed_date"),
         "accession": rel.get("accession"),
     }
-    _ai_fill(val, cik, rel)
+    val["ai_state"] = _ai_fill(val, cik, rel)
+    val["ai_attempts"] = 1
     return _stamp(val)
 
 
-def _ai_fill(val: dict, cik, rel: dict) -> None:
+def _ai_fill(val: dict, cik, rel: dict) -> str:
     """Fill val's None metric cells in place from the guarded-AI extraction
     (data/release_ai — verbatim-evidence verified, unit-safe keys only).
     Deterministic values are NEVER overwritten; capital keys land in the
-    period dicts the exhibit reads. Any failure leaves val untouched."""
+    period dicts the exhibit reads. Returns the fill state: "ok" (filled, or
+    nothing to do — no key configured) / "pending" (extraction failed; the
+    caller retries on a later pass rather than locking the accession)."""
     try:
-        from data.release_ai import release_ai_metrics
+        from data.release_ai import has_api_key, release_ai_metrics
+        if not has_api_key():
+            return "ok"                   # nothing to retry without a key
         ai = release_ai_metrics(
             cik, val.get("accession") or "", _flat_text(rel.get("html") or ""),
             qend=val.get("qend"), prior_qend=val.get("prior_qend"),
             yoy_qend=val.get("yoy_qend"))
     except Exception as e:
         print(f"[release_metrics] AI fill failed: {type(e).__name__}: {e}")
-        return
+        return "pending"
     if not ai:
-        return
+        return "pending"
     for bucket_key, period in (("metrics", "cur"), ("prior_metrics", "prior"),
                                ("yoy_metrics", "yoy")):
         bucket = val.setdefault(bucket_key, {})
@@ -614,3 +634,4 @@ def _ai_fill(val: dict, cik, rel: dict) -> None:
     for k in ("cet1_ratio", "t1_ratio", "total_ratio", "lev_ratio"):
         if cap.get(k) is None and (ai.get("cur") or {}).get(k) is not None:
             cap[k] = ai["cur"][k]
+    return "ok"

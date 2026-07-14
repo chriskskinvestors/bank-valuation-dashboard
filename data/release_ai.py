@@ -94,13 +94,21 @@ non-GAAP; those are fine). Percent metrics are percents (net interest margin \
 
 For EVERY value return the period it belongs to — "cur" (quarter ending \
 {qend}), "prior" ({prior_qend}) or "yoy" ({yoy_qend}) — and a SHORT verbatim \
-quote (3-40 words) copied EXACTLY from the document that contains the number \
-and enough context to identify the metric and period. Values whose quote you \
-cannot copy verbatim must be omitted. Numbers printed in comparative table \
-rows are fine — quote the row text.
+quote (3-25 words, keep it minimal) copied EXACTLY from the document that \
+contains the number and enough context to identify the metric. Values whose \
+quote you cannot copy verbatim must be omitted.
+
+Numbers printed in comparative table rows are fine — quote the row text. For \
+a "prior" or "yoy" value taken from a TABLE COLUMN, additionally return \
+"period_quote": the column's period header copied EXACTLY as printed (e.g. \
+"1Q26" or "March 31, 2026" or "Second Quarter 2025") so the column can be \
+verified. Narrated history ("compared with 3.38% in the prior quarter") \
+needs no period_quote — the sentence itself carries the period.
 
 Return ONLY a JSON array, no prose:
-[{{"key": "nim", "period": "cur", "value": 3.42, "quote": "..."}}, ...]
+[{{"key": "nim", "period": "cur", "value": 3.42, "quote": "..."}},
+ {{"key": "nim", "period": "prior", "value": 3.38, "quote": "...",
+   "period_quote": "1Q26"}}, ...]
 
 DOCUMENT:
 {text}"""
@@ -129,7 +137,28 @@ def _number_renderings(value: float) -> list[str]:
     return forms
 
 
-def guard_items(items, source_text: str) -> dict:
+def _history_period_ok(it: dict, period: str, quote: str, norm_source: str,
+                       prior_qend, yoy_qend) -> bool:
+    """A prior/yoy claim must prove its period one of two ways:
+    - the quote itself carries a period cue (narrated history), OR
+    - `period_quote` (a table column's period header) exists verbatim in the
+      document AND parses to EXACTLY the expected quarter-end for that bucket
+      (table history — the cue lives in the header, not the row; the Jul-14
+      megabank panels lost ALL history to the cue-only rule)."""
+    if _PERIOD_CUE_RE.search(quote):
+        return True
+    pq = it.get("period_quote")
+    if not isinstance(pq, str):
+        return False
+    pq = pq.strip()
+    if not pq or _norm(pq) not in norm_source:
+        return False
+    from data.release_metrics import _period_qend
+    expected = prior_qend if period == "prior" else yoy_qend
+    return expected is not None and _period_qend(pq) == expected
+
+
+def guard_items(items, source_text: str, prior_qend=None, yoy_qend=None) -> dict:
     """{period: {key: value}} for items surviving EVERY guard (see module
     docstring). Anything else is dropped — never partially trusted."""
     norm_source = _norm(source_text)
@@ -163,8 +192,9 @@ def guard_items(items, source_text: str) -> dict:
             continue
         if _SEGMENT_RE.search(q):
             continue                      # a segment's figure, not firmwide
-        if period != "cur" and not _PERIOD_CUE_RE.search(q):
-            continue                      # history claim without a period cue
+        if period != "cur" and not _history_period_ok(
+                it, period, q, norm_source, prior_qend, yoy_qend):
+            continue                      # history claim without period proof
         if key in out[period]:            # duplicate claims must agree
             if abs(out[period][key] - value) > 0.011:
                 out[period][key] = None   # conflicting — poison then drop
@@ -176,27 +206,51 @@ def guard_items(items, source_text: str) -> dict:
 
 
 def _parse_items(raw: str) -> list:
+    """Model output → item list. A max_tokens-truncated array (the Jul-14
+    megabank responses) is SALVAGED to its complete items rather than parsed
+    to [] — losing the tail must not lose the whole extraction."""
     s = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip())
-    i, j = s.find("["), s.rfind("]")
-    if i < 0 or j <= i:
+    i = s.find("[")
+    if i < 0:
+        return []
+    j = s.rfind("]")
+    if j > i:
+        try:
+            data = json.loads(s[i:j + 1])
+            return data if isinstance(data, list) else []
+        except (ValueError, TypeError):
+            pass
+    k = s.rfind("}")                       # salvage complete items
+    if k <= i:
         return []
     try:
-        data = json.loads(s[i:j + 1])
+        data = json.loads(s[i:k + 1] + "]")
     except (ValueError, TypeError):
         return []
     return data if isinstance(data, list) else []
 
 
+def _api_key() -> str | None:
+    import os
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if key:
+        return key
+    try:
+        import streamlit as st
+        return st.secrets.get("ANTHROPIC_API_KEY")
+    except Exception:
+        return None
+
+
+def has_api_key() -> bool:
+    """Whether an ANTHROPIC key is configured — callers distinguish 'no key
+    ever' (final; nothing to retry) from an extraction failure (retryable)."""
+    return bool(_api_key())
+
+
 def _call_model(text: str, ticker: str, bank: str, qend, prior_qend, yoy_qend):
     """One extraction call. None = API unavailable/failed (never cached)."""
-    import os
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        try:
-            import streamlit as st
-            api_key = st.secrets.get("ANTHROPIC_API_KEY")
-        except Exception:
-            api_key = None
+    api_key = _api_key()
     if not api_key:
         return None
     try:
@@ -204,7 +258,7 @@ def _call_model(text: str, ticker: str, bank: str, qend, prior_qend, yoy_qend):
         client = anthropic.Anthropic(api_key=api_key)
         msg = client.messages.create(
             model=_MODEL,
-            max_tokens=4000,
+            max_tokens=8000,     # 21 keys × 3 periods × quotes overran 4000
             messages=[{"role": "user", "content": _PROMPT.format(
                 bank=bank or ticker, ticker=ticker or "?", qend=qend or "?",
                 prior_qend=prior_qend or "?", yoy_qend=yoy_qend or "?",
@@ -234,7 +288,7 @@ def release_ai_metrics(cik, accession: str, text: str, ticker: str = "",
     items = _call_model(text, ticker, bank, qend, prior_qend, yoy_qend)
     if items is None:
         return None                       # API failure — retry next build
-    periods = guard_items(items, text)
+    periods = guard_items(items, text, prior_qend=prior_qend, yoy_qend=yoy_qend)
     if not any(periods[p] for p in _PERIODS):
         # Nothing verified. For a real release that's an extraction failure —
         # don't cache an empty result against the accession forever.

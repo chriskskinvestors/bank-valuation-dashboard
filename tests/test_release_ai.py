@@ -113,6 +113,150 @@ class TestGuards(unittest.TestCase):
         self.assertEqual(out["cur"], {})
 
 
+class TestTableHistoryEvidence(unittest.TestCase):
+    """Jul-14 catch: megabank history lives in table columns; the row quote
+    carries no period words — the period_quote (column header) is the proof."""
+    DOC = ("Consolidated ratios 2Q26 1Q26 2Q25 "
+           "Net interest margin 4.56 4.54 4.48 "
+           "Return on average assets 2.01 1.98 1.90 all periods shown")
+
+    def _it(self, period, value, pq=None):
+        d = item("nim", period, value, "Net interest margin 4.56 4.54 4.48")
+        if pq:
+            d["period_quote"] = pq
+        return d
+
+    def test_header_period_quote_accepts_table_history(self):
+        out = guard_items([self._it("prior", 4.54, pq="1Q26"),
+                           self._it("yoy", 4.48, pq="2Q25")],
+                          self.DOC, prior_qend="2026-03-31", yoy_qend="2025-06-30")
+        self.assertEqual(out["prior"], {"nim": 4.54})
+        self.assertEqual(out["yoy"], {"nim": 4.48})
+
+    def test_wrong_quarter_header_rejected(self):
+        out = guard_items([self._it("prior", 4.54, pq="2Q25")],  # that's yoy
+                          self.DOC, prior_qend="2026-03-31", yoy_qend="2025-06-30")
+        self.assertEqual(out["prior"], {})
+
+    def test_header_not_in_document_rejected(self):
+        out = guard_items([self._it("prior", 4.54, pq="4Q25")],
+                          self.DOC, prior_qend="2025-12-31", yoy_qend="2025-06-30")
+        self.assertEqual(out["prior"], {})
+
+    def test_table_history_without_period_quote_still_rejected(self):
+        out = guard_items([self._it("prior", 4.54)],
+                          self.DOC, prior_qend="2026-03-31", yoy_qend="2025-06-30")
+        self.assertEqual(out["prior"], {})
+
+    def test_current_from_table_needs_no_period_proof(self):
+        out = guard_items([self._it("cur", 4.56)],
+                          self.DOC, prior_qend="2026-03-31", yoy_qend="2025-06-30")
+        self.assertEqual(out["cur"], {"nim": 4.56})
+
+
+class TestTruncationSalvage(unittest.TestCase):
+    def test_truncated_array_salvages_complete_items(self):
+        raw = ('[{"key": "nim", "period": "cur", "value": 4.56, '
+               '"quote": "net interest margin was 4.56%,"}, '
+               '{"key": "roa", "period": "cur", "value": 2.01, "quo')
+        items = rai._parse_items(raw)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["key"], "nim")
+
+    def test_intact_array_parses_fully(self):
+        raw = '[{"key": "nim", "period": "cur", "value": 4.5, "quote": "q"}]'
+        self.assertEqual(len(rai._parse_items(raw)), 1)
+
+
+class TestAiRetryNotLocked(unittest.TestCase):
+    """The accession short-circuit must not lock in a failed AI fill (the
+    read-only trace's central finding): pending state retries bounded; ok is
+    immutable; legacy cached values without ai_state are treated pending."""
+
+    def setUp(self):
+        import data.cache as dc
+        import data.ir_provider as ip
+        import data.release_metrics as rm
+        self.rm, self.store = rm, {}
+        self._orig = (dc.get, dc.put, rm._current_accession,
+                      ip.latest_earnings_release)
+        dc.get = lambda k: self.store.get(k)
+        dc.put = lambda k, v: self.store.__setitem__(k, v)
+        rm._current_accession = lambda cik: "ACC1"
+        ip.latest_earnings_release = lambda cik: {
+            "html": "<p>x</p>", "filed_date": "2026-07-14", "accession": "ACC1",
+            "url": "u"}
+        self.fill_calls = []
+
+    def tearDown(self):
+        import data.cache as dc
+        import data.ir_provider as ip
+        (dc.get, dc.put, self.rm._current_accession,
+         ip.latest_earnings_release) = self._orig
+
+    def _seed(self, ai_state=None, attempts=0):
+        value = {"accession": "ACC1", "qend": "2026-06-30",
+                 "metrics": {"nim": 4.56}, "prior_metrics": {},
+                 "yoy_metrics": {}, "capital": {}, "url": "u",
+                 "filed_date": "2026-07-14"}
+        if ai_state is not None:
+            value["ai_state"] = ai_state
+            value["ai_attempts"] = attempts
+        self.store[f"release_metrics:v5:{1}"] = {
+            "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
+
+    def _patch_fill(self, state):
+        def fake(val, cik, rel):
+            self.fill_calls.append(1)
+            if state == "ok":
+                val.setdefault("prior_metrics", {})["nim"] = 4.54
+            return state
+        self.rm._ai_fill = fake
+
+    def test_pending_retries_and_heals(self):
+        self._seed(ai_state="pending", attempts=1)
+        self._orig_fill = self.rm._ai_fill
+        try:
+            self._patch_fill("ok")
+            out = self.rm.release_metrics(1)
+            self.assertEqual(out["ai_state"], "ok")
+            self.assertEqual(out["prior_metrics"], {"nim": 4.54})
+            self.assertEqual(len(self.fill_calls), 1)
+        finally:
+            self.rm._ai_fill = self._orig_fill
+
+    def test_ok_state_never_recalls_ai(self):
+        self._seed(ai_state="ok", attempts=1)
+        self._orig_fill = self.rm._ai_fill
+        try:
+            self._patch_fill("ok")
+            self.rm.release_metrics(1)
+            self.assertEqual(self.fill_calls, [])
+        finally:
+            self.rm._ai_fill = self._orig_fill
+
+    def test_legacy_value_without_state_is_retried(self):
+        self._seed(ai_state=None)         # pre-fix cached extraction
+        self._orig_fill = self.rm._ai_fill
+        try:
+            self._patch_fill("ok")
+            out = self.rm.release_metrics(1)
+            self.assertEqual(len(self.fill_calls), 1)
+            self.assertEqual(out["ai_state"], "ok")
+        finally:
+            self.rm._ai_fill = self._orig_fill
+
+    def test_attempt_cap_stops_retrying(self):
+        self._seed(ai_state="pending", attempts=8)
+        self._orig_fill = self.rm._ai_fill
+        try:
+            self._patch_fill("ok")
+            self.rm.release_metrics(1)
+            self.assertEqual(self.fill_calls, [])
+        finally:
+            self.rm._ai_fill = self._orig_fill
+
+
 class TestCacheContract(unittest.TestCase):
     def setUp(self):
         self.store = {}
@@ -155,10 +299,11 @@ class TestMergePrecedence(unittest.TestCase):
     def test_deterministic_wins_ai_fills_gaps(self):
         import data.release_ai as mod
         import data.release_metrics as rm
-        orig = mod.release_ai_metrics
+        orig = (mod.release_ai_metrics, mod.has_api_key)
         mod.release_ai_metrics = lambda *a, **k: {
             "cur": {"nim": 9.99, "roa": 2.01, "cet1_ratio": 12.5},
             "prior": {"nim": 4.54}, "yoy": {}}
+        mod.has_api_key = lambda: True
         try:
             val = {"accession": "a", "qend": "2026-06-30",
                    "metrics": {"nim": 4.56, "roa": None},
@@ -170,7 +315,7 @@ class TestMergePrecedence(unittest.TestCase):
             self.assertEqual(val["prior_metrics"]["nim"], 4.54)
             self.assertEqual(val["capital"]["cet1_ratio"], 12.5)
         finally:
-            mod.release_ai_metrics = orig
+            mod.release_ai_metrics, mod.has_api_key = orig
 
 
 if __name__ == "__main__":
