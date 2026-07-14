@@ -54,6 +54,22 @@ def _c_branches_county(fips, year): return get_branches_by_county(fips, year=yea
 def _c_banks_county(fips, year): return get_banks_by_county(fips, year=year)
 
 
+def _ticker_url(t) -> str | None:
+    """Company-page deep link for the Ticker LinkColumn; private banks (no
+    ticker) render a blank cell. Root-relative on purpose: st.dataframe is a
+    component iframe, so a bare '?s=…' would resolve against the iframe URL."""
+    t = (str(t).strip() if t is not None and not pd.isna(t) else "")
+    return f"/?s=Company&bank={t}" if t and t != "—" else None
+
+
+def _ticker_linkcol() -> dict:
+    """column_config making the Ticker column click through to Company pages
+    (grid link cells open a new tab — the grid canvas can't navigate in-app)."""
+    return {"Ticker": st.column_config.LinkColumn(
+        "Ticker", display_text=r"bank=(.+)$", width="small",
+        help="Open the bank's Company page")}
+
+
 def _fmt_dollars_k(thousands: float | int | None) -> str:
     """SOD deposits are in $thousands. Format with auto B/M/K scale."""
     if thousands is None or pd.isna(thousands):
@@ -164,15 +180,17 @@ def render_geo_view():
             st.markdown(f"### Banks operating in {state} — {len(banks_disp)} institutions")
             if not banks_disp.empty:
                 table = banks_disp.copy()
-                # Private banks have ticker=None; show "—" so the column is readable
-                table["ticker"] = table["ticker"].fillna("").replace("", "—")
+                # Public banks' tickers deep-link to their Company page;
+                # private banks (ticker=None) render a blank cell.
+                table["ticker"] = table["ticker"].map(_ticker_url)
                 table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
                 table = table.rename(columns={
                     "ticker": "Ticker", "bank_name": "Bank",
                     "n_branches": "Branches",
                 })[["Ticker", "Bank", "Branches", "Deposits"]]
                 st.dataframe(table, use_container_width=True, hide_index=True,
-                              height=min(500, 38 * (len(table) + 1) + 4))
+                              height=min(500, 38 * (len(table) + 1) + 4),
+                              column_config=_ticker_linkcol())
                 # Underlying numeric frame (deposits in $K, unformatted)
                 table_export(banks_disp, f"banks_by_state_{state}",
                              key=f"exp_banks_by_state_{state}")
@@ -217,14 +235,15 @@ def render_geo_view():
             st.markdown(f"### Banks operating in {msa_label} — {len(banks_disp)} institutions")
             if not banks_disp.empty:
                 table = banks_disp.copy()
-                table["ticker"] = table["ticker"].fillna("").replace("", "—")
+                table["ticker"] = table["ticker"].map(_ticker_url)
                 table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
                 table = table.rename(columns={
                     "ticker": "Ticker", "bank_name": "Bank",
                     "n_branches": "Branches",
                 })[["Ticker", "Bank", "Branches", "Deposits"]]
                 st.dataframe(table, use_container_width=True, hide_index=True,
-                              height=min(500, 38 * (len(table) + 1) + 4))
+                              height=min(500, 38 * (len(table) + 1) + 4),
+                              column_config=_ticker_linkcol())
                 # Underlying numeric frame (deposits in $K, unformatted)
                 table_export(banks_disp, f"banks_by_msa_{msa_code}",
                              key=f"exp_banks_by_msa_{msa_code}")
@@ -270,14 +289,15 @@ def render_geo_view():
             st.markdown(f"### Banks operating in {county_label} — {len(banks_disp)} institutions")
             if not banks_disp.empty:
                 table = banks_disp.copy()
-                table["ticker"] = table["ticker"].fillna("").replace("", "—")
+                table["ticker"] = table["ticker"].map(_ticker_url)
                 table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
                 table = table.rename(columns={
                     "ticker": "Ticker", "bank_name": "Bank",
                     "n_branches": "Branches",
                 })[["Ticker", "Bank", "Branches", "Deposits"]]
                 st.dataframe(table, use_container_width=True, hide_index=True,
-                              height=min(500, 38 * (len(table) + 1) + 4))
+                              height=min(500, 38 * (len(table) + 1) + 4),
+                              column_config=_ticker_linkcol())
                 table_export(banks_disp, f"banks_by_county_{stcntybr}",
                              key=f"exp_banks_by_county_{stcntybr}")
 
@@ -337,8 +357,12 @@ def render_geo_view():
                 "n_branches": "Branches",
             })[["Ticker", "Bank", "Branches", "Deposits"]]
             st.markdown(f"### Selected banks — combined {len(branches):,} branches")
-            st.dataframe(agg, use_container_width=True, hide_index=True,
-                          height=min(280, 38 * (len(agg) + 1) + 4))
+            # Display copy gets link URLs; the export keeps plain tickers.
+            agg_disp = agg.copy()
+            agg_disp["Ticker"] = agg_disp["Ticker"].map(_ticker_url)
+            st.dataframe(agg_disp, use_container_width=True, hide_index=True,
+                          height=min(280, 38 * (len(agg) + 1) + 4),
+                          column_config=_ticker_linkcol())
             table_export(agg, "selected_banks_branch_summary",
                          key="exp_selected_banks_branch_summary")
 
