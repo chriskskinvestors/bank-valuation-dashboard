@@ -1553,21 +1553,81 @@ def _rel_delta_html(key: str, cur, base, unit: str) -> str:
     return f'<span class="{cls}">{ds}</span>'
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _platform_hist_lookup() -> dict:
+    """{(src, ticker, 'Qn YYYY'): {series_key: value}} from the pre-warmed
+    ALLBANKS trends grids (FDIC quarterly ratios + SEC per-share). READ-ONLY:
+    never triggers the ~300s build — {} when the grids aren't warmed (the
+    exhibit then shows release-extracted history only)."""
+    out: dict = {}
+    grids = []
+    try:
+        from data.as_of_metrics import quarterly_series
+        grids.append(("fdic", quarterly_series(
+            {}, 20, build_if_missing=False, scope_id="ALLBANKS")))
+    except Exception:
+        pass
+    try:
+        from data.sec_per_share import sec_per_share_grid
+        grids.append(("sec", sec_per_share_grid(
+            {}, 20, build_if_missing=False, scope_id="ALLBANKS")))
+    except Exception:
+        pass
+    for src, data in grids:
+        if not data or not isinstance(data.get("rows"), list):
+            continue
+        labels = data.get("labels") or []
+        for row in data["rows"]:
+            tk, series = row.get("ticker"), row.get("series") or {}
+            if not tk:
+                continue
+            for i, lb in enumerate(labels):
+                cell = {k: v[i] for k, v in series.items()
+                        if isinstance(v, list) and i < len(v) and v[i] is not None}
+                if cell:
+                    out[(src, tk, lb)] = cell
+    return out
+
+
+def _platform_hist_val(ticker: str, key: str, qend_iso) -> float | None:
+    """This bank's platform value for an exhibit key at a quarter-end — only
+    for the basis-safe PLATFORM_HIST_MAP keys; None otherwise/on any gap."""
+    from data.earnings_results import PLATFORM_HIST_MAP, q_label
+    src_key = PLATFORM_HIST_MAP.get(key)
+    lb = q_label(qend_iso)
+    if not src_key or not lb or not ticker:
+        return None
+    src, skey = src_key
+    try:
+        v = (_platform_hist_lookup().get((src, ticker, lb)) or {}).get(skey)
+        return float(v) if v is not None else None
+    except Exception:
+        return None
+
+
 def _rel_exhibit_rows(r: dict) -> list[dict]:
-    """The exhibit table rows (broker-sheet layout, our data): one dict per
-    metric with yoy/prior/current actuals, consensus (EPS + revenue — all we
-    carry), and LQ / Y/Y deltas. Rows where the release confirmed nothing in
-    any period are dropped."""
+    """The exhibit table rows (broker-sheet layout): the SAME fixed metric
+    list for every bank — no more per-bank row shapes. Current quarter = the
+    release's own numbers; 2Q25A/1Q26A = PLATFORM quarterly data (FDIC
+    bank-sub ratios / SEC per-share — the app's standard fundamentals) for
+    the basis-safe keys, release-extracted otherwise. Capital history stays
+    release-only: holdco vs bank-sub capital must never be mixed."""
     rel = r.get("rel") or {}
+    tk = r.get("ticker") or ""
     cur = {**(rel.get("metrics") or {}), **(rel.get("capital") or {})}
     prior = rel.get("prior_metrics") or {}
     yoy = rel.get("yoy_metrics") or {}
+    prior_q, yoy_q = rel.get("prior_qend"), rel.get("yoy_qend")
     cons = {"eps_adj": r.get("eps_est"), "total_revenue": r.get("rev_est")}
     rows = []
     for key, label, unit in _REL_METRICS:
-        c, p, y = cur.get(key), prior.get(key), yoy.get(key)
-        if c is None and p is None and y is None:
-            continue
+        c = cur.get(key)
+        p = _platform_hist_val(tk, key, prior_q)
+        if p is None:
+            p = prior.get(key)
+        y = _platform_hist_val(tk, key, yoy_q)
+        if y is None:
+            y = yoy.get(key)
         rows.append({
             "key": key, "label": label, "unit": unit,
             "yoy": y, "prior": p, "cur": c, "cons": cons.get(key),
@@ -1605,7 +1665,8 @@ def _rel_exhibit_table(r: dict) -> str:
                  f'<td>{row["lq_html"]}</td>'
                  f'<td>{row["yy_html"]}</td>'
                  "</tr>")
-    notes = []
+    notes = ["history: platform FDIC/SEC quarterly data (bank-sub ratio basis); "
+             "capital & non-standard rows as released"]
     if r.get("eps_act_src") or r.get("rev_act_src"):
         notes.append("* actuals from the release")
     src = rel.get("url")

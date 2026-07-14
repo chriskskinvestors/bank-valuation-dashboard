@@ -25,6 +25,32 @@ from data.earnings_results import (
 )
 
 
+class TestPlatformHistoryMapping(unittest.TestCase):
+    def test_q_label_conversion(self):
+        from data.earnings_results import q_label
+        self.assertEqual(q_label("2026-03-31"), "Q1 2026")
+        self.assertEqual(q_label("2025-12-31"), "Q4 2025")
+        self.assertIsNone(q_label(None))
+        self.assertIsNone(q_label("junk"))
+
+    def test_capital_never_platform_mapped(self):
+        """Holdco capital (release) vs bank-sub capital (FDIC) must never mix
+        — the map must not carry any capital-ratio key."""
+        from data.earnings_results import PLATFORM_HIST_MAP
+        for key in ("cet1_ratio", "t1_ratio", "total_ratio", "lev_ratio",
+                    "tce_ratio"):
+            self.assertNotIn(key, PLATFORM_HIST_MAP)
+
+    def test_mapped_series_exist_in_trend_registry(self):
+        """Every FDIC-mapped series key must exist in TREND_KEYS — a renamed
+        trend metric must fail here, not silently blank the exhibit."""
+        from data.as_of_metrics import TREND_KEYS
+        from data.earnings_results import PLATFORM_HIST_MAP
+        for key, (src, skey) in PLATFORM_HIST_MAP.items():
+            if src == "fdic":
+                self.assertIn(skey, TREND_KEYS, f"{key} -> {skey}")
+
+
 class TestReleaseMatchesReport(unittest.TestCase):
     def test_same_day_through_five_days_match(self):
         self.assertTrue(release_matches_report("2026-07-14", "2026-07-14"))

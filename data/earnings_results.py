@@ -216,6 +216,33 @@ def _fill_price_reactions(rows, today, max_workers: int = 8) -> None:
         list(ex.map(_one, rows))
 
 
+def q_label(qend_iso) -> str | None:
+    """ISO quarter-end → the trends grids' 'Qn YYYY' label; None unparseable."""
+    d = _iso_date(qend_iso)
+    if d is None:
+        return None
+    return f"Q{(d.month - 1) // 3 + 1} {d.year}"
+
+
+# Exhibit history keys fillable from PLATFORM quarterly data, basis-safely:
+# FDIC trend ratios are BANK-SUBSIDIARY basis — the app's displayed
+# fundamentals basis — fine for spread/profitability/credit ratios; capital
+# ratios are NOT mapped (holdco capital ≠ bank-sub capital), nor are keys the
+# grids don't carry on a matching definition (ROE, NPAs/assets, TCE/TA, cost
+# of deposits vs cost of funds, loan yield). SEC per-share is holdco — the
+# correct basis for TBV/BV per share.
+PLATFORM_HIST_MAP = {
+    "nim": ("fdic", "nim"),
+    "efficiency": ("fdic", "efficiency_ratio"),
+    "roa": ("fdic", "roaa"),
+    "rotce": ("fdic", "roatce"),
+    "nco_ratio": ("fdic", "nco_ratio"),
+    "acl_loans": ("fdic", "allowance_loans"),
+    "tbv_ps": ("sec", "tbvps_hist"),
+    "bv_ps": ("sec", "bvps_hist"),
+}
+
+
 def release_matches_report(filed_iso, report_iso) -> bool:
     """True when an 8-K's filing date belongs to THIS report: same day through
     +5 days (the 8-K can trail the wire PR slightly; EDGAR acceptance after
