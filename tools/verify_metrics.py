@@ -112,7 +112,13 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
     # Computed metrics.
     out["market_cap"] = price * shares if (price and shares) else None
     out["pe_ratio"] = (price / eps) if (price and eps and eps > 0) else None
-    out["dividend_yield"] = ((dps / price) * 100) if (price and dps and price > 0) else None
+    # dps is None-checked, NOT truthiness-checked: a bank that DECLARES $0
+    # dividends (KFFB tags 0 in every 10-Q) has a real 0.0% yield — `dps and`
+    # collapsed declared-zero into "no data" and the nightly gate flagged the
+    # dashboard's honest 0.0 as a divergence (2026-07-13 alert).
+    out["dividend_yield"] = ((dps / price) * 100
+                             if (price is not None and dps is not None
+                                 and price > 0) else None)
 
     # ROATCE — house COMMON basis (owner call 2026-07-07, audit #24b): NI
     # available to common ÷ (common equity − intangible adjustment). Re-derived

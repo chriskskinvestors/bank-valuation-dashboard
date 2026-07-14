@@ -79,5 +79,24 @@ class TestWarnTierNeverFailsJob(unittest.TestCase):
         self.assertIn("tbvps_total", src)
 
 
+class TestDeclaredZeroDividend(unittest.TestCase):
+    """KFFB (2026-07-13 nightly alert): every recent 10-Q explicitly tags
+    $0 declared dividends, so the dashboard's 0.0% yield is evidence-backed.
+    The oracle's truthiness check (`dps and ...`) collapsed declared-zero
+    into None and the hard gate flagged the honest 0.0 as a divergence."""
+
+    def test_declared_zero_dividend_is_zero_not_none(self):
+        hard, _ = _oracle({}, _sec(dividends_per_share=0.0), price=4.0)
+        self.assertEqual(hard["dividend_yield"], 0.0)
+
+    def test_missing_dps_is_still_none(self):
+        hard, _ = _oracle({}, _sec(dividends_per_share=None), price=4.0)
+        self.assertIsNone(hard["dividend_yield"])
+
+    def test_missing_price_is_still_none(self):
+        hard, _ = _oracle({}, _sec(dividends_per_share=0.0), price=None)
+        self.assertIsNone(hard["dividend_yield"])
+
+
 if __name__ == "__main__":
     unittest.main()
