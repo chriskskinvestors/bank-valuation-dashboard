@@ -1170,11 +1170,16 @@ def _render_surprise_heatmap(watchlist: list[str]):
             if v < -1: return ["background-color: #fff3e0;"] * len(row)
             return [""] * len(row)
 
-        styled = stats_df.style.apply(_stats_color, axis=1).set_properties(
+        # Display copy gets Company-page link URLs; the export keeps plain
+        # tickers.
+        disp_df = stats_df.copy()
+        disp_df["Ticker"] = disp_df["Ticker"].map(_df_ticker_url)
+        styled = disp_df.style.apply(_stats_color, axis=1).set_properties(
             **{"font-size": "0.82rem", "padding": "3px 8px"}
         )
         st.dataframe(styled, use_container_width=True, hide_index=True,
-                      height=min(500, 50 + 32 * len(stats_df)))
+                      height=min(500, 50 + 32 * len(stats_df)),
+                      column_config=_df_ticker_linkcol())
         # Display frame (formatted) — stats are built as strings here
         table_export(stats_df, "earnings_consistency_metrics",
                      key="exp_earnings_consistency_metrics")
@@ -1190,6 +1195,23 @@ def _tk_cell(ticker: str) -> str:
         return '<td></td>'
     return (f'<td><a class="tk" href="?bank={_html.escape(str(ticker), quote=True)}" '
             f'target="_self">{tk}</a></td>')
+
+
+def _df_ticker_url(t) -> str | None:
+    """Company-page URL for st.dataframe LinkColumn ticker cells. Root-relative
+    on purpose — the grid is a component context, so a bare '?bank=' would
+    resolve against the wrong base."""
+    t = str(t or "").strip()
+    return f"/?s=Company&bank={t}" if t else None
+
+
+def _df_ticker_linkcol() -> dict:
+    """column_config making a dataframe's Ticker column click through to the
+    Company page (grid link cells open a new tab — the canvas grid can't
+    navigate in-app; the HTML ksk-grids above stay same-tab via _tk_cell)."""
+    return {"Ticker": st.column_config.LinkColumn(
+        "Ticker", display_text=r"bank=(.+)$", width="small",
+        help="Open the bank's Company page")}
 
 
 def _render_earnings_grid(headers, body_rows, height: int | None = None,
@@ -1894,7 +1916,9 @@ def _render_beat_miss_summary(all_consensus: dict):
                 return [_MISS_STYLE] * len(row)
             return [""] * len(row)
 
-        styled = df.style.apply(_color_score, axis=1).set_properties(
+        disp = df.copy()
+        disp["Ticker"] = disp["Ticker"].map(_df_ticker_url)
+        styled = disp.style.apply(_color_score, axis=1).set_properties(
             **{"font-size": "0.75rem", "padding": "3px 6px"}
         )
 
@@ -1903,6 +1927,7 @@ def _render_beat_miss_summary(all_consensus: dict):
             use_container_width=True,
             hide_index=True,
             height=min(600, 40 + 35 * len(df)),
+            column_config=_df_ticker_linkcol(),
         )
         table_export(df, "beat_miss_summary", key="exp_beat_miss_summary")
     else:
@@ -1914,10 +1939,12 @@ def _render_beat_miss_summary(all_consensus: dict):
 def _surprise_line(s: dict) -> str:
     """One Biggest Beats/Misses markdown line. Consensus/Actual arrive
     pre-formatted ("$3.10"), so the pair must be \\$-escaped or Streamlit
-    renders the $…$ span as LaTeX."""
+    renders the $…$ span as LaTeX. The ticker is a Company-page deep link
+    (?bank= — the same param _tk_cell uses; escaped AFTER the link is built
+    so the URL, which carries no $, is untouched)."""
     return (
-        f"**{s['Ticker']}** {s['Metric']}: {s['Surprise %']:+.1f}% "
-        f"({s['Consensus']} → {s['Actual']})"
+        f"[**{s['Ticker']}**](?bank={s['Ticker']}) {s['Metric']}: "
+        f"{s['Surprise %']:+.1f}% ({s['Consensus']} → {s['Actual']})"
     ).replace("$", "\\$")
 
 
@@ -2030,12 +2057,15 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
             return [""] * len(row)
 
         display_cols = ["Ticker", "Bank", "Metric", "Period", "Consensus", "Actual", "Surprise %", "Source"]
-        styled = df[display_cols].style.apply(_color_surprise, axis=1).set_properties(
+        disp = df[display_cols].copy()
+        disp["Ticker"] = disp["Ticker"].map(_df_ticker_url)
+        styled = disp.style.apply(_color_surprise, axis=1).set_properties(
             **{"font-size": "0.75rem", "padding": "3px 6px"}
         )
 
         st.dataframe(styled, use_container_width=True, hide_index=True,
-                      height=min(600, 40 + 35 * len(df)))
+                      height=min(600, 40 + 35 * len(df)),
+                      column_config=_df_ticker_linkcol())
         # Underlying numeric rows (unformatted Surprise %)
         table_export(pd.DataFrame(filtered[:50]), "surprise_rankings",
                      key="exp_surprise_rankings")
