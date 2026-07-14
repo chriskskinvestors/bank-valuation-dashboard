@@ -268,6 +268,41 @@ def fetch_call_report(rssd_id: int, reporting_period: str | None = None) -> pd.D
     return df
 
 
+def fetch_call_report_pdf(rssd_id: int, reporting_period: str) -> bytes | None:
+    """
+    The official FFIEC Call Report facsimile PDF for one bank/period
+    (Recent Documents → Regulatory Filings → Download PDF).
+
+    Same creds/endpoint as fetch_call_report, but output_type="pdf" so the
+    CDR returns the rendered facsimile bytes instead of XBRL. Returns None
+    when FFIEC isn't configured, the bank hasn't filed the period, or the
+    response isn't a PDF — the UI shows an honest error, never a broken file.
+    No previous-quarter fallback here: the caller asked for a SPECIFIC
+    period row, so silently serving a different quarter would be wrong.
+    """
+    creds = _get_creds()
+    if creds is None:
+        return None
+    try:
+        from ffiec_data_connect.methods import collect_data
+        data = collect_data(
+            creds,
+            reporting_period=reporting_period,
+            rssd_id=str(rssd_id),
+            series="call",
+            output_type="pdf",
+        )
+        if isinstance(data, (bytes, bytearray)) and bytes(data[:5]) == b"%PDF-":
+            return bytes(data)
+        print(f"[FFIEC] call report PDF ({rssd_id}, {reporting_period}): "
+              f"non-PDF response ({type(data).__name__})", flush=True)
+        return None
+    except Exception as e:
+        print(f"[FFIEC] call report PDF ({rssd_id}, {reporting_period}) "
+              f"failed: {e}", flush=True)
+        return None
+
+
 def _lookup_concept(df: pd.DataFrame, code: str) -> float | None:
     """
     Pull a single concept's value from a Call Report DataFrame.

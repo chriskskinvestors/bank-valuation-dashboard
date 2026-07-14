@@ -90,9 +90,12 @@ _PRESENTATION_WORDS = ("presentation", "investor deck", "slide", "supplemental")
 #   er|<accession>               earnings release — EX-99.1 resolved at click
 #   sec|<archives-path>          an exhibit URL we listed (path under sec.gov)
 #   tx|<year>|<quarter>          FMP transcript rendered from text
+#   call|<MMDDYYYY>              FFIEC call-report facsimile (quarter-end date)
 _ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 _DOCNAME_RE = re.compile(r"^[\w.\-]+$")
 _SECPATH_RE = re.compile(r"^Archives/edgar/data/[\w./\-]+$")
+# Real quarter-ends only — anything else never reaches the FFIEC API.
+_QEND_RE = re.compile(r"^(0331|0630|0930|1231)(19|20)\d{2}$")
 
 
 def parse_pdf_param(raw: str) -> dict | None:
@@ -115,6 +118,9 @@ def parse_pdf_param(raw: str) -> dict | None:
     elif kind == "tx" and len(parts) == 3:
         if parts[1].isdigit() and parts[2].isdigit() and len(parts[1]) == 4:
             return {"kind": "tx", "year": int(parts[1]), "quarter": int(parts[2])}
+    elif kind == "call" and len(parts) == 2:
+        if _QEND_RE.match(parts[1]):
+            return {"kind": "call", "period": parts[1]}
     return None
 
 
@@ -299,6 +305,20 @@ def _pdf_from_url(url: str) -> bytes | None:
     return filing_url_to_pdf_bytes(url)
 
 
+@st.cache_data(ttl=86400, max_entries=8, show_spinner=False)
+def _pdf_from_call_report(ticker: str, period_mmddyyyy: str) -> bytes | None:
+    """FFIEC call-report facsimile PDF (filed facsimiles are immutable —
+    long TTL). None when FFIEC creds are absent or the period isn't filed."""
+    from data.fdic_client import get_rssd_for_cert
+    from data.ffiec_client import fetch_call_report_pdf
+    cert = get_fdic_cert(ticker)
+    rssd = get_rssd_for_cert(cert) if cert else None
+    if not rssd:
+        return None
+    p = period_mmddyyyy
+    return fetch_call_report_pdf(int(rssd), f"{p[:2]}/{p[2:4]}/{p[4:]}")
+
+
 @st.cache_data(ttl=3600, max_entries=4, show_spinner=False)
 def _pdf_from_transcript(ticker: str, year: int, quarter: int) -> bytes | None:
     from data.filing_pdf import html_to_pdf_bytes
@@ -368,7 +388,18 @@ def _handle_pdf_request(ticker: str, cik: int, filings: list[dict]) -> None:
 
     @st.dialog("Download PDF")
     def _dlg():
-        if req["kind"] == "tx":
+        if req["kind"] == "call":
+            p = req["period"]
+            fname = f"{ticker}_call_report_{p[4:]}-{p[:2]}-{p[2:4]}.pdf"
+            with st.spinner("Fetching call-report facsimile from FFIEC CDR…"):
+                pdf = _pdf_from_call_report(ticker, p)
+            if not pdf:
+                st.error("Call-report PDF unavailable — the FFIEC connection "
+                         "isn't configured in this environment or the bank "
+                         "hasn't filed this period. Use \"View on FFIEC CDR\" "
+                         "from the document menu instead.")
+                return
+        elif req["kind"] == "tx":
             fname = f"{ticker}_Q{req['quarter']}_{req['year']}_transcript.pdf"
             with st.spinner("Rendering transcript to PDF…"):
                 pdf = _pdf_from_transcript(ticker, req["year"], req["quarter"])
@@ -383,8 +414,11 @@ def _handle_pdf_request(ticker: str, cik: int, filings: list[dict]) -> None:
         if pdf:
             st.download_button("Download PDF", pdf, file_name=fname,
                                mime="application/pdf", type="primary")
-            st.caption(f"{len(pdf) / 1e6:.1f} MB · rendered from the EDGAR "
-                       "HTML by the dashboard's print engine")
+            src = {"call": "official FFIEC CDR facsimile",
+                   "tx": "rendered from the FMP transcript text",
+                   }.get(req["kind"], "rendered from the EDGAR HTML by the "
+                                      "dashboard's print engine")
+            st.caption(f"{len(pdf) / 1e6:.1f} MB · {src}")
         else:
             st.error("PDF rendering failed for this document. Use View HTML "
                      "from the document menu instead.")
@@ -526,23 +560,44 @@ def _render_body(ticker: str, cik: int) -> None:
         st.markdown(_panel_html("Proxies", rows), unsafe_allow_html=True)
         _more_control("proxies", len(panels["proxies"]), None)
 
-        rows = [_row_html(_filing_menu(f, ticker), f.get("date", ""))
-                for f in _panel_rows("regulatory", panels["regulatory"])]
-        st.markdown(_panel_html("Regulatory Filings", rows), unsafe_allow_html=True)
-        _more_control("regulatory", len(panels["regulatory"]), None)
         cert = get_fdic_cert(ticker)
-        reg_links = [f'<a href="https://www.sec.gov/cgi-bin/browse-edgar?action='
-                     f'getcompany&CIK={raw_cik}&type=&dateb=&owner=include&count=40" '
-                     f'target="_blank">EDGAR company page</a>']
+        reg_rows = [(f.get("date") or "", _filing_menu(f, ticker))
+                    for f in panels["regulatory"]]
+        # Quarterly FFIEC Call Reports (the actual regulatory filings for a
+        # bank — filed with the FFIEC, not EDGAR). One row per quarter-end,
+        # newest first; PDF comes from the CDR facsimile API at click time,
+        # "View" opens the CDR's own public facsimile viewer.
         if cert:
-            reg_links.append(
+            from data.ffiec_client import (latest_reporting_period,
+                                           _previous_quarter)
+            period = latest_reporting_period()
+            for _ in range(8):
+                m, d, y = period.split("/")
+                iso = f"{y}-{m}-{d}"
+                q = {"03": 1, "06": 2, "09": 3, "12": 4}[m]
+                viewer = (f"https://cdr.ffiec.gov/Public/ViewFacsimileDirect."
+                          f"aspx?ds=call&idType=fdiccertnumber&id={cert}"
+                          f"&date={m}{d}{y}")
+                items = [("View on FFIEC CDR", viewer),
+                         ("Download PDF", _pdf_href(ticker, f"call|{m}{d}{y}"))]
+                reg_rows.append(
+                    (iso, _menu_html(f"Call Report (FFIEC) — Q{q} {y}", items)))
+                period = _previous_quarter(period)
+        reg_rows.sort(key=lambda r: r[0], reverse=True)
+        rows = [_row_html(cell, dt) for dt, cell in
+                _panel_rows("regulatory", reg_rows)]
+        st.markdown(_panel_html("Regulatory Filings", rows), unsafe_allow_html=True)
+        _more_control("regulatory", len(reg_rows), None)
+        if cert:
+            from data.fdic_client import get_rssd_for_cert
+            rssd = get_rssd_for_cert(cert)
+            nic = (f'<a href="https://www.ffiec.gov/npw/Institution/Profile?id='
+                   f'{rssd}" target="_blank">NIC profile</a> · ') if rssd else ""
+            st.caption(
+                f'FR Y-9C (holding co) lives on the Fed\'s NIC: {nic}'
                 f'<a href="https://www.fdic.gov/analysis/bank-research/bankfind/'
-                f'index.html?CERT={cert}" target="_blank">FDIC BankFind</a>')
-            reg_links.append(
-                '<a href="https://cdr.ffiec.gov/public/ManageFacsimiles.aspx" '
-                'target="_blank">FFIEC call reports</a>')
-        st.caption("Bank call reports live at FFIEC/FDIC, not EDGAR: "
-                   + " · ".join(reg_links), unsafe_allow_html=True)
+                f'index.html?CERT={cert}" target="_blank">FDIC BankFind</a>',
+                unsafe_allow_html=True)
 
     # ── Right column ─────────────────────────────────────────────────────
     with right:
