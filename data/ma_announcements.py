@@ -255,6 +255,38 @@ def _close_before(ticker: str, asof: str) -> tuple[float | None, str | None, boo
     return float(last["close"]), pdate, True
 
 
+def _side_cik(side_phrase: str, tick: str | None,
+              cik_by_ticker: dict[str, int],
+              name_ciks: list[tuple[str, int]] = ()) -> int | None:
+    """CIK for a ratio side: ticker map first, then the display-NAME brand
+    token (delisted filers), then the live bank mapping."""
+    cik = cik_by_ticker.get(tick) if tick else None
+    if not cik:
+        tok = brand_token(side_phrase)
+        cands = {c for n, c in (name_ciks or []) if token_in(tok, n)}
+        if len(cands) == 1:
+            cik = cands.pop()
+    if not cik and tick:
+        from data.bank_mapping import get_cik
+        cik = get_cik(tick)
+    return cik
+
+
+def ratio_target_cik(text: str, cik_by_ticker: dict[str, int],
+                     name_ciks: list[tuple[str, int]] = ()) -> int | None:
+    """The exchange-ratio's per-share (TARGET) side resolved to a holdco CIK,
+    or None. Deal comps pair the deal value with THIS entity's financials —
+    in an MOE the FDIC bank-level survivor can be the opposite side of the
+    holdco-level target (Columbia/Umpqua, live-verified), so the value's own
+    ratio is the only safe source of the priced entity."""
+    hit = extract_exchange_ratio(text)
+    if not hit:
+        return None
+    _ratio, _acq_side, tgt_side = hit
+    tgt_tick = _ticker_for_side(tgt_side, _pr_ticker_pairs(text))
+    return _side_cik(tgt_side, tgt_tick, cik_by_ticker, name_ciks)
+
+
 def compute_stock_value(text: str, announce_date: str,
                         cik_by_ticker: dict[str, int],
                         name_ciks: list[tuple[str, int]] = ()) -> tuple[dict | None, bool]:
@@ -279,15 +311,7 @@ def compute_stock_value(text: str, announce_date: str,
     if not acq_tick or not tgt_tick or acq_tick == tgt_tick:
         return None, True
 
-    tgt_cik = cik_by_ticker.get(tgt_tick)
-    if not tgt_cik:
-        tok = brand_token(tgt_side)
-        cands = {c for n, c in (name_ciks or []) if token_in(tok, n)}
-        if len(cands) == 1:
-            tgt_cik = cands.pop()
-    if not tgt_cik:
-        from data.bank_mapping import get_cik
-        tgt_cik = get_cik(tgt_tick)
+    tgt_cik = _side_cik(tgt_side, tgt_tick, cik_by_ticker, name_ciks)
     if not tgt_cik:
         return None, True
 
@@ -456,6 +480,8 @@ def resolve_announcement(target_name: str, acquirer_name: str,
             "value_usd": extract_stated_value(text),
             "value_basis": None,
             "value_note": None,
+            "target_cik": ratio_target_cik(text, _cik_by_ticker(hits),
+                                           _name_ciks(hits)),
             "url": (f"https://www.sec.gov/Archives/edgar/data/"
                     f"{int(cand['cik'])}/{cand['adsh'].replace('-', '')}/"
                     f"{cand['doc']}"),

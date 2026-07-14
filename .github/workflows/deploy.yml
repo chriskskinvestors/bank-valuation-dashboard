@@ -189,7 +189,7 @@ jobs:
       # image they were created with — easy to forget, painful to debug.
       - name: Sync Cloud Run Jobs to deployed image
         run: |
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices refresh-avg-volume refresh-insider refresh-live-yields verify-metrics refresh-capital refresh-company-financials refresh-home-snapshot refresh-macro refresh-premarket refresh-trends refresh-13f; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices refresh-avg-volume refresh-insider refresh-live-yields verify-metrics refresh-capital refresh-company-financials refresh-home-snapshot refresh-macro refresh-premarket refresh-trends refresh-13f refresh-deal-comps; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               echo "  Updating $job..."
               gcloud run jobs update "$job" \
@@ -211,7 +211,7 @@ jobs:
       - name: Ensure scheduler invoker bindings on scheduled jobs
         run: |
           INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider refresh-capital refresh-macro refresh-13f; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider refresh-capital refresh-macro refresh-13f refresh-deal-comps; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               echo "  Ensuring invoker binding on $job..."
               gcloud run jobs add-iam-policy-binding "$job" \
@@ -234,7 +234,7 @@ jobs:
         run: |
           INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
           missing=""
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider refresh-capital refresh-macro refresh-13f; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider refresh-capital refresh-macro refresh-13f refresh-deal-comps; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               if ! gcloud run jobs get-iam-policy "$job" --region="${{ env.REGION }}" \
                     --format="value(bindings.members)" 2>/dev/null | grep -q "$INVOKER"; then

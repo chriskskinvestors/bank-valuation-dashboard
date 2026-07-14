@@ -39,7 +39,8 @@ class TestTransactionsSection(unittest.TestCase):
         tab_bar = next((r for r in at.radio
                         if list(map(str, r.options)) ==
                         ["Transactions Summary", "Detailed M&A History",
-                         "Detailed Offerings", "Insider Activity"]), None)
+                         "Detailed Offerings", "Comparable Deal Analysis",
+                         "Insider Activity"]), None)
         self.assertIsNotNone(
             tab_bar,
             "Transactions lazy_tabs bar missing. Radios: "

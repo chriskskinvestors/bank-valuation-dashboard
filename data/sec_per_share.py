@@ -189,18 +189,46 @@ def _bank_per_share(cik: int, ends: list) -> dict:
     out = {}
     for q in ends:
         e, s = eq.get(q), _shares(q)                         # NOT forward-filled
-        if not e or not s:
-            out[q] = {"tbvps_hist": None, "bvps_hist": None}
-            continue
-        if presf.get(q) and not pfdf.get(q):
-            # Preferred outstanding but carrying value unresolved — n/a rather
-            # than a preferred-inflated per-share figure (cardinal rule).
-            out[q] = {"tbvps_hist": None, "bvps_hist": None}
-            continue
-        ce = e - (pfdf.get(q) or 0)
-        adj = _intangible_adj_at(q, gwo, exo, fino, inclo, msro)
-        out[q] = {"tbvps_hist": (ce - adj) / s, "bvps_hist": ce / s}
+        row = {"tbvps_hist": None, "bvps_hist": None, "tce_hist": None}
+        # Preferred outstanding but carrying value unresolved — n/a rather
+        # than a preferred-inflated figure (cardinal rule). Total TCE only
+        # needs equity resolvable; the per-share keys also need shares.
+        if e and not (presf.get(q) and not pfdf.get(q)):
+            ce = e - (pfdf.get(q) or 0)
+            adj = _intangible_adj_at(q, gwo, exo, fino, inclo, msro)
+            row["tce_hist"] = ce - adj
+            if s:
+                row["tbvps_hist"] = (ce - adj) / s
+                row["bvps_hist"] = ce / s
+        out[q] = row
     return out
+
+
+def tangible_common_equity_at(cik: int, asof_iso: str,
+                              max_age_days: int = 200) -> tuple[float | None, str | None]:
+    """TOTAL tangible common equity (raw dollars, holdco) at the last
+    reported quarter-end on or before ``asof_iso`` — the deal-comps P/TBV
+    denominator (data/deal_comps). Reuses the audited _bank_per_share
+    machinery (preferred removed, forward-filled intangible adjustment,
+    same n/a-over-guess guards). Returns (tce, end_iso) or (None, None)
+    when no fresh-enough equity end exists (staler than ``max_age_days``
+    would price a deal off a stale balance sheet)."""
+    try:
+        asof = pd.Timestamp(asof_iso).normalize()
+    except (TypeError, ValueError):
+        return None, None
+    eq_ends = [q for q in _series(int(cik), ["StockholdersEquity"])
+               if q <= asof]
+    if not eq_ends:
+        return None, None
+    q = max(eq_ends)
+    if (asof - q).days > max_age_days:
+        return None, None
+    row = _bank_per_share(int(cik), [q]).get(q) or {}
+    tce = row.get("tce_hist")
+    if tce is None or tce <= 0:
+        return None, None
+    return float(tce), q.date().isoformat()
 
 
 def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,

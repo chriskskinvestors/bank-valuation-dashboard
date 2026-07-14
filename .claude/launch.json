@@ -4,8 +4,28 @@
     {
       "name": "bank-dashboard",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "streamlit", "run", "app.py", "--server.headless=true", "--server.port=8502"],
+      "runtimeArgs": [
+        "-m",
+        "streamlit",
+        "run",
+        "app.py",
+        "--server.headless=true",
+        "--server.port=8502"
+      ],
       "port": 8502
+    },
+    {
+      "name": "bank-dashboard-8503",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "streamlit",
+        "run",
+        "app.py",
+        "--server.headless=true",
+        "--server.port=8503"
+      ],
+      "port": 8503
     }
   ]
 }

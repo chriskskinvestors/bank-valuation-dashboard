@@ -49,7 +49,7 @@ COLUMBIA = 33826
 # The four announcement fields every deal dict now carries (None unless the
 # EFTS leg resolves them — patched out in these tests unless stated).
 ANN_NONE = {"announce_date": None, "value_usd": None, "value_basis": None,
-            "value_note": None, "announce_url": None,
+            "value_note": None, "target_cik": None, "announce_url": None,
             "status": "completed", "termination_date": None}
 
 
@@ -180,7 +180,7 @@ class TestWholeCompanyDeals(_AnnPatched):
         self.assertEqual(fin_call[0][1]["limit"], 1)
         # Cached under the documented key.
         key, payload = mock_cput.call_args[0]
-        self.assertEqual(key, f"ma_history:v5:{UMPQUA}:0")
+        self.assertEqual(key, f"ma_history:v6:{UMPQUA}:0")
         self.assertEqual(payload["deals"], deals)
 
     @patch("data.cache.put")
@@ -455,7 +455,7 @@ class TestTerminatedDeals(_AnnPatched):
         self.assertEqual(self.mock_term.call_args[0][1], "Umpqua Bank")
         # CIK-scoped cache key.
         self.assertEqual(mock_cput.call_args[0][0],
-                         f"ma_history:v5:{UMPQUA}:36966")
+                         f"ma_history:v6:{UMPQUA}:36966")
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)

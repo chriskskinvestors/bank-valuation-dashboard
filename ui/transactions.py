@@ -28,6 +28,13 @@ they are BUILT — no empty placeholders:
       amounts strict-extracted from covers; layout owner-confirmed
       2026-07-13. The Summary pie reuses this classification to split
       its Offerings bucket.
+  Comparable Deal Analysis — UNIVERSE-wide computed deal comps
+      (data/deal_comps): announced values ÷ target financials at
+      announcement — P/TBV paid (SEC holdco basis for the ratio's priced
+      entity, FDIC bank-sub otherwise, always labeled), price/assets,
+      core deposit premium; median-by-year chart, size buckets, scatter,
+      selected-bank overlay. Reads the snapshot compiled nightly by
+      jobs/refresh_deal_comps — never builds on the render thread.
   Insider Activity — the pre-existing universe-wide open-market insider
       feed (unchanged; reads the Home-snapshot aggregate, zero per-bank
       I/O on render).
@@ -55,14 +62,16 @@ from utils.formatting import fmt_dollars
 def render_transactions():
     st.markdown("### Transactions")
     sel = lazy_tabs(["Transactions Summary", "Detailed M&A History",
-                     "Detailed Offerings", "Insider Activity"],
-                    key="transactions")
+                     "Detailed Offerings", "Comparable Deal Analysis",
+                     "Insider Activity"], key="transactions")
     if sel == "Transactions Summary":
         _render_summary()
     elif sel == "Detailed M&A History":
         _render_ma_history()
     elif sel == "Detailed Offerings":
         _render_offerings()
+    elif sel == "Comparable Deal Analysis":
+        _render_comps()
     else:
         _render_insider_feed()
 
@@ -354,6 +363,248 @@ def _render_offerings():
                "excluded from raise totals. Pre-2001 text-only filings can "
                "be Unclassified (no fetchable cover). ECM vs DCM split "
                "feeds the Summary pie.")
+
+
+# ── Comparable Deal Analysis ──────────────────────────────────────────────
+
+_SIZE_BUCKETS = [("<$500M", 0, 5e8), ("$500M–$1B", 5e8, 1e9),
+                 ("$1–5B", 1e9, 5e9), ("$5B+", 5e9, float("inf"))]
+
+
+def _median(vals):
+    vals = sorted(v for v in vals if v is not None)
+    if not vals:
+        return None
+    n = len(vals)
+    return vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+
+
+def _render_comps():
+    import plotly.graph_objects as go
+    from data.deal_comps import get_comps_snapshot
+    from utils.chart_style import CATEGORICAL_PALETTE, apply_standard_layout
+
+    st.caption("Computed deal comps across every bank's M&A history: "
+               "announced deal value ÷ target financials at announcement. "
+               "P/TBV basis is SEC holdco tangible common equity for the "
+               "deal's priced entity when it resolves, FDIC bank-subsidiary "
+               "tangible equity otherwise — hover any multiple for basis "
+               "and as-of date. Core deposit premium = (value − TBV) ÷ core "
+               "deposits, bank-sub basis only. n/a = not sourceable, never "
+               "estimated. Announced-but-pending deals are not yet included "
+               "(no completion or termination filing to anchor on).")
+
+    snap = get_comps_snapshot()
+    if not snap:
+        st.info("The universe comps snapshot has not been compiled yet — "
+                "the refresh-deal-comps job builds it (nightly, or run it "
+                "manually after deploy). Per-bank deals are already "
+                "available on Detailed M&A History.")
+        return
+
+    deals = snap["deals"]
+    pill_row([
+        stat_pill("DEALS", f"{snap['deals_total']:,}"),
+        stat_pill("PRICED (P/TBV)", f"{snap['deals_priced']:,}"),
+        stat_pill("BANKS COVERED", f"{snap['banks_covered']:,}"),
+        stat_pill("SNAPSHOT", _h.escape(str(snap.get("built_at", ""))[:10])),
+    ], margin="2px 0 12px")
+
+    # ── Filters ──────────────────────────────────────────────────────────
+    fa, fb, fc = st.columns([1, 1, 2])
+    with fa:
+        since = st.selectbox("Announced since", ["All years", "2005", "2010",
+                                                 "2015", "2020"],
+                             index=0, key="comps_since")
+    with fb:
+        status = st.selectbox("Status", ["All", "Completed", "Terminated"],
+                              index=0, key="comps_status")
+    with fc:
+        overlay = st.selectbox(
+            "Highlight a bank's own deals", options=[None] + sorted(
+                {d["buyer_ticker"] for d in deals if d.get("buyer_ticker")}),
+            index=0, format_func=lambda t: t or "—",
+            key="comps_overlay")
+
+    def _date(d):
+        return (d.get("announce_date") or d.get("completion_date")
+                or d.get("termination_date") or "")
+
+    shown = deals
+    if since != "All years":
+        shown = [d for d in shown if _date(d) >= since]
+    if status != "All":
+        shown = [d for d in shown if d["status"] == status.lower()]
+    priced_shown = [d for d in shown if d.get("p_tbv")]
+
+    # ── Median P/TBV by announce year ────────────────────────────────────
+    by_year = {}
+    for d in priced_shown:
+        yr = _date(d)[:4]
+        if yr:
+            by_year.setdefault(int(yr), []).append(d["p_tbv"])
+    if by_year:
+        xs = list(range(min(by_year), max(by_year) + 1))
+        meds = [_median(by_year.get(x, [])) for x in xs]
+        cnts = [len(by_year.get(x, [])) for x in xs]
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=xs, y=cnts, name="Priced deals",
+                             marker_color=CATEGORICAL_PALETTE[5],
+                             opacity=0.45, yaxis="y2"))
+        fig.add_trace(go.Scatter(x=xs, y=meds, name="Median P/TBV paid",
+                                 mode="lines+markers", connectgaps=True,
+                                 line=dict(color=CATEGORICAL_PALETTE[0])))
+        apply_standard_layout(fig, title="Median P/TBV paid by announce year",
+                              height=320, yaxis_title="P/TBV (x)")
+        fig.update_layout(yaxis2=dict(overlaying="y", side="right",
+                                      showgrid=False, rangemode="tozero",
+                                      title="Deals"))
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False})
+
+    left, right = st.columns([2, 3])
+
+    # ── Size-bucket summary ──────────────────────────────────────────────
+    with left:
+        st.markdown("**Pricing by target size**")
+        body = ""
+        for label, lo, hi in _SIZE_BUCKETS:
+            rows_b = [d for d in priced_shown
+                      if lo <= (d.get("comp_assets") or
+                                d.get("target_assets") or 0) < hi]
+            med_p = _median([d["p_tbv"] for d in rows_b])
+            med_pa = _median([d.get("price_assets") for d in rows_b])
+            med_cdp = _median([d.get("core_dep_premium") for d in rows_b])
+            body += (
+                "<tr>"
+                f'<td style="text-align:left;">{label}</td>'
+                f'<td style="text-align:right;">{len(rows_b)}</td>'
+                f'<td style="text-align:right;">{f"{med_p:.2f}x" if med_p else "—"}</td>'
+                f'<td style="text-align:right;">{f"{med_pa*100:.1f}%" if med_pa else "—"}</td>'
+                f'<td style="text-align:right;">{f"{med_cdp*100:.1f}%" if med_cdp else "—"}</td>'
+                "</tr>")
+        st.markdown(
+            '<div class="ksk-grid"><table><thead><tr>'
+            '<th style="text-align:left;">Target assets</th>'
+            '<th style="text-align:right;">Deals</th>'
+            '<th style="text-align:right;">Med P/TBV</th>'
+            '<th style="text-align:right;">Med P/Assets</th>'
+            '<th style="text-align:right;">Med core dep prem</th>'
+            "</tr></thead><tbody>" + body + "</tbody></table></div>",
+            unsafe_allow_html=True)
+
+    # ── P/TBV vs size scatter ────────────────────────────────────────────
+    with right:
+        st.markdown("**P/TBV vs target size**")
+        base = [d for d in priced_shown
+                if (d.get("comp_assets") or d.get("target_assets"))]
+        if base:
+            def _pt(d):
+                return ((d.get("comp_assets") or d.get("target_assets")) / 1e6,
+                        d["p_tbv"],
+                        f"{d.get('buyer_ticker') or ''} → "
+                        f"{d.get('target_name') or ''}<br>"
+                        f"{_date(d)} · {_fmt_bn(d.get('value_usd'))} · "
+                        f"{d['p_tbv']:.2f}x ({d.get('tbv_basis')})")
+            others = [d for d in base if d.get("buyer_ticker") != overlay]
+            mine = [d for d in base if overlay and d.get("buyer_ticker") == overlay]
+            fig = go.Figure()
+            pts = [_pt(d) for d in others]
+            fig.add_trace(go.Scatter(
+                x=[p[0] for p in pts], y=[p[1] for p in pts],
+                mode="markers", name="Universe deals",
+                marker=dict(color=CATEGORICAL_PALETTE[0], size=7,
+                            opacity=0.55),
+                hovertext=[p[2] for p in pts], hoverinfo="text"))
+            if mine:
+                pts = [_pt(d) for d in mine]
+                fig.add_trace(go.Scatter(
+                    x=[p[0] for p in pts], y=[p[1] for p in pts],
+                    mode="markers", name=f"{overlay} deals",
+                    marker=dict(color=CATEGORICAL_PALETTE[3], size=11,
+                                symbol="diamond"),
+                    hovertext=[p[2] for p in pts], hoverinfo="text"))
+            apply_standard_layout(fig, height=340,
+                                  yaxis_title="P/TBV paid (x)",
+                                  xaxis_title="Target assets ($M, log)",
+                                  hovermode="closest")
+            fig.update_xaxes(type="log")
+            st.plotly_chart(fig, use_container_width=True,
+                            config={"displayModeBar": False})
+
+    # ── Deal table ───────────────────────────────────────────────────────
+    st.markdown("**Deal comps**")
+    cert_map = _cert_ticker_map()
+    body = ""
+    for d in shown[:250]:
+        buyer = d.get("buyer_ticker") or ""
+        buyer_cell = (f'<a href="?s=Company&bank={_h.escape(buyer)}" '
+                      f'target="_self">{_h.escape(buyer)}</a>') if buyer else "—"
+        tgt = _party(d.get("target_name"), d.get("target_cert"), cert_map)
+        ann = d.get("announce_date")
+        if ann and d.get("announce_url"):
+            ann_cell = (f'<a href="{_h.escape(d["announce_url"])}" '
+                        f'target="_blank">{_h.escape(ann)}</a>')
+        else:
+            ann_cell = _h.escape(ann) if ann else "—"
+        status_cell = ("Completed" if d["status"] == "completed" else
+                       '<span style="color:var(--danger,#dc2626);'
+                       'font-weight:600;">Terminated</span>')
+        p = d.get("p_tbv")
+        if p:
+            note = (f"{d.get('tbv_basis')} TBV {_fmt_bn(d.get('tbv_usd'))} "
+                    f"as of {d.get('tbv_asof')}")
+            if d.get("value_note"):
+                # Names the priced entity — vital on flipped MOEs where the
+                # bank-level target isn't the holdco the value priced.
+                note += f" · {d['value_note']}"
+            ptbv_cell = f'<span title="{_h.escape(note)}">{p:.2f}x</span>'
+        elif d.get("flagged"):
+            ptbv_cell = f'<span title="{_h.escape(d["flagged"])}">n/a†</span>'
+        else:
+            ptbv_cell = "—"
+        pa = d.get("price_assets")
+        cdp = d.get("core_dep_premium")
+        assets = d.get("comp_assets") or d.get("target_assets")
+        body += (
+            "<tr>"
+            f'<td style="text-align:left;">{ann_cell}</td>'
+            f'<td style="text-align:left;">{buyer_cell}</td>'
+            f'<td style="text-align:left;">{tgt}</td>'
+            f'<td style="text-align:left;">{status_cell}</td>'
+            f'<td style="text-align:right;">{_fmt_bn(d.get("value_usd"))}</td>'
+            f'<td style="text-align:right;">{_fmt_bn(assets)}</td>'
+            f'<td style="text-align:right;">{ptbv_cell}</td>'
+            f'<td style="text-align:right;">{f"{pa*100:.1f}%" if pa else "—"}</td>'
+            f'<td style="text-align:right;">{f"{cdp*100:.1f}%" if cdp else "—"}</td>'
+            "</tr>")
+    st.markdown(
+        '<div class="ksk-grid"><table><thead><tr>'
+        '<th style="text-align:left;">Announced</th>'
+        '<th style="text-align:left;">Buyer</th>'
+        '<th style="text-align:left;">Target</th>'
+        '<th style="text-align:left;">Status</th>'
+        '<th style="text-align:right;">Value</th>'
+        '<th style="text-align:right;">Target assets</th>'
+        '<th style="text-align:right;">P/TBV</th>'
+        '<th style="text-align:right;">P/Assets</th>'
+        '<th style="text-align:right;">Core dep prem</th>'
+        "</tr></thead><tbody>" + body + "</tbody></table></div>",
+        unsafe_allow_html=True)
+    shown_n = min(len(shown), 250)
+    st.caption(f"{shown_n:,} of {len(shown):,} deals shown (newest first"
+               f"{', capped at 250' if len(shown) > 250 else ''}) · deals "
+               "without a sourceable value price the count only · "
+               "† = multiple outside the 0.2x–8x sanity band (basis "
+               "mismatch guard) · sources: FDIC structure history + "
+               "financials, EDGAR announcement 8-Ks, SEC companyfacts.")
+
+    try:
+        import pandas as pd
+        from ui.chrome import table_export
+        table_export(pd.DataFrame(shown), "deal_comps", key="comps_export")
+    except Exception:
+        pass
 
 
 # ── Detailed M&A History ──────────────────────────────────────────────────

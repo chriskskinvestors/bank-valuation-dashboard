@@ -38,7 +38,7 @@ and value (live-verified: FHN/TD $13.4B stated, announced 2022-02-28,
 terminated 2023-05-04). Completed rows carry status='completed'. FDIC
 history itself is completions only (EFFDATE).
 
-Cache: ``ma_history:v5:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
+Cache: ``ma_history:v6:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
 the key is versioned so a deal-schema change never serves stale rows. Any
 fetch failure — history pages, a target-assets lookup, or an announcement
 fetch — skips the cache put so a transient outage is never frozen as a
@@ -174,6 +174,7 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
             "value_usd": None,
             "value_basis": None,
             "value_note": None,
+            "target_cik": None,
             "announce_url": None,
         })
     for date, n in office_counts.items():
@@ -193,6 +194,7 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
                 "value_usd": None,
                 "value_basis": None,
                 "value_note": None,
+                "target_cik": None,
                 "announce_url": None,
             })
     return deals
@@ -230,9 +232,9 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
     cert = int(cert)
     from data import cache
 
-    # v5: announce-anchored target assets (2026-07-13). The key carries the
+    # v6: target_cik for deal comps (2026-07-13). The key carries the
     # holdco CIK because the terminated leg only runs when one is supplied.
-    key = f"ma_history:v5:{cert}:{int(cik) if cik else 0}"
+    key = f"ma_history:v6:{cert}:{int(cik) if cik else 0}"
     cached = cache.get(key)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
@@ -316,6 +318,7 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
             "value_usd": (ann or {}).get("value_usd"),
             "value_basis": (ann or {}).get("value_basis"),
             "value_note": (ann or {}).get("value_note"),
+            "target_cik": (ann or {}).get("target_cik"),
             "announce_url": (ann or {}).get("url"),
         })
 
@@ -358,6 +361,7 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
             "value_usd": None,
             "value_basis": None,
             "value_note": None,
+            "target_cik": None,
             "announce_url": None,
         })
 
@@ -385,6 +389,7 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
                 "value_usd": t["value_usd"],
                 "value_basis": t["value_basis"],
                 "value_note": t["value_note"],
+                "target_cik": None,
                 "announce_url": t["announce_url"],
                 "status": "terminated",
                 "termination_date": t["termination_date"],

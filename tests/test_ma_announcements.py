@@ -380,6 +380,9 @@ class TestResolveAnnouncement(unittest.TestCase):
         self.assertEqual(r["announce_date"], "2021-10-12")
         self.assertEqual(r["value_usd"], 4_766_400_000)
         self.assertEqual(r["value_basis"], "computed")
+        # Deal comps pair the value with the RATIO's target side — the
+        # priced entity (UMPQ), not the FDIC bank-level counterparty.
+        self.assertEqual(r["target_cik"], 1077771)
         mock_facts.assert_called_once_with(1077771)
 
     @patch("data.ma_announcements.time.sleep", lambda *_: None)
