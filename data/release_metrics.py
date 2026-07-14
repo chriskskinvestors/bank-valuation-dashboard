@@ -525,13 +525,12 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v4 (2026-07-13): + year-ago column from the same document (the
-    # exhibit-style A/A/A comparison the owner specified). v3 added
-    # month-year period headers, ROE/NPA/ACL phrasing fixes, EPS + revenue
-    # specs, prior-quarter extraction. Extractions are immutable per
-    # accession, so spec improvements MUST bump this version or cached
-    # releases never re-extract.
-    key = f"release_metrics:v4:{int(cik)}"
+    # v5 (2026-07-14): + guarded-AI fill (data/release_ai) over every period
+    # bucket — deterministic values always win; AI fills the None cells only.
+    # v4 added the year-ago column; v3 month-year headers + EPS/revenue specs.
+    # Extractions are immutable per accession, so spec improvements MUST bump
+    # this version or cached releases never re-extract.
+    key = f"release_metrics:v5:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:
@@ -583,4 +582,35 @@ def release_metrics(cik) -> dict | None:
         "filed_date": rel.get("filed_date"),
         "accession": rel.get("accession"),
     }
+    _ai_fill(val, cik, rel)
     return _stamp(val)
+
+
+def _ai_fill(val: dict, cik, rel: dict) -> None:
+    """Fill val's None metric cells in place from the guarded-AI extraction
+    (data/release_ai — verbatim-evidence verified, unit-safe keys only).
+    Deterministic values are NEVER overwritten; capital keys land in the
+    period dicts the exhibit reads. Any failure leaves val untouched."""
+    try:
+        from data.release_ai import release_ai_metrics
+        ai = release_ai_metrics(
+            cik, val.get("accession") or "", _flat_text(rel.get("html") or ""),
+            qend=val.get("qend"), prior_qend=val.get("prior_qend"),
+            yoy_qend=val.get("yoy_qend"))
+    except Exception as e:
+        print(f"[release_metrics] AI fill failed: {type(e).__name__}: {e}")
+        return
+    if not ai:
+        return
+    for bucket_key, period in (("metrics", "cur"), ("prior_metrics", "prior"),
+                               ("yoy_metrics", "yoy")):
+        bucket = val.setdefault(bucket_key, {})
+        for k, v in (ai.get(period) or {}).items():
+            if bucket.get(k) is None:
+                bucket[k] = v
+    # Current-quarter capital: the dedicated extractor's values win; AI fills
+    # the gaps in the capital dict the exhibit merges over `metrics`.
+    cap = val.setdefault("capital", {})
+    for k in ("cet1_ratio", "t1_ratio", "total_ratio", "lev_ratio"):
+        if cap.get(k) is None and (ai.get("cur") or {}).get(k) is not None:
+            cap[k] = ai["cur"][k]

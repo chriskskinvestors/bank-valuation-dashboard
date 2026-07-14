@@ -183,6 +183,15 @@ class TestBuildResultsRows(unittest.TestCase):
                             "published_at": "2026-07-14T09:00:00"}]}
         self.assertEqual(build_results_rows(fmp, {"ABCB"}, events, self.TODAY), [])
 
+    def test_negative_revenue_is_fmp_junk(self):
+        """JPM/AMJB showed Rev Act $-47.81B (2026-07-14) — bank revenue is
+        never negative; the junk must not render OR feed the surprise."""
+        fmp = [{"symbol": "JPM", "date": "2026-07-14", "epsActual": 5.8,
+                "revenueActual": -47.81e9, "revenueEstimated": 51.09e9}]
+        rows = build_results_rows(fmp, {"JPM"}, {}, self.TODAY)
+        self.assertIsNone(rows[0]["rev_act"])
+        self.assertIsNone(rows[0]["rev_surprise"])
+
     def test_actuals_row_is_not_pending(self):
         fmp = [{"symbol": "JPM", "date": "2026-07-14", "epsActual": 5.8,
                 "periodEnding": "2026-06-30"}]

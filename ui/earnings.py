@@ -1460,16 +1460,18 @@ _REL_METRICS = [
     ("total_revenue", "Revenue", "$M"),
     ("nim", "NIM", "%"), ("efficiency", "Efficiency", "%"),
     ("roa", "ROA", "%"), ("roe", "ROE", "%"), ("rotce", "ROTCE", "%"),
+    ("loan_yield", "Loan Yield", "%"), ("cost_of_deposits", "Cost of Deps", "%"),
     ("cet1_ratio", "CET1", "%"), ("t1_ratio", "Tier 1", "%"),
     ("total_ratio", "Total Cap", "%"), ("lev_ratio", "Leverage", "%"),
-    ("tbv_ps", "TBV/sh", "$"), ("div_ps", "Div/sh", "$"),
+    ("tce_ratio", "TCE/TA", "%"),
+    ("tbv_ps", "TBV/sh", "$"), ("bv_ps", "BV/sh", "$"), ("div_ps", "Div/sh", "$"),
     ("nco_ratio", "NCOs", "%"), ("npa_assets", "NPAs/Assets", "%"),
     ("acl_loans", "ACL/Loans", "%"),
 ]
 
 # Q/Q delta coloring must respect direction: a FALLING efficiency ratio /
-# NCO / NPA is the good print. ACL movement is ambiguous → muted.
-_REL_LOWER_BETTER = {"efficiency", "nco_ratio", "npa_assets"}
+# NCO / NPA / deposit cost is the good print. ACL movement is ambiguous → muted.
+_REL_LOWER_BETTER = {"efficiency", "nco_ratio", "npa_assets", "cost_of_deposits"}
 _REL_NEUTRAL = {"acl_loans"}
 
 

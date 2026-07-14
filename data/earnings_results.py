@@ -137,6 +137,8 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
         if d is None or not (floor <= d <= today):
             continue
         eps_act, rev_act = r.get("epsActual"), r.get("revenueActual")
+        if rev_act is not None and rev_act < 0:
+            rev_act = None       # negative bank revenue = FMP junk (JPM -47.8B)
         pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
         pending = False
         if eps_act is None and rev_act is None:
@@ -295,7 +297,11 @@ def results_board(days_back: int = 30) -> list[dict]:
         if fmp_rows is None:
             raise RuntimeError("FMP earnings calendar unavailable")
         try:
-            universe = set(get_universe().keys())
+            # Common shares only: preferred/ETN listings share the parent's
+            # CIK+name and FMP carries junk rows for them (AMJB rendered as
+            # "Jpmorgan Chase" with a negative revenue, 2026-07-14).
+            universe = {tk for tk, v in get_universe().items()
+                        if (v or {}).get("share_class", "common") == "common"}
         except Exception:
             universe = set()
         try:
@@ -315,7 +321,8 @@ def results_board(days_back: int = 30) -> list[dict]:
 
     try:
         # v3: rows gained `pending` (PR-signaled reports without FMP actuals).
-        return _cache.served_snapshot(f"earnings_results_board_v3:{days_back}",
+        # v4: common-shares-only universe + negative-revenue junk guard.
+        return _cache.served_snapshot(f"earnings_results_board_v4:{days_back}",
                                       900, _build) or []
     except Exception:
         return []
