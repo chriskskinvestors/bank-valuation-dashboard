@@ -319,13 +319,13 @@ def _row_values(cells: list[str]) -> list[float]:
 # the value kind: '%' rows must carry a percent sign somewhere, '$' rows a
 # dollar sign — a same-named row in a different unit never qualifies.
 _TABLE_SPECS = {
-    "nim": (r"net interest margin", "%", (0.5, 8.0)),
+    "nim": (r"(?:net interest margin|nim\b)", "%", (0.5, 8.0)),
     "efficiency": (r"efficiency ratio", "%", (20.0, 110.0)),
     "roa": (r"return on (?:average )?(?:total )?assets", "%", (0.05, 4.0)),
-    "roe": (r"return on (?:average )?(?:common )?(?:shareholders['’]?,? )?equity",
-            "%", (0.5, 40.0)),
-    "rotce": (r"return on (?:average )?tangible common (?:shareholders['’]?,? )?equity",
-              "%", (0.5, 60.0)),
+    "roe": (r"(?:return on (?:average )?(?:common )?(?:shareholders['’]?,? )?equity"
+            r"|roe\b)", "%", (0.5, 40.0)),
+    "rotce": (r"(?:return on (?:average )?tangible common "
+              r"(?:shareholders['’]?,? )?equity|rotce\b)", "%", (0.5, 60.0)),
     "nco_ratio": (r"net (?:loan )?charge-?offs?(?: \(recoveries\))?"
                   r"(?: (?:to|/) average (?:total )?loans| ratio)", "%", (0.0, 5.0)),
     "npa_assets": (r"non-?performing assets (?:to|/|as a percentage of) "
@@ -374,12 +374,17 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
             continue                      # no/ambiguous period row → skip table
         col = qends.index(expected_qend)
         # Magnitude sniff for "$K" specs: the table's own units statement
-        # (e.g. "(dollars in thousands, except per share data)"). No stated
-        # unit → magnitude rows are refused, never guessed from size.
-        head_text = " ".join(" ".join(c for c in cells if c)
-                             for cells in rows[:hdr_i + 1]).lower()
-        scale = (1_000 if "in thousands" in head_text
-                 else 1_000_000 if "in millions" in head_text else None)
+        # (e.g. "(dollars in thousands, except per share data)") — anywhere
+        # in the table (WFC puts it below the header row). No stated unit →
+        # magnitude rows are refused, never guessed from size.
+        table_text = " ".join(" ".join(c for c in cells if c)
+                              for cells in rows).lower()
+        scale = (1_000 if "in thousands" in table_text
+                 else 1_000_000 if "in millions" in table_text else None)
+        # Dollar affirmation for "$" (per-share) specs: WFC-style blocks put
+        # the $ sign only on each block's FIRST row, so accept a row without
+        # its own $ when the table's units statement covers per-share values.
+        table_per_share = "per share" in table_text
 
         def _try(specs, label, row_text, vals):
             for key, (lab_re, kind, band) in specs.items():
@@ -389,7 +394,9 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                     if scale is None:
                         continue
                     v = vals[col] * scale
-                elif kind not in row_text:
+                elif kind == "$" and "$" not in row_text and not table_per_share:
+                    continue
+                elif kind == "%" and kind not in row_text:
                     continue
                 else:
                     v = vals[col]
@@ -397,11 +404,19 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                     cands[key].append(v)
 
         for cells in rows[hdr_i + 1:]:
-            if not cells or not cells[0]:
+            # Label = the first NON-EMPTY cell (WFC/JPM indent data rows with
+            # a leading empty cell — cells[0] as label skipped every row,
+            # caught live 2026-07-13). Values parse only AFTER the label cell
+            # so footnote digits in labels ("ROE 3") never enter the value
+            # list and break period alignment.
+            label_idx = next((i for i, c in enumerate(cells) if c), None)
+            if label_idx is None:
                 continue
-            label = cells[0]
+            label = cells[label_idx]
             row_text = " ".join(cells)
-            vals = _row_values(cells)
+            # _row_values itself skips its first cell (the label slot), so
+            # hand it the row FROM the label cell onward.
+            vals = _row_values(cells[label_idx:])
             if len(vals) != len(qends):
                 continue                  # colspan drift → alignment unproven
             if _CONNECTOR_EXCLUDE.search(label):
