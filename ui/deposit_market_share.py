@@ -29,6 +29,10 @@ def _share_rows(df: pd.DataFrame, subject_cert: int) -> list[dict]:
     rows: list[dict] = []
     if df is None or df.empty:
         return rows
+    # Prod Postgres returns SUM(BIGINT) as NUMERIC → decimal.Decimal objects
+    # (sqlite returns ints); Decimal can't mix with float in the share/HHI
+    # math below, so coerce once at the boundary.
+    df = df.assign(deposits=df["deposits"].astype(float))
     for key, m in df.groupby("market_key", sort=False):
         total = m["deposits"].sum()
         if not total or total <= 0:

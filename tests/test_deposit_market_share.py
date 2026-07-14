@@ -7,6 +7,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -46,6 +47,28 @@ class TestShareRows(unittest.TestCase):
         self.assertEqual(r["top_competitor"], "Rival Bank")
         self.assertAlmostEqual(r["top_competitor_share_pct"], 40.0)
         self.assertEqual(r["subj_branches"], 3)
+
+    def test_decimal_deposits_prod_postgres_parity(self):
+        # Prod parity: Postgres SUM(BIGINT) returns NUMERIC, which psycopg2
+        # hands back as decimal.Decimal — the deposits column arrives as an
+        # object column of Decimals, not ints (sqlite/local returns ints).
+        # Same hand-computed market as above: 600k/400k → share 60%,
+        # HHI 60² + 40² = 5200, rank 1 of 2.
+        df = _frame([
+            ("06001", "Alameda, CA", 111, "Subject Bank", "SUBJ", 3,
+             Decimal("600000")),
+            ("06001", "Alameda, CA", 222, "Rival Bank", "RVL", 5,
+             Decimal("400000")),
+        ])
+        rows = _share_rows(df, subject_cert=111)
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertAlmostEqual(r["share_pct"], 60.0)
+        self.assertAlmostEqual(r["hhi"], 5200.0)
+        self.assertAlmostEqual(r["top_competitor_share_pct"], 40.0)
+        self.assertEqual((r["rank"], r["n_banks"]), (1, 2))
+        self.assertIsInstance(r["subj_deposits_k"], float)
+        self.assertIsInstance(r["market_total_k"], float)
 
     def test_rank_when_not_leader_and_monopoly_market(self):
         df = _frame([
