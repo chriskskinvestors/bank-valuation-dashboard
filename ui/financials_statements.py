@@ -1744,6 +1744,182 @@ _CRIT_ROWS = [
 ]
 
 
+# ── Capital Adequacy (docs/SNL-BUILD-PLAN.md tab 3) ─────────────────────────
+# Live-verified TCBK/BANR 12/31/2025: RBCT1J/RWAJ reproduces IDT1CER exactly
+# (RBCT1J = CET1 $), RBCT1/RWAJ = RBC1RWAJ, RBCT1 + RBCT2 = RBC to the dollar.
+# Leverage stays RBCT1JR — the field config.py's leverage_ratio metric already
+# uses platform-wide (RBC1AAJ differs a few bps; one convention everywhere).
+# T1/T2 component walks are the RC-R section further down the page; LCR/HQLA
+# are large-bank-only (SNL shows NA too) — covered by the holdco caption.
+_CAPITAL_ADEQUACY = [
+    ("Regulatory Capital ($000)", [
+        ("Common Equity Tier 1 (CET1) Capital", "dollar", "RBCT1J"),
+        ("Additional Tier 1 Capital", "diff", "RBCT1", "RBCT1J"),
+        ("» Tier 1 Capital", "dollar", "RBCT1"),
+        ("Tier 2 Capital", "dollar", "RBCT2"),
+        ("» Total Risk-Based Capital", "dollar", "RBC"),
+        ("Risk-Weighted Assets", "dollar", "RWAJ"),
+    ]),
+    ("Equity Capital ($000)", [
+        ("Total Equity Capital", "dollar", "EQTOT"),
+        ("Total Intangibles (incl. goodwill)", "dollar", "INTAN"),
+        ("» Tangible Equity", "tce"),
+    ]),
+    ("Capital Ratios (%)", [
+        ("CET1 Ratio", "pct", "IDT1CER"),
+        ("Tier 1 Ratio", "pct", "RBC1RWAJ"),
+        ("Total Capital Ratio", "pct", "RBCRWAJ"),
+        ("Tier 1 Leverage Ratio", "pct", "RBCT1JR"),
+        ("RWA / Total Assets", "ratio", "RWAJ", "ASSET"),
+        ("Equity / Assets", "ratio", "EQTOT", "ASSET"),
+        ("Tangible Equity / Tangible Assets", "fratio", "EQTOT-INTAN", "ASSET-INTAN"),
+    ]),
+    ("Annualized Growth Rates (%)", [
+        ("CET1 Capital Growth", "growth", "RBCT1J"),
+        ("Risk-Weighted Asset Growth", "growth", "RWAJ"),
+        ("Equity Growth", "growth", "EQTOT"),
+    ]),
+]
+
+
+# ── Asset Quality by Loan Type (docs/SNL-BUILD-PLAN.md tab 5 — beats SNL) ───
+# The FULL per-category delinquency dollar matrix from SDI, probed 2026-07-13:
+# leaf-category sums reconcile to the filed totals TO THE DOLLAR for
+# TCBK + BANR in all three stages. "of which" rows (HELOC ⊂ 1-4 fam;
+# OO/NOO ⊂ CRE) are excluded from the leaf set. Agricultural P3AG/P9AG/NAAG
+# exist in the FDIC dictionary but the financials endpoint drops them —
+# the residual row (filed total − leaves) carries ag + anything unrequested,
+# and renders n/a if ever negative (residual kind).
+_BYLT_LEAVES = ["RECONS", "RERES", "REMULT", "RENRES", "REAG",
+                "CI", "CRCD", "AUTO", "CONOTH", "LS", "OTHLN"]
+_BYLT_ROWS = [
+    ("Construction & Land", "RECONS"),
+    ("1–4 Family Residential", "RERES"),
+    ("of which: HELOC (1–4 fam lines)", "RELOC"),
+    ("Multifamily", "REMULT"),
+    ("CRE Nonfarm Nonresidential", "RENRES"),
+    ("of which: Owner-Occupied", "RENROW"),
+    ("of which: Non-Owner-Occupied", "RENROT"),
+    ("Farmland", "REAG"),
+    ("Commercial & Industrial", "CI"),
+    ("Credit Cards", "CRCD"),
+    ("Auto", "AUTO"),
+    ("Other Consumer", "CONOTH"),
+    ("Leases", "LS"),
+    ("All Other Loans", "OTHLN"),
+]
+
+
+def _bylt_section(title, prefix, total_field):
+    rows = [(lb, "dollar", prefix + sfx) for lb, sfx in _BYLT_ROWS]
+    rows.append(("Agricultural & other (residual)", "residual", total_field,
+                 *[prefix + s for s in _BYLT_LEAVES]))
+    rows.append(("» Total", "dollar", total_field))
+    return (title, rows)
+
+
+_AQ_BY_LOAN_TYPE = [
+    _bylt_section("Nonaccrual by Loan Type ($000)", "NA", "NALNLS"),
+    _bylt_section("90+ Days Past Due, Accruing, by Loan Type ($000)", "P9", "P9LNLS"),
+    _bylt_section("30–89 Days Past Due by Loan Type ($000)", "P3", "P3LNLS"),
+    ("Noncurrent Ratio by Loan Type (%, reported)", [
+        ("Construction & Land", "pct", "NCRECONR"),
+        ("1–4 Family Residential", "pct", "NCRERESR"),
+        ("HELOC (1–4 fam lines)", "pct", "NCRELOCR"),
+        ("Multifamily", "pct", "NCREMULR"),
+        ("CRE Nonfarm Nonresidential", "pct", "NCRENRER"),
+        ("Commercial & Industrial", "pct", "IDNCCIR"),
+        ("Consumer", "pct", "IDNCCONR"),
+        ("» Total Loans & Leases", "pct", "NCLNLSR"),
+    ]),
+]
+
+# ── Deposit/Loan Composition (docs/SNL-BUILD-PLAN.md tab 6) ─────────────────
+# Both trees reconcile to the dollar (probed TCBK/BANR 12/31/2025):
+# LNLSGR = LNRE + LNCI + LNCON + LNAG + LS + LNOTHER + LNMUNI + LNDEP
+# (BANR's 397M gap was LNMUNI); DEP = TRN + NTR; NTR = NTRSMMDA (MMDA) +
+# NTRSOTH (other savings) + NTRTIME. HELOC ⊂ 1-4 fam; OO/NOO ⊂ CRE.
+_DEPOSIT_LOAN_COMP = [
+    ("Loan Composition ($000)", [
+        ("Construction & Land", "dollar", "LNRECONS"),
+        ("1–4 Family Residential", "dollar", "LNRERES"),
+        ("of which: HELOC (1–4 fam lines)", "dollar", "LNRELOC"),
+        ("Multifamily", "dollar", "LNREMULT"),
+        ("CRE Nonfarm Nonresidential", "dollar", "LNRENRES"),
+        ("of which: Owner-Occupied", "dollar", "LNRENROW"),
+        ("of which: Non-Owner-Occupied", "dollar", "LNRENROT"),
+        ("Farmland", "dollar", "LNREAG"),
+        ("» Total Real Estate Loans", "dollar", "LNRE"),
+        ("Commercial & Industrial", "dollar", "LNCI"),
+        ("Consumer", "dollar", "LNCON"),
+        ("of which: Auto", "dollar", "LNAUTO"),
+        ("of which: Credit Cards", "dollar", "LNCRCD"),
+        ("of which: Other Consumer", "dollar", "LNCONOTH"),
+        ("Agricultural Production", "dollar", "LNAG"),
+        ("Municipal & States", "dollar", "LNMUNI"),
+        ("Loans to Depository Institutions", "dollar", "LNDEP"),
+        ("Leases", "dollar", "LS"),
+        ("Other Loans", "dollar", "LNOTHER"),
+        ("» Gross Loans & Leases", "dollar", "LNLSGR"),
+    ]),
+    ("Loan Mix (% of gross loans)", [
+        ("Real Estate / Gross Loans", "fratio", "LNRE", "LNLSGR"),
+        ("CRE (nonfarm nonres) / Gross Loans", "fratio", "LNRENRES", "LNLSGR"),
+        ("Construction / Gross Loans", "fratio", "LNRECONS", "LNLSGR"),
+        ("1–4 Family / Gross Loans", "fratio", "LNRERES", "LNLSGR"),
+        ("C&I / Gross Loans", "fratio", "LNCI", "LNLSGR"),
+        ("Consumer / Gross Loans", "fratio", "LNCON", "LNLSGR"),
+    ]),
+    ("Deposit Composition ($000)", [
+        ("Transaction Accounts", "dollar", "TRN"),
+        ("of which: Demand Deposits", "dollar", "DDT"),
+        ("Savings & MMDA", "dollar", "NTRSMMDA"),
+        ("Other Savings", "dollar", "NTRSOTH"),
+        ("Time Deposits", "dollar", "NTRTIME"),
+        ("» Total Nontransaction", "dollar", "NTR"),
+        ("» Total Deposits", "dollar", "DEP"),
+        ("Non-Interest-Bearing (domestic)", "dollar", "DEPNIDOM"),
+        ("Interest-Bearing (domestic)", "dollar", "DEPIDOM"),
+        ("Core Deposits", "dollar", "COREDEP"),
+        ("Brokered Deposits", "dollar", "BRO"),
+        ("Est. Insured Deposits", "dollar", "DEPINS"),
+        ("Est. Uninsured Deposits", "dollar", "DEPUNINS"),
+        ("Accounts > $250K", "dollar", "DEPLGAMT"),
+        ("Accounts ≤ $250K", "dollar", "DEPSMAMT"),
+    ]),
+    ("Deposit Mix & Funding (%)", [
+        ("Core Deposits / Deposits", "fratio", "COREDEP", "DEP"),
+        ("Brokered / Deposits", "fratio", "BRO", "DEP"),
+        ("Est. Uninsured / Deposits", "fratio", "DEPUNINS", "DEP"),
+        ("Non-Interest-Bearing / Deposits", "fratio", "DEPNIDOM", "DEP"),
+        ("Time Deposits / Deposits", "fratio", "NTRTIME", "DEP"),
+        ("Net Loans / Deposits", "ratio", "LNLSNET", "DEP"),
+    ]),
+    ("Annualized Growth Rates (%)", [
+        ("Gross Loan Growth", "growth", "LNLSGR"),
+        ("CRE Growth", "growth", "LNRENRES"),
+        ("Deposit Growth", "growth", "DEP"),
+        ("Core Deposit Growth", "growth", "COREDEP"),
+    ]),
+]
+
+# Deposit Trends keeps its beta/cost charts; its left table becomes the
+# deposit side of the composition (with the toggle) + growth.
+_DEPOSIT_TRENDS_TABLE = [_DEPOSIT_LOAN_COMP[2], _DEPOSIT_LOAN_COMP[3],
+                         _DEPOSIT_LOAN_COMP[4]]
+
+# Trend groups for the Deposit/Loan Composition page (metric keys pinned by
+# test_statement_trends to exist in config.METRICS_BY_KEY).
+_DLC_TRENDS = [
+    ("Deposit Funding Mix (%)", ["nonint_dep_pct", "core_dep_pct",
+                                 "uninsured_pct", "brokered_pct"]),
+    ("Deposits ($B)", ["total_deposits", "core_deposits", "uninsured_deposits"]),
+    ("Loan Composition ($B)", ["ln_re_total", "ln_re_residential", "ln_ci"]),
+    ("CRE Detail ($B)", ["ln_re_nres_oo", "ln_re_nres_noo",
+                         "ln_re_multifam", "ln_re_construct"]),
+]
+
+
 _FAIR_VALUE = [
     ("Investment Securities", [
         ("Total investment securities", "dollar", "SC"),
@@ -2251,6 +2427,38 @@ def render_performance_analysis(ticker):
     render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE,
                      with_persh=True, with_dep_cost=True, with_fte=True,
                      side_by_side=True)
+
+
+def render_aq_by_loan_type(ticker):
+    """Asset Quality by Loan Type statement table (the full per-category
+    delinquency matrix SNL shows as NA). Left column of credit_dynamics'
+    by-loan-type view — segment NPL chart stays on the right."""
+    render_statement(ticker, "aqlt", "Asset Quality by Loan Type",
+                     _AQ_BY_LOAN_TYPE, trends=[], header=False)
+
+
+@st.fragment
+def render_deposit_loan_composition(ticker):
+    """Deposit/Loan Composition page: full mix table (both trees reconcile
+    to filed totals on the face) with trends on the right."""
+    render_statement(ticker, "dlc", "Deposit/Loan Composition",
+                     _DEPOSIT_LOAN_COMP, trends=_DLC_TRENDS,
+                     side_by_side=True, header=False)
+
+
+def render_deposit_trends_table(ticker):
+    """Deposit-side composition table for the Deposit Trends page's left
+    column (its cost/beta charts stay on the right)."""
+    render_statement(ticker, "deptr", "Deposit Trends",
+                     _DEPOSIT_TRENDS_TABLE, trends=[], header=False)
+
+
+def render_capital_adequacy(ticker):
+    """Capital Adequacy statement table (bank-level regulatory capital).
+    Rendered by capital_dynamics inside its left column — same integration
+    as render_asset_quality (charts right, page chrome owns the header)."""
+    render_statement(ticker, "capadq", "Capital Adequacy", _CAPITAL_ADEQUACY,
+                     trends=[], header=False)
 
 
 def render_asset_quality(ticker):

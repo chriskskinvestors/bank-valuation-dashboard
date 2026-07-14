@@ -84,6 +84,13 @@ source); **n/a** = honest gap, shown as such.
 | Total equity | FDIC EQTOT |
 
 ## 3. Capital Adequacy
+
+> **SHIPPED 2026-07-13 (sweep).** `_CAPITAL_ADEQUACY` statement table
+> (5FY/8Q + toggle) replaced the 6-row Annual-only left pane in
+> ui/capital_dynamics.py; charts/holdco/RC-R sections unchanged. Verified:
+> RBCT1J/RWAJ = IDT1CER exactly (RBCT1J is CET1 $), RBCT1+RBCT2 = RBC to
+> the dollar; leverage stays RBCT1JR (config convention, not RBC1AAJ).
+
 | SNL line | Source |
 |---|---|
 | CET1 / T1 / T2 / Total capital ($) | FDIC RBCT1J, RBCT1, RBCT2, RBC |
@@ -121,12 +128,27 @@ source); **n/a** = honest gap, shown as such.
 | Criticized/classified (pass/SM/substandard/doubtful) | 10-K/10-Q credit-quality footnote (FinancingReceivableCreditQualityIndicator dimensional XBRL) — SHIPPED via credit_quality_history, graded-classes-only label + coverage row |
 
 ## 5. Asset Quality by Loan Type  ← we BEAT SNL here
-30-89 PD, 90+ PD, Nonaccrual × loan category (1-4 fam, multifam, CRE, C&D,
-HELOC, cards, other consumer, C&I, other): **RC-N parse** gives the full
-matrix SNL shows as NA. FDIC SDI may expose partial P3*/P9*/NA* category
-fields — probe at build; RC-N is the complete source.
+
+> **SHIPPED 2026-07-13 (sweep) — NO RC-N parse needed.** SDI carries the
+> FULL dollar matrix: P3*/P9*/NA* × category (`_AQ_BY_LOAN_TYPE`,
+> `_bylt_section`). Probed TCBK+BANR 12/31/2025: leaf sums reconcile to
+> P3LNLS/P9LNLS/NALNLS TO THE DOLLAR (leaves exclude the of-which overlaps
+> HELOC⊂1-4fam, OO/NOO⊂CRE). P3AG/P9AG/NAAG are in the dictionary but the
+> financials endpoint DROPS them — the residual row (filed total − leaves)
+> carries ag production, n/a if negative. Plus reported noncurrent-ratio
+> section (NCRE*R/IDNC*R). Table left + segment NPL chart right.
 
 ## 6. Deposit/Loan Composition
+
+> **SHIPPED 2026-07-13 (sweep).** `_DEPOSIT_LOAN_COMP` full mix table
+> (57 rows: loan tree, loan mix %, deposit tree, funding %, growth) +
+> `_DLC_TRENDS` charts (side_by_side); deposit_lookup no longer delegates
+> to Deposit Trends. Reconciliation identities verified to the dollar
+> (TCBK+BANR): LNLSGR = LNRE+LNCI+LNCON+LNAG+LS+LNOTHER+LNMUNI+LNDEP
+> (BANR's 397M "gap" was LNMUNI); DEP = TRN+NTR; NTR = NTRSMMDA (MMDA
+> only!) + NTRSOTH + NTRTIME. Deposit Trends keeps cost/beta charts with
+> the deposit-side sections (`_DEPOSIT_TRENDS_TABLE`) as its left table.
+
 Almost entirely FDIC now: loan mix (LNRENRES/LNREMULT/LNRECONS/LNRERES/
 LNCI/consumer fields), % of gross loans calc, growth rows calc; deposit mix
 (transaction/savings/MMDA/time/jumbo/brokered/core/NIB fields — engine

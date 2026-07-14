@@ -3,8 +3,6 @@ Credit Dynamics UI — renders the institutional-grade credit quality panel
 in the Company Analysis > Credit tab.
 """
 
-import html as _html
-
 import streamlit as st
 import pandas as pd
 
@@ -277,27 +275,13 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
         ("npl_ci", "C&I", COLOR_SUCCESS, 2),
         ("npl_consumer", "Consumer", CATEGORICAL_PALETTE[6], 2),
     ]
-    latest = timeline.iloc[-1] if not timeline.empty else None
-    total = latest.get("npl_ratio") if latest is not None else None
-
-    _tbl, _chart = st.columns([1, 2])
+    # Owner layout (2026-07-13): full per-category delinquency matrix
+    # (statement engine, Annual/Quarterly toggle) on the LEFT — the table
+    # SNL shows as NA; the per-segment NPL trend chart stays on the RIGHT.
+    _tbl, _chart = st.columns([1, 1])
     with _tbl:
-        st.markdown('<div class="ksk-sec">NPL by Loan Segment — latest quarter</div>',
-                    unsafe_allow_html=True)
-        body = ""
-        if latest is not None:
-            for col, label, _c, _w in segments:
-                v = latest.get(col)
-                if v is None or pd.isna(v):
-                    continue
-                mult = f"{v / total:.1f}x" if (total and col != "npl_ratio") else "—"
-                body += (f'<tr><td>{_html.escape(label)}</td>'
-                         f'<td>{v:.2f}%</td><td>{mult}</td></tr>')
-        st.markdown(
-            '<div class="ksk-grid"><table><thead><tr>'
-            '<th>Segment</th><th>NPL %</th><th>vs Bank Total</th>'
-            f'</tr></thead><tbody>{body}</tbody></table></div>',
-            unsafe_allow_html=True)
+        from ui.financials_statements import render_aq_by_loan_type
+        render_aq_by_loan_type(ticker)
 
     with _chart:
         import plotly.graph_objects as go

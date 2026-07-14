@@ -125,6 +125,52 @@ class TestSpecFieldsFetched(unittest.TestCase):
         self.assertEqual(missing, set(),
                          f"spec names FDIC fields the client never fetches: {missing}")
 
+    def test_capital_adequacy_fields_are_fetched(self):
+        from ui.financials_statements import _CAPITAL_ADEQUACY
+        from data.fdic_client import _BASE_FINANCIALS_FIELDS
+        from config import get_fdic_fields
+        have = _BASE_FINANCIALS_FIELDS | get_fdic_fields()
+        missing = self._fields_of(_CAPITAL_ADEQUACY) - have
+        self.assertEqual(missing, set(),
+                         f"spec names FDIC fields the client never fetches: {missing}")
+
+    def test_sweep_spec_fields_are_fetched(self):
+        from ui.financials_statements import (_AQ_BY_LOAN_TYPE,
+                                              _DEPOSIT_LOAN_COMP,
+                                              _DEPOSIT_TRENDS_TABLE)
+        from data.fdic_client import _BASE_FINANCIALS_FIELDS
+        from config import get_fdic_fields
+        have = _BASE_FINANCIALS_FIELDS | get_fdic_fields()
+        for spec in (_AQ_BY_LOAN_TYPE, _DEPOSIT_LOAN_COMP, _DEPOSIT_TRENDS_TABLE):
+            missing = self._fields_of(spec) - have
+            self.assertEqual(missing, set(),
+                             f"spec names FDIC fields the client never fetches: {missing}")
+
+    def test_by_loan_type_residual_excludes_of_which_rows(self):
+        # The residual row must subtract ONLY leaf categories: HELOC ⊂ 1-4 fam
+        # and OO/NOO ⊂ CRE would double-subtract and turn the residual negative.
+        from ui.financials_statements import _BYLT_LEAVES
+        for overlap in ("RELOC", "RENROW", "RENROT"):
+            self.assertNotIn(overlap, _BYLT_LEAVES)
+
+    def test_by_loan_type_leaf_sum_reconciles_tcbk(self):
+        # TCBK 12/31/2025 live probe (values pulled from the FDIC API on
+        # 2026-07-13): the leaf categories sum EXACTLY to NALNLS — pins the
+        # leaf-set design (no overlap, no gap except the residual's ag).
+        na = {"NARECONS": 650, "NARERES": 11720, "NAREMULT": 435,
+              "NARENRES": 14822, "NAREAG": 31615, "NACI": 3976, "NACRCD": 0,
+              "NAAUTO": 456, "NACONOTH": 3, "NALS": 0, "NAOTHLN": 460}
+        self.assertEqual(sum(na.values()), 64137)   # = NALNLS as filed
+
+    def test_tangible_equity_ratio_hand_computed(self):
+        # TCBK 12/31/2025: (1,362,147 − 315,553) ÷ (9,820,725 − 315,553)
+        # = 1,046,594 ÷ 9,505,172 = 11.0108%
+        from ui.financials_statements import _eval_expr
+        nv, _, _ = _eval_expr(_TCBK.get, "EQTOT-INTAN", False)
+        dv, _, _ = _eval_expr(_TCBK.get, "ASSET-INTAN", False)
+        self.assertEqual((nv, dv), (1046594, 9505172))
+        self.assertAlmostEqual(nv / dv * 100, 11.0108, places=4)
+
 
 class TestCreditQualityHistory(unittest.TestCase):
     """Merge + cache contract of credit_quality_history (stubbed I/O)."""

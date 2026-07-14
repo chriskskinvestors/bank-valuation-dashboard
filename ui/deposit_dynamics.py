@@ -134,6 +134,9 @@ def _render_deposit_headline(ticker, hist, summary, timeline):
     render_traceable_cards(cards, key=f"deposits_{ticker}", columns=5)
 
 
+# @st.fragment: the statement table's Annual/Quarterly radio must not rerun
+# the whole Company page (same pattern as the other Financials tabs).
+@st.fragment
 def render_deposit_dynamics(ticker: str, show_title: bool = True):
     """Render the Deposit Dynamics analysis panel for a specific bank.
 
@@ -268,33 +271,14 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     )
     fig3.update_yaxes(ticksuffix="%")
 
-    # Page pattern: click-to-source deposit/loan composition table on the left,
-    # charts tiled 2×2 on the right. Fields are the same FDIC items Financial
-    # Highlights proves correct (DEP, LNLSNET, Loans/Deposits) plus the FDIC
-    # loan-segment balances.
-    from ui.fdic_click_table import render_fdic_click_table
-    _dl_sections = [
-        ("Deposits — FDIC Call Report", [
-            ("Total deposits", "dollar", "DEP"),
-            ("Brokered deposits", "dollar", "BRO"),
-            ("Brokered / deposits", "ratio", "BRO", "DEP",
-             "Brokered deposits", "Total deposits"),
-            ("Loans / deposits", "ratio", "LNLSNET", "DEP",
-             "Net loans", "Total deposits"),
-        ]),
-        ("Loan Composition", [
-            ("Net loans", "dollar", "LNLSNET"),
-            ("Construction & land", "dollar", "LNRECONS"),
-            ("Commercial RE (non-owner-occ)", "dollar", "LNRENRES"),
-            ("Multifamily", "dollar", "LNREMULT"),
-            ("1–4 family residential", "dollar", "LNRERES"),
-            ("Commercial & industrial", "dollar", "LNCI"),
-        ]),
-    ]
+    # Owner layout (2026-07-13): the deposit-side statement table (Annual/
+    # Quarterly toggle, click-to-source) on the LEFT — the full loan+deposit
+    # mix lives on Deposit/Loan Composition; this page keeps the deposit
+    # sections + growth next to its cost/beta charts on the RIGHT.
+    from ui.financials_statements import render_deposit_trends_table
     _left, _right = st.columns([1, 1])
     with _left:
-        if not render_fdic_click_table(ticker, _dl_sections, period="Annual"):
-            st.caption("FDIC composition table unavailable.")
+        render_deposit_trends_table(ticker)
     with _right:
         _g = st.columns(2)
         with _g[0]:

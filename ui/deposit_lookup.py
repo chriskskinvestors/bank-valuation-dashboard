@@ -27,12 +27,13 @@ def render_deposits_for_ticker(ticker: str):
     name = get_name(ticker)
     title_bar(f"{name} ({ticker})", "Deposit/Loan Composition")
 
-    # ── Deposit & loan composition (table left, charts right) ──
+    # ── Deposit & loan composition (table left, trends right) ──
+    # Full SNL-depth mix table (statement engine, Annual/Quarterly toggle) —
+    # both trees reconcile to filed totals on the face (2026-07-13 rebuild).
     # The branch map + market-share summary live on Market Analysis ▸ Market
-    # Share & Branches (render_market_share_for_ticker), so they are NOT
-    # duplicated on this Financials tab anymore.
-    from ui.deposit_dynamics import render_deposit_dynamics
-    render_deposit_dynamics(ticker, show_title=False)
+    # Share & Branches; deposit cost/beta charts stay on Deposit Trends.
+    from ui.financials_statements import render_deposit_loan_composition
+    render_deposit_loan_composition(ticker)
 
 
 def render_market_share_for_ticker(ticker: str):

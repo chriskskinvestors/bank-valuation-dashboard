@@ -213,6 +213,9 @@ def _render_capital_headline(ticker, hist, summary, timeline, peer_cet1):
     render_traceable_cards(cards, key=f"capital_{ticker}", columns=5)
 
 
+# @st.fragment: the statement table's Annual/Quarterly radio must not rerun
+# the whole Company page (same pattern as the statement pages / credit tab).
+@st.fragment
 def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     """Render the Capital Adequacy & Buyback Capacity panel."""
     hist = _load_hist(ticker)
@@ -412,25 +415,13 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         _pad = max((_hi - _lo) * 0.6, 0.03 * max(abs(x) for x in _levels), 0.02)
         fig4.update_yaxes(range=[_lo - _pad, _hi + _pad])
 
-    # Page pattern (matches Financial Highlights): click-to-source capital
-    # table on the left, trend charts tiled 2×2 on the right.
-    from ui.fdic_click_table import render_fdic_click_table
-    _cap_sections = [
-        ("Capital Adequacy — bank level (FDIC Call Report)", [
-            ("CET1 ratio", "pct", "IDT1CER"),
-            ("Total capital ratio", "pct", "RBCRWAJ"),
-            ("Leverage ratio", "pct", "RBCT1JR"),
-        ]),
-        ("Regulatory Capital", [
-            ("Tier 1 capital", "dollar", "RBCT1J"),
-            ("Total equity", "dollar", "EQTOT"),
-            ("Risk-weighted assets", "dollar", "RWAJ"),
-        ]),
-    ]
+    # Owner layout (2026-07-13, same as Asset Quality Detail): the SNL-depth
+    # statement table on the LEFT (Annual/Quarterly toggle, click-to-source),
+    # trend charts tiled 2×2 on the RIGHT.
+    from ui.financials_statements import render_capital_adequacy
     _left, _right = st.columns([1, 1])
     with _left:
-        if not render_fdic_click_table(ticker, _cap_sections, period="Annual"):
-            st.caption("FDIC capital table unavailable.")
+        render_capital_adequacy(ticker)
     with _right:
         _g1 = st.columns(2)
         with _g1[0]:

@@ -44,6 +44,24 @@ _BASE_FINANCIALS_FIELDS = {
     # FDIC's reported NPA/assets ratio.
     "NALNLS", "RSLNLTOT", "NCLNLS", "P3LNLS", "P9LNLS", "LNATRES",
     "DRLNLS", "CRLNLS", "NTLNLS", "DRLNLSQ", "CRLNLSQ", "NTLNLSQ", "NPERFV",
+    # Asset Quality by Loan Type (SNL plan §5): the FULL per-category
+    # delinquency dollar matrix straight from SDI (probed 2026-07-13:
+    # leaf sums reconcile to P3LNLS/P9LNLS/NALNLS to the dollar for
+    # TCBK+BANR; agricultural P3AG/P9AG/NAAG are in the dictionary but the
+    # financials endpoint drops them — the spec's residual row covers ag).
+    "P3RECONS", "P3RERES", "P3RELOC", "P3REMULT", "P3RENROW", "P3RENROT",
+    "P3RENRES", "P3REAG", "P3CI", "P3CRCD", "P3AUTO", "P3CONOTH", "P3LS", "P3OTHLN",
+    "P9RECONS", "P9RERES", "P9RELOC", "P9REMULT", "P9RENROW", "P9RENROT",
+    "P9RENRES", "P9REAG", "P9CI", "P9CRCD", "P9AUTO", "P9CONOTH", "P9LS", "P9OTHLN",
+    "NARECONS", "NARERES", "NARELOC", "NAREMULT", "NARENROW", "NARENROT",
+    "NARENRES", "NAREAG", "NACI", "NACRCD", "NAAUTO", "NACONOTH", "NALS", "NAOTHLN",
+    "NCRECONR", "NCRERESR", "NCRELOCR", "NCREMULR", "NCRENRER",
+    # Deposit/Loan Composition (SNL plan §6): mix balances not already in
+    # the config registry. TRN+NTR=DEP and NTRSMMDA+NTRTIME=NTR verified.
+    "LNRE", "LNRELOC", "LNRENROW", "LNRENROT", "LNREAG", "LNCONOTH",
+    "LNOTHER", "LS", "LNMUNI", "LNDEP",
+    "DDT", "TRN", "NTR", "NTRSMMDA", "NTRSOTH", "NTRTIME",
+    "DEPLGAMT", "DEPSMAMT",
 }
 
 
