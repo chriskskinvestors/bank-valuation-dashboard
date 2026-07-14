@@ -1,16 +1,27 @@
 """
 Mirror the latest filed quarter of FR Y-9C facsimile PDFs to GCS.
 
-NPW's Cloudflare bot management 403s Cloud Run egress IPs outright (prod
-logs 2026-07-14), so production can never fetch the facsimiles behind
-Recent Documents → Regulatory Filings → "Download via dashboard".
+NPW's Cloudflare bot management 403s Cloud Run egress IPs AND GitHub-hosted
+runner egress outright (prod logs + workflow run 29357551545, 2026-07-14),
+so neither production nor CI can fetch the facsimiles behind Recent
+Documents → Regulatory Filings → "Download via dashboard".
 data/nic_client.fetch_y9c_pdf serves the y9c/ mirror this script fills.
-Run it from any network Cloudflare doesn't block:
+The ONLY proven-unblocked egress is the dev box (residential IP):
 
-  - by .github/workflows/refresh-nic-bulk.yml (monthly on the 3rd, plus
-    the 16th of Feb/May/Aug/Nov — right after each Y-9C filing deadline)
-  - manually from the dev box:
-      $env:GCS_BUCKET='ksk-bank-dashboard-data'; python -m tools.refresh_y9c_mirror
+    gcloud.cmd auth application-default login   # ADC; expires ~hourly
+    $env:GCS_BUCKET='ksk-bank-dashboard-data'
+    $env:Y9C_MAX_FETCHES='50'                   # bounded batch (see below)
+    python -m tools.refresh_y9c_mirror
+
+A full quarter is ~366 holdcos × 30s spacing ≈ 3h, but two limits bite a
+single long run (both hit 2026-07-14): the Workspace-managed ADC token the
+GCS client uses expires ~hourly, and a residential IP gets Cloudflare-
+challenged under a multi-hour sustained session. So fill the mirror in
+bounded sub-hour batches via Y9C_MAX_FETCHES; runs are resumable (mirrored
+objects are skipped) and largest-first, so a handful of ~50-holdco batches
+converge and the most-viewed banks land in the first batch. The workflow
+.github/workflows/refresh-nic-bulk.yml is kept dispatch-only purely for
+the day Cloudflare unblocks GitHub egress.
 
 Targets: FDIC ACTIVE institutions grouped by regulatory high holder
 (RSSDHCR — the exact field ui/recent_documents keys its Y-9C rows on, so
@@ -21,11 +32,14 @@ trip bot scoring even on allowed networks), skip objects already
 mirrored, and a holdco that misses _MAX_MISS_ATTEMPTS times for a period
 (sub-floor consolidated assets → files FR Y-9SP, or a foreign parent with
 no IHC) is recorded in y9c/_manifest.json and never retried for that
-period — misses must not burn spaced hits every run forever.
+period — misses must not burn spaced hits every run forever. If the GCS
+credential dies mid-run, a consecutive-upload-failure circuit breaker
+aborts rather than burning bot score on fetches it can't persist.
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 
@@ -48,11 +62,29 @@ _FDIC_INSTITUTIONS_URL = "https://banks.data.fdic.gov/api/institutions"
 # mirror write in fetch_y9c_pdf, and the UI's "View on NIC" link always works.
 _Y9C_ASSET_FLOOR_THOUSANDS = 3_000_000
 _MAX_MISS_ATTEMPTS = 3      # a late filer gets 3 spaced runs, then stops
-# Runaway guard: ~3.4h at 30s spacing — above the ~366 holdcos clearing
-# the floor today (live probe 2026-07-14), so a quarter's first run
-# covers every filer, and far below the 6h GitHub job limit.
+# Runaway guard: ~3.4h at 30s spacing — above the ~366 holdcos clearing the
+# floor today (live probe 2026-07-14), so a full run covers every filer.
+# Override with Y9C_MAX_FETCHES to fill the mirror in bounded sub-hour
+# batches: the dev box's only viable egress is a Workspace-managed ADC that
+# the reauth policy expires ~hourly (< a full 3h run), and a residential IP
+# gets Cloudflare-challenged under a multi-hour sustained session. Runs are
+# resumable (skip-existing), so `Y9C_MAX_FETCHES=50` across a few sessions
+# converges without either limit biting. Largest holdcos go first, so even
+# one small batch covers the most-viewed banks.
 _MAX_FETCHES_PER_RUN = 400
 _MIN_PDF_BYTES = 20_000     # facsimiles are ~1MB+; an error PDF is not
+# Circuit breaker: consecutive GCS upload failures mean the credential died
+# mid-run (ADC reauth). Keep fetching and every NPW hit is unsaveable — pure
+# bot-score burn that got the dev IP Cloudflare-challenged 2026-07-14. Abort
+# instead so a dead token stops the run cleanly.
+_MAX_CONSEC_UPLOAD_FAILS = 3
+
+
+def _max_fetches() -> int:
+    raw = (os.environ.get("Y9C_MAX_FETCHES") or "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return _MAX_FETCHES_PER_RUN
 
 
 def _latest_y9c_period(as_of=None) -> str:
@@ -159,16 +191,17 @@ def main() -> int:
     if skipped_misses:
         print(f"[y9c] skipping {skipped_misses} holdcos that already missed "
               f"{_MAX_MISS_ATTEMPTS}x for {period} (Y-9SP filers?)")
-    if len(todo) > _MAX_FETCHES_PER_RUN:
-        print(f"[y9c] fetch cap {_MAX_FETCHES_PER_RUN}: deferring "
-              f"{len(todo) - _MAX_FETCHES_PER_RUN} smaller holdcos to the "
-              "next run")
-        todo = todo[:_MAX_FETCHES_PER_RUN]
+    cap = _max_fetches()
+    if len(todo) > cap:
+        print(f"[y9c] fetch cap {cap}: deferring {len(todo) - cap} smaller "
+              "holdcos to the next run")
+        todo = todo[:cap]
     if not todo:
         print("[y9c] mirror already current — nothing to fetch")
         return 0
 
-    fetched = misses = upload_failures = 0
+    fetched = misses = upload_failures = consec_upload_fails = 0
+    aborted = False
     for i, (rssd, name) in enumerate(todo):
         if i:
             time.sleep(_SPACING_SECONDS)
@@ -185,12 +218,27 @@ def main() -> int:
         if save_bytes(_GCS_PREFIX, name, content, "application/pdf"):
             manifest.pop(name, None)
             fetched += 1
+            consec_upload_fails = 0
         else:
             print(f"FAIL {name}: GCS upload failed")
             upload_failures += 1
+            consec_upload_fails += 1
+            if consec_upload_fails >= _MAX_CONSEC_UPLOAD_FAILS:
+                # Credential died mid-run (ADC reauth). Every further NPW
+                # fetch is unsaveable bot-score burn — stop now. Re-auth
+                # (gcloud auth application-default login) and re-run; the
+                # already-mirrored objects are skipped.
+                print(f"[y9c] aborting: {consec_upload_fails} consecutive "
+                      "upload failures — GCS credential expired? Re-auth ADC "
+                      "and re-run (mirrored objects are skipped).")
+                aborted = True
+                break
 
-    print(f"[y9c] done: {fetched} mirrored, {misses} misses, "
-          f"{upload_failures} upload failures, {len(todo)} attempted")
+    print(f"[y9c] {'ABORTED' if aborted else 'done'}: {fetched} mirrored, "
+          f"{misses} misses, {upload_failures} upload failures, "
+          f"{i + 1}/{len(todo)} attempted")
+    if aborted:
+        return 1  # don't persist miss counts on a half-run; loud failure
 
     if misses > fetched:
         # A miss looks the same whether the holdco doesn't file Y-9C or

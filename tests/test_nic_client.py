@@ -419,6 +419,58 @@ class TestY9cMirrorTool(unittest.TestCase):
         self.assertEqual(_latest_y9c_period(pd.Timestamp(2026, 8, 20)),
                          "20260630")
 
+    def test_max_fetches_env_override(self):
+        from tools import refresh_y9c_mirror as R
+        with patch.dict(os.environ, {"Y9C_MAX_FETCHES": "50"}):
+            self.assertEqual(R._max_fetches(), 50)
+        with patch.dict(os.environ, {"Y9C_MAX_FETCHES": "0"}):   # invalid
+            self.assertEqual(R._max_fetches(), R._MAX_FETCHES_PER_RUN)
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(R._max_fetches(), R._MAX_FETCHES_PER_RUN)
+
+    def test_circuit_breaker_aborts_on_consecutive_upload_failures(self):
+        # Simulate ADC dying mid-run: curl always returns a good PDF, but
+        # every GCS upload fails. The run must abort after
+        # _MAX_CONSEC_UPLOAD_FAILS attempts, not hammer NPW for all targets.
+        from tools import refresh_y9c_mirror as R
+        records = [{"CERT": i, "RSSDHCR": str(1000 + i),
+                    "ASSET": 5_000_000} for i in range(20)]
+        good_pdf = b"%PDF-" + b"x" * R._MIN_PDF_BYTES
+        with patch.object(R, "is_gcs_enabled", return_value=True), \
+             patch.object(R, "_latest_y9c_period", return_value="20260331"), \
+             patch.object(R, "_fetch_fdic_records", return_value=records), \
+             patch.object(R, "list_files", return_value=[]), \
+             patch.object(R, "_load_manifest", return_value={}), \
+             patch.object(R, "_curl_fetch", return_value=good_pdf), \
+             patch.object(R, "save_bytes", return_value=False) as mock_save, \
+             patch.object(R.time, "sleep"):
+            rc = R.main()
+        self.assertEqual(rc, 1)  # loud failure
+        # Aborted at the breaker, not after all 20 targets.
+        self.assertEqual(mock_save.call_count, R._MAX_CONSEC_UPLOAD_FAILS)
+
+    def test_successful_upload_resets_consecutive_failure_counter(self):
+        # A success between failures resets the breaker — a single flaky
+        # upload must not abort a healthy run.
+        from tools import refresh_y9c_mirror as R
+        records = [{"CERT": i, "RSSDHCR": str(1000 + i),
+                    "ASSET": 5_000_000} for i in range(6)]
+        good_pdf = b"%PDF-" + b"x" * R._MIN_PDF_BYTES
+        # fail, ok, fail, ok, fail, ok — never 3 in a row.
+        saves = [False, True, False, True, False, True]
+        with patch.object(R, "is_gcs_enabled", return_value=True), \
+             patch.object(R, "_latest_y9c_period", return_value="20260331"), \
+             patch.object(R, "_fetch_fdic_records", return_value=records), \
+             patch.object(R, "list_files", return_value=[]), \
+             patch.object(R, "_load_manifest", return_value={}), \
+             patch.object(R, "_curl_fetch", return_value=good_pdf), \
+             patch.object(R, "save_bytes", side_effect=saves), \
+             patch.object(R, "_save_manifest"), \
+             patch.object(R.time, "sleep"):
+            rc = R.main()
+        # All 6 attempted (no early abort); 3 upload failures → rc 1.
+        self.assertEqual(rc, 1)
+
 
 class TestRefreshToolValidation(unittest.TestCase):
     """tools/refresh_nic_bulk._validate — the gate that keeps a Cloudflare
