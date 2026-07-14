@@ -94,6 +94,20 @@ class TestRelExhibit(unittest.TestCase):
         from ui.earnings import _REL_METRICS
         self.assertEqual(len(rows), len(_REL_METRICS))
 
+    def test_release_history_wins_over_platform(self):
+        """Owner decision 2026-07-14: the bank's own comparative column is
+        the history when stated (same basis as current → true deltas);
+        platform data fills only the gaps."""
+        import ui.earnings as ue
+        orig = ue._platform_hist_val
+        ue._platform_hist_val = lambda tk, key, q: 9.99
+        try:
+            rows = {r["key"]: r for r in ue._rel_exhibit_rows(self.FIX)}
+            self.assertEqual(rows["nim"]["prior"], 3.94)   # release column wins
+            self.assertEqual(rows["roa"]["prior"], 9.99)   # gap → platform fills
+        finally:
+            ue._platform_hist_val = orig
+
     def test_detail_row_is_exhibit_table(self):
         html = _rel_detail_tr(self.FIX, ncols=14)
         for want in ("2Q25A", "1Q26A", "2Q26A", "Cons.", "LQ Δ", "Y/Y Δ",

@@ -1608,10 +1608,14 @@ def _platform_hist_val(ticker: str, key: str, qend_iso) -> float | None:
 def _rel_exhibit_rows(r: dict) -> list[dict]:
     """The exhibit table rows (broker-sheet layout): the SAME fixed metric
     list for every bank — no more per-bank row shapes. Current quarter = the
-    release's own numbers; 2Q25A/1Q26A = PLATFORM quarterly data (FDIC
-    bank-sub ratios / SEC per-share — the app's standard fundamentals) for
-    the basis-safe keys, release-extracted otherwise. Capital history stays
-    release-only: holdco vs bank-sub capital must never be mixed."""
+    release's own numbers; 2Q25A/1Q26A = the bank's OWN comparative columns
+    when the release/supplement states them (same reporting basis as the
+    current quarter, so the deltas are true — owner decision 2026-07-14:
+    JPM's FDIC bank-sub NIM history vs holdco current made the LQ delta
+    read -0.52 when the firm's own move was -0.10), with PLATFORM quarterly
+    data (FDIC bank-sub ratios / SEC per-share) filling only the gaps, for
+    the basis-safe keys. Capital history stays release-only: holdco vs
+    bank-sub capital must never be mixed."""
     rel = r.get("rel") or {}
     tk = r.get("ticker") or ""
     cur = {**(rel.get("metrics") or {}), **(rel.get("capital") or {})}
@@ -1622,12 +1626,12 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     rows = []
     for key, label, unit in _REL_METRICS:
         c = cur.get(key)
-        p = _platform_hist_val(tk, key, prior_q)
+        p = prior.get(key)
         if p is None:
-            p = prior.get(key)
-        y = _platform_hist_val(tk, key, yoy_q)
+            p = _platform_hist_val(tk, key, prior_q)
+        y = yoy.get(key)
         if y is None:
-            y = yoy.get(key)
+            y = _platform_hist_val(tk, key, yoy_q)
         rows.append({
             "key": key, "label": label, "unit": unit,
             "yoy": y, "prior": p, "cur": c, "cons": cons.get(key),
@@ -1665,8 +1669,9 @@ def _rel_exhibit_table(r: dict) -> str:
                  f'<td>{row["lq_html"]}</td>'
                  f'<td>{row["yy_html"]}</td>'
                  "</tr>")
-    notes = ["history: platform FDIC/SEC quarterly data (bank-sub ratio basis); "
-             "capital & non-standard rows as released"]
+    notes = ["history: the bank's own comparative columns where stated, else "
+             "platform FDIC/SEC quarterly data (bank-sub ratio basis); "
+             "capital as released"]
     if r.get("eps_act_src") or r.get("rev_act_src"):
         notes.append("* actuals from the release")
     src = rel.get("url")
