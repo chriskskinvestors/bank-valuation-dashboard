@@ -1123,6 +1123,72 @@ def securities_multiyear_for(cik, n_years: int = 5) -> dict | None:
     return {"meta": metas[0], "filings": used_filings, "securities": securities}
 
 
+def _multiquarter_stitch(cik, extract_cached, n_quarters: int):
+    """Quarter-end stitch shared by the securities / fair-value multiquarter
+    walkers: walk recent 10-K + 10-Q filings (each tags its own period end,
+    usually + one comparative), keep EVERY tagged period, newest filing wins a
+    shared period, cap to the newest n_quarters period-ends. Per-filing
+    extracts are the same accession-cached, reconcile-gated results the
+    annual stitchers use — a quarter a filer didn't tag simply isn't there
+    (n/a downstream, never interpolated)."""
+    if not cik:
+        return None
+    from data.sec_statements import _recent_filing_metas
+    metas = _recent_filing_metas(cik, ("10-K", "10-Q"), n_quarters + 2)
+    if not metas:
+        return None
+    by_period: dict = {}
+    used: list = []
+    for m in metas:                                   # newest-first
+        ext = extract_cached(m)
+        contributed = False
+        for period, entry in ext.items():
+            if period in by_period:                   # newer filing already supplied it
+                continue
+            by_period[period] = entry
+            contributed = True
+        if contributed:
+            used.append(m)
+    if not by_period:
+        return None
+    keep = sorted(by_period, reverse=True)[:n_quarters]
+    return {"meta": metas[0], "filings": used,
+            "periods": {p: by_period[p] for p in keep}}
+
+
+def securities_multiquarter_for(cik, n_quarters: int = 8) -> dict | None:
+    """Quarterly AFS/HTM bridge across the last ~8 quarter-ends, stitched from
+    10-Qs + 10-Ks. Same shape as securities_multiyear_for but keyed
+    "securities" over quarter-end periods."""
+    res = _multiquarter_stitch(cik, _securities_extract_cached, n_quarters)
+    if not res:
+        return None
+    return {"meta": res["meta"], "filings": res["filings"],
+            "securities": res["periods"]}
+
+
+def fair_value_multiquarter_for(cik, n_quarters: int = 8) -> dict | None:
+    """Quarterly recurring ASC 820 hierarchy across the last ~8 quarter-ends,
+    stitched from 10-Qs + 10-Ks. Applies the SAME per-period side gate as
+    fair_value_multiyear_for (keep only sides with a clean tagged level
+    total; drop a period with none — n/a, never a carried-forward guess)."""
+    def _gated(meta):
+        fv = _fair_value_extract_cached(meta)
+        out = {}
+        for period, sides in fv.items():
+            kept = {sk: sv for sk, sv in sides.items()
+                    if sv and sv.get("total") is not None}
+            if kept:
+                out[period] = kept
+        return out
+
+    res = _multiquarter_stitch(cik, _gated, n_quarters)
+    if not res:
+        return None
+    return {"meta": res["meta"], "filings": res["filings"],
+            "fair_value": res["periods"]}
+
+
 # ── Credit quality / allowance (ACL) ─────────────────────────────────────────
 # The CECL allowance and asset-quality figures the loan footnote tags
 # undimensioned: allowance for credit losses on loans, gross/net loans, nonaccrual

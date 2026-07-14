@@ -2591,6 +2591,7 @@ _CR_FV_SIDES = [("assets", "Assets at fair value"),
                 ("liabilities", "Liabilities at fair value")]
 
 
+@st.fragment
 def _render_fair_value_hierarchy(ticker):
     """Multi-year (up to 5 FY) recurring ASC 820 fair-value hierarchy (Level 1/2/3)
     for the HOLDING COMPANY, stitched FY-end-only from its own recent 10-Ks
@@ -2605,22 +2606,30 @@ def _render_fair_value_hierarchy(ticker):
     cik = info.get("cik") if info else None
     if not cik:
         return
-    try:
-        from data.sec_filing_scraper import fair_value_multiyear_for
-        res = fair_value_multiyear_for(cik, n_years=5)
-    except Exception:
-        res = None
     st.markdown("---")
     st.subheader("Fair Value Hierarchy — recurring (ASC 820)")
+    quarterly = st.radio(
+        "Period", ["Annual", "Quarterly"], horizontal=True,
+        key=f"crfv_period_{ticker}", label_visibility="collapsed") == "Quarterly"
+    try:
+        if quarterly:
+            from data.sec_filing_scraper import fair_value_multiquarter_for
+            res = fair_value_multiquarter_for(cik, n_quarters=8)
+        else:
+            from data.sec_filing_scraper import fair_value_multiyear_for
+            res = fair_value_multiyear_for(cik, n_years=5)
+    except Exception:
+        res = None
     if not res or not res.get("fair_value"):
-        st.caption("Fair-value hierarchy rollup not tagged in this filer's 10-Ks — "
-                   "n/a. (Per-instrument component extraction is planned.)")
+        st.caption("Fair-value hierarchy rollup not tagged in this filer's "
+                   f"{'10-Qs/10-Ks' if quarterly else '10-Ks'} — n/a. "
+                   "(Per-instrument component extraction is planned.)")
         return
     meta, fv = res["meta"], res["fair_value"]
-    periods = sorted(fv, reverse=True)[::-1]            # oldest → newest (FY-ends)
+    periods = sorted(fv, reverse=True)[::-1]            # oldest → newest
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
            f"{meta['accession']}/{meta['doc']}")
-    cols = [f"FY{p[:4]}" for p in periods]
+    cols = [_cr_plabel(p, quarterly) for p in periods]
 
     def _cell(period, side, key, fmt):
         """Formatted cell, or None (blank) when the year doesn't disclose it."""
@@ -2660,11 +2669,15 @@ def _render_fair_value_hierarchy(ticker):
                    "n/a. (Per-instrument component extraction is planned.)")
         return
 
+    _span = (f"{len(periods)} quarter-end{'s' if len(periods) != 1 else ''}"
+             if quarterly else
+             f"{len(periods)} fiscal year-end{'s' if len(periods) != 1 else ''}")
+    _forms = "10-Q/10-K" if quarterly else "10-K"
     st.caption(
-        f"Source: company 10-K filings — latest [{meta['date']}]({src}); "
-        f"{len(periods)} fiscal year-end{'s' if len(periods) != 1 else ''} stitched "
-        f"from {len(res['filings'])} filings. Level 3 = mark-to-model (unobservable "
-        "inputs); the total is the sum of tagged levels. Company-reported, never FDIC.")
+        f"Source: company {_forms} filings — latest [{meta['date']}]({src}); "
+        f"{_span} stitched from {len(res['filings'])} filings. Level 3 = "
+        "mark-to-model (unobservable inputs); the total is the sum of tagged "
+        "levels. Company-reported, never FDIC.")
 
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
@@ -2675,10 +2688,22 @@ def _render_fair_value_hierarchy(ticker):
                        "total nets counterparty/collateral arrangements, the netting "
                        "is shown as a reconciling line (blank where it doesn't apply).")
     with _rt:
-        _cr_fair_value_trends(periods, fv, ticker, "crfv")
+        _cr_fair_value_trends(periods, fv, ticker, "crfv", quarterly=quarterly)
 
 
-def _cr_fair_value_trends(periods, fv, ticker, key_prefix):
+def _cr_plabel(period: str, quarterly: bool = False) -> str:
+    """Column label for a Company-Reported period end ("YYYY-MM-DD"):
+    FY2025 in annual views; Q4 '25 in quarterly views."""
+    if not quarterly:
+        return f"FY{period[:4]}"
+    try:
+        q = (int(period[5:7]) - 1) // 3 + 1
+    except (ValueError, TypeError):
+        return period
+    return f"Q{q} '{period[2:4]}"
+
+
+def _cr_fair_value_trends(periods, fv, ticker, key_prefix, quarterly=False):
     """Right-hand trend charts for multi-year Company-Reported Fair Value: Level 3
     as % of total, one single-line chart per side (Assets, Liabilities). Same style
     as _cr_securities_trends; a side n/a for every year is skipped; ≥3 points to
@@ -2686,7 +2711,7 @@ def _cr_fair_value_trends(periods, fv, ticker, key_prefix):
     import plotly.graph_objects as go
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
                                    CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
-    xs = [f"FY{p[:4]}" for p in periods]               # already oldest → newest
+    xs = [_cr_plabel(p, quarterly) for p in periods]   # already oldest → newest
     charts = []
     for title, side in (("Level 3 % of assets at fair value", "assets"),
                         ("Level 3 % of liabilities at fair value", "liabilities")):
@@ -2735,6 +2760,7 @@ _CR_SECURITIES_SECTIONS = [
 ]
 
 
+@st.fragment
 def _render_securities_portfolio(ticker):
     """Multi-year (up to 5 FY) Company-Reported AFS / HTM debt-securities
     amortized-cost → fair-value bridge, stitched FY-end-only from the HOLDING
@@ -2749,22 +2775,29 @@ def _render_securities_portfolio(ticker):
     cik = info.get("cik") if info else None
     if not cik:
         return
-    try:
-        from data.sec_filing_scraper import securities_multiyear_for
-        res = securities_multiyear_for(cik, n_years=5)
-    except Exception:
-        res = None
     st.markdown("---")
     st.subheader("Investment Securities — AFS / HTM (Company Reported)")
+    quarterly = st.radio(
+        "Period", ["Annual", "Quarterly"], horizontal=True,
+        key=f"crsec_period_{ticker}", label_visibility="collapsed") == "Quarterly"
+    try:
+        if quarterly:
+            from data.sec_filing_scraper import securities_multiquarter_for
+            res = securities_multiquarter_for(cik, n_quarters=8)
+        else:
+            from data.sec_filing_scraper import securities_multiyear_for
+            res = securities_multiyear_for(cik, n_years=5)
+    except Exception:
+        res = None
     if not res or not res.get("securities"):
         st.caption("AFS/HTM amortized-cost → fair-value bridge not tagged in this "
-                   "filer's 10-Ks — n/a.")
+                   f"filer's {'10-Qs/10-Ks' if quarterly else '10-Ks'} — n/a.")
         return
     meta, sec = res["meta"], res["securities"]
-    periods = sorted(sec, reverse=True)[::-1]          # oldest → newest (FY-ends)
+    periods = sorted(sec, reverse=True)[::-1]          # oldest → newest
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
            f"{meta['accession']}/{meta['doc']}")
-    cols = [f"FY{p[:4]}" for p in periods]
+    cols = [_cr_plabel(p, quarterly) for p in periods]
 
     def _cell(period, port, key, fmt):
         """Formatted cell, or None (blank) when the year doesn't disclose it."""
@@ -2800,11 +2833,13 @@ def _render_securities_portfolio(ticker):
                    "filer's 10-Ks — n/a.")
         return
 
+    _span = (f"{len(periods)} quarter-ends" if quarterly
+             else f"{len(periods)} fiscal year-ends")
     st.caption(
-        f"Source: company 10-K filings — latest [{meta['date']}]({src}); "
-        f"{len(periods)} fiscal year-ends stitched from {len(res['filings'])} filings. "
-        "Net unrealized = fair value − amortized cost; HTM losses are NOT reflected "
-        "on the balance sheet or in AOCI. Company-reported, never FDIC.")
+        f"Source: company {'10-Q/10-K' if quarterly else '10-K'} filings — latest "
+        f"[{meta['date']}]({src}); {_span} stitched from {len(res['filings'])} "
+        "filings. Net unrealized = fair value − amortized cost; HTM losses are NOT "
+        "reflected on the balance sheet or in AOCI. Company-reported, never FDIC.")
 
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
@@ -2815,10 +2850,10 @@ def _render_securities_portfolio(ticker):
                        "tying the amortized-cost → fair-value bridge; otherwise blank "
                        "(the net is the directly tagged fair value − amortized cost).")
     with _rt:
-        _cr_securities_trends(periods, sec, ticker, "crsec")
+        _cr_securities_trends(periods, sec, ticker, "crsec", quarterly=quarterly)
 
 
-def _cr_securities_trends(periods, sec, ticker, key_prefix):
+def _cr_securities_trends(periods, sec, ticker, key_prefix, quarterly=False):
     """Right-hand trend charts for multi-year Company-Reported Securities: net
     unrealized as % of amortized cost (the underwater %), one single-line chart per
     portfolio (AFS, HTM). Same plotting style as _cr_credit_trends; a portfolio
@@ -2826,7 +2861,7 @@ def _cr_securities_trends(periods, sec, ticker, key_prefix):
     import plotly.graph_objects as go
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
                                    CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
-    xs = [f"FY{p[:4]}" for p in periods]               # already oldest → newest
+    xs = [_cr_plabel(p, quarterly) for p in periods]   # already oldest → newest
     charts = []
     for title, port in (("AFS net unrealized, % of amortized cost", "afs"),
                         ("HTM net unrealized, % of amortized cost", "htm")):

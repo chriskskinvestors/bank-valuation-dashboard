@@ -885,20 +885,27 @@ def _period_year(p: str) -> int:
     return int(m.group()) if m else 0
 
 
-def _recent_10k_metas(cik, n: int) -> list:
-    """Up to n most-recent 10-K filings {accession, doc, date, cik}, newest first."""
+def _recent_filing_metas(cik, forms: tuple, n: int) -> list:
+    """Up to n most-recent filings among `forms` {accession, doc, date, form,
+    cik}, newest first (submissions recent list is reverse-chronological)."""
     cik10 = str(int(cik)).zfill(10)
     data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
     rec = data.get("filings", {}).get("recent", {})
     out = []
     for i, form in enumerate(rec.get("form", [])):
-        if form == "10-K":
+        if form in forms:
             out.append({"accession": rec["accessionNumber"][i].replace("-", ""),
                         "doc": rec["primaryDocument"][i],
-                        "date": rec["filingDate"][i], "cik": int(cik)})
+                        "date": rec["filingDate"][i], "form": form,
+                        "cik": int(cik)})
             if len(out) >= n:
                 break
     return out
+
+
+def _recent_10k_metas(cik, n: int) -> list:
+    """Up to n most-recent 10-K filings {accession, doc, date, cik}, newest first."""
+    return _recent_filing_metas(cik, ("10-K",), n)
 
 
 def _norm_label(s: str) -> str:
