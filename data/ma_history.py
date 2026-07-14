@@ -43,7 +43,7 @@ alive), value and target assets at announce (live-verified: FHB/TriCo
 Completed rows carry status='completed'. FDIC history itself is
 completions only (EFFDATE).
 
-Cache: ``ma_history:v7:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
+Cache: ``ma_history:v8:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
 the key is versioned so a deal-schema change never serves stale rows. Any
 fetch failure — history pages, a target-assets lookup, or an announcement
 fetch — skips the cache put so a transient outage is never frozen as a
@@ -205,7 +205,8 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
     return deals
 
 
-def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
+def get_ma_history(cert: int, cik: int | None = None,
+                   name: str | None = None) -> list[dict]:
     """
     All completed structure deals for an FDIC cert, newest-first.
 
@@ -237,9 +238,9 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
     cert = int(cert)
     from data import cache
 
-    # v7: pending deals (2026-07-14). The key carries the
+    # v8: cash-deal pending leg (2026-07-14). The key carries the
     # holdco CIK because the terminated leg only runs when one is supplied.
-    key = f"ma_history:v7:{cert}:{int(cik) if cik else 0}"
+    key = f"ma_history:v8:{cert}:{int(cik) if cik else 0}"
     cached = cache.get(key)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
@@ -258,11 +259,14 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
 
     deals: list[dict] = []
     cache_ok = True
+    # Deal-time name from the structure rows; the caller's display name is
+    # the fallback for banks with NO structure rows (a young bank's first
+    # deal — the pending legs still need to know who "self" is).
     subject_name = next(
         (d.get("ACQ_INSTNAME") or d.get("INSTNAME")
          for d in structure
          if to_cert(d.get("ACQ_CERT")) == cert or to_cert(d.get("CERT")) == cert),
-        "") or ""
+        "") or (name or "")
 
     # Whole-company deals, both directions, from institution-level events.
     # Announcement enrichment (announce date + stated value via EDGAR

@@ -165,6 +165,30 @@ class TestHelpers(unittest.TestCase):
             "valued at approximately $191.1 million ... again valued at "
             "approximately $191.1 million"), 191_100_000)
 
+    def test_stated_value_trailing_aggregate_form(self):
+        # "or $41.1 million in aggregate, subject to adjustment" — the
+        # Catalyst/Lakeside all-cash phrasing (live-verified 2026-04-08).
+        from data.ma_announcements import extract_stated_value
+        self.assertEqual(extract_stated_value(
+            "$25.58 per share in cash, or $41.1 million in aggregate, "
+            "subject to adjustment under certain circumstances"),
+            41_100_000)
+
+    def test_ratio_bare_and_comma_tolerant_forms(self):
+        # FHB/TriCo phrasings (live-verified 2026-07-14): the bare form and
+        # a comma inside the company phrase ("First Hawaiian, Inc.").
+        from data.ma_announcements import extract_exchange_ratio
+        r = extract_exchange_ratio(
+            "TriCo's shareholders will receive 2.095 First Hawaiian shares "
+            "for each TriCo share, representing $63.12 per share")
+        self.assertEqual(r[0], 2.095)
+        self.assertIn("First Hawaiian", r[1])
+        self.assertIn("TriCo", r[2])
+        r = extract_exchange_ratio(
+            "receive 2.095 shares of First Hawaiian, Inc. common stock for "
+            "each TriCo share")
+        self.assertEqual(r[0], 2.095)
+
 
 class TestComputedStockValue(unittest.TestCase):
 
@@ -568,6 +592,91 @@ class TestFindTerminatedDeals(unittest.TestCase):
     def test_no_cik_returns_empty(self):
         from data.ma_announcements import find_terminated_deals
         self.assertEqual(find_terminated_deals(None, "X"), ([], True))
+
+
+# CLST/Lakeside-style pure-cash announcement (live-verified 2026-04-08): a
+# PRIVATE target (no ticker pair for it), the filer's own "(Nasdaq: CLST)"
+# boilerplate as the ONLY ticker pair, headline full name vs body short name.
+CASH_PR = (
+    "Catalyst Bancorp, Inc. Announces Agreement to Acquire Lakeside "
+    "Bancshares, Inc. Catalyst has entered into a definitive agreement "
+    "under which Catalyst will acquire Lakeside Bancshares, Inc. and its "
+    "wholly-owned subsidiary Lakeside Bank. The acquisition of Lakeside "
+    "in an all-cash transaction is valued at $41.1 million in aggregate. "
+    "About Catalyst Bancorp, Inc. Catalyst Bancorp, Inc. (Nasdaq: CLST) "
+    "is the parent company of Catalyst Bank.")
+
+CASH_SALE_PR = (
+    "Big Buyer Bancorp (NYSE: BBB) and Catalyst Bancorp, Inc. (Nasdaq: "
+    "CLST) today announced a definitive agreement under which Big Buyer "
+    "will acquire Catalyst Bancorp, Inc. in an all-cash transaction valued "
+    "at $41.1 million in aggregate. Big Buyer expects the deal to close in "
+    "2027.")
+
+
+class TestFindOpenAnnouncements(unittest.TestCase):
+    """The cash-deal pending leg — pins the live self-as-counterparty bug
+    (2026-07-14): with an EMPTY subject_name (a bank with no FDIC structure
+    rows derives none) the filer's own '(Nasdaq: CLST)' pair leaked through
+    a brand-token-equality check — 'About Catalyst Bancorp, Inc.' tokens to
+    'about', not 'catalyst'. Self-exclusion must be word-boundary
+    containment over the filer's OWN EFTS display names."""
+
+    def _run(self, pr_text, subject_name=""):
+        import datetime as _dt
+
+        class _FakeDate(_dt.date):
+            @classmethod
+            def today(cls):
+                return _dt.date.fromisoformat("2026-07-14")
+
+        hits = [_hit("0001-26-5", "2026-04-08", "clst8k.htm",
+                     file_type="8-K", cik="0001849867",
+                     items=["1.01", "7.01", "9.01"],
+                     display_names=["Catalyst Bancorp, Inc.  (CLST)  "
+                                    "(CIK 0001849867)"])]
+        with patch("data.ma_announcements.requests.get",
+                   return_value=_efts_resp(hits)), \
+             patch("data.ma_announcements._accession_text",
+                   return_value=(pr_text, True)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None), \
+             patch("data.ma_announcements.date", _FakeDate):
+            from data.ma_announcements import find_open_announcements
+            return find_open_announcements(1849867, subject_name)
+
+    def test_private_target_full_name_never_self(self):
+        # Empty subject_name = the live trigger. Counterparty must be the
+        # LONGEST acquire-object capture (headline full name), never the
+        # filer's own boilerplate pair.
+        rows, ok = self._run(CASH_PR, subject_name="")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["counterparty_name"], "Lakeside Bancshares, Inc")
+        self.assertNotIn("atalyst", r["counterparty_name"])
+        self.assertEqual(r["direction"], "acquisition")
+        self.assertEqual(r["announce_date"], "2026-04-08")
+        self.assertEqual(r["value_usd"], 41_100_000)
+        self.assertEqual(r["value_basis"], "stated")
+
+    def test_with_subject_name_same_result(self):
+        rows, ok = self._run(CASH_PR, subject_name="Catalyst Bank")
+        self.assertTrue(ok)
+        self.assertEqual([r["counterparty_name"] for r in rows],
+                         ["Lakeside Bancshares, Inc"])
+
+    def test_self_as_acquire_object_is_sale(self):
+        # We are the target: buyer's ticker pair is the counterparty and
+        # the direction flips to sale — via display-name identity alone.
+        rows, ok = self._run(CASH_SALE_PR, subject_name="")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["counterparty_name"], "Big Buyer Bancorp")
+        self.assertEqual(rows[0]["direction"], "sale")
+
+    def test_no_cik_returns_empty(self):
+        from data.ma_announcements import find_open_announcements
+        self.assertEqual(find_open_announcements(None, "X"), ([], True))
 
 
 if __name__ == "__main__":

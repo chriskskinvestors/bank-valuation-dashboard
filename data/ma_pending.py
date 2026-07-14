@@ -9,19 +9,19 @@ DETECTION is form-driven, not text-driven: Rule 425 filings (prospectus
 communications for a live stock business combination) appear in the
 filer's own submissions history the day a stock deal is announced and
 keep coming while it is pending. The latest 425 "episode" (trailing
-cluster, gaps ≤ 180 days) younger than 540 days = a live deal. Cash
-deals file no 425 — a documented coverage gap (bank M&A is
-overwhelmingly stock consideration).
+cluster, gaps ≤ 180 days) younger than 540 days = a live deal.
 
 DETAILS come from the episode's first 425s plus same-window announcement
 8-Ks: the 425 legend's "Subject Company:" line names the deal's TARGET
 authoritatively (subject == self -> this bank is being acquired), the
-press release supplies the stated value or the exchange ratio. The local
-ratio patterns tolerate commas inside company phrases ("First Hawaiian,
-Inc.") and the "2.095 First Hawaiian shares for each TriCo share" form —
-both live-verified on FHB/TriCo; they belong upstream in
-data/ma_announcements once that file is free (a concurrent session is
-editing it — do NOT duplicate further, merge later).
+press release supplies the stated value or the exchange ratio (shared
+extractor in data/ma_announcements — comma-tolerant, FHB-form aware).
+
+CASH deals file no 425 — those come from ma_announcements.
+find_open_announcements (recent announcement-classified 8-Ks with no
+completion/termination anchor; live case: Catalyst/Lakeside all-cash,
+announced 2026-04-08, $41.1M stated). When both legs surface the same
+deal (mixed stock-and-cash), the 425 row wins (richer party data).
 
 Counterparties are matched to the live universe by brand token (a pending
 deal's counterparty is by definition still alive), giving cert + CIK —
@@ -43,7 +43,9 @@ from data.ma_announcements import (
     _close_before,
     _shares_outstanding_asof,
     brand_token,
+    extract_exchange_ratio,
     extract_stated_value,
+    find_open_announcements,
     token_in,
 )
 from data.ma_summary import iter_submission_filings
@@ -58,32 +60,9 @@ _ANNOUNCE_8K_ITEMS = {"1.01", "7.01", "8.01"}
 _SUBJECT_RE = re.compile(
     r"Subject\s+Compan(?:y|ies)\s*:?\s*(.{3,80}?)\s*(?:Commission\s+File|"
     r"\(Commission|Registration\s+No)", re.IGNORECASE)
-# Ratio forms, comma-tolerant side phrases:
-#   "receive 2.095 First Hawaiian shares for each TriCo share"
-#   "receive 0.5958 of a share of Columbia stock for each Umpqua share"
-_RATIO_FORMS = [
-    re.compile(r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+"
-               r"([A-Z][\w.,&'\- ]{1,60}?)\s+shares?\s+for\s+each\s+"
-               r"([A-Z][\w.,&'\- ]{1,60}?)\s+shares?", re.IGNORECASE),
-    re.compile(r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|"
-               r"shares?)\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?"
-               r"stock\s+for\s+each(?:\s+share\s+of)?\s+"
-               r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+stock|shares?|stock)",
-               re.IGNORECASE),
-]
-
-
-def _extract_ratio(text: str):
-    """(ratio, acquirer-side phrase, target-side phrase) or None; several
-    DISTINCT ratios -> None (collars, never a guess)."""
-    found = []
-    for pat in _RATIO_FORMS:
-        for m in pat.finditer(text):
-            found.append((float(m.group(1)), m.group(2).strip(),
-                          m.group(3).strip()))
-    if not found or len({r for r, _, _ in found}) != 1:
-        return None
-    return found[0]
+# Ratio extraction lives upstream in ma_announcements.extract_exchange_ratio
+# (comma-tolerant + the bare "2.095 First Hawaiian shares for each TriCo
+# share" form — upstreamed 2026-07-14, closing the merge-later note).
 
 
 def _universe_match(name: str):
@@ -113,9 +92,9 @@ def _universe_match(name: str):
     return t, cert, cik
 
 
-def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
+def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
     """
-    Live announced deals for a holdco CIK (usually 0 or 1), or ([], ok).
+    Live 425-episode (stock) deals for a holdco CIK (usually 0 or 1).
 
     Rows: {announce_date, direction 'acquisition' | 'sale',
            counterparty_name, counterparty_ticker | None,
@@ -210,7 +189,7 @@ def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
     basis = "stated" if value else None
     note = None
     tgt_cik = None
-    ratio_hit = _extract_ratio(corpus)
+    ratio_hit = extract_exchange_ratio(corpus)
     if ratio_hit:
         ratio, acq_side, tgt_side = ratio_hit
         # The ratio's per-share (target) side owns the deal value.
@@ -237,6 +216,38 @@ def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
            "value_usd": value, "value_basis": basis, "value_note": note,
            "target_cik": tgt_cik, "announce_url": url}
     return [row], not fetch_failed
+
+
+def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
+    """
+    All live announced deals for a holdco CIK: 425-episode (stock) rows
+    plus cash-deal rows from find_open_announcements, deduped by
+    counterparty brand token — the 425 row wins (richer party data).
+    Same row schema as _find_pending_425; ok=False on any fetch failure.
+    """
+    rows_425, ok1 = _find_pending_425(cik, subject_name)
+    cash, ok2 = find_open_announcements(cik, subject_name)
+    seen = {brand_token(r["counterparty_name"] or "") for r in rows_425}
+    out = list(rows_425)
+    for c in cash:
+        tok = brand_token(c["counterparty_name"] or "")
+        if tok and tok in seen:
+            continue
+        seen.add(tok)
+        cp_tick, cp_cert, cp_cik = _universe_match(c["counterparty_name"])
+        out.append({"announce_date": c["announce_date"],
+                    "direction": c["direction"],
+                    "counterparty_name": c["counterparty_name"],
+                    "counterparty_ticker": cp_tick,
+                    "counterparty_cert": cp_cert,
+                    "counterparty_cik": cp_cik,
+                    "value_usd": c["value_usd"],
+                    "value_basis": c["value_basis"],
+                    "value_note": c["value_note"],
+                    "target_cik": c["target_cik"] or cp_cik
+                    if c["direction"] == "sale" else c["target_cik"],
+                    "announce_url": c["announce_url"]})
+    return out, ok1 and ok2
 
 
 if __name__ == "__main__":

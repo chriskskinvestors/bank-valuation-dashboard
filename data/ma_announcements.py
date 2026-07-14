@@ -159,18 +159,24 @@ def _strip_html(raw: str) -> str:
 
 # ── Computed all-stock value (ratio × acquirer price × target shares) ─────
 
-# "receive 0.5958 of a share of Columbia stock for each Umpqua share"
+# Ratio forms — side phrases are COMMA-TOLERANT ("First Hawaiian, Inc.")
+# and the bare form "2.095 First Hawaiian shares for each TriCo share" is
+# covered (both live-verified on FHB/TriCo 2026-07-14; upstreamed from
+# data/ma_pending).
 _RATIO_RECEIVE_RE = re.compile(
-    r"receive\s+(\d?\.\d{2,4})\s+(?:of\s+a\s+share|shares?)\s+of\s+"
-    r"([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+)?stock\s+for\s+each(?:\s+share\s+"
-    r"of)?\s+([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+stock|shares?|stock)")
+    r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)\s+of\s+"
+    r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+for\s+each(?:\s+share\s+"
+    r"of)?\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+stock|shares?|stock)")
+_RATIO_BARE_RE = re.compile(
+    r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+([A-Z][\w.,&'\- ]{1,60}?)\s+"
+    r"shares?\s+for\s+each\s+([A-Z][\w.,&'\- ]{1,60}?)\s+shares?")
 # "each share of Umpqua common stock will be converted into ... 0.5958
 #  shares of Columbia common stock"
 _RATIO_CONVERT_RE = re.compile(
-    r"each\s+share\s+of\s+([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+)?stock\s+"
+    r"each\s+share\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+"
     r"(?:will\s+be|shall\s+be|is)\s+converted\s+into\s+(?:the\s+right\s+to\s+"
-    r"receive\s+)?(\d?\.\d{2,4})\s+(?:of\s+a\s+share|shares?)\s+of\s+"
-    r"([A-Z][\w.&'\- ]{1,50}?)\s+(?:common\s+)?stock")
+    r"receive\s+)?(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)\s+of\s+"
+    r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock")
 # "Columbia Banking System, Inc. (NASDAQ: COLB)" -> name/ticker pairs
 _PR_TICKER_RE = re.compile(
     r"([A-Z][\w.,&'\- ]{2,60}?)\s*\(\s*(?:[A-Z]{2,8}\s+and\s+)?"
@@ -190,6 +196,8 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
     exchange-ratio sentence, or None. Several DISTINCT ratios -> None."""
     found = []
     for m in _RATIO_RECEIVE_RE.finditer(text):
+        found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
+    for m in _RATIO_BARE_RE.finditer(text):
         found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
     for m in _RATIO_CONVERT_RE.finditer(text):
         found.append((float(m.group(2)), m.group(3).strip(), m.group(1).strip()))
@@ -363,11 +371,18 @@ def _name_ciks(hits: list[dict]) -> list[tuple[str, int]]:
     return [(n, c) for c, n in out.items()]
 
 
+# Trailing form: "$41.1 million in aggregate[, subject to adjustment]"
+# (live-verified: Catalyst/Lakeside all-cash PR, 2026-04-08).
+_VALUE_TRAIL_RE = re.compile(
+    r"\$\s?([\d][\d,]*(?:\.\d+)?)\s*(million|billion)\s+in\s+"
+    r"(?:the\s+)?aggregate", re.IGNORECASE)
+
+
 def extract_stated_value(text: str) -> int | None:
     """Deal value in RAW DOLLARS from strict stated-value phrasings, or None.
     Distinct candidate amounts -> None (ambiguous, never a guess)."""
     vals = set()
-    for num, unit in _VALUE_RE.findall(text):
+    for num, unit in _VALUE_RE.findall(text) + _VALUE_TRAIL_RE.findall(text):
         try:
             v = float(num.replace(",", ""))
         except ValueError:
@@ -526,6 +541,166 @@ def resolve_announcement(target_name: str, acquirer_name: str,
 
 _MERGER_PHRASE = '"Agreement and Plan of Merger"'
 _TERM_TEXT_RE = re.compile(r"\bterminat(?:e|ed|ion|ing)\b", re.IGNORECASE)
+
+
+def _split_merger_groups(hits: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Group a per-filer merger-phrase EFTS result by accession and split:
+    1.02 groups = termination candidates; announce-item groups (1.01/7.01/
+    8.01 — FHN/TD was Reg-FD-only, live-verified) = announcements.
+    (_candidates isn't reusable here — it drops 1.02-only groups by design.)
+    Terminations newest-first, announcements oldest-first."""
+    terminations, announcements = [], []
+    by_adsh: dict[str, dict] = {}
+    for h in hits:
+        src = h.get("_source", {})
+        adsh = src.get("adsh") or (h.get("_id", "").split(":")[0])
+        if not adsh or not src.get("file_date"):
+            continue
+        items = {str(i) for i in (src.get("items") or [])}
+        is_ex99 = str(src.get("file_type") or "").upper().startswith("EX-99")
+        cur = by_adsh.setdefault(adsh, {
+            "adsh": adsh, "doc": h.get("_id", "").split(":")[-1],
+            "file_date": src.get("file_date"),
+            "cik": (src.get("ciks") or [None])[0],
+            "items": set(), "is_ex99": is_ex99})
+        cur["items"] |= items
+        if is_ex99 and not cur["is_ex99"]:
+            cur.update(doc=h.get("_id", "").split(":")[-1], is_ex99=True)
+    for g in by_adsh.values():
+        if "1.02" in g["items"]:
+            terminations.append(g)
+        elif g["items"] & _ANNOUNCE_ITEMS:
+            announcements.append(g)
+    terminations.sort(key=lambda g: g["file_date"], reverse=True)
+    announcements.sort(key=lambda g: g["file_date"])
+    return terminations, announcements
+
+
+# Private-counterparty extraction for CASH deals (no ticker parens on a
+# private target): the acquire-verb object, e.g. "Agreement to Acquire
+# Lakeside Bancshares, Inc." (live-verified CLST PR, 2026-04-08).
+_ACQUIRE_OBJ_RE = re.compile(
+    r"(?:agreement\s+to\s+acquire|will\s+acquire|to\s+acquire|"
+    r"acquisition\s+of|acquire\s+100%\s+of\s+the\s+stock\s+of)\s+"
+    r"([A-Z][\w.,&'\- ]{2,60}?)(?:\s*\(|\s+in\s+an?\s|,\s+the\s|\.\s|\s+and\s)")
+
+
+def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
+    """
+    Recent announcement 8-Ks with NO completion/termination anchor yet —
+    the CASH-deal pending leg (stock deals are caught by data/ma_pending's
+    Rule 425 episodes; a pure-cash deal files no 425 at all).
+
+    Returns ([{announce_date, direction, counterparty_name, value_usd,
+    value_basis, value_note, target_cik, announce_url, accession}], ok).
+    Strict: no counterparty extractable -> no row, never a guess. The
+    caller (ma_pending/ma_history) dedupes against 425-leg, completed and
+    terminated rows by counterparty brand token.
+    """
+    if not cik:
+        return [], True
+    cik10 = f"{int(cik):010d}"
+    subj_tok = brand_token(subject_name or "")
+    try:
+        resp = requests.get(EDGAR_FTS, params={
+            "q": _MERGER_PHRASE, "forms": "8-K", "ciks": cik10,
+            "dateRange": "custom", "startdt": _EFTS_FLOOR,
+            "enddt": date.today().isoformat(),
+        }, headers=_headers(), timeout=30)
+        resp.raise_for_status()
+        hits = resp.json().get("hits", {}).get("hits", [])
+    except Exception as e:
+        print(f"[ma_announce] open sweep cik {cik10}: {type(e).__name__}: {e}")
+        return [], False
+
+    _terms, announcements = _split_merger_groups(hits)
+    floor = (date.today() - timedelta(days=_WINDOW_DAYS)).isoformat()
+    recent = [a for a in announcements if a["file_date"] >= floor]
+
+    # SELF tokens: the caller-supplied name may be empty (a bank with no
+    # FDIC structure rows derives none) — the filer's own display names in
+    # the EFTS hits always identify self (live bug: Catalyst picked ITSELF
+    # as counterparty when subject_name came through empty).
+    self_toks = {subj_tok} if subj_tok else set()
+    for h in hits:
+        for dn in (h.get("_source", {}).get("display_names") or []):
+            m = _DISPLAY_CIK_RE.match((dn or "").strip())
+            if m and int(m.group(2)) == int(cik):
+                t = brand_token(m.group(1))
+                if t:
+                    self_toks.add(t)
+
+    rows, fetch_failed, seen_toks = [], False, set()
+    for ann in sorted(recent, key=lambda g: g["file_date"], reverse=True)[:3]:
+        time.sleep(_PAUSE_S)
+        text, t_ok = _accession_text(ann["cik"], ann["adsh"], ann["doc"])
+        fetch_failed = fetch_failed or not t_ok
+        if not text:
+            continue
+        if _COMPLETED_RE.search(text) or not _ANNOUNCE_RE.search(text):
+            continue
+        # Counterparty: a non-self ticker pair, else the acquire-verb object
+        # (private target) that recurs in the text.
+        direction = "acquisition"
+        counterparty = None
+
+        def _is_self(name: str) -> bool:
+            # Word-boundary containment, NOT brand-token equality: a messy
+            # capture like "About Catalyst Bancorp, Inc." brand-tokens to
+            # "about" yet is plainly self.
+            low = name.lower()
+            return any(token_in(t, low) for t in self_toks)
+
+        pairs = [(n, t) for n, t in _pr_ticker_pairs(text) if not _is_self(n)]
+        if pairs:
+            counterparty = pairs[0][0]
+        else:
+            # Longest acquire-object capture per brand token — the headline
+            # carries the full name ("Lakeside Bancshares, Inc."), the body
+            # the short one ("Lakeside"); take the fullest.
+            cands = {}
+            for m in _ACQUIRE_OBJ_RE.finditer(text):
+                cand = " ".join(m.group(1).split()).strip(" .,")
+                t = brand_token(cand)
+                if t and not _is_self(cand) and len(re.findall(
+                        "\\b" + re.escape(t) + "\\b", text.lower())) >= 2:
+                    if len(cand) > len(cands.get(t, "")):
+                        cands[t] = cand
+            if len(cands) == 1:
+                counterparty = next(iter(cands.values()))
+        if not counterparty:
+            continue
+        ct = brand_token(counterparty)
+        if not ct or ct in seen_toks or _is_self(counterparty):
+            continue
+        # Self as the acquire object -> we are the target (seller side).
+        for m in _ACQUIRE_OBJ_RE.finditer(text):
+            if _is_self(m.group(1)):
+                direction = "sale"
+                break
+        seen_toks.add(ct)
+        value = extract_stated_value(text)
+        basis = "stated" if value else None
+        note = None
+        tgt_cik = None
+        if value is None:
+            comp, c_ok = compute_stock_value(text, ann["file_date"], {}, [])
+            fetch_failed = fetch_failed or not c_ok
+            if comp:
+                value, basis = comp["value_usd"], "computed"
+                note = comp["value_note"]
+        rows.append({
+            "announce_date": ann["file_date"],
+            "direction": direction,
+            "counterparty_name": counterparty,
+            "value_usd": value, "value_basis": basis, "value_note": note,
+            "target_cik": tgt_cik,
+            "announce_url": (f"https://www.sec.gov/Archives/edgar/data/"
+                             f"{int(ann['cik'])}/{ann['adsh'].replace('-', '')}/"
+                             f"{ann['doc']}"),
+            "accession": ann["adsh"],
+        })
+    return rows, not fetch_failed
 _EX99_NAME_RE = re.compile(r"ex[-_.]?99|press", re.IGNORECASE)
 
 
@@ -590,35 +765,7 @@ def find_terminated_deals(subject_cik, subject_name: str) -> tuple[list[dict], b
         print(f"[ma_announce] term sweep cik {cik10}: {type(e).__name__}: {e}")
         return [], False
 
-    # Split the filer's merger-agreement 8-Ks: 1.02 groups = termination
-    # candidates; 1.01/8.01 groups = announcements (back-link targets).
-    # (_candidates isn't reusable here — it drops 1.02-only groups by design.)
-    terminations, announcements = [], []
-    by_adsh: dict[str, dict] = {}
-    for h in hits:
-        src = h.get("_source", {})
-        adsh = src.get("adsh") or (h.get("_id", "").split(":")[0])
-        if not adsh or not src.get("file_date"):
-            continue
-        items = {str(i) for i in (src.get("items") or [])}
-        is_ex99 = str(src.get("file_type") or "").upper().startswith("EX-99")
-        cur = by_adsh.setdefault(adsh, {
-            "adsh": adsh, "doc": h.get("_id", "").split(":")[-1],
-            "file_date": src.get("file_date"),
-            "cik": (src.get("ciks") or [None])[0],
-            "items": set(), "is_ex99": is_ex99})
-        cur["items"] |= items
-        if is_ex99 and not cur["is_ex99"]:
-            cur.update(doc=h.get("_id", "").split(":")[-1], is_ex99=True)
-    for g in by_adsh.values():
-        if "1.02" in g["items"]:
-            terminations.append(g)
-        elif g["items"] & _ANNOUNCE_ITEMS:
-            # Same item gate as the announcement leg — FHN/TD was announced
-            # under 7.01 (Reg FD) only, live-verified.
-            announcements.append(g)
-    terminations.sort(key=lambda g: g["file_date"], reverse=True)
-    announcements.sort(key=lambda g: g["file_date"])
+    terminations, announcements = _split_merger_groups(hits)
 
     deals, fetch_failed = [], False
     for term in terminations:
