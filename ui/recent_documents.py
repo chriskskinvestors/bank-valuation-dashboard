@@ -309,23 +309,16 @@ def _pdf_from_url(url: str) -> bytes | None:
     return filing_url_to_pdf_bytes(url)
 
 
-@st.cache_data(ttl=30 * 86400, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def _holdco_rssd(ticker: str) -> int | None:
-    """Top-of-chain holding-company RSSD for a ticker's bank, or None when
-    the bank has no separate holdco. Reuses Corporate Structure's NIC climb
-    (per-RSSD parent lookups are 30-day cached in data.cache)."""
-    from data.fdic_client import get_rssd_for_cert
-    from ui.corporate_structure import _top_holder_rssd
+    """The bank's regulatory high holder (FR Y-9C filer) RSSD, or None when
+    there's no holding company. Sourced from FDIC RSSDHCR — NOT the NIC
+    hierarchy climb, whose NPW bulk download is Cloudflare-403'd from Cloud
+    Run egress (2026-07-14: Y-9C rows silently missing in prod; worse, the
+    failed climb was cached as "no holdco" for 30 days)."""
+    from data.fdic_client import get_holdco_rssd_for_cert
     cert = get_fdic_cert(ticker)
-    rssd = get_rssd_for_cert(cert) if cert else None
-    if not rssd:
-        return None
-    try:
-        top, _chain = _top_holder_rssd(int(rssd))
-        return int(top) if top and int(top) != int(rssd) else None
-    except Exception as e:
-        print(f"[recent_docs] holdco climb failed for {ticker}: {e}")
-        return None
+    return get_holdco_rssd_for_cert(cert) if cert else None
 
 
 @st.cache_data(ttl=30 * 86400, max_entries=8, show_spinner=False)
@@ -637,8 +630,11 @@ def _render_body(ticker: str, cik: int) -> None:
                     nic_pdf = (f"https://www.ffiec.gov/npw/FinancialReport/"
                                f"ReturnFinancialReportPDF?rpt=FRY9C"
                                f"&id={holdco}&dt={y}{m}{d}")
-                    items = [("View on NIC", nic_pdf),
-                             ("Download PDF",
+                    # The direct NIC link IS the PDF (the user's browser
+                    # passes Cloudflare; Cloud Run egress often doesn't) —
+                    # list it first as the reliable path.
+                    items = [("Open PDF on NIC", nic_pdf),
+                             ("Download via dashboard",
                               _pdf_href(ticker, f"y9c|{m}{d}{y}"))]
                     reg_rows.append(
                         (iso, _menu_html(f"FR Y-9C (Holding Co) — Q{q} {y}",

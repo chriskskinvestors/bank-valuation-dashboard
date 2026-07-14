@@ -255,6 +255,43 @@ def get_rssd_for_cert(cert: int, ttl_seconds: int = 30 * 86400) -> int | None:
         return None
 
 
+def get_holdco_rssd_for_cert(cert: int, ttl_seconds: int = 30 * 86400) -> int | None:
+    """RSSD of the bank's regulatory high holder (FDIC RSSDHCR) — the FR
+    Y-9C filer. None when the bank has no holding company (RSSDHCR empty/0).
+
+    This is THE source for holdco identity on render paths: the Fed NIC
+    hierarchy climb needs NPW bulk files that Cloudflare 403s from Cloud
+    Run egress (2026-07-14 — Y-9C rows silently missing in prod), while
+    this FDIC field answers the same question in one reliable call."""
+    if not cert:
+        return None
+    from data import cache as _cache
+    key = f"fdic_rssdhcr:{cert}"
+    cached = _cache.get(key)
+    if cached is not None:
+        ts = (cached or {}).get("_ts", 0)
+        if time.time() - float(ts) < ttl_seconds:
+            v = cached.get("_v")
+            return int(v) if v else None
+
+    try:
+        resp = _get_with_retry(FDIC_INSTITUTIONS_URL, {
+            "filters": f"CERT:{cert}",
+            "fields": "CERT,RSSDHCR",
+        })
+        rssd = None
+        if resp is not None:
+            data = resp.json().get("data", [])
+            if data:
+                raw = str(data[0].get("data", {}).get("RSSDHCR") or "").strip()
+                rssd = int(raw) if raw.isdigit() and int(raw) > 0 else None
+        _cache.put(key, {"_ts": time.time(), "_v": rssd})
+        return rssd
+    except Exception as e:
+        print(f"[FDIC] get_holdco_rssd_for_cert({cert}) failed: {e}")
+        return None
+
+
 def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     """
     Fetch recent quarterly financials for a bank by FDIC cert number.
