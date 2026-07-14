@@ -243,6 +243,107 @@ class TestGetParent(_Base):
         self.assertIsNone(nic_client.get_parent(777777))
 
 
+class TestBulkSourceLadder(unittest.TestCase):
+    """_bulk_path's source ladder (module doc): local → GCS mirror → NPW
+    direct → stale copies. NPW 403s Cloud Run egress (2026-07-14), so the
+    GCS-mirror leg IS the production path — these pin it with the real
+    _bulk_path (no patching of the function under test)."""
+
+    ZIP = b"PK\x03\x04fake-zip-payload"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="nic_bulk_test_"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        p_dir = patch("data.nic_client._BULK_DIR", self.tmp)
+        p_load = patch("data.cloud_storage.load_bytes", return_value=None)
+        p_save = patch("data.cloud_storage.save_bytes", return_value=True)
+        p_dl = patch("data.nic_client._download", return_value=None)
+        p_dir.start()
+        self.addCleanup(p_dir.stop)
+        self.mock_load = p_load.start()
+        self.addCleanup(p_load.stop)
+        self.mock_save = p_save.start()
+        self.addCleanup(p_save.stop)
+        self.mock_dl = p_dl.start()
+        self.addCleanup(p_dl.stop)
+
+    def test_fresh_mirror_serves_without_touching_npw(self):
+        from data import nic_client
+        self.mock_load.return_value = (self.ZIP, 3600.0)  # fresh blob
+        path = nic_client._bulk_path("relationships")
+        self.assertIsNotNone(path)
+        self.assertEqual(path.read_bytes(), self.ZIP)
+        self.mock_dl.assert_not_called()
+
+    def test_stale_mirror_served_when_npw_fails(self):
+        from data import nic_client
+        age = nic_client.BULK_TTL_SECONDS + 86400.0
+        self.mock_load.return_value = (self.ZIP, age)
+        path = nic_client._bulk_path("relationships")
+        self.assertEqual(path.read_bytes(), self.ZIP)
+        self.mock_dl.assert_called_once()  # NPW tried first for stale blob
+
+    def test_npw_success_heals_the_mirror(self):
+        from data import nic_client
+        self.mock_dl.return_value = self.ZIP
+        path = nic_client._bulk_path("attributes_active")
+        self.assertEqual(path.read_bytes(), self.ZIP)
+        prefix, filename, data = self.mock_save.call_args[0][:3]
+        self.assertEqual((prefix, filename), ("nic_bulk",
+                                              "attributes_active.zip"))
+        self.assertEqual(data, self.ZIP)
+
+    def test_everything_down_returns_none(self):
+        from data import nic_client
+        self.assertIsNone(nic_client._bulk_path("relationships"))
+
+    def test_non_zip_mirror_object_ignored(self):
+        from data import nic_client
+        self.mock_load.return_value = (b"<html>challenge page</html>", 60.0)
+        self.assertIsNone(nic_client._bulk_path("relationships"))
+        self.mock_dl.assert_called_once()  # fell through to NPW
+
+    def test_fresh_local_file_short_circuits_everything(self):
+        from data import nic_client
+        (self.tmp / "relationships.zip").write_bytes(self.ZIP)
+        path = nic_client._bulk_path("relationships")
+        self.assertEqual(path, self.tmp / "relationships.zip")
+        self.mock_load.assert_not_called()
+        self.mock_dl.assert_not_called()
+
+
+class TestRefreshToolValidation(unittest.TestCase):
+    """tools/refresh_nic_bulk._validate — the gate that keeps a Cloudflare
+    challenge page or truncated fetch from clobbering the good mirror."""
+
+    def _zip_with_header(self, header: str, pad: int = 1_100_000) -> bytes:
+        import io
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("data.csv", header + "\n" + "x" * pad)
+        return buf.getvalue()
+
+    def test_good_relationships_zip_passes(self):
+        from tools.refresh_nic_bulk import _validate
+        header = ("#ID_RSSD_PARENT,ID_RSSD_OFFSPRING,PCT_EQUITY,"
+                  "CTRL_IND,DT_END,OTHER")
+        self.assertIsNone(_validate("relationships",
+                                    self._zip_with_header(header)))
+
+    def test_missing_column_rejected(self):
+        from tools.refresh_nic_bulk import _validate
+        header = "#ID_RSSD_PARENT,ID_RSSD_OFFSPRING,DT_END"  # no PCT_EQUITY
+        problem = _validate("relationships", self._zip_with_header(header))
+        self.assertIn("PCT_EQUITY", problem or "")
+
+    def test_small_or_non_zip_rejected(self):
+        from tools.refresh_nic_bulk import _validate
+        self.assertIsNotNone(_validate("relationships", b"PK tiny"))
+        self.assertIsNotNone(_validate("relationships",
+                                       b"<html>" + b"x" * 1_100_000))
+
+
 class TestCaching(_Base):
 
     def test_fresh_tree_cache_short_circuits_bulk_files(self):

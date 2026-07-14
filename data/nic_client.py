@@ -39,12 +39,22 @@ already have them via the fdic mapping):
 
   get_parent(rssd_id)       — immediate parent entity dict or None.
 
-Download path: ffiec.gov sits behind Cloudflare bot management, which
-403s Python's TLS fingerprint (requests AND urllib, any headers) while
-allowing curl's. So the fetch tries the shared requests policy first
-(in case the rules relax) and falls back to a curl subprocess — curl is
-in the deploy image (Dockerfile installs it for health checks) and ships
-with Windows 10+.
+Download path: ffiec.gov sits behind Cloudflare bot management. It 403s
+Python's TLS fingerprint everywhere, and since ~2026-07 it 403s Cloud Run
+egress IPs entirely (curl included — proven in prod logs 2026-07-14), so
+production instances can NEVER download from NPW directly. The source
+ladder in _bulk_path is therefore:
+
+  1. fresh local file in /tmp (per-instance cache)
+  2. fresh GCS mirror gs://$GCS_BUCKET/nic_bulk/{name}.zip — the prod
+     path. The mirror is refreshed monthly by the refresh-nic-bulk
+     GitHub Actions workflow (runner egress isn't Cloudflare-blocked);
+     fallback refresher: tools/refresh_nic_bulk.py from any unblocked
+     machine.
+  3. NPW direct — requests first (in case rules relax), then a curl
+     subprocess (curl is in the deploy image and ships with Windows
+     10+). Works from dev machines; a success re-uploads to the mirror.
+  4. stale GCS mirror, then stale local file — stale beats nothing.
 """
 
 from __future__ import annotations
@@ -73,6 +83,7 @@ MAX_DEPTH = 4                   # generations below the root
 ACTIVE_DT_END = 99991231        # NIC sentinel: relationship still open
 
 _BULK_DIR = Path(tempfile.gettempdir()) / "nic_bulk"
+_GCS_PREFIX = "nic_bulk"        # mirror prefix in the GCS_BUCKET
 
 REL_COLS = ["#ID_RSSD_PARENT", "ID_RSSD_OFFSPRING", "DT_END",
             "PCT_EQUITY", "CTRL_IND"]
@@ -133,10 +144,10 @@ def _is_fresh(cached: dict | None) -> bool:
 
 def _bulk_path(name: str) -> Path | None:
     """
-    Local path of one bulk zip, downloading it when missing or older than
-    BULK_TTL_SECONDS. A stale file on disk is the fallback when the
-    download fails (same philosophy as the universe snapshot). None only
-    when there is no file at all.
+    Local path of one bulk zip, populated via the source ladder in the
+    module doc (local → GCS mirror → NPW direct → stale copies). A stale
+    file is the fallback when every fetch fails (same philosophy as the
+    universe snapshot). None only when there is no file at all.
     """
     path = _BULK_DIR / f"{name}.zip"
     try:
@@ -146,9 +157,27 @@ def _bulk_path(name: str) -> Path | None:
     except OSError:
         pass
 
+    # GCS mirror first: NPW 403s Cloud Run egress outright, and even where
+    # it doesn't, the mirror spares NPW a multi-MB hit per instance.
+    mirrored = _gcs_load(name)
+    if mirrored is not None and mirrored[1] is not None \
+            and mirrored[1] < BULK_TTL_SECONDS:
+        return _write_bulk(path, mirrored[0], name)
+
     content = _download(BULK_URLS[name], name)
-    if content is None:
-        return path if path.exists() else None  # stale file beats nothing
+    if content is not None:
+        _gcs_store(name, content)  # heal the mirror for blocked instances
+        return _write_bulk(path, content, name)
+
+    if mirrored is not None:  # stale mirror beats nothing
+        print(f"[nic] {name}: NPW unavailable — serving stale GCS mirror")
+        return _write_bulk(path, mirrored[0], name)
+    return path if path.exists() else None  # stale local beats nothing
+
+
+def _write_bulk(path: Path, content: bytes, name: str) -> Path | None:
+    """Atomic write of one bulk zip to the local bulk dir. On write failure
+    an existing (stale) file still wins over nothing."""
     try:
         _BULK_DIR.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".part")
@@ -158,6 +187,35 @@ def _bulk_path(name: str) -> Path | None:
     except OSError as e:
         print(f"[nic] {name} write error: {type(e).__name__}: {e}")
         return path if path.exists() else None
+
+
+def _gcs_load(name: str) -> tuple[bytes, float | None] | None:
+    """(bytes, age_seconds) of one bulk zip from the GCS mirror, or None.
+    Zip-magic-validated so a bad upload never poisons the parse."""
+    try:
+        from data.cloud_storage import load_bytes
+        got = load_bytes(_GCS_PREFIX, f"{name}.zip")
+    except Exception as e:
+        print(f"[nic] {name}: GCS mirror read error: {type(e).__name__}: {e}")
+        return None
+    if got is None:
+        return None
+    data, age = got
+    if not data.startswith(b"PK"):
+        print(f"[nic] {name}: GCS mirror object is not a zip — ignoring")
+        return None
+    return data, age
+
+
+def _gcs_store(name: str, content: bytes) -> None:
+    """Best-effort upload of a freshly-downloaded bulk zip to the GCS
+    mirror, so egress-blocked instances get it without touching NPW."""
+    try:
+        from data.cloud_storage import save_bytes
+        if save_bytes(_GCS_PREFIX, f"{name}.zip", content, "application/zip"):
+            print(f"[nic] {name}: refreshed the GCS mirror")
+    except Exception as e:
+        print(f"[nic] {name}: GCS mirror write error: {type(e).__name__}: {e}")
 
 
 def _curl_fetch(url: str, name: str, magic: bytes) -> bytes | None:

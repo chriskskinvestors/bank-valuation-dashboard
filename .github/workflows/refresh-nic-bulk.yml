@@ -1,0 +1,80 @@
+name: Refresh NIC bulk mirror
+
+# The Fed NIC bulk files (Corporate Structure sub-tab) sit behind Cloudflare
+# bot management that 403s Cloud Run egress IPs outright — production can
+# never download them (prod logs 2026-07-14). GitHub-hosted runners use
+# different egress, so this workflow fetches the two zips monthly and
+# uploads them to the GCS mirror (nic_bulk/) that data/nic_client.py reads.
+# The zips change slowly (org structure), so monthly matches nic_client's
+# 30-day BULK_TTL_SECONDS. If Cloudflare ever blocks GitHub's IPs too, this
+# fails loudly (red run) and the fallback is running
+# tools/refresh_nic_bulk.py from any unblocked machine (e.g. the dev box);
+# nic_client keeps serving the stale mirror in the meantime.
+on:
+  schedule:
+    - cron: "17 6 3 * *"   # 06:17 UTC on the 3rd of each month
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ace-beanbag-486220-a8
+  REGION: us-central1
+  SERVICE: bank-dashboard
+  GCS_BUCKET: ksk-bank-dashboard-data
+  SA_EMAIL: bank-dashboard-sa@ace-beanbag-486220-a8.iam.gserviceaccount.com
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Required for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Fetch from NPW, validate, upload to the GCS mirror
+        run: |
+          # Only what tools/refresh_nic_bulk.py's import chain needs — not
+          # the full requirements.txt (this runs on a monthly cron).
+          python -m pip install --quiet google-cloud-storage pandas requests
+          python -m tools.refresh_nic_bulk
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      # Prove the PRODUCTION read path end-to-end: run the live service
+      # image as a Cloud Run job with a wiped /tmp (a brand-new instance)
+      # and require it to serve + parse both bulk files from the mirror
+      # just uploaded. Fails this workflow loudly if a fresh prod instance
+      # couldn't render the Corporate Structure tab.
+      - name: Verify fresh-instance read path (empty /tmp → GCS mirror)
+        run: |
+          IMAGE=$(gcloud run services describe "${{ env.SERVICE }}" \
+            --region="${{ env.REGION }}" \
+            --format='value(spec.template.spec.containers[0].image)')
+          echo "Verifying with service image: $IMAGE"
+          gcloud run jobs deploy nic-mirror-verify \
+            --image="$IMAGE" \
+            --region="${{ env.REGION }}" \
+            --service-account="${{ env.SA_EMAIL }}" \
+            --command=python \
+            --args=-m,tools.verify_nic_mirror \
+            --set-env-vars="GCS_BUCKET=${{ env.GCS_BUCKET }},GCLOUD_PROJECT=${{ env.PROJECT_ID }}" \
+            --memory=2Gi \
+            --task-timeout=600 \
+            --max-retries=0 \
+            --quiet
+          gcloud run jobs execute nic-mirror-verify \
+            --region="${{ env.REGION }}" \
+            --wait

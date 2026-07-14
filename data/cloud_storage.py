@@ -146,6 +146,51 @@ def load_json(prefix: str, filename: str) -> dict | None:
     return None
 
 
+# ── Bytes (bulk-file mirrors) ──────────────────────────────────────────
+# GCS-only, no local shadow copy: callers that mirror bulk files (e.g.
+# data/nic_client's NIC zips) manage their own on-disk cache in /tmp and
+# must not litter the repo tree the way the JSON helpers' local copies do.
+
+def save_bytes(prefix: str, filename: str, data: bytes,
+               content_type: str = "application/octet-stream") -> bool:
+    """Upload raw bytes to GCS. False when GCS is off or the write failed —
+    the object is NOT durable."""
+    if not is_gcs_enabled():
+        return False
+    try:
+        bucket = _get_bucket()
+        if bucket:
+            bucket.blob(f"{prefix}/{filename}").upload_from_string(
+                data, content_type=content_type)
+            return True
+    except Exception as e:
+        print(f"[GCS] Error saving {prefix}/{filename}: {e}")
+    return False
+
+
+def load_bytes(prefix: str, filename: str) -> tuple[bytes, float | None] | None:
+    """Raw bytes from GCS as (data, age_seconds) — age from the object's
+    last-update stamp (None if the stamp is unavailable). None when GCS is
+    off, the object is missing, or the read failed."""
+    if not is_gcs_enabled():
+        return None
+    try:
+        bucket = _get_bucket()
+        if bucket:
+            blob = bucket.get_blob(f"{prefix}/{filename}")
+            if blob is None:
+                return None
+            data = blob.download_as_bytes()
+            age = None
+            if blob.updated is not None:
+                from datetime import datetime, timezone
+                age = (datetime.now(timezone.utc) - blob.updated).total_seconds()
+            return data, age
+    except Exception as e:
+        print(f"[GCS] Error loading {prefix}/{filename}: {e}")
+    return None
+
+
 # ── List ───────────────────────────────────────────────────────────────
 
 def list_files(prefix: str, pattern: str = "*.json") -> list[str]:
