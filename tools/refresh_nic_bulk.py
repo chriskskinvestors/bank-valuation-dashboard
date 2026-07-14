@@ -85,7 +85,7 @@ def main() -> int:
             failures += 1
             continue
         if save_bytes(_GCS_PREFIX, f"{name}.zip", content, "application/zip"):
-            print(f"OK   {name}: {len(content):,} bytes → "
+            print(f"OK   {name}: {len(content):,} bytes -> "
                   f"{_GCS_PREFIX}/{name}.zip")
         else:
             print(f"FAIL {name}: GCS upload failed")
