@@ -1927,26 +1927,105 @@ _FAIR_VALUE = [
     ]),
 ]
 
+# ── Portfolio Analysis — securities composition (SNL depth, 2026-07-13) ─────
+# Type tree probed TCBK/BANR 12/31/2025: leaves are ORTHOGONAL — the residual
+# (SC − leaves) equals equity-NFT + rounding (TCBK 2,693 exact; BANR 115 vs
+# equity 406). TRAP: SCUS/SCAGE include agency MBS and would double-count
+# SCMTGBK — agency non-MBS is SCASPNSUM. SCODOT = other domestic debt
+# (corporates; BANR's 119M gap). Reported *R ratios here are NOT value/SC
+# (SCODOTR ≠ SCODOT/SC) — every share is a transparent fratio instead.
 _PORTFOLIO = [
-    ("Loan Portfolio", [
-        ("Gross loans & leases", "dollar", "LNLSGR"),
-        ("Net loans & leases", "dollar", "LNLSNET"),
-        ("Loans / total assets", "ratio", "LNLSNET", "ASSET"),
-        ("Loan-loss reserves / loans", "pct", "LNATRESR"),
+    ("Securities by Type ($000)", [
+        ("U.S. Treasury", "dollar", "SCUST"),
+        ("U.S. Agency (non-MBS)", "dollar", "SCASPNSUM"),
+        ("Municipal", "dollar", "SCMUNI"),
+        ("Mortgage-Backed Securities", "dollar", "SCMTGBK"),
+        ("of which: Commercial MBS", "dollar", "SCCMMB"),
+        ("Asset-Backed Securities", "dollar", "SCABS"),
+        ("Structured Financial Products", "dollar", "SCSFP"),
+        ("Other Domestic Debt (corporates)", "dollar", "SCODOT"),
+        ("Foreign Debt", "dollar", "SCFORD"),
+        ("Equity & Other (residual)", "residual", "SC",
+         "SCUST", "SCASPNSUM", "SCMUNI", "SCMTGBK", "SCABS", "SCSFP",
+         "SCODOT", "SCFORD"),
+        ("» Total Securities", "dollar", "SC"),
     ]),
-    ("Securities Portfolio", [
-        ("Total securities", "dollar", "SC"),
-        ("Securities / total assets", "ratio", "SC", "ASSET"),
+    ("Accounting Classification ($000)", [
+        ("Trading", "dollar", "TRADE"),
+        ("Available-for-Sale (fair value)", "dollar", "SCAF"),
+        ("Held-to-Maturity", "htm"),
+        ("Pledged Securities", "dollar", "SCPLEDGE"),
+    ]),
+    ("Loan Portfolio ($000)", [
+        ("Gross Loans & Leases", "dollar", "LNLSGR"),
+        ("Loan Loss Reserve", "dollar", "LNATRES"),
+        ("» Net Loans & Leases", "dollar", "LNLSNET"),
+    ]),
+    ("Portfolio Ratios (%)", [
+        ("Securities / Assets", "ratio", "SC", "ASSET"),
+        ("Loans / Assets", "ratio", "LNLSNET", "ASSET"),
+        ("MBS / Securities", "fratio", "SCMTGBK", "SC"),
+        ("Municipal / Securities", "fratio", "SCMUNI", "SC"),
+        ("AFS / Securities", "fratio", "SCAF", "SC"),
+        ("Pledged / Securities", "fratio", "SCPLEDGE", "SC"),
+        ("Yield: Investment Securities", "yield", "ISC", "SC"),
+        ("Loan-Loss Reserves / Loans", "pct", "LNATRESR"),
+    ]),
+    ("Annualized Growth Rates (%)", [
+        ("Securities Growth", "growth", "SC"),
+        ("Gross Loan Growth", "growth", "LNLSGR"),
     ]),
 ]
 
+_PORTFOLIO_TRENDS = [
+    ("Securities & Cash ($B)", ["securities", "cash_balances"]),
+    ("Loans ($B)", ["total_loans_gross", "total_loans"]),
+]
+
+_CAPSTRUCT_TRENDS = [
+    ("Equity ($B) vs Capital Ratios (%)", ["total_equity", "cet1_ratio",
+                                           "leverage_ratio"]),
+    ("Capital Ratios (%)", ["cet1_ratio", "total_capital_ratio",
+                            "leverage_ratio"]),
+]
+
+# ── Capital Structure Details (SNL depth, 2026-07-13) ───────────────────────
+# Equity component identity verified EXACT for TCBK+BANR 12/31/2025:
+# EQPP + EQCS + EQSUR + EQUPTOT = EQTOT to the dollar. Dividends/stock-sale
+# are RI-A calendar-YTD flows → "flow" kind (no filed quarterly variant).
 _CAPITAL_STRUCTURE = [
-    ("Capital", [
-        ("Total equity capital", "dollar", "EQTOT"),
-        ("Tangible common equity", "tce"),
-        ("Equity / assets", "ratio", "EQTOT", "ASSET"),
+    ("Equity Components ($000)", [
+        ("Perpetual Preferred Stock", "dollar", "EQPP"),
+        ("Common Stock", "dollar", "EQCS"),
+        ("Surplus", "dollar", "EQSUR"),
+        ("Undivided Profits & Other Capital", "dollar", "EQUPTOT"),
+        ("» Total Equity Capital", "dollar", "EQTOT"),
+        ("Total Intangibles (incl. goodwill)", "dollar", "INTAN"),
+        ("» Tangible Equity", "tce"),
     ]),
-    ("Regulatory Capital Ratios", [
+    ("Borrowings & Debt ($000)", [
+        ("Fed Funds Purchased & Repos", "dollar", "FREPP"),
+        ("FHLB & Other Borrowings (combined)", "dollar", "OTHBFHLB"),
+        ("Subordinated Notes & Debentures", "dollar", "SUBND"),
+        ("Trading Liabilities", "dollar", "TRADEL"),
+        ("Trust Preferred (TruPS)", "na", "FFIEC RC-M — later phase"),
+        ("» Total Borrowings & Debt", "sum", "FREPP", "OTHBFHLB", "SUBND", "TRADEL"),
+    ]),
+    ("Dividends & Capital Actions ($000)", [
+        ("Cash Dividends — Common", "flow", "EQCDIVC", None),
+        ("Cash Dividends — Preferred", "flow", "EQCDIVP", None),
+        ("» Total Cash Dividends", "flow", "EQCDIV", None),
+        ("Sale of Capital Stock", "flow", "EQCSTKRX", None),
+    ]),
+    ("Capitalization Ratios (%)", [
+        ("Equity / Assets", "ratio", "EQTOT", "ASSET"),
+        ("Tangible Equity / Tangible Assets", "fratio", "EQTOT-INTAN", "ASSET-INTAN"),
+        ("Debt / Equity", "fratio", "FREPP+OTHBFHLB+SUBND+TRADEL", "EQTOT"),
+        ("Debt / Assets", "fratio", "FREPP+OTHBFHLB+SUBND+TRADEL", "ASSET"),
+        ("Dividend Payout (dividends ÷ net income)", "flowratio",
+         ("EQCDIV", None), ("NETINC", None)),
+    ]),
+    ("Regulatory Capital Ratios (%)", [
         ("CET1 ratio", "pct", "IDT1CER"),
         ("Total risk-based capital ratio", "pct", "RBCRWAJ"),
         ("Tier 1 leverage ratio", "pct", "RBCT1JR"),
@@ -3899,11 +3978,14 @@ def _rate_risk_trend(xs, ys, ticker):
     st.plotly_chart(fig, use_container_width=True, key=f"crrr_trend_{ticker}")
 
 
+@st.fragment
 def render_portfolio(ticker):
     render_statement(ticker, "port", "Portfolio Analysis", _PORTFOLIO,
-                     side_by_side=True)
+                     trends=_PORTFOLIO_TRENDS, side_by_side=True)
 
 
+@st.fragment
 def render_capital_structure(ticker):
     render_statement(ticker, "capstruct", "Capital Structure Details",
-                     _CAPITAL_STRUCTURE, side_by_side=True)
+                     _CAPITAL_STRUCTURE, trends=_CAPSTRUCT_TRENDS,
+                     side_by_side=True)

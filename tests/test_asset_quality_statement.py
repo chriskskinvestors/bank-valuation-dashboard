@@ -114,6 +114,10 @@ class TestSpecFieldsFetched(unittest.TestCase):
                 elif kind == "flowratio":
                     for pair in args:
                         out.update(a for a in pair if a)
+                elif kind == "residual":
+                    out.update(args)
+                elif kind == "yield":
+                    out.update(args)
         return out
 
     def test_asset_quality_fields_are_fetched(self):
@@ -137,14 +141,37 @@ class TestSpecFieldsFetched(unittest.TestCase):
     def test_sweep_spec_fields_are_fetched(self):
         from ui.financials_statements import (_AQ_BY_LOAN_TYPE,
                                               _DEPOSIT_LOAN_COMP,
-                                              _DEPOSIT_TRENDS_TABLE)
+                                              _DEPOSIT_TRENDS_TABLE,
+                                              _PORTFOLIO, _CAPITAL_STRUCTURE)
         from data.fdic_client import _BASE_FINANCIALS_FIELDS
         from config import get_fdic_fields
         have = _BASE_FINANCIALS_FIELDS | get_fdic_fields()
-        for spec in (_AQ_BY_LOAN_TYPE, _DEPOSIT_LOAN_COMP, _DEPOSIT_TRENDS_TABLE):
+        for spec in (_AQ_BY_LOAN_TYPE, _DEPOSIT_LOAN_COMP,
+                     _DEPOSIT_TRENDS_TABLE, _PORTFOLIO, _CAPITAL_STRUCTURE):
             missing = self._fields_of(spec) - have
             self.assertEqual(missing, set(),
                              f"spec names FDIC fields the client never fetches: {missing}")
+
+    def test_equity_components_identity_tcbk_banr(self):
+        # Live probe 2026-07-13: EQPP + EQCS + EQSUR + EQUPTOT = EQTOT to the
+        # dollar for both banks — pins the Equity Components tree design.
+        for eq in ({"EQPP": 0, "EQCS": 5858, "EQSUR": 785019,
+                    "EQUPTOT": 571270, "EQTOT": 1362147},        # TCBK
+                   {"EQPP": 0, "EQCS": 2851, "EQSUR": 1627343,
+                    "EQUPTOT": 321267, "EQTOT": 1951461}):       # BANR
+            self.assertEqual(eq["EQPP"] + eq["EQCS"] + eq["EQSUR"]
+                             + eq["EQUPTOT"], eq["EQTOT"])
+
+    def test_securities_tree_residual_tcbk(self):
+        # TCBK 12/31/2025 probe: orthogonal leaves + residual = SC; residual
+        # equals equity-not-for-trading + other-domestic rounding (2,693 SCEQNFT
+        # + 4,958 SCODOT shown as its own row → residual 2,693).
+        leaves = {"SCUST": 0, "SCASPNSUM": 0, "SCMUNI": 222250,
+                  "SCMTGBK": 1325747, "SCABS": 106401, "SCSFP": 163119,
+                  "SCODOT": 4958, "SCFORD": 0}
+        sc = 1825168
+        residual = sc - sum(leaves.values())
+        self.assertEqual(residual, 2693)   # = SCEQNFT as filed
 
     def test_by_loan_type_residual_excludes_of_which_rows(self):
         # The residual row must subtract ONLY leaf categories: HELOC ⊂ 1-4 fam

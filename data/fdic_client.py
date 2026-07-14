@@ -62,6 +62,13 @@ _BASE_FINANCIALS_FIELDS = {
     "LNOTHER", "LS", "LNMUNI", "LNDEP",
     "DDT", "TRN", "NTR", "NTRSMMDA", "NTRSOTH", "NTRTIME",
     "DEPLGAMT", "DEPSMAMT",
+    # Portfolio Analysis securities-by-type tree (orthogonal leaves; SCUS/
+    # SCAGE deliberately EXCLUDED — they contain agency MBS and would
+    # double-count SCMTGBK) + Capital Structure components/flows.
+    "SCUST", "SCASPNSUM", "SCMUNI", "SCMTGBK", "SCCMMB", "SCABS", "SCSFP",
+    "SCODOT", "SCFORD", "SCPLEDGE", "SCHA",
+    "EQCS", "EQSUR", "FREPP", "TRADEL",
+    "EQCDIV", "EQCDIVC", "EQCDIVP", "EQCSTKRX",
 }
 
 
