@@ -558,6 +558,26 @@ def get_noncommon_primary_map() -> dict[str, str]:
     return _NONCOMMON_PRIMARY_CACHE
 
 
+def cert_ticker_map() -> dict[int, str]:
+    """fdic_cert -> covered universe ticker, for Company-page deep links on
+    surfaces that carry FDIC certs but bank NAMES (deal parties, deposit-share
+    competitors — the universal linking rule). Fail-open: get_universe serves
+    the snapshot (stale-tolerant, never live-builds on the interactive path);
+    any hiccup just means unlinked names."""
+    try:
+        out: dict[int, str] = {}
+        for t, info in get_universe().items():
+            try:
+                cert = int(info.get("fdic_cert") or 0)
+            except (TypeError, ValueError):
+                continue
+            if cert:
+                out.setdefault(cert, t)
+        return out
+    except Exception:
+        return {}
+
+
 def coverage_excluded() -> set[str]:
     """Tickers hidden from every covered/display surface (screens, leaderboard,
     search, count):

@@ -15,7 +15,23 @@ from data.sod_client import (
 )
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
-from ui.chrome import ledger, table_export, title_bar, lazy_tabs
+from ui.chrome import (ledger, table_export, title_bar, lazy_tabs,
+                       ticker_company_url, ticker_linkcol)
+
+
+def _linked_tickers(certs) -> list:
+    """Company-page link URLs for a market-share table's CERT column —
+    covered banks get a linked Ticker cell, private banks a blank one
+    (universal linking rule)."""
+    from data.bank_universe import cert_ticker_map
+    cmap = cert_ticker_map()
+
+    def _one(c):
+        try:
+            return ticker_company_url(cmap.get(int(c)))
+        except (TypeError, ValueError):
+            return None
+    return [_one(c) for c in certs]
 
 
 def render_deposits_for_ticker(ticker: str):
@@ -237,12 +253,16 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
                     show_df = display[["rank", "NAMEFULL", "branches", "deposits_fmt", "market_share_fmt"]].copy()
                     show_df.columns = ["Rank", "Bank", "Branches", "Deposits", "Market Share"]
+                    # Universal linking rule: covered participants get a
+                    # linked Ticker column (private banks show a blank cell).
+                    show_df.insert(1, "Ticker", _linked_tickers(display["CERT"]))
 
                     st.dataframe(
                         show_df,
                         use_container_width=True,
                         hide_index=True,
                         height=min(600, 40 + 35 * len(show_df)),
+                        column_config=ticker_linkcol(),
                     )
                     # Underlying numeric frame (deposits $K / share %)
                     table_export(
@@ -292,12 +312,14 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
                     show_df = display[["rank", "NAMEFULL", "branches", "deposits_fmt", "market_share_fmt"]].copy()
                     show_df.columns = ["Rank", "Bank", "Branches", "Deposits", "Market Share"]
+                    show_df.insert(1, "Ticker", _linked_tickers(display["CERT"]))
 
                     st.dataframe(
                         show_df,
                         use_container_width=True,
                         hide_index=True,
                         height=min(600, 40 + 35 * len(show_df)),
+                        column_config=ticker_linkcol(),
                     )
                     # Underlying numeric frame (deposits $K / share %)
                     table_export(

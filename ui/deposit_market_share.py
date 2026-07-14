@@ -48,6 +48,10 @@ def _share_rows(df: pd.DataFrame, subject_cert: int) -> list[dict]:
         top_name = comp["bank_name"].iloc[0] if not comp.empty else None
         top_share = (float(comp["deposits"].iloc[0]) / total * 100.0
                      if not comp.empty else None)
+        try:
+            top_cert = int(comp["cert"].iloc[0]) if not comp.empty else None
+        except (TypeError, ValueError):
+            top_cert = None
         rows.append({
             "market_key": key,
             "market": m["market_label"].iloc[0],
@@ -60,6 +64,7 @@ def _share_rows(df: pd.DataFrame, subject_cert: int) -> list[dict]:
             "hhi": hhi,
             "top_competitor": top_name,
             "top_competitor_share_pct": top_share,
+            "top_competitor_cert": top_cert,
         })
     rows.sort(key=lambda r: -r["subj_deposits_k"])
     return rows
@@ -70,10 +75,23 @@ def _render_market_table(rows: list[dict], heading: str, key: str):
     if not rows:
         st.info("No markets with recorded deposits for this bank at this level.")
         return
+    from data.bank_universe import cert_ticker_map
+    cmap = cert_ticker_map()
     body = ""
     for r in rows:
-        comp = (f'{_h.escape(r["top_competitor"])} '
-                f'({r["top_competitor_share_pct"]:.1f}%)'
+        # Universal linking rule: a covered competitor's name deep-links to
+        # its Company page; a private bank links to its FDIC profile.
+        comp_name = _h.escape(r["top_competitor"]) if r["top_competitor"] else ""
+        tk = cmap.get(r.get("top_competitor_cert") or 0)
+        if comp_name and tk:
+            comp_name = (f'<a href="?bank={_h.escape(tk, quote=True)}" '
+                         f'target="_self" title="Open {_h.escape(tk)} company '
+                         f'page">{comp_name}</a>')
+        elif comp_name and r.get("top_competitor_cert"):
+            comp_name = (f'<a href="https://banks.data.fdic.gov/bankfind-suite/'
+                         f'bankfind/details/{int(r["top_competitor_cert"])}" '
+                         f'target="_blank" rel="noopener">{comp_name}</a>')
+        comp = (f'{comp_name} ({r["top_competitor_share_pct"]:.1f}%)'
                 if r["top_competitor"] else "—")
         body += ("<tr>"
                  f'<td style="text-align:left;">{_h.escape(str(r["market"]))}</td>'

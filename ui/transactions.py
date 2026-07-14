@@ -734,23 +734,9 @@ def _fmt_bn(raw_dollars) -> str:
     return f"${raw_dollars / 1_000_000:,.1f}M"
 
 
-def _cert_ticker_map() -> dict[int, str]:
-    """fdic_cert -> universe ticker for company-page deep links. Fail-open:
-    get_universe serves the snapshot (stale-tolerant, never live-builds on
-    the interactive path); any hiccup just means unlinked names."""
-    try:
-        from data.bank_universe import get_universe
-        out: dict[int, str] = {}
-        for t, info in get_universe().items():
-            try:
-                cert = int(info.get("fdic_cert") or 0)
-            except (TypeError, ValueError):
-                continue
-            if cert:
-                out.setdefault(cert, t)
-        return out
-    except Exception:
-        return {}
+# Shared cert->ticker map (data.bank_universe) — promoted from here when the
+# deposit-share tables became its second consumer.
+from data.bank_universe import cert_ticker_map as _cert_ticker_map
 
 
 def _party(name: str | None, cert, cert_map: dict[int, str]) -> str:
