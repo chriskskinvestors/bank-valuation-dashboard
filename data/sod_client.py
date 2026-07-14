@@ -18,6 +18,12 @@ from data.http import get_with_retry as _get_with_retry
 
 SOD_URL = "https://banks.data.fdic.gov/api/sod"
 
+# FDIC API hard-caps limit at 10,000 rows per request. No US bank has that
+# many branches today (JPM tops out near 5,000), but fetch_branches still
+# paginates by offset: the previous single-request limit of 500 silently
+# truncated every bank above it (WFC/JPM/BAC/USB), holing the branches store.
+_PAGE_LIMIT = 10000
+
 BRANCH_FIELDS = [
     "CERT", "YEAR", "BRNUM", "NAMEBR", "NAMEFULL",
     "ADDRESBR", "CITYBR", "STALPBR", "ZIPBR",
@@ -61,21 +67,32 @@ def fetch_branches(cert: int, year: int | None = None) -> pd.DataFrame:
     if year is None:
         year = get_latest_sod_year()
 
-    params = {
-        "filters": f"CERT:{cert} AND YEAR:{year}",
-        "fields": ",".join(BRANCH_FIELDS),
-        "limit": 500,
-    }
-    try:
-        resp = _get_with_retry(SOD_URL, params)
-        if resp is None:
+    # Paginate to completion; on any failed page return empty rather than a
+    # partial frame (partial = the same truncation bug in a new shape — the
+    # refresh job then counts the bank as failed and keeps prior store rows).
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        params = {
+            "filters": f"CERT:{cert} AND YEAR:{year}",
+            "fields": ",".join(BRANCH_FIELDS),
+            "limit": _PAGE_LIMIT,
+            "offset": offset,
+        }
+        try:
+            resp = _get_with_retry(SOD_URL, params)
+            if resp is None:
+                return pd.DataFrame()
+            data = resp.json()
+        except Exception as e:
+            print(f"[SOD] Error fetching cert {cert}: {e}")
             return pd.DataFrame()
-        data = resp.json()
-    except Exception as e:
-        print(f"[SOD] Error fetching cert {cert}: {e}")
-        return pd.DataFrame()
+        page = [r["data"] for r in data.get("data", [])]
+        rows.extend(page)
+        if len(page) < _PAGE_LIMIT:
+            break
+        offset += len(page)
 
-    rows = [r["data"] for r in data.get("data", [])]
     if not rows:
         return pd.DataFrame()
 
