@@ -28,6 +28,13 @@ they are BUILT — no empty placeholders:
       amounts strict-extracted from covers; layout owner-confirmed
       2026-07-13. The Summary pie reuses this classification to split
       its Offerings bucket.
+  Private Equity Transactions — per-bank stake filings + private
+      placements (data/stake_filings + the Offerings PP rows). SC 13D
+      (activist/control intent) shown prominently; the SC 13G pile
+      (passive schedules — index managers file on every bank) collapsed
+      behind an expander; the 13D/13G split is the FORM'S OWN
+      distinction, not a classification of ours. Public PE coverage is
+      thin by nature — an honest sparse table, per the plan.
   Comparable Deal Analysis — UNIVERSE-wide computed deal comps
       (data/deal_comps): announced values ÷ target financials at
       announcement — P/TBV paid (SEC holdco basis for the ratio's priced
@@ -62,14 +69,17 @@ from utils.formatting import fmt_dollars
 def render_transactions():
     st.markdown("### Transactions")
     sel = lazy_tabs(["Transactions Summary", "Detailed M&A History",
-                     "Detailed Offerings", "Comparable Deal Analysis",
-                     "Insider Activity"], key="transactions")
+                     "Detailed Offerings", "Private Equity Transactions",
+                     "Comparable Deal Analysis", "Insider Activity"],
+                    key="transactions")
     if sel == "Transactions Summary":
         _render_summary()
     elif sel == "Detailed M&A History":
         _render_ma_history()
     elif sel == "Detailed Offerings":
         _render_offerings()
+    elif sel == "Private Equity Transactions":
+        _render_pe()
     elif sel == "Comparable Deal Analysis":
         _render_comps()
     else:
@@ -363,6 +373,112 @@ def _render_offerings():
                "excluded from raise totals. Pre-2001 text-only filings can "
                "be Unclassified (no fetchable cover). ECM vs DCM split "
                "feeds the Summary pie.")
+
+
+# ── Private Equity Transactions ───────────────────────────────────────────
+
+def _stake_table(rows: list[dict]) -> str:
+    body = ""
+    for r in rows:
+        nm = r.get("holder_name")
+        holder = _h.escape(nm) if nm else "—"
+        form = _h.escape(r["form"])
+        form_cell = (f'<a href="{_h.escape(r["url"])}" target="_blank">'
+                     f"{form}</a>") if r.get("url") else form
+        body += ("<tr>"
+                 f'<td style="text-align:left;">{_h.escape(r["date"])}</td>'
+                 f'<td style="text-align:left;">{holder}</td>'
+                 f'<td style="text-align:left;">{form_cell}</td>'
+                 "</tr>")
+    return ('<div class="ksk-grid"><table><thead><tr>'
+            '<th style="text-align:left;">Filed</th>'
+            '<th style="text-align:left;">Holder</th>'
+            '<th style="text-align:left;">Form</th>'
+            "</tr></thead><tbody>" + body + "</tbody></table></div>")
+
+
+def _render_pe():
+    from data.bank_mapping import get_cik
+    from data.offerings import get_offerings
+    from data.stake_filings import get_stake_filings
+
+    st.caption("Large-stake filings on this bank (SEC Schedules 13D/13G — "
+               "13D signals activist/control intent, 13G is the passive "
+               "schedule; that split is the form's own, not ours) plus "
+               "private placements from the Offerings leg. Public "
+               "private-equity coverage is inherently thin — 13D/G only "
+               "captures stakes above 5% — so this is an honest sparse "
+               "view, never an estimate.")
+
+    ticker = _bank_picker()
+    if not ticker:
+        st.info("Pick a bank to load its stake filings.")
+        return
+    cik = get_cik(ticker)
+    if not cik:
+        st.warning(f"No SEC CIK resolved for {ticker}.")
+        return
+    with st.spinner("Reading stake filings and private placements "
+                    "(cached 7 days)…"):
+        rows = get_stake_filings(cik, get_name(ticker) or ticker)
+        offers = get_offerings(cik)
+    if rows is None:
+        st.warning("EDGAR is temporarily unavailable — retry shortly.")
+        return
+
+    d13 = [r for r in rows if r["form"].startswith("SC 13D")]
+    g13 = [r for r in rows if r["form"].startswith("SC 13G")]
+    pps = [r for r in (offers or []) if r["kind"] == "Private placement"]
+    pp_gross = sum(r["gross_usd"] or 0 for r in pps)
+    pill_row([
+        stat_pill("13D FILINGS", f"{len(d13):,}"),
+        stat_pill("13G FILINGS", f"{len(g13):,}"),
+        stat_pill("PRIVATE PLACEMENTS", f"{len(pps):,}"),
+        stat_pill("KNOWN PP GROSS", _fmt_bn(pp_gross) if pp_gross else "—"),
+    ], margin="2px 0 12px")
+
+    st.markdown("**Schedule 13D filings (activist / control intent)**")
+    if d13:
+        st.markdown(_stake_table(d13), unsafe_allow_html=True)
+    else:
+        st.caption("No 13D has ever been filed on this bank — no holder "
+                   "has declared activist or control intent above 5%.")
+
+    st.markdown("**Private placements (8-K Item 3.02)**")
+    if pps:
+        body = ""
+        for r in pps:
+            form = _h.escape(r["form"])
+            form_cell = (f'<a href="{_h.escape(r["url"])}" target="_blank">'
+                         f"{form}</a>") if r.get("url") else form
+            body += ("<tr>"
+                     f'<td style="text-align:left;">{_h.escape(r["date"])}</td>'
+                     f'<td style="text-align:left;">{form_cell}</td>'
+                     f'<td style="text-align:right;">{_fmt_bn(r["gross_usd"])}</td>'
+                     "</tr>")
+        st.markdown('<div class="ksk-grid"><table><thead><tr>'
+                    '<th style="text-align:left;">Filed</th>'
+                    '<th style="text-align:left;">Filing</th>'
+                    '<th style="text-align:right;">Gross</th>'
+                    "</tr></thead><tbody>" + body + "</tbody></table></div>",
+                    unsafe_allow_html=True)
+        st.caption("Unregistered sales (incl. 2008-era TARP CPP preferred "
+                   "issues to Treasury); gross shown only where stated in "
+                   "the filing.")
+    elif offers is None:
+        st.caption("Private placements unavailable (EDGAR fetch failed) — "
+                   "retry shortly.")
+    else:
+        st.caption("No Item 3.02 private placements on record.")
+
+    with st.expander(f"Schedule 13G filings (passive) — {len(g13):,}"):
+        if g13:
+            st.markdown(_stake_table(g13), unsafe_allow_html=True)
+        else:
+            st.caption("None on record.")
+    st.caption("Sources: issuer EDGAR submissions (complete filing list) + "
+               "EDGAR full-text search (holder names, 2001+ — older "
+               "filings show a working link with holder —).")
 
 
 # ── Comparable Deal Analysis ──────────────────────────────────────────────
