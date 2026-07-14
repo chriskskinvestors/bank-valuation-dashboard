@@ -29,8 +29,10 @@ that also warms every bank's ma_history cache) and stored under ONE cache
 key; the UI only ever reads the snapshot. Deals are deduped across banks
 by announcement accession, else (counterparty cert, completion date).
 
-KNOWN GAP (documented, next increment): announced-but-PENDING deals have
-no FDIC completion event and no termination 8-K yet, so they are absent.
+Pending (announced) deals flow through from ma_history's Rule 425 leg —
+status='pending' rows with full multiples (both parties alive, so holdco
+TBV and FDIC financials resolve). Cash-consideration pending deals file
+no 425 and remain a documented coverage gap.
 """
 
 from __future__ import annotations
@@ -187,8 +189,11 @@ def build_comps_snapshot(banks: list[dict]) -> dict | None:
         for d in deals:
             if d.get("deal_kind") != "whole_company":
                 continue
-            if d.get("direction") == "sale" and d.get("status") == "completed":
-                continue    # the acquirer's row carries this deal
+            if d.get("direction") == "sale" and d.get("status") in (
+                    "completed", "pending"):
+                # The acquirer's row carries the deal — a pending deal
+                # otherwise appears under BOTH filers' 425 episodes.
+                continue
             k = _dedupe_key(d, cert)
             if k in seen:
                 continue

@@ -35,10 +35,15 @@ module). TERMINATED deals (announced, never completed — no FDIC anchor)
 come from find_terminated_deals when the caller supplies the holdco CIK:
 status='terminated' rows with termination + announce dates, counterparty
 and value (live-verified: FHN/TD $13.4B stated, announced 2022-02-28,
-terminated 2023-05-04). Completed rows carry status='completed'. FDIC
-history itself is completions only (EFFDATE).
+terminated 2023-05-04). PENDING deals (announced, no anchor yet) come
+from data/ma_pending's Rule 425 episode leg — status='pending' rows with
+announce date, counterparty (universe-matched to cert/CIK — both parties
+alive), value and target assets at announce (live-verified: FHB/TriCo
+2026-07-13, $2.01B computed = the PR's own $63.12/share convention).
+Completed rows carry status='completed'. FDIC history itself is
+completions only (EFFDATE).
 
-Cache: ``ma_history:v6:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
+Cache: ``ma_history:v7:{cert}:{cik or 0}`` for 7 days — structure changes are rare;
 the key is versioned so a deal-schema change never serves stale rows. Any
 fetch failure — history pages, a target-assets lookup, or an announcement
 fetch — skips the cache put so a transient outage is never frozen as a
@@ -232,9 +237,9 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
     cert = int(cert)
     from data import cache
 
-    # v6: target_cik for deal comps (2026-07-13). The key carries the
+    # v7: pending deals (2026-07-14). The key carries the
     # holdco CIK because the terminated leg only runs when one is supplied.
-    key = f"ma_history:v6:{cert}:{int(cik) if cik else 0}"
+    key = f"ma_history:v7:{cert}:{int(cik) if cik else 0}"
     cached = cache.get(key)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
@@ -370,6 +375,7 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
         d["termination_date"] = None
 
     # Terminated / withdrawn deals (EFTS sweep) — only with a holdco CIK.
+    terminated = []
     if cik:
         from data.ma_announcements import find_terminated_deals
         terminated, t_ok = find_terminated_deals(cik, subject_name)
@@ -395,7 +401,58 @@ def get_ma_history(cert: int, cik: int | None = None) -> list[dict]:
                 "termination_date": t["termination_date"],
             })
 
-    deals.sort(key=lambda x: x["completion_date"] or x["termination_date"] or "",
+    # PENDING deals (announced, no completion/termination anchor yet — the
+    # Rule 425 episode leg; live case FHB/TriCo 2026-07-13). Deduped against
+    # rows the other legs already carry: a completed deal whose counterparty
+    # brand token matches on/after the announce date, or any terminated row
+    # with the same counterparty token.
+    if cik:
+        from data.ma_announcements import brand_token, token_in
+        from data.ma_pending import find_pending_deals
+        pending, pd_ok = find_pending_deals(cik, subject_name)
+        cache_ok = cache_ok and pd_ok
+        for pr in pending:
+            tok = brand_token(pr["counterparty_name"] or "")
+            owned = False
+            for d in deals:
+                nm = ((d.get("counterparty") or {}).get("name") or "").lower()
+                if not token_in(tok, nm):
+                    continue
+                if d["status"] == "terminated":
+                    owned = True
+                    break
+                if (d.get("completion_date") or "") >= pr["announce_date"]:
+                    owned = True
+                    break
+            if owned:
+                continue
+            assets, repdte, a_ok = (
+                _assets_before(pr["counterparty_cert"], pr["announce_date"])
+                if pr["direction"] == "acquisition" else (None, None, True))
+            cache_ok = cache_ok and a_ok
+            deals.append({
+                "completion_date": None,
+                "deal_kind": "whole_company",
+                "direction": pr["direction"],
+                "counterparty": {"name": pr["counterparty_name"],
+                                 "cert": pr["counterparty_cert"]},
+                "branch_count": None,
+                "event_code": None,
+                "event_desc": "Announced — pending",
+                "target_assets": assets,
+                "target_assets_repdte": repdte,
+                "announce_date": pr["announce_date"],
+                "value_usd": pr["value_usd"],
+                "value_basis": pr["value_basis"],
+                "value_note": pr["value_note"],
+                "target_cik": pr["target_cik"],
+                "announce_url": pr["announce_url"],
+                "status": "pending",
+                "termination_date": None,
+            })
+
+    deals.sort(key=lambda x: (x["completion_date"] or x["termination_date"]
+                              or x.get("announce_date") or ""),
                reverse=True)
     if cache_ok:
         cache.put(key, {"deals": deals,
