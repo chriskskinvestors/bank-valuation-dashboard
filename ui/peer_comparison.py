@@ -153,7 +153,10 @@ def _render_scorecard(scores: dict, order: list[str]):
         s = scores.get(tk)
         if not s or s.get("score") is None:
             continue
-        parts = [f'<b>{_html.escape(tk)}</b>',
+        parts = [f'<a href="?bank={_html.escape(tk, quote=True)}" target="_self" '
+                 f'style="text-decoration:none;color:inherit;" '
+                 f'title="Open {_html.escape(tk)} company page">'
+                 f'<b>{_html.escape(tk)}</b></a>',
                  f'<span style="color:var(--brand-primary);">{round(s["score"])}</span>']
         if s["top"]:
             parts.append(f'<span style="color:#047857;">▲{s["top"]}</span>')
@@ -325,7 +328,13 @@ def render_peer_comparison(all_metrics: list[dict]):
                 "Business Mix": business_mix_tier(m),
             })
         comp_df = pd.DataFrame(comp_rows)
-        st.dataframe(comp_df, use_container_width=True, hide_index=True)
+        # Display copy gets Company-page links (universal linking rule); the
+        # export keeps plain tickers.
+        from ui.chrome import ticker_company_url, ticker_linkcol
+        comp_disp = comp_df.copy()
+        comp_disp["Ticker"] = comp_disp["Ticker"].map(ticker_company_url)
+        st.dataframe(comp_disp, use_container_width=True, hide_index=True,
+                     column_config=ticker_linkcol())
         table_export(comp_df, "peer_group_composition",
                      key="exp_peer_group_composition")
 
@@ -351,7 +360,10 @@ def _render_highlights(peers: list[dict]):
             f'border:0.5px solid var(--grid-head);border-radius:0;padding:4px 9px;'
             f'white-space:nowrap;">'
             f'<span style="color:var(--text-secondary);">{_html.escape(label)}</span> '
-            f'<b>{_html.escape(tk)}</b> '
+            f'<a href="?bank={_html.escape(tk, quote=True)}" target="_self" '
+            f'style="text-decoration:none;color:inherit;" '
+            f'title="Open {_html.escape(tk)} company page">'
+            f'<b>{_html.escape(tk)}</b></a> '
             f'<span style="color:var(--brand-primary);">{vs}</span></span>')
     if chips:
         st.markdown(

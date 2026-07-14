@@ -54,20 +54,10 @@ def _c_branches_county(fips, year): return get_branches_by_county(fips, year=yea
 def _c_banks_county(fips, year): return get_banks_by_county(fips, year=year)
 
 
-def _ticker_url(t) -> str | None:
-    """Company-page deep link for the Ticker LinkColumn; private banks (no
-    ticker) render a blank cell. Root-relative on purpose: st.dataframe is a
-    component iframe, so a bare '?s=…' would resolve against the iframe URL."""
-    t = (str(t).strip() if t is not None and not pd.isna(t) else "")
-    return f"/?s=Company&bank={t}" if t and t != "—" else None
-
-
-def _ticker_linkcol() -> dict:
-    """column_config making the Ticker column click through to Company pages
-    (grid link cells open a new tab — the grid canvas can't navigate in-app)."""
-    return {"Ticker": st.column_config.LinkColumn(
-        "Ticker", display_text=r"bank=(.+)$", width="small",
-        help="Open the bank's Company page")}
+# Shared universal-linking helpers (ui.chrome) — private banks (no ticker)
+# render a blank cell; link cells open the Company page in a new tab.
+from ui.chrome import ticker_company_url as _ticker_url
+from ui.chrome import ticker_linkcol as _ticker_linkcol
 
 
 def _fmt_dollars_k(thousands: float | int | None) -> str:

@@ -1197,21 +1197,10 @@ def _tk_cell(ticker: str) -> str:
             f'target="_self">{tk}</a></td>')
 
 
-def _df_ticker_url(t) -> str | None:
-    """Company-page URL for st.dataframe LinkColumn ticker cells. Root-relative
-    on purpose — the grid is a component context, so a bare '?bank=' would
-    resolve against the wrong base."""
-    t = str(t or "").strip()
-    return f"/?s=Company&bank={t}" if t else None
-
-
-def _df_ticker_linkcol() -> dict:
-    """column_config making a dataframe's Ticker column click through to the
-    Company page (grid link cells open a new tab — the canvas grid can't
-    navigate in-app; the HTML ksk-grids above stay same-tab via _tk_cell)."""
-    return {"Ticker": st.column_config.LinkColumn(
-        "Ticker", display_text=r"bank=(.+)$", width="small",
-        help="Open the bank's Company page")}
+# Shared universal-linking helpers (ui.chrome) for st.dataframe surfaces;
+# the HTML ksk-grids above stay same-tab via _tk_cell.
+from ui.chrome import ticker_company_url as _df_ticker_url
+from ui.chrome import ticker_linkcol as _df_ticker_linkcol
 
 
 def _render_earnings_grid(headers, body_rows, height: int | None = None,

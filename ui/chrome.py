@@ -92,3 +92,26 @@ def table_export(df, filename: str, key: str) -> None:
     df.to_csv(buf, index=False)
     st.download_button("Export", buf.getvalue(), file_name=f"{filename}.csv",
                        mime="text/csv", key=key)
+
+
+def ticker_company_url(ticker) -> str | None:
+    """Root-relative Company-page URL for st.dataframe LinkColumn ticker cells
+    (universal linking rule). Root-relative on purpose: the canvas grid renders
+    in a component context, so a bare '?bank=' would resolve against the wrong
+    base. None (blank cell) for missing/NaN/em-dash tickers. HTML surfaces use
+    plain '?bank=' anchors instead — this helper is the dataframe path."""
+    if ticker is None:
+        return None
+    t = str(ticker).strip()
+    if not t or t == "—" or t.lower() == "nan":
+        return None
+    return f"/?s=Company&bank={t}"
+
+
+def ticker_linkcol(col: str = "Ticker") -> dict:
+    """column_config rendering `col` (URLs built by ticker_company_url) as the
+    plain ticker text, deep-linking to the Company page. Grid link cells open
+    a new tab — the canvas grid can't navigate in-app."""
+    return {col: st.column_config.LinkColumn(
+        col, display_text=r"bank=(.+)$", width="small",
+        help="Open the bank's Company page")}
