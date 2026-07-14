@@ -96,14 +96,15 @@ def test_derive_quarterly_value():
 
 def test_roatce_variants():
     # Sub-bank, Q4: NI 1000 (×1), TCE = 10000 - 2000 = 8000 → 12.5%
-    fdic_q4 = {"NETINC": 1000.0, "EQTOT": 10000.0, "INTANGW": 2000.0,
+    # (INTAN = total intangibles, the house TCE convention — audit P2 #24)
+    fdic_q4 = {"NETINC": 1000.0, "EQTOT": 10000.0, "INTAN": 2000.0,
                "REPDTE": "20261231"}
     assert approx(compute_roatce(fdic_q4), 12.5)
     # Same bank reported at Q1 (NI 250 YTD ×4 = 1000) → identical 12.5%
     fdic_q1 = dict(fdic_q4, NETINC=250.0, REPDTE="20260331")
     assert approx(compute_roatce(fdic_q1), 12.5)
     # Negative TCE → None
-    assert compute_roatce({"NETINC": 100.0, "EQTOT": 100.0, "INTANGW": 200.0,
+    assert compute_roatce({"NETINC": 100.0, "EQTOT": 100.0, "INTAN": 200.0,
                            "REPDTE": "20261231"}) is None
 
     # HoldCo: NI 1000, equity 10000, gw 1000, intang 1000 → TCE 8000 → 12.5%
