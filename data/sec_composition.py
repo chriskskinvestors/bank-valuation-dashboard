@@ -586,13 +586,8 @@ def extract_deposit_composition(facts, labels: dict, children: dict) -> dict | N
 
 
 # ── public per-CIK entry points ──────────────────────────────────────────────
-def _fetch(cik):
-    """Fetch a company's latest 10-K iXBRL once: (meta, facts, labels, children)
-    or None. Shared by the per-kind helpers and the dual extractor so a single
-    filing fetch+parse serves both loan and deposit."""
-    if not cik:
-        return None
-    meta = latest_filing(cik, ("10-K",))
+def _fetch_meta(meta):
+    """Fetch ONE filing's iXBRL: (meta, facts, labels, children) or None."""
     if not meta:
         return None
     base = _filing_dir(meta["cik"], meta["accession"])
@@ -606,6 +601,15 @@ def _fetch(cik):
     return meta, facts, labels, children
 
 
+def _fetch(cik):
+    """Fetch a company's latest 10-K iXBRL once: (meta, facts, labels, children)
+    or None. Shared by the per-kind helpers and the dual extractor so a single
+    filing fetch+parse serves both loan and deposit."""
+    if not cik:
+        return None
+    return _fetch_meta(latest_filing(cik, ("10-K",)))
+
+
 def _composition_for(cik, extractor) -> dict | None:
     """Run one `extractor(facts, labels, children)`; {"meta", "composition"} or None."""
     got = _fetch(cik)
@@ -614,6 +618,62 @@ def _composition_for(cik, extractor) -> dict | None:
     meta, facts, labels, children = got
     comp = extractor(facts, labels, children)
     return {"meta": meta, "composition": comp} if comp else None
+
+
+def _compositions_extract_cached(meta) -> dict | None:
+    """Both compositions for ONE filing, cached per accession (immutable):
+    {"loan": comp|None, "deposit": comp|None} or None when the filing has no
+    usable iXBRL. A transient fetch failure is never cached."""
+    from data import cache
+    ckey = f"compositions_filing:v1:{meta['accession']}"
+    got = cache.get(ckey)
+    if got is not None:
+        return got or None
+    fetched = _fetch_meta(meta)
+    if not fetched:
+        return None                      # transient — retryable, never cached
+    _m, facts, labels, children = fetched
+    out = {"loan": extract_loan_composition(facts, labels, children),
+           "deposit": extract_deposit_composition(facts, labels, children)}
+    try:
+        cache.put(ckey, out)
+    except Exception:
+        pass
+    return out
+
+
+def compositions_multiquarter_for(cik, n_quarters: int = 8) -> dict | None:
+    """Quarter-end loan + deposit composition stitched from recent 10-Qs +
+    10-Ks: each filing's composition note covers its own period end (sometimes
+    a comparative); reconcile gates are per filing-period exactly as in the
+    annual path; newest filing wins a shared period; capped to the newest
+    n_quarters period-ends per kind. Returns {"meta", "loan", "deposit"} in
+    the compositions_for shape, or None."""
+    if not cik:
+        return None
+    from data.sec_statements import _recent_filing_metas
+    metas = _recent_filing_metas(cik, ("10-K", "10-Q"), n_quarters + 2)
+    if not metas:
+        return None
+    merged = {"loan": {}, "deposit": {}}
+    latest_meta = None
+    for meta in metas:                                # newest-first
+        got = _compositions_extract_cached(meta)
+        if not got:
+            continue
+        if latest_meta is None:
+            latest_meta = meta
+        for kind in ("loan", "deposit"):
+            for period, entry in (got.get(kind) or {}).items():
+                if period not in merged[kind]:        # newest filing wins
+                    merged[kind][period] = entry
+    if latest_meta is None or not (merged["loan"] or merged["deposit"]):
+        return None
+    out = {"meta": latest_meta}
+    for kind in ("loan", "deposit"):
+        keep = sorted(merged[kind], reverse=True)[:n_quarters]
+        out[kind] = ({p: merged[kind][p] for p in keep}) if keep else None
+    return out
 
 
 def compositions_for(cik) -> dict | None:

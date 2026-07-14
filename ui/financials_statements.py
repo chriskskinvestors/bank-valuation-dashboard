@@ -2406,6 +2406,7 @@ def _comp_norm_label(label) -> str:
     return " ".join(s.lower().split())
 
 
+@st.fragment
 def _render_company_composition(ticker, kind):
     """As-reported loan/deposit composition (kind = "loan" | "deposit") from the
     bank's OWN 10-K inline XBRL — each line the filer's own category label, the set
@@ -2420,28 +2421,38 @@ def _render_company_composition(ticker, kind):
     if not cik:
         st.info("No SEC filer mapping for this bank.")
         return
+    _qtr = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                    key=f"crcomp_{kind}_period_{ticker}",
+                    label_visibility="collapsed") == "Quarterly"
     try:
-        res = _compositions_cached(cik)
+        if _qtr:
+            from data.sec_composition import compositions_multiquarter_for
+            res = compositions_multiquarter_for(cik, n_quarters=8)
+        else:
+            res = _compositions_cached(cik)
     except Exception:
         res = None
     comp = (res or {}).get(kind)
     if not comp:
         st.caption(f"Company-reported {kind} composition is not disclosed in a "
-                   f"clean, reconciling table in this filer's latest 10-K — n/a.")
+                   "clean, reconciling table in this filer's "
+                   f"{'recent 10-Qs/10-Ks' if _qtr else 'latest 10-K'} — n/a.")
         return
     meta = res["meta"]
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
            f"{meta['accession']}/{meta['doc']}")
 
     # comp is {period: {"total", "rows": [(label, value)]}} newest-first; take the
-    # most recent 5 FY and render oldest→newest (matching the multi-year statements).
-    periods = list(comp)[:5][::-1]            # oldest → newest
+    # most recent 5 FY / 8 quarters and render oldest→newest (matching the
+    # multi-year statements).
+    periods = sorted(comp, reverse=True)[:8 if _qtr else 5][::-1]  # oldest → newest
 
     def _yr(p):
         m = re.search(r"\d{4}", p or "")
         return m.group() if m else (p or "")
 
-    cols = [f"FY{_yr(p)}" for p in periods]
+    cols = ([_cr_plabel(p, True) for p in periods] if _qtr
+            else [f"FY{_yr(p)}" for p in periods])
 
     # Union the category labels across the in-view periods, matched by normalised
     # label; keep the first-seen display text. A category is a row even if only one
@@ -2473,12 +2484,15 @@ def _render_company_composition(ticker, kind):
                  "values": [_cr_usd(comp[p]["total"]) for p in periods], "kind": "data"})
 
     latest_total = comp[latest]["total"]
-    st.caption(f"Source: company 10-K [{meta['date']}]({src}) — as reported, "
-               f"{len(periods)} fiscal year{'s' if len(periods) != 1 else ''} "
+    _span = (f"{len(periods)} quarter-end{'s' if len(periods) != 1 else ''}"
+             if _qtr else
+             f"{len(periods)} fiscal year{'s' if len(periods) != 1 else ''}")
+    st.caption(f"Source: company {'10-Q/10-K' if _qtr else '10-K'} "
+               f"[{meta['date']}]({src}) — as reported, {_span} "
                f"(latest {latest}). Each line is the company's own category; the "
-               f"lines reconcile to the disclosed total each year "
+               f"lines reconcile to the disclosed total each period "
                f"(latest \\${latest_total / 1e6:,.0f}M). Blank = not separately "
-               f"reported that year.")
+               f"reported that period.")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _cr_component(cols, rows, entity=entity, src=src)
 
