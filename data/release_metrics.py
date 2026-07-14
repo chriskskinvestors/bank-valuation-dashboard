@@ -619,17 +619,22 @@ def _year_ago_qend(qend: str | None) -> str | None:
 # ── Fetch/cache layer ──────────────────────────────────────────────────────
 
 def _current_accession(cik) -> str | None:
-    """The accession of the latest earnings 8-K per the (cheap) submissions
-    index; None when unavailable. One request."""
-    from data.ir_provider import _latest_earnings_8k
+    """The FRONTIER accession — the newest 8-K that could BE the earnings
+    release (Item 2.02, or exhibit-bearing without 2.02: ASB furnishes its
+    news release under Item 9.01 only) per the (cheap) submissions index;
+    None when unavailable. One request. Compared against the stored record's
+    `frontier`, not its release accession, so a furnished non-release 8-K
+    (investor deck) costs at most ONE re-selection pass — never a refetch
+    loop."""
+    from data.ir_provider import _earnings_8k_candidates
     from data.sec_filing_scraper import _get
     try:
         cik10 = str(int(cik)).zfill(10)
         subs = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
     except Exception:
         return None
-    hit = _latest_earnings_8k(subs)
-    return (hit or {}).get("accession")
+    cands = _earnings_8k_candidates(subs)
+    return cands[0]["accession"] if cands else None
 
 
 def release_metrics(cik) -> dict | None:
@@ -680,12 +685,12 @@ def release_metrics(cik) -> dict | None:
         # Submissions unreachable: keep serving what we had (re-stamped so one
         # outage doesn't turn into a re-check storm); nothing if we had nothing.
         return _stamp(prev) if prev else None
-    if prev and prev.get("accession") == acc:
-        # Same release. A COMPLETE extraction is immutable — but an AI fill
-        # that failed at extraction time must NOT be locked in for the
-        # quarter (Jul-14: one bad window on report morning left the six
-        # megabank exhibits deterministic-only, permanently). Retry the AI
-        # fill against the same accession, bounded.
+    if prev and prev.get("frontier", prev.get("accession")) == acc:
+        # Frontier unchanged — same release. A COMPLETE extraction is
+        # immutable — but an AI fill that failed at extraction time must NOT
+        # be locked in for the quarter (Jul-14: one bad window on report
+        # morning left the six megabank exhibits deterministic-only,
+        # permanently). Retry the AI fill against the same release, bounded.
         # Cap sized to the 900s re-check TTL: 24 × ~15 min ≈ a 6-hour retry
         # horizon (was 8 × 1h under the old hourly TTL).
         if prev.get("ai_state") == "ok" or prev.get("ai_attempts", 0) >= 24:
@@ -695,7 +700,7 @@ def release_metrics(cik) -> dict | None:
             rel = _ler(cik)
         except Exception:
             rel = None
-        if rel and rel.get("accession") == acc:
+        if rel and rel.get("accession") == prev.get("accession"):
             prev["ai_state"] = _ai_fill(prev, cik, rel)
         prev["ai_attempts"] = prev.get("ai_attempts", 0) + 1
         return _stamp(prev)
@@ -708,6 +713,12 @@ def release_metrics(cik) -> dict | None:
         rel = None
     if not rel:
         return _stamp(prev) if prev else None
+    if prev and rel.get("accession") == prev.get("accession"):
+        # The frontier moved (a furnished non-release 8-K) but the selected
+        # release is unchanged — advance the stored frontier, keep the
+        # extraction (and its AI state) intact.
+        prev["frontier"] = acc
+        return _stamp(prev)
     qend = _quarter_end_before(rel.get("filed_date") or "")
     prior_qend = _prior_quarter_end(qend)
     val = {
@@ -726,6 +737,7 @@ def release_metrics(cik) -> dict | None:
         "url": rel.get("url"),
         "filed_date": rel.get("filed_date"),
         "accession": rel.get("accession"),
+        "frontier": acc,
     }
     val["ai_state"] = _ai_fill(val, cik, rel)
     val["ai_attempts"] = 1

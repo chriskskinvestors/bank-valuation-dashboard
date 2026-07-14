@@ -257,6 +257,37 @@ class TestAiRetryNotLocked(unittest.TestCase):
         finally:
             self.rm._ai_fill = self._orig_fill
 
+    def test_frontier_moved_same_release_keeps_extraction(self):
+        # A furnished non-release 8-K (investor deck) moves the FRONTIER but
+        # latest_earnings_release still selects the same release: the stored
+        # extraction (and its AI state) must survive, with the frontier
+        # advanced so the next pass short-circuits — never a refetch loop.
+        self._seed(ai_state="ok", attempts=1)
+        self.rm._current_accession = lambda cik: "DECK2"
+        self._orig_fill = self.rm._ai_fill
+        try:
+            self._patch_fill("ok")
+            out = self.rm.release_metrics(1)
+            self.assertEqual(out["accession"], "ACC1")   # release unchanged
+            self.assertEqual(out["frontier"], "DECK2")   # frontier advanced
+            self.assertEqual(out["metrics"], {"nim": 4.56})
+            self.assertEqual(out["ai_state"], "ok")
+            self.assertEqual(self.fill_calls, [])        # no re-extraction
+        finally:
+            self.rm._ai_fill = self._orig_fill
+
+    def test_new_release_reextracts_and_stamps_frontier(self):
+        import data.ir_provider as ip
+        self._seed(ai_state="ok", attempts=1)
+        self.rm._current_accession = lambda cik: "ACC2"
+        ip.latest_earnings_release = lambda cik: {
+            "html": "<p>net interest margin of 4.60%.</p>",
+            "filed_date": "2026-07-14", "accession": "ACC2", "url": "u2"}
+        out = self.rm.release_metrics(1)
+        self.assertEqual(out["accession"], "ACC2")
+        self.assertEqual(out["frontier"], "ACC2")
+        self.assertEqual(out["metrics"].get("nim"), 4.60)
+
 
 class TestCacheContract(unittest.TestCase):
     def setUp(self):

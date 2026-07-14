@@ -57,6 +57,70 @@ class TestLatestEarnings8K(unittest.TestCase):
         self.assertEqual(_latest_earnings_8k(subs)["accession"], "000119312526000123")
 
 
+class TestEarnings8kCandidates(unittest.TestCase):
+    """9.01-only earnings 8-Ks (ASB, caught 2026-07-14): exhibit-bearing
+    filings WITHOUT 2.02 are gated candidates; the scan stops at the first
+    2.02 hit."""
+
+    def test_gated_candidates_then_202_stop(self):
+        from data.ir_provider import _earnings_8k_candidates
+        subs = _subs(
+            forms=["8-K", "8-K", "8-K", "8-K", "8-K"],
+            items=["7.01,9.01", "5.07,8.01,9.01", "9.01", "2.02,9.01", "9.01"],
+            dates=["2026-05-05", "2026-04-28", "2026-04-23", "2026-01-22",
+                   "2025-10-20"],
+            accs=["a-5", "a-4", "a-3", "a-2", "a-1"],
+        )
+        cands = _earnings_8k_candidates(subs)
+        self.assertEqual([c["filed_date"] for c in cands],
+                         ["2026-05-05", "2026-04-28", "2026-04-23",
+                          "2026-01-22"])            # stops AT the 2.02
+        self.assertEqual([c["gated"] for c in cands],
+                         [True, True, True, False])
+
+    def test_202_first_means_single_ungated_candidate(self):
+        from data.ir_provider import _earnings_8k_candidates
+        subs = _subs(["8-K"], ["2.02,9.01"], ["2026-07-14"], ["a-1"])
+        cands = _earnings_8k_candidates(subs)
+        self.assertEqual(len(cands), 1)
+        self.assertFalse(cands[0]["gated"])
+
+    def test_non_exhibit_8ks_never_candidate(self):
+        from data.ir_provider import _earnings_8k_candidates
+        subs = _subs(["8-K"], ["5.02"], ["2026-07-01"], ["a-1"])
+        self.assertEqual(_earnings_8k_candidates(subs), [])
+
+
+class TestEarningsHeadlineGate(unittest.TestCase):
+    def test_real_earnings_headline_passes(self):
+        from data.ir_provider import _is_earnings_headline
+        self.assertTrue(_is_earnings_headline(
+            "NEWS RELEASE Investor Contact: ... Associated Banc-Corp Reports "
+            "First Quarter 2026 Net Income of $200 million"))
+        self.assertTrue(_is_earnings_headline(
+            "FFIN Reports Fourth Quarter and Full Year Earnings"))
+
+    def test_annual_meeting_release_refused(self):
+        # "Announces Results of Annual Meeting" has no quarter word (ASB
+        # 4/28 — passed a looser two-signal gate during rollout).
+        from data.ir_provider import _is_earnings_headline
+        self.assertFalse(_is_earnings_headline(
+            "Associated Banc-Corp Announces Results of Annual Meeting of "
+            "Shareholders"))
+
+    def test_investor_deck_refused(self):
+        from data.ir_provider import _is_earnings_headline
+        self.assertFalse(_is_earnings_headline(
+            "Associated Banc-Corp 2026 Fixed Income Investor Presentation "
+            "May 5, 2026 Important Disclosures Forward-looking statements"))
+
+    def test_dividend_declaration_refused(self):
+        from data.ir_provider import _is_earnings_headline
+        self.assertFalse(_is_earnings_headline(
+            "XYZ Bancorp Announces Quarterly Cash Dividend of $0.25 Per "
+            "Share payable August 15"))
+
+
 class TestPickEx99(unittest.TestCase):
     def test_prefers_ex99_1_over_ex99_2(self):
         items = [

@@ -52,10 +52,9 @@ def _parse_index_html(html: str) -> list[dict]:
     return out
 
 
-def _latest_earnings_8k(submissions: dict) -> dict | None:
-    """Pure: the most recent 8-K carrying Item 2.02, from an EDGAR submissions
-    JSON. `recent` is newest-first, so the first match is the latest. Returns
-    {accession (no dashes), filed_date, primary, form} or None."""
+def _iter_8ks(submissions: dict):
+    """Pure: newest-first (items-set, row-dict) for every 8-K in the
+    submissions JSON's `recent` block."""
     rec = submissions.get("filings", {}).get("recent", {})
     forms = rec.get("form", [])
     items = rec.get("items", [])
@@ -66,16 +65,67 @@ def _latest_earnings_8k(submissions: dict) -> dict | None:
         if not form.startswith("8-K"):
             continue
         item_str = items[i] if i < len(items) else ""
-        present = {s.strip() for s in item_str.replace(";", ",").split(",") if s.strip()}
-        if _EARNINGS_ITEM not in present:
-            continue
-        return {
+        present = {s.strip() for s in item_str.replace(";", ",").split(",")
+                   if s.strip()}
+        yield present, {
             "accession": (accs[i] if i < len(accs) else "").replace("-", ""),
             "filed_date": dates[i] if i < len(dates) else "",
             "primary": primaries[i] if i < len(primaries) else "",
             "form": form,
         }
+
+
+def _latest_earnings_8k(submissions: dict) -> dict | None:
+    """Pure: the most recent 8-K carrying Item 2.02, from an EDGAR submissions
+    JSON. `recent` is newest-first, so the first match is the latest. Returns
+    {accession (no dashes), filed_date, primary, form} or None."""
+    for present, hit in _iter_8ks(submissions):
+        if _EARNINGS_ITEM in present:
+            return hit
     return None
+
+
+def _earnings_8k_candidates(submissions: dict, limit: int = 4) -> list[dict]:
+    """Pure: newest-first 8-K candidates for the earnings release. An Item
+    2.02 filing qualifies unconditionally; an exhibit-bearing filing WITHOUT
+    2.02 (Item 9.01/7.01 — ASB furnishes its news release under 9.01 only,
+    caught 2026-07-14) qualifies as {gated: True} and the caller must verify
+    the exhibit's headline before trusting it. Stops at the first 2.02 hit
+    (anything older is stale by definition) or after `limit` rows."""
+    out = []
+    for present, hit in _iter_8ks(submissions):
+        if _EARNINGS_ITEM in present:
+            out.append({**hit, "gated": False})
+            break
+        if "9.01" in present:
+            out.append({**hit, "gated": True})
+        if len(out) >= limit:
+            break
+    return out
+
+
+# Headline gate for non-2.02 candidates: the exhibit's opening text must read
+# like an earnings release ("… Reports First Quarter 2026 Results") — ALL
+# THREE signals required. "Announces Results of Annual Meeting" (ASB 4/28,
+# caught during rollout) has no quarter word; investor decks and dividend
+# declarations lack the results/earnings/net-income word.
+_HEADLINE_PARTS = (
+    re.compile(r"(?i)\b(?:reports?|announces?)\b"),
+    re.compile(r"(?i)\bquarter"),
+    re.compile(r"(?i)\b(?:results|earnings|net income)\b"),
+)
+
+
+def _is_earnings_headline(text: str) -> bool:
+    return all(p.search(text) for p in _HEADLINE_PARTS)
+
+
+def _headline_text(html: str, limit: int = 800) -> str:
+    """The exhibit's opening text (tags stripped, whitespace collapsed) —
+    just enough for the headline gate."""
+    t = re.sub(r"(?is)<(script|style).*?</\1>", " ", (html or "")[:40_000])
+    t = re.sub(r"(?s)<[^>]+>", " ", t)
+    return re.sub(r"\s+", " ", _h.unescape(t))[:limit]
 
 
 def _pick_ex99(items: list[dict]) -> str | None:
@@ -286,24 +336,13 @@ def extract_pnl(html: str) -> dict:
     return {"diluted_eps": vals[0]}
 
 
-def latest_earnings_release(cik) -> dict | None:
-    """I/O: locate + fetch the latest 8-K Item 2.02 EX-99.1 earnings release for a
-    CIK. Returns {url, html, filed_date, accession, form} or None. Any network or
-    structure failure returns None — the resolver simply falls through to the SEC
-    filing (this layer can only ever ADD a fresher source, never break one)."""
-    try:
-        cik10 = str(int(cik)).zfill(10)
-        subs = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
-    except Exception:
-        return None
-    hit = _latest_earnings_8k(subs)
-    if not hit or not hit["accession"]:
-        return None
+def _fetch_ex99(cik, hit: dict) -> dict | None:
+    """I/O: resolve + fetch a filing's EX-99.1. Primary: the -index.htm
+    document table is the only reliable source of which file is EX-99.1
+    (press release) vs EX-99.2 (data supplement) — index.json carries no
+    document type. Fall back to index.json filenames only if that table
+    can't be read."""
     base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{hit['accession']}"
-    # Primary: the -index.htm document table is the only reliable source of which
-    # file is EX-99.1 (press release) vs EX-99.2 (data supplement) — index.json
-    # carries no document type. Fall back to index.json filenames only if that
-    # table can't be read.
     doc = None
     try:
         idx_html = _get(f"{base}/{_dash_accession(hit['accession'])}-index.htm").decode(
@@ -326,6 +365,32 @@ def latest_earnings_release(cik) -> dict | None:
         return None
     return {"url": f"{base}/{doc}", "html": html, "filed_date": hit["filed_date"],
             "accession": hit["accession"], "form": hit["form"]}
+
+
+def latest_earnings_release(cik) -> dict | None:
+    """I/O: locate + fetch the latest EX-99.1 earnings release for a CIK.
+    Item 2.02 8-Ks are trusted outright; NEWER exhibit-bearing 8-Ks without
+    2.02 (ASB furnishes its news release under Item 9.01 only) are accepted
+    only when the exhibit's opening text passes the earnings-headline gate —
+    a furnished investor deck never replaces a real release. Returns
+    {url, html, filed_date, accession, form} or None. Any network or
+    structure failure returns None — the resolver simply falls through to
+    the SEC filing (this layer can only ever ADD a fresher source, never
+    break one)."""
+    try:
+        cik10 = str(int(cik)).zfill(10)
+        subs = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
+    except Exception:
+        return None
+    for cand in _earnings_8k_candidates(subs):
+        if not cand.get("accession"):
+            continue
+        if not cand.get("gated"):
+            return _fetch_ex99(cik, cand)
+        got = _fetch_ex99(cik, cand)
+        if got and _is_earnings_headline(_headline_text(got["html"])):
+            return got
+    return None
 
 
 # ── Freshest-wins wire-in (increment 5d) ───────────────────────────────────
