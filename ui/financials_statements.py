@@ -3913,6 +3913,7 @@ def _render_segments(ticker):
     _cr_component(cols, grid_rows, entity=entity, src=src)
 
 
+@st.fragment
 def _render_rate_risk(ticker):
     """Multi-year (up to 5 FY) embedded interest-rate risk: the AFS + HTM unrealized
     gain/(loss) already on the securities book, against equity and CET1 capital (the
@@ -3932,20 +3933,29 @@ def _render_rate_risk(ticker):
         return
     st.markdown("---")
     st.subheader("Interest Rate Risk — embedded securities marks (Company Reported)")
+    _rrq = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                    key=f"crrr_period_{ticker}",
+                    label_visibility="collapsed") == "Quarterly"
 
-    # Per-FY AFS/HTM net unrealized marks (same source the Securities tab shows).
+    # AFS/HTM net unrealized marks (same source the Securities tab shows).
     try:
-        from data.sec_filing_scraper import securities_multiyear_for
-        sec_res = securities_multiyear_for(cik, n_years=5)
+        if _rrq:
+            from data.sec_filing_scraper import securities_multiquarter_for
+            sec_res = securities_multiquarter_for(cik, n_quarters=8)
+        else:
+            from data.sec_filing_scraper import securities_multiyear_for
+            sec_res = securities_multiyear_for(cik, n_years=5)
     except Exception:
         sec_res = None
-    # Per-FY total equity (and the latest-10-K link) from the shipped highlights.
+    # Total equity per period (and the latest filing link) from the highlights
+    # engine — quarterly labels are _q_label strings, the join key below.
     try:
-        years, hdicts, hl_src = _cr_highlights_by_year(ticker)
+        years, hdicts, hl_src = _cr_highlights_by_year(ticker, quarterly=_rrq)
     except Exception:
         years = hdicts = hl_src = None
     if not sec_res or not sec_res.get("securities"):
-        st.caption("AFS/HTM unrealized marks not tagged in this filer's 10-Ks — n/a. "
+        st.caption("AFS/HTM unrealized marks not tagged in this filer's "
+                   f"{'10-Qs/10-Ks' if _rrq else '10-Ks'} — n/a. "
                    "Forward rate-shock (NII/EVE) sensitivity is disclosed in Item 7A "
                    "of the 10-K.")
         return
@@ -3956,14 +3966,26 @@ def _render_rate_risk(ticker):
         m = re.search(r"\d{4}", s or "")
         return int(m.group()) if m else None
 
-    sec = sec_res["securities"]                          # {fy_period: {...}}
-    sec_by_year = {_yr(p): v for p, v in sec.items() if _yr(p) is not None}
+    def _qlab(p):
+        """Same compact form as sec_statements._q_label: Q1'26."""
+        return f"Q{(int(p[5:7]) - 1) // 3 + 1}'{p[2:4]}"
+
+    # Join key: fiscal-year int (annual) or the _q_label string (quarterly —
+    # the highlights engine's quarterly column labels ARE _q_label outputs).
+    _key = _qlab if _rrq else _yr
+    sec = sec_res["securities"]                          # {period: {...}}
+    sec_by_year, _key_date = {}, {}
+    for p, v in sec.items():
+        k = _key(p)
+        if k is not None:
+            sec_by_year[k] = v
+            _key_date[k] = p
     equity_by_year = {}
     if years and hdicts:
         for y, d in zip(years, hdicts):
-            yi = _yr(y)
-            if yi is not None:
-                equity_by_year[yi] = d.get("total_equity")
+            k = y if _rrq else _yr(y)
+            if k is not None:
+                equity_by_year[k] = d.get("total_equity")
 
     # CET1 capital ($) per FY — only the bank's freshest filing tags the capital
     # table, so this typically covers the latest 1-2 FY-ends. Same FDIC CET1 anchor
@@ -3976,18 +3998,23 @@ def _render_rate_risk(ticker):
             cert = get_fdic_cert(ticker)
         except Exception:
             cert = info.get("fdic_cert") if info else None
-        cap_res = holdco_capital_for(cik, cert)
+        if _rrq:
+            from data.sec_filing_scraper import holdco_capital_quarterly_for
+            cap_res = holdco_capital_quarterly_for(cik, cert, 8)
+        else:
+            cap_res = holdco_capital_for(cik, cert)
         if cap_res:
             for period, d in cap_res["capital"].items():
-                yi = _yr(period)
-                if yi is not None:
-                    cet1_by_year[yi] = d.get("cet1_cap")
+                k = _key(period)
+                if k is not None:
+                    cet1_by_year[k] = d.get("cet1_cap")
     except Exception:
         cet1_by_year = {}
 
-    # Year set drives off the securities portfolio years, oldest → newest.
-    yrs = sorted(sec_by_year)
-    cols = [f"FY{y}" for y in yrs]
+    # Period set drives off the securities portfolio, oldest → newest (by the
+    # underlying period END — label sort would misorder quarters across years).
+    yrs = sorted(sec_by_year, key=lambda k: _key_date[k])
+    cols = yrs if _rrq else [f"FY{y}" for y in yrs]
 
     def _marks(y):
         """(afs_net, htm_net, total) for a year, or (None, None, None) when neither
@@ -4046,9 +4073,11 @@ def _render_rate_risk(ticker):
     meta = sec_res["meta"]
     src = hl_src or (f"https://www.sec.gov/Archives/edgar/data/{int(meta['cik'])}/"
                      f"{meta['accession']}/{meta['doc']}")
+    _span = (f"{len(yrs)} quarter-end(s)" if _rrq
+             else f"{len(yrs)} fiscal year-end(s)")
     st.caption(
-        f"Source: company 10-K filings — latest [{meta['date']}]({src}); "
-        f"{len(yrs)} fiscal year-end(s) stitched from {len(sec_res['filings'])} "
+        f"Source: company {'10-Q/10-K' if _rrq else '10-K'} filings — latest "
+        f"[{meta['date']}]({src}); {_span} stitched from {len(sec_res['filings'])} "
         "filing(s). Unrealized gain/(loss) on AFS + HTM debt securities vs equity "
         "and CET1 capital — the rate risk ALREADY on the books. CET1 capital is "
         "tagged only in the bank's freshest filing, so that % populates only the "

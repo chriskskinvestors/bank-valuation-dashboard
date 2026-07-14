@@ -487,20 +487,35 @@ def _render_holdco_capital(ticker: str):
                 "ratio double-confirmed in the release; the filed figures supersede "
                 "it once published.")
 
+    # Annual = FY-end stitch (+ the timeliest quarter, as before). Quarterly =
+    # the full quarter-end series from recent 10-Qs/10-Ks (2026-07-14 sweep) —
+    # same per-filing FDIC-CET1 anchor + reconcile gate either way.
+    _qtr = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                    key=f"hc_period_{ticker}",
+                    label_visibility="collapsed") == "Quarterly"
     try:
-        from data.sec_filing_scraper import holdco_capital_for
-        res = holdco_capital_for(cik, get_fdic_cert(ticker))
+        if _qtr:
+            from data.sec_filing_scraper import holdco_capital_quarterly_for
+            res = holdco_capital_quarterly_for(cik, get_fdic_cert(ticker), 8)
+        else:
+            from data.sec_filing_scraper import holdco_capital_for
+            res = holdco_capital_for(cik, get_fdic_cert(ticker))
     except Exception:
         res = None
     if not res or not res.get("capital"):
+        if _qtr:
+            st.caption("Quarterly capital table not tagged in this filer's "
+                       "recent 10-Qs — n/a (switch to Annual).")
         return
     meta, cap = res["meta"], res["capital"]
-    periods = sorted(cap, reverse=True)[:5]
+    periods = sorted(cap, reverse=True)[:8 if _qtr else 5]
     if not periods:
         return
 
     def _plab(p):
         y, m = p[:4], p[5:7]
+        if _qtr:
+            return f"Q{(int(m) - 1) // 3 + 1} '{y[2:]}"
         return f"FY{y}" if m == "12" else f"Q{(int(m) - 1) // 3 + 1} '{y[2:]}"
 
     st.markdown('<div class="ksk-sec">Capital Adequacy — holding company '

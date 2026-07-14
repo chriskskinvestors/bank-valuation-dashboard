@@ -641,6 +641,38 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
     return {"meta": latest_meta, "capital": capital}
 
 
+def holdco_capital_quarterly_for(cik, cert=None, n_quarters: int = 8) -> dict | None:
+    """Quarter-end holdco regulatory capital series: walk the recent 10-Qs +
+    10-Ks (each filing's capital table covers its own period end, sometimes a
+    comparative), same FDIC-CET1 anchor + reconcile gate per filing
+    (_holdco_capital_extract_cached), newest filing wins a shared period, cap
+    to the newest n_quarters period-ends. Quarters whose filing doesn't tag
+    the table simply aren't present (n/a downstream). Returns
+    {"meta": <latest contributing filing>, "capital": {period: {...}}} or None."""
+    if not cik:
+        return None
+    anchor = _fdic_cet1(cert)
+    from data.sec_statements import _recent_filing_metas
+    metas = _recent_filing_metas(cik, ("10-K", "10-Q"), n_quarters + 2)
+    if not metas:
+        return None
+    capital: dict = {}
+    latest_meta = None
+    for meta in metas:                                # newest-first
+        cap = _holdco_capital_extract_cached(meta, anchor)
+        if not _has_capital(cap):
+            continue
+        if latest_meta is None:
+            latest_meta = meta
+        for period, d in cap.items():
+            if period not in capital:                 # newest filing wins
+                capital[period] = d
+    if not _has_capital(capital):
+        return None
+    keep = sorted(capital, reverse=True)[:n_quarters]
+    return {"meta": latest_meta, "capital": {p: capital[p] for p in keep}}
+
+
 # ── Fair-value hierarchy (ASC 820) extraction ───────────────────────────────
 # The recurring fair-value hierarchy total is tagged Assets/Liabilities-
 # FairValueDisclosure, split across FairValueByFairValueHierarchyLevelAxis
