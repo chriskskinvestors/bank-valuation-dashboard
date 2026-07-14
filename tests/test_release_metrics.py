@@ -444,3 +444,117 @@ class TestRegionalTableShapes(unittest.TestCase):
                 + "</table>")
         m = extract_table_metrics(html, "2026-03-31")
         self.assertIsNone(m.get("nim"))
+
+
+class TestMegaCapTableShapes(unittest.TestCase):
+    """JPM/C shapes caught live on the 2026-07-14 report morning — every
+    table in both releases was skipped (JPM extracted 1/13, C 1/13)."""
+
+    def test_curly_quote_quarter_token(self):
+        from data.release_metrics import _period_qend
+        self.assertEqual(_period_qend("2Q’26"), "2026-06-30")
+        self.assertEqual(_period_qend("1Q'26"), "2026-03-31")
+
+    # JPM "Results for JPM": a caption/banner row carrying the change-vs
+    # periods sits ABOVE the real header; change columns are "$ O/(U)" /
+    # "O/(U) %"; scale reads "($ millions, …)" with no "in"; EPS label is
+    # the postfix form; revenue is "Net revenue - reported" (GAAP) next to
+    # "- managed" (which must never match).
+    JPM = ("<table>"
+           "<tr><td>Results for JPM</td><td></td><td></td><td>1Q26</td>"
+           "<td></td><td>2Q25</td></tr>"
+           "<tr><td>($ millions, except per share data)</td><td>2Q26</td>"
+           "<td>1Q26</td><td>2Q25</td><td>$ O/(U)</td><td>O/(U) %</td>"
+           "<td>$ O/(U)</td><td>O/(U) %</td></tr>"
+           "<tr><td>Net revenue - reported</td><td>$</td><td>57,347</td>"
+           "<td>$</td><td>49,836</td><td>$</td><td>44,912</td><td>$</td>"
+           "<td>7,511</td><td>15</td><td>%</td><td>$</td><td>12,435</td>"
+           "<td>28</td><td>%</td></tr>"
+           "<tr><td>Net revenue - managed</td><td>58,022</td><td>50,536</td>"
+           "<td>45,680</td><td>7,486</td><td>15</td><td>12,342</td>"
+           "<td>27</td></tr>"
+           "<tr><td>Earnings per share - diluted</td><td>$</td><td>7.70</td>"
+           "<td>$</td><td>5.94</td><td>$</td><td>5.24</td><td>$</td>"
+           "<td>1.76</td><td>30</td><td>%</td><td>$</td><td>2.46</td>"
+           "<td>47</td><td>%</td></tr>"
+           "<tr><td>Return on common equity</td><td>24</td><td>%</td>"
+           "<td>19</td><td>%</td><td>18</td><td>%</td></tr>"
+           "<tr><td>Return on tangible common equity</td><td>29</td>"
+           "<td>23</td><td>21</td></tr>"
+           "</table>")
+
+    def test_jpm_banner_row_does_not_hijack_header(self):
+        m = extract_table_metrics(self.JPM, "2026-06-30")
+        self.assertEqual(m.get("eps_diluted"), 7.70)
+        self.assertEqual(m.get("roe"), 24.0)
+        self.assertEqual(m.get("rotce"), 29.0)
+        self.assertEqual(m.get("total_revenue"), 57_347_000_000.0)
+
+    def test_jpm_prior_and_yoy_columns(self):
+        p = extract_table_metrics(self.JPM, "2026-03-31")
+        self.assertEqual(p.get("eps_diluted"), 5.94)
+        self.assertEqual(p.get("total_revenue"), 49_836_000_000.0)
+        y = extract_table_metrics(self.JPM, "2025-06-30")
+        self.assertEqual(y.get("eps_diluted"), 5.24)
+        self.assertEqual(y.get("roe"), 18.0)
+
+    def test_managed_basis_row_never_merges(self):
+        # If "- managed" (58,022) ever matched the revenue spec, the
+        # disagreement guard would kill total_revenue instead of 57,347.
+        m = extract_table_metrics(self.JPM, "2026-06-30")
+        self.assertEqual(m.get("total_revenue"), 57_347_000_000.0)
+
+    @staticmethod
+    def _c_tbl(caption, *rows):
+        zw = "​"
+        def tr(cells):
+            return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+        out = tr([caption, zw, "2Q’26", zw, "1Q’26", zw, "2Q’25", zw,
+                  "QoQ%", zw, "YoY%"])
+        return "<table>" + out + "".join(tr(r) for r in rows) + "</table>"
+
+    def test_c_zero_width_cells_and_bps_change_cols(self):
+        zw = "​"
+        html = self._c_tbl(
+            "Citigroup ($ in millions, except per share amounts)",
+            ["Return on average common equity (RoE)", zw, "11.4%", zw,
+             "11.5%", zw, "7.7%", zw, "(10) bps", zw, "370 bps"],
+            ["Tangible book value per share (c)", zw, "$", "100.89", zw,
+             "$", "99.01", zw, "$", "94.16", zw, "2%", zw, "7%"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertEqual(m.get("roe"), 11.4)
+        self.assertEqual(m.get("tbv_ps"), 100.89)
+        p = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(p.get("roe"), 11.5)
+        self.assertEqual(p.get("tbv_ps"), 99.01)
+
+    def test_c_segment_revenue_never_ships_as_firmwide(self):
+        # The firmwide "…, net of interest expense" row must CANDIDATE (not
+        # be invisible): alone it extracts; next to a segment table's plain
+        # "Total revenues" row the disagreement guard refuses — a lone
+        # segment figure must never ship as the firmwide number.
+        zw = "​"
+        firmwide = self._c_tbl(
+            "Citigroup ($ in millions, except per share amounts)",
+            ["Total revenues, net of interest expense", zw, "24,766", zw,
+             "24,633", zw, "21,668", zw, "1%", zw, "14%"])
+        m = extract_table_metrics(firmwide, "2026-06-30")
+        self.assertEqual(m.get("total_revenue"), 24_766_000_000.0)
+        segment = self._c_tbl(
+            "All Other (Managed Basis) ($ in millions)",
+            ["Total revenues", zw, "1,737", zw, "1,682", zw, "1,716", zw,
+             "3%", zw, "1%"])
+        m = extract_table_metrics(firmwide + segment, "2026-06-30")
+        self.assertIsNone(m.get("total_revenue"))
+
+
+class TestFifteenMinuteRecheck(unittest.TestCase):
+    def test_ttl_is_900(self):
+        # Report-morning freshness: a fetch minutes before the 8-K lands
+        # re-stamps LAST quarter's release — at 1h C served its April
+        # release until 9:39 on Jul-14. Pin the shorter re-check window.
+        import inspect
+        from data import release_metrics as rm
+        src = inspect.getsource(rm.release_metrics)
+        self.assertIn("is_fresh(cached, 900)", src)
+        self.assertNotIn("is_fresh(cached, 3600)", src)

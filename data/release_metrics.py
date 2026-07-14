@@ -26,8 +26,8 @@ Anything not confidently found is None — rendered as '—', never guessed.
 
 Fetch layer: one cached record per CIK. The extraction for a given 8-K
 accession is immutable, so a cache hit re-checks ONLY the (cheap) submissions
-index hourly and re-extracts only when a NEW accession appears — earnings-
-morning freshness at ~1 request/bank/hour.
+index every 15 min and re-extracts only when a NEW accession appears —
+earnings-morning freshness at ~4 requests/bank/hour.
 """
 
 from __future__ import annotations
@@ -233,7 +233,7 @@ _MONTHS3 = {m[:3]: i for i, m in enumerate(
     ("january", "february", "march", "april", "may", "june", "july", "august",
      "september", "october", "november", "december"), 1)}
 _Q_END = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
-_QTOK = re.compile(r"\b([1-4])Q\s?(\d{2}|\d{4})\b", re.I)
+_QTOK = re.compile(r"\b([1-4])Q\s?['’]?(\d{2}|\d{4})\b", re.I)
 _QWORD = re.compile(r"\b(first|second|third|fourth)\s+quarter,?\s+(\d{4})", re.I)
 _QNUM = {"first": 1, "second": 2, "third": 3, "fourth": 4}
 _DTOK = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})")
@@ -243,8 +243,10 @@ _DTOK = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})")
 _MONYR = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(20\d{2})\b")
 _QE_MONTH = {3: 31, 6: 30, 9: 30, 12: 31}
 # Header cells that mark a trailing %-change/comparison column (FITB "Seq",
-# "Yr/Yr"; generic "% Change", "bps") — never period columns.
-_CHANGE_COL = re.compile(r"(?i)\b(?:seq|yr/yr|yoy|qoq|change|bps|%)\b|%")
+# "Yr/Yr"; generic "% Change", "bps"; JPM "$ O/(U)" over/under, and the
+# analogous "B/(W)" better/worse) — never period columns.
+_CHANGE_COL = re.compile(r"(?i)\b(?:seq|yr/yr|yoy|qoq|change|bps|%)\b|%"
+                         r"|[ob]/\([uw]\)")
 
 
 def _period_qend(cell: str) -> str | None:
@@ -286,8 +288,13 @@ def _table_rows(table_html: str) -> list[list[str]]:
     rows = []
     for tr in re.findall(r"(?is)<tr[^>]*>(.*?)</tr>", table_html):
         cells = re.findall(r"(?is)<t[dh][^>]*>(.*?)</t[dh]>", tr)
+        # Zero-width characters (C pads every cell with U+200B) are not
+        # str.strip() whitespace — normalize them away or padding cells
+        # read as non-empty labels/columns.
         rows.append([re.sub(r"\s+", " ",
-                            _h.unescape(re.sub(r"(?s)<[^>]+>", " ", c))).strip()
+                            re.sub("[\u200b\u200c\ufeff]", " ",
+                                   _h.unescape(re.sub(r"(?s)<[^>]+>", " ", c)))
+                            ).strip()
                      for c in cells])
     return rows
 
@@ -343,15 +350,26 @@ _TABLE_SPECS = {
     # itself so the boards aren't blank while FMP's consensus feed lags a
     # fresh report. GAAP diluted EPS here; the ADJUSTED variant (what street
     # consensus usually compares to) is in _ADJ_TABLE_SPECS below.
-    "eps_diluted": (r"diluted (?:eps\b|(?:earnings|net income)(?: \(loss\))? per "
-                    r"(?:common )?share)", "$", (0.01, 60.0)),
+    # Prefix ("Diluted EPS") and postfix ("Earnings per share - diluted",
+    # JPM) label forms.
+    "eps_diluted": (r"(?:diluted (?:eps\b|(?:earnings|net income)(?: \(loss\))? "
+                    r"per (?:common )?share)"
+                    r"|(?:earnings|net income)(?: \(loss\))? per (?:common )?"
+                    r"share\s*[-–—]\s*diluted\b)", "$", (0.01, 60.0)),
     # "$K": magnitude row (reported in the table's stated unit — see the
     # in-thousands/in-millions scale sniff in extract_table_metrics); band
     # is in RAW dollars post-scale.
     # Anchored to label end (+ optional footnote) so taxable-equivalent /
     # adjusted variants ("Total revenue - TE (1)") never merge in and
-    # trip the cross-table disagreement guard.
-    "total_revenue": (r"total revenues?\s*(?:\(\d\))?\s*$", "$K", (5e6, 100e9)),
+    # trip the cross-table disagreement guard. The ", net of interest
+    # expense" form (C) is deliberately INCLUDED so a firmwide row always
+    # candidates alongside any segment-table "Total revenues" rows — they
+    # disagree and the guard refuses, instead of a lone segment row
+    # shipping as the firmwide figure. "Net revenue - reported" is JPM's
+    # GAAP line ("- managed" never matches the end anchor's basis word).
+    "total_revenue": (r"(?:total revenues?(?:, net of interest expense)?"
+                      r"|net revenues?\s*[-–—]\s*reported)"
+                      r"\s*(?:\(\d\))?\s*$", "$K", (5e6, 100e9)),
 }
 
 # Rows whose label is an "Adjusted …" variant are normally refused (the
@@ -374,7 +392,26 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
         for i, cells in enumerate(rows[:8]):
             found = [q for c in cells if (q := _period_qend(c))]
             if len(found) >= 2:
+                # A caption/banner row ("2Q26 Change vs. | 1Q26 | 2Q25") can
+                # sit ABOVE the real period header (JPM, caught live
+                # 2026-07-14) — advance while the NEXT row carries strictly
+                # MORE period tokens (value rows carry none, so this can
+                # never walk past the header).
+                while i + 1 < len(rows):
+                    nxt = [q for c in rows[i + 1] if (q := _period_qend(c))]
+                    if len(nxt) <= len(found):
+                        break
+                    found, i = nxt, i + 1
                 qends, hdr_i = found, i
+                # Trailing change columns on the header row itself ("$ O/(U)"
+                # / "O/(U) %", "QoQ%", "% Change") — counted so value rows
+                # that carry the change cells still align. Any trailing
+                # non-change token → count nothing (rows with extras skip).
+                last_p = max(j for j, c in enumerate(rows[i])
+                             if _period_qend(c))
+                trail = [c for c in rows[i][last_p + 1:] if c]
+                if trail and all(_CHANGE_COL.search(c) for c in trail):
+                    n_change = len(trail)
                 break
             # FITB-style SPLIT header: month names on one row, years on the
             # next ("March | December | March" over "2026 | 2025 | 2025 |
@@ -406,9 +443,12 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
         # magnitude rows are refused, never guessed from size.
         table_text = " ".join(" ".join(c for c in cells if c)
                               for cells in rows).lower()
-        scale = (1_000 if "in thousands" in table_text
-                 else 1_000_000 if "in millions" in table_text
-                 else 1_000_000_000 if "in billions" in table_text else None)
+        # "in millions" / "$ in millions" / JPM's "($ millions, except per
+        # share …)" — a unit word without either marker stays unrecognized.
+        _m = re.search(r"(?:\bin|\(\$)\s?(thousands|millions|billions)\b",
+                       table_text)
+        scale = {None: None, "thousands": 1_000, "millions": 1_000_000,
+                 "billions": 1_000_000_000}[_m.group(1) if _m else None]
         # Dollar affirmation for "$" (per-share) specs: WFC-style blocks put
         # the $ sign only on each block's FIRST row, so accept a row without
         # its own $ when the table's units statement covers per-share values.
@@ -515,27 +555,34 @@ def release_metrics(cik) -> dict | None:
     {metrics: {...}, capital: {...}, url, filed_date, accession} or None.
 
     Cached per CIK. An extraction is immutable per accession, so a fresh-
-    within-1h cache serves directly; past 1h only the submissions index is
-    re-checked and the stored extraction is re-stamped unless a NEW accession
-    appeared (then the new release is fetched and extracted). Failures never
-    overwrite a good cached extraction."""
+    within-15-min cache serves directly; past that only the submissions index
+    is re-checked and the stored extraction is re-stamped unless a NEW
+    accession appeared (then the new release is fetched and extracted).
+    Failures never overwrite a good cached extraction."""
     if not cik:
         return None
     from datetime import datetime
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v5 (2026-07-14): + guarded-AI fill (data/release_ai) over every period
-    # bucket — deterministic values always win; AI fills the None cells only.
-    # v4 added the year-ago column; v3 month-year headers + EPS/revenue specs.
-    # Extractions are immutable per accession, so spec improvements MUST bump
-    # this version or cached releases never re-extract.
-    key = f"release_metrics:v5:{int(cik)}"
+    # v6 (2026-07-14): mega-cap deterministic shapes caught live on JPM/C
+    # report morning — banner-row header advance, O/(U) change columns,
+    # "($ millions" scale, curly-quote periods (2Q’26), zero-width-space
+    # cells, postfix "- diluted" EPS, reported-basis / net-of-interest-
+    # expense revenue labels. v5 added the guarded-AI fill (data/release_ai);
+    # v4 the year-ago column. Extractions are immutable per accession, so
+    # spec improvements MUST bump this version or cached releases never
+    # re-extract.
+    key = f"release_metrics:v6:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:
         cached = None
-    if cached is not None and is_fresh(cached, 3600):
+    # 15-min re-check: on report morning a fetch minutes before the 8-K
+    # lands re-stamps LAST quarter's release — at the old 1h TTL, C served
+    # its April release until 9:39 on Jul-14. One cheap submissions-index
+    # request per bank per 15 min past TTL.
+    if cached is not None and is_fresh(cached, 900):
         return cached.get("value")
 
     def _stamp(value):
@@ -558,7 +605,9 @@ def release_metrics(cik) -> dict | None:
         # quarter (Jul-14: one bad window on report morning left the six
         # megabank exhibits deterministic-only, permanently). Retry the AI
         # fill against the same accession, bounded.
-        if prev.get("ai_state") == "ok" or prev.get("ai_attempts", 0) >= 8:
+        # Cap sized to the 900s re-check TTL: 24 × ~15 min ≈ a 6-hour retry
+        # horizon (was 8 × 1h under the old hourly TTL).
+        if prev.get("ai_state") == "ok" or prev.get("ai_attempts", 0) >= 24:
             return _stamp(prev)
         from data.ir_provider import latest_earnings_release as _ler
         try:

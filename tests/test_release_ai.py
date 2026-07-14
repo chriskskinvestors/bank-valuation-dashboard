@@ -202,7 +202,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
         if ai_state is not None:
             value["ai_state"] = ai_state
             value["ai_attempts"] = attempts
-        self.store[f"release_metrics:v5:{1}"] = {
+        self.store[f"release_metrics:v6:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):
@@ -247,7 +247,8 @@ class TestAiRetryNotLocked(unittest.TestCase):
             self.rm._ai_fill = self._orig_fill
 
     def test_attempt_cap_stops_retrying(self):
-        self._seed(ai_state="pending", attempts=8)
+        # Cap is 24 (sized to the 900s re-check TTL — ~6h retry horizon).
+        self._seed(ai_state="pending", attempts=24)
         self._orig_fill = self.rm._ai_fill
         try:
             self._patch_fill("ok")
