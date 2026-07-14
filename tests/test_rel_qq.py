@@ -54,23 +54,48 @@ class TestRelQqHtml(unittest.TestCase):
         self.assertIn("mut", _rel_qq_html("nim", None, 3.94, "%"))
 
 
-class TestRelDetailTr(unittest.TestCase):
-    def test_detail_row_carries_qq_and_notes(self):
-        r = {"rel": {"metrics": {"nim": 3.95, "efficiency": 52.3,
-                                 "eps_adj": 1.14},
-                     "prior_metrics": {"nim": 3.94, "efficiency": 55.2,
-                                       "eps_adj": 1.12},
-                     "prior_qend": "2026-03-31",
-                     "capital": {"cet1_ratio": 11.0},
-                     "url": "https://x"},
-             "eps_act_src": "release, adj."}
-        html = _rel_detail_tr(r, ncols=14)
-        self.assertIn("3.95%", html)
-        self.assertIn("-2.90", html)              # efficiency Q/Q
-        self.assertIn("$1.14", html)              # EPS adj row
-        self.assertIn("Δ vs 2026-03", html)
-        self.assertIn("actuals from the release", html)
-        self.assertIn("release ↗", html)
+class TestRelExhibit(unittest.TestCase):
+    FIX = {"rel": {"qend": "2026-06-30",
+                   "metrics": {"nim": 3.95, "efficiency": 52.3,
+                               "eps_adj": 1.14},
+                   "prior_metrics": {"nim": 3.94, "efficiency": 55.2,
+                                     "eps_adj": 1.12},
+                   "prior_qend": "2026-03-31",
+                   "yoy_metrics": {"nim": 3.68, "efficiency": 105.7,
+                                   "eps_adj": 0.88},
+                   "yoy_qend": "2025-06-30",
+                   "capital": {"cet1_ratio": 11.0},
+                   "url": "https://x"},
+           "eps_est": 1.14, "rev_est": None,
+           "eps_act_src": "release, adj."}
+
+    def test_q_labels(self):
+        from ui.earnings import _q_label
+        self.assertEqual(_q_label("2026-06-30"), "2Q26")
+        self.assertEqual(_q_label("2025-12-31"), "4Q25")
+        self.assertEqual(_q_label(None), "—")
+
+    def test_exhibit_rows_hand_computed(self):
+        from ui.earnings import _rel_exhibit_rows
+        rows = {r["key"]: r for r in _rel_exhibit_rows(self.FIX)}
+        eff = rows["efficiency"]
+        self.assertEqual((eff["yoy"], eff["prior"], eff["cur"]),
+                         (105.7, 55.2, 52.3))
+        self.assertIn("-2.90", eff["lq_html"])        # 52.3 - 55.2
+        self.assertIn('class="pos"', eff["lq_html"])  # falling eff = good
+        self.assertIn("-53.40", eff["yy_html"])       # 52.3 - 105.7
+        eps = rows["eps_adj"]
+        self.assertEqual(eps["cons"], 1.14)           # consensus lands on EPS
+        self.assertIn("+0.26", eps["yy_html"])        # 1.14 - 0.88
+        # a metric absent from ALL periods must not produce a row
+        self.assertNotIn("div_ps", rows)
+
+    def test_detail_row_is_exhibit_table(self):
+        html = _rel_detail_tr(self.FIX, ncols=14)
+        for want in ("2Q25A", "1Q26A", "2Q26A", "Cons.", "LQ Δ", "Y/Y Δ",
+                     "3.95%", "$1.14", "105.70%",
+                     "actuals from the release", "release ↗"):
+            self.assertIn(want, html)
 
 
 if __name__ == "__main__":

@@ -435,6 +435,17 @@ def _prior_quarter_end(qend: str | None) -> str | None:
     return f"{y + dy}-{pm:02d}-{_QE_MONTH[pm]}"
 
 
+def _year_ago_qend(qend: str | None) -> str | None:
+    """Same quarter-end one year earlier."""
+    if not qend:
+        return None
+    try:
+        y, rest = qend.split("-", 1)
+        return f"{int(y) - 1}-{rest}"
+    except ValueError:
+        return None
+
+
 # ── Fetch/cache layer ──────────────────────────────────────────────────────
 
 def _current_accession(cik) -> str | None:
@@ -466,12 +477,13 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v3 (2026-07-13): month-year period headers, ROE curly-apostrophe +
-    # NPA/ACL phrasing fixes, EPS (GAAP + adjusted) + total-revenue specs,
-    # and prior-quarter extraction from the same document (Q/Q display).
-    # Extractions are immutable per accession, so spec improvements MUST
-    # bump this version or cached releases never re-extract.
-    key = f"release_metrics:v3:{int(cik)}"
+    # v4 (2026-07-13): + year-ago column from the same document (the
+    # exhibit-style A/A/A comparison the owner specified). v3 added
+    # month-year period headers, ROE/NPA/ACL phrasing fixes, EPS + revenue
+    # specs, prior-quarter extraction. Extractions are immutable per
+    # accession, so spec improvements MUST bump this version or cached
+    # releases never re-extract.
+    key = f"release_metrics:v4:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:
@@ -507,6 +519,7 @@ def release_metrics(cik) -> dict | None:
     qend = _quarter_end_before(rel.get("filed_date") or "")
     prior_qend = _prior_quarter_end(qend)
     val = {
+        "qend": qend,
         "metrics": extract_release_metrics(rel["html"], expected_qend=qend),
         # Q/Q from the SAME document's comparative column — same reporting
         # basis as the current quarter, zero extra fetches. Table-only (the
@@ -514,6 +527,9 @@ def release_metrics(cik) -> dict | None:
         "prior_metrics": (extract_table_metrics(rel["html"], prior_qend)
                           if prior_qend else {}),
         "prior_qend": prior_qend,
+        "yoy_metrics": (extract_table_metrics(rel["html"], _year_ago_qend(qend))
+                        if _year_ago_qend(qend) else {}),
+        "yoy_qend": _year_ago_qend(qend),
         "capital": extract_capital_ratios(rel["html"]),
         "url": rel.get("url"),
         "filed_date": rel.get("filed_date"),

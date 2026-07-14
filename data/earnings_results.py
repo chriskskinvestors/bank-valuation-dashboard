@@ -242,10 +242,13 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
             return
         if rm and release_matches_report(rm.get("filed_date"), row["date"]):
             metrics = rm.get("metrics") or {}
-            row["rel"] = {"metrics": metrics,
+            row["rel"] = {"qend": rm.get("qend"),
+                          "metrics": metrics,
                           "capital": rm.get("capital") or {},
                           "prior_metrics": rm.get("prior_metrics") or {},
                           "prior_qend": rm.get("prior_qend"),
+                          "yoy_metrics": rm.get("yoy_metrics") or {},
+                          "yoy_qend": rm.get("yoy_qend"),
                           "url": rm.get("url")}
             # Actuals fill (owner, 2026-07-13): FMP's consensus feed lags a
             # fresh report ("pending") — the bank's own release already

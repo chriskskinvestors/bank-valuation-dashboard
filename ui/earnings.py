@@ -242,19 +242,27 @@ def _render_reported_panel(ticker: str):
 
     rel_all = row.get("rel") or {}
     vals = {**(rel_all.get("metrics") or {}), **(rel_all.get("capital") or {})}
-    prior = rel_all.get("prior_metrics") or {}
     if any(v is not None for v in vals.values()):
-        pq = rel_all.get("prior_qend")
-        items = []
-        for key, label, unit in _REL_METRICS:
-            items.append((label,
-                          _rel_qq_html(key, vals.get(key), prior.get(key), unit),
-                          "As stated in the bank's own earnings release, with "
-                          f"the move vs its prior-quarter column ({pq or 'n/a'})"
-                          "; '—' when not confidently confirmed.", None))
         st.markdown('<div class="ec-sec">From the Release</div>',
                     unsafe_allow_html=True)
-        _kpi_strip(items, cols=7, html_values=True)
+        st.markdown(
+            '<style>'
+            'table.relx{border-collapse:collapse;margin:2px 0 6px 0;}'
+            'table.relx th,table.relx td{padding:1px 12px;text-align:right;'
+            'font-size:0.92em;line-height:1.55;}'
+            'table.relx th{color:var(--text-muted);font-weight:600;'
+            'border-bottom:1px solid var(--border-subtle,rgba(0,0,0,0.12));}'
+            'table.relx td.rl,table.relx th:first-child{text-align:left;}'
+            'table.relx .cur{font-weight:600;}'
+            'table.relx .pos{color:#059669;}table.relx .neg{color:#dc2626;}'
+            'table.relx .mut{color:var(--text-muted);}'
+            '</style>' + _rel_exhibit_table(row),
+            unsafe_allow_html=True)
+        st.caption("Actuals straight from the bank's own release columns "
+                   "(year-ago and prior quarter are the release's own "
+                   "comparatives — same reporting basis). Consensus shown "
+                   "where we carry it (EPS, revenue); '—' where the release "
+                   "didn't confidently state a value.")
 
 
 def _format_val(val, unit: str) -> str:
@@ -1499,28 +1507,113 @@ def _rel_qq_html(key: str, cur, prior, unit: str) -> str:
     return f'{s} <span class="{cls}">{ds}</span>'
 
 
-def _rel_detail_tr(r: dict, ncols: int) -> str:
-    """The hidden expansion <tr> under a bank's row: every release-extracted
-    metric with its Q/Q move vs the release's own prior-quarter column
-    (label CUR ±Δ), '—' where the release didn't confirmably state it."""
+def _q_label(qend: str | None) -> str:
+    """'2026-06-30' → '2Q26' (exhibit-style column label)."""
+    if not qend:
+        return "—"
+    try:
+        y, m = int(qend[:4]), int(qend[5:7])
+        return f"{m // 3}Q{y % 100}"
+    except (ValueError, IndexError):
+        return qend
+
+
+def _rel_delta_html(key: str, cur, base, unit: str) -> str:
+    """LQ / Y/Y delta cell: pp for % metrics, $ for per-share, % for
+    revenue — direction-colored (falling efficiency/NCOs/NPAs = good)."""
+    if cur is None or base is None:
+        return '<span class="mut">—</span>'
+    d = cur - base
+    if unit == "%":
+        ds = f"{d:+.2f}"
+    elif unit == "$":
+        ds = f"{d:+.2f}"
+    else:
+        ds = f"{(cur / base - 1) * 100:+.1f}%" if base > 0 else "—"
+    if ds == "—":
+        return '<span class="mut">—</span>'
+    if key in _REL_NEUTRAL or d == 0:
+        cls = "mut"
+    else:
+        good = (d < 0) if key in _REL_LOWER_BETTER else (d > 0)
+        cls = "pos" if good else "neg"
+    return f'<span class="{cls}">{ds}</span>'
+
+
+def _rel_exhibit_rows(r: dict) -> list[dict]:
+    """The exhibit table rows (broker-sheet layout, our data): one dict per
+    metric with yoy/prior/current actuals, consensus (EPS + revenue — all we
+    carry), and LQ / Y/Y deltas. Rows where the release confirmed nothing in
+    any period are dropped."""
     rel = r.get("rel") or {}
-    vals = {**(rel.get("metrics") or {}), **(rel.get("capital") or {})}
+    cur = {**(rel.get("metrics") or {}), **(rel.get("capital") or {})}
     prior = rel.get("prior_metrics") or {}
-    parts = []
+    yoy = rel.get("yoy_metrics") or {}
+    cons = {"eps_adj": r.get("eps_est"), "total_revenue": r.get("rev_est")}
+    rows = []
     for key, label, unit in _REL_METRICS:
-        parts.append(f'<span class="rl">{label}</span> '
-                     + _rel_qq_html(key, vals.get(key), prior.get(key), unit))
-    pq = rel.get("prior_qend")
-    if pq:
-        parts.append(f'<span class="mut">Δ vs {pq[:7]}</span>')
+        c, p, y = cur.get(key), prior.get(key), yoy.get(key)
+        if c is None and p is None and y is None:
+            continue
+        rows.append({
+            "key": key, "label": label, "unit": unit,
+            "yoy": y, "prior": p, "cur": c, "cons": cons.get(key),
+            "lq_html": _rel_delta_html(key, c, p, unit),
+            "yy_html": _rel_delta_html(key, c, y, unit),
+        })
+    return rows
+
+
+def _rel_exhibit_table(r: dict) -> str:
+    """The exhibit as dense HTML (shared by the Results expander and the
+    Company panel): metric | year-ago A | prior A | current A | Cons. |
+    LQ Δ | Y/Y Δ, all straight from the bank's release columns."""
+    rel = r.get("rel") or {}
+    rows = _rel_exhibit_rows(r)
+    if not rows:
+        return ""
+
+    def _v(v, unit):
+        return _rel_val_str(v, unit) if v is not None else "—"
+
+    yl = _q_label(rel.get("yoy_qend"))
+    pl = _q_label(rel.get("prior_qend"))
+    cl = _q_label(rel.get("qend"))
+    if cl == "—":
+        cl = "Cur."
+    body = ""
+    for row in rows:
+        body += ("<tr>"
+                 f'<td class="rl">{row["label"]}</td>'
+                 f'<td>{_v(row["yoy"], row["unit"])}</td>'
+                 f'<td>{_v(row["prior"], row["unit"])}</td>'
+                 f'<td class="cur">{_v(row["cur"], row["unit"])}</td>'
+                 f'<td>{_v(row["cons"], row["unit"])}</td>'
+                 f'<td>{row["lq_html"]}</td>'
+                 f'<td>{row["yy_html"]}</td>'
+                 "</tr>")
+    notes = []
     if r.get("eps_act_src") or r.get("rev_act_src"):
-        parts.append('<span class="mut">* actuals from the release</span>')
+        notes.append("* actuals from the release")
     src = rel.get("url")
-    if src:
-        parts.append(f'<a class="lnk" href="{_html.escape(src, quote=True)}" '
-                     f'target="_blank" rel="noopener">release ↗</a>')
+    link = (f'<a class="lnk" href="{_html.escape(src, quote=True)}" '
+            f'target="_blank" rel="noopener">release ↗</a>' if src else "")
+    note_html = (' <span class="mut">' + " · ".join(notes) + "</span>"
+                 if notes else "")
+    return ('<table class="relx"><thead><tr>'
+            '<th></th>'
+            f'<th>{yl}A</th><th>{pl}A</th><th class="cur">{cl}A</th>'
+            '<th>Cons.</th><th>LQ Δ</th><th>Y/Y Δ</th>'
+            f"</tr></thead><tbody>{body}</tbody></table>{link}{note_html}")
+
+
+def _rel_detail_tr(r: dict, ncols: int) -> str:
+    """The hidden expansion <tr> under a bank's row: the exhibit-style
+    release table (year-ago / prior / current actuals + consensus + deltas),
+    every value from the bank's own release columns."""
+    exhibit = _rel_exhibit_table(r)
     return (f'<tr class="det"><td class="dt" colspan="{ncols}">'
-            + " · ".join(parts) + "</td></tr>")
+            + (exhibit or '<span class="mut">—</span>') + "</td></tr>")
 
 
 def _results_tr(r: dict, ncols: int) -> str:
@@ -1641,6 +1734,17 @@ def _render_results_board():
         "white-space:normal;}"
         ".ern-grid td.dt .rl{color:var(--text-muted);font-size:0.85em;"
         "text-transform:uppercase;letter-spacing:0.03em;}"
+        # The exhibit table inside an expanded row (broker-sheet layout):
+        # metric | year-ago A | prior A | current A | Cons. | LQ Δ | Y/Y Δ.
+        ".ern-grid td.dt table.relx{border-collapse:collapse;display:inline-table;"
+        "vertical-align:top;margin:2px 8px 2px 0;}"
+        ".ern-grid td.dt table.relx th,.ern-grid td.dt table.relx td{"
+        "padding:1px 10px;text-align:right;font-size:0.92em;line-height:1.5;}"
+        ".ern-grid td.dt table.relx th{color:var(--text-muted);font-weight:600;"
+        "border-bottom:1px solid var(--border-subtle,rgba(0,0,0,0.12));}"
+        ".ern-grid td.dt table.relx td.rl,.ern-grid td.dt table.relx th:first-child{"
+        "text-align:left;}"
+        ".ern-grid td.dt table.relx .cur{font-weight:600;}"
         "</style>", unsafe_allow_html=True)
     _render_earnings_grid(headers, [_results_tr(r, len(headers)) for r in rows],
                           col_widths=col_widths)
