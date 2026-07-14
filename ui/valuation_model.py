@@ -891,11 +891,17 @@ def _render_peer_warranted(ticker: str, coe_pct: float, terminal_g_pct: float):
             base = ["background-color: rgba(220, 38, 38, 0.08);"] * len(row)
         return base
 
-    styled = df.style.apply(_style_upside, axis=1).set_properties(
+    # Universal linking rule: tickers click through to Company pages
+    # (LinkColumn on a display copy; the Styler reads ""/"Upside" only).
+    from ui.chrome import ticker_company_url, ticker_linkcol
+    disp = df.copy()
+    disp["Ticker"] = disp["Ticker"].map(ticker_company_url)
+    styled = disp.style.apply(_style_upside, axis=1).set_properties(
         **{"font-size": "0.82rem", "padding": "4px 8px"}
     )
     st.dataframe(styled, use_container_width=True, hide_index=True,
-                 height=min(700, 50 + 32 * len(df)))
+                 height=min(700, 50 + 32 * len(df)),
+                 column_config=ticker_linkcol())
 
     st.caption(
         "**Reading the table:** Banks at top have the largest implied upside under "

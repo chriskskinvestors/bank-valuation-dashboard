@@ -311,21 +311,39 @@ def render_crossholdings(ticker: str):
                 "the cross-join will populate as 13F tabs are viewed.")
         return
 
-    rows = []
+    # ksk-grid HTML (not st.dataframe): the "Largest other positions" cell
+    # carries SEVERAL tickers, each deep-linking to its Company page
+    # (universal linking rule) — a canvas-grid LinkColumn can only link a
+    # whole single-value cell.
+    import html as _h
+    body = ""
     for r in x["rows"]:
         others = r["others"]
         tops = ", ".join(
-            f"{o['ticker']} ({fmt_dollars(o['value_usd'], 1)})"
+            f'<a href="?bank={_h.escape(o["ticker"], quote=True)}" '
+            f'target="_self">{_h.escape(o["ticker"])}</a> '
+            f'({_h.escape(fmt_dollars(o["value_usd"], 1))})'
             for o in others[:5] if o.get("value_usd"))
-        rows.append({
-            "Institution": r["holder"],
-            "Position here": fmt_dollars(r["subject_value_usd"], 2)
-                              if r.get("subject_value_usd") else "—",
-            "Other banks held": len(others),
-            "Largest other positions": tops or "—",
-        })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
-                 height=min(640, 36 + 35 * len(rows)))
+        pos = (fmt_dollars(r["subject_value_usd"], 2)
+               if r.get("subject_value_usd") else "—")
+        body += (
+            "<tr>"
+            f'<td style="text-align:left;">{_h.escape(r["holder"])}</td>'
+            f'<td style="text-align:right;">{_h.escape(pos)}</td>'
+            f'<td style="text-align:right;">{len(others)}</td>'
+            f'<td style="text-align:left;">{tops or "—"}</td>'
+            "</tr>"
+        )
+    st.markdown(
+        '<div class="ksk-grid" style="max-height:640px;overflow-y:auto;">'
+        "<table><thead><tr>"
+        '<th style="text-align:left;">Institution</th>'
+        '<th style="text-align:right;">Position here</th>'
+        '<th style="text-align:right;">Other banks held</th>'
+        '<th style="text-align:left;">Largest other positions</th>'
+        "</tr></thead><tbody>" + body + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
     flat = [{"holder": r["holder"], "ticker": o["ticker"],
              "shares": o.get("shares"), "value_usd": o.get("value_usd")}
             for r in x["rows"] for o in r["others"]]

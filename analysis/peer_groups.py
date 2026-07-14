@@ -182,11 +182,14 @@ def metric_percentile_context(ticker: str, all_metrics: list[dict],
         v = self_m.get(k)
         # NaN is missing data, not a value — a pandas round-trip turns None
         # into NaN, which passes `is not None` and would otherwise rank as
-        # 0th percentile (every comparison against NaN is False).
-        if v is None or pd.isna(v):
+        # 0th percentile (every comparison against NaN is False). Non-numeric
+        # values (a stray str from a stale cache row) are missing too — they
+        # made the rank comparison below raise and took down Peer Rank.
+        if not isinstance(v, (int, float)) or pd.isna(v):
             continue
         peer_vals = [m.get(k) for m in cohort
-                     if m.get(k) is not None and not pd.isna(m.get(k))]
+                     if isinstance(m.get(k), (int, float))
+                     and not pd.isna(m.get(k))]
         if len(peer_vals) < min_peers:
             continue
         raw = compute_peer_percentile(v, peer_vals)
@@ -220,9 +223,13 @@ def compute_peer_percentile(bank_value: float | None, peer_values: list[float]) 
     Formula: percentile = (n_below + 0.5 * n_equal) / n_total * 100
     This is the Hazen method — robust, commonly used in statistics packages.
     """
-    if bank_value is None or pd.isna(bank_value):
-        return None  # NaN = missing data → no percentile, never 0th
-    valid = [v for v in peer_values if v is not None and not pd.isna(v)]
+    if bank_value is None or not isinstance(bank_value, (int, float)) \
+            or pd.isna(bank_value):
+        return None  # NaN/non-numeric = missing data → no percentile, never 0th
+    # Numeric-only: a stray str value in a cohort (e.g. a stale local-cache
+    # row) made `v < bank_value` raise and took down the whole Peer Rank page.
+    valid = [v for v in peer_values
+             if isinstance(v, (int, float)) and not pd.isna(v)]
     if not valid:
         return None
     below = sum(1 for v in valid if v < bank_value)

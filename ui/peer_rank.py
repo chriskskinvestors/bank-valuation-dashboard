@@ -233,7 +233,10 @@ def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str):
         cells.append(
             f'<tr style="{bg}">'
             f'<td style="padding:5px 10px;color:#64748b;width:46px;">#{i}</td>'
-            f'<td style="padding:5px 10px;font-weight:{weight};color:#0f172a;white-space:nowrap;">{marker}{_html.escape(str(tk))}</td>'
+            f'<td style="padding:5px 10px;font-weight:{weight};color:#0f172a;white-space:nowrap;">'
+            f'{marker}<a href="?bank={_html.escape(str(tk), quote=True)}" target="_self" '
+            f'style="text-decoration:none;color:inherit;" '
+            f'title="Open {_html.escape(str(tk))} company page">{_html.escape(str(tk))}</a></td>'
             f'<td style="padding:5px 10px;color:#475569;">{nm}</td>'
             f'<td style="padding:5px 10px;text-align:right;font-weight:{weight};color:#0f172a;">{v:.2f}%</td>'
             f'</tr>'
