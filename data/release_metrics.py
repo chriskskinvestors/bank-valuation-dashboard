@@ -652,14 +652,16 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v8 (2026-07-14 pm): ordinal-quarter headers — "1st Quarter 2026"
-    # single-cell (_QWORD), TCBI ordinals-over-years split, CFR years-over-
-    # ordinals inverted split (descending-runs proof). v7 added the prose
+    # v9 (2026-07-14 pm): AI fill also reads the 8-K's financial-supplement
+    # exhibit (consolidated front section) — megabank NIM/ROA/Tier 1 and
+    # history-table cells the press release never states. v8 added ordinal-
+    # quarter headers ("1st Quarter 2026" single-cell _QWORD, TCBI ordinals-
+    # over-years, CFR years-over-ordinals inverted split); v7 the prose
     # diluted-EPS spec; v6 the JPM/C table shapes; v5 the guarded-AI fill
     # (data/release_ai). Extractions are immutable per accession, so spec
     # improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v8:{int(cik)}"
+    key = f"release_metrics:v9:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:
@@ -744,6 +746,39 @@ def release_metrics(cik) -> dict | None:
     return _stamp(val)
 
 
+# Segment DETAIL-page boundary. Generic "segment" is useless as a cut marker:
+# consolidated pages embed segment-summary tables (names as row labels) and
+# page-1 TOCs list every section — so the marker is a detail-page HEADER
+# ("SEGMENT RESULTS", "<segment name> FINANCIAL HIGHLIGHTS"), and matches
+# inside the TOC region are ignored. Measured on the 2026-07-14 JPM/BAC/C/WFC
+# supplements: keeps consolidated NIM/ROA/capital/TBV, excludes every
+# segment-ratio page (JPM Card 3.47% NCO).
+_SEG_DETAIL = re.compile(
+    r"(?i)\bsegment (?:results|detail|information)\b|"
+    r"(?:consumer & community banking|corporate & investment bank|"
+    r"asset & wealth management|commercial banking|consumer banking|"
+    r"global wealth|global banking|global markets|institutional securities|"
+    r"wealth (?:&|and) investment management|u\.?s\.? personal banking|"
+    r"branded cards|retail services|services|markets|banking|wealth)"
+    r"\s+(?:financial highlights|selected financial|segment results)")
+_TOC_FLOOR = 8_000       # detail markers inside page 1 are a table of contents
+_NO_MARKER_CAP = 25_000  # unrecognized layout → consolidated front tables only
+                         # (C 2Q26: first business credit row at 26k)
+
+
+def _consolidated_slice(sup_text: str, cap: int = 120_000) -> str:
+    """The supplement's FIRMWIDE front section: everything before the first
+    segment detail-page header (megabank supplements lead with consolidated
+    highlights/statements, then per-segment pages whose qualified ratios —
+    e.g. JPM Card Services' 3.47% NCO rate — must never reach the AI as
+    firmwide candidates). No recognizable boundary → a conservative front
+    cap. Cutting early loses coverage, never correctness."""
+    for m in _SEG_DETAIL.finditer(sup_text):
+        if m.start() >= _TOC_FLOOR:
+            return sup_text[:m.start()][:cap]
+    return sup_text[:_NO_MARKER_CAP]
+
+
 def _ai_fill(val: dict, cik, rel: dict) -> str:
     """Fill val's None metric cells in place from the guarded-AI extraction
     (data/release_ai — verbatim-evidence verified, unit-safe keys only).
@@ -755,8 +790,22 @@ def _ai_fill(val: dict, cik, rel: dict) -> str:
         from data.release_ai import has_api_key, release_ai_metrics
         if not has_api_key():
             return "ok"                   # nothing to retry without a key
+        text = _flat_text(rel.get("html") or "")
+        # Megabanks keep NIM/ROA/Tier 1 and the 5-quarter history tables in
+        # the 8-K's SECOND exhibit (financial supplement) — append its
+        # consolidated front section so those cells can fill. All release_ai
+        # guards (verbatim quote, number-in-quote, bands, segment rejection,
+        # period proof) apply unchanged.
+        try:
+            from data.ir_provider import earnings_supplement
+            sup = earnings_supplement(cik, val.get("accession") or "")
+        except Exception:
+            sup = None
+        if sup:
+            text += ("\n\n[FINANCIAL SUPPLEMENT — CONSOLIDATED SECTION]\n"
+                     + _consolidated_slice(_flat_text(sup.get("html") or "")))
         ai = release_ai_metrics(
-            cik, val.get("accession") or "", _flat_text(rel.get("html") or ""),
+            cik, val.get("accession") or "", text,
             qend=val.get("qend"), prior_qend=val.get("prior_qend"),
             yoy_qend=val.get("yoy_qend"))
     except Exception as e:

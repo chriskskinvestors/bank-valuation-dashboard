@@ -202,7 +202,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
         if ai_state is not None:
             value["ai_state"] = ai_state
             value["ai_attempts"] = attempts
-        self.store[f"release_metrics:v8:{1}"] = {
+        self.store[f"release_metrics:v9:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):
@@ -329,13 +329,15 @@ class TestCacheContract(unittest.TestCase):
 
 class TestMergePrecedence(unittest.TestCase):
     def test_deterministic_wins_ai_fills_gaps(self):
+        import data.ir_provider as ip
         import data.release_ai as mod
         import data.release_metrics as rm
-        orig = (mod.release_ai_metrics, mod.has_api_key)
+        orig = (mod.release_ai_metrics, mod.has_api_key, ip.earnings_supplement)
         mod.release_ai_metrics = lambda *a, **k: {
             "cur": {"nim": 9.99, "roa": 2.01, "cet1_ratio": 12.5},
             "prior": {"nim": 4.54}, "yoy": {}}
         mod.has_api_key = lambda: True
+        ip.earnings_supplement = lambda cik, acc: None   # no network in tests
         try:
             val = {"accession": "a", "qend": "2026-06-30",
                    "metrics": {"nim": 4.56, "roa": None},
@@ -347,7 +349,93 @@ class TestMergePrecedence(unittest.TestCase):
             self.assertEqual(val["prior_metrics"]["nim"], 4.54)
             self.assertEqual(val["capital"]["cet1_ratio"], 12.5)
         finally:
-            mod.release_ai_metrics, mod.has_api_key = orig
+            mod.release_ai_metrics, mod.has_api_key, ip.earnings_supplement = orig
+
+
+class TestSupplementFeed(unittest.TestCase):
+    """The AI fill's input = release text + the supplement's CONSOLIDATED
+    front section only (2026-07-14): segment pages carry qualified ratios
+    (JPM Card 3.47% NCO) that must never reach the model as firmwide
+    candidates."""
+
+    def test_consolidated_slice_cuts_at_detail_header(self):
+        import data.release_metrics as rm
+        txt = ("CONSOLIDATED FINANCIAL HIGHLIGHTS net interest margin 2.62% "
+               + "pad " * 3000 +   # past the TOC floor
+               "SEGMENT RESULTS Card Services net charge-off rate 3.47%")
+        out = rm._consolidated_slice(txt)
+        self.assertIn("2.62%", out)
+        self.assertNotIn("3.47%", out)
+
+    def test_toc_mention_does_not_cut(self):
+        # Page-1 TOCs list "Segment Results" — a marker before the floor is
+        # navigation, not the section itself (WFC cut to 0 chars without this).
+        import data.release_metrics as rm
+        txt = ("Table of Contents Segment Results 8 "
+               "CONSOLIDATED net interest margin 2.62%")
+        self.assertIn("2.62%", rm._consolidated_slice(txt))
+
+    def test_no_marker_keeps_front_cap_only(self):
+        import data.release_metrics as rm
+        txt = "return on assets 1.03% " + "x" * 40_000
+        out = rm._consolidated_slice(txt)
+        self.assertIn("1.03%", out)
+        self.assertEqual(len(out), rm._NO_MARKER_CAP)
+
+    def test_ai_fill_appends_supplement_front_section(self):
+        import data.ir_provider as ip
+        import data.release_ai as mod
+        import data.release_metrics as rm
+        orig = (mod.release_ai_metrics, mod.has_api_key, ip.earnings_supplement)
+        seen = {}
+
+        def capture(cik, acc, text, **kw):
+            seen["text"] = text
+            return {"cur": {}, "prior": {}, "yoy": {}}
+        mod.release_ai_metrics = capture
+        mod.has_api_key = lambda: True
+        ip.earnings_supplement = lambda cik, acc: {
+            "url": "u", "html": "<p>Consolidated ROA 1.03%</p>"
+                                + "<p>pad</p>" * 3000    # past the TOC floor
+                                + "<p>Segment Results Card NCO 3.47%</p>"}
+        try:
+            val = {"accession": "a", "qend": "2026-06-30", "metrics": {},
+                   "prior_metrics": {}, "yoy_metrics": {}, "capital": {}}
+            state = rm._ai_fill(val, 1, {"html": "<p>release text</p>"})
+            self.assertEqual(state, "ok")
+            self.assertIn("release text", seen["text"])
+            self.assertIn("FINANCIAL SUPPLEMENT", seen["text"])
+            self.assertIn("1.03%", seen["text"])
+            self.assertNotIn("3.47%", seen["text"])   # segment tail cut
+        finally:
+            mod.release_ai_metrics, mod.has_api_key, ip.earnings_supplement = orig
+
+    def test_supplement_failure_still_extracts_release(self):
+        import data.ir_provider as ip
+        import data.release_ai as mod
+        import data.release_metrics as rm
+        orig = (mod.release_ai_metrics, mod.has_api_key, ip.earnings_supplement)
+        seen = {}
+
+        def capture(cik, acc, text, **kw):
+            seen["text"] = text
+            return {"cur": {"nim": 4.56}, "prior": {}, "yoy": {}}
+        mod.release_ai_metrics = capture
+        mod.has_api_key = lambda: True
+
+        def boom(cik, acc):
+            raise RuntimeError("index unreachable")
+        ip.earnings_supplement = boom
+        try:
+            val = {"accession": "a", "qend": "2026-06-30", "metrics": {},
+                   "prior_metrics": {}, "yoy_metrics": {}, "capital": {}}
+            state = rm._ai_fill(val, 1, {"html": "<p>release text</p>"})
+            self.assertEqual(state, "ok")
+            self.assertEqual(val["metrics"]["nim"], 4.56)
+            self.assertIn("release text", seen["text"])
+            self.assertNotIn("FINANCIAL SUPPLEMENT", seen["text"])
+        finally:
+            mod.release_ai_metrics, mod.has_api_key, ip.earnings_supplement = orig
 
 
 if __name__ == "__main__":

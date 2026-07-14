@@ -153,6 +153,39 @@ class TestPickEx99(unittest.TestCase):
         self.assertIsNone(_pick_ex99([]))
 
 
+class TestPickSupplement(unittest.TestCase):
+    """The financial-supplement exhibit = the lowest EX-99.x that is NOT the
+    chosen press release (2026-07-14: megabank NIM/ROA/Tier 1 live there)."""
+
+    def test_picks_ex99_2_beside_release(self):
+        from data.ir_provider import _pick_supplement
+        items = [
+            {"name": "d8k.htm", "type": "8-K"},
+            {"name": "supp.htm", "type": "EX-99.2"},
+            {"name": "press.htm", "type": "EX-99.1"},
+        ]
+        self.assertEqual(_pick_supplement(items, "press.htm"), "supp.htm")
+
+    def test_lowest_remaining_when_several(self):
+        from data.ir_provider import _pick_supplement
+        items = [{"name": "a.htm", "type": "EX-99.3"},
+                 {"name": "b.htm", "type": "EX-99.2"},
+                 {"name": "press.htm", "type": "EX-99.1"}]
+        self.assertEqual(_pick_supplement(items, "press.htm"), "b.htm")
+
+    def test_none_when_single_exhibit(self):
+        from data.ir_provider import _pick_supplement
+        items = [{"name": "press.htm", "type": "EX-99.1"}]
+        self.assertIsNone(_pick_supplement(items, "press.htm"))
+
+    def test_no_filename_heuristic(self):
+        # Untyped rows can't be told apart from a furnished deck — fail-safe None.
+        from data.ir_provider import _pick_supplement
+        items = [{"name": "dex991.htm", "type": ""},
+                 {"name": "dex992.htm", "type": ""}]
+        self.assertIsNone(_pick_supplement(items, "dex991.htm"))
+
+
 class TestParseIndexHtml(unittest.TestCase):
     # A trimmed real JPMorgan -index.htm document table: the press release
     # (EX-99.1) and the data supplement (EX-99.2). The picker must prefer .1.

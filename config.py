@@ -255,7 +255,11 @@ METRICS = [
         "category": "Credit Quality",
     },
     {
-        "key": "allowance_loans", "label": "ALL/Loans", "source": "fdic", "fdic_field": "ELNANTR",
+        # ELNANTR is "LOAN LOSS PROV/NT CHG-OFFS" (provision ÷ net charge-offs,
+        # ~100% when reserves hold steady) — NOT allowance/loans (that is
+        # reserve_to_loans/LNATRESR). Key name is a historical misnomer kept
+        # for cached-grid compatibility; the label tells the truth.
+        "key": "allowance_loans", "label": "Prov/NCO", "source": "fdic", "fdic_field": "ELNANTR",
         "format": "pct", "decimals": 2,
         "category": "Credit Quality",
     },

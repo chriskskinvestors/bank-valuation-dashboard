@@ -237,7 +237,10 @@ PLATFORM_HIST_MAP = {
     "roa": ("fdic", "roaa"),
     "rotce": ("fdic", "roatce"),
     "nco_ratio": ("fdic", "nco_ratio"),
-    "acl_loans": ("fdic", "allowance_loans"),
+    # LNATRESR reserves/loans — NOT "allowance_loans", whose ELNANTR field is
+    # provision/NCO coverage (~100%) despite its name (caught live 2026-07-14:
+    # JPM "ACL/Loans" history rendered 112%).
+    "acl_loans": ("fdic", "reserve_to_loans"),
     "tbv_ps": ("sec", "tbvps_hist"),
     "bv_ps": ("sec", "bvps_hist"),
 }

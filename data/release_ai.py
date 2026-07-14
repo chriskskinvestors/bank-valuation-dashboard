@@ -71,7 +71,13 @@ _VARIANT_RE = re.compile(
 _NONGAAP_RE = re.compile(r"non-?gaap", re.I)
 _SEGMENT_RE = re.compile(
     r"\b(?:card(?: services)?|consumer bank|community bank|wholesale|wealth|"
-    r"asset management|investment bank|mortgage bank|segment)\b", re.I)
+    r"asset management|investment bank|mortgage bank|segment|"
+    # supplement segment-page vocabulary (2026-07-14): per-segment returns are
+    # labeled "return on average allocated capital" (BAC) and business lines
+    # like branded cards / retail services / personal banking / home lending
+    # print their own credit ratios.
+    r"allocated capital|branded cards|retail services|personal banking|"
+    r"home lending)\b", re.I)
 # A prior/year-ago quote must carry its own period cue.
 _PERIOD_CUE_RE = re.compile(
     r"(?:[1-4]Q\s?\d{2,4}|Q[1-4]\s?'?\d{2,4}|\b(?:19|20)\d{2}\b|"
@@ -280,7 +286,9 @@ def release_ai_metrics(cik, accession: str, text: str, ticker: str = "",
     if not cik or not accession or not text:
         return None
     from data.cloud_storage import load_json, save_json
-    fname = f"{int(cik)}_{accession.replace('-', '')}_v1.json"
+    # _v2: input now includes the financial-supplement consolidated section
+    # (2026-07-14) — _v1 results were release-text-only and must re-extract.
+    fname = f"{int(cik)}_{accession.replace('-', '')}_v2.json"
     cached = load_json(RELEASE_AI_CACHE_PREFIX, fname)
     if cached and isinstance(cached.get("periods"), dict):
         return cached["periods"]

@@ -87,8 +87,12 @@ class TestRelExhibit(unittest.TestCase):
         eps = rows["eps_adj"]
         self.assertEqual(eps["cons"], 1.14)           # consensus lands on EPS
         self.assertIn("+0.26", eps["yy_html"])        # 1.14 - 0.88
-        # a metric absent from ALL periods must not produce a row
-        self.assertNotIn("div_ps", rows)
+        # FIXED broker-sheet shape (owner decision 2026-07-14): every bank
+        # gets the same row set — an all-absent metric still renders, muted.
+        self.assertIn("div_ps", rows)
+        self.assertIsNone(rows["div_ps"]["cur"])
+        from ui.earnings import _REL_METRICS
+        self.assertEqual(len(rows), len(_REL_METRICS))
 
     def test_detail_row_is_exhibit_table(self):
         html = _rel_detail_tr(self.FIX, ncols=14)

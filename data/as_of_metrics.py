@@ -87,7 +87,8 @@ TREND_METRICS = [
     ("roatce", "ROATCE"), ("roatce_4q", "ROATCE (4Q)"),
     ("nim", "NIM"), ("nim_4q", "NIM (4Q)"), ("efficiency_ratio", "Efficiency"),
     ("npl_ratio", "NPL ratio"), ("nco_ratio", "NCO ratio"),
-    ("allowance_loans", "ALL / Loans"), ("reserve_to_loans", "Reserves / Loans"),
+    # allowance_loans = ELNANTR provision/NCO coverage (misnomer key — see config.py)
+    ("allowance_loans", "Prov / NCO"), ("reserve_to_loans", "Reserves / Loans"),
     ("cet1_ratio", "CET1"), ("total_capital_ratio", "Total capital"),
     ("leverage_ratio", "T1 leverage"), ("equity_to_assets", "Equity / Assets"),
     ("total_assets", "Total assets ($)"), ("total_loans", "Loans ($)"),

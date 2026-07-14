@@ -50,6 +50,17 @@ class TestPlatformHistoryMapping(unittest.TestCase):
             if src == "fdic":
                 self.assertIn(skey, TREND_KEYS, f"{key} -> {skey}")
 
+    def test_acl_maps_to_true_allowance_ratio(self):
+        """ACL/Loans history must read LNATRESR reserves/loans
+        (reserve_to_loans) — NEVER the misnamed allowance_loans series, whose
+        ELNANTR field is provision/NCO coverage (~100%; rendered JPM's
+        'ACL/Loans' as 112% live on 2026-07-14)."""
+        from data.earnings_results import PLATFORM_HIST_MAP
+        self.assertEqual(PLATFORM_HIST_MAP["acl_loans"],
+                         ("fdic", "reserve_to_loans"))
+        for key, (src, skey) in PLATFORM_HIST_MAP.items():
+            self.assertNotEqual(skey, "allowance_loans", key)
+
 
 class TestReleaseMatchesReport(unittest.TestCase):
     def test_same_day_through_five_days_match(self):

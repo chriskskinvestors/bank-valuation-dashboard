@@ -29,7 +29,7 @@ _CREDIT_FIELDS = {
     "nco_ci": "NTCOMRER",          # NCO C&I %
     "reserve_to_loans": "LNATRESR",  # Reserves / loans %
     "reserve_coverage": "IDERNCVR",   # Reserves / NPL (coverage ratio)
-    "allowance_loans": "ELNANTR",     # ALLL / loans
+    "allowance_loans": "ELNANTR",     # provision / NCOs % (NOT ALL/loans — title lies)
     # Dollar amounts (in thousands). Past-due ratios are LOANS past due over
     # GROSS loans (AUDIT-2026-07-02 #32): the loan-only past-due fields P3LNLS/
     # P9LNLS — NOT the total-asset fields P3ASSET/P9ASSET, which add past-due

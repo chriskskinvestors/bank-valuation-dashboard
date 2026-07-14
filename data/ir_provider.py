@@ -153,6 +153,23 @@ def _pick_ex99(items: list[dict]) -> str | None:
     return None
 
 
+def _pick_supplement(items: list[dict], release_doc: str | None) -> str | None:
+    """Pure: the financial-supplement exhibit's document name — the
+    lowest-numbered EX-99.x that is NOT the chosen press release (megabanks
+    file the release as EX-99.1 and the quarterly financial supplement as
+    EX-99.2/99.3). Typed rows only — no filename heuristic: without a type
+    a second EX-99 file can't be told apart from a furnished deck, and a
+    missing supplement is fail-safe (blank cells, never wrong ones)."""
+    typed = []
+    for it in items:
+        typ = (it.get("type") or "").upper().replace(" ", "")
+        name = it.get("name") or ""
+        if (name and name != release_doc
+                and (typ.startswith("EX-99") or typ.startswith("EX99"))):
+            typed.append((typ, name))
+    return sorted(typed)[0][1] if typed else None
+
+
 # ── Capital-ratio extraction (increment 5b) ───────────────────────────────
 # Earnings releases carry no inline XBRL, so values come from text — and large
 # (advanced-approaches) banks report EACH ratio twice, under the Standardized and
@@ -391,6 +408,36 @@ def latest_earnings_release(cik) -> dict | None:
         if got and _is_earnings_headline(_headline_text(got["html"])):
             return got
     return None
+
+
+def earnings_supplement(cik, accession: str) -> dict | None:
+    """I/O: fetch an earnings 8-K's financial-supplement exhibit (the EX-99
+    that isn't the press release). Megabank releases narrate returns and
+    capital but keep NIM/ROA/Tier 1 and the 5-quarter history tables in this
+    exhibit. Returns {url, html} or None (no second exhibit / any failure —
+    the AI fill then works from the release alone)."""
+    if not cik or not accession:
+        return None
+    base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}"
+    items = []
+    try:
+        idx_html = _get(f"{base}/{_dash_accession(accession)}-index.htm").decode(
+            "utf-8", "replace")
+        items = _parse_index_html(idx_html)
+    except Exception:
+        try:
+            items = json.loads(_get(f"{base}/index.json")).get(
+                "directory", {}).get("item", [])
+        except Exception:
+            return None
+    doc = _pick_supplement(items, _pick_ex99(items))
+    if not doc:
+        return None
+    try:
+        html = _get(f"{base}/{doc}").decode("utf-8", "replace")
+    except Exception:
+        return None
+    return {"url": f"{base}/{doc}", "html": html}
 
 
 # ── Freshest-wins wire-in (increment 5d) ───────────────────────────────────
