@@ -237,6 +237,8 @@ _AF_CSS = r"""
 .afwrap .cbar{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 12px 3px;}
 .afwrap .leg{display:flex;gap:10px;flex-wrap:wrap;}
 .afwrap .leg span{display:flex;align-items:center;gap:4px;font-size:var(--fs-grid-9_5);font-weight:600;color:#475569;font-variant-numeric:tabular-nums;}
+.afwrap .leg a{text-decoration:none;}
+.afwrap .leg a:hover span{color:#1e3a8a;text-decoration:line-through;}
 .afwrap .chart{flex:1 1 auto;min-height:0;padding:0 6px 4px;}
 .afwrap .chart svg{width:100%;height:100%;display:block;}
 /* ── Native-widget panes (st.container cards) — compaction + alignment ──
@@ -1054,7 +1056,15 @@ def _af_overlay_table(sel: list, tf: str) -> str:
     for i, tk in enumerate(sel[:8]):
         c = color_by.get(tk, _AF_OVERLAY_COLORS[i % len(_AF_OVERLAY_COLORS)])
         tail = (f' {last_by[tk]:+.1f}%' if tk in last_by else "")
-        leg += (f'<span><span class="dotc" style="background:{c};"></span>{tk}{tail}</span>')
+        # Legend chip click REMOVES the ETF from the overlay — the same
+        # stateless exact-selection link the ETF pane uses (?overlay= carries
+        # the resulting list; a fresh session can't toggle relatively). Hover
+        # strikes the chip through to signal removal.
+        new_sel = ",".join(x for x in sel if x != tk)
+        leg += (f'<a href="?s=Home&overlay={new_sel}" target="_self" '
+                f'title="Remove {tk} from Overlay chart">'
+                f'<span><span class="dotc" style="background:{c};"></span>'
+                f'{tk}{tail}</span></a>')
     leg += "</div>"
     if not sel:
         body = '<div class="pend">Pick ETFs above to overlay them here.</div>'
