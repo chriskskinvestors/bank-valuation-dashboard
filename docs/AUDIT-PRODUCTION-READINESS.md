@@ -148,6 +148,15 @@ every bump PR — and every PR generally, which previously ran NO checks — mus
 before merge. Updates become deliberate and tested, never silent. CI suite verified
 green locally before commit.
 
+**Post-launch backlog (owner decision 2026-07-14):** dependabot's three open
+GitHub-Actions MAJOR bumps — PR #3 `actions/checkout` 6→7, PR #4
+`google-github-actions/auth` 2→3, PR #5 `google-github-actions/setup-gcloud`
+2→3 — are deliberately HELD until after go-live. `auth`/`setup-gcloud` majors
+can change credential behavior in the exact workflow that deploys prod; zero
+functional gain mid-earnings-week. After launch, merge ONE at a time, each
+with a watched deploy to green (the rebase "Re:" emails on push traffic are
+noise — dependabot keeps them current automatically).
+
 ### Gap F (P0) — Deploy could silently drop a required secret — ✅ FIXED 2026-06-24
 **Incident:** all prices went blank app-wide. Not FMP — the key + Premium plan
 were fine (live `/quote` returned a price). The **bank-dashboard service was
