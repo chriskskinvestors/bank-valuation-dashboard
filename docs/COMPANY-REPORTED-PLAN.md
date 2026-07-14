@@ -4,6 +4,29 @@ Tracked plan for the **Company Reported** basis of the Financials section: an
 inventory of the 12 sub-tabs as they exist today, and the build order to bring
 every one to full, multi-year, trend-charted, timely coverage.
 
+> **STATUS 2026-07-14 — QUARTERLY TRACK SHIPPED (supersedes the §2 inventory's
+> period notes).** Every CR tab now has an Annual/Quarterly toggle except
+> Segment Reporting (segment notes are annual-only disclosures — honest skip):
+> - Income/Balance already had the 12-quarter 10-Q stitch
+>   (`as_reported_statement_multiquarter`).
+> - Securities Portfolio + Fair Value: `securities_multiquarter_for` /
+>   `fair_value_multiquarter_for` (10-Q+10-K walk, 8 quarter-ends, same
+>   reconcile gates; `_recent_filing_metas` generalizes the 10-K lister).
+> - Financial Highlights / Performance / Credit Quality:
+>   `_cr_highlights_by_year(quarterly=True)` — discrete quarters, returns
+>   annualized ×4, NIM/NPL/NCO (10-K-only MD&A/rollforward) blank quarterly.
+> - Regulatory Capital: `holdco_capital_quarterly_for` (full 8-quarter series).
+> - Interest Rate Risk: quarterly marks vs equity AND CET1 every quarter.
+> - Loan/Deposit Composition: `compositions_multiquarter_for` (per-filing
+>   extraction accession-cached `compositions_filing:v1`).
+> Known follow-ups: Q4 income cells blank where FY−9M isn't additive (by
+> design); a 10-K's own label wording can split a category row in its Q4
+> composition column (faithful-label union — only a GUARDED merge may ever
+> change this); 10-Q label forms (hyphenated "non-interest", "(in USD per
+> share)", "Available for sale debt securities…" word order) were added to
+> the highlights-engine match lists 2026-07-14 — extend those lists, never
+> loosen to fuzzy matching.
+
 > Status note (2026-06-29, on `main`): the multi-year **Financial Highlights**
 > rebuild **is SHIPPED** — it now renders 5 FY with section bands + trend charts
 > (ROAA/ROAE/Efficiency/ROATCE), and NIM / NPLs / net-charge-offs fill from the

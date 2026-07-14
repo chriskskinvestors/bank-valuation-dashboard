@@ -3174,15 +3174,33 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
                   "net of allowance for credit losses"], year)
         htm = _b(["debt securities held-to-maturity, at amortized cost, "
                   "net of allowance for credit losses"], year)
-        # AFS / HTM labels embed year-varying allowance amounts — match on a prefix.
+        # AFS / HTM labels embed year-varying allowance amounts AND word order
+        # varies by filer ("Debt securities available-for-sale…" vs TCBK's
+        # "Available for sale debt securities, at fair value (amortized cost
+        # of $…)") — match on the classification phrase + a debt-securities
+        # context, either word order, hyphenated or not. When a filer lists
+        # both an amortized-cost and a fair-value AFS line, prefer the fair-
+        # value one (the balance-sheet carrying amount); HTM's carrying amount
+        # IS amortized cost, so its first match stands. "Equity securities"
+        # lines never carry the AFS/HTM phrases, so they can't false-match.
         if afs is None or htm is None:
-            for nlab, vals in bin_.items():
-                if year in bal_years and bal_years.index(year) < len(vals):
-                    vv = vals[bal_years.index(year)]
-                    if afs is None and nlab.startswith("debt securities available-for-sale"):
-                        afs = vv
-                    elif htm is None and nlab.startswith("debt securities held-to-maturity"):
+            def _clsmatch(nlab, phrase):
+                return ((phrase in nlab or phrase.replace("-", " ") in nlab)
+                        and "securities" in nlab and "equity securities" not in nlab)
+            afs_cands = []
+            if year in bal_years:
+                ci_ = bal_years.index(year)
+                for nlab, vals in bin_.items():
+                    if ci_ >= len(vals) or vals[ci_] is None:
+                        continue
+                    vv = vals[ci_]
+                    if afs is None and _clsmatch(nlab, "available-for-sale"):
+                        afs_cands.append((nlab, vv))
+                    elif htm is None and _clsmatch(nlab, "held-to-maturity"):
                         htm = vv
+            if afs is None and afs_cands:
+                fv_first = [v for nl, v in afs_cands if "fair value" in nl]
+                afs = fv_first[0] if fv_first else afs_cands[0][1]
         securities = None
         if afs is not None or htm is not None:
             securities = (afs or 0.0) + (htm or 0.0)
