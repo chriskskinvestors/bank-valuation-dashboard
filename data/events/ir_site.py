@@ -107,6 +107,19 @@ def _parse_date_in_text(text: str) -> datetime | None:
     return None
 
 
+def _scraped_pub_date(url: str, text: str, now: datetime) -> datetime | None:
+    """Publication date for a scraped IR link: a date in the URL, else in the
+    link text — but a date AHEAD of `now` is an event date the headline mentions
+    (a note's maturity, a meeting date), never the publication date. BAC's
+    "…due May 4, 2027" redemption notices got stamped with their 2027 maturity
+    dates and pinned the top of every published_at-sorted feed. None when
+    there's no usable date (caller falls back to now, marked date_inferred)."""
+    pub = _parse_date_in_text(url) or _parse_date_in_text(text)
+    if pub and pub > now + timedelta(days=1):
+        return None
+    return pub
+
+
 def _is_plausible_press_link(href: str, text: str) -> bool:
     """Quick filter — does this <a> look like a press release link?"""
     if not href or not text:
@@ -911,10 +924,11 @@ class IRSiteAdapter(SourceAdapter):
                 print(f"[ir_site] {ticker} error: {type(e).__name__}: {e}")
                 continue
             for url, text in links:
-                pub = _parse_date_in_text(url) or _parse_date_in_text(text)
+                now = datetime.now(timezone.utc)
+                pub = _scraped_pub_date(url, text, now)
                 if pub and pub < cutoff:
                     continue
-                _emit(ticker, url, text, pub or datetime.now(timezone.utc),
+                _emit(ticker, url, text, pub or now,
                       {"ir_home": ir_home, "date_inferred": pub is None})
         return out
 

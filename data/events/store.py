@@ -73,6 +73,26 @@ def _source_rank(source: str | None) -> int:
     return _SOURCE_RANK.get(source or "", 1)
 
 
+# Feeds sort by published_at DESC, so a single future-stamped row sits pinned
+# at the top until that date passes. A published_at ahead of the wall clock is
+# always a parsing artifact — an event date extracted as the publication date
+# (the IR scraper stamped BAC's note-redemption notices with their 2027
+# maturities) — so the store clamps it at ingest. Grace covers clock skew and
+# naive-local-time sources (Q4 dates are ET-ish treated as UTC).
+_FUTURE_GRACE = timedelta(hours=12)
+
+
+def _clamp_future(pub, now: datetime):
+    """`pub` clamped to `now` when it's ahead of the wall clock beyond
+    _FUTURE_GRACE. Naive/aware comparison mismatches fail open (unchanged)."""
+    try:
+        if pub and pub > now + _FUTURE_GRACE:
+            return now
+    except TypeError:
+        pass
+    return pub
+
+
 def _content_key(ticker: str, headline: str) -> str:
     """Normalized (ticker, headline) key for cross-source dedup: lower-cased,
     punctuation→space, whitespace collapsed. The same release worded identically
@@ -237,6 +257,7 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
     best_rank: dict[str, int] = {
         ck: _source_rank(src) for ck, (src, _eid) in existing_rows.items()
     }
+    now = datetime.now(timezone.utc)
     upgrade_stmt = text("""
         UPDATE events SET
           source = :source, event_type = :event_type, headline = :headline,
@@ -287,7 +308,7 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
                             "summary": e.summary[:20000] if e.summary else None,
                             "url": e.url or None,
                             "external_id": e.external_id[:255],
-                            "published_at": e.published_at,
+                            "published_at": _clamp_future(e.published_at, now),
                             "raw_json": json.dumps(e.raw, default=str) if e.raw else None,
                             "old_source": old[0],
                             "old_external_id": old[1],
@@ -305,7 +326,7 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
                 "summary": e.summary[:20000] if e.summary else None,
                 "url": e.url or None,
                 "external_id": e.external_id[:255],
-                "published_at": e.published_at,
+                "published_at": _clamp_future(e.published_at, now),
                 "raw_json": json.dumps(e.raw, default=str) if e.raw else None,
             }
             if _USE_POSTGRES:
@@ -340,6 +361,23 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
 def insert_events(events: Iterable[Event]) -> int:
     """Insert events idempotently. Returns count of NEW rows written."""
     return len(insert_events_returning_new(events))
+
+
+def heal_future_published() -> int:
+    """Re-stamp any stored row whose published_at is ahead of the wall clock
+    (beyond _FUTURE_GRACE) to its ingested_at — the closest available truth.
+    Ingest now clamps these; this sweep heals rows written before the clamp
+    (the three BAC redemption notices stamped 2027). Cheap (indexed range
+    scan finding nothing normally) and idempotent, so safe every poll."""
+    from sqlalchemy import text
+    eng = _get_engine()
+    now = datetime.now(timezone.utc)
+    with eng.begin() as conn:
+        res = conn.execute(text(
+            "UPDATE events SET published_at = COALESCE(ingested_at, :now) "
+            "WHERE published_at > :grace"),
+            {"now": now, "grace": now + _FUTURE_GRACE})
+    return res.rowcount or 0
 
 
 def get_recent_events(ticker: str, limit: int = 20) -> list[dict]:

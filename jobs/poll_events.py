@@ -214,6 +214,18 @@ def main() -> int:
     # of staleness. FDIC data is already fetched live on every render.
     _invalidate_fundamentals_for_filings(new_events)
 
+    # Re-stamp future-dated rows (an event date parsed as the publication date,
+    # e.g. BAC's note-redemption notices stamped with their 2027 maturities) —
+    # they'd otherwise sit pinned atop every published_at-sorted feed until the
+    # date passes. Ingest clamps new ones; this heals rows stored before that.
+    try:
+        from data.events.store import heal_future_published
+        n_healed = heal_future_published()
+        if n_healed:
+            print(f"▶ Re-stamped {n_healed} future-dated events to their ingest time")
+    except Exception as e:
+        print(f"  [heal-future] failed: {type(e).__name__}: {e}")
+
     # Purge any junk that slipped in before the safety filters existed —
     # spam/social URLs (e.g. a WhatsApp-group link) and structured-note noise.
     try:
