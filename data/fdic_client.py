@@ -39,6 +39,11 @@ _BASE_FINANCIALS_FIELDS = {
     "SCAF", "ORE", "MSA", "INTANMSR", "BKPREM", "CHBALI", "FREPO",
     "OTHBFHLB", "SUBND", "EQPP", "EQCS", "EQUPTOT",
     "RBCT1J", "RBCT1", "RBCT2", "RBC", "RWAJ", "RBC1RWAJ", "RBC1AAJ",
+    # Asset Quality Detail (SNL plan §4): levels, flows (YTD + the filed
+    # single-quarter *Q variants for the Quarterly view) and NPERFV, the
+    # FDIC's reported NPA/assets ratio.
+    "NALNLS", "RSLNLTOT", "NCLNLS", "P3LNLS", "P9LNLS", "LNATRES",
+    "DRLNLS", "CRLNLS", "NTLNLS", "DRLNLSQ", "CRLNLSQ", "NTLNLSQ", "NPERFV",
 }
 
 

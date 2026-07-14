@@ -299,19 +299,19 @@ def fetch_dimensional_facts(cik: int, accession: str) -> dict | None:
     return payload
 
 
-def _latest_filing(cik: int, forms: tuple[str, ...]) -> dict | None:
-    """Newest filing among `forms` from the submissions API (recent list is
-    reverse-chronological). Returns {form, accession, filed, report_date}."""
+def _list_filings(cik: int, forms: tuple[str, ...], limit: int) -> list[dict]:
+    """Newest `limit` filings among `forms` from the submissions API (recent
+    list is reverse-chronological). Each: {form, accession, filed, report_date}."""
     url = SUBMISSIONS_URL.format(cik=str(int(cik)).zfill(10))
     try:
         resp = _throttled_get(url, timeout=15)
         if resp is None:
-            return None
+            return []
         recent = (resp.json().get("filings") or {}).get("recent") or {}
     except Exception as e:
         print(f"[xbrl-dim] submissions fetch failed for CIK {cik}: "
               f"{type(e).__name__}: {e}")
-        return None
+        return []
 
     form_list = recent.get("form", [])
 
@@ -319,15 +319,24 @@ def _latest_filing(cik: int, forms: tuple[str, ...]) -> dict | None:
         lst = recent.get(field, [])
         return lst[i] if i < len(lst) else default
 
+    out = []
     for i, form in enumerate(form_list):
         if form in forms:
-            return {
+            out.append({
                 "form": form,
                 "accession": _safe("accessionNumber", i),
                 "filed": _safe("filingDate", i),
                 "report_date": _safe("reportDate", i),
-            }
-    return None
+            })
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _latest_filing(cik: int, forms: tuple[str, ...]) -> dict | None:
+    """Newest filing among `forms`. Returns {form, accession, filed, report_date}."""
+    filings = _list_filings(cik, forms, 1)
+    return filings[0] if filings else None
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -526,3 +535,67 @@ def get_credit_quality_breakdown(cik: int, form: str | None = None) -> dict | No
         "url": bundle.get("instance_url"),
     }
     return breakdown
+
+
+# How many filings the two history modes walk: 5 10-Ks ≈ 5 FY-end instants;
+# 9 10-K/10-Q filings ≈ the last 8 quarter-ends plus overlap.
+_HISTORY_ANNUAL_FILINGS = 5
+_HISTORY_QUARTERLY_FILINGS = 9
+
+
+def credit_quality_history(cik: int, quarterly: bool = False) -> dict:
+    """
+    {period_end "YYYY-MM-DD" → credit-quality breakdown} across recent filings
+    (each filing contributes its single latest instant — extract_credit_quality
+    keeps only as_of; the comparative column is dropped there, so history NEEDS
+    one filing per period). Annual: the last 5 10-Ks. Quarterly: the last 9
+    10-K/10-Q filings. Newest filing wins a shared period end.
+
+    A filing whose XBRL lacks the grade disclosure simply contributes nothing
+    (its period renders n/a downstream — never a guess). The merged dict is
+    cached 30 days keyed by the newest accession (a new filing re-merges), but
+    ONLY when every instance fetch succeeded — a transient SEC failure must
+    not bake a 30-day gap into the cache (fetch=None is retryable; a parsed
+    filing with no tagged grades is a real, cacheable absence).
+    """
+    from data import cache
+    from data.freshness import is_fresh
+
+    n = _HISTORY_QUARTERLY_FILINGS if quarterly else _HISTORY_ANNUAL_FILINGS
+    forms = ("10-K", "10-Q") if quarterly else ("10-K",)
+    filings = [f for f in _list_filings(cik, forms, n) if f.get("accession")]
+    if not filings:
+        return {}
+
+    key = (f"crit_hist:v1:{int(cik)}:"
+           f"{filings[0]['accession'].replace('-', '')}:{'q' if quarterly else 'a'}")
+    cached = cache.get(key)
+    if is_fresh(cached, CACHE_TTL_SECONDS):
+        return cached.get("by_period", {})
+
+    by_period: dict[str, dict] = {}
+    complete = True
+    for filing in reversed(filings):        # oldest → newest: newest wins a tie
+        bundle = fetch_dimensional_facts(cik, filing["accession"])
+        if not bundle:
+            complete = False                # fetch/parse failure — retryable
+            continue
+        breakdown = extract_credit_quality(bundle.get("facts") or {})
+        if breakdown is None:
+            continue                        # not tagged in this filing — real absence
+        breakdown["source"] = {
+            "form": filing["form"],
+            "accession": filing["accession"],
+            "filed": filing["filed"],
+            "report_date": filing["report_date"],
+            "url": bundle.get("instance_url"),
+        }
+        by_period[breakdown["as_of"]] = breakdown
+
+    if complete:
+        try:
+            cache.put(key, {"cached_at": datetime.now().isoformat(),
+                            "by_period": by_period})
+        except Exception as e:
+            print(f"[xbrl-dim] cache put failed for {key}: {e}")
+    return by_period

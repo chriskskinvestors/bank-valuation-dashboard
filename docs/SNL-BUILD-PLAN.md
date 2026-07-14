@@ -94,12 +94,31 @@ source); **n/a** = honest gap, shown as such.
 | LCR/HQLA | n/a for community banks (large-bank only; SNL also NA) |
 
 ## 4. Asset Quality Detail
+
+> **SHIPPED 2026-07-13 (CapIQ-depth rebuild).** Statement-engine table
+> (`_ASSET_QUALITY` in ui/financials_statements.py, `render_asset_quality`)
+> replaced the old 5-row panel: 31 rows × 5FY/8Q, Annual/Quarterly toggle,
+> click-to-source, table LEFT + credit charts RIGHT (owner layout). Fields
+> live-verified TCBK/BANR 12/31/2025; quarterly flows use the FILED
+> single-quarter *Q fields (NTLNLSQ/DRLNLSQ/CRLNLSQ), provision de-cumulates.
+> Criticized block = credit_quality_history (data/xbrl_dimensional.py) over
+> the last 5 10-Ks (annual) / 9 10-K+10-Q (quarterly), labeled "Graded
+> Classes Only" with a Graded/Gross coverage row (BANR 59% commercial-book,
+> TCBK 100%). Tests: tests/test_asset_quality_statement.py.
+> Build notes: NPL = NALNLS + RSLNLTOT (accruing RC-C M.1 memo; nonaccrual
+> restructured is NARSLNLT inside NALNLS — no double count). NAASSETR
+> REJECTED (dictionary title is an ag-loans ratio despite the value
+> coinciding with nonaccrual/assets). NPERFV verified = (NCLNLS+ORE)/ASSET.
+> FDIC data dictionary that actually serves YAML:
+> `https://api.fdic.gov/banks/docs/risview_properties.yaml` (the
+> banks.data.fdic.gov path redirects to HTML).
+
 | SNL line | Source |
 |---|---|
-| Nonaccrual / restructured / NPLs | FDIC NCLNLS, restructured (RSLNLTOT?) — verify field at build |
-| OREO (net) / NPAs / 90+PD accruing | FDIC ORE, calc, P9LNLS-equivalent (verify) |
-| LLR / NCOs / all the ratios | FDIC LNATRES, NTLNLS, calc ratios (engine has most) |
-| Criticized/classified (pass/SM/substandard/doubtful) | 10-K/10-Q credit-quality footnote (FinancingReceivableCreditQualityIndicator dimensional XBRL) — see Decisions; the dimensional filing parser sources this |
+| Nonaccrual / restructured / NPLs | FDIC NALNLS + RSLNLTOT (verified; see build notes) |
+| OREO (net) / NPAs / 90+PD accruing | FDIC ORE, calc sums, P9LNLS |
+| LLR / NCOs / all the ratios | FDIC LNATRES, NTLNLS(+Q variants), fratio computed kinds |
+| Criticized/classified (pass/SM/substandard/doubtful) | 10-K/10-Q credit-quality footnote (FinancingReceivableCreditQualityIndicator dimensional XBRL) — SHIPPED via credit_quality_history, graded-classes-only label + coverage row |
 
 ## 5. Asset Quality by Loan Type  ← we BEAT SNL here
 30-89 PD, 90+ PD, Nonaccrual × loan category (1-4 fam, multifam, CRE, C&D,

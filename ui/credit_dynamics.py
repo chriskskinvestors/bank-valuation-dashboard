@@ -118,6 +118,10 @@ def _render_credit_headline(ticker, hist, summary, peer_median):
     render_traceable_cards(cards, key=f"credit_{ticker}", columns=5)
 
 
+# @st.fragment for the same reason as the statement pages: the Annual/
+# Quarterly radio inside the statement table would otherwise rerun the WHOLE
+# Company page per toggle (see ui/financials_statements.py fragment note).
+@st.fragment
 def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
                            view: str = "detail"):
     """Render the Credit Quality analysis panel for a bank.
@@ -240,24 +244,13 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
         _rc_vals.append(peer_median)
     tighten_yaxis(fig4, _rc_vals, floor_zero=True, ticksuffix="%")
 
-    # Page pattern (matches Financial Highlights): click-to-source data table
-    # on the left, trend charts tiled 2×2 on the right.
-    from ui.fdic_click_table import render_fdic_click_table
-    _aq_sections = [
-        ("Asset Quality — FDIC Call Report", [
-            ("NPLs / loans", "pct", "NCLNLSR"),
-            ("Net charge-offs / loans", "pct", "NTLNLSR"),
-            ("Loan-loss reserves / loans", "pct", "LNATRESR"),
-            ("30–89 days past due / loans", "ratio", "P3LNLS", "LNLSGR",
-             "Loans 30–89 days past due", "Total loans (gross)"),
-            ("90+ days past due / loans", "ratio", "P9LNLS", "LNLSGR",
-             "Loans 90+ days past due", "Total loans (gross)"),
-        ]),
-    ]
+    # Owner layout (2026-07-13): the full SNL/CapIQ-depth statement table on
+    # the LEFT (statement engine — Annual/Quarterly toggle, click-to-source),
+    # the credit trend charts stacked on the RIGHT.
+    from ui.financials_statements import render_asset_quality
     _left, _right = st.columns([1, 1])
     with _left:
-        if not render_fdic_click_table(ticker, _aq_sections, period="Annual"):
-            st.caption("FDIC metrics table unavailable.")
+        render_asset_quality(ticker)
     with _right:
         _g1 = st.columns(2)
         with _g1[0]:

@@ -66,6 +66,48 @@ def _core_income(rec):
     return ni - igl * (1 - t) - extra
 
 
+def _expr_terms(expr: str) -> list[tuple[int, str]]:
+    """'A+B-C' → [(+1,'A'), (+1,'B'), (-1,'C')] — the field expression used by
+    the fratio kind. First term is implicitly positive."""
+    out, sign, tok = [], 1, ""
+    for ch in expr:
+        if ch in "+-":
+            if tok:
+                out.append((sign, tok))
+            sign, tok = (1 if ch == "+" else -1), ""
+        else:
+            tok += ch
+    if tok:
+        out.append((sign, tok))
+    return out
+
+
+def _eval_expr(getter, expr: str, skip_none_positive: bool):
+    """Evaluate a field expression against `getter` (field → value | None).
+
+    Returns (total, terms, ok). Numerator semantics (skip_none_positive=True):
+    a None positive term is skipped like the "sum" kind (absent ≠ $0); ok is
+    False only when NO term was present. Denominator semantics (False):
+    every POSITIVE term is required (None → not ok — a partial denominator is
+    plausible-wrong); a None NEGATIVE term counts as 0, matching the "tce"
+    kind's INTAN handling. terms = [(signed_label, value_or_None)] for the
+    click-through."""
+    total, seen, ok = 0.0, False, True
+    terms = []
+    for sign, fld in _expr_terms(expr):
+        v = _num(getter(fld))
+        terms.append((("− " if sign < 0 else "") + fld, v))
+        if v is None:
+            if sign > 0 and not skip_none_positive:
+                ok = False
+            continue
+        total += sign * v
+        seen = True
+    if skip_none_positive:
+        ok = seen
+    return total, terms, ok
+
+
 # Trend charts are GROUPED: each entry is (chart_title, [metric_keys]) and the
 # keys in a group plot together on one chart (grouped_trend_chart handles the
 # axes — a group mixing $ levels and % ratios gets a secondary axis). Keys come
@@ -353,13 +395,17 @@ def _spec_with_rie_rows(spec, rie_by_ci):
 def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                      trends: list | None = None, with_persh: bool = False,
                      with_ri: bool = False, with_dep_cost: bool = False,
-                     with_fte: bool = False, side_by_side: bool = False):
+                     with_fte: bool = False, side_by_side: bool = False,
+                     header: bool = True):
     info = get_bank_info(ticker)
     name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
     cik = info.get("cik") if info else None
 
-    st.markdown(f"### {name} ({ticker}) — {title}")
+    # header=False when the caller's page chrome already names the bank + tab
+    # (Asset Quality Detail renders inside credit_dynamics' title_bar page).
+    if header:
+        st.markdown(f"### {name} ({ticker}) — {title}")
     period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
                       key=f"{key_prefix}_period_{ticker}", label_visibility="collapsed")
     st.caption("From the FDIC Call Report. Click any number for its source field "
@@ -1097,6 +1143,139 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             g = ((ratio ** 4 - 1.0) if quarterly else (ratio - 1.0)) * 100.0
             return f"{g:.2f}%", calc(label, f"{g:.2f}%", asof,
                                      "Computed from Call Report", terms, op, False)
+        if kind == "flow":
+            # Income-statement flow shown as a PERIOD dollar amount (not a
+            # rate): Annual columns are 12/31 rows, so the calendar-YTD figure
+            # IS the full year. Quarterly columns show the SINGLE quarter —
+            # the filed quarterly field (args[1], e.g. NTLNLSQ) when the FDIC
+            # files one, else de-cumulated YTD (audit #26 machinery); a column
+            # whose prior quarter is missing renders dead, never a mixed span.
+            ytd_fl, q_fl = args
+            if not _quarterly_view:
+                raw = _num(rec.get(ytd_fl))
+                return _usd(raw), calc(label, _usd(raw), asof,
+                                       f"FDIC field {ytd_fl} (calendar-YTD; FY at 12/31)",
+                                       [{"label": label, "val": _term000(raw)}],
+                                       None, True)
+            if q_fl is not None:
+                raw = _num(rec.get(q_fl))
+                if raw is not None:
+                    return _usd(raw), calc(label, _usd(raw), asof,
+                                           f"FDIC field {q_fl} (single quarter, as filed)",
+                                           [{"label": label, "val": _term000(raw)}],
+                                           None, True)
+            qv, _fq = _flow(ci, ytd_fl)
+            if qv is None:
+                return "—", calc(label, "—", asof, "Computed from Call Report",
+                                 [{"label": label,
+                                   "val": "n/a — prior quarter not available to "
+                                          "de-cumulate the YTD flow"}],
+                                 f"{ytd_fl}_YTD(q) − {ytd_fl}_YTD(q−1)", False)
+            return _usd(qv), calc(label, _usd(qv), asof, "Computed from Call Report",
+                                  [{"label": f"{ytd_fl} (YTD, current)",
+                                    "val": _term000(_num(rec.get(ytd_fl)))},
+                                   {"label": "Single quarter (de-cumulated)",
+                                    "val": _term000(qv)}],
+                                  f"{ytd_fl}_YTD(q) − {ytd_fl}_YTD(q−1)", False)
+        if kind == "fratio":
+            # Field-expression ratio (%): args = (numerator_expr, denominator
+            # _expr), e.g. ("NALNLS+RSLNLTOT+ORE", "ASSET") or the Texas-ratio
+            # denominator "EQTOT-INTAN+LNATRES". Semantics in _eval_expr.
+            num_expr, den_expr = args
+            nv, nterms, nok = _eval_expr(rec.get, num_expr, True)
+            dv, dterms, dok = _eval_expr(rec.get, den_expr, False)
+            terms = ([{"label": lb, "val": _term000(v)} for lb, v in nterms]
+                     + [{"label": f"÷ {lb.replace('− ', '− ')}", "val": _term000(v)}
+                        for lb, v in dterms])
+            op = f"({num_expr}) ÷ ({den_expr}) × 100"
+            if not nok or not dok or dv <= 0:
+                return "—", calc(label, "—", asof, "Computed from Call Report",
+                                 terms, op, False)
+            v = f"{nv / dv * 100:.2f}%"
+            return v, calc(label, v, asof, "Computed from Call Report", terms, op, False)
+        if kind == "flowratio":
+            # Ratio of two FLOWS over the same span (e.g. Provision ÷ NCO):
+            # Annual = FY ÷ FY; Quarterly = single quarter ÷ single quarter
+            # (filed quarterly field preferred, else de-cumulated — same rules
+            # as the "flow" kind; a mixed-span quotient never renders).
+            (n_ytd, n_q), (d_ytd, d_q) = args
+
+            def _one(ytd_fl, q_fl):
+                if not _quarterly_view:
+                    return _num(rec.get(ytd_fl))
+                if q_fl is not None:
+                    raw = _num(rec.get(q_fl))
+                    if raw is not None:
+                        return raw
+                qv, _f = _flow(ci, ytd_fl)
+                return qv
+
+            nv, dv = _one(n_ytd, n_q), _one(d_ytd, d_q)
+            span = "FY" if not _quarterly_view else "single quarter"
+            terms = [{"label": f"{n_ytd} ({span})", "val": _term000(nv)},
+                     {"label": f"÷ {d_ytd} ({span})", "val": _term000(dv)}]
+            op = f"{n_ytd} ÷ {d_ytd} × 100 (same-span flows)"
+            if nv is None or dv is None:
+                return "—", calc(label, "—", asof, "Computed from Call Report",
+                                 terms, op, False)
+            if dv <= 0 or nv < 0:
+                # SNL/CapIQ convention: a negative provision (reserve release)
+                # or non-positive NCO base has no meaningful coverage multiple
+                # — NM, not a giant negative percentage. The $ rows above
+                # still show the release itself.
+                return "NM", calc(label, "NM — not meaningful (negative flow "
+                                  "in the period)", asof,
+                                  "Computed from Call Report", terms, op, False)
+            v = f"{nv / dv * 100:.2f}%"
+            return v, calc(label, v, asof, "Computed from Call Report", terms, op, False)
+        if kind == "crit":
+            # Criticized/classified loan grades from the company's OWN
+            # 10-K/10-Q dimensional XBRL (FinancingReceivableCreditQuality
+            # Indicator) — the one block on this tab that is NOT Call Report
+            # data. args = (by_period map from credit_quality_history, row key).
+            # XBRL facts are RAW DOLLARS; this table is $000 → ÷ 1,000 at this
+            # boundary. Columns with no filing at that period end render dead.
+            crit_map, ckey = args
+            dt_key = pd.Timestamp(rec.get("REPDTE")).strftime("%Y-%m-%d")
+            entry = crit_map.get(dt_key)
+            if not entry:
+                return "—", None
+            src = entry.get("source") or {}
+            ref = (f"{src.get('form', '10-K')} filed {src.get('filed', '?')} — "
+                   f"dimensional XBRL ({entry.get('concept', '')})")
+            link = src.get("url")
+            graded_total = sum(v for v in (entry.get("total_by_grade") or {}).values()
+                               if isinstance(v, (int, float)))
+            if ckey == "coverage":
+                loans = _num(rec.get("LNLSGR"))
+                terms = [{"label": "Graded loans (all tagged grades, $000)",
+                          "val": _thou(round(graded_total / 1000.0)) + " ($000)"},
+                         {"label": "÷ Gross loans (LNLSGR)", "val": _term000(loans)}]
+                if not loans or graded_total <= 0:
+                    return "—", calc(label, "—", asof, ref, terms,
+                                     "graded ÷ LNLSGR × 100", False,
+                                     source="SEC filing XBRL", link=link)
+                v = f"{graded_total / 1000.0 / loans * 100:.1f}%"
+                return v, calc(label, v, asof, ref, terms,
+                               "graded ÷ LNLSGR × 100", False,
+                               source="SEC filing XBRL", link=link)
+            if ckey in ("classified", "criticized"):
+                raw = entry.get(ckey)
+                op = ("substandard + doubtful + loss" if ckey == "classified"
+                      else "classified + special mention")
+            else:
+                raw = (entry.get("total_by_grade") or {}).get(ckey)
+                op = None
+            if raw is None:
+                return "n/a", calc(label, "n/a", asof, ref,
+                                   [{"label": label,
+                                     "val": "n/a — grade not tagged in this filing"}],
+                                   op, False, source="SEC filing XBRL", link=link)
+            v = _usd(raw / 1000.0)
+            return v, calc(label, v, asof, ref,
+                           [{"label": f"{label} (XBRL, $ ÷ 1,000)",
+                             "val": _thou(round(raw / 1000.0)) + " ($000)"}],
+                           op, op is None, source="SEC filing XBRL", link=link)
         # ── Per-share (SEC holding-company filings) ──────────────────────
         ps = ps_by_ci.get(ci, {})
         if kind == "ps":
@@ -1485,6 +1664,85 @@ _PERFORMANCE = [
         ("Common shares outstanding (actual)", "shares", "shares"),
     ]),
 ]
+
+# ── Asset Quality Detail (docs/SNL-BUILD-PLAN.md tab 4) ─────────────────────
+# Every field live-verified against TCBK (cert 21943) and BANR (cert 28489)
+# 12/31/2025, cross-checked to the owner's CapIQ TCBK screenshot where the
+# bases align exactly: ORE 6,245 / LNATRES 125,762 / NTLNLS 9,922
+# (= DRLNLS 11,051 − CRLNLS 1,129) / P9LNLS 82; reported ratios NTLNLSR 0.14,
+# LNATRESR 1.77. Level rows differing from CapIQ do so by ENTITY (bank
+# subsidiary Call Report vs holdco 10-K) — e.g. nonaccrual 64,137 vs 62,449.
+#
+# Conventions (SNL): Nonperforming Loans = nonaccrual (NALNLS) + restructured
+# ACCRUING (RSLNLTOT, the RC-C M.1 in-compliance memo — restructured loans
+# that are past due / nonaccrual live in the P3RS*/P9RS*/NARS* fields and are
+# already inside P3/P9/NALNLS, so the sum never double-counts; verified
+# NARSLNLT ⊄ RSLNLTOT for both banks). The FDIC's own "noncurrent" aggregate
+# (NCLNLS = nonaccrual + 90+ PD) is shown as its Reported: row, same pattern
+# as CapIQ's "Reported:" lines. NAASSETR was rejected for the nonaccrual/assets
+# row: its dictionary title is an agricultural-loan ratio even though the
+# value coincides — the transparent fratio shows its own inputs instead.
+_ASSET_QUALITY = [
+    ("Asset Quality ($000)", [
+        ("Nonaccrual Loans", "dollar", "NALNLS"),
+        ("Restructured Loans (accruing)", "dollar", "RSLNLTOT"),
+        ("» Nonperforming Loans", "sum", "NALNLS", "RSLNLTOT"),
+        ("Real Estate Owned & Repossessed, Net", "dollar", "ORE"),
+        ("» Nonperforming Assets", "sum", "NALNLS", "RSLNLTOT", "ORE"),
+        ("90+ Days Past Due, Still Accruing", "dollar", "P9LNLS"),
+        ("» NPAs & 90+ Day Delinquent", "sum", "NALNLS", "RSLNLTOT", "ORE", "P9LNLS"),
+        ("Reported: Noncurrent Loans (nonaccrual + 90+ PD)", "dollar", "NCLNLS"),
+        ("30–89 Days Past Due, Still Accruing", "dollar", "P3LNLS"),
+    ]),
+    ("Loan Loss Reserve & Charge-Offs ($000)", [
+        ("Loan Loss Reserve", "dollar", "LNATRES"),
+        ("Provision for Credit Losses", "flow", "ELNATR", None),
+        ("Gross Charge-Offs", "flow", "DRLNLS", "DRLNLSQ"),
+        ("Recoveries", "flow", "CRLNLS", "CRLNLSQ"),
+        ("» Net Charge-Offs", "flow", "NTLNLS", "NTLNLSQ"),
+    ]),
+    ("Asset Quality Ratios (%)", [
+        ("NPAs / Assets", "fratio", "NALNLS+RSLNLTOT+ORE", "ASSET"),
+        ("Reported: Nonperforming Assets / Assets", "pct", "NPERFV"),
+        ("Nonaccrual Loans / Assets", "fratio", "NALNLS", "ASSET"),
+        ("NPAs & 90+ PD / Assets", "fratio", "NALNLS+RSLNLTOT+ORE+P9LNLS", "ASSET"),
+        ("Nonaccrual Loans / Loans", "fratio", "NALNLS", "LNLSGR"),
+        ("NPLs / Loans", "fratio", "NALNLS+RSLNLTOT", "LNLSGR"),
+        ("Reported: Noncurrent Loans / Loans", "pct", "NCLNLSR"),
+        ("30–89 Days Past Due / Loans", "fratio", "P3LNLS", "LNLSGR"),
+        ("90+ Days Past Due / Loans", "fratio", "P9LNLS", "LNLSGR"),
+        ("NPAs / (Loans + REO)", "fratio", "NALNLS+RSLNLTOT+ORE", "LNLSGR+ORE"),
+        ("NPAs & 90+ PD / (Equity + LLR)", "fratio",
+         "NALNLS+RSLNLTOT+ORE+P9LNLS", "EQTOT+LNATRES"),
+        # Texas ratio. EQTOT − INTAN is tangible TOTAL equity (bank subs almost
+        # never carry preferred; a common-only figure would need EQPP netting).
+        ("NPAs & 90+ PD / (Tangible Equity + LLR)", "fratio",
+         "NALNLS+RSLNLTOT+ORE+P9LNLS", "EQTOT-INTAN+LNATRES"),
+        ("Reserves / NPLs", "fratio", "LNATRES", "NALNLS+RSLNLTOT"),
+        ("Reserves / NPAs & 90+ PD", "fratio",
+         "LNATRES", "NALNLS+RSLNLTOT+ORE+P9LNLS"),
+        ("Reserves / Loans", "pct", "LNATRESR"),
+        ("Loan Loss Provision / NCO", "flowratio",
+         ("ELNATR", None), ("NTLNLS", "NTLNLSQ")),
+        ("NCOs / Avg Loans (reported, annualized)", "pct", "NTLNLSR"),
+    ]),
+]
+
+# Criticized & Classified rows (grade key in the credit_quality_history
+# breakdown → row label). "coverage" is computed: graded ÷ LNLSGR — the
+# XBRL footnote often grades only the commercial book (plan §4 decision:
+# XBRL-only, label the partial coverage, never present it as whole-portfolio).
+_CRIT_ROWS = [
+    ("Pass", "pass"),
+    ("Special Mention", "special_mention"),
+    ("Substandard", "substandard"),
+    ("Doubtful", "doubtful"),
+    ("Loss", "loss"),
+    ("» Classified (Substandard + Doubtful + Loss)", "classified"),
+    ("» Criticized (Classified + Special Mention)", "criticized"),
+    ("Graded Loans / Gross Loans (coverage)", "coverage"),
+]
+
 
 _FAIR_VALUE = [
     ("Investment Securities", [
@@ -1993,6 +2251,43 @@ def render_performance_analysis(ticker):
     render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE,
                      with_persh=True, with_dep_cost=True, with_fte=True,
                      side_by_side=True)
+
+
+def render_asset_quality(ticker):
+    """Asset Quality Detail statement table (SNL/CapIQ depth). Rendered by
+    credit_dynamics inside its own left column (charts stay on the right), so
+    no side_by_side/trends/header here — the table IS this pane.
+
+    The Criticized & Classified section joins the company's OWN 10-K/10-Q
+    dimensional-XBRL grades onto the FDIC columns by period end. The history
+    mode must match the Annual/Quarterly radio, which lives INSIDE
+    render_statement — its widget state is read here (absent on first render
+    = the radio's Annual default). SEC-side failure degrades to dead cells;
+    the FDIC table must never be hostage to EDGAR."""
+    info = get_bank_info(ticker)
+    cik = info.get("cik") if info else None
+    quarterly = st.session_state.get(f"aq_period_{ticker}") == "Quarterly"
+
+    crit_map = {}
+    if cik:
+        try:
+            from data.xbrl_dimensional import credit_quality_history
+            crit_map = credit_quality_history(int(cik), quarterly=quarterly) or {}
+        except Exception as e:
+            print(f"[statements] criticized history unavailable for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+
+    spec = list(_ASSET_QUALITY)
+    if crit_map:
+        # Partial-coverage label is REQUIRED (plan §4 owner decision): filers
+        # often grade only the commercial book in XBRL — say what's graded,
+        # never imply whole-portfolio.
+        spec.append((
+            "Criticized & Classified — Graded Classes Only ($000, company 10-K/10-Q XBRL)",
+            [(lb, "crit", crit_map, ck) for lb, ck in _CRIT_ROWS],
+        ))
+    render_statement(ticker, "aq", "Asset Quality Detail", spec,
+                     trends=[], header=False)
 
 
 # Fair-value hierarchy sub-tab: per-side section band + the rows shown within it.
