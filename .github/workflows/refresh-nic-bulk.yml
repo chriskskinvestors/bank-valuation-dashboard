@@ -1,18 +1,25 @@
 name: Refresh NIC bulk mirror
 
-# The Fed NIC bulk files (Corporate Structure sub-tab) sit behind Cloudflare
-# bot management that 403s Cloud Run egress IPs outright — production can
-# never download them (prod logs 2026-07-14). GitHub-hosted runners use
-# different egress, so this workflow fetches the two zips monthly and
-# uploads them to the GCS mirror (nic_bulk/) that data/nic_client.py reads.
-# The zips change slowly (org structure), so monthly matches nic_client's
-# 30-day BULK_TTL_SECONDS. If Cloudflare ever blocks GitHub's IPs too, this
-# fails loudly (red run) and the fallback is running
-# tools/refresh_nic_bulk.py from any unblocked machine (e.g. the dev box);
-# nic_client keeps serving the stale mirror in the meantime.
+# NPW (ffiec.gov/npw) sits behind Cloudflare bot management that 403s Cloud
+# Run egress IPs outright — production can never download from it (prod logs
+# 2026-07-14). GitHub-hosted runners use different egress, so this workflow
+# mirrors everything the app needs from NPW into GCS:
+#   1. the two NIC bulk zips (nic_bulk/ — Corporate Structure sub-tab); the
+#      zips change slowly, so monthly matches nic_client's 30-day TTL
+#   2. the latest filed quarter of FR Y-9C facsimile PDFs (y9c/ — Recent
+#      Documents → Regulatory Filings "Download via dashboard"); the extra
+#      cron on the 16th of Feb/May/Aug/Nov lands right after each Y-9C
+#      filing deadline (40-45 days after quarter-end) so a new quarter is
+#      mirrored within days of the facsimiles appearing, and the monthly
+#      run catches late filers (already-mirrored PDFs are skipped)
+# If Cloudflare ever blocks GitHub's IPs too, this fails loudly (red run)
+# and the fallback is running tools/refresh_nic_bulk.py and
+# tools/refresh_y9c_mirror.py from any unblocked machine (e.g. the dev
+# box); nic_client keeps serving the stale mirror in the meantime.
 on:
   schedule:
-    - cron: "17 6 3 * *"   # 06:17 UTC on the 3rd of each month
+    - cron: "17 6 3 * *"          # 06:17 UTC on the 3rd of each month
+    - cron: "17 6 16 2,5,8,11 *"  # just after each FR Y-9C filing deadline
   workflow_dispatch:
 
 env:
@@ -41,12 +48,18 @@ jobs:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
 
-      - name: Fetch from NPW, validate, upload to the GCS mirror
+      - name: Fetch bulk zips from NPW, validate, upload to the GCS mirror
         run: |
-          # Only what tools/refresh_nic_bulk.py's import chain needs — not
-          # the full requirements.txt (this runs on a monthly cron).
+          # Only what the two refresh tools' import chains need — not the
+          # full requirements.txt (this runs on a monthly cron).
           python -m pip install --quiet google-cloud-storage pandas requests
           python -m tools.refresh_nic_bulk
+
+      # Latest-quarter FR Y-9C facsimiles for every likely filer. First run
+      # of a new quarter fetches ~370 PDFs at 30s spacing (~3h); later
+      # runs skip already-mirrored objects and finish in minutes.
+      - name: Mirror latest-quarter FR Y-9C facsimile PDFs
+        run: python -m tools.refresh_y9c_mirror
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3

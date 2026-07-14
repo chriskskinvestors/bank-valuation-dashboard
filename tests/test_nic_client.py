@@ -11,7 +11,13 @@ bulk-file access is via small synthetic CSV fixtures written to a temp dir
   • cycle guard: A↔B ownership loop terminates, no infinite recursion
   • missing rssd → None (tree and parent); top-of-chain parent → None
   • fresh cache entry short-circuits the bulk files entirely
+  • fetch_y9c_pdf ladder: GCS mirror hit serves whatever its age; Cloud
+    Run NEVER falls through to NPW direct; a dev direct fetch heals the
+    mirror under the shared y9c_mirror_name contract
+  • tools/refresh_y9c_mirror target building: RSSDHCR grouping with
+    summed multi-bank assets, $3B floor, largest-first order
 """
+import os
 import shutil
 import sys
 import tempfile
@@ -310,6 +316,108 @@ class TestBulkSourceLadder(unittest.TestCase):
         self.assertEqual(path, self.tmp / "relationships.zip")
         self.mock_load.assert_not_called()
         self.mock_dl.assert_not_called()
+
+
+class TestY9cSourceLadder(unittest.TestCase):
+    """fetch_y9c_pdf's ladder: GCS mirror → NPW direct (dev only — NEVER
+    on Cloud Run, where a guaranteed 403 would burn per-IP bot score) →
+    None. Facsimiles are immutable, so a mirror hit serves at ANY age."""
+
+    PDF = b"%PDF-1.7 fake-facsimile"
+
+    def setUp(self):
+        p_load = patch("data.cloud_storage.load_bytes", return_value=None)
+        p_save = patch("data.cloud_storage.save_bytes", return_value=True)
+        p_curl = patch("data.nic_client._curl_fetch", return_value=None)
+        self.mock_load = p_load.start()
+        self.addCleanup(p_load.stop)
+        self.mock_save = p_save.start()
+        self.addCleanup(p_save.stop)
+        self.mock_curl = p_curl.start()
+        self.addCleanup(p_curl.stop)
+        # Tests must behave the same on a dev box and in CI containers.
+        self.env = patch.dict(os.environ)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        os.environ.pop("K_SERVICE", None)
+        os.environ.pop("CLOUD_RUN_JOB", None)
+
+    def test_mirror_hit_serves_at_any_age_without_touching_npw(self):
+        from data import nic_client
+        self.mock_load.return_value = (self.PDF, 400 * 86400.0)  # very old
+        out = nic_client.fetch_y9c_pdf(1027004, "20260331")
+        self.assertEqual(out, self.PDF)
+        self.mock_curl.assert_not_called()
+
+    def test_cloud_run_service_never_hits_npw_direct(self):
+        from data import nic_client
+        os.environ["K_SERVICE"] = "bank-dashboard"
+        self.assertIsNone(nic_client.fetch_y9c_pdf(1027004, "20260331"))
+        self.mock_curl.assert_not_called()
+
+    def test_cloud_run_job_never_hits_npw_direct(self):
+        from data import nic_client
+        os.environ["CLOUD_RUN_JOB"] = "nic-mirror-verify"
+        self.assertIsNone(nic_client.fetch_y9c_pdf(1027004, "20260331"))
+        self.mock_curl.assert_not_called()
+
+    def test_dev_direct_fetch_heals_the_mirror(self):
+        from data import nic_client
+        self.mock_curl.return_value = self.PDF
+        out = nic_client.fetch_y9c_pdf(1027004, "20260331")
+        self.assertEqual(out, self.PDF)
+        prefix, filename, data = self.mock_save.call_args[0][:3]
+        self.assertEqual((prefix, filename), ("y9c", "1027004_20260331.pdf"))
+        self.assertEqual(data, self.PDF)
+
+    def test_non_pdf_mirror_object_ignored(self):
+        from data import nic_client
+        self.mock_load.return_value = (b"<html>challenge page</html>", 60.0)
+        self.assertIsNone(nic_client.fetch_y9c_pdf(1027004, "20260331"))
+        self.mock_curl.assert_called_once()  # fell through to NPW (dev)
+
+    def test_invalid_args_never_fetch(self):
+        from data import nic_client
+        for rssd, dt in ((None, "20260331"), (1027004, "2026-03-31"),
+                         (1027004, "202603"), (0, "20260331")):
+            self.assertIsNone(nic_client.fetch_y9c_pdf(rssd, dt))
+        self.mock_load.assert_not_called()
+        self.mock_curl.assert_not_called()
+
+    def test_mirror_name_contract(self):
+        from data.nic_client import y9c_mirror_name
+        self.assertEqual(y9c_mirror_name(1027004, "20260331"),
+                         "1027004_20260331.pdf")
+
+
+class TestY9cMirrorTool(unittest.TestCase):
+    """tools/refresh_y9c_mirror pure logic — target building + the
+    latest-filed-quarter rule."""
+
+    def test_targets_grouped_summed_floored_and_sorted(self):
+        from tools.refresh_y9c_mirror import _holdco_targets_from_records
+        records = [
+            # multi-bank holdco: neither sub clears $3B alone, sum does
+            {"CERT": 1, "RSSDHCR": "100", "ASSET": 2_000_000},
+            {"CERT": 2, "RSSDHCR": "100", "ASSET": 1_500_000},
+            {"CERT": 3, "RSSDHCR": "200", "ASSET": 50_000_000},
+            {"CERT": 4, "RSSDHCR": "", "ASSET": 9_000_000},    # no holdco
+            {"CERT": 5, "RSSDHCR": "0", "ASSET": 9_000_000},   # 0 sentinel
+            {"CERT": 6, "RSSDHCR": "300", "ASSET": 500_000},   # under floor
+            {"CERT": 7, "RSSDHCR": None, "ASSET": 9_000_000},
+        ]
+        self.assertEqual(_holdco_targets_from_records(records),
+                         [(200, 50_000_000), (100, 3_500_000)])
+
+    def test_latest_y9c_period_respects_45_day_window(self):
+        import pandas as pd
+        from tools.refresh_y9c_mirror import _latest_y9c_period
+        # 2026-07-14: Q2 ended 14 days ago (not filed) → Q1.
+        self.assertEqual(_latest_y9c_period(pd.Timestamp(2026, 7, 14)),
+                         "20260331")
+        # 2026-08-20: Q2 deadline (+45d) passed → Q2.
+        self.assertEqual(_latest_y9c_period(pd.Timestamp(2026, 8, 20)),
+                         "20260630")
 
 
 class TestRefreshToolValidation(unittest.TestCase):

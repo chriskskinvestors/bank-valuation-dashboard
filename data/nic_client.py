@@ -55,10 +55,19 @@ ladder in _bulk_path is therefore:
      subprocess (curl is in the deploy image and ships with Windows
      10+). Works from dev machines; a success re-uploads to the mirror.
   4. stale GCS mirror, then stale local file — stale beats nothing.
+
+FR Y-9C facsimile PDFs (fetch_y9c_pdf, Recent Documents → Regulatory
+Filings) hit the same Cloudflare-blocked host per request, so they get the
+same treatment: a GCS mirror gs://$GCS_BUCKET/y9c/{rssd}_{yyyymmdd}.pdf,
+pre-filled for the latest filed quarter by tools/refresh_y9c_mirror.py
+(run by the refresh-nic-bulk workflow). See fetch_y9c_pdf's docstring for
+its ladder — unlike the bulk zips, Cloud Run NEVER falls through to NPW
+direct there (per-click guaranteed 403s burn per-IP bot score).
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import time
@@ -83,7 +92,8 @@ MAX_DEPTH = 4                   # generations below the root
 ACTIVE_DT_END = 99991231        # NIC sentinel: relationship still open
 
 _BULK_DIR = Path(tempfile.gettempdir()) / "nic_bulk"
-_GCS_PREFIX = "nic_bulk"        # mirror prefix in the GCS_BUCKET
+_GCS_PREFIX = "nic_bulk"        # bulk-zip mirror prefix in the GCS_BUCKET
+_Y9C_PREFIX = "y9c"             # FR Y-9C facsimile-PDF mirror prefix
 
 REL_COLS = ["#ID_RSSD_PARENT", "ID_RSSD_OFFSPRING", "DT_END",
             "PCT_EQUITY", "CTRL_IND"]
@@ -159,14 +169,15 @@ def _bulk_path(name: str) -> Path | None:
 
     # GCS mirror first: NPW 403s Cloud Run egress outright, and even where
     # it doesn't, the mirror spares NPW a multi-MB hit per instance.
-    mirrored = _gcs_load(name)
+    mirrored = _gcs_load(_GCS_PREFIX, f"{name}.zip", magic=b"PK")
     if mirrored is not None and mirrored[1] is not None \
             and mirrored[1] < BULK_TTL_SECONDS:
         return _write_bulk(path, mirrored[0], name)
 
     content = _download(BULK_URLS[name], name)
     if content is not None:
-        _gcs_store(name, content)  # heal the mirror for blocked instances
+        # heal the mirror for blocked instances
+        _gcs_store(_GCS_PREFIX, f"{name}.zip", content, "application/zip")
         return _write_bulk(path, content, name)
 
     if mirrored is not None:  # stale mirror beats nothing
@@ -189,33 +200,39 @@ def _write_bulk(path: Path, content: bytes, name: str) -> Path | None:
         return path if path.exists() else None
 
 
-def _gcs_load(name: str) -> tuple[bytes, float | None] | None:
-    """(bytes, age_seconds) of one bulk zip from the GCS mirror, or None.
-    Zip-magic-validated so a bad upload never poisons the parse."""
+def _gcs_load(prefix: str, filename: str,
+              magic: bytes) -> tuple[bytes, float | None] | None:
+    """(bytes, age_seconds) of one mirror object from GCS, or None.
+    Magic-validated (b"PK" zips, b"%PDF-" facsimiles) so a bad upload
+    never poisons the consumer."""
     try:
         from data.cloud_storage import load_bytes
-        got = load_bytes(_GCS_PREFIX, f"{name}.zip")
+        got = load_bytes(prefix, filename)
     except Exception as e:
-        print(f"[nic] {name}: GCS mirror read error: {type(e).__name__}: {e}")
+        print(f"[nic] {filename}: GCS mirror read error: "
+              f"{type(e).__name__}: {e}")
         return None
     if got is None:
         return None
     data, age = got
-    if not data.startswith(b"PK"):
-        print(f"[nic] {name}: GCS mirror object is not a zip — ignoring")
+    if not data.startswith(magic):
+        print(f"[nic] {filename}: GCS mirror object has wrong magic "
+              f"({data[:8]!r}) — ignoring")
         return None
     return data, age
 
 
-def _gcs_store(name: str, content: bytes) -> None:
-    """Best-effort upload of a freshly-downloaded bulk zip to the GCS
+def _gcs_store(prefix: str, filename: str, content: bytes,
+               content_type: str) -> None:
+    """Best-effort upload of a freshly-downloaded NPW object to the GCS
     mirror, so egress-blocked instances get it without touching NPW."""
     try:
         from data.cloud_storage import save_bytes
-        if save_bytes(_GCS_PREFIX, f"{name}.zip", content, "application/zip"):
-            print(f"[nic] {name}: refreshed the GCS mirror")
+        if save_bytes(prefix, filename, content, content_type):
+            print(f"[nic] {filename}: refreshed the GCS mirror")
     except Exception as e:
-        print(f"[nic] {name}: GCS mirror write error: {type(e).__name__}: {e}")
+        print(f"[nic] {filename}: GCS mirror write error: "
+              f"{type(e).__name__}: {e}")
 
 
 def _curl_fetch(url: str, name: str, magic: bytes) -> bytes | None:
@@ -258,22 +275,51 @@ def _download(url: str, name: str) -> bytes | None:
     return _curl_fetch(url, name, b"PK")
 
 
+def y9c_mirror_name(rssd_id: int, yyyymmdd: str) -> str:
+    """Object name of one FR Y-9C facsimile in the y9c/ GCS mirror — the
+    contract between fetch_y9c_pdf and tools/refresh_y9c_mirror.py."""
+    return f"{rssd_id}_{yyyymmdd}.pdf"
+
+
+def _on_cloud_run() -> bool:
+    """True inside a Cloud Run service (K_SERVICE) or job (CLOUD_RUN_JOB)
+    — the egress NPW's Cloudflare 403s outright (prod logs 2026-07-14)."""
+    return bool(os.environ.get("K_SERVICE") or os.environ.get("CLOUD_RUN_JOB"))
+
+
 def fetch_y9c_pdf(rssd_id: int, yyyymmdd: str) -> bytes | None:
     """FR Y-9C facsimile PDF for a HOLDING COMPANY RSSD and quarter-end
-    (Recent Documents → Regulatory Filings). NPW serves these publicly but
-    behind Cloudflare bot management that ALWAYS 403s python's TLS
-    fingerprint and scores failed hits against the IP — so this goes
-    curl-only (no requests attempt: a guaranteed 403 would just burn bot
-    score; a probe burst 2026-07-14 got the IP temp-blocked exactly that
-    way). None when blocked or the holdco didn't file the period (small
-    holdcos file FR Y-9SP) — callers show an honest error with the
+    (Recent Documents → Regulatory Filings). Source ladder — facsimiles
+    are immutable once filed, so any hit is good regardless of age:
+
+      1. GCS mirror y9c/{rssd}_{yyyymmdd}.pdf — THE production path,
+         pre-filled for the latest filed quarter of every likely Y-9C
+         filer by tools/refresh_y9c_mirror.py (refresh-nic-bulk workflow).
+      2. NPW direct via curl — dev machines only, NEVER on Cloud Run:
+         Cloudflare 403s that egress outright and scores failed hits
+         against the IP (a probe burst 2026-07-14 got the IP temp-blocked),
+         so a guaranteed-403 per-click probe is strictly negative. Same
+         reason there is no requests attempt: python's TLS fingerprint is
+         a guaranteed 403 from anywhere. A dev success heals the mirror.
+
+    None when unmirrored + blocked, or the holdco didn't file the period
+    (small holdcos file FR Y-9SP) — callers show an honest error with the
     "View on NIC" browser link as the fallback."""
     rssd_id = _int(rssd_id)
     if not rssd_id or not str(yyyymmdd).isdigit() or len(str(yyyymmdd)) != 8:
         return None
+    name = y9c_mirror_name(rssd_id, yyyymmdd)
+    mirrored = _gcs_load(_Y9C_PREFIX, name, magic=b"%PDF-")
+    if mirrored is not None:
+        return mirrored[0]
+    if _on_cloud_run():
+        return None
     url = (f"{NIC_BASE}/ReturnFinancialReportPDF?rpt=FRY9C"
            f"&id={rssd_id}&dt={yyyymmdd}")
-    return _curl_fetch(url, f"y9c_{rssd_id}_{yyyymmdd}", magic=b"%PDF-")
+    content = _curl_fetch(url, f"y9c_{rssd_id}_{yyyymmdd}", magic=b"%PDF-")
+    if content is not None:
+        _gcs_store(_Y9C_PREFIX, name, content, "application/pdf")
+    return content
 
 
 # ──────────────────────────────────────────────────────────────────────────

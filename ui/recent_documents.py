@@ -321,16 +321,35 @@ def _holdco_rssd(ticker: str) -> int | None:
     return get_holdco_rssd_for_cert(cert) if cert else None
 
 
+class _Y9cUnavailable(Exception):
+    """Miss sentinel so st.cache_data never caches a None: a Y-9C miss can
+    now HEAL without a redeploy (the refresh-nic-bulk workflow fills the
+    y9c/ GCS mirror hours after a quarter's facsimiles appear), and a
+    30-day cached None would keep lying until the instance recycled.
+    Retrying a miss per click is cheap — on Cloud Run fetch_y9c_pdf is
+    mirror-only and never hits NPW's touchy bot management."""
+
+
 @st.cache_data(ttl=30 * 86400, max_entries=8, show_spinner=False)
-def _pdf_from_y9c(ticker: str, period_mmddyyyy: str) -> bytes | None:
-    """FR Y-9C facsimile PDF from NPW (immutable once filed — 30d TTL so
-    repeat clicks never re-hit NPW's touchy bot management)."""
+def _pdf_from_y9c_cached(ticker: str, period_mmddyyyy: str) -> bytes:
+    """FR Y-9C facsimile PDF (immutable once filed — long TTL for hits;
+    misses raise _Y9cUnavailable and are never cached)."""
     from data.nic_client import fetch_y9c_pdf
     rssd = _holdco_rssd(ticker)
-    if not rssd:
+    pdf = None
+    if rssd:
+        p = period_mmddyyyy
+        pdf = fetch_y9c_pdf(rssd, f"{p[4:]}{p[:2]}{p[2:4]}")
+    if pdf is None:
+        raise _Y9cUnavailable()
+    return pdf
+
+
+def _pdf_from_y9c(ticker: str, period_mmddyyyy: str) -> bytes | None:
+    try:
+        return _pdf_from_y9c_cached(ticker, period_mmddyyyy)
+    except _Y9cUnavailable:
         return None
-    p = period_mmddyyyy
-    return fetch_y9c_pdf(rssd, f"{p[4:]}{p[:2]}{p[2:4]}")
 
 
 @st.cache_data(ttl=86400, max_entries=8, show_spinner=False)
