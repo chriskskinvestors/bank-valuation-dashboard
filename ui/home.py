@@ -508,6 +508,11 @@ def _af_rates_table() -> str:
             '<span class="num h">YTD bp</span><span class="h rh">range</span>'
             '<span class="h rh">52wk</span></div>')
     body = ""
+    # Rows deep-link to the Market & Macro section (owner call 2026-07-13) —
+    # the in-app home of the full rates/curve content. %26 = the '&' inside
+    # the section name; app.py's ?s= handler decodes it.
+    _macro_a = ('<a class="crow" href="?s=Market+%26+Macro" target="_self" '
+                'title="Open Market &amp; Macro">')
     for section, rows in _AF_RATES_SECTIONS:
         is_spread = section == "Spreads"
         body += f'<div class="rsec">{section}</div>'
@@ -517,8 +522,9 @@ def _af_rates_table() -> str:
             dot = ('<span class="dotc" style="background:#059669;margin-right:4px;"'
                    ' title="live ~15m"></span>') if is_live else ""
             if lv is None:
-                body += (f'<div class="erow r10 ed"><span class="nm">{dot}{label}</span>'
-                         + '<span class="num mut">—</span>' * 9 + '</div>')
+                body += (f'{_macro_a}<div class="erow r10 ed">'
+                         f'<span class="nm">{dot}{label}</span>'
+                         + '<span class="num mut">—</span>' * 9 + '</div></a>')
                 continue
             lvl = f'{lv:+.2f}' if is_spread else f'{lv:.2f}'
 
@@ -537,10 +543,11 @@ def _af_rates_table() -> str:
             wc_m = _win(an.get("m1"), an.get("m_lo"), an.get("m_hi"), "1M")
             wc_y = _win(an.get("ytd"), an.get("y_lo"), an.get("y_hi"), "YTD")
             rng = _af_range_bar(lv, an.get("lo"), an.get("hi"))
-            body += (f'<div class="erow r10 ed"><span class="nm">{dot}{label}</span>'
+            body += (f'{_macro_a}<div class="erow r10 ed">'
+                     f'<span class="nm">{dot}{label}</span>'
                      f'<span class="num">{lvl}</span>'
                      f'<span class="num {d1c}">{d1t}</span>'
-                     f'{wc_w}{wc_m}{wc_y}{rng}</div>')
+                     f'{wc_w}{wc_m}{wc_y}{rng}</div></a>')
     return (_af_hd("Rates · Credit", '<span class="live"></span>live · FRED daily')
             + f'<div class="body"><div class="etf">{head}{body}</div></div>')
 
