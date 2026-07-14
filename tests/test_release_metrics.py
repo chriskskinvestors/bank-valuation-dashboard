@@ -187,7 +187,16 @@ class TestTableExtraction(unittest.TestCase):
                  ["Efficiency ratio (1)", "58.3", "55.1", "60.5"])
         m = extract_table_metrics(h, self.Q)
         self.assertEqual(m["nim"], 3.71)
-        # efficiency row has no % sign anywhere → unit unproven → None.
+        # Ratio rows without % signs extract (TFC omits them entirely —
+        # the specific label + band disambiguate; policy changed 2026-07-13).
+        self.assertEqual(m["efficiency"], 58.3)
+
+    def test_ratio_label_on_dollar_row_still_refused(self):
+        # The $ guard that replaced the % requirement: an explicit $ marks
+        # a dollar line — a ratio spec must never read it.
+        h = _tbl(["", "1Q26", "4Q25"],
+                 ["Efficiency ratio (1)", "$58.3", "$55.1"])
+        m = extract_table_metrics(h, self.Q)
         self.assertIsNone(m["efficiency"])
 
     def test_full_date_headers_current_not_first_column(self):
@@ -384,3 +393,54 @@ class TestPriorQuarterEnd(unittest.TestCase):
         self.assertEqual(_prior_quarter_end("2025-09-30"), "2025-06-30")
         self.assertIsNone(_prior_quarter_end(None))
         self.assertIsNone(_prior_quarter_end("garbage"))
+
+
+class TestRegionalTableShapes(unittest.TestCase):
+    """TFC/FITB shapes from the 2026-07-13 pre-season sweep."""
+
+    def test_billions_scale_and_te_variant_excluded(self):
+        # TFC: dollars in billions; the taxable-equivalent revenue row must
+        # not merge with (and kill) the GAAP one via the disagreement guard.
+        html = _tbl(["(Dollars in billions, except per share data)",
+                     "1Q26", "4Q25", "1Q25"],
+                    ["Total revenue", "5.15", "5.25", "4.90"],
+                    ["Total revenue - TE (1)", "5.20", "5.30", "4.95"],
+                    ["Diluted EPS", "$1.09", "$1.00", "$0.87"])
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(m.get("total_revenue"), 5.15e9)
+        self.assertEqual(m.get("eps_diluted"), 1.09)   # "Diluted EPS" abbrev
+
+    def test_footnoted_revenue_label_still_matches(self):
+        html = _tbl(["(dollars in thousands)", "1Q26", "4Q25"],
+                    ["Total revenue (2)", "174,752", "172,340"])
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(m.get("total_revenue"), 174_752_000.0)
+
+    def test_split_month_year_header_with_change_cols(self):
+        # FITB: months on one row, years + Seq/Yr/Yr change cols on the next;
+        # data rows carry two trailing change values that must be trimmed.
+        def tr(cells):
+            return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+        html = ("<table>"
+                + tr(["($ in millions, except per share)", "", "", ""])
+                + tr(["", "March", "December", "March", "", ""])
+                + tr(["", "2026", "2025", "2025", "Seq", "Yr/Yr"])
+                + tr(["Net interest margin (a)", "3.30", "3.13", "3.03",
+                      "17", "27"])
+                + "</table>")
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertEqual(m.get("nim"), 3.30)
+        p = extract_table_metrics(html, "2025-12-31")
+        self.assertEqual(p.get("nim"), 3.13)
+
+    def test_split_header_with_non_change_extras_refused(self):
+        # Extra year-row cells that are NOT change tokens → pairing unproven.
+        def tr(cells):
+            return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+        html = ("<table>"
+                + tr(["", "March", "December", ""])
+                + tr(["", "2026", "2025", "Outlook"])
+                + tr(["Net interest margin", "3.30", "3.13", "3.40"])
+                + "</table>")
+        m = extract_table_metrics(html, "2026-03-31")
+        self.assertIsNone(m.get("nim"))

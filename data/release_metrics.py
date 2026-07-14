@@ -242,6 +242,9 @@ _DTOK = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})")
 # only; "May 2026" is a monthly column, not a quarter period.
 _MONYR = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(20\d{2})\b")
 _QE_MONTH = {3: 31, 6: 30, 9: 30, 12: 31}
+# Header cells that mark a trailing %-change/comparison column (FITB "Seq",
+# "Yr/Yr"; generic "% Change", "bps") — never period columns.
+_CHANGE_COL = re.compile(r"(?i)\b(?:seq|yr/yr|yoy|qoq|change|bps|%)\b|%")
 
 
 def _period_qend(cell: str) -> str | None:
@@ -340,12 +343,15 @@ _TABLE_SPECS = {
     # itself so the boards aren't blank while FMP's consensus feed lags a
     # fresh report. GAAP diluted EPS here; the ADJUSTED variant (what street
     # consensus usually compares to) is in _ADJ_TABLE_SPECS below.
-    "eps_diluted": (r"diluted (?:earnings|net income)(?: \(loss\))? per "
-                    r"(?:common )?share", "$", (0.01, 60.0)),
+    "eps_diluted": (r"diluted (?:eps\b|(?:earnings|net income)(?: \(loss\))? per "
+                    r"(?:common )?share)", "$", (0.01, 60.0)),
     # "$K": magnitude row (reported in the table's stated unit — see the
     # in-thousands/in-millions scale sniff in extract_table_metrics); band
     # is in RAW dollars post-scale.
-    "total_revenue": (r"total revenues?\b", "$K", (5e6, 100e9)),
+    # Anchored to label end (+ optional footnote) so taxable-equivalent /
+    # adjusted variants ("Total revenue - TE (1)") never merge in and
+    # trip the cross-table disagreement guard.
+    "total_revenue": (r"total revenues?\s*(?:\(\d\))?\s*$", "$K", (5e6, 100e9)),
 }
 
 # Rows whose label is an "Adjusted …" variant are normally refused (the
@@ -364,12 +370,33 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
     cands: dict = {k: [] for k in {**_TABLE_SPECS, **_ADJ_TABLE_SPECS}}
     for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
         rows = _table_rows(thtml)
-        qends, hdr_i = None, None
+        qends, hdr_i, n_change = None, None, 0
         for i, cells in enumerate(rows[:8]):
             found = [q for c in cells if (q := _period_qend(c))]
             if len(found) >= 2:
                 qends, hdr_i = found, i
                 break
+            # FITB-style SPLIT header: month names on one row, years on the
+            # next ("March | December | March" over "2026 | 2025 | 2025 |
+            # Seq | Yr/Yr"). Pair them in order; extra non-year cells on the
+            # year row are trailing change columns (counted for alignment).
+            if i + 1 < len(rows):
+                months = [_MONTHS3.get(c.strip().rstrip(".,")[:3].lower())
+                          for c in cells if c.strip()]
+                months = [m for m in months if m in _QE_MONTH]
+                if len(months) >= 2 and months == [
+                        _MONTHS3.get(c.strip().rstrip(".,")[:3].lower())
+                        for c in cells if c.strip()]:
+                    nxt = [c.strip() for c in rows[i + 1] if c.strip()]
+                    years = [int(c) for c in nxt if re.fullmatch(r"20\d{2}", c)]
+                    extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
+                    if (len(years) >= len(months)
+                            and all(_CHANGE_COL.search(c) for c in extras)):
+                        from datetime import date as _date
+                        qends = [_date(y, m, _QE_MONTH[m]).isoformat()
+                                 for m, y in zip(months, years)]
+                        hdr_i, n_change = i + 1, len(extras)
+                        break
         if not qends or qends.count(expected_qend) != 1:
             continue                      # no/ambiguous period row → skip table
         col = qends.index(expected_qend)
@@ -380,7 +407,8 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
         table_text = " ".join(" ".join(c for c in cells if c)
                               for cells in rows).lower()
         scale = (1_000 if "in thousands" in table_text
-                 else 1_000_000 if "in millions" in table_text else None)
+                 else 1_000_000 if "in millions" in table_text
+                 else 1_000_000_000 if "in billions" in table_text else None)
         # Dollar affirmation for "$" (per-share) specs: WFC-style blocks put
         # the $ sign only on each block's FIRST row, so accept a row without
         # its own $ when the table's units statement covers per-share values.
@@ -396,7 +424,10 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                     v = vals[col] * scale
                 elif kind == "$" and "$" not in row_text and not table_per_share:
                     continue
-                elif kind == "%" and kind not in row_text:
+                elif kind == "%" and "%" not in row_text and "$" in row_text:
+                    # A $-bearing row can't be the ratio (TFC omits % signs
+                    # entirely — the specific label + band disambiguate; only
+                    # an explicit $ marks the row as a dollar line).
                     continue
                 else:
                     v = vals[col]
@@ -417,6 +448,8 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
             # _row_values itself skips its first cell (the label slot), so
             # hand it the row FROM the label cell onward.
             vals = _row_values(cells[label_idx:])
+            if len(vals) == len(qends) + n_change and n_change:
+                vals = vals[:len(qends)]  # trailing change cols (header-counted)
             if len(vals) != len(qends):
                 continue                  # colspan drift → alignment unproven
             if _CONNECTOR_EXCLUDE.search(label):
