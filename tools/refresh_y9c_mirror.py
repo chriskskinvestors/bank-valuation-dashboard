@@ -61,7 +61,22 @@ _FDIC_INSTITUTIONS_URL = "https://banks.data.fdic.gov/api/institutions"
 # so a floor-straddling holdco can be missed — it heals via the dev-fetch
 # mirror write in fetch_y9c_pdf, and the UI's "View on NIC" link always works.
 _Y9C_ASSET_FLOOR_THOUSANDS = 3_000_000
-_MAX_MISS_ATTEMPTS = 3      # a late filer gets 3 spaced runs, then stops
+# Permanent-skip threshold. A "miss" is any non-PDF result, but curl can't
+# cleanly tell a genuine "this holdco doesn't file Y-9C" from a Cloudflare
+# 403/challenge page (both are non-PDF; observed 2026-07-14 the dev-box
+# misses were ALL Cloudflare challenge bodies, not real absences). Since
+# essentially every holdco above the $3B floor MUST file Y-9C, true
+# non-filers are rare and misses are Cloudflare-dominated. The two are
+# separable by frequency: a true non-filer misses on EVERY attempt (reaches
+# any cap deterministically), while a transiently-challenged real filer
+# misses only ~25% of the time — so a high cap lets persistent non-filers
+# stop after a handful of runs while a real filer almost never accumulates
+# enough consecutive block-misses to be wrongly dropped (dropping one =
+# silently serving only the "View on NIC" fallback for a bank that does
+# file). Paired with the misses>fetched run-guard below, false-skips are
+# negligible. Cost of a higher cap: a few wasted 30s fetches on each rare
+# true non-filer, spread across runs.
+_MAX_MISS_ATTEMPTS = 6
 # Runaway guard: ~3.4h at 30s spacing — above the ~366 holdcos clearing the
 # floor today (live probe 2026-07-14), so a full run covers every filer.
 # Override with Y9C_MAX_FETCHES to fill the mirror in bounded sub-hour
