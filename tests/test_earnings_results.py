@@ -229,6 +229,28 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertIsNone(rows[0]["rev_act"])
         self.assertIsNone(rows[0]["rev_surprise"])
 
+    def test_revenue_before_eps_is_held_on_report_day(self):
+        """MS 2026-07-15: FMP posted H1 revenue ($36.29B, '+84% surprise') as
+        the quarter while its own EPS was still null — mid-ingestion junk.
+        Revenue is held until FMP's EPS settles the row or 2 days pass."""
+        fmp = [{"symbol": "MS", "date": "2026-07-15", "epsActual": None,
+                "revenueActual": 36.29e9, "revenueEstimated": 19.67e9}]
+        events = {"MS": [{"headline": "Morgan Stanley Reports Second Quarter",
+                          "url": "https://x/pr",
+                          "published_at": "2026-07-15T07:30:00"}]}
+        rows = build_results_rows(fmp, {"MS"}, events, self.TODAY)
+        self.assertIsNone(rows[0]["rev_act"])
+        self.assertIsNone(rows[0]["rev_surprise"])
+        self.assertTrue(rows[0]["pending"])   # release fill supplies actuals
+
+    def test_settled_revenue_only_row_survives_after_two_days(self):
+        # Micro-caps can have revenue-only FMP coverage for good — once the
+        # 2-day settling window passes, revenue-only rows display again.
+        fmp = [{"symbol": "MLGF", "date": "2026-07-10", "epsActual": None,
+                "revenueActual": 12e6}]
+        rows = build_results_rows(fmp, {"MLGF"}, {}, self.TODAY)
+        self.assertEqual(rows[0]["rev_act"], 12e6)
+
     def test_actuals_row_is_not_pending(self):
         fmp = [{"symbol": "JPM", "date": "2026-07-14", "epsActual": 5.8,
                 "periodEnding": "2026-06-30"}]

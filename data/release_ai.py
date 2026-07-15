@@ -84,6 +84,42 @@ _PERIOD_CUE_RE = re.compile(
     r"first|second|third|fourth|prior|previous|preceding|linked|year[- ]ago|"
     r"a year earlier|last year|compared|versus|vs\.?|from)", re.I)
 
+# Label affirmation: the evidence quote must NAME the metric it claims, not
+# just contain the number (CTBI 2026-07-15: the "Tangible common equity
+# 11.93%" row was accepted as ROTCE — right number+band+verbatim, wrong
+# metric; only the label distinguishes them).
+_LABEL_RE = {
+    "nim":              r"margin|net yield|nim\b",
+    "efficiency":       r"efficiency",
+    "roa":              r"return on.{0,12}assets|roa\b",
+    "roe":              r"return on|roe\b",
+    "rotce":            r"rotce|return on.{0,30}tangible",
+    "cet1_ratio":       r"cet\s?1|common equity tier",
+    "t1_ratio":         r"tier\s?1",
+    "total_ratio":      r"total.{0,15}capital",
+    "lev_ratio":        r"leverage",
+    "tce_ratio":        r"tangible common equity|tce\b",
+    "nco_ratio":        r"charge-?off|ncl",
+    "npa_assets":       r"non-?performing|non-?accrual|npa",
+    "acl_loans":        r"allowance|acl\b|reserve",
+    "cost_of_deposits": r"deposit",
+    "loan_yield":       r"loan",
+    "eps_diluted":      r"earnings per|per.{0,10}share|eps\b|diluted",
+    "tbv_ps":           r"tangible book|tbv",
+    "bv_ps":            r"book value",
+    "div_ps":           r"dividend",
+}
+_LABEL_RE = {k: re.compile(v, re.I) for k, v in _LABEL_RE.items()}
+# Sibling-metric words that DISQUALIFY a quote for a key even when the label
+# pattern matches (a ROTCE row contains "return on"; a TBV row contains
+# "per share"; a CET1 row contains "tier 1").
+_LABEL_EXCLUDE = {
+    "roe":         re.compile(r"tangible", re.I),
+    "bv_ps":       re.compile(r"tangible", re.I),
+    "t1_ratio":    re.compile(r"common equity|cet", re.I),
+    "eps_diluted": re.compile(r"book value|dividend", re.I),
+}
+
 _PROMPT = """You are extracting metrics from a bank's quarterly earnings \
 release for {bank} (ticker {ticker}). The current reporting quarter ends \
 {qend}; the prior (linked) quarter ends {prior_qend}; the year-ago quarter \
@@ -192,6 +228,17 @@ def guard_items(items, source_text: str, prior_qend=None, yoy_qend=None) -> dict
             continue
         if not any(r in q for r in _number_renderings(value)):
             continue                      # number not printed in the evidence
+        # Label affirmation — except narrated history ("compared with 4.54%
+        # in the first quarter"), whose subject precedes the quoted clause;
+        # its period cue marks that form. Current values and table-row quotes
+        # (the observed mis-key vector) always carry the row's own label.
+        lab = _LABEL_RE.get(key)
+        narrated_hist = period != "cur" and _PERIOD_CUE_RE.search(q)
+        if lab is not None and not narrated_hist and not lab.search(q):
+            continue                      # quote names a DIFFERENT metric
+        exc = _LABEL_EXCLUDE.get(key)
+        if exc is not None and exc.search(q):
+            continue                      # quote names a SIBLING metric
         if _VARIANT_RE.search(q):
             continue                      # adjusted/core/… variant
         if key not in _NONGAAP_OK and _NONGAAP_RE.search(q):
@@ -286,9 +333,10 @@ def release_ai_metrics(cik, accession: str, text: str, ticker: str = "",
     if not cik or not accession or not text:
         return None
     from data.cloud_storage import load_json, save_json
-    # _v2: input now includes the financial-supplement consolidated section
-    # (2026-07-14) — _v1 results were release-text-only and must re-extract.
-    fname = f"{int(cik)}_{accession.replace('-', '')}_v2.json"
+    # _v3: label-affirmation guard (2026-07-15) — _v2 results could carry a
+    # sibling metric's row (CTBI TCE row cached as ROTCE) and must re-extract.
+    # _v2 added the financial-supplement consolidated section to the input.
+    fname = f"{int(cik)}_{accession.replace('-', '')}_v3.json"
     cached = load_json(RELEASE_AI_CACHE_PREFIX, fname)
     if cached and isinstance(cached.get("periods"), dict):
         return cached["periods"]

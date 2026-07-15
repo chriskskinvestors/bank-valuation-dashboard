@@ -139,6 +139,14 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
         eps_act, rev_act = r.get("epsActual"), r.get("revenueActual")
         if rev_act is not None and rev_act < 0:
             rev_act = None       # negative bank revenue = FMP junk (JPM -47.8B)
+        if rev_act is not None and eps_act is None and (today - d).days <= 2:
+            # Revenue posted before EPS on report day = FMP mid-ingestion; the
+            # early figure is junk-prone (MS 2026-07-15: H1 revenue $36.29B
+            # posted as the quarter, "+84% surprise", EPS still null). Hold
+            # revenueActual until FMP's own EPS settles the row or two days
+            # pass (some micro-caps have revenue-only coverage for good); the
+            # release fill below still supplies confirmable actuals meanwhile.
+            rev_act = None
         pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
         pending = False
         if eps_act is None and rev_act is None:

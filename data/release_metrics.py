@@ -652,16 +652,16 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v9 (2026-07-14 pm): AI fill also reads the 8-K's financial-supplement
-    # exhibit (consolidated front section) — megabank NIM/ROA/Tier 1 and
-    # history-table cells the press release never states. v8 added ordinal-
+    # v10 (2026-07-15): label-affirmation guard in release_ai — v9 values
+    # could carry a sibling metric's row (CTBI's TCE row filled ROTCE) and
+    # must re-extract. v9 added the financial-supplement feed; v8 ordinal-
     # quarter headers ("1st Quarter 2026" single-cell _QWORD, TCBI ordinals-
     # over-years, CFR years-over-ordinals inverted split); v7 the prose
     # diluted-EPS spec; v6 the JPM/C table shapes; v5 the guarded-AI fill
     # (data/release_ai). Extractions are immutable per accession, so spec
     # improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v9:{int(cik)}"
+    key = f"release_metrics:v10:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:

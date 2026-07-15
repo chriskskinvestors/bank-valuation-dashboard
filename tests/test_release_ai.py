@@ -107,6 +107,38 @@ class TestGuards(unittest.TestCase):
         ], doc)
         self.assertEqual(out["cur"], {})
 
+    def test_quote_must_name_the_claimed_metric(self):
+        """CTBI 2026-07-15: the 'Tangible common equity 11.93%' row was
+        accepted as ROTCE — verbatim, in-band, number printed, but the WRONG
+        metric. The quote must carry the claimed key's own label."""
+        doc = ("Tangible common equity 11.93 % 12.07 % 11.72 % "
+               "Return on average tangible common equity 15.20 % shown")
+        bad = guard_items([item("rotce", "cur", 11.93,
+                                "Tangible common equity 11.93 %")], doc)
+        self.assertEqual(bad["cur"], {})
+        both = guard_items([
+            item("tce_ratio", "cur", 11.93, "Tangible common equity 11.93 %"),
+            item("rotce", "cur", 15.20,
+                 "Return on average tangible common equity 15.20 %"),
+        ], doc)
+        self.assertEqual(both["cur"], {"tce_ratio": 11.93, "rotce": 15.20})
+
+    def test_sibling_metric_words_disqualify(self):
+        doc = ("Return on average tangible common equity 15.20 % and "
+               "Tangible book value per share $27.83 and "
+               "Dividends declared per share $0.53 here")
+        out = guard_items([
+            # ROTCE row claimed as plain ROE → rejected ("tangible")
+            item("roe", "cur", 15.20,
+                 "Return on average tangible common equity 15.20 %"),
+            # TBV row claimed as book value → rejected ("tangible")
+            item("bv_ps", "cur", 27.83, "Tangible book value per share $27.83"),
+            # dividend row claimed as EPS → rejected ("dividend")
+            item("eps_diluted", "cur", 0.53,
+                 "Dividends declared per share $0.53"),
+        ], doc)
+        self.assertEqual(out["cur"], {})
+
     def test_unknown_key_or_period_ignored(self):
         out = g([item("nii", "cur", 5.0, "net interest margin was 4.56%,"),
                  item("nim", "ytd", 4.56, "net interest margin was 4.56%,")])
@@ -202,7 +234,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
         if ai_state is not None:
             value["ai_state"] = ai_state
             value["ai_attempts"] = attempts
-        self.store[f"release_metrics:v9:{1}"] = {
+        self.store[f"release_metrics:v10:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):
