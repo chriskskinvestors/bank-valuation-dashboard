@@ -24,10 +24,21 @@ name: Refresh NIC bulk mirror
 # refresh degrades gracefully (never an outage). This workflow is kept as a
 # manual trigger purely so that IF Cloudflare ever unblocks GitHub egress,
 # restoring automation is a one-line `schedule:` re-add — until then, expect
-# a dispatch to fail at the first NPW fetch. (The Cloud Run verify step at
-# the end does NOT depend on NPW and is separately useful — see its comment.)
+# a dispatch to fail at the first NPW fetch.
+#
+# verify_only=true SKIPS the (blocked) NPW fetches and runs ONLY the Cloud Run
+# fresh-instance verification. That step touches only GCS + Cloud Run (never
+# NPW) and authenticates via WIF (no Workspace reauth wall), so it is the
+# repeatable, CI-runnable proof that a brand-new prod instance can serve both
+# tabs from the mirrors — run it after a dev-box refresh to confirm the mirror
+# is good end-to-end.
 on:
   workflow_dispatch:
+    inputs:
+      verify_only:
+        description: "Skip NPW fetches; run only the Cloud Run fresh-instance verification"
+        type: boolean
+        default: false
 
 env:
   PROJECT_ID: ace-beanbag-486220-a8
@@ -56,6 +67,7 @@ jobs:
           service_account: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
 
       - name: Fetch bulk zips from NPW, validate, upload to the GCS mirror
+        if: ${{ !inputs.verify_only }}
         run: |
           # NOTE: 403s from GitHub egress (see header) — the dev-box tools are
           # the real refresh path. Only what the two refresh tools' import
@@ -67,6 +79,7 @@ jobs:
       # of a new quarter fetches ~370 PDFs at 30s spacing (~3h); later
       # runs skip already-mirrored objects and finish in minutes.
       - name: Mirror latest-quarter FR Y-9C facsimile PDFs
+        if: ${{ !inputs.verify_only }}
         run: python -m tools.refresh_y9c_mirror
 
       - name: Set up gcloud
