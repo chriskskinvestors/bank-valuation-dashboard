@@ -29,11 +29,8 @@ that also warms every bank's ma_history cache) and stored under ONE cache
 key; the UI only ever reads the snapshot. Deals are deduped across banks
 by announcement accession, else (counterparty cert, completion date).
 
-Pending (announced) deals flow through from ma_history's two pending legs
-(Rule 425 episodes for stock deals; the open-announcement 8-K sweep for
-cash deals, which file no 425) — status='pending' rows with full multiples
-where the target's financials resolve (private cash targets price off the
-FDIC bank-sub basis when their cert links).
+KNOWN GAP (documented, next increment): announced-but-PENDING deals have
+no FDIC completion event and no termination 8-K yet, so they are absent.
 """
 
 from __future__ import annotations
@@ -183,18 +180,15 @@ def build_comps_snapshot(banks: list[dict]) -> dict | None:
         cert, cik = b.get("cert"), b.get("cik")
         if not cert:
             continue
-        deals = get_ma_history(cert, cik=cik, name=b.get("name"))
+        deals = get_ma_history(cert, cik=cik)
         if not deals:
             continue
         covered += 1
         for d in deals:
             if d.get("deal_kind") != "whole_company":
                 continue
-            if d.get("direction") == "sale" and d.get("status") in (
-                    "completed", "pending"):
-                # The acquirer's row carries the deal — a pending deal
-                # otherwise appears under BOTH filers' 425 episodes.
-                continue
+            if d.get("direction") == "sale" and d.get("status") == "completed":
+                continue    # the acquirer's row carries this deal
             k = _dedupe_key(d, cert)
             if k in seen:
                 continue

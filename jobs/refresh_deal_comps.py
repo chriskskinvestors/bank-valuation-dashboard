@@ -41,7 +41,7 @@ def main() -> int:
     warmed = failed = 0
     for i, b in enumerate(banks, 1):
         try:
-            deals = get_ma_history(b["cert"], cik=b["cik"], name=b["name"])
+            deals = get_ma_history(b["cert"], cik=b["cik"])
             warmed += 1 if deals is not None else 0
         except Exception as e:
             failed += 1
