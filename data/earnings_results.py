@@ -163,8 +163,12 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
         # showed a period ending AFTER its report date; CPBI one a year old).
         # A real earnings report lands ~1-5 weeks after the period closes —
         # anything outside [7, 150] days is FMP junk → '—', never displayed.
+        # And US banks report CALENDAR quarters (Call Reports pin them), so a
+        # non-quarter-end date is junk too (FBK rendered "2026-06-01" live).
         pe = _iso_date(r.get("periodEnding"))
-        period = (pe.isoformat() if pe is not None and 7 <= (d - pe).days <= 150
+        period = (pe.isoformat()
+                  if pe is not None and 7 <= (d - pe).days <= 150
+                  and (pe.month, pe.day) in ((3, 31), (6, 30), (9, 30), (12, 31))
                   else None)
         best[tk] = {
             "_d": d,

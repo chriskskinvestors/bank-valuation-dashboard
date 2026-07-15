@@ -332,6 +332,15 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertIsNone(rows["CARV"]["period_ending"])
         self.assertIsNone(rows["CPBI"]["period_ending"])
 
+    def test_non_quarter_end_period_is_dropped(self):
+        """FBK rendered Period '2026-06-01' live (2026-07-15): a date inside
+        the 7-150d window but not a calendar quarter-end — US banks report
+        calendar quarters (Call Reports pin them), so it's FMP junk."""
+        fmp = [{"symbol": "FBK", "date": "2026-07-13", "epsActual": 1.14,
+                "periodEnding": "2026-06-01"}]
+        rows = build_results_rows(fmp, {"FBK"}, {}, self.TODAY)
+        self.assertIsNone(rows[0]["period_ending"])
+
     def test_pr_link_attached_from_events(self):
         fmp = [{"symbol": "JPM", "date": "2026-07-14", "epsActual": 5.8}]
         events = {"JPM": [{"headline": "JPM Reports Q2", "url": "https://x/pr",
