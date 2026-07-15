@@ -56,7 +56,7 @@ from __future__ import annotations
 import html as _html
 import re
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -73,6 +73,10 @@ _MAX_CANDIDATES = 16            # accession groups fetched per deal — big
                                 # order (the first doc IN TIME passing the
                                 # announce gates is the announcement)
 _PAUSE_S = 0.15                 # stay far under EDGAR's 10 req/s
+_DOC_404_TTL_S = 90 * 86400     # a 404 on an immutable EDGAR archive document
+                                # is permanent; remember it so the nightly job
+                                # never re-fetches the same dead 2001-vintage
+                                # docs. 90d self-heals against any freak miss.
 
 # 8-K items an announcement can carry: 1.01 material agreement, 8.01 other
 # events, 7.01 Reg FD. A candidate whose items EXCLUDE all three (earnings
@@ -423,14 +427,30 @@ def _candidates(hits: list[dict]) -> list[dict]:
     return sorted(by_adsh.values(), key=lambda c: c["file_date"])
 
 
+def _doc_404_key(cik, adsh: str, doc: str) -> str:
+    return f"edgar_doc_404:v1:{int(cik)}:{adsh}:{doc}"
+
+
 def _fetch_doc_text(cik, adsh: str, doc: str) -> tuple[str | None, bool]:
     """One EDGAR archive document as flattened text. Returns (text, ok):
     ok=False only on a TRANSIENT failure (timeout, 5xx — caller must not
     cache the miss). An HTTP 404 is (None, True): archives are immutable,
     the document will never appear, a cacheable honest gap. Unresolvable
-    coordinates (no cik/adsh/doc) are equally permanent -> (None, True)."""
+    coordinates (no cik/adsh/doc) are equally permanent -> (None, True).
+
+    A 404 is also remembered in a document-level negative cache
+    (_DOC_404_TTL_S): a bank that legitimately fails to cache its ma_history
+    that night (e.g. a transient EFTS 500 elsewhere in its build) would
+    otherwise re-fetch the same dead 2001-vintage docs on every run. On a
+    negative-cache hit we skip the network AND the log line entirely."""
     if not cik or not adsh or not doc:
         return None, True
+    from data import cache
+    from data.freshness import is_fresh
+
+    key = _doc_404_key(cik, adsh, doc)
+    if is_fresh(cache.get(key), _DOC_404_TTL_S):
+        return None, True           # known-permanent 404 — no network, no log
     url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
            f"{adsh.replace('-', '')}/{doc}")
     try:
@@ -439,7 +459,13 @@ def _fetch_doc_text(cik, adsh: str, doc: str) -> tuple[str | None, bool]:
         return _strip_html(resp.text), True
     except Exception as e:
         print(f"[ma_announce] doc {adsh}/{doc} error: {type(e).__name__}: {e}")
-        return None, is_http_404(e)
+        if is_http_404(e):
+            try:
+                cache.put(key, {"cached_at": datetime.now().isoformat()})
+            except Exception as ce:
+                print(f"[ma_announce] doc-404 cache put {adsh}/{doc}: {ce}")
+            return None, True
+        return None, False
 
 
 def resolve_announcement(target_name: str, acquirer_name: str,

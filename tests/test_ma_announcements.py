@@ -287,6 +287,17 @@ class TestComputedStockValue(unittest.TestCase):
 
 class TestResolveAnnouncement(unittest.TestCase):
 
+    def setUp(self):
+        # Isolate from the real cache.db: _fetch_doc_text's document-level
+        # negative cache (c) calls cache.get/put. get->None keeps every test
+        # hitting its mocked network; put is a no-op so no dev-cache rows are
+        # written and re-runs stay deterministic. (Dedicated negative-cache
+        # behavior is pinned in TestDocNegativeCache.)
+        for tgt in ("data.cache.get", "data.cache.put"):
+            p = patch(tgt, **({"return_value": None} if "get" in tgt else {}))
+            p.start()
+            self.addCleanup(p.stop)
+
     @patch("data.ma_announcements.time.sleep", lambda *_: None)
     @patch("data.ma_announcements.requests.get")
     def test_happy_path_skips_completion_pr(self, mock_get):
@@ -513,6 +524,14 @@ class TestFindTerminatedDeals(unittest.TestCase):
 
     FHN = 36966
 
+    def setUp(self):
+        # Same real-cache isolation as TestResolveAnnouncement (find_terminated
+        # _deals -> _accession_text -> _fetch_doc_text hits the negative cache).
+        for tgt in ("data.cache.get", "data.cache.put"):
+            p = patch(tgt, **({"return_value": None} if "get" in tgt else {}))
+            p.start()
+            self.addCleanup(p.stop)
+
     def _hits(self):
         # Announcement (7.01, live FHN shape), a LATER extension 8-K (8.01),
         # and the termination (1.02). Bodies matched the phrase; the PRs are
@@ -601,6 +620,59 @@ class TestFindTerminatedDeals(unittest.TestCase):
     def test_no_cik_returns_empty(self):
         from data.ma_announcements import find_terminated_deals
         self.assertEqual(find_terminated_deals(None, "X"), ([], True))
+
+
+def _doc_status_resp(status):
+    """A response whose raise_for_status() raises that HTTP status."""
+    r = MagicMock()
+    r.raise_for_status.side_effect = _http_error(status)
+    return r
+
+
+class TestDocNegativeCache(unittest.TestCase):
+    """(c) — a permanently-404 EDGAR document is remembered so the nightly job
+    never re-fetches it, even when its bank legitimately fails to cache."""
+
+    def _fake_cache(self):
+        store = {}
+        return (store,
+                patch("data.cache.get",
+                      side_effect=lambda k, max_age_s=None: store.get(k)),
+                patch("data.cache.put",
+                      side_effect=lambda k, v: store.__setitem__(k, v)))
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_404_remembered_then_skips_network(self, mock_get):
+        from data.ma_announcements import _fetch_doc_text
+        mock_get.return_value = _doc_status_resp(404)
+        store, gp, pp = self._fake_cache()
+        with gp, pp:
+            t1, ok1 = _fetch_doc_text(829281, "0000909518-01-000405", "0001.txt")
+            self.assertIsNone(t1)
+            self.assertTrue(ok1)                 # permanent gap
+            self.assertEqual(mock_get.call_count, 1)
+            self.assertEqual(len(store), 1)      # 404 remembered
+            # Second call for the SAME dead doc: no network, still (None, True).
+            t2, ok2 = _fetch_doc_text(829281, "0000909518-01-000405", "0001.txt")
+            self.assertIsNone(t2)
+            self.assertTrue(ok2)
+            self.assertEqual(mock_get.call_count, 1)   # NOT re-fetched
+
+    @patch("data.ma_announcements.time.sleep", lambda *_: None)
+    @patch("data.ma_announcements.requests.get")
+    def test_503_not_remembered(self, mock_get):
+        from data.ma_announcements import _fetch_doc_text
+        mock_get.return_value = _doc_status_resp(503)
+        store, gp, pp = self._fake_cache()
+        with gp, pp:
+            t, ok = _fetch_doc_text(1, "0001-18-1", "d.txt")
+            self.assertIsNone(t)
+            self.assertFalse(ok)                 # transient — retry allowed
+            self.assertEqual(store, {})          # NOT negative-cached
+            # A retry still hits the network (no negative-cache short-circuit).
+            _fetch_doc_text(1, "0001-18-1", "d.txt")
+            self.assertEqual(mock_get.call_count, 2)
 
 
 if __name__ == "__main__":
