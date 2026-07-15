@@ -232,23 +232,13 @@ def q_label(qend_iso) -> str | None:
     return f"Q{(d.month - 1) // 3 + 1} {d.year}"
 
 
-# Exhibit history keys fillable from PLATFORM quarterly data, basis-safely:
-# FDIC trend ratios are BANK-SUBSIDIARY basis — the app's displayed
-# fundamentals basis — fine for spread/profitability/credit ratios; capital
-# ratios are NOT mapped (holdco capital ≠ bank-sub capital), nor are keys the
-# grids don't carry on a matching definition (ROE, NPAs/assets, TCE/TA, cost
-# of deposits vs cost of funds, loan yield). SEC per-share is holdco — the
-# correct basis for TBV/BV per share.
+# Exhibit history keys fillable from the PLATFORM grids. SEC per-share only
+# (holdco, point-in-time — the correct basis for TBV/BV per share): the FDIC
+# entries moved to EXHIBIT_FDIC_Q_MAP's direct single-quarter fetch — the
+# grids carry YTD-annualized ratios (NIMY/ROA/EEFFR/roatce), which are the
+# wrong quantity for a quarter column (2Q25A filled with an H1-annualized
+# value). Capital ratios are NEVER mapped (holdco ≠ bank-sub).
 PLATFORM_HIST_MAP = {
-    "nim": ("fdic", "nim"),
-    "efficiency": ("fdic", "efficiency_ratio"),
-    "roa": ("fdic", "roaa"),
-    "rotce": ("fdic", "roatce"),
-    "nco_ratio": ("fdic", "nco_ratio"),
-    # LNATRESR reserves/loans — NOT "allowance_loans", whose ELNANTR field is
-    # provision/NCO coverage (~100%) despite its name (caught live 2026-07-14:
-    # JPM "ACL/Loans" history rendered 112%).
-    "acl_loans": ("fdic", "reserve_to_loans"),
     "tbv_ps": ("sec", "tbvps_hist"),
     "bv_ps": ("sec", "bvps_hist"),
 }
@@ -319,6 +309,76 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
         list(ex.map(_one, rows))
 
 
+# Exhibit-history keys fillable from FDIC's single-QUARTER ratio fields
+# (bank-sub basis, gap-fill only — the bank's own comparative columns always
+# win). The Q variants, not the YTD-annualized defaults the Trends grid
+# carries: exhibit columns are quarters (verified 2026-07-16: at a Q1
+# quarter-end every Q field equals its YTD twin exactly, so the Q semantics
+# are sound). DELIBERATELY absent: cost_of_deposits (banks state interest-
+# bearing vs total-deposit cost inconsistently — a cross-definition delta is
+# a plausible-wrong number); loan_yield (ILNDOMQR renders CTBI ~3.6% vs its
+# real ~6.4% loan yield — unverifiable semantics, the ELNANTR title-lie
+# class); capital ratios and TCE/TA (holdco ≠ bank-sub, pinned by test);
+# rotce (no FDIC quarterly source — release/AI only).
+EXHIBIT_FDIC_Q_MAP = {
+    "nim": "NIMYQ",
+    "efficiency": "EEFFQR",
+    "roa": "ROAQ",
+    "roe": "ROEQ",
+    "nco_ratio": "NTLNLSQR",
+    "acl_loans": "LNATRESR",
+    "npa_assets": "NPERFV",
+}
+
+
+def _fill_fdic_history(rows) -> None:
+    """Attach ``row["fdic_hist"] = {"prior": {key: val}, "yoy": {...}}`` from
+    FDIC quarterly ratios for each reported bank's two history quarter-ends —
+    one batched financials call per unique quarter-end. Any failure leaves
+    rows without the attribute (exhibit cells stay blank, never wrong)."""
+    try:
+        from data import fdic_client
+        from data.bank_universe import get_universe
+        uni = get_universe()
+    except Exception:
+        return
+    # repdte (YYYYMMDD) -> {cert: [(row, bucket), ...]}
+    need: dict = {}
+    for row in rows:
+        rel = row.get("rel") or {}
+        cert = (uni.get(row.get("ticker")) or {}).get("fdic_cert")
+        if not cert:
+            continue
+        for bucket, qend in (("prior", rel.get("prior_qend")),
+                             ("yoy", rel.get("yoy_qend"))):
+            if qend:
+                rd = str(qend).replace("-", "")
+                need.setdefault(rd, {}).setdefault(int(cert), []).append(
+                    (row, bucket))
+    for rd, by_cert in need.items():
+        try:
+            recs = fdic_client.fetch_quarter_financials(rd, certs=by_cert)
+        except Exception:
+            continue
+        for cert, targets in by_cert.items():
+            rec = recs.get(cert)
+            if not rec:
+                continue
+            vals = {}
+            for key, field in EXHIBIT_FDIC_Q_MAP.items():
+                v = rec.get(field)
+                try:
+                    v = float(v) if v is not None else None
+                except (TypeError, ValueError):
+                    v = None
+                if v is not None:
+                    vals[key] = v
+            if not vals:
+                continue
+            for row, bucket in targets:
+                row.setdefault("fdic_hist", {})[bucket] = vals
+
+
 def results_board(days_back: int = 30) -> list[dict]:
     """The Results board rows, cross-instance cached 15 min (earnings-week
     freshness without per-render fetch storms). Empty list when nothing has
@@ -355,12 +415,14 @@ def results_board(days_back: int = 30) -> list[dict]:
                                   days_back=days_back)
         _fill_price_reactions(rows, today)
         _fill_release_metrics(rows)
+        _fill_fdic_history(rows)
         return rows
 
     try:
         # v3: rows gained `pending` (PR-signaled reports without FMP actuals).
         # v4: common-shares-only universe + negative-revenue junk guard.
-        return _cache.served_snapshot(f"earnings_results_board_v4:{days_back}",
+        # v5: rows gained `fdic_hist` (quarterly-ratio exhibit history).
+        return _cache.served_snapshot(f"earnings_results_board_v5:{days_back}",
                                       900, _build) or []
     except Exception:
         return []

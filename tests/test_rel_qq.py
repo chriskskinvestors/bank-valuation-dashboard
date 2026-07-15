@@ -108,6 +108,40 @@ class TestRelExhibit(unittest.TestCase):
         finally:
             ue._platform_hist_val = orig
 
+    def test_fdic_quarterly_hist_beats_grid_never_release(self):
+        """History chain: release column → FDIC quarterly ratios → grids."""
+        import ui.earnings as ue
+        orig = ue._platform_hist_val
+        ue._platform_hist_val = lambda tk, key, q: 9.99   # grid (last resort)
+        fix = dict(self.FIX)
+        fix["fdic_hist"] = {"prior": {"nim": 8.88, "roe": 11.5}}
+        try:
+            rows = {r["key"]: r for r in ue._rel_exhibit_rows(fix)}
+            self.assertEqual(rows["nim"]["prior"], 3.94)    # release wins
+            self.assertEqual(rows["roe"]["prior"], 11.5)    # FDIC quarterly
+            self.assertEqual(rows["tbv_ps"]["prior"], 9.99)  # grid (SEC) fills
+        finally:
+            ue._platform_hist_val = orig
+
+    def test_consensus_actuals_fill_consensus_rows_only(self):
+        from ui.earnings import _rel_exhibit_rows
+        # FMP-sourced actuals (no _src flag) land on EPS adj / Revenue cur.
+        fix = {"rel": {"qend": "2026-06-30", "metrics": {},
+                       "prior_metrics": {}, "yoy_metrics": {}, "capital": {}},
+               "eps_act": 3.46, "rev_act": 19.6e9, "eps_est": 2.89}
+        rows = {r["key"]: r for r in _rel_exhibit_rows(fix)}
+        self.assertEqual(rows["eps_adj"]["cur"], 3.46)
+        self.assertEqual(rows["total_revenue"]["cur"], 19.6e9)
+        self.assertIsNone(rows["eps_diluted"]["cur"])   # never the GAAP row
+        # Release-sourced board actuals (starred) must NOT double-land: the
+        # release extraction already carries them on their own basis.
+        fix2 = {"rel": {"qend": "2026-06-30", "metrics": {"eps_diluted": 1.64},
+                        "prior_metrics": {}, "yoy_metrics": {}, "capital": {}},
+                "eps_act": 1.64, "eps_act_src": "release, GAAP"}
+        rows2 = {r["key"]: r for r in _rel_exhibit_rows(fix2)}
+        self.assertIsNone(rows2["eps_adj"]["cur"])
+        self.assertEqual(rows2["eps_diluted"]["cur"], 1.64)
+
     def test_detail_row_is_exhibit_table(self):
         html = _rel_detail_tr(self.FIX, ncols=14)
         for want in ("2Q25A", "1Q26A", "2Q26A", "Cons.", "LQ Δ", "Y/Y Δ",

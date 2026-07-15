@@ -35,11 +35,12 @@ class TestPlatformHistoryMapping(unittest.TestCase):
 
     def test_capital_never_platform_mapped(self):
         """Holdco capital (release) vs bank-sub capital (FDIC) must never mix
-        — the map must not carry any capital-ratio key."""
-        from data.earnings_results import PLATFORM_HIST_MAP
+        — neither history map may carry a capital-ratio key."""
+        from data.earnings_results import EXHIBIT_FDIC_Q_MAP, PLATFORM_HIST_MAP
         for key in ("cet1_ratio", "t1_ratio", "total_ratio", "lev_ratio",
                     "tce_ratio"):
             self.assertNotIn(key, PLATFORM_HIST_MAP)
+            self.assertNotIn(key, EXHIBIT_FDIC_Q_MAP)
 
     def test_mapped_series_exist_in_trend_registry(self):
         """Every FDIC-mapped series key must exist in TREND_KEYS — a renamed
@@ -50,16 +51,72 @@ class TestPlatformHistoryMapping(unittest.TestCase):
             if src == "fdic":
                 self.assertIn(skey, TREND_KEYS, f"{key} -> {skey}")
 
+    def test_fdic_q_map_fields_exist_and_exclusions_hold(self):
+        """The exhibit's FDIC history uses single-QUARTER ratio fields; every
+        mapped field must stay in the fetch list, and the deliberate
+        exclusions must hold: cost_of_deposits (interest-bearing vs total-
+        deposit definitions vary by bank — a cross-definition delta is a
+        plausible-wrong number), capital + TCE/TA (holdco ≠ bank-sub)."""
+        from data.earnings_results import EXHIBIT_FDIC_Q_MAP
+        from data.fdic_client import _BASE_FINANCIALS_FIELDS
+        for key, field in EXHIBIT_FDIC_Q_MAP.items():
+            self.assertIn(field, _BASE_FINANCIALS_FIELDS, f"{key} -> {field}")
+        for key in ("cost_of_deposits", "loan_yield", "rotce", "cet1_ratio",
+                    "t1_ratio", "total_ratio", "lev_ratio", "tce_ratio"):
+            self.assertNotIn(key, EXHIBIT_FDIC_Q_MAP)
+
+    def test_fill_fdic_history_batches_and_fails_safe(self):
+        import data.bank_universe as bu
+        import data.fdic_client as fc
+        from data.earnings_results import _fill_fdic_history
+        orig = (bu.get_universe, fc.fetch_quarter_financials)
+        bu.get_universe = lambda: {"AAA": {"fdic_cert": 10},
+                                   "BBB": {"fdic_cert": 20},
+                                   "CCC": {"fdic_cert": None}}
+        calls = []
+
+        def fake_fetch(rd, certs=None):
+            calls.append((rd, sorted(certs)))
+            return {10: {"NIMYQ": 3.5, "ROEQ": 12.0, "ILNDOMQR": None},
+                    20: {"NIMYQ": 2.9}}
+        fc.fetch_quarter_financials = fake_fetch
+        rows = [
+            {"ticker": "AAA", "rel": {"prior_qend": "2026-03-31",
+                                      "yoy_qend": "2025-06-30"}},
+            {"ticker": "BBB", "rel": {"prior_qend": "2026-03-31",
+                                      "yoy_qend": "2025-06-30"}},
+            {"ticker": "CCC", "rel": {"prior_qend": "2026-03-31"}},  # no cert
+        ]
+        try:
+            _fill_fdic_history(rows)
+            # one batched call per unique quarter-end, both certs together
+            self.assertEqual(sorted(c[0] for c in calls),
+                             ["20250630", "20260331"])
+            self.assertEqual(calls[0][1], [10, 20])
+            self.assertEqual(rows[0]["fdic_hist"]["prior"],
+                             {"nim": 3.5, "roe": 12.0})   # None field dropped
+            self.assertEqual(rows[1]["fdic_hist"]["yoy"], {"nim": 2.9})
+            self.assertNotIn("fdic_hist", rows[2])
+
+            # total fetch failure → rows untouched, never raises
+            fc.fetch_quarter_financials = lambda rd, certs=None: (_ for _ in ()).throw(RuntimeError())
+            fresh = [{"ticker": "AAA", "rel": {"prior_qend": "2026-03-31"}}]
+            _fill_fdic_history(fresh)
+            self.assertNotIn("fdic_hist", fresh[0])
+        finally:
+            bu.get_universe, fc.fetch_quarter_financials = orig
+
     def test_acl_maps_to_true_allowance_ratio(self):
-        """ACL/Loans history must read LNATRESR reserves/loans
-        (reserve_to_loans) — NEVER the misnamed allowance_loans series, whose
-        ELNANTR field is provision/NCO coverage (~100%; rendered JPM's
-        'ACL/Loans' as 112% live on 2026-07-14)."""
-        from data.earnings_results import PLATFORM_HIST_MAP
-        self.assertEqual(PLATFORM_HIST_MAP["acl_loans"],
-                         ("fdic", "reserve_to_loans"))
+        """ACL/Loans history must read LNATRESR reserves/loans — NEVER
+        ELNANTR, whose title says allowance but whose value is provision/NCO
+        coverage (~100%; rendered JPM's 'ACL/Loans' as 112% live 2026-07-14).
+        The grid map carries no FDIC entries at all anymore — grid ratios are
+        YTD-annualized, the wrong quantity for a quarter column."""
+        from data.earnings_results import EXHIBIT_FDIC_Q_MAP, PLATFORM_HIST_MAP
+        self.assertEqual(EXHIBIT_FDIC_Q_MAP["acl_loans"], "LNATRESR")
+        self.assertNotIn("ELNANTR", EXHIBIT_FDIC_Q_MAP.values())
         for key, (src, skey) in PLATFORM_HIST_MAP.items():
-            self.assertNotEqual(skey, "allowance_loans", key)
+            self.assertEqual(src, "sec", key)
 
 
 class TestReleaseMatchesReport(unittest.TestCase):

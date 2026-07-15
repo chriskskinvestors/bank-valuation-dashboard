@@ -1622,14 +1622,31 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     prior = rel.get("prior_metrics") or {}
     yoy = rel.get("yoy_metrics") or {}
     prior_q, yoy_q = rel.get("prior_qend"), rel.get("yoy_qend")
+    fdic_hist = r.get("fdic_hist") or {}
     cons = {"eps_adj": r.get("eps_est"), "total_revenue": r.get("rev_est")}
+    # Consensus-feed ACTUALS fill the consensus-basis rows' current cells when
+    # the release didn't state them — FMP's epsActual is the consensus-basis
+    # figure, so it lands on EPS adj (never the GAAP row); a release-sourced
+    # board actual (eps_act_src/rev_act_src) already lives in `cur`.
+    if cur.get("eps_adj") is None and r.get("eps_act") is not None \
+            and not r.get("eps_act_src"):
+        cur["eps_adj"] = r["eps_act"]
+    if cur.get("total_revenue") is None and r.get("rev_act") is not None \
+            and not r.get("rev_act_src"):
+        cur["total_revenue"] = r["rev_act"]
     rows = []
     for key, label, unit in _REL_METRICS:
         c = cur.get(key)
+        # History: the bank's own comparative column, else FDIC single-quarter
+        # ratios (bank-sub, quarterly-true), else the platform grids.
         p = prior.get(key)
+        if p is None:
+            p = (fdic_hist.get("prior") or {}).get(key)
         if p is None:
             p = _platform_hist_val(tk, key, prior_q)
         y = yoy.get(key)
+        if y is None:
+            y = (fdic_hist.get("yoy") or {}).get(key)
         if y is None:
             y = _platform_hist_val(tk, key, yoy_q)
         rows.append({
@@ -1671,7 +1688,8 @@ def _rel_exhibit_table(r: dict) -> str:
                  "</tr>")
     notes = ["history: the bank's own comparative columns where stated, else "
              "platform FDIC/SEC quarterly data (bank-sub ratio basis); "
-             "capital as released"]
+             "capital as released; EPS adj & Revenue actuals fall back to "
+             "the consensus feed"]
     if r.get("eps_act_src") or r.get("rev_act_src"):
         notes.append("* actuals from the release")
     src = rel.get("url")

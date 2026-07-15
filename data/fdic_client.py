@@ -31,6 +31,9 @@ _BASE_FINANCIALS_FIELDS = {
     "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR", "ITAX", "PTAXNETINC",
     "SC", "LNLSGR", "CHBAL", "DEPNIDOM", "LIAB", "ROA", "ROE", "EEFFR",
     "NCLNLSR", "NTLNLSR", "LNATRESR", "IDT1CER", "RBCRWAJ", "RBCT1JR", "INTAN",
+    # Single-QUARTER ratio variants (the defaults above are YTD-annualized):
+    # the earnings-exhibit history columns are quarters (EXHIBIT_FDIC_Q_MAP).
+    "NIMYQ", "EEFFQR", "ROAQ", "ROEQ", "NTLNLSQR",
     "ILNDOM", "ISC", "EDEP", "ESAL", "EPREMAGG", "EAMINTAN", "EOTHNINT",
     "INTINCY", "NONIIAY", "NONIXAY", "ROAPTX",
     "IGLSEC", "EXTRA",
