@@ -189,15 +189,15 @@ class TestComputedStockValue(unittest.TestCase):
 
     @patch("data.fmp_client.get_history")
     @patch("data.fmp_client._has_key", return_value=True)
-    @patch("data.sec_client.fetch_company_facts")
+    @patch("data.sec_client.fetch_company_facts_ok")
     def test_computed_value_hand_math(self, mock_facts, _hk, mock_hist):
         # 200,000,000 shares x 0.5958 x $40.00 = $4,766,400,000 (hand).
         import pandas as pd
         from data.ma_announcements import compute_stock_value
-        mock_facts.return_value = {"facts": {"dei": {
+        mock_facts.return_value = ({"facts": {"dei": {
             "EntityCommonStockSharesOutstanding": {"units": {"shares": [
                 {"end": "2021-09-30", "filed": "2021-10-01",
-                 "val": 200_000_000}]}}}}}
+                 "val": 200_000_000}]}}}}}, True)
         mock_hist.return_value = pd.DataFrame(
             {"date": ["2021-10-08", "2021-10-11", "2021-10-12"],
              "close": [41.0, 40.0, 38.0]})
@@ -215,13 +215,13 @@ class TestComputedStockValue(unittest.TestCase):
 
     @patch("data.fmp_client.get_history")
     @patch("data.fmp_client._has_key", return_value=True)
-    @patch("data.sec_client.fetch_company_facts")
+    @patch("data.sec_client.fetch_company_facts_ok")
     def test_stale_share_count_is_na(self, mock_facts, _hk, mock_hist):
         from data.ma_announcements import compute_stock_value
-        mock_facts.return_value = {"facts": {"dei": {
+        mock_facts.return_value = ({"facts": {"dei": {
             "EntityCommonStockSharesOutstanding": {"units": {"shares": [
                 {"end": "2020-06-30", "filed": "2020-08-01",
-                 "val": 200_000_000}]}}}}}
+                 "val": 200_000_000}]}}}}}, True)
         text = ("Columbia Banking System, Inc. (NASDAQ: COLB) and Umpqua "
                 "Holdings Corporation (NASDAQ: UMPQ) ... receive 0.5958 of a "
                 "share of Columbia stock for each Umpqua share")
@@ -231,19 +231,52 @@ class TestComputedStockValue(unittest.TestCase):
         mock_hist.assert_not_called()
 
     @patch("data.fmp_client._has_key", return_value=False)
-    @patch("data.sec_client.fetch_company_facts")
+    @patch("data.sec_client.fetch_company_facts_ok")
     def test_no_fmp_key_is_uncacheable(self, mock_facts, _hk):
         from data.ma_announcements import compute_stock_value
-        mock_facts.return_value = {"facts": {"dei": {
+        mock_facts.return_value = ({"facts": {"dei": {
             "EntityCommonStockSharesOutstanding": {"units": {"shares": [
                 {"end": "2021-09-30", "filed": "2021-10-01",
-                 "val": 200_000_000}]}}}}}
+                 "val": 200_000_000}]}}}}}, True)
         text = ("Columbia Banking System, Inc. (NASDAQ: COLB) and Umpqua "
                 "Holdings Corporation (NASDAQ: UMPQ) ... receive 0.5958 of a "
                 "share of Columbia stock for each Umpqua share")
         comp, ok = compute_stock_value(text, "2021-10-12", {"UMPQ": 1077771})
         self.assertIsNone(comp)
         self.assertFalse(ok)
+
+    @patch("data.fmp_client.get_history")
+    @patch("data.fmp_client._has_key", return_value=True)
+    @patch("data.sec_client.fetch_company_facts_ok")
+    def test_target_companyfacts_404_is_cacheable(self, mock_facts, _hk, mock_hist):
+        # Permanent companyfacts 404 on the target CIK (non-reporting entity):
+        # no shares -> value n/a, but ok=True so the deal caches instead of
+        # re-fetching the dead CIK every nightly run.
+        from data.ma_announcements import compute_stock_value
+        mock_facts.return_value = ({}, True)     # 404 -> empty facts, permanent
+        text = ("Columbia Banking System, Inc. (NASDAQ: COLB) and Umpqua "
+                "Holdings Corporation (NASDAQ: UMPQ) ... receive 0.5958 of a "
+                "share of Columbia stock for each Umpqua share")
+        comp, ok = compute_stock_value(text, "2021-10-12", {"UMPQ": 1077771})
+        self.assertIsNone(comp)
+        self.assertTrue(ok)              # cacheable gap, NOT a retry
+        mock_hist.assert_not_called()
+
+    @patch("data.fmp_client.get_history")
+    @patch("data.fmp_client._has_key", return_value=True)
+    @patch("data.sec_client.fetch_company_facts_ok")
+    def test_target_companyfacts_transient_is_uncacheable(self, mock_facts, _hk, mock_hist):
+        # Transient companyfacts failure (5xx/timeout) -> ok=False so the deal
+        # is NOT frozen; retried next run.
+        from data.ma_announcements import compute_stock_value
+        mock_facts.return_value = ({}, False)    # transient -> uncacheable
+        text = ("Columbia Banking System, Inc. (NASDAQ: COLB) and Umpqua "
+                "Holdings Corporation (NASDAQ: UMPQ) ... receive 0.5958 of a "
+                "share of Columbia stock for each Umpqua share")
+        comp, ok = compute_stock_value(text, "2021-10-12", {"UMPQ": 1077771})
+        self.assertIsNone(comp)
+        self.assertFalse(ok)
+        mock_hist.assert_not_called()
 
     def test_no_ratio_is_cacheable_na(self):
         from data.ma_announcements import compute_stock_value
@@ -409,7 +442,7 @@ class TestResolveAnnouncement(unittest.TestCase):
 
     @patch("data.fmp_client.get_history")
     @patch("data.fmp_client._has_key", return_value=True)
-    @patch("data.sec_client.fetch_company_facts")
+    @patch("data.sec_client.fetch_company_facts_ok")
     @patch("data.ma_announcements.time.sleep", lambda *_: None)
     @patch("data.ma_announcements.requests.get")
     def test_moe_gets_computed_value(self, mock_get, mock_facts, _hk, mock_hist):
@@ -424,10 +457,10 @@ class TestResolveAnnouncement(unittest.TestCase):
                   # name — exercises the name-brand-token CIK fallback.
                   display_names=["UMPQUA HOLDINGS CORP  (CIK 0001077771)"])],
             {"moe.htm": MOE_PR})
-        mock_facts.return_value = {"facts": {"dei": {
+        mock_facts.return_value = ({"facts": {"dei": {
             "EntityCommonStockSharesOutstanding": {"units": {"shares": [
                 {"end": "2021-09-30", "filed": "2021-10-01",
-                 "val": 200_000_000}]}}}}}
+                 "val": 200_000_000}]}}}}}, True)
         mock_hist.return_value = pd.DataFrame(
             {"date": ["2021-10-11"], "close": [40.0]})
         r, ok = resolve_announcement("Columbia State Bank", "Umpqua Bank",

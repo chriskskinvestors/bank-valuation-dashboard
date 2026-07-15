@@ -120,21 +120,34 @@ def _slim_facts(facts: dict) -> dict:
     }
 
 
-def _download_company_facts(cik: int) -> dict:
-    """Raw SEC companyfacts download (no cache, full blob). Used by the cache
-    layer and the slim-vs-full verification harness.
+def _download_company_facts_ok(cik: int) -> tuple[dict, bool]:
+    """Raw SEC companyfacts download with a permanence signal. Returns
+    (facts, ok): ok=False only on a TRANSIENT failure (timeout, 5xx,
+    429-exhausted) that a retry might fix. An HTTP 404 — SEC holds no XBRL
+    facts for this CIK, a STABLE condition for non-reporting entities that
+    are in the ticker index but file only Form D/13G/13F — is ({}, True):
+    an honest empty a caller may cache instead of re-fetching forever.
 
     Every SEC fundamental on the dashboard depends on this fetch, so it gets
     the shared retry policy (it previously had ONE attempt while far less
     critical fetches retried three times)."""
-    from data.http import get_with_retry
+    from data.http import get_with_retry, is_http_404
     url = SEC_COMPANY_FACTS_URL.format(cik=_pad_cik(cik))
     try:
         resp = get_with_retry(url, headers=HEADERS, timeout=20)
-        return resp.json() if resp is not None else {}
+        if resp is None:
+            return {}, False        # 429s exhausted every attempt — transient
+        return resp.json(), True
     except Exception as e:
         print(f"[SEC] companyfacts fetch failed for CIK {cik}: {type(e).__name__}: {e}")
-        return {}
+        return {}, is_http_404(e)       # 404 permanent -> ok=True (cacheable gap)
+
+
+def _download_company_facts(cik: int) -> dict:
+    """Raw SEC companyfacts download (no cache, full blob). Used by the cache
+    layer and the slim-vs-full verification harness. See
+    _download_company_facts_ok for the permanence-aware variant."""
+    return _download_company_facts_ok(cik)[0]
 
 
 # In-process memo (1h) on top of the Postgres/SQLite store: the persistent
@@ -172,6 +185,32 @@ def fetch_company_facts(cik: int) -> dict:
         # Cache failure shouldn't break the call — log and move on.
         print(f"[SEC] Cache put failed for CIK {cik}: {e}")
     return slim
+
+
+def fetch_company_facts_ok(cik: int) -> tuple[dict, bool]:
+    """Like fetch_company_facts, but also returns ok — False ONLY on a
+    transient fetch failure. A permanent 404 (SEC has no XBRL facts for a
+    non-reporting CIK) is ({}, True), so a caller that gates caching on this
+    fetch (M&A deal-comp assembly) treats an unresolvable target as an honest
+    gap rather than a retry. Without this, one 404-target deal kept a bank's
+    ma_history perpetually uncached and re-fetched every nightly run.
+
+    Not @st.cache_data-memoized (unlike fetch_company_facts): the only caller
+    is the batch deal-comps job, not an interactive tab."""
+    from data import cache
+    cache_key = f"sec_facts:{_SLIM_VER}:{cik}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached, True
+    facts, ok = _download_company_facts_ok(cik)
+    if not facts:
+        return {}, ok
+    slim = _slim_facts(facts)
+    try:
+        cache.put(cache_key, slim)
+    except Exception as e:
+        print(f"[SEC] Cache put failed for CIK {cik}: {e}")
+    return slim, True
 
 
 def _extract_latest_value_with_source(facts: dict, concept: str,

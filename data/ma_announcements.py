@@ -214,12 +214,14 @@ def _ticker_for_side(side_phrase: str, pairs: list[tuple[str, str]]) -> str | No
 
 def _shares_outstanding_asof(cik, asof: str) -> tuple[int | None, str | None, bool]:
     """Target cover-page share count nearest ≤ ``asof`` from SEC companyfacts.
-    Returns (shares, as-of end date, ok) — ok=False on fetch failure."""
-    from data.sec_client import fetch_company_facts
+    Returns (shares, as-of end date, ok) — ok=False only on a TRANSIENT fetch
+    failure. A permanent companyfacts 404 (non-reporting target CIK) yields no
+    facts with ok=True: a cacheable honest gap, not an eternal retry."""
+    from data.sec_client import fetch_company_facts_ok
 
-    facts = fetch_company_facts(int(cik))
+    facts, facts_ok = fetch_company_facts_ok(int(cik))
     if not facts:
-        return None, None, False        # fetch failed (helper logs + returns {})
+        return None, None, facts_ok     # 404 -> ok=True (gap); 5xx -> ok=False
     dei = facts.get("facts", {}).get("dei", {}).get(
         "EntityCommonStockSharesOutstanding", {})
     rows = [r for u in dei.get("units", {}).values() for r in u
