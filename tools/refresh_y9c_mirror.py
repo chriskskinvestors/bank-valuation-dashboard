@@ -27,27 +27,43 @@ Targets: FDIC ACTIVE institutions grouped by regulatory high holder
 (RSSDHCR — the exact field ui/recent_documents keys its Y-9C rows on, so
 mirror names always match what the UI requests), keeping holdcos whose
 summed bank-subsidiary assets clear the Fed's $3B FR Y-9C filing floor,
-largest first. Fetches are curl-only and spaced (back-to-back NPW hits
-trip bot scoring even on allowed networks), skip objects already
-mirrored, and a holdco that misses _MAX_MISS_ATTEMPTS times for a period
-(sub-floor consolidated assets → files FR Y-9SP, or a foreign parent with
-no IHC) is recorded in y9c/_manifest.json and never retried for that
-period — misses must not burn spaced hits every run forever. If the GCS
-credential dies mid-run, a consecutive-upload-failure circuit breaker
-aborts rather than burning bot score on fetches it can't persist.
+largest first. FR Y-9C is a US top-tier report, so foreign parents (NIC
+type FHF/FBH — TD, BMO, HSBC, UBS...) are dropped up front via the NIC
+attributes: they file FR Y-7 and NPW returns onError for them.
+
+Every remaining fetch is CLASSIFIED (see _fetch_y9c_classified), which is
+what lets a clean run reach a true zero miss rate: an NPW onError redirect
+means "this RSSD has no Y-9C" (a small/exempt SLHC or trust that files
+FR Y-9SP) — recorded to y9c/_manifest.json after _MAX_MISS_ATTEMPTS and
+never retried; a Cloudflare 403/challenge is a transient block of a real
+filer — retried next run, NEVER recorded, and forces a non-zero exit so a
+batch with any blocks clearly signals "re-run". Fetches are curl-only and
+spaced (back-to-back NPW hits trip bot scoring even on allowed networks)
+and skip objects already mirrored. If the GCS credential dies mid-run, a
+consecutive-upload-failure circuit breaker aborts rather than burning bot
+score on fetches it can't persist.
+
+Not covered: foreign-owned US banks (TD Bank, BMO Harris, HSBC USA...) DO
+file Y-9C, but under a US intermediate holding company whose RSSD differs
+from RSSDHCR. Mirroring + serving those needs IHC resolution (a separate
+change that also touches the UI's holdco lookup); until then they fall
+back to the "Open PDF on NIC" link.
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 
+from data import nic_client
 from data.cloud_storage import (is_gcs_enabled, list_files, load_bytes,
                                 save_bytes)
 from data.ffiec_client import latest_reporting_period
 from data.http import get_with_retry
-from data.nic_client import NIC_BASE, _curl_fetch, y9c_mirror_name
+from data.nic_client import NIC_BASE, USER_AGENT, y9c_mirror_name
 from tools.refresh_nic_bulk import _SPACING_SECONDS
 
 _GCS_PREFIX = "y9c"
@@ -61,22 +77,15 @@ _FDIC_INSTITUTIONS_URL = "https://banks.data.fdic.gov/api/institutions"
 # so a floor-straddling holdco can be missed — it heals via the dev-fetch
 # mirror write in fetch_y9c_pdf, and the UI's "View on NIC" link always works.
 _Y9C_ASSET_FLOOR_THOUSANDS = 3_000_000
-# Permanent-skip threshold. A "miss" is any non-PDF result, but curl can't
-# cleanly tell a genuine "this holdco doesn't file Y-9C" from a Cloudflare
-# 403/challenge page (both are non-PDF; observed 2026-07-14 the dev-box
-# misses were ALL Cloudflare challenge bodies, not real absences). Since
-# essentially every holdco above the $3B floor MUST file Y-9C, true
-# non-filers are rare and misses are Cloudflare-dominated. The two are
-# separable by frequency: a true non-filer misses on EVERY attempt (reaches
-# any cap deterministically), while a transiently-challenged real filer
-# misses only ~25% of the time — so a high cap lets persistent non-filers
-# stop after a handful of runs while a real filer almost never accumulates
-# enough consecutive block-misses to be wrongly dropped (dropping one =
-# silently serving only the "View on NIC" fallback for a bank that does
-# file). Paired with the misses>fetched run-guard below, false-skips are
-# negligible. Cost of a higher cap: a few wasted 30s fetches on each rare
-# true non-filer, spread across runs.
-_MAX_MISS_ATTEMPTS = 6
+# Permanent-skip threshold for CONFIRMED non-filers. _fetch_y9c_classified
+# separates a genuine "no Y-9C for this RSSD" (NPW 302 → /npw/Home/onError —
+# a foreign parent that slipped the type filter, or a small/exempt SLHC that
+# files FR Y-9SP) from a transient Cloudflare block. Only a confirmed-absent
+# result increments the manifest, and onError is deterministic, so a low cap
+# is safe; the >1 guards against a one-off NPW app hiccup being read as a
+# permanent absence. Cloudflare blocks NEVER touch the manifest, so a real
+# filer can't be wrongly skipped.
+_MAX_MISS_ATTEMPTS = 3
 # Runaway guard: ~3.4h at 30s spacing — above the ~366 holdcos clearing the
 # floor today (live probe 2026-07-14), so a full run covers every filer.
 # Override with Y9C_MAX_FETCHES to fill the mirror in bounded sub-hour
@@ -130,6 +139,49 @@ def _holdco_targets_from_records(records: list[dict]) -> list[tuple[int, int]]:
     return targets
 
 
+# NIC entity types whose top holder does NOT file an FR Y-9C at its own RSSD.
+# FR Y-9C is a US top-tier holding-company report (BHC/FHD/SLHC/IHC file it);
+# a foreign parent files FR Y-7 / Y-9LP instead, so NPW returns onError for
+# its RSSD. FDIC RSSDHCR points at the ULTIMATE high holder, which for a
+# foreign-owned US bank is that foreign parent — TD, BMO, HSBC, UBS, RBC,
+# Santander, Barclays, Deutsche Bank, Mizuho... (verified 2026-07-14, all
+# NIC type FHF/FBH). Being the largest holdcos, they sorted to the front of
+# every batch and were the bulk of the "misses". Their US operations DO file
+# Y-9C, but under a US intermediate holding company — a different RSSD than
+# RSSDHCR, whose resolution is a separate enhancement (foreign-owned US banks
+# still fall back to the "Open PDF on NIC" link meanwhile).
+_FOREIGN_HOLDCO_TYPES = {"FHF", "FBH", "FBK", "FBO", "FEO", "IFB", "ISB"}
+
+
+def _drop_foreign_holdcos(
+        targets: list[tuple[int, int]]) -> tuple[list[tuple[int, int]], int]:
+    """Filter out foreign parents (they file FR Y-7, not Y-9C — a guaranteed
+    NPW onError). Uses the mirrored NIC ATTRIBUTES file. Best-effort: if that
+    data can't be loaded, returns targets unchanged so the run still works."""
+    if not targets:
+        return targets, 0
+    try:
+        attr_path = nic_client._bulk_path("attributes_active")
+        if attr_path is None:
+            print("[y9c] foreign-filter skipped — NIC attributes unavailable")
+            return targets, 0
+        attrs = nic_client._load_attributes({r for r, _ in targets}, attr_path)
+    except Exception as e:  # noqa: BLE001 — never let the filter break the run
+        print(f"[y9c] foreign-filter skipped ({type(e).__name__}: {e})")
+        return targets, 0
+    kept: list[tuple[int, int]] = []
+    dropped = 0
+    for rssd, assets in targets:
+        ent = attrs.get(rssd)
+        # Keep unknowns (not in NIC) — attempt them; the miss-manifest catches
+        # any that genuinely don't file. Only a KNOWN foreign type is dropped.
+        if ent and ent.get("type_code") in _FOREIGN_HOLDCO_TYPES:
+            dropped += 1
+            continue
+        kept.append((rssd, assets))
+    return kept, dropped
+
+
 def _fetch_fdic_records() -> list[dict]:
     """Every ACTIVE FDIC institution's {CERT, RSSDHCR, ASSET}. Paginated —
     a capped single page would silently truncate to the largest banks.
@@ -180,6 +232,58 @@ def _save_manifest(manifest: dict[str, int]) -> None:
               "retried next run")
 
 
+_OK, _ABSENT, _BLOCKED = "ok", "absent", "blocked"
+# curl -w trailer sentinel: separates the appended status line from the body.
+# Must NOT start with '@' — curl reads a -w value beginning with '@' as a
+# filename ("-w: error encountered when reading a file"). Underscores are safe
+# and won't appear in a PDF/HTML body.
+_META = b"__Y9CMETA__"
+
+
+def _fetch_y9c_classified(rssd: int, period: str) -> tuple[str, bytes | None]:
+    """Fetch one FR Y-9C facsimile and CLASSIFY the outcome — the difference
+    between a non-filer and a block is what lets the run reach a true zero
+    miss rate:
+
+      (_OK, pdf_bytes) — a real facsimile.
+      (_ABSENT, None)  — NPW redirected to /npw/Home/onError: this RSSD has no
+                         FR Y-9C for the period (foreign parent past the type
+                         filter, or a small/exempt SLHC filing FR Y-9SP).
+                         Deterministic → recorded so it isn't retried forever.
+      (_BLOCKED, None) — Cloudflare 403/challenge or any transport error: a
+                         TRANSIENT block of a (presumed) real filer. Retried;
+                         never recorded as a non-filer.
+
+    Keeps curl -L so the success path matches nic_client._curl_fetch; the HTTP
+    status + effective URL are captured via -w and classified after the fact.
+    The %PDF magic + size gate still guards against an error body slipping
+    through as a facsimile."""
+    curl = shutil.which("curl")
+    if not curl:
+        print("[y9c] no curl on PATH — cannot fetch")
+        return _BLOCKED, None
+    url = (f"{NIC_BASE}/ReturnFinancialReportPDF?rpt=FRY9C"
+           f"&id={rssd}&dt={period}")
+    try:
+        proc = subprocess.run(
+            [curl, "-sS", "-L", "-A", USER_AGENT, "--max-time", "240",
+             "-w", _META.decode() + "%{http_code} %{url_effective}", url],
+            capture_output=True, timeout=300)
+    except Exception as e:  # noqa: BLE001 — any curl failure is just a block
+        print(f"[y9c] {rssd}: curl error ({type(e).__name__}: {e})")
+        return _BLOCKED, None
+    out = proc.stdout
+    idx = out.rfind(_META)
+    body = out[:idx] if idx >= 0 else out
+    trailer = out[idx + len(_META):].decode("latin-1", "replace") if idx >= 0 else ""
+    if body.startswith(b"%PDF-") and len(body) >= _MIN_PDF_BYTES:
+        return _OK, body
+    code, _, effurl = trailer.partition(" ")
+    if "/npw/Home/onError" in effurl or code in ("302", "404"):
+        return _ABSENT, None
+    return _BLOCKED, None
+
+
 def main() -> int:
     if not is_gcs_enabled():
         print("GCS_BUCKET is not set — nothing to mirror to.")
@@ -188,10 +292,12 @@ def main() -> int:
     period = _latest_y9c_period()
     targets = _fetch_fdic_records()
     targets = _holdco_targets_from_records(targets)
+    targets, dropped_foreign = _drop_foreign_holdcos(targets)
     existing = set(list_files(_GCS_PREFIX, "*.pdf"))
     manifest = _load_manifest()
-    print(f"[y9c] period {period}: {len(targets)} holdcos above the Y-9C "
-          f"floor, {len(existing)} facsimiles already mirrored")
+    print(f"[y9c] period {period}: {len(targets)} US Y-9C-filing holdcos "
+          f"above the floor ({dropped_foreign} foreign parents excluded — "
+          f"they file FR Y-7), {len(existing)} facsimiles already mirrored")
 
     todo: list[tuple[int, str]] = []
     skipped_misses = 0
@@ -204,8 +310,9 @@ def main() -> int:
             continue
         todo.append((rssd, name))
     if skipped_misses:
-        print(f"[y9c] skipping {skipped_misses} holdcos that already missed "
-              f"{_MAX_MISS_ATTEMPTS}x for {period} (Y-9SP filers?)")
+        print(f"[y9c] skipping {skipped_misses} holdcos confirmed to have no "
+              f"FR Y-9C for {period} ({_MAX_MISS_ATTEMPTS}x onError — Y-9SP "
+              "filers / foreign parents)")
     cap = _max_fetches()
     if len(todo) > cap:
         print(f"[y9c] fetch cap {cap}: deferring {len(todo) - cap} smaller "
@@ -215,20 +322,23 @@ def main() -> int:
         print("[y9c] mirror already current — nothing to fetch")
         return 0
 
-    fetched = misses = upload_failures = consec_upload_fails = 0
+    fetched = absent = blocked = upload_failures = consec_upload_fails = 0
     aborted = False
     for i, (rssd, name) in enumerate(todo):
         if i:
             time.sleep(_SPACING_SECONDS)
-        url = (f"{NIC_BASE}/ReturnFinancialReportPDF?rpt=FRY9C"
-               f"&id={rssd}&dt={period}")
-        content = _curl_fetch(url, f"y9c_{rssd}_{period}", magic=b"%PDF-")
-        if content is None or len(content) < _MIN_PDF_BYTES:
-            if content is not None:
-                print(f"[y9c] {name}: only {len(content)} bytes — not a "
-                      "facsimile")
+        status, content = _fetch_y9c_classified(rssd, period)
+        if status == _ABSENT:
+            # Confirmed no Y-9C for this RSSD (NPW onError) — record toward the
+            # permanent skip so it isn't retried forever. Trustworthy because
+            # it's an application-level answer, not a network block.
             manifest[name] = manifest.get(name, 0) + 1
-            misses += 1
+            absent += 1
+            continue
+        if status == _BLOCKED:
+            # Cloudflare block of a (presumed) real filer — retry next run,
+            # never record. This is the only "real" miss: a clean run has zero.
+            blocked += 1
             continue
         if save_bytes(_GCS_PREFIX, name, content, "application/pdf"):
             manifest.pop(name, None)
@@ -250,24 +360,18 @@ def main() -> int:
                 break
 
     print(f"[y9c] {'ABORTED' if aborted else 'done'}: {fetched} mirrored, "
-          f"{misses} misses, {upload_failures} upload failures, "
+          f"{absent} absent (no Y-9C filed), {blocked} blocked (Cloudflare — "
+          f"will retry), {upload_failures} upload failures, "
           f"{i + 1}/{len(todo)} attempted")
     if aborted:
-        return 1  # don't persist miss counts on a half-run; loud failure
+        return 1  # half-run on a dead credential — loud failure
 
-    if misses > fetched:
-        # A miss looks the same whether the holdco doesn't file Y-9C or
-        # Cloudflare started blocking THIS network (possibly mid-run), so
-        # when misses dominate, don't persist the incremented counts —
-        # they'd poison real filers' manifest entries for the period.
-        # True non-filers just get retried next run (30s each, bounded).
-        print("[y9c] misses outnumber successes — NOT persisting miss "
-              "counts (Cloudflare block?)")
-        if fetched == 0 and len(todo) >= 20:
-            return 1  # a big run yielding nothing at all is a blocked network
-        return 1 if upload_failures else 0
+    # Only confirmed-absent (deterministic onError) entries were written to
+    # the manifest — Cloudflare blocks never touch it — so it's always safe to
+    # persist; no misses>fetched guard needed. A clean batch has zero blocks;
+    # a non-zero exit means "re-run to retry blocked filers" (or fix uploads).
     _save_manifest(manifest)
-    return 1 if upload_failures else 0
+    return 1 if (upload_failures or blocked) else 0
 
 
 if __name__ == "__main__":

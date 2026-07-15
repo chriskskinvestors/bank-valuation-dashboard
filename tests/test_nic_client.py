@@ -419,6 +419,52 @@ class TestY9cMirrorTool(unittest.TestCase):
         self.assertEqual(_latest_y9c_period(pd.Timestamp(2026, 8, 20)),
                          "20260630")
 
+    def test_fetch_y9c_classified(self):
+        from tools import refresh_y9c_mirror as R
+
+        def run_with(stdout):
+            proc = types.SimpleNamespace(stdout=stdout, returncode=0)
+            with patch.object(R.shutil, "which", return_value="curl"), \
+                 patch.object(R.subprocess, "run", return_value=proc):
+                return R._fetch_y9c_classified(123, "20260331")
+
+        pdf = b"%PDF-" + b"x" * R._MIN_PDF_BYTES
+        # OK: PDF body, trailer stripped so the returned bytes are clean.
+        status, content = run_with(pdf + R._META + b"200 https://x/pdf")
+        self.assertEqual(status, R._OK)
+        self.assertEqual(content, pdf)
+        # ABSENT: NPW redirected to the onError page.
+        status, _ = run_with(b"<html>err</html>" + R._META
+                             + b"200 https://www.ffiec.gov/npw/Home/onError")
+        self.assertEqual(status, R._ABSENT)
+        # BLOCKED: Cloudflare 403 (no onError redirect).
+        status, _ = run_with(b"" + R._META + b"403 https://x/ReturnFinancialReportPDF")
+        self.assertEqual(status, R._BLOCKED)
+
+    def test_drop_foreign_holdcos(self):
+        # Foreign parents (FHF/FBH) file FR Y-7 not Y-9C → dropped. US filers
+        # (BHC) kept. RSSDs absent from NIC are kept (attempt + manifest).
+        from tools import refresh_y9c_mirror as R
+        from pathlib import Path
+        targets = [(1238565, 900), (1025541, 500), (7777777, 100)]
+        attrs = {1238565: {"type_code": "FHF"},   # Toronto-Dominion
+                 1025541: {"type_code": "BHC"}}    # Westamerica (US)
+        with patch.object(R.nic_client, "_bulk_path",
+                          return_value=Path("attrs.zip")), \
+             patch.object(R.nic_client, "_load_attributes",
+                          return_value=attrs):
+            kept, dropped = R._drop_foreign_holdcos(targets)
+        self.assertEqual(dropped, 1)
+        self.assertEqual([r for r, _ in kept], [1025541, 7777777])
+
+    def test_drop_foreign_holdcos_degrades_when_nic_unavailable(self):
+        from tools import refresh_y9c_mirror as R
+        targets = [(1238565, 900), (1025541, 500)]
+        with patch.object(R.nic_client, "_bulk_path", return_value=None):
+            kept, dropped = R._drop_foreign_holdcos(targets)
+        self.assertEqual(dropped, 0)
+        self.assertEqual(kept, targets)  # unchanged — run still works
+
     def test_max_fetches_env_override(self):
         from tools import refresh_y9c_mirror as R
         with patch.dict(os.environ, {"Y9C_MAX_FETCHES": "50"}):
@@ -429,19 +475,20 @@ class TestY9cMirrorTool(unittest.TestCase):
             self.assertEqual(R._max_fetches(), R._MAX_FETCHES_PER_RUN)
 
     def test_circuit_breaker_aborts_on_consecutive_upload_failures(self):
-        # Simulate ADC dying mid-run: curl always returns a good PDF, but
-        # every GCS upload fails. The run must abort after
-        # _MAX_CONSEC_UPLOAD_FAILS attempts, not hammer NPW for all targets.
+        # Simulate ADC dying mid-run: every fetch is a good PDF, but every GCS
+        # upload fails. The run must abort after _MAX_CONSEC_UPLOAD_FAILS
+        # attempts, not hammer NPW for all targets.
         from tools import refresh_y9c_mirror as R
         records = [{"CERT": i, "RSSDHCR": str(1000 + i),
                     "ASSET": 5_000_000} for i in range(20)]
-        good_pdf = b"%PDF-" + b"x" * R._MIN_PDF_BYTES
+        good = (R._OK, b"%PDF-" + b"x" * R._MIN_PDF_BYTES)
         with patch.object(R, "is_gcs_enabled", return_value=True), \
              patch.object(R, "_latest_y9c_period", return_value="20260331"), \
              patch.object(R, "_fetch_fdic_records", return_value=records), \
+             patch.object(R.nic_client, "_bulk_path", return_value=None), \
              patch.object(R, "list_files", return_value=[]), \
              patch.object(R, "_load_manifest", return_value={}), \
-             patch.object(R, "_curl_fetch", return_value=good_pdf), \
+             patch.object(R, "_fetch_y9c_classified", return_value=good), \
              patch.object(R, "save_bytes", return_value=False) as mock_save, \
              patch.object(R.time, "sleep"):
             rc = R.main()
@@ -455,21 +502,58 @@ class TestY9cMirrorTool(unittest.TestCase):
         from tools import refresh_y9c_mirror as R
         records = [{"CERT": i, "RSSDHCR": str(1000 + i),
                     "ASSET": 5_000_000} for i in range(6)]
-        good_pdf = b"%PDF-" + b"x" * R._MIN_PDF_BYTES
+        good = (R._OK, b"%PDF-" + b"x" * R._MIN_PDF_BYTES)
         # fail, ok, fail, ok, fail, ok — never 3 in a row.
         saves = [False, True, False, True, False, True]
         with patch.object(R, "is_gcs_enabled", return_value=True), \
              patch.object(R, "_latest_y9c_period", return_value="20260331"), \
              patch.object(R, "_fetch_fdic_records", return_value=records), \
+             patch.object(R.nic_client, "_bulk_path", return_value=None), \
              patch.object(R, "list_files", return_value=[]), \
              patch.object(R, "_load_manifest", return_value={}), \
-             patch.object(R, "_curl_fetch", return_value=good_pdf), \
+             patch.object(R, "_fetch_y9c_classified", return_value=good), \
              patch.object(R, "save_bytes", side_effect=saves), \
              patch.object(R, "_save_manifest"), \
              patch.object(R.time, "sleep"):
             rc = R.main()
         # All 6 attempted (no early abort); 3 upload failures → rc 1.
         self.assertEqual(rc, 1)
+
+    def test_absent_recorded_blocked_not_recorded(self):
+        # The crux of a true-zero miss rate: a non-filer (onError) is recorded
+        # to the manifest and counts as done; a Cloudflare block is NOT
+        # recorded (so it retries next run) and forces a non-zero exit.
+        from tools import refresh_y9c_mirror as R
+        # rssd 1000 → real filer, 1001 → absent (non-filer), 1002 → blocked.
+        records = [{"CERT": 0, "RSSDHCR": "1000", "ASSET": 9_000_000},
+                   {"CERT": 1, "RSSDHCR": "1001", "ASSET": 8_000_000},
+                   {"CERT": 2, "RSSDHCR": "1002", "ASSET": 7_000_000}]
+        good = (R._OK, b"%PDF-" + b"x" * R._MIN_PDF_BYTES)
+        outcomes = {1000: good, 1001: (R._ABSENT, None),
+                    1002: (R._BLOCKED, None)}
+        manifest = {}
+        saved = {}
+        with patch.object(R, "is_gcs_enabled", return_value=True), \
+             patch.object(R, "_latest_y9c_period", return_value="20260331"), \
+             patch.object(R, "_fetch_fdic_records", return_value=records), \
+             patch.object(R.nic_client, "_bulk_path", return_value=None), \
+             patch.object(R, "list_files", return_value=[]), \
+             patch.object(R, "_load_manifest", return_value=manifest), \
+             patch.object(R, "_fetch_y9c_classified",
+                          side_effect=lambda rssd, period: outcomes[rssd]), \
+             patch.object(R, "save_bytes",
+                          side_effect=lambda *a, **k: saved.setdefault(
+                              a[1], a[2]) or True), \
+             patch.object(R, "_save_manifest") as mock_savem, \
+             patch.object(R.time, "sleep"):
+            rc = R.main()
+        self.assertEqual(rc, 1)  # a block → re-run signal
+        # Only the real filer was uploaded.
+        self.assertEqual(list(saved), [R.y9c_mirror_name(1000, "20260331")])
+        # The persisted manifest holds the non-filer, NOT the blocked filer.
+        persisted = mock_savem.call_args[0][0]
+        self.assertIn(R.y9c_mirror_name(1001, "20260331"), persisted)
+        self.assertNotIn(R.y9c_mirror_name(1002, "20260331"), persisted)
 
 
 class TestRefreshToolValidation(unittest.TestCase):
