@@ -417,7 +417,7 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # The reconstruction is the FALLBACK when the bank doesn't disclose or the
     # reported figure fails a sanity gate. See _resolve_tbvps.
     reconstructed_tbvps = sec_data.get("tangible_book_value_per_share")
-    tbvps = _resolve_tbvps(ticker, reconstructed_tbvps, bvps)
+    tbvps, tbvps_source = _resolve_tbvps(ticker, reconstructed_tbvps, bvps)
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
 
@@ -535,6 +535,13 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "pe_ratio": compute_pe_ratio(price, eps),
         "pb_ratio": compute_pb_ratio(price, bvps),
         "ptbv_ratio": compute_ptbv_ratio(price, tbvps),
+        # The RESOLVED tangible book value — the same figure ptbv_ratio and
+        # the fair-value chain price against (previously the display key read
+        # the raw reconstruction and could differ from the ratio's input).
+        # tbvps_source: "reported_8k" | "reconstructed" | "company_release"
+        # (non-SEC filers — the wire release is their primary disclosure).
+        "tbvps": tbvps,
+        "tbvps_source": tbvps_source,
         # Computed from our own robust TTM dividend-per-share (anchored to the
         # latest period; handles cut/skipped quarters). FMP's dividend figure is
         # ALSO unreliable, so we derive from the filing rather than adopt it.
@@ -588,28 +595,65 @@ def _resolve_tbvps(
     ticker: str | None,
     reconstructed: float | None,
     bvps: float | None,
-) -> float | None:
-    """Tangible book value per common share, preferring the bank's OWN reported
-    figure (earnings-release non-GAAP line) over our reconstruction.
+) -> tuple[float | None, str | None]:
+    """(Tangible book value per common share, source), preferring the bank's
+    OWN reported figure (earnings-release non-GAAP line) over our
+    reconstruction.
 
-    Company-Reported principle: take the disclosed number when it's cleanly found
-    AND ties out (see data.sec_earnings_8k.reported_tbvps gates); otherwise fall
-    back to `reconstructed` (data.sec_client's corrected reconstruction). If the
-    reported extractor errors or CIK can't be resolved, the reconstruction stands
-    — never a regression. Returns None only when both are None (→ n/a upstream)."""
+    Company-Reported principle: take the disclosed number when it's cleanly
+    found AND ties out (see data.sec_earnings_8k.reported_tbvps gates);
+    otherwise fall back to `reconstructed` (data.sec_client's corrected
+    reconstruction). If the reported extractor errors, the reconstruction
+    stands — never a regression. NON-SEC filers (cik=None: PBAM class) have
+    no reconstruction at all — their wire earnings release is the primary
+    disclosure and the only per-share source (owner decision 2026-07-16);
+    the guarded data/otc_release extraction supplies it, staleness-gated.
+    Sources: "reported_8k" | "reconstructed" | "company_release" | None."""
+    cik = None
     if ticker:
         try:
             from data.bank_mapping import get_cik
-            from data.sec_earnings_8k import reported_tbvps
             cik = get_cik(ticker)
-            if cik:
-                reported = reported_tbvps(cik, reconstructed=reconstructed, bvps=bvps)
-                if reported is not None:
-                    return reported
+        except Exception:
+            cik = None
+    if cik:
+        try:
+            from data.sec_earnings_8k import reported_tbvps
+            reported = reported_tbvps(cik, reconstructed=reconstructed, bvps=bvps)
+            if reported is not None:
+                return reported, "reported_8k"
         except Exception as e:
             print(f"[valuation] reported_tbvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
-    return reconstructed
+    elif ticker:
+        try:
+            otc = _otc_tbvps(ticker)
+            if otc is not None:
+                return otc, "company_release"
+        except Exception as e:
+            print(f"[valuation] otc tbvps lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    return reconstructed, ("reconstructed" if reconstructed is not None else None)
+
+
+def _otc_tbvps(ticker: str) -> float | None:
+    """A non-SEC bank's tangible book value per share from its latest wire
+    earnings release (guarded extraction, band-checked at the source).
+    STALENESS GATE: a release quarter-end older than ~200 days means the
+    bank stopped publishing — pricing today's quote against that TBV drifts,
+    so None (n/a) instead."""
+    from datetime import date
+    from data.otc_release import otc_release_metrics
+    val = otc_release_metrics(ticker) or {}
+    tbv = (val.get("metrics") or {}).get("tbv_ps")
+    qend = val.get("qend")
+    if tbv is None or not qend:
+        return None
+    try:
+        age_days = (date.today() - date.fromisoformat(qend)).days
+    except ValueError:
+        return None
+    return tbv if age_days <= 200 else None
 
 
 def _compute_capital_return_for_ticker(ticker: str | None, price_data: dict, sec_data: dict) -> dict:

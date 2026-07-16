@@ -102,6 +102,12 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
         c = "var(--success)" if chg >= 0 else "var(--danger)"
         chg_html = f'<span style="color:{c};">{chg:+.2f}%</span>'
 
+    # Non-SEC filers (PBAM class): TBV comes from the bank's own wire
+    # earnings release — labeled so the provenance is visible (owner
+    # decision 2026-07-16).
+    tbv_label = ("TBV / Share (co. release)"
+                 if row.get("tbvps_source") == "company_release"
+                 else "TBV / Share")
     valuation = [
         ("Last Price", disp("price")),
         ("Change", chg_html),
@@ -109,7 +115,7 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
         ("P/E (LTM)", disp("pe_ratio")),
         ("EPS (TTM)", disp("eps")),
         ("P/TBV", disp("ptbv_ratio")),
-        ("TBV / Share", disp("tbvps")),
+        (tbv_label, disp("tbvps")),
         ("Dividend Yield", disp("dividend_yield")),
     ]
 

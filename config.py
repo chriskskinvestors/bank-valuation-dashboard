@@ -131,8 +131,20 @@ METRICS = [
         "category": "Valuation",
     },
     {
-        "key": "tbvps", "label": "TBV/Sh", "source": "sec", "sec_concept": "tangible_book_value_per_share",
+        # RESOLVED tangible book value (analysis/valuation._resolve_tbvps):
+        # the bank's own reported figure when gated-clean, else the SEC
+        # reconstruction, else (non-SEC filers) the wire-release extraction.
+        # Same figure ptbv_ratio prices against — was source "sec", which
+        # could display a different number than the ratio's input.
+        "key": "tbvps", "label": "TBV/Sh", "source": "computed",
         "format": "currency", "decimals": 2,
+        "category": "Valuation",
+    },
+    {
+        # Provenance of tbvps ("reported_8k" | "reconstructed" |
+        # "company_release") — carried for UI labeling, not a display column.
+        "key": "tbvps_source", "label": "TBV Src", "source": "computed",
+        "format": "flag",
         "category": "Valuation",
     },
     {
