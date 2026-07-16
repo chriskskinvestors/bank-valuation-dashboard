@@ -100,7 +100,22 @@ class SEC8KAdapter(SourceAdapter):
     # frequently enough (e.g. every 30 min) that 7 days is generous overlap.
     LOOKBACK_DAYS = 7
 
+    # Internal budget, under poll_events._PER_ADAPTER_S (240s). The runner
+    # abandons an adapter that overruns its cap by RAISING — which discards
+    # every event the adapter had already collected, since poll() never
+    # returns. Serial-looping the universe at ~0.7s/bank measured ~310s at 445
+    # banks, so this adapter silently contributed ZERO on every full poll (and
+    # burned the cap doing it) once the universe grew past ~340. Same failure
+    # IRSiteAdapter was fixed for; same remedy — bounded, parallel, and always
+    # returns what it has.
+    MAX_POLL_SECONDS = 200
+    # SEC allows 10 req/s. 6 workers x ~0.7s/req ~= 8.5 req/s keeps headroom
+    # under the limit while collapsing the walk from ~310s to ~55s.
+    MAX_WORKERS = 6
+
     def poll(self, tickers: list[str], since: datetime | None = None) -> list[Event]:
+        from concurrent.futures import (ThreadPoolExecutor, as_completed,
+                                        TimeoutError as _FTimeout)
         out: list[Event] = []
         # `since` (the source-wide MAX(published_at)) is deliberately ignored:
         # this source name is shared with SEC8KRecentAdapter, whose feed entries
@@ -113,16 +128,30 @@ class SEC8KAdapter(SourceAdapter):
         # per-CIK HTTP fetch is the same single call either way.
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.LOOKBACK_DAYS)
 
-        for ticker in tickers:
-            try:
-                events = self._poll_one(ticker, cutoff)
-                out.extend(events)
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code == 404:
-                    continue  # no CIK / no filings — silent
-                print(f"[8K] {ticker} HTTP error: {e}")
-            except Exception as e:
-                print(f"[8K] {ticker} error: {type(e).__name__}: {e}")
+        ex = ThreadPoolExecutor(max_workers=self.MAX_WORKERS)
+        futs = {ex.submit(self._poll_one, t, cutoff): t for t in tickers}
+        done = 0
+        try:
+            for fut in as_completed(futs, timeout=self.MAX_POLL_SECONDS):
+                ticker = futs[fut]
+                done += 1
+                try:
+                    out.extend(fut.result())
+                except requests.HTTPError as e:
+                    if e.response is not None and e.response.status_code == 404:
+                        continue  # no CIK / no filings — silent
+                    print(f"[8K] {ticker} HTTP error: {e}")
+                except Exception as e:
+                    print(f"[8K] {ticker} error: {type(e).__name__}: {e}")
+        except _FTimeout:
+            # Hard-bounded: keep what finished, abandon the stragglers. The
+            # 7-day lookback + accession dedup means anything skipped is picked
+            # up next cycle — losing the whole batch is the thing we can't do.
+            print(f"[8K] budget hit at {self.MAX_POLL_SECONDS}s — "
+                  f"{done}/{len(futs)} banks checked, {len(out)} events kept; "
+                  "rest catch up next cycle")
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
         return out
 
     def _poll_one(self, ticker: str, cutoff: datetime) -> list[Event]:
