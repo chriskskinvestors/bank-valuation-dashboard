@@ -222,12 +222,18 @@ _DIV_BAND = (0.005, 10.0)
 # marker sits outside the before-label window, and a release narrating
 # per-share ONLY in that comparison clause would ship the year-ago EPS as a
 # lone clean candidate.
+# Connectors are 60 chars: OZK writes 'Diluted earnings per common share
+# ("EPS") for the first quarter of 2026 were $1.44' — the parenthetical +
+# period phrase is ~45 chars of connector. [^$%] still can't cross an
+# earlier value, and a release that narrates BOTH quarters with full labels
+# produces disagreeing candidates → None (never a column guess).
 _EPS_PATS = [
-    re.compile(r"diluted (?:earnings per share|eps)(?:\s*\(eps\))?"
-               r"[^$%]{0,40}?(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})",
+    re.compile(r"diluted (?:earnings per (?:common )?share|eps)"
+               r"(?:\s*\(“?\"?eps”?\"?\))?"
+               r"[^$%]{0,60}?(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})",
                re.I),
     re.compile(r"(?:\beps\b|earnings per (?:diluted|common) share)"
-               r"[^$%]{0,30}?(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})",
+               r"[^$%]{0,60}?(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})",
                re.I),
 ]
 _EPS_BAND = (0.01, 60.0)
@@ -672,15 +678,15 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v11 (2026-07-16): digit-free percent connector + bps value form — v10
-    # shipped CFG NCOs of 1.48% (the next metric's percent; real 0.37%
-    # narrated as "37 bps") and must re-extract. v10 the label-affirmation
-    # guard; v9 the financial-supplement feed; v8 ordinal-quarter headers;
-    # v7 the prose diluted-EPS spec; v6 the JPM/C table shapes; v5 the
-    # guarded-AI fill (data/release_ai). Extractions are immutable per
-    # accession, so spec improvements MUST bump this version or cached
-    # releases never re-extract.
-    key = f"release_metrics:v11:{int(cik)}"
+    # v12 (2026-07-16 pm): prose EPS accepts "per common share" + the
+    # OZK-style ~45-char parenthetical/period connector. v11 digit-free
+    # percent connector + bps value form; v10 the label-affirmation guard;
+    # v9 the financial-supplement feed; v8 ordinal-quarter headers; v7 the
+    # prose diluted-EPS spec; v6 the JPM/C table shapes; v5 the guarded-AI
+    # fill (data/release_ai). Extractions are immutable per accession, so
+    # spec improvements MUST bump this version or cached releases never
+    # re-extract.
+    key = f"release_metrics:v12:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:

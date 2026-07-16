@@ -114,10 +114,16 @@ _HEADLINE_PARTS = (
     re.compile(r"(?i)\bquarter"),
     re.compile(r"(?i)\b(?:results|earnings|net income)\b"),
 )
+# "Bank OZK Announces DATE for Second Quarter 2026 Earnings Release" (caught
+# live 2026-07-16) passes all three signals but is a scheduling notice, not
+# the release. A real release never "announces the date". Kept narrow — a
+# genuine release's "will host a conference call" boilerplate must not trip.
+_HEADLINE_NEGATIVE = re.compile(r"(?i)\bannounces?\s+(?:the\s+)?date\b")
 
 
 def _is_earnings_headline(text: str) -> bool:
-    return all(p.search(text) for p in _HEADLINE_PARTS)
+    return (all(p.search(text) for p in _HEADLINE_PARTS)
+            and not _HEADLINE_NEGATIVE.search(text))
 
 
 def _headline_text(html: str, limit: int = 800) -> str:
