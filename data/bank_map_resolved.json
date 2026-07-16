@@ -43,8 +43,8 @@
  },
  "AMAL": {
   "cik": 1823608,
-  "fdic_cert": 903,
-  "fdic_score": 0.5,
+  "fdic_cert": 622,
+  "fdic_score": 1.0,
   "name": "Amalgamated Financial"
  },
  "AMFC": {
@@ -85,7 +85,7 @@
  },
  "ATLO": {
   "cik": 1132651,
-  "fdic_cert": 57391,
+  "fdic_cert": 1545,
   "fdic_score": 1.0,
   "name": "Ames National"
  },
@@ -403,7 +403,7 @@
  },
  "CARV": {
   "cik": 1016178,
-  "fdic_cert": 16584,
+  "fdic_cert": 30394,
   "fdic_score": 1.0,
   "name": "Carver Bancorp"
  },
@@ -655,8 +655,8 @@
  },
  "CPF": {
   "cik": 701347,
-  "fdic_cert": 23041,
-  "fdic_score": 0.5,
+  "fdic_cert": 17308,
+  "fdic_score": 1.0,
   "name": "Central Pacific Financial"
  },
  "CPKF": {
@@ -781,8 +781,8 @@
  },
  "EBMT": {
   "cik": 1478454,
-  "fdic_cert": 58482,
-  "fdic_score": 0.5,
+  "fdic_cert": 30182,
+  "fdic_score": 1.0,
   "name": "Eagle Bancorp Montana"
  },
  "EBSH": {
@@ -823,7 +823,7 @@
  },
  "EMYB": {
   "cik": 1449794,
-  "fdic_cert": 58413,
+  "fdic_cert": 57228,
   "fdic_score": 1.0,
   "name": "Embassy Bancorp"
  },
@@ -1555,7 +1555,7 @@
  },
  "HOPE": {
   "cik": 1128361,
-  "fdic_cert": 4690,
+  "fdic_cert": 26610,
   "fdic_score": 1.0,
   "name": "HOPE Bancorp"
  },
@@ -1831,8 +1831,8 @@
  },
  "MCHB": {
   "cik": 1518715,
-  "fdic_cert": 29011,
-  "fdic_score": 0.5,
+  "fdic_cert": 1768,
+  "fdic_score": 1.0,
   "name": "Mechanics Bancorp"
  },
  "MDVT": {
@@ -2173,7 +2173,7 @@
  },
  "PBFS": {
   "cik": 1769663,
-  "fdic_cert": 6913,
+  "fdic_cert": 20741,
   "fdic_score": 1.0,
   "name": "Pioneer Bancorp"
  },
@@ -2191,8 +2191,8 @@
  },
  "PCB": {
   "cik": 1423869,
-  "fdic_cert": 22460,
-  "fdic_score": 0.5,
+  "fdic_cert": 57463,
+  "fdic_score": 1.0,
   "name": "PCB Bancorp"
  },
  "PCLB": {
@@ -2233,8 +2233,8 @@
  },
  "PFBX": {
   "cik": 770460,
-  "fdic_cert": 10075,
-  "fdic_score": 0.5,
+  "fdic_cert": 340,
+  "fdic_score": 1.0,
   "name": "Peoples Financial"
  },
  "PFIS": {
@@ -2323,7 +2323,7 @@
  },
  "QCRH": {
   "cik": 906465,
-  "fdic_cert": 18272,
+  "fdic_cert": 33867,
   "fdic_score": 1.0,
   "name": "QCR Holdings"
  },
@@ -2755,7 +2755,7 @@
  },
  "UNB": {
   "cik": 706863,
-  "fdic_cert": 6180,
+  "fdic_cert": 14158,
   "fdic_score": 1.0,
   "name": "Union Bankshares"
  },

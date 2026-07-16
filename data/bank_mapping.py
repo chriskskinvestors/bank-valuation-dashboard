@@ -50,7 +50,11 @@ BANK_MAP = {
     "BFST":  {"name": "Business First Bancshares",          "fdic_cert": 58228,  "cik": 1624322},
     "TCBX":  {"name": "Third Coast Bancshares",             "fdic_cert": 58716,  "cik": 1781730},
     "FMBH":  {"name": "First Mid Bancshares",               "fdic_cert": 3705,   "cik": 700565},
-    "HBNC":  {"name": "Horizon Bancorp Inc.",               "fdic_cert": 14327,  "cik": 706129},
+    # cert 14327 was Horizon Bank of NEBRASKA ($539M) — a same-name bank in the
+    # wrong state, and 14327 carries NO high holder at all, so the NAMEHCR tell
+    # had nothing to contradict. Real sub = Horizon Bank, Michigan City IN
+    # ($6.54B vs the $6.56B holdco), hcr HORIZON BCORP INC.
+    "HBNC":  {"name": "Horizon Bancorp Inc.",               "fdic_cert": 4360,   "cik": 706129},
     "PLBC":  {"name": "Plumas Bancorp",                     "fdic_cert": 23275,  "cik": 1168455},
     # FSRL is "First Reliance Bancshares" (not First Savings Financial).
     # OTC-only, no SEC XBRL. FDIC cert 35214 = First Reliance Bank, SC.
@@ -172,7 +176,11 @@ BANK_MAP = {
     # cert_is_active() in data/fdic_client.py, but keeping it here as an
     # explicit None signals "we know about this; intentionally excluded".
     "MCBI":  {"name": "Mountain Commerce Bancshares (acquired)", "fdic_cert": None, "cik": None},
-    "BRBS":  {"name": "Blue Ridge Bankshares",              "fdic_cert": 17773,  "cik": 842717},
+    # cert 17773 was Blue Ridge Bank of SOUTH CAROLINA ($195M, hcr BLUE RIDGE
+    # FINANCIAL CORP) — this BANK_MAP override was beating the correct value
+    # already sitting in bank_map_resolved.json. Real sub = Blue Ridge Bank NA
+    # (VA) cert 35274 ($2.40B vs the $2.41B holdco), hcr BLUE RIDGE BANKSHARES INC.
+    "BRBS":  {"name": "Blue Ridge Bankshares",              "fdic_cert": 35274,  "cik": 842717},
     "FSBW":  {"name": "FS Bancorp Inc.",                    "fdic_cert": 57633,  "cik": 1530249},
     "SPFI":  {"name": "South Plains Financial Inc.",        "fdic_cert": 25103,  "cik": 1163668},
     "ALRS":  {"name": "Alerus Financial Corp.",             "fdic_cert": 3931,   "cik": 903419},
