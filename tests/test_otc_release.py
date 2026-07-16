@@ -35,15 +35,33 @@ class TestHeadlineDateNotice(unittest.TestCase):
             "XYZ Bancorp Reports Second Quarter 2026 Results. The Company "
             "will host a conference call today at 5:00 pm ET"))
 
+    def test_conference_call_notice_refused(self):
+        # FRBA (2026-07-16 class sweep): "earnings" as a modifier of
+        # "conference call" must not satisfy the results-word signal.
+        from data.ir_provider import _is_earnings_headline
+        self.assertFalse(_is_earnings_headline(
+            "First Bank Announces Second Quarter 2026 Earnings "
+            "Conference Call"))
+
+    def test_genuine_earnings_with_call_details_passes(self):
+        from data.ir_provider import _is_earnings_headline
+        self.assertTrue(_is_earnings_headline(
+            "XYZ Bancorp Reports Second Quarter Earnings and Conference "
+            "Call Details"))
+
 
 class TestLatestEarningsPr(unittest.TestCase):
     def setUp(self):
+        import data.bank_mapping as bm
         import data.fmp_client as fc
-        self._orig = fc.get_press_releases
-        self.fc = fc
+        self._orig = (fc.get_press_releases, bm.get_name)
+        self.fc, self.bm = fc, bm
+        self.bm.get_name = lambda t: {
+            "PBAM": "Private Bancorp of America",
+            "OZK": "Bank OZK"}.get(t, t)
 
     def tearDown(self):
-        self.fc.get_press_releases = self._orig
+        self.fc.get_press_releases, self.bm.get_name = self._orig
 
     def _patch(self, prs):
         self.fc.get_press_releases = lambda t, limit=25: prs
@@ -73,6 +91,48 @@ class TestLatestEarningsPr(unittest.TestCase):
              "url": None, "published_at": "2026-04-17 08:00:00"},
         ])
         self.assertIsNone(_latest_earnings_pr("OZK"))
+
+    def test_other_companys_release_never_qualifies(self):
+        # FMP's symbol index is polluted for short tickers — a wrong story
+        # here puts ANOTHER COMPANY'S numbers on this bank's valuation.
+        from data.otc_release import _latest_earnings_pr
+        self._patch([
+            {"title": "Acme Widgets Corp Reports Second Quarter 2026 "
+                      "Results", "url": "u1",
+             "published_at": "2026-07-17 08:00:00",
+             "text": "Acme Widgets reported record net income."},
+            {"title": "Private Bancorp of America Announces Second Quarter "
+                      "2026 Results", "url": "u2",
+             "published_at": "2026-07-16 08:00:00",
+             "text": "CalPrivate Bank results."},
+        ])
+        got = _latest_earnings_pr("PBAM")
+        self.assertEqual(got["url"], "u2")
+
+
+class TestReleaseQend(unittest.TestCase):
+    def test_title_period_governs_for_late_release(self):
+        # A tiny OTC bank publishing its Q2 results LATE — Oct 2, where the
+        # date-derived qend would be 2026-09-30 — must label values with the
+        # title's own period, not the publish-date assumption.
+        from data.otc_release import _release_qend
+        self.assertEqual(
+            _release_qend("X Bancorp Reports Second Quarter 2026 Results",
+                          "2026-10-02"),
+            "2026-06-30")
+
+    def test_implausible_title_period_refused(self):
+        from data.otc_release import _release_qend
+        self.assertIsNone(
+            _release_qend("X Bancorp Reports Fourth Quarter 2019 Results",
+                          "2026-07-16"))
+
+    def test_no_title_period_falls_back_to_date(self):
+        from data.otc_release import _release_qend
+        self.assertEqual(
+            _release_qend("X Bancorp Announces Continued Strong Net Income",
+                          "2026-07-16"),
+            "2026-06-30")
 
 
 class TestOtcWrapper(unittest.TestCase):
@@ -108,7 +168,7 @@ class TestOtcWrapper(unittest.TestCase):
             "title": "x", "url": "u1", "published_at": "2026-07-16 08:00:00"}
         fetches = []
         self.orl._fetch_story = lambda u: fetches.append(u) or "<p>x</p>"
-        self.store["otc_release:v3:PBAM"] = {
+        self.store["otc_release:v5:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",       # stale ⇒ re-check
             "value": {"url": "u1", "metrics": {"nim": 5.18}}}
         val = self.orl.otc_release_metrics("PBAM")
@@ -119,7 +179,7 @@ class TestOtcWrapper(unittest.TestCase):
         self.orl._latest_earnings_pr = lambda t: {
             "title": "x", "url": "u2", "published_at": "2026-07-16 08:00:00"}
         self.orl._fetch_story = lambda u: None
-        self.store["otc_release:v3:PBAM"] = {
+        self.store["otc_release:v5:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",
             "value": {"url": "u1", "metrics": {"nim": 5.0}}}
         val = self.orl.otc_release_metrics("PBAM")

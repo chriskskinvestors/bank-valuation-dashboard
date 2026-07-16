@@ -25,9 +25,16 @@ _UA = {"User-Agent": "Mozilla/5.0 (compatible; KSK-dashboard "
 
 def _latest_earnings_pr(ticker: str) -> dict | None:
     """The newest press release whose TITLE passes the earnings-headline
-    gate (shared with the 9.01-fallback finder): {title, url, published_at}
-    or None. Title-gated BEFORE any fetch — appointments, product news and
-    dividend declarations never cost a page load."""
+    gate (shared with the 9.01-fallback finder) AND whose title+blurb name
+    the bank as SUBJECT: {title, url, published_at} or None.
+
+    The subject guard is non-negotiable: FMP's symbol index is polluted for
+    short tickers (the news adapter's founding bug — symbols=CMA returned
+    "CMA Fest" stories), and here a wrong story doesn't just mis-file news,
+    it puts ANOTHER COMPANY'S numbers on this bank's valuation. Both gates
+    run BEFORE any fetch — appointments, product news and other issuers'
+    releases never cost a page load."""
+    from data.events.fmp_news import _is_subject
     from data.fmp_client import get_press_releases
     from data.ir_provider import _is_earnings_headline
     try:
@@ -36,10 +43,33 @@ def _latest_earnings_pr(ticker: str) -> dict | None:
         return None
     hits = [p for p in prs
             if _is_earnings_headline(p.get("title") or "")
-            and p.get("url") and p.get("published_at")]
+            and p.get("url") and p.get("published_at")
+            and _is_subject(ticker, f"{p.get('title') or ''} "
+                                    f"{p.get('text') or ''}")]
     if not hits:
         return None
     return max(hits, key=lambda p: p["published_at"])
+
+
+def _release_qend(title: str, filed_date: str) -> str | None:
+    """The release's quarter-end. The TITLE's own period statement
+    ("… Second Quarter 2026 …") governs — tiny OTC banks publish late, and
+    a date-derived quarter would mislabel every value in a late release.
+    A title period more than ~100 days before (or after) the publish date
+    is a garbage signal → None, never a guess. Titles without a period fall
+    back to the standard published-just-after-quarter-end assumption."""
+    from datetime import date
+    from data.ir_provider import _quarter_end_before
+    from data.release_metrics import _period_qend
+    title_qend = _period_qend(title or "")
+    if title_qend:
+        try:
+            gap = (date.fromisoformat(filed_date)
+                   - date.fromisoformat(title_qend)).days
+        except ValueError:
+            return None
+        return title_qend if 0 <= gap <= 100 else None
+    return _quarter_end_before(filed_date)
 
 
 def _fetch_story(url: str) -> str | None:
@@ -65,12 +95,15 @@ def otc_release_metrics(ticker: str) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v3 (2026-07-16): prose-EPS connector fix (release_metrics v12) — OZK's
-    # Q1 story was cached extracted-empty under the old spec. COUPLING: any
-    # release_metrics extraction-spec bump must bump THIS version too
+    # v5 (2026-07-16): earnings-conference-call notice refusal (FRBA).
+    # v4 + subject guard (FMP index pollution must never put
+    # another company's numbers on this bank) + title-governed qend (late
+    # OTC releases would mislabel every value under the date-derived
+    # assumption). v3 prose-EPS connector (release_metrics v12). COUPLING:
+    # any release_metrics extraction-spec bump must bump THIS version too
     # (extractions here are immutable per story URL). v2 refused "Announces
     # Date for … Earnings Release" scheduling notices.
-    key = f"otc_release:v3:{ticker.upper()}"
+    key = f"otc_release:v5:{ticker.upper()}"
     try:
         cached = _cache.get(key)
     except Exception:
@@ -99,12 +132,16 @@ def otc_release_metrics(ticker: str) -> dict | None:
     if not html:
         return _stamp(prev) if prev else None
 
-    from data.ir_provider import _quarter_end_before, extract_capital_ratios
+    from data.ir_provider import extract_capital_ratios
     from data.release_metrics import (_prior_quarter_end, _year_ago_qend,
                                       extract_release_metrics,
                                       extract_table_metrics)
     filed_date = (pr["published_at"] or "")[:10]
-    qend = _quarter_end_before(filed_date)
+    qend = _release_qend(pr.get("title") or "", filed_date)
+    if qend is None:
+        # Title names a period that can't be reconciled with the publish
+        # date — extracting would mislabel every value. Serve what we had.
+        return _stamp(prev) if prev else None
     prior_qend = _prior_quarter_end(qend)
     val = {
         "qend": qend,

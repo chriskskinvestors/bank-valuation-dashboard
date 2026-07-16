@@ -119,11 +119,20 @@ _HEADLINE_PARTS = (
 # the release. A real release never "announces the date". Kept narrow — a
 # genuine release's "will host a conference call" boilerplate must not trip.
 _HEADLINE_NEGATIVE = re.compile(r"(?i)\bannounces?\s+(?:the\s+)?date\b")
+# Scheduling-notice phrases where "earnings" is a MODIFIER, not the results
+# word: "First Bank Announces Second Quarter 2026 Earnings Conference Call"
+# (FRBA, caught in the 2026-07-16 class sweep) must not satisfy signal 3 via
+# that "Earnings". Stripped before the signal test; a genuine "Reports Q2
+# Earnings and Conference Call Details" keeps its bare "Earnings".
+_NOTICE_PHRASE = re.compile(
+    r"(?i)\bearnings\s+(?:conference\s+call|call|webcast|release\s+date)\b")
 
 
 def _is_earnings_headline(text: str) -> bool:
-    return (all(p.search(text) for p in _HEADLINE_PARTS)
-            and not _HEADLINE_NEGATIVE.search(text))
+    if _HEADLINE_NEGATIVE.search(text):
+        return False
+    stripped = _NOTICE_PHRASE.sub(" ", text)
+    return all(p.search(stripped) for p in _HEADLINE_PARTS)
 
 
 def _headline_text(html: str, limit: int = 800) -> str:
