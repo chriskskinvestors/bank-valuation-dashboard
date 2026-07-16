@@ -146,21 +146,41 @@ def _clean(text: str, matches, band, agree_tol) -> float | None:
     return vals[0]
 
 
+def _conn(n: int) -> str:
+    """Label→value connector window: can't cross a percent sign (only the
+    FIRST % after the label is a candidate), a bps token (an unparsed VALUE —
+    walking past it reaches the NEXT metric's percent: CFG live 2026-07-16,
+    "net charge-offs of 37 bps, … ■ Strong ACL coverage of 1.48%" shipped
+    NCOs of 1.48%, real 0.37%), a bullet/clause separator, or a sentence
+    boundary. Digits stay crossable — the legit dollar-then-ratio form
+    ("$12.3 million, or 0.25% of average loans") depends on it."""
+    return (r"(?:(?!bps\b|basis\s+points?\b|[■•;]|\.\s[A-Z])[^%])"
+            + "{0,%d}?" % n)
+
+
 def _pct_metric(text: str, label_re: str, band) -> float | None:
-    """Percent metric: '<label> … <verb> X.XX%', first % after the label only."""
-    pat = re.compile(label_re + r"[^%]{0,60}?" + _VERB + _NUM + r"\s*%", re.I)
-    return _clean(text, ((m.start(), m.group(1), m.end()) for m in pat.finditer(text)),
-                  band, _AGREE_PCT)
+    """Percent metric: '<label> … <verb> X.XX%' — or the basis-point form
+    '<label> … <verb> N bps' (÷100), which banks use for credit ratios."""
+    pat = re.compile(label_re + _conn(60) + _VERB + _NUM + r"\s*%", re.I)
+    bps = re.compile(label_re + _conn(60) + _VERB +
+                     r"(\d{1,3}(?:\.\d{1,2})?)\s*(?:bps|basis points?)\b", re.I)
+
+    def _gen():
+        for m in pat.finditer(text):
+            yield m.start(), m.group(1), m.end()
+        for m in bps.finditer(text):
+            yield m.start(), str(float(m.group(1)) / 100), m.end()
+    return _clean(text, _gen(), band, _AGREE_PCT)
 
 
 def _pinned_metric(text: str, label_re: str, denom_re: str, band) -> float | None:
     """Denominator-pinned percent: the base must appear either in the label
     ('<label> to <denominator> … X%') or right after the value ('<label> …
     X% of <denominator>') — a ratio against any other base never qualifies."""
-    p_after = re.compile(label_re + r"[^%]{0,80}?" + _NUM +
+    p_after = re.compile(label_re + _conn(80) + _NUM +
                          r"\s*%\s*of " + denom_re, re.I)
     p_label = re.compile(label_re + r"\s+to\s+" + denom_re +
-                         r"[^%]{0,40}?" + _VERB + _NUM + r"\s*%", re.I)
+                         _conn(40) + _VERB + _NUM + r"\s*%", re.I)
     def _gen():
         for m in p_after.finditer(text):
             yield m.start(), m.group(1), m.end()
@@ -652,16 +672,15 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v10 (2026-07-15): label-affirmation guard in release_ai — v9 values
-    # could carry a sibling metric's row (CTBI's TCE row filled ROTCE) and
-    # must re-extract. v9 added the financial-supplement feed; v8 ordinal-
-    # quarter headers ("1st Quarter 2026" single-cell _QWORD, TCBI ordinals-
-    # over-years, CFR years-over-ordinals inverted split); v7 the prose
-    # diluted-EPS spec; v6 the JPM/C table shapes; v5 the guarded-AI fill
-    # (data/release_ai). Extractions are immutable per accession, so spec
-    # improvements MUST bump this version or cached releases never
-    # re-extract.
-    key = f"release_metrics:v10:{int(cik)}"
+    # v11 (2026-07-16): digit-free percent connector + bps value form — v10
+    # shipped CFG NCOs of 1.48% (the next metric's percent; real 0.37%
+    # narrated as "37 bps") and must re-extract. v10 the label-affirmation
+    # guard; v9 the financial-supplement feed; v8 ordinal-quarter headers;
+    # v7 the prose diluted-EPS spec; v6 the JPM/C table shapes; v5 the
+    # guarded-AI fill (data/release_ai). Extractions are immutable per
+    # accession, so spec improvements MUST bump this version or cached
+    # releases never re-extract.
+    key = f"release_metrics:v11:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:

@@ -333,10 +333,11 @@ def release_ai_metrics(cik, accession: str, text: str, ticker: str = "",
     if not cik or not accession or not text:
         return None
     from data.cloud_storage import load_json, save_json
-    # _v3: label-affirmation guard (2026-07-15) — _v2 results could carry a
-    # sibling metric's row (CTBI TCE row cached as ROTCE) and must re-extract.
-    # _v2 added the financial-supplement consolidated section to the input.
-    fname = f"{int(cik)}_{accession.replace('-', '')}_v3.json"
+    # _v4 (2026-07-16): fresh pass for the Jul-16 wave — the one-shot _v3
+    # results froze model-missed cells (CFG efficiency, USB ROE/BV) the
+    # moment anything verified. _v3 added the label-affirmation guard; _v2
+    # the financial-supplement consolidated section.
+    fname = f"{int(cik)}_{accession.replace('-', '')}_v4.json"
     cached = load_json(RELEASE_AI_CACHE_PREFIX, fname)
     if cached and isinstance(cached.get("periods"), dict):
         return cached["periods"]

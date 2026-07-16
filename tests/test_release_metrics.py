@@ -69,6 +69,22 @@ class TestPercentMetrics(unittest.TestCase):
               "loans, annualized.</p>")
         self.assertEqual(m["nco_ratio"], 0.25)
 
+    def test_bps_narrated_level_is_parsed(self):
+        """CFG live 2026-07-16: 'net charge-offs of 37 bps, down 2 bps QoQ ■
+        Strong ACL coverage of 1.48%' shipped NCOs of 1.48% — the connector
+        walked past the (unparsed) bps figure and a bullet into the NEXT
+        metric's percent. The bps form is the value; the % form must not
+        cross a bps token or a clause boundary."""
+        m = x("<p>Continuing favorable credit trends; net charge-offs of "
+              "37 bps, down 2 bps QoQ ■ Strong ACL coverage of 1.48%</p>")
+        self.assertEqual(m["nco_ratio"], 0.37)
+
+    def test_connector_never_crosses_sentence_or_bullet(self):
+        m = x("<p>Net charge-offs were flat. ACL coverage of 1.48% shown.</p>")
+        self.assertIsNone(m["nco_ratio"])
+        m2 = x("<p>Net charge-offs improved ■ efficiency ratio of 61.1%</p>")
+        self.assertIsNone(m2["nco_ratio"])
+
     def test_segment_qualified_figure_never_captured(self):
         # JPM: "Card Services net charge-off rate of 3.47%" is a SEGMENT rate,
         # not firmwide (2026-07-06 ground-truth catch).

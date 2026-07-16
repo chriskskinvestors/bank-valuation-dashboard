@@ -234,7 +234,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
         if ai_state is not None:
             value["ai_state"] = ai_state
             value["ai_attempts"] = attempts
-        self.store[f"release_metrics:v10:{1}"] = {
+        self.store[f"release_metrics:v11:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):
