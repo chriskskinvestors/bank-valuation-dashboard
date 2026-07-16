@@ -785,9 +785,117 @@ _NAMEHCR_VERIFIED_OK: dict[str, int] = {
                      # First National Bank of Omaha
     "FGBI": 14028,   # SMITH&HOOD HOLDING CO LLC (control entity above First
                      # Guaranty Bancshares) / First Guaranty Bank, Hammond LA
+    # The four below all corroborate on the state and size keys and fail only
+    # the name tell — the shape those keys were added for. The first three
+    # became visible when 53aab80 moved them onto their correct certs.
+    "AMAL": 622,     # WORKERS UNITED (the union controlling Amalgamated) /
+                     # Amalgamated Bank, NY — high holder above the registrant
+    "MCHB": 1768,    # 2011 TCRT (the family trust above Mechanics Bancorp) /
+                     # Mechanics Bank, Walnut Creek CA
+    "BYFC": 34352,   # CITY FIRST ENTERPRISES INC / City First Bank NA, DC —
+                     # Broadway Financial merged into City First in 2021 and
+                     # the pre-merger high holder is still of record
+    "PNSB": 29517,   # PSB Financial / Pioneer State Bank, Deer Lodge MT — the
+                     # registrant IS the bank, initialized; no HCR of record,
+                     # and the same-name holdco the name tell DOES affirm
+                     # (PSB FINANCIAL SHARES INC / PrinsBank, MN) is a
+                     # different company two states away
 }
 
+# ── Second identity key: STATE ─────────────────────────────────────────────
+# The name tell has a blind spot it cannot see out of: a look-alike bank whose
+# HIGH HOLDER carries the identical legal name. CBSH (Commerce Bancshares, MO,
+# $35.5B) sat joined to cert 1374 — "The Bank of Commerce", White Castle LA,
+# $88M — whose NAMEHCR is also "COMMERCE BANCSHARES INC", so every name rule
+# above AFFIRMS the wrong bank. Name alone is therefore not an identity; the
+# sweep in tools/sweep_otc_banks.py already learned this (it admits on exact
+# name AND state). This is that same second key, applied to the guard:
+#
+#   FDIC STALPHCR (the regulatory high holder's own state) must agree with the
+#   SEC registrant's state — its business address or its state of incorporation.
+#
+# STALPHCR, not the bank's STALP, is the primary comparison: a bank subsidiary
+# is routinely chartered away from its parent (JPMorgan Chase Bank NA is OHIO,
+# U.S. Bank NA is OHIO, Wells Fargo Bank NA and Citibank NA are SOUTH DAKOTA),
+# so comparing the SEC registrant to the bank's charter state alone flags 23 of
+# 301 — all legitimate. Comparing holdco-to-holdco flags 12.
+#
+# STALP is kept as a fallback escape for the "high holder above the listed
+# entity" pattern the name tell already knows: when the HCR is a union, trust,
+# or family LLC sitting a tier above the registrant, its state is that entity's
+# (AMAL's high holder is WORKERS UNITED, PA; MCHB's is a Texas trust) while the
+# bank itself sits in the registrant's state. Bank-state agreement corroborates.
+_STATE_VERIFIED_OK: dict[str, int] = {
+    # SEC business address is the registrant's LAW FIRM (Stevens & Lee,
+    # Reading PA) and it incorporated in PA; the bank, the high holder
+    # (PRINCETON BCORP INC) and $2.25B of assets are all unambiguously the
+    # right entity, matching the registrant to the dollar.
+    "BPRN": 58513,
+    # Broadway Financial (Los Angeles) merged into City First (2021); the
+    # surviving bank IS City First Bank NA in Washington DC and the high
+    # holder is still recorded as CITY FIRST ENTERPRISES INC. Registrant
+    # address CA, bank DC, assets match to 1%. Fails the name tell too.
+    "BYFC": 34352,
+}
+
+# ── Third key: SIZE ────────────────────────────────────────────────────────
+# A single-bank holding company's sub carries substantially all of its assets,
+# so a holdco many times larger than the cert it claims is a wrong join. The
+# 2026-07-16 sweep (53aab80) found 14 wrong entities this way; every one was a
+# same-name bank in the wrong state, and the smallest gap among them was ~4x.
+# The threshold is 4x rather than the ~100x an $88M-vs-$35B case suggests:
+# 100x would have caught only 2 of those 14 (CBSH 400x, HOPE 217x) and none of
+# the FDBC/LSBK class, which are wrong by identity at ~1x size.
+#
+# Genuine multi-bank holdcos legitimately hold a fraction of assets in any one
+# charter (WTFC has 15 bank subs, MS 2). They are not allowlisted by hand —
+# FDIC's own HCTMULT flag ("member of a multibank holding company") identifies
+# them, so the escape self-maintains as holdcos consolidate charters.
+_SIZE_GAP_X = 4.0
+
 _SEC_STATE_SUFFIX_RE = re.compile(r"/[A-Z]{2,3}/?\s*$")
+
+
+def _sec_states(profile: dict) -> set[str]:
+    """The states the SEC registrant claims: business address + state of
+    incorporation. Either agreeing is enough — holdcos incorporate in DE/MD
+    while operating elsewhere, and both codes appear in FDIC's STALPHCR."""
+    if not profile:
+        return set()
+    return {s for s in ((profile.get("hq_state") or "").strip().upper(),
+                        (profile.get("state_of_incorp") or "").strip().upper())
+            if s}
+
+
+def _state_corroborates(profile: dict, rec: dict) -> bool:
+    """True when the FDIC record's geography agrees with the SEC registrant.
+    Unknown on either side is not evidence of a wrong join — only a positive
+    disagreement counts (a missing state must never manufacture a finding)."""
+    states = _sec_states(profile)
+    if not states:
+        return True
+    hcr_state = (rec.get("STALPHCR") or "").strip().upper()
+    bank_state = (rec.get("STALP") or "").strip().upper()
+    if not hcr_state and not bank_state:
+        return True
+    if hcr_state and hcr_state in states:
+        return True
+    # High-holder-above-the-registrant: the HCR's state is the controlling
+    # entity's, but the bank itself sits where the registrant does.
+    return bool(bank_state and bank_state in states)
+
+
+def _size_gap(profile: dict, rec: dict) -> float | None:
+    """holdco_assets / sub_assets, or None when not comparable. FDIC ASSET is
+    $thousands (the units contract); SEC Assets is raw dollars."""
+    sec_assets = profile.get("assets") if profile else None
+    fdic_assets = rec.get("ASSET")
+    if not sec_assets or not fdic_assets:
+        return None
+    sub = float(fdic_assets) * 1000.0
+    if sub <= 0 or float(sec_assets) <= 0:
+        return None
+    return float(sec_assets) / sub
 
 
 def _hcr_tokens(name: str) -> list[str]:
@@ -859,16 +967,32 @@ def _names_corroborate(sec_name: str, hcr: str, bank_name: str = "") -> bool:
 
 
 def namehcr_flags(snapshot: dict[str, dict],
-                  fdic_records: dict[int, dict]) -> dict[str, list]:
+                  fdic_records: dict[int, dict],
+                  sec_profiles: dict[int, dict] | None = None) -> dict[str, list]:
     """Pure integrity check of a built snapshot against pre-fetched FDIC
-    institution records ({cert: {"NAME":…, "NAMEHCR":…}}). Returns:
+    institution records ({cert: {"NAME":…, "NAMEHCR":…, "STALP":…,
+    "STALPHCR":…, "HCTMULT":…, "ASSET":…}}) and, when available, SEC profiles
+    ({cik: {"hq_state":…, "state_of_incorp":…, "assets":…}}). Returns:
       • "mismatch": [(ticker, cert, sec_name, hcr, bank_name)] — NAMEHCR (and
         the bank's own name) fail to corroborate the SEC registrant;
+      • "state": [(ticker, cert, sec_states, hcr_state, bank_state, bank_name)]
+        — the second identity key: neither the high holder's state nor the
+        bank's own agrees with the registrant. Catches the identical-NAMEHCR
+        twins the name tell affirms (CBSH/1374, FDBC/30895);
+      • "size": [(ticker, cert, gap, sec_assets, sub_assets, bank_name)] — the
+        holdco is _SIZE_GAP_X+ times its claimed sub and is not a multibank
+        holdco (an $88M bank cannot be a $35B registrant's only charter);
       • "dup_cert": [(cert, [tickers])] — one cert claimed by 2+ tickers that
         are neither same-CIK nor same-name share-class siblings;
       • "missing": [(ticker, cert)] — cert absent from the ACTIVE-institution
-        records (acquired/closed → the MCBI-class staleness signal)."""
-    out: dict[str, list] = {"mismatch": [], "dup_cert": [], "missing": []}
+        records (acquired/closed → the MCBI-class staleness signal).
+
+    sec_profiles omitted (or a ticker's CIK absent from it, as with every
+    FDIC-only §12(i) bank) runs the name/dup/missing tells alone — the state
+    and size keys need a live SEC side to compare against."""
+    out: dict[str, list] = {"mismatch": [], "state": [], "size": [],
+                            "dup_cert": [], "missing": []}
+    sec_profiles = sec_profiles or {}
 
     by_cert: dict[int, list[str]] = {}
     for t, v in sorted(snapshot.items()):
@@ -888,13 +1012,27 @@ def namehcr_flags(snapshot: dict[str, dict],
         if rec is None:
             out["missing"].append((t, cert))
             continue
-        if _NAMEHCR_VERIFIED_OK.get(t) == cert:
-            continue
         sec_name = v.get("name") or ""
         hcr = rec.get("NAMEHCR") or ""
         bank = rec.get("NAME") or ""
-        if not _names_corroborate(sec_name, hcr, bank):
+        if (_NAMEHCR_VERIFIED_OK.get(t) != cert
+                and not _names_corroborate(sec_name, hcr, bank)):
             out["mismatch"].append((t, cert, sec_name, hcr, bank))
+
+        profile = sec_profiles.get(int(v["cik"])) if v.get("cik") else None
+        if not profile:
+            continue
+        if (_STATE_VERIFIED_OK.get(t) != cert
+                and not _state_corroborates(profile, rec)):
+            out["state"].append((t, cert, sorted(_sec_states(profile)),
+                                 rec.get("STALPHCR") or "", rec.get("STALP") or "",
+                                 bank))
+        gap = _size_gap(profile, rec)
+        # HCTMULT: FDIC's own "member of a multibank holding company" flag —
+        # those holdcos hold assets across charters this cert cannot account for.
+        if (gap and gap >= _SIZE_GAP_X and str(rec.get("HCTMULT") or "") != "1"):
+            out["size"].append((t, cert, gap, profile.get("assets"),
+                                float(rec["ASSET"]) * 1000.0, bank))
 
     for cert, tickers in sorted(by_cert.items()):
         if len(tickers) < 2:
@@ -910,7 +1048,8 @@ def namehcr_flags(snapshot: dict[str, dict],
 
 
 def fetch_fdic_records_for_certs(certs: list[int]) -> dict[int, dict]:
-    """Batched FDIC institutions lookup: {cert: {"NAME", "NAMEHCR"}}. ~7 calls
+    """Batched FDIC institutions lookup: {cert: {"NAME", "NAMEHCR", "STALP",
+    "STALPHCR", "HCTMULT", "ASSET"}} — the name, state and size keys. ~10 calls
     for the full universe (50 certs per OR-filter query). Raises on HTTP
     failure — the caller treats that as 'guard skipped', never a job failure."""
     records: dict[int, dict] = {}
@@ -920,7 +1059,8 @@ def fetch_fdic_records_for_certs(certs: list[int]) -> dict[int, dict]:
         flt = "CERT:(" + " OR ".join(str(c) for c in chunk) + ")"
         resp = requests.get(
             "https://banks.data.fdic.gov/api/institutions",
-            params={"filters": flt, "fields": "NAME,CERT,NAMEHCR",
+            params={"filters": flt,
+                    "fields": "NAME,CERT,NAMEHCR,STALP,STALPHCR,HCTMULT,ASSET",
                     "limit": len(chunk)},
             timeout=30,
         )
@@ -931,24 +1071,74 @@ def fetch_fdic_records_for_certs(certs: list[int]) -> dict[int, dict]:
     return records
 
 
+# Instant frames to try, newest first: one request returns EVERY filer's total
+# assets for that quarter-end, so the whole universe's SEC side costs ~5 calls
+# instead of one per bank. Filers land in the frame matching their own period
+# end, so a short ladder covers off-cycle fiscal years.
+_ASSET_FRAMES = ("CY2026Q1I", "CY2025Q4I", "CY2025Q3I", "CY2025Q2I", "CY2025Q1I")
+
+
+def fetch_sec_profiles(ciks: list[int]) -> dict[int, dict]:
+    """{cik: {"hq_state", "state_of_incorp", "assets"}} for the state and size
+    keys. States come from EDGAR submissions (cached per CIK); total assets
+    from the XBRL frames ladder, deliberately NOT from the dashboard's own
+    fundamentals cache — a guard that reads the pipeline it is auditing would
+    corroborate the pipeline's own mistakes.
+
+    Raises on a frames HTTP failure (caller treats it as 'guard skipped'); a
+    single CIK's submissions failing is tolerated — it costs the state key for
+    that bank, not the run."""
+    from data.sec_client import get_filing_info
+
+    uniq = sorted({int(c) for c in ciks if c})
+    assets: dict[int, float] = {}
+    for frame in _ASSET_FRAMES:
+        resp = requests.get(
+            f"https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/{frame}.json",
+            headers=SEC_HEADERS, timeout=60,
+        )
+        resp.raise_for_status()
+        for row in resp.json().get("data", []):
+            assets.setdefault(int(row["cik"]), float(row["val"]))
+        time.sleep(0.15)
+
+    profiles: dict[int, dict] = {}
+    for cik in uniq:
+        try:
+            info = get_filing_info(cik, max_filings=1)
+        except Exception:  # noqa: BLE001 — one bank's states, not the run
+            info = {}
+        profiles[cik] = {
+            "hq_state": info.get("hq_state", ""),
+            "state_of_incorp": info.get("state_of_incorp", ""),
+            "assets": assets.get(cik),
+        }
+        time.sleep(0.1)
+    return profiles
+
+
 def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
     """Observe-only wrong-entity guard, run by jobs/refresh_universe after
     every snapshot rebuild. Prints loud [namehcr-guard] lines for anything a
     human should re-verify; NEVER raises and never fails the job — harden to a
     gate only after the nightly logs show a stable clean baseline."""
+    empty: dict[str, list] = {"mismatch": [], "state": [], "size": [],
+                              "dup_cert": [], "missing": []}
     try:
         certs = [int(v["fdic_cert"]) for v in snapshot.values()
                  if v.get("fdic_cert")]
         records = fetch_fdic_records_for_certs(certs)
-        flags = namehcr_flags(snapshot, records)
+        profiles = fetch_sec_profiles([v["cik"] for v in snapshot.values()
+                                       if v.get("cik") and v.get("fdic_cert")])
+        flags = namehcr_flags(snapshot, records, profiles)
     except Exception as e:  # noqa: BLE001 — observe-only by contract
         print(f"[namehcr-guard] skipped: {type(e).__name__}: {e}", flush=True)
-        return {"mismatch": [], "dup_cert": [], "missing": []}
+        return empty
 
     n = sum(len(v) for v in flags.values())
     if not n:
-        print(f"[namehcr-guard] OK — {len(certs)} cert joins corroborated, "
-              "no duplicate claims", flush=True)
+        print(f"[namehcr-guard] OK — {len(certs)} cert joins corroborated on "
+              "name, state and size; no duplicate claims", flush=True)
         return flags
     print(f"[namehcr-guard] ⚠️  {n} finding(s) — possible wrong-entity joins; "
           "verify each against FDIC NAMEHCR before trusting the numbers:",
@@ -956,6 +1146,15 @@ def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
     for t, cert, sec_name, hcr, bank in flags["mismatch"]:
         print(f"[namehcr-guard]   MISMATCH {t}: SEC='{sec_name}' vs cert {cert} "
               f"NAMEHCR='{hcr}' bank='{bank}'", flush=True)
+    for t, cert, states, hcr_state, bank_state, bank in flags["state"]:
+        print(f"[namehcr-guard]   STATE {t}: SEC registrant in {states or '?'} "
+              f"vs cert {cert} holdco state '{hcr_state}' / bank state "
+              f"'{bank_state}' ('{bank}') — same-name bank elsewhere?",
+              flush=True)
+    for t, cert, gap, sec_assets, sub_assets, bank in flags["size"]:
+        print(f"[namehcr-guard]   SIZE {t}: holdco ${(sec_assets or 0)/1e9:.2f}B "
+              f"is {gap:.0f}x cert {cert} '{bank}' (${sub_assets/1e9:.2f}B) and "
+              "it is not a multibank holdco", flush=True)
     for cert, tickers in flags["dup_cert"]:
         print(f"[namehcr-guard]   DUP-CERT {cert} claimed by {tickers} "
               "(a cert belongs to exactly one holdco)", flush=True)
