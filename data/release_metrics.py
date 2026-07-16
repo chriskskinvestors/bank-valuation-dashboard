@@ -612,8 +612,26 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
             tol = max(_AGREE_USD, 0.002 * max(vs)) if vs else 0
         else:
             tol = _AGREE_USD if kind == "$" else _AGREE_PCT
-        out[key] = vs[0] if vs and (max(vs) - min(vs)) <= tol else None
+            # Rounding-aware agreement: a headline table and a detail table
+            # print the SAME figure at different precision (CFG 2026-07-16:
+            # efficiency 61.1 vs 61.08 poisoned the key to None) — widen to
+            # the coarsest candidate's half-ULP. Same-precision candidates
+            # keep the strict tolerance, so a misaligned-column pair (3.17
+            # vs 3.22) still refuses.
+            if vs:
+                tol = max(tol, 0.5 * 10.0 ** -min(_dec(v) for v in vs))
+        if vs and (max(vs) - min(vs)) <= tol:
+            out[key] = max(vs, key=_dec)      # the most precise candidate
+        else:
+            out[key] = None
     return out
+
+
+def _dec(v: float) -> int:
+    """Printed decimal places of a parsed table value (61.1 → 1, 61.08 → 2).
+    repr() round-trips the short decimal strings these cells hold."""
+    s = repr(v)
+    return len(s.split(".", 1)[1]) if "." in s else 0
 
 
 def _prior_quarter_end(qend: str | None) -> str | None:
@@ -678,15 +696,17 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v12 (2026-07-16 pm): prose EPS accepts "per common share" + the
-    # OZK-style ~45-char parenthetical/period connector. v11 digit-free
+    # v13 (2026-07-16 pm): rounding-aware cross-table agreement — CFG's
+    # efficiency (61.1 headline vs 61.08 detail) poisoned to None under the
+    # strict tolerance. v12 prose EPS accepts "per common share" + the
+    # OZK-style ~45-char parenthetical/period connector; v11 digit-free
     # percent connector + bps value form; v10 the label-affirmation guard;
     # v9 the financial-supplement feed; v8 ordinal-quarter headers; v7 the
     # prose diluted-EPS spec; v6 the JPM/C table shapes; v5 the guarded-AI
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v12:{int(cik)}"
+    key = f"release_metrics:v13:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:

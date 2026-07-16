@@ -89,7 +89,8 @@ def render_transactions():
 # ── Transactions Summary ──────────────────────────────────────────────────
 
 def _deal_year(d: dict) -> int | None:
-    dt = d.get("completion_date") or d.get("termination_date") or ""
+    dt = (d.get("completion_date") or d.get("termination_date")
+          or d.get("announce_date") or "")   # pending deals: announce year
     try:
         return int(dt[:4])
     except (TypeError, ValueError):
@@ -533,7 +534,8 @@ def _render_comps():
                                                  "2015", "2020"],
                              index=0, key="comps_since")
     with fb:
-        status = st.selectbox("Status", ["All", "Completed", "Terminated"],
+        status = st.selectbox("Status",
+                              ["All", "Pending", "Completed", "Terminated"],
                               index=0, key="comps_status")
     with fc:
         overlay = st.selectbox(
@@ -664,6 +666,9 @@ def _render_comps():
         else:
             ann_cell = _h.escape(ann) if ann else "—"
         status_cell = ("Completed" if d["status"] == "completed" else
+                       '<span style="color:var(--warning,#d97706);'
+                       'font-weight:600;">Pending</span>'
+                       if d["status"] == "pending" else
                        '<span style="color:var(--danger,#dc2626);'
                        'font-weight:600;">Terminated</span>')
         p = d.get("p_tbv")
@@ -780,7 +785,7 @@ def _load_deals(ticker: str):
     with st.spinner("Assembling deal history — first load pulls FDIC "
                     "structure records and EDGAR announcement filings "
                     "(cached 7 days)…"):
-        deals = get_ma_history(cert, cik=cik)
+        deals = get_ma_history(cert, cik=cik, name=get_name(ticker) or ticker)
     return deals, cert, cik
 
 
@@ -812,8 +817,10 @@ def _render_ma_history():
     acq = [d for d in completed if d["direction"] == "acquisition"]
     branch = [d for d in completed if d["deal_kind"] == "branch"]
     terminated = [d for d in deals if d["status"] == "terminated"]
+    pending = [d for d in deals if d["status"] == "pending"]
     pill_row([
         stat_pill("DEALS", f"{len(deals):,}"),
+        stat_pill("PENDING", f"{len(pending):,}"),
         stat_pill("COMPLETED ACQUISITIONS", f"{len(acq):,}"),
         stat_pill("BRANCH DEALS", f"{len(branch):,}"),
         stat_pill("TERMINATED", f"{len(terminated):,}"),
@@ -855,6 +862,10 @@ def _deal_cells(d: dict) -> tuple[str, str, str, str, str]:
                   f' title="Terminated {_h.escape(d["termination_date"] or "")}">'
                   "Terminated</span>")
         completed_cell = _h.escape(d["termination_date"] or "—")
+    elif d["status"] == "pending":
+        status = ('<span style="color:var(--warning,#d97706);'
+                  'font-weight:600;">Pending</span>')
+        completed_cell = "—"
     else:
         status = "Completed"
         completed_cell = _h.escape(d["completion_date"] or "—")

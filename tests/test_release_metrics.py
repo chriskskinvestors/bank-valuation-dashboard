@@ -69,6 +69,31 @@ class TestPercentMetrics(unittest.TestCase):
               "loans, annualized.</p>")
         self.assertEqual(m["nco_ratio"], 0.25)
 
+    def test_rounded_duplicates_across_tables_agree(self):
+        """CFG 2026-07-16: efficiency printed 61.1 in the headline table and
+        61.08 in the detail table — the bank's own rounding must corroborate
+        (most precise value wins), never poison the key to None."""
+        from data.release_metrics import extract_table_metrics
+        t1 = ("<table><tr><td>x</td><td>2Q26</td><td>1Q26</td><td>2Q25</td></tr>"
+              "<tr><td>Efficiency ratio</td><td>61.1</td><td>63.6</td>"
+              "<td>64.8</td></tr></table>")
+        t2 = ("<table><tr><td>x</td><td>2Q26</td><td>1Q26</td><td>2Q25</td></tr>"
+              "<tr><td>Efficiency ratio</td><td>61.08 %</td><td>63.55 %</td>"
+              "<td>64.76 %</td></tr></table>")
+        m = extract_table_metrics(t1 + t2, "2026-06-30")
+        self.assertEqual(m["efficiency"], 61.08)
+
+    def test_same_precision_conflict_still_refuses(self):
+        from data.release_metrics import extract_table_metrics
+        t1 = ("<table><tr><td>x</td><td>2Q26</td><td>1Q26</td></tr>"
+              "<tr><td>Net interest margin</td><td>3.17 %</td><td>3.22 %</td>"
+              "</tr></table>")
+        t2 = ("<table><tr><td>x</td><td>2Q26</td><td>1Q26</td></tr>"
+              "<tr><td>Net interest margin</td><td>3.22 %</td><td>3.17 %</td>"
+              "</tr></table>")
+        m = extract_table_metrics(t1 + t2, "2026-06-30")
+        self.assertIsNone(m["nim"])
+
     def test_bps_narrated_level_is_parsed(self):
         """CFG live 2026-07-16: 'net charge-offs of 37 bps, down 2 bps QoQ ■
         Strong ACL coverage of 1.48%' shipped NCOs of 1.48% — the connector
