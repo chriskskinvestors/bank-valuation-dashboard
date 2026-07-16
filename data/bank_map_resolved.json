@@ -649,8 +649,8 @@
  },
  "CPBI": {
   "cik": 1979332,
-  "fdic_cert": 18118,
-  "fdic_score": 0.5,
+  "fdic_cert": 29476,
+  "fdic_score": 1.0,
   "name": "Central Plains Bancshares"
  },
  "CPF": {
@@ -667,7 +667,7 @@
  },
  "CSBB": {
   "cik": 880417,
-  "fdic_cert": 23257,
+  "fdic_cert": 9139,
   "fdic_score": 1.0,
   "name": "CSB Bancorp"
  },
@@ -997,8 +997,8 @@
  },
  "FDBC": {
   "cik": 1098151,
-  "fdic_cert": 30895,
-  "fdic_score": 0.5,
+  "fdic_cert": 11868,
+  "fdic_score": 1.0,
   "name": "Fidelity D & D Bancorp"
  },
  "FDSB": {
@@ -1357,9 +1357,9 @@
  },
  "FUSB": {
   "cik": 717806,
-  "fdic_cert": 1867,
-  "fdic_score": 0.5,
-  "name": "United Security Bancshares"
+  "fdic_cert": 17077,
+  "fdic_score": 1.0,
+  "name": "First US Bancshares"
  },
  "FVCB": {
   "cik": 1675644,
@@ -1753,8 +1753,8 @@
  },
  "LSBK": {
   "cik": 2059653,
-  "fdic_cert": 13058,
-  "fdic_score": 0.67,
+  "fdic_cert": 30530,
+  "fdic_score": 1.0,
   "name": "Lake Shore Bancorp"
  },
  "LUMB": {
@@ -2047,8 +2047,8 @@
  },
  "NWPP": {
   "cik": 1163389,
-  "fdic_cert": 16152,
-  "fdic_score": 0.5,
+  "fdic_cert": 34890,
+  "fdic_score": 1.0,
   "name": "New Peoples Bankshares"
  },
  "OAKC": {
@@ -2581,7 +2581,7 @@
  },
  "STLE": {
   "cik": 779227,
-  "fdic_cert": 9967,
+  "fdic_cert": 10685,
   "fdic_score": 1.0,
   "name": "Steele Bancorp"
  },

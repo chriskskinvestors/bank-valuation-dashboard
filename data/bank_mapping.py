@@ -113,7 +113,13 @@ BANK_MAP = {
     "LYBC":    {"name": "Lyons Bancorp Inc.",                            "fdic_cert": 7151,   "cik": None},
     "BKGM":    {"name": "BankGuam Holding Co.",                          "fdic_cert": 20884,  "cik": None},
     "PLQC":    {"name": "Plains Acquisition Corporation",                "fdic_cert": 17739,  "cik": None},
-    "PFLC":    {"name": "Pacific Financial Corporation",                 "fdic_cert": 17308,  "cik": None},
+    # cert 17308 is CENTRAL Pacific Bank (Honolulu, $7.49B) — CPF's sub, not
+    # PFLC's. The §12(i) sweep matched on holding-company name alone and
+    # "PACIFIC FINANCIAL CORP" is a substring of "CENTRAL PACIFIC FINANCIAL
+    # CORP". Until 53aab80 moved CPF onto its own cert the two were exactly
+    # SWAPPED (CPF held 23041), so not even the duplicate-cert tell fired.
+    # Real sub = Bank of the Pacific, Aberdeen WA, hcr PACIFIC FINANCIAL CORP.
+    "PFLC":    {"name": "Pacific Financial Corporation",                 "fdic_cert": 23041,  "cik": None},
     "MNAT":    {"name": "Marquette National Corporation",                "fdic_cert": 16250,  "cik": None},
     "SBKO":    {"name": "Summit Bank Group, Inc.",                       "fdic_cert": 57706,  "cik": None},
     "UBAB":    {"name": "United Bancorporation of Alabama, Inc.",        "fdic_cert": 58,     "cik": None},
