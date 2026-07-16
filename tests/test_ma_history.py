@@ -184,7 +184,7 @@ class TestWholeCompanyDeals(_AnnPatched):
         self.assertEqual(fin_call[0][1]["limit"], 1)
         # Cached under the documented key.
         key, payload = mock_cput.call_args[0]
-        self.assertEqual(key, f"ma_history:v8:{UMPQUA}:0")
+        self.assertEqual(key, f"ma_history:v9:{UMPQUA}:0")
         self.assertEqual(payload["deals"], deals)
 
     @patch("data.cache.put")
@@ -459,7 +459,7 @@ class TestTerminatedDeals(_AnnPatched):
         self.assertEqual(self.mock_term.call_args[0][1], "Umpqua Bank")
         # CIK-scoped cache key.
         self.assertEqual(mock_cput.call_args[0][0],
-                         f"ma_history:v8:{UMPQUA}:36966")
+                         f"ma_history:v9:{UMPQUA}:36966")
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)
@@ -534,6 +534,27 @@ class TestPendingDeals(_AnnPatched):
         deals = ma_history.get_ma_history(UMPQUA, cik=36377)
         self.assertEqual(len(deals), 1)
         self.assertEqual(deals[0]["status"], "completed")
+
+    @patch("data.cache.put")
+    @patch("data.cache.get", return_value=None)
+    @patch("data.http.get_with_retry")
+    def test_pending_deduped_tokenless_leading_words(self, mock_get, _cg, _cp):
+        # PB/American class (the rebuild's second net): every token in
+        # "American Bank Holding Company" is generic, so brand-token dedup
+        # can't fire — FDIC records the completion as "American Bank,
+        # National Association" and the leading-two-words match must retire
+        # the pending twin (Prosperity closed it 2026-01-01 with NO 2.01
+        # anywhere, live-verified 2026-07-16).
+        from data import ma_history
+        self.mock_pend.return_value = ([dict(
+            self.PENDING, counterparty_name="American Bank Holding Company",
+            counterparty_cert=None, announce_date="2025-07-18")], True)
+        mock_get.side_effect = _route(
+            structure=[_merger_row("2026-01-01", 20241,
+                                   "American Bank, National Association")],
+            fin={20241: [_fin_row(20241, "20251231", 2_500_000)]})
+        deals = ma_history.get_ma_history(UMPQUA, cik=36377)
+        self.assertEqual([d["status"] for d in deals], ["completed"])
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)

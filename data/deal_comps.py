@@ -183,7 +183,16 @@ def build_comps_snapshot(banks: list[dict]) -> dict | None:
         cert, cik = b.get("cert"), b.get("cik")
         if not cert:
             continue
-        deals = get_ma_history(cert, cik=cik, name=b.get("name"))
+        # Guard per-bank like the nightly job's walk loop does — an EDGAR
+        # throw inside one bank's ma_history must not abort the whole
+        # snapshot (an un-guarded call here crashed refresh-deal-comps).
+        try:
+            deals = get_ma_history(cert, cik=cik, name=b.get("name"))
+        except Exception as e:
+            print(f"[deal_comps] {b.get('ticker')}: "
+                  f"{type(e).__name__}: {e} — skipped")
+            lookups_ok = False
+            continue
         if not deals:
             continue
         covered += 1

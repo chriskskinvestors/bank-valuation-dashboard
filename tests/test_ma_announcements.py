@@ -675,5 +675,160 @@ class TestDocNegativeCache(unittest.TestCase):
             self.assertEqual(mock_get.call_count, 2)
 
 
+class TestCleanCompanyName(unittest.TestCase):
+    """Pins the 'About X. X' footer run-on fix (live: HOPE's ticker pair
+    captured 'About Territorial Bancorp Inc. Territorial Bancorp Inc.' and
+    the first repair mangled 'Heartland Financial USA, Inc.' to 'USA, Inc'
+    — every case below is a real capture from 2026-07-16 verification)."""
+
+    def test_ground_truth_cases(self):
+        from data.ma_announcements import _clean_company_name
+        cases = [
+            ("About Catalyst Bancorp, Inc. Catalyst Bancorp, Inc.",
+             "Catalyst Bancorp, Inc"),
+            ("About Territorial Bancorp Inc. Territorial Bancorp Inc.",
+             "Territorial Bancorp Inc"),
+            ("TBNK About Hope Bancorp, Inc. Hope Bancorp, Inc.",
+             "Hope Bancorp, Inc"),
+            ("Heartland Financial USA, Inc.", "Heartland Financial USA, Inc"),
+            ("U.S. Bancorp", "U.S. Bancorp"),
+            ("Lakeside Bancshares, Inc", "Lakeside Bancshares, Inc"),
+            ("Lakeside", "Lakeside"),
+            ("First Hawaiian, Inc.", "First Hawaiian, Inc"),
+            ("American Bank Holding Company", "American Bank Holding Company"),
+        ]
+        for raw, want in cases:
+            self.assertEqual(_clean_company_name(raw), want, raw)
+
+
+# CLST/Lakeside-style pure-cash announcement (live-verified 2026-04-08): a
+# PRIVATE target (no ticker pair for it), the filer's own "(Nasdaq: CLST)"
+# boilerplate as the ONLY ticker pair — polluted with the "About X. X"
+# footer run-on — and headline full name vs body short name.
+CASH_PR = (
+    "Catalyst Bancorp, Inc. Announces Agreement to Acquire Lakeside "
+    "Bancshares, Inc. Catalyst has entered into a definitive agreement "
+    "under which Catalyst will acquire Lakeside Bancshares, Inc. and its "
+    "wholly-owned subsidiary Lakeside Bank. The acquisition of Lakeside "
+    "in an all-cash transaction is valued at $41.1 million in aggregate. "
+    "About Catalyst Bancorp, Inc. Catalyst Bancorp, Inc. (Nasdaq: CLST) "
+    "is the parent company of Catalyst Bank.")
+
+
+class TestFindOpenAnnouncements(unittest.TestCase):
+    """The cash-deal pending CANDIDATE leg. These are candidates only — the
+    open-status gate lives in ma_pending.find_pending_deals — but the leg
+    itself pins: the self-as-counterparty bug (empty subject_name + the
+    filer's own boilerplate ticker pair), footer-run-on name cleaning, the
+    2.01-group exclusion (a completion 8-K with items {2.01, 8.01} must not
+    classify as an announcement — the UMB/Heartland leak), and never-guess
+    strictness."""
+
+    def _run(self, pr_text, subject_name="", items=None):
+        import datetime as _dt
+
+        class _FakeDate(_dt.date):
+            @classmethod
+            def today(cls):
+                return _dt.date.fromisoformat("2026-07-16")
+
+        hits = [_hit("0001-26-5", "2026-04-08", "clst8k.htm",
+                     file_type="8-K", cik="0001849867",
+                     items=items or ["1.01", "7.01", "9.01"],
+                     display_names=["Catalyst Bancorp, Inc.  (CLST)  "
+                                    "(CIK 0001849867)"])]
+        with patch("data.ma_announcements.requests.get",
+                   return_value=_efts_resp(hits)), \
+             patch("data.ma_announcements._accession_text",
+                   return_value=(pr_text, True)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None), \
+             patch("data.ma_announcements.date", _FakeDate):
+            from data.ma_announcements import find_open_announcements
+            return find_open_announcements(1849867, subject_name)
+
+    def test_private_target_full_name_never_self(self):
+        # Empty subject_name = the live self-as-counterparty trigger.
+        rows, ok = self._run(CASH_PR, subject_name="")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["counterparty_name"], "Lakeside Bancshares, Inc")
+        self.assertNotIn("atalyst", r["counterparty_name"])
+        self.assertEqual(r["direction"], "acquisition")
+        self.assertEqual(r["announce_date"], "2026-04-08")
+        self.assertEqual(r["value_usd"], 41_100_000)
+        self.assertEqual(r["value_basis"], "stated")
+
+    def test_with_subject_name_same_result(self):
+        rows, ok = self._run(CASH_PR, subject_name="Catalyst Bank")
+        self.assertTrue(ok)
+        self.assertEqual([r["counterparty_name"] for r in rows],
+                         ["Lakeside Bancshares, Inc"])
+
+    def test_completion_201_group_never_a_candidate(self):
+        # UMB/Heartland class: the completion 8-K carries 8.01 ALONGSIDE its
+        # 2.01 and previously classified as an announcement. Zero rows AND
+        # zero document fetches.
+        with patch("data.ma_announcements._accession_text") as mock_text:
+            import datetime as _dt
+
+            class _FakeDate(_dt.date):
+                @classmethod
+                def today(cls):
+                    return _dt.date.fromisoformat("2026-07-16")
+
+            hits = [_hit("0001-26-5", "2026-04-08", "close8k.htm",
+                         file_type="8-K", cik="0001849867",
+                         items=["2.01", "8.01", "9.01"])]
+            with patch("data.ma_announcements.requests.get",
+                       return_value=_efts_resp(hits)), \
+                 patch("data.ma_announcements.time.sleep", lambda *_: None), \
+                 patch("data.ma_announcements.date", _FakeDate):
+                from data.ma_announcements import find_open_announcements
+                rows, ok = find_open_announcements(1849867, "Catalyst Bank")
+        self.assertEqual(rows, [])
+        self.assertTrue(ok)
+        mock_text.assert_not_called()
+
+    def test_ticker_pair_footer_runon_cleaned(self):
+        # HOPE class: the counterparty ticker pair's captured name is the
+        # "About X. X" footer run-on — the emitted name must be clean.
+        pr = ("Hope Bancorp, Inc. and Territorial Bancorp Inc. today "
+              "announced a definitive agreement under which Hope will "
+              "acquire Territorial Bancorp Inc. in an all-stock "
+              "transaction. Territorial shareholders will receive shares. "
+              "About Territorial Bancorp Inc. Territorial Bancorp Inc. "
+              "(NASDAQ: TBNK) is the holding company of Territorial "
+              "Savings Bank.")
+        import datetime as _dt
+
+        class _FakeDate(_dt.date):
+            @classmethod
+            def today(cls):
+                return _dt.date.fromisoformat("2026-07-16")
+
+        hits = [_hit("0001-26-7", "2026-04-08", "hope8k.htm",
+                     file_type="8-K", cik="0001128361",
+                     items=["1.01", "9.01"],
+                     display_names=["Hope Bancorp, Inc.  (HOPE)  "
+                                    "(CIK 0001128361)"])]
+        with patch("data.ma_announcements.requests.get",
+                   return_value=_efts_resp(hits)), \
+             patch("data.ma_announcements._accession_text",
+                   return_value=(pr, True)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None), \
+             patch("data.ma_announcements.date", _FakeDate):
+            from data.ma_announcements import find_open_announcements
+            rows, ok = find_open_announcements(1128361, "Bank of Hope")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["counterparty_name"],
+                         "Territorial Bancorp Inc")
+
+    def test_no_cik_returns_empty(self):
+        from data.ma_announcements import find_open_announcements
+        self.assertEqual(find_open_announcements(None, "X"), ([], True))
+
+
 if __name__ == "__main__":
     unittest.main()

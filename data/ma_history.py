@@ -56,6 +56,7 @@ later lever if that bites.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from data.fdic_structure import (
@@ -238,9 +239,10 @@ def get_ma_history(cert: int, cik: int | None = None,
     cert = int(cert)
     from data import cache
 
-    # v8: cash-deal pending leg (2026-07-14). The key carries the
-    # holdco CIK because the terminated leg only runs when one is supplied.
-    key = f"ma_history:v8:{cert}:{int(cik) if cik else 0}"
+    # v9: pending rows gated by open-status verification (2026-07-15 rebuild
+    # — v8 shipped closed deals as pending). The key carries the holdco CIK
+    # because the pending/terminated legs only run when one is supplied.
+    key = f"ma_history:v9:{cert}:{int(cik) if cik else 0}"
     cached = cache.get(key)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
@@ -405,22 +407,38 @@ def get_ma_history(cert: int, cik: int | None = None,
                 "termination_date": t["termination_date"],
             })
 
-    # PENDING deals (announced, no completion/termination anchor yet — the
-    # Rule 425 episode leg; live case FHB/TriCo 2026-07-13). Deduped against
-    # rows the other legs already carry: a completed deal whose counterparty
-    # brand token matches on/after the announce date, or any terminated row
-    # with the same counterparty token.
+    # PENDING deals (announced, not yet completed/terminated; both legs of
+    # data/ma_pending, each already gated by the SEC open-status check).
+    # SECOND NET — the FDIC structure record is the authoritative completion
+    # source and catches closes the SEC net can miss (a filer that never
+    # files a 2.01: live case Prosperity/American Bank closed 2026-01-01
+    # with no 2.01 anywhere). A pending row whose counterparty matches a
+    # completed row on/after its announce date, or any terminated row, is
+    # owned by that leg and dropped. Matching: brand token when one exists,
+    # else the leading two words (case-folded — "American Bank Holding
+    # Company" vs FDIC's "American Bank, National Association"); a false
+    # positive here hides an open deal (safe), never shows a closed one.
     if cik:
         from data.ma_announcements import brand_token, token_in
         from data.ma_pending import find_pending_deals
         pending, pd_ok = find_pending_deals(cik, subject_name)
         cache_ok = cache_ok and pd_ok
+
+        def _lead_words(name: str) -> str:
+            return " ".join(re.findall(r"[a-z0-9&']+", (name or "").lower())[:2])
+
+        def _same_counterparty(pending_name: str, deal_name: str) -> bool:
+            tok = brand_token(pending_name or "")
+            if tok:
+                return token_in(tok, (deal_name or "").lower())
+            lead = _lead_words(pending_name)
+            return bool(lead) and lead == _lead_words(deal_name)
+
         for pr in pending:
-            tok = brand_token(pr["counterparty_name"] or "")
             owned = False
             for d in deals:
-                nm = ((d.get("counterparty") or {}).get("name") or "").lower()
-                if not token_in(tok, nm):
+                nm = (d.get("counterparty") or {}).get("name") or ""
+                if not _same_counterparty(pr["counterparty_name"], nm):
                     continue
                 if d["status"] == "terminated":
                     owned = True
