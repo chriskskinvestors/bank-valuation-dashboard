@@ -1793,6 +1793,12 @@
   "fdic_score": 1.0,
   "name": "Prosperity Bancshares"
  },
+ "PBAM": {
+  "cik": null,
+  "fdic_cert": 58291,
+  "fdic_score": 1.0,
+  "name": "Private Bancorp of America"
+ },
  "PBFS": {
   "cik": 1769663,
   "fdic_cert": 6913,
