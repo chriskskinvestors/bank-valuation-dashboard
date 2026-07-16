@@ -139,6 +139,19 @@ class TestGuards(unittest.TestCase):
         ], doc)
         self.assertEqual(out["cur"], {})
 
+    def test_point_first_print_is_evidence(self):
+        """CBSH 2026-07-16: '.19%' (no leading zero) must evidence 0.19 —
+        but never as the tail of a larger number ('3.19%' is not 0.19)."""
+        doc = ("net loan charge-offs to average loans was .19% here while "
+               "gross charge-offs reached 3.19% there")
+        ok = guard_items([item("nco_ratio", "cur", 0.19,
+                               "net loan charge-offs to average loans was .19%")],
+                         doc)
+        self.assertEqual(ok["cur"], {"nco_ratio": 0.19})
+        bad = guard_items([item("nco_ratio", "cur", 0.19,
+                                "gross charge-offs reached 3.19% there")], doc)
+        self.assertEqual(bad["cur"], {})
+
     def test_unknown_key_or_period_ignored(self):
         out = g([item("nii", "cur", 5.0, "net interest margin was 4.56%,"),
                  item("nim", "ytd", 4.56, "net interest margin was 4.56%,")])
@@ -234,7 +247,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
         if ai_state is not None:
             value["ai_state"] = ai_state
             value["ai_attempts"] = attempts
-        self.store[f"release_metrics:v13:{1}"] = {
+        self.store[f"release_metrics:v14:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):

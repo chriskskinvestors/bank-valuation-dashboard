@@ -198,9 +198,9 @@
   "name": "BayCom"
  },
  "BCOW": {
-  "cik": 1847360,
+  "cik": null,
   "fdic_cert": 29120,
-  "fdic_score": 0.67,
+  "fdic_score": 1.0,
   "name": "1895 Bancorp of Wisconsin"
  },
  "BCSO": {
@@ -210,7 +210,7 @@
   "name": "Bancorp Of Southern Indiana"
  },
  "BCTF": {
-  "cik": 1668340,
+  "cik": null,
   "fdic_cert": 29087,
   "fdic_score": 1.0,
   "name": "Bancorp 34"
@@ -481,8 +481,8 @@
  },
  "CBSH": {
   "cik": 22356,
-  "fdic_cert": 1374,
-  "fdic_score": 0.5,
+  "fdic_cert": 24998,
+  "fdic_score": 1.0,
   "name": "Commerce Bancshares"
  },
  "CBU": {
@@ -574,6 +574,12 @@
   "fdic_cert": 12982,
   "fdic_score": 1.0,
   "name": "Civista Bancshares"
+ },
+ "CIZN": {
+  "cik": null,
+  "fdic_cert": 12204,
+  "fdic_score": 1.0,
+  "name": "Citizens Holding Co"
  },
  "CLBK": {
   "cik": 1723596,
@@ -1378,12 +1384,6 @@
   "fdic_cert": 58626,
   "fdic_score": 1.0,
   "name": "GBank Financial Holdings"
- },
- "GBNY": {
-  "cik": 1823365,
-  "fdic_cert": 16040,
-  "fdic_score": 0.67,
-  "name": "Generations Bancorp NY"
  },
  "GCBC": {
   "cik": 1070524,
@@ -2713,7 +2713,7 @@
  },
  "UBOH": {
   "cik": null,
-  "fdic_cert": 22858,
+  "fdic_cert": 12969,
   "fdic_score": 1.0,
   "name": "United Bancshares"
  },
@@ -2850,9 +2850,9 @@
   "name": "Valley National Bancorp"
  },
  "VWFB": {
-  "cik": 1913838,
+  "cik": null,
   "fdic_cert": 29495,
-  "fdic_score": 0.5,
+  "fdic_score": 1.0,
   "name": "VWF Bancorp"
  },
  "WABC": {

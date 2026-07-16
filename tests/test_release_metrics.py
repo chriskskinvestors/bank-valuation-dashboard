@@ -94,6 +94,22 @@ class TestPercentMetrics(unittest.TestCase):
         m = extract_table_metrics(t1 + t2, "2026-06-30")
         self.assertIsNone(m["nim"])
 
+    def test_point_first_decimals_parse(self):
+        """CBSH 2026-07-16: ratios printed WITHOUT a leading zero (".19%") —
+        the leading-digit-only pattern was blind to the bank's entire number
+        style (NCO current blank while the release stated it plainly)."""
+        m = x("<p>The ratio of annualized net loan charge-offs to average "
+              "loans was .19% in the current quarter.</p>")
+        self.assertEqual(m["nco_ratio"], 0.19)
+
+    def test_point_first_table_cells_parse(self):
+        from data.release_metrics import extract_table_metrics
+        t = ("<table><tr><td>x</td><td>2Q26</td><td>1Q26</td></tr>"
+             "<tr><td>Net charge-off ratio</td><td>.19 %</td><td>.30 %</td>"
+             "</tr></table>")
+        self.assertEqual(extract_table_metrics(t, "2026-06-30")["nco_ratio"],
+                         0.19)
+
     def test_bps_narrated_level_is_parsed(self):
         """CFG live 2026-07-16: 'net charge-offs of 37 bps, down 2 bps QoQ ■
         Strong ACL coverage of 1.48%' shipped NCOs of 1.48% — the connector

@@ -45,7 +45,10 @@ import re
 _VERB = r"(?:ratio\s+)?(?::\s*|\b(?:of|was|were|at|to|or|" \
         r"ended (?:the (?:quarter|year) )?at|" \
         r"(?:in|de)creased to|improved to|expanded to|contracted to|declined to)\s+)"
-_NUM = r"(\d{1,2}(?:\.\d{1,2})?)"
+# Point-first decimals included: CBSH prints ratios without a leading zero
+# (".19%", ".94%") — a leading-digit-only pattern is blind to the bank's
+# entire number style (caught live 2026-07-16).
+_NUM = r"(\d{1,2}(?:\.\d{1,2})?|\.\d{1,2})"
 
 _PCT_SPECS = {
     "nim": (r"net interest margin", (0.5, 8.0)),
@@ -58,7 +61,7 @@ _PCT_SPECS = {
     "rotce": (r"return on (?:average )?tangible common (?:shareholders'?,? )?equity",
               (0.5, 60.0)),
     # Credit — the label side of the two denominator-pinned forms (see below).
-    "nco_ratio": (r"net charge-offs?(?: ratio)?", (0.0, 5.0)),
+    "nco_ratio": (r"net (?:loan )?charge-offs?(?: ratio)?", (0.0, 5.0)),
 }
 
 # Denominator-pinned credit ratios: EITHER "<label> … X% of <denominator>"
@@ -358,7 +361,8 @@ def _table_rows(table_html: str) -> list[list[str]]:
 
 
 _FOOTNOTE = re.compile(r"^\(\d\)$")
-_CELL_NUM = re.compile(r"\(?\$?\s?(\d{1,3}(?:,\d{3})*\.?\d{0,4})\)?")
+# Point-first alternative for CBSH-style cells (".94"), see _NUM.
+_CELL_NUM = re.compile(r"\(?\$?\s?(\d{1,3}(?:,\d{3})*\.?\d{0,4}|\.\d{1,4})\)?")
 
 
 def _row_values(cells: list[str]) -> list[float]:
@@ -696,8 +700,10 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v13 (2026-07-16 pm): rounding-aware cross-table agreement — CFG's
-    # efficiency (61.1 headline vs 61.08 detail) poisoned to None under the
+    # v14 (2026-07-16 pm): point-first decimals (".19%") in prose/cell
+    # patterns — CBSH's entire number style was invisible. v13 rounding-
+    # aware cross-table agreement — CFG's efficiency (61.1 headline vs
+    # 61.08 detail) poisoned to None under the
     # strict tolerance. v12 prose EPS accepts "per common share" + the
     # OZK-style ~45-char parenthetical/period connector; v11 digit-free
     # percent connector + bps value form; v10 the label-affirmation guard;
@@ -706,7 +712,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v13:{int(cik)}"
+    key = f"release_metrics:v14:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:

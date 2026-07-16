@@ -174,9 +174,25 @@ def _number_renderings(value: float) -> list[str]:
     for fmt in (f"{a:,.2f}", f"{a:,.1f}", f"{a:,.0f}", f"{a:g}"):
         if abs(float(fmt.replace(",", "")) - a) < 0.006 and fmt not in forms:
             forms.append(fmt)
+    # Point-first prints (CBSH ".19%", 2026-07-16): banks that drop the
+    # leading zero would otherwise fail number-in-quote for every sub-1 value.
+    forms += [f[1:] for f in list(forms) if f.startswith("0.")]
     if value < 0:
         return [f"-{f}" for f in forms] + [f"({f})" for f in forms]
     return forms
+
+
+def _number_in_quote(q: str, value: float) -> bool:
+    """True when a plausible printed form of `value` appears in the quote.
+    Point-first forms (".19") must not match the TAIL of a larger number
+    ("3.19" is not evidence for 0.19) — they require a non-digit boundary."""
+    for r in _number_renderings(value):
+        if "." in r and r.split(".", 1)[0].lstrip("-(") == "":
+            if re.search(r"(?<![\d.])" + re.escape(r), q):
+                return True
+        elif r in q:
+            return True
+    return False
 
 
 def _history_period_ok(it: dict, period: str, quote: str, norm_source: str,
@@ -226,7 +242,7 @@ def guard_items(items, source_text: str, prior_qend=None, yoy_qend=None) -> dict
         words = q.split()
         if not (3 <= len(words) <= 60) or _norm(q) not in norm_source:
             continue
-        if not any(r in q for r in _number_renderings(value)):
+        if not _number_in_quote(q, value):
             continue                      # number not printed in the evidence
         # Label affirmation — except narrated history ("compared with 4.54%
         # in the first quarter"), whose subject precedes the quoted clause;
@@ -333,11 +349,11 @@ def release_ai_metrics(cik, accession: str, text: str, ticker: str = "",
     if not cik or not accession or not text:
         return None
     from data.cloud_storage import load_json, save_json
-    # _v4 (2026-07-16): fresh pass for the Jul-16 wave — the one-shot _v3
-    # results froze model-missed cells (CFG efficiency, USB ROE/BV) the
-    # moment anything verified. _v3 added the label-affirmation guard; _v2
-    # the financial-supplement consolidated section.
-    fname = f"{int(cik)}_{accession.replace('-', '')}_v4.json"
+    # _v5 (2026-07-16 pm): point-first number-in-quote (CBSH ".19%") — _v4
+    # rejected every sub-1 value from leading-zero-less banks. _v4 fresh
+    # pass for the Jul-16 wave; _v3 the label-affirmation guard; _v2 the
+    # financial-supplement consolidated section.
+    fname = f"{int(cik)}_{accession.replace('-', '')}_v5.json"
     cached = load_json(RELEASE_AI_CACHE_PREFIX, fname)
     if cached and isinstance(cached.get("periods"), dict):
         return cached["periods"]
