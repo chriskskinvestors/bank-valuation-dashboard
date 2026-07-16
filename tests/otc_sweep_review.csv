@@ -1,0 +1,94 @@
+ticker,cert,fdic_name,namehcr,fmp_name,state,fmp_state,assets_k,matched_on,eod_price,symbols,why
+,10628,Preferred Bank,BOR BCORP,Preferred Bank,MO,,138119,NAME,,PFBC,SEC-listed ticker (SEC path territory)
+,10976,Center National Bank,CNB FINANCIAL CORP,CNB Financial Corporation,MN,,232611,NAMEHCR,,CCNE;CCNEP,multiple symbols share the name
+,14276,"First Bank, Upper Michigan",FIRST BANCSHARES CORP,"First Bancshares, Inc.",MI,,632092,NAMEHCR,,FBSI;FBMS;FIBH,multiple symbols share the name
+,15760,Citizens National Bank of Albion,CITIZENS BANCSHARES INC,Citizens Bancshares Corp.,IL,,353381,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,15932,The Citizens Bank,CITIZENS BANCSHARES CORP,Citizens Bancshares Corp.,SC,,1164386,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,16571,BMO Bank National Association,BANK OF MONTREAL,Bank of Montreal,IL,,251964731,NAMEHCR,,BMO,SEC-listed ticker (SEC path territory)
+,17281,City National Bank,ROYAL BANK OF CANADA,Royal Bank of Canada,CA,,99947369,NAMEHCR,,RY,SEC-listed ticker (SEC path territory)
+,18409,"TD Bank, National Association",TORONTO-DOMINION BANK THE,The Toronto-Dominion Bank,DE,,345610767,NAMEHCR,,TD,SEC-listed ticker (SEC path territory)
+,19674,The Citizens Bank of Weston,CITIZENS BANCSHARES INC,Citizens Bancshares Corp.,WV,,299450,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,22358,The Citizens Bank,CITIZENS BANCSHARES INC,Citizens Bancshares Corp.,AL,,129788,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,26342,"RBC Bank, (Georgia) National Association",ROYAL BANK OF CANADA,Royal Bank of Canada,GA,,8785816,NAMEHCR,,RY,SEC-listed ticker (SEC path territory)
+,27052,"St. Charles Bank & Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,3542800,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,2725,The Citizens National Bank of Somerset,CITIZENS BANCSHARES INC,Citizens Bancshares Corp.,KY,,706473,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,27314,Synchrony Bank,SYNCHRONY FINANCIAL,Synchrony Financial,UT,,114855000,NAMEHCR,,SYF,SEC-listed ticker (SEC path territory)
+,27589,"Lake Forest Bank & Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,8997757,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,3158,Citizens National Bank of Crosbyton,CITIZENS BANCSHARES INC,Citizens Bancshares Corp.,TX,,77857,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,33497,"Charles Schwab Premier Bank, SSB",CHARLES SCHWAB CORP THE,The Charles Schwab Corporation,TX,,27441000,NAMEHCR,,SCHW,SEC-listed ticker (SEC path territory)
+,33539,Preferred Bank,,Preferred Bank,CA,,7655086,NAME,,PFBC,SEC-listed ticker (SEC path territory)
+,33803,"Wheaton Bank & Trust, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,4462876,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,33849,"Hinsdale Bank & Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,6503041,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,33947,"TD Bank USA, National Association",TORONTO-DOMINION BANK THE,The Toronto-Dominion Bank,DE,,32718396,NAMEHCR,,TD,SEC-listed ticker (SEC path territory)
+,34011,"Village Bank and Trust, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,3466631,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,34073,"Libertyville Bank & Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,3154274,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,34395,"Barrington Bank & Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,4927099,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,34618,"Macatawa Bank, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,MI,,3479542,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,34681,"Crystal Lake Bank and Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,2148686,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,34717,"Town Bank, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,WI,,4515383,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,34728,Independent Bank,INDEPENDENT HOLDINGS INC,Independent Bank Corporation,TN,,1678841,NAME,,IBCP;INDB,multiple symbols share the name
+,34900,Preferred Bank,PREFERRED BCORP INC,Preferred Bank,IL,,74239,NAME,,PFBC,SEC-listed ticker (SEC path territory)
+,34967,Popular Bank,POPULAR INC,"Popular, Inc.",NY,,14953476,NAMEHCR,,BPOPO;BPOP,multiple symbols share the name
+,5018,Citizens National Bank of Cheboygan,CNB CORP,CNB Corp.,MI,,463876,NAMEHCR,,CNBW;CNBZ,multiple symbols share the name
+,5548,The City National Bank of Taylor,CNB FINANCIAL CORP INC,CNB Financial Corporation,TX,,246357,NAMEHCR,,CCNE;CCNEP,multiple symbols share the name
+,5574,Citizens National Bank of Texas,FIRST CITIZENS BANCSHARES INC,"First Citizens BancShares, Inc.",TX,,2109952,NAMEHCR,,FCNCB;FCNCO;FCNCP;FCNCA;FIZN,multiple symbols share the name
+,57082,"Northbrook Bank and Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,6810323,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,57103,"Schaumburg Bank & Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,2394258,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,57203,Barclays Bank Delaware,BARCLAYS PLC,Barclays PLC,DE,,46648000,NAMEHCR,,BCS,SEC-listed ticker (SEC path territory)
+,5744,"State Bank of the Lakes, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,2689580,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,57450,"Charles Schwab Bank, SSB",CHARLES SCHWAB CORP THE,The Charles Schwab Corporation,TX,,242914000,NAMEHCR,,SCHW,SEC-listed ticker (SEC path territory)
+,57701,"Beverly Bank & Trust Company, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,2658605,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,57890,"HSBC Bank USA, National Association",HSBC HOLDINGS PLC,HSBC Holdings plc,VA,,167705510,NAMEHCR,,HSBC,SEC-listed ticker (SEC path territory)
+,58188,"HSBC Trust Company (Delaware), National Association",HSBC HOLDINGS PLC,HSBC Holdings plc,DE,,56652,NAMEHCR,,HSBC,SEC-listed ticker (SEC path territory)
+,58216,BMO Harris Central National Association,BANK OF MONTREAL,Bank of Montreal,IL,,8213,NAMEHCR,,BMO,SEC-listed ticker (SEC path territory)
+,58264,Signature Bank,SIGNATURE BCORP INC,Signature Bank,IL,,1950418,NAME,,SBNY;SBNYP,multiple symbols share the name
+,58314,"Old Plank Trail Community Bank, National Association",WINTRUST FINANCIAL CORP,Wintrust Financial Corporation,IL,,3321035,NAMEHCR,,WTFCM;WTFC;WTFCP,multiple symbols share the name
+,59108,Charles Schwab Trust Bank,CHARLES SCHWAB CORP THE,The Charles Schwab Corporation,TX,,10419683,NAMEHCR,,SCHW,SEC-listed ticker (SEC path territory)
+,6528,The First National Bank of Bellevue,FIRST BANCSHARES INC,"First Bancshares, Inc.",OH,,316609,NAMEHCR,,FBSI;FBMS;FIBH,multiple symbols share the name
+,6531,The Citizens National Bank of Bluffton,CITIZENS BANCSHARES INC,Citizens Bancshares Corp.,OH,,1078019,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,6760,"Citizens Bank of West Virginia, Inc.",CITIZENS FINANCIAL CORP,Citizens Financial Corp.,WV,,775093,NAMEHCR,,CIWV;CFIN,multiple symbols share the name
+,8033,Citizens Trust Bank,CITIZENS BANCSHARES CORP,Citizens Bancshares Corp.,GA,,786846,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,8183,Citizens State Bank,CITIZENS BANCSHARES INC,Citizens Bancshares Corp.,MI,,543781,NAMEHCR,,CITZ;CZBS,multiple symbols share the name
+,8321,Stockmens Bank,FIRST BANCSHARES INC,"First Bancshares, Inc.",CO,,591778,NAMEHCR,,FBSI;FBMS;FIBH,multiple symbols share the name
+SMAL,13960,The Bank of Houston,SUMMIT BANCSHARES INC,"Summit Bancshares, Inc.",MO,,64483,NAMEHCR,,SMAL,second cert for SMAL (kept 14567)
+TCFC,14883,Community State Bank,COMMUNITY FINANCIAL CORP,The Community Financial Corporation,IN,,521046,NAMEHCR,,TCFC,second cert for TCFC (kept 14633)
+CBSU,1095,Central Savings Bank,CENTRAL BANK CORP,Central Bank Corporation,MI,,488233,NAMEHCR,,CBSU,second cert for CBSU (kept 15555)
+FSTF,15899,Fusion Bank,FIRST STATE FINANCIAL CORP,First State Financial Corp.,KS,,233583,NAMEHCR,,FSTF,second cert for FSTF (kept 15032)
+CBSU,1756,Central Bank,CROSS COUNTY BANCSHARES INC,Central Bank Corporation,AR,,937589,NAME,,CBSU,second cert for CBSU (kept 15555)
+CBSU,17612,Central Bank,CENTRAL BANCSHARES INC,Central Bank Corporation,TX,,1347254,NAME,,CBSU,second cert for CBSU (kept 15555)
+SMAL,23864,Summit Bank,SUMMIT BANCSHARES INC,"Summit Bancshares, Inc.",CA,,270191,NAMEHCR,,SMAL,second cert for SMAL (kept 14567)
+CNUN,25267,TruBank,COMMUNITY BANCSHARES CORP,"Community Bancshares, Inc.",IA,,487488,NAMEHCR,,CNUN,second cert for CNUN (kept 25665)
+GABK,2608,The National Grand Bank of Marblehead,GRAND BANK CORP,Grand Bank Corp.,MA,,442306,NAMEHCR,,GABK,second cert for GABK (kept 22065)
+CBSU,31545,Central Bank,,Central Bank Corporation,TN,,164253,NAME,,CBSU,second cert for CBSU (kept 15555)
+TCFC,34020,Community Bank,COMMUNITY FINANCIAL CORP,The Community Financial Corporation,KS,,181191,NAMEHCR,,TCFC,second cert for TCFC (kept 14633)
+CZNL,5495,Citizens State Bank,CITIZENS NATIONAL CORP,Citizens National Corporation,NE,,653531,NAMEHCR,,CZNL,second cert for CZNL (kept 2718)
+CNUN,57137,Mission Bank,COMMUNITY BANCSHARES INC,"Community Bancshares, Inc.",AZ,,182236,NAMEHCR,,CNUN,second cert for CNUN (kept 25665)
+TCFC,57468,Community Bank Owatonna,COMMUNITY FINANCIAL CORP,The Community Financial Corporation,MN,,100432,NAMEHCR,,TCFC,second cert for TCFC (kept 14633)
+CBSU,58377,Central Bank,CENTRAL FINANCIAL HOLDINGS INC,Central Bank Corporation,FL,,389728,NAME,,CBSU,second cert for CBSU (kept 15555)
+CNUN,58517,The Community Bank,COMMUNITY BANCSHARES INC,"Community Bancshares, Inc.",TX,,200090,NAMEHCR,,CNUN,second cert for CNUN (kept 25665)
+CNUN,25665,Community National Bank,COMMUNITY BANCSHARES INC,"Community Bancshares, Inc.",KS,,903907,NAMEHCR,,CNUN,second cert for CNUN (kept 6636)
+CNUN,8140,Colfax Banking Company,COMMUNITY BANCSHARES CO,"Community Bancshares, Inc.",LA,,151074,NAMEHCR,,CNUN,second cert for CNUN (kept 6636)
+CBSU,9204,Central Bank,CENTRAL BCORP,Central Bank Corporation,UT,,2149085,NAME,,CBSU,second cert for CBSU (kept 15555)
+CNUN,9313,"PBK BANK, INC.",COMMUNITY BANCSHARES INC,"Community Bancshares, Inc.",KY,,172049,NAMEHCR,,CNUN,second cert for CNUN (kept 6636)
+HBSI,9998,Capon Valley Bank,HIGHLANDS BANKSHARES INC,"Highlands Bankshares, Inc.",WV,,239663,NAMEHCR,,HBSI,second cert for HBSI (kept 11953)
+STBZ,10383,State Bank Financial,FIRST BCORP INC,State Bank Financial Corporation,WI,,537110,NAME,,STBZ,no FMP EOD price
+HCBN,11407,Highpoint Community Bank,HCB FINANCIAL CORP,HCB Financial Corp.,MI,,597210,NAMEHCR,,HCBN,no FMP EOD price
+GLNV,11501,First National Bank of Scotia,GLENVILLE BANK HOLDING CO INC,"Glenville Bank Holding Company, Inc.",NY,,706452,NAMEHCR,,GLNV,no FMP EOD price
+TCFC,14633,Community Savings Bank,COMMUNITY FINANCIAL CORP,The Community Financial Corporation,IA,,616145,NAMEHCR,,TCFC,no FMP EOD price
+FSTF,15032,First State Bank,FIRST STATE FINANCIAL CORP,First State Financial Corp.,MI,,1348773,NAMEHCR,0.009,FSTF,sub-$1 price (shell / wrong line)
+GABK,22065,Grand Bank,GRAND CAPITAL CORP,Grand Bank Corp.,OK,,679202,NAME,,GABK,no FMP EOD price
+MCPH,29980,Midland Federal Savings and Loan Association,MIDLAND CAPITAL HOLDINGS CORP,Midland Capital Holdings Corp.,IL,,116268,NAMEHCR,,MCPH,no FMP EOD price
+GWBK,33103,"Gateway Bank, F.S.B.",,"Gateway Bank, F.S.B.",CA,,286530,NAME,0.09,GWBK,sub-$1 price (shell / wrong line)
+PCBB,34252,Pacific Coast Bankers' Bank,PACIFIC COAST BANKERS BANCSHARES,Pacific Coast Bankers' Bancshares,CA,,1084528,NAMEHCR,,PCBB,no FMP EOD price
+PFC,34849,Premier Bank,PREMIER FINANCIAL CORP,Premier Financial Corp.,IA,,370747,NAMEHCR,,PFC,no FMP EOD price
+AONE,5357,First National Community Bank,ONE CORP,One,WI,,336799,NAMEHCR,,AONE,no FMP EOD price
+MBNKP,57449,Medallion Bank,,Medallion Bank,UT,,2651012,NAME,,MBNKP,no FMP EOD price
+TECTP,57703,"T Bank, National Association",TECTONIC FINANCIAL INC,"Tectonic Financial, Inc.",TX,,1047405,NAMEHCR,,TECTP,no FMP EOD price
+PWBO,57872,Pacific West Bank,PACIFIC WEST BCORP,Pacific West Bank,OR,,403359,NAME,,PWBO,no FMP EOD price
+CAIB,57974,"California International Bank, N.A.",,"California International Bank, N.A.",CA,,95231,NAME,0.08,CAIB,sub-$1 price (shell / wrong line)
+CABB,58037,California Business Bank,,California Business Bank,CA,,122227,NAME,0.0091,CABB,sub-$1 price (shell / wrong line)
+PMHG,58694,Prime Meridian Bank,PRIME MERIDIAN HOLDING CO,Prime Meridian Holding Company,FL,,956408,NAMEHCR,,PMHG,no FMP EOD price
+CBSU,15555,Central Bank,COMMERCIAL FINANCIAL CORP,Central Bank Corporation,IA,MI,2249066,NAME,30,CBSU,state mismatch fmp=MI
+CIBH,11729,CIBM Bank,CIB MARINE BANCSHARES INC,"CIB Marine Bancshares, Inc.",IL,WI,824403,NAMEHCR,41.05,CIBH,state mismatch fmp=WI
+SMAL,14567,First National Bank in Olney,SUMMIT BANCSHARES LTD,"Summit Bancshares, Inc.",IL,CA,475547,NAMEHCR,58.1,SMAL,state mismatch fmp=CA
+LFGP,33418,Ledyard National Bank,LEDYARD FINANCIAL GROUP INC,"Ledyard Financial Group, Inc.",VT,NH,1042973,NAMEHCR,19.81,LFGP,state mismatch fmp=NH
