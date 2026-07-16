@@ -199,7 +199,9 @@ BANK_MAP = {
     # Rockland's data. Rockland Trust's parent trades as INDB. Not SEC-listed
     # → cik None (FDIC-only path).
     "INBC":  {"name": "InBankshares, Corp.",                "fdic_cert": 11492,  "cik": None},
-    "CCNB":  {"name": "Coastal Carolina Bancshares",        "fdic_cert": 58864,  "cik": 1437213},
+    # SEC-dark (Form 15-15D; growth-gate staleness catch 2026-07-16): the CIK
+    # stopped financial filings — cik None forces the honest FDIC-only path.
+    "CCNB":  {"name": "Coastal Carolina Bancshares",        "fdic_cert": 58864,  "cik": None},
     "JMSB":  {"name": "John Marshall Bancorp",              "fdic_cert": 58243,  "cik": 1710482},
     "RVSB":  {"name": "Riverview Bancorp Inc.",             "fdic_cert": 29922,  "cik": 1041368},
     "SLBK":  {"name": "Skyline Bankshares",                 "fdic_cert": 6861,   "cik": 1657642},
@@ -266,7 +268,8 @@ BANK_MAP = {
     "HBCP":  {"name": "Home Bancorp",                       "fdic_cert": 28094,  "cik": 1436425},  # Lafayette LA; was 11241 = Centennial (HOMB)
     "HFBL":  {"name": "Home Federal Bancorp, Inc. of Louisiana", "fdic_cert": 27654, "cik": 1500375},  # Shreveport LA; was 11241 = Centennial (HOMB)
     "UBCP":  {"name": "United Bancorp",                     "fdic_cert": 9463,   "cik": 731653},   # Martins Ferry OH; was 22858 = United Bank (UBSI)
-    "UBOH":  {"name": "United Bancshares Inc/OH",           "fdic_cert": 12969,  "cik": 1087456},  # Columbus Grove OH; was 22858 = United Bank (UBSI)
+    # cik None 2026-07-16: filed Form 15-12G (SEC-dark; growth-gate catch).
+    "UBOH":  {"name": "United Bancshares Inc/OH",           "fdic_cert": 12969,  "cik": None},  # Columbus Grove OH; was 22858 = United Bank (UBSI)
     "BCAL":  {"name": "California BanCorp",                 "fdic_cert": 57044,  "cik": 1795815},  # San Diego; was 24045 = Banc of California (BANC)
     "FCBC":  {"name": "First Community Bankshares",         "fdic_cert": 13012,  "cik": 859070},   # Bluefield VA; was 3850 = Xenia IL namesake ($57M)
     # FBSI (First Bancshares Inc /MO/): its bank First Home Bank (Mountain
