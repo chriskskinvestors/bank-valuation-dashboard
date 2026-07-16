@@ -66,13 +66,13 @@ class TestPlatformHistoryMapping(unittest.TestCase):
             self.assertNotIn(key, EXHIBIT_FDIC_Q_MAP)
 
     def test_fill_fdic_history_batches_and_fails_safe(self):
-        import data.bank_universe as bu
+        import data.bank_mapping as bm
         import data.fdic_client as fc
         from data.earnings_results import _fill_fdic_history
-        orig = (bu.get_universe, fc.fetch_quarter_financials)
-        bu.get_universe = lambda: {"AAA": {"fdic_cert": 10},
-                                   "BBB": {"fdic_cert": 20},
-                                   "CCC": {"fdic_cert": None}}
+        orig = (bm.get_fdic_cert, fc.fetch_quarter_financials)
+        # Lookup-time resolver (curated corrections apply immediately —
+        # CBSH 2026-07-16), never the universe snapshot.
+        bm.get_fdic_cert = lambda tk: {"AAA": 10, "BBB": 20}.get(tk)
         calls = []
 
         def fake_fetch(rd, certs=None):
@@ -104,7 +104,7 @@ class TestPlatformHistoryMapping(unittest.TestCase):
             _fill_fdic_history(fresh)
             self.assertNotIn("fdic_hist", fresh[0])
         finally:
-            bu.get_universe, fc.fetch_quarter_financials = orig
+            bm.get_fdic_cert, fc.fetch_quarter_financials = orig
 
     def test_acl_maps_to_true_allowance_ratio(self):
         """ACL/Loans history must read LNATRESR reserves/loans — NEVER

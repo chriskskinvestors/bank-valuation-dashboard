@@ -342,15 +342,20 @@ def _fill_fdic_history(rows) -> None:
     rows without the attribute (exhibit cells stay blank, never wrong)."""
     try:
         from data import fdic_client
-        from data.bank_universe import get_universe
-        uni = get_universe()
+        from data.bank_mapping import get_fdic_cert
     except Exception:
         return
     # repdte (YYYYMMDD) -> {cert: [(row, bucket), ...]}
     need: dict = {}
     for row in rows:
         rel = row.get("rel") or {}
-        cert = (uni.get(row.get("ticker")) or {}).get("fdic_cert")
+        # Lookup-time resolver, NOT the universe snapshot: curated cert
+        # corrections apply immediately (CBSH 2026-07-16 — the snapshot
+        # served the wrong-entity cert until the nightly rebuild).
+        try:
+            cert = get_fdic_cert(row.get("ticker"))
+        except Exception:
+            cert = None
         if not cert:
             continue
         for bucket, qend in (("prior", rel.get("prior_qend")),
