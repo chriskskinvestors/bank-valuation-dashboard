@@ -148,13 +148,22 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             # release fill below still supplies confirmable actuals meanwhile.
             rev_act = None
         pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
-        pending = False
+        pending = awaiting = False
         if eps_act is None and rev_act is None:
-            # No FMP actuals: reported anyway IF the bank's own results PR is
-            # out (never an upcoming-date announcement) — else not reported.
-            if pr is None or _UPCOMING_CUE_RE.search(pr.get("headline") or ""):
+            if pr is not None and not _UPCOMING_CUE_RE.search(
+                    pr.get("headline") or ""):
+                # Bank's own results PR is out; consensus feed hasn't caught up.
+                pending = True
+            elif (today - d).days <= 2:
+                # Scheduled date has arrived but nothing is published yet —
+                # the bank still gets a ROW (owner 2026-07-17: "there never
+                # can be stragglers"): visible as awaiting, flipping to
+                # pending/reported the moment an 8-K, PR, or actual lands.
+                # FMP re-projects slipped dates forward, and >2-day-old
+                # quiet projections drop with them.
+                awaiting = True
+            else:
                 continue
-            pending = True
         prev = best.get(tk)
         if prev is not None and prev["_d"] >= d:
             continue                                  # keep the newest report
@@ -186,8 +195,11 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             "pr_headline": (pr or {}).get("headline"),
             "pr_url": (pr or {}).get("url"),
             "pending": pending,
+            "awaiting": awaiting,
         }
-    rows = sorted(best.values(), key=lambda x: (-x["_d"].toordinal(), x["ticker"]))
+    rows = sorted(best.values(),
+                  key=lambda x: (-x["_d"].toordinal(), x["awaiting"],
+                                 x["ticker"]))
     for r in rows:
         r.pop("_d")
     return rows
@@ -206,6 +218,8 @@ def _fill_price_reactions(rows, today, max_workers: int = 8) -> None:
         session = _iso_date(row["reaction_session"])
         row["px_react"] = None
         row["px_react_live"] = False
+        if row.get("awaiting"):
+            return          # nothing published — today's move is not a reaction
         try:
             df = fmp_client.get_history(tk, "1M")
             closes = [(d.date(), float(c)) for d, c in
@@ -275,6 +289,9 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
         except Exception:
             return
         if rm and release_matches_report(rm.get("filed_date"), row["date"]):
+            # An attached release IS the report — an "awaiting" row flips the
+            # moment the 8-K lands, ahead of FMP and the wires.
+            row["awaiting"] = False
             metrics = rm.get("metrics") or {}
             row["rel"] = {"qend": rm.get("qend"),
                           "metrics": metrics,
@@ -431,7 +448,8 @@ def results_board(days_back: int = 30) -> list[dict]:
         # v3: rows gained `pending` (PR-signaled reports without FMP actuals).
         # v4: common-shares-only universe + negative-revenue junk guard.
         # v5: rows gained `fdic_hist` (quarterly-ratio exhibit history).
-        return _cache.served_snapshot(f"earnings_results_board_v5:{days_back}",
+        # v6: rows gained `awaiting` (scheduled reporters visible pre-release).
+        return _cache.served_snapshot(f"earnings_results_board_v6:{days_back}",
                                       900, _build) or []
     except Exception:
         return []

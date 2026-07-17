@@ -1729,6 +1729,8 @@ def _results_tr(r: dict, ncols: int) -> str:
         eps_act += "*"                # filled from the bank's own release
     if r.get("pending") and eps_act is None:
         eps_act = "pending"           # release is out; FMP actuals not posted yet
+    elif r.get("awaiting") and eps_act is None:
+        eps_act = "awaiting"          # scheduled today; nothing published yet
     # Release link: the wire/IR press release when the events feed has it;
     # else the SEC 8-K EX-99.1 already located for the metrics expansion
     # (micro-caps often file with EDGAR without ever hitting a wire).
@@ -1785,8 +1787,10 @@ def _render_results_board():
     beats = sum(1 for r in eps_rows if r["eps_surprise"] >= 0)
     reacts = [r["px_react"] for r in rows if r.get("px_react") is not None]
     n_pending = sum(1 for r in rows if r.get("pending"))
+    n_awaiting = sum(1 for r in rows if r.get("awaiting"))
     ledger("Results Season", [
-        ("Reported", str(len(rows))),
+        ("Reported", str(len(rows) - n_awaiting)),
+        ("Awaiting Release", str(n_awaiting)),
         ("Awaiting Actuals", str(n_pending)),
         ("EPS Beats", str(beats)),
         ("EPS Misses", str(len(eps_rows) - beats)),
@@ -1801,9 +1805,11 @@ def _render_results_board():
         "(FMP, filled the day results land), **Px React** = the release "
         "session's close-over-prior-close move (after-close reports react the "
         "NEXT session; *live* marks today's in-progress session), and the "
-        "results press **Release** from the news feed. A bank whose release "
-        "is out but whose actuals haven't posted to the consensus feed yet "
-        "shows **pending** (micro-caps can lag). A **▸** expands the "
+        "results press **Release** from the news feed. Every bank SCHEDULED "
+        "for today is on the board from the open — **awaiting** until "
+        "anything publishes, **pending** once its release is out but "
+        "actuals haven't posted to the consensus feed (micro-caps can "
+        "lag). A **▸** expands the "
         "release's own metrics (NIM, efficiency, returns, capital, TBV, "
         "credit) — each parsed from the bank's release prose and shown only "
         "when confidently confirmed; '—' otherwise, never a guess. "

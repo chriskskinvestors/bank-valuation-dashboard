@@ -224,7 +224,10 @@ class TestBuildResultsRows(unittest.TestCase):
              "epsEstimated": 1.4},                                 # outside window
         ]
         rows = build_results_rows(fmp, {"JPM", "GS", "WFC"}, {}, self.TODAY)
-        self.assertEqual([r["ticker"] for r in rows], ["JPM"])
+        # GS (nothing published, date 1d old) rides along as AWAITING —
+        # never invisible (owner 2026-07-17); AAPL/WFC stay excluded.
+        self.assertEqual([r["ticker"] for r in rows], ["JPM", "GS"])
+        self.assertTrue(rows[1]["awaiting"])
         r = rows[0]
         self.assertAlmostEqual(r["eps_surprise"], (5.80 - 5.61) / 5.61 * 100)
         self.assertEqual(r["when"], "Before open")
@@ -261,21 +264,27 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertEqual(rows[0]["pr_url"], "https://x/pr")
         self.assertIsNone(rows[0]["eps_act"])
 
-    def test_no_pr_and_no_actuals_still_excluded(self):
+    def test_no_pr_and_no_actuals_is_awaiting_not_reported(self):
         fmp = [{"symbol": "GS", "date": "2026-07-14", "epsActual": None,
                 "revenueActual": None}]
-        self.assertEqual(build_results_rows(fmp, {"GS"}, {}, self.TODAY), [])
+        rows = build_results_rows(fmp, {"GS"}, {}, self.TODAY)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["awaiting"])
+        self.assertFalse(rows[0]["pending"])
 
     def test_upcoming_announcement_pr_never_marks_reported(self):
         # A date-announcement PR published near the projected date is NOT a
-        # results release.
+        # results release — the row stays AWAITING, never pending.
         fmp = [{"symbol": "ABCB", "date": "2026-07-14", "epsActual": None,
                 "revenueActual": None}]
         events = {"ABCB": [{"headline": "Ameris Bancorp Will Report Second "
                             "Quarter 2026 Results on July 23",
                             "url": "https://x/announce",
                             "published_at": "2026-07-14T09:00:00"}]}
-        self.assertEqual(build_results_rows(fmp, {"ABCB"}, events, self.TODAY), [])
+        rows = build_results_rows(fmp, {"ABCB"}, events, self.TODAY)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["awaiting"])
+        self.assertFalse(rows[0]["pending"])
 
     def test_negative_revenue_is_fmp_junk(self):
         """JPM/AMJB showed Rev Act $-47.81B (2026-07-14) — bank revenue is
@@ -285,6 +294,31 @@ class TestBuildResultsRows(unittest.TestCase):
         rows = build_results_rows(fmp, {"JPM"}, {}, self.TODAY)
         self.assertIsNone(rows[0]["rev_act"])
         self.assertIsNone(rows[0]["rev_surprise"])
+
+    def test_scheduled_reporter_is_awaiting_never_invisible(self):
+        """Owner 2026-07-17: 'there never can be stragglers' — a bank whose
+        scheduled date has arrived gets a row even with NOTHING published
+        (no actuals, no PR): awaiting, flipping as data lands. Quiet
+        projections older than 2 days drop (FMP re-projects slipped dates)."""
+        fmp = [
+            {"symbol": "OVLY", "date": "2026-07-15", "epsEstimated": 0.55},
+            {"symbol": "HIFS", "date": "2026-07-12", "epsEstimated": 2.10},
+        ]
+        rows = {r["ticker"]: r for r in build_results_rows(
+            fmp, {"OVLY", "HIFS"}, {}, self.TODAY)}
+        self.assertIn("OVLY", rows)              # 2 days old — still awaiting
+        self.assertTrue(rows["OVLY"]["awaiting"])
+        self.assertFalse(rows["OVLY"]["pending"])
+        self.assertIsNone(rows["OVLY"]["eps_act"])
+        self.assertNotIn("HIFS", rows)           # 5-day-old quiet projection
+
+    def test_awaiting_sorts_below_reported_same_day(self):
+        fmp = [
+            {"symbol": "AAA", "date": "2026-07-15", "epsEstimated": 1.0},
+            {"symbol": "ZZZ", "date": "2026-07-15", "epsActual": 2.0},
+        ]
+        rows = build_results_rows(fmp, {"AAA", "ZZZ"}, {}, self.TODAY)
+        self.assertEqual([r["ticker"] for r in rows], ["ZZZ", "AAA"])
 
     def test_revenue_before_eps_is_held_on_report_day(self):
         """MS 2026-07-15: FMP posted H1 revenue ($36.29B, '+84% surprise') as
