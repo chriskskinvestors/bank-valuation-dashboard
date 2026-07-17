@@ -135,20 +135,93 @@ class TestReleaseQend(unittest.TestCase):
             "2026-06-30")
 
 
+class TestIrCandidateSelection(unittest.TestCase):
+    """The IR-site locator's proofs: shared headline gate + a STATED period
+    in the link text (PDFs have no publish date), newest period wins,
+    ancient archives refused."""
+
+    def setUp(self):
+        import data.events.ir_site as irs
+        import data.otc_release as orl
+        self.irs, self.orl = irs, orl
+        self._orig = (irs._fetch, orl._bank_webaddr)
+        orl._bank_webaddr = lambda t: "https://www.examplebank.com"
+
+    def tearDown(self):
+        self.irs._fetch, self.orl._bank_webaddr = self._orig
+
+    def _page(self, *links):
+        html = "".join(f'<a href="{u}">{t}</a>' for u, t in links)
+        self.irs._fetch = lambda url, timeout=12: (
+            html if url.rstrip("/").endswith("news") else None)
+
+    def test_newest_stated_period_wins_and_pdf_detected(self):
+        from datetime import date
+        y = date.today().year
+        self._page(
+            ("/pr/q1.pdf", f"Example Bank Reports First Quarter {y} Results"),
+            ("/pr/q2.pdf", f"Example Bank Reports Second Quarter {y} Results"),
+            ("/about.html", "About our community bank"))
+        got = self.orl._latest_ir_release("EXBK")
+        self.assertTrue(got["url"].endswith("q2.pdf"))
+        self.assertEqual(got["kind"], "pdf")
+        self.assertEqual(got["qend"], f"{y}-06-30")
+
+    def test_link_without_stated_period_never_candidates(self):
+        self._page(("/pr/latest.pdf", "Example Bank Reports Record Quarterly "
+                                      "Earnings Results"))
+        self.assertIsNone(self.orl._latest_ir_release("EXBK"))
+
+    def test_ancient_archive_refused(self):
+        self._page(("/pr/old.pdf", "Example Bank Reports Fourth Quarter 2022 "
+                                   "Results"))
+        self.assertIsNone(self.orl._latest_ir_release("EXBK"))
+
+
 class TestOtcWrapper(unittest.TestCase):
     def setUp(self):
         import data.cache as dc
         import data.otc_release as orl
         self.orl, self.store = orl, {}
         self._orig = (dc.get, dc.put, orl._latest_earnings_pr,
-                      orl._fetch_story)
+                      orl._fetch_story, orl._latest_ir_release,
+                      orl._fetch_document)
         dc.get = lambda k: self.store.get(k)
         dc.put = lambda k, v: self.store.__setitem__(k, v)
+        orl._latest_ir_release = lambda t: None
 
     def tearDown(self):
         import data.cache as dc
         (dc.get, dc.put, self.orl._latest_earnings_pr,
-         self.orl._fetch_story) = self._orig
+         self.orl._fetch_story, self.orl._latest_ir_release,
+         self.orl._fetch_document) = self._orig
+
+    def test_ir_fallback_extracts_when_no_wire_release(self):
+        from datetime import date
+        qend = f"{date.today().year}-03-31"
+        self.orl._latest_earnings_pr = lambda t: None
+        self.orl._latest_ir_release = lambda t: {
+            "url": "https://examplebank.com/pr/q1.pdf",
+            "title": "Example Bank Reports First Quarter Results",
+            "qend": qend, "kind": "pdf"}
+        self.orl._fetch_document = lambda u, k: (
+            "Net interest margin of 4.10% for the quarter. Tangible book "
+            "value per share was $31.25.")
+        val = self.orl.otc_release_metrics("EXBK")
+        self.assertEqual(val["transport"], "ir_site")
+        self.assertEqual(val["qend"], qend)
+        self.assertEqual(val["metrics"]["nim"], 4.10)
+        self.assertEqual(val["metrics"]["tbv_ps"], 31.25)
+        self.assertIsNone(val["filed_date"])
+
+    def test_nothing_anywhere_caches_negative(self):
+        crawls = []
+        self.orl._latest_earnings_pr = lambda t: None
+        self.orl._latest_ir_release = lambda t: crawls.append(1) or None
+        self.assertIsNone(self.orl.otc_release_metrics("EXBK"))
+        # Fresh sentinel: the second call must serve None WITHOUT re-crawling.
+        self.assertIsNone(self.orl.otc_release_metrics("EXBK"))
+        self.assertEqual(len(crawls), 1)
 
     def test_extracts_and_labels_source(self):
         self.orl._latest_earnings_pr = lambda t: {
@@ -168,7 +241,7 @@ class TestOtcWrapper(unittest.TestCase):
             "title": "x", "url": "u1", "published_at": "2026-07-16 08:00:00"}
         fetches = []
         self.orl._fetch_story = lambda u: fetches.append(u) or "<p>x</p>"
-        self.store["otc_release:v5:PBAM"] = {
+        self.store["otc_release:v6:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",       # stale ⇒ re-check
             "value": {"url": "u1", "metrics": {"nim": 5.18}}}
         val = self.orl.otc_release_metrics("PBAM")
@@ -179,7 +252,7 @@ class TestOtcWrapper(unittest.TestCase):
         self.orl._latest_earnings_pr = lambda t: {
             "title": "x", "url": "u2", "published_at": "2026-07-16 08:00:00"}
         self.orl._fetch_story = lambda u: None
-        self.store["otc_release:v5:PBAM"] = {
+        self.store["otc_release:v6:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",
             "value": {"url": "u1", "metrics": {"nim": 5.0}}}
         val = self.orl.otc_release_metrics("PBAM")
