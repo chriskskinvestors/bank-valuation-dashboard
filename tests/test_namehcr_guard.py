@@ -34,7 +34,7 @@ sys.modules.setdefault("streamlit", _st)
 
 from data.bank_universe import (  # noqa: E402
     _names_corroborate, namehcr_flags, _NAMEHCR_VERIFIED_OK,
-    _STATE_VERIFIED_OK, _SIZE_GAP_X,
+    _STATE_VERIFIED_OK, _SIZE_GAP_X, _choose_cert, _profile_from_submissions,
 )
 
 
@@ -276,11 +276,33 @@ class TestStateKey(unittest.TestCase):
                 self.assertEqual(self._flags(snap, {22356: profile})["state"], [])
 
     def test_no_sec_profile_runs_name_tell_only(self):
-        # Every FDIC-only §12(i) bank (cik=None) lands here.
+        # An FDIC-only §12(i) bank with no listing state to fall back on.
         snap = {"CBSH": {**self.CBSH, "cik": None, "fdic_cert": 1374}}
         flags = namehcr_flags(snap, self.TWINS, {})
         self.assertEqual(flags["state"], [])
         self.assertEqual(flags["size"], [])
+
+    def test_listing_state_covers_cikless_banks(self):
+        # PFLC/CYFL/SNLC each hid here: no SEC registrant, so the name tell
+        # was the ONLY check and it affirmed an identically-named holdco's
+        # bank in another state. FMP's listing state closes it.
+        snap = {"CBSH": {**self.CBSH, "cik": None, "fdic_cert": 1374}}
+        flags = namehcr_flags(snap, self.TWINS, {}, {"CBSH": "MO"})
+        self.assertEqual(len(flags["state"]), 1)
+        # ...and the size key stays off — there is no SEC balance sheet.
+        self.assertEqual(flags["size"], [])
+        # The right bank for that listing state is clean.
+        snap["CBSH"]["fdic_cert"] = 24998
+        self.assertEqual(namehcr_flags(snap, self.TWINS, {}, {"CBSH": "MO"})["state"], [])
+
+    def test_sec_profile_wins_over_listing_state(self):
+        # A real registrant is the better source; the listing state is only
+        # the fallback for banks that have none.
+        snap = {"CBSH": {**self.CBSH, "fdic_cert": 24998}}
+        profiles = {22356: {"hq_state": "MO", "state_of_incorp": "MO",
+                            "assets": 35_500_000_000}}
+        flags = namehcr_flags(snap, self.TWINS, profiles, {"CBSH": "LA"})
+        self.assertEqual(flags["state"], [])
 
     def test_state_allowlist_is_cert_keyed(self):
         self.assertEqual(_STATE_VERIFIED_OK.get("BPRN"), 58513)
@@ -350,6 +372,74 @@ class TestSizeKey(unittest.TestCase):
                                 "assets": assets}}
                 self.assertEqual(
                     namehcr_flags(snap, self.RECORDS, profiles)["size"], [])
+
+
+class TestChooseCert(unittest.TestCase):
+    """The join gate — the builder's side of the same two keys. The guard
+    reports wrong joins; this is what stops the build making them."""
+
+    # Both are the regulatory high holder "COMMERCE BANCSHARES INC". The old
+    # lookup kept only the largest and the name became the identity; these are
+    # the real FDIC rows, largest first, as _fetch_fdic_banks now groups them.
+    COMMERCE = [
+        {"cert": 24998, "name": "Commerce Bank", "namehcr": "COMMERCE BANCSHARES INC",
+         "asset": 35_540_239, "stalp": "MO", "stalphcr": "MO"},
+        {"cert": 1374, "name": "The Bank of Commerce",
+         "namehcr": "COMMERCE BANCSHARES INC", "asset": 88_409,
+         "stalp": "LA", "stalphcr": "LA"},
+    ]
+
+    def test_state_picks_the_right_twin(self):
+        profile = {"hq_state": "MO", "state_of_incorp": "MO"}
+        self.assertEqual(_choose_cert(self.COMMERCE, profile, "CBSH"), 24998)
+
+    def test_state_picks_the_smaller_twin_when_that_is_the_match(self):
+        # Size is NOT the tiebreak — the Louisiana bank is right for a
+        # Louisiana registrant even though it is 400x smaller.
+        profile = {"hq_state": "LA", "state_of_incorp": "LA"}
+        self.assertEqual(_choose_cert(self.COMMERCE, profile, "SOMELA"), 1374)
+
+    def test_no_state_match_refuses_the_join(self):
+        # A Texas registrant named "Commerce Bancshares" gets NO cert: FDIC
+        # metrics render n/a, rather than another company's balance sheet.
+        profile = {"hq_state": "TX", "state_of_incorp": "TX"}
+        self.assertIsNone(_choose_cert(self.COMMERCE, profile, "NOPE"))
+
+    def test_unknown_state_keeps_legacy_behaviour(self):
+        # A transient SEC failure must not strip joins universe-wide.
+        for profile in (None, {}, {"hq_state": "", "state_of_incorp": ""}):
+            with self.subTest(profile=profile):
+                self.assertEqual(_choose_cert(self.COMMERCE, profile, "CBSH"), 24998)
+
+    def test_no_candidates_is_no_cert(self):
+        self.assertIsNone(_choose_cert([], {"hq_state": "MO"}, "CBSH"))
+
+    def test_builder_honours_the_verified_allowlist(self):
+        # BPRN files from its law firm's address in PA; the join to its NJ bank
+        # is hand-verified. The builder must not refuse what the guard accepts.
+        cands = [{"cert": 58513, "name": "The Bank of Princeton",
+                  "namehcr": "PRINCETON BCORP INC", "asset": 2_250_000,
+                  "stalp": "NJ", "stalphcr": "NJ"}]
+        profile = {"hq_state": "PA", "state_of_incorp": "PA"}
+        self.assertEqual(_choose_cert(cands, profile, "BPRN"), 58513)
+        # ...but only for its verified cert, and only for that ticker.
+        self.assertIsNone(_choose_cert(self.COMMERCE, profile, "BPRN"))
+        self.assertIsNone(_choose_cert(cands, profile, "OTHER"))
+
+    def test_holdco_state_beats_charter_state(self):
+        # A Delaware-chartered sub of a NY registrant: STALPHCR carries it.
+        cands = [{"cert": 1, "name": "Some Bank NA", "namehcr": "SOME CORP",
+                  "asset": 100, "stalp": "DE", "stalphcr": "NY"}]
+        self.assertEqual(
+            _choose_cert(cands, {"hq_state": "NY", "state_of_incorp": "DE"}, "X"), 1)
+
+    def test_profile_from_submissions(self):
+        sub = {"stateOfIncorporation": "MD",
+               "addresses": {"business": {"stateOrCountry": "NE"}}}
+        self.assertEqual(_profile_from_submissions(sub),
+                         {"hq_state": "NE", "state_of_incorp": "MD"})
+        self.assertEqual(_profile_from_submissions(None), {})
+        self.assertEqual(_profile_from_submissions({}), {})
 
 
 if __name__ == "__main__":

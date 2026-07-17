@@ -151,8 +151,16 @@ def _clean(n: str) -> str:
     return n.strip()
 
 
-def _fetch_fdic_banks() -> dict[str, dict]:
-    """Fetch all ACTIVE FDIC institutions and build the HC lookup.
+def _fetch_fdic_banks() -> dict[str, list[dict]]:
+    """Fetch all ACTIVE FDIC institutions and build the HC lookup:
+    {holding-company name: [candidate banks, largest first]}.
+
+    A LIST, not one bank: holding-company names are not unique. "COMMERCE
+    BANCSHARES INC" is the regulatory high holder of both Commerce Bank
+    (Kansas City, $35.5B) and The Bank of Commerce (White Castle LA, $88M).
+    This lookup used to keep only the largest bank per name, which threw the
+    twin away before anything could compare states — and made the name the
+    de-facto identity. Keep both; _choose_cert picks on state.
 
     Filter is ACTIVE:1 — institution records are current-state, so no report
     vintage is needed. (The original REPDTE:YYYYMMDD filter matched ZERO rows
@@ -168,7 +176,7 @@ def _fetch_fdic_banks() -> dict[str, dict]:
     while True:
         params = {
             "filters": "ACTIVE:1",
-            "fields": "CERT,NAME,NAMEHCR,ASSET,WEBADDR",
+            "fields": "CERT,NAME,NAMEHCR,ASSET,WEBADDR,STALP,STALPHCR",
             "sort_by": "ASSET",
             "sort_order": "DESC",
             "limit": 1000,
@@ -191,6 +199,8 @@ def _fetch_fdic_banks() -> dict[str, dict]:
                 "namehcr": d.get("NAMEHCR", ""),
                 "webaddr": d.get("WEBADDR", ""),   # bank website — seed for IR-site discovery
                 "asset": d.get("ASSET") or 0,
+                "stalp": d.get("STALP", ""),       # the bank's own state
+                "stalphcr": d.get("STALPHCR", ""),  # its high holder's state — the second key
             })
         offset += len(rows)
         if offset >= data.get("totals", {}).get("count", 0):
@@ -199,15 +209,66 @@ def _fetch_fdic_banks() -> dict[str, dict]:
     if not fdic_banks:
         raise RuntimeError("FDIC institutions endpoint returned no active institutions")
 
-    # Deduplicate: HC name -> largest bank cert
-    hc_lookup = {}
+    # Group: HC name -> every bank under it, largest first.
+    hc_lookup: dict[str, list[dict]] = {}
     for b in fdic_banks:
         hc = b["namehcr"].upper().strip()
         if not hc or len(hc) < 3:
             continue
-        if hc not in hc_lookup or b["asset"] > hc_lookup[hc]["asset"]:
-            hc_lookup[hc] = b
+        hc_lookup.setdefault(hc, []).append(b)
+    for banks in hc_lookup.values():
+        banks.sort(key=lambda b: b["asset"], reverse=True)
     return hc_lookup
+
+
+def _profile_from_submissions(sub: dict | None) -> dict:
+    """The state fields _choose_cert / the guard compare against, read off a
+    SEC submissions record. Same shape sec_client.get_filing_info returns."""
+    if not sub:
+        return {}
+    biz = (sub.get("addresses", {}) or {}).get("business", {}) or {}
+    return {"hq_state": biz.get("stateOrCountry", "") or "",
+            "state_of_incorp": sub.get("stateOfIncorporation", "") or ""}
+
+
+def _choose_cert(candidates: list[dict], profile: dict | None,
+                 ticker: str = "") -> int | None:
+    """Pick the FDIC cert for a name-matched set of candidate banks — the ONE
+    place the nightly build turns a name match into a join.
+
+    A name match is a candidate, not an identity. Three sweeps (0eb5dd5,
+    53aab80, 3605a52) fixed 40 joins where the name was right and the bank was
+    somebody else's, because the builder took the biggest same-name bank and
+    never asked where it was. So: the SEC registrant's state decides.
+
+      • candidates whose state corroborates → the largest of them (a holdco's
+        lead charter is its biggest);
+      • none corroborates → None. No cert means FDIC metrics render n/a, which
+        is the honest answer; a plausible-wrong balance sheet is not (the
+        cardinal rule). The nightly guard reports what the builder refused.
+      • no state known (SEC fetch failed, or a filer that publishes none) →
+        the largest candidate, the historical behaviour. A transient network
+        blip must not silently strip working joins from the whole universe.
+
+    _STATE_VERIFIED_OK entries are hand-verified joins whose registrant state
+    legitimately disagrees (BPRN files from its law firm's address in another
+    state) — the builder honours the same allowlist the guard does, so a
+    verified join is never refused."""
+    if not candidates:
+        return None
+    states = _sec_states(profile or {})
+    if not states:
+        return candidates[0]["cert"]
+
+    ok = [c for c in candidates
+          if _state_corroborates(profile, {"STALP": c.get("stalp", ""),
+                                           "STALPHCR": c.get("stalphcr", "")})]
+    if ok:
+        return ok[0]["cert"]
+    allowed = _STATE_VERIFIED_OK.get(ticker.upper())
+    if allowed and any(c["cert"] == allowed for c in candidates):
+        return allowed
+    return None
 
 
 def _fetch_sec_companies() -> list[list]:
@@ -308,6 +369,10 @@ def _build_universe_live() -> dict[str, dict]:
     universe = {}
 
     # ── Phase 1: Strong name matching ────────────────────────────────────
+    # Collects CANDIDATES only. The cert is chosen in phase 1.5, where the
+    # registrant's own state is known — picking here, on the name alone, is
+    # what joined Commerce Bancshares to an $88M Louisiana namesake.
+    pending: dict[str, dict] = {}
     for row in sec_rows:
         cik, name, ticker, exchange = row
         if not ticker or not name:
@@ -320,57 +385,63 @@ def _build_universe_live() -> dict[str, dict]:
 
         sec_clean = _clean(name)
 
-        for hc_raw, bank_info in hc_lookup.items():
+        for hc_raw, banks in hc_lookup.items():
             hc_clean = _clean(hc_raw)
-
-            # Exact match
-            if sec_clean == hc_clean:
-                universe[ticker] = {
+            matched = sec_clean == hc_clean
+            # Strong prefix match (both names >= 8 chars, >= 65% overlap)
+            if not matched and len(sec_clean) >= 8 and len(hc_clean) >= 8:
+                if hc_clean.startswith(sec_clean) or sec_clean.startswith(hc_clean):
+                    overlap = min(len(sec_clean), len(hc_clean))
+                    matched = overlap / max(len(sec_clean), len(hc_clean)) >= 0.65
+            if matched:
+                pending[ticker] = {
                     "name": name.title() if name.isupper() else name,
                     "cik": int(cik),
-                    "fdic_cert": bank_info["cert"],
                     "exchange": exchange or "OTC",
+                    "cands": banks,
                 }
                 break
 
-            # Strong prefix match (both names >= 8 chars, >= 65% overlap)
-            if len(sec_clean) >= 8 and len(hc_clean) >= 8:
-                if hc_clean.startswith(sec_clean) or sec_clean.startswith(hc_clean):
-                    overlap = min(len(sec_clean), len(hc_clean))
-                    ratio = overlap / max(len(sec_clean), len(hc_clean))
-                    if ratio >= 0.65:
-                        universe[ticker] = {
-                            "name": name.title() if name.isupper() else name,
-                            "cik": int(cik),
-                            "fdic_cert": bank_info["cert"],
-                            "exchange": exchange or "OTC",
-                        }
-                        break
-
-    # ── Phase 1.5: US-domicile enforcement on name matches ──────────────
+    # ── Phase 1.5: US-domicile + the state key on name matches ──────────
     # Phase-1 matches on FDIC holding-company NAMES, which foreign parents
     # of US bank subsidiaries also carry (HSBC Holdings ↔ HSBC Bank USA,
     # Royal Bank of Canada ↔ City National, Santander ↔ Santander Bank NA).
     # Those parents are foreign-domiciled filers (6-K/20-F, no US-GAAP
     # facts) — out of scope ("US-domiciled banks on exchanges or OTC").
     # ~1 fetch per phase-1 match (+~50s nightly), same source as phase 2.
-    for t in sorted(universe):
-        cik = universe[t].get("cik")
-        if not cik:
-            continue
+    #
+    # This same submissions record carries the registrant's state, so the join
+    # is settled here at no extra cost: _choose_cert takes the candidate whose
+    # state agrees and refuses the join outright when none does.
+    for t in sorted(pending):
+        info = pending[t]
+        sub = None
         try:
             time.sleep(0.12)  # SEC rate limit: 10 req/sec
             resp = requests.get(
-                f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json",
+                f"https://data.sec.gov/submissions/CIK{str(info['cik']).zfill(10)}.json",
                 headers=SEC_HEADERS, timeout=8,
             )
-            if resp.status_code != 200:
-                continue  # transient — keep; nightly rebuild retries tomorrow
-            if not _is_us_domestic_filer(resp.json()):
-                print(f"[universe] dropping {t}: foreign-domiciled filer")
-                del universe[t]
+            if resp.status_code == 200:
+                sub = resp.json()
+                if not _is_us_domestic_filer(sub):
+                    print(f"[universe] dropping {t}: foreign-domiciled filer")
+                    continue
         except requests.RequestException:
-            continue
+            pass  # transient — keep the ticker; _choose_cert falls back below
+
+        cert = _choose_cert(info["cands"], _profile_from_submissions(sub), t)
+        if cert is None and info["cands"]:
+            print(f"[universe] {t}: no cert — name matches "
+                  f"'{info['cands'][0]['namehcr']}' but every candidate is in "
+                  f"{sorted({c['stalphcr'] or c['stalp'] for c in info['cands']})}, "
+                  f"registrant is not", flush=True)
+        universe[t] = {
+            "name": info["name"],
+            "cik": info["cik"],
+            "fdic_cert": cert,
+            "exchange": info["exchange"],
+        }
 
     # ── Phase 2: SIC code verification for bank-named candidates ─────────
     candidates = []
@@ -410,16 +481,24 @@ def _build_universe_live() -> dict[str, dict]:
             if not _is_us_domestic_filer(sub):
                 continue
 
-            # Confirmed bank — try to find FDIC cert
-            fdic_cert = None
+            # Confirmed bank — try to find FDIC cert. A shared FIRST WORD is
+            # the weakest evidence in the build ("PACIFIC FINANCIAL CORP" and
+            # "CENTRAL PACIFIC FINANCIAL CORP" are different companies), so
+            # every candidate must also corroborate on the full holdco name
+            # AND on state before it becomes a join.
+            profile = _profile_from_submissions(sub)
+            cands = []
             name_clean = _clean(c["name"])
             first_word = name_clean.split()[0] if name_clean else ""
             if first_word and len(first_word) >= 4:
-                for hc_raw, bank_info in hc_lookup.items():
+                for hc_raw, banks in hc_lookup.items():
                     hc_clean = _clean(hc_raw)
                     if hc_clean.startswith(first_word) or first_word in hc_clean.split():
-                        fdic_cert = bank_info["cert"]
-                        break
+                        cands.extend(
+                            b for b in banks
+                            if _names_corroborate(c["name"], b["namehcr"], b["name"]))
+            cands.sort(key=lambda b: b["asset"], reverse=True)
+            fdic_cert = _choose_cert(cands, profile, c["ticker"])
 
             universe[c["ticker"]] = {
                 "name": c["name"].title() if c["name"].isupper() else c["name"],
@@ -486,9 +565,9 @@ def _build_universe_live() -> dict[str, dict]:
     # matcher (data/events/wire_base.build_name_index) indexes it alongside the
     # holdco name. Sourced from the FDIC certs already fetched (no extra calls).
     cert_name = {bi["cert"]: bi.get("name", "")
-                 for bi in hc_lookup.values() if bi.get("name")}
+                 for banks in hc_lookup.values() for bi in banks if bi.get("name")}
     cert_web = {bi["cert"]: bi.get("webaddr", "")
-                for bi in hc_lookup.values() if bi.get("webaddr")}
+                for banks in hc_lookup.values() for bi in banks if bi.get("webaddr")}
     for info in universe.values():
         cert = info.get("fdic_cert")
         nm = cert_name.get(cert)
@@ -836,6 +915,12 @@ _STATE_VERIFIED_OK: dict[str, int] = {
     # holder is still recorded as CITY FIRST ENTERPRISES INC. Registrant
     # address CA, bank DC, assets match to 1%. Fails the name tell too.
     "BYFC": 34352,
+    # Main Street Financial Services (Wheeling WV) merged with Wayne Savings
+    # (Wooster OH) in 2024; the surviving bank sits in OH while the listing
+    # still carries the WV corporate address. cert 29847 is the ONLY bank
+    # under the holder name, and its $1.53B matches the merged company.
+    # Keyed by the FMP listing state, this bank's only registrant state.
+    "MSWV": 29847,
 }
 
 # ── Third key: SIZE ────────────────────────────────────────────────────────
@@ -968,7 +1053,8 @@ def _names_corroborate(sec_name: str, hcr: str, bank_name: str = "") -> bool:
 
 def namehcr_flags(snapshot: dict[str, dict],
                   fdic_records: dict[int, dict],
-                  sec_profiles: dict[int, dict] | None = None) -> dict[str, list]:
+                  sec_profiles: dict[int, dict] | None = None,
+                  listing_states: dict[str, str] | None = None) -> dict[str, list]:
     """Pure integrity check of a built snapshot against pre-fetched FDIC
     institution records ({cert: {"NAME":…, "NAMEHCR":…, "STALP":…,
     "STALPHCR":…, "HCTMULT":…, "ASSET":…}}) and, when available, SEC profiles
@@ -987,12 +1073,19 @@ def namehcr_flags(snapshot: dict[str, dict],
       • "missing": [(ticker, cert)] — cert absent from the ACTIVE-institution
         records (acquired/closed → the MCBI-class staleness signal).
 
-    sec_profiles omitted (or a ticker's CIK absent from it, as with every
-    FDIC-only §12(i) bank) runs the name/dup/missing tells alone — the state
-    and size keys need a live SEC side to compare against."""
+    listing_states ({ticker: "MI"}) carries the state key for the FDIC-only
+    §12(i) banks (cik=None), which have no SEC registrant to compare against
+    and were therefore invisible to every tell but the name — the hole PFLC,
+    CYFL and SNLC each sat in, all three joined to an identically-named
+    holdco's bank in another state. Same second key tools/sweep_otc_banks.py
+    admits them on. Size still needs a live SEC side, so it stays off for them.
+
+    sec_profiles omitted (and no listing state) runs the name/dup/missing tells
+    alone — the state and size keys need something to compare against."""
     out: dict[str, list] = {"mismatch": [], "state": [], "size": [],
                             "dup_cert": [], "missing": []}
     sec_profiles = sec_profiles or {}
+    listing_states = listing_states or {}
 
     by_cert: dict[int, list[str]] = {}
     for t, v in sorted(snapshot.items()):
@@ -1020,6 +1113,10 @@ def namehcr_flags(snapshot: dict[str, dict],
             out["mismatch"].append((t, cert, sec_name, hcr, bank))
 
         profile = sec_profiles.get(int(v["cik"])) if v.get("cik") else None
+        if not profile and listing_states.get(t):
+            # FDIC-only bank: the listing's own state is the only registrant
+            # state there is. No SEC facts, so no size key for these.
+            profile = {"hq_state": listing_states[t], "state_of_incorp": ""}
         if not profile:
             continue
         if (_STATE_VERIFIED_OK.get(t) != cert
@@ -1117,6 +1214,37 @@ def fetch_sec_profiles(ciks: list[int]) -> dict[int, dict]:
     return profiles
 
 
+def fetch_listing_states(tickers: list[str]) -> dict[str, str]:
+    """{ticker: state} from FMP's company profile — the state key for banks
+    with no SEC registrant (§12(i) filers, OTC admissions). FMP is market data
+    and never reaches a displayed figure (the provenance rule); here it is
+    doing what tools/verify_metrics.py's oracle does — corroborating from an
+    independent source. One call per bank, and any failure just costs the key
+    for that bank."""
+    from data.fmp_client import FMP_BASE, _api_key
+    from data.http import get_with_retry
+
+    out: dict[str, str] = {}
+    key = _api_key()
+    for t in sorted(tickers):
+        try:
+            resp = get_with_retry(f"{FMP_BASE}/profile",
+                                  params={"symbol": t, "apikey": key}, timeout=15)
+            data = resp.json() if resp is not None else None
+            row = data[0] if isinstance(data, list) and data else (
+                data if isinstance(data, dict) else {})
+            # US listings only: a foreign profile's "state" is a province code
+            # that no FDIC record can match, which would be a false finding.
+            if (row.get("country") or "").upper() in ("", "US"):
+                state = (row.get("state") or "").strip().upper()
+                if state:
+                    out[t] = state
+        except Exception:  # noqa: BLE001 — one bank's key, not the run
+            continue
+        time.sleep(0.05)
+    return out
+
+
 def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
     """Observe-only wrong-entity guard, run by jobs/refresh_universe after
     every snapshot rebuild. Prints loud [namehcr-guard] lines for anything a
@@ -1130,7 +1258,17 @@ def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
         records = fetch_fdic_records_for_certs(certs)
         profiles = fetch_sec_profiles([v["cik"] for v in snapshot.values()
                                        if v.get("cik") and v.get("fdic_cert")])
-        flags = namehcr_flags(snapshot, records, profiles)
+        try:
+            listing = fetch_listing_states(
+                [t for t, v in snapshot.items()
+                 if v.get("fdic_cert") and not v.get("cik")
+                 and (v.get("share_class") or "common") == "common"])
+        except Exception as e:  # noqa: BLE001 — FMP is the optional key here
+            print(f"[namehcr-guard] listing states unavailable "
+                  f"({type(e).__name__}) — §12(i) banks keep the name tell only",
+                  flush=True)
+            listing = {}
+        flags = namehcr_flags(snapshot, records, profiles, listing)
     except Exception as e:  # noqa: BLE001 — observe-only by contract
         print(f"[namehcr-guard] skipped: {type(e).__name__}: {e}", flush=True)
         return empty

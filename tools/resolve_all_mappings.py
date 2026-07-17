@@ -62,6 +62,23 @@ def get_sec_info(ticker: str) -> dict | None:
     return {"cik": info["cik_str"], "name": info["title"]}
 
 
+def sec_profile(cik: int) -> dict | None:
+    """{'hq_state','state_of_incorp'} for the registrant — the second identity
+    key best_fdic_match gates on. None when EDGAR can't be read (the join then
+    falls back to the name alone, as it always did)."""
+    try:
+        r = requests.get(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json",
+                         headers=UA, timeout=10)
+        if r.status_code != 200:
+            return None
+        sub = r.json()
+    except Exception:
+        return None
+    biz = (sub.get("addresses", {}) or {}).get("business", {}) or {}
+    return {"hq_state": biz.get("stateOrCountry", "") or "",
+            "state_of_incorp": sub.get("stateOfIncorporation", "") or ""}
+
+
 def sec_has_xbrl(cik: int, max_age_years: int = 2) -> bool:
     """
     Does SEC's companyfacts endpoint return *recent* data for this CIK?
@@ -156,7 +173,7 @@ def fdic_search_by_name(name: str) -> list[dict]:
         try:
             r = requests.get(url, params={
                 "filters": f"NAMEHCR:{q_quoted} AND ACTIVE:1",
-                "fields": "CERT,NAME,NAMEHCR,ASSET,STALP",
+                "fields": "CERT,NAME,NAMEHCR,ASSET,STALP,STALPHCR",
                 "sort_by": "ASSET", "sort_order": "DESC",
                 "limit": 5,
             }, headers=UA, timeout=10)
@@ -174,6 +191,8 @@ def fdic_search_by_name(name: str) -> list[dict]:
                     "namehcr": d.get("NAMEHCR", ""),
                     "asset": d.get("ASSET", 0),
                     "state": d.get("STALP", ""),
+                    "STALP": d.get("STALP", ""),
+                    "STALPHCR": d.get("STALPHCR", ""),
                 })
         except Exception:
             continue
@@ -181,10 +200,24 @@ def fdic_search_by_name(name: str) -> list[dict]:
     return matches
 
 
-def best_fdic_match(sec_name: str, matches: list[dict]) -> dict | None:
-    """Score matches by token overlap with the SEC name. Highest wins."""
+def best_fdic_match(sec_name: str, matches: list[dict],
+                    profile: dict | None = None) -> dict | None:
+    """Score matches by token overlap with the SEC name, among the banks whose
+    state agrees with the registrant's. Highest wins.
+
+    This function wrote the wrong-entity joins later fixed by hand in 5c92310,
+    53aab80 and 3605a52 — every one of them scored well on tokens and sat in a
+    state the registrant has no presence in (CPBI's "PLAINS BANCSHARES INC" in
+    Kansas for a Nebraska thrift; FDBC's Kansas "FIDELITY FINANCIAL CORP" for a
+    Pennsylvania one). Token overlap cannot separate those; state can, and a
+    0.3 floor on the name is far too weak to be an identity on its own."""
     if not matches:
         return None
+    if profile:
+        from data.bank_universe import _state_corroborates
+        matches = [m for m in matches if _state_corroborates(profile, m)]
+        if not matches:
+            return None
     sec_tokens = set(_content_tokens(sec_name))
     if not sec_tokens:
         return matches[0]  # take asset-sorted top if we have no content tokens
@@ -229,17 +262,20 @@ def resolve(ticker: str) -> dict:
            "sec_xbrl": False, "fdic_score": 0.0}
 
     sec = get_sec_info(ticker)
+    profile = None
     if sec:
         out["name"] = sec["name"]
+        profile = sec_profile(sec["cik"])
         # Only set CIK if SEC actually has XBRL for it; otherwise FDIC-only path
         if sec_has_xbrl(sec["cik"]):
             out["cik"] = sec["cik"]
             out["sec_xbrl"] = True
 
-    # FDIC search — use SEC-canonical name if available, else ticker
+    # FDIC search — use SEC-canonical name if available, else ticker. The
+    # registrant's state gates the match: name alone is not an identity.
     search_name = out["name"]
     matches = fdic_search_by_name(search_name)
-    pick = best_fdic_match(search_name, matches)
+    pick = best_fdic_match(search_name, matches, profile)
     if pick and fdic_verify_cert(pick["cert"]):
         out["cert"] = pick["cert"]
         # Compute the score we used for selection (for reporting)

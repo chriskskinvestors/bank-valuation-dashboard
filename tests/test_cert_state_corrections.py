@@ -65,6 +65,17 @@ CORRECTIONS = {
     # the two were exactly SWAPPED, so not even the dup-cert tell fired.
     # BANK_MAP entry, cik=None (FDIC-only §12(i) filer).
     "PFLC": (23041, 17308),
+    # ── cik=None banks: found by the FMP listing-state key (no SEC side) ──
+    # Century Bank and Trust, Coldwater (MI) $0.49B, hcr CENTURY FINANCIAL
+    # CORP [MI], same city as the listing — was Century Bank of Santa Fe NEW
+    # MEXICO $0.35B (hcr CENTURY FINL SERVICES CO).
+    "CYFL": (5015, 28362),
+    # Security National Bank of Sioux City (IA) $1.74B, hcr state SD — the
+    # lead sub of Security National Corp of Dakota Dunes SD. Was Security
+    # National Bank of OMAHA (cert 19213): a DIFFERENT company whose holdco
+    # carries the identical name "SECURITY NATIONAL CORP" in Nebraska. Three
+    # unrelated companies share that holder name (NE, SD, FL).
+    "SNLC": (4506, 19213),
 }
 
 

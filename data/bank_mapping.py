@@ -93,11 +93,21 @@ BANK_MAP = {
     "DBIN":    {"name": "Dacotah Banks, Inc.",                           "fdic_cert": 17437,  "cik": None},
     "PBAM":    {"name": "Private Bancorp of America, Inc.",              "fdic_cert": 58291,  "cik": None},
     "FAHE":    {"name": "The Fahey Banking Company",                     "fdic_cert": 2068,   "cik": None},
-    "SNLC":    {"name": "Security National Corporation",                 "fdic_cert": 19213,  "cik": None},
+    # THREE different companies are "SECURITY NATIONAL CORP" to the FDIC, in
+    # NE, SD and FL. cert 19213 is the NEBRASKA one's bank (Security National
+    # Bank of Omaha). SNLC is the South Dakota one (Dakota Dunes) whose lead
+    # sub is Security National Bank of Sioux City, IA ($1.74B, hcr state SD);
+    # it also owns cert 34394 ($0.25B), so the largest sub is the join, per the
+    # ATLO/QCRH convention.
+    "SNLC":    {"name": "Security National Corporation",                 "fdic_cert": 4506,   "cik": None},
     "BFCC":    {"name": "BankFirst Capital Corporation",                 "fdic_cert": 8870,   "cik": None},
     "MFGI":    {"name": "Merchants Financial Group, Inc.",               "fdic_cert": 8866,   "cik": None},
     "MSBC":    {"name": "Mission Bancorp",                               "fdic_cert": 34805,  "cik": None},
-    "CYFL":    {"name": "Century Financial Corporation",                 "fdic_cert": 28362,  "cik": None},
+    # cert 28362 is Century Bank of Santa Fe NEW MEXICO (hcr CENTURY FINL
+    # SERVICES CO). CYFL is Century Financial Corporation of Coldwater
+    # MICHIGAN — its bank is Century Bank and Trust, same city, hcr CENTURY
+    # FINANCIAL CORP [MI].
+    "CYFL":    {"name": "Century Financial Corporation",                 "fdic_cert": 5015,   "cik": None},
     "CSHX":    {"name": "Cashmere Valley Bank",                          "fdic_cert": 1265,   "cik": None},
     "NASB":    {"name": "NASB Financial, Inc.",                          "fdic_cert": 29708,  "cik": None},
     "EXSR":    {"name": "Exchange Bank (Santa Rosa, CA)",                "fdic_cert": 8468,   "cik": None},
@@ -572,10 +582,11 @@ def _name_similarity(a: str, b: str) -> float:
     return len(wa & wb) / len(wa | wb)
 
 
-def search_fdic_by_name(name: str, min_similarity: float = 0.5) -> int | None:
+def search_fdic_by_name(name: str, min_similarity: float = 0.5,
+                        profile: dict | None = None) -> int | None:
     """
     Search FDIC for the primary bank subsidiary CERT matching a holding-
-    company name.
+    company name, in the state the registrant actually files from.
 
     Strategy:
       1. Build 1-3 quoted-phrase queries from the cleaned name (the FDIC API
@@ -583,8 +594,14 @@ def search_fdic_by_name(name: str, min_similarity: float = 0.5) -> int | None:
          substrings).
       2. Run each query against the FDIC institutions endpoint (sorted by
          ASSET DESC) and collect candidate banks.
-      3. Score each candidate by name similarity to the query.
-      4. Return the highest-similarity match above `min_similarity`;
+      3. Drop candidates whose state contradicts the registrant's (`profile`,
+         as returned by _profile_from_submissions / get_filing_info). A name
+         is not an identity: "COMMERCE BANCSHARES INC" is the high holder of
+         both a $35.5B Missouri bank and an $88M Louisiana one, and name
+         similarity scores them IDENTICALLY. Skipped when no profile is
+         given — a caller with no state cannot do better than the name.
+      4. Score the survivors by name similarity to the query.
+      5. Return the highest-similarity match above `min_similarity`;
          otherwise return None rather than wire up the wrong cert.
 
     This replaces an earlier implementation that did a single-word wildcard
@@ -631,7 +648,7 @@ def search_fdic_by_name(name: str, min_similarity: float = 0.5) -> int | None:
             # phrase filter matches nothing (audit P3).
             params = {
                 "filters": f'NAMEHCR:"{phrase}"',
-                "fields": "CERT,NAME,NAMEHCR,ASSET,ACTIVE",
+                "fields": "CERT,NAME,NAMEHCR,ASSET,ACTIVE,STALP,STALPHCR",
                 "sort_by": "ASSET",
                 "sort_order": "DESC",
                 "limit": 20,
@@ -657,6 +674,16 @@ def search_fdic_by_name(name: str, min_similarity: float = 0.5) -> int | None:
         # Prefer ACTIVE institutions
         active = [c for c in all_candidates if c.get("ACTIVE") == 1]
         pool = active or all_candidates
+
+        # The second key: drop same-name banks in a state the registrant has
+        # no connection to. If that leaves nothing, the name matched somebody
+        # else — return None rather than the best-scoring stranger.
+        if profile:
+            from data.bank_universe import _state_corroborates
+            in_state = [c for c in pool if _state_corroborates(profile, c)]
+            if not in_state:
+                return None
+            pool = in_state
 
         # Score by similarity
         best = None; best_score = 0.0
@@ -703,8 +730,20 @@ def resolve_ticker(ticker: str) -> dict:
                       ("Llc", "LLC"), ("N.A.", "N.A.")]:
         name = name.replace(bad, good)
 
-    # Try to find FDIC cert from the SEC company name
-    fdic_cert = search_fdic_by_name(sec_name) if sec_name else None
+    # Try to find FDIC cert from the SEC company name, in the registrant's own
+    # state — the name alone cannot separate same-name banks (see the
+    # wrong-entity corpus in tests/test_cert_state_corrections.py). A profile
+    # we can't read costs the state key, not the join.
+    profile = None
+    if cik:
+        try:
+            from data.sec_client import get_filing_info
+            info_sec = get_filing_info(int(cik), max_filings=1)
+            profile = {"hq_state": info_sec.get("hq_state", ""),
+                       "state_of_incorp": info_sec.get("state_of_incorp", "")}
+        except Exception:
+            profile = None
+    fdic_cert = search_fdic_by_name(sec_name, profile=profile) if sec_name else None
 
     resolved = {"name": name, "fdic_cert": fdic_cert, "cik": cik}
     _RESOLVED_CACHE[ticker] = resolved
