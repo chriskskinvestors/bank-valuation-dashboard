@@ -405,6 +405,86 @@ def _fill_fdic_history(rows) -> None:
                 row.setdefault("fdic_hist", {})[bucket] = vals
 
 
+def _fill_sec_history(rows) -> None:
+    """Attach ``row["sec_hist"] = {"prior": {...}, "yoy": {...}}`` with holdco
+    TBV/BV per share for reported banks the pre-warmed ALLBANKS grid does NOT
+    cover (RF 2026-07-17 — that grid's coverage is observe-only and has
+    holes). The grid is read first (free); only the missing banks get a
+    scoped live build (small cohorts build in seconds, cohort-cached 36h).
+    Any failure leaves rows untouched — blank cells, never wrong ones."""
+    try:
+        from data.bank_mapping import get_cik
+        from data.sec_per_share import sec_per_share_grid
+    except Exception:
+        return
+
+    def _index(grid) -> dict:
+        # {(ticker, 'Qn YYYY'): {"tbv_ps": v, "bv_ps": v}}
+        out = {}
+        if not grid or not isinstance(grid.get("rows"), list):
+            return out
+        labels = grid.get("labels") or []
+        for r in grid["rows"]:
+            tk, series = r.get("ticker"), r.get("series") or {}
+            for i, lb in enumerate(labels):
+                cell = {}
+                for key, skey in (("tbv_ps", "tbvps_hist"), ("bv_ps", "bvps_hist")):
+                    v = (series.get(skey) or [None] * len(labels))[i] \
+                        if i < len(series.get(skey) or []) else None
+                    if v is not None:
+                        cell[key] = float(v)
+                if cell:
+                    out[(tk, lb)] = cell
+        return out
+
+    try:
+        warmed = _index(sec_per_share_grid({}, 20, build_if_missing=False,
+                                           scope_id="ALLBANKS"))
+    except Exception:
+        warmed = {}
+
+    def _wanted(row):
+        rel = row.get("rel") or {}
+        for bucket, qend in (("prior", rel.get("prior_qend")),
+                             ("yoy", rel.get("yoy_qend"))):
+            lb = q_label(qend)
+            if not lb:
+                continue
+            stated = rel.get(f"{bucket}_metrics") or {}
+            if stated.get("tbv_ps") is None or stated.get("bv_ps") is None:
+                yield bucket, lb
+
+    missing_cohort: dict = {}
+    for row in rows:
+        tk = row.get("ticker")
+        for bucket, lb in _wanted(row):
+            if (tk, lb) in warmed:
+                row.setdefault("sec_hist", {}).setdefault(bucket, {}).update(
+                    warmed[(tk, lb)])
+            else:
+                try:
+                    cik = get_cik(tk)
+                except Exception:
+                    cik = None
+                if cik:
+                    missing_cohort[int(cik)] = tk
+    if not missing_cohort:
+        return
+    try:
+        built = _index(sec_per_share_grid(missing_cohort, 8,
+                                          build_if_missing=True))
+    except Exception:
+        return
+    for row in rows:
+        tk = row.get("ticker")
+        if tk not in missing_cohort.values():
+            continue
+        for bucket, lb in _wanted(row):
+            if (tk, lb) in built:
+                row.setdefault("sec_hist", {}).setdefault(bucket, {}).update(
+                    built[(tk, lb)])
+
+
 def results_board(days_back: int = 30) -> list[dict]:
     """The Results board rows, cross-instance cached 15 min (earnings-week
     freshness without per-render fetch storms). Empty list when nothing has
@@ -442,6 +522,7 @@ def results_board(days_back: int = 30) -> list[dict]:
         _fill_price_reactions(rows, today)
         _fill_release_metrics(rows)
         _fill_fdic_history(rows)
+        _fill_sec_history(rows)
         return rows
 
     try:
@@ -449,7 +530,8 @@ def results_board(days_back: int = 30) -> list[dict]:
         # v4: common-shares-only universe + negative-revenue junk guard.
         # v5: rows gained `fdic_hist` (quarterly-ratio exhibit history).
         # v6: rows gained `awaiting` (scheduled reporters visible pre-release).
-        return _cache.served_snapshot(f"earnings_results_board_v6:{days_back}",
+        # v7: rows gained `sec_hist` (per-share history for grid-coverage holes).
+        return _cache.served_snapshot(f"earnings_results_board_v7:{days_back}",
                                       900, _build) or []
     except Exception:
         return []

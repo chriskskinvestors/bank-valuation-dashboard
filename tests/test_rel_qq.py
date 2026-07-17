@@ -120,6 +120,11 @@ class TestRelExhibit(unittest.TestCase):
             self.assertEqual(rows["nim"]["prior"], 3.94)    # release wins
             self.assertEqual(rows["roe"]["prior"], 11.5)    # FDIC quarterly
             self.assertEqual(rows["tbv_ps"]["prior"], 9.99)  # grid (SEC) fills
+            # board-built sec_hist beats the grid (grid-coverage holes)
+            fix2 = dict(fix)
+            fix2["sec_hist"] = {"prior": {"tbv_ps": 13.54}}
+            rows2 = {r["key"]: r for r in ue._rel_exhibit_rows(fix2)}
+            self.assertEqual(rows2["tbv_ps"]["prior"], 13.54)
         finally:
             ue._platform_hist_val = orig
 

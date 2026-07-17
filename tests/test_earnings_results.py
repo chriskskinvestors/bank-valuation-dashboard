@@ -106,6 +106,50 @@ class TestPlatformHistoryMapping(unittest.TestCase):
         finally:
             bm.get_fdic_cert, fc.fetch_quarter_financials = orig
 
+    def test_fill_sec_history_covers_grid_holes_only(self):
+        """RF 2026-07-17: present in SEC data, absent from the pre-warmed
+        ALLBANKS grid (observe-only coverage) — the board builds per-share
+        history DIRECTLY for exactly the uncovered banks."""
+        import data.bank_mapping as bm
+        import data.sec_per_share as sps
+        from data.earnings_results import _fill_sec_history
+        orig = (bm.get_cik, sps.sec_per_share_grid)
+        bm.get_cik = lambda tk: {"AAA": 11, "RF": 22}.get(tk)
+        calls = []
+
+        def fake_grid(cohort, n, build_if_missing=True, scope_id=None):
+            calls.append((dict(cohort), build_if_missing, scope_id))
+            if scope_id == "ALLBANKS":     # warmed grid covers AAA only
+                return {"labels": ["Q1 2026"],
+                        "rows": [{"ticker": "AAA",
+                                  "series": {"tbvps_hist": [10.0],
+                                             "bvps_hist": [12.0]}}]}
+            return {"labels": ["Q1 2026", "Q2 2025"],
+                    "rows": [{"ticker": "RF",
+                              "series": {"tbvps_hist": [13.54, 12.77],
+                                         "bvps_hist": [20.41, 19.36]}}]}
+        sps.sec_per_share_grid = fake_grid
+        rows = [
+            {"ticker": "AAA", "rel": {"prior_qend": "2026-03-31",
+                                      "prior_metrics": {}, "yoy_metrics": {}}},
+            {"ticker": "RF", "rel": {"prior_qend": "2026-03-31",
+                                     "yoy_qend": "2025-06-30",
+                                     "prior_metrics": {}, "yoy_metrics": {}}},
+        ]
+        try:
+            _fill_sec_history(rows)
+            self.assertEqual(rows[0]["sec_hist"]["prior"],
+                             {"tbv_ps": 10.0, "bv_ps": 12.0})   # warmed grid
+            self.assertEqual(rows[1]["sec_hist"]["prior"],
+                             {"tbv_ps": 13.54, "bv_ps": 20.41})  # direct build
+            self.assertEqual(rows[1]["sec_hist"]["yoy"],
+                             {"tbv_ps": 12.77, "bv_ps": 19.36})
+            # the live build ran once, for ONLY the uncovered bank
+            builds = [c for c in calls if c[1] and c[2] is None]
+            self.assertEqual(builds, [({22: "RF"}, True, None)])
+        finally:
+            bm.get_cik, sps.sec_per_share_grid = orig
+
     def test_acl_maps_to_true_allowance_ratio(self):
         """ACL/Loans history must read LNATRESR reserves/loans — NEVER
         ELNANTR, whose title says allowance but whose value is provision/NCO

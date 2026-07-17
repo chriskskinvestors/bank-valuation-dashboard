@@ -1623,6 +1623,7 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     yoy = rel.get("yoy_metrics") or {}
     prior_q, yoy_q = rel.get("prior_qend"), rel.get("yoy_qend")
     fdic_hist = r.get("fdic_hist") or {}
+    sec_hist = r.get("sec_hist") or {}
     cons = {"eps_adj": r.get("eps_est"), "total_revenue": r.get("rev_est")}
     # Consensus-feed ACTUALS fill the consensus-basis rows' current cells when
     # the release didn't state them — FMP's epsActual is the consensus-basis
@@ -1637,16 +1638,21 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     rows = []
     for key, label, unit in _REL_METRICS:
         c = cur.get(key)
-        # History: the bank's own comparative column, else FDIC single-quarter
-        # ratios (bank-sub, quarterly-true), else the platform grids.
+        # History: the bank's own comparative column, else the board-built
+        # FDIC quarterly ratios / SEC per-share (covers the pre-warmed grid's
+        # holes — RF 2026-07-17), else the platform grids.
         p = prior.get(key)
         if p is None:
             p = (fdic_hist.get("prior") or {}).get(key)
+        if p is None:
+            p = (sec_hist.get("prior") or {}).get(key)
         if p is None:
             p = _platform_hist_val(tk, key, prior_q)
         y = yoy.get(key)
         if y is None:
             y = (fdic_hist.get("yoy") or {}).get(key)
+        if y is None:
+            y = (sec_hist.get("yoy") or {}).get(key)
         if y is None:
             y = _platform_hist_val(tk, key, yoy_q)
         rows.append({
