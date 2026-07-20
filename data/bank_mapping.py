@@ -332,10 +332,15 @@ BANK_MAP = {
 # ── IR page URLs (separate to keep BANK_MAP clean) ──────────────────────
 # Maps ticker -> investor relations URL. Not every bank is listed; the UI
 # falls back to the SEC EDGAR company page when missing.
+# INVARIANT (VLY 2026-07-20): when a bank has a Q4-hosted IR site, the curated
+# entry must point AT that Q4 host — curated entries re-assert over nightly
+# discovery, so a marketing/CMS URL here suppresses the bank's press releases
+# and earnings-call info. Full sweep 2026-07-20 verified every entry below:
+# each Q4 host answers GetPressReleaseList; the rest are genuinely non-Q4.
 IR_URLS = {
     "PFS":   "https://investorrelations.provident.bank/",
-    "SFST":  "https://www.southernfirst.com/investor-relations",
-    "CFFI":  "https://www.cffc.com/investor-relations/",
+    "SFST":  "https://ir.southernfirst.com/",
+    "CFFI":  "https://investor.cffc.com/",
     "CBNK":  "https://ir.capitalbankmd.com/",
     "FBIZ":  "https://ir.firstbusiness.bank/",
     "CCBG":  "https://www.ccbg.com/investor-relations/",
@@ -348,13 +353,13 @@ IR_URLS = {
     "TCBX":  "https://ir.thirdcoast.bank/",
     "FMBH":  "https://www.firstmidbancshares.com/investor-relations/",
     "HBNC":  "https://investor.horizonbank.com/",
-    "PLBC":  "https://www.plumasbank.com/investor-relations",
-    "BANR":  "https://www.bannerbank.com/investor-relations",
+    "PLBC":  "https://ir.plumasbank.com/",
+    "BANR":  "https://investor.bannerbank.com/",
     "BRBS":  "https://www.mybrb.com/investor-relations/",
     "FSBW":  "https://ir.fsbwa.com/",
     "SPFI":  "https://ir.southplains.com/",
     "ALRS":  "https://ir.alerus.com/",
-    "FMNB":  "https://www.farmersbankgroup.com/investor-relations",
+    "FMNB":  "https://ir.farmersbankgroup.com/",
     "HFWA":  "https://ir.hf-wa.com/",
     "CBAN":  "https://ir.colony.bank/",
     # Q4 IR site the nightly subdomain probe should have found off the FDIC
@@ -364,7 +369,7 @@ IR_URLS = {
     # which the Home feed hides. Verified: Q4 API returns the releases.
     "CBSH":  "https://investor.commercebank.com/",
     "FRME":  "https://www.firstmerchants.com/investor-relations",
-    "WAL":   "https://ir.westernalliancebancorporation.com/",
+    "WAL":   "https://investors.westernalliancebancorporation.com/",
     "BKU":   "https://ir.bankunited.com/",
     "PGC":   "https://www.pgbank.com/investor-relations",
     "INBK":  "https://ir.firstib.com/",
@@ -373,9 +378,9 @@ IR_URLS = {
     "OZK":   "https://ir.ozk.com/",
     "FHN":   "https://ir.firsthorizon.com/",
     "UBSI":  "https://www.ubsi-wv.com/investor-relations",
-    "FBNC":  "https://ir.localfirstbank.com/",
+    "FBNC":  "https://investor.localfirstbank.com/",
     "FFWM":  "https://ir.firstfoundationinc.com/",
-    "FFIN":  "https://www.ffin.com/investor-relations",
+    "FFIN":  "https://investorrelations.ffin.com/",
     "HOMB":  "https://ir.homebancshares.com/",
     "EGBN":  "https://ir.eaglebankcorp.com/",
     "BANC":  "https://ir.bancofcal.com/",
@@ -383,7 +388,7 @@ IR_URLS = {
     # Q4 host, NOT the valley.com marketing page — the curated marketing URL
     # suppressed Q4 discovery and cost VLY its call info (2026-07-20).
     "VLY":   "https://ir.valleynationalbank.com",
-    "KEY":   "https://ir.key.com/",
+    "KEY":   "https://investor.key.com/",
     "HBAN":  "https://ir.huntington.com/",
     "ZION":  "https://www.zionsbancorporation.com/investor-relations",
     "JPM":   "https://www.jpmorganchase.com/ir",
