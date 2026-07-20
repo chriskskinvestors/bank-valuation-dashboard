@@ -1855,8 +1855,30 @@ def _render_results_board():
         "text-align:left;}"
         ".ern-grid td.dt table.relx .cur{font-weight:600;}"
         "</style>", unsafe_allow_html=True)
-    _render_earnings_grid(headers, [_results_tr(r, len(headers)) for r in rows],
-                          col_widths=col_widths)
+    # Calendar-style per-DAY sections, most recent day first (owner
+    # 2026-07-17): rows arrive newest-first from the board, so consecutive
+    # grouping preserves the order; within a day reported rows precede
+    # awaiting ones (builder contract).
+    from datetime import date
+    from itertools import groupby
+    today = date.today()
+    for d_iso, grp_iter in groupby(rows, key=lambda r: r.get("date") or ""):
+        grp = list(grp_iter)
+        try:
+            delta = (today - date.fromisoformat(d_iso)).days
+            label = ("Today" if delta == 0 else "Yesterday" if delta == 1
+                     else date.fromisoformat(d_iso).strftime("%a, %b %d"))
+        except ValueError:
+            delta, label = 99, d_iso or "—"
+        n_aw = sum(1 for r in grp if r.get("awaiting"))
+        n_rep = len(grp) - n_aw
+        header = f"{label} · {n_rep} reported"
+        if n_aw:
+            header += f" · {n_aw} awaiting"
+        st.markdown(f"##### {'🔴 ' if delta == 0 else ''}{header}")
+        _render_earnings_grid(headers,
+                              [_results_tr(r, len(headers)) for r in grp],
+                              col_widths=col_widths)
     export_rows = [{**{k: v for k, v in r.items() if k != "rel"},
                     **{f"rel_{key}": ((r.get("rel") or {}).get("metrics", {}) |
                                       (r.get("rel") or {}).get("capital", {})
