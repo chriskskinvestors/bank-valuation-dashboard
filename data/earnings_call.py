@@ -433,6 +433,103 @@ def get_pr_call_details() -> dict:
     return {}
 
 
+def _release_call_infos(board_rows, today, fetch_release, is_safe,
+                        cache_get, cache_put) -> dict:
+    """Pure core of release_call_info_map: {ticker: info} for board rows that
+    REPORTED within the last 2 days (never awaiting rows — their releases
+    don't exist; never older rows — a prior quarter's call logistics are
+    stale). Every returned info carries release_date = the board's report
+    date, which the agenda treats as an announced-by-the-bank date →
+    the calendar's ✓ instead of "(proj.)" for banks that have factually
+    reported. Call logistics parse from the release body when present
+    (banks state the report-day call, webcast and dial-in there — coverage
+    the wires miss). Parsed once per (ticker, report date) via the cache
+    callables; a fetch failure caches {} for the cycle but release_date
+    still confirms."""
+    out: dict = {}
+    for r in board_rows or []:
+        if r.get("awaiting"):
+            continue
+        d = _iso_date(r.get("date"))
+        if d is None or (today - d).days > 2:
+            continue
+        tk = r.get("ticker")
+        if not tk:
+            continue
+        ck = f"release_callinfo:v1:{tk}:{r['date']}"
+        hit = cache_get(ck)
+        if hit is not None:
+            ci = dict(hit or {})
+        else:
+            ci = {}
+            try:
+                rel = fetch_release(tk)
+                fd = _iso_date((rel or {}).get("filed_date"))
+                if rel and fd is not None and 0 <= (fd - d).days <= 5:
+                    from data.release_metrics import _flat_text
+                    ci = parse_call_info(_flat_text(rel.get("html") or ""))
+                    url = ci.get("webcast_url")
+                    if url and not is_safe(url):
+                        ci["webcast_url"] = None
+                    ci = {k: v for k, v in ci.items() if v}
+            except Exception:
+                ci = {}
+            cache_put(ck, ci)
+        ci["release_date"] = r["date"]
+        out[tk] = ci
+    return out
+
+
+def release_call_info_map() -> dict:
+    """{ticker: {release_date, call_time?, webcast_url?, dial_in?, when?}}
+    from the earnings RELEASES of banks that reported in the last two days
+    (the Results board). 1h assembled-map cache; each release parsed once
+    per report via the shared data cache. Empty on any failure."""
+    import streamlit as st
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _build() -> dict:
+        from datetime import datetime
+        try:
+            from data import cache as _cache
+            from data.bank_mapping import get_cik
+            from data.earnings_results import results_board
+            from data.events.wire_base import is_safe_news_url
+            from data.ir_provider import latest_earnings_release
+        except Exception:
+            return {}
+        try:
+            rows = results_board()
+        except Exception:
+            rows = []
+
+        def _fetch(tk):
+            cik = get_cik(tk)
+            return latest_earnings_release(cik) if cik else None
+
+        def _get(ck):
+            try:
+                v = _cache.get(ck)
+                return (v or {}).get("value") if v is not None else None
+            except Exception:
+                return None
+
+        def _put(ck, val):
+            try:
+                _cache.put(ck, {"cached_at": datetime.now().isoformat(),
+                                "value": val})
+            except Exception:
+                pass
+
+        return _release_call_infos(rows, date.today(), _fetch,
+                                   is_safe_news_url, _get, _put)
+
+    try:
+        return _build()
+    except Exception:
+        return {}
+
+
 def merged_call_info() -> dict:
     """{ticker: {call_time, webcast_url, dial_in, call_date, release_date}} from
     ALL call-detail sources, layered weakest→strongest:
@@ -458,6 +555,11 @@ def merged_call_info() -> dict:
     _overlay(get_pr_call_details(),
              ("call_time", "webcast_url", "dial_in", "call_date", "release_date",
               "when"))
+    # The bank's own earnings RELEASE (banks that reported ≤2 days ago): its
+    # existence makes the date a fact — ✓, never "(proj.)" — and its body
+    # states the report-day call/webcast/dial-in the wires often miss.
+    _overlay(release_call_info_map(),
+             ("call_time", "webcast_url", "dial_in", "release_date", "when"))
     try:
         from data.events.ir_site import get_q4_call_details
         q4 = get_q4_call_details()

@@ -416,6 +416,56 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertIn("JPM", tickers)                     # 07-14, within 5 days
         self.assertNotIn("FMPONLY", tickers)              # 07-20, beyond 5 days
 
+    def test_release_call_infos_confirms_and_parses(self):
+        """2026-07-17: reported banks showed '(proj.)' and blank Call/Webcast
+        while their own releases — already fetched — state the report-day
+        call. The release layer: reported ≤2d rows get release_date (→ ✓)
+        plus parsed call logistics; awaiting and stale rows never do."""
+        from data.earnings_call import _release_call_infos
+        store = {}
+        html = ("<p>Regions will host a conference call today at 10:00 a.m. "
+                "Eastern time. A live webcast is available at "
+                "https://ir.regionsbank.com/events. Dial-in: 1-888-317-6003, "
+                "conference ID 1234567.</p>")
+        fetches = []
+
+        def fetch(tk):
+            fetches.append(tk)
+            return {"html": html, "filed_date": "2026-07-17"}
+        rows = [
+            {"ticker": "RF", "date": "2026-07-17"},               # today ✓
+            {"ticker": "OVLY", "date": "2026-07-17", "awaiting": True},
+            {"ticker": "OLD", "date": "2026-07-10"},              # stale
+        ]
+        out = _release_call_infos(rows, date(2026, 7, 17), fetch,
+                                  lambda u: True,
+                                  store.get, store.__setitem__)
+        self.assertEqual(sorted(out), ["RF"])
+        self.assertEqual(out["RF"]["release_date"], "2026-07-17")
+        self.assertIn("10:00", out["RF"]["call_time"])
+        self.assertIn("regionsbank.com", out["RF"]["webcast_url"])
+        self.assertTrue(out["RF"].get("dial_in"))
+        self.assertEqual(fetches, ["RF"])
+        # Second pass serves from the cache — no refetch; ✓ persists.
+        out2 = _release_call_infos(rows, date(2026, 7, 17), fetch,
+                                   lambda u: True,
+                                   store.get, store.__setitem__)
+        self.assertEqual(fetches, ["RF"])
+        self.assertEqual(out2["RF"]["release_date"], "2026-07-17")
+
+    def test_release_call_infos_stale_release_still_confirms(self):
+        # Fetch returns LAST quarter's release (filed months before the
+        # report) — its call logistics must NOT attach, but the report date
+        # itself (the board row) still confirms.
+        from data.earnings_call import _release_call_infos
+        store = {}
+        out = _release_call_infos(
+            [{"ticker": "XX", "date": "2026-07-17"}], date(2026, 7, 17),
+            lambda tk: {"html": "<p>call today at 9 a.m. ET</p>",
+                        "filed_date": "2026-04-17"},
+            lambda u: True, store.get, store.__setitem__)
+        self.assertEqual(out["XX"], {"release_date": "2026-07-17"})
+
     def test_empty_inputs_return_empty(self):
         self.assertEqual(
             build_calls_agenda(None, None, self.UNIVERSE, {}, date(2026, 7, 13)), [])
