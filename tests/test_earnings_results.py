@@ -364,6 +364,28 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertEqual(rows["MNSB"]["date"], "2026-07-14")
         self.assertEqual(rows["MNSB"]["pr_url"], "https://sec.gov/x")
 
+    def test_logistics_announcements_never_mint_pending_rows(self):
+        """WAL 2026-07-20: 'Announces Second Quarter 2026 Earnings Release
+        Date, Conference Call and Webcast' slipped the upcoming filter and
+        minted a false PENDING row (pending claims the release is OUT).
+        Real results headlines must still qualify."""
+        headlines = {
+            "WAL": "Western Alliance Bancorporation Announces Second Quarter "
+                   "2026 Earnings Release Date, Conference Call and Webcast",
+            "HBCP": "HOME BANCORP, INC. TO ISSUE 2026 SECOND QUARTER "
+                    "EARNINGS AND HOST CONFERENCE CALL",
+            "PEBO": "Peoples Bancorp Announces Details for the Release of "
+                    "Its Second Quarter Results",
+            "REAL": "MainStreet Bancshares Reports Q2 2026 Results",
+        }
+        events = {tk: [{"headline": h, "url": "u",
+                        "published_at": "2026-07-14T09:00:00"}]
+                  for tk, h in headlines.items()}
+        rows = {r["ticker"]: r for r in build_results_rows(
+            [], set(headlines), events, self.TODAY)}
+        self.assertEqual(sorted(rows), ["REAL"])
+        self.assertTrue(rows["REAL"]["pending"])
+
     def test_events_row_never_duplicates_fmp_row(self):
         fmp = [{"symbol": "MNSB", "date": "2026-07-14", "epsActual": 0.55}]
         events = {"MNSB": [{"headline": "8-K · Results of Operations",

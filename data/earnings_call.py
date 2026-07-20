@@ -167,7 +167,13 @@ _ON_DATE_RE = re.compile(
     r"([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})", re.I)
 _ANNOUNCE_CUES = ("announce", "will report", "to report", "will release",
                   "to release", "schedule", "set date", "sets date",
-                  "will host", "to host")
+                  "will host", "to host",
+                  # HBCP 2026-07-20: "TO ISSUE 2026 SECOND QUARTER EARNINGS
+                  # AND HOST CONFERENCE CALL" — "issue" is a release verb too.
+                  "will issue", "to issue",
+                  # SMBK-style "Sets Dates for..." already covered; the
+                  # date-in-title form "Earnings Release Date" is its own cue.
+                  "release date")
 _EARNINGS_KW = ("results", "earnings")
 
 

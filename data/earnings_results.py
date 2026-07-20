@@ -102,8 +102,14 @@ def pick_release_pr(events: list[dict], report_date: date) -> dict | None:
 # near a projected date must not mark the bank "reported" (the results PR
 # says "Reports Q2 Results"; the announcement says "Will Report … on July 23").
 _UPCOMING_CUE_RE = re.compile(
-    r"\b(?:will (?:report|announce|release|host)|to (?:report|announce|release|"
-    r"host)|schedul|sets? (?:the )?date)", re.I)
+    r"\b(?:will (?:report|announce|release|host|issue)|to (?:report|announce|"
+    r"release|host|issue)|schedul|sets? (?:the )?dates?|"
+    # WAL 2026-07-20: "Announces Second Quarter 2026 Earnings Release Date,
+    # Conference Call and Webcast" slipped through and minted a false
+    # PENDING row (a pending row claims the release is OUT — it wasn't).
+    # A date/logistics announcement is never a results release.
+    r"release (?:date|schedule)|announces? details|details for the release|"
+    r"conference call and webcast)", re.I)
 
 
 def build_results_rows(fmp_rows, universe, events_by_ticker, today,
