@@ -197,6 +197,37 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             "pending": pending,
             "awaiting": awaiting,
         }
+    # FMP's calendar is NOT the universe of reporters: banks FMP omits
+    # entirely (MNSB 2026-07-20 — no calendar row in any window) still file
+    # their 8-K, which the events feed carries as an 'earnings' event (the
+    # sec_8k adapter classifies Item 2.02). Any universe ticker with a
+    # RESULTS-shaped earnings event in the window and no FMP row gets a
+    # pending row — the release fill then attaches the 8-K and supplies
+    # actuals from the bank's own release.
+    for tk, evs in (events_by_ticker or {}).items():
+        if tk in best or tk not in uni:
+            continue
+        for e in evs or []:                          # newest-first
+            ed = _iso_date(str(e.get("published_at") or "")[:10])
+            if ed is None or not (floor <= ed <= today):
+                continue
+            if _UPCOMING_CUE_RE.search(e.get("headline") or ""):
+                continue                             # date announcement, not results
+            best[tk] = {
+                "_d": ed,
+                "ticker": tk,
+                "date": ed.isoformat(),
+                "when": None,
+                "period_ending": None,
+                "eps_act": None, "eps_est": None, "eps_surprise": None,
+                "rev_act": None, "rev_est": None, "rev_surprise": None,
+                "reaction_session": reaction_session(ed, None).isoformat(),
+                "pr_headline": e.get("headline"),
+                "pr_url": e.get("url"),
+                "pending": True,
+                "awaiting": False,
+            }
+            break
     rows = sorted(best.values(),
                   key=lambda x: (-x["_d"].toordinal(), x["awaiting"],
                                  x["ticker"]))
@@ -292,6 +323,8 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
             # An attached release IS the report — an "awaiting" row flips the
             # moment the 8-K lands, ahead of FMP and the wires.
             row["awaiting"] = False
+            if not row.get("period_ending") and rm.get("qend"):
+                row["period_ending"] = rm["qend"]    # FMP-less rows (MNSB)
             metrics = rm.get("metrics") or {}
             row["rel"] = {"qend": rm.get("qend"),
                           "metrics": metrics,
@@ -531,7 +564,8 @@ def results_board(days_back: int = 30) -> list[dict]:
         # v5: rows gained `fdic_hist` (quarterly-ratio exhibit history).
         # v6: rows gained `awaiting` (scheduled reporters visible pre-release).
         # v7: rows gained `sec_hist` (per-share history for grid-coverage holes).
-        return _cache.served_snapshot(f"earnings_results_board_v7:{days_back}",
+        # v8: events-only discovery (reporters FMP's calendar omits entirely).
+        return _cache.served_snapshot(f"earnings_results_board_v8:{days_back}",
                                       900, _build) or []
     except Exception:
         return []

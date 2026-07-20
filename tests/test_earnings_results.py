@@ -339,6 +339,39 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertIsNone(rows[0]["rev_act"])
         self.assertIsNone(rows[0]["rev_surprise"])
 
+    def test_events_only_reporter_appears_without_fmp_row(self):
+        """MNSB 2026-07-20: filed its earnings 8-K but has NO FMP calendar
+        row in any window — the board must discover reporters from the
+        events feed too (the sec_8k adapter types Item 2.02 as 'earnings'),
+        as a pending row the release fill completes."""
+        events = {
+            "MNSB": [{"headline": "8-K · Results of Operations — MainStreet "
+                      "Bancshares", "url": "https://sec.gov/x",
+                      "published_at": "2026-07-14T09:05:00"}],
+            # announcement-shaped headline never creates a row
+            "ANNC": [{"headline": "Bank Will Report Second Quarter Results "
+                      "on July 30", "url": "u",
+                      "published_at": "2026-07-14T09:00:00"}],
+            # outside the window
+            "OLDE": [{"headline": "8-K · Results of Operations", "url": "u",
+                      "published_at": "2026-05-01T09:00:00"}],
+        }
+        rows = {r["ticker"]: r for r in build_results_rows(
+            [], {"MNSB", "ANNC", "OLDE"}, events, self.TODAY)}
+        self.assertEqual(sorted(rows), ["MNSB"])
+        self.assertTrue(rows["MNSB"]["pending"])
+        self.assertFalse(rows["MNSB"]["awaiting"])
+        self.assertEqual(rows["MNSB"]["date"], "2026-07-14")
+        self.assertEqual(rows["MNSB"]["pr_url"], "https://sec.gov/x")
+
+    def test_events_row_never_duplicates_fmp_row(self):
+        fmp = [{"symbol": "MNSB", "date": "2026-07-14", "epsActual": 0.55}]
+        events = {"MNSB": [{"headline": "8-K · Results of Operations",
+                            "url": "u", "published_at": "2026-07-14T09:05:00"}]}
+        rows = build_results_rows(fmp, {"MNSB"}, events, self.TODAY)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["eps_act"], 0.55)   # the FMP row won
+
     def test_scheduled_reporter_is_awaiting_never_invisible(self):
         """Owner 2026-07-17: 'there never can be stragglers' — a bank whose
         scheduled date has arrived gets a row even with NOTHING published
