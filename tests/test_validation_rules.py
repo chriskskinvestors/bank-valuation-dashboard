@@ -41,6 +41,16 @@ def test_loan_composition():
     # A single segment mis-scaled ×1000 exceeds gross → error
     bad = dict(good, LNCI=250_000)
     assert any(f.severity == "error" for f in check_loan_composition(bad))
+    # NASB (cert 29708): LNRE at a stable 102.2% of LNLSGR in the bank's own
+    # filed data — an FDIC classification artifact, NOT a unit error. At the
+    # old 1.02 threshold it flapped in/out of the nightly gate all weekend
+    # (2026-07-20). Artifact-range overshoot must not error…
+    nasb_like = {"LNLSGR": 2_179_998, "LNRE": 2_227_427}
+    assert not any(f.severity == "error"
+                   for f in check_loan_composition(nasb_like))
+    # …while a genuine blowout still must (tripwire keeps its teeth).
+    assert any(f.severity == "error"
+               for f in check_loan_composition({"LNLSGR": 1000, "LNRE": 1200}))
     # Missing gross → safe no-op
     assert check_loan_composition({}) == []
     print("PASS: loan composition")

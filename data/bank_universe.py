@@ -28,6 +28,12 @@ _SKIP_TICKERS = {
     "FLBL", "FLRT", "HERD", "NRGD", "NRGU", "OILK", "TSLZ",
     "FNGG", "FNGO", "HIBL", "HIBS", "WEBL", "WEBS", "ZSL",
     "BACRP",
+    # Generations Bancorp NY: the BANK CLOSED 2026-06-30 (FDIC ACTIVE=0)
+    # and the holdco deregistered (Form 15-12G, last filing 2024) — but the
+    # ticker lingers in SEC's company_tickers.json, so removing its map
+    # entry just let discovery re-admit it as a dead-CIK ghost that failed
+    # sec_filings staleness every morning (weekend alerts, 2026-07-20).
+    "GBNY",
     # Deutsche Bank-issued PowerShares/X-trackers ETNs
     "DGP", "DGZ", "DZZ", "DEE", "DEENF", "ADZCF", "OLOXF",
     "DBA", "DBB", "DBC", "DBE", "DBEU", "DBJP", "DBMV",

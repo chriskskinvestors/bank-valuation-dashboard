@@ -281,8 +281,14 @@ def check_loan_composition(fdic_data: dict) -> list[Finding]:
         "consumer (LNCON)": fdic_data.get("LNCON"),
         "agricultural (LNAG)": fdic_data.get("LNAG"),
     }
+    # Threshold 1.10, not ~1.0: this is a UNIT-ERROR tripwire (those land at
+    # 10-1000x, never a stable 1.02x) — and FDIC's own field classification
+    # can legitimately put a segment slightly ABOVE the gross roll-up. NASB
+    # (cert 29708) files LNRE at a stable 102.2% of LNLSGR three quarters
+    # running (verified against raw FDIC data 2026-07-20); at 1.02 it
+    # flapped in and out of the nightly growth gate all weekend.
     for label, v in segments.items():
-        if v is not None and v > gross * 1.02:
+        if v is not None and v > gross * 1.10:
             findings.append(Finding(
                 severity="error",
                 field="loan_composition",
