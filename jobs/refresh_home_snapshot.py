@@ -150,10 +150,24 @@ def main() -> int:
     # a 25-minute lag on earnings headlines is not.
     _warm_news_feed(tickers)
 
-    fdic, hist = _load_fdic(tickers)
-    sec = _load_sec(tickers)
-    prices = _load_prices(tickers)
-    metrics = build_all_bank_metrics(tickers, fdic, sec, prices, hist)
+    # Per-phase timing. The build was logged as ONE number ("wrote ... in 747s")
+    # which named the metrics build as the whole runtime but not WHICH loader —
+    # and the 747s-vs-1631s split between two overlapping runs proved it's live
+    # external fetches contending on a shared rate limit, not CPU. These four
+    # prints tell the next run's log exactly which source (FDIC / SEC / prices /
+    # compute) to fix, instead of guessing at it.
+    def _timed(label, fn):
+        _t = time.time()
+        r = fn()
+        print(f"[{time.strftime('%H:%M:%S')}] {label}: {time.time() - _t:.0f}s",
+              flush=True)
+        return r
+
+    fdic, hist = _timed("load_fdic", lambda: _load_fdic(tickers))
+    sec = _timed("load_sec", lambda: _load_sec(tickers))
+    prices = _timed("load_prices", lambda: _load_prices(tickers))
+    metrics = _timed("build_metrics",
+                     lambda: build_all_bank_metrics(tickers, fdic, sec, prices, hist))
     if not metrics:
         print("[home-snap] build produced no metrics — keeping the last good "
               "snapshot", flush=True)
