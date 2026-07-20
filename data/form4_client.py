@@ -288,10 +288,28 @@ def recent_open_market_transactions(ticker_ciks: dict, days: int = 30,
     """
     cutoff = (datetime.now() - timedelta(days=days)).date()
     out: list[dict] = []
-    for ticker, cik in (ticker_ciks or {}).items():
-        if not cik:
-            continue
-        cached = load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
+    pairs = [(t, c) for t, c in (ticker_ciks or {}).items() if c]
+    # One GCS object read per bank. These were issued SERIALLY, so the walk cost
+    # ~len(pairs) round-trips end to end — ~380 of them once the universe reached
+    # 533 banks, on the critical path of a job scheduled every 15 minutes (which
+    # was overrunning to 13-28 min and overlapping itself). They're independent
+    # reads of distinct objects with no ordering requirement, so a small pool
+    # collapses that to ~len(pairs)/16 round-trips. Bounded at 16: GCS is happy
+    # with far more, but this runs inside a job that is already doing other I/O
+    # and the win is mostly gone past this point.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _read(pair):
+        ticker, cik = pair
+        try:
+            return ticker, cik, load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
+        except Exception:
+            return ticker, cik, None      # a bad/missing object skips this bank
+
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        fetched = list(ex.map(_read, pairs))
+
+    for ticker, cik, cached in fetched:
         if not cached:
             continue
         for tx in cached.get("transactions", []):

@@ -26,12 +26,20 @@ import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-_st.session_state = {}
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub. setdefault alone is not enough: another
+# suite may have registered a THINNER stub first (several predate ui/home.py's
+# module-load @st.fragment), and then importing ui.home here dies on the missing
+# attribute purely because of test ordering. So take whatever stub is already
+# installed and fill in only what's absent — additive, so no other suite's
+# expectations change.
+_st = sys.modules.get("streamlit") or types.ModuleType("streamlit")
+_passthru = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
+for _attr in ("cache_data", "cache_resource", "fragment"):
+    if not hasattr(_st, _attr):
+        setattr(_st, _attr, _passthru)
+if not hasattr(_st, "session_state"):
+    _st.session_state = {}
+sys.modules["streamlit"] = _st
 
 import ui.home as home  # noqa: E402
 
