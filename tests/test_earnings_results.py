@@ -364,6 +364,33 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertEqual(rows["MNSB"]["date"], "2026-07-14")
         self.assertEqual(rows["MNSB"]["pr_url"], "https://sec.gov/x")
 
+    def test_aggregator_events_are_never_first_party(self):
+        """2026-07-20 evening: google_news preview articles ("(ABCB) Q2 2026
+        Preview: EPS Est. $1.66, Reports July 23") typed 'earnings' minted
+        false pending rows for banks reporting days later. Only first-party
+        sources (8-K filings, wire PRs, IR pages) survive the gate; missing
+        source is NOT first-party."""
+        from data.earnings_results import first_party_events
+        evs = {"ABCB": [
+            {"source": "google_news", "headline": "Ameris (ABCB) Q2 Results "
+             "Beat", "url": "u", "published_at": "2026-07-14T09:00:00"},
+            {"source": "sec_8k", "headline": "8-K · Results of Operations",
+             "url": "s", "published_at": "2026-07-14T08:00:00"},
+            {"headline": "no source field", "url": "x",
+             "published_at": "2026-07-14T07:00:00"},
+        ]}
+        out = first_party_events(evs)
+        self.assertEqual([e["source"] for e in out["ABCB"]], ["sec_8k"])
+
+    def test_preview_headline_belt(self):
+        fmp = []
+        events = {"ABCB": [{"headline": "Ameris Bancorp (ABCB) Q2 2026 "
+                            "Preview: EPS Est. $1.66, Reports July 23",
+                            "url": "u",
+                            "published_at": "2026-07-14T09:00:00"}]}
+        self.assertEqual(
+            build_results_rows(fmp, {"ABCB"}, events, self.TODAY), [])
+
     def test_logistics_announcements_never_mint_pending_rows(self):
         """WAL 2026-07-20: 'Announces Second Quarter 2026 Earnings Release
         Date, Conference Call and Webcast' slipped the upcoming filter and

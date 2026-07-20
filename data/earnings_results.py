@@ -109,7 +109,26 @@ _UPCOMING_CUE_RE = re.compile(
     # PENDING row (a pending row claims the release is OUT — it wasn't).
     # A date/logistics announcement is never a results release.
     r"release (?:date|schedule)|announces? details|details for the release|"
-    r"conference call and webcast)", re.I)
+    r"conference call and webcast|"
+    # Aggregator preview shapes ("(ABCB) Q2 2026 Preview: EPS Est. $1.66,
+    # Reports July 23") — belt behind the first-party source gate.
+    r"preview|eps est|forecast|what to expect|ahead of earnings)", re.I)
+
+# Only events from FIRST-PARTY sources may mark a bank reported/pending or
+# supply its release link. Aggregator articles typed 'earnings'
+# (google_news/yfinance_news: "(ABCB) Q2 2026 Preview … Reports July 23",
+# 2026-07-20) minted false pending rows for banks reporting days later —
+# no headline filter can contain third-party content shapes. Unknown or
+# missing source = NOT first-party.
+_FIRST_PARTY_SOURCES = {"sec_8k", "businesswire", "prnewswire",
+                        "globenewswire", "fmp_news", "ir_site"}
+
+
+def first_party_events(events_by_ticker: dict) -> dict:
+    """events_by_ticker restricted to first-party sources (order kept)."""
+    return {tk: [e for e in evs or []
+                 if (e.get("source") or "") in _FIRST_PARTY_SOURCES]
+            for tk, evs in (events_by_ticker or {}).items()}
 
 
 def build_results_rows(fmp_rows, universe, events_by_ticker, today,
@@ -554,6 +573,7 @@ def results_board(days_back: int = 30) -> list[dict]:
                 tk = e.get("ticker")
                 if tk:
                     events.setdefault(tk, []).append(e)   # store order: newest-first
+            events = first_party_events(events)
         except Exception:
             events = {}
         rows = build_results_rows(fmp_rows, universe, events, today,
@@ -571,7 +591,8 @@ def results_board(days_back: int = 30) -> list[dict]:
         # v6: rows gained `awaiting` (scheduled reporters visible pre-release).
         # v7: rows gained `sec_hist` (per-share history for grid-coverage holes).
         # v8: events-only discovery (reporters FMP's calendar omits entirely).
-        return _cache.served_snapshot(f"earnings_results_board_v8:{days_back}",
+        # v9: first-party source gate (aggregator previews minted false rows).
+        return _cache.served_snapshot(f"earnings_results_board_v9:{days_back}",
                                       900, _build) or []
     except Exception:
         return []
