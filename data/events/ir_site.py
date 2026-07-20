@@ -414,10 +414,14 @@ def refresh_q4_ir_endpoints(universe: dict | None = None,
         curated = IR_URLS.get(tk)
         if curated:
             try:
-                _q4_site(curated)   # warm the Q4 detection/key cache
+                is_q4, _ = _q4_site(curated)   # warm the Q4 detection/key cache
             except Exception:
-                pass
-            return tk, curated
+                is_q4 = False
+            if is_q4:
+                return tk, curated
+            # Curated but NOT Q4 — keep probing: a curated marketing URL must
+            # never suppress discovery of the real Q4 host (VLY 2026-07-20:
+            # valley.com hid ir.valleynationalbank.com and its call info).
         webaddr = info.get("webaddr") or ""
         if not webaddr:
             # FDIC carries no website for this bank (e.g. CBSH), so the subdomain
@@ -429,9 +433,10 @@ def refresh_q4_ir_endpoints(universe: dict | None = None,
             except Exception:
                 webaddr = ""
         try:
-            return tk, discover_q4_ir_url(webaddr)
+            disc = discover_q4_ir_url(webaddr)
         except Exception:
-            return tk, None
+            disc = None
+        return tk, disc or curated     # discovered Q4 host wins; curated kept
 
     found: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
@@ -451,15 +456,20 @@ def refresh_q4_ir_endpoints(universe: dict | None = None,
 
 
 def get_ir_endpoints() -> dict[str, str]:
-    """Curated IR_URLS merged with the nightly-discovered Q4 endpoints — the full
-    set the adapter polls. Falls back to just IR_URLS before discovery has run."""
-    endpoints = dict(IR_URLS)
+    """Nightly-discovered Q4 endpoints merged over curated IR_URLS — the full
+    set the adapter polls. Curated entries RE-ASSERT last: they are reviewed
+    in-repo truth and must take effect on deploy, not after the next nightly
+    discovery (VLY 2026-07-20: the corrected Q4 host would otherwise have sat
+    behind a stale cached marketing URL until morning). A curated entry must
+    therefore point at the bank's Q4 host when one exists."""
+    endpoints = {}
     try:
         from data import cache
-        cached = (cache.get(_IR_ENDPOINTS_CACHE_KEY) or {}).get("endpoints") or {}
-        endpoints.update(cached)
+        endpoints = dict(
+            (cache.get(_IR_ENDPOINTS_CACHE_KEY) or {}).get("endpoints") or {})
     except Exception:
         pass
+    endpoints.update(IR_URLS)
     return endpoints
 
 

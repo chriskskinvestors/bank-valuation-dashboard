@@ -380,7 +380,9 @@ IR_URLS = {
     "EGBN":  "https://ir.eaglebankcorp.com/",
     "BANC":  "https://ir.bancofcal.com/",
     "FLG":   "https://ir.flagstar.com/",
-    "VLY":   "https://www.valley.com/investor-relations",
+    # Q4 host, NOT the valley.com marketing page — the curated marketing URL
+    # suppressed Q4 discovery and cost VLY its call info (2026-07-20).
+    "VLY":   "https://ir.valleynationalbank.com",
     "KEY":   "https://ir.key.com/",
     "HBAN":  "https://ir.huntington.com/",
     "ZION":  "https://www.zionsbancorporation.com/investor-relations",
