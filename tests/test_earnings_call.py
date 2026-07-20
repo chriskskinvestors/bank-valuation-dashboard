@@ -416,6 +416,45 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertIn("JPM", tickers)                     # 07-14, within 5 days
         self.assertNotIn("FMPONLY", tickers)              # 07-20, beyond 5 days
 
+    def test_fmp_announcement_infos_parse_and_guards(self):
+        """2026-07-20: upcoming banks' call info missing — their announcement
+        PRs aren't on the wires we poll, but FMP's press-release index has
+        the full text. Announcement-shaped + subject-confirmed + ≤60d only;
+        newest announcement wins; fetch bound respected."""
+        from data.earnings_call import _fmp_announcement_infos
+        prs = {
+            "GOOD": [
+                {"title": "Community Bank to Announce Second Quarter 2026 "
+                          "Results on Thursday, July 23, 2026",
+                 "published_at": "2026-07-06 09:00:00",
+                 "text": "The company will host a conference call at 11:00 "
+                         "a.m. Eastern time on July 23. A live webcast will "
+                         "be available at https://ir.communitybank.com/events"
+                         ". Dial-in: 1-877-555-1212."}],
+            "NOTANN": [{"title": "Community Bank Opens New Branch",
+                        "published_at": "2026-07-06 09:00:00", "text": "x"}],
+            "WRONGCO": [
+                {"title": "Some Other Corp Will Report Q2 Earnings July 22",
+                 "published_at": "2026-07-06 09:00:00", "text": "x"}],
+            "STALE": [
+                {"title": "Bank Will Report First Quarter Results",
+                 "published_at": "2026-04-01 09:00:00", "text": "x"}],
+        }
+        out = _fmp_announcement_infos(
+            ["GOOD", "NOTANN", "WRONGCO", "STALE"],
+            lambda tk: prs.get(tk), lambda tk, blob: tk != "WRONGCO",
+            "2026-07-20")
+        self.assertEqual(sorted(out), ["GOOD"])
+        self.assertEqual(out["GOOD"]["release_date"], "2026-07-23")
+        self.assertIn("11:00", out["GOOD"]["call_time"])
+        self.assertIn("communitybank.com", out["GOOD"]["webcast_url"])
+        self.assertTrue(out["GOOD"].get("dial_in"))
+        # fetch bound: with max_fetch=1 only the first ticker is attempted
+        out2 = _fmp_announcement_infos(
+            ["NOTANN", "GOOD"], lambda tk: prs.get(tk),
+            lambda tk, blob: True, "2026-07-20", max_fetch=1)
+        self.assertEqual(out2, {})
+
     def test_release_call_infos_confirms_and_parses(self):
         """2026-07-17: reported banks showed '(proj.)' and blank Call/Webcast
         while their own releases — already fetched — state the report-day

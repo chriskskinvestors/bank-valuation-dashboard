@@ -433,6 +433,111 @@ def get_pr_call_details() -> dict:
     return {}
 
 
+def _fmp_announcement_infos(tickers, fetch_prs, is_subject, today_iso,
+                            max_fetch: int = 120) -> dict:
+    """Pure core of fmp_announcement_call_info: for upcoming-reporter
+    tickers (soonest first), the newest ANNOUNCEMENT-shaped first-party PR
+    (≤60 days old, subject-confirmed — FMP's symbol index is polluted for
+    short tickers) parsed for call logistics and the announced release
+    date. Wire feeds miss many of these announcements; FMP's press-release
+    index aggregates them (discovery-only, links stay first-party)."""
+    out: dict = {}
+    fetched = 0
+    today_d = _iso_date(today_iso)
+    for tk in tickers:
+        if fetched >= max_fetch:
+            break
+        fetched += 1
+        try:
+            prs = fetch_prs(tk) or []
+        except Exception:
+            continue
+        for pr in prs:                                # newest-first
+            title = pr.get("title") or ""
+            if not _is_earnings_announcement(title):
+                continue
+            d = _iso_date(str(pr.get("published_at") or "")[:10])
+            if d is None or today_d is None or (today_d - d).days > 60:
+                continue
+            blob = title + "\n" + (pr.get("text") or "")
+            try:
+                if not is_subject(tk, blob):
+                    continue
+            except Exception:
+                continue
+            ci = parse_call_info(blob)
+            rd = (_announced_release_date(title, today_iso)
+                  or _parse_release_date(blob, today_iso))
+            if rd:
+                ci["release_date"] = rd
+            cd = _parse_call_date(blob, today_iso)
+            if cd:
+                ci["call_date"] = cd
+            ci = {k: v for k, v in ci.items() if v}
+            if ci:
+                out[tk] = ci
+            break                                     # newest announcement only
+    return out
+
+
+def fmp_announcement_call_info() -> dict:
+    """{ticker: call info} for banks reporting in the next 14 days, mined
+    from FMP's press-release index (full announcement-PR text — the wires'
+    RSS coverage misses many). Per-ticker fetches ride fmp_client's own
+    cache; the assembled map is 6h-cached. Empty on any failure."""
+    import streamlit as st
+
+    @st.cache_data(ttl=6 * 3600, show_spinner=False)
+    def _build() -> dict:
+        from concurrent.futures import ThreadPoolExecutor
+        from datetime import timedelta
+        try:
+            from data import fmp_client
+            from data.bank_universe import get_universe
+            from data.events.fmp_news import _is_subject
+            from data.events.wire_base import is_safe_news_url
+        except Exception:
+            return {}
+        today = date.today()
+        try:
+            cal = fmp_client.get_earnings_calendar(
+                today.isoformat(), (today + timedelta(days=14)).isoformat()) or []
+            uni = set(get_universe().keys())
+        except Exception:
+            return {}
+        # soonest report first, deduped
+        seen, targets = set(), []
+        for r in sorted(cal, key=lambda x: str(x.get("date") or "9999")):
+            tk = (r.get("symbol") or "").upper()
+            if tk in uni and tk not in seen:
+                seen.add(tk)
+                targets.append(tk)
+
+        prs_by_tk: dict = {}
+
+        def _fetch(tk):
+            try:
+                prs_by_tk[tk] = fmp_client.get_press_releases(tk, limit=15)
+            except Exception:
+                prs_by_tk[tk] = []
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(_fetch, targets[:120]))
+
+        out = _fmp_announcement_infos(
+            targets, lambda tk: prs_by_tk.get(tk), _is_subject,
+            today.isoformat())
+        for tk, ci in out.items():
+            url = ci.get("webcast_url")
+            if url and not is_safe_news_url(url):
+                ci.pop("webcast_url", None)
+        return out
+
+    try:
+        return _build()
+    except Exception:
+        return {}
+
+
 def _release_call_infos(board_rows, today, fetch_release, is_safe,
                         cache_get, cache_put) -> dict:
     """Pure core of release_call_info_map: {ticker: info} for board rows that
@@ -552,6 +657,11 @@ def merged_call_info() -> dict:
                     cur[k] = info[k]
             base[tk] = cur
 
+    # FMP's press-release index (upcoming reporters): full announcement-PR
+    # text the wires' RSS coverage misses — discovery-only, links first-party.
+    _overlay(fmp_announcement_call_info(),
+             ("call_time", "webcast_url", "dial_in", "call_date",
+              "release_date", "when"))
     _overlay(get_pr_call_details(),
              ("call_time", "webcast_url", "dial_in", "call_date", "release_date",
               "when"))
