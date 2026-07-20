@@ -734,6 +734,17 @@ _INSTITUTIONAL_RE = re.compile(
     r"|\btakes?\s+(a\s+)?position\s+in\b"
     r"|\b(boost\w+|trim\w+|lower\w+|reduc\w+|grow\w+|grew|cut\w+|rais\w+|"
     r"increas\w+|lift\w+)\s+(its\s+|a\s+)?(stake|holdings?|position)\s+in\b"
+    # "<Holder> Raises/Reduces STOCK HOLDINGS in <Bank>" — the same 13F churn
+    # with "stock" wedged in, which the clause above (stake|holdings|position
+    # immediately after the verb) walked straight past. Live feed 2026-07-20:
+    # Illinois Municipal Retirement Fund / Dimensional Fund Advisors rows.
+    r"|\b(boost\w+|trim\w+|lower\w+|reduc\w+|grow\w+|cut\w+|rais\w+|"
+    r"increas\w+|lift\w+)\s+(its\s+)?stock\s+(holdings?|position)\s+in\b"
+    # passive form: "<Bank> Stake Raised by <Holder>", "Position Lowered by"
+    r"|\b(stake|holdings?|position)\s+"
+    r"(rais\w+|boost\w+|lower\w+|trim\w+|reduc\w+|cut\w+|increas\w+)\s+by\b"
+    # "<Bank>'s Long Position In <Other Co> Increases" — the bank as INVESTOR
+    r"|\blong\s+position\s+in\b[^.]{0,60}\b(increas\w+|decreas\w+|rises?|falls?)\b"
     r"|\bshares?\s+(sold|bought|purchased|acquired)\s+by\b",
     re.IGNORECASE,
 )
@@ -999,6 +1010,61 @@ _CASHTAG_RE = re.compile(r"\$([A-Z]{2,6})\b")
 #   • content-marketing "study/survey finds" pieces — "BofA Study Finds ..."
 # Narrow on purpose: real dividend/M&A/earnings/buyback/officer headlines never
 # read this way (pinned in tests/test_news_junk_filter.py).
+# ── Bank-as-COMMENTATOR (aggregator-only) ───────────────────────────────────
+# The single largest remaining junk class in the live feed, and the one that
+# crowds real earnings off a 50-row window during reporting season: the bank is
+# the SPEAKER, not the subject. A sell-side desk publishes constantly, and
+# Google News tags every one of those rewrites with the bank's ticker — on
+# 2026-07-20 Morgan Stanley alone held 8 of the feed's 50 rows with items about
+# Texas Instruments, Micron, DRAM pricing, European diesel and cybersecurity
+# stocks, none of which are news ABOUT Morgan Stanley.
+#
+# Deliberately narrow, because the same verbs carry real bank news:
+#   "Names Top Cybersecurity Stocks"  junk   vs  "Names John Smith CFO"   keep
+#   "..., Morgan Stanley Says"        junk   vs  "Morgan Stanley Reports" keep
+#   "raises TI estimates"             junk   vs  "raises dividend"        keep
+# Aggregator-scoped (see _AGGREGATOR_SOURCES): a first-party wire is trusted,
+# an aggregator rewrite must be material — the house rule for this filter.
+_COMMENTARY_RE = re.compile(
+    # trailing/leading attribution: "…, Morgan Stanley Says", "according to X"
+    r",\s*[A-Z][\w.&' ]{2,40}\s+says\b"
+    r"|\baccording\s+to\s+[A-Z][\w.&' ]{2,40}$"
+    # research view on someone/something else
+    r"|\b(?:sees|expects|forecasts?|predicts?|warns)\b[^.]{0,60}"
+    r"\b(?:to\s+(?:rise|fall|raise|cut|climb|drop)|upside|downside|"
+    r"rate|prices?|demand|growth|recession|rally)\b"
+    # analyst actions ON another company (estimates / targets / ratings)
+    r"|\b(?:rais\w+|cuts?|lifts?|lowers?|trims?|hikes?)\s+"
+    r"[^.]{0,40}\b(?:estimates?|forecasts?|outlook|price\s+targets?|"
+    r"pt|rating)\b"
+    r"|\bpt\s+(?:rais\w+|cut|lowered)\s+to\b"
+    r"|\b(?:upgrad\w+|downgrad\w+)\s+[^.]{0,30}\bto\s+(?:buy|sell|hold|"
+    r"neutral|overweight|underweight)\b"
+    # stock-picking / directional calls
+    r"|\bnames?\s+top\b[^.]{0,40}\bstocks?\b"
+    r"|\btop\s+(?:picks?|ideas?)\b"
+    r"|\bturn\w*\s+(?:bullish|bearish)\s+on\b"
+    r"|\b(?:bullish|bearish)\s+on\b",
+    re.IGNORECASE,
+)
+
+# Trailing "…: <Name>" attribution. Only the CAPTURE matters — the caller
+# resolves it against the tagged ticker before treating it as attribution.
+_COLON_ATTRIB_RE = re.compile(r":\s*([A-Z][\w.&' ]{2,40})\s*$")
+
+# Fund/ETF administrative filler — a bank's asset-management arm publishes a
+# per-fund NAV/holdings update EVERY trading day, per fund. Three State Street
+# SPDR "Daily Fund Update" rows sat in one 50-row window. Never company news.
+_FUND_ADMIN_RE = re.compile(
+    r"\bdaily\s+fund\s+update\b"
+    r"|\b(?:net\s+asset\s+value|nav)\s+(?:update|announcement)\b"
+    r"|\bannounces?\s+(?:daily|weekly|monthly)\s+(?:fund|nav|portfolio)\b"
+    r"|\b(?:etf|fund)\s+(?:announces?|reports?)\s+(?:daily|estimated)\b"
+    r"|\bdistribution\s+(?:announcement|declaration)\s+for\s+(?:the\s+)?"
+    r"[\w\s]{0,30}\betfs?\b",
+    re.IGNORECASE,
+)
+
 _OFFSUBJECT_RE = re.compile(
     r"\bunderwrit"                                       # underwriter/-ing
     r"|\bbook-?runn|\bbookrunner\b"
@@ -1066,10 +1132,26 @@ def is_junk_news(headline: str, ticker: str | None = None,
             or _PHILANTHROPY_RE.search(h)
             or is_routine_noise(h)):
         return True
-    # Aggregator rewrites (Google News / Yahoo) must clear a higher bar than
-    # first-party wires — drop their soft fluff, keep their material events.
-    if source in _AGGREGATOR_SOURCES and _AGGREGATOR_FLUFF_RE.search(h):
+    # Fund/ETF daily administrative updates are never company news, from any
+    # source — the bank's asset-management arm publishes them per fund, per day.
+    if _FUND_ADMIN_RE.search(h):
         return True
+    # Aggregator rewrites (Google News / Yahoo) must clear a higher bar than
+    # first-party wires — drop their soft fluff and their sell-side commentary
+    # (bank as SPEAKER, not subject), keep their material events.
+    if source in _AGGREGATOR_SOURCES:
+        if _AGGREGATOR_FLUFF_RE.search(h) or _COMMENTARY_RE.search(h):
+            return True
+        # Trailing colon-attribution: "Europe's diesel inventories set to hit a
+        # decade low: Morgan Stanley". Matching ':<Title Case>$' alone would eat
+        # real headlines ("Reports Q2: Strong Growth"), so require the trailing
+        # name to resolve to the SAME bank the row is tagged to — then the bank
+        # is provably the source being cited, not the subject.
+        if ticker:
+            m = _COLON_ATTRIB_RE.search(h)
+            if m and ticker.upper() in {t.upper()
+                                        for t in match_tickers(m.group(1))}:
+                return True
     if ticker:
         t = ticker.upper()
         for other in _PAREN_TICKER_RE.findall(h):
