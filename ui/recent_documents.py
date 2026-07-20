@@ -311,14 +311,22 @@ def _pdf_from_url(url: str) -> bytes | None:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def _holdco_rssd(ticker: str) -> int | None:
-    """The bank's regulatory high holder (FR Y-9C filer) RSSD, or None when
-    there's no holding company. Sourced from FDIC RSSDHCR — NOT the NIC
+    """The bank's FR Y-9C FILER RSSD, or None when there's no holding
+    company. FDIC RSSDHCR first (reliable one-call answer — NOT a live NIC
     hierarchy climb, whose NPW bulk download is Cloudflare-403'd from Cloud
-    Run egress (2026-07-14: Y-9C rows silently missing in prod; worse, the
-    failed climb was cached as "no holdco" for 30 days)."""
+    Run egress; 2026-07-14: Y-9C rows silently missing in prod). When the
+    high holder itself doesn't file a Y-9C — a foreign parent (its US IHC
+    files) or an ESOP/trust top holder (the BHC below files) — the
+    fetch-verified y9c/_filer_map.json override redirects to the true
+    filer, so the row label, the direct NIC PDF link, and the mirror
+    download all point at a report that actually exists."""
     from data.fdic_client import get_holdco_rssd_for_cert
+    from data.nic_client import y9c_filer_override
     cert = get_fdic_cert(ticker)
-    return get_holdco_rssd_for_cert(cert) if cert else None
+    rssd = get_holdco_rssd_for_cert(cert) if cert else None
+    if rssd:
+        rssd = y9c_filer_override(rssd) or rssd
+    return rssd
 
 
 class _Y9cUnavailable(Exception):

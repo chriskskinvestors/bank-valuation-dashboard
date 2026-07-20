@@ -419,6 +419,18 @@ class TestY9cMirrorTool(unittest.TestCase):
         self.assertEqual(_latest_y9c_period(pd.Timestamp(2026, 8, 20)),
                          "20260630")
 
+    def test_y9c_filer_override(self):
+        import json as _json
+        from data import nic_client
+        body = _json.dumps({"1238565": 3606542, "55": 0}).encode("utf-8")
+        with patch("data.cloud_storage.load_bytes",
+                   return_value=(body, 10.0)):
+            self.assertEqual(nic_client.y9c_filer_override(1238565), 3606542)
+            self.assertIsNone(nic_client.y9c_filer_override(55))   # 0 → None
+            self.assertIsNone(nic_client.y9c_filer_override(999))  # unmapped
+        with patch("data.cloud_storage.load_bytes", return_value=None):
+            self.assertIsNone(nic_client.y9c_filer_override(1238565))
+
     def test_fetch_y9c_classified(self):
         from tools import refresh_y9c_mirror as R
 
@@ -441,9 +453,9 @@ class TestY9cMirrorTool(unittest.TestCase):
         status, _ = run_with(b"" + R._META + b"403 https://x/ReturnFinancialReportPDF")
         self.assertEqual(status, R._BLOCKED)
 
-    def test_drop_foreign_holdcos(self):
-        # Foreign parents (FHF/FBH) file FR Y-7 not Y-9C → dropped. US filers
-        # (BHC) kept. RSSDs absent from NIC are kept (attempt + manifest).
+    def test_foreign_holdco_rssds(self):
+        # Foreign parents (FHF/FBH) file FR Y-7 not Y-9C → flagged for filer
+        # resolution. US filers (BHC) and NIC-unknown RSSDs are not flagged.
         from tools import refresh_y9c_mirror as R
         from pathlib import Path
         targets = [(1238565, 900), (1025541, 500), (7777777, 100)]
@@ -453,17 +465,136 @@ class TestY9cMirrorTool(unittest.TestCase):
                           return_value=Path("attrs.zip")), \
              patch.object(R.nic_client, "_load_attributes",
                           return_value=attrs):
-            kept, dropped = R._drop_foreign_holdcos(targets)
-        self.assertEqual(dropped, 1)
-        self.assertEqual([r for r, _ in kept], [1025541, 7777777])
+            self.assertEqual(R._foreign_holdco_rssds(targets), {1238565})
 
-    def test_drop_foreign_holdcos_degrades_when_nic_unavailable(self):
+    def test_foreign_holdco_rssds_degrades_when_nic_unavailable(self):
         from tools import refresh_y9c_mirror as R
         targets = [(1238565, 900), (1025541, 500)]
         with patch.object(R.nic_client, "_bulk_path", return_value=None):
-            kept, dropped = R._drop_foreign_holdcos(targets)
-        self.assertEqual(dropped, 0)
-        self.assertEqual(kept, targets)  # unchanged — run still works
+            self.assertEqual(R._foreign_holdco_rssds(targets), set())
+
+    def test_resolve_filer_probes_topmost_first_verified_by_fetch(self):
+        # Chain bank(10) → P1(20) → P2(30) → stop(99). Candidates probed
+        # top-down: P2 absent (e.g. a non-filing midco), P1 serves a real
+        # facsimile → P1 is the filer, proven by its own PDF.
+        from tools import refresh_y9c_mirror as R
+        pdf = b"%PDF-" + b"x" * R._MIN_PDF_BYTES
+        edges = {10: [{"rssd": 20, "controlled": True, "ownership_pct": 100}],
+                 20: [{"rssd": 30, "controlled": True, "ownership_pct": 100}],
+                 30: [{"rssd": 99, "controlled": True, "ownership_pct": 100}]}
+        outcome = {30: (R._ABSENT, None), 20: (R._OK, pdf)}
+        with patch.object(R.nic_client, "_scan_parent_edges",
+                          side_effect=lambda cur, rel: edges.get(cur, [])), \
+             patch.object(R, "_fetch_y9c_classified",
+                          side_effect=lambda rssd, p: outcome[rssd]), \
+             patch.object(R.time, "sleep"):
+            filer, content, spent = R._resolve_filer(10, 99, "20260331", "rel")
+        self.assertEqual((filer, content, spent), (20, pdf, 2))
+
+    def test_resolve_filer_blocked_records_nothing(self):
+        from tools import refresh_y9c_mirror as R
+        edges = {10: [{"rssd": 30, "controlled": True, "ownership_pct": 100}],
+                 30: [{"rssd": 99, "controlled": True, "ownership_pct": 100}]}
+        with patch.object(R.nic_client, "_scan_parent_edges",
+                          side_effect=lambda cur, rel: edges.get(cur, [])), \
+             patch.object(R, "_fetch_y9c_classified",
+                          return_value=(R._BLOCKED, None)), \
+             patch.object(R.time, "sleep"):
+            filer, content, spent = R._resolve_filer(10, 99, "20260331", "rel")
+        self.assertEqual((filer, content), (None, None))  # retry next run
+
+    def test_resolve_filer_exhausted_chain_confirms_no_filer(self):
+        from tools import refresh_y9c_mirror as R
+        edges = {10: [{"rssd": 30, "controlled": True, "ownership_pct": 100}],
+                 30: [{"rssd": 99, "controlled": True, "ownership_pct": 100}]}
+        with patch.object(R.nic_client, "_scan_parent_edges",
+                          side_effect=lambda cur, rel: edges.get(cur, [])), \
+             patch.object(R, "_fetch_y9c_classified",
+                          return_value=(R._ABSENT, None)), \
+             patch.object(R.time, "sleep"):
+            filer, content, spent = R._resolve_filer(10, 99, "20260331", "rel")
+        self.assertEqual((filer, content, spent), (0, None, 1))
+
+    def test_resolve_filer_bank_directly_under_stop(self):
+        # No intermediate holdco between the bank and the non-filing top
+        # holder → nothing can file; zero NPW hits spent.
+        from tools import refresh_y9c_mirror as R
+        edges = {10: [{"rssd": 99, "controlled": True, "ownership_pct": 100}]}
+        with patch.object(R.nic_client, "_scan_parent_edges",
+                          side_effect=lambda cur, rel: edges.get(cur, [])), \
+             patch.object(R.time, "sleep"):
+            filer, content, spent = R._resolve_filer(10, 99, "20260331", "rel")
+        self.assertEqual((filer, content, spent), (0, None, 0))
+
+    def test_dead_credential_fails_fast_before_any_fetch(self):
+        # cloud_storage swallows auth errors (list_files → []), so a dead ADC
+        # makes the mirror look empty and the run would re-fetch everything.
+        # The startup probe write must catch it before any NPW hit.
+        from tools import refresh_y9c_mirror as R
+        with patch.object(R, "is_gcs_enabled", return_value=True), \
+             patch.object(R, "save_bytes", return_value=False), \
+             patch.object(R, "_fetch_fdic_records") as mock_fdic, \
+             patch.object(R, "_fetch_y9c_classified") as mock_fetch:
+            rc = R.main()
+        self.assertEqual(rc, 1)
+        mock_fdic.assert_not_called()
+        mock_fetch.assert_not_called()
+
+    def test_mapped_high_holder_fetches_under_filer_rssd(self):
+        # A high holder in the filer map fetches (and mirrors) under the
+        # FILER's RSSD — the same name the UI override computes.
+        from tools import refresh_y9c_mirror as R
+        records = [{"CERT": 1, "RSSDHCR": "1238565", "ASSET": 9_000_000,
+                    "FED_RSSD": "497404"}]
+        good = (R._OK, b"%PDF-" + b"x" * R._MIN_PDF_BYTES)
+        saved = []
+        with patch.object(R, "is_gcs_enabled", return_value=True), \
+             patch.object(R, "_latest_y9c_period", return_value="20260331"), \
+             patch.object(R, "_fetch_fdic_records", return_value=records), \
+             patch.object(R.nic_client, "_bulk_path", return_value=None), \
+             patch.object(R, "list_files", return_value=[]), \
+             patch.object(R, "_load_manifest", return_value={}), \
+             patch.object(R, "_load_filer_map",
+                          return_value={"1238565": 3606542}), \
+             patch.object(R, "_fetch_y9c_classified", return_value=good), \
+             patch.object(R, "save_bytes",
+                          side_effect=lambda *a, **k: saved.append(a[1]) or True), \
+             patch.object(R, "_save_manifest"), \
+             patch.object(R.time, "sleep"):
+            rc = R.main()
+        self.assertEqual(rc, 0)
+        self.assertIn(R.y9c_mirror_name(3606542, "20260331"), saved)
+
+    def test_unmapped_foreign_holdco_resolves_and_persists_map(self):
+        from tools import refresh_y9c_mirror as R
+        from pathlib import Path
+        records = [{"CERT": 1, "RSSDHCR": "1238565", "ASSET": 9_000_000,
+                    "FED_RSSD": "497404"}]
+        pdf = b"%PDF-" + b"x" * R._MIN_PDF_BYTES
+        saved = []
+        with patch.object(R, "is_gcs_enabled", return_value=True), \
+             patch.object(R, "_latest_y9c_period", return_value="20260331"), \
+             patch.object(R, "_fetch_fdic_records", return_value=records), \
+             patch.object(R, "_foreign_holdco_rssds",
+                          return_value={1238565}), \
+             patch.object(R.nic_client, "_bulk_path",
+                          return_value=Path("rel.zip")), \
+             patch.object(R, "list_files", return_value=[]), \
+             patch.object(R, "_load_manifest", return_value={}), \
+             patch.object(R, "_load_filer_map", return_value={}), \
+             patch.object(R, "_resolve_filer",
+                          return_value=(3606542, pdf, 1)) as mock_resolve, \
+             patch.object(R, "save_bytes",
+                          side_effect=lambda *a, **k: saved.append(a[1]) or True), \
+             patch.object(R, "_save_filer_map") as mock_savefm, \
+             patch.object(R, "_save_manifest"), \
+             patch.object(R.time, "sleep"):
+            rc = R.main()
+        self.assertEqual(rc, 0)
+        mock_resolve.assert_called_once()
+        self.assertEqual(mock_resolve.call_args[0][:2], (497404, 1238565))
+        self.assertEqual(mock_savefm.call_args[0][0], {"1238565": 3606542})
+        self.assertIn(R.y9c_mirror_name(3606542, "20260331"), saved)
 
     def test_max_fetches_env_override(self):
         from tools import refresh_y9c_mirror as R
@@ -489,12 +620,16 @@ class TestY9cMirrorTool(unittest.TestCase):
              patch.object(R, "list_files", return_value=[]), \
              patch.object(R, "_load_manifest", return_value={}), \
              patch.object(R, "_fetch_y9c_classified", return_value=good), \
-             patch.object(R, "save_bytes", return_value=False) as mock_save, \
+             patch.object(R, "save_bytes",
+                          side_effect=lambda *a, **k: a[1] == "_health.txt") \
+                as mock_save, \
              patch.object(R.time, "sleep"):
             rc = R.main()
         self.assertEqual(rc, 1)  # loud failure
-        # Aborted at the breaker, not after all 20 targets.
-        self.assertEqual(mock_save.call_count, R._MAX_CONSEC_UPLOAD_FAILS)
+        # Aborted at the breaker (+1 for the startup health probe), not
+        # after all 20 targets.
+        self.assertEqual(mock_save.call_count,
+                         R._MAX_CONSEC_UPLOAD_FAILS + 1)
 
     def test_successful_upload_resets_consecutive_failure_counter(self):
         # A success between failures resets the breaker — a single flaky
@@ -503,8 +638,8 @@ class TestY9cMirrorTool(unittest.TestCase):
         records = [{"CERT": i, "RSSDHCR": str(1000 + i),
                     "ASSET": 5_000_000} for i in range(6)]
         good = (R._OK, b"%PDF-" + b"x" * R._MIN_PDF_BYTES)
-        # fail, ok, fail, ok, fail, ok — never 3 in a row.
-        saves = [False, True, False, True, False, True]
+        # health probe ok, then fail, ok, fail, ok, fail, ok — never 3 in a row.
+        saves = [True, False, True, False, True, False, True]
         with patch.object(R, "is_gcs_enabled", return_value=True), \
              patch.object(R, "_latest_y9c_period", return_value="20260331"), \
              patch.object(R, "_fetch_fdic_records", return_value=records), \
@@ -548,8 +683,9 @@ class TestY9cMirrorTool(unittest.TestCase):
              patch.object(R.time, "sleep"):
             rc = R.main()
         self.assertEqual(rc, 1)  # a block → re-run signal
-        # Only the real filer was uploaded.
-        self.assertEqual(list(saved), [R.y9c_mirror_name(1000, "20260331")])
+        # Only the real filer was uploaded (ignoring the health probe).
+        self.assertEqual([n for n in saved if n != "_health.txt"],
+                         [R.y9c_mirror_name(1000, "20260331")])
         # The persisted manifest holds the non-filer, NOT the blocked filer.
         persisted = mock_savem.call_args[0][0]
         self.assertIn(R.y9c_mirror_name(1001, "20260331"), persisted)

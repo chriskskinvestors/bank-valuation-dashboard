@@ -287,6 +287,29 @@ def _on_cloud_run() -> bool:
     return bool(os.environ.get("K_SERVICE") or os.environ.get("CLOUD_RUN_JOB"))
 
 
+def y9c_filer_override(holdco_rssd: int) -> int | None:
+    """RSSD of the actual FR Y-9C filer when the FDIC high holder (RSSDHCR)
+    does not itself file one — a foreign parent (TD/BMO/HSBC... file FR Y-7;
+    their US IHC files the Y-9C) or an ESOP/family-trust top holder (the
+    filer is the BHC below it). Read from y9c/_filer_map.json, which
+    tools/refresh_y9c_mirror builds by climbing the NIC hierarchy and
+    VERIFYING each mapping with an actual fetched facsimile — an entry only
+    exists if its Y-9C was downloaded, so this can never redirect to a
+    plausible-wrong RSSD. None = no override (the high holder is the filer,
+    is unresolved, or the map is unavailable) — callers keep RSSDHCR."""
+    try:
+        import json as _json
+        from data.cloud_storage import load_bytes
+        got = load_bytes(_Y9C_PREFIX, "_filer_map.json")
+        if got is None:
+            return None
+        mapped = _json.loads(got[0].decode("utf-8")).get(str(_int(holdco_rssd)))
+        return int(mapped) if mapped else None
+    except Exception as e:
+        print(f"[nic] y9c filer map read error: {type(e).__name__}: {e}")
+        return None
+
+
 def fetch_y9c_pdf(rssd_id: int, yyyymmdd: str) -> bytes | None:
     """FR Y-9C facsimile PDF for a HOLDING COMPANY RSSD and quarter-end
     (Recent Documents → Regulatory Filings). Source ladder — facsimiles

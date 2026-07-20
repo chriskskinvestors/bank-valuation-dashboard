@@ -24,12 +24,18 @@ converge and the most-viewed banks land in the first batch. The workflow
 the day Cloudflare unblocks GitHub egress.
 
 Targets: FDIC ACTIVE institutions grouped by regulatory high holder
-(RSSDHCR — the exact field ui/recent_documents keys its Y-9C rows on, so
-mirror names always match what the UI requests), keeping holdcos whose
-summed bank-subsidiary assets clear the Fed's $3B FR Y-9C filing floor,
-largest first. FR Y-9C is a US top-tier report, so foreign parents (NIC
-type FHF/FBH — TD, BMO, HSBC, UBS...) are dropped up front via the NIC
-attributes: they file FR Y-7 and NPW returns onError for them.
+(RSSDHCR), keeping holdcos whose summed bank-subsidiary assets clear the
+Fed's $3B FR Y-9C filing floor, largest first. RSSDHCR is usually the
+filer, but not always: foreign parents (NIC type FHF/FBH — TD, BMO, HSBC,
+UBS...) file FR Y-7 while their US IHC files the Y-9C, and an ESOP /
+family-trust top holder doesn't file while the BHC below it does. Those go
+through FILER RESOLUTION (_resolve_filer): climb the NIC hierarchy from
+the holdco's largest bank sub, probe each intermediate parent top-down
+with a classified fetch, and let the first actual facsimile identify the
+filer — verified, never inferred from entity type. Results persist in
+y9c/_filer_map.json; the UI applies the same map via
+nic_client.y9c_filer_override so its rows, NIC links, and mirror lookups
+all use the true filer RSSD.
 
 Every remaining fetch is CLASSIFIED (see _fetch_y9c_classified), which is
 what lets a clean run reach a true zero miss rate: an NPW onError redirect
@@ -43,11 +49,6 @@ and skip objects already mirrored. If the GCS credential dies mid-run, a
 consecutive-upload-failure circuit breaker aborts rather than burning bot
 score on fetches it can't persist.
 
-Not covered: foreign-owned US banks (TD Bank, BMO Harris, HSBC USA...) DO
-file Y-9C, but under a US intermediate holding company whose RSSD differs
-from RSSDHCR. Mirroring + serving those needs IHC resolution (a separate
-change that also touches the UI's holdco lookup); until then they fall
-back to the "Open PDF on NIC" link.
 """
 from __future__ import annotations
 
@@ -145,53 +146,129 @@ def _holdco_targets_from_records(records: list[dict]) -> list[tuple[int, int]]:
 # its RSSD. FDIC RSSDHCR points at the ULTIMATE high holder, which for a
 # foreign-owned US bank is that foreign parent — TD, BMO, HSBC, UBS, RBC,
 # Santander, Barclays, Deutsche Bank, Mizuho... (verified 2026-07-14, all
-# NIC type FHF/FBH). Being the largest holdcos, they sorted to the front of
-# every batch and were the bulk of the "misses". Their US operations DO file
-# Y-9C, but under a US intermediate holding company — a different RSSD than
-# RSSDHCR, whose resolution is a separate enhancement (foreign-owned US banks
-# still fall back to the "Open PDF on NIC" link meanwhile).
+# NIC type FHF/FBH). Their US operations DO file Y-9C under a US IHC — a
+# different RSSD than RSSDHCR — resolved by _resolve_filer and recorded in
+# the filer map.
 _FOREIGN_HOLDCO_TYPES = {"FHF", "FBH", "FBK", "FBO", "FEO", "IFB", "ISB"}
 
 
-def _drop_foreign_holdcos(
-        targets: list[tuple[int, int]]) -> tuple[list[tuple[int, int]], int]:
-    """Filter out foreign parents (they file FR Y-7, not Y-9C — a guaranteed
-    NPW onError). Uses the mirrored NIC ATTRIBUTES file. Best-effort: if that
-    data can't be loaded, returns targets unchanged so the run still works."""
+def _foreign_holdco_rssds(targets: list[tuple[int, int]]) -> set[int]:
+    """RSSDs among `targets` whose NIC entity type is a foreign parent —
+    candidates for filer resolution rather than a direct fetch. Best-effort:
+    empty set when the NIC ATTRIBUTES data can't be loaded (those holdcos
+    then get attempted directly and strike out via the manifest instead)."""
     if not targets:
-        return targets, 0
+        return set()
     try:
         attr_path = nic_client._bulk_path("attributes_active")
         if attr_path is None:
-            print("[y9c] foreign-filter skipped — NIC attributes unavailable")
-            return targets, 0
+            print("[y9c] foreign-id skipped — NIC attributes unavailable")
+            return set()
         attrs = nic_client._load_attributes({r for r, _ in targets}, attr_path)
-    except Exception as e:  # noqa: BLE001 — never let the filter break the run
-        print(f"[y9c] foreign-filter skipped ({type(e).__name__}: {e})")
-        return targets, 0
-    kept: list[tuple[int, int]] = []
-    dropped = 0
-    for rssd, assets in targets:
-        ent = attrs.get(rssd)
-        # Keep unknowns (not in NIC) — attempt them; the miss-manifest catches
-        # any that genuinely don't file. Only a KNOWN foreign type is dropped.
-        if ent and ent.get("type_code") in _FOREIGN_HOLDCO_TYPES:
-            dropped += 1
+    except Exception as e:  # noqa: BLE001 — never let the check break the run
+        print(f"[y9c] foreign-id skipped ({type(e).__name__}: {e})")
+        return set()
+    return {rssd for rssd, _assets in targets
+            if (attrs.get(rssd) or {}).get("type_code") in _FOREIGN_HOLDCO_TYPES}
+
+
+# y9c/_filer_map.json: {high_holder_rssd: filer_rssd | 0}. The Y-9C filer for
+# a high holder that doesn't file one itself — a foreign parent's US IHC
+# (TD → TD Group US Holdings LLC) or the BHC below an ESOP/family-trust top
+# holder. Entries are VERIFIED: a mapping is only written when the filer's
+# facsimile was actually fetched (the fetch IS the proof), so the UI override
+# (nic_client.y9c_filer_override) can never redirect to a plausible-wrong
+# RSSD. 0 = climb completed and no candidate filed — permanent "no filer"
+# (the UI keeps RSSDHCR and its honest-error path).
+_FILER_MAP = "_filer_map.json"
+
+
+def _load_filer_map() -> dict[str, int]:
+    got = load_bytes(_GCS_PREFIX, _FILER_MAP)
+    if got is None:
+        return {}
+    try:
+        raw = json.loads(got[0].decode("utf-8"))
+        return {str(k): int(v) for k, v in raw.items()}
+    except Exception as e:  # noqa: BLE001 — any bad map starts fresh
+        print(f"[y9c] filer map unreadable ({type(e).__name__}: {e}) "
+              "— starting fresh")
+        return {}
+
+
+def _save_filer_map(fmap: dict[str, int]) -> None:
+    body = json.dumps(fmap, sort_keys=True).encode("utf-8")
+    if not save_bytes(_GCS_PREFIX, _FILER_MAP, body, "application/json"):
+        print("[y9c] WARNING: filer map upload failed — resolutions will "
+              "re-run next time")
+
+
+def _resolve_filer(bank_rssd: int, stop_rssd: int, period: str,
+                   rel_path) -> tuple[int | None, bytes | None, int]:
+    """Find the FR Y-9C filer for a bank whose high holder doesn't file one.
+
+    Climbs the NIC hierarchy from `bank_rssd` toward `stop_rssd` (the
+    non-filing RSSDHCR), collecting the intermediate parents, then tries
+    each top-most-first with a classified fetch. The first _OK candidate is
+    the filer — verified by its own facsimile, never inferred from entity
+    type (a "family trust" can be typed SLHC; a mid-tier LLC can sit in the
+    chain — only an actual fetched Y-9C proves who files).
+
+    Returns (filer_rssd, pdf, fetches_spent) on success,
+            (0, None, spent)   — chain exhausted, nothing files (Y-9SP org),
+            (None, None, spent) — a candidate was Cloudflare-blocked: resolve
+                                  again next run, record nothing."""
+    chain: list[int] = []
+    cur = bank_rssd
+    for _ in range(6):
+        edges = nic_client._scan_parent_edges(cur, rel_path)
+        if not edges:
+            break
+        best = max(edges, key=lambda e: (e["controlled"],
+                                         e["ownership_pct"] or 0))
+        parent = best["rssd"]
+        if parent == stop_rssd:
+            break
+        chain.append(parent)
+        cur = parent
+    spent = 0
+    for cand in reversed(chain):  # top-tier US holdco first
+        time.sleep(_SPACING_SECONDS)
+        spent += 1
+        status, content = _fetch_y9c_classified(cand, period)
+        if status == _OK:
+            return cand, content, spent
+        if status == _BLOCKED:
+            return None, None, spent
+    return 0, None, spent
+
+
+def _largest_bank_by_holdco(records: list[dict]) -> dict[int, int]:
+    """{holdco_rssd: FED_RSSD of its largest bank subsidiary} — the climb
+    start point for filer resolution (see _resolve_filer)."""
+    best: dict[int, tuple[int, int]] = {}  # holdco -> (assets, bank_rssd)
+    for d in records:
+        hcr = str(d.get("RSSDHCR") or "").strip()
+        bank = str(d.get("FED_RSSD") or "").strip()
+        if not hcr.isdigit() or int(hcr) <= 0 or not bank.isdigit():
             continue
-        kept.append((rssd, assets))
-    return kept, dropped
+        assets = int(d.get("ASSET") or 0)
+        if assets > best.get(int(hcr), (0, 0))[0]:
+            best[int(hcr)] = (assets, int(bank))
+    return {h: rssd for h, (_a, rssd) in best.items()}
 
 
 def _fetch_fdic_records() -> list[dict]:
-    """Every ACTIVE FDIC institution's {CERT, RSSDHCR, ASSET}. Paginated —
-    a capped single page would silently truncate to the largest banks.
-    Raises on failure/empty: a partial target list must never look done."""
+    """Every ACTIVE FDIC institution's {CERT, RSSDHCR, ASSET, FED_RSSD}.
+    Paginated — a capped single page would silently truncate to the largest
+    banks. Raises on failure/empty: a partial target list must never look
+    done."""
     records: list[dict] = []
     offset = 0
     while True:
         resp = get_with_retry(_FDIC_INSTITUTIONS_URL, params={
             "filters": "ACTIVE:1",
-            "fields": "CERT,RSSDHCR,ASSET",
+            "fields": "CERT,RSSDHCR,ASSET,FED_RSSD",
             "limit": 1000,
             "offset": offset,
         }, timeout=30)
@@ -288,20 +365,113 @@ def main() -> int:
     if not is_gcs_enabled():
         print("GCS_BUCKET is not set — nothing to mirror to.")
         return 1
+    # Fail fast on a dead credential BEFORE any NPW hit. cloud_storage
+    # swallows auth errors (list_files → [], load_bytes → None), so with an
+    # expired ADC the skip-existing set silently reads as empty and the run
+    # would re-fetch the entire mirror — hundreds of pointless spaced NPW
+    # hits (observed 2026-07-16; only the upload breaker stopped it). A probe
+    # write is the one operation that reports failure honestly.
+    if not save_bytes(_GCS_PREFIX, "_health.txt",
+                      b"y9c mirror refresh probe", "text/plain"):
+        print("[y9c] GCS probe write failed — expired ADC? Run "
+              "`gcloud auth application-default login` and re-run.")
+        return 1
 
     period = _latest_y9c_period()
-    targets = _fetch_fdic_records()
-    targets = _holdco_targets_from_records(targets)
-    targets, dropped_foreign = _drop_foreign_holdcos(targets)
+    records = _fetch_fdic_records()
+    targets = _holdco_targets_from_records(records)
+    bank_of = _largest_bank_by_holdco(records)
     existing = set(list_files(_GCS_PREFIX, "*.pdf"))
     manifest = _load_manifest()
-    print(f"[y9c] period {period}: {len(targets)} US Y-9C-filing holdcos "
-          f"above the floor ({dropped_foreign} foreign parents excluded — "
-          f"they file FR Y-7), {len(existing)} facsimiles already mirrored")
+    fmap = _load_filer_map()
+    foreign = _foreign_holdco_rssds(targets)
+
+    # Partition targets: already-mapped high holders fetch under their filer
+    # RSSD; foreign parents and struck-out non-filers go to resolution; the
+    # rest fetch directly (RSSDHCR is the filer — the common case).
+    direct: list[tuple[int, int]] = []
+    resolve_q: list[tuple[int, int]] = []   # (high_holder, largest bank sub)
+    known_no_filer = 0
+    for rssd, assets in targets:
+        mapped = fmap.get(str(rssd))
+        if mapped is not None:
+            if mapped:
+                direct.append((mapped, assets))
+            else:
+                known_no_filer += 1
+            continue
+        name = y9c_mirror_name(rssd, period)
+        if rssd in foreign or manifest.get(name, 0) >= _MAX_MISS_ATTEMPTS:
+            bank = bank_of.get(rssd)
+            if bank:
+                resolve_q.append((rssd, bank))
+            continue
+        direct.append((rssd, assets))
+    print(f"[y9c] period {period}: {len(targets)} holdcos above the Y-9C "
+          f"floor — {len(direct)} fetchable, {len(resolve_q)} need filer "
+          f"resolution (foreign parent / non-filing top holder), "
+          f"{known_no_filer} known no-filer; {len(existing)} facsimiles "
+          "already mirrored")
+
+    budget = _max_fetches()
+    upload_failures = 0
+
+    # Filer resolution: climb the NIC hierarchy from the largest bank sub and
+    # verify candidates by fetching. Spends from the same budget as direct
+    # fetches (every candidate probe is a spaced NPW hit).
+    resolved = res_blocked = res_none = consec_res_fails = 0
+    map_changed = False
+    if resolve_q:
+        rel_path = nic_client._bulk_path("relationships")
+        if rel_path is None:
+            print("[y9c] filer resolution skipped — NIC relationships "
+                  "unavailable")
+        else:
+            for hh, bank in resolve_q:
+                if budget <= 0:
+                    break
+                filer, pdf, spent = _resolve_filer(bank, hh, period, rel_path)
+                budget -= spent
+                if filer is None:
+                    res_blocked += 1
+                    continue
+                map_changed = True
+                if filer == 0:
+                    fmap[str(hh)] = 0
+                    res_none += 1
+                    continue
+                fmap[str(hh)] = filer
+                fname = y9c_mirror_name(filer, period)
+                if fname in existing or save_bytes(_GCS_PREFIX, fname, pdf,
+                                                   "application/pdf"):
+                    existing.add(fname)
+                    resolved += 1
+                    consec_res_fails = 0
+                else:
+                    # The mapping is still true (verified by the fetch) —
+                    # keep it; the PDF re-fetches via the mapped target next
+                    # run once uploads work again.
+                    print(f"FAIL {fname}: GCS upload failed")
+                    upload_failures += 1
+                    consec_res_fails += 1
+                    if consec_res_fails >= _MAX_CONSEC_UPLOAD_FAILS:
+                        # Same dead-credential breaker as the direct loop —
+                        # don't burn climbs + spaced fetches on PDFs that
+                        # can't be persisted.
+                        print("[y9c] aborting resolution: consecutive upload "
+                              "failures — GCS credential expired? Re-auth "
+                              "ADC and re-run.")
+                        budget = 0
+                        break
+            print(f"[y9c] filer resolution: {resolved} resolved+mirrored, "
+                  f"{res_none} confirmed no US filer, {res_blocked} blocked "
+                  "(will retry)")
+    if map_changed:
+        _save_filer_map(fmap)
 
     todo: list[tuple[int, str]] = []
     skipped_misses = 0
-    for rssd, _assets in targets:
+    for rssd, _assets in direct:
         name = y9c_mirror_name(rssd, period)
         if name in existing:
             continue
@@ -312,19 +482,19 @@ def main() -> int:
     if skipped_misses:
         print(f"[y9c] skipping {skipped_misses} holdcos confirmed to have no "
               f"FR Y-9C for {period} ({_MAX_MISS_ATTEMPTS}x onError — Y-9SP "
-              "filers / foreign parents)")
-    cap = _max_fetches()
-    if len(todo) > cap:
-        print(f"[y9c] fetch cap {cap}: deferring {len(todo) - cap} smaller "
-              "holdcos to the next run")
-        todo = todo[:cap]
-    if not todo:
+              "filers)")
+    if len(todo) > budget:
+        print(f"[y9c] fetch cap {budget}: deferring {len(todo) - budget} "
+              "smaller holdcos to the next run")
+        todo = todo[:max(budget, 0)]
+    if not todo and not (resolved or res_none or res_blocked):
         print("[y9c] mirror already current — nothing to fetch")
-        return 0
+        return 1 if upload_failures else 0
 
-    fetched = absent = blocked = upload_failures = consec_upload_fails = 0
+    fetched = absent = blocked = consec_upload_fails = attempted = 0
     aborted = False
     for i, (rssd, name) in enumerate(todo):
+        attempted += 1
         if i:
             time.sleep(_SPACING_SECONDS)
         status, content = _fetch_y9c_classified(rssd, period)
@@ -362,7 +532,7 @@ def main() -> int:
     print(f"[y9c] {'ABORTED' if aborted else 'done'}: {fetched} mirrored, "
           f"{absent} absent (no Y-9C filed), {blocked} blocked (Cloudflare — "
           f"will retry), {upload_failures} upload failures, "
-          f"{i + 1}/{len(todo)} attempted")
+          f"{attempted}/{len(todo)} attempted")
     if aborted:
         return 1  # half-run on a dead credential — loud failure
 
@@ -371,7 +541,7 @@ def main() -> int:
     # persist; no misses>fetched guard needed. A clean batch has zero blocks;
     # a non-zero exit means "re-run to retry blocked filers" (or fix uploads).
     _save_manifest(manifest)
-    return 1 if (upload_failures or blocked) else 0
+    return 1 if (upload_failures or blocked or res_blocked) else 0
 
 
 if __name__ == "__main__":
