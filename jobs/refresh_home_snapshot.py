@@ -136,6 +136,20 @@ def main() -> int:
     print(f"[{time.strftime('%H:%M:%S')}] building Home snapshot for "
           f"{len(tickers)} banks...", flush=True)
 
+    # FIRST, before anything expensive. This is the most time-sensitive item in
+    # the job and the cheapest (one indexed 150-row events query); it used to run
+    # 4th, behind the full metrics build + ~55 live FMP history calls + the
+    # per-CIK insider scan, so on a 13-28 min run the feed was refreshed 10-25
+    # min in. Owner-visible symptom (2026-07-20): a release ingested within a
+    # minute by the 1-min earnings poll still wasn't on Home ("how is MNSB still
+    # not getting picked up?"), because Home reads this snapshot, not the store.
+    #
+    # Tradeoff, deliberate: the feed's insider half now reads the PREVIOUS run's
+    # aggregate rather than this run's. Form 4 data moves on a daily cadence and
+    # a one-cycle lag there is already the documented design tolerance, whereas
+    # a 25-minute lag on earnings headlines is not.
+    _warm_news_feed(tickers)
+
     fdic, hist = _load_fdic(tickers)
     sec = _load_sec(tickers)
     prices = _load_prices(tickers)
@@ -158,6 +172,10 @@ def main() -> int:
     _warm_overlay_history()
     _warm_bank_sector_history()
     _warm_feed_insider_aggregate(tickers)
+    # Second pass, now that the insider aggregate above is fresh: cheap (one
+    # query) and it re-stamps the feed with anything ingested during this run's
+    # 13-28 minutes. The early call is what guarantees latency; this one
+    # restores the insider-half consistency the original ordering had.
     _warm_news_feed(tickers)
     _warm_rates_bundle()
     return 0

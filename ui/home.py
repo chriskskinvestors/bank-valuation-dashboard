@@ -796,13 +796,34 @@ def _af_feed_items(watchlist: list[str]) -> list[dict]:
 
 def warm_news_feed_snapshot(watchlist: list[str]) -> int:
     """Rebuild + persist the Bank News Feed snapshot OFF the render path (called
-    by jobs.refresh_home_snapshot). Invalidate first so the rebuild always runs
-    even within the TTL, then go through the SAME served_snapshot path the render
-    uses — identical key, guard and value shape — so the next Home load is a
-    cache hit on a fresh feed. Returns the item count."""
-    from data.cache import invalidate
-    invalidate(_NEWS_FEED_SNAP_KEY)
-    return len(_af_feed_items(watchlist))
+    by jobs.refresh_home_snapshot). Writes the SAME key/guard/value shape the
+    render's served_snapshot reads, so the next Home load is a cache hit on a
+    fresh feed. Returns the item count.
+
+    OVERLAP-SAFE. refresh_home_snapshot takes 13-28 min against its own */15
+    schedule, so two executions routinely run concurrently. The old body did
+    invalidate() then rebuild, which is last-write-wins: on 2026-07-20 two runs
+    wrote 6s apart and the one that had STARTED 15 min EARLIER finished last, so
+    its staler feed overwrote the fresher one — the Home feed moving BACKWARDS in
+    time, dropping releases that had already made it in. We now compare against
+    what's stored and refuse to overwrite a snapshot written after this build
+    began. Losing the race is success: the other run's data is newer."""
+    from datetime import datetime
+    from data.cache import get, put
+    started = datetime.now()
+    items = _af_feed_items_live(watchlist)
+    try:
+        cur = get(_NEWS_FEED_SNAP_KEY) or {}
+        cur_at = cur.get("cached_at")
+        if cur_at and datetime.fromisoformat(cur_at) > started:
+            print(f"[home] news feed: newer snapshot ({cur_at}) landed while "
+                  f"this build ran — keeping it", flush=True)
+            return len(cur.get("value") or [])
+    except Exception:
+        pass          # unreadable/garbled stored value — fall through and write
+    put(_NEWS_FEED_SNAP_KEY, {"cached_at": datetime.now().isoformat(),
+                              "guard": len(watchlist or []), "value": items})
+    return len(items)
 
 
 def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
