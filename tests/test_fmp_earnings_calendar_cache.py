@@ -29,14 +29,42 @@ class TestEarningsCalendarCache(unittest.TestCase):
         (fmp._has_key, fmp._get, fmp._cache_get, fmp._cache_put) = self._orig
 
     def test_repeat_call_hits_cache_not_fmp(self):
+        # Long windows fetch in 2-day CHUNKS (the endpoint silently caps at
+        # ~4000 rows keeping the window's END — SMBK and the whole current
+        # week vanished from a 14-day request, 2026-07-20). Rows are deduped
+        # on (symbol, date); a repeat call serves every chunk from cache.
         calls = []
         rows = [{"symbol": "JPM", "date": "2026-07-15"}]
         fmp._get = lambda path, params, timeout=10: (calls.append(1), rows)[1]
         a = fmp.get_earnings_calendar("2026-07-01", "2026-07-31")
+        n_first = len(calls)
         b = fmp.get_earnings_calendar("2026-07-01", "2026-07-31")
-        self.assertEqual(a, rows)
+        self.assertGreater(n_first, 1, "a 30-day window must fetch in chunks")
+        self.assertEqual(a, rows)          # duplicate rows across chunks dedupe
         self.assertEqual(a, b)
-        self.assertEqual(len(calls), 1, "second call must serve from cache, not FMP")
+        self.assertEqual(len(calls), n_first,
+                         "repeat call must serve every chunk from cache")
+
+    def test_chunks_cover_the_whole_window(self):
+        # Truncation regression: every chunk's rows survive the merge.
+        fmp._get = lambda path, params, timeout=10: [
+            {"symbol": "X", "date": params["from"]}]
+        cal = fmp.get_earnings_calendar("2026-07-20", "2026-07-27")
+        got = sorted(r["date"] for r in cal)
+        self.assertEqual(got[0], "2026-07-20")
+        self.assertGreaterEqual(len(got), 4)   # one row per chunk start
+        self.assertEqual(len(set(got)), len(got))
+
+    def test_one_failed_chunk_fails_the_whole_call(self):
+        calls = []
+
+        def g(path, params, timeout=10):
+            calls.append(params["from"])
+            return None if len(calls) == 2 else [{"symbol": "X",
+                                                  "date": params["from"]}]
+        fmp._get = g
+        self.assertIsNone(fmp.get_earnings_calendar("2026-07-20", "2026-07-27"),
+                          "a silently partial calendar must never serve")
 
     def test_distinct_windows_keyed_separately(self):
         fmp._get = lambda path, params, timeout=10: [{"symbol": "X", "from": params["from"]}]
@@ -53,10 +81,13 @@ class TestEarningsCalendarCache(unittest.TestCase):
 
         fmp._get = g
         first = fmp.get_earnings_calendar("2026-07-01", "2026-07-31")
+        n_first = len(calls)
         second = fmp.get_earnings_calendar("2026-07-01", "2026-07-31")
-        self.assertIsNone(first)
+        self.assertIsNone(first)                    # failed chunk fails the call
+        self.assertEqual(n_first, 1, "abort on the first failed chunk")
         self.assertEqual(second, [{"symbol": "JPM"}])
-        self.assertEqual(len(calls), 2, "a None failure must retry, never be cached")
+        self.assertGreater(len(calls), n_first,
+                           "the failed chunk must retry, never be cached")
 
     def test_request_asks_for_report_times(self):
         """includeReportTimes=true must be on the request: without it FMP's stable

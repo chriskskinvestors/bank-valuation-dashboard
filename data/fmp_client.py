@@ -629,9 +629,37 @@ def get_earnings_calendar(from_date: str, to_date: str) -> list[dict] | None:
     omits time/confirmed/periodEnding entirely (every calendar date rendered as
     "(proj.)" and the When column stayed empty — 2026-07-06). Cache key carries
     :v2 so field-less rows cached before the fix can never serve.
+
+    The endpoint SILENTLY CAPS at ~4000 rows and keeps the END of the window
+    (2026-07-20: a [Jul 20, Aug 3] request returned only Jul 28+ — SMBK and
+    the whole current week truncated away, market-wide peak days run >1500
+    rows each). Long windows are therefore fetched in 2-day chunks (each its
+    own cache entry, so overlapping windows reuse) and merged, deduped on
+    (symbol, date). One failed chunk fails the whole call — a silently
+    partial calendar is exactly the bug this guards against.
     """
     if not _has_key():
         return None
+    from datetime import date as _d, timedelta as _td
+    try:
+        f, t = _d.fromisoformat(from_date), _d.fromisoformat(to_date)
+    except ValueError:
+        return None
+    if (t - f).days > 2:
+        merged, seen = [], set()
+        cur = f
+        while cur <= t:
+            end = min(cur + _td(days=1), t)
+            chunk = get_earnings_calendar(cur.isoformat(), end.isoformat())
+            if chunk is None:
+                return None              # partial calendar must never serve
+            for r in chunk:
+                k = (r.get("symbol"), r.get("date"))
+                if k not in seen:
+                    seen.add(k)
+                    merged.append(r)
+            cur = end + _td(days=1)
+        return merged
     key = f"fmp_earn_cal:v2:{from_date}:{to_date}"
     cached = _cache_get(key, 3600)
     if cached is not None:
