@@ -161,18 +161,44 @@ def _conn(n: int) -> str:
             + "{0,%d}?" % n)
 
 
+# "A and B were X% and Y%, respectively" — the pair form maps values by
+# ORDER. First-%-after-label handed the SECOND label the FIRST value (CCFN
+# 2026-07-21: "Return on average assets and return on average equity were
+# 1.70% and 14.65%, respectively" shipped ROE = 1.70). The generic pattern
+# is suppressed inside these constructs; a candidate whose value trails
+# into "and <num>% … respectively" belongs to the pair parser.
+_RESP_TAIL = re.compile(
+    r"^\s*(?:%\s*)?and\s+(?:\d[\d.]*|\.\d+)\s*%[^.;]{0,40}respectively", re.I)
+
+
 def _pct_metric(text: str, label_re: str, band) -> float | None:
-    """Percent metric: '<label> … <verb> X.XX%' — or the basis-point form
-    '<label> … <verb> N bps' (÷100), which banks use for credit ratios."""
+    """Percent metric: '<label> … <verb> X.XX%', the basis-point form
+    '<label> … <verb> N bps' (÷100), or either side of an
+    'A and B were X% and Y%, respectively' pair."""
     pat = re.compile(label_re + _conn(60) + _VERB + _NUM + r"\s*%", re.I)
     bps = re.compile(label_re + _conn(60) + _VERB +
                      r"(\d{1,3}(?:\.\d{1,2})?)\s*(?:bps|basis points?)\b", re.I)
+    # Pair forms: label FIRST ("<label> and <other> were (V1)% and V2%") and
+    # label SECOND ("<other> and <label> were V1% and (V2)%"), respectively-
+    # anchored so an unrelated 'and' can never bind.
+    pair1 = re.compile(label_re + r"\s+and\s+[^.;%]{3,70}?\s+"
+                       r"(?:were|are)\s+" + _NUM + r"\s*%\s+and\s+"
+                       r"(?:\d[\d.]*|\.\d+)\s*%[^.;]{0,40}respectively", re.I)
+    pair2 = re.compile(r"\band\s+" + label_re + r"\s+(?:were|are)\s+"
+                       r"(?:\d[\d.]*|\.\d+)\s*%\s+and\s+" + _NUM +
+                       r"\s*%[^.;]{0,40}respectively", re.I)
 
     def _gen():
         for m in pat.finditer(text):
+            if _RESP_TAIL.match(text[m.end():m.end() + 60]):
+                continue                  # the pair parser owns this value
             yield m.start(), m.group(1), m.end()
         for m in bps.finditer(text):
             yield m.start(), str(float(m.group(1)) / 100), m.end()
+        for m in pair1.finditer(text):
+            yield m.start(), m.group(1), m.end()
+        for m in pair2.finditer(text):
+            yield m.start(), m.group(1), m.end()
     return _clean(text, _gen(), band, _AGREE_PCT)
 
 
@@ -700,7 +726,9 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
-    # v14 (2026-07-16 pm): point-first decimals (".19%") in prose/cell
+    # v15 (2026-07-21): respectively-pair form — first-%-after-label
+    # handed the SECOND label the FIRST value (CCFN ROE 1.70, real
+    # 14.65). v14 point-first decimals (".19%") in prose/cell
     # patterns — CBSH's entire number style was invisible. v13 rounding-
     # aware cross-table agreement — CFG's efficiency (61.1 headline vs
     # 61.08 detail) poisoned to None under the
@@ -712,7 +740,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v14:{int(cik)}"
+    key = f"release_metrics:v15:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:

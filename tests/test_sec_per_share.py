@@ -238,5 +238,37 @@ class TestIntangibleAdjustmentMirrorsMainPath(unittest.TestCase):
         self.assertAlmostEqual(tbv, (1000.0 - 170.0) / 101.0, places=6)
 
 
+class TestSharesCorroboration(unittest.TestCase):
+    """CCFN 2026-07-21: CommonStockSharesOutstanding tagged 3.54M while the
+    filer's own NI/EPS implies 10.6M — BV/TBV history rendered ~3x high
+    (TBV above BV). Every share-count candidate must corroborate against
+    the period's diluted average when one exists."""
+
+    def test_wrong_point_in_time_count_falls_to_diluted_avg(self):
+        data = {"StockholdersEquity": [(Q1, 192_058.0)],
+                "CommonStockSharesOutstanding": [(Q1, 3_537.0)],   # ~3x under
+                "WeightedAverageNumberOfDilutedSharesOutstanding":
+                    [(Q1, 10_640.0)]}
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertAlmostEqual(r["bvps_hist"], 192_058.0 / 10_640.0, places=4)
+
+    def test_corroborated_count_still_preferred(self):
+        data = {"StockholdersEquity": [(Q1, 1_000.0)],
+                "CommonStockSharesOutstanding": [(Q1, 100.0)],
+                "WeightedAverageNumberOfDilutedSharesOutstanding":
+                    [(Q1, 102.0)]}                                  # ~1x: fine
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertAlmostEqual(r["bvps_hist"], 10.0)   # point-in-time count
+
+    def test_no_diluted_series_keeps_legacy_behavior(self):
+        data = {"StockholdersEquity": [(Q1, 1_000.0)],
+                "CommonStockSharesOutstanding": [(Q1, 100.0)]}
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertAlmostEqual(r["bvps_hist"], 10.0)
+
+
 if __name__ == "__main__":
     unittest.main()

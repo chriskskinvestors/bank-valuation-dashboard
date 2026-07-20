@@ -53,6 +53,15 @@ class TestPercentMetrics(unittest.TestCase):
         self.assertEqual(x("<p>Return on average assets of 1.15%.</p>")["roa"],
                          1.15)
 
+    def test_respectively_pair_maps_values_by_order(self):
+        """CCFN 2026-07-21: 'Return on average assets and return on average
+        equity were 1.70% and 14.65%, respectively' — first-%-after-label
+        handed ROE the ROA value. Each label takes ITS position's value."""
+        m = x("<p>Return on average assets and return on average equity were "
+              "1.70% and 14.65%, respectively, for the second quarter.</p>")
+        self.assertEqual(m["roa"], 1.70)
+        self.assertEqual(m["roe"], 14.65)
+
     def test_roe_and_rotce_do_not_cross_match(self):
         m = x("<p>Return on average common equity was 12.4% and return on "
               "average tangible common equity was 15.2%.</p>")

@@ -175,16 +175,29 @@ def _bank_per_share(cik: int, ends: list) -> dict:
         derivation, mirroring sec_client's rounded-placeholder guard. A filer
         with a treasury series but no same-end value must not derive with
         treasury=0 (overstates the count) — fall to the period-average diluted
-        last resort, or n/a."""
+        last resort, or n/a.
+
+        Every candidate is CORROBORATED against the period's diluted average
+        when one exists: a point-in-time count far off it is a wrong/partial
+        tag, not a real share count (CCFN 2026-07-21: 3.54M tagged vs 10.6M
+        implied by its own NI/EPS — BV/TBV history rendered ~3x high, TBV
+        above BV). An uncorroboratable count falls through to the diluted
+        average itself (within a few percent of outstanding for banks)."""
+        w = wavg.get(q)
+
+        def _ok(v):
+            return bool(v) and (not w or 0.65 <= v / w <= 1.55)
         s = sh.get(q)
-        if s and s % 100_000_000 != 0:
+        if s and s % 100_000_000 != 0 and _ok(s):
             return s
         iss = issued.get(q)
         if iss:
             tre = treasury.get(q)
             if tre is not None or not treasury:
-                return iss - (tre or 0)
-        return wavg.get(q)    # last resort: period-average diluted
+                v = iss - (tre or 0)
+                if _ok(v):
+                    return v
+        return w              # last resort: period-average diluted
 
     out = {}
     for q in ends:
@@ -247,7 +260,7 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     # + MSR netting, AUDIT #5 residual) — the bump invalidates pre-warmed v2
     # grids so stale BKU/USB-class TBVPS values don't serve until re-warmed.
     # (v2 was the per-common-share conventions bump.)
-    key = f"sec_pershare:v3:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
+    key = f"sec_pershare:v4:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
     cached = cache.get(key)
     if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached

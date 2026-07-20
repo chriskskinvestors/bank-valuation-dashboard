@@ -128,6 +128,26 @@ class TestRelExhibit(unittest.TestCase):
         finally:
             ue._platform_hist_val = orig
 
+    def test_split_gate_drops_incomparable_platform_pershare_history(self):
+        """CCFN 3:1 split (2026-07-21): XBRL pre-split BV 54.29 beside the
+        bank's post-split current 18.72 rendered a -35.57 'delta'. Platform
+        per-share fallbacks at split-scale odds with a stated current never
+        render; the bank's OWN columns are never gated."""
+        import ui.earnings as ue
+        fix = {"rel": {"qend": "2026-06-30",
+                       "metrics": {"bv_ps": 18.72, "tbv_ps": None},
+                       "prior_metrics": {}, "yoy_metrics": {}, "capital": {}},
+               "sec_hist": {"prior": {"bv_ps": 54.29, "tbv_ps": 44.78}}}
+        rows = {r["key"]: r for r in ue._rel_exhibit_rows(fix)}
+        self.assertIsNone(rows["bv_ps"]["prior"])      # 2.9x — split-gated
+        self.assertEqual(rows["tbv_ps"]["prior"], 44.78)  # no current → kept
+        # bank's own column never gated, even at split-scale odds
+        fix2 = {"rel": {"qend": "2026-06-30", "metrics": {"bv_ps": 18.72},
+                        "prior_metrics": {"bv_ps": 18.10},
+                        "yoy_metrics": {}, "capital": {}}}
+        rows2 = {r["key"]: r for r in ue._rel_exhibit_rows(fix2)}
+        self.assertEqual(rows2["bv_ps"]["prior"], 18.10)
+
     def test_consensus_actuals_fill_consensus_rows_only(self):
         from ui.earnings import _rel_exhibit_rows
         # FMP-sourced actuals (no _src flag) land on EPS adj / Revenue cur.

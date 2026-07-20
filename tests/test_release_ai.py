@@ -139,6 +139,14 @@ class TestGuards(unittest.TestCase):
         ], doc)
         self.assertEqual(out["cur"], {})
 
+    def test_roa_row_never_fills_roe(self):
+        # CCFN 2026-07-21: "return on average assets 1.70" satisfies roe's
+        # "return on" label — the 'assets' sibling word must disqualify.
+        doc = "Annualized return on average assets 1.70 % 1.72 % shown here"
+        out = guard_items([item("roe", "cur", 1.70,
+                                "return on average assets 1.70 %")], doc)
+        self.assertEqual(out["cur"], {})
+
     def test_point_first_print_is_evidence(self):
         """CBSH 2026-07-16: '.19%' (no leading zero) must evidence 0.19 —
         but never as the tail of a larger number ('3.19%' is not 0.19)."""
@@ -247,7 +255,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
         if ai_state is not None:
             value["ai_state"] = ai_state
             value["ai_attempts"] = attempts
-        self.store[f"release_metrics:v14:{1}"] = {
+        self.store[f"release_metrics:v15:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):

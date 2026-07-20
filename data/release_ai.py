@@ -114,7 +114,9 @@ _LABEL_RE = {k: re.compile(v, re.I) for k, v in _LABEL_RE.items()}
 # pattern matches (a ROTCE row contains "return on"; a TBV row contains
 # "per share"; a CET1 row contains "tier 1").
 _LABEL_EXCLUDE = {
-    "roe":         re.compile(r"tangible", re.I),
+    # "assets": an ROA row ("return on average assets 1.70") satisfies roe's
+    # "return on" label — CCFN-class sibling leak, 2026-07-21.
+    "roe":         re.compile(r"tangible|assets", re.I),
     "bv_ps":       re.compile(r"tangible", re.I),
     "t1_ratio":    re.compile(r"common equity|cet", re.I),
     "eps_diluted": re.compile(r"book value|dividend", re.I),
@@ -349,11 +351,12 @@ def release_ai_metrics(cik, accession: str, text: str, ticker: str = "",
     if not cik or not accession or not text:
         return None
     from data.cloud_storage import load_json, save_json
-    # _v5 (2026-07-16 pm): point-first number-in-quote (CBSH ".19%") — _v4
+    # _v6 (2026-07-21): roe label excludes 'assets' (CCFN sibling leak).
+    # _v5 point-first number-in-quote (CBSH ".19%") — _v4
     # rejected every sub-1 value from leading-zero-less banks. _v4 fresh
     # pass for the Jul-16 wave; _v3 the label-affirmation guard; _v2 the
     # financial-supplement consolidated section.
-    fname = f"{int(cik)}_{accession.replace('-', '')}_v5.json"
+    fname = f"{int(cik)}_{accession.replace('-', '')}_v6.json"
     cached = load_json(RELEASE_AI_CACHE_PREFIX, fname)
     if cached and isinstance(cached.get("periods"), dict):
         return cached["periods"]

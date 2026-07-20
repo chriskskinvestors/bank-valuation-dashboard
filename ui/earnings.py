@@ -1638,26 +1638,41 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     if cur.get("total_revenue") is None and r.get("rev_act") is not None \
             and not r.get("rev_act_src"):
         cur["total_revenue"] = r["rev_act"]
+    def _split_ok(v, c, unit):
+        """Platform per-share history is incomparable with the release's
+        current across a stock split (CCFN 3:1, 2026-07-21: XBRL pre-split
+        BV 54.29 beside the bank's post-split 18.72 rendered a -35.57
+        'delta'). A fallback value at split-scale odds with a stated current
+        never renders; the bank's OWN columns are never gated."""
+        if v is None or unit != "$" or not c or c <= 0:
+            return True
+        return 0.5 <= v / c <= 2.0
+
     rows = []
     for key, label, unit in _REL_METRICS:
         c = cur.get(key)
         # History: the bank's own comparative column, else the board-built
         # FDIC quarterly ratios / SEC per-share (covers the pre-warmed grid's
-        # holes — RF 2026-07-17), else the platform grids.
+        # holes — RF 2026-07-17), else the platform grids. Per-share
+        # fallbacks are split-gated against the stated current.
         p = prior.get(key)
         if p is None:
             p = (fdic_hist.get("prior") or {}).get(key)
-        if p is None:
-            p = (sec_hist.get("prior") or {}).get(key)
-        if p is None:
-            p = _platform_hist_val(tk, key, prior_q)
+            if p is None:
+                p = (sec_hist.get("prior") or {}).get(key)
+            if p is None:
+                p = _platform_hist_val(tk, key, prior_q)
+            if not _split_ok(p, c, unit):
+                p = None
         y = yoy.get(key)
         if y is None:
             y = (fdic_hist.get("yoy") or {}).get(key)
-        if y is None:
-            y = (sec_hist.get("yoy") or {}).get(key)
-        if y is None:
-            y = _platform_hist_val(tk, key, yoy_q)
+            if y is None:
+                y = (sec_hist.get("yoy") or {}).get(key)
+            if y is None:
+                y = _platform_hist_val(tk, key, yoy_q)
+            if not _split_ok(y, c, unit):
+                y = None
         rows.append({
             "key": key, "label": label, "unit": unit,
             "yoy": y, "prior": p, "cur": c, "cons": cons.get(key),
