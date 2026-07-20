@@ -117,6 +117,25 @@ def main() -> int:
             if done % 50 == 0:
                 print(f"  {done}/{len(tickers)}")
 
+    if failures:
+        # Transient-blip re-check (earnings week 2026-07: BORT, then CMHF/
+        # HCKG/PCLB, then HIFS — a DIFFERENT healthy bank failed each sweep;
+        # under the 532-ticker hammer FDIC intermittently returns non-429
+        # errors / 200-with-empty-body, which the 429-only retry can't see).
+        # Re-check ONLY the failers, serially, after a cooldown — a
+        # genuinely dead source still fails the gate.
+        print(f"\nRe-checking {len(failures)} failure(s) serially after "
+              "a 45s cooldown...")
+        time.sleep(45)
+        still = []
+        for ticker, cik, cert in failures:
+            _, ok, _, _ = _check_ticker(ticker)
+            if not ok:
+                still.append((ticker, cik, cert))
+            else:
+                print(f"  {ticker}: transient — passes on re-check")
+        failures = still
+
     print()
     print(f"Total: {len(tickers)}")
     print(f"Passed: {len(tickers) - len(failures)}")
