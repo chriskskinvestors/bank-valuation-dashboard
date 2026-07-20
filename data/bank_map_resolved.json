@@ -73,8 +73,8 @@
  },
  "ASBA": {
   "cik": 7789,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 5296,
+  "fdic_score": 1.0,
   "name": "Associated Banc-Corp"
  },
  "ASRV": {
@@ -187,8 +187,8 @@
  },
  "BCBP": {
   "cik": 1228454,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 35541,
+  "fdic_score": 1.0,
   "name": "BCB Bancorp"
  },
  "BCML": {
@@ -235,14 +235,14 @@
  },
  "BHRB": {
   "cik": 1964333,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 11578,
+  "fdic_score": 1.0,
   "name": "Burke & Herbert Financial Services"
  },
  "BK": {
   "cik": 1390777,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 639,
+  "fdic_score": 1.0,
   "name": "Bank of New York Mellon"
  },
  "BKSC": {
@@ -325,8 +325,8 @@
  },
  "BSRR": {
   "cik": 1130144,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 22597,
+  "fdic_score": 1.0,
   "name": "Sierra Bancorp"
  },
  "BSSC": {
@@ -373,8 +373,8 @@
  },
  "BY": {
   "cik": 1702750,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 20624,
+  "fdic_score": 1.0,
   "name": "Byline Bancorp"
  },
  "BYFC": {
@@ -457,8 +457,8 @@
  },
  "CBK": {
   "cik": 1981546,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 22354,
+  "fdic_score": 1.0,
   "name": "Commercial Bancgroup"
  },
  "CBKM": {
@@ -595,8 +595,8 @@
  },
  "CMTV": {
   "cik": 718413,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 6271,
+  "fdic_score": 1.0,
   "name": "Community Bancorp"
  },
  "CNND": {
@@ -607,14 +607,14 @@
  },
  "CNOB": {
   "cik": 712771,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 57919,
+  "fdic_score": 1.0,
   "name": "ConnectOne Bancorp"
  },
  "CNOBP": {
   "cik": 712771,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 57919,
+  "fdic_score": 1.0,
   "name": "ConnectOne Bancorp"
  },
  "CNUN": {
@@ -643,8 +643,8 @@
  },
  "COSO": {
   "cik": 1297107,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 57756,
+  "fdic_score": 1.0,
   "name": "CoastalSouth Bancshares"
  },
  "CPBI": {
@@ -691,8 +691,8 @@
  },
  "CUBB": {
   "cik": 1488813,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 34444,
+  "fdic_score": 1.0,
   "name": "Customers Bancorp"
  },
  "CUBI": {
@@ -715,8 +715,8 @@
  },
  "CWBC": {
   "cik": 1127371,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 23030,
+  "fdic_score": 1.0,
   "name": "Community West Bancshares"
  },
  "CYVF": {
@@ -793,14 +793,14 @@
  },
  "ECBK": {
   "cik": 1914605,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 26444,
+  "fdic_score": 1.0,
   "name": "ECB Bancorp"
  },
  "EFSC": {
   "cik": 1025835,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 27237,
+  "fdic_score": 1.0,
   "name": "Enterprise Financial Services"
  },
  "EFSCP": {
@@ -829,8 +829,8 @@
  },
  "ENBP": {
   "cik": 1437479,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 7493,
+  "fdic_score": 1.0,
   "name": "ENB Financial"
  },
  "EQBK": {
@@ -895,7 +895,7 @@
  },
  "FBLA": {
   "cik": 2013639,
-  "fdic_cert": 8663,
+  "fdic_cert": 28316,
   "fdic_score": 1.0,
   "name": "FB Bancorp"
  },
@@ -907,8 +907,8 @@
  },
  "FBP": {
   "cik": 1057706,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 30387,
+  "fdic_score": 1.0,
   "name": "First Bancorp"
  },
  "FBPA": {
@@ -955,8 +955,8 @@
  },
  "FCF": {
   "cik": 712537,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 7468,
+  "fdic_score": 1.0,
   "name": "First Commonwealth Financial"
  },
  "FCNCA": {
@@ -1015,8 +1015,8 @@
  },
  "FFBC": {
   "cik": 708955,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 6600,
+  "fdic_score": 1.0,
   "name": "First Financial Bancorp"
  },
  "FFBW": {
@@ -1057,8 +1057,8 @@
  },
  "FGBIP": {
   "cik": 1408534,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 14028,
+  "fdic_score": 1.0,
   "name": "First Guaranty Bancshares"
  },
  "FGFH": {
@@ -1087,8 +1087,8 @@
  },
  "FIBK": {
   "cik": 860413,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 1105,
+  "fdic_score": 1.0,
   "name": "First Interstate Bancsystem"
  },
  "FIDS": {
@@ -1111,8 +1111,8 @@
  },
  "FINW": {
   "cik": 1856365,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 35323,
+  "fdic_score": 1.0,
   "name": "Finwise Bancorp"
  },
  "FISI": {
@@ -1147,8 +1147,8 @@
  },
  "FITBP": {
   "cik": 35527,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 6672,
+  "fdic_score": 1.0,
   "name": "Fifth Third Bancorp"
  },
  "FKYS": {
@@ -1231,8 +1231,8 @@
  },
  "FNLC": {
   "cik": 765207,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 4256,
+  "fdic_score": 1.0,
   "name": "First Bancorp"
  },
  "FNRN": {
@@ -1393,8 +1393,8 @@
  },
  "GLBZ": {
   "cik": 890066,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 16820,
+  "fdic_score": 1.0,
   "name": "Glen Burnie Bancorp"
  },
  "GNRV": {
@@ -1459,8 +1459,8 @@
  },
  "HBANP": {
   "cik": 49196,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 6560,
+  "fdic_score": 1.0,
   "name": "Huntington Bancshares"
  },
  "HBANZ": {
@@ -1621,8 +1621,8 @@
  },
  "INBKZ": {
   "cik": 1562463,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 34607,
+  "fdic_score": 1.0,
   "name": "First Internet Bancorp"
  },
  "INDB": {
@@ -1711,8 +1711,8 @@
  },
  "LARK": {
   "cik": 1141688,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 5826,
+  "fdic_score": 1.0,
   "name": "Landmark Bancorp"
  },
  "LCNB": {
@@ -1777,20 +1777,20 @@
  },
  "MBINL": {
   "cik": 1629019,
-  "fdic_cert": 4365,
-  "fdic_score": 0.5,
+  "fdic_cert": 8056,
+  "fdic_score": 1.0,
   "name": "Merchants Bancorp"
  },
  "MBINM": {
   "cik": 1629019,
-  "fdic_cert": 4365,
-  "fdic_score": 0.5,
+  "fdic_cert": 8056,
+  "fdic_score": 1.0,
   "name": "Merchants Bancorp"
  },
  "MBINN": {
   "cik": 1629019,
-  "fdic_cert": 4365,
-  "fdic_score": 0.5,
+  "fdic_cert": 8056,
+  "fdic_score": 1.0,
   "name": "Merchants Bancorp"
  },
  "MBKL": {
@@ -1855,7 +1855,7 @@
  },
  "MGNO": {
   "cik": 2033615,
-  "fdic_cert": 8120,
+  "fdic_cert": 27716,
   "fdic_score": 1.0,
   "name": "Magnolia Bancorp"
  },
@@ -1885,8 +1885,8 @@
  },
  "MNSBP": {
   "cik": 1693577,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 57742,
+  "fdic_score": 1.0,
   "name": "MainStreet Bancshares"
  },
  "MPB": {
@@ -2017,8 +2017,8 @@
  },
  "NRIM": {
   "cik": 1163370,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 33216,
+  "fdic_score": 1.0,
   "name": "Northrim Bancorp"
  },
  "NSTS": {
@@ -2029,9 +2029,9 @@
  },
  "NTRS": {
   "cik": 73124,
-  "fdic_cert": null,
-  "name": "Northern Trust",
-  "source": "sec_bank_sic_audit"
+  "fdic_cert": 913,
+  "fdic_score": 1.0,
+  "name": "Northern Trust"
  },
  "NWBI": {
   "cik": 1471265,
@@ -2065,8 +2065,8 @@
  },
  "OBK": {
   "cik": 1516912,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 12614,
+  "fdic_score": 1.0,
   "name": "Origin Bancorp"
  },
  "OBT": {
@@ -2095,8 +2095,8 @@
  },
  "ONB": {
   "cik": 707179,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 3832,
+  "fdic_score": 1.0,
   "name": "Old National Bancorp"
  },
  "ONBPO": {
@@ -2215,8 +2215,8 @@
  },
  "PEBK": {
   "cik": 1093672,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 5956,
+  "fdic_score": 1.0,
   "name": "Peoples Bancorp of North Carolina"
  },
  "PEBO": {
@@ -2275,8 +2275,8 @@
  },
  "PNBK": {
   "cik": 1098146,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 33928,
+  "fdic_score": 1.0,
   "name": "Patriot National Bancorp"
  },
  "PNC": {
@@ -2311,8 +2311,8 @@
  },
  "PROV": {
   "cik": 1010470,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 30879,
+  "fdic_score": 1.0,
   "name": "Provident Financial Holdings"
  },
  "PTBS": {
@@ -2347,14 +2347,14 @@
  },
  "RBCAA": {
   "cik": 921557,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 23627,
+  "fdic_score": 1.0,
   "name": "Republic Bancorp"
  },
  "RBKB": {
   "cik": 1751783,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 16032,
+  "fdic_score": 1.0,
   "name": "Rhinebeck Bancorp"
  },
  "RBNK": {
@@ -2491,8 +2491,8 @@
  },
  "SMBC": {
   "cik": 916907,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 28332,
+  "fdic_score": 1.0,
   "name": "Southern Missouri Bancorp"
  },
  "SMBK": {
@@ -2587,8 +2587,8 @@
  },
  "SYBT": {
   "cik": 835324,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 258,
+  "fdic_score": 1.0,
   "name": "Stock Yards Bancorp"
  },
  "TBBC": {
@@ -2599,8 +2599,8 @@
  },
  "TBBK": {
   "cik": 1295401,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 35444,
+  "fdic_score": 1.0,
   "name": "Bancorp"
  },
  "TCBI": {
@@ -2659,8 +2659,8 @@
  },
  "THFF": {
   "cik": 714562,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 4382,
+  "fdic_score": 1.0,
   "name": "First Financial"
  },
  "TMAK": {
@@ -2683,8 +2683,8 @@
  },
  "TRST": {
   "cik": 357301,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 31945,
+  "fdic_score": 1.0,
   "name": "Trustco Bank Corp N Y"
  },
  "TSBK": {
@@ -2785,8 +2785,8 @@
  },
  "URSB": {
   "cik": 2084261,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 29170,
+  "fdic_score": 1.0,
   "name": "URSB Bancorp"
  },
  "USB": {
@@ -2833,8 +2833,8 @@
  },
  "VLYPN": {
   "cik": 714310,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 9396,
+  "fdic_score": 1.0,
   "name": "Valley National Bancorp"
  },
  "VLYPO": {
@@ -2845,8 +2845,8 @@
  },
  "VLYPP": {
   "cik": 714310,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 9396,
+  "fdic_score": 1.0,
   "name": "Valley National Bancorp"
  },
  "VWFB": {
@@ -2905,8 +2905,8 @@
  },
  "WNEB": {
   "cik": 1157647,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 90300,
+  "fdic_score": 1.0,
   "name": "Western New England Bancorp"
  },
  "WOBK": {
@@ -2929,8 +2929,8 @@
  },
  "WSBCO": {
   "cik": 203596,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 803,
+  "fdic_score": 1.0,
   "name": "Wesbanco"
  },
  "WSBF": {
@@ -2959,8 +2959,8 @@
  },
  "WTBA": {
   "cik": 1166928,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 15614,
+  "fdic_score": 1.0,
   "name": "West Bancorporation"
  },
  "WTFC": {
@@ -2989,8 +2989,8 @@
  },
  "ZIONP": {
   "cik": 109380,
-  "fdic_cert": null,
-  "fdic_score": 0.0,
+  "fdic_cert": 2270,
+  "fdic_score": 1.0,
   "name": "Zions Bancorporation"
  }
 }
