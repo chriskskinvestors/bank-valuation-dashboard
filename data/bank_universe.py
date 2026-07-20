@@ -175,8 +175,17 @@ def _fetch_fdic_banks() -> dict[str, list[dict]]:
     function silently returned an empty lookup forever and the universe was
     the curated map alone.)
 
+    Paginates through data/http.py's shared retry policy, which backs off on
+    429. FDIC throttles bursts, and this is a ~5-page walk that gates the ENTIRE
+    nightly job: on 2026-07-20 a single 429 on the LAST page (offset 4000 of
+    ~4257) killed the whole run and left the snapshot a day stale. A transient
+    throttle must cost seconds, not the rebuild.
+
     Raises on fetch failure or an empty result — a partial list must never be
-    silently used and cached for 24h."""
+    silently used and cached for 24h. That invariant is why an exhausted retry
+    raises here rather than breaking with what it has."""
+    from data.http import get_with_retry
+
     fdic_banks: list[dict] = []
     offset = 0
     while True:
@@ -188,11 +197,14 @@ def _fetch_fdic_banks() -> dict[str, list[dict]]:
             "limit": 1000,
             "offset": offset,
         }
-        resp = requests.get(
+        resp = get_with_retry(
             "https://banks.data.fdic.gov/api/institutions",
             params=params, timeout=20,
         )
-        resp.raise_for_status()
+        if resp is None:
+            raise RuntimeError(
+                f"FDIC institutions: rate-limited past retries at offset "
+                f"{offset} — refusing to build the universe from a partial list")
         data = resp.json()
         rows = data.get("data", [])
         if not rows:
@@ -1155,19 +1167,24 @@ def fetch_fdic_records_for_certs(certs: list[int]) -> dict[int, dict]:
     "STALPHCR", "HCTMULT", "ASSET"}} — the name, state and size keys. ~10 calls
     for the full universe (50 certs per OR-filter query). Raises on HTTP
     failure — the caller treats that as 'guard skipped', never a job failure."""
+    from data.http import get_with_retry
+
     records: dict[int, dict] = {}
     uniq = sorted({int(c) for c in certs})
     for i in range(0, len(uniq), 50):
         chunk = uniq[i:i + 50]
         flt = "CERT:(" + " OR ".join(str(c) for c in chunk) + ")"
-        resp = requests.get(
+        resp = get_with_retry(
             "https://banks.data.fdic.gov/api/institutions",
             params={"filters": flt,
                     "fields": "NAME,CERT,NAMEHCR,STALP,STALPHCR,HCTMULT,ASSET",
                     "limit": len(chunk)},
             timeout=30,
         )
-        resp.raise_for_status()
+        if resp is None:
+            raise RuntimeError(
+                f"FDIC institutions: rate-limited past retries on cert chunk "
+                f"{i // 50} — guard cannot corroborate a partial record set")
         for d in resp.json().get("data", []):
             rec = d.get("data", d)
             records[int(rec["CERT"])] = rec
@@ -1191,16 +1208,18 @@ def fetch_sec_profiles(ciks: list[int]) -> dict[int, dict]:
     Raises on a frames HTTP failure (caller treats it as 'guard skipped'); a
     single CIK's submissions failing is tolerated — it costs the state key for
     that bank, not the run."""
+    from data.http import get_with_retry
     from data.sec_client import get_filing_info
 
     uniq = sorted({int(c) for c in ciks if c})
     assets: dict[int, float] = {}
     for frame in _ASSET_FRAMES:
-        resp = requests.get(
+        resp = get_with_retry(
             f"https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/{frame}.json",
             headers=SEC_HEADERS, timeout=60,
         )
-        resp.raise_for_status()
+        if resp is None:
+            raise RuntimeError(f"SEC frames {frame}: rate-limited past retries")
         for row in resp.json().get("data", []):
             assets.setdefault(int(row["cik"]), float(row["val"]))
         time.sleep(0.15)
