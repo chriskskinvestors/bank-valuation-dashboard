@@ -767,8 +767,24 @@ def _af_calendar_table(watchlist: list[str]) -> str:
 # this deploy's first render instead of waiting it out. The feed is ALSO warmed
 # on a schedule by jobs.refresh_home_snapshot (warm_news_feed_snapshot), so it no
 # longer goes stale waiting for someone to load Home after the TTL lapses.
-_NEWS_FEED_SNAP_KEY = "home_af_feed_snap_v3"
-_NEWS_FEED_SNAP_TTL = 1800   # 30 min
+# Bumped to _v4 (2026-07-20) alongside the TTL cut: the junk filter gained the
+# fund/ETF daily-admin rule, which applies to ALL sources and so changes what
+# Home shows. Same reasoning as the v3 bump — force a rebuild on this deploy's
+# first render instead of serving pre-filter rows until the TTL lapses.
+_NEWS_FEED_SNAP_KEY = "home_af_feed_snap_v4"
+# 5 min, cut from 30 (2026-07-20). Earnings-season polling runs every 60s
+# (poll-events-earnings-1min), so a 30-min snapshot meant a release could be
+# ingested and sit invisible on Home for half an hour — the owner-reported
+# "MNSB still not getting picked up", which was live in News & Research (that
+# view reads the store directly) while Home served a pre-MNSB snapshot.
+#
+# The scheduled warm (jobs.refresh_home_snapshot) still does the real work off
+# the render path; this TTL is the SAFETY NET for the window between warms, and
+# for a warm job that silently stops firing (a missing scheduler run.invoker
+# binding fails closed and quietly stales the data — cf. refresh-trends,
+# 2026-06-24). The rebuild it can trigger is one indexed 150-row query over
+# events plus a pre-aggregated Form-4 read, not a network fan-out.
+_NEWS_FEED_SNAP_TTL = 300
 
 
 def _af_feed_items(watchlist: list[str]) -> list[dict]:
