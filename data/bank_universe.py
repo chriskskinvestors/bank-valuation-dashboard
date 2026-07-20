@@ -882,6 +882,12 @@ _NAMEHCR_VERIFIED_OK: dict[str, int] = {
                      # First National Bank of Omaha
     "FGBI": 14028,   # SMITH&HOOD HOLDING CO LLC (control entity above First
                      # Guaranty Bancshares) / First Guaranty Bank, Hammond LA
+    "ENBP": 7493,    # HIBSHMAN TR EPHRATA NB STK (a trust holding the bank's
+                     # stock, above the registrant) / The Ephrata National
+                     # Bank, Ephrata PA — registrant ENB Financial Corp is the
+                     # bank's initials, same PA, $2.42B. Trust-holder + an
+                     # initialism registrant: the name tell's exact blind spot.
+                     # Verified against the 2026-07-20 nightly finding.
     # The four below all corroborate on the state and size keys and fail only
     # the name tell — the shape those keys were added for. The first three
     # became visible when 53aab80 moved them onto their correct certs.
@@ -939,6 +945,12 @@ _STATE_VERIFIED_OK: dict[str, int] = {
     # under the holder name, and its $1.53B matches the merged company.
     # Keyed by the FMP listing state, this bank's only registrant state.
     "MSWV": 29847,
+    # Coastal States Bank is SC-chartered (Hilton Head, $2.35B) while its
+    # holding company CoastalSouth Bancshares files from Atlanta GA. cert
+    # 57756 is the ONLY bank under "COASTALSOUTH BANCSHARES INC" and the high
+    # holder names the registrant exactly — a real SC-bank/GA-holdco split,
+    # same shape as BPRN. Verified against the 2026-07-20 nightly finding.
+    "COSO": 57756,
 }
 
 # ── Third key: SIZE ────────────────────────────────────────────────────────

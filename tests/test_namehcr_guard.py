@@ -175,6 +175,22 @@ class TestNamehcrFlags(unittest.TestCase):
         # FRME is present. The missing cert IS reported.
         self.assertEqual(flags["missing"], [("DEAD", 99999)])
 
+    def test_trust_high_holder_allowlisted(self):
+        # ENBP — the registrant is ENB Financial (the bank's initials) and the
+        # HCR is a trust holding the bank's stock; neither the token rule nor
+        # the containment escape can bridge "ENB" to "Ephrata National Bank".
+        # Flagged by the 2026-07-20 nightly; a correct join.
+        self.assertEqual(_NAMEHCR_VERIFIED_OK.get("ENBP"), 7493)
+        rec = {7493: {"NAME": "The Ephrata National Bank",
+                      "NAMEHCR": "HIBSHMAN TR EPHRATA NB STK"},
+               4365: {"NAME": "First Merchants Bank",
+                      "NAMEHCR": "FIRST MERCHANTS CORP"}}
+        snap = {"ENBP": {"name": "ENB Financial", "cik": 1437479,
+                         "fdic_cert": 7493, "share_class": "common"}}
+        self.assertEqual(namehcr_flags(snap, rec)["mismatch"], [])
+        snap["ENBP"]["fdic_cert"] = 4365  # moved to someone else's cert
+        self.assertEqual(len(namehcr_flags(snap, rec)["mismatch"]), 1)
+
     def test_allowlist_is_cert_keyed(self):
         # TFSL's MHC-named HCR is allowlisted for cert 30012 ONLY — a changed
         # cert must flag again.
@@ -303,6 +319,19 @@ class TestStateKey(unittest.TestCase):
                             "assets": 35_500_000_000}}
         flags = namehcr_flags(snap, self.TWINS, profiles, {"CBSH": "LA"})
         self.assertEqual(flags["state"], [])
+
+    def test_real_split_state_bank_allowlisted(self):
+        # COSO — SC-chartered Coastal States Bank, GA holding company. The
+        # 2026-07-20 nightly flagged it; it is a real split, not a wrong join.
+        self.assertEqual(_STATE_VERIFIED_OK.get("COSO"), 57756)
+        rec = {57756: {"NAME": "Coastal States Bank",
+                       "NAMEHCR": "COASTALSOUTH BANCSHARES INC", "STALP": "SC",
+                       "STALPHCR": "SC", "ASSET": 2_350_000}}
+        snap = {"COSO": {"name": "CoastalSouth Bancshares", "cik": 1297107,
+                         "fdic_cert": 57756, "share_class": "common"}}
+        profiles = {1297107: {"hq_state": "GA", "state_of_incorp": "",
+                              "assets": 2_350_000_000}}
+        self.assertEqual(namehcr_flags(snap, rec, profiles)["state"], [])
 
     def test_state_allowlist_is_cert_keyed(self):
         self.assertEqual(_STATE_VERIFIED_OK.get("BPRN"), 58513)
