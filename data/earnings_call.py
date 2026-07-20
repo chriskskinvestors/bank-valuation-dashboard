@@ -701,6 +701,12 @@ def merged_call_info() -> dict:
         _overlay(get_curated_call_info(), ("webcast_url",))
     except Exception:
         pass
+    # The bank's OWN announced dates re-assert LAST (dates only): the full
+    # announcement-PR text is authoritative for WHEN over any stale wire/Q4
+    # snapshot (VLY 2026-07-21: its PR says July 23; a stronger layer's stale
+    # release_date kept it on FMP's wrong July 20 — with FMP's confirmed flag
+    # asserting a date the bank itself contradicts).
+    _overlay(fmp_announcement_call_info(), ("release_date", "call_date"))
     return base
 
 
