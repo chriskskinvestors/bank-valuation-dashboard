@@ -46,10 +46,16 @@ _PHONE_RE = re.compile(
     r"(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}")
 _DIALIN_CUE_RE = re.compile(
     r"(?:dial[-\s]?in|toll[-\s]?free|by (?:tele)?phone|telephone|"
-    r"to access the call|participants? (?:may|can|should) dial)", re.I)
+    r"to access the call|participants? (?:may|can|should) dial|"
+    # bare imperative "dial (833) 461-5787" (SMBK 2026-07-20 — the cue only
+    # scopes where the number is looked for, so this stays safe)
+    r"\bdial(?:ing)?\b)", re.I)
 _ID_RE = re.compile(
-    r"(?:conference id|passcode|access code|pass\s?code|conference number)"
-    r"[:#\s]*([0-9]{4,})", re.I)
+    # "Meeting ID: 208 155 555" — label variants + digit groups that may be
+    # SPACE-SEPARATED (SMBK); inner whitespace normalized by the caller.
+    r"(?:conference id|meeting id|passcode|access code|pass\s?code|"
+    r"conference number|entry number)"
+    r"[:#\s]*(\d(?:[\d ]{2,})\d)", re.I)
 
 
 def _parse_call_time(text: str) -> str | None:
@@ -108,7 +114,10 @@ def _parse_dial_in(text: str) -> str | None:
             return None
         num = m.group(0).strip()
     pid = _ID_RE.search(text)
-    return f"{num} (ID {pid.group(1)})" if pid else num
+    if pid:
+        code = re.sub(r"\s+", " ", pid.group(1).strip())
+        return f"{num} (ID {code})"
+    return num
 
 
 def parse_call_info(text: str) -> dict:
@@ -502,7 +511,8 @@ def fmp_announcement_call_info() -> dict:
         try:
             cal = fmp_client.get_earnings_calendar(
                 today.isoformat(), (today + timedelta(days=14)).isoformat()) or []
-            uni = set(get_universe().keys())
+            uni = {tk for tk, v in get_universe().items()
+                   if (v or {}).get("share_class", "common") == "common"}
         except Exception:
             return {}
         # soonest report first, deduped

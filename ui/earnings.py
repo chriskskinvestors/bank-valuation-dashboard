@@ -1309,7 +1309,10 @@ def _render_earnings_calendar(watchlist: list[str]):
     with st.spinner("Loading earnings calendar..."):
         try:
             from data.bank_universe import get_universe
-            universe = set(get_universe().keys())
+            # Common shares only — preferred/note listings share the parent's
+            # report (ZIONP rendered as a second Zions row, 2026-07-20).
+            universe = {tk for tk, v in get_universe().items()
+                        if (v or {}).get("share_class", "common") == "common"}
         except Exception:
             universe = set()
         # Date spine: the universe-wide yfinance snapshot (real near-term dates,

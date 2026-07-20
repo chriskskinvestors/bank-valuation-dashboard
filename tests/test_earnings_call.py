@@ -416,6 +416,16 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertIn("JPM", tickers)                     # 07-14, within 5 days
         self.assertNotIn("FMPONLY", tickers)              # 07-20, beyond 5 days
 
+    def test_dial_in_bare_imperative_and_spaced_meeting_id(self):
+        """SMBK 2026-07-20 (FMP truncates PR text at ~500 chars, so this is
+        ALL we get): 'dial (833) 461-5787 and enter the Meeting ID: 208 155
+        555.' — a bare 'dial' cue, paren area code, spaced meeting ID."""
+        from data.earnings_call import _parse_dial_in
+        txt = ("please join the teleconference, dial (833) 461-5787 and "
+               "enter the Meeting ID: 208 155 555. A link to a replay")
+        self.assertEqual(_parse_dial_in(txt),
+                         "(833) 461-5787 (ID 208 155 555)")
+
     def test_fmp_announcement_infos_parse_and_guards(self):
         """2026-07-20: upcoming banks' call info missing — their announcement
         PRs aren't on the wires we poll, but FMP's press-release index has
