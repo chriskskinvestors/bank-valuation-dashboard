@@ -279,16 +279,18 @@ class TestResolveTbvpsFallback(unittest.TestCase):
 
         with unittest.mock.patch("data.bank_mapping.get_cik", return_value=1521951), \
              unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", fake_reported):
-            out = val._resolve_tbvps("FBIZ", reconstructed=42.68, bvps=52.10)
-        self.assertAlmostEqual(out, 42.68)
+            value, source = val._resolve_tbvps("FBIZ", reconstructed=42.68, bvps=52.10)
+        self.assertAlmostEqual(value, 42.68)
+        self.assertEqual(source, "reported_8k")
         self.assertEqual(called["args"], (1521951, 42.68, 52.10))
 
     def test_falls_back_to_reconstruction_when_reported_none(self):
         import analysis.valuation as val
         with unittest.mock.patch("data.bank_mapping.get_cik", return_value=1521951), \
              unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", return_value=None):
-            out = val._resolve_tbvps("ABCB", reconstructed=37.50, bvps=50.0)
-        self.assertAlmostEqual(out, 37.50)
+            value, source = val._resolve_tbvps("ABCB", reconstructed=37.50, bvps=50.0)
+        self.assertAlmostEqual(value, 37.50)
+        self.assertEqual(source, "reconstructed")
 
     def test_error_does_not_regress(self):
         import analysis.valuation as val
@@ -298,13 +300,15 @@ class TestResolveTbvpsFallback(unittest.TestCase):
 
         with unittest.mock.patch("data.bank_mapping.get_cik", return_value=999), \
              unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", boom):
-            out = val._resolve_tbvps("XXXX", reconstructed=30.0, bvps=45.0)
-        self.assertAlmostEqual(out, 30.0)   # reconstruction stands
+            value, source = val._resolve_tbvps("XXXX", reconstructed=30.0, bvps=45.0)
+        self.assertAlmostEqual(value, 30.0)   # reconstruction stands
+        self.assertEqual(source, "reconstructed")
 
     def test_no_ticker_returns_reconstruction(self):
         import analysis.valuation as val
-        self.assertAlmostEqual(
-            val._resolve_tbvps(None, reconstructed=30.0, bvps=45.0), 30.0)
+        value, source = val._resolve_tbvps(None, reconstructed=30.0, bvps=45.0)
+        self.assertAlmostEqual(value, 30.0)
+        self.assertEqual(source, "reconstructed")
 
 
 if __name__ == "__main__":

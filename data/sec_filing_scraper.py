@@ -14,17 +14,49 @@ from __future__ import annotations
 
 import json
 import re
-import urllib.request
+import threading
+import time
 from dataclasses import dataclass
 from datetime import date
 
 _UA = {"User-Agent": "KSK Investors research chris@kskinvestors.com"}
 
+# Proactive SEC throttle. This module is the SEC provider's fetch choke point,
+# called per-ticker across the whole universe (532 banks) by the valuation
+# reported_tbvps path and the Company-Reported statement extractors. The old
+# `_get` was raw urllib — no backoff, no rate limit, a 60s hang per call — so a
+# universe walk BURST past SEC's ~10 req/s cap, got HTTP-429 stormed, and the
+# hung calls ran refresh-universe into its 1800s task timeout (2026-07-20:
+# `reported_tbvps ... HTTP Error 429` for dozens of tickers, then "maximum
+# timeout of 1800 seconds"). A shared min-interval lock keeps the aggregate rate
+# under the cap so the storm never starts; data/http.py's retry policy (below)
+# is the backstop for any residual 429. Interactive single fetches pay ~0.
+_SEC_MIN_INTERVAL = 0.11          # ~9 req/s, under SEC's 10/s
+_SEC_LOCK = threading.Lock()
+_sec_last = [0.0]
+
+
+def _sec_throttle() -> None:
+    with _SEC_LOCK:
+        wait = _SEC_MIN_INTERVAL - (time.monotonic() - _sec_last[0])
+        if wait > 0:
+            time.sleep(wait)
+        _sec_last[0] = time.monotonic()
+
 
 def _get(url: str) -> bytes:
-    req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return r.read()
+    """Fetch bytes through the shared retry policy (data/http.py) behind the SEC
+    throttle — NOT raw urllib. Honors 429 Retry-After with capped backoff and a
+    20s (not 60s) timeout. Raises on a non-429 HTTP error or when 429s exhaust
+    the retries, preserving the raise-on-failure contract so callers' existing
+    try/except keeps failing soft (a transient throttle yields None UNcached, not
+    a poisoned 'no data')."""
+    from data.http import get_with_retry
+    _sec_throttle()
+    resp = get_with_retry(url, headers=_UA, timeout=20)
+    if resp is None:
+        raise RuntimeError(f"SEC/EDGAR fetch exhausted by 429s: {url}")
+    return resp.content
 
 
 def latest_filing(cik, forms=("10-K",)) -> dict | None:
@@ -540,8 +572,9 @@ def _fdic_cet1(cert) -> float | None:
     url = (f"https://banks.data.fdic.gov/api/financials?filters=CERT:{cert}"
            f"&fields=IDT1CER&sort_by=REPDTE&sort_order=DESC&limit=1&format=json")
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=_UA), timeout=15) as r:
-            d = json.load(r)["data"]
+        from data.http import get_with_retry
+        resp = get_with_retry(url, headers=_UA, timeout=15)
+        d = (resp.json().get("data") if resp else None) or []
         return d[0]["data"].get("IDT1CER") if d else None
     except Exception:
         return None
