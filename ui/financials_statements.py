@@ -2406,6 +2406,78 @@ def _comp_norm_label(label) -> str:
     return " ".join(s.lower().split())
 
 
+# Category-label wording that varies between a filer's 10-K and its own 10-Qs
+# WITHOUT changing the category's identity — TCBK tags "Commercial real estate"
+# each quarter but "Total commercial real estate loans" in the 10-K, which split
+# one category into two half-blank rows in the quarterly view. Dropped ONLY to
+# DETECT a mergeable twin: never used as the stitch key (that stays
+# _comp_norm_label) and never used as the DISPLAYED text (always the filer's own).
+_COMP_VARIANT_DROP = {"total", "loans", "loan", "deposits", "deposit",
+                      "net", "gross", "portfolio", "balance", "balances"}
+
+
+def _comp_variant_key(norm_label: str) -> frozenset:
+    """Distinctive token set of a normalised category label, identity-neutral
+    wording removed. "commercial real estate" and "total commercial real estate
+    loans" both reduce to {commercial, real, estate}; "time deposits" reduces to
+    {time} and can never collide with "demand deposits" → {demand}. An EMPTY set
+    (nothing distinctive survives, e.g. a bare "Total loans") never merges."""
+    return frozenset(t for t in norm_label.replace(",", " ").split()
+                     if t not in _COMP_VARIANT_DROP)
+
+
+def _comp_merge_variants(order, display, per_val, periods):
+    """Fold 10-K/10-Q wording variants of the SAME category into one row.
+
+    Mirrors data.sec_statements._consolidate_variants' contract:
+      • candidates must share an identical distinctive token set
+        (_comp_variant_key) — near-synonyms only, never different categories;
+      • CARDINAL GUARD: two rows merge ONLY if they never both hold a value in
+        the SAME period. Both populated anywhere means they are genuinely
+        DISTINCT lines (a subtotal disclosed alongside its own component), so
+        they stay separate. A merge therefore can never overwrite an existing
+        value or invent one — it only fills blanks;
+      • the survivor keeps the label whose values reach the NEWEST period (the
+        filer's current wording), matching the statement stitcher.
+
+    Returns (order, display, per_val); per_val/display are updated in place."""
+    idx = {p: i for i, p in enumerate(periods)}
+
+    def _newest(key):
+        """Index of the newest period holding a value (-1 when all blank)."""
+        got = [idx[p] for p, v in per_val[key].items()
+               if v is not None and p in idx]
+        return max(got) if got else -1
+
+    def _disjoint(a, b):
+        return not any(per_val[a].get(p) is not None
+                       and per_val[b].get(p) is not None for p in periods)
+
+    out_order, absorbed = [], set()
+    for key in order:
+        if key in absorbed:
+            continue
+        vkey = _comp_variant_key(key)
+        target = None
+        if vkey:                       # empty (nothing distinctive) never merges
+            for prior in out_order:
+                if _comp_variant_key(prior) == vkey and _disjoint(prior, key):
+                    target = prior
+                    break
+        if target is None:
+            out_order.append(key)
+            continue
+        # Rank BEFORE mutating, else the merged values skew the comparison.
+        newer_label = _newest(key) > _newest(target)
+        for p, v in per_val[key].items():
+            if v is not None and per_val[target].get(p) is None:
+                per_val[target][p] = v
+        if newer_label:
+            display[target] = display[key]
+        absorbed.add(key)
+    return out_order, display, per_val
+
+
 @st.fragment
 def _render_company_composition(ticker, kind):
     """As-reported loan/deposit composition (kind = "loan" | "deposit") from the
@@ -2467,6 +2539,10 @@ def _render_company_composition(ticker, kind):
                 display[key] = str(label)
                 per_val[key] = {}
             per_val[key][p] = v
+
+    # Fold the filer's own 10-K/10-Q wording variants of one category into a
+    # single row (guarded: never merges two lines that share a populated period).
+    order, display, per_val = _comp_merge_variants(order, display, per_val, periods)
 
     # Order rows by the latest period's value (largest first), trailing any category
     # absent from the latest period; keeps the table reading like the latest year.

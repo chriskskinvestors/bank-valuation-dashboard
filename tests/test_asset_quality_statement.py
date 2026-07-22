@@ -199,6 +199,86 @@ class TestSpecFieldsFetched(unittest.TestCase):
         self.assertAlmostEqual(nv / dv * 100, 11.0108, places=4)
 
 
+class TestCompositionVariantMerge(unittest.TestCase):
+    """Guarded fold of a filer's own 10-K/10-Q category wording variants
+    (2026-07-14). Values are the live TCBK quarterly loan-composition probe:
+    the 10-Qs tag "Commercial real estate" / "Consumer" while the FY 10-K tags
+    "Total commercial real estate loans" / "Total consumer loans", which split
+    each category into two half-blank rows before this merge."""
+
+    PERIODS = ["2024-06-30", "2024-09-30", "2024-12-31", "2025-03-31"]
+
+    def _merge(self, rows):
+        """rows: {norm_label: {period: value}} → (order, display, per_val)."""
+        from ui.financials_statements import _comp_merge_variants
+        order = list(rows)
+        display = {k: k for k in rows}
+        per_val = {k: dict(v) for k, v in rows.items()}
+        return _comp_merge_variants(order, display, per_val, self.PERIODS)
+
+    def test_variant_key_folds_only_identity_neutral_wording(self):
+        from ui.financials_statements import _comp_variant_key as vk
+        self.assertEqual(vk("commercial real estate"),
+                         vk("total commercial real estate loans"))
+        self.assertEqual(vk("consumer"), vk("total consumer loans"))
+        # Genuinely different categories must never collide.
+        self.assertNotEqual(vk("time deposits"), vk("demand deposits"))
+        self.assertNotEqual(vk("commercial real estate"), vk("commercial"))
+        self.assertNotEqual(vk("commercial and industrial"), vk("commercial"))
+        # Nothing distinctive left → never mergeable.
+        self.assertEqual(vk("total loans"), frozenset())
+
+    def test_disjoint_variants_merge_and_keep_newest_wording(self):
+        order, display, per_val = self._merge({
+            "commercial real estate": {"2024-06-30": 4.46e9, "2024-09-30": 4.49e9,
+                                       "2025-03-31": 4.63e9},
+            "total commercial real estate loans": {"2024-12-31": 4.58e9},
+        })
+        self.assertEqual(len(order), 1)                  # one row, not two
+        key = order[0]
+        # Every quarter now populated — the 10-K cell filled the hole.
+        self.assertEqual([per_val[key].get(p) for p in self.PERIODS],
+                         [4.46e9, 4.49e9, 4.58e9, 4.63e9])
+        # Survivor keeps the wording that reaches the NEWEST period.
+        self.assertEqual(display[key], "commercial real estate")
+
+    def test_absorbed_row_may_carry_the_newer_wording(self):
+        # Reverse case: the 10-K wording reaches the newest period, so it wins.
+        order, display, per_val = self._merge({
+            "consumer": {"2024-06-30": 1.30e9},
+            "total consumer loans": {"2025-03-31": 1.28e9},
+        })
+        self.assertEqual(len(order), 1)
+        self.assertEqual(display[order[0]], "total consumer loans")
+
+    def test_shared_populated_period_blocks_merge(self):
+        # CARDINAL GUARD: a subtotal disclosed ALONGSIDE its component in the
+        # same period is two real lines — merging would hide one.
+        order, display, per_val = self._merge({
+            "commercial real estate": {"2024-06-30": 4.46e9},
+            "total commercial real estate loans": {"2024-06-30": 4.58e9},
+        })
+        self.assertEqual(len(order), 2)                  # stayed separate
+        self.assertEqual(per_val["commercial real estate"]["2024-06-30"], 4.46e9)
+        self.assertEqual(
+            per_val["total commercial real estate loans"]["2024-06-30"], 4.58e9)
+
+    def test_merge_never_overwrites_an_existing_value(self):
+        order, _display, per_val = self._merge({
+            "consumer": {"2024-06-30": 1.30e9, "2024-09-30": 1.28e9},
+            "total consumer loans": {"2024-12-31": 1.28e9},
+        })
+        self.assertEqual(per_val[order[0]]["2024-06-30"], 1.30e9)   # untouched
+        self.assertEqual(per_val[order[0]]["2024-12-31"], 1.28e9)   # filled
+
+    def test_unrelated_categories_never_merge(self):
+        order, _d, _p = self._merge({
+            "time deposits": {"2024-06-30": 1.0e9},
+            "demand deposits": {"2024-09-30": 2.0e9},
+        })
+        self.assertEqual(len(order), 2)
+
+
 class TestCreditQualityHistory(unittest.TestCase):
     """Merge + cache contract of credit_quality_history (stubbed I/O)."""
 
