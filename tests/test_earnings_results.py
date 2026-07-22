@@ -466,6 +466,41 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertEqual(rows["BWB"]["rev_act"], 63e6)
         self.assertEqual(rows["NOEST"]["rev_act"], 5e6)
 
+    def test_estimate_less_scale_junk_blanked_vs_assets(self):
+        """Jul-22: FDBC revenueActual $1,450 and PKBK $3.9M (release states
+        $39.3M — a dropped digit), both with NO estimate, so the 0.2-5x
+        guard couldn't fire. Real quarterly bank revenue never falls below
+        0.25% of bank-sub assets; junk sits orders of magnitude under."""
+        fmp = [
+            {"symbol": "FDBC", "date": "2026-07-14", "epsActual": 1.33,
+             "revenueActual": 1_450},
+            {"symbol": "PKBK", "date": "2026-07-14", "epsActual": 1.03,
+             "revenueActual": 3_906_000},
+            # Legit micro-cap: $8M on $500M assets = 1.6% — kept.
+            {"symbol": "OKMC", "date": "2026-07-14", "epsActual": 0.5,
+             "revenueActual": 8e6},
+            # No assets known → guard can't anchor, value kept.
+            {"symbol": "NOAST", "date": "2026-07-14", "epsActual": 0.5,
+             "revenueActual": 1_450},
+        ]
+        assets = {"FDBC": 2.6e9, "PKBK": 2.3e9, "OKMC": 500e6}
+        rows = {r["ticker"]: r for r in build_results_rows(
+            fmp, {"FDBC", "PKBK", "OKMC", "NOAST"}, {}, self.TODAY,
+            assets_by_ticker=assets)}
+        self.assertIsNone(rows["FDBC"]["rev_act"])
+        self.assertIsNone(rows["PKBK"]["rev_act"])
+        self.assertEqual(rows["OKMC"]["rev_act"], 8e6)
+        self.assertEqual(rows["NOAST"]["rev_act"], 1_450)
+
+    def test_estimate_present_skips_assets_guard(self):
+        # With an estimate the 0.2-5x consensus guard owns the decision —
+        # the assets anchor never second-guesses an in-band actual.
+        fmp = [{"symbol": "T", "date": "2026-07-14", "epsActual": 1.0,
+                "revenueActual": 6e6, "revenueEstimated": 7e6}]
+        rows = build_results_rows(fmp, {"T"}, {}, self.TODAY,
+                                  assets_by_ticker={"T": 10e9})
+        self.assertEqual(rows[0]["rev_act"], 6e6)
+
     def test_revenue_before_eps_is_held_on_report_day(self):
         """MS 2026-07-15: FMP posted H1 revenue ($36.29B, '+84% surprise') as
         the quarter while its own EPS was still null — mid-ingestion junk.

@@ -132,7 +132,8 @@ def first_party_events(events_by_ticker: dict) -> dict:
 
 
 def build_results_rows(fmp_rows, universe, events_by_ticker, today,
-                       days_back: int = 30) -> list[dict]:
+                       days_back: int = 30,
+                       assets_by_ticker: dict | None = None) -> list[dict]:
     """Pure row builder for the Results board, one row per universe ticker
     dated within [today − days_back, today], newest report first then ticker:
       - FMP actuals present → a reported row, OR
@@ -180,6 +181,18 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             # REVENUE never lands an order of magnitude off consensus even in
             # a terrible quarter — that's EPS's job. The release fill still
             # supplies the bank's own stated revenue.
+            rev_act = None
+        ta = (assets_by_ticker or {}).get(tk)
+        if (rev_act is not None and not rev_est and ta
+                and rev_act < 0.0025 * ta):
+            # ESTIMATE-LESS scale junk (Jul-22: FDBC $1,450; PKBK $3.9M vs
+            # its release's stated $39.3M — a dropped digit): with no
+            # consensus estimate the 0.2-5x guard above can't fire, so
+            # sanity the actual against the bank's own balance sheet. Real
+            # quarterly bank revenue never falls below 0.25% of total assets
+            # (the lowest-NIM, no-fee banks run ≥0.5%; junk sits orders of
+            # magnitude under). Blank → release/AI fill supplies the stated
+            # figure; a lost real number renders '—', never a wrong one.
             rev_act = None
         pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
         pending = awaiting = False
@@ -596,6 +609,25 @@ def results_board(days_back: int = 30) -> list[dict]:
         except Exception:
             universe = set()
         try:
+            # Bank-sub total assets (raw dollars; FDIC reports $thousands)
+            # for the estimate-less revenue junk guard. Day-stale is fine —
+            # it only anchors an order-of-magnitude sanity check. String
+            # keys: the cache JSON round-trip stringifies dict keys.
+            def _assets_by_cert():
+                from data.fdic_client import list_all_active_institutions
+                return {str(int(r["cert"])): float(r["asset"]) * 1000.0
+                        for r in list_all_active_institutions()
+                        if r.get("cert") and r.get("asset")}
+            by_cert = _cache.served_snapshot(
+                "fdic_assets_by_cert_v1", 86400, _assets_by_cert) or {}
+            assets = {}
+            for tk, v in get_universe().items():
+                c = (v or {}).get("fdic_cert")
+                if c and by_cert.get(str(int(c))):
+                    assets[tk] = by_cert[str(int(c))]
+        except Exception:
+            assets = {}
+        try:
             from data.events.store import get_events_by_type
             events: dict = {}
             for e in get_events_by_type("earnings", limit=800):
@@ -606,7 +638,8 @@ def results_board(days_back: int = 30) -> list[dict]:
         except Exception:
             events = {}
         rows = build_results_rows(fmp_rows, universe, events, today,
-                                  days_back=days_back)
+                                  days_back=days_back,
+                                  assets_by_ticker=assets)
         _fill_price_reactions(rows, today)
         _fill_release_metrics(rows)
         _fill_fdic_history(rows)
@@ -625,7 +658,10 @@ def results_board(days_back: int = 30) -> list[dict]:
         # v11: release-contradicted EPS guard + mis-itemized 8-K candidates
         #      (NPB filed its Q2 release under Items 2.01/7.01; FMP's $0.09
         #      stood against the release's $0.60).
-        return _cache.served_snapshot(f"earnings_results_board_v11:{days_back}",
+        # v12: estimate-less revenue junk guard vs bank-sub assets (FDBC
+        #      $1,450; PKBK $3.9M vs stated $39.3M — no estimate, so the
+        #      0.2-5x guard couldn't fire).
+        return _cache.served_snapshot(f"earnings_results_board_v12:{days_back}",
                                       900, _build) or []
     except Exception:
         return []
