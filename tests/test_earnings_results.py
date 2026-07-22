@@ -571,11 +571,34 @@ class TestReleaseActualsFill(unittest.TestCase):
         self.assertEqual(row["eps_act"], 1.13)
         self.assertEqual(row["eps_act_src"], "release, GAAP")
 
-    def test_fmp_actual_never_overwritten(self):
+    def test_fmp_actual_kept_when_release_consistent(self):
+        # A small delta is a GAAP-vs-adjusted gap, never grounds to override.
         row = {"ticker": "T", "date": "2026-07-13", "eps_act": 1.20,
                "eps_est": 1.10, "eps_surprise": 9.09, "pending": False}
         self._run_fill(row, {"eps_adj": 1.14})
         self.assertEqual(row["eps_act"], 1.20)          # FMP actual kept
+        self.assertNotIn("eps_act_src", row)
+
+    def test_release_contradicted_fmp_eps_replaced(self):
+        # NPB 2026-07-22: FMP posted $0.09 against the release's $0.60
+        # diluted — a fabricated −86.9% surprise. Contradicting EVERY stated
+        # release figure by > max($0.25, 50%) = junk; release value wins.
+        row = {"ticker": "NPB", "date": "2026-07-21", "eps_act": 0.09,
+               "eps_est": 0.69, "eps_surprise": -86.9, "pending": False}
+        self._run_fill(row, {"eps_diluted": 0.60})
+        self.assertEqual(row["eps_act"], 0.60)
+        self.assertEqual(row["eps_act_src"], "release, GAAP")
+        # (0.60 - 0.69) / 0.69 = -13.04%, recomputed off the real number
+        self.assertAlmostEqual(row["eps_surprise"], -13.043, places=2)
+
+    def test_fmp_matching_one_of_two_stated_figures_kept(self):
+        # Big-charge quarter: GAAP $0.05, adjusted $1.20. FMP carrying the
+        # GAAP figure disagrees wildly with adjusted but matches GAAP — the
+        # guard requires contradiction with EVERY stated figure.
+        row = {"ticker": "T", "date": "2026-07-13", "eps_act": 0.05,
+               "eps_est": 1.15, "eps_surprise": -95.7, "pending": False}
+        self._run_fill(row, {"eps_adj": 1.20, "eps_diluted": 0.05})
+        self.assertEqual(row["eps_act"], 0.05)
         self.assertNotIn("eps_act_src", row)
 
     def test_stale_release_never_fills(self):

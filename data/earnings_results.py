@@ -373,6 +373,26 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
             # states EPS and total revenue, so fill from it, LABELED via
             # *_src. Adjusted EPS preferred (the street's comparison basis);
             # GAAP marked as such. Values are extraction-guarded upstream.
+            # FMP junk-EPS guard (NPB 2026-07-22: FMP posted $0.09 while the
+            # bank's own release stated $0.60 diluted — shipped as a "−86.9%
+            # surprise"). A GAAP-vs-adjusted gap explains small deltas, so
+            # FMP's actual is junk only when it contradicts EVERY EPS figure
+            # the release states by more than max($0.25, 50% of the stated
+            # value); the release's own (extraction-guarded) number then
+            # replaces it, labeled via eps_act_src.
+            stated = [v for v in (metrics.get("eps_adj"),
+                                  metrics.get("eps_diluted")) if v is not None]
+            if (row.get("eps_act") is not None and stated
+                    and all(abs(row["eps_act"] - v) > max(0.25, 0.5 * abs(v))
+                            for v in stated)):
+                if metrics.get("eps_adj") is not None:
+                    row["eps_act"] = metrics["eps_adj"]
+                    row["eps_act_src"] = "release, adj."
+                else:
+                    row["eps_act"] = metrics["eps_diluted"]
+                    row["eps_act_src"] = "release, GAAP"
+                row["eps_surprise"] = surprise_pct(row["eps_act"],
+                                                   row.get("eps_est"))
             if row.get("eps_act") is None:
                 if metrics.get("eps_adj") is not None:
                     row["eps_act"] = metrics["eps_adj"]
@@ -602,7 +622,10 @@ def results_board(days_back: int = 30) -> list[dict]:
         # v8: events-only discovery (reporters FMP's calendar omits entirely).
         # v9: first-party source gate (aggregator previews minted false rows).
         # v10: revenue scale-junk guard (HWC $26,850 vs $399M est).
-        return _cache.served_snapshot(f"earnings_results_board_v10:{days_back}",
+        # v11: release-contradicted EPS guard + mis-itemized 8-K candidates
+        #      (NPB filed its Q2 release under Items 2.01/7.01; FMP's $0.09
+        #      stood against the release's $0.60).
+        return _cache.served_snapshot(f"earnings_results_board_v11:{days_back}",
                                       900, _build) or []
     except Exception:
         return []

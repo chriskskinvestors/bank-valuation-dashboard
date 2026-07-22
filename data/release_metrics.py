@@ -572,9 +572,31 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                             qends.append(_date(years[ri], mo, dy).isoformat())
                         hdr_i = i + 1
                         break
-        if not qends or qends.count(expected_qend) != 1:
-            continue                      # no/ambiguous period row → skip table
-        col = qends.index(expected_qend)
+        if not qends:
+            continue                      # no period row → skip table
+        if qends.count(expected_qend) == 1:
+            col = qends.index(expected_qend)
+        elif qends.count(expected_qend) > 1 and hdr_i:
+            # Combined "Three Months Ended | Six Months Ended" statement
+            # header repeats the quarter-end date under BOTH spans (NPB
+            # 2026-07-21: "June 30, 2026 | Mar 31, 2026 | June 30, 2025 |
+            # June 30, 2026") — the bare count!=1 refusal threw away the
+            # whole income statement, so EPS/revenue never table-filled and
+            # FMP's junk $0.09 stood against the release's $0.60. The span
+            # row directly above the period row PROVES the layout: a
+            # quarter-span marker strictly before a YTD-span marker means
+            # the quarter block leads, so the FIRST occurrence of the
+            # expected quarter-end is the quarter column (YTD twins can
+            # only sit in the trailing block). Any other arrangement keeps
+            # the refusal — never guessed.
+            above = " ".join(c for c in rows[hdr_i - 1] if c).lower()
+            q_m = re.search(r"three months? ended|quarters? ended", above)
+            y_m = re.search(r"(?:six|nine|twelve) months? ended", above)
+            if not (q_m and y_m and q_m.start() < y_m.start()):
+                continue
+            col = qends.index(expected_qend)
+        else:
+            continue                      # ambiguous period row → skip table
         # Magnitude sniff for "$K" specs: the table's own units statement
         # (e.g. "(dollars in thousands, except per share data)") — anywhere
         # in the table (WFC puts it below the header row). No stated unit →
@@ -740,7 +762,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v15:{int(cik)}"
+    key = f"release_metrics:v16:{int(cik)}"
     try:
         cached = _cache.get(key)
     except Exception:

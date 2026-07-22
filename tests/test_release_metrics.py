@@ -280,10 +280,35 @@ class TestTableExtraction(unittest.TestCase):
         self.assertIsNone(extract_table_metrics(h, self.Q)["nim"])
 
     def test_duplicate_period_column_is_ambiguous(self):
-        # Quarter + year-to-date columns both headed "June 30, 2026" → skip.
+        # Quarter + year-to-date columns both headed "June 30, 2026" → skip
+        # (no span row above to prove which occurrence is the quarter).
         h = _tbl(["", "June 30, 2026", "March 31, 2026", "June 30, 2026"],
                  ["Return on average assets", "1.20 %", "1.15 %", "1.18 %"])
         self.assertIsNone(extract_table_metrics(h, "2026-06-30")["roa"])
+
+    def test_combined_3m_6m_header_first_occurrence_is_quarter(self):
+        # NPB 2026-07-21: income statement headed "Three Months Ended | Six
+        # Months Ended" repeats the quarter-end under both spans. The span
+        # row proves the quarter block leads → FIRST occurrence is the
+        # quarter column; the refusal here left EPS to FMP's junk $0.09.
+        h = _tbl(["", "Three Months Ended", "", "Six Months Ended"],
+                 ["", "June 30, 2026", "Mar 31, 2026", "June 30, 2025",
+                  "June 30, 2026"],
+                 ["Diluted Earnings Per Share", "$0.60", "$0.62", "$0.51",
+                  "$1.22"])
+        m = extract_table_metrics(h, "2026-06-30")
+        self.assertEqual(m["eps_diluted"], 0.60)
+        # Non-colliding columns in the same table keep working.
+        self.assertEqual(extract_table_metrics(h, "2026-03-31")["eps_diluted"],
+                         0.62)
+
+    def test_ytd_first_span_order_stays_refused(self):
+        # YTD block leading is not the proven layout — never guess.
+        h = _tbl(["", "Six Months Ended", "", "Three Months Ended"],
+                 ["", "June 30, 2026", "June 30, 2026", "Mar 31, 2026"],
+                 ["Diluted Earnings Per Share", "$1.22", "$0.60", "$0.62"])
+        self.assertIsNone(
+            extract_table_metrics(h, "2026-06-30")["eps_diluted"])
 
     def test_value_count_mismatch_skips_row(self):
         h = _tbl(["", "1Q26", "4Q25", "1Q25"],

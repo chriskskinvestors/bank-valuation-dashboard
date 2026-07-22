@@ -90,6 +90,16 @@ class TestEarnings8kCandidates(unittest.TestCase):
         subs = _subs(["8-K"], ["5.02"], ["2026-07-01"], ["a-1"])
         self.assertEqual(_earnings_8k_candidates(subs), [])
 
+    def test_mis_itemized_release_is_gated_candidate(self):
+        # NPB 2026-07-21: Q2 earnings release filed under Items 2.01,7.01 —
+        # no 2.02, no 9.01. Any furnish-capable item makes a gated candidate;
+        # the headline gate stays the arbiter.
+        from data.ir_provider import _earnings_8k_candidates
+        subs = _subs(["8-K"], ["2.01,7.01"], ["2026-07-21"], ["a-1"])
+        cands = _earnings_8k_candidates(subs)
+        self.assertEqual(len(cands), 1)
+        self.assertTrue(cands[0]["gated"])
+
 
 class TestEarningsHeadlineGate(unittest.TestCase):
     def test_real_earnings_headline_passes(self):

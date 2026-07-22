@@ -85,19 +85,29 @@ def _latest_earnings_8k(submissions: dict) -> dict | None:
     return None
 
 
+# Items under which a mis-itemized or furnished-only earnings release has
+# actually shipped: ASB under 9.01 alone (2026-07-14); NPB's Q2-2026 release
+# under 2.01,7.01 — no 2.02, no 9.01 — which made it invisible here and left
+# FMP's junk $0.09 EPS standing against the release's $0.60 (2026-07-22).
+# Items that never carry a PR exhibit (5.02 departures, 3.01 delisting…) stay
+# out so a routine governance 8-K never burns a re-selection fetch.
+_FURNISH_ITEMS = {"2.01", "7.01", "8.01", "9.01"}
+
+
 def _earnings_8k_candidates(submissions: dict, limit: int = 4) -> list[dict]:
     """Pure: newest-first 8-K candidates for the earnings release. An Item
-    2.02 filing qualifies unconditionally; an exhibit-bearing filing WITHOUT
-    2.02 (Item 9.01/7.01 — ASB furnishes its news release under 9.01 only,
-    caught 2026-07-14) qualifies as {gated: True} and the caller must verify
-    the exhibit's headline before trusting it. Stops at the first 2.02 hit
-    (anything older is stale by definition) or after `limit` rows."""
+    2.02 filing qualifies unconditionally; a filing WITHOUT 2.02 but carrying
+    any furnish-capable item (_FURNISH_ITEMS — item lists are filer-authored
+    and earnings releases DO ship mis-itemized) qualifies as {gated: True}
+    and the caller must verify the exhibit's headline before trusting it.
+    Stops at the first 2.02 hit (anything older is stale by definition) or
+    after `limit` rows."""
     out = []
     for present, hit in _iter_8ks(submissions):
         if _EARNINGS_ITEM in present:
             out.append({**hit, "gated": False})
             break
-        if "9.01" in present:
+        if present & _FURNISH_ITEMS:
             out.append({**hit, "gated": True})
         if len(out) >= limit:
             break
