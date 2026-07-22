@@ -397,6 +397,45 @@ def _is_risky_single(name: str) -> bool:
     return len(toks) == 1 and (toks[0] in _COMMON_NAME_WORDS or len(toks[0]) <= 4)
 
 
+def _word_before(haystack_padded: str, idx: int) -> str:
+    """Token immediately preceding the match that starts at `idx` (which points
+    at the space before the name). '' at the start of the haystack."""
+    prefix = haystack_padded[:idx].rstrip()
+    return prefix.rsplit(" ", 1)[-1] if prefix else ""
+
+
+def _swallowed_on_the_left(haystack_padded: str, idx: int) -> bool:
+    """True when the token BEFORE a name match extends it into a longer bank
+    name, so the match is a substring of a different institution.
+
+    _first_real_occurrence only guards the RIGHT side (its trap is keyed on the
+    phrase's last word), which is why "Community Bancorp" matched inside
+    "Central Valley Community Bancorp" and tagged a California bank's earnings
+    onto Vermont's CMTV (live feed 2026-07-22) — the same wrong-entity class as
+    the cert joins, in the news domain.
+
+    The test is DATA-DERIVED, not a hand list: if the preceding token is one
+    that BEGINS some bank name in our own index (VALLEY-, CENTRAL-, FIRST-…),
+    the real subject is a longer name than the one we matched. A genuine
+    standalone mention is preceded by a function word ("as Community Bancorp
+    reports") or nothing, which never begins a bank name."""
+    prev = _word_before(haystack_padded, idx)
+    return bool(prev) and prev in _name_leading_tokens()
+
+
+def _name_leading_tokens() -> set:
+    """First token of every indexed bank name (lazy, mirrors _NAME_INDEX)."""
+    global _NAME_LEADING_TOKENS
+    if _NAME_LEADING_TOKENS is None:
+        _NAME_LEADING_TOKENS = {n.split(" ", 1)[0]
+                                for n, _t in (_NAME_INDEX or [])
+                                if n and " " in n}
+    return _NAME_LEADING_TOKENS
+
+
+_NAME_LEADING_TOKENS = None
+
+
 def _word_after(haystack: str, name: str) -> str:
     """The token immediately following `name` in the space-normalized haystack
     ('CITIZENS HOLDING ...' -> 'HOLDING'); '' if none. Used to confirm a risky
@@ -425,9 +464,10 @@ def match_tickers(text: str, context: str = "") -> list[str]:
 
     Returns a deduplicated list of tickers (preserving order of appearance).
     """
-    global _NAME_INDEX
+    global _NAME_INDEX, _NAME_LEADING_TOKENS
     if not _NAME_INDEX:
         _NAME_INDEX = build_name_index()
+        _NAME_LEADING_TOKENS = None      # rebuild alongside the index
 
     haystack = " " + _normalize_name(text) + " "
     if not haystack.strip():
@@ -447,6 +487,10 @@ def match_tickers(text: str, context: str = "") -> list[str]:
         end = idx + len(needle)
         # Don't double-count: if this match overlaps a longer earlier match, skip.
         if any(s <= idx < e or s < end <= e for (s, e) in consumed):
+            continue
+        # …and the same check on the LEFT for a longer name we don't index at
+        # all (the `consumed` guard only sees names that ARE in the index).
+        if _swallowed_on_the_left(haystack, idx):
             continue
         # A bare common-word / short-initialism core ("FREEDOM", "FNB") collides
         # with unrelated text. Accept it only when it sits inside the bank's real
@@ -745,6 +789,12 @@ _INSTITUTIONAL_RE = re.compile(
     r"(rais\w+|boost\w+|lower\w+|trim\w+|reduc\w+|cut\w+|increas\w+)\s+by\b"
     # "<Bank>'s Long Position In <Other Co> Increases" — the bank as INVESTOR
     r"|\blong\s+position\s+in\b[^.]{0,60}\b(increas\w+|decreas\w+|rises?|falls?)\b"
+    # A bank's OWN 13F portfolio disclosure — "reports $231M in 13F equity
+    # holdings" (live feed 2026-07-22, PFIS). The bank as an INVESTOR again;
+    # its securities portfolio isn't bank news. Requires the literal "13F" so
+    # a real "reports ... holdings" earnings line can't trip it.
+    r"|\b13-?f\b[^.]{0,30}\b(holdings?|portfolio|positions?)\b"
+    r"|\b(holdings?|portfolio|positions?)\b[^.]{0,20}\b13-?f\b"
     r"|\bshares?\s+(sold|bought|purchased|acquired)\s+by\b",
     re.IGNORECASE,
 )

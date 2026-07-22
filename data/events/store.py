@@ -410,6 +410,12 @@ _MA_RE = re.compile(
     r"definitive\s+(?:merger|agreement)|business\s+combination|to\s+acquire)\b",
     re.IGNORECASE)
 _MA_DEDUP_DAYS = 3
+
+# Display-time cap on aggregator rewrites per (ticker, event_type) — see the
+# comment at the cap site in get_universe_recent. Aggregators only; first-party
+# wires and SEC filings are never capped.
+_AGGREGATOR_DISPLAY_SOURCES = {"google_news", "yfinance_news"}
+_AGGREGATOR_DISPLAY_CAP = 2
 # Stopwords so the tokens that remain are DISTINCTIVE brand cores (prosperity,
 # stellar) — bank-name suffixes, the generic adjectives shared by many banks
 # (first/community/citizens/…), M&A verbs, generic words and months are dropped.
@@ -536,6 +542,7 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
     # Event") and would falsely collapse two distinct filings.
     seen_ck: set[str] = set()
     ma_kept: dict[str, list] = {}   # ticker -> [(brand_tokens, ts)] of kept M&A rows
+    agg_seen: dict[tuple, int] = {}  # (ticker, event_type) -> aggregator rows kept
     deduped: list[dict] = []
     for r in out:
         tk = (r.get("ticker") or "").upper()
@@ -561,6 +568,28 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
                    for (pt, pts) in ma_kept.get(tk, [])):
                 continue
             ma_kept.setdefault(tk, []).append((toks, ts))
+        # (3) AGGREGATOR CAP. One earnings event spawns 4-5 Google News
+        # rewrites of the same story, each worded differently — so the
+        # content-key dedup above can't collapse them (verified: FMBH's two
+        # rows differ only by a trailing " By Investing.com"). Live feed
+        # 2026-07-22: FCCO x5, NWFL x5, FMNB x4 = ~14 of the 50 slots for
+        # THREE events, crowding out other banks during earnings season.
+        #
+        # Capping beats similarity-matching here: deciding two differently-
+        # worded headlines are "the same story" risks hiding a real second
+        # event (a dividend announced the same day as results). A cap makes no
+        # such claim — it just limits how many of ONE bank's aggregator
+        # rewrites of ONE event_type occupy the window.
+        #
+        # First-party rows (sec_8k / the wires / fmp_news / ir_site) are NEVER
+        # capped: they're the authoritative copy and already deduped. Nothing
+        # is deleted — capped rows stay in the store and on the bank's own
+        # Company page.
+        if (r.get("source") or "") in _AGGREGATOR_DISPLAY_SOURCES:
+            k = (tk, r.get("event_type") or "")
+            agg_seen[k] = agg_seen.get(k, 0) + 1
+            if agg_seen[k] > _AGGREGATOR_DISPLAY_CAP:
+                continue
         deduped.append(r)
     return deduped
 
