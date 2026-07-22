@@ -828,7 +828,17 @@ _SEO_RE = re.compile(
     # forward of First Reliance Bancshares, Inc. - OTC:FSRL", "Price to sales
     # forward of First Citizens BancShares - NASDAQ:FCNCA". A metric name + "of".
     r"|\bprice\s+to\s+(?:earnings|sales|book(?:\s+value)?|tangible\s+book|"
-    r"cash\s*flow|free\s+cash\s+flow|ebitda|fcf)\s+(?:forward\s+|trailing\s+)?of\b",
+    r"cash\s*flow|free\s+cash\s+flow|ebitda|fcf)\s+(?:forward\s+|trailing\s+)?of\b"
+    # Aggregator QUOTE-PAGE titles scraped as "news" — a ticker's quote/profile
+    # page, which is never an event. Live feed 2026-07-22: "Bridgewater
+    # Bancshares, Inc. - Common Stock (BWB) Stock Price, News, Quote & History"
+    # and "Home Bancorp Inc (NASDAQ: HBCP) Share Price, HBCP Stock News, HBCP
+    # Share Price & Updates". Keyed on the PAGE FURNITURE ("Stock Price, News",
+    # "Quote & History", "Share Price & Updates") — phrasing a real press
+    # release never uses, so an earnings/dividend/M&A headline can't trip it.
+    r"|\b(?:stock|share)\s+price,\s*(?:news|quote)\b"
+    r"|\bquote\s*(?:&|and)\s*history\b"
+    r"|\b(?:stock|share)\s+price\s*(?:&|and)\s*updates?\b",
     re.IGNORECASE,
 )
 

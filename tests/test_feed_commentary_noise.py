@@ -48,6 +48,13 @@ FUND_ADMIN_JUNK = [
     ("STT", "State Street Global Advisors Reports Daily Fund Update for SPDR S&P/ASX 50 ETF"),
 ]
 
+# Aggregator quote-PAGE titles scraped as news (verbatim from the live feed).
+QUOTE_PAGE_JUNK = [
+    ("BWB", "Bridgewater Bancshares, Inc. - Common Stock (BWB) Stock Price, News, Quote & History"),
+    ("HBCP", "Home Bancorp Inc (NASDAQ: HBCP) Share Price, HBCP Stock News, HBCP Share Price & Updates"),
+    ("FCCO", "First Community Corporation (FCCO) Stock Price, Quote and News"),
+]
+
 OWNERSHIP_JUNK = [
     ("ZION", "Illinois Municipal Retirement Fund Raises Stock Holdings in Zions Bancorporation, N.A."),
     ("WFC", "Dimensional Fund Advisors LP Reduces Stock Holdings in Wells Fargo & Company"),
@@ -76,6 +83,14 @@ REAL_NEWS = [
     ("CLST", "Catalyst Bancorp Completes Acquisition Of Lakeside Bancshares"),
     ("LKFN", "Lakeland Financial Corporation Declares Quarterly Cash Dividend"),
     ("BANR", "Banner Bank Releases New Corporate Responsibility Report"),
+    # Real headlines that USE the quote-page filter's words ("stock", "price",
+    # "news", "update") in a legitimate sentence — these must never trip it.
+    ("SFBS", "ServisFirst Bancshares Announces Two For One Stock Split For August 2026"),
+    ("WRIV", "White River Bancshares declares 2-for-1 stock split"),
+    ("ZION", "Zions Bancorporation Prices $500 Million Senior Notes Offering"),
+    ("FBP", "First BanCorp Announces Pricing of Common Stock Offering"),
+    ("NWFL", "Wayne Bank Parent Completes Presence Bancshares Integration"),
+    ("TMAK", "TOUCHMARK BANCSHARES, INC. REPORTS SECOND QUARTER 2026 RESULTS"),
 ]
 
 
@@ -100,6 +115,13 @@ class TestCommentaryNoise(unittest.TestCase):
                 self.assertTrue(is_junk_news(h, tk, source="google_news"))
                 self.assertTrue(is_junk_news(h, tk, source="prnewswire"),
                                 "daily NAV filler is never company news")
+
+    def test_quote_page_titles_are_junk_from_any_source(self):
+        for tk, h in QUOTE_PAGE_JUNK:
+            with self.subTest(headline=h):
+                self.assertTrue(
+                    is_junk_news(h, tk, source="google_news"),
+                    f"quote-page title must be filtered: {h!r}")
 
     def test_ownership_churn_forms_that_leaked(self):
         for tk, h in OWNERSHIP_JUNK:
