@@ -125,6 +125,11 @@ def main(limit: int | None = None):
     t0 = time.time()
     ok = miss = err = 0
     err_samples: list[str] = []
+    # Per-part tally (2026-07-15): the aggregate alone can't say WHICH
+    # extraction moved when a run's miss count shifts — after the v2
+    # composition bump the totals drifted and the logs couldn't attribute it
+    # without re-deriving locally. Keyed by part name, in _parts() order.
+    by_part = {name: {"ok": 0, "miss": 0, "err": 0} for name, _fn in parts}
     # Heavy multi-MB parses per filing — a small pool bounds memory while the
     # global throttle bounds SEC request rate.
     with ThreadPoolExecutor(max_workers=3) as ex:
@@ -132,9 +137,11 @@ def main(limit: int | None = None):
         for i, fut in enumerate(as_completed(futs), 1):
             ticker, statuses = fut.result()
             for name, s in statuses.items():
-                if s == "ok":
+                bucket = "ok" if s == "ok" else ("miss" if s == "miss" else "err")
+                by_part.setdefault(name, {"ok": 0, "miss": 0, "err": 0})[bucket] += 1
+                if bucket == "ok":
                     ok += 1
-                elif s == "miss":
+                elif bucket == "miss":
                     miss += 1
                 else:
                     err += 1
@@ -147,8 +154,17 @@ def main(limit: int | None = None):
     print(f"[refresh_cr_quarterly] done in {time.time() - t0:.0f}s — "
           f"parts ok={ok} miss={miss} err={err} "
           f"({100 * ok // total_parts}% ok)", flush=True)
+    # Every summary line carries the [refresh_cr_quarterly] tag so ONE log
+    # filter (textPayload:refresh_cr_quarterly) returns the whole picture —
+    # the untagged "error samples" line was invisible to that filter and cost
+    # a diagnosis round-trip on 2026-07-14.
+    for name, _fn in parts:
+        c = by_part.get(name, {})
+        print(f"[refresh_cr_quarterly]   {name}: ok={c.get('ok', 0)} "
+              f"miss={c.get('miss', 0)} err={c.get('err', 0)}", flush=True)
     if err_samples:
-        print(f"  error samples: {'; '.join(err_samples)}", flush=True)
+        print(f"[refresh_cr_quarterly] error samples: "
+              f"{'; '.join(err_samples)}", flush=True)
     # miss = the bank doesn't disclose it (correct n/a, cached); only a high
     # error rate signals a regression.
     sys.exit(1 if err > 0.10 * total_parts else 0)
