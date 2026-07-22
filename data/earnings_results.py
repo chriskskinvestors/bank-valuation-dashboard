@@ -172,6 +172,15 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             # pass (some micro-caps have revenue-only coverage for good); the
             # release fill below still supplies confirmable actuals meanwhile.
             rev_act = None
+        rev_est = r.get("revenueEstimated")
+        if (rev_act is not None and rev_est and rev_est > 0
+                and not 0.2 <= rev_act / rev_est <= 5):
+            # Scale-junk actual (HWC 2026-07-21: $26,850 posted vs $399M est
+            # rendered "-100.0%"; FVCB $2M vs $19M; NPB $9M vs $67M): bank
+            # REVENUE never lands an order of magnitude off consensus even in
+            # a terrible quarter — that's EPS's job. The release fill still
+            # supplies the bank's own stated revenue.
+            rev_act = None
         pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
         pending = awaiting = False
         if eps_act is None and rev_act is None:
@@ -592,7 +601,8 @@ def results_board(days_back: int = 30) -> list[dict]:
         # v7: rows gained `sec_hist` (per-share history for grid-coverage holes).
         # v8: events-only discovery (reporters FMP's calendar omits entirely).
         # v9: first-party source gate (aggregator previews minted false rows).
-        return _cache.served_snapshot(f"earnings_results_board_v9:{days_back}",
+        # v10: revenue scale-junk guard (HWC $26,850 vs $399M est).
+        return _cache.served_snapshot(f"earnings_results_board_v10:{days_back}",
                                       900, _build) or []
     except Exception:
         return []

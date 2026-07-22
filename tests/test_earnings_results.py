@@ -446,6 +446,26 @@ class TestBuildResultsRows(unittest.TestCase):
         rows = build_results_rows(fmp, {"AAA", "ZZZ"}, {}, self.TODAY)
         self.assertEqual([r["ticker"] for r in rows], ["ZZZ", "AAA"])
 
+    def test_scale_junk_revenue_never_renders(self):
+        """HWC 2026-07-21: FMP posted revenueActual $26,850 (raw dollars!)
+        against a $399M estimate — rendered '-100.0%'. Revenue an order of
+        magnitude off consensus is feed junk, not a result; big real moves
+        (BWB +52.7%) stay."""
+        fmp = [
+            {"symbol": "HWC", "date": "2026-07-14", "epsActual": 1.55,
+             "revenueActual": 26_850, "revenueEstimated": 399e6},
+            {"symbol": "BWB", "date": "2026-07-14", "epsActual": 0.45,
+             "revenueActual": 63e6, "revenueEstimated": 41e6},
+            {"symbol": "NOEST", "date": "2026-07-14", "epsActual": 1.0,
+             "revenueActual": 5e6},                    # no estimate → kept
+        ]
+        rows = {r["ticker"]: r for r in build_results_rows(
+            fmp, {"HWC", "BWB", "NOEST"}, {}, self.TODAY)}
+        self.assertIsNone(rows["HWC"]["rev_act"])
+        self.assertIsNone(rows["HWC"]["rev_surprise"])
+        self.assertEqual(rows["BWB"]["rev_act"], 63e6)
+        self.assertEqual(rows["NOEST"]["rev_act"], 5e6)
+
     def test_revenue_before_eps_is_held_on_report_day(self):
         """MS 2026-07-15: FMP posted H1 revenue ($36.29B, '+84% surprise') as
         the quarter while its own EPS was still null — mid-ingestion junk.
