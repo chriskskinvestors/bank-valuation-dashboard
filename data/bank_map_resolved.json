@@ -569,11 +569,23 @@
   "fdic_score": 1.0,
   "name": "Chemung Financial"
  },
+ "CITZ": {
+  "cik": null,
+  "fdic_cert": 15932,
+  "fdic_score": 1.0,
+  "name": "Citizens Bancshares Corp"
+ },
  "CIVB": {
   "cik": 944745,
   "fdic_cert": 12982,
   "fdic_score": 1.0,
   "name": "Civista Bancshares"
+ },
+ "CIWV": {
+  "cik": null,
+  "fdic_cert": 6760,
+  "fdic_score": 1.0,
+  "name": "Citizens Financial Corp"
  },
  "CIZN": {
   "cik": null,
@@ -598,6 +610,12 @@
   "fdic_cert": 6271,
   "fdic_score": 1.0,
   "name": "Community Bancorp"
+ },
+ "CNBZ": {
+  "cik": null,
+  "fdic_cert": 5018,
+  "fdic_score": 1.0,
+  "name": "CNB Corp"
  },
  "CNND": {
   "cik": null,
@@ -724,6 +742,12 @@
   "fdic_cert": 8745,
   "fdic_score": 1.0,
   "name": "Crystal Valley Financial Corp"
+ },
+ "CZBS": {
+  "cik": null,
+  "fdic_cert": 8033,
+  "fdic_score": 1.0,
+  "name": "Citizens Bancshares Corp"
  },
  "CZFS": {
   "cik": 739421,
@@ -1084,6 +1108,12 @@
   "fdic_cert": 4977,
   "fdic_score": 1.0,
   "name": "First Horizon"
+ },
+ "FIBH": {
+  "cik": null,
+  "fdic_cert": 6528,
+  "fdic_score": 1.0,
+  "name": "First Bancshares Inc"
  },
  "FIBK": {
   "cik": 860413,
