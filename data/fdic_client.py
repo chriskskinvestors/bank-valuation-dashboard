@@ -10,6 +10,7 @@ and cap parallel workers at 4 to stay well under their limit.
 """
 
 import time
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -97,6 +98,35 @@ def _fetch_fin_page(filters: str, fields: str, offset: int) -> list[dict]:
     except Exception as e:
         print(f"[FDIC] fetch_quarter_financials error: {e}")
         return []
+
+
+def _is_still_filing_call_reports(cert: int, max_age_days: int = 200) -> bool:
+    """Liveness fallback for a cert the institutions index has no row for:
+    is it still filing call reports? Only a live insured institution files,
+    so a REPDTE inside the last ``max_age_days`` means the bank is active and
+    the missing institutions row is an index defect.
+
+    200 days ~= two quarters. Call reports land ~30 days after quarter end, so
+    the newest REPDTE is legitimately up to ~130 days old mid-quarter; 200
+    leaves headroom without spanning so long that a real closure looks alive.
+    Errors return True — the fail-open direction, matching cert_is_active."""
+    try:
+        resp = _get_with_retry(FDIC_FINANCIALS_URL, {
+            "filters": f"CERT:{cert}", "fields": "CERT,REPDTE",
+            "limit": 1, "sort_by": "REPDTE", "sort_order": "DESC",
+        })
+        if resp is None:
+            return True
+        data = resp.json().get("data", [])
+        if not data:
+            return False                     # no row in EITHER dataset: gone
+        repdte = str(data[0].get("data", {}).get("REPDTE", ""))
+        # financials formats REPDTE as YYYYMMDD (institutions uses MM/DD/YYYY)
+        filed = datetime.strptime(repdte, "%Y%m%d")
+        return (datetime.now() - filed).days <= max_age_days
+    except Exception as e:  # noqa: BLE001 — liveness probe, never a hard failure
+        print(f"[FDIC] call-report probe failed for cert {cert}: {e}", flush=True)
+        return True
 
 
 def fetch_quarter_financials(repdte: str, certs=None) -> dict[int, dict]:
@@ -196,6 +226,16 @@ def cert_is_active(cert: int, ttl_seconds: int = 7 * 86400) -> bool:
     institutions endpoint — we want to drop these from the universe so
     they don't appear in screens with stale data. Cached for a week in
     Postgres so this check costs ~one HTTP call per bank per week.
+
+    A cert with NO institutions row at all is a different thing from
+    ACTIVE=0, and must not be read as "closed": a genuinely dead bank keeps
+    its record with the flag flipped (Regions' own 1990s acquisitions are
+    all still there, ACTIVE=0 with 1996-98 end dates). Zero rows means the
+    institutions index dropped the entity — which FDIC did to Regions Bank
+    (cert 12368, $159B) in the 2026-07-21 index build, while /history still
+    carried it live and /financials still had its Q1 2026 call report. So
+    the empty case falls back to the call-report probe below instead of
+    silently dropping a live bank out of the universe.
     """
     if not cert:
         return False
@@ -212,11 +252,15 @@ def cert_is_active(cert: int, ttl_seconds: int = 7 * 86400) -> bool:
             "filters": f"CERT:{cert}",
             "fields": "CERT,ACTIVE",
         })
-        active = False
-        if resp is not None:
-            data = resp.json().get("data", [])
-            if data:
-                active = int(data[0].get("data", {}).get("ACTIVE", 0)) == 1
+        if resp is None:
+            return True                      # transient: assume active, no cache
+        data = resp.json().get("data", [])
+        if data:
+            active = int(data[0].get("data", {}).get("ACTIVE", 0)) == 1
+        else:
+            active = _is_still_filing_call_reports(cert)
+            print(f"[FDIC] cert {cert} absent from institutions index; "
+                  f"call-report probe says active={active}", flush=True)
         _cache.put(key, {"_ts": time.time(), "_v": active})
         return active
     except Exception:

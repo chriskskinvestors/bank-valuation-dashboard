@@ -471,5 +471,79 @@ class TestChooseCert(unittest.TestCase):
         self.assertEqual(_profile_from_submissions({}), {})
 
 
+class TestIndexOmissionSplit(unittest.TestCase):
+    """A cert with no institutions row is NOT proof of closure.
+
+    FDIC dropped Regions Bank (cert 12368, $159B) out of the institutions
+    index in the 2026-07-21 build while /history still carried it live and
+    /financials still had its Q1 2026 call report. The guard cried MISSING
+    on a perfectly good join. Only a bank that has ALSO stopped filing call
+    reports is really gone; run_namehcr_guard splits the two.
+    """
+    SNAP = {
+        # index-omission: absent from records, still filing (Regions' case)
+        "RF": {"name": "Regions Financial", "cik": 1281761,
+               "fdic_cert": 12368, "share_class": "common"},
+        # really gone: absent from records AND no recent call report
+        "DEAD": {"name": "Gone Bancorp", "cik": 2, "fdic_cert": 99999,
+                 "share_class": "common"},
+    }
+
+    def _run(self):
+        import data.bank_universe as bu
+        from unittest import mock
+        with mock.patch.object(bu, "fetch_fdic_records_for_certs",
+                               lambda certs: {}), \
+             mock.patch.object(bu, "fetch_sec_profiles", lambda ciks: {}), \
+             mock.patch.object(bu, "fetch_listing_states", lambda ts: {}), \
+             mock.patch.object(bu, "_cert_still_files",
+                               lambda cert: cert == 12368):
+            return bu.run_namehcr_guard(self.SNAP)
+
+    def test_still_filing_cert_is_not_reported_missing(self):
+        flags = self._run()
+        self.assertEqual(flags["index_omission"], [("RF", 12368)])
+        self.assertNotIn(("RF", 12368), flags["missing"])
+
+    def test_genuinely_closed_cert_still_reported_missing(self):
+        # The fix must not blunt the real tell it was built for.
+        self.assertEqual(self._run()["missing"], [("DEAD", 99999)])
+
+
+class TestCertIsActiveEmptyIndex(unittest.TestCase):
+    """cert_is_active read FDIC's 'HTTP 200, zero rows' as inactive, which
+    drops the ticker from the universe (bank_universe._resolves). A genuinely
+    dead bank keeps its row with ACTIVE=0 — zero rows means the index lost the
+    entity, so that case must fall back to the call-report probe."""
+
+    def _cert_is_active(self, rows, still_filing):
+        import data.fdic_client as fc
+        from unittest import mock
+
+        class _Resp:
+            def json(self_inner):
+                return {"data": rows}
+
+        cache = types.ModuleType("cache")
+        cache.get = lambda k: None
+        cache.put = lambda k, v: None
+        with mock.patch.dict(sys.modules, {"data.cache": cache}), \
+             mock.patch.object(fc, "_get_with_retry", lambda *a, **k: _Resp()), \
+             mock.patch.object(fc, "_is_still_filing_call_reports",
+                               lambda cert, **k: still_filing):
+            return fc.cert_is_active(12368)
+
+    def test_empty_index_row_falls_back_to_call_reports(self):
+        self.assertTrue(self._cert_is_active([], still_filing=True))
+        self.assertFalse(self._cert_is_active([], still_filing=False))
+
+    def test_explicit_active_flag_still_wins(self):
+        # An ACTIVE=0 row is authoritative — never overridden by the probe.
+        row = [{"data": {"CERT": 12368, "ACTIVE": 0}}]
+        self.assertFalse(self._cert_is_active(row, still_filing=True))
+        row = [{"data": {"CERT": 12368, "ACTIVE": 1}}]
+        self.assertTrue(self._cert_is_active(row, still_filing=False))
+
+
 if __name__ == "__main__":
     unittest.main()

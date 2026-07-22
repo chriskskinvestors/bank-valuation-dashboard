@@ -1282,13 +1282,20 @@ def fetch_listing_states(tickers: list[str]) -> dict[str, str]:
     return out
 
 
+def _cert_still_files(cert: int) -> bool:
+    """Does this cert have a recent call report? Only live insured institutions
+    file, so this separates a real closure from an institutions-index defect."""
+    from data.fdic_client import _is_still_filing_call_reports
+    return _is_still_filing_call_reports(int(cert))
+
+
 def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
     """Observe-only wrong-entity guard, run by jobs/refresh_universe after
     every snapshot rebuild. Prints loud [namehcr-guard] lines for anything a
     human should re-verify; NEVER raises and never fails the job — harden to a
     gate only after the nightly logs show a stable clean baseline."""
     empty: dict[str, list] = {"mismatch": [], "state": [], "size": [],
-                              "dup_cert": [], "missing": []}
+                              "dup_cert": [], "missing": [], "index_omission": []}
     try:
         certs = [int(v["fdic_cert"]) for v in snapshot.values()
                  if v.get("fdic_cert")]
@@ -1306,6 +1313,15 @@ def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
                   flush=True)
             listing = {}
         flags = namehcr_flags(snapshot, records, profiles, listing)
+        # A cert with no institutions row is ambiguous: really acquired/closed,
+        # or dropped by a bad index build. Only the former stops filing call
+        # reports, so split the two before crying wolf — FDIC dropped Regions
+        # Bank (12368) from the index on 2026-07-21 while it was still filing.
+        flags["index_omission"] = [
+            (t, c) for t, c in flags["missing"] if _cert_still_files(c)]
+        omitted = {c for _, c in flags["index_omission"]}
+        flags["missing"] = [(t, c) for t, c in flags["missing"]
+                            if c not in omitted]
     except Exception as e:  # noqa: BLE001 — observe-only by contract
         print(f"[namehcr-guard] skipped: {type(e).__name__}: {e}", flush=True)
         return empty
@@ -1335,5 +1351,11 @@ def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
               "(a cert belongs to exactly one holdco)", flush=True)
     for t, cert in flags["missing"]:
         print(f"[namehcr-guard]   MISSING {t}: cert {cert} not in ACTIVE "
-              "institutions (acquired/closed?)", flush=True)
+              "institutions and not filing call reports (acquired/closed?)",
+              flush=True)
+    for t, cert in flags["index_omission"]:
+        print(f"[namehcr-guard]   FDIC-INDEX-OMISSION {t}: cert {cert} absent "
+              "from the institutions index but still filing call reports — "
+              "FDIC-side defect, the join is fine; expect it to self-correct",
+              flush=True)
     return flags
