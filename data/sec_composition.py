@@ -504,8 +504,12 @@ def _extract_member_composition(facts, labels, children, concept_ok, axis_ok) ->
         if abs(total) < _BOOK_COVERAGE_MIN * book_max:
             continue                       # sub-slice for this period → drop it
         ordered = sorted(rows.items(), key=lambda kv: -kv[1])
+        # (display label, value, MEMBER QNAME). The member is the filer's own
+        # XBRL axis member and is STABLE across its 10-K and 10-Qs even when the
+        # label wording changes ("Small balance CRE" vs "Small Balance Commercial
+        # Real Estate Loans"), so the UI can fold those wording variants safely.
         out[period] = {"total": total,
-                       "rows": [(labels.get(m, m), v) for m, v in ordered]}
+                       "rows": [(labels.get(m, m), v, m) for m, v in ordered]}
     return out or None
 
 
@@ -580,8 +584,9 @@ def extract_deposit_composition(facts, labels: dict, children: dict) -> dict | N
     for period in sorted(best_by_period, reverse=True):       # newest period first
         total, _n, rows = best_by_period[period]
         ordered = sorted(rows, key=lambda cv: -cv[1])
+        # (display label, value, MEMBER/CONCEPT QNAME) — see the loan extractor.
         out[period] = {"total": total,
-                       "rows": [(labels.get(c, c), v) for c, v in ordered]}
+                       "rows": [(labels.get(c, c), v, c) for c, v in ordered]}
     return out
 
 
@@ -625,7 +630,8 @@ def _compositions_extract_cached(meta) -> dict | None:
     {"loan": comp|None, "deposit": comp|None} or None when the filing has no
     usable iXBRL. A transient fetch failure is never cached."""
     from data import cache
-    ckey = f"compositions_filing:v1:{meta['accession']}"
+    # v2 (2026-07-14): rows carry the member QName as a third element.
+    ckey = f"compositions_filing:v2:{meta['accession']}"
     got = cache.get(ckey)
     if got is not None:
         return got or None
@@ -720,5 +726,5 @@ if __name__ == "__main__":
             continue
         p, d = next(iter(r["composition"].items()))
         print(f"{tk} [{p}] {kind} total={d['total']/1e9:.2f}B  ({len(d['rows'])} categories)")
-        for label, v in d["rows"]:
-            print(f"      {label[:38]:38} {v/1e6:>9,.1f}M")
+        for label, v, member in d["rows"]:
+            print(f"      {label[:38]:38} {v/1e6:>9,.1f}M   {member}")

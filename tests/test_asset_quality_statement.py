@@ -279,6 +279,72 @@ class TestCompositionVariantMerge(unittest.TestCase):
         self.assertEqual(len(order), 2)
 
 
+class TestCompositionMemberMerge(unittest.TestCase):
+    """TIER 1 of the composition fold: identical XBRL member QName (2026-07-14).
+    The member is the filer's own category identity and is stable across its
+    10-K and 10-Qs, so it folds wording the token heuristic can't — BANR tags
+    'Small balance CRE' quarterly and 'Small Balance Commercial Real Estate
+    Loans' in the 10-K under one member."""
+
+    PERIODS = ["2024-06-30", "2024-09-30", "2024-12-31", "2025-03-31"]
+
+    def _merge(self, rows):
+        """rows: {norm_label: (member, {period: value})}."""
+        from ui.financials_statements import _comp_merge_variants
+        order = list(rows)
+        display = {k: k for k in rows}
+        member = {k: v[0] for k, v in rows.items()}
+        per_val = {k: dict(v[1]) for k, v in rows.items()}
+        return _comp_merge_variants(order, display, per_val, self.PERIODS, member)
+
+    def test_same_member_folds_wording_the_token_tier_cannot(self):
+        # These token sets DIFFER ({small, cre} vs {small, commercial, real,
+        # estate}), so only the member tier can fold them.
+        from ui.financials_statements import _comp_variant_key as vk
+        self.assertNotEqual(vk("small balance cre"),
+                            vk("small balance commercial real estate loans"))
+        order, display, per_val = self._merge({
+            "small balance cre": ("banr:SmallBalanceCREMember",
+                                  {"2024-06-30": 1.23e9, "2025-03-31": 1.22e9}),
+            "small balance commercial real estate loans":
+                ("banr:SmallBalanceCREMember", {"2024-12-31": 1.21e9}),
+        })
+        self.assertEqual(len(order), 1)
+        self.assertEqual([per_val[order[0]].get(p) for p in self.PERIODS],
+                         [1.23e9, None, 1.21e9, 1.22e9])
+        self.assertEqual(display[order[0]], "small balance cre")   # newest wording
+
+    def test_different_members_never_merge_even_with_same_wording(self):
+        # The safety win over pure-wording matching: a filer using two DISTINCT
+        # members has two distinct categories, however alike the labels read.
+        order, _display, _per_val = self._merge({
+            "commercial real estate": ("banr:OwnerOccupiedMember",
+                                       {"2024-06-30": 1.0e9}),
+            "total commercial real estate loans":
+                ("banr:InvestmentPropertiesMember", {"2024-12-31": 2.0e9}),
+        })
+        self.assertEqual(len(order), 2)
+
+    def test_member_tier_still_honors_the_shared_period_guard(self):
+        order, _display, _per_val = self._merge({
+            "small balance cre": ("banr:SmallBalanceCREMember",
+                                  {"2024-06-30": 1.23e9}),
+            "small balance commercial real estate loans":
+                ("banr:SmallBalanceCREMember", {"2024-06-30": 1.21e9}),
+        })
+        self.assertEqual(len(order), 2)      # both populated in one period
+
+    def test_missing_member_falls_back_to_the_wording_tier(self):
+        # Legacy cached rows (pre-v2) carry no member — the token tier still
+        # folds the clean TCBK-style case.
+        order, _display, per_val = self._merge({
+            "commercial real estate": (None, {"2024-06-30": 4.46e9}),
+            "total commercial real estate loans": (None, {"2024-12-31": 4.58e9}),
+        })
+        self.assertEqual(len(order), 1)
+        self.assertEqual(per_val[order[0]]["2024-12-31"], 4.58e9)
+
+
 class TestCreditQualityHistory(unittest.TestCase):
     """Merge + cache contract of credit_quality_history (stubbed I/O)."""
 

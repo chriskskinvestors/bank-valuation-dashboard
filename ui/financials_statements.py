@@ -2385,7 +2385,8 @@ def _compositions_cached(cik):
     meta = latest_filing(cik, ("10-K",))
     if not meta:
         return None
-    ckey = f"compositions:v1:{meta['accession']}"
+    # v2 (2026-07-14): rows carry the member QName as a third element.
+    ckey = f"compositions:v2:{meta['accession']}"
     cached = cache.get(ckey)
     if cached is not None:
         return cached or None
@@ -2426,12 +2427,18 @@ def _comp_variant_key(norm_label: str) -> frozenset:
                      if t not in _COMP_VARIANT_DROP)
 
 
-def _comp_merge_variants(order, display, per_val, periods):
+def _comp_merge_variants(order, display, per_val, periods, member=None):
     """Fold 10-K/10-Q wording variants of the SAME category into one row.
 
-    Mirrors data.sec_statements._consolidate_variants' contract:
-      • candidates must share an identical distinctive token set
-        (_comp_variant_key) — near-synonyms only, never different categories;
+    Mirrors data.sec_statements._consolidate_variants' contract, two tiers:
+      • TIER 1 (SAFE) — identical XBRL MEMBER QName. The filer's own axis member
+        is the category's identity and is stable across its 10-K and 10-Qs, so
+        two rows sharing it ARE the same category however differently worded
+        ("Small balance CRE" ↔ "Small Balance Commercial Real Estate Loans").
+        Risk-free; needs no wording heuristic at all;
+      • TIER 2 (GUARDED) — no member available (legacy cached rows): candidates
+        must share an identical distinctive token set (_comp_variant_key) —
+        near-synonyms only, never different categories;
       • CARDINAL GUARD: two rows merge ONLY if they never both hold a value in
         the SAME period. Both populated anywhere means they are genuinely
         DISTINCT lines (a subtotal disclosed alongside its own component), so
@@ -2453,17 +2460,23 @@ def _comp_merge_variants(order, display, per_val, periods):
         return not any(per_val[a].get(p) is not None
                        and per_val[b].get(p) is not None for p in periods)
 
+    member = member or {}
     out_order, absorbed = [], set()
     for key in order:
         if key in absorbed:
             continue
         vkey = _comp_variant_key(key)
+        mem = member.get(key)
         target = None
-        if vkey:                       # empty (nothing distinctive) never merges
-            for prior in out_order:
-                if _comp_variant_key(prior) == vkey and _disjoint(prior, key):
-                    target = prior
-                    break
+        for prior in out_order:
+            same_member = bool(mem) and member.get(prior) == mem      # tier 1
+            # Tier 2 only when the member can't decide it (legacy rows with no
+            # member, or two different members that must NOT be folded).
+            same_wording = (not mem or not member.get(prior)) and bool(vkey) \
+                and _comp_variant_key(prior) == vkey
+            if (same_member or same_wording) and _disjoint(prior, key):
+                target = prior
+                break
         if target is None:
             out_order.append(key)
             continue
@@ -2474,6 +2487,8 @@ def _comp_merge_variants(order, display, per_val, periods):
                 per_val[target][p] = v
         if newer_label:
             display[target] = display[key]
+        if not member.get(target) and mem:
+            member[target] = mem
         absorbed.add(key)
     return out_order, display, per_val
 
@@ -2531,18 +2546,28 @@ def _render_company_composition(ticker, kind):
     # period reports it (blank elsewhere — filers rename/add/drop lines year to
     # year; never guess or carry a value forward).
     order, display, per_val = [], {}, {}       # norm-key order, key->label, key->{period:value}
+    member = {}                                # key -> XBRL member QName (identity)
     for p in periods:
-        for label, v in comp[p]["rows"]:
+        for row in comp[p]["rows"]:
+            # (label, value) pre-v2 / (label, value, member) from v2 on — a
+            # legacy cached row simply has no member and falls to the wording tier.
+            label, v = row[0], row[1]
+            mem = row[2] if len(row) > 2 else None
             key = _comp_norm_label(label)
             if key not in per_val:
                 order.append(key)
                 display[key] = str(label)
                 per_val[key] = {}
+                member[key] = mem
+            elif mem and not member.get(key):
+                member[key] = mem
             per_val[key][p] = v
 
     # Fold the filer's own 10-K/10-Q wording variants of one category into a
-    # single row (guarded: never merges two lines that share a populated period).
-    order, display, per_val = _comp_merge_variants(order, display, per_val, periods)
+    # single row: same XBRL member (safe) or, absent a member, near-synonym
+    # wording. Guarded — never merges two lines that share a populated period.
+    order, display, per_val = _comp_merge_variants(
+        order, display, per_val, periods, member)
 
     # Order rows by the latest period's value (largest first), trailing any category
     # absent from the latest period; keeps the table reading like the latest year.
