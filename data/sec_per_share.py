@@ -35,16 +35,6 @@ def _series(cik: int, concepts) -> dict:
     return {}
 
 
-def _ffill(d: dict, all_ends) -> dict:
-    """Forward-fill a sparse {end: val} across all_ends (carry last known value)."""
-    out, last = {}, None
-    for q in sorted(all_ends):
-        if d.get(q) is not None:
-            last = d[q]
-        out[q] = last
-    return out
-
-
 def _ffill_origin(d: dict, all_ends) -> dict:
     """Forward-fill carrying the ORIGIN end: {end: (val, origin_end)}. The
     intangible adjustment mixes several forward-filled series; vintage guards
@@ -111,6 +101,11 @@ _PREFERRED_VALUE_CONCEPTS = [
     "PreferredStockLiquidationPreferenceValue",
 ]
 
+# A carried preferred value/presence signal goes stale after ~1y (leap-safe),
+# mirroring the snapshot path's max_age_years=1 (_resolve_preferred_stock):
+# annual-only taggers still fill their off-quarters, abandoned tags age out.
+_PFD_MAX_AGE_DAYS = 366
+
 
 def _merged_series(cik: int, concepts) -> dict:
     """{end: first nonzero value across the concept ladder, per END}. Unlike
@@ -125,6 +120,19 @@ def _merged_series(cik: int, concepts) -> dict:
     return out
 
 
+def _equity_series(cik: int) -> dict:
+    """Equity per end across the snapshot path's concept ladder (sec_client
+    get_latest_fundamentals falls back to the including-NCI tag when the
+    primary is missing/stale): AUBN/PRK tag ONLY the including-NCI concept, so
+    a primary-only read rendered their entire per-share history n/a. Per-END
+    merge (primary wins wherever both exist) so tag-switchers resolve both
+    eras."""
+    return _merged_series(cik, [
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    ])
+
+
 def _bank_per_share(cik: int, ends: list) -> dict:
     """{quarter_end: {tbvps_hist, bvps_hist}} for the requested quarter-ends.
 
@@ -133,8 +141,9 @@ def _bank_per_share(cik: int, ends: list) -> dict:
     per quarter — preferred present but carrying value unresolved → n/a, never
     a preferred-inflated figure (AUDIT-2026-07-02 P1 #5). Preferred, like
     goodwill, is a slow-moving item sparsely tagged by some filers, so its
-    value/presence forward-fill; equity and shares never do."""
-    eq = _series(cik, ["StockholdersEquity"])
+    value/presence forward-fill — but only ~1y (an abandoned tag is not
+    presence, 2026-07-22: CTBI/WABC); equity and shares never fill."""
+    eq = _equity_series(cik)
     if not eq:
         return {}
     sh = _series(cik, ["CommonStockSharesOutstanding"])
@@ -162,11 +171,14 @@ def _bank_per_share(cik: int, ends: list) -> dict:
     fino = _ffill_origin(it_fin, universe)
     inclo = _ffill_origin(incl, universe)
     msro = _ffill_origin(msr, universe)
-    pfdf = _ffill(pfd, universe)
-    # Presence forward-fills WITH the value: a filer that tags preferred only
-    # annually must not read as preferred-free in the off-quarters.
-    presf = _ffill({q: True for q in (set(pfd) | {q for q, v in pfd_sh.items() if v})},
-                   universe)
+    # Preferred forward-fills WITH its origin end: a filer that tags preferred
+    # only annually must not read as preferred-free in the off-quarters — but a
+    # tag abandoned YEARS ago must not read as preferred-present forever either
+    # (CTBI: a 2014 SharesIssued tag with explicit modern PreferredStockValue=0
+    # rendered every modern quarter n/a; WABC same from 2009). Value and
+    # presence carry at most _PFD_MAX_AGE_DAYS past their origin.
+    pfdo = _ffill_origin(pfd, universe)
+    psho = _ffill_origin({q: v for q, v in pfd_sh.items() if v}, universe)
 
     def _shares(q):
         """Common share count at exactly q. The cover-page count rounded to a
@@ -199,15 +211,21 @@ def _bank_per_share(cik: int, ends: list) -> dict:
                     return v
         return w              # last resort: period-average diluted
 
+    def _fresh(pair, q):
+        return bool(pair) and (q - pair[1]).days <= _PFD_MAX_AGE_DAYS
+
     out = {}
     for q in ends:
         e, s = eq.get(q), _shares(q)                         # NOT forward-filled
         row = {"tbvps_hist": None, "bvps_hist": None, "tce_hist": None}
+        pv = pfdo.get(q)
+        pval = pv[0] if _fresh(pv, q) else None
+        present = bool(pval) or _fresh(psho.get(q), q)
         # Preferred outstanding but carrying value unresolved — n/a rather
         # than a preferred-inflated figure (cardinal rule). Total TCE only
         # needs equity resolvable; the per-share keys also need shares.
-        if e and not (presf.get(q) and not pfdf.get(q)):
-            ce = e - (pfdf.get(q) or 0)
+        if e and not (present and not pval):
+            ce = e - (pval or 0)
             adj = _intangible_adj_at(q, gwo, exo, fino, inclo, msro)
             row["tce_hist"] = ce - adj
             if s:
@@ -230,8 +248,7 @@ def tangible_common_equity_at(cik: int, asof_iso: str,
         asof = pd.Timestamp(asof_iso).normalize()
     except (TypeError, ValueError):
         return None, None
-    eq_ends = [q for q in _series(int(cik), ["StockholdersEquity"])
-               if q <= asof]
+    eq_ends = [q for q in _equity_series(int(cik)) if q <= asof]
     if not eq_ends:
         return None, None
     q = max(eq_ends)
@@ -256,11 +273,13 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     n = max(int(n_quarters), 1)
     ends = [pd.Timestamp(e).normalize() for e in recent_quarter_ends(n)]
     labels = [quarter_label(e) for e in ends]
-    # v3: intangible adjustment now mirrors the main path (combined-tag filers
-    # + MSR netting, AUDIT #5 residual) — the bump invalidates pre-warmed v2
-    # grids so stale BKU/USB-class TBVPS values don't serve until re-warmed.
-    # (v2 was the per-common-share conventions bump.)
-    key = f"sec_pershare:v4:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
+    # v5: equity reads fall back to the including-NCI tag (AUBN/PRK all-n/a)
+    # and preferred presence/value staleness mirrors the snapshot path
+    # (CTBI/WABC forever-n/a from abandoned tags) — the bump invalidates
+    # pre-warmed v4 grids so the fixed values serve once re-warmed. (v4 was
+    # the CCFN share-count corroboration bump, v3 the intangible-adjustment
+    # main-path mirror.)
+    key = f"sec_pershare:v5:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
     cached = cache.get(key)
     if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached

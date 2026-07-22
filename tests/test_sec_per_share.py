@@ -15,7 +15,11 @@ Pins (all against a mocked get_historical_fundamentals; no network):
      treasury-less guess;
   5. no preferred anywhere → numbers unchanged from the plain computation;
   6. annual-only preferred tagging forward-fills into off-quarters (value and
-     presence together), like the goodwill convention.
+     presence together), like the goodwill convention;
+  7. equity falls back to the including-NCI concept (AUBN/PRK, 2026-07-22);
+  8. preferred presence/value carry at most ~1y past origin — an abandoned
+     tag is not presence (CTBI/WABC, 2026-07-22) — with the PNC par-zero
+     guard intact.
 """
 import sys
 import types
@@ -236,6 +240,111 @@ class TestIntangibleAdjustmentMirrorsMainPath(unittest.TestCase):
                 "IntangibleAssetsNetIncludingGoodwill": [(Q4, 150.0)]}
         tbv, _ = self._tbvps(data)
         self.assertAlmostEqual(tbv, (1000.0 - 170.0) / 101.0, places=6)
+
+
+class TestEquityConceptLadder(unittest.TestCase):
+    """AUBN/PRK (2026-07-22): filers that tag ONLY
+    StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest had
+    their entire per-share history n/a — the audited snapshot path already
+    falls back to the including-NCI tag; the historical path must too."""
+
+    def test_including_nci_only_filer_resolves(self):
+        data = {
+            "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest":
+                [(Q1, 1_000.0)],
+            "CommonStockSharesOutstanding": [(Q1, 10.0)],
+            "Goodwill": [(Q1, 100.0)],
+        }
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertAlmostEqual(r["bvps_hist"], 100.0)
+        self.assertAlmostEqual(r["tbvps_hist"], 90.0)
+
+    def test_primary_wins_when_both_tagged(self):
+        # An NCI filer tags both; the narrower common-equity concept must win.
+        data = {
+            "StockholdersEquity": [(Q1, 900.0)],
+            "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest":
+                [(Q1, 1_000.0)],
+            "CommonStockSharesOutstanding": [(Q1, 10.0)],
+        }
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertAlmostEqual(r["bvps_hist"], 90.0)
+
+
+class TestStalePreferredPresence(unittest.TestCase):
+    """CTBI/WABC (2026-07-22): a nonzero PreferredStockShares(Issued|
+    Outstanding) tag abandoned years ago (CTBI 2014, WABC 2009) forward-filled
+    presence forever while the carrying value never resolved — every modern
+    quarter n/a. Presence and value now carry at most ~1y past their origin,
+    mirroring _resolve_preferred_stock's max_age_years=1."""
+
+    def test_stale_shares_tag_does_not_poison_modern_quarters(self):
+        # CTBI shape: 2014 Issued tag + explicit modern PreferredStockValue=0.
+        old = pd.Timestamp("2014-12-31")
+        data = {
+            "StockholdersEquity": [(Q1, 1_000.0)],
+            "CommonStockSharesOutstanding": [(Q1, 10.0)],
+            "PreferredStockSharesIssued": [(old, 300.0)],
+            "PreferredStockValue": [(Q1, 0.0)],
+        }
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertAlmostEqual(r["bvps_hist"], 100.0)
+
+    def test_stale_shares_tag_ages_out_without_explicit_zero(self):
+        # WABC shape: nothing preferred-tagged since 2009, no zero tag either.
+        old = pd.Timestamp("2009-12-31")
+        data = {
+            "StockholdersEquity": [(Q1, 1_000.0)],
+            "CommonStockSharesOutstanding": [(Q1, 10.0)],
+            "PreferredStockSharesOutstanding": [(old, 300.0)],
+        }
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertAlmostEqual(r["bvps_hist"], 100.0)
+
+    def test_current_shares_with_par_zero_value_still_na(self):
+        # PNC guard unchanged: FRESH nonzero shares + par-zero value → n/a.
+        data = {
+            "StockholdersEquity": [(Q1, 1_000.0)],
+            "CommonStockSharesOutstanding": [(Q1, 10.0)],
+            "PreferredStockSharesOutstanding": [(Q1, 5_000.0)],
+            "PreferredStockValue": [(Q1, 0.0)],
+        }
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertIsNone(r["bvps_hist"])
+        self.assertIsNone(r["tbvps_hist"])
+
+    def test_stale_value_with_fresh_shares_is_na(self):
+        # Value tag abandoned >1y while shares are still tagged: presence is
+        # real, value unresolved → n/a, never a stale-value subtraction.
+        old = pd.Timestamp("2020-12-31")
+        data = {
+            "StockholdersEquity": [(Q1, 1_000.0)],
+            "CommonStockSharesOutstanding": [(Q1, 10.0)],
+            "PreferredStockSharesOutstanding": [(Q1, 5_000.0)],
+            "PreferredStockValue": [(old, 200.0)],
+        }
+        with _mock_hist(data):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertIsNone(r["bvps_hist"])
+
+    def test_presence_evaluated_relative_to_each_end(self):
+        # The same abandoned tag WAS presence back when it was fresh: the 2014
+        # quarter still honors the cardinal rule while 2026 resolves.
+        old = pd.Timestamp("2014-12-31")
+        data = {
+            "StockholdersEquity": [(old, 1_000.0), (Q1, 1_000.0)],
+            "CommonStockSharesOutstanding": [(old, 10.0), (Q1, 10.0)],
+            "PreferredStockSharesIssued": [(old, 300.0)],
+        }
+        with _mock_hist(data):
+            per = sps._bank_per_share(1, [old, Q1])
+        self.assertIsNone(per[old]["bvps_hist"])          # present, unresolved
+        self.assertAlmostEqual(per[Q1]["bvps_hist"], 100.0)  # aged out
 
 
 class TestSharesCorroboration(unittest.TestCase):
