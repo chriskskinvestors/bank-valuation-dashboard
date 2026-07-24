@@ -55,6 +55,20 @@ QUOTE_PAGE_JUNK = [
     ("FCCO", "First Community Corporation (FCCO) Stock Price, Quote and News"),
 ]
 
+# Pipe-delimited quote-widget scrapes + content-farm rewrites of REAL events
+# (verbatim, live feed 2026-07-24).
+PIPE_QUOTE_JUNK = [
+    ("HWC", "HWC|Hancock Whitney Corp|Price:75.910|Chg%:+0.230"),
+]
+CONTENT_FARM_JUNK = [
+    ("TFC", "The Bull Case For Truist Financial (TFC) Could Change Following "
+            "Sameer's Wealth Tech Appointment And Capital Moves – Learn Why"),
+    ("SSB", "SouthState Bank Reports Strong Q2 2026 Results: 11% Dividend Hike, "
+            "Solid Loan Growth, and Enhanced Shareholder Value – Minichart"),
+    ("VABK", "Virginia National Bankshares Reports Strong Q2 2026 Earnings with "
+             "Higher Dividends and Robust Financial Performance – Minichart"),
+]
+
 OWNERSHIP_JUNK = [
     ("ZION", "Illinois Municipal Retirement Fund Raises Stock Holdings in Zions Bancorporation, N.A."),
     ("WFC", "Dimensional Fund Advisors LP Reduces Stock Holdings in Wells Fargo & Company"),
@@ -122,6 +136,26 @@ class TestCommentaryNoise(unittest.TestCase):
                 self.assertTrue(
                     is_junk_news(h, tk, source="google_news"),
                     f"quote-page title must be filtered: {h!r}")
+
+    def test_pipe_delimited_quote_widget_is_junk(self):
+        for tk, h in PIPE_QUOTE_JUNK:
+            with self.subTest(headline=h):
+                self.assertTrue(is_junk_news(h, tk, source="google_news"))
+
+    def test_content_farm_rewrites_of_real_events_are_junk(self):
+        for tk, h in CONTENT_FARM_JUNK:
+            with self.subTest(headline=h):
+                self.assertTrue(is_junk_news(h, tk, source="google_news"))
+
+    def test_farm_filter_keys_on_the_tag_not_the_news(self):
+        # THE safety property: the SAME headline without the publisher tag is
+        # real news and must survive. If this ever fails, the filter has
+        # started eating earnings coverage.
+        clean = ("SouthState Bank Reports Strong Q2 2026 Results: "
+                 "11% Dividend Hike, Solid Loan Growth")
+        self.assertFalse(is_junk_news(clean, "SSB", source="google_news"))
+        self.assertTrue(is_junk_news(clean + " – Minichart", "SSB",
+                                     source="google_news"))
 
     def test_ownership_churn_forms_that_leaked(self):
         for tk, h in OWNERSHIP_JUNK:

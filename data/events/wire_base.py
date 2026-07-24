@@ -888,7 +888,13 @@ _SEO_RE = re.compile(
     # release never uses, so an earnings/dividend/M&A headline can't trip it.
     r"|\b(?:stock|share)\s+price,\s*(?:news|quote)\b"
     r"|\bquote\s*(?:&|and)\s*history\b"
-    r"|\b(?:stock|share)\s+price\s*(?:&|and)\s*updates?\b",
+    r"|\b(?:stock|share)\s+price\s*(?:&|and)\s*updates?\b"
+    # PIPE-DELIMITED quote-ticker scrape — a price widget, not a headline:
+    #   "HWC|Hancock Whitney Corp|Price:75.910|Chg%:+0.230"  (live 2026-07-24)
+    # Keyed on the pipe-delimited Price:/Chg% FIELDS, which no prose headline
+    # carries, so a real release with a pipe in its title can't trip it.
+    r"|\|\s*(?:price|chg%?|change|last|vol(?:ume)?)\s*[:=]"
+    r"|^\s*[A-Z.]{1,6}\s*\|[^|]{1,60}\|\s*price\s*[:=]",
     re.IGNORECASE,
 )
 
@@ -961,7 +967,18 @@ _FOREIGN_LANG_RE = re.compile(
 _FARM_RE = re.compile(
     r"\bearnings\s+manipulation\s+risk\b"
     r"|\b(you\s+)?should\s+you?\s+buy\b|\bis\s+it\s+a\s+buy\b"
-    r"|\bhere'?s\s+(why|what)\b",
+    r"|\bhere'?s\s+(why|what)\b"
+    # Content-farm rewrites of REAL bank news, live feed 2026-07-24. The event
+    # underneath is genuine (an appointment, a results release) — it's the
+    # framing that's chaff, and the first-party wire copy of the same event is
+    # already in the feed. Anchored to the trailing call-to-action / publisher
+    # tag, not to the news words, so the real release can't trip it:
+    #   "The Bull Case For Truist Financial ... Appointment And Capital Moves - Learn Why"
+    #   "... Reports Strong Q2 2026 Earnings ... - Minichart"
+    r"|[-–—:]\s*learn\s+why\s*$"
+    r"|\blearn\s+why\b\s*$"
+    r"|[-–—]\s*minichart\s*$"
+    r"|\bthe\s+(bull|bear)\s+case\s+for\b",
     re.IGNORECASE,
 )
 
