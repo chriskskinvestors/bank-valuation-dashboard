@@ -10,28 +10,14 @@ Tests for data/ma_summary.py — the Transactions Summary aggregates
   • any fetch failure -> None and nothing cached; success cached under
     ma_summary:v1:{cik}
 """
-import sys
-import types
 import unittest
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-# Full house stub (see tests/test_audit_regressions.py): a minimal stub that
-# wins the sys.modules setdefault race would break later suites needing
-# st.fragment / streamlit.components.v1 at module load (the stub-rot trap,
-# memory 2026-07-02).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-_st_components = types.ModuleType("streamlit.components")
-_st_components_v1 = types.ModuleType("streamlit.components.v1")
-_st_components_v1.html = lambda *a, **k: None
-_st_components.v1 = _st_components_v1
-_st.components = _st_components
-sys.modules.setdefault("streamlit", _st)
-sys.modules.setdefault("streamlit.components", _st_components)
-sys.modules.setdefault("streamlit.components.v1", _st_components_v1)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 CIK = 946673
 

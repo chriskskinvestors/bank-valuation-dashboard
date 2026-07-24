@@ -15,31 +15,22 @@ Run: python -m unittest tests.test_earnings_calendar_nonblocking
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-def _install_streamlit_stub():
-    st = types.ModuleType("streamlit")
-
-    def _cache(*a, **k):
-        # Pass-through decorator so the wrapped function runs directly.
-        if a and callable(a[0]):
-            return a[0]
-        return lambda f: f
-
-    st.cache_data = _cache
-    st.cache_resource = _cache
-    sys.modules["streamlit"] = st
+# Order-independent streamlit stub (shared helper). The old local installer
+# force-replaced sys.modules["streamlit"] with a bare stub at setUpClass,
+# poisoning any fuller stub a suite running after this one relied on.
+from tests import _streamlit_stub
 
 
 class TestEarningsCalendarNonBlocking(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        _install_streamlit_stub()
+        _streamlit_stub.install()
         import importlib
         import data.estimates as est
         cls.est = importlib.reload(est)

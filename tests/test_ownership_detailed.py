@@ -5,19 +5,15 @@ Run: python -m unittest tests.test_ownership_detailed
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# House pattern (test_holder_history): a minimal streamlit stub via
-# setdefault so this suite is order-safe next to the stub-installing suites.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from ui.ownership import _detailed_rows  # noqa: E402
 

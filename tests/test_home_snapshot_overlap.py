@@ -20,26 +20,15 @@ flight at once. Two consequences, both pinned here:
 
 Offline: cache get/put are stubbed; no DB, no network.
 """
-import sys
-import types
 import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-# Order-independent streamlit stub. setdefault alone is not enough: another
-# suite may have registered a THINNER stub first (several predate ui/home.py's
-# module-load @st.fragment), and then importing ui.home here dies on the missing
-# attribute purely because of test ordering. So take whatever stub is already
-# installed and fill in only what's absent — additive, so no other suite's
-# expectations change.
-_st = sys.modules.get("streamlit") or types.ModuleType("streamlit")
-_passthru = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-for _attr in ("cache_data", "cache_resource", "fragment"):
-    if not hasattr(_st, _attr):
-        setattr(_st, _attr, _passthru)
-if not hasattr(_st, "session_state"):
-    _st.session_state = {}
-sys.modules["streamlit"] = _st
+# Order-independent streamlit stub — this file's additive fill-in pattern is
+# now the shared helper every suite uses.
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import ui.home as home  # noqa: E402
 

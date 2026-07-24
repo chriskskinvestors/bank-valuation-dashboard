@@ -19,16 +19,13 @@ in-memory exactly like tests/test_form13f_history.py; no live network. Pins:
 """
 import fnmatch
 import json
-import sys
-import types
 import unittest
 from unittest.mock import patch
 
-# Stub streamlit before importing modules that decorate with st.cache_data.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from data import form13f_client as f13  # noqa: E402
 from analysis import ownership_analytics as own  # noqa: E402

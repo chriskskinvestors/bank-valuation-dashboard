@@ -18,14 +18,12 @@ The must-pass list is the point of this suite: every one of these filters runs
 at INGEST, so an over-broad pattern silently deletes real earnings news. Real
 releases — including megabank ones using the same verbs — must survive.
 """
-import sys
-import types
 import unittest
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from data.events.wire_base import is_junk_news  # noqa: E402
 

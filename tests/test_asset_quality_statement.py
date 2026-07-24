@@ -13,24 +13,12 @@ Pins:
   • credit_quality_history's newest-wins merge and its cache contract
     (complete walks cache; a fetch failure must NOT bake a 30-day gap).
 """
-import sys
-import types
 import unittest
 
-# Stub streamlit before importing ui modules (same pattern as
-# test_audit_regressions — @st.cache_data/@st.fragment at module load).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-_st_components = types.ModuleType("streamlit.components")
-_st_components_v1 = types.ModuleType("streamlit.components.v1")
-_st_components_v1.html = lambda *a, **k: None
-_st_components.v1 = _st_components_v1
-_st.components = _st_components
-sys.modules.setdefault("streamlit", _st)
-sys.modules.setdefault("streamlit.components", _st_components)
-sys.modules.setdefault("streamlit.components.v1", _st_components_v1)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 
 # TCBK (Tri Counties Bank, cert 21943) 12/31/2025 — live FDIC probe values.

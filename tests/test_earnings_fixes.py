@@ -13,24 +13,15 @@ Pins two AUDIT-2026-07-02 fixes in ui/earnings.py:
 Run: python -m unittest tests.test_earnings_fixes
 """
 import sys
-import types
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Stub streamlit before importing ui modules (house pattern).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
-_c = types.ModuleType("streamlit.components")
-_c1 = types.ModuleType("streamlit.components.v1")
-_c.v1 = _c1
-_st.components = _c
-sys.modules.setdefault("streamlit.components", _c)
-sys.modules.setdefault("streamlit.components.v1", _c1)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from ui.earnings import _surprise_line, _quarter_label, _heatmap_columns  # noqa: E402
 
@@ -47,8 +38,9 @@ class TestSurpriseLineEscapesDollars(unittest.TestCase):
         self.assertIn("\\$3.30", line)
         # No unescaped $ anywhere — one survivor re-arms the LaTeX span.
         self.assertNotIn("$", line.replace("\\$", ""))
-        # Content intact around the escaping.
-        self.assertIn("**JPM** EPS: +6.5%", line)
+        # Content intact around the escaping — ticker renders as a Company-page
+        # link since f42e9ce.
+        self.assertIn("[**JPM**](?bank=JPM) EPS: +6.5%", line)
 
     def test_dash_placeholders_untouched(self):
         # Missing estimate renders "—"; nothing to escape, line stays clean.

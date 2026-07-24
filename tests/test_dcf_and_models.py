@@ -4,15 +4,12 @@ and the empirically calibrated NIM-model constants. Every expected value is
 hand-computed — these are the formulas behind fair values shown to investors,
 previously shipped with zero tests (audit P4).
 """
-import sys
-import types
 import unittest
 
-# Stub streamlit before importing modules that decorate with st.cache_data.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from analysis.dcf import (  # noqa: E402
     terminal_value, present_value, run_fcfe_dcf, implied_irr, warranted_ptbv,

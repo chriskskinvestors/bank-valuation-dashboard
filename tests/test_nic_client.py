@@ -19,7 +19,6 @@ bulk-file access is via small synthetic CSV fixtures written to a temp dir
 """
 import os
 import shutil
-import sys
 import tempfile
 import types
 import unittest
@@ -27,11 +26,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-# Stub streamlit before importing data modules (config may pull it in).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 ATTR_HEADER = ("#ID_RSSD,NM_LGL,NM_SHORT,ENTITY_TYPE,CITY,"
                "STATE_ABBR_NM,CNTRY_NM")

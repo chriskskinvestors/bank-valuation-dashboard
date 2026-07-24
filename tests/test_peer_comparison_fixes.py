@@ -14,17 +14,12 @@ Pins two AUDIT-2026-07-02 P1 fixes in ui/peer_comparison.py:
 
 Run: python -m unittest tests.test_peer_comparison_fixes
 """
-import sys
-import types
 import unittest
 
-# Stub streamlit before importing ui modules (house pattern) —
-# ui.peer_comparison applies @st.fragment at module load.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from config import METRICS_BY_KEY  # noqa: E402
 from analysis.peer_groups import compute_peer_percentile  # noqa: E402

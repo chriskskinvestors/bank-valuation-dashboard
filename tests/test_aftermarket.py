@@ -13,7 +13,6 @@ HTTP/cache mocked. Run:  python -m unittest tests.test_aftermarket
 """
 from __future__ import annotations
 import sys
-import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -21,10 +20,10 @@ from unittest.mock import patch
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 
 class TestAftermarketMove(unittest.TestCase):

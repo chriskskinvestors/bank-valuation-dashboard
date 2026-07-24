@@ -19,7 +19,6 @@ Pins (mocked fetch_company_facts, no network):
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 import warnings
 from datetime import datetime
@@ -30,40 +29,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 warnings.filterwarnings("ignore")
 
 
-def _install_streamlit_stub():
-    st = types.ModuleType("streamlit")
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
 
-    def _noop(*a, **k):
-        return None
-
-    def _cache(*a, **k):
-        if a and callable(a[0]):
-            return a[0]
-        return lambda f: f
-
-    st.cache_data = _cache
-    st.cache_resource = _cache
-    st.fragment = _cache          # decorator-safe passthrough
-    st.session_state = {}
-    st.query_params = {}
-    for name in ("markdown", "caption", "write", "info", "warning", "error",
-                 "divider", "metric", "dataframe", "button", "html", "subheader"):
-        setattr(st, name, _noop)
-    comp_pkg = types.ModuleType("streamlit.components")
-    comp_v1 = types.ModuleType("streamlit.components.v1")
-    comp_v1.html = _noop
-    comp_pkg.v1 = comp_v1
-    st.components = comp_pkg
-    sys.modules["streamlit"] = st
-    sys.modules["streamlit.components"] = comp_pkg
-    sys.modules["streamlit.components.v1"] = comp_v1
-
-
-# Reuse a richer streamlit stub if a sibling test module already installed one
-# (running combined with test_audit_regressions et al.); only install ours when
-# none exists, so we never clobber their st.fragment/segmented_control support.
-if "streamlit" not in sys.modules:
-    _install_streamlit_stub()
+_st = _streamlit_stub.install()
+# Extras beyond the helper baseline (additive — never clobber a richer stub).
+if not hasattr(_st, "query_params"):
+    _st.query_params = {}
+for _name in ("markdown", "caption", "write", "info", "warning", "error",
+              "divider", "metric", "dataframe", "button", "html", "subheader"):
+    if not hasattr(_st, _name):
+        setattr(_st, _name, lambda *a, **k: None)
 
 import ui.financial_highlights as fh  # noqa: E402
 

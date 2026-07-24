@@ -5,15 +5,13 @@ snapshot with {} — the previous data keeps serving (call dates expire naturall
 downstream). A legitimately-empty result persists only when there was no prior
 snapshot to protect.
 """
-import sys
-import types
 import unittest
 from unittest.mock import patch
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import data.events.ir_site as irs  # noqa: E402
 

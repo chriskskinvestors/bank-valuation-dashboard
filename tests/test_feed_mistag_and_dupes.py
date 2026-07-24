@@ -19,15 +19,13 @@ Pins the 2026-07-22 feed residuals (all three found by reading the live feed).
 Offline: the store runs on private in-memory SQLite; matching uses the real
 name index (skipped if no universe snapshot).
 """
-import sys
-import types
 import unittest
 from datetime import datetime, timedelta, timezone
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import data.db as db  # noqa: E402
 import data.events.store as store  # noqa: E402

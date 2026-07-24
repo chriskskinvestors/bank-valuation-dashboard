@@ -13,29 +13,16 @@ import unittest
 
 import pandas as pd
 
-# Stub streamlit before importing modules that decorate with st.cache_data.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-# ui.financials_statements decorates its statement pages with @st.fragment (both
-# bare `@st.fragment` and `@st.fragment(run_every=...)`); the identity-decorator
-# lambda handles both forms just like cache_data above.
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
-# ui.financials_statements does `import streamlit.components.v1` at module load.
-# The balance-sheet render tests below reload that module and, in their finally
-# block, restore THIS module table before a final reload — so the table must
-# keep streamlit.components.v1 registered, or that reload (and running those
-# tests standalone) dies with "No module named 'streamlit.components'". Register
-# the components packages here so the restore target is always import-safe,
-# independent of whether another test class seeded a fuller stub first.
-_st_components = types.ModuleType("streamlit.components")
-_st_components_v1 = types.ModuleType("streamlit.components.v1")
-_st_components_v1.html = lambda *a, **k: None
-_st_components.v1 = _st_components_v1
-_st.components = _st_components
-sys.modules.setdefault("streamlit.components", _st_components)
-sys.modules.setdefault("streamlit.components.v1", _st_components_v1)
+# Order-independent streamlit stub (shared helper) before importing modules
+# that decorate with st.cache_data. install() also registers
+# streamlit.components(.v1): ui.financials_statements imports that at module
+# load, and the balance-sheet render tests below restore this module table in
+# their finally block before a final reload — so the restore target must
+# always be import-safe. The `_st` binding is the restore target for test
+# classes that temporarily swap sys.modules["streamlit"].
+from tests import _streamlit_stub
+
+_st = _streamlit_stub.install()
 
 
 class TestA1PeerTierUnits(unittest.TestCase):

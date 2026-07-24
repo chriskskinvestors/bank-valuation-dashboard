@@ -15,17 +15,14 @@ Pins the 2026-06-15 news-quality pass on the events pipeline:
 No live network: the RSS layer is mocked; the store runs on a private in-memory
 SQLite DB.
 """
-import sys
-import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-# Stub streamlit before importing data modules (house pattern).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import data.db as db  # noqa: E402
 import data.events.store as store  # noqa: E402

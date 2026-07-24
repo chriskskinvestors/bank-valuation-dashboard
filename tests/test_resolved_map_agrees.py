@@ -16,15 +16,13 @@ The two files are kept in sync instead. This test is the ratchet.
 Offline: reads the mapping chain only, no network.
 """
 import json
-import sys
-import types
 import unittest
 from pathlib import Path
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from data.bank_mapping import BANK_MAP  # noqa: E402
 

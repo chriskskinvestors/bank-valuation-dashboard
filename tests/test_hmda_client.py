@@ -12,17 +12,14 @@ All HTTP is mocked; no live network. Pins:
   • failures return None and never cache
   • a fresh cache entry short-circuits the network entirely
 """
-import sys
-import types
 import unittest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
-# Stub streamlit before importing modules that decorate with st.cache_data.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 
 def _resp(payload):

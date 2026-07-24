@@ -18,16 +18,12 @@ filter let through. The two invariants this suite enforces:
 
 No network or DB — pure function tests over the regex filter.
 """
-import sys
-import types
 import unittest
 
-# House pattern: stub streamlit before importing data modules (some import
-# chains decorate with st.cache_data at module load).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from data.events.wire_base import (  # noqa: E402
     is_junk_news, is_company_press_release, is_routine_noise, is_safe_news_url,

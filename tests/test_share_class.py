@@ -11,11 +11,15 @@ The fix excludes non-common classes at data.bank_universe.get_universe_tickers
 shared CIK (not a hardcoded ticker blocklist), so it generalizes across the
 26 multi-ticker registrants in the universe.
 """
-import sys
-import types
 import unittest
 
-from data.share_class import (
+# Order-independent streamlit stub (shared helper) — bank_universe's
+# @st.cache_data decorators must no-op when tests import it lazily.
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
+
+from data.share_class import (  # noqa: E402
     noncommon_tickers,
     annotate_share_classes,
     _pick_primary,
@@ -139,13 +143,6 @@ class TestUniverseTickerFilter(unittest.TestCase):
     """End-to-end: get_universe_tickers drops the preferred series."""
 
     def test_get_universe_tickers_excludes_preferred(self):
-        # Stub streamlit so bank_universe's @st.cache_data decorators no-op.
-        st = types.ModuleType("streamlit")
-        st.cache_data = lambda *a, **k: (
-            a[0] if a and callable(a[0]) else (lambda f: f))
-        st.cache_resource = st.cache_data
-        sys.modules.setdefault("streamlit", st)
-
         import data.bank_universe as bu
         import data.bank_mapping as bm
 
@@ -174,11 +171,6 @@ class TestDisplaySurfaces(unittest.TestCase):
     the raw resolution store and exact-ticker lookup still works."""
 
     def _stub_universe(self):
-        st = types.ModuleType("streamlit")
-        st.cache_data = lambda *a, **k: (
-            a[0] if a and callable(a[0]) else (lambda f: f))
-        st.cache_resource = st.cache_data
-        sys.modules.setdefault("streamlit", st)
         import data.bank_universe as bu
         uni = {t: {**v, "name": "First Citizens BancShares"}
                for t, v in FCNC.items()}
@@ -227,11 +219,6 @@ class TestForeignTwinExclusion(unittest.TestCase):
     and the count without waiting for a snapshot rebuild."""
 
     def _stub(self):
-        st = types.ModuleType("streamlit")
-        st.cache_data = lambda *a, **k: (
-            a[0] if a and callable(a[0]) else (lambda f: f))
-        st.cache_resource = st.cache_data
-        sys.modules.setdefault("streamlit", st)
         import data.bank_universe as bu
         import data.bank_mapping as bm
         uni = {

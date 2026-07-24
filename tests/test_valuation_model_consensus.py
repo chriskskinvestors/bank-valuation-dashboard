@@ -16,24 +16,13 @@ Both sites now route through _consensus_annualizer(period): quarterly → 4.0,
 annual → 1.0, unrecognized label → None (skip the pre-fill / EPS row entirely —
 n/a over a guessed basis).
 """
-import sys
-import types
 import unittest
 from pathlib import Path
 
-# Stub streamlit before importing ui modules (house pattern).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-# ui.valuation_model decorates its panel with @st.fragment.
-_st.fragment = _st.cache_data
-# Another suite's leaner stub may already be registered (setdefault keeps the
-# first one) — backfill the attributes this import chain needs onto it, so the
-# suite passes standalone AND alongside the other stub-based suites.
-_reg = sys.modules.setdefault("streamlit", _st)
-for _attr in ("cache_data", "cache_resource", "fragment"):
-    if not hasattr(_reg, _attr):
-        setattr(_reg, _attr, _st.cache_data)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from ui.valuation_model import _consensus_annualizer, _derive_defaults  # noqa: E402
 

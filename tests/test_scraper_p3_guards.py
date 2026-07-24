@@ -20,16 +20,12 @@ the correctly aligned value:
 
 Run: PYTHONIOENCODING=utf-8 python -m unittest tests.test_scraper_p3_guards -v
 """
-import sys
-import types
 import unittest
 
-# Streamlit stub (defensive: these data modules must import without a UI).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from data.sec_filing_scraper import (  # noqa: E402
     Fact, extract_credit_quality, extract_rate_risk, extract_nim_by_year,

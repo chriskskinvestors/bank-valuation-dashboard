@@ -17,17 +17,14 @@ Invariants:
 
 FMP / get_name are mocked; no network or key.
 """
-import sys
-import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-# Stub streamlit before importing data modules (house pattern).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import data.fmp_client as fmp  # noqa: E402
 import data.bank_mapping as bank_mapping  # noqa: E402

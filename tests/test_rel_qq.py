@@ -6,17 +6,15 @@ GREEN (better), a falling NIM red. Run: python -m unittest tests.test_rel_qq
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from ui.earnings import _rel_qq_html, _rel_detail_tr  # noqa: E402
 

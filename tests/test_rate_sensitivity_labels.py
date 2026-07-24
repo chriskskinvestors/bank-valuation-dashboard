@@ -19,16 +19,17 @@ Run: python -m unittest tests.test_rate_sensitivity_labels
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Stub streamlit before importing ui modules (house pattern —
-# see tests/test_sec_8k_adapter.py / tests/test_render_smoke.py).
-_st = types.ModuleType("streamlit")
+# Order-independent streamlit stub (shared helper), plus the richer widget
+# behaviors this suite's render-path tests need, set on the shared module.
+from tests import _streamlit_stub  # noqa: E402
+
+_st = _streamlit_stub.install()
 
 
 class _Ctx:
@@ -75,14 +76,6 @@ _st.segmented_control = lambda label, options=None, **k: (
     else (options[0] if options else None))
 _st.slider = lambda *a, **k: k.get("value", 0)
 _st.tabs = lambda labels, **k: [_Ctx() for _ in labels]
-_comp_pkg = types.ModuleType("streamlit.components")
-_comp_v1 = types.ModuleType("streamlit.components.v1")
-_comp_v1.html = _noop
-_comp_pkg.v1 = _comp_v1
-_st.components = _comp_pkg
-sys.modules.setdefault("streamlit", _st)
-sys.modules.setdefault("streamlit.components", _comp_pkg)
-sys.modules.setdefault("streamlit.components.v1", _comp_v1)
 
 from ui.rate_sensitivity import _render_rate_context, _slope_regime  # noqa: E402
 

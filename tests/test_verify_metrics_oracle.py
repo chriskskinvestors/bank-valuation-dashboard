@@ -10,16 +10,13 @@ job and paged the owner. The oracle must (1) re-derive ROATCE on the common
 basis, (2) keep cross-source/cross-convention checks in a WARN tier that never
 fails the job.
 """
-import sys
-import types
 import unittest
 from pathlib import Path
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from tools.verify_metrics import _oracle  # noqa: E402
 

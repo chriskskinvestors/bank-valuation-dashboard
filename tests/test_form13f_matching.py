@@ -9,15 +9,12 @@ merge-only quarter snapshots. The fix (`_issuer_matches`) requires a
 word/token-boundary match: a bare ticker must equal a whole word token of
 the issuer name, never a substring of one.
 """
-import sys
-import types
 import unittest
 
-# Stub streamlit before importing modules that decorate with st.cache_data.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from data.form13f_client import _issuer_matches  # noqa: E402
 

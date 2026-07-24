@@ -8,28 +8,15 @@ contract that gates M&A deal-comp caching. Pins:
   • transient failures (503, timeout, 429-exhausted) -> ({}, False)
   • success -> (facts, True)
 """
-import sys
-import types
 import unittest
 from unittest.mock import MagicMock, patch
 
 import requests
 
-# Full house stub (see tests/test_audit_regressions.py) — sec_client does
-# `import streamlit as st` and decorates fetch_company_facts with st.cache_data
-# at module load.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-_st_components = types.ModuleType("streamlit.components")
-_st_components_v1 = types.ModuleType("streamlit.components.v1")
-_st_components_v1.html = lambda *a, **k: None
-_st_components.v1 = _st_components_v1
-_st.components = _st_components
-sys.modules.setdefault("streamlit", _st)
-sys.modules.setdefault("streamlit.components", _st_components)
-sys.modules.setdefault("streamlit.components.v1", _st_components_v1)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 
 def _http_error(status):

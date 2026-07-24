@@ -8,17 +8,16 @@ path hits that API directly. No network: requests are mocked.
 """
 import os
 import sys
-import types
 import unittest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import data.events.ir_site as ir  # noqa: E402
 

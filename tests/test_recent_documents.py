@@ -11,23 +11,12 @@ Recent Documents (Company → News & Filings) — pins the pure logic:
     sink (same _safe contract test_filings_escaping pins) and hrefs are
     attribute-escaped.
 """
-import sys
-import types
 import unittest
 
-# Stub streamlit + its components package before importing ui modules
-# (same stub as test_filings_escaping — keep in sync if st grows new
-# module-load APIs; see the 2026-07-02 stub-rot fix).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
-_comp = types.ModuleType("streamlit.components")
-_v1 = types.ModuleType("streamlit.components.v1")
-_comp.v1 = _v1
-sys.modules.setdefault("streamlit.components", _comp)
-sys.modules.setdefault("streamlit.components.v1", _v1)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import ui.recent_documents as RD  # noqa: E402
 

@@ -13,17 +13,13 @@ Regression tests for the AUDIT-2026-07-02 P3 analysis/data guards:
     (requests encodes params once; pre-quoting double-encoded the phrase and
     made the lookup tier dead). Pinned via a mock of requests.get — no network.
 """
-import sys
-import types
 import unittest
 from unittest import mock
 
-# Stub streamlit before importing data modules that decorate with st.cache_data.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import requests  # noqa: E402  (URL-encoding pin only; no network calls)
 

@@ -11,22 +11,20 @@ Pins AUDIT-2026-07-02 finding #15 (ui/historicals.py Annual Summary):
 Synthetic FDIC quarterly rows; no network, no streamlit runtime.
 """
 import sys
-import types
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Stub streamlit (and the module tree ui.historicals pulls in at import
-# time) before importing it (house pattern — see test_sec_8k_adapter.py).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.session_state = {}
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_st = _streamlit_stub.install()
+# Extras beyond the helper baseline (additive — never clobber a richer stub).
 for _name in ("markdown", "caption", "write", "info", "warning", "error",
               "dataframe", "plotly_chart", "html"):
-    setattr(_st, _name, lambda *a, **k: None)
-sys.modules.setdefault("streamlit", _st)
+    if not hasattr(_st, _name):
+        setattr(_st, _name, lambda *a, **k: None)
 
 import pandas as pd  # noqa: E402
 

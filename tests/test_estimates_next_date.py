@@ -17,11 +17,10 @@ import unittest
 from datetime import datetime, timedelta
 from unittest import mock
 
-# Stub streamlit before importing data modules (house pattern).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import data.estimates as estimates  # noqa: E402
 

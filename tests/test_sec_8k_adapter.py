@@ -11,17 +11,14 @@ Pins two SEC-leg quality tweaks (2026-06-16):
 SEC HTTP + CIK lookup are mocked; no network.
 """
 import json
-import sys
-import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-# Stub streamlit before importing data modules (house pattern).
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import data.events.sec_8k as sec_8k  # noqa: E402
 import data.events.wire_base as wire_base  # noqa: E402

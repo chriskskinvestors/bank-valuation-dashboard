@@ -8,17 +8,13 @@ quarterly_series must NOT persist a build whose coverage is below
 _MIN_GRID_COVERAGE (90%; measured baseline 99.7%), and must flag it via
 payload["persisted"] so jobs/refresh_trends fails loudly.
 """
-import sys
-import types
 import unittest
 from unittest import mock
 
-# Stub streamlit before importing data modules that decorate with st.cache_data.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 from data.as_of_metrics import quarterly_series, TREND_KEYS  # noqa: E402
 

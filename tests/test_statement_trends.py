@@ -6,24 +6,12 @@ Two guarantees:
   2. grouped_trend_chart scales $ fields to $B, leaves % as-is, and adds a
      secondary y-axis only when a group mixes dollar levels with a ratio.
 """
-import sys
-import types
 import unittest
 
-# ui.financials_statements imports streamlit + streamlit.components.v1 at load.
-_st = types.ModuleType("streamlit")
-_st.cache_data = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-_st.cache_resource = _st.cache_data
-# The statement pages decorate at module load with @st.fragment (bare and
-# @st.fragment(run_every=...)); the identity-decorator lambda covers both.
-_st.fragment = _st.cache_data
-sys.modules.setdefault("streamlit", _st)
-_c = types.ModuleType("streamlit.components")
-_c1 = types.ModuleType("streamlit.components.v1")
-_c.v1 = _c1
-_st.components = _c
-sys.modules.setdefault("streamlit.components", _c)
-sys.modules.setdefault("streamlit.components.v1", _c1)
+# Order-independent streamlit stub (shared helper).
+from tests import _streamlit_stub
+
+_streamlit_stub.install()
 
 import pandas as pd
 
