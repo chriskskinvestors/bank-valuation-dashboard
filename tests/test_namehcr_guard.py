@@ -35,6 +35,7 @@ sys.modules.setdefault("streamlit", _st)
 from data.bank_universe import (  # noqa: E402
     _names_corroborate, namehcr_flags, _NAMEHCR_VERIFIED_OK,
     _STATE_VERIFIED_OK, _SIZE_GAP_X, _choose_cert, _profile_from_submissions,
+    _SecOutageBreaker, _BULK_SEC_ATTEMPTS,
 )
 
 
@@ -445,6 +446,50 @@ class TestDegradedSources(unittest.TestCase):
                          [("X", 99999)])
 
 
+class TestSecOutageBreaker(unittest.TestCase):
+    """Retry must not turn a throttle into a timeout.
+
+    Measured 2026-07-22: a fully-throttled submissions fetch costs ~3.2s even
+    at 2 attempts, so a 750-call nightly walk runs ~40 min against a 30-min
+    task timeout. The breaker bounds that.
+    """
+
+    def test_starts_at_the_full_bulk_budget(self):
+        self.assertEqual(_SecOutageBreaker().attempts, _BULK_SEC_ATTEMPTS)
+
+    def test_trips_after_a_sustained_outage(self):
+        b = _SecOutageBreaker()
+        for _ in range(_SecOutageBreaker.TRIP):
+            b.record(False)
+        self.assertTrue(b.tripped)
+        self.assertEqual(b.attempts, 1)
+
+    def test_a_bursty_patch_never_trips_it(self):
+        # Nine failures then a success — the common shape of throttling.
+        b = _SecOutageBreaker()
+        for _ in range(_SecOutageBreaker.TRIP - 1):
+            b.record(False)
+        b.record(True)
+        self.assertFalse(b.tripped)
+        self.assertEqual(b.attempts, _BULK_SEC_ATTEMPTS)
+        for _ in range(_SecOutageBreaker.TRIP - 1):
+            b.record(False)
+        self.assertFalse(b.tripped)
+
+    def test_tripping_never_costs_correctness(self):
+        # The breaker only reduces RETRIES. With no state, an ambiguous name
+        # is still refused — the guarantee that makes failing fast safe.
+        twins = [
+            {"cert": 24998, "name": "Commerce Bank",
+             "namehcr": "COMMERCE BANCSHARES INC", "asset": 35_540_239,
+             "stalp": "MO", "stalphcr": "MO"},
+            {"cert": 1374, "name": "The Bank of Commerce",
+             "namehcr": "COMMERCE BANCSHARES INC", "asset": 88_409,
+             "stalp": "LA", "stalphcr": "LA"},
+        ]
+        self.assertIsNone(_choose_cert(twins, {}, "CBSH"))
+
+
 class TestChooseCert(unittest.TestCase):
     """The join gate — the builder's side of the same two keys. The guard
     reports wrong joins; this is what stops the build making them."""
@@ -476,11 +521,21 @@ class TestChooseCert(unittest.TestCase):
         profile = {"hq_state": "TX", "state_of_incorp": "TX"}
         self.assertIsNone(_choose_cert(self.COMMERCE, profile, "NOPE"))
 
-    def test_unknown_state_keeps_legacy_behaviour(self):
-        # A transient SEC failure must not strip joins universe-wide.
+    def test_unknown_state_refuses_an_AMBIGUOUS_name(self):
+        # SEC unreachable AND 2+ same-name banks: the state IS the identity
+        # here, so "largest" is a coin flip. 21% of phase-1 matches are
+        # ambiguous (53/248 measured 2026-07-22) — refuse rather than guess.
         for profile in (None, {}, {"hq_state": "", "state_of_incorp": ""}):
             with self.subTest(profile=profile):
-                self.assertEqual(_choose_cert(self.COMMERCE, profile, "CBSH"), 24998)
+                self.assertIsNone(_choose_cert(self.COMMERCE, profile, "CBSH"))
+
+    def test_unknown_state_keeps_an_UNAMBIGUOUS_name(self):
+        # One bank under the holdco name: no twin to confuse, so a transient
+        # SEC failure must not strip a working join.
+        solo = [self.COMMERCE[0]]
+        for profile in (None, {}, {"hq_state": "", "state_of_incorp": ""}):
+            with self.subTest(profile=profile):
+                self.assertEqual(_choose_cert(solo, profile, "CBSH"), 24998)
 
     def test_no_candidates_is_no_cert(self):
         self.assertIsNone(_choose_cert([], {"hq_state": "MO"}, "CBSH"))

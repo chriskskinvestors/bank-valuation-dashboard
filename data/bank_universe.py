@@ -265,8 +265,14 @@ def _choose_cert(candidates: list[dict], profile: dict | None,
         is the honest answer; a plausible-wrong balance sheet is not (the
         cardinal rule). The nightly guard reports what the builder refused.
       • no state known (SEC fetch failed, or a filer that publishes none) →
-        the largest candidate, the historical behaviour. A transient network
-        blip must not silently strip working joins from the whole universe.
+        the largest candidate ONLY when the name is unambiguous (exactly one
+        bank under that holding-company name). A transient blip must not strip
+        working joins universe-wide, but where 2+ same-name banks exist the
+        state IS the identity — guessing there is precisely what built the
+        wrong-entity corpus. 21% of phase-1 name matches are ambiguous
+        (53 of 248 measured 2026-07-22; CBSH alone has four candidate banks
+        in MO/MN/OK/LA), so "largest" is a coin flip exactly where it matters.
+        Ambiguous + unverifiable = no cert, and the caller logs it.
 
     _STATE_VERIFIED_OK entries are hand-verified joins whose registrant state
     legitimately disagrees (BPRN files from its law firm's address in another
@@ -276,7 +282,7 @@ def _choose_cert(candidates: list[dict], profile: dict | None,
         return None
     states = _sec_states(profile or {})
     if not states:
-        return candidates[0]["cert"]
+        return candidates[0]["cert"] if len(candidates) == 1 else None
 
     ok = [c for c in candidates
           if _state_corroborates(profile, {"STALP": c.get("stalp", ""),
@@ -289,14 +295,64 @@ def _choose_cert(candidates: list[dict], profile: dict | None,
     return None
 
 
+# Retry budget for the BULK per-bank SEC walks (~450 in phase 1.5, ~300 more in
+# phase 2). The default 3 attempts costs ~7s of backoff per call when SEC is
+# throttling — ~50 min across the walk, which would blow the job's 30-min task
+# timeout and turn a throttle into a total failure. Two attempts recovers the
+# bursty case (the common one) and fails fast on a sustained outage, which is
+# SAFE here precisely because _choose_cert refuses ambiguous joins when the
+# state is unverifiable: correctness does not depend on the fetch succeeding,
+# only coverage does. Single-shot fetches elsewhere keep the full budget.
+_BULK_SEC_ATTEMPTS = 2
+
+
+class _SecOutageBreaker:
+    """Stops paying retry backoff once SEC is clearly down.
+
+    Even at 2 attempts, a sustained outage costs ~3.2s per call (measured), so
+    a 750-call walk runs ~40 min against a 30-min task timeout — the retry
+    would convert a throttle into a total build failure. After TRIP consecutive
+    unreachable fetches, drop to a single attempt for the remainder: the walk
+    finishes, the degradation is logged, and correctness is untouched because
+    _choose_cert refuses ambiguous joins whenever the state is unverifiable.
+    One success resets the streak, so a bursty patch never trips it."""
+
+    TRIP = 10
+
+    def __init__(self) -> None:
+        self.streak = 0
+        self.tripped = False
+
+    @property
+    def attempts(self) -> int:
+        return 1 if self.tripped else _BULK_SEC_ATTEMPTS
+
+    def record(self, ok: bool) -> None:
+        if ok:
+            self.streak = 0
+            return
+        self.streak += 1
+        if self.streak >= self.TRIP and not self.tripped:
+            self.tripped = True
+            print(f"[universe] ⚠️  SEC submissions unreachable {self.TRIP}x in a "
+                  "row — single-attempt fetches for the rest of this build; "
+                  "ambiguous joins will be REFUSED, not guessed", flush=True)
+
+
 def _fetch_sec_companies() -> list[list]:
     """Fetch all SEC public companies with tickers. Raises on failure — an
-    empty list here would silently collapse the universe to the curated map."""
-    resp = requests.get(
+    empty list here would silently collapse the universe to the curated map.
+    Goes through the shared retry so a transient 429 costs seconds rather than
+    the whole nightly (the FDIC-side lesson, 4aa79b2)."""
+    from data.http import get_with_retry
+
+    resp = get_with_retry(
         "https://www.sec.gov/files/company_tickers_exchange.json",
         headers=SEC_HEADERS, timeout=15,
     )
-    resp.raise_for_status()
+    if resp is None:
+        raise RuntimeError(
+            "SEC company_tickers_exchange.json: rate-limited past retries")
     rows = resp.json().get("data", [])
     if not rows:
         raise RuntimeError("SEC company_tickers_exchange.json returned no rows")
@@ -431,35 +487,60 @@ def _build_universe_live() -> dict[str, dict]:
     # This same submissions record carries the registrant's state, so the join
     # is settled here at no extra cost: _choose_cert takes the candidate whose
     # state agrees and refuses the join outright when none does.
+    from data.http import get_with_retry as _sec_get
+    breaker = _SecOutageBreaker()
+    unverified = 0
     for t in sorted(pending):
         info = pending[t]
         sub = None
         try:
             time.sleep(0.12)  # SEC rate limit: 10 req/sec
-            resp = requests.get(
+            # Shared retry, NOT a bare get: this walk makes ~450 sequential SEC
+            # calls at ~8 req/s against a 10 req/s limit, and a 429 here used
+            # to leave `sub` None — which silently handed _choose_cert no state
+            # and reverted the join to name-only, the exact bug the gate exists
+            # to prevent. Throttling must cost time, never correctness.
+            resp = _sec_get(
                 f"https://data.sec.gov/submissions/CIK{str(info['cik']).zfill(10)}.json",
-                headers=SEC_HEADERS, timeout=8,
+                headers=SEC_HEADERS, timeout=8, max_attempts=breaker.attempts,
             )
-            if resp.status_code == 200:
+            breaker.record(resp is not None and resp.status_code == 200)
+            if resp is not None and resp.status_code == 200:
                 sub = resp.json()
                 if not _is_us_domestic_filer(sub):
                     print(f"[universe] dropping {t}: foreign-domiciled filer")
                     continue
         except requests.RequestException:
-            pass  # transient — keep the ticker; _choose_cert falls back below
+            breaker.record(False)  # _choose_cert decides below; we count it
 
-        cert = _choose_cert(info["cands"], _profile_from_submissions(sub), t)
+        profile = _profile_from_submissions(sub)
+        if not _sec_states(profile):
+            unverified += 1
+        cert = _choose_cert(info["cands"], profile, t)
         if cert is None and info["cands"]:
-            print(f"[universe] {t}: no cert — name matches "
-                  f"'{info['cands'][0]['namehcr']}' but every candidate is in "
-                  f"{sorted({c['stalphcr'] or c['stalp'] for c in info['cands']})}, "
-                  f"registrant is not", flush=True)
+            if _sec_states(profile):
+                print(f"[universe] {t}: no cert — name matches "
+                      f"'{info['cands'][0]['namehcr']}' but every candidate is in "
+                      f"{sorted({c['stalphcr'] or c['stalp'] for c in info['cands']})}, "
+                      f"registrant is not", flush=True)
+            else:
+                print(f"[universe] {t}: no cert — registrant state UNVERIFIABLE "
+                      f"and '{info['cands'][0]['namehcr']}' has "
+                      f"{len(info['cands'])} candidate banks; refusing to guess",
+                      flush=True)
         universe[t] = {
             "name": info["name"],
             "cik": info["cik"],
             "fdic_cert": cert,
             "exchange": info["exchange"],
         }
+
+    # A build where SEC was unreachable is a build whose joins were made on
+    # weaker evidence. Say so — silence here would look identical to a clean run.
+    if unverified:
+        print(f"[universe] ⚠️  {unverified}/{len(pending)} phase-1 joins had NO "
+              "verifiable registrant state (SEC unreachable?) — unambiguous "
+              "names kept, ambiguous ones refused", flush=True)
 
     # ── Phase 2: SIC code verification for bank-named candidates ─────────
     candidates = []
@@ -482,15 +563,21 @@ def _build_universe_live() -> dict[str, dict]:
                 "ticker": ticker, "exchange": exchange,
             })
 
+    unreachable = 0
     for c in candidates:
         try:
             time.sleep(0.12)  # SEC rate limit: 10 req/sec
             cik_str = str(c["cik"]).zfill(10)
-            resp = requests.get(
+            # Shared retry: a bare get's 429 fell through to `continue`, which
+            # silently DROPPED the bank from the universe for that night.
+            resp = _sec_get(
                 f"https://data.sec.gov/submissions/CIK{cik_str}.json",
-                headers=SEC_HEADERS, timeout=8,
+                headers=SEC_HEADERS, timeout=8, max_attempts=breaker.attempts,
             )
-            if resp.status_code != 200:
+            ok = resp is not None and resp.status_code == 200
+            breaker.record(ok)
+            if not ok:
+                unreachable += 1
                 continue
             sub = resp.json()
             sic = sub.get("sic", "")
@@ -526,6 +613,11 @@ def _build_universe_live() -> dict[str, dict]:
             }
         except Exception:
             continue
+
+    if unreachable:
+        print(f"[universe] ⚠️  {unreachable}/{len(candidates)} phase-2 candidates "
+              "unreachable at SEC — those banks are absent from this build",
+              flush=True)
 
     # ── Reconcile with curated mappings ──────────────────────────────────
     # The live name-matching above silently drops banks whose SEC and FDIC
@@ -1344,6 +1436,16 @@ def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
     keys = ["name", f"state({n_state + len(listing)})", f"size({n_size})"]
     if not n_size:
         keys[-1] = "size(DEGRADED — no SEC frames)"
+    # A state key that covers a fraction of the universe is a fraction of an
+    # audit. The count alone reads as fine at a glance, so say it outright.
+    n_auditable = sum(1 for v in snapshot.values()
+                      if v.get("fdic_cert")
+                      and (v.get("share_class") or "common") == "common")
+    covered = n_state + len(listing)
+    if n_auditable and covered < 0.8 * n_auditable:
+        print(f"[namehcr-guard] ⚠️  STATE KEY DEGRADED — only {covered}/"
+              f"{n_auditable} joins had a registrant state to check against; "
+              "treat a clean result as partial", flush=True)
 
     n = sum(len(v) for v in flags.values())
     if not n:
