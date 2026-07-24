@@ -1217,21 +1217,31 @@ def fetch_sec_profiles(ciks: list[int]) -> dict[int, dict]:
     fundamentals cache — a guard that reads the pipeline it is auditing would
     corroborate the pipeline's own mistakes.
 
-    Raises on a frames HTTP failure (caller treats it as 'guard skipped'); a
-    single CIK's submissions failing is tolerated — it costs the state key for
-    that bank, not the run."""
+    NOTHING here raises. Assets feed only the SIZE key, so a throttled frames
+    endpoint must cost that one key — not the whole guard. It did exactly that
+    on the 2026-07-21 nightly: one 429 on the first frame raised, run_namehcr_guard
+    caught it, and the entire audit printed "skipped" — losing the name, state
+    and duplicate-cert tells, which need no SEC data at all. A degraded key is
+    a smaller loss than a blind night."""
     from data.http import get_with_retry
     from data.sec_client import get_filing_info
 
     uniq = sorted({int(c) for c in ciks if c})
     assets: dict[int, float] = {}
     for frame in _ASSET_FRAMES:
-        resp = get_with_retry(
-            f"https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/{frame}.json",
-            headers=SEC_HEADERS, timeout=60,
-        )
+        try:
+            resp = get_with_retry(
+                f"https://data.sec.gov/api/xbrl/frames/us-gaap/Assets/USD/{frame}.json",
+                headers=SEC_HEADERS, timeout=60,
+            )
+        except Exception as e:  # noqa: BLE001 — one frame, not the guard
+            print(f"[namehcr-guard] frame {frame} unavailable "
+                  f"({type(e).__name__}) — size key degraded", flush=True)
+            continue
         if resp is None:
-            raise RuntimeError(f"SEC frames {frame}: rate-limited past retries")
+            print(f"[namehcr-guard] frame {frame} rate-limited past retries "
+                  "— size key degraded", flush=True)
+            continue
         for row in resp.json().get("data", []):
             assets.setdefault(int(row["cik"]), float(row["val"]))
         time.sleep(0.15)
@@ -1326,10 +1336,19 @@ def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
         print(f"[namehcr-guard] skipped: {type(e).__name__}: {e}", flush=True)
         return empty
 
+    # Name which keys actually had data. A night where SEC or FMP was throttled
+    # is a PARTIAL audit, and "OK" alone would read as a clean full one.
+    n_state = sum(1 for p in profiles.values()
+                  if p.get("hq_state") or p.get("state_of_incorp"))
+    n_size = sum(1 for p in profiles.values() if p.get("assets"))
+    keys = ["name", f"state({n_state + len(listing)})", f"size({n_size})"]
+    if not n_size:
+        keys[-1] = "size(DEGRADED — no SEC frames)"
+
     n = sum(len(v) for v in flags.values())
     if not n:
         print(f"[namehcr-guard] OK — {len(certs)} cert joins corroborated on "
-              "name, state and size; no duplicate claims", flush=True)
+              f"{', '.join(keys)}; no duplicate claims", flush=True)
         return flags
     print(f"[namehcr-guard] ⚠️  {n} finding(s) — possible wrong-entity joins; "
           "verify each against FDIC NAMEHCR before trusting the numbers:",

@@ -403,6 +403,48 @@ class TestSizeKey(unittest.TestCase):
                     namehcr_flags(snap, self.RECORDS, profiles)["size"], [])
 
 
+class TestDegradedSources(unittest.TestCase):
+    """A throttled optional source must cost ONE key, never the whole audit.
+
+    Live regression, 2026-07-21 nightly: fetch_sec_profiles raised on a single
+    429 from the SEC frames endpoint, run_namehcr_guard caught it, and the
+    entire audit printed "skipped" — the name, state and duplicate-cert tells
+    were lost for the night even though none of them touch SEC frames. The
+    guard is observe-only, so nothing failed loudly; it was simply blind.
+    """
+
+    RECORDS = {
+        1374: {"NAME": "The Bank of Commerce", "NAMEHCR": "COMMERCE BANCSHARES INC",
+               "STALP": "LA", "STALPHCR": "LA", "ASSET": 88_409},
+    }
+    SNAP = {"CBSH": {"name": "Commerce Bancshares", "cik": 22356,
+                     "fdic_cert": 1374, "share_class": "common"}}
+
+    def test_state_key_survives_missing_assets(self):
+        # Profiles WITHOUT "assets" — exactly what a degraded frames fetch
+        # yields. The state key must still catch the Louisiana twin.
+        profiles = {22356: {"hq_state": "MO", "state_of_incorp": "MO"}}
+        flags = namehcr_flags(self.SNAP, self.RECORDS, profiles)
+        self.assertEqual(len(flags["state"]), 1)
+        self.assertEqual(flags["size"], [])
+
+    def test_dup_cert_survives_no_sec_side_at_all(self):
+        snap = {
+            "A": {"name": "Alpha Corp", "cik": 1, "fdic_cert": 1374,
+                  "share_class": "common"},
+            "B": {"name": "Beta Corp", "cik": 2, "fdic_cert": 1374,
+                  "share_class": "common"},
+        }
+        self.assertEqual(namehcr_flags(snap, self.RECORDS, {})["dup_cert"],
+                         [(1374, ["A", "B"])])
+
+    def test_missing_tell_survives_no_sec_side(self):
+        snap = {"X": {"name": "Whoever", "cik": 9, "fdic_cert": 99999,
+                      "share_class": "common"}}
+        self.assertEqual(namehcr_flags(snap, self.RECORDS, {})["missing"],
+                         [("X", 99999)])
+
+
 class TestChooseCert(unittest.TestCase):
     """The join gate — the builder's side of the same two keys. The guard
     reports wrong joins; this is what stops the build making them."""
