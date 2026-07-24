@@ -613,6 +613,7 @@ class TestCertIsActiveEmptyIndex(unittest.TestCase):
     entity, so that case must fall back to the call-report probe."""
 
     def _cert_is_active(self, rows, still_filing):
+        import data
         import data.fdic_client as fc
         from unittest import mock
 
@@ -623,7 +624,12 @@ class TestCertIsActiveEmptyIndex(unittest.TestCase):
         cache = types.ModuleType("cache")
         cache.get = lambda k: None
         cache.put = lambda k, v: None
+        # cert_is_active does `from data import cache` at call time, which
+        # resolves via the `data` package attribute whenever the real module
+        # has already been imported (by any earlier suite in the batch) —
+        # patching sys.modules alone is bypassed. Patch both.
         with mock.patch.dict(sys.modules, {"data.cache": cache}), \
+             mock.patch.object(data, "cache", cache, create=True), \
              mock.patch.object(fc, "_get_with_retry", lambda *a, **k: _Resp()), \
              mock.patch.object(fc, "_is_still_filing_call_reports",
                                lambda cert, **k: still_filing):
@@ -639,6 +645,27 @@ class TestCertIsActiveEmptyIndex(unittest.TestCase):
         self.assertFalse(self._cert_is_active(row, still_filing=True))
         row = [{"data": {"CERT": 12368, "ACTIVE": 1}}]
         self.assertTrue(self._cert_is_active(row, still_filing=False))
+
+    def test_stub_survives_prior_real_cache_import(self):
+        # Pins the cross-suite failure:
+        #   python -m unittest tests.test_macro_calendar tests.test_namehcr_guard
+        # Once an earlier suite imports the real data.cache, it is bound as
+        # the `cache` attribute of the `data` package, and cert_is_active's
+        # call-time `from data import cache` resolves through that attribute
+        # — bypassing a sys.modules-only patch. The first call then wrote
+        # {"_v": True} for fdic_active:12368 into the REAL cache and the
+        # second call read it back, flipping assertFalse to True (and
+        # leaving the entry behind as a side effect).
+        import data.cache as real_cache  # the earlier suite's import
+        from unittest import mock
+        with mock.patch.object(
+                real_cache, "get",
+                side_effect=AssertionError("stub bypassed: real cache read")), \
+             mock.patch.object(
+                real_cache, "put",
+                side_effect=AssertionError("stub bypassed: real cache write")):
+            self.assertTrue(self._cert_is_active([], still_filing=True))
+            self.assertFalse(self._cert_is_active([], still_filing=False))
 
 
 if __name__ == "__main__":

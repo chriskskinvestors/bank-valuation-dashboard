@@ -47,10 +47,10 @@ throttling never trips it.
 
 **Degradation is now loud.** Every partial state is reported:
 
-- `[universe] ⚠️  N/M phase-1 joins had NO verifiable registrant state`
-- `[universe] ⚠️  N/M phase-2 candidates unreachable at SEC`
+- `[universe] WARNING: N/M phase-1 joins had NO verifiable registrant state`
+- `[universe] WARNING: N/M phase-2 candidates unreachable at SEC`
 - `[universe] <T>: no cert — registrant state UNVERIFIABLE and '<HCR>' has N candidate banks; refusing to guess`
-- `[namehcr-guard] ⚠️  STATE KEY DEGRADED — only N/M joins had a registrant state`
+- `[namehcr-guard] WARNING: STATE KEY DEGRADED — only N/M joins had a registrant state`
 - guard success line names the live keys: `OK — 536 joins corroborated on name, state(534), size(291)`
 
 The principle behind all of it: **an optional key's data source must degrade

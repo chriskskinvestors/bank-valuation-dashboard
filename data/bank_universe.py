@@ -334,7 +334,9 @@ class _SecOutageBreaker:
         self.streak += 1
         if self.streak >= self.TRIP and not self.tripped:
             self.tripped = True
-            print(f"[universe] ⚠️  SEC submissions unreachable {self.TRIP}x in a "
+            # ASCII marker: this print runs on Windows dev consoles (cp1252),
+            # where the ⚠️ emoji raises UnicodeEncodeError and kills the build.
+            print(f"[universe] WARNING: SEC submissions unreachable {self.TRIP}x in a "
                   "row — single-attempt fetches for the rest of this build; "
                   "ambiguous joins will be REFUSED, not guessed", flush=True)
 
@@ -538,7 +540,7 @@ def _build_universe_live() -> dict[str, dict]:
     # A build where SEC was unreachable is a build whose joins were made on
     # weaker evidence. Say so — silence here would look identical to a clean run.
     if unverified:
-        print(f"[universe] ⚠️  {unverified}/{len(pending)} phase-1 joins had NO "
+        print(f"[universe] WARNING: {unverified}/{len(pending)} phase-1 joins had NO "
               "verifiable registrant state (SEC unreachable?) — unambiguous "
               "names kept, ambiguous ones refused", flush=True)
 
@@ -615,7 +617,7 @@ def _build_universe_live() -> dict[str, dict]:
             continue
 
     if unreachable:
-        print(f"[universe] ⚠️  {unreachable}/{len(candidates)} phase-2 candidates "
+        print(f"[universe] WARNING: {unreachable}/{len(candidates)} phase-2 candidates "
               "unreachable at SEC — those banks are absent from this build",
               flush=True)
 
@@ -1443,7 +1445,7 @@ def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
                       and (v.get("share_class") or "common") == "common")
     covered = n_state + len(listing)
     if n_auditable and covered < 0.8 * n_auditable:
-        print(f"[namehcr-guard] ⚠️  STATE KEY DEGRADED — only {covered}/"
+        print(f"[namehcr-guard] WARNING: STATE KEY DEGRADED — only {covered}/"
               f"{n_auditable} joins had a registrant state to check against; "
               "treat a clean result as partial", flush=True)
 
@@ -1452,7 +1454,7 @@ def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
         print(f"[namehcr-guard] OK — {len(certs)} cert joins corroborated on "
               f"{', '.join(keys)}; no duplicate claims", flush=True)
         return flags
-    print(f"[namehcr-guard] ⚠️  {n} finding(s) — possible wrong-entity joins; "
+    print(f"[namehcr-guard] WARNING: {n} finding(s) — possible wrong-entity joins; "
           "verify each against FDIC NAMEHCR before trusting the numbers:",
           flush=True)
     for t, cert, sec_name, hcr, bank in flags["mismatch"]:
