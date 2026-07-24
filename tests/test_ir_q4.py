@@ -27,13 +27,18 @@ _Q4_HTML = (
     "</head><body>JS-rendered, no release links here</body></html>"
 )
 
+def _recent(days_ago):
+    # Dynamic so the fixtures never rot past the 30-day cutoff.
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%m/%d/%Y %H:%M:%S")
+
+
 _Q4_JSON = {
     "GetPressReleaseListResult": [
         {"Headline": "Provident Bank Appoints Adriano Duarte EVP and Chief Financial Officer",
-         "PressReleaseDate": "06/23/2026 08:00:00",
+         "PressReleaseDate": _recent(3),
          "LinkToDetailPage": "/news-events/press-releases/press-release/2026/Provident-Bank-Appoints-Adriano/default.aspx"},
         {"Headline": "Provident Bank Names Annamaria Vitelli EVP, Chief Wealth Officer",
-         "PressReleaseDate": "06/04/2026 08:00:00",
+         "PressReleaseDate": _recent(10),
          "LinkToDetailPage": "/news-events/press-releases/press-release/2026/Vitelli/default.aspx"},
         {"Headline": "Old news that predates the cutoff",
          "PressReleaseDate": "01/01/2020 08:00:00",
