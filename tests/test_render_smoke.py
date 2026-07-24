@@ -147,6 +147,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
         # the Cons./Prior column must render and the time must convert to ET.
         import data.estimates as est
         import data.econ_calendar as ec
+        import data.earnings_call as ecall
         fake = [
             {"date": "2026-07-02", "event": "Nonfarm Payrolls <YoY>",
              "estimate": 180.0, "previous": 175.0, "unit": "K",
@@ -157,13 +158,17 @@ class TestHomeRendersPopulated(unittest.TestCase):
              "datetime": "2026-07-09 12:30:00", "impact": "High",
              "released": False},
         ]
-        saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases)
+        saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
+                 ecall.merged_call_info, ecall.earnings_timing_map)
         try:
             est.fetch_earnings_calendar = lambda w: []
             ec.get_upcoming_releases = lambda days=14: list(fake)
+            ecall.merged_call_info = lambda: {}
+            ecall.earnings_timing_map = lambda: {}
             h = self.home._af_calendar_table([])
         finally:
-            est.fetch_earnings_calendar, ec.get_upcoming_releases = saved
+            (est.fetch_earnings_calendar, ec.get_upcoming_releases,
+             ecall.merged_call_info, ecall.earnings_timing_map) = saved
         self.assertIn("180K / 175K", h)      # consensus / previous column
         self.assertIn("3.2% / 3.1%", h)
         self.assertIn("8:30 AM ET", h)       # FMP UTC 12:30 -> 8:30 AM EDT
@@ -178,6 +183,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
         import datetime as _dt
         import data.estimates as est
         import data.econ_calendar as ec
+        import data.earnings_call as ecall
         base = _dt.date.today()
         macro = [{"date": (base + _dt.timedelta(days=d)).isoformat(),
                   "event": f"Initial Jobless Claims {d}", "estimate": 230.0,
@@ -187,13 +193,17 @@ class TestHomeRendersPopulated(unittest.TestCase):
         earn = [{"ticker": "BANR",
                  "next_earnings_date": (base + _dt.timedelta(days=35)).isoformat(),
                  "eps_estimate": 1.23}]
-        saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases)
+        saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
+                 ecall.merged_call_info, ecall.earnings_timing_map)
         try:
             est.fetch_earnings_calendar = lambda w: list(earn)
             ec.get_upcoming_releases = lambda days=14: list(macro)
+            ecall.merged_call_info = lambda: {}
+            ecall.earnings_timing_map = lambda: {}
             h = self.home._af_calendar_table(["BANR"])
         finally:
-            est.fetch_earnings_calendar, ec.get_upcoming_releases = saved
+            (est.fetch_earnings_calendar, ec.get_upcoming_releases,
+             ecall.merged_call_info, ecall.earnings_timing_map) = saved
         # 20 nearer macro events must NOT bury the (later) bank earnings.
         self.assertIn("BANR", h)
 
@@ -201,26 +211,32 @@ class TestHomeRendersPopulated(unittest.TestCase):
         # Parsed conference-call info (time/webcast/dial-in) surfaces on the
         # earnings row: time + 'webcast' in the column, the row links to the
         # webcast (new tab), and the dial-in is a tooltip.
+        # Stub merged_call_info — the seam home actually reads. Stubbing only
+        # call_info_map (its base layer) let merged_call_info's live overlays
+        # (FMP PR index etc.) fetch the ticker's REAL announcement PR and
+        # overwrite the fixture whenever the bank was genuinely about to
+        # report and an FMP key was in the env (2026-07-24: NWBI's real
+        # '9:00a ET' beat the fixture's '10:00a ET' locally, {} on keyless CI).
         import datetime as _dt
         import data.estimates as est
         import data.econ_calendar as ec
         import data.earnings_call as ecall
         soon = (_dt.date.today() + _dt.timedelta(days=10)).isoformat()
         saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-                 ecall.call_info_map, ecall.earnings_timing_map)
+                 ecall.merged_call_info, ecall.earnings_timing_map)
         try:
             est.fetch_earnings_calendar = lambda w: [
                 {"ticker": "NWBI", "next_earnings_date": soon, "eps_estimate": 1.2}]
             ec.get_upcoming_releases = lambda days=14: []
             ecall.earnings_timing_map = lambda: {}
-            ecall.call_info_map = lambda: {"NWBI": {
+            ecall.merged_call_info = lambda: {"NWBI": {
                 "call_time": "10:00a ET",
                 "webcast_url": "https://investor.example.com/webcast",
                 "dial_in": "1-800-555-1234 (ID 99)"}}
             h = self.home._af_calendar_table(["NWBI"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-             ecall.call_info_map, ecall.earnings_timing_map) = saved
+             ecall.merged_call_info, ecall.earnings_timing_map) = saved
         self.assertIn("10:00a ET", h)                               # call time
         self.assertIn("webcast", h)                                 # indicator
         self.assertIn('href="https://investor.example.com/webcast"', h)  # row → webcast
@@ -236,18 +252,18 @@ class TestHomeRendersPopulated(unittest.TestCase):
         import data.earnings_call as ecall
         soon = (_dt.date.today() + _dt.timedelta(days=12)).isoformat()
         saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-                 ecall.call_info_map, ecall.earnings_timing_map)
+                 ecall.merged_call_info, ecall.earnings_timing_map)
         try:
             est.fetch_earnings_calendar = lambda w: [
                 {"ticker": "JPM", "next_earnings_date": soon, "eps_estimate": 5.4}]
             ec.get_upcoming_releases = lambda days=14: []
-            ecall.call_info_map = lambda: {}                      # no precise call info
+            ecall.merged_call_info = lambda: {}                   # no precise call info
             ecall.earnings_timing_map = lambda: {"JPM": {"when": "Before open",
                                                          "confirmed": True}}
             h = self.home._af_calendar_table(["JPM"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-             ecall.call_info_map, ecall.earnings_timing_map) = saved
+             ecall.merged_call_info, ecall.earnings_timing_map) = saved
         self.assertIn("Before open", h)      # FMP timing fills the column
 
     def test_movers_premarket_window(self):
@@ -280,15 +296,20 @@ class TestHomeRendersPopulated(unittest.TestCase):
         # other pane reads local cache/snapshots, and _af_safe isolates any
         # failure into its own error pane — the call itself must not raise.
         import data.fmp_client as fmp
+        import data.earnings_call as ecall
         self.home._af_feed_items = lambda w: list(FAKE_FEED)
         self.home._fred_points = lambda sid: (None, None, None)
-        saved = (fmp.get_history, fmp.get_quote_batch)
+        saved = (fmp.get_history, fmp.get_quote_batch,
+                 ecall.merged_call_info, ecall.earnings_timing_map)
         try:
             fmp.get_history = lambda *a, **k: None
             fmp.get_quote_batch = lambda *a, **k: {}
+            ecall.merged_call_info = lambda: {}
+            ecall.earnings_timing_map = lambda: {}
             self.home._render_above_fold([], ["BANR"])
         finally:
-            fmp.get_history, fmp.get_quote_batch = saved
+            (fmp.get_history, fmp.get_quote_batch,
+             ecall.merged_call_info, ecall.earnings_timing_map) = saved
 
     def test_pins_the_esc_regression(self):
         # Removing the _esc import must reproduce the production crash on a
