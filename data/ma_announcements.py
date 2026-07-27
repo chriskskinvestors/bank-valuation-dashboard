@@ -464,7 +464,9 @@ def _fetch_doc_text(cik, adsh: str, doc: str) -> tuple[str | None, bool]:
     from data.freshness import is_fresh
 
     key = _doc_404_key(cik, adsh, doc)
-    if is_fresh(cache.get(key), _DOC_404_TTL_S):
+    # is_fresh judges the 90d design TTL — the default 24h read ceiling would
+    # void the negative cache and re-fetch known-dead docs nightly.
+    if is_fresh(cache.get(key, max_age_s=None), _DOC_404_TTL_S):
         return None, True           # known-permanent 404 — no network, no log
     url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
            f"{adsh.replace('-', '')}/{doc}")

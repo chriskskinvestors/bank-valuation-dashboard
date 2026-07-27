@@ -181,7 +181,8 @@ def get_summary(cik) -> dict | None:
     from data import cache
 
     key = f"ma_summary:v1:{cik}"
-    cached = cache.get(key)
+    # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
+    cached = cache.get(key, max_age_s=None)
     if _is_fresh(cached) and isinstance(cached.get("summary"), dict):
         return cached["summary"]
 

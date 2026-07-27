@@ -241,7 +241,8 @@ def cert_is_active(cert: int, ttl_seconds: int = 7 * 86400) -> bool:
         return False
     from data import cache as _cache
     key = f"fdic_active:{cert}"
-    cached = _cache.get(key)
+    # Freshness judged by _ts below (30d design TTL) — no 24h read ceiling.
+    cached = _cache.get(key, max_age_s=None)
     if cached is not None:
         ts = (cached or {}).get("_ts", 0)
         if time.time() - float(ts) < ttl_seconds:
@@ -277,7 +278,8 @@ def get_rssd_for_cert(cert: int, ttl_seconds: int = 30 * 86400) -> int | None:
         return None
     from data import cache as _cache
     key = f"fdic_rssd:{cert}"
-    cached = _cache.get(key)
+    # Freshness judged by _ts below (30d design TTL) — no 24h read ceiling.
+    cached = _cache.get(key, max_age_s=None)
     if cached is not None:
         ts = (cached or {}).get("_ts", 0)
         if time.time() - float(ts) < ttl_seconds:
@@ -314,7 +316,8 @@ def get_holdco_rssd_for_cert(cert: int, ttl_seconds: int = 30 * 86400) -> int | 
         return None
     from data import cache as _cache
     key = f"fdic_rssdhcr:{cert}"
-    cached = _cache.get(key)
+    # Freshness judged by _ts below (30d design TTL) — no 24h read ceiling.
+    cached = _cache.get(key, max_age_s=None)
     if cached is not None:
         ts = (cached or {}).get("_ts", 0)
         if time.time() - float(ts) < ttl_seconds:

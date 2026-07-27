@@ -243,7 +243,8 @@ def get_ma_history(cert: int, cik: int | None = None,
     # — v8 shipped closed deals as pending). The key carries the holdco CIK
     # because the pending/terminated legs only run when one is supplied.
     key = f"ma_history:v9:{cert}:{int(cik) if cik else 0}"
-    cached = cache.get(key)
+    # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
+    cached = cache.get(key, max_age_s=None)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
         return cached["deals"]
 
