@@ -181,6 +181,7 @@ class TestCallSitesReadWithoutCeiling(unittest.TestCase):
         ("data/sec_earnings_8k.py", r'ckey = f"earnings_8k:v1:'),
         ("data/sec_earnings_8k.py", r'ckey = f"reported_tbvps:v2:'),
         ("data/otc_release.py", r'key = f"otc_release:v6:'),
+        ("data/release_metrics.py", r'key = f"release_metrics:v16:'),
         ("data/ma_history.py", r'key = f"ma_history:v9:'),
         ("data/ma_summary.py", r'key = f"ma_summary:v1:'),
         ("data/offerings.py", r'key = f"offerings:v1:'),
