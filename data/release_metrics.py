@@ -764,7 +764,10 @@ def release_metrics(cik) -> dict | None:
     # re-extract.
     key = f"release_metrics:v16:{int(cik)}"
     try:
-        cached = _cache.get(key)
+        # Freshness is judged below (15-min is_fresh + accession-match
+        # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
+        # full re-extraction per SEC filer (2026-07-27 timeout incident).
+        cached = _cache.get(key, max_age_s=None)
     except Exception:
         cached = None
     # 15-min re-check: on report morning a fetch minutes before the 8-K
