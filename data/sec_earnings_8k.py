@@ -44,10 +44,24 @@ from data.sec_filing_scraper import (
 
 
 # ── Locate the latest earnings 8-K + its EX-99.1 exhibit ─────────────────────
+_LATEST_8K_TTL_S = 2 * 3600
+
+
 def _latest_earnings_8k(cik) -> dict | None:
     """Most-recent Item-2.02 (Results of Operations) 8-K: {accession, accession_dash,
     date, cik} or None. Item 2.02 is the earnings item — a press-release-only 8-K
-    (7.01/8.01) is skipped so we land on the quarter's results filing."""
+    (7.01/8.01) is skipped so we land on the quarter's results filing.
+
+    The result (a no-8-K bank included) is cached ~2h: this runs per bank on
+    every metrics build, and the uncached submissions fetch × ~440 SEC filers
+    was the bulk of the build's EDGAR load (the 2026-07-27 refresh-home-snapshot
+    timeout incident). A new release is picked up within the TTL; a transient
+    fetch EXCEPTION propagates uncached, as before."""
+    from data import cache
+    ckey = f"earnings_8k_latest:v1:{int(cik)}"
+    hit = cache.get(ckey, max_age_s=_LATEST_8K_TTL_S)
+    if hit is not None:
+        return hit.get("f8k")
     cik10 = str(int(cik)).zfill(10)
     data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
     rec = data.get("filings", {}).get("recent", {})
@@ -55,6 +69,7 @@ def _latest_earnings_8k(cik) -> dict | None:
     items = rec.get("items", [])
     accs = rec.get("accessionNumber", [])
     dates = rec.get("filingDate", [])
+    f8k = None
     for i, form in enumerate(forms):
         if form != "8-K":
             continue
@@ -64,9 +79,14 @@ def _latest_earnings_8k(cik) -> dict | None:
         acc_dash = accs[i] if i < len(accs) else ""
         if not acc_dash:
             continue
-        return {"accession_dash": acc_dash, "accession": acc_dash.replace("-", ""),
-                "date": dates[i] if i < len(dates) else "", "cik": int(cik)}
-    return None
+        f8k = {"accession_dash": acc_dash, "accession": acc_dash.replace("-", ""),
+               "date": dates[i] if i < len(dates) else "", "cik": int(cik)}
+        break
+    try:
+        cache.put(ckey, {"f8k": f8k})
+    except Exception:
+        pass
+    return f8k
 
 
 def _ex991_document(cik, accession_dash) -> str | None:
@@ -443,7 +463,9 @@ def latest_earnings_8k_figures(cik) -> dict | None:
         return None
 
     ckey = f"earnings_8k:v1:{f8k['accession']}"
-    payload = cache.get(ckey)
+    # Accession-keyed and version-prefixed = immutable; the default 24h read
+    # ceiling would silently re-run the fetch+parse for every bank every day.
+    payload = cache.get(ckey, max_age_s=None)
     if payload is None:
         try:
             doc = _ex991_document(cik, f8k["accession_dash"])
@@ -526,7 +548,8 @@ def reported_tbvps(
     rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
     bk = f"{bvps:.4f}" if bvps is not None else "na"
     ckey = f"reported_tbvps:v2:{f8k['accession']}:{rk}:{bk}"
-    cached = cache.get(ckey)
+    # Accession+anchor-keyed = immutable; no 24h read ceiling (see above).
+    cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         # {"value": float|None}; None values are cached as {"value": None}.
         return cached.get("value")

@@ -280,7 +280,10 @@ def otc_release_metrics(ticker: str) -> dict | None:
     # bump must bump THIS version too (extractions immutable per URL).
     key = f"otc_release:v6:{ticker.upper()}"
     try:
-        cached = _cache.get(key)
+        # Freshness is judged below (15-min is_fresh + URL-match re-stamp);
+        # the default 24h read ceiling would drop `prev` after any >24h gap
+        # and force a full re-crawl + re-extraction per bank.
+        cached = _cache.get(key, max_age_s=None)
     except Exception:
         cached = None
     if cached is not None and is_fresh(cached, 900):
