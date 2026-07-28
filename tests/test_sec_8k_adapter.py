@@ -60,24 +60,44 @@ def _submissions(items_per_filing):
 
 
 class TestBoilerplateSkip(unittest.TestCase):
+    """9.01-only filings used to be DROPPED at ingest. They are now ingested and
+    typed EXHIBIT_ONLY_TYPE, then filtered out of every display query instead
+    (AUDIT-2026-07-27): dropping them left the events store an incomplete 8-K
+    record, and some registrants furnish their earnings release under 9.01 alone
+    (ASB), so the store could never see those earnings filings — which is what
+    data/release_metrics now reads to decide whether a bank has filed something
+    newer. The UI contract is unchanged; see tests/test_frontier_from_events.py
+    for the hidden-from-display and frontier-sees-them halves."""
+
     def _poll(self, items_per_filing):
         payload = _submissions(items_per_filing)
         with patch.object(sec_8k, "get_cik", return_value=320193), \
              patch.object(sec_8k.requests, "get", return_value=_FakeResp(payload)):
             return SEC8KAdapter()._poll_one("TEST", PAST)
 
-    def test_pure_9_01_filing_skipped(self):
+    def test_pure_9_01_filing_ingested_as_exhibit_only(self):
         evs = self._poll(["9.01"])
-        self.assertEqual(evs, [], "an exhibits-only 8-K must not be emitted")
+        self.assertEqual(len(evs), 1, "an exhibits-only 8-K must be ingested")
+        self.assertEqual(evs[0].event_type, sec_8k.EXHIBIT_ONLY_TYPE)
+        self.assertEqual(evs[0].raw["items"], ["9.01"])
 
-    def test_substantive_filings_kept(self):
+    def test_substantive_filings_keep_their_own_types(self):
         evs = self._poll(["9.01", "2.02,9.01", "8.01", "9.01"])
-        # Two pure-9.01 dropped; earnings (2.02) and other-material (8.01) kept.
-        self.assertEqual(len(evs), 2)
-        leads = {e.headline for e in evs}
+        # All four are ingested now; the two pure-9.01 ones carry the hidden
+        # type, and the substantive ones are classified exactly as before.
+        self.assertEqual(len(evs), 4)
+        by_type: dict[str, int] = {}
+        for e in evs:
+            by_type[e.event_type] = by_type.get(e.event_type, 0) + 1
+        self.assertEqual(by_type.get(sec_8k.EXHIBIT_ONLY_TYPE), 2)
+        visible = [e for e in evs if e.event_type != sec_8k.EXHIBIT_ONLY_TYPE]
+        self.assertEqual(len(visible), 2)
+        leads = {e.headline for e in visible}
         self.assertTrue(any("Earnings" in h for h in leads))
         self.assertTrue(any("Other Material Event" in h for h in leads))
-        self.assertFalse(any("Financial Statements / Exhibits" in h for h in leads))
+        # The opaque headline exists only on rows the feed never shows.
+        self.assertFalse(any("Financial Statements / Exhibits" in h
+                             for h in leads))
 
     def test_real_item_with_9_01_not_dropped(self):
         # 9.01 is almost always attached to a real item — that filing stays.
@@ -117,11 +137,15 @@ class TestRecentFeedAdapter(unittest.TestCase):
         self.assertIn("Earnings", evs[0].headline)
         self.assertEqual(evs[0].raw["items"], ["2.02"])
 
-    def test_pure_9_01_skipped(self):
+    def test_pure_9_01_ingested_as_exhibit_only(self):
+        """Same contract as the per-CIK adapter: ingested, typed for hiding, not
+        dropped (see TestBoilerplateSkip's note)."""
         evs = self._poll([
             _entry("0000123456", "Item 9.01: Financial Statements and Exhibits", "0000123456-26-000003"),
         ])
-        self.assertEqual(evs, [], "exhibits-only feed entry must be dropped")
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0].event_type, sec_8k.EXHIBIT_ONLY_TYPE)
+        self.assertEqual(evs[0].external_id, "0000123456-26-000003")
 
     def test_dedup_on_accession(self):
         evs = self._poll([
