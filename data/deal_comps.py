@@ -166,12 +166,25 @@ def _dedupe_key(deal: dict, buyer_cert) -> tuple:
             deal.get("termination_date"), buyer_cert)
 
 
-def build_comps_snapshot(banks: list[dict]) -> dict | None:
+def build_comps_snapshot(banks: list[dict],
+                         min_deals: int | None = None) -> dict | None:
     """
     Compile the universe deal-comps snapshot from each bank's (cached)
     ma_history. ``banks``: [{ticker, cert, cik}]. Returns the snapshot dict
     (also cached under SNAPSHOT_KEY) or None when lookups failed badly
     enough that caching would freeze wrong data.
+
+    ``min_deals``: refuse to cache a build yielding fewer than this many deals.
+    A full-universe walk that comes back nearly empty means most banks failed
+    in a way no single lookup reported (get_ma_history RETURNING empty keeps
+    lookups_ok True), and this plausibility gate MUST run before the cache.put
+    below: the nightly job's identical post-hoc check ran after the hollow
+    snapshot had already replaced the last good one, and get_comps_snapshot has
+    no coverage check of its own, so the Comparable Deal Analysis tab served
+    the near-empty board as genuine while the job reported failure
+    (AUDIT-2026-07-27 P2). Left None for small/targeted builds (self-test, unit
+    tests) where a low deal count is expected, so only the universe caller
+    imposes the universe-scale floor.
     """
     from data import cache
     from data.ma_history import get_ma_history
@@ -236,6 +249,11 @@ def build_comps_snapshot(banks: list[dict]) -> dict | None:
                              or r.get("completion_date")
                              or r.get("termination_date") or ""),
               reverse=True)
+    if min_deals is not None and len(rows) < min_deals:
+        print(f"[deal_comps] implausibly thin build ({len(rows)} deals < "
+              f"{min_deals}) — snapshot NOT cached, previous still serves")
+        return None
+
     snapshot = {
         "built_at": datetime.now().isoformat(),
         "banks_covered": covered,

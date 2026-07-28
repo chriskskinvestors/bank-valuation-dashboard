@@ -587,9 +587,15 @@ def _render_comps():
         st.markdown("**Pricing by target size**")
         body = ""
         for label, lo, hi in _SIZE_BUCKETS:
+            # Unsourceable target assets must be EXCLUDED, not defaulted to 0 —
+            # `or 0` put every unknown-size deal in the smallest bucket, so a
+            # large MOE with unresolved assets polluted the "<$500M" medians and
+            # count. The adjacent scatter already excludes them; these two panels
+            # disagreed on the same data (AUDIT-2026-07-27 P3).
             rows_b = [d for d in priced_shown
-                      if lo <= (d.get("comp_assets") or
-                                d.get("target_assets") or 0) < hi]
+                      if (d.get("comp_assets") or d.get("target_assets"))
+                      and lo <= (d.get("comp_assets")
+                                 or d.get("target_assets")) < hi]
             med_p = _median([d["p_tbv"] for d in rows_b])
             med_pa = _median([d.get("price_assets") for d in rows_b])
             med_cdp = _median([d.get("core_dep_premium") for d in rows_b])

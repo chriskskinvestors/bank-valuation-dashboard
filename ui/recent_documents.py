@@ -360,18 +360,39 @@ def _pdf_from_y9c(ticker: str, period_mmddyyyy: str) -> bytes | None:
         return None
 
 
+class _CallReportUnavailable(Exception):
+    """Miss sentinel so st.cache_data never caches a None — same reasoning as
+    _Y9cUnavailable above. fetch_call_report_pdf returns None for a TRANSIENT
+    CDR/network failure as well as for genuinely-not-configured / not-filed, so
+    a cached None turned one FFIEC hiccup into a full day of "the FFIEC
+    connection isn't configured … or the bank hasn't filed this period" on every
+    Download-PDF click (AUDIT-2026-07-27 P3; house rule: failures are never
+    cached). Retrying per click is cheap."""
+
+
 @st.cache_data(ttl=86400, max_entries=8, show_spinner=False)
-def _pdf_from_call_report(ticker: str, period_mmddyyyy: str) -> bytes | None:
+def _pdf_from_call_report_cached(ticker: str, period_mmddyyyy: str) -> bytes:
     """FFIEC call-report facsimile PDF (filed facsimiles are immutable —
-    long TTL). None when FFIEC creds are absent or the period isn't filed."""
+    long TTL for hits; misses raise _CallReportUnavailable and are never
+    cached)."""
     from data.fdic_client import get_rssd_for_cert
     from data.ffiec_client import fetch_call_report_pdf
     cert = get_fdic_cert(ticker)
     rssd = get_rssd_for_cert(cert) if cert else None
-    if not rssd:
+    pdf = None
+    if rssd:
+        p = period_mmddyyyy
+        pdf = fetch_call_report_pdf(int(rssd), f"{p[:2]}/{p[2:4]}/{p[4:]}")
+    if pdf is None:
+        raise _CallReportUnavailable()
+    return pdf
+
+
+def _pdf_from_call_report(ticker: str, period_mmddyyyy: str) -> bytes | None:
+    try:
+        return _pdf_from_call_report_cached(ticker, period_mmddyyyy)
+    except _CallReportUnavailable:
         return None
-    p = period_mmddyyyy
-    return fetch_call_report_pdf(int(rssd), f"{p[:2]}/{p[2:4]}/{p[4:]}")
 
 
 @st.cache_data(ttl=3600, max_entries=4, show_spinner=False)

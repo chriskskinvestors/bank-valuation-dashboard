@@ -107,27 +107,45 @@ def build_capital_timeline(hist_records: list[dict], shares_outstanding: float |
 
     df = df.groupby("year", group_keys=False).apply(_compute_quarterly_ni).reset_index(drop=True)
 
+    # A positional .diff() assumes consecutive ROWS are consecutive QUARTERS.
+    # That breaks on any gap — a quarter skipped by the missing-EQTOT guard
+    # above, or absent from the FDIC history — and the diff then spans TWO
+    # quarters while every consumer reads it as one: capital_returned_k pairs a
+    # single-quarter NI against a two-quarter equity change, understating
+    # retention_ratio enough to fire a false "high_payout" alert, and
+    # cet1_qoq_pp / loan growth are silently doubled (AUDIT-2026-07-27 P3).
+    # n/a across a gap is correct; a two-quarter change labeled QoQ is not.
+    # Derived from `date` (not the year/quarter columns): pandas 2.x can drop the
+    # grouping column through the groupby-apply above (see the note at :92).
+    _gap = (df["date"].dt.year * 4 + df["date"].dt.quarter).diff() != 1
+
+    def _qoq(series):
+        """Quarter-over-quarter change, n/a wherever the previous row is not the
+        immediately-preceding calendar quarter (also n/a on the first row)."""
+        return series.diff().mask(_gap)
+
     # Equity QoQ change
-    df["equity_qoq_k"] = df["equity_k"].diff()
-    df["tbv_qoq_k"] = df["tbv_k"].diff()
+    df["equity_qoq_k"] = _qoq(df["equity_k"])
+    df["tbv_qoq_k"] = _qoq(df["tbv_k"])
 
     # Implied dividends + buybacks = NI - ΔEquity (assumes no AOCI/other capital actions)
     # This is a rough approximation; captures "capital returned to shareholders"
+    # Across a gap equity_qoq_k is NaN, so both of these go n/a with it.
     df["capital_returned_k"] = df["net_income_k_qtr"] - df["equity_qoq_k"]
     df["retention_ratio"] = 1 - (df["capital_returned_k"] / df["net_income_k_qtr"])
 
     # Loan growth
-    df["loan_growth_qoq_k"] = df["total_loans_k"].diff()
-    df["loan_growth_qoq_pct"] = df["total_loans_k"].pct_change() * 100
+    df["loan_growth_qoq_k"] = _qoq(df["total_loans_k"])
+    df["loan_growth_qoq_pct"] = (df["total_loans_k"].pct_change() * 100).mask(_gap)
 
     # CET1 QoQ change (pp)
-    df["cet1_qoq_pp"] = df["cet1_pct"].diff()
+    df["cet1_qoq_pp"] = _qoq(df["cet1_pct"])
 
     # TBV per share (only if shares provided)
     if shares_outstanding and shares_outstanding > 0:
         # TBV stored in thousands → /1000 → millions; divide by shares in millions
         df["tbv_per_share"] = df["tbv_k"] * 1000 / shares_outstanding
-        df["tbv_per_share_qoq"] = df["tbv_per_share"].diff()
+        df["tbv_per_share_qoq"] = _qoq(df["tbv_per_share"])
 
     return df
 

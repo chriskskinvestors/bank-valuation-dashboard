@@ -160,11 +160,18 @@ class TestOtcPrevSurvivesCeiling(_IsolatedCache):
     """Pin 3: a >24h-old OTC extraction still serves via the same-URL re-stamp."""
 
     def test_stale_prev_restamped_not_recrawled(self):
+        # Read the CURRENT extraction-spec version out of the module so an
+        # intentional bump (v6->v7, …) doesn't silently stop exercising the
+        # cache path this pin exists to protect.
+        ver = re.search(r'key = f"otc_release:(v\d+):',
+                        (REPO / "data/otc_release.py").read_text(encoding="utf-8"))
+        self.assertIsNotNone(ver, "otc_release cache key shape changed")
+        key = f"otc_release:{ver.group(1)}:TBNK"
         stamped_at = (datetime.now() - timedelta(days=3)).isoformat()
         prev = {"url": "https://wire.example/q2", "eps": 0.52,
                 "source": "company_release"}
-        cache.put("otc_release:v6:TBNK", {"cached_at": stamped_at, "value": prev})
-        self._age("otc_release:v6:TBNK", 72 * 3600)
+        cache.put(key, {"cached_at": stamped_at, "value": prev})
+        self._age(key, 72 * 3600)
         with patch.object(otcr, "_latest_earnings_pr",
                           return_value={"url": "https://wire.example/q2",
                                         "title": "T", "published_at": "2026-07-20"}), \
@@ -180,12 +187,15 @@ class TestCallSitesReadWithoutCeiling(unittest.TestCase):
     SITES = [
         ("data/sec_earnings_8k.py", r'ckey = f"earnings_8k:v1:'),
         ("data/sec_earnings_8k.py", r'ckey = f"reported_tbvps:v2:'),
-        ("data/otc_release.py", r'key = f"otc_release:v6:'),
-        ("data/release_metrics.py", r'key = f"release_metrics:v16:'),
-        ("data/ma_history.py", r'key = f"ma_history:v9:'),
-        ("data/ma_summary.py", r'key = f"ma_summary:v1:'),
-        ("data/offerings.py", r'key = f"offerings:v1:'),
-        ("data/stake_filings.py", r'key = f"stake_filings:v1:'),
+        # Version-agnostic on purpose: these keys carry an extraction-spec
+        # version that is SUPPOSED to be bumped (otc_release v6->v7 etc.), and
+        # a version bump must not look like a regression in this pin.
+        ("data/otc_release.py", r'key = f"otc_release:v\d+:'),
+        ("data/release_metrics.py", r'key = f"release_metrics:v\d+:'),
+        ("data/ma_history.py", r'key = f"ma_history:v\d+:'),
+        ("data/ma_summary.py", r'key = f"ma_summary:v\d+:'),
+        ("data/offerings.py", r'key = f"offerings:v\d+:'),
+        ("data/stake_filings.py", r'key = f"stake_filings:v\d+:'),
         ("data/fdic_client.py", r'key = f"fdic_active:'),
         ("data/fdic_client.py", r'key = f"fdic_rssd:'),
         ("data/fdic_client.py", r'key = f"fdic_rssdhcr:'),

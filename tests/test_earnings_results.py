@@ -651,3 +651,72 @@ class TestReleaseActualsFill(unittest.TestCase):
         self.assertIsNone(row["rel"])
         self.assertIsNone(row["eps_act"])
         self.assertTrue(row["pending"])
+
+
+class TestResultsBoardOutageVsQuietWindow(unittest.TestCase):
+    """AUDIT-2026-07-27 P2: results_board() returned [] on total source failure
+    and the UI rendered that as "No universe bank has reported in the trailing
+    30 days" — a confident wrong statement during an FMP-calendar outage, the
+    AUDIT-2026-07-02 #34 class reintroduced on the Results surface.
+
+    Pins: a failed build serves the last good board at any age; with no
+    last-good, availability reports False so the UI can say "unavailable"; and
+    a genuinely-empty stored board still reads as available (real quiet window).
+    """
+
+    def test_failed_build_serves_last_good_board(self):
+        from unittest.mock import patch
+        import data.cache as cache
+        import data.earnings_results as er
+        last_good = [{"ticker": "AAA", "eps_act": 1.0}]
+        with patch.object(cache, "served_snapshot",
+                          side_effect=RuntimeError("FMP calendar unavailable")), \
+                patch.object(cache, "get",
+                             return_value={"cached_at": "2026-07-26T09:00:00",
+                                           "value": last_good}):
+            self.assertEqual(er.results_board(), last_good)
+
+    def test_failed_build_without_last_good_reports_unavailable(self):
+        from unittest.mock import patch
+        import data.cache as cache
+        import data.earnings_results as er
+        with patch.object(cache, "served_snapshot",
+                          side_effect=RuntimeError("FMP calendar unavailable")), \
+                patch.object(cache, "get", return_value=None):
+            self.assertEqual(er.results_board(), [])
+            self.assertFalse(er.results_board_available())
+
+    def test_stored_empty_board_is_a_genuine_quiet_window(self):
+        from unittest.mock import patch
+        import data.cache as cache
+        import data.earnings_results as er
+        with patch.object(cache, "get",
+                          return_value={"cached_at": "2026-07-27T09:00:00",
+                                        "value": []}):
+            self.assertTrue(er.results_board_available())
+
+    def test_availability_read_carries_no_age_ceiling(self):
+        """A >24h-old snapshot still proves the board has been built."""
+        from unittest.mock import patch
+        import data.cache as cache
+        import data.earnings_results as er
+        seen = {}
+
+        def fake_get(key, max_age_s="unset"):
+            seen["max_age_s"] = max_age_s
+            return {"cached_at": "old", "value": []}
+
+        with patch.object(cache, "get", fake_get):
+            er.results_board_available()
+        self.assertIsNone(seen["max_age_s"],
+                          "availability probe must read with max_age_s=None")
+
+    def test_ui_branches_on_availability(self):
+        """Structural: the empty-board branch must consult availability rather
+        than assert a quiet window outright."""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent
+               / "ui/earnings.py").read_text(encoding="utf-8")
+        i = src.index("No universe bank has reported")
+        window = src[max(0, i - 600):i]
+        self.assertIn("results_board_available", window)

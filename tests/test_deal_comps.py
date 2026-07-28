@@ -157,6 +157,50 @@ class TestSnapshot(unittest.TestCase):
         self.assertIsNone(snap)
         mock_cput.assert_not_called()
 
+    # AUDIT-2026-07-27 P2: the <100-deal plausibility floor used to be checked
+    # by the job AFTER build_comps_snapshot had already cache.put the hollow
+    # snapshot over the last good one (get_comps_snapshot has no coverage check,
+    # so the UI served it as genuine while the job exited 1). The floor now gates
+    # the persist. get_ma_history returning EMPTY — not raising — is the mode
+    # that reaches it, since that keeps lookups_ok True.
+    @patch("data.cache.put")
+    @patch("data.deal_comps.compute_multiples",
+           return_value=({"tbv_usd": None, "tbv_basis": None, "tbv_asof": None,
+                          "p_tbv": None, "price_assets": None,
+                          "core_dep_premium": None, "comp_assets": None,
+                          "flagged": None}, True))
+    @patch("data.ma_history.get_ma_history")
+    def test_thin_universe_build_never_cached(self, mock_hist, _cm, mock_cput):
+        from data.deal_comps import build_comps_snapshot
+        mock_hist.return_value = []          # systemic empty, no exception
+        snap = build_comps_snapshot(
+            [{"ticker": "A", "cert": 1, "cik": 10}], min_deals=100)
+        self.assertIsNone(snap, "thin build must refuse to cache")
+        mock_cput.assert_not_called()
+
+    @patch("data.cache.put")
+    @patch("data.deal_comps.compute_multiples",
+           return_value=({"tbv_usd": None, "tbv_basis": None, "tbv_asof": None,
+                          "p_tbv": None, "price_assets": None,
+                          "core_dep_premium": None, "comp_assets": None,
+                          "flagged": None}, True))
+    @patch("data.ma_history.get_ma_history")
+    def test_no_floor_by_default_for_small_builds(self, mock_hist, _cm, mock_cput):
+        """Targeted/self-test builds (a handful of banks) must still cache."""
+        from data.deal_comps import build_comps_snapshot
+        mock_hist.return_value = [_deal()]
+        snap = build_comps_snapshot([{"ticker": "A", "cert": 1, "cik": 10}])
+        self.assertEqual(snap["deals_total"], 1)
+        mock_cput.assert_called_once()
+
+    def test_job_passes_the_universe_floor(self):
+        """The floor must be handed to the builder, not re-checked after."""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent
+               / "jobs/refresh_deal_comps.py").read_text(encoding="utf-8")
+        self.assertIn("min_deals=_MIN_UNIVERSE_DEALS", src)
+        self.assertNotIn('snap["deals_total"] < 100', src)
+
     @patch("data.cache.get")
     def test_get_snapshot_reads_only(self, mock_cget):
         from data.deal_comps import get_comps_snapshot
