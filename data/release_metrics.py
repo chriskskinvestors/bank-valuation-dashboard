@@ -714,14 +714,79 @@ def _year_ago_qend(qend: str | None) -> str | None:
 
 # ── Fetch/cache layer ──────────────────────────────────────────────────────
 
+# How recently poll-events must have ingested SOMETHING for the store to be
+# trusted as the frontier authority. Generous vs the 1-minute poll cadence, so a
+# brief blip doesn't stampede every bank back onto EDGAR, but far short of a
+# quarter — a poller wedged longer than this degrades to the live index rather
+# than silently freezing every bank's release metrics.
+_POLLER_LIVENESS_S = 3 * 3600
+
+_CIK_TICKER: dict[int, str] = {}
+
+
+def _ticker_for_cik(cik) -> str | None:
+    """CIK → the ticker its 8-Ks are attributed to, resolved the SAME canonical
+    way the adapter used when it wrote those rows (a registrant with preferred /
+    ETN siblings must land on the same primary common or the lookup misses).
+    Memoized, but an EMPTY map is never pinned — that was audit P1 #3's bug."""
+    global _CIK_TICKER
+    try:
+        key = int(cik)
+    except (TypeError, ValueError):
+        return None
+    if not _CIK_TICKER:
+        try:
+            from data.bank_universe import get_universe_tickers
+            from data.events.sec_8k import _canonical_cik_map
+            built = _canonical_cik_map(sorted(get_universe_tickers()))
+        except Exception:
+            return None
+        if not built:
+            return None                      # retry on the next call
+        _CIK_TICKER = built
+    return _CIK_TICKER.get(key)
+
+
+def _accession_from_store(cik) -> str | None:
+    """The frontier per the events store, or None when the store cannot PROVE an
+    answer (poller not demonstrably live, no ticker mapping, no 8-K on record) —
+    in which case the caller falls back to the live submissions index.
+
+    poll-events ingests every 8-K within a minute, INCLUDING the 9.01-only
+    filings that used to be dropped, so this replaces a multi-MB submissions
+    fetch per bank with one indexed row read. That fetch — ~538 of them,
+    serialized, on every metrics build past the 15-min re-check gate — was the
+    dominant cost of the 2026-07-27 refresh-home-snapshot timeout incident."""
+    try:
+        from data.events.store import events_ingested_within, latest_8k_accession
+        if not events_ingested_within(_POLLER_LIVENESS_S):
+            return None
+        tk = _ticker_for_cik(cik)
+        if not tk:
+            return None
+        return latest_8k_accession(tk)
+    except Exception:
+        return None
+
+
 def _current_accession(cik) -> str | None:
     """The FRONTIER accession — the newest 8-K that could BE the earnings
     release (Item 2.02, or exhibit-bearing without 2.02: ASB furnishes its
-    news release under Item 9.01 only) per the (cheap) submissions index;
-    None when unavailable. One request. Compared against the stored record's
-    `frontier`, not its release accession, so a furnished non-release 8-K
-    (investor deck) costs at most ONE re-selection pass — never a refetch
-    loop."""
+    news release under Item 9.01 only); None when unavailable. Compared against
+    the stored record's `frontier`, not its release accession, so a furnished
+    non-release 8-K (investor deck) costs at most ONE re-selection pass — never
+    a refetch loop.
+
+    Answered from the events store when it can prove an answer (see
+    _accession_from_store), else the live submissions index — one request. The
+    store path returns the newest 8-K of ANY item set rather than the newest
+    earnings CANDIDATE; that is deliberately conservative, since the only effect
+    of an over-eager frontier is the single re-selection pass the caller already
+    handles at the "frontier moved, release unchanged" branch."""
+    acc = _accession_from_store(cik)
+    if acc is not None:
+        return acc
+
     from data.ir_provider import _earnings_8k_candidates
     from data.sec_filing_scraper import _get
     try:

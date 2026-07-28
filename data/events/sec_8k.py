@@ -62,10 +62,25 @@ _ITEM_PRIORITY = ["4.02", "5.01", "2.06", "2.01", "1.01", "5.02", "2.02", "3.01"
                   "7.01", "8.01", "9.01"]
 
 
+# An 8-K whose ONLY item is 9.01 (Financial Statements / Exhibits) carries no
+# substantive event to display — it would surface as the opaque "8-K · Financial
+# Statements / Exhibits". It used to be DROPPED at ingest for that reason, which
+# left the events store an incomplete 8-K record: some registrants furnish their
+# earnings news release under 9.01 alone (ASB), so the store could never see
+# their earnings filing. That made the store unusable as the freshness authority
+# for data/release_metrics — the bank would keep serving LAST quarter's release
+# (the "C served its April release until 9:39 on Jul-14" class, AUDIT-2026-07-27).
+# They are now ingested under this type and filtered out of every DISPLAY query
+# instead (data/events/store.py), so the record is complete and the feed unchanged.
+EXHIBIT_ONLY_TYPE = "exhibit_only"
+
+
 def _classify_event_type(items: list[str], description: str) -> str:
     """Map 8-K item list to a coarse event_type."""
     if "2.02" in items:
         return "earnings"
+    if items and set(items) == {"9.01"}:
+        return EXHIBIT_ONLY_TYPE
     if "1.01" in items or "2.01" in items:
         return "m_and_a"
     if "5.02" in items:
@@ -218,13 +233,10 @@ class SEC8KAdapter(SourceAdapter):
             item_str = items_list[i] if i < len(items_list) else ""
             items = [it.strip() for it in re.split(r"[,;]", item_str) if it.strip()]
 
-            # Skip pure-boilerplate filings: an 8-K whose ONLY item is 9.01
-            # (Financial Statements / Exhibits) is just an exhibit attachment
-            # with no substantive event — it would surface as the opaque
-            # "8-K · Financial Statements / Exhibits". Material filings always
-            # carry a real item alongside 9.01, so nothing substantive is lost.
-            if set(items) == {"9.01"}:
-                continue
+            # 9.01-only filings are INGESTED (classified EXHIBIT_ONLY_TYPE and
+            # hidden from display queries) rather than dropped — see the note on
+            # EXHIBIT_ONLY_TYPE: dropping them left the store blind to the
+            # earnings 8-Ks of registrants that furnish under 9.01 alone.
 
             # Build the URL to the filing index page on EDGAR
             acc_nodash = accession.replace("-", "")
@@ -349,9 +361,9 @@ class SEC8KRecentAdapter(SourceAdapter):
                 continue
 
             item_codes = _FEED_ITEM_RE.findall(it.summary or "")
-            # Drop pure-boilerplate (exhibits-only) filings, same as SEC8KAdapter.
-            if set(item_codes) == {"9.01"}:
-                continue
+            # 9.01-only filings are ingested as EXHIBIT_ONLY_TYPE and hidden at
+            # display time, same as SEC8KAdapter — never dropped (see the note
+            # on EXHIBIT_ONLY_TYPE).
 
             pub = it.published or datetime.now(timezone.utc)
             if pub < cutoff:
