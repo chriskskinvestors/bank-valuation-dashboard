@@ -143,8 +143,16 @@ METRICS = [
     {
         # Provenance of tbvps ("reported_8k" | "reconstructed" |
         # "company_release") — carried for UI labeling, not a display column.
+        # format "text", NOT "flag": the flag formatter renders ANY non-empty
+        # value as "⚠️", so when a user added this column from the Screen &
+        # Compare picker every bank with a TBV showed a warning glyph and the
+        # provenance string never displayed (AUDIT-2026-07-27 P3). ⚠️ means the
+        # one-time-earnings distortion flag on this platform. "text" has no
+        # branch in format_value ON PURPOSE — a non-numeric value falls through
+        # its float() coercion to str(value), which is the wanted rendering, and
+        # it stays out of the numeric screen-filter format lists.
         "key": "tbvps_source", "label": "TBV Src", "source": "computed",
-        "format": "flag",
+        "format": "text",
         "category": "Valuation",
     },
     {

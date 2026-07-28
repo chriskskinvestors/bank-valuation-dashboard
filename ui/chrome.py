@@ -94,17 +94,23 @@ def table_export(df, filename: str, key: str) -> None:
                        mime="text/csv", key=key)
 
 
-def ticker_company_url(ticker) -> str | None:
+def ticker_company_url(ticker) -> str:
     """Root-relative Company-page URL for st.dataframe LinkColumn ticker cells
     (universal linking rule). Root-relative on purpose: the canvas grid renders
     in a component context, so a bare '?bank=' would resolve against the wrong
-    base. None (blank cell) for missing/NaN/em-dash tickers. HTML surfaces use
-    plain '?bank=' anchors instead — this helper is the dataframe path."""
+    base. HTML surfaces use plain '?bank=' anchors instead — this helper is the
+    dataframe path.
+
+    Missing/NaN/em-dash tickers yield "" — NOT None. A LinkColumn whose cells
+    are all None renders the literal string "None" in every row, which happens
+    whenever no listed participant is public (an all-private county's deposit
+    table, a private-only peer set). Every caller pipes this straight into a
+    LinkColumn column, so "" is the blank cell for all of them."""
     if ticker is None:
-        return None
+        return ""
     t = str(ticker).strip()
     if not t or t == "—" or t.lower() == "nan":
-        return None
+        return ""
     return f"/?s=Company&bank={t}"
 
 

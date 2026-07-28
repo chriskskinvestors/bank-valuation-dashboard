@@ -28,9 +28,11 @@ def _linked_tickers(certs) -> list:
 
     def _one(c):
         try:
+            # ticker_company_url returns "" (never None) for private banks —
+            # an all-None LinkColumn renders the literal string "None".
             return ticker_company_url(cmap.get(int(c)))
         except (TypeError, ValueError):
-            return None
+            return ""
     return [_one(c) for c in certs]
 
 

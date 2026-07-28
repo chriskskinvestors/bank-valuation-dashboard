@@ -658,6 +658,59 @@ def _period_of_header(cell) -> str | None:
     return canon if _CANON_PERIOD.fullmatch(canon) else None
 
 
+def _header_date_parts(cell) -> tuple[int, int] | None:
+    """(year, month) when a header cell is a DATE form (Excel Timestamp, or
+    '6/30/2026' / '2026-06-30' text), else None. Kept separate from
+    _period_of_header because a date header is AMBIGUOUS on its own — see
+    _resolve_header_periods."""
+    if cell is None or (isinstance(cell, float) and math.isnan(cell)):
+        return None
+    if hasattr(cell, "year") and hasattr(cell, "month"):
+        return int(cell.year), int(cell.month)
+    s = str(cell).strip()
+    m = re.fullmatch(r"(\d{1,2})/\d{1,2}/(\d{2,4})", s)
+    if m:
+        mo, yr = int(m.group(1)), int(m.group(2))
+    else:
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})-\d{1,2}", s)
+        if not m:
+            return None
+        yr, mo = int(m.group(1)), int(m.group(2))
+    yr += 2000 if yr < 100 else 0
+    return (yr, mo) if 1 <= mo <= 12 else None
+
+
+def _resolve_header_periods(header_cells: dict) -> dict:
+    """{column: canonical period} for ONE header row, with date-form headers
+    disambiguated as a set rather than cell-by-cell.
+
+    A header of 12/31/2026 heads a Q4 column in a quarterly model and an ANNUAL
+    column in a fiscal-year model; the cell alone cannot say which. Mapping
+    every date to the quarter it falls in ingested FY EPS (~$10) as that year's
+    Q4 quarterly estimate, re-opening the ×4 class AUDIT-2026-07-02 #6/#7 closed
+    — the period-type-aware valuation pre-fill and Model-vs-Consensus row then
+    compare an annual street figure against a quarterly model figure
+    (AUDIT-2026-07-27 P3).
+
+    The header ROW resolves it: quarterly columns step ~3 months, while annual
+    columns land on the SAME month in consecutive years. When every date header
+    shares one month and the years are all distinct, they are annual periods.
+    Text headers ('FY26', '2026E', '2Q26E') are already unambiguous and are left
+    to normalize_period.
+    """
+    periods = {j: p for j, c in header_cells.items()
+               if (p := _period_of_header(c))}
+    dated = {j: d for j, c in header_cells.items()
+             if j in periods and (d := _header_date_parts(c))}
+    if len(dated) >= 2:
+        months = {mo for _yr, mo in dated.values()}
+        years = [yr for yr, _mo in dated.values()]
+        if len(months) == 1 and len(set(years)) == len(years):
+            for j, (yr, _mo) in dated.items():
+                periods[j] = str(yr)
+    return periods
+
+
 def _cell_float(x) -> float | None:
     """A grid cell as a finite float — strips $/%/commas/parens (negatives)
     from text cells; None for anything non-numeric (never fabricated)."""
@@ -689,8 +742,10 @@ def parse_consensus_excel_periods(file_bytes: bytes, filename: str = "") -> dict
             df = pd.read_excel(pd.io.common.BytesIO(file_bytes), header=None)
         header_i, col_periods = None, {}
         for i in range(min(8, len(df))):
-            found = {j: p for j in range(1, df.shape[1])
-                     if (p := _period_of_header(df.iat[i, j]))}
+            # Resolve the row as a SET so year-end-dated ANNUAL columns aren't
+            # each read as that year's Q4 (see _resolve_header_periods).
+            found = _resolve_header_periods(
+                {j: df.iat[i, j] for j in range(1, df.shape[1])})
             if len(found) >= 2:
                 header_i, col_periods = i, found
                 break

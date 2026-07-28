@@ -49,5 +49,10 @@ jobs:
             tests.test_sec_filing_scraper \
             tests.test_nav_renders \
             tests.test_deploy_secret_contract \
-            tests.test_cache_read_ceilings
+            tests.test_cache_read_ceilings \
+            tests.test_audit_20260727_p3 \
+            tests.test_capital_dynamics_equity \
+            tests.test_consensus_excel_periods \
+            tests.test_deal_comps \
+            tests.test_earnings_results
           PYTHONIOENCODING=utf-8 python tests/test_metric_formulas.py

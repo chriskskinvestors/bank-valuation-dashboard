@@ -585,11 +585,51 @@ def _fill_sec_history(rows) -> None:
                     built[(tk, lb)])
 
 
+def _board_key(days_back: int) -> str:
+    # v3: rows gained `pending` (PR-signaled reports without FMP actuals).
+    # v4: common-shares-only universe + negative-revenue junk guard.
+    # v5: rows gained `fdic_hist` (quarterly-ratio exhibit history).
+    # v6: rows gained `awaiting` (scheduled reporters visible pre-release).
+    # v7: rows gained `sec_hist` (per-share history for grid-coverage holes).
+    # v8: events-only discovery (reporters FMP's calendar omits entirely).
+    # v9: first-party source gate (aggregator previews minted false rows).
+    # v10: revenue scale-junk guard (HWC $26,850 vs $399M est).
+    # v11: release-contradicted EPS guard + mis-itemized 8-K candidates
+    #      (NPB filed its Q2 release under Items 2.01/7.01; FMP's $0.09
+    #      stood against the release's $0.60).
+    # v12: estimate-less revenue junk guard vs bank-sub assets (FDBC
+    #      $1,450; PKBK $3.9M vs stated $39.3M — no estimate, so the
+    #      0.2-5x guard couldn't fire).
+    return f"earnings_results_board_v12:{days_back}"
+
+
+def results_board_available(days_back: int = 30) -> bool:
+    """Whether a Results-board snapshot has ever been built.
+
+    results_board() returns [] BOTH when no bank has reported in the window
+    AND when the build failed with no last-good snapshot to fall back on, so an
+    empty board alone cannot tell a genuine quiet window from a source outage.
+    Callers that must show "unavailable" instead of a confident "nobody has
+    reported" check this (AUDIT-2026-07-02 #34 class; same contract as
+    data.estimates.earnings_calendar_available). Presence at ANY age answers
+    the question, so this read carries no age ceiling. Never builds."""
+    from data import cache as _cache
+    try:
+        snap = _cache.get(_board_key(days_back), max_age_s=None)
+    except Exception:
+        return False
+    return bool(snap and isinstance(snap.get("value"), list))
+
+
 def results_board(days_back: int = 30) -> list[dict]:
     """The Results board rows, cross-instance cached 15 min (earnings-week
     freshness without per-render fetch storms). Empty list when nothing has
-    reported in the window or on total source failure — a genuine FMP-calendar
-    failure raises out of the build so it is never cached (house pattern)."""
+    reported in the window; on total source failure the LAST GOOD board is
+    served at whatever age (an empty board reads as "nobody reported", which
+    is a confident wrong statement during an outage). A genuine FMP-calendar
+    failure raises out of the build so it is never cached (house pattern).
+    When there is no last-good either, callers must use
+    results_board_available() to say "unavailable" rather than "none yet"."""
     from data import cache as _cache
 
     def _build():
@@ -646,22 +686,23 @@ def results_board(days_back: int = 30) -> list[dict]:
         _fill_sec_history(rows)
         return rows
 
+    key = _board_key(days_back)
     try:
-        # v3: rows gained `pending` (PR-signaled reports without FMP actuals).
-        # v4: common-shares-only universe + negative-revenue junk guard.
-        # v5: rows gained `fdic_hist` (quarterly-ratio exhibit history).
-        # v6: rows gained `awaiting` (scheduled reporters visible pre-release).
-        # v7: rows gained `sec_hist` (per-share history for grid-coverage holes).
-        # v8: events-only discovery (reporters FMP's calendar omits entirely).
-        # v9: first-party source gate (aggregator previews minted false rows).
-        # v10: revenue scale-junk guard (HWC $26,850 vs $399M est).
-        # v11: release-contradicted EPS guard + mis-itemized 8-K candidates
-        #      (NPB filed its Q2 release under Items 2.01/7.01; FMP's $0.09
-        #      stood against the release's $0.60).
-        # v12: estimate-less revenue junk guard vs bank-sub assets (FDBC
-        #      $1,450; PKBK $3.9M vs stated $39.3M — no estimate, so the
-        #      0.2-5x guard couldn't fire).
-        return _cache.served_snapshot(f"earnings_results_board_v12:{days_back}",
-                                      900, _build) or []
-    except Exception:
+        return _cache.served_snapshot(key, 900, _build) or []
+    except Exception as e:
+        # The build raised — by design on a total source failure (an FMP
+        # calendar outage), so nothing was cached. Serve the last good board at
+        # WHATEVER age instead of []: an empty board renders as "no universe
+        # bank has reported", a confident wrong statement mid-outage
+        # (AUDIT-2026-07-02 #34 class, reintroduced on this surface and caught
+        # by the 2026-07-27 audit). No last-good → [] plus
+        # results_board_available() == False, which the UI renders as
+        # "unavailable" rather than a quiet window.
+        print(f"[results] board build failed: {type(e).__name__}: {e}")
+        try:
+            snap = _cache.get(key, max_age_s=None)
+        except Exception:
+            snap = None
+        if isinstance(snap, dict) and isinstance(snap.get("value"), list):
+            return snap["value"]
         return []

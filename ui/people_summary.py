@@ -75,7 +75,12 @@ def render_people_summary(ticker: str):
         if bios:
             with st.expander("One-line bios (from the proxy)"):
                 for p in bios:
-                    st.markdown(f"**{_h.escape(p['name'])}** — {_h.escape(p['bio'])}")
+                    # Plain markdown: two dollar amounts in one bio ("oversaw
+                    # $500 million and $2 billion portfolios") would render as
+                    # inline LaTeX and swallow the text between them, so
+                    # neutralize $ the way the other prose sinks do.
+                    st.markdown(f"**{_h.escape(p['name'])}** — "
+                                f"{_h.escape(p['bio'])}".replace("$", "\\$"))
 
         df = pd.DataFrame([{
             "Name": p["name"], "Age": p["age"], "Position": p["position"],

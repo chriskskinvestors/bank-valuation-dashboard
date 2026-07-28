@@ -1803,8 +1803,20 @@ def _render_results_board():
         rows = results_board()
 
     if not rows:
-        st.info("No universe bank has reported in the trailing 30 days yet — "
-                "this board fills as results land.")
+        # An empty board means EITHER a genuine quiet window OR a source
+        # outage with no last-good snapshot to serve. Only the snapshot-presence
+        # check tells them apart; without it an outage rendered as a confident
+        # "nobody has reported" (AUDIT-2026-07-02 #34 class, same fix shape as
+        # the KPI bar's earnings_calendar_available branch above).
+        from data.earnings_results import results_board_available
+        if results_board_available():
+            st.info("No universe bank has reported in the trailing 30 days yet — "
+                    "this board fills as results land.")
+        else:
+            st.warning("Reported results are unavailable right now — the earnings "
+                       "calendar source didn't respond and there's no cached board "
+                       "to fall back on. This is a feed outage, not an empty "
+                       "quarter.")
         return
 
     eps_rows = [r for r in rows if r.get("eps_surprise") is not None]

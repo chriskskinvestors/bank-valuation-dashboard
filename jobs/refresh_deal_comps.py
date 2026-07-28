@@ -20,6 +20,10 @@ Scheduler — remember the scheduler-invoker run.invoker binding.
 import sys
 import time
 
+# A full-universe walk yielding fewer deals than this means most banks failed
+# in a way no single lookup reported — treated as a failed run, never cached.
+_MIN_UNIVERSE_DEALS = 100
+
 
 def main() -> int:
     from data.bank_mapping import get_cik, get_fdic_cert, get_name
@@ -52,21 +56,21 @@ def main() -> int:
 
     print(f"▶ Compiling comps snapshot ({warmed} warmed, {failed} errored, "
           f"{time.time() - t0:.0f}s)", flush=True)
-    snap = build_comps_snapshot(banks)
+    # The <100-deal plausibility floor is passed INTO the build so it gates the
+    # cache.put. It used to be checked here, after the fact — by which point the
+    # hollow snapshot had already replaced the last good one and the UI served
+    # it (AUDIT-2026-07-27 P2), making the "previous snapshot still serves"
+    # message below untrue for exactly the case it was describing.
+    snap = build_comps_snapshot(banks, min_deals=_MIN_UNIVERSE_DEALS)
     if not snap:
-        print("✗ snapshot build refused to cache (lookup failures) — the "
-              "previous snapshot still serves", flush=True)
+        print("✗ snapshot build refused to cache (lookup failures, or a walk "
+              f"yielding <{_MIN_UNIVERSE_DEALS} deals) — the previous snapshot "
+              "still serves", flush=True)
         return 1
     print(f"✓ snapshot: {snap['deals_total']} deals "
           f"({snap['deals_priced']} priced) across "
           f"{snap['banks_covered']} banks in {time.time() - t0:.0f}s",
           flush=True)
-    if snap["deals_total"] < 100:
-        # A universe walk yielding under 100 deals means most banks failed
-        # silently — don't let a hollow snapshot look like success.
-        print("✗ implausibly thin snapshot (<100 deals) — failing the job",
-              flush=True)
-        return 1
     return 0
 
 
