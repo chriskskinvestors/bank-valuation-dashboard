@@ -380,8 +380,17 @@ def heal_future_published() -> int:
     return res.rowcount or 0
 
 
+# 9.01-only 8-Ks are ingested so the store is a COMPLETE 8-K record (some
+# registrants furnish their earnings release under 9.01 alone — see
+# data/events/sec_8k.EXHIBIT_ONLY_TYPE), but they carry no substantive event and
+# must never reach a feed: they would render as the opaque "8-K · Financial
+# Statements / Exhibits". Every DISPLAY query filters this type out; the
+# freshness/authority readers below deliberately do not.
+EXHIBIT_ONLY_TYPE = "exhibit_only"
+
+
 def get_recent_events(ticker: str, limit: int = 20) -> list[dict]:
-    """Most recent events for a single ticker, newest first."""
+    """Most recent DISPLAYABLE events for a single ticker, newest first."""
     from sqlalchemy import text
     eng = _get_engine()
     with eng.connect() as conn:
@@ -390,13 +399,59 @@ def get_recent_events(ticker: str, limit: int = 20) -> list[dict]:
                 SELECT ticker, source, event_type, headline, summary, url,
                        published_at, external_id
                 FROM events
-                WHERE ticker = :t
+                WHERE ticker = :t AND event_type <> :hidden
                 ORDER BY published_at DESC
                 LIMIT :n
             """),
-            {"t": ticker.upper(), "n": limit},
+            {"t": ticker.upper(), "n": limit, "hidden": EXHIBIT_ONLY_TYPE},
         ).mappings().all()
     return [dict(r) for r in rows]
+
+
+def latest_8k_accession(ticker: str, source: str = "sec_8k") -> str | None:
+    """Newest 8-K accession on record for `ticker`, or None when the store has
+    none.
+
+    Unlike every reader above this INCLUDES EXHIBIT_ONLY_TYPE rows: the question
+    is "has this registrant filed anything newer", a completeness question, and
+    some registrants furnish their earnings release under item 9.01 alone.
+    Filtering them here would report a stale frontier and freeze that bank on
+    last quarter's release (AUDIT-2026-07-27).
+    """
+    from sqlalchemy import text
+    with _get_engine().connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT external_id FROM events
+                WHERE ticker = :t AND source = :src AND external_id IS NOT NULL
+                ORDER BY published_at DESC
+                LIMIT 1
+            """),
+            {"t": ticker.upper(), "src": source},
+        ).first()
+    return row[0] if row and row[0] else None
+
+
+def events_ingested_within(seconds: float) -> bool:
+    """Whether ANY event was ingested inside the window — a cheap liveness probe
+    for the poller (one indexed-ish existence check, no per-bank cost).
+
+    Readers that treat the store as an AUTHORITY (rather than a display cache)
+    must gate on this: if poll-events is wedged, a store that merely looks quiet
+    is indistinguishable from "nothing new has been filed", and trusting it
+    would silently freeze downstream freshness. False → fall back to the live
+    source."""
+    from sqlalchemy import text
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=float(seconds))
+    try:
+        with _get_engine().connect() as conn:
+            row = conn.execute(
+                text("SELECT 1 FROM events WHERE ingested_at >= :c LIMIT 1"),
+                {"c": cutoff},
+            ).first()
+        return row is not None
+    except Exception:
+        return False
 
 
 # ── Event-level M&A dedup (display) ──────────────────────────────────────
@@ -462,18 +517,18 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
             SELECT ticker, source, event_type, headline, summary, url,
                    published_at, external_id
             FROM events
-            WHERE source = ANY(:srcs)
+            WHERE source = ANY(:srcs) AND event_type <> :hidden
             ORDER BY published_at DESC
             LIMIT :n
         """ if _USE_POSTGRES else """
             SELECT ticker, source, event_type, headline, summary, url,
                    published_at, external_id
             FROM events
-            WHERE source IN ({placeholders})
+            WHERE source IN ({placeholders}) AND event_type <> :hidden
             ORDER BY published_at DESC
             LIMIT :n
         """.format(placeholders=",".join(f":s{i}" for i in range(len(sources))))
-        params = {"n": limit}
+        params = {"n": limit, "hidden": EXHIBIT_ONLY_TYPE}
         if _USE_POSTGRES:
             params["srcs"] = sources
         else:
@@ -486,11 +541,12 @@ def get_universe_recent(limit: int = 50, sources: list[str] | None = None) -> li
             SELECT ticker, source, event_type, headline, summary, url,
                    published_at, external_id
             FROM events
-            WHERE source <> :topic_src
+            WHERE source <> :topic_src AND event_type <> :hidden
             ORDER BY published_at DESC
             LIMIT :n
         """
-        params = {"n": limit, "topic_src": TOPIC_SOURCE}
+        params = {"n": limit, "topic_src": TOPIC_SOURCE,
+                  "hidden": EXHIBIT_ONLY_TYPE}
 
     with _get_engine().connect() as conn:
         rows = conn.execute(text(sql), params).mappings().all()

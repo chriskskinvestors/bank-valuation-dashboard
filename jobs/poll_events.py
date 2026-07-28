@@ -530,19 +530,24 @@ def _summarize_recent_events(limit: int = 40, max_seconds: float = 180.0) -> int
     """
     import time as _t
     from sqlalchemy import text
-    from data.events.store import _get_engine
+    from data.events.store import EXHIBIT_ONLY_TYPE, _get_engine
 
     eng = _get_engine()
     with eng.connect() as conn:
         # Pull a window of the most recent unsummarized 8-Ks, then re-rank so the
         # material-but-opaque ones get summarized first within the per-run cap.
+        # exhibit_only rows (9.01-only filings) are ingested purely so the store
+        # is a complete 8-K record for freshness checks — they never render, so
+        # summarizing them would spend LLM budget on boilerplate nobody reads.
         rows = conn.execute(text("""
             SELECT id, ticker, source, headline, url, raw_json
             FROM events
             WHERE (summary IS NULL OR summary = '') AND source = 'sec_8k'
+              AND event_type <> :hidden
             ORDER BY published_at DESC
             LIMIT :w
-        """), {"w": max(limit * 3, limit)}).mappings().all()
+        """), {"w": max(limit * 3, limit),
+               "hidden": EXHIBIT_ONLY_TYPE}).mappings().all()
     print(f"  [summarizer] queued {len(rows)} unsummarized 8-Ks", flush=True)
     if not rows:
         return 0
