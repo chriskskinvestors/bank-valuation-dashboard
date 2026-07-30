@@ -60,6 +60,28 @@ from ui.chrome import ticker_company_url as _ticker_url
 from ui.chrome import ticker_linkcol as _ticker_linkcol
 
 
+def _default_bank_picks(coverage, options: list[str], n: int = 5) -> list[str]:
+    """The `n` highest-deposit tickers from `coverage` that are actually IN
+    `options` — the multiselect's default must be a SUBSET of its options.
+
+    A default outside options is a hard StreamlitAPIException, and it took the
+    whole By Bank(s) tab down in production (2026-07-28): get_branch_counts_by_ticker
+    GROUPs BY ticker, so every branch with no ticker mapping collapses into ONE
+    NULL-ticker row whose SUMMED deposits rank it near the top of the
+    deposits-ordered frame. `options` dropped that row via dropna() while the
+    default (a plain .head(5)) kept the NaN. Same guard ui/filings.py applies to
+    its form filter. Filtering before the slice (not after) keeps a full n picks
+    instead of silently returning fewer."""
+    avail = set(options)
+    picks: list[str] = []
+    for t in coverage["ticker"].tolist():
+        if t in avail and t not in picks:
+            picks.append(t)
+            if len(picks) == n:
+                break
+    return picks
+
+
 def _fmt_dollars_k(thousands: float | int | None) -> str:
     """SOD deposits are in $thousands. Format with auto B/M/K scale."""
     if thousands is None or pd.isna(thousands):
@@ -302,8 +324,7 @@ def render_geo_view():
             return
 
         all_tickers = sorted(coverage["ticker"].dropna().unique().tolist())
-        # default to top-5 by deposits
-        top5 = coverage.head(5)["ticker"].tolist()
+        top5 = _default_bank_picks(coverage, all_tickers)
         selected = st.multiselect(
             "Banks to show on the map",
             options=all_tickers,
