@@ -386,7 +386,12 @@ def get_latest_year() -> int | None:
 
 
 def get_branch_counts_by_ticker() -> pd.DataFrame:
-    """Coverage check: how many branches per ticker (latest year only)."""
+    """Coverage check: how many branches per ticker (latest year only).
+
+    NOTE: every branch with no ticker collapses into ONE null-ticker row whose
+    deposits are the SUM across all ~4,200 private banks — fine as a coverage
+    diagnostic, misleading as a bank list. Use get_branch_counts_by_bank() for
+    anything that presents banks to a user."""
     sql = """
         SELECT ticker,
                COUNT(*) AS n_branches,
@@ -394,6 +399,32 @@ def get_branch_counts_by_ticker() -> pd.DataFrame:
         FROM branches
         WHERE year = (SELECT MAX(year) FROM branches)
         GROUP BY ticker
+        ORDER BY total_deposits DESC
+    """
+    return _q_to_df(sql, {})
+
+
+def get_branch_counts_by_bank() -> pd.DataFrame:
+    """One row per INSTITUTION for the latest SOD year: cert, ticker, bank_name,
+    n_branches, total_deposits — deposits-descending.
+
+    Keyed on cert, not ticker, so the ~4,200 private banks are first-class rows
+    instead of collapsing into a single null-ticker aggregate. refresh_sod
+    already ingests SOD for every active FDIC institution (ticker=None for the
+    private ones), so this is purely a grouping change — no new data.
+
+    MAX(bank_name) picks one name per cert: a bank that renamed mid-survey can
+    carry two spellings across its branches, and GROUPing by name too would
+    split one institution into two rows."""
+    sql = """
+        SELECT cert,
+               MAX(ticker)    AS ticker,
+               MAX(bank_name) AS bank_name,
+               COUNT(*)       AS n_branches,
+               SUM(deposits)  AS total_deposits
+        FROM branches
+        WHERE year = (SELECT MAX(year) FROM branches)
+        GROUP BY cert
         ORDER BY total_deposits DESC
     """
     return _q_to_df(sql, {})

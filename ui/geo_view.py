@@ -23,7 +23,7 @@ from data.branches_store import (
     list_states, list_msas, list_counties, get_latest_year,
     get_branches_by_state, get_branches_by_msa, get_branches_by_county,
     get_banks_by_state, get_banks_by_msa, get_banks_by_county,
-    get_branch_counts_by_ticker,
+    get_branch_counts_by_bank,
 )
 from ui.chrome import table_export, lazy_tabs
 
@@ -39,7 +39,7 @@ def _c_msas(): return list_msas()
 @st.cache_data(ttl=900, show_spinner=False)
 def _c_counties(): return list_counties()
 @st.cache_data(ttl=900, show_spinner=False)
-def _c_branch_counts(): return get_branch_counts_by_ticker()
+def _c_branch_counts(): return get_branch_counts_by_bank()
 @st.cache_data(ttl=900, show_spinner=False)
 def _c_branches_state(state, year): return get_branches_by_state(state, year=year)
 @st.cache_data(ttl=900, show_spinner=False)
@@ -60,21 +60,55 @@ from ui.chrome import ticker_company_url as _ticker_url
 from ui.chrome import ticker_linkcol as _ticker_linkcol
 
 
+def _bank_option_label(row) -> str:
+    """How one institution reads in the bank picker: 'JPM — JPMorgan Chase Bank'
+    for a public bank, the plain name for a private one. The ticker leads when
+    present because that is how a covered bank is searched for; private banks
+    have no ticker and are found by name."""
+    name = (row.get("bank_name") or "").strip() or f"Cert {row.get('cert')}"
+    tk = row.get("ticker")
+    tk = "" if tk is None or (isinstance(tk, float) and pd.isna(tk)) else str(tk).strip()
+    return f"{tk} — {name}" if tk else name
+
+
+def _bank_options(coverage) -> tuple[list[str], dict[str, int]]:
+    """(labels deposits-descending, label → cert). Labels are de-duplicated with
+    the cert appended, because distinct institutions genuinely share a name
+    ("First National Bank") and a multiselect keyed on a repeated label could
+    not tell them apart."""
+    labels: list[str] = []
+    by_label: dict[str, int] = {}
+    for row in coverage.to_dict("records"):
+        cert = row.get("cert")
+        if cert is None or (isinstance(cert, float) and pd.isna(cert)):
+            continue
+        label = _bank_option_label(row)
+        if label in by_label:
+            label = f"{label} (cert {int(cert)})"
+        if label in by_label:      # same name AND cert twice — nothing to add
+            continue
+        by_label[label] = int(cert)
+        labels.append(label)
+    return labels, by_label
+
+
 def _default_bank_picks(coverage, options: list[str], n: int = 5) -> list[str]:
-    """The `n` highest-deposit tickers from `coverage` that are actually IN
+    """The `n` highest-deposit entries of `coverage` that are actually IN
     `options` — the multiselect's default must be a SUBSET of its options.
 
     A default outside options is a hard StreamlitAPIException, and it took the
-    whole By Bank(s) tab down in production (2026-07-28): get_branch_counts_by_ticker
-    GROUPs BY ticker, so every branch with no ticker mapping collapses into ONE
-    NULL-ticker row whose SUMMED deposits rank it near the top of the
-    deposits-ordered frame. `options` dropped that row via dropna() while the
-    default (a plain .head(5)) kept the NaN. Same guard ui/filings.py applies to
-    its form filter. Filtering before the slice (not after) keeps a full n picks
-    instead of silently returning fewer."""
+    whole By Bank(s) tab down in production (2026-07-28): the old ticker-keyed
+    coverage query collapsed every branch with no ticker into ONE null-ticker row
+    whose SUMMED deposits ranked it near the top, `options` dropped it via
+    dropna(), and the default (a plain .head(5)) kept the NaN. Same guard
+    ui/filings.py applies to its form filter. Filtering before the slice (not
+    after) keeps a full n picks instead of silently returning fewer.
+
+    Works on whatever column identifies a row in `options` — labels now, tickers
+    before — so the invariant is enforced independently of the identity model."""
     avail = set(options)
     picks: list[str] = []
-    for t in coverage["ticker"].tolist():
+    for t in coverage:
         if t in avail and t not in picks:
             picks.append(t)
             if len(picks) == n:
@@ -94,8 +128,16 @@ def _fmt_dollars_k(thousands: float | int | None) -> str:
     return f"${v:.0f}"
 
 
-def _render_map(df: pd.DataFrame, title: str = ""):
-    """Render a branch map from a DataFrame of branches."""
+def _render_map(df: pd.DataFrame, title: str = "",
+                color_col: str = "ticker", color_label: str = "Ticker"):
+    """Render a branch map from a DataFrame of branches.
+
+    `color_col` defaults to ticker (the whole-market tabs plot every bank in a
+    state/MSA/county, where one shared colour for the unlisted banks keeps the
+    legend readable). The By Bank(s) tab plots a handful of DELIBERATELY chosen
+    institutions instead, so it passes a per-bank label — otherwise every private
+    bank would land in a single "nan" colour group, indistinguishable from each
+    other on the map the user picked them for."""
     if df.empty:
         st.info("No branches found for the selected filter.")
         return
@@ -114,12 +156,14 @@ def _render_map(df: pd.DataFrame, title: str = ""):
 
     hover = ["ticker", "bank_name", "branch_name", "address", "city",
              "state", "msa_name", "deposits_fmt"]
+    if color_col not in plot_df.columns:
+        color_col = "ticker"
 
     fig = px.scatter_mapbox(
         plot_df,
         lat="lat", lon="lng",
         size="size",
-        color="ticker",
+        color=color_col,
         hover_data=hover,
         zoom=3,
         height=620,
@@ -127,7 +171,7 @@ def _render_map(df: pd.DataFrame, title: str = ""):
         title=title or None,
     )
     fig.update_layout(margin=dict(l=0, r=0, t=40 if title else 0, b=0),
-                       legend_title_text="Ticker")
+                       legend_title_text=color_label)
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -323,52 +367,68 @@ def render_geo_view():
             st.info("No banks loaded yet.")
             return
 
-        all_tickers = sorted(coverage["ticker"].dropna().unique().tolist())
-        top5 = _default_bank_picks(coverage, all_tickers)
+        # Keyed on CERT, not ticker: every FDIC institution has a cert, only the
+        # ~300 covered ones have a ticker, and refresh_sod already stores SOD for
+        # all ~4,500 (ticker=None for the rest). Keying on ticker made the ~4,200
+        # private banks unselectable here even though their deposits were sitting
+        # in the same table the other three tabs already show them from.
+        labels, label_to_cert = _bank_options(coverage)
+        default_labels = _default_bank_picks(labels, labels)
         selected = st.multiselect(
             "Banks to show on the map",
-            options=all_tickers,
-            default=top5,
-            key="geo_banks_select",
+            options=labels,
+            default=default_labels,
+            key="geo_banks_select_v2",   # new identity model — don't restore
+                                         # v1's stored tickers into label options
+            help="Every FDIC-insured institution, public or private — type to "
+                 "search by ticker or name.",
         )
         if not selected:
             st.info("Pick one or more banks above.")
             return
 
-        # Pull branches for the selected tickers across all states
-        # (use the by_state query with no state restriction by querying each)
+        certs = [label_to_cert[s] for s in selected if s in label_to_cert]
+        if not certs:
+            st.info("Pick one or more banks above.")
+            return
+
+        # Pull branches for the selected certs across all states
         from data.branches_store import _q_to_df
         from data.branches_store import _USE_POSTGRES
-        params: dict = {}
+        params: dict = {"year": year}
         if _USE_POSTGRES:
-            params["tickers"] = [t.upper() for t in selected]
-            params["year"] = year
+            params["certs"] = certs
             sql = ("SELECT * FROM branches "
-                   "WHERE ticker = ANY(:tickers) AND year = :year "
+                   "WHERE cert = ANY(:certs) AND year = :year "
                    "ORDER BY deposits DESC")
         else:
-            placeholders = ",".join(f":t{i}" for i in range(len(selected)))
-            for i, t in enumerate(selected):
-                params[f"t{i}"] = t.upper()
-            params["year"] = year
-            sql = (f"SELECT * FROM branches WHERE ticker IN ({placeholders}) "
+            placeholders = ",".join(f":c{i}" for i in range(len(certs)))
+            for i, c in enumerate(certs):
+                params[f"c{i}"] = c
+            sql = (f"SELECT * FROM branches WHERE cert IN ({placeholders}) "
                    f"AND year = :year ORDER BY deposits DESC")
         branches = _q_to_df(sql, params)
 
-        # Summary table per selected bank
+        # Summary table per selected bank. Grouped on CERT (dropna=False so a
+        # null ticker can't drop the row): two distinct private banks can share a
+        # name, and grouping by name would silently merge their deposits.
         if not branches.empty:
-            agg = (branches.groupby(["ticker", "bank_name"])
-                   .agg(n_branches=("brnum", "count"),
+            agg = (branches.groupby("cert", dropna=False)
+                   .agg(ticker=("ticker", "first"),
+                        bank_name=("bank_name", "first"),
+                        n_branches=("brnum", "count"),
                         total_deposits=("deposits", "sum"))
                    .reset_index()
                    .sort_values("total_deposits", ascending=False))
             agg["Deposits"] = agg["total_deposits"].apply(_fmt_dollars_k)
             agg = agg.rename(columns={
-                "ticker": "Ticker", "bank_name": "Bank",
+                "cert": "Cert", "ticker": "Ticker", "bank_name": "Bank",
                 "n_branches": "Branches",
-            })[["Ticker", "Bank", "Branches", "Deposits"]]
+            })[["Ticker", "Bank", "Cert", "Branches", "Deposits"]]
             st.markdown(f"### Selected banks — combined {len(branches):,} branches")
-            # Display copy gets link URLs; the export keeps plain tickers.
+            # Display copy gets link URLs (blank for private banks — they have no
+            # Company page); the export keeps plain tickers and carries Cert, the
+            # only identifier every institution has.
             agg_disp = agg.copy()
             agg_disp["Ticker"] = agg_disp["Ticker"].map(_ticker_url)
             st.dataframe(agg_disp, use_container_width=True, hide_index=True,
@@ -377,4 +437,12 @@ def render_geo_view():
             table_export(agg, "selected_banks_branch_summary",
                          key="exp_selected_banks_branch_summary")
 
-        _render_map(branches)
+        # Colour each SELECTED institution separately — ticker when it has one,
+        # otherwise its name, so private banks are distinguishable from each
+        # other rather than sharing one "nan" group. (An empty frame falls
+        # through to _render_map's own "no branches" message.)
+        if not branches.empty:
+            branches = branches.copy()
+            branches["Bank"] = [
+                _bank_option_label(r) for r in branches.to_dict("records")]
+        _render_map(branches, color_col="Bank", color_label="Bank")
