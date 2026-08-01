@@ -98,15 +98,28 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     # quarter would otherwise default to ~71%). Matches the fair-value screen.
     roatce_raw = compute_roatce_4q(hist) or compute_roatce(latest) or 12.0
     roatce_pct = roatce_raw * _normalized_earnings_factor(hist)
-    equity = latest.get("EQTOT") or 0
-    goodwill = latest.get("INTANGW") or 0
-    tce = equity - goodwill
-
     # Shares
     shares = sec.get("shares_outstanding") or 0
-    # TBV per share
-    tbv_usd = tce * 1000  # thousands → dollars
-    tbvps = (tbv_usd / shares) if shares > 0 else None
+
+    # TBV per share. Prefer the SEC holdco reconstruction: it is the same
+    # tangible book the rest of the platform displays (preferred removed, full
+    # goodwill+other-intangibles resolution, MSRs kept in tangible equity), so
+    # the model can't seed a different TBV/share than the Company page shows for
+    # the same bank.
+    #
+    # The FDIC bank-sub fallback deducts INTAN — TOTAL intangibles, the house TCE
+    # convention (CLAUDE.md; analysis/valuation.compute_roatce). It previously
+    # deducted INTANGW, GOODWILL ONLY, which is the exact convention error
+    # AUDIT-2026-07-02 #24 fixed everywhere else: it leaves core-deposit and
+    # other intangibles inside "tangible" equity, overstating TCE and therefore
+    # TBV/share — and since the headline is warranted_price = warranted P/TBV ×
+    # TBV/share, it overstated fair value proportionally on every bank carrying
+    # non-goodwill intangibles.
+    tbvps = sec.get("tangible_book_value_per_share")
+    if tbvps is None:
+        equity = latest.get("EQTOT") or 0
+        intangibles = latest.get("INTAN") or 0   # NOT INTANGW (goodwill only)
+        tbvps = ((equity - intangibles) * 1000 / shares) if shares > 0 else None
 
     # Trailing loan growth (TTM)
     loans = [r.get("LNLSNET") for r in hist[:5] if r.get("LNLSNET") is not None]

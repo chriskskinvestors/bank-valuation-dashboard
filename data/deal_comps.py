@@ -19,7 +19,7 @@ pairing the $5.19B value with Columbia State Bank's TBV would be
 plausible-wrong). On the holdco basis, price/assets uses HOLDCO assets and
 the core-deposit premium is n/a (bank-sub core deposits belong to the
 other side in a flipped deal). On the bank-sub basis (private targets —
-cash deals, no flip in practice) FDIC EQ−INTAN / COREDEP / ASSET at the
+cash deals, no flip in practice) FDIC EQTOT−INTAN / COREDEP / ASSET at the
 last REPDTE ≤ announce are used. A residual flip risk exists only for
 stated-value stock deals whose PR quotes no ratio — a P/TBV sanity band
 (0.2×–8×) flags and n/a's any such mismatch rather than displaying it.
@@ -47,7 +47,7 @@ _MAX_TBV_AGE_DAYS = 200
 
 def _fdic_at(cert, asof_iso: str):
     """(tbv, core_deposits, assets, repdte_iso, ok) — FDIC bank-sub tangible
-    equity (EQ − INTAN), core deposits and assets at the last REPDTE ≤ asof,
+    equity (EQTOT − INTAN), core deposits and assets at the last REPDTE ≤ asof,
     all raw dollars. ok=False on fetch failure."""
     if not cert or not asof_iso:
         return None, None, None, None, True
@@ -58,7 +58,12 @@ def _fdic_at(cert, asof_iso: str):
         resp = get_with_retry(FDIC_FINANCIALS_URL, {
             "filters": (f"CERT:{int(cert)} AND "
                         f"REPDTE:[19000101 TO {asof_iso.replace('-', '')[:8]}]"),
-            "fields": "CERT,REPDTE,EQ,INTAN,COREDEP,ASSET",
+            # EQTOT, not EQ: both exist on the FDIC financials endpoint and
+            # differ (JPM cert 628 @2026-03-31: EQ 335,931,000 vs EQTOT
+            # 335,961,000 $K — minority interests). EQTOT is the platform's
+            # equity base everywhere else, so using EQ here made this the one
+            # surface computing tangible equity off a different definition.
+            "fields": "CERT,REPDTE,EQTOT,INTAN,COREDEP,ASSET",
             "sort_by": "REPDTE", "sort_order": "DESC", "limit": 1,
         }, timeout=30)
         if resp is None:
@@ -73,7 +78,7 @@ def _fdic_at(cert, asof_iso: str):
     repdte = str(rec.get("REPDTE") or "")
     if len(repdte) != 8:
         return None, None, None, None, True
-    eq, intan = rec.get("EQ"), rec.get("INTAN")
+    eq, intan = rec.get("EQTOT"), rec.get("INTAN")
     tbv = (eq - (intan or 0)) * 1000 if eq is not None else None
     core = rec.get("COREDEP")
     assets = rec.get("ASSET")
