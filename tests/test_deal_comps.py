@@ -34,9 +34,13 @@ def _deal(**kw):
 
 
 def _fdic_resp(eq_k, intan_k, coredep_k, asset_k, repdte="20180630"):
+    # EQTOT, not EQ: both exist on the FDIC financials endpoint and differ
+    # (JPM cert 628 @2026-03-31: EQ 335,931,000 vs EQTOT 335,961,000 $K —
+    # minority interests). EQTOT is the platform's equity base everywhere else;
+    # deal comps was the one surface reading EQ (TBV audit 2026-07-30).
     r = MagicMock()
     r.json.return_value = {"data": [{"data": {
-        "REPDTE": repdte, "EQ": eq_k, "INTAN": intan_k,
+        "REPDTE": repdte, "EQTOT": eq_k, "INTAN": intan_k,
         "COREDEP": coredep_k, "ASSET": asset_k}}]}
     return r
 
