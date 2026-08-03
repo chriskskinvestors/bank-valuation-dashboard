@@ -159,20 +159,56 @@ def _render_map(df: pd.DataFrame, title: str = "",
     if color_col not in plot_df.columns:
         color_col = "ticker"
 
+    center, zoom = _fit_viewport(plot_df["lat"], plot_df["lng"])
+
     fig = px.scatter_mapbox(
         plot_df,
         lat="lat", lon="lng",
         size="size",
         color=color_col,
         hover_data=hover,
-        zoom=3,
+        center=center,
+        zoom=zoom,
         height=620,
         mapbox_style="carto-positron",
         title=title or None,
     )
+    # A legend with one entry per bank is unreadable once a market has dozens
+    # of them, and it eats the map's width. Past ~15 banks the colours still
+    # separate them visually and hover names them, so drop the legend and give
+    # the space back to the map — the whole-market tabs are the common case.
+    n_series = plot_df[color_col].nunique(dropna=True)
     fig.update_layout(margin=dict(l=0, r=0, t=40 if title else 0, b=0),
-                       legend_title_text=color_label)
+                      showlegend=n_series <= 15,
+                      legend_title_text=color_label)
     st.plotly_chart(fig, use_container_width=True)
+
+
+def _fit_viewport(lats, lngs) -> tuple[dict, float]:
+    """(center, zoom) framing the plotted branches — what st.map does natively.
+
+    The map used a hardcoded zoom=3 (continental US) for every view, so picking
+    a single county, MSA or community bank rendered the whole country with a
+    speck on it. Zoom is derived from the bounding box: mapbox halves the
+    visible span per level, so log2(span_at_z0 / span) fits it, less a margin
+    so markers aren't flush to the edge.
+    """
+    import math
+    try:
+        la_min, la_max = float(lats.min()), float(lats.max())
+        lo_min, lo_max = float(lngs.min()), float(lngs.max())
+    except (TypeError, ValueError):
+        return {"lat": 39.5, "lon": -98.35}, 3.0          # continental US
+    if not all(map(math.isfinite, (la_min, la_max, lo_min, lo_max))):
+        return {"lat": 39.5, "lon": -98.35}, 3.0
+
+    center = {"lat": (la_min + la_max) / 2, "lon": (lo_min + lo_max) / 2}
+    lat_span = max(la_max - la_min, 1e-4)
+    lon_span = max(lo_max - lo_min, 1e-4)
+    zoom = min(math.log2(360.0 / lon_span), math.log2(180.0 / lat_span)) - 0.6
+    # Floor keeps a nationwide branch network whole; ceiling stops a
+    # single-branch bank zooming to rooftop level, where the map is useless.
+    return center, max(3.0, min(zoom, 11.0))
 
 
 def render_geo_view():
