@@ -625,7 +625,14 @@ def _resolve_tbvps(
         except Exception as e:
             print(f"[valuation] reported_tbvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
-    elif ticker:
+    # The release fallback is gated on having NOTHING from SEC — not on the bank
+    # lacking a CIK. It used to be an `elif cik`, so a registrant that HAS a CIK
+    # but no usable XBRL never tried its own earnings release and rendered n/a
+    # permanently: of the 75 smallest universe banks, PNSB and DWNX return no
+    # facts at all and CMHF's companyfacts 404s (measured 2026-08-02). For a
+    # bank with no CIK `reconstructed` is always None, so the previous behaviour
+    # is unchanged — this only ADDS the with-CIK-but-empty case.
+    if reconstructed is None and ticker:
         try:
             otc = _otc_tbvps(ticker)
             if otc is not None:

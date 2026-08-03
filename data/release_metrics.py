@@ -228,6 +228,22 @@ _TBV_PATS = [
                r"ended [^$%]{0,20}at))\s*\$\s?(\d{1,3}\.\d{2})", re.I),
     re.compile(_TBV_LABEL + r"[^$%]{0,30}?\d{1,2}(?:\.\d{1,2})?\s*%[^$%]{0,20}?"
                r"to\s*\$\s?(\d{1,3}\.\d{2})", re.I),
+    # DOLLAR-change-then-level: "Tangible book value per share (Non-GAAP)
+    # increased $1.67, or 15.6%, to $12.38 from $10.71" (FSRL 2Q26, found
+    # 2026-08-02 auditing the 75 smallest banks). The two patterns above both
+    # fail by design — their [^$%] connector cannot cross the $1.67 change — so
+    # the form yielded nothing at all rather than a wrong number.
+    #
+    # Deliberately narrow: an explicit change VERB, then the change amount,
+    # then an OPTIONAL ", or N%," clause, then the level pinned to "to $". The
+    # capture is the level, never the change. Anything looser would risk
+    # grabbing a change or a year-ago figure, which is the failure mode the
+    # first-$ discipline elsewhere in this file exists to prevent.
+    re.compile(_TBV_LABEL + r"[^$%]{0,40}?"
+               r"\b(?:increased|decreased|rose|fell|grew|declined|improved)\s*"
+               r"(?:by\s*)?\$\s?\d{1,3}\.\d{2}\s*,?\s*"
+               r"(?:or\s*\d{1,2}(?:\.\d{1,2})?\s*%\s*,?\s*)?"
+               r"to\s*\$\s?(\d{1,3}\.\d{2})", re.I),
 ]
 _TBV_BAND = (1.0, 500.0)
 
@@ -840,6 +856,11 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v17 (2026-08-02): TBV/share dollar-change-then-level form —
+    # "increased $1.67, or 15.6%, to $12.38" (FSRL 2Q26). Both existing
+    # patterns' [^$%] connectors stop at the change amount, so the value
+    # was missed entirely; found auditing the 75 smallest banks, where
+    # small-bank TBV coverage matters most.
     # v15 (2026-07-21): respectively-pair form — first-%-after-label
     # handed the SECOND label the FIRST value (CCFN ROE 1.70, real
     # 14.65). v14 point-first decimals (".19%") in prose/cell
@@ -854,7 +875,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v16:{int(cik)}"
+    key = f"release_metrics:v17:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
