@@ -149,22 +149,12 @@ def _render_map(df: pd.DataFrame, title: str = "",
         st.info("No branches with geographic coordinates available.")
         return
 
-    # Size by deposits, SQRT-scaled. Plotly sizes markers by diameter, so
-    # radius ∝ √value makes AREA ∝ value — the proportional-symbol convention,
-    # and what makes a $5B branch read as bigger than a $50M one. The previous
-    # log1p scaling compressed that comparison almost flat (log1p of 5e6 vs
-    # 5e4 $K is 15.4 vs 10.8, i.e. ~18px vs ~14px), so the map showed WHERE
-    # branches are but said almost nothing about their weight.
-    import numpy as np
-    dep = plot_df["deposits"].clip(lower=0).fillna(0)
-    root = np.sqrt(dep)
-    top = float(root.max()) or 1.0
-    # Floor at 12% of the max radius: pure proportionality would render a
-    # branch holding 1% of the largest one's deposits at ~3px on a map where
-    # the biggest is 34px — technically honest, practically invisible and
-    # unclickable. The floor costs accuracy only at the very bottom of the
-    # range, where the exact size carries no information anyway.
-    plot_df["size"] = (root / top).fillna(0.0).clip(lower=0.12)
+    # Uniform small dots (owner decision 2026-08-03, after a side-by-side
+    # mockup): deposit-proportional markers blotted into unreadable blobs in
+    # dense metros — JPM's Chicago footprint rendered as one blue mass — and
+    # the Market Analysis st.map look (small crisp dots) was preferred. A
+    # branch's deposits stay in the hover and in the ranked tables beside each
+    # map; the dots answer WHERE, the tables answer HOW MUCH.
     plot_df["deposits_fmt"] = plot_df["deposits"].apply(_fmt_dollars_k)
 
     if color_col not in plot_df.columns:
@@ -175,8 +165,6 @@ def _render_map(df: pd.DataFrame, title: str = "",
     fig = px.scatter_mapbox(
         plot_df,
         lat="lat", lon="lng",
-        size="size",
-        size_max=34,                 # readable at metro zoom without blotting
         color=color_col,
         color_discrete_sequence=CATEGORICAL_PALETTE,
         custom_data=["bank_name", "branch_name", "city", "state",
@@ -189,7 +177,7 @@ def _render_map(df: pd.DataFrame, title: str = "",
     )
     # A labelled tooltip instead of plotly's raw "column=value" dump.
     fig.update_traces(
-        marker=dict(opacity=0.72),   # branches overlap in dense metros
+        marker=dict(size=7, opacity=0.9),
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
             "%{customdata[1]}<br>"
