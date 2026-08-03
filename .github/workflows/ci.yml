@@ -41,6 +41,18 @@ jobs:
       - name: Render smoke (Home sections with populated fake data)
         run: python tests/test_render_smoke.py
 
+      # EVERY suite, discovered — not a hand-maintained list. The list gated 16
+      # of the repo's 151 test modules, so a suite could pin a behaviour and
+      # never run: on 2026-08-02 a merged, DEPLOYED change regressed a contract
+      # pinned by tests/test_valuation_model_consensus.py, which wasn't listed.
+      # CI was green throughout. Most of the audit's own pinning suites
+      # (test_cache_stale_fallback, test_financial_highlights_tbvps,
+      # test_filings_escaping, test_deeplink_subtab, test_form13f_matching, …)
+      # were unlisted too, so the fixes they protect were unenforced.
+      # Discovery means adding a test file is enough to have it gate merges.
+      - name: Full test suite (discovered)
+        run: python -m unittest discover -s tests -t . -v 2>&1 | tail -40
+
       - name: Hand-computed value + extractor suites (offline)
         run: |
           python -m unittest \
