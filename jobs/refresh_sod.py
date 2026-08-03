@@ -48,25 +48,43 @@ def _refresh_one(cert: int, ticker: str | None,
 def main() -> int:
     import warnings; warnings.filterwarnings("ignore")
     from data.branches_store import init_branches_schema
-    from data.bank_mapping import BANK_MAP
+    from data.bank_mapping import BANK_MAP, get_fdic_cert
+    from data.bank_universe import get_universe_tickers
     from data.fdic_client import list_all_active_institutions
 
     init_branches_schema()
 
     # Reverse lookup: cert → ticker (so we tag public banks even though we're
-    # iterating by cert)
+    # iterating by cert).
+    #
+    # Built from get_fdic_cert() over the live universe — the LOOKUP-TIME
+    # resolver, which applies curated cert corrections. Reading BANK_MAP's and
+    # _RESOLVED_FROM_JSON's raw dicts instead missed every bank whose cert comes
+    # from a correction: 9 public banks including STT, BPOP, HWC, WAFD and NEWT
+    # were ingested with ticker=None, so their branches joined the unmapped pool
+    # and rendered on Geographic as if they were private banks — blank ticker,
+    # no Company-page link, and (before the cert-keyed picker) unselectable in
+    # By Bank(s). Deposits were never wrong, only unattributed.
     cert_to_ticker: dict[int, str] = {}
+    for ticker in sorted(get_universe_tickers()):
+        try:
+            cert = get_fdic_cert(ticker)
+        except Exception:
+            cert = None
+        if cert:
+            cert_to_ticker.setdefault(int(cert), ticker)
+    # Belt-and-braces: keep the raw maps as a floor so a universe-snapshot
+    # hiccup can't shrink coverage below what the static mappings already give.
     for ticker, info in BANK_MAP.items():
         cert = info.get("fdic_cert")
         if cert:
-            cert_to_ticker[int(cert)] = ticker
-    # Also load the resolved JSON for full coverage
+            cert_to_ticker.setdefault(int(cert), ticker)
     try:
         from data.bank_mapping import _RESOLVED_FROM_JSON
         for t, info in _RESOLVED_FROM_JSON.items():
             cert = info.get("fdic_cert")
-            if cert and int(cert) not in cert_to_ticker:
-                cert_to_ticker[int(cert)] = t
+            if cert:
+                cert_to_ticker.setdefault(int(cert), t)
     except Exception:
         pass
 
