@@ -223,5 +223,48 @@ class TestTableRowsColumnAlignment(unittest.TestCase):
             extract_reported_tbvps(html, reconstructed=42.68, bvps=52.10))
 
 
+# ── 5. _table_rows: a bare '$'/'%' cell is row decoration, not a blank ────────
+class TestSharedDecorationColumn(unittest.TestCase):
+    """FRME 2026-Q2 (found 2026-08-03): its highlights table shares one physical
+    column between ratio VALUES ('9.8' on %-rows) and dollar MARKERS ('$' on
+    $-rows), so the column is a value column table-wide and the TBVPS row read
+    [None, 29.8, …]. The P3 blank-cell guard then misread the '$' cell as a
+    blank latest quarter and dropped a cleanly disclosed $29.80 — the app
+    rendered the $29.57 reconstruction instead."""
+
+    # Column pairs mimic FRME: %-rows put the number where $-rows put '$'.
+    _FRME = (
+        _row("", "2026", "", "2025", "")
+        + _row("Return on tangible common equity", "9.8", "%", "6.39", "%")
+        + _row("Book value per common share", "$", "43.55", "$", "41.20")
+        + _row("Tangible common book value per share", "$", "29.80", "$", "27.90")
+    )
+
+    def test_dollar_marker_cells_are_skipped_per_row(self):
+        by_label = dict(_table_rows(_html(self._FRME)))
+        # OLD: [None, 29.8, None, 27.9] -> nums[0] None -> figure dropped.
+        self.assertEqual(
+            by_label["tangible common book value per share"], [29.8, 27.9])
+        self.assertEqual(
+            by_label["return on tangible common equity"], [9.8, 6.39])
+
+    def test_frme_reported_tbvps_now_extracted(self):
+        # Anchors are FRME's real values: reconstruction 29.5658, bvps 42.76.
+        self.assertEqual(
+            extract_reported_tbvps(
+                _html(self._FRME), reconstructed=29.5658, bvps=42.76),
+            29.8)
+
+    def test_blank_current_behind_dollar_marker_still_na(self):
+        # '$' skipped, the EMPTY latest cell still lands as None -> the P3
+        # guard must keep refusing to serve the prior quarter as current.
+        html = _html(
+            _row("Book value per common share", "$", "43.55", "$", "41.20")
+            + _row("Tangible common book value per share", "$", "", "$", "27.90")
+        )
+        self.assertIsNone(
+            extract_reported_tbvps(html, reconstructed=27.9, bvps=43.55))
+
+
 if __name__ == "__main__":
     unittest.main()
