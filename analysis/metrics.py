@@ -97,11 +97,38 @@ def build_all_bank_metrics(
     """
     fdic_hist_all = fdic_hist_all or {}
     rows = []
+    # Per-bank wall clock. The refresh-home-snapshot build has sat at a ~1618s
+    # median across 24 consecutive runs (2026-08-02) while the one measured
+    # warm-cache run finished in 201s, and TWO fixes aimed at the presumed
+    # bottleneck moved it not at all. Rather than guess a third time, report
+    # where the time actually goes: the slowest banks by name, and the frontier
+    # fast-path/fallback split that says whether the events-store route engages.
+    import time as _t
+    per_bank: list[tuple[float, str]] = []
+    t_start = _t.time()
     for ticker in watchlist:
         fdic = fdic_all.get(ticker, {})
         sec = sec_all.get(ticker, {})
         price = prices_all.get(ticker, {})
         fdic_hist = fdic_hist_all.get(ticker, [])
+        _t0 = _t.time()
         row = build_bank_metrics(ticker, fdic, sec, price, fdic_hist)
+        per_bank.append((_t.time() - _t0, ticker))
         rows.append(row)
+
+    try:
+        total = _t.time() - t_start
+        per_bank.sort(reverse=True)
+        slowest = ", ".join(f"{tk} {s:.1f}s" for s, tk in per_bank[:10])
+        over_1s = sum(1 for s, _ in per_bank if s >= 1.0)
+        top10 = sum(s for s, _ in per_bank[:10])
+        print(f"[metrics] {len(per_bank)} banks in {total:.0f}s | "
+              f"{over_1s} took >=1s | slowest 10 = {top10:.0f}s "
+              f"({top10 / total * 100:.0f}% of total)", flush=True)
+        print(f"[metrics] slowest: {slowest}", flush=True)
+        from data.release_metrics import FRONTIER_STATS
+        print(f"[metrics] frontier path: {dict(FRONTIER_STATS)}", flush=True)
+    except Exception as e:                      # never let telemetry break a build
+        print(f"[metrics] timing report failed: {type(e).__name__}: {e}",
+              flush=True)
     return rows

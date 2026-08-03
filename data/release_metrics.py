@@ -747,6 +747,22 @@ def _ticker_for_cik(cik) -> str | None:
     return _CIK_TICKER.get(key)
 
 
+# Why the store fast-path did or didn't answer, counted per process. The
+# frontier change (2026-07-28) was expected to remove ~538 multi-MB EDGAR
+# submissions fetches per metrics build; 24 consecutive runs measured 2026-08-02
+# show build_metrics UNCHANGED at a 1618s median, so either the fast path is not
+# engaging or that fetch was never the bottleneck. These counters answer which,
+# instead of a third hypothesis read off the code.
+FRONTIER_STATS: dict[str, int] = {
+    "hit": 0,            # store answered
+    "no_poller": 0,      # liveness gate closed
+    "no_ticker": 0,      # CIK didn't resolve to a ticker
+    "no_8k_row": 0,      # ticker resolved, no 8-K on record
+    "error": 0,          # store read raised
+    "edgar": 0,          # fell through to the live submissions index
+}
+
+
 def _accession_from_store(cik) -> str | None:
     """The frontier per the events store, or None when the store cannot PROVE an
     answer (poller not demonstrably live, no ticker mapping, no 8-K on record) —
@@ -756,16 +772,26 @@ def _accession_from_store(cik) -> str | None:
     filings that used to be dropped, so this replaces a multi-MB submissions
     fetch per bank with one indexed row read. That fetch — ~538 of them,
     serialized, on every metrics build past the 15-min re-check gate — was the
-    dominant cost of the 2026-07-27 refresh-home-snapshot timeout incident."""
+    dominant cost of the 2026-07-27 refresh-home-snapshot timeout incident.
+
+    Every exit increments FRONTIER_STATS so a run reports which branch it took."""
     try:
         from data.events.store import events_ingested_within, latest_8k_accession
         if not events_ingested_within(_POLLER_LIVENESS_S):
+            FRONTIER_STATS["no_poller"] += 1
             return None
         tk = _ticker_for_cik(cik)
         if not tk:
+            FRONTIER_STATS["no_ticker"] += 1
             return None
-        return latest_8k_accession(tk)
+        acc = latest_8k_accession(tk)
+        if acc is None:
+            FRONTIER_STATS["no_8k_row"] += 1
+        else:
+            FRONTIER_STATS["hit"] += 1
+        return acc
     except Exception:
+        FRONTIER_STATS["error"] += 1
         return None
 
 
@@ -787,6 +813,7 @@ def _current_accession(cik) -> str | None:
     if acc is not None:
         return acc
 
+    FRONTIER_STATS["edgar"] += 1
     from data.ir_provider import _earnings_8k_candidates
     from data.sec_filing_scraper import _get
     try:
