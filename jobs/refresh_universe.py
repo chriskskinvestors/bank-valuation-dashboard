@@ -64,9 +64,12 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
     sec_data = {}
     try:
         if cert:
-            df = fdic_client.fetch_financials(cert, limit=8)
-            if not df.empty:
-                fdic_hist = df.to_dict("records")
+            # Whole banking operation, not just the lead charter — 11 universe
+            # banks are multi-bank holdcos (WTFC was showing $9.3B of $72.4B).
+            from data.cert_group import fetch_group_history
+            recs = fetch_group_history(ticker, limit=8, cert=cert)
+            if recs:
+                fdic_hist = recs
                 fdic_data = fdic_hist[0]
                 cache.put_fdic(ticker, fdic_data)
                 cache.put(f"fdic_hist:{ticker}", fdic_hist)

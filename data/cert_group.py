@@ -190,6 +190,63 @@ def aggregate_records(records: list[dict]) -> dict:
     return out
 
 
+def fetch_group_history(ticker: str, limit: int = 20,
+                        cert: int | None = None) -> list[dict]:
+    """`limit` quarters of FDIC financials for the ticker's WHOLE banking
+    operation, newest first — one consolidated record per REPDTE.
+
+    This is the single seam the wiring goes through. Every producer of the
+    `fdic_hist:{ticker}` cache entry calls it, so every consumer (the metrics
+    build, the statement/credit/capital/deposit/rate tabs, the trends grid)
+    becomes correct without touching a line of their code.
+
+    Aggregating the HISTORY rather than one record is what keeps the averaged
+    ratios alive: downstream code already derives ROA/NIM/ROATCE from levels
+    plus a prior quarter (ui/financials_statements._avg,
+    analysis.valuation.compute_roatce_4q), so with a correct per-quarter series
+    those come out right for a group too. Only the FDIC-REPORTED ratio columns
+    are dropped, because those specific numbers are the lead charter's.
+
+    Quarters are aggregated over whatever charters reported them. A bank that
+    acquired a charter mid-history therefore steps up at the acquisition — that
+    IS what happened, and each record carries _charter_count so a consumer can
+    see the composition.
+
+    Single-charter banks take the same path as before (one cert, no
+    aggregation), so the ~350 of them are unaffected.
+    """
+    from data import fdic_client
+
+    certs = get_cert_group(ticker, cert=cert)
+    if not certs:
+        return []
+    if len(certs) == 1:
+        df = fdic_client.fetch_financials(certs[0], limit=limit)
+        return [] if df is None or df.empty else df.to_dict("records")
+
+    by_period: dict[str, list[dict]] = {}
+    for c in certs:
+        try:
+            df = fdic_client.fetch_financials(c, limit=limit)
+        except Exception as e:
+            print(f"[cert_group] {ticker}: cert {c} history failed: "
+                  f"{type(e).__name__}: {e}")
+            continue
+        if df is None or df.empty:
+            continue
+        for rec in df.to_dict("records"):
+            period = str(rec.get("REPDTE") or "")
+            if period:
+                by_period.setdefault(period, []).append(rec)
+
+    out = []
+    for period in sorted(by_period, reverse=True):
+        recs = sorted(by_period[period],
+                      key=lambda r: -(float(r.get("ASSET") or 0)))
+        out.append(aggregate_records(recs))
+    return out[:limit]
+
+
 def _recompute_exact_ratios(out: dict) -> None:
     """Rebuild the ratios that ARE a pure quotient of summed levels."""
     def _n(k):
