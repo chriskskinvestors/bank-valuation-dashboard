@@ -19,6 +19,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+from utils.chart_style import CATEGORICAL_PALETTE
+
 from data.branches_store import (
     list_states, list_msas, list_counties, get_latest_year,
     get_branches_by_state, get_branches_by_msa, get_branches_by_county,
@@ -147,32 +149,97 @@ def _render_map(df: pd.DataFrame, title: str = "",
         st.info("No branches with geographic coordinates available.")
         return
 
-    # Size by deposits (clipped + log-scaled so big-bank branches don't
-    # overwhelm small-bank ones visually)
+    # Size by deposits, SQRT-scaled. Plotly sizes markers by diameter, so
+    # radius ∝ √value makes AREA ∝ value — the proportional-symbol convention,
+    # and what makes a $5B branch read as bigger than a $50M one. The previous
+    # log1p scaling compressed that comparison almost flat (log1p of 5e6 vs
+    # 5e4 $K is 15.4 vs 10.8, i.e. ~18px vs ~14px), so the map showed WHERE
+    # branches are but said almost nothing about their weight.
     import numpy as np
-    plot_df["size"] = np.log1p(plot_df["deposits"].clip(lower=0))
-    plot_df["size"] = (plot_df["size"] / plot_df["size"].max() * 25 + 5).fillna(5)
+    dep = plot_df["deposits"].clip(lower=0).fillna(0)
+    root = np.sqrt(dep)
+    top = float(root.max()) or 1.0
+    # Floor at 12% of the max radius: pure proportionality would render a
+    # branch holding 1% of the largest one's deposits at ~3px on a map where
+    # the biggest is 34px — technically honest, practically invisible and
+    # unclickable. The floor costs accuracy only at the very bottom of the
+    # range, where the exact size carries no information anyway.
+    plot_df["size"] = (root / top).fillna(0.0).clip(lower=0.12)
     plot_df["deposits_fmt"] = plot_df["deposits"].apply(_fmt_dollars_k)
 
-    hover = ["ticker", "bank_name", "branch_name", "address", "city",
-             "state", "msa_name", "deposits_fmt"]
     if color_col not in plot_df.columns:
         color_col = "ticker"
+
+    center, zoom = _fit_viewport(plot_df["lat"], plot_df["lng"])
 
     fig = px.scatter_mapbox(
         plot_df,
         lat="lat", lon="lng",
         size="size",
+        size_max=34,                 # readable at metro zoom without blotting
         color=color_col,
-        hover_data=hover,
-        zoom=3,
+        color_discrete_sequence=CATEGORICAL_PALETTE,
+        custom_data=["bank_name", "branch_name", "city", "state",
+                     "deposits_fmt"],
+        center=center,
+        zoom=zoom,
         height=620,
         mapbox_style="carto-positron",
         title=title or None,
     )
-    fig.update_layout(margin=dict(l=0, r=0, t=40 if title else 0, b=0),
-                       legend_title_text=color_label)
+    # A labelled tooltip instead of plotly's raw "column=value" dump.
+    fig.update_traces(
+        marker=dict(opacity=0.72),   # branches overlap in dense metros
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "%{customdata[1]}<br>"
+            "%{customdata[2]}, %{customdata[3]}<br>"
+            "Deposits: %{customdata[4]}<extra></extra>"
+        ),
+    )
+    # A legend with one entry per bank is unreadable once a market has dozens
+    # of them, and it eats the map's width. Past ~15 banks the colours still
+    # separate them visually and hover names them, so drop the legend and give
+    # the space back to the map — the whole-market tabs are the common case.
+    n_series = plot_df[color_col].nunique(dropna=True)
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=40 if title else 0, b=0),
+        showlegend=n_series <= 15,
+        legend_title_text=color_label,
+        font=dict(family="Inter, -apple-system, system-ui, sans-serif", size=12),
+        hoverlabel=dict(bgcolor="#ffffff",
+                        font=dict(family="Inter, system-ui, sans-serif",
+                                  size=12)),
+        legend=dict(bgcolor="rgba(255,255,255,0.85)", borderwidth=0),
+    )
     st.plotly_chart(fig, use_container_width=True)
+
+
+def _fit_viewport(lats, lngs) -> tuple[dict, float]:
+    """(center, zoom) framing the plotted branches — what st.map does natively.
+
+    The map used a hardcoded zoom=3 (continental US) for every view, so picking
+    a single county, MSA or community bank rendered the whole country with a
+    speck on it. Zoom is derived from the bounding box: mapbox halves the
+    visible span per level, so log2(span_at_z0 / span) fits it, less a margin
+    so markers aren't flush to the edge.
+    """
+    import math
+    try:
+        la_min, la_max = float(lats.min()), float(lats.max())
+        lo_min, lo_max = float(lngs.min()), float(lngs.max())
+    except (TypeError, ValueError):
+        return {"lat": 39.5, "lon": -98.35}, 3.0          # continental US
+    if not all(map(math.isfinite, (la_min, la_max, lo_min, lo_max))):
+        return {"lat": 39.5, "lon": -98.35}, 3.0
+
+    center = {"lat": (la_min + la_max) / 2, "lon": (lo_min + lo_max) / 2}
+    lat_span = max(la_max - la_min, 1e-4)
+    lon_span = max(lo_max - lo_min, 1e-4)
+    zoom = min(math.log2(360.0 / lon_span), math.log2(180.0 / lat_span)) - 0.6
+    # Floor keeps a nationwide branch network whole; ceiling stops a
+    # single-branch bank zooming to rooftop level, where the map is useless.
+    return center, max(3.0, min(zoom, 11.0))
 
 
 def render_geo_view():
