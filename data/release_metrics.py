@@ -228,6 +228,22 @@ _TBV_PATS = [
                r"ended [^$%]{0,20}at))\s*\$\s?(\d{1,3}\.\d{2})", re.I),
     re.compile(_TBV_LABEL + r"[^$%]{0,30}?\d{1,2}(?:\.\d{1,2})?\s*%[^$%]{0,20}?"
                r"to\s*\$\s?(\d{1,3}\.\d{2})", re.I),
+    # DOLLAR-change-then-level: "Tangible book value per share (Non-GAAP)
+    # increased $1.67, or 15.6%, to $12.38 from $10.71" (FSRL 2Q26, found
+    # 2026-08-02 auditing the 75 smallest banks). The two patterns above both
+    # fail by design — their [^$%] connector cannot cross the $1.67 change — so
+    # the form yielded nothing at all rather than a wrong number.
+    #
+    # Deliberately narrow: an explicit change VERB, then the change amount,
+    # then an OPTIONAL ", or N%," clause, then the level pinned to "to $". The
+    # capture is the level, never the change. Anything looser would risk
+    # grabbing a change or a year-ago figure, which is the failure mode the
+    # first-$ discipline elsewhere in this file exists to prevent.
+    re.compile(_TBV_LABEL + r"[^$%]{0,40}?"
+               r"\b(?:increased|decreased|rose|fell|grew|declined|improved)\s*"
+               r"(?:by\s*)?\$\s?\d{1,3}\.\d{2}\s*,?\s*"
+               r"(?:or\s*\d{1,2}(?:\.\d{1,2})?\s*%\s*,?\s*)?"
+               r"to\s*\$\s?(\d{1,3}\.\d{2})", re.I),
 ]
 _TBV_BAND = (1.0, 500.0)
 
@@ -747,6 +763,22 @@ def _ticker_for_cik(cik) -> str | None:
     return _CIK_TICKER.get(key)
 
 
+# Why the store fast-path did or didn't answer, counted per process. The
+# frontier change (2026-07-28) was expected to remove ~538 multi-MB EDGAR
+# submissions fetches per metrics build; 24 consecutive runs measured 2026-08-02
+# show build_metrics UNCHANGED at a 1618s median, so either the fast path is not
+# engaging or that fetch was never the bottleneck. These counters answer which,
+# instead of a third hypothesis read off the code.
+FRONTIER_STATS: dict[str, int] = {
+    "hit": 0,            # store answered
+    "no_poller": 0,      # liveness gate closed
+    "no_ticker": 0,      # CIK didn't resolve to a ticker
+    "no_8k_row": 0,      # ticker resolved, no 8-K on record
+    "error": 0,          # store read raised
+    "edgar": 0,          # fell through to the live submissions index
+}
+
+
 def _accession_from_store(cik) -> str | None:
     """The frontier per the events store, or None when the store cannot PROVE an
     answer (poller not demonstrably live, no ticker mapping, no 8-K on record) —
@@ -756,16 +788,26 @@ def _accession_from_store(cik) -> str | None:
     filings that used to be dropped, so this replaces a multi-MB submissions
     fetch per bank with one indexed row read. That fetch — ~538 of them,
     serialized, on every metrics build past the 15-min re-check gate — was the
-    dominant cost of the 2026-07-27 refresh-home-snapshot timeout incident."""
+    dominant cost of the 2026-07-27 refresh-home-snapshot timeout incident.
+
+    Every exit increments FRONTIER_STATS so a run reports which branch it took."""
     try:
         from data.events.store import events_ingested_within, latest_8k_accession
         if not events_ingested_within(_POLLER_LIVENESS_S):
+            FRONTIER_STATS["no_poller"] += 1
             return None
         tk = _ticker_for_cik(cik)
         if not tk:
+            FRONTIER_STATS["no_ticker"] += 1
             return None
-        return latest_8k_accession(tk)
+        acc = latest_8k_accession(tk)
+        if acc is None:
+            FRONTIER_STATS["no_8k_row"] += 1
+        else:
+            FRONTIER_STATS["hit"] += 1
+        return acc
     except Exception:
+        FRONTIER_STATS["error"] += 1
         return None
 
 
@@ -787,6 +829,7 @@ def _current_accession(cik) -> str | None:
     if acc is not None:
         return acc
 
+    FRONTIER_STATS["edgar"] += 1
     from data.ir_provider import _earnings_8k_candidates
     from data.sec_filing_scraper import _get
     try:
@@ -813,6 +856,11 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v17 (2026-08-02): TBV/share dollar-change-then-level form —
+    # "increased $1.67, or 15.6%, to $12.38" (FSRL 2Q26). Both existing
+    # patterns' [^$%] connectors stop at the change amount, so the value
+    # was missed entirely; found auditing the 75 smallest banks, where
+    # small-bank TBV coverage matters most.
     # v15 (2026-07-21): respectively-pair form — first-%-after-label
     # handed the SECOND label the FIRST value (CCFN ROE 1.70, real
     # 14.65). v14 point-first decimals (".19%") in prose/cell
@@ -827,7 +875,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v16:{int(cik)}"
+    key = f"release_metrics:v17:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a

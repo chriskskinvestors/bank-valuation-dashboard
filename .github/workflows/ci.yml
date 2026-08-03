@@ -41,23 +41,21 @@ jobs:
       - name: Render smoke (Home sections with populated fake data)
         run: python tests/test_render_smoke.py
 
-      - name: Hand-computed value + extractor suites (offline)
-        run: |
-          python -m unittest \
-            tests.test_audit_regressions \
-            tests.test_dcf_and_models \
-            tests.test_sec_filing_scraper \
-            tests.test_nav_renders \
-            tests.test_deploy_secret_contract \
-            tests.test_cache_read_ceilings \
-            tests.test_frontier_from_events \
-            tests.test_geo_bank_picker \
-            tests.test_tbv_conventions \
-            tests.test_valuation_model_consensus \
-            tests.test_sec_8k_adapter \
-            tests.test_audit_20260727_p3 \
-            tests.test_capital_dynamics_equity \
-            tests.test_consensus_excel_periods \
-            tests.test_deal_comps \
-            tests.test_earnings_results
-          PYTHONIOENCODING=utf-8 python tests/test_metric_formulas.py
+      # EVERY suite, discovered — not a hand-maintained list. The list gated 16
+      # of the repo's 151 test modules, so a suite could pin a behaviour and
+      # never run: on 2026-08-02 a merged, DEPLOYED change regressed a contract
+      # pinned by tests/test_valuation_model_consensus.py, which wasn't listed.
+      # CI was green throughout. Most of the audit's own pinning suites
+      # (test_cache_stale_fallback, test_financial_highlights_tbvps,
+      # test_filings_escaping, test_deeplink_subtab, test_form13f_matching, …)
+      # were unlisted too, so the fixes they protect were unenforced.
+      # Discovery means adding a test file is enough to have it gate merges.
+      # Verified 2026-08-02 (CI run #24): all 151 modules pass under discovery,
+      # in 7m49s vs ~5m for the 16-module list — so the list was retired rather
+      # than left as a duplicate that could drift out of sync with reality.
+      - name: Full test suite (discovered)
+        run: python -m unittest discover -s tests -t . -v 2>&1 | tail -40
+
+      # Script-style suite: run as a program, so discovery doesn't collect it.
+      - name: Metric formula suite (script-style)
+        run: PYTHONIOENCODING=utf-8 python tests/test_metric_formulas.py
