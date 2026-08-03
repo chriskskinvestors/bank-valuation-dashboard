@@ -15,7 +15,7 @@ def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[
     """
     from data.cache import get as cache_get, put as cache_put
     from data.bank_mapping import get_fdic_cert
-    from data import fdic_client
+    from data.cert_group import fetch_group_history
 
     hist = cache_get(f"fdic_hist:{ticker}")
     if hist and len(hist) >= min_quarters:
@@ -23,9 +23,12 @@ def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[
     cert = get_fdic_cert(ticker)
     if not cert:
         return hist or []
-    df = fdic_client.fetch_financials(cert, limit=limit)
-    if df.empty:
+    # The WHOLE banking operation, not just the lead charter: 11 universe banks
+    # are multi-bank holdcos and were showing one charter's figures (WTFC $9.3B
+    # of $72.4B). fetch_group_history returns one consolidated record per
+    # quarter, so every consumer of this list gets the real bank.
+    records = fetch_group_history(ticker, limit=limit, cert=cert)
+    if not records:
         return hist or []
-    records = df.to_dict("records")
     cache_put(f"fdic_hist:{ticker}", records)
     return records

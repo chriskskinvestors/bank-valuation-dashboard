@@ -161,3 +161,77 @@ class TestGroupResolutionDegradesSafely(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGroupHistoryAggregation(unittest.TestCase):
+    """fetch_group_history is the single seam the wiring goes through: every
+    producer of the fdic_hist cache entry calls it, so every consumer becomes
+    correct without changing. Aggregating the HISTORY (not one record) is what
+    keeps averaged ratios alive — downstream derives ROA/NIM/ROATCE from levels
+    plus a prior quarter."""
+
+    def _df(self, rows):
+        import pandas as pd
+        return pd.DataFrame(rows)
+
+    def test_quarters_are_consolidated_across_charters(self):
+        import data.cert_group as cg
+        rows = {
+            19629: [{"REPDTE": "20260630", "ASSET": 9_892_909, "CERT": 19629},
+                    {"REPDTE": "20260331", "ASSET": 9_800_000, "CERT": 19629}],
+            25679: [{"REPDTE": "20260630", "ASSET": 4_520_154, "CERT": 25679},
+                    {"REPDTE": "20260331", "ASSET": 4_500_000, "CERT": 25679}],
+        }
+        with patch("data.fdic_client.fetch_financials",
+                   side_effect=lambda c, limit=20: self._df(rows[c])), \
+                patch.object(cg, "get_cert_group", return_value=[19629, 25679]):
+            hist = cg.fetch_group_history("IBOC", limit=20)
+        self.assertEqual(len(hist), 2)
+        self.assertEqual(hist[0]["REPDTE"], "20260630")          # newest first
+        self.assertEqual(hist[0]["ASSET"], 14_413_063)           # 9,892,909+4,520,154
+        self.assertEqual(hist[1]["ASSET"], 14_300_000)
+        self.assertEqual(hist[0]["_charter_count"], 2)
+
+    def test_single_charter_takes_the_unaggregated_path(self):
+        import data.cert_group as cg
+        one = self._df([{"REPDTE": "20260630", "ASSET": 500, "ROA": 1.11,
+                         "CERT": 35295}])
+        with patch("data.fdic_client.fetch_financials", return_value=one), \
+                patch.object(cg, "get_cert_group", return_value=[35295]):
+            hist = cg.fetch_group_history("SFST")
+        self.assertEqual(len(hist), 1)
+        self.assertEqual(hist[0]["ROA"], 1.11, "single charter keeps its ratios")
+        self.assertNotIn("_aggregated", hist[0])
+
+    def test_one_charter_failing_does_not_lose_the_others(self):
+        import data.cert_group as cg
+
+        def _fetch(c, limit=20):
+            if c == 2:
+                raise RuntimeError("FDIC down")
+            return self._df([{"REPDTE": "20260630", "ASSET": 100, "CERT": c}])
+
+        with patch("data.fdic_client.fetch_financials", side_effect=_fetch), \
+                patch.object(cg, "get_cert_group", return_value=[1, 2]):
+            hist = cg.fetch_group_history("X")
+        self.assertEqual(len(hist), 1)
+        self.assertEqual(hist[0]["ASSET"], 100)
+
+    def test_no_certs_returns_empty(self):
+        import data.cert_group as cg
+        with patch.object(cg, "get_cert_group", return_value=[]):
+            self.assertEqual(cg.fetch_group_history("NOPE"), [])
+
+
+class TestProducersUseTheSeam(unittest.TestCase):
+    """Structural: the cache entry every tab reads must be written from the
+    group path, or a consumer silently gets lead-charter figures again."""
+
+    def test_shared_loader_uses_group_history(self):
+        src = (REPO / "data/loaders.py").read_text(encoding="utf-8")
+        self.assertIn("fetch_group_history", src)
+        self.assertNotIn("fdic_client.fetch_financials(cert", src)
+
+    def test_nightly_refresh_uses_group_history(self):
+        src = (REPO / "jobs/refresh_universe.py").read_text(encoding="utf-8")
+        self.assertIn("fetch_group_history", src)
