@@ -118,7 +118,13 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     tbvps = sec.get("tangible_book_value_per_share")
     if tbvps is None:
         equity = latest.get("EQTOT") or 0
-        intangibles = latest.get("INTAN") or 0   # NOT INTANGW (goodwill only)
+        # max(INTAN, INTANGW), the same belt-and-braces analysis/capital_dynamics
+        # uses. INTAN (total intangibles) is the convention and normally the
+        # larger, so this resolves to it; but a record missing INTAN would
+        # otherwise deduct NOTHING and treat all equity as tangible — a bigger
+        # overstatement than the goodwill-only bug this replaced. Falling back to
+        # goodwill is the conservative floor.
+        intangibles = max(latest.get("INTAN") or 0, latest.get("INTANGW") or 0)
         tbvps = ((equity - intangibles) * 1000 / shares) if shares > 0 else None
 
     # Trailing loan growth (TTM)
