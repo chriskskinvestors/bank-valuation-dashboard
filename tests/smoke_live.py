@@ -47,6 +47,8 @@ HYDRATE_TIMEOUT_S = int(os.environ.get("SMOKE_HYDRATE_TIMEOUT_S", "150"))
 # page paints but native controls aren't wired until the WS session is live).
 WARM = "--warm" in sys.argv
 WARM_TIMEOUT_S = int(os.environ.get("SMOKE_WARM_TIMEOUT_S", "180"))
+# App-shell mount window per attempt: 30s normally, one 60s retry (see main()).
+SHELL_TIMEOUTS_MS = (30_000, 60_000)
 _ADDON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_iap_proxy_addon.py")
 
 # Top-nav section labels (app.py SECTIONS). Hydration is proven STRUCTURALLY
@@ -55,6 +57,12 @@ _ADDON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_iap_proxy_ad
 # log line rather than driving the pass/fail decision.
 EXPECTED_ANY = ["Home", "Market & Macro", "Screen & Compare", "Company",
                 "Earnings", "News & Research", "Geographic"]
+
+
+def _shell_retry_allowed(attempt: int) -> bool:
+    """Retry a stApp-selector miss on 0-based `attempt`? Only while a later
+    window in SHELL_TIMEOUTS_MS remains — i.e. exactly one retry by default."""
+    return attempt + 1 < len(SHELL_TIMEOUTS_MS)
 
 
 def _port_open(port: int) -> bool:
@@ -124,21 +132,41 @@ def main() -> int:
                 ctx = browser.new_context(extra_http_headers=headers)
             page = ctx.new_page()
 
-            resp = page.goto(URL, wait_until="domcontentloaded", timeout=60_000)
-            if resp is not None and resp.status >= 400:
-                print(f"smoke_live: FAIL — {URL} returned HTTP {resp.status}",
-                      file=sys.stderr)
-                return 1
-
             # Reached the Streamlit shell? Proves IAP auth + the revision serves
-            # the app (else: a login page, 403, or error page).
-            try:
-                page.wait_for_selector('[data-testid="stApp"]', timeout=30_000)
-            except Exception:
-                print("smoke_live: FAIL — did not reach the Streamlit app shell "
-                      "(IAP auth or server problem)", file=sys.stderr)
-                print(page.content()[:1500], file=sys.stderr)
-                return 1
+            # the app (else: a login page, 403, or error page). One miss earns a
+            # single fresh-page retry with a longer window: a stone-cold revision
+            # after a full layer-cache-miss rebuild can serve the shell HTML yet
+            # take >30s to mount the React app (deploy run #936 false-failed on
+            # exactly that). A repeat miss still fails — a revision that can't
+            # mount twice IS a broken deploy.
+            for attempt, shell_timeout_ms in enumerate(SHELL_TIMEOUTS_MS):
+                if attempt:
+                    print(f"smoke_live: app shell not mounted within "
+                          f"{SHELL_TIMEOUTS_MS[attempt - 1] // 1000}s — first "
+                          f"attempt timed out (cold revision); retrying once on "
+                          f"a fresh page with a {shell_timeout_ms // 1000}s "
+                          f"window", file=sys.stderr)
+                    page.close()
+                    page = ctx.new_page()
+
+                resp = page.goto(URL, wait_until="domcontentloaded",
+                                 timeout=60_000)
+                if resp is not None and resp.status >= 400:
+                    print(f"smoke_live: FAIL — {URL} returned HTTP {resp.status}",
+                          file=sys.stderr)
+                    return 1
+
+                try:
+                    page.wait_for_selector('[data-testid="stApp"]',
+                                           timeout=shell_timeout_ms)
+                    break
+                except Exception:
+                    if _shell_retry_allowed(attempt):
+                        continue
+                    print("smoke_live: FAIL — did not reach the Streamlit app "
+                          "shell (IAP auth or server problem)", file=sys.stderr)
+                    print(page.content()[:1500], file=sys.stderr)
+                    return 1
 
             if WARM:
                 # Stay connected until the Movers table populates — that needs
