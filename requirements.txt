@@ -55,7 +55,7 @@ MarkupSafe==3.0.3
 mdurl==0.1.2
 multitasking==0.0.13
 narwhals==2.24.0
-numpy==2.5.1
+numpy==2.4.6
 openpyxl==3.1.5
 packaging==26.2
 pandas==3.0.5
@@ -66,11 +66,11 @@ plotly==6.9.0
 proto-plus==1.28.2
 protobuf==7.35.1
 psycopg2-binary==2.9.12
-pyarrow==25.0.0
+pyarrow==24.0.0
 pyasn1-modules==0.4.2
 pyasn1==0.6.4
 pycparser==3.0
-pydantic-core==2.47.0
+pydantic-core==2.46.4
 pydantic==2.13.4
 pydeck==0.9.3
 pygments==2.20.0
