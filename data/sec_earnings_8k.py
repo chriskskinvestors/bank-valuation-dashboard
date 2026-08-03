@@ -162,7 +162,15 @@ def _table_rows(html_bytes: bytes) -> list[tuple]:
     a blank latest-quarter cell must render n/a, never a prior period's figure.
     Columns that never carry a number anywhere in the table (spacers, '$'/'%'
     decoration, footnote refs) are dropped for every row alike, exactly as the
-    old cell-filtering did."""
+    old cell-filtering did.
+
+    Per-row decoration (FRME 2026-Q2): some releases share ONE physical column
+    between ratio values ('9.8' on %-rows) and dollar markers ('$' on $-rows),
+    so the column IS a value column table-wide and a $-row reads
+    [None, 29.8, …] — the P3 guard then misread the '$' cell as a blank latest
+    quarter and dropped a cleanly disclosed figure. A cell whose entire text is
+    a bare '$'/'%' is decoration for THAT row and is skipped; a truly blank
+    cell is empty text, still lands as None, and the guard keeps working."""
     from lxml import html as lhtml
     root = lhtml.fromstring(html_bytes)
     rows: list[tuple] = []
@@ -193,8 +201,16 @@ def _table_rows(html_bytes: bytes) -> list[tuple]:
             cl = _clean_label(label)
             if not cl:
                 continue
-            nums = [_num(row[i]) if i < len(row) else None
-                    for i in num_cols if i > label_idx]
+            nums = []
+            for i in num_cols:
+                if i <= label_idx:
+                    continue
+                if i >= len(row):
+                    nums.append(None)
+                    continue
+                if row[i].strip() in ("$", "%"):   # this row's decoration cell
+                    continue
+                nums.append(_num(row[i]))
             if not any(n is not None for n in nums):
                 continue
             rows.append((cl, nums))
@@ -462,7 +478,8 @@ def latest_earnings_8k_figures(cik) -> dict | None:
     if not f8k:
         return None
 
-    ckey = f"earnings_8k:v1:{f8k['accession']}"
+    # v2: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss).
+    ckey = f"earnings_8k:v2:{f8k['accession']}"
     # Accession-keyed and version-prefixed = immutable; the default 24h read
     # ceiling would silently re-run the fetch+parse for every bank every day.
     payload = cache.get(ckey, max_age_s=None)
@@ -547,7 +564,9 @@ def reported_tbvps(
     # reconstruction/bvps is a different question and must not reuse a stale None.
     rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
     bk = f"{bvps:.4f}" if bvps is not None else "na"
-    ckey = f"reported_tbvps:v2:{f8k['accession']}:{rk}:{bk}"
+    # v3: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss) —
+    # cached {"value": None} under v2 would otherwise serve the miss forever.
+    ckey = f"reported_tbvps:v3:{f8k['accession']}:{rk}:{bk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling (see above).
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
