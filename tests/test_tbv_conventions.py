@@ -83,21 +83,30 @@ class TestValuationModelTbvps(unittest.TestCase):
             {"shares_outstanding": 0, "eps": 5.0})
         self.assertIsNone(seed["tbvps"])
 
-    def test_missing_intan_does_not_silently_undeduct(self):
-        """A record with no INTAN must not quietly become 'equity is tangible'.
+    def test_missing_intan_falls_back_to_goodwill_not_zero(self):
+        """A record with no INTAN must not become 'all equity is tangible'.
 
-        This is the weaker half of the guarantee: INTAN is in
-        _BASE_FINANCIALS_FIELDS so it is normally present, and when it is
-        absent the fallback deducts 0 — the honest read of "no intangibles
-        reported". The pin exists so a future change to the fetched field list
-        shows up here rather than as a silently inflated TBV."""
+        Caught by the full local suite 2026-08-02: deducting only INTAN made
+        this case WORSE than the goodwill-only bug it replaced ($25.00 vs
+        $20.00 on the shared fixture) because nothing was deducted at all.
+        max(INTAN, INTANGW) resolves to INTAN whenever it is present — the
+        convention — and floors at goodwill when it isn't."""
         from ui.valuation_model import _derive_defaults
         seed = _derive_defaults(
             "TEST",
             [{"REPDTE": "20260331", "EQTOT": 1_000_000, "INTANGW": 200_000,
               "LNLSNET": 500_000, "NETINC": 10_000, "ASSET": 2_000_000}],
             {"shares_outstanding": 10_000_000, "eps": 5.0})
-        self.assertAlmostEqual(seed["tbvps"], 100.00, places=6)
+        # (1,000,000 − 200,000)k = $800M / 10M shares = $80.00, NOT $100.00.
+        self.assertAlmostEqual(seed["tbvps"], 80.00, places=6)
+
+    def test_intan_wins_when_both_present(self):
+        """The convention: total intangibles, not goodwill, whenever available."""
+        from ui.valuation_model import _derive_defaults
+        seed = _derive_defaults(
+            "TEST", self._hist(eqtot=1_000_000, intan=300_000, intangw=200_000),
+            {"shares_outstanding": 10_000_000, "eps": 5.0})
+        self.assertAlmostEqual(seed["tbvps"], 70.00, places=6)
 
 
 class TestConventionIsUniform(unittest.TestCase):
@@ -110,9 +119,13 @@ class TestConventionIsUniform(unittest.TestCase):
         max(goodwill, intangibles), which lands on INTAN). What must never come
         back is deriving tangible equity from goodwill alone here."""
         src = (REPO / "ui/valuation_model.py").read_text(encoding="utf-8")
+        # What must never return: tangible equity derived from goodwill alone.
         self.assertNotIn("equity - goodwill", src)
-        self.assertNotIn('latest.get("INTANGW")', src)
-        self.assertIn('latest.get("INTAN")', src)
+        # INTANGW may be REFERENCED — but only as the conservative floor inside
+        # max(INTAN, INTANGW), never as the deduction on its own.
+        self.assertIn(
+            'max(latest.get("INTAN") or 0, latest.get("INTANGW") or 0)', src,
+            "the FDIC fallback must deduct max(total intangibles, goodwill)")
 
     def test_deal_comps_requests_eqtot_not_eq(self):
         src = (REPO / "data/deal_comps.py").read_text(encoding="utf-8")

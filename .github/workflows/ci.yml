@@ -53,6 +53,7 @@ jobs:
             tests.test_frontier_from_events \
             tests.test_geo_bank_picker \
             tests.test_tbv_conventions \
+            tests.test_valuation_model_consensus \
             tests.test_sec_8k_adapter \
             tests.test_audit_20260727_p3 \
             tests.test_capital_dynamics_equity \
