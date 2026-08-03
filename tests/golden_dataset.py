@@ -68,8 +68,19 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         "roatce_holdco": {"expected": 19.83, "tol_abs": 1.0},
     },
     "BAC": {
-        "shares":        {"expected": 7_212_000_000, "tol_pct": 2.0},
-        "ni_ttm_b":      {"expected": 31.73, "tol_pct": 3.0},
+        # Re-pinned 2026-08-02 to BAC's Q2-2026 10-Q — it is the only golden
+        # bank that had filed Q2 at that date, so it alone drifted past
+        # tolerance while the others stayed inside it. Hand-verified against raw
+        # companyfacts via tools/golden_handcheck (NEVER copied from pipeline
+        # output): NI quarters 2025-09-30 8.469B + 2025-12-31 7.510B +
+        # 2026-03-31 8.584B + 2026-06-30 9.074B = 33.637B TTM; dei shares
+        # 6,992,748,365 as of the 2026-07-30 cover page (was 7.212B — buybacks).
+        # equity_b/tbvps still pass on their Q1 pins and are deliberately NOT
+        # churned: tbvps is pinned to BAC's OWN reported 1Q26 8-K figure, and
+        # re-pinning it needs the Q2 8-K reconciliation hand-read, not a
+        # reconstruction.
+        "shares":        {"expected": 6_993_000_000, "tol_pct": 2.0},
+        "ni_ttm_b":      {"expected": 33.64, "tol_pct": 3.0},
         "equity_b":      {"expected": 303.2, "tol_pct": 3.0},
         # Reported tangible book value / common share, 1Q26 8-K (TCE $205,651M /
         # 7,129.9M shares) = $28.84. BAC's reconciliation nets DTL on intangibles
