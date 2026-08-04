@@ -192,9 +192,19 @@ jobs:
           for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices refresh-avg-volume refresh-insider refresh-live-yields verify-metrics refresh-capital refresh-company-financials refresh-home-snapshot refresh-macro refresh-premarket refresh-trends refresh-13f refresh-deal-comps refresh-cr-quarterly nic-mirror-verify; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               echo "  Updating $job..."
+              # refresh-universe: 3600s, not the 1800s default. Its 30-min
+              # ceiling killed the 2026-08-04 run at bank 400/595 (and
+              # 2026-07-31 before any code change) — baseline ~21 min plus
+              # FDIC-slow days plus the cert-group calls leaves no headroom.
+              # Same fix as refresh-home-snapshot (2026-07-27 incident).
+              EXTRA=""
+              if [ "$job" = "refresh-universe" ]; then
+                EXTRA="--task-timeout=3600"
+              fi
               gcloud run jobs update "$job" \
                 --region="${{ env.REGION }}" \
                 --image="${{ env.IMAGE }}" \
+                $EXTRA \
                 --quiet >/dev/null
             else
               echo "  Skipping $job (not deployed yet)"
