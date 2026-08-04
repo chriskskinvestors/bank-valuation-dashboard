@@ -101,9 +101,9 @@ Dispatch: `ui/company_nav.py` → `_CR_RENDERERS` (12 entries) → renderers in
 Performance Analysis, Credit Quality and Interest Rate Risk closed the gap via
 `_cr_highlights_by_year` (annual + discrete-quarter toggles; see Phase 1
 notes — the per-tab status table above predates this and is kept for field
-mapping only). Trend charts: Highlights, Performance, Credit Quality, Rate
-Risk, Regulatory Capital; Securities / Fair Value / Segments / Compositions
-are table-only (Phase 3 tail).
+mapping only). Trend charts: every multi-year tab
+(Highlights, Performance, Credit Quality, Rate Risk, Regulatory Capital,
+Securities, Fair Value, Segments, Loan/Deposit Composition).
 
 ---
 
@@ -164,9 +164,13 @@ series to chart first.*
       `_cr_perf_trends` (NIM/ROAA/ROAE/efficiency %, ≥3 points, ≤4 charts).
 - [x] **Regulatory Capital** — SHIPPED: CET1-with-floors trend + TBV/share +
       capital-return charts in `ui/capital_dynamics.py`.
-- [~] Extend trend charts to the other multi-year tabs — Credit Quality and
-      Interest Rate Risk have them; Securities / Fair Value / Segments /
-      Compositions are still table-only (open).
+- [x] Extend trend charts to the other multi-year tabs — DONE 2026-08-04.
+      Credit Quality, Interest Rate Risk, Securities (underwater %) and Fair
+      Value (Level 3 %) already had them (the 2026-08-04 reconcile initially
+      mis-read Securities/FV as table-only — corrected); Segments (primary
+      measure by segment) and Loan/Deposit Composition (mix % of total) added
+      via the shared `_cr_multiline_trend`, table LEFT / trends RIGHT like
+      every sibling tab.
 
 ### Phase 4 — 8-K earnings-supplement scrape (timeliness layer)
 *Rationale: there is a ~4-week gap between an earnings 8-K and the 10-Q. Banks

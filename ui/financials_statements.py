@@ -2493,6 +2493,34 @@ def _comp_merge_variants(order, display, per_val, periods, member=None):
     return out_order, display, per_val
 
 
+def _cr_multiline_trend(xs, series, title, ytitle, key):
+    """One multi-line trend chart shared by the Segments and Composition tabs:
+    series = [(name, ys)] oldest→newest, blanks preserved (connectgaps, like
+    every other Company-Reported trend). A series needs ≥3 disclosed points to
+    draw; nothing renders when none qualifies. Same plotting style as
+    _cr_perf_trends, plus a legend (multi-line needs one)."""
+    import plotly.graph_objects as go
+    from utils.chart_style import (apply_standard_layout, tighten_yaxis,
+                                   CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
+    drawn = [(name, ys) for name, ys in series
+             if sum(1 for y in ys if y is not None) >= 3]
+    if not drawn:
+        return
+    st.markdown("##### Trends")
+    fig = go.Figure()
+    for i, (name, ys) in enumerate(drawn):
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="lines+markers", connectgaps=True, name=name,
+            line=dict(color=CATEGORICAL_PALETTE[i % len(CATEGORICAL_PALETTE)],
+                      width=2),
+            marker=dict(size=5)))
+    apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
+                          yaxis_title=ytitle, show_legend=True)
+    allv = [y for _, ys in drawn for y in ys if y is not None]
+    tighten_yaxis(fig, values=allv or None)
+    st.plotly_chart(fig, use_container_width=True, key=key)
+
+
 @st.fragment
 def _render_company_composition(ticker, kind):
     """As-reported loan/deposit composition (kind = "loan" | "deposit") from the
@@ -2595,7 +2623,24 @@ def _render_company_composition(ticker, kind):
                f"(latest \\${latest_total / 1e6:,.0f}M). Blank = not separately "
                f"reported that period.")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(cols, rows, entity=entity, src=src)
+    _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+    with _lt:
+        _cr_component(cols, rows, entity=entity, src=src)
+    with _rt:
+        # Mix trend: each category as % of the period's reconciled total —
+        # faithful by construction (every in-view period reconciles to its
+        # disclosed total). Top 5 categories by latest-period share; a category
+        # absent in a period stays a gap (never carried forward).
+        series = []
+        for key in order[:5]:
+            ys = []
+            for p in periods:
+                v, tot = per_val[key].get(p), comp[p]["total"]
+                ys.append(100.0 * v / tot if v is not None and tot else None)
+            series.append((display[key], ys))
+        _cr_multiline_trend(
+            cols, series, f"{kind.capitalize()} mix, % of total", "%",
+            f"crcomp_{kind}_tr_{ticker}_{'q' if _qtr else 'a'}")
 
 
 # @st.fragment on the three statement pages: the Annual/Quarterly toggle +
@@ -4043,7 +4088,31 @@ def _render_segments(ticker):
     grid_rows += _band("Revenue ($)", "revenue")
     grid_rows += _band("Total assets ($)", "assets")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
-    _cr_component(cols, grid_rows, entity=entity, src=src)
+    _lt, _rt = st.columns([1, 1], vertical_alignment="top")
+    with _lt:
+        _cr_component(cols, grid_rows, entity=entity, src=src)
+    with _rt:
+        # Primary-measure trend per reportable segment (the residual/consolidated
+        # reconciling rows are table-only — they'd read as phantom "segments").
+        # Scale by the largest magnitude in view: $B when any segment reaches
+        # $1B, else $M.
+        raw = {}
+        for lbl in seg_order[:6]:
+            ys = []
+            for p in periods:
+                seg = next((s for s in seg_data[p]["segments"]
+                            if s["label"] == lbl), None)
+                v = seg.get(primary_key) if seg is not None else None
+                ys.append(v)
+            raw[lbl] = ys
+        maxabs = max((abs(v) for ys in raw.values() for v in ys
+                      if v is not None), default=0)
+        unit, div = ("$B", 1e9) if maxabs >= 1e9 else ("$M", 1e6)
+        series = [(lbl, [v / div if v is not None else None for v in ys])
+                  for lbl, ys in raw.items()]
+        _cr_multiline_trend(
+            cols, series, f"{primary_title.replace(' ($)', '')} by segment ({unit})",
+            unit, f"crseg_tr_{ticker}")
 
 
 @st.fragment
