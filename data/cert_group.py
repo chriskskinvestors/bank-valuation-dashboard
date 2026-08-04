@@ -61,6 +61,17 @@ _IDENTITY = frozenset({"CERT", "REPNM", "REPDTE", "NAME", "STALP", "CITY",
 
 _GROUP_TTL_S = 30 * 86400          # bank structure changes rarely
 
+# ONE cache row holding {str(cert): [group certs largest-first]} for every
+# cert under a holdco with 2+ active charters, built from the universe
+# snapshot's full-institutions walk (data/bank_universe._fetch_fdic_banks).
+# Why bulk: the per-cert path costs 2 FDIC API calls per bank, and inside the
+# nightly's 8-worker burst those get 429-throttled — get_with_retry returns
+# None, and the group silently degraded to the lead charter for EVERY bank
+# (2026-08-04: a "successful" run wrote lead-charter data universe-wide).
+# Absence from the map means single-charter; the API path is only a fallback
+# for an environment where the map has never been built.
+_GROUP_MAP_KEY = "cert_groups:v2"
+
 
 def get_cert_group(ticker: str, cert: int | None = None) -> list[int]:
     """Every ACTIVE FDIC cert under `ticker`'s holding company, largest first.
@@ -81,6 +92,17 @@ def get_cert_group(ticker: str, cert: int | None = None) -> list[int]:
     cert = int(cert)
 
     from data import cache
+    # Bulk map first: no API call, and a cert absent from the map IS the
+    # single-charter answer (the map only lists multi-charter groups).
+    try:
+        m = cache.get(_GROUP_MAP_KEY, max_age_s=_GROUP_TTL_S)
+    except Exception:
+        m = None
+    if isinstance(m, dict):
+        g = m.get(str(cert))
+        return [int(c) for c in g] if g else [cert]
+
+    # No bulk map yet (fresh environment): legacy per-cert resolution.
     key = f"cert_group:v1:{cert}"
     try:
         hit = cache.get(key, max_age_s=_GROUP_TTL_S)
@@ -99,6 +121,47 @@ def get_cert_group(ticker: str, cert: int | None = None) -> list[int]:
     return certs
 
 
+def build_group_map(institutions: list[dict]) -> dict[str, list[int]]:
+    """{str(cert): [group certs largest-first]} for every cert whose holdco
+    (rssdhcr) has 2+ active charters. Single-charter certs are OMITTED —
+    absence from the map means [cert]. Keys are strings because the map
+    round-trips through JSON in the cache.
+
+    `institutions` rows need cert / rssdhcr / asset (lowercase, as
+    data/bank_universe._fetch_fdic_banks builds them). RSSDHCR of 0/None/""
+    means no high holder."""
+    by_hc: dict[int, list[dict]] = {}
+    for b in institutions:
+        try:
+            hc = int(b.get("rssdhcr") or 0)
+            cert = int(b.get("cert") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not hc or not cert:
+            continue
+        by_hc.setdefault(hc, []).append(b)
+    out: dict[str, list[int]] = {}
+    for members in by_hc.values():
+        if len(members) < 2:
+            continue
+        certs = [int(mm["cert"]) for mm in
+                 sorted(members, key=lambda mm: -(float(mm.get("asset") or 0)))]
+        for c in certs:
+            out[str(c)] = certs
+    return out
+
+
+def warm_group_map(institutions: list[dict]) -> int:
+    """Build and persist the bulk group map. Returns the number of certs that
+    belong to a multi-charter group. Called from the universe snapshot build,
+    which already walked every ACTIVE institution — so this costs zero extra
+    FDIC API calls."""
+    m = build_group_map(institutions)
+    from data import cache
+    cache.put(_GROUP_MAP_KEY, m)
+    return len(m)
+
+
 def _resolve_group(cert: int) -> list[int]:
     """Live FDIC lookup: the cert's holdco RSSD, then every active cert under
     it, ordered by assets descending. [] on any failure (caller falls back)."""
@@ -111,6 +174,12 @@ def _resolve_group(cert: int) -> list[int]:
             "fields": "CERT,RSSDHCR,ASSET", "limit": 1, "format": "json",
         }, timeout=30)
         if r is None:
+            # get_with_retry returns None ONLY when every attempt ate a 429.
+            # This must be loud: the silent version of this line let a
+            # rate-limited nightly degrade every bank to its lead charter
+            # with nothing in the logs (2026-08-04).
+            print(f"[cert_group] cert {cert}: institutions lookup "
+                  f"rate-limited past retries — degrading to single cert")
             return []
         rows = r.json().get("data", [])
         if not rows:
@@ -124,6 +193,8 @@ def _resolve_group(cert: int) -> list[int]:
             "sort_by": "ASSET", "sort_order": "DESC",
         }, timeout=30)
         if r2 is None:
+            print(f"[cert_group] cert {cert}: group lookup rate-limited "
+                  f"past retries — degrading to single cert")
             return []
         out = []
         for d in r2.json().get("data", []):

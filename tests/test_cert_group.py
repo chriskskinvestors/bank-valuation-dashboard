@@ -154,8 +154,14 @@ class TestGroupResolutionDegradesSafely(unittest.TestCase):
             self.assertEqual(cg.get_cert_group("X", cert=19629), [19629])
 
     def test_cached_group_is_served(self):
+        # No bulk map in this environment; the legacy per-cert cache row
+        # must still be honoured (key-aware mock: the bulk-map read misses).
         import data.cert_group as cg
-        with patch("data.cache.get", return_value={"certs": [1, 2, 3]}):
+
+        def _get(key, max_age_s=None):
+            return {"certs": [1, 2, 3]} if key.startswith("cert_group:v1:") else None
+
+        with patch("data.cache.get", side_effect=_get):
             self.assertEqual(cg.get_cert_group("X", cert=1), [1, 2, 3])
 
 
@@ -221,6 +227,79 @@ class TestGroupHistoryAggregation(unittest.TestCase):
         import data.cert_group as cg
         with patch.object(cg, "get_cert_group", return_value=[]):
             self.assertEqual(cg.fetch_group_history("NOPE"), [])
+
+
+class TestBulkGroupMap(unittest.TestCase):
+    """(2026-08-04) The per-cert resolution path costs 2 FDIC API calls per
+    bank; inside the nightly's 8-worker burst those get 429-throttled,
+    get_with_retry returns None, and every bank SILENTLY degraded to its lead
+    charter — a 'successful' run wrote lead-charter data universe-wide. The
+    bulk map is built from the universe snapshot's full-institutions walk
+    (zero extra API calls) and consulted before any API path."""
+
+    _INSTS = [
+        {"cert": 19629, "rssdhcr": 1114912, "asset": 9_892_909},
+        {"cert": 25679, "rssdhcr": 1114912, "asset": 4_520_154},
+        {"cert": 59093, "rssdhcr": 1114912, "asset": 1_610_821},
+        {"cert": 628,   "rssdhcr": 1039502, "asset": 3_600_000_000},
+        {"cert": 35295, "rssdhcr": 3557916, "asset": 4_500_000},   # single
+        {"cert": 90001, "rssdhcr": 0,       "asset": 100},         # no holdco
+        {"cert": 90002, "rssdhcr": None,    "asset": 100},
+    ]
+
+    def test_map_lists_only_multi_charter_groups_largest_first(self):
+        from data.cert_group import build_group_map
+        m = build_group_map(self._INSTS)
+        self.assertEqual(m["19629"], [19629, 25679, 59093])
+        self.assertEqual(m["25679"], [19629, 25679, 59093],
+                         "every member cert must key the SAME group")
+        self.assertNotIn("35295", m, "single-charter certs are omitted")
+        self.assertNotIn("628", m, "a holdco with one active charter is single")
+        self.assertNotIn("90001", m, "RSSDHCR 0 = no holdco")
+        self.assertNotIn("90002", m)
+
+    def test_get_cert_group_serves_the_map_without_any_api_call(self):
+        import data.cert_group as cg
+        with patch("data.cache.get",
+                   return_value={"19629": [19629, 25679, 59093]}), \
+                patch.object(cg, "_resolve_group",
+                             side_effect=AssertionError("API path must not run")):
+            self.assertEqual(cg.get_cert_group("IBOC", cert=19629),
+                             [19629, 25679, 59093])
+
+    def test_absence_from_the_map_means_single_charter_no_api_call(self):
+        import data.cert_group as cg
+        with patch("data.cache.get", return_value={"19629": [19629, 25679]}), \
+                patch.object(cg, "_resolve_group",
+                             side_effect=AssertionError("API path must not run")):
+            self.assertEqual(cg.get_cert_group("SFST", cert=35295), [35295])
+
+    def test_no_map_falls_back_to_legacy_resolution(self):
+        import data.cert_group as cg
+        with patch("data.cache.get", return_value=None), \
+                patch("data.cache.put", return_value=None), \
+                patch.object(cg, "_resolve_group", return_value=[1, 2]):
+            self.assertEqual(cg.get_cert_group("X", cert=1), [1, 2])
+
+    def test_throttled_resolution_is_loud_not_silent(self):
+        """The cardinal-adjacent rule for ops: a degradation must never be
+        invisible. get_with_retry returns None ONLY on exhausted 429s."""
+        import contextlib
+        import io
+        import data.cert_group as cg
+        buf = io.StringIO()
+        with patch("data.http.get_with_retry", return_value=None), \
+                contextlib.redirect_stdout(buf):
+            self.assertEqual(cg._resolve_group(19629), [])
+        self.assertIn("rate-limited", buf.getvalue())
+
+    def test_universe_walk_feeds_the_map(self):
+        """Structural: the snapshot build must request RSSDHCR and warm the
+        map, or the bulk path silently never exists and every environment
+        falls back to the throttle-prone API resolution."""
+        src = (REPO / "data/bank_universe.py").read_text(encoding="utf-8")
+        self.assertIn("RSSDHCR", src)
+        self.assertIn("warm_group_map", src)
 
 
 class TestProducersUseTheSeam(unittest.TestCase):

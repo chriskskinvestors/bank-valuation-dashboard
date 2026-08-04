@@ -191,7 +191,7 @@ def _fetch_fdic_banks() -> dict[str, list[dict]]:
     while True:
         params = {
             "filters": "ACTIVE:1",
-            "fields": "CERT,NAME,NAMEHCR,ASSET,WEBADDR,STALP,STALPHCR",
+            "fields": "CERT,NAME,NAMEHCR,RSSDHCR,ASSET,WEBADDR,STALP,STALPHCR",
             "sort_by": "ASSET",
             "sort_order": "DESC",
             "limit": 1000,
@@ -215,6 +215,7 @@ def _fetch_fdic_banks() -> dict[str, list[dict]]:
                 "cert": int(d["CERT"]),
                 "name": d.get("NAME", ""),         # subsidiary bank brand (e.g. "Provident Bank")
                 "namehcr": d.get("NAMEHCR", ""),
+                "rssdhcr": d.get("RSSDHCR"),   # holdco RSSD — cert-group map
                 "webaddr": d.get("WEBADDR", ""),   # bank website — seed for IR-site discovery
                 "asset": d.get("ASSET") or 0,
                 "stalp": d.get("STALP", ""),       # the bank's own state
@@ -226,6 +227,18 @@ def _fetch_fdic_banks() -> dict[str, list[dict]]:
         time.sleep(0.05)
     if not fdic_banks:
         raise RuntimeError("FDIC institutions endpoint returned no active institutions")
+
+    # This walk just touched EVERY active institution, so derive the
+    # multi-charter cert-group map here for free — the per-cert API path in
+    # data/cert_group gets 429-throttled inside the nightly's burst and
+    # silently degraded every bank to its lead charter (2026-08-04).
+    try:
+        from data.cert_group import warm_group_map
+        n = warm_group_map(fdic_banks)
+        print(f"[universe] cert-group map warmed: {n} certs in "
+              f"multi-charter groups")
+    except Exception as e:
+        print(f"[warn] cert-group map warm failed: {type(e).__name__}: {e}")
 
     # Group: HC name -> every bank under it, largest first.
     hc_lookup: dict[str, list[dict]] = {}
