@@ -719,11 +719,12 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
     from ui.source_trace import _calc_tooltip, fdic_calc, make_calc, sec_doc_for
     from ui.financial_highlights import _fdic_doc, _disp_date, _num, _thou
     from data.bank_mapping import get_fdic_cert, get_cik, get_name
-    from data import fdic_client, sec_client
+    from data import sec_client
 
     cert = get_fdic_cert(ticker); cik = get_cik(ticker)
     entity = f"{get_name(ticker)} ({ticker})"
-    rec = (fdic_client.get_latest_financials(cert) or {}) if cert else {}
+    from data.loaders import load_fdic_latest
+    rec = load_fdic_latest(ticker) if cert else {}   # group-aware
     facts = sec_client.fetch_company_facts(cik) if cik else {}
     fund = (sec_client.get_latest_fundamentals(cik) or {}) if cik else {}
     cr_doc = _fdic_doc(cert, rec.get("REPDTE")) if (cert and rec.get("REPDTE")) else None

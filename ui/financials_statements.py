@@ -15,7 +15,6 @@ import streamlit.components.v1 as components
 import pandas as pd
 
 from data.bank_mapping import get_bank_info
-from data import fdic_client
 from ui.financial_highlights import _build_component
 
 
@@ -414,7 +413,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         st.info("No FDIC Call Report data mapped for this bank.")
         return
     with st.spinner("Loading…"):
-        hist = fdic_client.get_historical_financials(cert, quarters=44)
+        from data.loaders import load_fdic_hist_df
+        hist = load_fdic_hist_df(ticker, 44)   # group-aware: the WHOLE bank
     if hist is None or hist.empty:
         st.info("No FDIC history available.")
         return

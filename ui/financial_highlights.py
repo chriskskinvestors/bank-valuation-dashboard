@@ -23,7 +23,7 @@ import pandas as pd
 
 from data.bank_mapping import get_bank_info
 from ui.chrome import title_bar
-from data import fdic_client, sec_client
+from data import sec_client
 
 
 # ── small helpers ──────────────────────────────────────────────────────────
@@ -378,7 +378,8 @@ def render_financial_highlights(ticker: str):
         st.info("No FDIC Call Report data mapped for this bank.")
         return
     with st.spinner("Loading financials…"):
-        hist = fdic_client.get_historical_financials(cert, quarters=36)
+        from data.loaders import load_fdic_hist_df
+        hist = load_fdic_hist_df(ticker, 36)   # group-aware: the WHOLE bank
     if hist is None or hist.empty:
         st.info("No FDIC history available.")
         return
