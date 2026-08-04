@@ -314,3 +314,25 @@ class TestProducersUseTheSeam(unittest.TestCase):
     def test_nightly_refresh_uses_group_history(self):
         src = (REPO / "jobs/refresh_universe.py").read_text(encoding="utf-8")
         self.assertIn("fetch_group_history", src)
+
+    def test_no_ui_module_reads_fdic_per_cert(self):
+        """(2026-08-04, third fix of the day) Six UI call sites bypassed the
+        seam via fdic_client.get_latest_financials / get_historical_financials
+        and kept rendering lead-charter figures — IBOC's Corporate Profile
+        showed $9.89B of $17.3B THROUGH two correct nightly-side fixes,
+        because this panel never read what the nightly writes. Ticker-scoped
+        display code must go through data.loaders (load_fdic_latest /
+        load_fdic_hist_df / load_fdic_hist).
+
+        ui/data_quality.py is exempt: it is a raw-source diagnostic that
+        compares the per-cert FDIC record against SEC deliberately."""
+        offenders = []
+        for p in sorted((REPO / "ui").glob("*.py")):
+            if p.name == "data_quality.py":
+                continue
+            src = p.read_text(encoding="utf-8")
+            for needle in ("get_latest_financials", "get_historical_financials",
+                           "fdic_client.fetch_financials("):
+                if needle in src:
+                    offenders.append(f"{p.name}: {needle}")
+        self.assertEqual(offenders, [])

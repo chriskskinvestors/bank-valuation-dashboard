@@ -9,7 +9,7 @@ import streamlit as st
 
 from config import METRICS, METRICS_BY_KEY, METRIC_CATEGORIES
 from data.bank_mapping import get_name, get_bank_info, get_ir_url
-from data import fdic_client, sec_client
+from data import sec_client
 from data.ibkr_client import get_ibkr_client
 from analysis.peer_comparison import build_radar_data, get_peer_group_by_asset_size
 from utils.formatting import format_value
@@ -161,7 +161,8 @@ def _render_financial_highlights_table(ticker, info):
     if not cert:
         return
     try:
-        df = fdic_client.get_historical_financials(cert, quarters=8)
+        from data.loaders import load_fdic_hist_df
+        df = load_fdic_hist_df(ticker, 8)   # group-aware: the WHOLE bank
     except Exception:
         return
     if df is None or df.empty or "REPDTE" not in df.columns:
@@ -304,7 +305,8 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
         fdic_rec = {}
         if cert:
             try:
-                fdic_rec = fdic_client.get_latest_financials(cert) or {}
+                from data.loaders import load_fdic_latest
+                fdic_rec = load_fdic_latest(ticker)   # group-aware
             except Exception:
                 fdic_rec = {}
     fund = {}
@@ -448,7 +450,8 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
 
     ends_all = []
     if cert:
-        fh = fdic_client.get_historical_financials(cert, quarters=44)
+        from data.loaders import load_fdic_hist_df
+        fh = load_fdic_hist_df(ticker, 44)   # group-aware
         if fh is not None and not fh.empty:
             ds = pd.to_datetime(fh["REPDTE"]).dropna().sort_values()
             ends_all = [d.to_pydatetime() for d in ds]
@@ -691,8 +694,10 @@ def _prefetch_profile_data(ticker: str, info: dict) -> None:
 
     tasks = []
     if cert:
-        tasks.append(lambda: fdic_client.get_latest_financials(cert))
-        tasks.append(lambda: fdic_client.get_historical_financials(cert, quarters=44))
+        # One group-aware warm covers both the latest-record and history
+        # readers below — they all go through load_fdic_hist's cache now.
+        from data.loaders import load_fdic_hist
+        tasks.append(lambda: load_fdic_hist(ticker, min_quarters=44, limit=44))
     if cik:
         tasks.append(lambda: sec_client.fetch_company_facts(cik))
     tasks.append(lambda: get_history(ticker, "1Y"))  # price + val default window
@@ -729,7 +734,8 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     if cert:
         with timed("cp.fdic"):
             try:
-                fdic_rec = fdic_client.get_latest_financials(cert) or {}
+                from data.loaders import load_fdic_latest
+                fdic_rec = load_fdic_latest(ticker)   # group-aware
             except Exception:
                 fdic_rec = {}
     # Capital-IQ-style snapshot: identity + quick links, then two stacked pairs
@@ -838,7 +844,8 @@ def render_price_trends(ticker: str, all_metrics_df: pd.DataFrame = None):
     cert = info["fdic_cert"] if info else None
     fdic_hist = pd.DataFrame()
     if cert:
-        fdic_hist = fdic_client.get_historical_financials(cert, quarters=20)
+        from data.loaders import load_fdic_hist_df
+        fdic_hist = load_fdic_hist_df(ticker, 20)   # group-aware
 
     # One metric per chart (separate axes — different scales), all on one row.
     _km = [("roaa", "ROAA"), ("nim", "Net Interest Margin"),
