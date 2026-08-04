@@ -44,9 +44,10 @@ SNL's Capital Adequacy is holding-company basis. Source it from the SEC filing
 RC-R walk stays as a labeled complement.
 
 ## Build increments (each verified vs Regions/Banner before wiring)
-> **STATUS RECONCILED 2026-06-17** — verified against `data/sec_filing_scraper.py`,
-> `data/sec_composition.py`, `ui/company_nav.py`. Increments 1, 2, and 6 are DONE and
-> live across the full Company Reported tab set; 3 is PARTIAL; 5 is NOT STARTED.
+> **STATUS RECONCILED 2026-08-04** (supersedes 2026-06-17) — verified against
+> `data/sec_filing_scraper.py`, `data/sec_composition.py`, `data/sec_earnings_8k.py`,
+> `data/ir_provider.py`, `ui/company_nav.py`. Increments 1, 2, 5, and 6 are DONE;
+> 3 is PARTIAL (resolver refactor is the only open piece).
 
 1. **SECFilingProvider core** — ✅ DONE. `latest_filing()` + `instance_facts()` +
    `parse_inline_xbrl[_documentset]()` in `data/sec_filing_scraper.py`; handles
@@ -57,12 +58,18 @@ RC-R walk stays as a labeled complement.
    doc-link) IS surfaced per tab, but there is **no unified `resolve()` freshest-wins
    layer**: holdco (SEC) shows in Company Reported → Regulatory Capital, bank-sub
    (FDIC) in Templated → Capital Adequacy — two tabs, not one merged view. Remaining
-   work = the resolver refactor + IRProvider (below).
+   work = the resolver refactor (IRProvider below is now done).
 4. **Capital Adequacy tab** — ✅ DONE. `_render_holdco_capital()` (highlights block +
    walk, n/a when not reconciling, LCR/HQLA n/a w/ note) wired in company_nav.
-5. **IRProvider** — ❌ NOT STARTED. No 8-K Item 2.02 / Ex-99 earnings-release table
-   parser. 8-K infra exists for the news feed only. SEC 10-K/10-Q is currently the
-   freshest active source; this increment would add the ~2-3-week-earlier layer.
+5. **IRProvider** — ✅ DONE (verified 2026-08-04; this entry was stale). The 8-K
+   EX-99.1 earnings-release layer SHIPPED as `data/sec_earnings_8k.py` (exhibit
+   located from the filing index's TYPE table; exact-label match; dollar scale
+   anchored to the prior 10-Q; per-figure sanity gate — n/a over a guess) plus
+   `data/ir_provider.py` (release/call/webcast discovery, `fresh_diluted_eps`).
+   Surfaced as the clearly-labeled PRELIMINARY banner on Financial Highlights
+   and the preliminary-EPS note on Performance — additive only, never merged
+   into audited columns. See COMPANY-REPORTED-PLAN Phase 4 + §6 for the
+   measured hit rates and gate rules.
 6. **Generalize** — ✅ DONE. iXBRL/document scraper unlocked the dimensional tabs:
    credit quality / criticized-classified (XBRL grades), fair value (ASC 820 L1/L2/L3
    with ASC 825-disclosure guard), as-reported loan + deposit composition
