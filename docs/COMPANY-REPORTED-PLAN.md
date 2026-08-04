@@ -97,13 +97,13 @@ Dispatch: `ui/company_nav.py` → `_CR_RENDERERS` (12 entries) → renderers in
 | Segment Reporting | `_cr_segments` → `_render_segments` — `financials_statements.py:1914` | `segments_multiyear_for` — `sec_filing_scraper.py:1914` → `extract_segments` | **10-K** iXBRL segment footnote, stitched FY-ends | **Multi-year** (DONE this session; 54% multi-year, **42% empty** — many genuine single-segment banks, §5) | None | Reliable: per-segment NI/revenue/assets + a Corporate/other residual reconciling to consolidated NI. n/a: single-segment banks (fewer than two reportable segments) — by design. |
 | Interest Rate Risk | `_cr_rate_risk` → `_render_rate_risk` — `financials_statements.py:1961` | `rate_risk_for` — `sec_filing_scraper.py:1489` → `extract_rate_risk` (+ FDIC CET1 anchor) | Timeliest **10-Q**, then **10-K** iXBRL (securities marks vs capital) | **Single-period** (latest filing) | None | Reliable: AFS+HTM unrealized gain/(loss), vs equity and vs CET1 — the *embedded* (already-on-the-books) rate risk. n/a: forward NII/EVE rate-shock sensitivity (narrative Item 7A, not standardized XBRL) — linked, not scraped. |
 
-**Summary of the gap (updated 2026-06-29):** 9 of 12 sub-tabs now have a
-multi-year extractor — Income, Balance, Regulatory Capital, Financial Highlights
-(shipped earlier), plus **Securities, Fair Value, Segments, Loan/Deposit
-Composition** (the four built THIS session, confirmed across the §5 sample). The
-remaining single-period tabs are **Performance Analysis, Credit Quality, and
-Interest Rate Risk**. Financial Highlights, ROAA/ROAE/Efficiency/ROATCE have
-trend charts; the other tabs are still table-only.
+**Summary of the gap (updated 2026-08-04):** ALL 12 sub-tabs are multi-year —
+Performance Analysis, Credit Quality and Interest Rate Risk closed the gap via
+`_cr_highlights_by_year` (annual + discrete-quarter toggles; see Phase 1
+notes — the per-tab status table above predates this and is kept for field
+mapping only). Trend charts: Highlights, Performance, Credit Quality, Rate
+Risk, Regulatory Capital; Securities / Fair Value / Segments / Compositions
+are table-only (Phase 3 tail).
 
 ---
 
@@ -115,12 +115,14 @@ multi-year stitch pattern already exists (`as_reported_statement_multiyear`,
 `holdco_capital_for[:5]`, `company_asset_quality_nim` by_year) — apply it to the
 single-period extractors.*
 
-- [ ] **Performance Analysis** — extend `extract_performance` to return
-      `{fy_end: {...}}` across the last ~5 fiscal years (it already computes one
-      FY; loop the fiscal-year detection), and render the multi-FY table.
-- [ ] **Credit Quality / Allowance** — stitch `credit_quality_for` across the
-      last ~5 filings (it currently takes the single latest 10-Q/10-K), keyed by
-      period, render multi-column.
+- [x] **Performance Analysis** — SHIPPED (verified in code 2026-08-04), by a
+      different route than planned: `_render_performance` is multi-FY (up to 5,
+      plus a discrete-quarter toggle) on `_cr_highlights_by_year`, which derives
+      from the multi-year income/balance statements — `extract_performance`
+      stays the single-FY snapshot feeding Financial Highlights.
+- [x] **Credit Quality / Allowance** — SHIPPED (verified 2026-08-04):
+      `_render_credit_quality` is multi-FY (+ quarterly toggle) on
+      `_cr_highlights_by_year` (ACL/loans, NPL/loans, NCO/loans, coverage).
 - [x] **Loan Composition** — `compositions_for` now returns every reconciling
       period (DONE this session). 100% multi-year in the §5 sample.
 - [x] **Deposit Composition** — DONE this session (shares the loan fetch).
@@ -132,37 +134,39 @@ single-period extractors.*
 - [x] **Segment Reporting** — `segments_multiyear_for` stitches segment
       NI/revenue/assets across FY-ends (DONE this session). 54% multi-year in §5;
       the 42% empty are mostly genuine single-segment banks (by design).
-- [ ] **Interest Rate Risk** — collect the embedded unrealized-vs-capital
-      snapshot across the last ~5 period-ends.
+- [x] **Interest Rate Risk** — SHIPPED (verified 2026-08-04): `_render_rate_risk`
+      composes the unrealized-vs-equity/CET1 walk per FY (+ quarterly toggle)
+      from `securities_multiyear_for` + `_cr_highlights_by_year` equity.
 
 ### Phase 2 — Wire `company_asset_quality_nim` into Performance + Credit Quality
 *Rationale: NIM, NPL and NCO are the headline bank metrics and they're already
 extracted (10-K MD&A average-balance table + allowance rollforward, company data
 never FDIC) — they just aren't shown on the detailed tabs yet.*
 
-- [ ] **Performance Analysis** — add NIM (and, where the average-balance table
-      supports it, earning-asset yield / cost of funds) rows from
-      `company_asset_quality_nim(cik).by_year`, multi-FY.
-- [ ] **Credit Quality** — add the multi-year NPL/loans and NCO/loans trend from
-      the same extractor (the allowance rollforward), so the tab stops being a
-      single-period snapshot.
-- [ ] Merge the in-flight 5-FY **Financial Highlights** rebuild (already wires
-      `company_asset_quality_nim`) onto this branch and confirm the highlights
-      NIM/NPL/NCO cells reconcile to the detailed tabs.
-- [ ] Pin each with a hand-computed test (one bank, one FY) — NIM, NPL%, NCO%
-      against the raw 10-K MD&A / rollforward.
+- [x] **Performance Analysis** — SHIPPED (verified 2026-08-04): NIM rows +
+      trend chart from `company_asset_quality_nim` via `_cr_highlights_by_year`
+      (annual only; quarterly deliberately blanks NIM — 10-K-only disclosure).
+- [x] **Credit Quality** — SHIPPED (verified 2026-08-04): NPL/loans and
+      NCO/loans multi-year rows + trend charts on the same extractor.
+- [x] Merge the 5-FY **Financial Highlights** rebuild — SHIPPED as
+      `_cr_highlights_by_year`, the shared per-year source for Highlights,
+      Performance and Credit Quality (cells reconcile by construction).
+- [x] Hand-computed pins SHIPPED in `tests/test_sec_filing_scraper.py` —
+      NIM table/computed/ZION-change-column cases, NPL 0.5/100, NCO
+      (0.517−0.087)/106.541.
 
 ### Phase 3 — Trend charts (Performance Analysis + Regulatory Capital)
 *Rationale: the known open tail — every Company-Reported tab is table-only.
 Performance and Regulatory Capital are the two with the cleanest multi-year
 series to chart first.*
 
-- [ ] **Performance Analysis** — trend charts (ROA/ROE/NIM %, efficiency %, PPNR
-      $) using the multi-FY series from Phases 1–2, styled via
-      `utils/chart_style.py`.
-- [ ] **Regulatory Capital** — trend chart of CET1/T1/Total/Leverage ratios over
-      the multi-period holdco series.
-- [ ] Extend trend charts to the other multi-year tabs once their series land.
+- [x] **Performance Analysis** — SHIPPED (verified 2026-08-04):
+      `_cr_perf_trends` (NIM/ROAA/ROAE/efficiency %, ≥3 points, ≤4 charts).
+- [x] **Regulatory Capital** — SHIPPED: CET1-with-floors trend + TBV/share +
+      capital-return charts in `ui/capital_dynamics.py`.
+- [~] Extend trend charts to the other multi-year tabs — Credit Quality and
+      Interest Rate Risk have them; Securities / Fair Value / Segments /
+      Compositions are still table-only (open).
 
 ### Phase 4 — 8-K earnings-supplement scrape (timeliness layer)
 *Rationale: there is a ~4-week gap between an earnings 8-K and the 10-Q. Banks
@@ -251,10 +255,19 @@ universe and measure.*
       parser gaps (label variants, custom taxonomy extensions, split-filer
       doc-sets, dimensional-only tagging). **Started:** §5 backlog — KEY statement
       stitch, fair-value FY-end matching, latest-FY NIM.
-- [ ] Fix the high-impact label/structure misses (tolerant matchers), re-measure.
-- [ ] Add a small **coverage report / test** (akin to
-      `tests/test_universe_coverage.py`) that records the coverage baseline and
-      fails on regression, with the residual n/a explained per metric.
+- [x] Fix the high-impact label/structure misses — SHIPPED (non-Dec-FYE gate,
+      segment disclosed-measure recovery, AFS/HTM label word orders; re-measured
+      across 47 diverse banks). The confirmed genuine-non-disclosure residual
+      (fair-value rollup, single-segment, CASH loans) is the accepted standard —
+      don't re-chase.
+- [x] Coverage baseline gate ADDED 2026-08-04: `tests/test_cr_coverage.py`
+      measures the 47-bank sample via `tools/cr_coverage_report.measure` and
+      fails on regression vs the pinned `tests/cr_coverage_baseline.json`
+      (per-bank class ranks; ERROR always fails; baseline-EMPTY = explained
+      residual; `--record` re-pins and refuses while any extractor errors).
+      Comparison logic pinned offline in `tests/test_cr_coverage_gate.py`.
+      Manual/nightly — NOT in unittest discovery or the deploy gate (live
+      EDGAR, hours when the local cache is cold).
 
 ---
 

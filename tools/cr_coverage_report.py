@@ -164,26 +164,12 @@ def _resolve_sample(tickers):
     return out
 
 
-def main(argv):
-    tickers = SAMPLE
-    slow_sub = None
-    i = 1
-    while i < len(argv):
-        a = argv[i]
-        if a == "--slow-sub":
-            slow_sub = int(argv[i + 1])
-            i += 2
-            continue
-        if not a.startswith("--"):
-            tickers = [x.strip().upper() for x in a.split(",") if x.strip()]
-        i += 1
-
-    print(f"Resolving {len(tickers)} tickers ...")
-    sample = _resolve_sample(tickers)
-    print(f"Sample: {len(sample)} banks with CIK -> "
-          f"{', '.join(t for t, _ in sample)}\n")
-
-    # results[fn_name][ticker] = {"class","n","extra","err"}
+def measure(sample, slow_sub=None):
+    """Run every FUNCTIONS extractor over `sample` [(ticker, cik), ...] and
+    return results[fn_name][ticker] = {"class","n","extra","err"}. Per-bank
+    errors are caught and classified ERROR, never fatal. This is the shared
+    measurement core: main() prints a human report from it and the coverage
+    gate (tests/test_cr_coverage.py) compares it against the pinned baseline."""
     results: dict[str, dict[str, dict]] = {name: {} for name, _, _ in FUNCTIONS}
 
     for name, fn, slow in FUNCTIONS:
@@ -210,7 +196,29 @@ def main(argv):
             dt = time.time() - t0
             print(f"    {ticker:6s} {tag}  ({dt:.1f}s)")
         print()
+    return results
 
+
+def main(argv):
+    tickers = SAMPLE
+    slow_sub = None
+    i = 1
+    while i < len(argv):
+        a = argv[i]
+        if a == "--slow-sub":
+            slow_sub = int(argv[i + 1])
+            i += 2
+            continue
+        if not a.startswith("--"):
+            tickers = [x.strip().upper() for x in a.split(",") if x.strip()]
+        i += 1
+
+    print(f"Resolving {len(tickers)} tickers ...")
+    sample = _resolve_sample(tickers)
+    print(f"Sample: {len(sample)} banks with CIK -> "
+          f"{', '.join(t for t, _ in sample)}\n")
+
+    results = measure(sample, slow_sub=slow_sub)
     _print_summary(results)
     return results
 
