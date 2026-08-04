@@ -699,23 +699,23 @@ class TestIncomeStatementRiRendersPopulated(unittest.TestCase):
         import pandas as pd
         comp_v1 = sys.modules["streamlit.components.v1"]
         import data.call_report_store as crs
-        import data.fdic_client as fc
+        import data.loaders as dl   # renderers read the group seam now
         captured = []
         saved = (comp_v1.html, self.fs.get_bank_info,
-                 fc.get_historical_financials,
+                 dl.load_fdic_hist_df,
                  crs.get_stored_ri_detail, crs.get_stored_rie_detail)
         try:
             comp_v1.html = lambda html, **k: captured.append(html)
             self.fs.get_bank_info = lambda t: {
                 "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
-            fc.get_historical_financials = (
-                lambda cert, quarters=36: pd.DataFrame([dict(self.HIST_ROW)]))
+            dl.load_fdic_hist_df = (
+                lambda ticker, quarters=36: pd.DataFrame([dict(self.HIST_ROW)]))
             crs.get_stored_ri_detail = lambda cert, quarters=8: list(ri_rows)
             crs.get_stored_rie_detail = lambda cert, quarters=8: list(rie_rows)
             self.fs.render_income_statement("BANR")
         finally:
             (comp_v1.html, self.fs.get_bank_info,
-             fc.get_historical_financials,
+             dl.load_fdic_hist_df,
              crs.get_stored_ri_detail, crs.get_stored_rie_detail) = saved
         return captured
 
@@ -811,22 +811,22 @@ class TestBalanceSheetRendersPopulated(unittest.TestCase):
         import pandas as pd
         comp_v1 = self.fs.components
         st = self.fs.st
-        import data.fdic_client as fc
+        import data.loaders as dl   # renderers read the group seam now
         captured = []
         saved = (comp_v1.html, st.radio, self.fs.get_bank_info,
-                 fc.get_historical_financials)
+                 dl.load_fdic_hist_df)
         try:
             comp_v1.html = lambda html, **k: captured.append(html)
             st.radio = lambda label, options=None, **k: "Annual"
             self.fs.get_bank_info = lambda t: {
                 "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
-            fc.get_historical_financials = (
-                lambda cert, quarters=36:
+            dl.load_fdic_hist_df = (
+                lambda ticker, quarters=36:
                 pd.DataFrame([dict(r) for r in hist_rows]))
             self.fs.render_balance_sheet("BANR")
         finally:
             (comp_v1.html, st.radio, self.fs.get_bank_info,
-             fc.get_historical_financials) = saved
+             dl.load_fdic_hist_df) = saved
         return captured
 
     def test_balance_sheet_renders_banner_values(self):
@@ -931,22 +931,22 @@ class TestPerformanceComputedLines(unittest.TestCase):
         import pandas as pd
         comp_v1 = self.fs.components
         st = self.fs.st
-        import data.fdic_client as fc
+        import data.loaders as dl   # renderers read the group seam now
         captured = []
         saved = (comp_v1.html, st.radio, self.fs.get_bank_info,
-                 fc.get_historical_financials)
+                 dl.load_fdic_hist_df)
         try:
             comp_v1.html = lambda html, **k: captured.append(html)
             st.radio = lambda label, options=None, **k: "Quarterly"  # show Q1
             self.fs.get_bank_info = lambda t: {
                 "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
-            fc.get_historical_financials = (
-                lambda cert, quarters=36: pd.DataFrame([dict(r) for r in rows]))
+            dl.load_fdic_hist_df = (
+                lambda ticker, quarters=36: pd.DataFrame([dict(r) for r in rows]))
             # Custom spec keeps the test to the new kinds (no SEC/FFIEC loads).
             self.fs.render_statement("BANR", "perftest", "Perf", self._SPEC)
         finally:
             (comp_v1.html, st.radio, self.fs.get_bank_info,
-             fc.get_historical_financials) = saved
+             dl.load_fdic_hist_df) = saved
         return captured
 
     def test_computed_ratios_match_probed_values(self):
@@ -992,23 +992,23 @@ class TestPerformanceComputedLines(unittest.TestCase):
         ])]
         comp_v1 = self.fs.components
         st = self.fs.st
-        import data.fdic_client as fc
+        import data.loaders as dl   # renderers read the group seam now
         captured = []
         saved = (comp_v1.html, st.radio, self.fs.get_bank_info,
-                 fc.get_historical_financials, fh._per_share_for_ends)
+                 dl.load_fdic_hist_df, fh._per_share_for_ends)
         try:
             comp_v1.html = lambda html, **k: captured.append(html)
             st.radio = lambda *a, **k: "Annual"
             self.fs.get_bank_info = lambda t: {
                 "name": "Regions", "fdic_cert": 12368, "cik": "1281761"}
-            fc.get_historical_financials = (
-                lambda cert, quarters=36:
+            dl.load_fdic_hist_df = (
+                lambda ticker, quarters=36:
                 pd.DataFrame([{"REPDTE": "2025-12-31", "ASSET": 1}]))
             fh._per_share_for_ends = lambda cik, ends, quarterly=False: {e: PS for e in ends}
             self.fs.render_statement("RF", "psw", "PS", spec, with_persh=True)
         finally:
             (comp_v1.html, st.radio, self.fs.get_bank_info,
-             fc.get_historical_financials, fh._per_share_for_ends) = saved
+             dl.load_fdic_hist_df, fh._per_share_for_ends) = saved
         h = captured[0]
         self.assertIn("2.51", h)           # Basic EPS
         self.assertIn("2.52", h)           # Diluted EPS before amortization
@@ -1126,25 +1126,25 @@ class TestPerformanceDepositCostRendersPopulated(unittest.TestCase):
         comp_v1 = self.fs.components   # `import streamlit.components.v1 as components`
         st = self.fs.st
         import data.call_report_store as crs
-        import data.fdic_client as fc
+        import data.loaders as dl   # renderers read the group seam now
         captured = []
         saved = (comp_v1.html, st.radio, self.fs.get_bank_info,
-                 fc.get_historical_financials,
+                 dl.load_fdic_hist_df,
                  crs.get_stored_deposit_cost_detail)
         try:
             comp_v1.html = lambda html, **k: captured.append(html)
             st.radio = lambda label, options=None, **k: period
             self.fs.get_bank_info = lambda t: {
                 "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
-            fc.get_historical_financials = (
-                lambda cert, quarters=36:
+            dl.load_fdic_hist_df = (
+                lambda ticker, quarters=36:
                 pd.DataFrame([dict(r) for r in hist_rows]))
             crs.get_stored_deposit_cost_detail = (
                 lambda cert, quarters=8: [dict(r) for r in stored])
             self.fs.render_performance_analysis("BANR")
         finally:
             (comp_v1.html, st.radio, self.fs.get_bank_info,
-             fc.get_historical_financials,
+             dl.load_fdic_hist_df,
              crs.get_stored_deposit_cost_detail) = saved
         return captured
 
