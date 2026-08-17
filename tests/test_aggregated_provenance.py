@@ -113,3 +113,15 @@ class TestCharterCountEdgeCases(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEarningsDirectCallPassesRecord(unittest.TestCase):
+    """(2026-08-17 follow-up) ui/earnings' Key Reported Metrics built its
+    call-report doc link with the two-arg _fdic_doc, so a multi-charter
+    bank's link stayed unlabeled while every fdic_calc tooltip next to it
+    disclosed. Structural: the call must pass the record."""
+
+    def test_earnings_fdic_doc_call_passes_rec(self):
+        src = (REPO / "ui/earnings.py").read_text(encoding="utf-8")
+        self.assertIn('_fdic_doc(cert, rec.get("REPDTE"), rec)', src)
+        self.assertNotIn('_fdic_doc(cert, rec.get("REPDTE"))', src)

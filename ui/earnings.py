@@ -727,7 +727,7 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
     rec = load_fdic_latest(ticker) if cert else {}   # group-aware
     facts = sec_client.fetch_company_facts(cik) if cik else {}
     fund = (sec_client.get_latest_fundamentals(cik) or {}) if cik else {}
-    cr_doc = _fdic_doc(cert, rec.get("REPDTE")) if (cert and rec.get("REPDTE")) else None
+    cr_doc = _fdic_doc(cert, rec.get("REPDTE"), rec) if (cert and rec.get("REPDTE")) else None
     asof = _disp_date(rec.get("REPDTE")) if rec.get("REPDTE") else "latest"
     eps_doc = sec_doc_for(cik, facts, "EarningsPerShareDiluted", instant=False) if facts else None
     eq_doc = sec_doc_for(cik, facts, "StockholdersEquity", instant=True) if facts else None
