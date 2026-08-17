@@ -662,7 +662,7 @@ def search_fdic_by_name(name: str, min_similarity: float = 0.5,
             }
             try:
                 resp = requests.get(
-                    "https://banks.data.fdic.gov/api/institutions",
+                    "https://api.fdic.gov/banks/institutions",
                     params=params, timeout=10,
                 )
                 resp.raise_for_status()
