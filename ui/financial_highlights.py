@@ -209,12 +209,35 @@ def _sec_doc(cik, prov):
             "label": f"{lbl} {prov.get('form', 'filing')}"}
 
 
-def _fdic_doc(cert, repdte):
-    """{url, label} → FFIEC CDR Call Report facsimile for this cert + quarter."""
+def _agg_charter_count(rec) -> int:
+    """Charter count of a cert-group aggregate (data/cert_group), else 1.
+    NaN-safe: records that round-trip through a DataFrame carry NaN, not None,
+    in periods where only one charter reported."""
+    try:
+        return int(rec.get("_charter_count"))
+    except (AttributeError, TypeError, ValueError):
+        return 1
+
+
+def _consolidated_note(cert, n: int) -> str:
+    """Disclosure for a group-summed FDIC figure whose link is ONE charter's
+    filing — presenting that filing as THE source would be plausible-wrong."""
+    return (f"Consolidated across {n} bank charters (sum of call reports); "
+            f"link shows the lead charter (cert {cert})")
+
+
+def _fdic_doc(cert, repdte, rec=None):
+    """{url, label} → FFIEC CDR Call Report facsimile for this cert + quarter.
+    Pass the underlying record so a cert-group aggregate (_charter_count > 1)
+    is disclosed in the label; without it the label stays single-charter."""
     dd = _iso(repdte)
+    label = f"{dd.month}/{dd.day}/{dd.year} Call Report"
+    n = _agg_charter_count(rec)
+    if n > 1:
+        label += f" — {_consolidated_note(cert, n)}"
     return {"url": (f"https://cdr.ffiec.gov/public/ViewFacsimileDirect.aspx?ds=call"
                     f"&idType=fdiccert&id={cert}&date={dd.strftime('%m%d%Y')}"),
-            "label": f"{dd.month}/{dd.day}/{dd.year} Call Report"}
+            "label": label}
 
 
 def _flow_for(d: datetime, q_map: dict, a_map: dict, quarterly: bool):
@@ -611,7 +634,7 @@ def render_financial_highlights(ticker: str):
                     calc = payload["calc"]
                     # FDIC terms all trace to the same quarterly Call Report.
                     if calc.get("source", "").startswith("FDIC"):
-                        cr_doc = _fdic_doc(cert, recs[k].get("REPDTE"))
+                        cr_doc = _fdic_doc(cert, recs[k].get("REPDTE"), recs[k])
                         for t in calc.get("terms", []):
                             t.setdefault("doc", cr_doc)
                     cells[cid] = calc

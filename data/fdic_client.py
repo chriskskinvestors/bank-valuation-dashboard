@@ -2,7 +2,7 @@
 FDIC BankFind API client.
 
 Fetches Call Report financial data for banks by FDIC certificate number.
-API docs: https://banks.data.fdic.gov/api/
+API docs: https://api.fdic.gov/banks/
 
 Rate-limiting note: FDIC's public API returns 429 Too Many Requests when
 hit too fast. We retry up to 3 times with exponential backoff + jitter,
@@ -20,8 +20,8 @@ from config import get_fdic_fields
 # was the original it was extracted from.
 from data.http import get_with_retry as _get_with_retry
 
-FDIC_FINANCIALS_URL = "https://banks.data.fdic.gov/api/financials"
-FDIC_INSTITUTIONS_URL = "https://banks.data.fdic.gov/api/institutions"
+FDIC_FINANCIALS_URL = "https://api.fdic.gov/banks/financials"
+FDIC_INSTITUTIONS_URL = "https://api.fdic.gov/banks/institutions"
 
 # Identifiers + every raw FDIC field the metric engine reads (registry fields are
 # unioned in at call time). ERNAST = true earning-assets base for rate metrics,
@@ -400,8 +400,14 @@ def get_latest_financials(cert: int) -> dict:
     return {k: (None if pd.isna(v) else v) for k, v in row.items()}
 
 
-def build_fdic_provenance(cert: int, field: str, repdte) -> dict:
-    """Return a Source dict describing a FDIC Call Report field."""
+def build_fdic_provenance(cert: int, field: str, repdte,
+                          charter_count: int = 1) -> dict:
+    """Return a Source dict describing a FDIC Call Report field.
+
+    charter_count > 1 marks a cert-group aggregate (data/cert_group): the value
+    is a sum across charters and `cert` is only the LEAD, so the Source must
+    disclose that rather than present one charter's call report as THE source.
+    """
     from data.provenance import Source
 
     if hasattr(repdte, "strftime"):
@@ -412,12 +418,18 @@ def build_fdic_provenance(cert: int, field: str, repdte) -> dict:
             s = f"{s[:4]}-{s[4:6]}-{s[6:8]}"
         as_of = s
 
+    notes = ""
+    if charter_count and charter_count > 1:
+        notes = (f"Consolidated across {charter_count} bank charters "
+                 f"(sum of call reports); cert {cert} is the lead charter")
+
     return Source(
         origin="FDIC",
         identifier=str(cert),
         concept=field,
         as_of=as_of,
         form="Call Report",
+        notes=notes,
         unit="$thousands" if field in (
             "ASSET", "DEP", "LNLSNET", "LNLSGR", "EQTOT", "NETINC", "INTANGW",
             "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR",

@@ -16,24 +16,33 @@ import streamlit as st
 
 from ui.financial_highlights import (
     _fdic_doc, _sec_doc, _sec_prov_map, _disp_date, _thou, _num,
+    _agg_charter_count, _consolidated_note,
 )
 
 
 def make_calc(metric, value, *, entity, source, asof, unit, ref, definition,
-              terms, op=None, reported=False, link=None):
+              terms, op=None, reported=False, link=None, note=None):
     """Build a provenance payload for a metric value."""
-    return {
+    out = {
         "metric": metric, "value": value, "entity": entity, "source": source,
         "asof": asof, "unit": unit, "ref": ref, "definition": definition,
         "terms": terms, "op": op, "reported": reported, "link": link,
     }
+    # Key added only when set, so pre-existing payloads stay byte-identical.
+    if note:
+        out["note"] = note
+    return out
 
 
 def fdic_calc(metric, field, fdic_rec, cert, *, unit, definition, entity,
               value, reported=True, terms=None, op=None):
     """A value reported (or computed) from the latest FDIC Call Report, linked
-    to that quarter's FFIEC facsimile."""
-    doc = _fdic_doc(cert, fdic_rec.get("REPDTE")) if cert else None
+    to that quarter's FFIEC facsimile. A cert-group aggregate (_charter_count
+    > 1) carries a consolidation note — the link is one charter's filing, not
+    the source of the summed figure."""
+    doc = _fdic_doc(cert, fdic_rec.get("REPDTE"), fdic_rec) if cert else None
+    n = _agg_charter_count(fdic_rec)
+    note = _consolidated_note(cert, n) if n > 1 else None
     if terms is None:
         raw = _num(fdic_rec.get(field))
         shown = (_thou(raw) + (" ($000)" if unit.startswith("$") else "")) if unit.startswith("$") \
@@ -47,7 +56,7 @@ def fdic_calc(metric, field, fdic_rec, cert, *, unit, definition, entity,
                      asof=_disp_date(fdic_rec.get("REPDTE")), unit=unit,
                      ref=(f"FDIC field {field}" if reported else "Computed from Call Report"),
                      definition=definition, terms=terms, op=op, reported=reported,
-                     link=(doc or {}).get("url"))
+                     link=(doc or {}).get("url"), note=note)
 
 
 def sec_doc_for(cik, facts, concept, *, instant, span="both", ns="us-gaap"):
@@ -83,6 +92,8 @@ def _calc_tooltip(c) -> str:
         lines.append(meta)
     if c.get("definition"):
         lines.append(c["definition"])
+    if c.get("note"):
+        lines.append(c["note"])
     if c.get("op"):
         lines.append(f"Formula:  {c['op']}")
     for t in (c.get("terms") or []):
