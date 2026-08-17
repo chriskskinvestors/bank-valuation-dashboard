@@ -32,6 +32,28 @@ _UA = {"User-Agent": "Mozilla/5.0 (compatible; KSK-dashboard "
                      "research@kskinvestors.com)"}
 
 
+# IR-site crawls are quarterly-cadence discovery, not freshness: once per day
+# per bank is generous (a release posted mid-day is picked up within 24h, the
+# same tolerance the Form-4 insider half documents). The 15-min envelope serve
+# and the wire-PR path are NOT throttled by this.
+_IR_CRAWL_TTL_S = 24 * 3600
+
+
+def _ir_checked_within(cached: dict | None, ttl_s: float) -> bool:
+    """True when the envelope records an IR-crawl attempt newer than ttl_s.
+    Absent/garbled marker = False (crawl) — first discovery must never be
+    blocked, and a corrupt timestamp must not wedge a bank into never
+    crawling again."""
+    from datetime import datetime as _dt
+    marker = (cached or {}).get("ir_checked_at")
+    if not marker:
+        return False
+    try:
+        return (_dt.now() - _dt.fromisoformat(str(marker))).total_seconds() < ttl_s
+    except (TypeError, ValueError):
+        return False
+
+
 def _latest_earnings_pr(ticker: str) -> dict | None:
     """The newest press release whose TITLE passes the earnings-headline
     gate (shared with the 9.01-fallback finder) AND whose title+blurb name
@@ -147,7 +169,7 @@ def _bank_webaddr(ticker: str) -> str | None:
         if not cert:
             return None
         resp = get_with_retry(
-            "https://banks.data.fdic.gov/api/institutions",
+            "https://api.fdic.gov/banks/institutions",
             params={"filters": f"CERT:{int(cert)}", "fields": "WEBADDR",
                     "format": "json"},
             headers=_UA, timeout=20)
@@ -302,10 +324,15 @@ def otc_release_metrics(ticker: str) -> dict | None:
         v = cached.get("value")
         return None if (v or {}).get("empty") else v
 
-    def _stamp(value):
+    def _stamp(value, ir_checked: str | None = None):
+        # ir_checked_at rides the envelope and must SURVIVE re-stamps: it
+        # marks the last IR-site crawl ATTEMPT (cached_at is bumped on every
+        # serve, so it can't be the throttle clock).
         try:
             _cache.put(key, {"cached_at": datetime.now().isoformat(),
-                             "value": value})
+                             "value": value,
+                             "ir_checked_at":
+                                 ir_checked or (cached or {}).get("ir_checked_at")})
         except Exception:
             pass
         return value
@@ -317,24 +344,43 @@ def otc_release_metrics(ticker: str) -> dict | None:
     transport = "wire"
     if pr is None:
         # No wire release — the bank's own site is the disclosure channel.
+        # THROTTLE (2026-08-17): the two-hop site crawl below costs 30-84s
+        # for the slow banks, and the metrics build re-entered it every 30
+        # minutes for ~80 no-wire banks once the 15-min serve lapsed — the
+        # slowest 10 banks alone were 29% of a 1741s build (measured
+        # 2026-08-03; NARA 84s, TCNB 64s). Releases are quarterly: crawl at
+        # most once per _IR_CRAWL_TTL_S per bank and serve the envelope in
+        # between. First-ever discovery (no marker) still crawls
+        # immediately, and the wire path above is untouched.
+        if _ir_checked_within(cached, _IR_CRAWL_TTL_S):
+            if prev:
+                return _stamp(prev)
+            _stamp({"empty": True})
+            return None
+
+        _ir_now = datetime.now().isoformat()
+
+        def _stamp_ir(value):
+            return _stamp(value, ir_checked=_ir_now)
+
         ir = _latest_ir_release(ticker)
         if ir is None:
             # Nothing anywhere: cache the negative so the site isn't
             # re-crawled every render; serve what we had if anything.
             if prev:
-                return _stamp(prev)
-            _stamp({"empty": True})
+                return _stamp_ir(prev)
+            _stamp_ir({"empty": True})
             return None
         if prev and prev.get("url") == ir["url"]:
-            return _stamp(prev)                 # same document — nothing new
+            return _stamp_ir(prev)              # same document — nothing new
         text = _fetch_document(ir["url"], ir["kind"])
         if not text:
             if prev:
-                return _stamp(prev)
-            _stamp({"empty": True})
+                return _stamp_ir(prev)
+            _stamp_ir({"empty": True})
             return None
         return _extract_and_stamp(
-            _stamp, prev, ticker, html=text, url=ir["url"],
+            _stamp_ir, prev, ticker, html=text, url=ir["url"],
             title=ir.get("title"), qend=ir["qend"], filed_date=None,
             transport="ir_site")
     if prev and prev.get("url") == pr["url"]:
