@@ -1179,9 +1179,14 @@ def _af_card(render_fn, key, title, *args):
     """Render one pane inside a bordered card, isolating failures so a slow or
     failing data source degrades to its own 'unavailable' card rather than
     taking the page down. The afpane key class is the CSS compaction hook."""
+    from utils.timing import timed
     with st.container(border=True, key=f"afpane_{key}"):
         try:
-            render_fn(*args)
+            # Per-pane mark: home.above_fold intermittently hits 100-373s
+            # (measured 2026-08-17, budget 3s) with no sub-attribution — the
+            # pane-level label is what lets the next stall name its cause.
+            with timed(f"home.af.{key}"):
+                render_fn(*args)
         except Exception as e:  # noqa: BLE001
             print(f"[home.af] pane {title!r} failed: {type(e).__name__}: {e}")
             _md(_af_hd(title) + '<div class="pend">temporarily unavailable</div>')
