@@ -129,6 +129,10 @@ def main() -> int:
     from analysis.metrics import build_all_bank_metrics
 
     t0 = time.time()
+    # Captured before any data loads: the vintage of what this run will write.
+    # The guarded put below refuses to clobber a snapshot written after this
+    # moment by an overlapping run (audit 2026-07-27 P2 #5).
+    build_started = datetime.now()
     tickers = sorted(get_universe_tickers())
     if not tickers:
         print("[home-snap] no universe tickers available — aborting", flush=True)
@@ -175,13 +179,14 @@ def main() -> int:
 
     # Same shape app.load_all_data_fast validates (cached_at + n_tickers + metrics);
     # n_tickers must equal len(sorted(get_universe_tickers())) so the Home accepts it.
-    cache.put(SNAP_KEY, {
+    wrote = cache.put_snapshot_if_fresher(SNAP_KEY, {
         "cached_at": datetime.now().isoformat(),
         "n_tickers": len(tickers),
         "metrics": metrics,
-    })
-    print(f"[{time.strftime('%H:%M:%S')}] wrote {SNAP_KEY}: {len(metrics)} banks "
-          f"in {time.time() - t0:.0f}s", flush=True)
+    }, build_started)
+    if wrote:
+        print(f"[{time.strftime('%H:%M:%S')}] wrote {SNAP_KEY}: {len(metrics)} "
+              f"banks in {time.time() - t0:.0f}s", flush=True)
 
     _warm_overlay_history()
     _warm_bank_sector_history()

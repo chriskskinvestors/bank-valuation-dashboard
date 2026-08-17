@@ -112,6 +112,33 @@ def put(key: str, value: dict):
             )
 
 
+def put_snapshot_if_fresher(key: str, value: dict, build_started) -> bool:
+    """put(), unless a snapshot written AFTER `build_started` already exists —
+    then keep it and return False (losing the race is success: the stored
+    data is newer).
+
+    The stale-clobber guard (audit 2026-07-27 P2 #5): overlapping snapshot
+    jobs are last-write-wins, and on 2026-07-20 a run that STARTED 15 min
+    earlier finished last, overwriting a fresher news feed with staler data
+    that then passed the app's freshness check as new. The news feed got the
+    inline fix (ui/home._warm_news_feed); this is the same rule for every
+    `{cached_at: ...}`-shaped snapshot writer. `value` must carry cached_at;
+    `build_started` is a datetime captured BEFORE the run began loading data
+    — that is the vintage of what it is about to write."""
+    from datetime import datetime
+    try:
+        cur = get(key, max_age_s=None) or {}
+        cur_at = cur.get("cached_at")
+        if cur_at and datetime.fromisoformat(str(cur_at)) > build_started:
+            print(f"[cache] {key}: newer snapshot ({cur_at}) landed while "
+                  f"this build ran — keeping it", flush=True)
+            return False
+    except Exception:
+        pass          # unreadable/garbled stored value — fall through and write
+    put(key, value)
+    return True
+
+
 def served_snapshot(key: str, ttl_s: float, build, guard=None):
     """Cross-instance persisted snapshot: serve the stored value when fresh
     (and the guard matches), else build live and persist for every other
