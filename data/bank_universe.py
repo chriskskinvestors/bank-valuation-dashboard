@@ -198,7 +198,7 @@ def _fetch_fdic_banks() -> dict[str, list[dict]]:
             "offset": offset,
         }
         resp = get_with_retry(
-            "https://banks.data.fdic.gov/api/institutions",
+            "https://api.fdic.gov/banks/institutions",
             params=params, timeout=20,
         )
         if resp is None:
@@ -1294,7 +1294,7 @@ def fetch_fdic_records_for_certs(certs: list[int]) -> dict[int, dict]:
         chunk = uniq[i:i + 50]
         flt = "CERT:(" + " OR ".join(str(c) for c in chunk) + ")"
         resp = get_with_retry(
-            "https://banks.data.fdic.gov/api/institutions",
+            "https://api.fdic.gov/banks/institutions",
             params={"filters": flt,
                     "fields": "NAME,CERT,NAMEHCR,STALP,STALPHCR,HCTMULT,ASSET",
                     "limit": len(chunk)},

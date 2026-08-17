@@ -211,19 +211,24 @@ def main():
         from analysis.metrics import build_all_bank_metrics
         from data.price_cache_store import get_prices
         from datetime import datetime
+        # Vintage of this warm = when its cache reads begin; the guarded put
+        # refuses to clobber a snapshot an overlapping refresh-home-snapshot
+        # run wrote after this (audit 2026-07-27 P2 #5).
+        build_started = datetime.now()
         fdic_all = {t: (cache.get_fdic(t) or {}) for t in universe}
         sec_all = {t: (cache.get_sec(t) or {}) for t in universe}
         hist_all = {t: (cache.get(f"fdic_hist:{t}") or []) for t in universe}
         prices_all = get_prices(universe)
         agg = build_all_bank_metrics(universe, fdic_all, sec_all, prices_all, hist_all)
-        cache.put("watchlist_metrics_snap", {
+        wrote = cache.put_snapshot_if_fresher("watchlist_metrics_snap", {
             "cached_at": datetime.now().isoformat(),
             "n_tickers": len(universe),
             "metrics": agg,
-        })
+        }, build_started)
         cache.put("watchlist_metrics_last", agg)
-        print(f"[{time.strftime('%H:%M:%S')}] Home aggregate snapshot warmed "
-              f"({len(agg)} banks)", flush=True)
+        if wrote:
+            print(f"[{time.strftime('%H:%M:%S')}] Home aggregate snapshot "
+                  f"warmed ({len(agg)} banks)", flush=True)
     except Exception as e:
         print(f"[warn] aggregate snapshot warm failed: {type(e).__name__}: {e}",
               flush=True)

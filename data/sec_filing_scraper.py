@@ -569,7 +569,7 @@ def _fdic_cet1(cert) -> float | None:
     """Latest FDIC bank-sub CET1 ratio (IDT1CER, %) — the holdco anchor."""
     if not cert:
         return None
-    url = (f"https://banks.data.fdic.gov/api/financials?filters=CERT:{cert}"
+    url = (f"https://api.fdic.gov/banks/financials?filters=CERT:{cert}"
            f"&fields=IDT1CER&sort_by=REPDTE&sort_order=DESC&limit=1&format=json")
     try:
         from data.http import get_with_retry

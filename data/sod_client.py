@@ -9,14 +9,14 @@ Rate-limit hardening: FDIC's public API throttles aggressive callers with
 this module kept a verbatim copy AND four raw requests.get call sites that
 bypassed it).
 
-API docs: https://banks.data.fdic.gov/api/
+API docs: https://api.fdic.gov/banks/
 """
 
 import pandas as pd
 
 from data.http import get_with_retry as _get_with_retry
 
-SOD_URL = "https://banks.data.fdic.gov/api/sod"
+SOD_URL = "https://api.fdic.gov/banks/sod"
 
 # FDIC API hard-caps limit at 10,000 rows per request. No US bank has that
 # many branches today (JPM tops out near 5,000), but fetch_branches still
@@ -208,7 +208,7 @@ def search_bank_by_name(name: str) -> list[dict]:
         # Fallback: try institutions endpoint
         try:
             resp = _get_with_retry(
-                "https://banks.data.fdic.gov/api/financials",
+                "https://api.fdic.gov/banks/financials",
                 {"filters": f'REPNM:"{name}*"', "fields": "CERT,REPNM", "limit": 50, "sort_by": "REPDTE", "sort_order": "DESC"},
                 timeout=15,
             )

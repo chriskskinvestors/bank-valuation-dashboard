@@ -45,34 +45,54 @@ def _refresh_one(cert: int, ticker: str | None,
         return cert, ticker, 0, f"{type(e).__name__}: {str(e)[:80]}"
 
 
-def main() -> int:
-    import warnings; warnings.filterwarnings("ignore")
-    from data.branches_store import init_branches_schema
+def _build_cert_to_ticker() -> dict[int, str]:
+    """Reverse lookup: cert → ticker (so we tag public banks even though we're
+    iterating by cert).
+
+    Built from get_fdic_cert() over the live universe — the LOOKUP-TIME
+    resolver, which applies curated cert corrections. Reading BANK_MAP's and
+    _RESOLVED_FROM_JSON's raw dicts instead missed every bank whose cert comes
+    from a correction: 9 public banks including STT, BPOP, HWC, WAFD and NEWT
+    were ingested with ticker=None, so their branches joined the unmapped pool
+    and rendered on Geographic as if they were private banks — blank ticker,
+    no Company-page link, and (before the cert-keyed picker) unselectable in
+    By Bank(s). Deposits were never wrong, only unattributed.
+
+    Each lead cert expands to the ticker's WHOLE cert group: 11 universe banks
+    are multi-bank holdcos (WTFC runs 16 charters), and mapping only the lead
+    left every sibling charter's branches at ticker=None — same private-bank
+    rendering as above. get_cert_group reads the bulk map the nightly universe
+    build warms (no per-bank FDIC calls) and degrades to [cert] on any failure,
+    so the ~350 single-charter banks map exactly as before.
+    """
     from data.bank_mapping import BANK_MAP, get_fdic_cert
     from data.bank_universe import get_universe_tickers
-    from data.fdic_client import list_all_active_institutions
+    from data.cert_group import get_cert_group
 
-    init_branches_schema()
-
-    # Reverse lookup: cert → ticker (so we tag public banks even though we're
-    # iterating by cert).
-    #
-    # Built from get_fdic_cert() over the live universe — the LOOKUP-TIME
-    # resolver, which applies curated cert corrections. Reading BANK_MAP's and
-    # _RESOLVED_FROM_JSON's raw dicts instead missed every bank whose cert comes
-    # from a correction: 9 public banks including STT, BPOP, HWC, WAFD and NEWT
-    # were ingested with ticker=None, so their branches joined the unmapped pool
-    # and rendered on Geographic as if they were private banks — blank ticker,
-    # no Company-page link, and (before the cert-keyed picker) unselectable in
-    # By Bank(s). Deposits were never wrong, only unattributed.
     cert_to_ticker: dict[int, str] = {}
     for ticker in sorted(get_universe_tickers()):
         try:
             cert = get_fdic_cert(ticker)
         except Exception:
             cert = None
-        if cert:
-            cert_to_ticker.setdefault(int(cert), ticker)
+        if not cert:
+            continue
+        try:
+            group = get_cert_group(ticker, cert=int(cert)) or [int(cert)]
+        except Exception:
+            group = [int(cert)]
+        for c in group:
+            c = int(c)
+            prev = cert_to_ticker.get(c)
+            if prev is None:
+                cert_to_ticker[c] = ticker
+            elif prev != ticker:
+                # A cert belongs to at most one ticker. First claim wins, but
+                # a double claim means the group map is wrong and must be
+                # loud — silently reassigning it would move branch deposits
+                # between public banks.
+                print(f"⚠ cert {c} claimed by {ticker} but already mapped to "
+                      f"{prev} — keeping {prev}", flush=True)
     # Belt-and-braces: keep the raw maps as a floor so a universe-snapshot
     # hiccup can't shrink coverage below what the static mappings already give.
     for ticker, info in BANK_MAP.items():
@@ -87,6 +107,17 @@ def main() -> int:
                 cert_to_ticker.setdefault(int(cert), t)
     except Exception:
         pass
+    return cert_to_ticker
+
+
+def main() -> int:
+    import warnings; warnings.filterwarnings("ignore")
+    from data.branches_store import init_branches_schema
+    from data.fdic_client import list_all_active_institutions
+
+    init_branches_schema()
+
+    cert_to_ticker = _build_cert_to_ticker()
 
     print(f"[{time.strftime('%H:%M:%S')}] Enumerating all active FDIC institutions...",
           flush=True)
