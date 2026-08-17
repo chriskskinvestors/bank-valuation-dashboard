@@ -496,13 +496,35 @@ def _fmp_announcement_infos(tickers, fetch_prs, is_subject, today_iso,
 
 
 def fmp_announcement_call_info() -> dict:
-    """{ticker: call info} for banks reporting in the next 14 days, mined
-    from FMP's press-release index (full announcement-PR text — the wires'
-    RSS coverage misses many). Per-ticker fetches ride fmp_client's own
-    cache; the assembled map is 6h-cached. Empty on any failure."""
-    import streamlit as st
+    """{ticker: call info} for banks reporting in the next 14 days, served
+    from the cross-instance 'announcement_call_snap' at WHATEVER age and
+    NEVER built on the interactive path. {} before the first poll-events
+    rebuild (the calendar degrades to the other call-detail layers).
 
-    @st.cache_data(ttl=6 * 3600, show_spinner=False)
+    Regression class (measured 2026-08-17): this was a per-instance
+    @st.cache_data(6h) whose builder fetched press releases for EVERY
+    universe bank reporting in the next 14 days — a cold instance rebuilt it
+    INLINE on the render thread (home.af.calendar 208s against Home's 3s
+    budget), and Streamlit's cache lock made every concurrent session queue
+    behind the build (two sessions observed unfreezing at the same instant).
+    Same failure shape — and same fix — as fetch_earnings_calendar's
+    2026-06-13 regression: snapshots are built by jobs, renders only read."""
+    try:
+        from data import cache
+        snap = cache.get("announcement_call_snap", max_age_s=None)
+    except Exception:
+        snap = None
+    if snap and isinstance(snap.get("value"), dict):
+        return snap["value"]
+    return {}
+
+
+def refresh_announcement_call_snapshot() -> dict:
+    """Build + persist the announcement-PR call-detail map for upcoming
+    reporters (cross-instance 'announcement_call_snap'). Background-only —
+    the per-ticker PR fetches are far too many for the interactive path;
+    poll-events rebuilds this every ~30 min alongside its PR/Q4 siblings.
+    {} on failure (a failed build never overwrites the stored snapshot)."""
     def _build() -> dict:
         from concurrent.futures import ThreadPoolExecutor
         from datetime import timedelta
@@ -549,9 +571,21 @@ def fmp_announcement_call_info() -> dict:
         return out
 
     try:
-        return _build()
-    except Exception:
+        out = _build()
+    except Exception as e:
+        print(f"[earnings_call] announcement call snapshot build failed: "
+              f"{type(e).__name__}: {e}", flush=True)
         return {}
+    try:
+        from data import cache
+        cache.put("announcement_call_snap",
+                  {"value": out, "cached_at": datetime.now().isoformat()})
+    except Exception as e:
+        print(f"[earnings_call] could not cache announcement call details: "
+              f"{type(e).__name__}: {e}")
+    print(f"[earnings_call] announcement call details for {len(out)} banks",
+          flush=True)
+    return out
 
 
 def _release_call_infos(board_rows, today, fetch_release, is_safe,

@@ -272,12 +272,18 @@ def main() -> int:
     # never fails the poll, uses the IR endpoints discovered nightly.
     try:
         from data.events.ir_site import refresh_q4_calls_snapshot
-        from data.earnings_call import refresh_pr_call_snapshot
+        from data.earnings_call import (refresh_announcement_call_snapshot,
+                                        refresh_pr_call_snapshot)
         tq = time.time()
         n_q4 = len(refresh_q4_calls_snapshot())
         n_pr = len(refresh_pr_call_snapshot())
-        print(f"▶ Call details refreshed — Q4 {n_q4} banks, PR {n_pr} banks "
-              f"({time.time()-tq:.0f}s)", flush=True)
+        # Third sibling (2026-08-17): the announcement-PR map used to build
+        # per-instance on the RENDER thread — 208s Home stalls on cold
+        # instances during earnings season. Jobs build, renders read.
+        n_ann = len(refresh_announcement_call_snapshot())
+        print(f"▶ Call details refreshed — Q4 {n_q4} banks, PR {n_pr} banks, "
+              f"announcements {n_ann} banks ({time.time()-tq:.0f}s)",
+              flush=True)
     except Exception as e:
         print(f"  [calls] snapshot refresh failed: {type(e).__name__}: {e}",
               flush=True)
