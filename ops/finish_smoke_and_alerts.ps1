@@ -19,7 +19,7 @@ $Service = "bank-dashboard"
 $Repo    = "chriskskinvestors/bank-valuation-dashboard"
 $SA      = "github-deployer@$Project.iam.gserviceaccount.com"
 
-if (-not $AppUrl) { $AppUrl = Read-Host "Dashboard URL you open (the IAP one, e.g. https://dashboard.kskinvestors.com)" }
+if (-not $AppUrl) { $AppUrl = Read-Host "Dashboard URL you open (the IAP one, e.g. https://dashboard.kskinvestor.com)" }
 
 Write-Host ">> Locating the IAP backend service ..." -ForegroundColor Cyan
 $Backend = ""
