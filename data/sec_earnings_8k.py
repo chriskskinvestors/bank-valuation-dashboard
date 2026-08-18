@@ -318,8 +318,31 @@ def extract_reported_tbvps(
     reconstructed: float | None = None,
     bvps: float | None = None,
 ) -> float | None:
+    """Value-only wrapper around extract_reported_tbvps_status (kept for the
+    existing callers/tests that only want the number)."""
+    return extract_reported_tbvps_status(ex991_html, reconstructed, bvps)[0]
+
+
+def extract_reported_tbvps_status(
+    ex991_html: bytes,
+    reconstructed: float | None = None,
+    bvps: float | None = None,
+) -> tuple[float | None, str]:
     """The bank's OWN reported tangible book value per common share from one
     EX-99.1 document, or None when not cleanly disclosed / fails a sanity gate.
+
+    Returns (value, status). status:
+      "ok"            — value extracted and cross-checked.
+      "not_disclosed" — no clean TBVPS row/anchor in the release (also covers
+                        extraction noise: blank cells, non-per-share values,
+                        a book-value row mismatched into the slot).
+      "gate_rejected" — a CLEAN per-share figure (magnitude + tangible<book
+                        both passed) disagrees with the reconstruction by
+                        ≥15%. That is not noise: the release and the pipeline
+                        cannot both be right (FSUN 2026-08: a stale share
+                        count made the reconstruction $58.97 vs the release's
+                        $35.16, and this gate silently discarded the truth
+                        for three weeks). Callers must surface it.
 
     Company-Reported principle: take the disclosed number, don't rebuild it. The
     caller supplies the corrected reconstruction (`reconstructed`, from
@@ -358,26 +381,26 @@ def extract_reported_tbvps(
         # Blank latest-quarter cell → n/a; never serve the prior column as
         # the current quarter (audit P3).
         if v is None:
-            return None
+            return None, "not_disclosed"
         # Positive, per-share magnitude (rejects a $-thousands equity total or a
         # negative/zero cell mis-aligned into the row).
         if not (0 < v < 10_000):
-            return None
+            return None, "not_disclosed"
         # Tangible < book, when book value per share is disclosed.
         if bvps is not None and bvps > 0 and not (v < bvps):
-            return None
+            return None, "not_disclosed"
         # Tie to the corrected reconstruction within a tight band. This is the
         # primary defense against an EPS/dividend value grabbed into the slot.
         if reconstructed is not None and reconstructed > 0:
             if abs(v - reconstructed) / reconstructed >= 0.15:
-                return None
-            return v
+                return None, "gate_rejected"
+            return v, "ok"
         # No reconstruction anchor: accept only if it cleared the book-value
         # cross-check (something real to tie to); otherwise nothing anchors it.
         if bvps is not None and bvps > 0:
-            return v
-        return None
-    return None
+            return v, "ok"
+        return None, "not_disclosed"
+    return None, "not_disclosed"
 
 
 def _detect_scale(rows: list[tuple], anchor: dict):
@@ -538,9 +561,23 @@ def reported_tbvps(
     reconstructed: float | None = None,
     bvps: float | None = None,
 ) -> float | None:
+    """Value-only wrapper around reported_tbvps_status."""
+    return reported_tbvps_status(cik, reconstructed=reconstructed, bvps=bvps)[0]
+
+
+def reported_tbvps_status(
+    cik,
+    reconstructed: float | None = None,
+    bvps: float | None = None,
+) -> tuple[float | None, str]:
     """The bank's OWN reported tangible book value per common share, read straight
     from its latest earnings release (8-K EX-99.1), or None when it isn't cleanly
     disclosed / fails a sanity gate (→ caller falls back to the reconstruction).
+
+    Returns (value, status) — see extract_reported_tbvps_status. A
+    "gate_rejected" status means the release and the reconstruction disagree
+    ≥15%: one of them IS wrong, and the caller must make that visible rather
+    than silently serving the fallback.
 
     Company-Reported principle: prefer the disclosed number over a rebuild. Pass
     the corrected reconstruction (`reconstructed`, data.sec_client's
@@ -553,12 +590,12 @@ def reported_tbvps(
     non-disclosing release isn't re-fetched; a transient fetch/parse EXCEPTION is
     never cached (returns None without poisoning the cache)."""
     if not cik:
-        return None
+        return None, "not_disclosed"
     from data import cache
 
     f8k = _latest_earnings_8k(cik)
     if not f8k:
-        return None
+        return None, "not_disclosed"
 
     # Fold the anchors into the key: the same release gated against a different
     # reconstruction/bvps is a different question and must not reuse a stale None.
@@ -566,23 +603,25 @@ def reported_tbvps(
     bk = f"{bvps:.4f}" if bvps is not None else "na"
     # v3: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss) —
     # cached {"value": None} under v2 would otherwise serve the miss forever.
-    ckey = f"reported_tbvps:v3:{f8k['accession']}:{rk}:{bk}"
+    # v4: value → (value, status); the stored shape gained "status".
+    ckey = f"reported_tbvps:v4:{f8k['accession']}:{rk}:{bk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling (see above).
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
-        # {"value": float|None}; None values are cached as {"value": None}.
-        return cached.get("value")
+        # {"value": float|None, "status": str}; None values are cached too.
+        return cached.get("value"), cached.get("status") or "not_disclosed"
 
     try:
         html = _fetch_ex991_html(cik)
-        value = (extract_reported_tbvps(html, reconstructed=reconstructed, bvps=bvps)
-                 if html else None)
+        value, status = (extract_reported_tbvps_status(
+                             html, reconstructed=reconstructed, bvps=bvps)
+                         if html else (None, "not_disclosed"))
         try:
-            cache.put(ckey, {"value": value})
+            cache.put(ckey, {"value": value, "status": status})
         except Exception:
             pass
-        return value
+        return value, status
     except Exception as e:
         print(f"[sec_earnings_8k] reported_tbvps failed for cik {cik}: "
               f"{type(e).__name__}: {e}")
-        return None
+        return None, "not_disclosed"
