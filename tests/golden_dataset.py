@@ -142,7 +142,15 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # ni_ttm uses summarize_capital_return (NetIncomeLossAvailableToCommonStockholdersBasic);
         # roatce uses sec_client.get_latest_fundamentals (NetIncomeLoss). The two
         # differ by preferred dividends, hence the slightly different ratio.
-        "ni_ttm_b":      {"expected": 6.58, "tol_pct": 5.0},
+        # Re-pinned 2026-08-18 (hand-computed from raw companyfacts, NI-to-common
+        # quarterly: 3Q25 1,723M (10-Q 0000713676-25-000132) + 4Q25 1,922M
+        # (FY−3Q, 10-K 0000713676-26-000020) + 1Q26 1,675M (10-Q
+        # 0000713676-26-000038) + 2Q26 1,941M (10-Q 0001628280-26-053170)
+        # = $7.261B). The old 6.58 was pre-Q2-2026. NOTE: PNC's Q2-2026 10-Q
+        # (new filing agent) re-tagged NetIncomeLoss as two sparse 6M-YTD rows,
+        # which briefly made this metric read $0.0 — fixed + pinned in
+        # tests/test_capital_return_pnc_regression.py.
+        "ni_ttm_b":      {"expected": 7.26, "tol_pct": 5.0},
         "equity_b":      {"expected": 63.63, "tol_pct": 3.0},
         # tbvps check disabled: pipeline returns n/a (None) for PNC. PNC reports
         # preferred outstanding but tags only a par-zero PreferredStockValue plus
@@ -171,13 +179,19 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # Re-pinned 2026-07-07 (common-basis; hand-check). Old 9.63 preferred-inclusive.
         "roatce_holdco": {"expected": 10.80, "tol_abs": 1.5},
     },
-    "SFST": {
-        "shares":        {"expected": 8_213_328, "tol_pct": 1.0},
-        "equity_b":      {"expected": 0.369, "tol_pct": 3.0},
+    "SFST": {  # April 2026 underwritten offering (424B5 2026-04-15/16,
+        # accns 0001206774-26-000220/-000225): +1.22M shares, ~+$73M equity.
+        # Re-pinned 2026-08-18 from the Q2-2026 10-Q (accn 0001206774-26-000404,
+        # period end 2026-06-30): CommonStockSharesOutstanding 9,468,467
+        # (dei cover-page 9,471,755 as of 2026-07-28 corroborates, 0.03% off);
+        # StockholdersEquity $452,268,000.
+        "shares":        {"expected": 9_468_467, "tol_pct": 1.0},
+        "equity_b":      {"expected": 0.452, "tol_pct": 3.0},
         # No preferred, no goodwill/intangibles, so TBV/share = BV/share. SFST's
-        # 1Q26 release reports book value per common share $46.00 (period-end
-        # 8.21M shares) — unchanged by the preferred fix.
-        "tbvps":         {"expected": 46.00, "tol_pct": 2.0},
+        # 2Q26 release (8-K 2026-07-21, accn 0001206774-26-000359) reports
+        # "Book value per common share was $47.77" — ties 452,268,000 /
+        # 9,468,467 exactly. (1Q26 pin was $46.00.)
+        "tbvps":         {"expected": 47.77, "tol_pct": 2.0},
         "roatce_holdco": {"expected": 9.22, "tol_abs": 1.0},
     },
 }
