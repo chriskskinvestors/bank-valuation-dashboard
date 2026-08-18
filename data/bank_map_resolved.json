@@ -510,7 +510,7 @@
   "name": "Muncy Columbia Financial"
  },
  "CCNB": {
-  "cik": null,
+  "cik": 1437213,
   "fdic_cert": 58864,
   "fdic_score": 1.0,
   "name": "Coastal Carolina Bancshares"
@@ -1086,7 +1086,7 @@
   "name": "First Guaranty Bancshares"
  },
  "FGFH": {
-  "cik": null,
+  "cik": 786298,
   "fdic_cert": 5749,
   "fdic_score": 1.0,
   "name": "Foresight Financial Group"
@@ -1284,7 +1284,7 @@
   "name": "Finward Bancorp"
  },
  "FOTB": {
-  "cik": null,
+  "cik": 1099668,
   "fdic_cert": 3719,
   "fdic_score": 1.0,
   "name": "First Ottawa Bancshares"
@@ -2088,7 +2088,7 @@
   "name": "Oakworth Capital"
  },
  "OAKV": {
-  "cik": null,
+  "cik": 1865429,
   "fdic_cert": 58827,
   "fdic_score": 1.0,
   "name": "Oak View Bankshares"
@@ -2166,7 +2166,7 @@
   "name": "Old Second Bancorp"
  },
  "OSBK": {
-  "cik": null,
+  "cik": 1076691,
   "fdic_cert": 18143,
   "fdic_score": 1.0,
   "name": "Oconee Financial"
@@ -2184,7 +2184,7 @@
   "name": "Oak Valley Bancorp"
  },
  "OZK": {
-  "cik": null,
+  "cik": 1569650,
   "fdic_cert": 110,
   "fdic_score": 1.0,
   "name": "Bank OZK"
@@ -2394,7 +2394,7 @@
   "name": "Riverbank Holding Co"
  },
  "REDW": {
-  "cik": null,
+  "cik": 942895,
   "fdic_cert": 31028,
   "fdic_score": 1.0,
   "name": "Redwood Financial"
@@ -2742,7 +2742,7 @@
   "name": "United Bancorp"
  },
  "UBOH": {
-  "cik": null,
+  "cik": 1087456,
   "fdic_cert": 12969,
   "fdic_score": 1.0,
   "name": "United Bancshares"
@@ -2880,7 +2880,7 @@
   "name": "Valley National Bancorp"
  },
  "VWFB": {
-  "cik": null,
+  "cik": 1913838,
   "fdic_cert": 29495,
   "fdic_score": 1.0,
   "name": "VWF Bancorp"
@@ -2946,7 +2946,7 @@
   "name": "Woodsboro Bank"
  },
  "WRIV": {
-  "cik": null,
+  "cik": 1328409,
   "fdic_cert": 89,
   "fdic_score": 1.0,
   "name": "White River Bancshares"

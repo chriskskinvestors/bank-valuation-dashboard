@@ -1,6 +1,6 @@
 """Earnings-release metrics for non-SEC-filer (OTC) banks.
 
-~100 universe banks (PBAM, BKSC, OZK, the 2026-07-16 admission sweep, …)
+~100 universe banks (PBAM, BKSC, the 2026-07-16 admission sweep, …)
 publish no EDGAR filings — their quarterly earnings release IS their primary
 public disclosure. Two transports, one guarded extraction:
 

@@ -225,7 +225,7 @@ BANK_MAP = {
     "INBC":  {"name": "InBankshares, Corp.",                "fdic_cert": 11492,  "cik": None},
     # SEC-dark (Form 15-15D; growth-gate staleness catch 2026-07-16): the CIK
     # stopped financial filings — cik None forces the honest FDIC-only path.
-    "CCNB":  {"name": "Coastal Carolina Bancshares",        "fdic_cert": 58864,  "cik": None},
+    "CCNB":  {"name": "Coastal Carolina Bancshares",        "fdic_cert": 58864,  "cik": 1437213},  # verified 2026-08-18: SEC tickers file + companyfacts (219 concepts)
     "JMSB":  {"name": "John Marshall Bancorp",              "fdic_cert": 58243,  "cik": 1710482},
     "RVSB":  {"name": "Riverview Bancorp Inc.",             "fdic_cert": 29922,  "cik": 1041368},
     "SLBK":  {"name": "Skyline Bankshares",                 "fdic_cert": 6861,   "cik": 1657642},
@@ -243,7 +243,7 @@ BANK_MAP = {
     "CMHF":  {"name": "Community Heritage Financial, Inc.",  "fdic_cert": 14017,  "cik": 1792597},
     # Bank OZK is a National Bank (no holding company) — files Call Reports
     # with FFIEC only, no SEC XBRL filings. cik=None forces FDIC-only path.
-    "OZK":   {"name": "Bank OZK",                           "fdic_cert": 110,    "cik": None},
+    "OZK":   {"name": "Bank OZK",                           "fdic_cert": 110,    "cik": 1569650},  # 12(i) bank filer: EDGAR has filings/ownership but companyfacts 404s (financials file with the FDIC) — cik gives the filings tab, not XBRL
     "FHN":   {"name": "First Horizon Corp.",                "fdic_cert": 4977,   "cik": 36966},
     "UBSI":  {"name": "United Bankshares Inc.",             "fdic_cert": 22858,  "cik": 729986},
     "FBNC":  {"name": "First Bancorp (NC)",                 "fdic_cert": 15019,  "cik": 811589},
@@ -293,7 +293,7 @@ BANK_MAP = {
     "HFBL":  {"name": "Home Federal Bancorp, Inc. of Louisiana", "fdic_cert": 27654, "cik": 1500375},  # Shreveport LA; was 11241 = Centennial (HOMB)
     "UBCP":  {"name": "United Bancorp",                     "fdic_cert": 9463,   "cik": 731653},   # Martins Ferry OH; was 22858 = United Bank (UBSI)
     # cik None 2026-07-16: filed Form 15-12G (SEC-dark; growth-gate catch).
-    "UBOH":  {"name": "United Bancshares Inc/OH",           "fdic_cert": 12969,  "cik": None},  # Columbus Grove OH; was 22858 = United Bank (UBSI)
+    "UBOH":  {"name": "United Bancshares Inc/OH",           "fdic_cert": 12969,  "cik": 1087456},  # Columbus Grove OH; was 22858 = United Bank (UBSI); cik verified 2026-08-18 (450 concepts)
     "BCAL":  {"name": "California BanCorp",                 "fdic_cert": 57044,  "cik": 1795815},  # San Diego; was 24045 = Banc of California (BANC)
     "FCBC":  {"name": "First Community Bankshares",         "fdic_cert": 13012,  "cik": 859070},   # Bluefield VA; was 3850 = Xenia IL namesake ($57M)
     # FBSI (First Bancshares Inc /MO/): its bank First Home Bank (Mountain
@@ -305,7 +305,7 @@ BANK_MAP = {
 
     # OTC-traded thrift: SEC CIK 942895 has no XBRL data, files only D + 13G.
     # FDIC cert 31028 = HomeTown Bank, MN (holdco REDWOOD FINANCIAL INC).
-    "REDW":  {"name": "Redwood Financial Inc /MN/",         "fdic_cert": 31028,  "cik": None},
+    "REDW":  {"name": "Redwood Financial Inc /MN/",         "fdic_cert": 31028,  "cik": 942895},  # verified 2026-08-18: active filer, no XBRL companyfacts (paper-style) — filings tab only
 
     # ── Small/thrift banks where the dynamic FDIC resolver mis-matches ──
     # These names collide with larger banks and the Jaccard-similarity
