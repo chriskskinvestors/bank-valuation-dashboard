@@ -82,7 +82,8 @@ _DPS_CONCEPTS = [
 
 def _extract_series(gaap: dict, concept_names: list[str],
                       units_priority: list[str] = None,
-                      max_age_years: int = 2) -> list[dict]:
+                      max_age_years: int = 2,
+                      min_recent_ends: int = 1) -> list[dict]:
     """
     Pull all entries for the first matching concept. Returns list of
     {end, filed, val, form} sorted by end date ascending.
@@ -91,6 +92,15 @@ def _extract_series(gaap: dict, concept_names: list[str],
     this way we fall through to fresher concepts when a company has
     switched which XBRL tag they use (e.g., PNC stopped reporting
     NetIncomeLoss in 2014 and now uses ProfitLoss).
+
+    min_recent_ends guards against SPARSE-but-fresh series: PNC's Q2-2026
+    10-Q (new filing agent) re-tagged NetIncomeLoss after a 12-year gap
+    with only two 6-month YTD rows — fresh enough to defeat the staleness
+    guard, far too sparse to decompose into quarters (every quarter came
+    out NaN). A concept must have at least this many distinct end dates
+    inside the freshness window to be chosen over later fallbacks; if NO
+    concept clears the bar (e.g. a young filer with 2 quarters of
+    history), the first fresh one is used as before.
     """
     if units_priority is None:
         units_priority = ["USD", "USD/shares", "shares", "pure"]
@@ -98,6 +108,7 @@ def _extract_series(gaap: dict, concept_names: list[str],
     from datetime import datetime, timedelta
     cutoff = (datetime.now() - timedelta(days=365 * max_age_years)).strftime("%Y-%m-%d")
 
+    sparse_fallback = None
     for concept in concept_names:
         concept_data = gaap.get(concept, {})
         units = concept_data.get("units", {})
@@ -110,30 +121,46 @@ def _extract_series(gaap: dict, concept_names: list[str],
             max_end = max((e.get("end", "") for e in entries), default="")
             if max_end < cutoff:
                 continue
-            # Filter to 10-K / 10-Q
-            filed = [
-                {
-                    "end": e.get("end"),
-                    "filed": e.get("filed"),
-                    "val": e.get("val"),
-                    "form": e.get("form"),
-                    "fp": e.get("fp"),
-                    "fy": e.get("fy"),
-                    "start": e.get("start"),  # for cash flow / income statement items
-                }
-                for e in entries
-                if e.get("form") in ("10-K", "10-Q")
-            ]
-            if filed:
-                filed.sort(key=lambda x: (x["end"] or "", x["filed"] or ""))
-                # Deduplicate by end: keep most recently filed for each end date
-                dedup = {}
-                for e in filed:
-                    end = e["end"]
-                    if end not in dedup or e["filed"] > dedup[end]["filed"]:
-                        dedup[end] = e
-                return sorted(dedup.values(), key=lambda x: x["end"])
+            recent_ends = {e.get("end") for e in entries
+                           if (e.get("end") or "") >= cutoff}
+            if len(recent_ends) < min_recent_ends:
+                if sparse_fallback is None:
+                    sparse_fallback = (concept, unit_type)
+                continue
+            picked = _filter_and_dedup(entries)
+            if picked:
+                return picked
+    if sparse_fallback is not None:
+        concept, unit_type = sparse_fallback
+        return _filter_and_dedup(gaap[concept]["units"][unit_type])
     return []
+
+
+def _filter_and_dedup(entries: list[dict]) -> list[dict]:
+    """Keep 10-K/10-Q rows, most recently filed per end date, sorted by end."""
+    filed = [
+        {
+            "end": e.get("end"),
+            "filed": e.get("filed"),
+            "val": e.get("val"),
+            "form": e.get("form"),
+            "fp": e.get("fp"),
+            "fy": e.get("fy"),
+            "start": e.get("start"),  # for cash flow / income statement items
+        }
+        for e in entries
+        if e.get("form") in ("10-K", "10-Q")
+    ]
+    if not filed:
+        return []
+    filed.sort(key=lambda x: (x["end"] or "", x["filed"] or ""))
+    # Deduplicate by end: keep most recently filed for each end date
+    dedup = {}
+    for e in filed:
+        end = e["end"]
+        if end not in dedup or e["filed"] > dedup[end]["filed"]:
+            dedup[end] = e
+    return sorted(dedup.values(), key=lambda x: x["end"])
 
 
 def _is_quarterly_cf(entry: dict) -> bool:
@@ -267,7 +294,11 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
             dividend_source = "unavailable"
 
     buybacks = _derive_quarterly_from_ytd(_extract_series(gaap, _BUYBACK_CONCEPTS))
-    ni = _derive_quarterly_from_ytd(_extract_series(gaap, _NET_INCOME_CONCEPTS))
+    # min_recent_ends=4: a decomposable NI series needs ~quarterly coverage;
+    # without it PNC's sparse re-tagged NetIncomeLoss (two 6M-YTD rows) wins
+    # on freshness and every quarter derives to NaN.
+    ni = _derive_quarterly_from_ytd(
+        _extract_series(gaap, _NET_INCOME_CONCEPTS, min_recent_ends=4))
     # Shares and equity are point-in-time, not YTD
     shares = _extract_series(gaap, _SHARES_CONCEPTS)
     equity = _extract_series(gaap, _EQUITY_CONCEPTS)
@@ -340,9 +371,17 @@ def compute_ttm_capital_return(timeline: pd.DataFrame) -> dict:
         return {}
     ttm = timeline.tail(4)  # last 4 quarters
 
-    ni_ttm = ttm["net_income_q"].sum(skipna=True) if "net_income_q" in ttm.columns else None
-    divs_ttm = ttm["dividends_q"].sum(skipna=True) if "dividends_q" in ttm.columns else None
-    bb_ttm = ttm["buybacks_q"].sum(skipna=True) if "buybacks_q" in ttm.columns else None
+    def _sum_or_none(col):
+        # pandas sums an all-NaN window to 0.0 — a plausible-wrong $0 (PNC
+        # Q2-2026). No observed quarters must surface as None → n/a, never 0.
+        if col not in ttm.columns:
+            return None
+        s = pd.to_numeric(ttm[col], errors="coerce")
+        return float(s.sum()) if s.notna().any() else None
+
+    ni_ttm = _sum_or_none("net_income_q")
+    divs_ttm = _sum_or_none("dividends_q")
+    bb_ttm = _sum_or_none("buybacks_q")
     total_ttm = (divs_ttm or 0) + (bb_ttm or 0)
 
     # Share count change TTM
@@ -354,7 +393,7 @@ def compute_ttm_capital_return(timeline: pd.DataFrame) -> dict:
 
     # Latest DPS (quarterly)
     dps_latest = ttm["dps_declared"].dropna().iloc[-1] if "dps_declared" in ttm.columns and ttm["dps_declared"].notna().any() else None
-    dps_ttm = ttm["dps_declared"].sum(skipna=True) if "dps_declared" in ttm.columns else None
+    dps_ttm = _sum_or_none("dps_declared")
 
     return {
         "net_income_ttm": ni_ttm,
