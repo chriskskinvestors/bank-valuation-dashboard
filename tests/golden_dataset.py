@@ -54,18 +54,31 @@ sys.path.insert(0, str(REPO_ROOT))
 # If any value drifts outside tolerance, the pipeline changed and we need
 # to investigate whether it's a data-quality issue or a genuine new period.
 GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
-    "JPM": {
+    "JPM": {  # Re-pinned 2026-08-18 to the Q2-2026 10-Q (accn
+        # 0001628280-26-054343) — hand-verified from raw companyfacts, never
+        # pipeline-copied. ni_ttm (NetIncomeLoss basis, matching the old pin):
+        # 3Q25 14.393 (10-Q 0001628280-25-048859) + 4Q25 13.025 (FY
+        # 0001628280-26-008131 − 9M) + 1Q26 16.494 (10-Q 0001628280-26-029344)
+        # + 2Q26 21.155 = 65.067B.
+        # NOTE shares pin left at the FY-2025 cover value the pipeline serves:
+        # true Q2 period-end is dei 2,658,186,195 — the pipeline's stale
+        # cover-count seam is a known open item; when it's fixed, re-pin shares
+        # to the dei value (tbvps will then read ~112.7 vs reported 113.35,
+        # residual = JPM's DTL netting).
         "shares":        {"expected": 2_696_200_000, "tol_pct": 1.0},
-        "ni_ttm_b":      {"expected": 58.90, "tol_pct": 3.0},
-        "equity_b":      {"expected": 362.4, "tol_pct": 3.0},
-        # Reported TBV / common share, 1Q26 press release "Fortress Principles":
-        # $108.87 (TCE at period-end / common shares at period-end). Ties the
-        # common-based fix (equity less preferred, less goodwill+intangibles).
-        "tbvps":         {"expected": 108.87, "tol_pct": 2.0},
-        # Re-pinned 2026-07-07 to the COMMON-basis ROATCE (NI-to-common TTM ÷
-        # common tangible equity) from the independent hand-check
-        # (tools/golden_handcheck.py). Old 19.0 was preferred-INCLUSIVE.
-        "roatce_holdco": {"expected": 19.83, "tol_abs": 1.0},
+        "ni_ttm_b":      {"expected": 65.07, "tol_pct": 3.0},
+        "equity_b":      {"expected": 374.60, "tol_pct": 3.0},
+        # Reported TBV / common share, 2Q26 press release "Fortress Principles"
+        # (8-K accn 0001628280-26-048078, filed 2026-07-14): "tangible book
+        # value per share of $113.35". Pipeline reads 111.10 (stale share
+        # count, see the shares note) — passes by 0.01pp; breaches next
+        # quarter unless the share seam is fixed.
+        "tbvps":         {"expected": 113.35, "tol_pct": 2.0},
+        # Common-basis ROATCE (NI-to-common TTM ÷ common TCE), hand-check
+        # convention (intangibles beyond goodwill: no instant tag at
+        # 2026-06-30 → 0 assumed): NIC TTM 63.633B ÷ (374.598 − 21.040
+        # preferred − 52.711 goodwill = 300.847B) = 21.15%.
+        "roatce_holdco": {"expected": 21.15, "tol_abs": 1.0},
     },
     "BAC": {
         # Re-pinned 2026-08-02 to BAC's Q2-2026 10-Q — it is the only golden
@@ -91,11 +104,16 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
     },
     "WFC": {
         "shares":        {"expected": 3_064_000_000, "tol_pct": 2.0},  # Q1 2026 post-buybacks
-        "ni_ttm_b":      {"expected": 21.23, "tol_pct": 5.0},
+        # Re-pinned 2026-08-18 (hand-verified, Q2-2026): NetIncomeLoss
+        # quarters 3Q25 5.589 (10-Q 0000072971-25-000253) + 4Q25 5.361 (FY
+        # 0000072971-26-000133 − 9M) + 1Q26 5.253 (10-Q 0000072971-26-000217)
+        # + 2Q26 6.407 (10-Q 0000072971-26-000302) = 22.610B.
+        "ni_ttm_b":      {"expected": 22.61, "tol_pct": 5.0},
         "equity_b":      {"expected": 178.4, "tol_pct": 3.0},
-        # Reported tangible book value / common share, 1Q26 Quarterly Supplement
-        # (TCE $137,817M / 3,064.3M shares) = $44.98.
-        "tbvps":         {"expected": 44.98, "tol_pct": 2.0},
+        # Reported tangible book value / common share, 2Q26 Quarterly
+        # Supplement p.24 (8-K accn 0000072971-26-000288, filed 2026-07-14):
+        # TCE $139,703M / 3,028.5M shares = $46.13. (1Q26 pin was $44.98.)
+        "tbvps":         {"expected": 46.13, "tol_pct": 2.0},
         # Re-pinned 2026-07-07 (common-basis; hand-check). Old 13.84 preferred-inclusive.
         "roatce_holdco": {"expected": 14.97, "tol_abs": 1.0},
     },
@@ -115,8 +133,13 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # 1,554,585,557) because CommonStockSharesOutstanding is a rounded
         # 1,600,000,000 cover-page placeholder. Ties USB's reported ~1,555M.
         "shares":        {"expected": 1_554_585_557, "tol_pct": 1.0},
-        "ni_ttm_b":      {"expected": 7.57, "tol_pct": 5.0},
-        "equity_b":      {"expected": 65.2, "tol_pct": 3.0},
+        # Re-pinned 2026-08-18 (hand-verified, Q2-2026 10-Q accn
+        # 0000036104-26-000044): NetIncomeLoss 3Q25 2.001 (10-Q
+        # 0000036104-25-000064) + 4Q25 2.045 (FY 0000036104-26-000011 − 9M)
+        # + 1Q26 1.945 (10-Q 0000036104-26-000024) + 2Q26 2.177 = 8.168B;
+        # StockholdersEquity 67.432B @ 2026-06-30.
+        "ni_ttm_b":      {"expected": 8.17, "tol_pct": 5.0},
+        "equity_b":      {"expected": 67.43, "tol_pct": 3.0},
         # tbvps check still disabled — but the gap is now down to the DTL residual.
         # The MSR-exclusion + correct-share fixes moved the reconstruction from
         # $25.90 to $28.76 (TCE convention): common equity $58,978M − (goodwill
