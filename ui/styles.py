@@ -123,15 +123,15 @@ CUSTOM_CSS = """
         border-bottom: 2px solid var(--brand-primary) !important;
         background: transparent !important;
     }
-    /* Render the radio as clean text tabs: hide the circle (the label's
-       first-child wrapper) and the <input>, leaving just the label text.
-       VERIFIED LIVE on Chrome 149 (2026-06-14) by injecting + screenshotting
-       on the user's exact browser: first-child IS the 15px circle wrapper
-       there, hiding it leaves the <p> fully visible, tabs render clean.
-       (The nav-blank incident that day was a browser render glitch —
-       zoom/hardware-acceleration on a fresh Chrome 149 build — NOT this CSS;
-       the same rule renders perfectly on the identical browser version.) */
-    .st-key-topnav [role="radiogroup"] label > div:first-child { display: none !important; }
+    /* Render the radio as clean text tabs: hide every label div that
+       neither IS nor CONTAINS the stMarkdownContainer text — i.e. the radio
+       circle, wherever a Streamlit version puts it. Positional selectors
+       broke SILENTLY on the 1.58->1.60 upgrade (2026-08-03, caught
+       2026-08-17): 1.60 wraps the input in a span and nests dot+text under
+       ONE div, so `div:first-child` matched nothing (topnav dots visible)
+       and `div:first-of-type` matched the CONTENT wrapper (section/sub-tab
+       labels blanked). The :not/:has form is structure-proof either way. */
+    .st-key-topnav [role="radiogroup"] label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])) { display: none !important; }
     .st-key-topnav [role="radiogroup"] label > input { position: absolute !important; opacity: 0 !important;
         width: 1px !important; height: 1px !important; margin: 0 !important; }
     .st-key-topnav [role="radiogroup"] label { display: inline-flex !important; align-items: center; }
@@ -375,7 +375,7 @@ CUSTOM_CSS = """
     section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
         background: var(--bg-hover) !important;
     }
-    section[data-testid="stSidebar"] div[role="radiogroup"] label[data-baseweb="radio"] > div:first-child {
+    section[data-testid="stSidebar"] div[role="radiogroup"] label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])) {
         display: none !important;
     }
     section[data-testid="stSidebar"] div[role="radiogroup"] label p {
@@ -823,7 +823,7 @@ CUSTOM_CSS = """
     .st-key-company_section_nav div[role="radiogroup"] > label:hover {
         background: rgba(37, 99, 235, 0.06);
     }
-    .st-key-company_section_nav div[role="radiogroup"] > label > div:first-of-type {
+    .st-key-company_section_nav div[role="radiogroup"] > label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])) {
         display: none !important;
     }
     .st-key-company_section_nav div[role="radiogroup"] > label p {
@@ -848,7 +848,7 @@ CUSTOM_CSS = """
     .st-key-company_subtab_nav div[role="radiogroup"] > label:hover {
         background: rgba(37, 99, 235, 0.06);
     }
-    .st-key-company_subtab_nav div[role="radiogroup"] > label > div:first-of-type {
+    .st-key-company_subtab_nav div[role="radiogroup"] > label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])) {
         display: none !important;
     }
     .st-key-company_subtab_nav div[role="radiogroup"] > label p {
@@ -875,7 +875,7 @@ CUSTOM_CSS = """
     [class*="st-key-lazytabs_"] div[role="radiogroup"] > label:hover {
         background: rgba(37, 99, 235, 0.06);
     }
-    [class*="st-key-lazytabs_"] div[role="radiogroup"] > label > div:first-of-type {
+    [class*="st-key-lazytabs_"] div[role="radiogroup"] > label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])) {
         display: none !important;
     }
     [class*="st-key-lazytabs_"] div[role="radiogroup"] > label p {
@@ -901,7 +901,7 @@ CUSTOM_CSS = """
     .st-key-company_basis_nav div[role="radiogroup"] > label:hover {
         background: rgba(37, 99, 235, 0.06);
     }
-    .st-key-company_basis_nav div[role="radiogroup"] > label > div:first-of-type {
+    .st-key-company_basis_nav div[role="radiogroup"] > label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])) {
         display: none !important;
     }
     .st-key-company_basis_nav div[role="radiogroup"] > label p {
