@@ -123,6 +123,7 @@ def _empty_quote() -> dict:
         "volume": None,
         "change": None,
         "change_pct": None,
+        "timestamp": None,
     }
 
 
@@ -152,6 +153,11 @@ def get_quote(ticker: str) -> dict:
         "volume": row.get("volume"),
         "change": row.get("change"),
         "change_pct": row.get("changePercentage"),
+        # FMP's own quote time (epoch seconds) — the price cache's ingest
+        # guard drops quotes this proves frozen (FMP sometimes serves a
+        # weeks-old quote as if current; caching it would show stale data
+        # under a fresh heartbeat).
+        "timestamp": row.get("timestamp"),
     }
     _cache_put(cache_key, out)
     return out

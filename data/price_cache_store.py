@@ -26,6 +26,15 @@ Public functions:
   • upsert_prices(quotes)            — bulk write {ticker: quote_dict}
   • get_prices(tickers, max_age_s)   — bulk read, fresh rows only
   • get_all_prices(max_age_s)        — bulk read everything fresh
+  • get_max_updated_at()             — newest updated_at (freshness badge)
+
+updated_at is the job heartbeat (write time) — the ≤120-ticker repair path
+and max_age_s reads depend on those semantics (data-time stamping was tried
+and reverted: off-hours it made every row look stale, so the repair path
+live-refetched the whole set on each weekend page view). Honesty is
+enforced at INGEST instead: a quote whose own FMP timestamp proves it
+frozen (>5 days old) is dropped, and the EOD fallback path
+(jobs/refresh_prices.py) back-stamps real trading dates.
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -136,22 +145,55 @@ def _coerce(v):
         return None
 
 
+# Ingest guard against frozen/junk quotes. FMP sometimes serves a months-old
+# quote as if current (e.g. HTBK dated 2026-04-17 with change==price);
+# upserting it would cache stale data under a fresh heartbeat. A quote whose
+# own FMP timestamp parses sane (post-2000, not ahead of now beyond clock
+# skew) but is older than 5 days at write time is DROPPED — the previous
+# cached row (or nothing → n/a) stays in place. Friday's stamp is ≤3 days
+# over a normal weekend and ≤4 over a holiday one, so 5 days never drops
+# real data; a missing/garbage/epoch-0 timestamp is accepted as today
+# (it proves nothing).
+_MIN_SANE_QUOTE_TS = 946684800.0  # 2000-01-01T00:00:00Z
+_MAX_FUTURE_SKEW_S = 300.0
+_FROZEN_QUOTE_MAX_AGE_S = 5 * 86400.0
+
+
+def _is_frozen_quote(q: dict, now: datetime) -> bool:
+    """True when the quote's own FMP timestamp (epoch seconds) proves it is
+    frozen (sane but >5 days old). Absent/garbage/future timestamps prove
+    nothing → False (row accepted)."""
+    try:
+        ts = float(q.get("timestamp"))
+    except (TypeError, ValueError):
+        return False
+    if not (_MIN_SANE_QUOTE_TS <= ts <= now.timestamp() + _MAX_FUTURE_SKEW_S):
+        return False
+    return now.timestamp() - ts > _FROZEN_QUOTE_MAX_AGE_S
+
+
 def upsert_prices(quotes: dict[str, dict]) -> int:
     """
     Bulk-write {ticker: quote_dict}. Only rows with a non-null price are
-    written (a missing price would clobber a good prior value). Returns the
-    number of rows written.
+    written (a missing price would clobber a good prior value), and rows
+    whose FMP timestamp proves them frozen (>5 days old) are dropped —
+    see _is_frozen_quote. Returns the number of rows written.
     """
     from sqlalchemy import text
     if not quotes:
         return 0
 
+    now = datetime.now(timezone.utc)
     rows = []
+    dropped: list[str] = []
     for ticker, q in quotes.items():
         if not q:
             continue
         price = _coerce(q.get("price"))
         if price is None:
+            continue
+        if _is_frozen_quote(q, now):
+            dropped.append(ticker.upper())
             continue
         rows.append({
             "ticker": ticker.upper(),
@@ -163,6 +205,9 @@ def upsert_prices(quotes: dict[str, dict]) -> int:
             "volume": _coerce(q.get("volume")),
             "dividend_yield": _coerce(q.get("dividend_yield")),
         })
+    if dropped:
+        print(f"[price_cache] dropped {len(dropped)} frozen-quote row(s) "
+              f"(FMP timestamp >5d old): {', '.join(sorted(dropped))}")
     if not rows:
         return 0
 
@@ -312,6 +357,22 @@ def get_prices(tickers: list[str], max_age_s: int | None = None) -> dict[str, di
                     "age_seconds": age,
                 }
     return out
+
+
+def get_max_updated_at() -> datetime | None:
+    """Newest updated_at across the whole cache — i.e. the last successful
+    price-job write (the freshness-badge input: if even the newest row is
+    old, the refresh-prices job is down and every served price is at least
+    that stale). None on empty table or DB failure, never a guess."""
+    from sqlalchemy import text
+    try:
+        eng = _get_engine()
+        with eng.begin() as conn:
+            v = conn.execute(
+                text("SELECT MAX(updated_at) FROM price_cache")).scalar()
+    except Exception:
+        return None
+    return _parse_ts(v)
 
 
 def get_all_prices(max_age_s: int | None = None) -> dict[str, dict]:
