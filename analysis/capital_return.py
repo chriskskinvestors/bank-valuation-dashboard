@@ -382,7 +382,12 @@ def compute_ttm_capital_return(timeline: pd.DataFrame) -> dict:
     ni_ttm = _sum_or_none("net_income_q")
     divs_ttm = _sum_or_none("dividends_q")
     bb_ttm = _sum_or_none("buybacks_q")
-    total_ttm = (divs_ttm or 0) + (bb_ttm or 0)
+    # One known component treats the other as 0 (banks that never buy back);
+    # BOTH unknown is not a $0 return — it's no observation at all (PNC tags
+    # no cash-flow dividend/buyback concepts) → None, so the UI shows n/a
+    # instead of "returns 0% of income".
+    total_ttm = (None if (divs_ttm is None and bb_ttm is None)
+                 else (divs_ttm or 0) + (bb_ttm or 0))
 
     # Share count change TTM
     share_start = ttm["shares_outstanding"].iloc[0] if "shares_outstanding" in ttm.columns and len(ttm) > 0 else None
@@ -404,7 +409,9 @@ def compute_ttm_capital_return(timeline: pd.DataFrame) -> dict:
         "dps_latest_quarterly": dps_latest,
         "payout_ratio_ttm": (divs_ttm / ni_ttm) if ni_ttm and divs_ttm and ni_ttm > 0 else None,
         "buyback_ratio_ttm": (bb_ttm / ni_ttm) if ni_ttm and bb_ttm and ni_ttm > 0 else None,
-        "total_return_ratio_ttm": (total_ttm / ni_ttm) if ni_ttm and ni_ttm > 0 else None,
+        "total_return_ratio_ttm": ((total_ttm / ni_ttm)
+                                   if total_ttm is not None and ni_ttm and ni_ttm > 0
+                                   else None),
         "shares_start": share_start,
         "shares_end": share_end,
         "share_change_pct_ttm": share_chg_pct,
@@ -458,7 +465,12 @@ def compute_shareholder_yield(timeline: pd.DataFrame, market_cap: float | None) 
     Break apart into dividend yield and buyback yield.
     """
     ttm = compute_ttm_capital_return(timeline)
-    if not market_cap or market_cap <= 0:
+    no_observation = (ttm.get("dividends_ttm") is None
+                      and ttm.get("buybacks_ttm") is None)
+    if not market_cap or market_cap <= 0 or no_observation:
+        # no_observation: neither dividend nor buyback dollars are tagged at
+        # all (PNC) — a 0.00% yield would claim the company returns nothing;
+        # unknown renders n/a.
         return {
             "dividend_yield_pct": None,
             "buyback_yield_pct": None,
