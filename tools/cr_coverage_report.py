@@ -231,7 +231,7 @@ def _print_summary(results):
     print(header)
     print("-" * len(header))
     for name, _, _ in FUNCTIONS:
-        rows = results[name]
+        rows = results.get(name) or {}   # a loaded results file may cover fewer
         n = len(rows)
         if n == 0:
             continue
@@ -248,7 +248,7 @@ def _print_summary(results):
     print("=" * 78)
     any_err = False
     for name, _, _ in FUNCTIONS:
-        errs = [(t, r["err"]) for t, r in results[name].items() if r["class"] == "ERROR"]
+        errs = [(t, r["err"]) for t, r in (results.get(name) or {}).items() if r["class"] == "ERROR"]
         if errs:
             any_err = True
             print(f"\n{name}:")
@@ -262,7 +262,7 @@ def _print_summary(results):
     print("EMPTY EXAMPLES (parser-miss candidates OR genuine non-disclosers)")
     print("=" * 78)
     for name, _, _ in FUNCTIONS:
-        empties = [t for t, r in results[name].items() if r["class"] == "EMPTY"]
+        empties = [t for t, r in (results.get(name) or {}).items() if r["class"] == "EMPTY"]
         if empties:
             shown = empties[:8]
             more = f" (+{len(empties) - len(shown)} more)" if len(empties) > len(shown) else ""

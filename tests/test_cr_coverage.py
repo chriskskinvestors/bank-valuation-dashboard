@@ -75,13 +75,31 @@ def main(argv) -> int:
     slow_sub = None
     if "--slow-sub" in argv:
         slow_sub = int(argv[argv.index("--slow-sub") + 1])
+    # --universe: measure the WHOLE universe (owner directive 2026-08-19:
+    # the full universe, not the 47-bank sample, is the coverage standard).
+    # --from-results <path>: record/compare from a sweep's saved results JSON
+    # ({"results": {fn: {ticker: {...}}}}) instead of re-measuring — a full
+    # cold sweep takes hours; re-running it to pin what it just measured
+    # would be pure waste.
+    from_results = None
+    if "--from-results" in argv:
+        from_results = argv[argv.index("--from-results") + 1]
 
     from tools.cr_coverage_report import (SAMPLE, _print_summary,
                                           _resolve_sample, measure)
-    print(f"Resolving {len(SAMPLE)} tickers ...")
-    sample = _resolve_sample(SAMPLE)
-    print(f"Sample: {len(sample)} banks with CIK\n")
-    results = measure(sample, slow_sub=slow_sub)
+    if from_results:
+        results = json.loads(Path(from_results).read_text(encoding="utf-8"))["results"]
+        print(f"Loaded measured results from {from_results}")
+    else:
+        if "--universe" in argv:
+            from data.bank_universe import get_universe_tickers
+            tickers = sorted(get_universe_tickers())
+        else:
+            tickers = SAMPLE
+        print(f"Resolving {len(tickers)} tickers ...")
+        sample = _resolve_sample(tickers)
+        print(f"Sample: {len(sample)} banks with CIK\n")
+        results = measure(sample, slow_sub=slow_sub)
     _print_summary(results)
 
     if record:
@@ -93,7 +111,7 @@ def main(argv) -> int:
             return 1
         baseline = {
             "recorded": time.strftime("%Y-%m-%d"),
-            "sample": [t for t, _ in sample],
+            "sample": sorted({t for rows in results.values() for t in rows}),
             "functions": {
                 fn: {"classes": {t: r["class"] for t, r in sorted(rows.items())}}
                 for fn, rows in results.items()},

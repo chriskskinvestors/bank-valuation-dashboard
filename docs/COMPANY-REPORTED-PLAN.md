@@ -251,14 +251,26 @@ relying on the income/ratio rows broadly.
 the label." The only way to know is to run every extractor across the whole
 universe and measure.*
 
-- [~] Run all Company-Reported extractors across the universe; record per-metric,
-      per-tab coverage % (value vs n/a). **Started 2026-06-29:** sampled 24 banks
-      via `tools/cr_coverage_report.py` (§5 above). Full ~367-bank sweep is the
-      remaining work.
-- [~] Triage the high-impact misses: distinguish genuine non-disclosure from
-      parser gaps (label variants, custom taxonomy extensions, split-filer
-      doc-sets, dimensional-only tagging). **Started:** §5 backlog — KEY statement
-      stitch, fair-value FY-end matching, latest-FY NIM.
+- [x] Run all Company-Reported extractors across the universe — **DONE
+      2026-08-19** (owner directive "THERE CAN BE NO WRONG DATA"): full sweep
+      over all 350 universe banks with a CIK (~4.6h live EDGAR + a warm
+      re-measure pass so cold-fetch flukes never count as misses). Coverage:
+      statements / securities / highlights / NIM **94% multi-year, 0 single,
+      0 errors**; compositions 85%; fair value 44%; segments 27%. Pinned as
+      the gate baseline (`tests/cr_coverage_baseline.json`, 350 banks × 8
+      extractors; `tests/test_cr_coverage.py --universe` re-measures it,
+      `--record --from-results` re-pins from a sweep's saved JSON).
+- [x] Triage — **DONE 2026-08-19, every EMPTY and ERROR explained:**
+      all 9 sweep ERRORs were transient EDGAR 503s (re-measured clean → the
+      universe has ZERO extractor errors). The ~6% statements-EMPTY residual
+      is proven genuine bank-by-bank via raw EDGAR submissions: 14 banks have
+      never filed a 10-K (OTC, FDIC-Templated covers them), CCNB/FOTB/OSBK
+      deregistered 2012-13 (decade-old statements would mislead), URSB is a
+      first-time 2026 filer whose 10-K carries no XBRL (phase-in
+      accommodation — auto-recovers on its next filing), OZK is a 12(i)
+      no-holdco filer (documented in bank_mapping). Fair-value/segments/
+      composition EMPTYs are the documented structural classes (no ASC 820
+      rollup / single-segment / no by-type composition disclosure).
 - [x] Fix the high-impact label/structure misses — SHIPPED (non-Dec-FYE gate,
       segment disclosed-measure recovery, AFS/HTM label word orders; re-measured
       across 47 diverse banks). The confirmed genuine-non-disclosure residual
