@@ -80,6 +80,12 @@ def build_bank_metrics(
 
         result[key] = val
 
+    # Diagnostic passthrough (NOT a config.py column — tables render only
+    # declared columns): the release-vs-reconstruction TBVPS conflict flag
+    # must reach validation so the nightly gate alerts on it (FSUN class:
+    # one of the two numbers IS wrong). See analysis/valuation._resolve_tbvps.
+    result["tbvps_conflict"] = computed.get("tbvps_conflict")
+
     return result
 
 
