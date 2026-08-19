@@ -24,9 +24,40 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+# Bounded universe for AppTest runs. Without this the app's script run does the
+# real thing: a cold environment (fresh clone, CI, new worktree — no persisted
+# universe/metrics snapshot in the local cache backend) triggers the ~6.5-min
+# live universe build plus a universe-wide per-bank SEC/FDIC metrics build below
+# Home. AppTest's timeout then calls runner.join() — which BLOCKS until that
+# fan-out actually finishes — before raising "AppTest script run timed out", so
+# the module appeared to hang for tens of minutes and then ERRORed. Injecting
+# the module-level universe cache (data, not a function replacement) bounds
+# every downstream consumer to 2 real banks while all production code still
+# runs for real — the nav guard's invariant is untouched.
+_STUB_UNIVERSE = {
+    "AMAL": {"cik": 1823608, "fdic_cert": 622, "share_class": "common",
+             "bank_name": "Amalgamated Financial Corp."},
+    "JPM": {"cik": 19617, "fdic_cert": 628, "share_class": "common",
+            "bank_name": "JPMorgan Chase & Co."},
+}
+
+
 class TestNavRendersFunctional(unittest.TestCase):
     SECTIONS = ["Home", "Market & Macro", "Screen & Compare", "Company",
                 "Earnings", "News & Research", "Geographic"]
+
+    def setUp(self):
+        import data.bank_universe as bu
+        self._bu = bu
+        self._saved = (bu._UNIVERSE_CACHE, bu._NONCOMMON_CACHE,
+                       bu._NONCOMMON_PRIMARY_CACHE)
+        bu._UNIVERSE_CACHE = dict(_STUB_UNIVERSE)
+        bu._NONCOMMON_CACHE = None
+        bu._NONCOMMON_PRIMARY_CACHE = None
+
+    def tearDown(self):
+        (self._bu._UNIVERSE_CACHE, self._bu._NONCOMMON_CACHE,
+         self._bu._NONCOMMON_PRIMARY_CACHE) = self._saved
 
     def _section_nav(self, at):
         nav = [r for r in at.radio

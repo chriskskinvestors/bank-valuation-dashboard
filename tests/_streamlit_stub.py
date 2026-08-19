@@ -34,6 +34,38 @@ def _passthru(*a, **k):
     return lambda f: f
 
 
+def assert_fixture_columns(test, html, hist_rows, period):
+    """Anti-dead-stub guard for statement render tests.
+
+    When a renderer's data seam migrates, a stub of the OLD seam keeps
+    "passing" while the render silently pulls LIVE data (f6c689c deadened
+    test_audit_regressions' balance-sheet stub exactly this way: the render
+    showed 8 real quarters, the 2 fixture rows never entered the pipeline,
+    and one fixture assert passed coincidentally against real values).
+    A statement's period headers are derived 1:1 from the fixture REPDTEs,
+    so leaked live data shows up as extra/other columns — assert the exact
+    header set the fixtures imply, mirroring render_statement's labeling
+    (Annual: December rows, tail(5), "FY2025"; Quarterly: tail(8), "Q1 '26").
+    """
+    import pandas as pd
+    dates = sorted(pd.to_datetime([r["REPDTE"] for r in hist_rows]))
+    if period == "Annual":
+        dates = [d for d in dates if d.month == 12][-5:]
+        labels = [f"FY{d.year}" for d in dates]
+    else:
+        dates = dates[-8:]
+        labels = [f"Q{(d.month - 1) // 3 + 1} '{str(d.year)[2:]}" for d in dates]
+    test.assertEqual(
+        html.count('class="colh"'), len(labels),
+        f"rendered period-column count != fixture rows ({labels}) — the "
+        "data-seam stub is dead and the render pulled live data")
+    for lab in labels:
+        test.assertIn(
+            f">{lab}</th>", html,
+            f"fixture column {lab!r} missing from rendered headers — the "
+            "data-seam stub is dead and the render pulled live data")
+
+
 def install():
     """Install or complete the streamlit stub; returns the module."""
     st = sys.modules.get("streamlit")

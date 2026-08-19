@@ -7,11 +7,21 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import data.earnings_call as ec  # noqa: E402
+
+
+class _FrozenDate(date):
+    """date whose today() is pinned before the fixture PRs' July 2026 dates —
+    the pipeline's stale-leak guard drops past dates, so these tests must not
+    depend on the wall clock (they started failing for real on 2026-07-24)."""
+    @classmethod
+    def today(cls):
+        return cls(2026, 7, 1)
 
 
 class TestFetchPrBody(unittest.TestCase):
@@ -46,12 +56,15 @@ class TestRefreshPrCallSnapshot(unittest.TestCase):
         self._g, self._f, self._p = store.get_events_by_type, ec._fetch_pr_body, dc.put
         self._eps = ir.get_ir_endpoints
         ir.get_ir_endpoints = lambda: {}      # no Q4 banks → nothing skipped here
+        self._date = ec.date
+        ec.date = _FrozenDate                 # deterministic 'today' for the guard
 
     def tearDown(self):
         self._store.get_events_by_type = self._g
         ec._fetch_pr_body = self._f
         self._dc.put = self._p
         self._ir.get_ir_endpoints = self._eps
+        ec.date = self._date
 
     def test_picks_announcement_fetches_body_parses_and_stores(self):
         self._store.get_events_by_type = lambda et, limit=800: [

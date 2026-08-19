@@ -850,13 +850,20 @@ class TestShareCountFreshness(unittest.TestCase):
         result = self._fundamentals(self._jpm_like_facts(issued_treasury=False))
         self.assertEqual(result["shares_outstanding"], 2_658_186_195)
 
-    def test_stale_primary_kept_when_nothing_fresher(self):
-        # Nothing fresher exists → the stale-but-genuine primary is served
-        # (within its 3y window), never None'd; the cover-divergence
-        # cross-check surfaces gaps instead of guessing.
+    def test_stale_primary_alone_is_incoherent_not_served(self):
+        # Nothing fresher exists and the only count predates the equity date
+        # by ~7 months — far beyond the 30-day coherence grace. The original
+        # pin here served the stale-but-genuine primary; bd980ea (2026-08-19,
+        # the FSUN incident: a 2025-12-31 count divided post-offering
+        # 2026-06-30 equity and TBVPS rendered $58.97 vs the release's $35.16
+        # for three weeks) superseded that: a count that cannot be coherent
+        # with the equity date is None + flagged, never a plausible-wrong
+        # divisor. The keep-side of the contract (gap INSIDE grace stays) is
+        # pinned in tests/test_share_equity_coherence.py.
         result = self._fundamentals(
             self._jpm_like_facts(issued_treasury=False, dei=False))
-        self.assertEqual(result["shares_outstanding"], 2_696_200_000)
+        self.assertIsNone(result["shares_outstanding"])
+        self.assertTrue(result["shares_asof_incoherent"])
 
     def test_current_primary_not_overridden_by_later_cover(self):
         # SFST shape WITH equity present: primary at the quarter-end equity
@@ -1540,7 +1547,13 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
                 else:
                     sys.modules[k] = saved_mods[k]
             importlib.reload(fs)
-        return captured[0] if captured else ""
+        html = captured[0] if captured else ""
+        # Anti-dead-stub guard: the rendered columns must be exactly the
+        # fixture rows, or the load_fdic_hist_df stub above is no longer the
+        # seam the renderer reads and live data leaked in.
+        from tests._streamlit_stub import assert_fixture_columns
+        assert_fixture_columns(self, html, hist_rows, "Quarterly")
+        return html
 
     def test_computed_lines_match_hand_values(self):
         # The Q1-2026 column renders (Quarterly view). Values are asserted in

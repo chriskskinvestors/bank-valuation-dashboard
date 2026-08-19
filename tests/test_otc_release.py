@@ -184,7 +184,10 @@ class TestOtcWrapper(unittest.TestCase):
         self._orig = (dc.get, dc.put, orl._latest_earnings_pr,
                       orl._fetch_story, orl._latest_ir_release,
                       orl._fetch_document)
-        dc.get = lambda k: self.store.get(k)
+        # Production reads with max_age_s=None (2026-07-27 no-ceiling
+        # contract) — the stub must accept it or the TypeError is swallowed
+        # and every seeded cache silently vanishes.
+        dc.get = lambda k, max_age_s=None: self.store.get(k)
         dc.put = lambda k, v: self.store.__setitem__(k, v)
         orl._latest_ir_release = lambda t: None
 
@@ -239,7 +242,9 @@ class TestOtcWrapper(unittest.TestCase):
             "title": "x", "url": "u1", "published_at": "2026-07-16 08:00:00"}
         fetches = []
         self.orl._fetch_story = lambda u: fetches.append(u) or "<p>x</p>"
-        self.store["otc_release:v6:PBAM"] = {
+        # Key version must track data/otc_release.py's current spec version
+        # or the seed is invisible and the wrapper re-extracts.
+        self.store["otc_release:v8:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",       # stale ⇒ re-check
             "value": {"url": "u1", "metrics": {"nim": 5.18}}}
         val = self.orl.otc_release_metrics("PBAM")
@@ -250,7 +255,7 @@ class TestOtcWrapper(unittest.TestCase):
         self.orl._latest_earnings_pr = lambda t: {
             "title": "x", "url": "u2", "published_at": "2026-07-16 08:00:00"}
         self.orl._fetch_story = lambda u: None
-        self.store["otc_release:v6:PBAM"] = {
+        self.store["otc_release:v8:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",
             "value": {"url": "u1", "metrics": {"nim": 5.0}}}
         val = self.orl.otc_release_metrics("PBAM")
