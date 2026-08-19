@@ -192,6 +192,50 @@ def cross_check_net_income(sec_ni: float | None, fdic_ni_ytd: float | None,
     return findings
 
 
+def check_coherence_flags(metrics: dict | None,
+                          sec_data: dict | None) -> list[Finding]:
+    """Alert wiring for the 2026-08 coherence guards (owner directive: the
+    SYSTEM pages on wrong-number risk before a customer sees it).
+
+    • tbvps_conflict (metrics, from analysis/valuation._resolve_tbvps): the
+      bank's own released TBVPS and our reconstruction disagree ≥15% — one of
+      them IS wrong (FSUN sat 3 weeks at a stale-share $58.97 vs its
+      release's $35.16). ERROR severity: the nightly gate fails on a
+      previously-clean bank gaining this, so a new conflict pages instead of
+      rendering silently.
+    • shares_asof_incoherent (sec_data, from data/sec_client): the newest
+      share evidence predates the equity date beyond grace — the guard
+      already renders per-share metrics n/a (and the release figure serves
+      where extracted), so this is the alarm WORKING: warning severity,
+      visible in the nightly summary without failing the job."""
+    findings = []
+    if metrics and metrics.get("tbvps_conflict"):
+        findings.append(Finding(
+            severity="error",
+            field="tbvps",
+            message=(
+                "Release-reported TBVPS and the reconstruction disagree ≥15% "
+                "— one of them is wrong (FSUN class). The reconstruction is "
+                "serving; hand-verify against the release before this bank "
+                "reaches a customer."
+            ),
+            value=metrics.get("tbvps"),
+            source="SEC",
+        ))
+    if sec_data and sec_data.get("shares_asof_incoherent"):
+        findings.append(Finding(
+            severity="warning",
+            field="shares_outstanding",
+            message=(
+                "Newest share-count evidence predates the equity date beyond "
+                "the coherence grace — per-share metrics render n/a and the "
+                "bank's released figure serves where cleanly extracted."
+            ),
+            source="SEC",
+        ))
+    return findings
+
+
 def check_shares_cover(sec_data: dict) -> list[Finding]:
     """
     Pipeline share count (balance-sheet date) vs the 10-Q/10-K cover-page
@@ -455,6 +499,11 @@ def validate_bank_metrics(metrics: dict, sec_data: dict | None = None,
     # SEC-internal: share count vs the latest filing's cover-page count
     if sec_data:
         findings.extend(check_shares_cover(sec_data))
+
+    # Coherence-guard alarms (FSUN class): release-vs-reconstruction TBVPS
+    # conflicts page as errors; guarded share/equity incoherence surfaces as
+    # a warning (the n/a render is the guard working).
+    findings.extend(check_coherence_flags(metrics, sec_data))
 
     # Internal consistency: loan & deposit composition must sum sensibly.
     # These run off raw FDIC fields (ratios, so scale-independent) and are
