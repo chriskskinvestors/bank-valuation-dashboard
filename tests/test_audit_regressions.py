@@ -771,17 +771,19 @@ class TestTceIntangibleConvention(unittest.TestCase):
         self.assertIsNone(result["mortgage_srv_rights"])
 
     def test_genuine_share_count_not_flagged_as_placeholder(self):
-        """A precise (non-round) CommonStockSharesOutstanding is kept as-is even
-        when dated at a prior period — only exact 100M multiples are placeholders
-        (guards JPM: 2,696,200,000 is genuine, not a rounded 100M placeholder)."""
+        """A precise (non-round) CommonStockSharesOutstanding dated AT the
+        equity's balance-sheet date is kept as-is — only exact 100M multiples
+        are placeholders, and the freshness guard (TestShareCountFreshness)
+        only fires when the primary count PREDATES the equity date."""
         from unittest.mock import patch
         from data import sec_client
         A = self.AS_OF
         facts = self._facts({
             "StockholdersEquity": {"units": {"USD": [self._pt(A, 362_400_000_000)]}},
             "CommonStockSharesOutstanding": {
-                "units": {"shares": [self._pt(self.PRIOR, 2_696_200_000, "10-K")]}},
-            # issued/treasury present but must NOT override the genuine count
+                "units": {"shares": [self._pt(A, 2_696_200_000)]}},
+            # issued/treasury present (implying a different count) but must NOT
+            # override a genuine same-date primary
             "CommonStockSharesIssued": {
                 "units": {"shares": [self._pt(A, 3_400_000_000)]}},
             "TreasuryStockCommonShares": {
@@ -790,6 +792,100 @@ class TestTceIntangibleConvention(unittest.TestCase):
         with patch.object(sec_client, "fetch_company_facts", return_value=facts):
             result = sec_client.get_latest_fundamentals(1)
         self.assertEqual(result["shares_outstanding"], 2_696_200_000)
+
+
+class TestShareCountFreshness(unittest.TestCase):
+    """A primary CommonStockSharesOutstanding older than the equity's
+    balance-sheet date must not divide fresher equity (audit hand-check
+    2026-08-18): JPM tags the concept only on the annual 10-K, so by Q2-2026
+    the pipeline served the FY-2025 count (2,696.2M) against 2026-06-30 equity,
+    understating TBVPS 1.99% ($111.10 vs reported $113.35) — a plausible-wrong
+    number that widens every buyback quarter. The freshest period-end count
+    wins: same-date issued − treasury first, then the fresher dei cover count.
+
+    Fixtures use JPM's real Q2-2026 figures (10-Q accn 0001628280-26-054343,
+    hand-verified from raw companyfacts): issued 4,104,933,895 − treasury
+    1,446,747,700 = 2,658,186,195 = the dei cover count exactly."""
+
+    from datetime import date as _date
+    AS_OF = (_date.today().replace(day=1)).isoformat()  # 1st of this month
+    PRIOR = "2025-12-31"                                 # stale prior year-end
+    FILED = _date.today().isoformat()
+
+    def _pt(self, end, val, form="10-Q"):
+        return {"end": end, "val": val, "form": form, "filed": self.FILED}
+
+    def _jpm_like_facts(self, *, issued_treasury=True, dei=True):
+        A = self.AS_OF
+        ug = {
+            "StockholdersEquity": {"units": {"USD": [self._pt(A, 374_598_000_000)]}},
+            # 10-K-only primary: genuine (non-round) but a period stale
+            "CommonStockSharesOutstanding": {
+                "units": {"shares": [self._pt(self.PRIOR, 2_696_200_000, "10-K")]}},
+        }
+        if issued_treasury:
+            ug["CommonStockSharesIssued"] = {
+                "units": {"shares": [self._pt(A, 4_104_933_895)]}}
+            ug["TreasuryStockCommonShares"] = {
+                "units": {"shares": [self._pt(A, 1_446_747_700)]}}
+        dei_ns = {}
+        if dei:
+            dei_ns["EntityCommonStockSharesOutstanding"] = {
+                "units": {"shares": [self._pt(A, 2_658_186_195)]}}
+        return {"facts": {"us-gaap": ug, "dei": dei_ns}}
+
+    def _fundamentals(self, facts):
+        from unittest.mock import patch
+        from data import sec_client
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            return sec_client.get_latest_fundamentals(1)
+
+    def test_stale_primary_superseded_by_same_date_issued_minus_treasury(self):
+        result = self._fundamentals(self._jpm_like_facts())
+        self.assertEqual(result["shares_outstanding"], 2_658_186_195)
+
+    def test_stale_primary_superseded_by_fresher_dei_cover(self):
+        # No issued/treasury at the equity date → the fresher dei cover count
+        # beats the older us-gaap cover value (the pinned JPM bug shape).
+        result = self._fundamentals(self._jpm_like_facts(issued_treasury=False))
+        self.assertEqual(result["shares_outstanding"], 2_658_186_195)
+
+    def test_stale_primary_kept_when_nothing_fresher(self):
+        # Nothing fresher exists → the stale-but-genuine primary is served
+        # (within its 3y window), never None'd; the cover-divergence
+        # cross-check surfaces gaps instead of guessing.
+        result = self._fundamentals(
+            self._jpm_like_facts(issued_treasury=False, dei=False))
+        self.assertEqual(result["shares_outstanding"], 2_696_200_000)
+
+    def test_current_primary_not_overridden_by_later_cover(self):
+        # SFST shape WITH equity present: primary at the quarter-end equity
+        # date, dei cover dated weeks later (post-quarter raise). Both are
+        # legitimate — the balance-sheet count stays, divergence is recorded
+        # for validation, never silently "fixed".
+        A = self.AS_OF
+        facts = {"facts": {"us-gaap": {
+            "StockholdersEquity": {"units": {"USD": [self._pt(A, 260_000_000)]}},
+            "CommonStockSharesOutstanding": {
+                "units": {"shares": [self._pt(A, 8_247_665)]}},
+        }, "dei": {"EntityCommonStockSharesOutstanding": {
+            "units": {"shares": [self._pt(self.FILED, 9_455_165)]}}}}}
+        result = self._fundamentals(facts)
+        self.assertEqual(result["shares_outstanding"], 8_247_665)
+        self.assertEqual(result["shares_outstanding_cover"], 9_455_165)
+
+    def test_provenance_path_matches_display(self):
+        # Display/trace parity (audit #22 class): the provenance path must
+        # serve the same superseded count, traced as a COMPUTED derivation.
+        from unittest.mock import patch
+        from data import sec_client
+        with patch.object(sec_client, "fetch_company_facts",
+                          return_value=self._jpm_like_facts()):
+            result = sec_client.get_fundamentals_with_provenance(1)
+        self.assertEqual(result["shares_outstanding"]["value"], 2_658_186_195)
+        src = result["shares_outstanding"]["source"]
+        self.assertEqual(src.origin, "COMPUTED")
+        self.assertIn("TreasuryStockCommonShares", src.concept)
 
 
 class TestUsDomicileFilter(unittest.TestCase):
