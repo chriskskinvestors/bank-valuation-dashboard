@@ -189,6 +189,32 @@ class TestHighlightsLabelVariants(unittest.TestCase):
         self.assertEqual(d["net_income"], 209.0)
         self.assertAlmostEqual(d["efficiency"], 237.0 / (460.0 + 55.0), places=6)
 
+    def test_loss_first_ni_and_reversed_assets_total_match(self):
+        # Round 2 of the harvest: "Net (loss) income" (13 banks) and the SEC
+        # standard-label "Assets, Total" reversed word order (ASB/EFSC/PRK).
+        inc = self._stmt([
+            ("Net interest income", 460.0),
+            ("Total noninterest income", 55.0),
+            ("Total noninterest expense", 237.0),
+            ("Net (loss) income", 209.0),
+        ])
+        bal = self._stmt([("Assets, Total", 15000.0), ("Total deposits", 12000.0),
+                          ("Total stockholders' equity", 2000.0)])
+        import ui.financials_statements as fs
+        import data.sec_statements as ss
+        with mock.patch.object(fs, "get_bank_info", return_value={"cik": 1, "name": "T"}), \
+             mock.patch.object(ss, "as_reported_statement_multiyear",
+                               side_effect=lambda cik, st, n: inc if st == "income" else bal), \
+             mock.patch("data.sec_filing_scraper.holdco_capital_for",
+                        return_value=None), \
+             mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
+                        return_value=None):
+            _years, dicts, _src = fs._cr_highlights_by_year("TEST")
+        d = dicts[0]
+        self.assertEqual(d["net_income"], 209.0)
+        self.assertEqual(d["total_assets"], 15000.0)
+        self.assertAlmostEqual(d["roaa"], 209.0 / 15000.0, places=6)
+
     def test_after_provision_line_never_matches(self):
         # The after-provision figure is NOT net interest income — a filer
         # tagging ONLY that line must yield n/a, never a wrong efficiency.

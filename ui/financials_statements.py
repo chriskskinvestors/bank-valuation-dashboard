@@ -3307,7 +3307,9 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
                     return (cur + pv) / 2.0
             return cur
 
-        ta = _b(["total assets"], year)
+        # "assets, total" = the SEC standard-label reversed word order (ASB/
+        # EFSC/PRK); bare "assets" = the total row of OVLY/SLBK-style sheets.
+        ta = _b(["total assets", "assets, total", "assets"], year)
         nl = _b(["loans, net", "total loans, net", "net loans"], year)
         # Gross loans = the pre-allowance carrying line ("Loans, net of unearned
         # income"). Distinct key from "Loans, net" (exact-match _b), so no collision.
@@ -3358,15 +3360,27 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
         # "net income (loss)" covers filers (KEY) whose headline line is labelled
         # 'NET INCOME (LOSS)'; the longer 'attributable to …' lines never match
         # these exact keys, so the consolidated total is taken, not a subtotal.
-        ni = _i(["net income", "net income (loss)", "net income (loss) available "
-                 "to common shareholders",
-                 # 2026-08-19 universe label harvest (124 efficiency-missing
-                 # banks): CVBF-style "net earnings" totals, and filers whose
-                 # only bottom line is the available-to-common figure (same
-                 # convention as the existing "(loss) available" key).
+        ni = _i(["net income", "net income (loss)",
+                 # Consolidated-total variants (2026-08-19 universe harvest):
+                 # loss-first ordering (13 banks) and the standard-label
+                 # attributable-to-parent wordings.
+                 "net (loss) income",
+                 "net income (loss) attributable to parent, total",
+                 "net income attributable to parent",
+                 "net income (loss) available to common shareholders",
+                 # Filers whose only bottom line is the available-/attributable-
+                 # to-common figure (same convention as the existing
+                 # "(loss) available" key). CVBF-style "net earnings" totals.
                  "net earnings", "net earnings (loss)",
                  "net income available to common stockholders",
-                 "net income available to common shareholders"], year)
+                 "net income available to common shareholders",
+                 "net (loss) income available to common stockholders",
+                 "net (loss) income available to common shareholders",
+                 "net income attributable to common stockholders",
+                 "net (loss) income attributable to common stockholders",
+                 "net income (loss) available to common stockholders, basic, total",
+                 "net income (loss) and net income (loss) allocable to common stockholders"],
+                year)
         # Hyphenation varies by filing (10-Qs often render "non-interest") and
         # the unit note varies "(in dollars…)" vs "(in USD…)": both forms are
         # listed so the quarterly stitch matches too.
@@ -3421,7 +3435,7 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
             if tce_pv is not None:
                 tce_avg = (tce_cur + tce_pv) / 2.0
 
-        avg_assets = _avg(["total assets"])
+        avg_assets = _avg(["total assets", "assets, total", "assets"])
         avg_equity = _avg(_EQUITY)
 
         def _ratio(num, den):
