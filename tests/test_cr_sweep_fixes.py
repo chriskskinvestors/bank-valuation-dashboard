@@ -147,5 +147,73 @@ class TestMultiyearStitchResilience(unittest.TestCase):
         self.assertIsNotNone(res)
 
 
+class TestHighlightsLabelVariants(unittest.TestCase):
+    """F5 — the 2026-08-19 label harvest across 124 efficiency-missing banks:
+    "before provision" NII lines, plural/"revenues" noninterest totals,
+    BOKF-style "other operating" totals, and "net earnings" bottom lines must
+    match (56 banks recovered). All values hand-computed from the fixture."""
+
+    @staticmethod
+    def _stmt(rows, periods=("Dec. 31, 2025",)):
+        return {"statement": {"periods": list(periods),
+                              "rows": [{"label": l, "header": False,
+                                        "values": [v]} for l, v in rows],
+                              "units_scale": 1, "title": "x"},
+                "meta": {"cik": 1, "accession": "a", "doc": "d.htm",
+                         "date": "2026-02-01"}}
+
+    def test_variant_labels_fill_efficiency(self):
+        inc = self._stmt([
+            ("Net interest income before (recapture of) provision for credit losses", 460.0),
+            ("Total noninterest revenues", 55.0),
+            ("Total non-interest expenses", 237.0),
+            ("Net earnings", 209.0),
+        ])
+        bal = self._stmt([("Total assets", 15000.0), ("Total deposits", 12000.0),
+                          ("Total stockholders' equity", 2000.0)])
+        import ui.financials_statements as fs
+        import data.sec_statements as ss
+        with mock.patch.object(fs, "get_bank_info", return_value={"cik": 1, "name": "T"}), \
+             mock.patch.object(ss, "as_reported_statement_multiyear",
+                               side_effect=lambda cik, st, n: inc if st == "income" else bal), \
+             mock.patch("data.sec_filing_scraper.holdco_capital_for",
+                        return_value=None), \
+             mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
+                        return_value=None):
+            years, dicts, _src = fs._cr_highlights_by_year("TEST")
+        self.assertEqual(years, ["FY2025"])
+        d = dicts[0]
+        self.assertEqual(d["nii"], 460.0)
+        self.assertEqual(d["noninterest_income"], 55.0)
+        self.assertEqual(d["noninterest_expense"], 237.0)
+        self.assertEqual(d["net_income"], 209.0)
+        self.assertAlmostEqual(d["efficiency"], 237.0 / (460.0 + 55.0), places=6)
+
+    def test_after_provision_line_never_matches(self):
+        # The after-provision figure is NOT net interest income — a filer
+        # tagging ONLY that line must yield n/a, never a wrong efficiency.
+        inc = self._stmt([
+            ("Net interest income after provision for credit losses", 420.0),
+            ("Total noninterest income", 55.0),
+            ("Total noninterest expense", 237.0),
+            ("Net income", 209.0),
+        ])
+        bal = self._stmt([("Total assets", 15000.0), ("Total deposits", 12000.0),
+                          ("Total stockholders' equity", 2000.0)])
+        import ui.financials_statements as fs
+        import data.sec_statements as ss
+        with mock.patch.object(fs, "get_bank_info", return_value={"cik": 1, "name": "T"}), \
+             mock.patch.object(ss, "as_reported_statement_multiyear",
+                               side_effect=lambda cik, st, n: inc if st == "income" else bal), \
+             mock.patch("data.sec_filing_scraper.holdco_capital_for",
+                        return_value=None), \
+             mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
+                        return_value=None):
+            years, dicts, _src = fs._cr_highlights_by_year("TEST")
+        d = dicts[0]
+        self.assertIsNone(d["nii"])
+        self.assertIsNone(d["efficiency"])
+
+
 if __name__ == "__main__":
     unittest.main()

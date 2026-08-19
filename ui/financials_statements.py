@@ -3359,13 +3359,36 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
         # 'NET INCOME (LOSS)'; the longer 'attributable to …' lines never match
         # these exact keys, so the consolidated total is taken, not a subtotal.
         ni = _i(["net income", "net income (loss)", "net income (loss) available "
-                 "to common shareholders"], year)
+                 "to common shareholders",
+                 # 2026-08-19 universe label harvest (124 efficiency-missing
+                 # banks): CVBF-style "net earnings" totals, and filers whose
+                 # only bottom line is the available-to-common figure (same
+                 # convention as the existing "(loss) available" key).
+                 "net earnings", "net earnings (loss)",
+                 "net income available to common stockholders",
+                 "net income available to common shareholders"], year)
         # Hyphenation varies by filing (10-Qs often render "non-interest") and
         # the unit note varies "(in dollars…)" vs "(in USD…)": both forms are
         # listed so the quarterly stitch matches too.
-        nii = _i(["net interest income"], year)
-        nonii = _i(["total noninterest income", "total non-interest income"], year)
-        nonix = _i(["total noninterest expense", "total non-interest expense"], year)
+        # "…before provision" IS pre-provision NII — exactly this metric; the
+        # after-provision line must never be added here.
+        nii = _i(["net interest income",
+                  "net interest income before provision for credit losses",
+                  "net interest income before (recapture of) provision for credit losses",
+                  "net interest income before credit loss expense"], year)
+        # Plural/"revenues" spellings + BOKF-style "other operating" totals
+        # (their statement's complete noninterest income/expense lines).
+        # Deliberately NOT added (could mislabel a narrower line as the total):
+        # "total fee revenue", "total operating expenses",
+        # "total other non-interest income/expenses".
+        nonii = _i(["total noninterest income", "total non-interest income",
+                    "total noninterest revenues", "total non-interest revenues",
+                    "total other operating revenue",
+                    "total other operating income"], year)
+        nonix = _i(["total noninterest expense", "total non-interest expense",
+                    "total noninterest expenses", "total non-interest expenses",
+                    "total other operating expense",
+                    "total other operating expenses"], year)
         prov = _i(["provision for credit losses", "provision for loan losses",
                    "(reversal of) provision for credit losses"], year)
         eps_dil = _i(["diluted earnings per common share (in dollars per share)",
