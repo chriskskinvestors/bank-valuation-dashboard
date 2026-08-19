@@ -147,6 +147,35 @@ class TestMultiyearStitchResilience(unittest.TestCase):
         self.assertIsNotNone(res)
 
 
+class TestNonaccrualSplitSum(unittest.TestCase):
+    """F6 — CECL-vintage filers tag nonaccrual ONLY as with-allowance /
+    no-allowance components. Their sum is total nonaccrual by the disclosure's
+    identity — but only when BOTH components exist; one alone stays n/a."""
+
+    B = 1e9
+    GROSS = "us-gaap:FinancingReceivableBeforeAllowanceForCreditLoss"
+    NO_A = "us-gaap:FinancingReceivableNonaccrualNoAllowance"
+    WITH_A = "us-gaap:FinancingReceivableNonaccrualWithAllowance"
+
+    def test_both_components_sum_to_npl(self):
+        facts = [
+            Fact(self.GROSS, 100 * self.B, "2025-12-31", None, {}, "usd"),
+            Fact(self.NO_A, 0.30 * self.B, "2025-12-31", None, {}, "usd"),
+            Fact(self.WITH_A, 0.50 * self.B, "2025-12-31", None, {}, "usd"),
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertAlmostEqual(out[2025]["npl_loans"], 0.80 / 100, places=6)
+
+    def test_one_component_alone_stays_na(self):
+        facts = [
+            Fact(self.GROSS, 100 * self.B, "2025-12-31", None, {}, "usd"),
+            Fact(self.NO_A, 0.30 * self.B, "2025-12-31", None, {}, "usd"),
+        ]
+        out = extract_npl_nco_by_year(facts)
+        self.assertNotIn("npl_loans", out.get(2025, {}),
+                         "a lone no-allowance component is NOT total nonaccrual")
+
+
 class TestHighlightsLabelVariants(unittest.TestCase):
     """F5 — the 2026-08-19 label harvest across 124 efficiency-missing banks:
     "before provision" NII lines, plural/"revenues" noninterest totals,

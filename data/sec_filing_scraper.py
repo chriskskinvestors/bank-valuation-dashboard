@@ -1640,6 +1640,35 @@ def extract_npl_nco_by_year(facts: list[Fact]) -> dict:
         if 0.0 <= ratio <= 0.25:
             out.setdefault(year, {}).setdefault("npl_loans", ratio)
 
+    # NPL fallback 2 (2026-08-19 universe sweep): CECL-vintage filers tag
+    # nonaccrual ONLY as its with-allowance / no-allowance COMPONENTS, no
+    # combined total. Their sum IS total nonaccrual by the disclosure's own
+    # identity — taken only when BOTH components are undimensioned at the
+    # date and on the SAME basis (both excluding-accrued-interest or both
+    # not); one component alone stays n/a (the total is unknowable).
+    _NA_SPLIT = (("FinancingReceivableExcludingAccruedInterestNonaccrualNoAllowance",
+                  "FinancingReceivableExcludingAccruedInterestNonaccrualWithAllowance"),
+                 ("FinancingReceivableNonaccrualNoAllowance",
+                  "FinancingReceivableNonaccrualWithAllowance"),
+                 ("FinancingReceivableNonaccrualNoAllowance",
+                  "FinancingReceivableNonaccrualWithAllowanceForCreditLoss"))
+    for period_end in bs_dates:
+        year = int(period_end[:4])
+        if out.get(year, {}).get("npl_loans") is not None:
+            continue
+        gross = _gross_loans_at(facts, period_end)
+        if not gross:
+            continue
+        for no_c, with_c in _NA_SPLIT:
+            no_v = _undimensioned_total(facts, no_c, period_end)
+            with_v = _undimensioned_total(facts, with_c, period_end)
+            if no_v is None or with_v is None:
+                continue
+            ratio = (no_v + with_v) / gross
+            if 0.0 <= ratio <= 0.25:
+                out.setdefault(year, {}).setdefault("npl_loans", ratio)
+            break
+
     # NCO: each full-year rollforward period; denominator = gross loans at year-end.
     for period_end in _annual_periods(facts):
         wo = _flow_total_for_period(facts, _CQ_CONCEPTS["writeoff"], period_end)
