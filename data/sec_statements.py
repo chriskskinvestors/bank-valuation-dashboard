@@ -1630,6 +1630,14 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     metas = _recent_10k_metas(cik, 6 if (stype == "balance" or stype in _NOTE_SPECS) else 4)
     if not metas:
         return None
+    # Freshness gate on the NEWEST filing: a deregistered filer's last 10-K is
+    # a decade old (CCNB/FOTB/OSBK stopped filing 2012-13) — rendering those
+    # statements as "Company Reported" beside live FDIC tabs would mislead.
+    # ~540 days = annual cadence + grace; a CURRENT filer's full multi-year
+    # history is untouched (only the newest filing's age is gated).
+    from datetime import date, timedelta
+    if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
+        return None
     ckey = f"asreported_my:v6:{stype}:{metas[0]['accession']}:{n_years}"
     cached = cache.get(ckey)
     if cached is not None:
@@ -1649,6 +1657,15 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
             if stmt and stype in _NOTE_TRANSFORM:
                 stmt = _NOTE_TRANSFORM[stype](stmt)   # e.g. collapse loan dimensions
         except Exception as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status == 404:
+                # PERMANENT: this filing has no rendered R-files at all (e.g.
+                # NEWT's BDC-era 2023 10-K, deregistered filers' last 10-Ks).
+                # It can never contribute — skip it instead of aborting the
+                # whole stitch and losing the filings that DO parse.
+                print(f"[sec_statements] multiyear {stype} cik {cik}: filing "
+                      f"{m['accession']} has no R-files (404) — skipped")
+                continue
             print(f"[sec_statements] multiyear {stype} failed for cik {cik}: "
                   f"{type(e).__name__}: {e}")
             return None                         # transient — don't cache

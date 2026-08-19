@@ -271,6 +271,19 @@ universe and measure.*
       no-holdco filer (documented in bank_mapping). Fair-value/segments/
       composition EMPTYs are the documented structural classes (no ASC 820
       rollup / single-segment / no by-type composition disclosure).
+      **Four parser fixes came out of the triage (2026-08-19, pinned in
+      tests/test_cr_sweep_fixes.py):** lease-inclusive rollforward concepts
+      (WFC's NPL 0.832% / NCO 0.405% recovered — its only undimensioned
+      totals are ...AndNetInvestmentInLease...), split-filer NIM (scan every
+      document part for the MD&A table — WFC 2.64% and BNY Mellon 1.33%
+      recovered from sibling parts), dead-filing resilience (a permanent
+      R-file 404 skips that filing instead of killing the stitch — NEWT's
+      BDC-era 10-Ks; NEWT + BVFL recovered 4 FYs each), and a freshness gate
+      (a filer whose NEWEST 10-K is >~18 months old renders n/a — the
+      deregistered CCNB/FOTB/OSBK must not surface 2012 statements beside
+      live FDIC tabs). BNY's NPL/NCO stays n/a: nonaccrual is
+      dimensioned-only and write-offs exist only under the combined
+      loans+unfunded reserve (documented dimensional-only class).
 - [x] Fix the high-impact label/structure misses — SHIPPED (non-Dec-FYE gate,
       segment disclosed-measure recovery, AFS/HTM label word orders; re-measured
       across 47 diverse banks). The confirmed genuine-non-disclosure residual

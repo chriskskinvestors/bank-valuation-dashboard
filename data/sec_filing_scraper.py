@@ -1296,6 +1296,9 @@ _CQ_CONCEPTS = {
     "nonaccrual": ("FinancingReceivableExcludingAccruedInterestNonaccrual",
                    "FinancingReceivableRecordedInvestmentNonaccrualStatus"),
     "writeoff": ("FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoff",
+                 # Lease-inclusive variant: the only UNDIMENSIONED charge-off
+                 # total WFC-class filers tag (2026-08-19 universe sweep).
+                 "FinancingReceivableAndNetInvestmentInLeaseExcludingAccruedInterestAllowanceForCreditLossWriteoff",
                  "FinancingReceivableAllowanceForCreditLossesWriteoff",
                  # KEY tags the rollforward charge-off with a different casing/plural
                  # ('WriteOffs', capital O) than the singular concept above; without
@@ -1303,6 +1306,7 @@ _CQ_CONCEPTS = {
                  "FinancingReceivableAllowanceForCreditLossesWriteOffs",
                  "AllowanceForLoanAndLeaseLossesWriteOffs"),
     "recovery": ("FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossRecovery",
+                 "FinancingReceivableAndNetInvestmentInLeaseExcludingAccruedInterestAllowanceForCreditLossRecovery",
                  "FinancingReceivableAllowanceForCreditLossesRecovery",
                  "AllowanceForLoanAndLeaseLossRecoveries"),
     "nco": ("FinancingReceivableExcludingAccruedInterestAllowanceForCreditLossWriteoffAfterRecovery",),
@@ -1507,6 +1511,10 @@ def credit_quality_for(cik) -> dict | None:
 # intentionally not mixed in, keeping each ratio from one consistent source.
 _NONPERF_CONCEPTS = (
     "FinancingReceivableExcludingAccruedInterestNonaccrual",
+    # Lease-inclusive variant — WFC/BNY-class filers tag their UNDIMENSIONED
+    # totals only under ...AndNetInvestmentInLease... (2026-08-19 universe
+    # sweep: WFC had every rollforward total tagged but none matched).
+    "FinancingReceivableAndNetInvestmentInLeaseExcludingAccruedInterestNonaccrual",
     "FinancingReceivableRecordedInvestmentNonaccrualStatus",
     # Some filers tag a nonperforming-loans total rather than nonaccrual.
     "FinancingReceivableNonperformingLoans",
@@ -1908,9 +1916,18 @@ def extract_asset_quality_nim(metas_and_docs: list[tuple]) -> dict:
         for yr, d in cr.items():
             _set(yr, "npl_loans", d.get("npl_loans"))
             _set(yr, "nco_loans", d.get("nco_loans"))
-        if html_bytes:
-            for yr, nim in extract_nim_by_year(html_bytes).items():
-                _set(yr, "nim", nim)
+        # html_bytes: one document, or the LIST of a split filer's parts — the
+        # MD&A average-balance table lives in a sibling part for document-set
+        # filers (WFC's primary is a 360KB shell; its 11.6MB main part holds
+        # the NIM table). First part that yields a table wins.
+        parts = html_bytes if isinstance(html_bytes, list) else (
+            [html_bytes] if html_bytes else [])
+        for part in parts:
+            found = extract_nim_by_year(part)
+            if found:
+                for yr, nim in found.items():
+                    _set(yr, "nim", nim)
+                break
 
     # Normalise every year to all three keys (None where a metric is absent) and
     # keep only the newest _MAX_YEARS years.
@@ -1945,7 +1962,11 @@ def company_asset_quality_nim(cik) -> dict | None:
     # in-window year's NPL/NCO that the 3-filing window dropped. v3: prose-NIM
     # fallback + performance-status nonaccrual + WriteOffs casing. (_HISTORY_FILINGS
     # is in the key, so the depth bump alone already invalidates old entries.)
-    ckey = f"asset_quality_nim:v4:{latest['accession']}:{_HISTORY_FILINGS}"
+    # v6: lease-inclusive rollforward concepts (...AndNetInvestmentInLease...)
+    # recover WFC-class NPL/NCO. v5: split-filer NIM — scan every document part
+    # for the MD&A average-balance table (WFC's lives outside the primary doc;
+    # v4 read only the primary and returned no NIM for document-set filers).
+    ckey = f"asset_quality_nim:v6:{latest['accession']}:{_HISTORY_FILINGS}"
     by_year = cache.get(ckey)
     if by_year is None:
         bundle: list[tuple] = []
@@ -1953,9 +1974,16 @@ def company_asset_quality_nim(cik) -> dict | None:
             try:
                 html_bytes = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
                 facts = parse_inline_xbrl(html_bytes)
+                html_parts = [html_bytes]
                 if len(facts) < _MULTIDOC_FACT_THRESHOLD:
                     facts = instance_facts(meta)   # split filer — fetch the doc set
-                bundle.append((meta, facts, html_bytes))
+                    # The MD&A NIM table lives in a SIBLING part for document-
+                    # set filers (WFC) — hand every part to the NIM scrape.
+                    base = _filing_base(meta["cik"], meta["accession"])
+                    html_parts += [_get(base + d)
+                                   for d in _instance_documents(base)
+                                   if d != meta["doc"]]
+                bundle.append((meta, facts, html_parts))
             except Exception as e:
                 print(f"[sec_scraper] asset_quality_nim filing {meta.get('accession')} "
                       f"failed for cik {cik}: {type(e).__name__}: {e}")
