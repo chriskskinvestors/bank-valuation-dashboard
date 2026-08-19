@@ -88,22 +88,31 @@ class TestScreenTableRender(unittest.TestCase):
     COLS = ["tbvps", "tbvps_source", "ptbv_ratio"]
 
     def setUp(self):
-        # Capture the table HTML the renderer emits via st.markdown.
-        self._orig_markdown = getattr(_st, "markdown", None)
-        self._orig_warning = getattr(_st, "warning", None)
+        # Capture the table HTML the renderer emits via st.markdown. Patch the
+        # streamlit module ui.generic_table is BOUND to, not this file's
+        # import-time `_st`: suites that force their own rich fake (e.g.
+        # test_render_smoke) replace sys.modules["streamlit"] mid-run without
+        # restoring, so under composition the renderer can be bound to a
+        # DIFFERENT module object than `_st` and the capture lands nowhere
+        # ("renderer emitted no table HTML").
+        import ui.generic_table as gt
+        self._gt_st = gt.st
+        self._orig_markdown = getattr(self._gt_st, "markdown", None)
+        self._orig_warning = getattr(self._gt_st, "warning", None)
         self.markdown_calls: list[str] = []
-        _st.markdown = lambda body, **k: self.markdown_calls.append(str(body))
-        _st.warning = lambda *a, **k: None
+        self._gt_st.markdown = (
+            lambda body, **k: self.markdown_calls.append(str(body)))
+        self._gt_st.warning = lambda *a, **k: None
 
     def tearDown(self):
         if self._orig_markdown is not None:
-            _st.markdown = self._orig_markdown
+            self._gt_st.markdown = self._orig_markdown
         else:
-            del _st.markdown
+            del self._gt_st.markdown
         if self._orig_warning is not None:
-            _st.warning = self._orig_warning
+            self._gt_st.warning = self._orig_warning
         else:
-            del _st.warning
+            del self._gt_st.warning
 
     def _render_rows(self, rows):
         from ui.generic_table import render_generic_table

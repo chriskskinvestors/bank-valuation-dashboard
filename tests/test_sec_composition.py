@@ -41,9 +41,25 @@ def member_fact(concept, value, member, axis=SEG_AXIS, period=PER):
 
 
 def rows_of(comp):
-    """{label: value} for the single period in a composition result."""
+    """(total, {label: value}) for the single period in a composition result.
+
+    v2 row contract (commit 193ba60): every row is a (label, value, member)
+    3-tuple — the member is the filer's own XBRL member/concept qname localname,
+    stable across its 10-K and 10-Qs, which the UI uses to fold label-wording
+    variants. Shape-checked here so a row-shape regression trips every test that
+    renders a composition."""
     _p, d = next(iter(comp.items()))
-    return d["total"], dict(d["rows"])
+    for row in d["rows"]:
+        if len(row) != 3:
+            raise AssertionError(
+                f"composition row must be (label, value, member), got {row!r}")
+    return d["total"], {label: v for label, v, _m in d["rows"]}
+
+
+def members_of(comp):
+    """{label: member} for the single period — each row's third element."""
+    _p, d = next(iter(comp.items()))
+    return {label: m for label, _v, m in d["rows"]}
 
 
 class TestLoanComposition(unittest.TestCase):
@@ -63,6 +79,11 @@ class TestLoanComposition(unittest.TestCase):
         self.assertEqual(total, 1000.0)
         self.assertEqual(rows, {"Commercial Real Estate": 500.0,
                                 "Commercial": 300.0, "Consumer": 200.0})
+        # v2: each row carries the member qname localname it came from
+        self.assertEqual(members_of(comp),
+                         {"Commercial Real Estate": "CommercialRealEstateMember",
+                          "Commercial": "CommercialPortfolioSegmentMember",
+                          "Consumer": "ConsumerPortfolioSegmentMember"})
 
     def test_synonym_label_collapse_AROW(self):
         """AROW: the SAME category is tagged under two member qnames that resolve
@@ -84,13 +105,24 @@ class TestLoanComposition(unittest.TestCase):
                   "CommercialRealEstatePortfolioSegmentMember": "Commercial Real Estate",
                   "CommercialLoanMember": "Commercial",
                   "CommercialPortfolioSegmentMember": "Commercial"}
-        total, rows = rows_of(extract_loan_composition(facts, labels, {}))
+        comp = extract_loan_composition(facts, labels, {})
+        total, rows = rows_of(comp)
         self.assertEqual(total, 3453.0)
         self.assertEqual(set(rows), {"Residential", "Consumer",
                                      "Commercial Real Estate", "Commercial"})
         self.assertAlmostEqual(rows["Commercial Real Estate"], 818.3)
         self.assertAlmostEqual(rows["Commercial"], 165.7)
         self.assertAlmostEqual(sum(rows.values()), 3453.0, places=1)
+        # v2 members: unambiguous rows carry their own member; a collapsed
+        # synonym pair keeps exactly ONE of its (interchangeable) members.
+        members = members_of(comp)
+        self.assertEqual(members["Residential"], "ResidentialPortfolioSegmentMember")
+        self.assertEqual(members["Consumer"], "ConsumerPortfolioSegmentMember")
+        self.assertIn(members["Commercial Real Estate"],
+                      {"CommercialRealEstateMember",
+                       "CommercialRealEstatePortfolioSegmentMember"})
+        self.assertIn(members["Commercial"],
+                      {"CommercialLoanMember", "CommercialPortfolioSegmentMember"})
 
     def test_value_aggregate_finest_partition_CFR(self):
         """CFR: parents AND children are tagged flat under one domain with NO
@@ -112,11 +144,18 @@ class TestLoanComposition(unittest.TestCase):
                   "CommercialRealEstateOwnerOccupiedMember": "CRE Owner Occupied",
                   "CommercialRealEstateNonOwnerOccupiedMember": "CRE Non-Owner Occupied",
                   "ConsumerLoanMember": "Consumer", "CommercialPortfolioSegmentMember": "Commercial"}
-        total, rows = rows_of(extract_loan_composition(facts, labels, {}))
+        comp = extract_loan_composition(facts, labels, {})
+        total, rows = rows_of(comp)
         self.assertEqual(total, 900 * M)
         self.assertEqual(set(rows), {"CRE Owner Occupied", "CRE Non-Owner Occupied",
                                      "Consumer", "Commercial"})
         self.assertAlmostEqual(sum(rows.values()), 900 * M, delta=M)
+        # v2: the kept leaves carry their own members (the dropped parents' never)
+        self.assertEqual(members_of(comp),
+                         {"CRE Owner Occupied": "CommercialRealEstateOwnerOccupiedMember",
+                          "CRE Non-Owner Occupied": "CommercialRealEstateNonOwnerOccupiedMember",
+                          "Consumer": "ConsumerLoanMember",
+                          "Commercial": "CommercialPortfolioSegmentMember"})
 
     def test_linkbase_descendant_drop(self):
         """A parent member is dropped when a finer member it CONTAINS (per the
@@ -132,9 +171,14 @@ class TestLoanComposition(unittest.TestCase):
         labels = {"RealEstateMember": "Real Estate", "CommercialRealEstateMember": "CRE",
                   "ResidentialMember": "Residential", "CommercialMember": "Commercial"}
         children = {"RealEstateMember": {"CommercialRealEstateMember", "ResidentialMember"}}
-        total, rows = rows_of(extract_loan_composition(facts, labels, children))
+        comp = extract_loan_composition(facts, labels, children)
+        total, rows = rows_of(comp)
         self.assertEqual(total, 900.0)
         self.assertEqual(set(rows), {"CRE", "Residential", "Commercial"})
+        self.assertEqual(members_of(comp),
+                         {"CRE": "CommercialRealEstateMember",
+                          "Residential": "ResidentialMember",
+                          "Commercial": "CommercialMember"})
 
     def test_non_reconciling_returns_none(self):
         """Members that don't sum to the disclosed total -> n/a, never a guess."""
@@ -213,7 +257,9 @@ class TestLoanComposition(unittest.TestCase):
         self.assertEqual(comp["2024-12-31"]["total"], 1000.0)
         self.assertEqual(comp["2023-12-31"]["total"], 900.0)
         for d in comp.values():
-            self.assertAlmostEqual(sum(v for _l, v in d["rows"]), d["total"], places=1)
+            self.assertAlmostEqual(sum(v for _l, v, _m in d["rows"]), d["total"], places=1)
+            self.assertEqual({m for _l, _v, m in d["rows"]},
+                             {"CommercialRealEstateMember", "ConsumerPortfolioSegmentMember"})
 
     def test_bad_coverage_period_is_dropped_ABCB2023(self):
         """ABCB's 2025 10-K tags the full ~$21.5B book undimensioned only for
@@ -291,10 +337,24 @@ class TestLoanComposition(unittest.TestCase):
             "CommercialConstructionMember": "Commercial Construction",
             "ConsumerLoanMember": "Consumer Loan",
         }
-        total, rows = rows_of(extract_loan_composition(facts, labels, {}))
+        comp = extract_loan_composition(facts, labels, {})
+        total, rows = rows_of(comp)
         self.assertEqual(total, 11721687000)
         self.assertEqual(len(rows), 14)                                 # 16 members, 2 dups collapsed
         self.assertEqual(sum(rows.values()), 11721687000)               # reconciles EXACTLY
+        # v2 members: every row's member is a genuinely tagged member (never
+        # invented) and its label is that member's own; each collapsed dup pair
+        # keeps exactly ONE representative.
+        members = members_of(comp)
+        tagged = {f.members[CLASS_AXIS].split(":")[-1] for f in facts if f.members}
+        for label, m in members.items():
+            self.assertIn(m, tagged)
+            self.assertEqual(labels[m], label)
+        kept = set(members.values())
+        self.assertEqual(len(kept & {"SmallBalanceCommercialRealEstateLoansMember",
+                                     "SmallBalanceCREMember"}), 1)
+        self.assertEqual(len(kept & {"LandandLandDevelopmentTypeMember",
+                                     "LandAndLandImprovementsMember"}), 1)
 
     def test_collapse_equal_value_helper(self):
         # Same value -> one representative; distinct values -> all kept.
@@ -317,11 +377,16 @@ class TestLoanComposition(unittest.TestCase):
         ]
         labels = {"CommercialMember": "Commercial", "ConsumerMember": "Consumer",
                   "RealEstateMember": "Real Estate"}
-        total, rows = rows_of(extract_loan_composition(facts, labels, {}))
+        comp = extract_loan_composition(facts, labels, {})
+        total, rows = rows_of(comp)
         self.assertEqual(total, 1000.0 * M)
         # both 300M leaves survive (collapsing one -> sum 700M, gate would reject)
         self.assertEqual(set(rows), {"Commercial", "Consumer", "Real Estate"})
         self.assertAlmostEqual(sum(rows.values()), 1000.0 * M, delta=M)
+        # v2: both equal-value leaves keep their OWN distinct members
+        self.assertEqual(members_of(comp),
+                         {"Commercial": "CommercialMember", "Consumer": "ConsumerMember",
+                          "Real Estate": "RealEstateMember"})
 
     def test_unique_reconciling_subset_flat_aggregate_partial_children_FBK(self):
         """FBK flat-tags a coarse 2-way book — TotalCommercial (9165.158M) +
@@ -345,11 +410,15 @@ class TestLoanComposition(unittest.TestCase):
                   "CommercialPortfolioSegmentMember": "Commercial and industrial",
                   "ConstructionPortfolioSegmentMember": "Construction",
                   "ConsumerAndOtherPortfolioSegmentMember": "Consumer and other"}
-        total, rows = rows_of(extract_loan_composition(facts, labels, {}))
+        comp = extract_loan_composition(facts, labels, {})
+        total, rows = rows_of(comp)
         self.assertEqual(total, 12383626000)
         self.assertEqual(set(rows),
                          {"Total commercial loan types", "Total consumer type loans"})
         self.assertEqual(sum(rows.values()), 12383626000)               # reconciles EXACTLY
+        self.assertEqual(members_of(comp),
+                         {"Total commercial loan types": "TotalCommercialLoansMember",
+                          "Total consumer type loans": "ConsumerPortfolioSegmentMember"})
 
     def test_unique_reconciling_subset_ambiguous_returns_none(self):
         """If more than one subset reconciles, the resolver can't tell which split
@@ -398,10 +467,17 @@ class TestDepositComposition(unittest.TestCase):
             total_fact("us-gaap:InterestBearingDomesticDepositMoneyMarket", 11889 * M),
             total_fact("us-gaap:TimeDeposits", 6428 * M),
         ]
-        total, rows = rows_of(extract_deposit_composition(facts, self._labels(), {}))
+        comp = extract_deposit_composition(facts, self._labels(), {})
+        total, rows = rows_of(comp)
         self.assertEqual(total, 42918 * M)
         self.assertEqual(set(rows), {"Noninterest-bearing", "Savings", "Money market", "Time deposits"})
         self.assertAlmostEqual(sum(rows.values()), 42918 * M, delta=M)
+        # v2: deposit rows carry the concept localname as the third element
+        self.assertEqual(members_of(comp),
+                         {"Noninterest-bearing": "NoninterestBearingDepositLiabilities",
+                          "Savings": "InterestBearingDomesticDepositSavings",
+                          "Money market": "InterestBearingDomesticDepositMoneyMarket",
+                          "Time deposits": "TimeDeposits"})
 
     def test_deposit_two_way_fallback(self):
         """A bank tagging only the interest 2-way still reconciles."""
@@ -410,9 +486,13 @@ class TestDepositComposition(unittest.TestCase):
             total_fact("us-gaap:NoninterestBearingDepositLiabilities", 1007 * M),
             total_fact("us-gaap:InterestBearingDepositLiabilities", 1885 * M),
         ]
-        total, rows = rows_of(extract_deposit_composition(facts, self._labels(), {}))
+        comp = extract_deposit_composition(facts, self._labels(), {})
+        total, rows = rows_of(comp)
         self.assertEqual(total, 2892 * M)
         self.assertEqual(set(rows), {"Noninterest-bearing", "Interest-bearing"})
+        self.assertEqual(members_of(comp),
+                         {"Noninterest-bearing": "NoninterestBearingDepositLiabilities",
+                          "Interest-bearing": "InterestBearingDepositLiabilities"})
 
     def test_deposit_multiyear_changing_granularity(self):
         """Filers change deposit granularity year to year: a coarse interest-bearing
@@ -433,12 +513,19 @@ class TestDepositComposition(unittest.TestCase):
         ]
         comp = extract_deposit_composition(facts, self._labels(), {})
         self.assertEqual(list(comp), ["2025-12-31", "2024-12-31"])    # newest first
-        self.assertEqual(set(dict(comp["2025-12-31"]["rows"])),
+        self.assertEqual({l for l, _v, _m in comp["2025-12-31"]["rows"]},
                          {"Noninterest-bearing", "Savings", "Time deposits"})
-        self.assertEqual(set(dict(comp["2024-12-31"]["rows"])),
+        self.assertEqual({l for l, _v, _m in comp["2024-12-31"]["rows"]},
                          {"Noninterest-bearing", "Interest-bearing"})
+        # v2: the member element is the concept each year actually tagged
+        self.assertEqual({m for _l, _v, m in comp["2025-12-31"]["rows"]},
+                         {"NoninterestBearingDepositLiabilities",
+                          "InterestBearingDomesticDepositSavings", "TimeDeposits"})
+        self.assertEqual({m for _l, _v, m in comp["2024-12-31"]["rows"]},
+                         {"NoninterestBearingDepositLiabilities",
+                          "InterestBearingDepositLiabilities"})
         for d in comp.values():
-            self.assertAlmostEqual(sum(v for _l, v in d["rows"]), d["total"], places=1)
+            self.assertAlmostEqual(sum(v for _l, v, _m in d["rows"]), d["total"], places=1)
 
     def test_deposit_non_reconciling_returns_none(self):
         facts = [

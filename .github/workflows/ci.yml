@@ -53,8 +53,17 @@ jobs:
       # Verified 2026-08-02 (CI run #24): all 151 modules pass under discovery,
       # in 7m49s vs ~5m for the 16-module list — so the list was retired rather
       # than left as a duplicate that could drift out of sync with reality.
+      #
+      # NO PIPE on this step (2026-08-19): the original `-v 2>&1 | tail -40`
+      # ran under GitHub's default shell (bash -e, NO pipefail), so the step's
+      # exit code was tail's — always 0. Every discovery run since 2026-08-02
+      # reported green while accumulating failures (the 2026-08-18 run had
+      # 2367 tests with 25 failures + 25 errors, all invisible; tail -40 also
+      # truncated the log so only 1 failing test name was recoverable). The
+      # non-verbose form keeps the log small (dots + full tracebacks at the
+      # end) with the exit code intact.
       - name: Full test suite (discovered)
-        run: python -m unittest discover -s tests -t . -v 2>&1 | tail -40
+        run: python -m unittest discover -s tests -t .
 
       # Script-style suite: run as a program, so discovery doesn't collect it.
       - name: Metric formula suite (script-style)

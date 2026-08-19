@@ -85,43 +85,55 @@ class TestDollarChangeThenLevel(unittest.TestCase):
 
 class TestReleaseFallbackNotGatedOnMissingCik(unittest.TestCase):
     """Fix 1: a bank with a CIK but no usable SEC facts must still try its own
-    earnings release rather than render n/a forever."""
+    earnings release rather than render n/a forever.
+
+    _resolve_tbvps returns (value, source, conflict); the SEC seam is
+    reported_tbvps_status → (value, status). None of these scenarios is a
+    gate_rejected disagreement, so conflict is False throughout (the conflict
+    path is pinned in tests/test_tbvps_conflict_signal.py)."""
 
     def test_cik_present_but_no_reconstruction_uses_release(self):
         from analysis import valuation
         with patch("data.bank_mapping.get_cik", return_value=123456), \
-                patch("data.sec_earnings_8k.reported_tbvps", return_value=None), \
+                patch("data.sec_earnings_8k.reported_tbvps_status",
+                      return_value=(None, "not_disclosed")), \
                 patch.object(valuation, "_otc_tbvps", return_value=14.25):
-            val, src = valuation._resolve_tbvps("PNSB", None, None)
+            val, src, conflict = valuation._resolve_tbvps("PNSB", None, None)
         self.assertAlmostEqual(val, 14.25, places=6)
         self.assertEqual(src, "company_release")
+        self.assertIs(conflict, False)
 
     def test_reconstruction_still_wins_over_the_release(self):
         """The release is a FALLBACK — a working reconstruction is not replaced."""
         from analysis import valuation
         with patch("data.bank_mapping.get_cik", return_value=123456), \
-                patch("data.sec_earnings_8k.reported_tbvps", return_value=None), \
+                patch("data.sec_earnings_8k.reported_tbvps_status",
+                      return_value=(None, "not_disclosed")), \
                 patch.object(valuation, "_otc_tbvps", return_value=99.99):
-            val, src = valuation._resolve_tbvps("XYZ", 20.00, 22.00)
+            val, src, conflict = valuation._resolve_tbvps("XYZ", 20.00, 22.00)
         self.assertAlmostEqual(val, 20.00, places=6)
         self.assertEqual(src, "reconstructed")
+        self.assertIs(conflict, False)
 
     def test_reported_8k_still_outranks_everything(self):
         from analysis import valuation
         with patch("data.bank_mapping.get_cik", return_value=123456), \
-                patch("data.sec_earnings_8k.reported_tbvps", return_value=30.00), \
+                patch("data.sec_earnings_8k.reported_tbvps_status",
+                      return_value=(30.00, "ok")), \
                 patch.object(valuation, "_otc_tbvps", return_value=99.99):
-            val, src = valuation._resolve_tbvps("XYZ", 20.00, 22.00)
+            val, src, conflict = valuation._resolve_tbvps("XYZ", 20.00, 22.00)
         self.assertAlmostEqual(val, 30.00, places=6)
         self.assertEqual(src, "reported_8k")
+        self.assertIs(conflict, False)
 
     def test_nothing_anywhere_is_na_with_no_source(self):
         from analysis import valuation
         with patch("data.bank_mapping.get_cik", return_value=None), \
                 patch.object(valuation, "_otc_tbvps", return_value=None):
-            val, src = valuation._resolve_tbvps("NONE", None, None)
+            val, src, conflict = valuation._resolve_tbvps("NONE", None, None)
         self.assertIsNone(val)
         self.assertIsNone(src)
+        self.assertIs(conflict, False)
 
 
 class TestCacheVersionsStayCoupled(unittest.TestCase):

@@ -19,7 +19,34 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+# Bounded universe for the AppTest run — same rationale as tests/test_nav_renders:
+# in a cold environment the first at.run() lands on Home, whose universe +
+# metrics builds fan out live for the whole universe; AppTest's timeout joins
+# the script thread, so the test hung then ERRORed. Injecting the module-level
+# universe cache (data, not a function replacement) bounds every consumer to
+# 2 real banks; the Transactions structure under test still renders for real.
+_STUB_UNIVERSE = {
+    "AMAL": {"cik": 1823608, "fdic_cert": 622, "share_class": "common",
+             "bank_name": "Amalgamated Financial Corp."},
+    "JPM": {"cik": 19617, "fdic_cert": 628, "share_class": "common",
+            "bank_name": "JPMorgan Chase & Co."},
+}
+
+
 class TestTransactionsSection(unittest.TestCase):
+
+    def setUp(self):
+        import data.bank_universe as bu
+        self._bu = bu
+        self._saved = (bu._UNIVERSE_CACHE, bu._NONCOMMON_CACHE,
+                       bu._NONCOMMON_PRIMARY_CACHE)
+        bu._UNIVERSE_CACHE = dict(_STUB_UNIVERSE)
+        bu._NONCOMMON_CACHE = None
+        bu._NONCOMMON_PRIMARY_CACHE = None
+
+    def tearDown(self):
+        (self._bu._UNIVERSE_CACHE, self._bu._NONCOMMON_CACHE,
+         self._bu._NONCOMMON_PRIMARY_CACHE) = self._saved
 
     def _open_transactions(self):
         from streamlit.testing.v1 import AppTest

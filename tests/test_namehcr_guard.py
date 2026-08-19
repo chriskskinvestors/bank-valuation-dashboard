@@ -622,7 +622,9 @@ class TestCertIsActiveEmptyIndex(unittest.TestCase):
                 return {"data": rows}
 
         cache = types.ModuleType("cache")
-        cache.get = lambda k: None
+        # Mirror data.cache's real signatures (get grew max_age_s in e4fa8fb);
+        # always a miss — cert_is_active must hit the stubbed HTTP path.
+        cache.get = lambda k, max_age_s=None: None
         cache.put = lambda k, v: None
         # cert_is_active does `from data import cache` at call time, which
         # resolves via the `data` package attribute whenever the real module

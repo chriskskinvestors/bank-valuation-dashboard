@@ -233,7 +233,10 @@ class TestAiRetryNotLocked(unittest.TestCase):
         self.rm, self.store = rm, {}
         self._orig = (dc.get, dc.put, rm._current_accession,
                       ip.latest_earnings_release)
-        dc.get = lambda k: self.store.get(k)
+        # Production reads with max_age_s=None (2026-07-27 no-ceiling
+        # contract) — the stub must accept it or the TypeError is swallowed
+        # and every seeded cache silently vanishes.
+        dc.get = lambda k, max_age_s=None: self.store.get(k)
         dc.put = lambda k, v: self.store.__setitem__(k, v)
         rm._current_accession = lambda cik: "ACC1"
         ip.latest_earnings_release = lambda cik: {
@@ -255,7 +258,9 @@ class TestAiRetryNotLocked(unittest.TestCase):
         if ai_state is not None:
             value["ai_state"] = ai_state
             value["ai_attempts"] = attempts
-        self.store[f"release_metrics:v15:{1}"] = {
+        # Key version must track data/release_metrics.py's current spec
+        # version or the seed is invisible and every test re-extracts.
+        self.store[f"release_metrics:v17:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):

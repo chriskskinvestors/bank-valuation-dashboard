@@ -266,8 +266,12 @@ class TestReportedTbvpsExtraction(unittest.TestCase):
 
 
 class TestResolveTbvpsFallback(unittest.TestCase):
-    """analysis.valuation._resolve_tbvps prefers the reported figure, falls back
-    to the reconstruction, and never regresses on error."""
+    """analysis.valuation._resolve_tbvps returns (value, source, conflict):
+    prefers the reported figure, falls back to the reconstruction, and never
+    regresses on error. conflict fires ONLY on the extractor's gate_rejected
+    status (release vs reconstruction ≥15% apart — pinned in
+    tests/test_tbvps_conflict_signal.py); every scenario here is conflict-free.
+    The SEC seam is reported_tbvps_status → (value, status)."""
 
     def test_prefers_reported_when_available(self):
         import analysis.valuation as val
@@ -275,22 +279,25 @@ class TestResolveTbvpsFallback(unittest.TestCase):
 
         def fake_reported(cik, reconstructed=None, bvps=None):
             called["args"] = (cik, reconstructed, bvps)
-            return 42.68
+            return 42.68, "ok"
 
         with unittest.mock.patch("data.bank_mapping.get_cik", return_value=1521951), \
-             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", fake_reported):
-            value, source = val._resolve_tbvps("FBIZ", reconstructed=42.68, bvps=52.10)
+             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps_status", fake_reported):
+            value, source, conflict = val._resolve_tbvps("FBIZ", reconstructed=42.68, bvps=52.10)
         self.assertAlmostEqual(value, 42.68)
         self.assertEqual(source, "reported_8k")
+        self.assertIs(conflict, False)
         self.assertEqual(called["args"], (1521951, 42.68, 52.10))
 
     def test_falls_back_to_reconstruction_when_reported_none(self):
         import analysis.valuation as val
         with unittest.mock.patch("data.bank_mapping.get_cik", return_value=1521951), \
-             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", return_value=None):
-            value, source = val._resolve_tbvps("ABCB", reconstructed=37.50, bvps=50.0)
+             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps_status",
+                                 return_value=(None, "not_disclosed")):
+            value, source, conflict = val._resolve_tbvps("ABCB", reconstructed=37.50, bvps=50.0)
         self.assertAlmostEqual(value, 37.50)
         self.assertEqual(source, "reconstructed")
+        self.assertIs(conflict, False)   # not_disclosed is noise, not a conflict
 
     def test_error_does_not_regress(self):
         import analysis.valuation as val
@@ -299,16 +306,18 @@ class TestResolveTbvpsFallback(unittest.TestCase):
             raise RuntimeError("network")
 
         with unittest.mock.patch("data.bank_mapping.get_cik", return_value=999), \
-             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps", boom):
-            value, source = val._resolve_tbvps("XXXX", reconstructed=30.0, bvps=45.0)
+             unittest.mock.patch("data.sec_earnings_8k.reported_tbvps_status", boom):
+            value, source, conflict = val._resolve_tbvps("XXXX", reconstructed=30.0, bvps=45.0)
         self.assertAlmostEqual(value, 30.0)   # reconstruction stands
         self.assertEqual(source, "reconstructed")
+        self.assertIs(conflict, False)   # an extractor error is not a conflict
 
     def test_no_ticker_returns_reconstruction(self):
         import analysis.valuation as val
-        value, source = val._resolve_tbvps(None, reconstructed=30.0, bvps=45.0)
+        value, source, conflict = val._resolve_tbvps(None, reconstructed=30.0, bvps=45.0)
         self.assertAlmostEqual(value, 30.0)
         self.assertEqual(source, "reconstructed")
+        self.assertIs(conflict, False)
 
 
 if __name__ == "__main__":
