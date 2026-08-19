@@ -1422,16 +1422,20 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
         sys.modules["streamlit.components.v1"] = comp_v1
         import ui.financials_statements as fs
         fs = importlib.reload(fs)
-        import data.fdic_client as fc
-        saved = (fs.get_bank_info, fc.get_historical_financials)
+        # Renderers read the group-aware seam (data.loaders.load_fdic_hist_df)
+        # since f6c689c — stubbing fdic_client.get_historical_financials left
+        # this test silently rendering LIVE data (the forced fixture never
+        # entered the pipeline, so the negative-residual assert went dead).
+        import data.loaders as dl
+        saved = (fs.get_bank_info, dl.load_fdic_hist_df)
         try:
             fs.get_bank_info = lambda t: {
                 "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
-            fc.get_historical_financials = (
-                lambda cert, quarters=36: pd.DataFrame([dict(r) for r in hist_rows]))
+            dl.load_fdic_hist_df = (
+                lambda ticker, quarters=44: pd.DataFrame([dict(r) for r in hist_rows]))
             fs.render_balance_sheet("BANR")
         finally:
-            fs.get_bank_info, fc.get_historical_financials = saved
+            fs.get_bank_info, dl.load_fdic_hist_df = saved
             # Restore the module table and reload fs against the real streamlit
             # so this test does not poison any class that runs after it.
             for k in keys:
