@@ -70,6 +70,15 @@ SLIM_USGAAP_CONCEPTS = {
     "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount",
     "PreferredStockLiquidationPreferenceValue",
     "PreferredStockSharesOutstanding", "PreferredStockSharesIssued",
+    # Preferred EVIDENCE (2026-08-19): duration facts proving preferred is
+    # outstanding when no balance-sheet tag says so — BAFN tags no preferred
+    # value at all ($96M recap, served TBVPS 5.9× its release), MBIN's value
+    # tags died in 2018 ($551M outstanding). _resolve_preferred_stock reads
+    # these; dropping them from the slim projection deadens that guard.
+    "PreferredStockDividendsIncomeStatementImpact",
+    "DividendsPreferredStock",
+    "PaymentsOfDividendsPreferredStockAndPreferenceStock",
+    "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock",
     # Period-matched actuals for the consensus comparison (data/sec_period.py):
     # bank income-statement flows, net interest income, provision, and the
     # balance-sheet stocks brokers estimate.
@@ -884,11 +893,15 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
     intangibles_s = _strip_msr(intangibles, intang_end, intangibles_is_rollup)
     incl_s = _strip_msr(incl, incl_end, True)  # IInclGW is always a rollup
 
-    # Guard: goodwill alone cannot exceed goodwill+intangibles. When the plain
-    # `Goodwill` tag is larger than the combined figure, that tag is stale or
-    # dimensional (e.g. PNFP reads $3.48B goodwill vs $1.88B combined) — trust
-    # the combined figure.
-    if goodwill is not None and incl is not None and goodwill > incl * 1.05:
+    # Guard: goodwill alone cannot exceed goodwill+intangibles — but ONLY when
+    # the two tags describe the same period. Same-period goodwill > combined
+    # means the goodwill tag is dimensional/stale — trust the combined figure.
+    # A combined tag STALER than goodwill must not win: post-Synovus PNFP
+    # (2026-08-19 hand-check) tags fresh 2026-06-30 Goodwill $3,479M while the
+    # combined tag sits at the pre-merger $1,879M (last end 2025-12-31); this
+    # guard without the date gate served TBVPS $80.65 vs the release's $63.02.
+    if (goodwill is not None and incl is not None and goodwill > incl * 1.05
+            and (not gw_end or not incl_end or incl_end >= gw_end)):
         adjustment = incl_s
     elif goodwill is not None:
         # Other-intangibles = the larger of the explicit tag and (same-period
@@ -934,8 +947,17 @@ def _resolve_preferred_stock(facts: dict) -> tuple[float | None, bool]:
       5. PreferredStockLiquidationPreferenceValue  (redemption value; last resort)
 
     "Has preferred" is true when a current PreferredStock* value tag resolves,
-    or current PreferredStockShares(Outstanding|Issued) > 0. A filer with no
-    preferred at all yields (0.0, False) → common_equity == equity, unchanged.
+    current PreferredStockShares(Outstanding|Issued) > 0, or — the 2026-08-19
+    hand-check class — current-period INCOME/CASH-FLOW evidence proves
+    preferred exists even though no balance-sheet tag does: a bank paying
+    preferred dividends or booking preferred-issuance proceeds this period
+    unmistakably has preferred outstanding. Absence of balance-sheet tags is
+    NOT absence of preferred: BAFN tags no preferred value at all yet carries
+    a $96M recap (TBVPS served $28.22 vs its release's $4.82); MBIN stopped
+    tagging carrying value in 2018 while $551M is outstanding (served $51.93
+    vs $39.93). Evidence-without-value → (None, True) → the cardinal-rule n/a
+    path, and the bank's own released figure serves instead. A filer with no
+    preferred at all still yields (0.0, False) → common_equity == equity.
     """
     value = None
     for concept in (
@@ -958,6 +980,25 @@ def _resolve_preferred_stock(facts: dict) -> tuple[float | None, bool]:
         or _extract_latest_value(facts, "PreferredStockSharesIssued", max_age_years=1)
     )
     has_preferred = bool(value) or bool(shares and shares > 0)
+
+    if not has_preferred:
+        # Income/cash-flow evidence of preferred (duration facts, so a fresh
+        # nonzero value means preferred existed DURING the latest period).
+        # PreferredStockSharesAuthorized is deliberately NOT evidence — nearly
+        # every charter authorizes preferred that was never issued. Edge case
+        # accepted: a full mid-year redemption keeps this true until the
+        # dividend facts age out (~a year) → n/a/release-figure, which is the
+        # honest side to err on.
+        for concept in (
+            "PreferredStockDividendsIncomeStatementImpact",
+            "DividendsPreferredStock",
+            "PaymentsOfDividendsPreferredStockAndPreferenceStock",
+            "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock",
+        ):
+            v = _extract_latest_value(facts, concept, max_age_years=1)
+            if v:
+                has_preferred = True
+                break
 
     if not has_preferred:
         # No preferred outstanding — subtract nothing.
