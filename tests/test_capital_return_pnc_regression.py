@@ -113,10 +113,15 @@ class TestAllNanTtmIsNone(unittest.TestCase):
             "None so the UI renders n/a (cardinal rule)")
         self.assertIsNone(ttm["payout_ratio_ttm"])
 
-    def test_partial_window_still_sums(self):
+    def test_partial_window_is_none(self):
+        """SUPERSEDES test_partial_window_still_sums (2026-08-19, owner
+        directive): a 3-quarter sum presented as trailing-twelve-months is a
+        plausible-wrong figure (~25% understated) — the same A21 class as the
+        all-NaN zero. A TTM is four consecutive observed quarters or None;
+        the fully-observed dividends column still sums."""
         ttm = compute_ttm_capital_return(
             self._timeline([float("nan"), 10.0, 20.0, 30.0]))
-        self.assertEqual(ttm["net_income_ttm"], 60.0)
+        self.assertIsNone(ttm["net_income_ttm"])
         self.assertEqual(ttm["dividends_ttm"], 400.0)
 
     def test_true_zero_stays_zero(self):

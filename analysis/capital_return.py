@@ -154,12 +154,17 @@ def _filter_and_dedup(entries: list[dict]) -> list[dict]:
     if not filed:
         return []
     filed.sort(key=lambda x: (x["end"] or "", x["filed"] or ""))
-    # Deduplicate by end: keep most recently filed for each end date
+    # Deduplicate by (end, start), NOT end alone: duration concepts carry BOTH
+    # a ~3-month and a YTD-cumulative fact at the same end date, and collapsing
+    # by end kept an arbitrary one — summing a mix of quarterly and cumulative
+    # per-share dividends produced e.g. a $14.60 JPM "DPS TTM" (true ~$5.70).
+    # _derive_quarterly_from_ytd picks the right duration per quarter; here
+    # every duration must survive. Most-recently-filed still wins per key.
     dedup = {}
     for e in filed:
-        end = e["end"]
-        if end not in dedup or e["filed"] > dedup[end]["filed"]:
-            dedup[end] = e
+        key = (e["end"], e.get("start"))
+        if key not in dedup or e["filed"] > dedup[key]["filed"]:
+            dedup[key] = e
     return sorted(dedup.values(), key=lambda x: x["end"])
 
 
@@ -183,13 +188,18 @@ def _is_quarterly_cf(entry: dict) -> bool:
 
 def _derive_quarterly_from_ytd(entries: list[dict]) -> list[dict]:
     """
-    For cash-flow statement concepts (YTD-cumulative), derive the single-
-    quarter values by subtracting prior quarter within the same fiscal year.
+    Derive single-quarter values for duration concepts. Entries may carry BOTH
+    a direct ~3-month fact and a YTD-cumulative fact per quarter (the (end,
+    start) dedup keeps both): the direct quarterly fact wins outright; else the
+    quarter is YTD(this quarter) − YTD(prior quarter) — both cumulative, same
+    fiscal year — the same same-start differencing sec_client uses. A quarter
+    that can't be formed either way is None, never a mixed-duration
+    subtraction (that mislabeled cumulative dividends as quarterly).
 
-    Returns entries with 'val_quarterly' field added.
+    Returns one entry per (year, quarter) with 'val_quarterly' added ('val'
+    keeps the YTD-cumulative figure when that's what the filer tagged).
     """
-    # Group by fiscal year
-    by_year = {}
+    by_yq: dict = {}
     for e in entries:
         try:
             year = int(e["end"][:4]) if e.get("end") else None
@@ -204,7 +214,6 @@ def _derive_quarterly_from_ytd(entries: list[dict]) -> list[dict]:
         elif fp == "FY":
             qtr = 4
         else:
-            # Derive from end month
             try:
                 m = int(e["end"][5:7])
                 qtr = (m - 1) // 3 + 1
@@ -212,31 +221,37 @@ def _derive_quarterly_from_ytd(entries: list[dict]) -> list[dict]:
                 qtr = None
         if qtr is None:
             continue
-        e = {**e, "quarter": qtr, "year": year}
-        by_year.setdefault(year, []).append(e)
+        by_yq.setdefault((year, qtr), []).append({**e, "quarter": qtr, "year": year})
+
+    def _latest_filed(cands):
+        return sorted(cands, key=lambda x: x.get("filed") or "")[-1]
 
     out = []
-    for year, group in by_year.items():
-        group = sorted(group, key=lambda x: x["quarter"])
-        for i, e in enumerate(group):
-            if _is_quarterly_cf(e):
-                # Already quarterly — use as-is
-                e["val_quarterly"] = e["val"]
-            elif e["quarter"] == 1:
-                e["val_quarterly"] = e["val"]
+    for (year, qtr) in sorted(by_yq):
+        cands = by_yq[(year, qtr)]
+        direct = [c for c in cands if _is_quarterly_cf(c)]
+        ytd = [c for c in cands if not _is_quarterly_cf(c)]
+        if direct:
+            e = _latest_filed(direct)
+            e["val_quarterly"] = e["val"]
+            if ytd:                       # keep the cumulative figure alongside
+                e["val"] = _latest_filed(ytd)["val"]
+        elif qtr == 1:
+            e = _latest_filed(ytd)
+            e["val_quarterly"] = e["val"]  # Q1 cumulative == Q1 quarter
+        else:
+            e = _latest_filed(ytd)
+            prior_ytd = [c for c in by_yq.get((year, qtr - 1), [])
+                         if not _is_quarterly_cf(c)]
+            # Q1 has no separate YTD fact — its direct fact IS the cumulative.
+            if not prior_ytd and qtr == 2:
+                prior_ytd = by_yq.get((year, 1), [])
+            if prior_ytd and e.get("val") is not None:
+                pv = _latest_filed(prior_ytd).get("val")
+                e["val_quarterly"] = (e["val"] - pv) if pv is not None else None
             else:
-                # Find prior quarter in same year
-                prior = None
-                for j in range(i - 1, -1, -1):
-                    if group[j]["quarter"] == e["quarter"] - 1:
-                        prior = group[j]
-                        break
-                if prior is not None and e.get("val") is not None and prior.get("val") is not None:
-                    e["val_quarterly"] = e["val"] - prior["val"]
-                else:
-                    e["val_quarterly"] = None
-            out.append(e)
-    out.sort(key=lambda x: (x["year"], x["quarter"]))
+                e["val_quarterly"] = None
+        out.append(e)
     return out
 
 
@@ -299,14 +314,19 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
     # on freshness and every quarter derives to NaN.
     ni = _derive_quarterly_from_ytd(
         _extract_series(gaap, _NET_INCOME_CONCEPTS, min_recent_ends=4))
+    # DPS is a DURATION concept (declared per share over a period) tagged in
+    # both 3-month and YTD-cumulative durations — it needs the same quarterly
+    # derivation as the flows. Merging the raw fact used to mix durations and
+    # sum cumulatives into "DPS TTM" (JPM: $14.60 vs true ~$5.70).
+    dps = _derive_quarterly_from_ytd(_extract_series(gaap, _DPS_CONCEPTS))
     # Shares and equity are point-in-time, not YTD
     shares = _extract_series(gaap, _SHARES_CONCEPTS)
     equity = _extract_series(gaap, _EQUITY_CONCEPTS)
-    dps = _extract_series(gaap, _DPS_CONCEPTS)
 
     # Merge on 'end' date
     rows = {}
-    for src, key in [(divs, "dividends_q"), (buybacks, "buybacks_q"), (ni, "net_income_q")]:
+    for src, key in [(divs, "dividends_q"), (buybacks, "buybacks_q"),
+                     (ni, "net_income_q"), (dps, "dps_declared")]:
         for e in src:
             end = e["end"]
             if end not in rows:
@@ -314,7 +334,7 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
             rows[end][key] = e.get("val_quarterly")
             rows[end][f"{key}_ytd"] = e.get("val")
 
-    for src, key in [(shares, "shares_outstanding"), (equity, "equity"), (dps, "dps_declared")]:
+    for src, key in [(shares, "shares_outstanding"), (equity, "equity")]:
         for e in src:
             end = e["end"]
             if end not in rows:
@@ -338,10 +358,14 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
     for col in ["shares_outstanding", "equity"]:
         df[col] = df[col].ffill()
 
-    # Compute total capital returned per quarter
-    df["total_returned_q"] = (
-        df["dividends_q"].fillna(0) + df["buybacks_q"].fillna(0)
-    )
+    # Total capital returned per quarter. One known component treats the other
+    # as 0 (a bank tagging dividends but no buyback concept genuinely didn't
+    # buy back — same convention as total_returned_ttm); BOTH unknown is no
+    # observation at all → NaN, never a fabricated $0 quarter.
+    _dv = pd.to_numeric(df["dividends_q"], errors="coerce")
+    _bb = pd.to_numeric(df["buybacks_q"], errors="coerce")
+    df["total_returned_q"] = (_dv.fillna(0) + _bb.fillna(0)).where(
+        _dv.notna() | _bb.notna())
 
     # Compute payout / buyback / return ratios
     ni_q = df["net_income_q"]
@@ -363,21 +387,37 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
     return df
 
 
+def _full_window_sum(window: pd.DataFrame, col: str):
+    """Sum `col` over the TTM window ONLY when it is FOUR CONSECUTIVE
+    quarters, each observed. pandas sums an all-NaN window to 0.0 — a
+    plausible-wrong $0 (PNC Q2-2026) — and a partial or gapped window to a
+    mislabeled "TTM" (3 quarters presented as twelve months understates ~25%;
+    audit A21: 12 months or None). Supersedes the earlier any-quarter-sums
+    rule (test_capital_return_pnc_regression pins the supersession)."""
+    if col not in window.columns or len(window) < 4:
+        return None
+    s = pd.to_numeric(window[col], errors="coerce")
+    if not s.notna().all():
+        return None
+    ends = pd.to_datetime(window["end"], errors="coerce") if "end" in window.columns else None
+    if ends is None or ends.isna().any():
+        return None
+    if ends.sort_values().diff().dropna().dt.days.max() > 100:  # quarterly cadence
+        return None
+    return float(s.sum())
+
+
 def compute_ttm_capital_return(timeline: pd.DataFrame) -> dict:
     """
-    Trailing 12-month summary of capital return activity.
+    Trailing 12-month summary of capital return activity. Every TTM figure is
+    a full-window sum or None (see _full_window_sum) — never a partial total.
     """
     if timeline.empty:
         return {}
     ttm = timeline.tail(4)  # last 4 quarters
 
     def _sum_or_none(col):
-        # pandas sums an all-NaN window to 0.0 — a plausible-wrong $0 (PNC
-        # Q2-2026). No observed quarters must surface as None → n/a, never 0.
-        if col not in ttm.columns:
-            return None
-        s = pd.to_numeric(ttm[col], errors="coerce")
-        return float(s.sum()) if s.notna().any() else None
+        return _full_window_sum(ttm, col)
 
     ni_ttm = _sum_or_none("net_income_q")
     divs_ttm = _sum_or_none("dividends_q")
@@ -428,9 +468,14 @@ def compute_yoy_growth(timeline: pd.DataFrame) -> dict:
     prior_4 = timeline.iloc[-8:-4] if len(timeline) >= 8 else pd.DataFrame()
 
     def _ttm(df, col):
-        if col not in df.columns:
+        # Full consecutive 4-quarter windows only — a partial-window sum would
+        # produce a plausible-wrong growth % (same rule as _sum_or_none).
+        if col not in df.columns or len(df) < 4:
             return None
-        v = df[col].sum(skipna=True)
+        s = pd.to_numeric(df[col], errors="coerce")
+        if not s.notna().all():
+            return None
+        v = float(s.sum())
         return v if v else None
 
     def _growth(curr, prior):
@@ -476,13 +521,16 @@ def compute_shareholder_yield(timeline: pd.DataFrame, market_cap: float | None) 
             "buyback_yield_pct": None,
             "total_shareholder_yield_pct": None,
         }
-    divs = ttm.get("dividends_ttm") or 0
-    bb = ttm.get("buybacks_ttm") or 0
-    total = ttm.get("total_returned_ttm") or 0
+    # None component → None yield: absent XBRL data is UNKNOWN, and a
+    # fabricated "0.00%" shareholder yield reads as a real figure (it showed
+    # for every major bank whose dividend/buyback cash-flow lines aren't in
+    # undimensioned companyfacts — JPM/BAC/WFC/C/USB tag them dimensionally).
+    def _yld(v):
+        return (v / market_cap) * 100 if v is not None else None
     return {
-        "dividend_yield_pct": (divs / market_cap) * 100 if divs else 0,
-        "buyback_yield_pct": (bb / market_cap) * 100 if bb else 0,
-        "total_shareholder_yield_pct": (total / market_cap) * 100 if total else 0,
+        "dividend_yield_pct": _yld(ttm.get("dividends_ttm")),
+        "buyback_yield_pct": _yld(ttm.get("buybacks_ttm")),
+        "total_shareholder_yield_pct": _yld(ttm.get("total_returned_ttm")),
     }
 
 

@@ -247,8 +247,7 @@ def _check(actual, expected_spec) -> tuple[bool, str]:
 
 def run():
     import warnings; warnings.filterwarnings("ignore")
-    from data.bank_mapping import get_cik, get_fdic_cert
-    from data.fdic_client import fetch_financials
+    from data.bank_mapping import get_cik
     from data import sec_client
     from analysis.capital_return import summarize_capital_return
 
@@ -259,7 +258,6 @@ def run():
 
     for ticker, checks in GOLDEN_2025_Q4.items():
         cik = get_cik(ticker)
-        cert = get_fdic_cert(ticker)
         if not cik:
             print(f"{ticker:<6} [no CIK, skipping]")
             continue
