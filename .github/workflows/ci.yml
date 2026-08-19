@@ -68,3 +68,14 @@ jobs:
       # Script-style suite: run as a program, so discovery doesn't collect it.
       - name: Metric formula suite (script-style)
         run: PYTHONIOENCODING=utf-8 python tests/test_metric_formulas.py
+
+      # AppTest suites need REAL streamlit, but tests/__init__.py installs the
+      # shared stub before any discovered module imports (the cross-module
+      # cache-poisoning guard), which shadows streamlit.testing — under
+      # discovery these skip with a visible reason. Run them as scripts in
+      # their own processes (no package init → real streamlit) so the nav and
+      # Transactions invariants stay enforced.
+      - name: AppTest suites (own process, real streamlit)
+        run: |
+          python tests/test_nav_renders.py
+          python tests/test_transactions_ui.py
