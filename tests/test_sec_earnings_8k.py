@@ -17,7 +17,7 @@ import unittest.mock
 
 from data.sec_earnings_8k import (
     extract_earnings_figures, _num, _clean_label, _table_rows, _detect_scale,
-    extract_reported_tbvps, _match_tbvps_label,
+    extract_reported_tbvps, extract_reported_tbvps_status, _match_tbvps_label,
 )
 
 
@@ -263,6 +263,101 @@ class TestReportedTbvpsExtraction(unittest.TestCase):
         )
         self.assertIsNone(
             extract_reported_tbvps(html, reconstructed=42.68, bvps=52.10))
+
+
+class TestInternalTieOutAnchor(unittest.TestCase):
+    """Release-internal tie-out anchor (the MBIN case, 2Q26 8-K acc
+    0001104659-26-087529): reconstruction n/a (preferred present but carrying
+    value untagged since 2018) AND no book-value-per-share line anywhere in the
+    release — but the reconciliation table prints TBVPS's own inputs, tangible
+    common shareholders' equity ($1,834,473K) and ending common shares
+    (45,938,075), whose ratio reproduces the printed $39.93. That arithmetic
+    tie IS an anchor; without it the figure stays untied → not_disclosed."""
+
+    # The real MBIN reconciliation rows (values as printed, $ in thousands).
+    def _mbin(self, tbvps="39.93", te="1,834,473", shares="45,938,075"):
+        return _html(
+            _row("Tangible common shareholders' equity", te)
+            + _row("Ending common shares", shares)
+            + _row("Tangible book value per common share (1)", tbvps)
+        )
+
+    def test_mbin_tie_out_accepts(self):
+        v, status = extract_reported_tbvps_status(
+            self._mbin(), reconstructed=None, bvps=None)
+        self.assertAlmostEqual(v, 39.93)
+        self.assertEqual(status, "ok")
+
+    def test_same_scale_inputs_tie_out(self):
+        """Equity in $M and shares in millions (ratio at scale ×1)."""
+        html = self._mbin(te="1,834.5", shares="45.938")
+        v, status = extract_reported_tbvps_status(
+            html, reconstructed=None, bvps=None)
+        self.assertAlmostEqual(v, 39.93)
+        self.assertEqual(status, "ok")
+
+    def test_mismatched_ratio_refuses(self):
+        """Inputs that do NOT reproduce the figure (wrong row grabbed into the
+        shares slot) are no anchor — the figure stays untied → n/a."""
+        html = self._mbin(shares="52,000,000")   # → $35.28, 11.6% off 39.93
+        v, status = extract_reported_tbvps_status(
+            html, reconstructed=None, bvps=None)
+        self.assertIsNone(v)
+        self.assertEqual(status, "not_disclosed")
+
+    def test_missing_shares_row_refuses(self):
+        html = _html(
+            _row("Tangible common shareholders' equity", "1,834,473")
+            + _row("Tangible book value per common share", "39.93")
+        )
+        v, status = extract_reported_tbvps_status(
+            html, reconstructed=None, bvps=None)
+        self.assertIsNone(v)
+        self.assertEqual(status, "not_disclosed")
+
+    def test_non_common_equity_label_does_not_anchor(self):
+        """A bare 'tangible shareholders' equity' can include preferred — it must
+        never anchor a per-COMMON-share figure, even when the ratio happens to
+        land (a no-preferred bank would print the same number under a common
+        label)."""
+        html = _html(
+            _row("Tangible shareholders' equity", "1,834,473")
+            + _row("Ending common shares", "45,938,075")
+            + _row("Tangible book value per common share", "39.93")
+        )
+        v, status = extract_reported_tbvps_status(
+            html, reconstructed=None, bvps=None)
+        self.assertIsNone(v)
+        self.assertEqual(status, "not_disclosed")
+
+    def test_blank_latest_quarter_input_skipped_to_next_table(self):
+        """A summary-table variant with a blank latest-quarter cell must not
+        block the anchor: the dense row (wherever it appears) supplies it."""
+        html = _html(
+            _row("Ending common shares", "", "45,938,075")   # blank latest col
+            + _row("Tangible common shareholders' equity", "1,834,473")
+            + _row("Ending common shares", "45,938,075")
+            + _row("Tangible book value per common share", "39.93")
+        )
+        v, status = extract_reported_tbvps_status(
+            html, reconstructed=None, bvps=None)
+        self.assertAlmostEqual(v, 39.93)
+        self.assertEqual(status, "ok")
+
+    def test_in_release_bvps_still_wins_over_tie_out(self):
+        """When the release DOES print book value per common share, the
+        tangible<book anchor path is unchanged (PNC shape): a v ≥ bvps is
+        rejected even if the reconciliation inputs would tie out."""
+        html = _html(
+            _row("Book value per common share", "39.00")     # below the 39.93
+            + _row("Tangible common shareholders' equity", "1,834,473")
+            + _row("Ending common shares", "45,938,075")
+            + _row("Tangible book value per common share", "39.93")
+        )
+        v, status = extract_reported_tbvps_status(
+            html, reconstructed=None, bvps=None)
+        self.assertIsNone(v)
+        self.assertEqual(status, "not_disclosed")
 
 
 class TestResolveTbvpsFallback(unittest.TestCase):
