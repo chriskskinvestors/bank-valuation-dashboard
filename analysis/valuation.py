@@ -417,7 +417,8 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # The reconstruction is the FALLBACK when the bank doesn't disclose or the
     # reported figure fails a sanity gate. See _resolve_tbvps.
     reconstructed_tbvps = sec_data.get("tangible_book_value_per_share")
-    tbvps, tbvps_source = _resolve_tbvps(ticker, reconstructed_tbvps, bvps)
+    tbvps, tbvps_source, tbvps_conflict = _resolve_tbvps(
+        ticker, reconstructed_tbvps, bvps)
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
 
@@ -542,6 +543,10 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         # (non-SEC filers — the wire release is their primary disclosure).
         "tbvps": tbvps,
         "tbvps_source": tbvps_source,
+        # True when the bank's own released TBVPS and the reconstruction
+        # disagree ≥15% — one of them is wrong (FSUN-class). Machine-readable
+        # in every metrics snapshot so jobs/monitors can alert on it.
+        "tbvps_conflict": tbvps_conflict,
         # Computed from our own robust TTM dividend-per-share (anchored to the
         # latest period; handles cut/skipped quarters). FMP's dividend figure is
         # ALSO unreliable, so we derive from the filing rather than adopt it.
@@ -608,8 +613,16 @@ def _resolve_tbvps(
     no reconstruction at all — their wire earnings release is the primary
     disclosure and the only per-share source (owner decision 2026-07-16);
     the guarded data/otc_release extraction supplies it, staleness-gated.
-    Sources: "reported_8k" | "reconstructed" | "company_release" | None."""
+    Sources: "reported_8k" | "reconstructed" | "company_release" | None.
+
+    Returns (tbvps, source, conflict). conflict=True means the release's own
+    clean TBVPS figure and the reconstruction disagree ≥15% (the extractor's
+    gate_rejected status): one of the two IS wrong. The reconstruction is
+    served (the release figure failed its cross-check), but silently — never
+    again: FSUN 2026-08 sat 3 weeks at a stale-share $58.97 while its release
+    said $35.16, and this exact gate was what discarded the truth."""
     cik = None
+    conflict = False
     if ticker:
         try:
             from data.bank_mapping import get_cik
@@ -618,10 +631,17 @@ def _resolve_tbvps(
             cik = None
     if cik:
         try:
-            from data.sec_earnings_8k import reported_tbvps
-            reported = reported_tbvps(cik, reconstructed=reconstructed, bvps=bvps)
+            from data.sec_earnings_8k import reported_tbvps_status
+            reported, status = reported_tbvps_status(
+                cik, reconstructed=reconstructed, bvps=bvps)
             if reported is not None:
-                return reported, "reported_8k"
+                return reported, "reported_8k", False
+            if status == "gate_rejected":
+                conflict = True
+                print(f"[valuation] TBVPS CONFLICT {ticker}: the release's own "
+                      f"figure disagrees >=15% with reconstruction "
+                      f"{reconstructed} — one of them is wrong; serving the "
+                      f"reconstruction, flagging tbvps_conflict")
         except Exception as e:
             print(f"[valuation] reported_tbvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
@@ -636,11 +656,13 @@ def _resolve_tbvps(
         try:
             otc = _otc_tbvps(ticker)
             if otc is not None:
-                return otc, "company_release"
+                return otc, "company_release", False
         except Exception as e:
             print(f"[valuation] otc tbvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
-    return reconstructed, ("reconstructed" if reconstructed is not None else None)
+    return (reconstructed,
+            "reconstructed" if reconstructed is not None else None,
+            conflict)
 
 
 def _otc_tbvps(ticker: str) -> float | None:

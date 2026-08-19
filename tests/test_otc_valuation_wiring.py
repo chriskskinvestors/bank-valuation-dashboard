@@ -65,35 +65,36 @@ class TestResolveTbvps(unittest.TestCase):
         self.orl.otc_release_metrics = lambda t: {
             "qend": _RECENT_QEND, "metrics": {"tbv_ps": 49.57}}
         self.assertEqual(va._resolve_tbvps("PBAM", None, None),
-                         (49.57, "company_release"))
+                         (49.57, "company_release", False))
 
     def test_reconstruction_fallback_keeps_source(self):
         self.bm.get_cik = lambda t: None
         self.orl.otc_release_metrics = lambda t: None
         self.assertEqual(va._resolve_tbvps("PBAM", 12.34, None),
-                         (12.34, "reconstructed"))
+                         (12.34, "reconstructed", False))
 
     def test_nothing_available_is_none_none(self):
         self.bm.get_cik = lambda t: None
         self.orl.otc_release_metrics = lambda t: None
-        self.assertEqual(va._resolve_tbvps("PBAM", None, None), (None, None))
+        self.assertEqual(va._resolve_tbvps("PBAM", None, None),
+                         (None, None, False))
 
     def test_sec_bank_never_touches_otc_path(self):
         import data.sec_earnings_8k as s8k
-        orig = s8k.reported_tbvps
+        orig = s8k.reported_tbvps_status
         calls = []
         self.bm.get_cik = lambda t: 12345
         self.orl.otc_release_metrics = (
             lambda t: calls.append(t) or {"qend": _RECENT_QEND,
                                           "metrics": {"tbv_ps": 99.0}})
         try:
-            s8k.reported_tbvps = (
-                lambda cik, reconstructed=None, bvps=None: 27.83)
+            s8k.reported_tbvps_status = (
+                lambda cik, reconstructed=None, bvps=None: (27.83, "ok"))
             self.assertEqual(va._resolve_tbvps("FBK", 27.50, None),
-                             (27.83, "reported_8k"))
+                             (27.83, "reported_8k", False))
             self.assertEqual(calls, [])
         finally:
-            s8k.reported_tbvps = orig
+            s8k.reported_tbvps_status = orig
 
 
 class TestComputeAllValuationsWiring(unittest.TestCase):

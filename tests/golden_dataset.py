@@ -60,19 +60,21 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         # 3Q25 14.393 (10-Q 0001628280-25-048859) + 4Q25 13.025 (FY
         # 0001628280-26-008131 − 9M) + 1Q26 16.494 (10-Q 0001628280-26-029344)
         # + 2Q26 21.155 = 65.067B.
-        # NOTE shares pin left at the FY-2025 cover value the pipeline serves:
-        # true Q2 period-end is dei 2,658,186,195 — the pipeline's stale
-        # cover-count seam is a known open item; when it's fixed, re-pin shares
-        # to the dei value (tbvps will then read ~112.7 vs reported 113.35,
-        # residual = JPM's DTL netting).
-        "shares":        {"expected": 2_696_200_000, "tol_pct": 1.0},
+        # Shares re-pinned 2026-08-18 with the stale-cover-count fix: JPM tags
+        # CommonStockSharesOutstanding only on the annual 10-K, so the pipeline
+        # now supersedes it with the true Q2 period-end count, issued
+        # 4,104,933,895 − treasury 1,446,747,700 = 2,658,186,195 (Q2-2026 10-Q
+        # accn 0001628280-26-054343; equals the dei cover count to the share —
+        # both hand-verified from raw companyfacts).
+        "shares":        {"expected": 2_658_186_195, "tol_pct": 1.0},
         "ni_ttm_b":      {"expected": 65.07, "tol_pct": 3.0},
         "equity_b":      {"expected": 374.60, "tol_pct": 3.0},
         # Reported TBV / common share, 2Q26 press release "Fortress Principles"
         # (8-K accn 0001628280-26-048078, filed 2026-07-14): "tangible book
-        # value per share of $113.35". Pipeline reads 111.10 (stale share
-        # count, see the shares note) — passes by 0.01pp; breaches next
-        # quarter unless the share seam is fixed.
+        # value per share of $113.35". With the correct Q2 share count the
+        # pipeline reads ~112.7 (was 111.10 on the stale FY-2025 count);
+        # residual ~0.6% = JPM's DTL netting on intangibles, which we don't
+        # source from a reliable tag (cardinal rule: don't guess it).
         "tbvps":         {"expected": 113.35, "tol_pct": 2.0},
         # Common-basis ROATCE (NI-to-common TTM ÷ common TCE), hand-check
         # convention (intangibles beyond goodwill: no instant tag at
@@ -245,8 +247,7 @@ def _check(actual, expected_spec) -> tuple[bool, str]:
 
 def run():
     import warnings; warnings.filterwarnings("ignore")
-    from data.bank_mapping import get_cik, get_fdic_cert
-    from data.fdic_client import fetch_financials
+    from data.bank_mapping import get_cik
     from data import sec_client
     from analysis.capital_return import summarize_capital_return
 
@@ -257,7 +258,6 @@ def run():
 
     for ticker, checks in GOLDEN_2025_Q4.items():
         cik = get_cik(ticker)
-        cert = get_fdic_cert(ticker)
         if not cik:
             print(f"{ticker:<6} [no CIK, skipping]")
             continue

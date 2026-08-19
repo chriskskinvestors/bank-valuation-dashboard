@@ -138,8 +138,8 @@ class TestImmutableExtractionCachesAnyAge(_IsolatedCache):
         payload = {"figures": {"diluted_eps": 1.25}, "_preliminary": True,
                    "accession": _F8K["accession_dash"], "filed": _F8K["date"],
                    "period": "2026-03-31", "doc": "ex991.htm"}
-        cache.put(f"earnings_8k:v1:{_F8K['accession']}", payload)
-        self._age(f"earnings_8k:v1:{_F8K['accession']}", 72 * 3600)
+        cache.put(f"earnings_8k:v2:{_F8K['accession']}", payload)
+        self._age(f"earnings_8k:v2:{_F8K['accession']}", 72 * 3600)
         with patch.object(se8k, "_latest_earnings_8k", return_value=_F8K), \
                 patch.object(se8k, "_ex991_document", _boom), \
                 patch.object(se8k, "_get", _boom):
@@ -147,8 +147,8 @@ class TestImmutableExtractionCachesAnyAge(_IsolatedCache):
         self.assertEqual(out["figures"]["diluted_eps"], 1.25)
 
     def test_reported_tbvps_served_past_24h(self):
-        key = f"reported_tbvps:v2:{_F8K['accession']}:12.3456:15.0000"
-        cache.put(key, {"value": 10.1})
+        key = f"reported_tbvps:v4:{_F8K['accession']}:12.3456:15.0000"
+        cache.put(key, {"value": 10.1, "status": "ok"})
         self._age(key, 72 * 3600)
         with patch.object(se8k, "_latest_earnings_8k", return_value=_F8K), \
                 patch.object(se8k, "_fetch_ex991_html", _boom):
@@ -185,8 +185,11 @@ class TestCallSitesReadWithoutCeiling(unittest.TestCase):
     drive-by revert to a bare cache.get(...) fails loudly here."""
 
     SITES = [
-        ("data/sec_earnings_8k.py", r'ckey = f"earnings_8k:v1:'),
-        ("data/sec_earnings_8k.py", r'ckey = f"reported_tbvps:v2:'),
+        # Version-agnostic (these were pinned to v1/v2 and went stale on
+        # version bumps — the shape version is SUPPOSED to move; these pins
+        # guard the max_age_s=None read, not the version).
+        ("data/sec_earnings_8k.py", r'ckey = f"earnings_8k:v\d+:'),
+        ("data/sec_earnings_8k.py", r'ckey = f"reported_tbvps:v\d+:'),
         # Version-agnostic on purpose: these keys carry an extraction-spec
         # version that is SUPPOSED to be bumped (otc_release v6->v7 etc.), and
         # a version bump must not look like a regression in this pin.

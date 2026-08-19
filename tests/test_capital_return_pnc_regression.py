@@ -37,6 +37,7 @@ sys.path.insert(0, str(REPO))
 from analysis.capital_return import (  # noqa: E402
     _NET_INCOME_CONCEPTS,
     _extract_series,
+    compute_shareholder_yield,
     compute_ttm_capital_return,
 )
 
@@ -112,10 +113,15 @@ class TestAllNanTtmIsNone(unittest.TestCase):
             "None so the UI renders n/a (cardinal rule)")
         self.assertIsNone(ttm["payout_ratio_ttm"])
 
-    def test_partial_window_still_sums(self):
+    def test_partial_window_is_none(self):
+        """SUPERSEDES test_partial_window_still_sums (2026-08-19, owner
+        directive): a 3-quarter sum presented as trailing-twelve-months is a
+        plausible-wrong figure (~25% understated) — the same A21 class as the
+        all-NaN zero. A TTM is four consecutive observed quarters or None;
+        the fully-observed dividends column still sums."""
         ttm = compute_ttm_capital_return(
             self._timeline([float("nan"), 10.0, 20.0, 30.0]))
-        self.assertEqual(ttm["net_income_ttm"], 60.0)
+        self.assertIsNone(ttm["net_income_ttm"])
         self.assertEqual(ttm["dividends_ttm"], 400.0)
 
     def test_true_zero_stays_zero(self):
@@ -123,6 +129,47 @@ class TestAllNanTtmIsNone(unittest.TestCase):
         not absence — it must survive as 0.0."""
         ttm = compute_ttm_capital_return(self._timeline([0.0, 0.0, 0.0, 0.0]))
         self.assertEqual(ttm["net_income_ttm"], 0.0)
+
+
+class TestUnobservedCapitalReturnIsNone(unittest.TestCase):
+    """PNC's second face of the same bug (seen live 2026-08-18): dividend and
+    buyback dollars both UNOBSERVED still produced 'Total Return Ratio 0% of
+    TTM net income' and 'Shareholder Yield 0.00%' — total = (None or 0) +
+    (None or 0). Both-unknown must be None → n/a; one known side still treats
+    the other as 0 (banks that never buy back)."""
+
+    def _timeline(self, divs, bbs):
+        return pd.DataFrame({
+            "end": [_d(d) for d in (320, 230, 140, 50)],
+            "net_income_q": [10.0, 20.0, 30.0, 40.0],
+            "dividends_q": divs,
+            "buybacks_q": bbs,
+        })
+
+    NAN4 = [float("nan")] * 4
+
+    def test_both_unobserved_total_and_ratio_are_none(self):
+        ttm = compute_ttm_capital_return(self._timeline(self.NAN4, self.NAN4))
+        self.assertIsNone(ttm["total_returned_ttm"])
+        self.assertIsNone(ttm["total_return_ratio_ttm"])
+
+    def test_both_unobserved_shareholder_yield_is_none(self):
+        y = compute_shareholder_yield(
+            self._timeline(self.NAN4, self.NAN4), market_cap=1_000_000.0)
+        self.assertIsNone(y["total_shareholder_yield_pct"],
+                          "unknown capital return rendered as a 0.00% yield")
+        self.assertIsNone(y["dividend_yield_pct"])
+        self.assertIsNone(y["buyback_yield_pct"])
+
+    def test_one_known_side_still_totals_with_zero_for_the_other(self):
+        ttm = compute_ttm_capital_return(
+            self._timeline([5.0, 5.0, 5.0, 5.0], self.NAN4))
+        self.assertEqual(ttm["total_returned_ttm"], 20.0)
+        self.assertEqual(ttm["total_return_ratio_ttm"], 0.2)
+        y = compute_shareholder_yield(
+            self._timeline([5.0, 5.0, 5.0, 5.0], self.NAN4),
+            market_cap=1000.0)
+        self.assertEqual(y["total_shareholder_yield_pct"], 2.0)
 
 
 if __name__ == "__main__":
