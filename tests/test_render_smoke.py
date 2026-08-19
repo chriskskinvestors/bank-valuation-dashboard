@@ -22,6 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 warnings.filterwarnings("ignore")
 
+from tests._streamlit_stub import assert_fixture_columns  # noqa: E402
+
 
 def _install_streamlit_stub():
     """Minimal no-op streamlit so render functions execute headlessly."""
@@ -717,6 +719,8 @@ class TestIncomeStatementRiRendersPopulated(unittest.TestCase):
             (comp_v1.html, self.fs.get_bank_info,
              dl.load_fdic_hist_df,
              crs.get_stored_ri_detail, crs.get_stored_rie_detail) = saved
+        if captured:   # anti-dead-stub guard (see _streamlit_stub)
+            assert_fixture_columns(self, captured[0], [self.HIST_ROW], "Annual")
         return captured
 
     def test_rie_and_fte_render_banner_values(self):
@@ -827,6 +831,8 @@ class TestBalanceSheetRendersPopulated(unittest.TestCase):
         finally:
             (comp_v1.html, st.radio, self.fs.get_bank_info,
              dl.load_fdic_hist_df) = saved
+        if captured:   # anti-dead-stub guard (see _streamlit_stub)
+            assert_fixture_columns(self, captured[0], hist_rows, "Annual")
         return captured
 
     def test_balance_sheet_renders_banner_values(self):
@@ -947,6 +953,8 @@ class TestPerformanceComputedLines(unittest.TestCase):
         finally:
             (comp_v1.html, st.radio, self.fs.get_bank_info,
              dl.load_fdic_hist_df) = saved
+        if captured:   # anti-dead-stub guard (see _streamlit_stub)
+            assert_fixture_columns(self, captured[0], rows, "Quarterly")
         return captured
 
     def test_computed_ratios_match_probed_values(self):
@@ -1010,6 +1018,8 @@ class TestPerformanceComputedLines(unittest.TestCase):
             (comp_v1.html, st.radio, self.fs.get_bank_info,
              dl.load_fdic_hist_df, fh._per_share_for_ends) = saved
         h = captured[0]
+        # Anti-dead-stub guard (see _streamlit_stub).
+        assert_fixture_columns(self, h, [{"REPDTE": "2025-12-31"}], "Annual")
         self.assertIn("2.51", h)           # Basic EPS
         self.assertIn("2.52", h)           # Diluted EPS before amortization
         self.assertIn("963,000,000", h)    # Avg diluted shares
@@ -1146,6 +1156,8 @@ class TestPerformanceDepositCostRendersPopulated(unittest.TestCase):
             (comp_v1.html, st.radio, self.fs.get_bank_info,
              dl.load_fdic_hist_df,
              crs.get_stored_deposit_cost_detail) = saved
+        if captured:   # anti-dead-stub guard (see _streamlit_stub)
+            assert_fixture_columns(self, captured[0], hist_rows, period)
         return captured
 
     def test_quarterly_decumulation_renders_hand_checked_rates(self):

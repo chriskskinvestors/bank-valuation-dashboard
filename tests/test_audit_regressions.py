@@ -1444,7 +1444,13 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
                 else:
                     sys.modules[k] = saved_mods[k]
             importlib.reload(fs)
-        return captured[0] if captured else ""
+        html = captured[0] if captured else ""
+        # Anti-dead-stub guard: the rendered columns must be exactly the
+        # fixture rows, or the load_fdic_hist_df stub above is no longer the
+        # seam the renderer reads and live data leaked in.
+        from tests._streamlit_stub import assert_fixture_columns
+        assert_fixture_columns(self, html, hist_rows, "Quarterly")
+        return html
 
     def test_computed_lines_match_hand_values(self):
         # The Q1-2026 column renders (Quarterly view). Values are asserted in
