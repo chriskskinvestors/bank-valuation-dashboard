@@ -105,9 +105,15 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
     # Non-SEC filers (PBAM class): TBV comes from the bank's own wire
     # earnings release — labeled so the provenance is visible (owner
     # decision 2026-07-16).
-    tbv_label = ("TBV / Share (co. release)"
-                 if row.get("tbvps_source") == "company_release"
-                 else "TBV / Share")
+    # Release-first provenance labels: both the 8-K release path and the wire
+    # release path are the bank's OWN reported figure — say so on the card.
+    def _ps_label(base, src_key):
+        return (f"{base} (co. release)"
+                if row.get(src_key) in ("company_release", "reported_8k")
+                else base)
+
+    tbv_label = _ps_label("TBV / Share", "tbvps_source")
+    bv_label = _ps_label("BV / Share", "bvps_source")
     valuation = [
         ("Last Price", disp("price")),
         ("Change", chg_html),
@@ -116,6 +122,8 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
         ("EPS (TTM)", disp("eps")),
         ("P/TBV", disp("ptbv_ratio")),
         (tbv_label, disp("tbvps")),
+        ("P/B", disp("pb_ratio")),
+        (bv_label, disp("bvps")),
         ("Dividend Yield", disp("dividend_yield")),
     ]
 

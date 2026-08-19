@@ -628,6 +628,94 @@ def reported_tbvps(
     return reported_tbvps_status(cik, reconstructed=reconstructed, bvps=bvps)[0]
 
 
+def extract_reported_bvps_status(
+    ex991_html: bytes,
+    reconstructed: float | None = None,
+    tbvps: float | None = None,
+) -> tuple[float | None, str]:
+    """The bank's OWN reported (tangible-INCLUSIVE) book value per common share
+    from one EX-99.1 document — the BVPS sibling of
+    extract_reported_tbvps_status, sharing its status vocabulary and gates
+    (release-first increment 1, owner directive 2026-08-19).
+
+    Gates (cardinal rule — never emit a plausible-wrong number):
+      • positive per-share magnitude (0 < x < 10 000);
+      • book ≥ tangible when TBVPS is known (EQUALITY allowed — a
+        no-intangibles bank like SFST legitimately prints equal values;
+        rejecting only v < tbvps catches a tangible row mismatched into the
+        book slot);
+      • ±15% vs the reconstruction when it resolved → "ok"/"gate_rejected";
+      • no reconstruction: the in-release TBVPS (caller-passed, else matched
+        from the same document) anchors it; with NOTHING to tie to →
+        "not_disclosed".
+    """
+    rows = _table_rows(ex991_html)
+    if tbvps is None:
+        for cl, nums in rows:
+            # A blank latest-quarter cell must not anchor (audit P3).
+            if _match_tbvps_label(cl) and nums[0] is not None:
+                tbvps = nums[0]
+                break
+    for cl, nums in rows:
+        if not _match_bvps_label(cl):
+            continue
+        v = nums[0]
+        if v is None:
+            return None, "not_disclosed"
+        if not (0 < v < 10_000):
+            return None, "not_disclosed"
+        if tbvps is not None and tbvps > 0 and v < tbvps:
+            return None, "not_disclosed"
+        if reconstructed is not None and reconstructed > 0:
+            if abs(v - reconstructed) / reconstructed >= 0.15:
+                return None, "gate_rejected"
+            return v, "ok"
+        if tbvps is not None and tbvps > 0:
+            return v, "ok"
+        return None, "not_disclosed"
+    return None, "not_disclosed"
+
+
+def reported_bvps_status(
+    cik,
+    reconstructed: float | None = None,
+    tbvps: float | None = None,
+) -> tuple[float | None, str]:
+    """Cached wrapper for extract_reported_bvps_status — the BVPS sibling of
+    reported_tbvps_status (same status vocabulary, same accession+anchor
+    cache discipline, same never-cache-exceptions rule)."""
+    if not cik:
+        return None, "not_disclosed"
+    from data import cache
+
+    f8k = _latest_earnings_8k(cik)
+    if not f8k:
+        return None, "not_disclosed"
+
+    rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
+    tk = f"{tbvps:.4f}" if tbvps is not None else "na"
+    ckey = f"reported_bvps:v1:{f8k['accession']}:{rk}:{tk}"
+    # Accession+anchor-keyed = immutable; no 24h read ceiling.
+    cached = cache.get(ckey, max_age_s=None)
+    if cached is not None:
+        return cached.get("value"), cached.get("status") or "not_disclosed"
+
+    try:
+        html = _fetch_ex991_html(cik)
+        value, status = (extract_reported_bvps_status(
+                             html, reconstructed=reconstructed, tbvps=tbvps)
+                         if html else (None, "not_disclosed"))
+        try:
+            cache.put(ckey, {"value": value, "status": status})
+        except Exception:
+            pass
+        return value, status
+    except Exception as e:
+        print(f"[sec_earnings_8k] reported_bvps failed for cik {cik}: "
+              f"{type(e).__name__}: {e}")
+        return None, "not_disclosed"
+
+
 def reported_tbvps_status(
     cik,
     reconstructed: float | None = None,
