@@ -18,12 +18,26 @@ All expectations hand-computed. Dates are generated relative to today so the
 """
 from __future__ import annotations
 
+import sys
 import unittest
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
-from analysis.capital_return import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# MUST precede the analysis import: analysis.capital_return imports
+# data.sec_client at module load, and without the stub sec_client binds REAL
+# streamlit — whose cache_data memoizes get_latest_fundamentals by cik, so
+# any LATER test module that patches fetch_company_facts and reuses a cik
+# gets this-module-era cached results (test_share_equity_coherence's FSUN
+# fixture was served JPM's share count when composed after this file).
+from tests import _streamlit_stub  # noqa: E402
+
+_streamlit_stub.install()
+
+from analysis.capital_return import (  # noqa: E402
     _derive_quarterly_from_ytd,
     _full_window_sum,
     compute_shareholder_yield,
