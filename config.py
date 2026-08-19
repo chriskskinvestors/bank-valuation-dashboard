@@ -162,6 +162,29 @@ METRICS = [
         "category": "Valuation",
     },
     {
+        # RESOLVED book value per common share — release-first like tbvps
+        # (analysis/valuation._resolve_bvps): the bank's own reported figure
+        # when gated-clean, else the SEC reconstruction, else the wire
+        # release. pb_ratio prices off this same figure. "computed" (not
+        # "sec") is mandatory: non-XBRL banks have no sec value at all.
+        "key": "bvps", "label": "BV/Sh", "source": "computed",
+        "format": "currency", "decimals": 2,
+        "category": "Valuation",
+    },
+    {
+        # Provenance of bvps — same "text"-not-"flag" rationale as
+        # tbvps_source above (AUDIT-2026-07-27 P3).
+        "key": "bvps_source", "label": "BV Src", "source": "computed",
+        "format": "text",
+        "category": "Valuation",
+    },
+    {
+        "key": "pb_ratio", "label": "P/B", "source": "computed",
+        "format": "ratio", "decimals": 2,
+        "color_rule": "lower_better", "thresholds": {"good": 1.0, "warn": 1.8},
+        "category": "Valuation",
+    },
+    {
         "key": "dividend_yield", "label": "Div Yield", "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 3.0, "warn": 1.5},

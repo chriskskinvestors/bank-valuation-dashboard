@@ -780,7 +780,26 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
                   "Common equity tier 1 capital ÷ risk-weighted assets (bank-level)."),
         fdic_card("NPL Ratio", "NCLNLSR", "npl_ratio", "Non-current loans as a percent of total loans."),
         {"label": "TBV/Share", "value": fmt("tbvps"),
-         "calc": make_calc("Tangible BV / share", fmt("tbvps"), entity=entity,
+         # Provenance must match what actually produced the DISPLAYED number
+         # (audit #22 class): when tbvps resolved release-first, the calc
+         # panel previously claimed "SEC filing" and showed a reconstruction
+         # that did not produce the figure on the card.
+         "calc": (make_calc("Tangible BV / share", fmt("tbvps"), entity=entity,
+                            source="Company earnings release (8-K EX-99.1)"
+                                   if actual_metrics.get("tbvps_source") == "reported_8k"
+                                   else "Company earnings release (wire)",
+                            asof="latest earnings release",
+                            unit="$ / share", ref="as reported by the company",
+                            definition=("The bank's own reported tangible book "
+                                        "value per common share, extracted from "
+                                        "its earnings release and cross-checked "
+                                        "before display."),
+                            terms=[{"label": "Reported TBV / share",
+                                    "val": fmt("tbvps")}],
+                            reported=True)
+                  if actual_metrics.get("tbvps_source") in ("reported_8k",
+                                                 "company_release")
+                  else make_calc("Tangible BV / share", fmt("tbvps"), entity=entity,
                            source="SEC filing (10-K/10-Q)", asof=(eq_doc or {}).get("label", "latest filing"),
                            unit="$ / share", ref="(equity − intangibles) ÷ shares",
                            definition="Tangible common equity (equity − intangibles) ÷ shares outstanding.",
@@ -792,7 +811,7 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
                                            f"{_thou(adj/1000) if adj is not None else '—'} ($000)")},
                                   {"label": "Shares outstanding",
                                    "val": (f"{shares:,.0f}" if shares else "—"), "doc": sh_doc}],
-                           op="Tangible common equity ÷ shares")},
+                           op="Tangible common equity ÷ shares"))},
     ]
     _kpi_strip([(c["label"], c["value"], _calc_tooltip(c.get("calc")),
                  (c.get("calc") or {}).get("link")) for c in cards], cols=4)

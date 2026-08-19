@@ -411,14 +411,19 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     prev_close = price_data.get("close")
 
     eps = sec_data.get("eps")
-    bvps = sec_data.get("book_value_per_share")
-    # Company-Reported principle: prefer the bank's OWN reported tangible book
-    # value per common share (from its earnings release) over our reconstruction.
-    # The reconstruction is the FALLBACK when the bank doesn't disclose or the
-    # reported figure fails a sanity gate. See _resolve_tbvps.
+    # Company-Reported principle (release-first, owner directive 2026-08-19):
+    # prefer the bank's OWN reported per-share book values (from its earnings
+    # release) over our reconstruction. The reconstruction is the FALLBACK
+    # when the bank doesn't disclose or the reported figure fails a sanity
+    # gate. TBVPS resolves first (anchored by the RECONSTRUCTED bvps — the
+    # anchor must be independent of the value being resolved), then BVPS
+    # (anchored by the resolved TBVPS: book ≥ tangible).
+    reconstructed_bvps = sec_data.get("book_value_per_share")
     reconstructed_tbvps = sec_data.get("tangible_book_value_per_share")
     tbvps, tbvps_source, tbvps_conflict = _resolve_tbvps(
-        ticker, reconstructed_tbvps, bvps)
+        ticker, reconstructed_tbvps, reconstructed_bvps)
+    bvps, bvps_source, bvps_conflict = _resolve_bvps(
+        ticker, reconstructed_bvps, tbvps)
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
 
@@ -547,6 +552,11 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         # disagree ≥15% — one of them is wrong (FSUN-class). Machine-readable
         # in every metrics snapshot so jobs/monitors can alert on it.
         "tbvps_conflict": tbvps_conflict,
+        # The RESOLVED book value per common share — same release-first
+        # discipline as tbvps (pb_ratio above prices off this same figure).
+        "bvps": bvps,
+        "bvps_source": bvps_source,
+        "bvps_conflict": bvps_conflict,
         # Computed from our own robust TTM dividend-per-share (anchored to the
         # latest period; handles cut/skipped quarters). FMP's dividend figure is
         # ALSO unreliable, so we derive from the filing rather than adopt it.
@@ -665,24 +675,77 @@ def _resolve_tbvps(
             conflict)
 
 
+def _resolve_bvps(
+    ticker: str | None,
+    reconstructed: float | None,
+    tbvps: float | None,
+) -> tuple[float | None, str | None, bool]:
+    """(Book value per common share, source, conflict) — the BVPS sibling of
+    _resolve_tbvps (release-first increment 1, owner directive 2026-08-19).
+    Same source vocabulary and conflict semantics; anchored by the RESOLVED
+    tbvps (book ≥ tangible). Non-SEC / empty-XBRL banks fall back to the wire
+    release's bv_ps under the same 200-day staleness gate."""
+    cik = None
+    conflict = False
+    if ticker:
+        try:
+            from data.bank_mapping import get_cik
+            cik = get_cik(ticker)
+        except Exception:
+            cik = None
+    if cik:
+        try:
+            from data.sec_earnings_8k import reported_bvps_status
+            reported, status = reported_bvps_status(
+                cik, reconstructed=reconstructed, tbvps=tbvps)
+            if reported is not None:
+                return reported, "reported_8k", False
+            if status == "gate_rejected":
+                conflict = True
+                print(f"[valuation] BVPS CONFLICT {ticker}: the release's own "
+                      f"figure disagrees >=15% with reconstruction "
+                      f"{reconstructed} — one of them is wrong; serving the "
+                      f"reconstruction, flagging bvps_conflict")
+        except Exception as e:
+            print(f"[valuation] reported_bvps lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    if reconstructed is None and ticker:
+        try:
+            otc = _otc_release_ps(ticker, "bv_ps")
+            if otc is not None:
+                return otc, "company_release", False
+        except Exception as e:
+            print(f"[valuation] otc bvps lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    return (reconstructed,
+            "reconstructed" if reconstructed is not None else None,
+            conflict)
+
+
 def _otc_tbvps(ticker: str) -> float | None:
     """A non-SEC bank's tangible book value per share from its latest wire
-    earnings release (guarded extraction, band-checked at the source).
-    STALENESS GATE: a release quarter-end older than ~200 days means the
-    bank stopped publishing — pricing today's quote against that TBV drifts,
-    so None (n/a) instead."""
+    earnings release — see _otc_release_ps."""
+    return _otc_release_ps(ticker, "tbv_ps")
+
+
+def _otc_release_ps(ticker: str, key: str) -> float | None:
+    """A non-SEC bank's per-share figure from its latest wire earnings release
+    (guarded extraction, band-checked at the source in data/otc_release +
+    release_metrics/release_ai specs). STALENESS GATE: a release quarter-end
+    older than ~200 days means the bank stopped publishing — pricing today's
+    quote against that figure drifts, so None (n/a) instead."""
     from datetime import date
     from data.otc_release import otc_release_metrics
     val = otc_release_metrics(ticker) or {}
-    tbv = (val.get("metrics") or {}).get("tbv_ps")
+    v = (val.get("metrics") or {}).get(key)
     qend = val.get("qend")
-    if tbv is None or not qend:
+    if v is None or not qend:
         return None
     try:
         age_days = (date.today() - date.fromisoformat(qend)).days
     except ValueError:
         return None
-    return tbv if age_days <= 200 else None
+    return v if age_days <= 200 else None
 
 
 def _compute_capital_return_for_ticker(ticker: str | None, price_data: dict, sec_data: dict) -> dict:

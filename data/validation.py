@@ -209,19 +209,20 @@ def check_coherence_flags(metrics: dict | None,
       where extracted), so this is the alarm WORKING: warning severity,
       visible in the nightly summary without failing the job."""
     findings = []
-    if metrics and metrics.get("tbvps_conflict"):
-        findings.append(Finding(
-            severity="error",
-            field="tbvps",
-            message=(
-                "Release-reported TBVPS and the reconstruction disagree ≥15% "
-                "— one of them is wrong (FSUN class). The reconstruction is "
-                "serving; hand-verify against the release before this bank "
-                "reaches a customer."
-            ),
-            value=metrics.get("tbvps"),
-            source="SEC",
-        ))
+    for key in ("tbvps", "bvps"):
+        if metrics and metrics.get(f"{key}_conflict"):
+            findings.append(Finding(
+                severity="error",
+                field=key,
+                message=(
+                    f"Release-reported {key.upper()} and the reconstruction "
+                    "disagree ≥15% — one of them is wrong (FSUN class). The "
+                    "reconstruction is serving; hand-verify against the "
+                    "release before this bank reaches a customer."
+                ),
+                value=metrics.get(key),
+                source="SEC",
+            ))
     if sec_data and sec_data.get("shares_asof_incoherent"):
         findings.append(Finding(
             severity="warning",
