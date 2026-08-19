@@ -715,6 +715,16 @@ def reported_bvps_status(
               f"{type(e).__name__}: {e}")
         return None, "not_disclosed"
 
+# Extraction-spec version of the reported_tbvps cache key. Bump on any change
+# to the extraction/gating logic — a cached result under the old spec must not
+# serve the old answer forever.
+# v3: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss) —
+#     cached {"value": None} under v2 would otherwise serve the miss forever.
+# v4: value → (value, status); the stored shape gained "status".
+# v5: release-internal tie-out anchor (MBIN) — a v4 None for the no-anchor
+#     case would otherwise serve the miss forever.
+_REPORTED_TBVPS_CKEY_V = "v5"
+
 
 def reported_tbvps_status(
     cik,
@@ -752,12 +762,7 @@ def reported_tbvps_status(
     # reconstruction/bvps is a different question and must not reuse a stale None.
     rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
     bk = f"{bvps:.4f}" if bvps is not None else "na"
-    # v3: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss) —
-    # cached {"value": None} under v2 would otherwise serve the miss forever.
-    # v4: value → (value, status); the stored shape gained "status".
-    # v5: release-internal tie-out anchor (MBIN) — a v4 None for the no-anchor
-    # case would otherwise serve the miss forever.
-    ckey = f"reported_tbvps:v5:{f8k['accession']}:{rk}:{bk}"
+    ckey = f"reported_tbvps:{_REPORTED_TBVPS_CKEY_V}:{f8k['accession']}:{rk}:{bk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling (see above).
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
