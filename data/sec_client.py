@@ -661,6 +661,53 @@ def get_latest_fundamentals(cik: int) -> dict:
         abs(sh - cov) / cov * 100 if sh and cov else None
     )
 
+    # Share/equity COHERENCE guard (the FSUN shape, 2026-08-18). The freshness
+    # guard above prefers the freshest count, but when a filer simply stops
+    # tagging share counts, "freshest" is still quarters old: FSUN's 2026
+    # 10-Qs tag NO count at all, so post-offering 2026-06-30 equity
+    # ($1,837M, ~46.8M true shares) was divided by a count frozen at
+    # 2025-12-31 (27.9M) — TBVPS $58.97 vs the release's $35.16, on screen
+    # for three weeks. A normal filer's newest share evidence is dated AT the
+    # equity period end (balance-sheet tag) or AFTER it (cover page), so
+    # share evidence ending more than a grace period BEFORE the equity date
+    # means no source can be coherent — CARDINAL RULE: n/a, never a
+    # mixed-period division. (Verified 2026-08-18: also PBHC 181d, MCHB 330d,
+    # CFBK ~5y, BYFC ~12y; multi-class filers with per-class-only tags —
+    # FCNCA, RBCAA, CBNA — already resolve no count and are unaffected.)
+    result["shares_asof_incoherent"] = False
+    if result.get("shares_outstanding"):
+        eq_end = (
+            _latest_end_date(facts, "StockholdersEquity")
+            or _latest_end_date(
+                facts,
+                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
+        )
+        share_end = _best_share_evidence_end(facts)
+        if eq_end and share_end and share_end < eq_end:
+            from datetime import date
+            try:
+                gap_days = (date.fromisoformat(eq_end)
+                            - date.fromisoformat(share_end)).days
+            except ValueError:
+                gap_days = None
+            # Exemption: a count served via the weighted-average fallback is
+            # an average-basis compromise the chain already accepts when no
+            # point-in-time count exists — a fresh average must not be nulled
+            # for the staleness of tags it didn't come from.
+            served_is_fresh_wavg = (
+                result.get("shares_outstanding") == _extract_latest_value(
+                    facts, "WeightedAverageNumberOfSharesOutstandingBasic",
+                    max_age_years=1))
+            if (gap_days is not None
+                    and gap_days > _SHARE_COHERENCE_GRACE_DAYS
+                    and not served_is_fresh_wavg):
+                result["shares_outstanding"] = None
+                result["shares_cover_divergence_pct"] = None
+                result["shares_asof_incoherent"] = True
+                print(f"[SEC] share/equity INCOHERENT cik {cik}: newest share "
+                      f"evidence {share_end} is {gap_days}d older than equity "
+                      f"{eq_end} — per-share metrics render n/a")
+
     # Compute derived values
     equity = result.get("book_value_total")
     shares = result.get("shares_outstanding")
@@ -732,6 +779,31 @@ def _val_end(facts: dict, concept: str, max_age_years: int = 1) -> tuple[float |
     if tup is None:
         return None, None
     return tup[0], tup[1]
+
+
+# A normal filer's newest share evidence is dated at/after the equity period
+# end; a positive gap beyond this grace means a newer filing tagged equity but
+# no usable share count (the FSUN shape — its gap was 117 days, so the grace
+# must stay well under a quarter).
+_SHARE_COHERENCE_GRACE_DAYS = 30
+
+
+def _best_share_evidence_end(facts: dict) -> str | None:
+    """Latest end date across the POINT-IN-TIME share-count sources
+    (us-gaap outstanding/issued + dei cover) — the upper bound on how fresh
+    any served period-end count can be. WeightedAverageNumberOfShares…
+    is deliberately EXCLUDED: it is a period average, not evidence that a
+    period-end count exists (FSUN's Q2 10-Q tags a fresh weighted average
+    while every point-in-time count sits two quarters stale — counting it
+    as evidence let the stale count keep dividing fresh equity)."""
+    ends = [
+        _latest_end_date(facts, c)
+        for c in ("CommonStockSharesOutstanding",
+                  "CommonStockSharesIssued")
+    ]
+    ends.append(_latest_dei_share_count(facts)[1])
+    ends = [e for e in ends if e]
+    return max(ends) if ends else None
 
 
 def _latest_dei_share_count(facts: dict) -> tuple[float | None, str | None]:
@@ -1031,6 +1103,44 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
                 **{**result["shares_outstanding"]["source"].__dict__,
                    "notes": "Fallback — using weighted-average shares"}
             )
+
+    # Share/equity COHERENCE guard — mirror of get_latest_fundamentals (the
+    # FSUN shape) so the traced share count matches the DISPLAYED one: when a
+    # filer's newest share evidence predates the equity date beyond the grace
+    # period, no source can be coherent and the display nulls the count — the
+    # trace must show the same n/a with the reason.
+    if result["shares_outstanding"]["value"]:
+        eq_end = (
+            _latest_end_date(facts, "StockholdersEquity")
+            or _latest_end_date(
+                facts,
+                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
+        )
+        share_end = _best_share_evidence_end(facts)
+        served_concept = getattr(
+            result["shares_outstanding"]["source"], "concept", None)
+        if (eq_end and share_end and share_end < eq_end
+                # same weighted-average exemption as the display path
+                and served_concept != "WeightedAverageNumberOfSharesOutstandingBasic"):
+            from datetime import date as _date_cls
+            try:
+                _gap = (_date_cls.fromisoformat(eq_end)
+                        - _date_cls.fromisoformat(share_end)).days
+            except ValueError:
+                _gap = None
+            if _gap is not None and _gap > _SHARE_COHERENCE_GRACE_DAYS:
+                result["shares_outstanding"] = {
+                    "value": None,
+                    "source": Source(
+                        origin="COMPUTED", identifier=str(cik),
+                        concept="shares_outstanding", as_of=share_end,
+                        notes=(f"INCOHERENT with equity date: newest share "
+                               f"evidence ({share_end}) is {_gap} days older "
+                               f"than the equity balance-sheet date ({eq_end}) "
+                               f"— dividing them mixes periods (FSUN class), "
+                               f"so per-share metrics render n/a"),
+                    ),
+                }
 
     # Net income must be TTM to match the DISPLAY path (audit #22): the app
     # serves a trailing-12-month figure (A21 invariant), so tracing the latest
