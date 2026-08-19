@@ -280,6 +280,27 @@ _BVPS_LABELS: frozenset = frozenset({
     "book value per common share",
 })
 
+# Release-INTERNAL tie-out anchor (the MBIN case): when neither a reconstruction
+# nor any book-value-per-share line exists, the release's own non-GAAP
+# reconciliation table often still discloses the two inputs of the printed
+# TBVPS — tangible COMMON equity and ending common shares. Their ratio ties the
+# printed figure out arithmetically. Labels are kept explicitly COMMON: a bare
+# "tangible stockholders' equity" can include preferred and must never anchor a
+# per-COMMON-share figure.
+_TANGIBLE_CE_LABELS: frozenset = frozenset({
+    "tangible common shareholders' equity",
+    "tangible common stockholders' equity",
+    "tangible common equity",
+    "total tangible common equity",
+})
+
+_ENDING_SHARES_LABELS: frozenset = frozenset({
+    "ending common shares",
+    "common shares outstanding",
+    "period end common shares outstanding",
+    "common shares outstanding at period end",
+})
+
 # Trailing qualifier / footnote groups that ride on the SAME line as the figure
 # and must be stripped before matching — a "(non-gaap)" or "(period end)"
 # qualifier, or a short footnote token like "(b)", "(1)", "(a)", "(b)/(f)",
@@ -311,6 +332,38 @@ def _match_tbvps_label(cl: str) -> bool:
 def _match_bvps_label(cl: str) -> bool:
     """True when a cleaned row label denotes (GAAP) book value per COMMON share."""
     return _strip_trailing_qualifiers(cl) in _BVPS_LABELS
+
+
+def _internal_tie_out(rows: list[tuple], v: float) -> bool:
+    """True when the release's OWN tangible-common-equity and ending-common-shares
+    rows arithmetically reproduce the extracted TBVPS `v` within 1% — the MBIN
+    case: no reconstruction (unresolvable preferred) and no book-value-per-share
+    line anywhere, but the reconciliation table prints both inputs of the figure
+    (tangible common shareholders' equity $1,834,473K ÷ 45,938,075 ending common
+    shares = $39.93 ✓).
+
+    The two rows carry unknown, independent scales (equity in $K/$M, shares raw
+    or in thousands), so the ratio is tried at ×1 / ×1e3 / ×1e6 — same plausible
+    set as _detect_scale. The 1% band is far tighter than any cross-scale gap
+    (×1000), so a wrong scale can never tie out; and the tie-out only ever
+    ACCEPTS the release's printed figure, never computes a displayed value."""
+    te = sh = None
+    for cl, nums in rows:
+        core = _strip_trailing_qualifiers(cl)
+        # First row with a non-blank latest-quarter cell wins (a summary-table
+        # variant of the same row can have a blank first column — audit P3).
+        if te is None and core in _TANGIBLE_CE_LABELS \
+                and nums[0] is not None and nums[0] > 0:
+            te = nums[0]
+        if sh is None and core in _ENDING_SHARES_LABELS \
+                and nums[0] is not None and nums[0] > 0:
+            sh = nums[0]
+        if te is not None and sh is not None:
+            break
+    if te is None or sh is None:
+        return False
+    ratio = te / sh
+    return any(abs(ratio * s - v) / v < 0.01 for s in (1.0, 1e3, 1e6))
 
 
 def extract_reported_tbvps(
@@ -359,10 +412,14 @@ def extract_reported_tbvps_status(
     If no reconstruction anchor AND no bvps is passed in, the release's OWN
     reported book value per common share is used as the tangible-<-book anchor
     (the PNC case: reconstruction n/a on unresolvable preferred, but both book
-    and tangible-book per common share are disclosed in the release). Only when
-    NOTHING ties the match — no reconstruction, no passed bvps, no in-release
-    book value — is the raw match rejected. Take the FIRST numeric column
-    (releases lead every table with the most-recent period).
+    and tangible-book per common share are disclosed in the release). Failing
+    that, the release's own reconciliation INPUTS anchor it: tangible common
+    equity ÷ ending common shares must reproduce the figure within 1% (the MBIN
+    case — no BVPS line anywhere, but both inputs printed; _internal_tie_out).
+    Only when NOTHING ties the match — no reconstruction, no passed bvps, no
+    in-release book value, no in-release tie-out — is the raw match rejected.
+    Take the FIRST numeric column (releases lead every table with the
+    most-recent period).
     """
     rows = _table_rows(ex991_html)
     # In-release reported book value per common share, the fallback cross-check
@@ -398,6 +455,12 @@ def extract_reported_tbvps_status(
         # No reconstruction anchor: accept only if it cleared the book-value
         # cross-check (something real to tie to); otherwise nothing anchors it.
         if bvps is not None and bvps > 0:
+            return v, "ok"
+        # Last anchor — the release's own reconciliation inputs (the MBIN case:
+        # unresolvable preferred kills the reconstruction AND the release prints
+        # no book-value-per-share line, but tangible common equity ÷ ending
+        # common shares reproduces the printed figure). See _internal_tie_out.
+        if _internal_tie_out(rows, v):
             return v, "ok"
         return None, "not_disclosed"
     return None, "not_disclosed"
@@ -604,7 +667,9 @@ def reported_tbvps_status(
     # v3: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss) —
     # cached {"value": None} under v2 would otherwise serve the miss forever.
     # v4: value → (value, status); the stored shape gained "status".
-    ckey = f"reported_tbvps:v4:{f8k['accession']}:{rk}:{bk}"
+    # v5: release-internal tie-out anchor (MBIN) — a v4 None for the no-anchor
+    # case would otherwise serve the miss forever.
+    ckey = f"reported_tbvps:v5:{f8k['accession']}:{rk}:{bk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling (see above).
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:

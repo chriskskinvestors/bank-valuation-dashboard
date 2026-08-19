@@ -82,6 +82,22 @@ class TestExtractStatus(unittest.TestCase):
         self.assertIsNone(v)
         self.assertEqual(status, "not_disclosed")
 
+    def test_internal_tie_out_never_bypasses_the_conflict(self):
+        """The release-internal tie-out (the MBIN anchor) is a LAST-resort
+        anchor for the no-reconstruction case, never a second opinion: a clean
+        figure that disagrees ≥15% with a RESOLVED reconstruction stays
+        gate_rejected even when the release's own reconciliation inputs
+        (tangible common equity ÷ ending shares) reproduce it exactly."""
+        with _rows([
+            ("tangible common shareholders' equity", [1614000.0]),
+            ("ending common shares", [45900000.0]),
+            ("tangible book value per share", [35.16, 33.10]),
+        ]):
+            v, status = s8k.extract_reported_tbvps_status(
+                b"<html/>", reconstructed=58.97)
+        self.assertIsNone(v)
+        self.assertEqual(status, "gate_rejected")
+
     def test_value_wrapper_contract_unchanged(self):
         with _rows([("tangible book value per share", [35.16])]):
             self.assertEqual(
