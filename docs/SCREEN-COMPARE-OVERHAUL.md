@@ -84,9 +84,14 @@ Build order (each its own verified, shippable batch):
   recompute via the real engine; validated on real data). Deployed (with B4).
 - **B6** ✅ Compare rebuild (shared scope selector, cohort-vs-display, Screen→Compare
   handoff). Render-verified; push pending B4+B5 green.
-- **B7** — retire `portfolio = []`, point-in-time spec doc, final cleanup. (open)
-
-Saved-screen versioning (the remaining confirmed item) folds into B7.
+- **B7** ✅ CLOSED 2026-08-20. Reconciled against code: the hardcoded
+  `portfolio = []` was already retired by the Bank Groups seed
+  (`data/bank_groups.ensure_portfolio_seed` from `portfolio.json`); the last
+  orphan (`config.DEFAULT_PORTFOLIO`, zero references) removed this pass.
+  Point-in-time spec doc EXISTS and is BUILT (`docs/POINT-IN-TIME-RECONSTRUCTION.md`
+  — v1 pulled forward 2026-06-18, 20-quarter window). Saved-screen versioning
+  BUILT (`data/saved_screens.py` versioned save/load + history,
+  `tests/test_saved_screens.py`, wired in `app.py`).
 
 ## Do-not-touch (other lanes)
 
