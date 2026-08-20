@@ -244,7 +244,7 @@ class TestOtcWrapper(unittest.TestCase):
         self.orl._fetch_story = lambda u: fetches.append(u) or "<p>x</p>"
         # Key version must track data/otc_release.py's current spec version
         # or the seed is invisible and the wrapper re-extracts.
-        self.store["otc_release:v8:PBAM"] = {
+        self.store["otc_release:v9:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",       # stale ⇒ re-check
             "value": {"url": "u1", "metrics": {"nim": 5.18}}}
         val = self.orl.otc_release_metrics("PBAM")
@@ -255,7 +255,7 @@ class TestOtcWrapper(unittest.TestCase):
         self.orl._latest_earnings_pr = lambda t: {
             "title": "x", "url": "u2", "published_at": "2026-07-16 08:00:00"}
         self.orl._fetch_story = lambda u: None
-        self.store["otc_release:v8:PBAM"] = {
+        self.store["otc_release:v9:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",
             "value": {"url": "u1", "metrics": {"nim": 5.0}}}
         val = self.orl.otc_release_metrics("PBAM")

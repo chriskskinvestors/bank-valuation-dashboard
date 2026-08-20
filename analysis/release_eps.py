@@ -167,7 +167,8 @@ def composite_ttm_eps(cik) -> tuple[float | None, str | None, dict | None]:
     """(composite TTM diluted EPS, quarter-end it runs through, components)
     or (None, None, None) whenever any of the four quarters is missing.
 
-    components = {"release": {"qend", "eps", "accession", "url"},
+    components = {"release": {"qend", "eps", "ni_common", "dil_shares",
+                              "accession", "url"},
                   "quarters": {statement label: single-quarter diluted EPS}}
     — provenance for every input, so a served composite is auditable.
     """
@@ -196,7 +197,8 @@ def composite_ttm_eps(cik) -> tuple[float | None, str | None, dict | None]:
 
 def _assemble(cik_i: int, rm: dict, expected: str | None):
     qend = rm.get("qend")
-    rel_eps = (rm.get("metrics") or {}).get("eps_diluted")
+    rel_metrics = rm.get("metrics") or {}
+    rel_eps = rel_metrics.get("eps_diluted")
     if rel_eps is None or not qend:
         return None, None, None
     # STALE-RELEASE GATE: the release must cover the expected most-recent
@@ -255,6 +257,14 @@ def _assemble(cik_i: int, rm: dict, expected: str | None):
     value = rel_eps + sum(quarters.values())
     components = {
         "release": {"qend": qend, "eps": rel_eps,
+                    # Tie-out inputs from the SAME release (may be None —
+                    # analysis/valuation._release_eps_tie_out only speaks
+                    # when both are present): NI applicable to common in
+                    # raw dollars, weighted average diluted shares as the
+                    # raw PRINTED count (unknown scale; the tie-out tries
+                    # ×1/×1e3/×1e6).
+                    "ni_common": rel_metrics.get("ni_common"),
+                    "dil_shares": rel_metrics.get("dil_shares"),
                     "accession": rm.get("accession"), "url": rm.get("url")},
         "quarters": quarters,
         "quarter_sources": sources,

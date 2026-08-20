@@ -476,6 +476,32 @@ _TABLE_SPECS = {
     "total_revenue": (r"(?:total revenues?(?:, net of interest expense)?"
                       r"|net revenues?\s*[-–—]\s*reported)"
                       r"\s*(?:\(\d\))?\s*$", "$K", (5e6, 100e9)),
+    # EPS tie-out inputs (analysis/valuation._release_eps_tie_out): net
+    # income applicable to common ÷ weighted average diluted shares from the
+    # SAME release must reproduce eps_diluted. NI is "$K" (scale-sniffed
+    # like total_revenue; no stated unit → refused). The share count is "#":
+    # the RAW printed value — share rows routinely carry a different
+    # magnitude than the table's dollar unit ("dollars in thousands, except
+    # per share data" says nothing about the share row), so a sniffed scale
+    # would be a guess. The tie-out instead tries the count at ×1/×1e3/×1e6
+    # (the sec_earnings_8k._internal_tie_out discipline) and its band is far
+    # tighter than any cross-scale gap, so an unknown scale can never fake a
+    # tie. Both labels are end-anchored like total_revenue so "…per diluted
+    # share" / basic-share variants never merge in; a bare "Diluted" sub-row
+    # under a "Weighted average shares outstanding:" header has no anchor
+    # and is deliberately unreachable (coverage loss, never a wrong row).
+    "ni_common": (r"net income(?: \(loss\))? "
+                  r"(?:applicable|available|attributable) to common "
+                  r"(?:(?:share|stock)holders['’]?|shares)"
+                  r"\s*(?:\(\d\))?\s*$", "$K", (1e5, 60e9)),
+    "dil_shares": (r"(?:(?:weighted[- ])?average (?:number of )?(?:common )?"
+                   r"shares(?: outstanding)?\s*[-–—:]\s*diluted"
+                   r"|diluted (?:weighted[- ])?average (?:common )?shares"
+                   r"(?: outstanding)?"
+                   r"|(?:weighted[- ])?average diluted (?:common )?shares"
+                   r"(?: outstanding)?)"
+                   r"\s*(?:\((?:in )?(?:thousands|millions|\d)\))?\s*$",
+                   "#", (10.0, 1e12)),
 }
 
 # Rows whose label is an "Adjusted …" variant are normally refused (the
@@ -494,7 +520,13 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
     cands: dict = {k: [] for k in {**_TABLE_SPECS, **_ADJ_TABLE_SPECS}}
     for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
         rows = _table_rows(thtml)
-        qends, hdr_i, n_change = None, None, 0
+        # span_i: the row where a "Three Months Ended | Six Months Ended"
+        # SPAN banner would sit for this table's header shape — directly
+        # above the period row for a single-row header, but above the MONTH
+        # row for a split month/year header (ONB 2Q26: span, then "June 30,"
+        # cells, then years — three rows; found 2026-08-20 wiring the EPS
+        # tie-out, whose NI/share rows live in exactly those tables).
+        qends, hdr_i, span_i, n_change = None, None, None, 0
         for i, cells in enumerate(rows[:8]):
             found = [q for c in cells if (q := _period_qend(c))]
             if len(found) >= 2:
@@ -509,6 +541,7 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                         break
                     found, i = nxt, i + 1
                 qends, hdr_i = found, i
+                span_i = hdr_i - 1
                 # Trailing change columns on the header row itself ("$ O/(U)"
                 # / "O/(U) %", "QoQ%", "% Change") — counted so value rows
                 # that carry the change cells still align. Any trailing
@@ -539,6 +572,7 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                         qends = [_date(y, m, _QE_MONTH[m]).isoformat()
                                  for m, y in zip(months, years)]
                         hdr_i, n_change = i + 1, len(extras)
+                        span_i = i - 1        # span banner above the months
                         break
             # TCBI-style split: ordinal-quarter row ("1st Quarter | 4th
             # Quarter | …") over a years row — pair 1:1 like months. A
@@ -561,6 +595,7 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                             mo, dy = _Q_END[_QNUM[om.group(1).lower()]]
                             qends.append(_date(y, mo, dy).isoformat())
                         hdr_i, n_change = i + 1, len(extras)
+                        span_i = i - 1
                         break
             # CFR-style INVERTED split: a years row ("2026 | 2025") ABOVE the
             # ordinal-quarter row ("1st Qtr | 4th | 3rd | 2nd | 1st Qtr").
@@ -587,25 +622,29 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                             mo, dy = _Q_END[q]
                             qends.append(_date(years[ri], mo, dy).isoformat())
                         hdr_i = i + 1
+                        span_i = i - 1
                         break
         if not qends:
             continue                      # no period row → skip table
         if qends.count(expected_qend) == 1:
             col = qends.index(expected_qend)
-        elif qends.count(expected_qend) > 1 and hdr_i:
+        elif qends.count(expected_qend) > 1 and span_i is not None \
+                and span_i >= 0:
             # Combined "Three Months Ended | Six Months Ended" statement
             # header repeats the quarter-end date under BOTH spans (NPB
             # 2026-07-21: "June 30, 2026 | Mar 31, 2026 | June 30, 2025 |
             # June 30, 2026") — the bare count!=1 refusal threw away the
             # whole income statement, so EPS/revenue never table-filled and
             # FMP's junk $0.09 stood against the release's $0.60. The span
-            # row directly above the period row PROVES the layout: a
-            # quarter-span marker strictly before a YTD-span marker means
-            # the quarter block leads, so the FIRST occurrence of the
-            # expected quarter-end is the quarter column (YTD twins can
-            # only sit in the trailing block). Any other arrangement keeps
-            # the refusal — never guessed.
-            above = " ".join(c for c in rows[hdr_i - 1] if c).lower()
+            # row (span_i — header-shape-aware: directly above a single-row
+            # period header, above the MONTH row of a split month/year
+            # header) PROVES the layout: a quarter-span marker strictly
+            # before a YTD-span marker means the quarter block leads, so
+            # the FIRST occurrence of the expected quarter-end is the
+            # quarter column (YTD twins can only sit in the trailing
+            # block). Any other arrangement keeps the refusal — never
+            # guessed.
+            above = " ".join(c for c in rows[span_i] if c).lower()
             q_m = re.search(r"three months? ended|quarters? ended", above)
             y_m = re.search(r"(?:six|nine|twelve) months? ended", above)
             if not (q_m and y_m and q_m.start() < y_m.start()):
@@ -645,6 +684,10 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                     # entirely — the specific label + band disambiguate; only
                     # an explicit $ marks the row as a dollar line).
                     continue
+                elif kind == "#" and ("$" in row_text or "%" in row_text):
+                    # A share COUNT row carries neither symbol; a $/% on the
+                    # row marks a dollar or ratio line mismatched into it.
+                    continue
                 else:
                     v = vals[col]
                 if band[0] <= v <= band[1]:
@@ -676,7 +719,12 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
     out = {}
     for key, vs in cands.items():
         kind = {**_TABLE_SPECS, **_ADJ_TABLE_SPECS}[key][1]
-        if kind == "$K":
+        if kind in ("$K", "#"):
+            # Relative agreement for magnitudes/counts. For "#" this is
+            # deliberately scale-BLIND: two tables printing the share count
+            # at different magnitudes (thousands vs raw) disagree and refuse
+            # — the tie-out then falls back to the median gate alone, a
+            # graceful degradation, never a scale guess.
             tol = max(_AGREE_USD, 0.002 * max(vs)) if vs else 0
         else:
             tol = _AGREE_USD if kind == "$" else _AGREE_PCT
@@ -863,7 +911,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v17:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v18:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -884,6 +932,18 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v18 (2026-08-20): EPS tie-out input rows — net income applicable to
+    # common ("$K", scale-sniffed) + weighted average diluted shares ("#",
+    # raw printed count) so analysis/valuation._release_eps_tie_out can
+    # verify the release quarter's extracted EPS arithmetically (NI ÷
+    # shares, scale-agnostic — the sec_earnings_8k._internal_tie_out
+    # discipline). Plus the span-row fix the ONB ground-truth check forced:
+    # a split month/year header under a "Three|Six Months Ended" banner put
+    # the banner TWO rows above the year row, so the duplicate-quarter
+    # guard looked at the month row, found no span markers, and skipped
+    # every such table (ONB's tables were prose-only before this). Forces a
+    # universe-wide re-extraction; warmed by poll-events / the Results
+    # board as usual.
     # v17 (2026-08-02): TBV/share dollar-change-then-level form —
     # "increased $1.67, or 15.6%, to $12.38" (FSRL 2Q26). Both existing
     # patterns' [^$%] connectors stop at the change amount, so the value
@@ -903,7 +963,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v17:{int(cik)}"
+    key = f"release_metrics:v18:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
