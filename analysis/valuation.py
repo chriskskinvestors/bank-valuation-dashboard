@@ -562,8 +562,10 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         # tbvps_source/bvps_source).
         "eps": eps,
         "eps_source": eps_source,
-        # True when the composite assembled AND disagrees with the XBRL TTM
-        # >=15% — one of them IS wrong; the XBRL TTM serves, flagged.
+        # True when the composite assembled, disagrees with the XBRL TTM
+        # >=15%, AND the release quarter failed the plausibility gate (a
+        # genuine YoY swing passes the gate and serves as release_ttm) —
+        # one of them IS wrong; the XBRL TTM serves, flagged.
         "eps_conflict": eps_conflict,
         "pb_ratio": compute_pb_ratio(price, bvps),
         "ptbv_ratio": compute_ptbv_ratio(price, tbvps),
@@ -773,10 +775,22 @@ def _resolve_eps(
     from data/sec_client (sec_data["eps"], TTM-or-None invariant) — the
     pipeline-derived figure, named consistently with tbvps/bvps.
 
-    conflict=True: the composite ASSEMBLED (all four quarters, fresh
-    release) yet disagrees with the XBRL TTM >=15% — one of them IS wrong.
-    The XBRL TTM serves (the longer-standing anchor), flagged via
-    eps_conflict so validation pages instead of a silent pick (FSUN lesson).
+    conflict semantics: the composite ASSEMBLED (all four quarters, fresh
+    release) yet disagrees with the XBRL TTM >=15%. The two TTMs cover the
+    SAME three prior quarters, so in-window the disagreement reduces to the
+    release quarter vs the year-ago quarter the stale XBRL TTM still
+    carries — either a GENUINE YoY earnings swing (ONB 2Q26,
+    Bremer-merger quarter: composite 2.26 vs stale XBRL 1.95) or a
+    mis-extracted release quarter. A bare TTM band can't tell them apart
+    and used to serve the stale figure exactly when earnings moved most,
+    so the RELEASE QUARTER itself is gated for plausibility
+    (_release_quarter_plausible): pass -> the fresher composite serves
+    even beyond the band; fail -> the XBRL TTM serves (the
+    longer-standing anchor), flagged via eps_conflict so validation pages
+    instead of a silent pick (FSUN lesson). NOTE the gate's assumption:
+    the three shared quarters are the bank's own filed CR statement values
+    (or the same XBRL construction the anchor uses), so a shared-quarter
+    error is common-mode and the release quarter is the only free variable.
 
     PERF GUARD (screen build: 440 banks, release_metrics has no warm path
     there): the composite is only ATTEMPTED inside the window where it can
@@ -793,11 +807,12 @@ def _resolve_eps(
         except Exception:
             cik = None
     composite = None
+    components = None
     if cik:
         try:
             if _release_newer_than_filings(cik, sec_as_of):
                 from analysis.release_eps import composite_ttm_eps
-                composite, _, _ = composite_ttm_eps(cik)
+                composite, _, components = composite_ttm_eps(cik)
         except Exception as e:
             print(f"[valuation] composite eps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
@@ -809,14 +824,54 @@ def _resolve_eps(
                 and abs(composite - reconstructed)
                 / abs(reconstructed) < 0.15):
             return composite, "release_ttm", False
+        if _release_quarter_plausible(components):
+            print(f"[valuation] EPS swing accepted {ticker}: composite TTM "
+                  f"{composite} is >=15% from the stale XBRL TTM "
+                  f"{reconstructed}, but the release quarter is plausible "
+                  f"against the shared quarters — genuine YoY swing, "
+                  f"serving the composite")
+            return composite, "release_ttm", False
         conflict = True
         print(f"[valuation] EPS CONFLICT {ticker}: release-anchored composite "
               f"TTM {composite} disagrees >=15% with the XBRL TTM "
-              f"{reconstructed} — one of them is wrong; serving the XBRL TTM, "
-              f"flagging eps_conflict")
+              f"{reconstructed} and the release quarter failed the "
+              f"plausibility gate — one of them is wrong; serving the XBRL "
+              f"TTM, flagging eps_conflict")
     return (reconstructed,
             "reconstructed" if reconstructed is not None else None,
             conflict)
+
+
+# Generous magnitude band for the release quarter vs the median shared
+# quarter: wide enough that any real YoY swing passes (a merger quarter, a
+# one-time charge/recovery), far too tight for the mis-extraction classes
+# (a YTD-as-quarter grab on an annual column, an equity total in the EPS
+# slot — 10x-1000x off).
+_REL_Q_MULT = (0.25, 4.0)
+
+
+def _release_quarter_plausible(components: dict | None) -> bool:
+    """True when the composite's release-quarter EPS is plausible as a REAL
+    quarter for this bank: its magnitude within _REL_Q_MULT of the median of
+    the three prior quarters both TTMs share (the composite's provenance
+    components — analysis/release_eps). Those shared quarters cancel out of
+    the composite-vs-XBRL disagreement, so this gates the one figure the two
+    sides actually dispute. Anything missing or a zero median -> False (the
+    conservative XBRL-serves + eps_conflict path), never a guess. Magnitudes,
+    not signed ratios: a genuine swing may cross zero (loss quarter -> merger
+    recovery), and the mis-extraction classes this exists to catch are
+    magnitude errors."""
+    if not isinstance(components, dict):
+        return False
+    rel = (components.get("release") or {}).get("eps")
+    quarters = list((components.get("quarters") or {}).values())
+    if rel is None or len(quarters) != 3 or any(q is None for q in quarters):
+        return False
+    median = sorted(quarters)[1]
+    if median == 0:
+        return False
+    ratio = abs(rel) / abs(median)
+    return _REL_Q_MULT[0] <= ratio <= _REL_Q_MULT[1]
 
 
 def _release_newer_than_filings(cik, sec_as_of) -> bool:
