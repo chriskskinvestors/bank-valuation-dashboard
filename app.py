@@ -246,7 +246,7 @@ if section == "Screen & Compare":
               padding:6px 16px;cursor:pointer;border-bottom:2px solid transparent;
               border-radius:0;transition:background .12s,border-color .12s;}
           .st-key-sc_subnav div[role="radiogroup"]>label:hover{background:var(--bg-hover);}
-          .st-key-sc_subnav div[role="radiogroup"]>label>div:first-of-type{
+          .st-key-sc_subnav div[role="radiogroup"]>label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])){
               display:none !important;}
           .st-key-sc_subnav div[role="radiogroup"]>label p{font-size:0.95rem;
               color:var(--text-secondary);font-weight:500;}
