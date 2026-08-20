@@ -93,6 +93,38 @@ class TestEarningsCalendarNonBlocking(unittest.TestCase):
         self._patch_cache(None)
         self.assertFalse(self.est.earnings_calendar_available())
 
+    # ── AUDIT-2026-07-02 #34, agenda tail ─────────────────────────────
+    # The upcoming-agenda tab blends three legs (yfinance snapshot / FMP
+    # window / IR-PR call pipeline). earnings_agenda_sources_down decides
+    # its empty state: True only when ALL legs are down (outage → render
+    # "unavailable"), False when any leg is up (empty agenda is genuine).
+
+    def test_agenda_all_sources_down_is_unavailable(self):
+        # FMP fetch failed (None) + call pipeline empty + no snapshot →
+        # outage: the agenda must NOT claim "no upcoming bank earnings".
+        self._patch_cache(None)
+        self.assertTrue(self.est.earnings_agenda_sources_down(None, {}))
+
+    def test_agenda_one_source_up_empty_is_genuine(self):
+        # At least one leg up + zero rows → the honest "no upcoming" message
+        # (never the unavailable state). Each leg alone must clear it:
+        # (a) snapshot exists (even empty) — yfinance leg up
+        self._patch_cache({"cached_at": "2026-06-13T08:00:00", "guard": 1,
+                           "value": []})
+        self.assertFalse(self.est.earnings_agenda_sources_down(None, {}))
+        # (b) FMP window fetch succeeded (even with zero rows) — FMP leg up
+        self._patch_cache(None)
+        self.assertFalse(self.est.earnings_agenda_sources_down([], {}))
+        # (c) call pipeline produced entries — call leg up
+        self.assertFalse(self.est.earnings_agenda_sources_down(
+            None, {"WAL": {"call_time": "12:00 PM ET"}}))
+
+    def test_agenda_check_never_triggers_live_build(self):
+        # Same non-blocking contract as earnings_calendar_available: a pure
+        # presence read (setUp fails the test if the live builder runs).
+        self._patch_cache(None)
+        self.est.earnings_agenda_sources_down(None, {})
+
     def test_refresh_helper_does_build_and_persist(self):
         # The background helper IS allowed to build; verify it persists the
         # served shape.

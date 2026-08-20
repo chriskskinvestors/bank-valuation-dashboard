@@ -1347,6 +1347,7 @@ def _render_earnings_calendar(watchlist: list[str]):
                 today.isoformat(), (today + timedelta(days=horizon_days)).isoformat())
         except Exception:
             fmp_cal = None
+        calls, agenda = {}, []
         try:
             from data import earnings_call as _ecall
             calls = _ecall.merged_call_info()
@@ -1360,7 +1361,16 @@ def _render_earnings_calendar(watchlist: list[str]):
                 "shortly.")
         return
     if not agenda:
-        st.info("No upcoming bank earnings found in the next 75 days.")
+        # An empty agenda is honest ONLY if at least one of its three source
+        # legs (yfinance snapshot / FMP window / IR-PR call pipeline) is up.
+        # All three down is an outage — "no upcoming earnings" would be a
+        # confident wrong answer (AUDIT-2026-07-02 #34, agenda tail).
+        from data.estimates import earnings_agenda_sources_down
+        if earnings_agenda_sources_down(fmp_cal, calls):
+            st.info("Earnings calendar is temporarily unavailable. Please try "
+                    "again shortly.")
+        else:
+            st.info("No upcoming bank earnings found in the next 75 days.")
         return
 
     all_rows = [r for b in agenda for r in b["rows"]]

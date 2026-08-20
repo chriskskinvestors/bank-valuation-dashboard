@@ -459,6 +459,26 @@ class TestPastDueLoansNotAssets(unittest.TestCase):
         self.assertNotAlmostEqual(float(df["past_due_30_89_pct"].iloc[0]),
                                   10_000 / 380_000 * 100, places=3)
 
+    def test_peer_metric_columns_use_loan_fields(self):
+        """#32's follow-up surface (owner call 2026-08-20): the peer-comparison
+        dollar columns past_due_30_89/past_due_90 map to past-due LOANS
+        (P3LNLS/P9LNLS), not total-asset past-due, and convert FDIC $thousands
+        at the boundary."""
+        from config import METRICS
+        by_key = {m["key"]: m for m in METRICS}
+        self.assertEqual(by_key["past_due_30_89"]["fdic_field"], "P3LNLS")
+        self.assertEqual(by_key["past_due_90"]["fdic_field"], "P9LNLS")
+
+    def test_peer_metric_values_flow_from_loan_fields_in_raw_dollars(self):
+        from analysis.metrics import build_bank_metrics
+        fdic = {"REPDTE": "2025-12-31",
+                "P3LNLS": 8_000, "P9LNLS": 2_000,       # $thousands (FDIC)
+                "P3ASSET": 10_000, "P9ASSET": 3_000}    # must NOT be picked
+        row = build_bank_metrics("X", fdic, {}, {"price": None}, [])
+        # 8,000 $K -> $8.0M raw dollars (thousands conversion at the boundary)
+        self.assertEqual(row.get("past_due_30_89"), 8_000_000)
+        self.assertEqual(row.get("past_due_90"), 2_000_000)
+
 
 class TestA19FedFunds(unittest.TestCase):
     """Quarters beyond the static table derive from FRED instead of vanishing."""

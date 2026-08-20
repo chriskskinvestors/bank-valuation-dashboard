@@ -74,8 +74,9 @@ if [[ -n "${MISSING}" ]]; then
     exit 1
 fi
 # OPTIONAL secrets — mounted if present, skipped silently otherwise (the
-# external-access gate stays dormant until the secret exists).
-for SECRET_NAME in external-access-password; do
+# external-access gate stays dormant until the secret exists; census-api-key
+# stays dormant until the owner creates it from the api.census.gov signup).
+for SECRET_NAME in external-access-password census-api-key; do
     if gcloud secrets describe "${SECRET_NAME}" --quiet >/dev/null 2>&1; then
         ENV_VAR=$(echo "${SECRET_NAME}" | tr '[:lower:]-' '[:upper:]_')
         SECRETS_ARG="${SECRETS_ARG:+${SECRETS_ARG},}${ENV_VAR}=${SECRET_NAME}:latest"

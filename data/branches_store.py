@@ -35,9 +35,14 @@ Provides:
   • get_branches_by_state(s)     — query for the new geo UI view
   • get_branches_by_msa(m)       — query
   • get_branch_counts_by_ticker() — quick coverage check
+  • haversine_miles(...)         — pure great-circle distance
+  • get_nearest_branches(...)    — other-bank branches nearest a point
+  • get_branch_competitors(...)  — competitor branches within a radius of
+                                   each subject-bank branch
 """
 
 from __future__ import annotations
+import math
 
 import pandas as pd
 
@@ -484,3 +489,243 @@ def get_market_participants(cert: int, kind: str = "county",
         ORDER BY b.{key}, SUM(b.deposits) DESC
     """
     return _q_to_df(sql, params)
+
+
+def has_branches(cert: int, year: int | None = None) -> bool:
+    """True when the store holds at least one branch row for this cert
+    (optionally restricted to a survey year)."""
+    params: dict = {"cert": int(cert)}
+    sql = "SELECT COUNT(*) AS n FROM branches WHERE cert = :cert"
+    if year:
+        sql += " AND year = :year"
+        params["year"] = int(year)
+    df = _q_to_df(sql, params)
+    return bool(int(df["n"].iloc[0])) if not df.empty else False
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Geo helpers (Branch Proximity / Competitors)
+# ──────────────────────────────────────────────────────────────────────────
+
+_EARTH_RADIUS_MILES = 3958.7613          # mean Earth radius (6371.0088 km)
+_MILES_PER_DEG_LAT = _EARTH_RADIUS_MILES * math.pi / 180.0   # ≈ 69.0934
+
+
+def haversine_miles(lat1: float, lng1: float,
+                    lat2: float, lng2: float) -> float:
+    """Great-circle distance in miles between two (lat, lng) points, in
+    degrees. Pure spherical haversine on the mean Earth radius."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lng2 - lng1)
+    a = (math.sin(dphi / 2.0) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2.0) ** 2)
+    return 2.0 * _EARTH_RADIUS_MILES * math.asin(math.sqrt(min(1.0, a)))
+
+
+def _bbox(lat: float, lng: float, radius_miles: float
+          ) -> tuple[float, float, float, float]:
+    """(lat_min, lat_max, lng_min, lng_max) box CONTAINING the radius circle
+    around (lat, lng). Longitude width scales by 1/cos(lat) (clamped away
+    from the poles) and the whole box is inflated 0.5% so the SQL prefilter
+    only ever over-covers — it must never drop a point inside the radius;
+    the exact haversine filter in Python does the final cut."""
+    r = radius_miles * 1.005
+    dlat = r / _MILES_PER_DEG_LAT
+    coslat = max(math.cos(math.radians(lat)), 0.01)
+    dlng = r / (_MILES_PER_DEG_LAT * coslat)
+    return lat - dlat, lat + dlat, lng - dlng, lng + dlng
+
+
+def _count_missing_coords(cert: int, year: int) -> int:
+    """Other-bank rows in the survey year with no usable lat/lng anywhere in
+    the store — a coverage figure: these rows cannot be evaluated for
+    distance and are EXCLUDED from geo results, never treated as far away."""
+    df = _q_to_df(
+        "SELECT COUNT(*) AS n FROM branches "
+        "WHERE year = :year AND cert != :cert "
+        "  AND (lat IS NULL OR lng IS NULL)",
+        {"year": int(year), "cert": int(cert)},
+    )
+    return int(df["n"].iloc[0]) if not df.empty else 0
+
+
+def get_nearest_branches(cert: int, lat: float, lng: float,
+                         limit: int = 25, max_miles: float = 25.0,
+                         year: int | None = None) -> dict:
+    """Nearest OTHER-bank branches to a point, latest survey year by default.
+
+    Returns a dict:
+      branches         — DataFrame of branch rows (all `branches` columns)
+                         + `distance_miles`, nearest first, at most `limit`
+                         rows within `max_miles`. Empty (no columns
+                         guaranteed) when nothing matches.
+      n_missing_coords — store-wide count of other-bank rows in the year
+                         lacking lat/lng (excluded from the search — honest
+                         coverage, see _count_missing_coords).
+      year             — survey year used; None (with empty result) when
+                         the store is empty.
+
+    SQL does a bounding-box prefilter (never a national scan); exact
+    haversine + radius cut happen in Python.
+    """
+    if year is None:
+        year = get_latest_year()
+    if year is None:
+        return {"branches": pd.DataFrame(), "n_missing_coords": 0,
+                "year": None}
+    lat_min, lat_max, lng_min, lng_max = _bbox(lat, lng, max_miles)
+    cand = _q_to_df(
+        """
+        SELECT * FROM branches
+        WHERE year = :year AND cert != :cert
+          AND lat IS NOT NULL AND lng IS NOT NULL
+          AND lat BETWEEN :lat_min AND :lat_max
+          AND lng BETWEEN :lng_min AND :lng_max
+        """,
+        {"year": int(year), "cert": int(cert),
+         "lat_min": lat_min, "lat_max": lat_max,
+         "lng_min": lng_min, "lng_max": lng_max},
+    )
+    n_missing = _count_missing_coords(cert, year)
+    if cand.empty:
+        return {"branches": cand, "n_missing_coords": n_missing,
+                "year": int(year)}
+    cand = cand.assign(distance_miles=[
+        haversine_miles(lat, lng, float(r.lat), float(r.lng))
+        for r in cand.itertuples(index=False)
+    ])
+    out = (cand[cand["distance_miles"] <= max_miles]
+           .sort_values("distance_miles")
+           .head(int(limit))
+           .reset_index(drop=True))
+    return {"branches": out, "n_missing_coords": n_missing,
+            "year": int(year)}
+
+
+_COMPETITOR_PAIR_COLS = [
+    "subj_brnum", "subj_branch_name", "subj_address", "subj_city",
+    "subj_state", "subj_lat", "subj_lng", "subj_deposits",
+    "cert", "brnum", "ticker", "bank_name", "branch_name", "address",
+    "city", "state", "zip", "deposits", "lat", "lng", "serv_type",
+    "distance_miles",
+]
+
+
+def get_branch_competitors(cert: int, radius_miles: float = 5.0,
+                           year: int | None = None) -> dict:
+    """Competitor branches within `radius_miles` of EACH subject-bank branch.
+
+    Returns a dict:
+      pairs            — flat DataFrame, one row per (subject branch,
+                         competitor branch) pair within the radius; columns
+                         _COMPETITOR_PAIR_COLS: subject branch keyed by the
+                         subj_* prefix, competitor branch columns unprefixed,
+                         plus distance_miles. Sorted by (subj_brnum,
+                         distance_miles) — the UI groups on subj_brnum.
+      n_subject_branches       — subject branch rows in the year
+      n_subject_missing_coords — subject branches lacking lat/lng (excluded
+                                 as search centers, counted honestly)
+      n_competitor_missing_coords — other-bank rows in the year lacking
+                                 lat/lng (excluded, counted)
+      year             — survey year used
+      reason           — why pairs is empty when it is, else None
+
+    One SQL fetch prefiltered to the union bounding box of the subject's
+    branch circles (small for a regional bank; approaches the footprint for
+    a national one — never an unconditional national scan), then per-branch
+    bounding-box + exact haversine refinement in Python.
+    """
+    empty = pd.DataFrame(columns=_COMPETITOR_PAIR_COLS)
+    if year is None:
+        year = get_latest_year()
+    if year is None:
+        return {"pairs": empty, "n_subject_branches": 0,
+                "n_subject_missing_coords": 0,
+                "n_competitor_missing_coords": 0,
+                "year": None, "reason": "branches store is empty"}
+    subj = _q_to_df(
+        "SELECT * FROM branches WHERE cert = :cert AND year = :year",
+        {"cert": int(cert), "year": int(year)},
+    )
+    n_missing_comp = _count_missing_coords(cert, year)
+    if subj.empty:
+        return {"pairs": empty, "n_subject_branches": 0,
+                "n_subject_missing_coords": 0,
+                "n_competitor_missing_coords": n_missing_comp,
+                "year": int(year),
+                "reason": f"no SOD branches for cert {int(cert)} "
+                          f"in {int(year)}"}
+    with_coords = subj[subj["lat"].notna() & subj["lng"].notna()]
+    n_subj_missing = len(subj) - len(with_coords)
+    if with_coords.empty:
+        return {"pairs": empty, "n_subject_branches": len(subj),
+                "n_subject_missing_coords": n_subj_missing,
+                "n_competitor_missing_coords": n_missing_comp,
+                "year": int(year),
+                "reason": "no subject branches with coordinates"}
+    boxes = [
+        (float(r.brnum), _bbox(float(r.lat), float(r.lng), radius_miles))
+        for r in with_coords.itertuples(index=False)
+    ]
+    lat_min = min(b[1][0] for b in boxes)
+    lat_max = max(b[1][1] for b in boxes)
+    lng_min = min(b[1][2] for b in boxes)
+    lng_max = max(b[1][3] for b in boxes)
+    cand = _q_to_df(
+        """
+        SELECT * FROM branches
+        WHERE year = :year AND cert != :cert
+          AND lat IS NOT NULL AND lng IS NOT NULL
+          AND lat BETWEEN :lat_min AND :lat_max
+          AND lng BETWEEN :lng_min AND :lng_max
+        """,
+        {"year": int(year), "cert": int(cert),
+         "lat_min": lat_min, "lat_max": lat_max,
+         "lng_min": lng_min, "lng_max": lng_max},
+    )
+    rows: list[dict] = []
+    if not cand.empty:
+        for s in with_coords.itertuples(index=False):
+            s_lat, s_lng = float(s.lat), float(s.lng)
+            b_lat_min, b_lat_max, b_lng_min, b_lng_max = _bbox(
+                s_lat, s_lng, radius_miles)
+            near = cand[cand["lat"].between(b_lat_min, b_lat_max)
+                        & cand["lng"].between(b_lng_min, b_lng_max)]
+            for c in near.itertuples(index=False):
+                d = haversine_miles(s_lat, s_lng, float(c.lat), float(c.lng))
+                if d > radius_miles:
+                    continue
+                rows.append({
+                    "subj_brnum": int(s.brnum),
+                    "subj_branch_name": s.branch_name,
+                    "subj_address": s.address,
+                    "subj_city": s.city,
+                    "subj_state": s.state,
+                    "subj_lat": s_lat,
+                    "subj_lng": s_lng,
+                    "subj_deposits": s.deposits,
+                    "cert": int(c.cert),
+                    "brnum": int(c.brnum),
+                    "ticker": c.ticker,
+                    "bank_name": c.bank_name,
+                    "branch_name": c.branch_name,
+                    "address": c.address,
+                    "city": c.city,
+                    "state": c.state,
+                    "zip": c.zip,
+                    "deposits": c.deposits,
+                    "lat": float(c.lat),
+                    "lng": float(c.lng),
+                    "serv_type": c.serv_type,
+                    "distance_miles": d,
+                })
+    pairs = (pd.DataFrame(rows, columns=_COMPETITOR_PAIR_COLS)
+             .sort_values(["subj_brnum", "distance_miles"])
+             .reset_index(drop=True))
+    return {"pairs": pairs, "n_subject_branches": len(subj),
+            "n_subject_missing_coords": n_subj_missing,
+            "n_competitor_missing_coords": n_missing_comp,
+            "year": int(year),
+            "reason": None if rows else
+            f"no competitor branches within {radius_miles} miles"}

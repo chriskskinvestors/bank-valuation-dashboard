@@ -263,13 +263,18 @@ def _branch_competitors(t, ctx):
     render_branch_competitors(t)
 
 
+# Proximity + Merger Planning resolve to the DEDICATED modules (merge of two
+# parallel 2026-08-20 builds): ui/branch_proximity + ui/merger_planning ride
+# the shared tested geo/HHI layer (data/branches_store geo helpers +
+# analysis/merger_hhi) with the MSA toggle, radius map, and coverage
+# accounting; branch_analytics keeps the other four leaves.
 def _branch_proximity(t, ctx):
-    from ui.branch_analytics import render_branch_proximity
+    from ui.branch_proximity import render_branch_proximity
     render_branch_proximity(t)
 
 
 def _merger_planning(t, ctx):
-    from ui.branch_analytics import render_merger_planning
+    from ui.merger_planning import render_merger_planning
     render_merger_planning(t)
 
 
@@ -281,6 +286,7 @@ def _market_demographics(t, ctx):
 def _hmda_mortgages(t, ctx):
     from ui.hmda_view import render_hmda_mortgages
     render_hmda_mortgages(t)
+
 
 
 def _ownership_13f(t, ctx):

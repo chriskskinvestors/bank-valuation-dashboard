@@ -69,8 +69,6 @@ DEFAULT_WATCHLIST = [
     "ISBA", "BANC", "FLG", "VLY", "KEY", "HBAN", "ZION",
 ]
 
-DEFAULT_PORTFOLIO = []  # User populates via sidebar
-
 # ---------------------------------------------------------------------------
 # Metric registry
 # ---------------------------------------------------------------------------
@@ -895,13 +893,17 @@ METRICS = [
         "color_rule": "lower_better", "thresholds": {"good": 0.3, "warn": 1.0},
         "category": "Credit Detail",
     },
+    # Loans basis (owner call 2026-08-20, closing audit 2026-07-02 #32's
+    # follow-up): past-due LOANS (P3LNLS/P9LNLS), not the total-asset fields
+    # P3ASSET/P9ASSET which add past-due securities/other assets — consistent
+    # with every other credit surface (analysis/credit_dynamics).
     {
-        "key": "past_due_30_89", "label": "PD 30-89 ($M)", "source": "fdic", "fdic_field": "P3ASSET",
+        "key": "past_due_30_89", "label": "PD 30-89 ($M)", "source": "fdic", "fdic_field": "P3LNLS",
         "format": "millions", "decimals": 1,
         "category": "Credit Detail",
     },
     {
-        "key": "past_due_90", "label": "PD 90+ ($M)", "source": "fdic", "fdic_field": "P9ASSET",
+        "key": "past_due_90", "label": "PD 90+ ($M)", "source": "fdic", "fdic_field": "P9LNLS",
         "format": "millions", "decimals": 1,
         "category": "Credit Detail",
     },

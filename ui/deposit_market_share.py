@@ -13,6 +13,7 @@ import html as _h
 import pandas as pd
 import streamlit as st
 
+from analysis.merger_hhi import hhi_from_deposits
 from data.bank_mapping import get_name, get_fdic_cert
 from utils.formatting import fmt_dollars_from_thousands
 from ui.chrome import title_bar, table_export
@@ -43,7 +44,9 @@ def _share_rows(df: pd.DataFrame, subject_cert: int) -> list[dict]:
         subj_dep = float(subj["deposits"].iloc[0])
         ranked = m.sort_values("deposits", ascending=False).reset_index(drop=True)
         rank = int(ranked.index[ranked["cert"] == subject_cert][0]) + 1
-        hhi = float(((m["deposits"] / total * 100.0) ** 2).sum())
+        hhi = hhi_from_deposits(m["deposits"])  # shared impl (analysis.merger_hhi)
+        if hhi is None:
+            continue
         comp = ranked[ranked["cert"] != subject_cert]
         top_name = comp["bank_name"].iloc[0] if not comp.empty else None
         top_share = (float(comp["deposits"].iloc[0]) / total * 100.0

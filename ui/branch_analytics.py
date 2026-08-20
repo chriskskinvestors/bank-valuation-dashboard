@@ -1,8 +1,9 @@
 """
 Market Analysis branch tabs (SNL-BUILD-PLAN §11): Branch List, Branch Map,
-Branch Competitors, Branch Proximity, Merger Planning (HHI / market overlap),
-and Market Demographics — all on the persisted FDIC SOD store
-(data/branches_store), demographics on the Census ACS client.
+Branch Competitors, and Market Demographics — all on the persisted FDIC SOD
+store (data/branches_store), demographics on the Census ACS client.
+(Branch Proximity + Merger Planning live in their dedicated modules — see
+the note above render_market_demographics.)
 
 Every figure is FDIC SOD as stored (deposits are $thousands in SOD; the store
 keeps them as reported — displayed via $-formatters at ×1000) or a transparent
@@ -10,8 +11,6 @@ calculation on it (shares, HHI = Σ(share%²) on the DOJ 0-10,000 scale).
 A bank with no SOD rows renders an honest empty state, never zeros.
 """
 from __future__ import annotations
-
-import math
 
 import pandas as pd
 import streamlit as st
@@ -40,11 +39,6 @@ def _county_banks(stcntybr: str, year: int) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _state_branches(state: str, year: int) -> pd.DataFrame:
-    from data.branches_store import get_branches_by_state
-    return get_branches_by_state(state, year=year)
-
-
 def _dep_usd(v) -> str:
     """SOD deposits are $thousands — convert at the display boundary."""
     return "—" if v is None or pd.isna(v) else fmt_dollars(float(v) * 1000, 1)
@@ -146,128 +140,11 @@ def render_branch_competitors(ticker):
     st.dataframe(tbl, use_container_width=True, hide_index=True, height=520)
 
 
-# ── Branch Proximity ─────────────────────────────────────────────────────────
-def _haversine_miles(lat1, lng1, lat2, lng2):
-    r = 3958.8
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
-
-
-def render_branch_proximity(ticker):
-    """Nearest competitor branch to each subject branch (within the subject's
-    states), plus how contested the network is at 1 / 5 miles."""
-    cert = _cert(ticker)
-    if not cert:
-        return _empty(ticker)
-    df = _roster(cert)
-    pts = df.dropna(subset=["lat", "lng"]) if not df.empty else df
-    if pts.empty:
-        return _empty(ticker)
-    yr = int(pts.iloc[0]["year"])
-    comp_frames = []
-    for stt in sorted(pts["state"].dropna().unique()):
-        sb = _state_branches(stt, yr)
-        if not sb.empty:
-            comp_frames.append(sb[sb["cert"] != cert].dropna(subset=["lat", "lng"]))
-    if not comp_frames:
-        return _empty(ticker)
-    comp = pd.concat(comp_frames, ignore_index=True)
-    if comp.empty:
-        st.caption("No competitor branches stored in this bank's states — n/a.")
-        return
-    import numpy as np
-    clat = np.radians(comp["lat"].to_numpy())
-    clng = np.radians(comp["lng"].to_numpy())
-    out_rows = []
-    for _, b in pts.iterrows():
-        p1 = math.radians(b["lat"]); l1 = math.radians(b["lng"])
-        a = (np.sin((clat - p1) / 2) ** 2
-             + math.cos(p1) * np.cos(clat) * np.sin((clng - l1) / 2) ** 2)
-        d = 2 * 3958.8 * np.arcsin(np.sqrt(a))
-        i = int(d.argmin())
-        out_rows.append({"Branch": b["branch_name"], "City": b["city"],
-                         "ST": b["state"],
-                         "Nearest competitor": comp.iloc[i]["branch_name"],
-                         "Competitor bank": comp.iloc[i]["bank_name"],
-                         "Distance (mi)": round(float(d[i]), 2)})
-    tbl = pd.DataFrame(out_rows).sort_values("Distance (mi)")
-    dists = tbl["Distance (mi)"]
-    st.markdown(
-        f"**Median nearest-competitor distance {dists.median():.2f} mi** · "
-        f"{(dists <= 1).mean() * 100:.0f}% of branches contested within 1 mi · "
-        f"{(dists <= 5).mean() * 100:.0f}% within 5 mi — FDIC SOD {yr}, "
-        "competitors limited to the bank's own states")
-    st.dataframe(tbl, use_container_width=True, hide_index=True, height=500)
-
-
-# ── Merger Planning (HHI / market overlap) ───────────────────────────────────
-def render_merger_planning(ticker, ctx=None):
-    """Pro-forma deposit-HHI screen for a hypothetical combination: shared
-    counties, each side's share, pre/post HHI and ΔHHI on the DOJ 0-10,000
-    scale, flagged against the banking guideline (post > 1,800 AND Δ > 200)."""
-    cert = _cert(ticker)
-    if not cert:
-        return _empty(ticker)
-    df = _roster(cert)
-    if df.empty:
-        return _empty(ticker)
-    yr = int(df.iloc[0]["year"])
-    from data.branches_store import get_branch_counts_by_bank
-    banks = get_branch_counts_by_bank()
-    banks = banks[banks["cert"] != cert] if not banks.empty else banks
-    if banks.empty:
-        return _empty(ticker)
-    opts = {f"{r['ticker'] or '—'} — {r['bank_name']}": int(r["cert"])
-            for _, r in banks.iterrows()}
-    pick = st.selectbox("Hypothetical partner", sorted(opts),
-                        key=f"mp_partner_{ticker}")
-    p_cert = opts[pick]
-    p_df = _roster(p_cert)
-    if p_df.empty:
-        st.caption("Partner has no stored SOD branches — n/a.")
-        return
-    shared = sorted(set(df["stcntybr"].dropna()) & set(p_df["stcntybr"].dropna()))
-    if not shared:
-        st.markdown("**No overlapping counties** — a combination raises no "
-                    "market-concentration screen on deposit HHI.")
-        return
-    rows = []
-    for fips in shared:
-        cb = _county_banks(str(fips), yr)
-        if cb.empty:
-            continue
-        tot = float(cb["total_deposits"].sum())
-        if not tot:
-            continue
-        shares = cb["total_deposits"].astype(float) / tot * 100
-        pre = float((shares ** 2).sum())
-        # Identify the two parties' county deposits by matching the roster rows.
-        subj = float(df[df["stcntybr"] == fips]["deposits"].sum() or 0)
-        part = float(p_df[p_df["stcntybr"] == fips]["deposits"].sum() or 0)
-        s_share, p_share = subj / tot * 100, part / tot * 100
-        post = pre - s_share ** 2 - p_share ** 2 + (s_share + p_share) ** 2
-        delta = post - pre
-        rows.append({
-            "County": str(cb.iloc[0].get("county") or fips),
-            "ST": str(cb.iloc[0].get("state") or ""),
-            "Subject share %": round(s_share, 2),
-            "Partner share %": round(p_share, 2),
-            "Market deposits": _dep_usd(tot),
-            "Pre HHI": round(pre), "Post HHI": round(post),
-            "ΔHHI": round(delta),
-            "Screen": "FLAG" if (post > 1800 and delta > 200) else "clear",
-        })
-    if not rows:
-        return _empty(ticker)
-    tbl = pd.DataFrame(rows).sort_values("ΔHHI", ascending=False)
-    n_flag = int((tbl["Screen"] == "FLAG").sum())
-    st.markdown(f"**{len(shared)} overlapping counties · {n_flag} flagged** "
-                "(banking guideline: post-merger HHI > 1,800 AND ΔHHI > 200) — "
-                f"deposit HHI on FDIC SOD {yr}; a screen flag is an analytical "
-                "indicator, not a legal determination.")
-    st.dataframe(tbl, use_container_width=True, hide_index=True, height=480)
+# Branch Proximity + Merger Planning moved to the dedicated modules
+# ui/branch_proximity.py + ui/merger_planning.py (merge of two parallel
+# 2026-08-20 builds — those ride the shared tested geo/HHI layer in
+# data/branches_store + analysis/merger_hhi); this module keeps the four
+# leaves above/below.
 
 
 # ── Market Demographics ──────────────────────────────────────────────────────

@@ -188,6 +188,7 @@ def main() -> int:
         print(f"[{time.strftime('%H:%M:%S')}] wrote {SNAP_KEY}: {len(metrics)} "
               f"banks in {time.time() - t0:.0f}s", flush=True)
 
+    _append_sector_val_history(metrics)
     _warm_overlay_history()
     _warm_bank_sector_history()
     _warm_feed_insider_aggregate(tickers)
@@ -216,6 +217,35 @@ def _warm_news_feed(tickers: list[str]) -> None:
     except Exception as e:
         print(f"[home-snap] news feed snapshot failed: {type(e).__name__}: {e}",
               flush=True)
+
+
+def _append_sector_val_history(metrics: list[dict]) -> None:
+    """Append today's per-tier valuation medians (P/TBV / P/E / div yield) to
+    the self-populating ``sector_val_hist`` record — the ONLY source the Home
+    sector strip's "vs 1y ago" column reads (it renders n/a until the history
+    is ~a year deep; the 1y-ago value is never approximated from anything
+    else). One small record per day, replace-on-same-date (overlapping runs
+    are idempotent), pruned to ~420 days by the pure helper. Guarded twice:
+    main() already returned before this on an empty metrics build, and any
+    failure here only logs — the snapshot job itself is unaffected."""
+    try:
+        from datetime import date
+        from data import cache
+        from ui.home import sector_val_medians, sector_hist_append
+        record = {"date": date.today().isoformat(),
+                  "tiers": sector_val_medians(metrics)}
+        try:
+            hist = cache.get("sector_val_hist")
+        except Exception:
+            hist = None
+        new = sector_hist_append(hist, record)
+        new["cached_at"] = datetime.now().isoformat()
+        cache.put("sector_val_hist", new)
+        print(f"[{time.strftime('%H:%M:%S')}] sector_val_hist: "
+              f"{len(new['records'])} daily records", flush=True)
+    except Exception as e:
+        print(f"[home-snap] sector_val_hist append failed: "
+              f"{type(e).__name__}: {e}", flush=True)
 
 
 def _warm_rates_bundle() -> None:
