@@ -586,8 +586,8 @@ def get_nearest_branches(cert: int, lat: float, lng: float,
 _COMPETITOR_PAIR_COLS = [
     "subj_brnum", "subj_branch_name", "subj_address", "subj_city",
     "subj_state", "subj_lat", "subj_lng", "subj_deposits",
-    "cert", "ticker", "bank_name", "branch_name", "address", "city",
-    "state", "zip", "deposits", "lat", "lng", "serv_type",
+    "cert", "brnum", "ticker", "bank_name", "branch_name", "address",
+    "city", "state", "zip", "deposits", "lat", "lng", "serv_type",
     "distance_miles",
 ]
 
@@ -686,6 +686,7 @@ def get_branch_competitors(cert: int, radius_miles: float = 5.0,
                     "subj_lng": s_lng,
                     "subj_deposits": s.deposits,
                     "cert": int(c.cert),
+                    "brnum": int(c.brnum),
                     "ticker": c.ticker,
                     "bank_name": c.bank_name,
                     "branch_name": c.branch_name,
