@@ -271,6 +271,16 @@ universe and measure.*
       no-holdco filer (documented in bank_mapping). Fair-value/segments/
       composition EMPTYs are the documented structural classes (no ASC 820
       rollup / single-segment / no by-type composition disclosure).
+      **Metric-fill campaign final state (2026-08-19/20): highlights
+      latest-year fill 82% → 88.3%** via eight pinned fix classes (F1-F8 in
+      tests/test_cr_sweep_fixes.py). Remaining residual, ALL verified:
+      CET1 82 banks = CBLR-framework filers who publish only leverage/T1
+      (those ratios flow to their tabs — never substituted for CET1);
+      efficiency ~66 = ambiguous labels whose income walk doesn't tie (the
+      F7 reconcile gate admits a bank the moment its walk proves the labels);
+      NPL ~57 = dimensional-only tagging; NIM ~33 = bespoke MD&A layouts
+      (CCBG-class) + genuinely-absent tables (BAC's 10-K states NIM 3 times
+      in prose context only).
       **Four parser fixes came out of the triage (2026-08-19, pinned in
       tests/test_cr_sweep_fixes.py):** lease-inclusive rollforward concepts
       (WFC's NPL 0.832% / NCO 0.405% recovered — its only undimensioned
