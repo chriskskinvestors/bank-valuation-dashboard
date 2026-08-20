@@ -258,6 +258,29 @@ def earnings_calendar_available() -> bool:
     return bool(snap and isinstance(snap.get("value"), list))
 
 
+def earnings_agenda_sources_down(fmp_cal, call_info) -> bool:
+    """Whether EVERY source feeding the upcoming-earnings agenda is unavailable.
+
+    The agenda (ui/earnings.py Calendar tab) blends three legs: the yfinance
+    snapshot (fetch_earnings_calendar), FMP's calendar window, and the IR/PR
+    call pipeline — so the snapshot-only earnings_calendar_available() check
+    can't diagnose its empty state alone (AUDIT-2026-07-02 #34, open tail).
+    True = all three legs down → an empty agenda is an OUTAGE and must render
+    "unavailable", never a confident "no upcoming earnings". False = at least
+    one leg is up, so an empty agenda is genuine.
+
+    `fmp_cal` is the already-fetched FMP window result (None = that fetch
+    failed; a list, even empty, = leg up) and `call_info` the already-built
+    merged_call_info() dict ({} = leg down/empty) — both are values the render
+    path has in hand, so the only I/O here is the same cheap snapshot-presence
+    read earnings_calendar_available() does. Never fetches, never blocks."""
+    if fmp_cal is not None:
+        return False
+    if call_info:
+        return False
+    return not earnings_calendar_available()
+
+
 def refresh_earnings_calendar_snapshot(tickers: tuple) -> list[dict]:
     """Build the earnings calendar live and persist the cross-instance
     snapshot. Background-only (nightly refresh-universe job) — NEVER call
