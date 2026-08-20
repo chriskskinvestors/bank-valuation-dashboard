@@ -63,7 +63,7 @@ def build_bank_metrics(
                 "BRO", "DDT", "NTRSMMDA",
                 "SCAF", "SCHA", "SCUST", "SCAGE", "SCUSO", "SCMUNI",
                 "SCABS", "IGLSEC", "SCSNHAA",
-                "P3ASSET", "P9ASSET",
+                "P3LNLS", "P9LNLS",
                 "INTINC", "EINTEXP", "ELNATR", "PTAXNETINC", "ITAX",
             }
             if field in FDIC_THOUSANDS_FIELDS and val is not None:
