@@ -46,7 +46,7 @@ COMPANY_NAV = {
     "Market Analysis": ["Market Share & Branches", "Deposit Market Share",
                         "Branch List", "Branch Map", "Branch Competitors",
                         "Branch Proximity", "Merger Planning (HHI)",
-                        "Market Demographics"],
+                        "Market Demographics", "HMDA Mortgages"],
     # SNL nav puts compensation under Overview, not Ownership (plan §12/§13);
     # the old "Executive Compensation" leaf moved there 2026-07-11.
     "Ownership": ["Institutional (13F)", "Detailed", "Holder History",
@@ -278,6 +278,11 @@ def _market_demographics(t, ctx):
     render_market_demographics(t)
 
 
+def _hmda_mortgages(t, ctx):
+    from ui.hmda_view import render_hmda_mortgages
+    render_hmda_mortgages(t)
+
+
 def _ownership_13f(t, ctx):
     from ui.ownership import render_ownership
     render_ownership(t)
@@ -436,6 +441,7 @@ _RENDERERS = {
     "Branch Proximity": _branch_proximity,
     "Merger Planning (HHI)": _merger_planning,
     "Market Demographics": _market_demographics,
+    "HMDA Mortgages": _hmda_mortgages,
     "Institutional (13F)": _ownership_13f,
     "Detailed": _ownership_detailed,
     "Holder History": _holder_history,
