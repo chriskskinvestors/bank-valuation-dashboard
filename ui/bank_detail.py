@@ -114,12 +114,16 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
 
     tbv_label = _ps_label("TBV / Share", "tbvps_source")
     bv_label = _ps_label("BV / Share", "bvps_source")
+    # "release_ttm" = release-anchored composite TTM (latest quarter from the
+    # bank's own earnings release + three Company-Reported quarters) — say so.
+    eps_label = ("EPS (TTM, co. release)"
+                 if row.get("eps_source") == "release_ttm" else "EPS (TTM)")
     valuation = [
         ("Last Price", disp("price")),
         ("Change", chg_html),
         ("Market Cap", disp("market_cap")),
         ("P/E (LTM)", disp("pe_ratio")),
-        ("EPS (TTM)", disp("eps")),
+        (eps_label, disp("eps")),
         ("P/TBV", disp("ptbv_ratio")),
         (tbv_label, disp("tbvps")),
         ("P/B", disp("pb_ratio")),

@@ -209,7 +209,9 @@ def check_coherence_flags(metrics: dict | None,
       where extracted), so this is the alarm WORKING: warning severity,
       visible in the nightly summary without failing the job."""
     findings = []
-    for key in ("tbvps", "bvps"):
+    # eps joins the loop (release-first increment 2): eps_conflict means the
+    # release-anchored composite TTM and the XBRL TTM disagree >=15%.
+    for key in ("tbvps", "bvps", "eps"):
         if metrics and metrics.get(f"{key}_conflict"):
             findings.append(Finding(
                 severity="error",
