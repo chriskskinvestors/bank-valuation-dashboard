@@ -190,11 +190,10 @@ def render_merger_planning(ticker: str):
     st.caption(
         f"FDIC Summary of Deposits, {res['year']} survey (June 30 branch "
         "deposits). HHI is the market's Herfindahl index over all insured "
-        "institutions (0–10,000; DOJ screens: <1,500 unconcentrated, "
-        ">2,500 highly concentrated). Merger screen: flagged when "
-        "post-merger HHI > 1,800 with ΔHHI > 100 (severe when > 2,500 "
-        "with ΔHHI > 200); post-merger HHI combines the two banks into "
-        "one participant with every other participant unchanged. Sorted "
-        "by ΔHHI. A flag is a deposit-share screening indicator, not a "
-        "legal determination."
+        "institutions (0–10,000; concentration bands: <1,500 unconcentrated, "
+        ">2,500 highly concentrated). Merger screen — the DOJ/Fed banking "
+        "guideline: flagged when post-merger HHI > 1,800 AND ΔHHI > 200; "
+        "post-merger HHI combines the two banks into one participant with "
+        "every other participant unchanged. Sorted by ΔHHI. A flag is a "
+        "deposit-share screening indicator, not a legal determination."
     )

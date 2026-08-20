@@ -218,11 +218,11 @@ Share · Residential & Commercial Mortgage Analytics · HMDA Mortgages ·
 U.S. Branch Analytics (Merger Planning/HHI, Market Share, Market Overlap).
 | Sub-tab | Source |
 |---|---|
-| Branch List / Map / Competitors / Proximity | FDIC SOD store (HAVE: branches table + geographic view) — geoqueries |
+| Branch List / Map / Competitors / Proximity | ✅ SHIPPED 2026-08-20 (ui/branch_analytics.py on branches_store.get_branches_by_cert): roster table w/ share-of-bank, deposit-sized mapbox, footprint-county competitor aggregation, vectorized nearest-competitor distances w/ 1/5-mi contested %. Render-verified live (Banner: 137 branches / 4 states / 49 counties / $13.6B — ties reported deposits) |
 | Deposit Market Share | ✅ SHIPPED 2026-07-13 (ui/deposit_market_share.py + branches_store.get_market_participants): all-markets table per bank — every county + MSA with deposits, market total, share %, rank/of, market HHI (DOJ 0-10,000 scale), top competitor; SOD store, latest survey year; existing picker tab kept unchanged |
-| Merger Planning / HHI / Market Overlap | calc on SOD deposits (deposit HHI per market, pro-forma overlap) |
-| Market Demographics | Census API (new client) |
-| HMDA Mortgages / Mortgage Analytics | CFPB HMDA public API (new client) |
+| Merger Planning / HHI / Market Overlap | ✅ SHIPPED 2026-08-20 (same module): partner picker → shared counties w/ pre/post deposit HHI + ΔHHI (DOJ 0-10,000), banking-guideline flag (post>1,800 & Δ>200), labeled analytical-not-legal. NOTE: local-dev store sparsity overstates HHI; prod store has the full universe |
+| Market Demographics | ✅ TAB SHIPPED 2026-08-20 (footprint counties joined to ACS via stcntybr FIPS; honest n/a caption until census-api-key exists). deploy.yml mounts census-api-key as an OPTIONAL secret — USER ACTION: free key at api.census.gov/data/key_signup.html, then `gcloud secrets create census-api-key` + grant github-deployer accessor/describe |
+| HMDA Mortgages / Mortgage Analytics | ✅ SHIPPED 2026-08-20: data/hmda_client.py (RSSD→LEI via reporter-panel zips newest-wins, per-year aggregations, loan-level state/county breakdown; raw dollars, midpoint-rounding caveat surfaced; 21 offline tests; live-verified: WaFd/Banner series + nationwide 2023 = 5,710,399 vs CFPB published 5.7M, double-entry state-sum ties) + ui/hmda_view.py tab (by-year chart + latest-year state table; non-filers honest n/a). Deeper Mortgage Analytics (rate spreads, purpose splits) = later increment |
 Nav via COMPANY_NAV + registry. Existing "Market Share & Branches" content
 splits into the new sub-tabs.
 

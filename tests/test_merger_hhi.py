@@ -10,13 +10,13 @@ Synthetic markets (cert 1 = acquirer A, cert 2 = target B):
       A=400 (two branches: 250+150), B=300, C=200, D=100
       shares 40/30/20/10 → pre-HHI = 1600+900+400+100      = 3000
       post (A+B=70%):      4900+400+100                    = 5400
-      Δ = 2400 → screened, "post > 2,500 with Δ > 200" severity
+      Δ = 2400 → screened (banking guideline: post > 1,800 AND Δ > 200)
 
   county 22222 / msa 10002 — total 1,000
       A=200, B=100, C=150, D=150, E=200, F=200
       shares 20/10/15/15/20/20 → pre = 400+100+225+225+400+400 = 1750
       post (A+B=30%): 900+225+225+400+400                      = 2150
-      Δ = 400 → screened via "post > 1,800 with Δ > 100" only
+      Δ = 400 → screened (post 2,150 > 1,800, Δ 400 > 200)
 
   county 33333 / msa 10003 — total 1,000
       A=100, B=50, C=450, D=400
@@ -96,15 +96,16 @@ class TestBandsAndScreen(unittest.TestCase):
                          "highly concentrated")
 
     def test_classify_screen(self):
+        # Banking guideline (reconciled 2026-08-20): post > 1,800 AND Δ > 200.
         self.assertEqual(mh.classify_screen(5400, 2400),
-                         (True, "post-merger HHI > 2,500 with ΔHHI > 200"))
+                         (True, "post-merger HHI > 1,800 with ΔHHI > 200"))
         self.assertEqual(mh.classify_screen(2150, 400),
-                         (True, "post-merger HHI > 1,800 with ΔHHI > 100"))
-        # Δ exactly 100 — strict inequality, no flag
-        self.assertEqual(mh.classify_screen(3850, 100), (False, None))
+                         (True, "post-merger HHI > 1,800 with ΔHHI > 200"))
+        # Δ exactly 200 — strict inequality, no flag
+        self.assertEqual(mh.classify_screen(3850, 200), (False, None))
         self.assertEqual(mh.classify_screen(1800, 500), (False, None))
-        self.assertEqual(mh.classify_screen(1801, 101),
-                         (True, "post-merger HHI > 1,800 with ΔHHI > 100"))
+        self.assertEqual(mh.classify_screen(1801, 201),
+                         (True, "post-merger HHI > 1,800 with ΔHHI > 200"))
 
 
 class TestMergerScreening(unittest.TestCase):
@@ -174,7 +175,7 @@ class TestMergerScreening(unittest.TestCase):
         self.assertAlmostEqual(r["combined_share_pct"], 70.0, places=9)
         self.assertTrue(bool(r["screen_flag"]))
         self.assertEqual(r["screen_reason"],
-                         "post-merger HHI > 2,500 with ΔHHI > 200")
+                         "post-merger HHI > 1,800 with ΔHHI > 200")
         self.assertEqual(r["concentration_post"], "highly concentrated")
         # 22222: pre 1750, post 2150, Δ 400
         r = df.loc["22222"]
@@ -183,7 +184,7 @@ class TestMergerScreening(unittest.TestCase):
         self.assertAlmostEqual(r["hhi_delta"], 400.0, places=9)
         self.assertTrue(bool(r["screen_flag"]))
         self.assertEqual(r["screen_reason"],
-                         "post-merger HHI > 1,800 with ΔHHI > 100")
+                         "post-merger HHI > 1,800 with ΔHHI > 200")
         self.assertEqual(r["concentration_post"], "moderately concentrated")
         # 33333: pre 3750, post 3850, Δ exactly 100 → not flagged
         r = df.loc["33333"]

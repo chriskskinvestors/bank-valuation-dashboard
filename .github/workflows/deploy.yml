@@ -110,8 +110,9 @@ jobs:
           # deploy never fails on their absence). external-access-password gates
           # non-kskinvestors.com users (ui/access_gate.py); the app runs
           # gate-dormant until the secret is created. census-api-key powers the
-          # Market Demographics sub-tab (data/census_client.py) — dormant until
-          # the owner creates the secret from their api.census.gov signup.
+          # Market Demographics tab (data/census_client.py) — honest n/a caption
+          # until the key lands; grant github-deployer secretAccessor + describe
+          # on it or it is SILENTLY skipped (see the 2026 secret-mount lesson).
           for s in external-access-password census-api-key; do
             if gcloud secrets describe "$s" --quiet >/dev/null 2>&1; then
               env_var=$(echo "$s" | tr '[:lower:]-' '[:upper:]_')

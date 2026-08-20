@@ -29,11 +29,12 @@ import pandas as pd
 # Concentration bands (0–10,000 scale) — shipped caption convention.
 HHI_MODERATE = 1500.0
 HHI_HIGH = 2500.0
-# Merger screen thresholds.
+# Merger screen thresholds — the DOJ/Fed BANKING guideline (post-merger HHI
+# above 1,800 AND a delta above 200), the screen actually applied to bank
+# deposit markets. Reconciled 2026-08-20 with the parallel branch_analytics
+# build, which shipped this convention with the analytical-not-legal label.
 SCREEN_POST = 1800.0
-SCREEN_DELTA = 100.0
-SCREEN_POST_HIGH = 2500.0
-SCREEN_DELTA_HIGH = 200.0
+SCREEN_DELTA = 200.0
 
 OVERLAP_COLS = [
     "market_key", "market_label", "n_banks", "market_total",
@@ -80,12 +81,11 @@ def concentration_band(hhi: float) -> str:
 
 def classify_screen(hhi_post: float, hhi_delta: float
                     ) -> tuple[bool, str | None]:
-    """(flagged, reason) under the DOJ bank-merger screen. Thresholds are
-    strict inequalities; the stricter condition wins the reason string."""
-    if hhi_post > SCREEN_POST_HIGH and hhi_delta > SCREEN_DELTA_HIGH:
-        return True, "post-merger HHI > 2,500 with ΔHHI > 200"
+    """(flagged, reason) under the DOJ/Fed banking guideline (strict
+    inequalities): post-merger HHI > 1,800 AND ΔHHI > 200. A flag is an
+    analytical indicator, not a legal determination."""
     if hhi_post > SCREEN_POST and hhi_delta > SCREEN_DELTA:
-        return True, "post-merger HHI > 1,800 with ΔHHI > 100"
+        return True, "post-merger HHI > 1,800 with ΔHHI > 200"
     return False, None
 
 

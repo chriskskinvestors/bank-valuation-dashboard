@@ -1,78 +1,65 @@
 """
-CFPB HMDA public data API client — mortgage origination data from the
-primary source.
+CFPB/FFIEC HMDA public-API client — residential-mortgage origination activity.
 
-Powers the HMDA Mortgages / Mortgage Analytics sub-tabs (docs/
-SNL-BUILD-PLAN.md §11). Aggregations only — never loan-level downloads.
+Powers the planned "HMDA Mortgages" sub-tab: annual origination counts and
+dollar volume for one lender, plus a by-state / by-county breakdown for the
+latest year. All endpoints are public and keyless.
 
-Endpoints (all public, no auth; verified live 2026-06):
-  • Aggregations — GET {HMDA_BASE}/data-browser-api/view/aggregations
-      ?years=Y&leis=LEI&actions_taken=1[&loan_purposes=..|&loan_types=..|&states=XX]
-    Rows group by the supplied *filter* params (keys mirror the param names,
-    e.g. "loan_purposes"); geography params (states/counties/msamds) only
-    FILTER — they never group, so per-state totals take one call per state
-    (~0.15s each, verified). Serves years 2018–2024 (its own error message
-    still says 2018-2023 — stale; 2024 serves).
-  • Filers — GET {HMDA_BASE}/reporting/filers/{year}
-    → {"institutions": [{lei, name, period}]}. Name → LEI search. No RSSD.
-  • Institution detail — GET {HMDA_BASE}/public/institutions/{lei}/year/{year}
-    → includes "rssd". LEI → RSSD only; the reverse (RSSD in the path) 404s,
-    and the admin-api is auth-gated (both verified live). So RSSD → LEI goes
-    RSSD → FDIC institutions (FED_RSSD filter) → name → filers match → LEI,
-    then round-trips the candidate's rssd through this endpoint — a mismatch
-    returns None, never a plausible-wrong LEI.
+Endpoints (verified live 2026-08-20 against ffiec.cfpb.gov/documentation):
+  Reporter Panel (RSSD → LEI):
+    https://files.ffiec.cfpb.gov/static-data/snapshot/{year}/{year}_public_panel_csv.zip
+    CSV columns include ``lei`` and ``respondent_rssd`` (the bank-subsidiary
+    RSSD, i.e. what data.fdic_client.get_rssd_for_cert returns). The public
+    institutions API blanks its rssd field (-1 sentinel), so the panel file
+    is the only public RSSD↔LEI join. Panels publish ~18 months behind
+    (2023 is the newest as of Aug 2026); years are merged newest-wins.
+  Aggregations (per-year totals):
+    https://ffiec.cfpb.gov/v2/data-browser-api/view/aggregations
+      ?leis={lei}&years={year}&actions_taken=1
+    Geography params are filters only — the API never groups by state/county,
+    and multiple years collapse into one aggregate, hence one request/year.
+  Loan-level CSV (geographic breakdown):
+    https://ffiec.cfpb.gov/v2/data-browser-api/view/csv
+      ?leis={lei}&years={year}&actions_taken=1
+    One request; grouped client-side by state_code / county_code.
 
-Values: "sum" is dollars, but approximate by design — HMDA reports each
-loan_amount as the midpoint of a $10k bucket and the API rounds sums.
-Counts are exact (state and purpose breakdowns re-add to the total
-exactly; verified against Banner Bank 2024).
+Units contract: HMDA 2018+ ``loan_amount`` (and the aggregation ``sum``) is
+RAW DOLLARS — no conversion at this boundary (unlike FDIC $thousands).
+Verified: WaFd 2023 aggregation sum 1,101,120,000 == Σ loan_amount over its
+1,950 loan-level rows (avg $565K/loan), and nationwide 2023 count 5,710,399
+matches CFPB's published "5.7 million" originations. Caveat: public HMDA
+rounds each loan_amount to the midpoint of a $10k bucket for privacy, so
+counts are exact but dollar volumes are approximate by design.
 
-Cache: data.cache (``hmda:*`` keys), 30 days via the shared freshness
-check — annual snapshots change once a year. The cache backend's own
-global TTL (24h) expires entries first locally; worst case is a daily
-refetch, and the 30d stamp stays correct if the backend TTL is raised.
+Cardinal rule: a bank that never filed HMDA resolves to None (n/a) — never
+an error, never a zero. Fetch failures return None/{} and are never cached;
+a genuine count-0 year is real data (omitted from results, cacheable).
 
-Failures return None with one [hmda] log line — never a guess.
+Functions:
+  resolve_lei(rssd)                       — HMDA LEI, or None if never filed
+  originations_by_year(lei, years)        — {year: {count, volume_usd}}
+  latest_breakdown(lei, year, by="state") — [{state[, county], count,
+                                             volume_usd}] or None on failure
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+import csv
+import io
+import zipfile
+from datetime import date, datetime
 
-HMDA_BASE = "https://ffiec.cfpb.gov/v2"
-AGGREGATIONS_URL = f"{HMDA_BASE}/data-browser-api/view/aggregations"
-FILERS_URL = HMDA_BASE + "/reporting/filers/{year}"
-INSTITUTION_URL = HMDA_BASE + "/public/institutions/{lei}/year/{year}"
+HMDA_AGG_URL = "https://ffiec.cfpb.gov/v2/data-browser-api/view/aggregations"
+HMDA_CSV_URL = "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv"
+PANEL_URL_TPL = ("https://files.ffiec.cfpb.gov/static-data/snapshot/"
+                 "{year}/{year}_public_panel_csv.zip")
 
-# Newest year the aggregation API serves (verified live 2026-06). Bump
-# annually when the new snapshot publishes (~June).
-LATEST_YEAR = 2024
+# LEI-keyed HMDA reporting began with the 2018 collection year; earlier
+# years use a different respondent-ID scheme the data browser doesn't serve.
+FIRST_HMDA_YEAR = 2018
 
-CACHE_TTL_SECONDS = 30 * 86400
-
-ACTION_ORIGINATED = "1"  # actions_taken=1 — loan originated
-
-# HMDA enumerations (Filing Instructions Guide) → our field names.
-LOAN_PURPOSES = {
-    "1": "purchase",
-    "2": "home_improvement",
-    "31": "refi",
-    "32": "cash_out_refi",
-    "4": "other",
-    "5": "not_applicable",
-}
-LOAN_TYPES = {
-    "1": "conventional",
-    "2": "fha",
-    "3": "va",
-    "4": "usda_rhs",
-}
-
-# Two-letter codes for the per-state loop — reuse the house FIPS table's
-# keys (50 states + DC + territories; HMDA covers the territories too).
-from data.census_client import STATE_FIPS
-
-STATES = tuple(STATE_FIPS)
+ACTION_ORIGINATED = "1"          # HMDA action_taken=1: "Loan originated"
+CACHE_TTL_SECONDS = 7 * 86400
 
 
 # Shared freshness check (data/freshness) bound to this module's TTL.
@@ -81,241 +68,250 @@ def _is_fresh(cached: dict | None) -> bool:
     return is_fresh(cached, CACHE_TTL_SECONDS)
 
 
-def _get_json(url: str, params: dict | None, label: str):
-    """One GET through the shared retry policy. Parsed JSON, or None
-    (logged) on any failure."""
+# ──────────────────────────────────────────────────────────────────────────
+# Reporter Panel — RSSD → LEI
+# ──────────────────────────────────────────────────────────────────────────
+
+def _parse_panel_zip(content: bytes) -> dict[str, str]:
+    """{respondent_rssd: lei} from one panel zip (rows without a positive
+    RSSD are skipped — credit unions/independent mortgage cos carry 0/-1)."""
+    out: dict[str, str] = {}
+    with zipfile.ZipFile(io.BytesIO(content)) as z:
+        with z.open(z.namelist()[0]) as f:
+            rdr = csv.reader(io.TextIOWrapper(f, encoding="utf-8",
+                                              errors="replace"))
+            header = next(rdr, None) or []
+            idx = {c.strip().lower(): i for i, c in enumerate(header)}
+            i_rssd, i_lei = idx.get("respondent_rssd"), idx.get("lei")
+            if i_rssd is None or i_lei is None:
+                raise ValueError("panel csv missing respondent_rssd/lei")
+            for row in rdr:
+                if len(row) <= max(i_rssd, i_lei):
+                    continue
+                rssd, lei = row[i_rssd].strip(), row[i_lei].strip()
+                if lei and rssd.isdigit() and int(rssd) > 0:
+                    out[rssd] = lei
+    return out
+
+
+def _panel_lei_map() -> dict[str, str] | None:
+    """{respondent_rssd(str): lei} merged across every published panel year,
+    newest year winning (LEIs can change across charter events).
+
+    Cached 7 days under ``hmda:panel_map:v1`` — but ONLY when every year in
+    range either loaded or 404'd (not yet published). A transient failure
+    yields an uncached partial map: positive hits are still trustworthy,
+    while a miss must not be frozen into a false "never filed".
+    Returns None only when nothing at all could be built.
+    """
+    from data import cache
+
+    key = "hmda:panel_map:v1"
+    # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
+    cached = cache.get(key, max_age_s=None)
+    if _is_fresh(cached) and isinstance(cached.get("map"), dict):
+        return cached["map"]
+
+    from data.http import get_with_retry, is_http_404
+
+    mapping: dict[str, str] = {}
+    complete = True
+    # Oldest → newest so the newest published panel wins on conflicts.
+    for year in range(FIRST_HMDA_YEAR, date.today().year):
+        url = PANEL_URL_TPL.format(year=year)
+        try:
+            resp = get_with_retry(url, timeout=60)
+        except Exception as e:
+            if is_http_404(e):
+                continue          # panel for this year not published — normal
+            print(f"[hmda] panel {year} fetch failed: {type(e).__name__}: {e}")
+            complete = False
+            continue
+        if resp is None:          # retries exhausted on 429s
+            print(f"[hmda] panel {year}: retries exhausted (429)")
+            complete = False
+            continue
+        try:
+            mapping.update(_parse_panel_zip(resp.content))
+        except Exception as e:
+            print(f"[hmda] panel {year} parse failed: {type(e).__name__}: {e}")
+            complete = False
+
+    if not mapping:
+        return None
+    if complete:
+        cache.put(key, {"map": mapping,
+                        "cached_at": datetime.now().isoformat()})
+    return mapping
+
+
+def resolve_lei(rssd: int) -> str | None:
+    """HMDA LEI for a bank's FED_RSSD (data.fdic_client.get_rssd_for_cert),
+    or None when the bank has never filed HMDA — many small banks genuinely
+    haven't; that is n/a, never an error."""
+    if not rssd:
+        return None
+    mapping = _panel_lei_map()
+    if mapping is None:
+        return None
+    return mapping.get(str(int(rssd)))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Originations by year
+# ──────────────────────────────────────────────────────────────────────────
+
+def _fetch_year_aggregate(lei: str, year: int) -> dict | None:
+    """{"count": int, "volume_usd": float} of originations for one year,
+    cached under ``hmda:orig:v1:{lei}:{year}``. count 0 means the lender
+    genuinely recorded no originations that year (real data, cached).
+    None means the fetch failed or the response shape was unexpected —
+    never cached."""
+    from data import cache
+
+    key = f"hmda:orig:v1:{lei}:{year}"
+    # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
+    cached = cache.get(key, max_age_s=None)
+    if (_is_fresh(cached) and isinstance(cached.get("count"), int)
+            and "volume_usd" in cached):
+        return {"count": cached["count"], "volume_usd": cached["volume_usd"]}
+
     try:
         from data.http import get_with_retry
-        resp = get_with_retry(url, params=params, timeout=30)
+        resp = get_with_retry(HMDA_AGG_URL, params={
+            "leis": lei,
+            "years": str(year),
+            "actions_taken": ACTION_ORIGINATED,
+        }, timeout=90)
         if resp is None:
-            print(f"[hmda] {label}: retries exhausted (429)")
+            print(f"[hmda] aggregations {lei} {year}: retries exhausted (429)")
             return None
-        return resp.json()
+        aggs = resp.json().get("aggregations")
     except Exception as e:
-        print(f"[hmda] {label} error: {type(e).__name__}: {e}")
+        print(f"[hmda] aggregations {lei} {year} error: {type(e).__name__}: {e}")
         return None
 
-
-def _agg_rows(lei: str, year: int, extra: dict, label: str) -> list[dict] | None:
-    """Origination aggregation rows for one lender-year, grouped by the
-    filter params in ``extra``. None (logged) on failure or bad shape."""
-    params = {"years": year, "leis": lei,
-              "actions_taken": ACTION_ORIGINATED, **extra}
-    data = _get_json(AGGREGATIONS_URL, params, label)
-    if data is None:
+    if not isinstance(aggs, list) or not aggs:
+        print(f"[hmda] aggregations {lei} {year}: unexpected response shape")
         return None
-    rows = data.get("aggregations") if isinstance(data, dict) else None
-    if not isinstance(rows, list):
-        print(f"[hmda] {label}: unexpected response shape")
-        return None
-    return rows
-
-
-def _bucket(rows: list[dict], row_key: str, labels: dict) -> dict | None:
-    """Shape grouped rows into {label: {count, volume_usd}}, every label
-    present (absent enum = 0). None if a row is malformed."""
-    out = {name: {"count": 0, "volume_usd": 0.0} for name in labels.values()}
-    for row in rows:
-        name = labels.get(str(row.get(row_key)))
-        if name is None:  # unknown enum value — refuse to mislabel
+    count, volume = 0, 0.0
+    for a in aggs:
+        c, s = a.get("count"), a.get("sum")
+        if not isinstance(c, (int, float)) or not isinstance(s, (int, float)):
+            print(f"[hmda] aggregations {lei} {year}: non-numeric row — "
+                  "refusing to guess")
             return None
-        try:
-            out[name] = {"count": int(row["count"]),
-                         "volume_usd": float(row["sum"])}
-        except (KeyError, TypeError, ValueError):
-            return None
+        count += int(c)
+        # HMDA aggregation `sum` is RAW dollars (verified: WaFd 2023 sum
+        # 1,101,120,000 == Σ loan-level loan_amount) — no unit conversion.
+        volume += float(s)
+
+    cache.put(key, {"count": count, "volume_usd": volume,
+                    "cached_at": datetime.now().isoformat()})
+    return {"count": count, "volume_usd": volume}
+
+
+def originations_by_year(lei: str, years: list[int]) -> dict:
+    """{year: {"count": int, "volume_usd": float}} of HMDA originations
+    (action_taken=1). Only years with data present: count-0 years (lender
+    didn't file / recorded nothing) and failed fetches are omitted — a
+    failed year is logged and retried next call, never cached."""
+    out: dict[int, dict] = {}
+    if not lei:
+        return out
+    for year in years:
+        year = int(year)
+        if year < FIRST_HMDA_YEAR:
+            continue              # pre-LEI era — not served by this API
+        rec = _fetch_year_aggregate(lei, year)
+        if rec is None:
+            continue              # fetch failed — already logged, not cached
+        if rec["count"] > 0:
+            out[year] = rec
     return out
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Public API
+# Geographic breakdown
 # ──────────────────────────────────────────────────────────────────────────
 
-def get_lender_originations(lei: str, year: int = LATEST_YEAR) -> dict | None:
+def latest_breakdown(lei: str, year: int, by: str = "state") -> list[dict] | None:
+    """Origination breakdown for one year, grouped by state or county.
+
+    Returns rows sorted by count desc —
+      by="state":  {"state": "WA", "count": 794, "volume_usd": ...}
+      by="county": {"county": "53073", "state": "WA", "count": ..., ...}
+    (county is 5-digit FIPS; loans with no reported geography group under
+    None). Empty list = the lender genuinely recorded no originations that
+    year. None = fetch/parse failure — never cached, never a partial result.
     """
-    Originated-mortgage totals for one lender-year, split by loan purpose
-    and loan type. Returns
-      {lei, year, total_count, total_volume_usd,
-       by_purpose: {purchase|refi|cash_out_refi|home_improvement|other|
-                    not_applicable: {count, volume_usd}},
-       by_type:    {conventional|fha|va|usda_rhs: {count, volume_usd}},
-       cached_at}
-    or None on any failure.
-    """
+    if by not in ("state", "county"):
+        raise ValueError(f"by must be 'state' or 'county', got {by!r}")
+    if not lei:
+        return None
     from data import cache
 
-    key = f"hmda:orig:{lei}:{year}"
-    cached = cache.get(key)
-    if _is_fresh(cached):
-        return cached
-
-    total = _agg_rows(lei, year, {}, f"originations {lei} {year}")
-    if total is None:
-        return None
-    purposes = _agg_rows(lei, year, {"loan_purposes": ",".join(LOAN_PURPOSES)},
-                         f"by-purpose {lei} {year}")
-    if purposes is None:
-        return None
-    types = _agg_rows(lei, year, {"loan_types": ",".join(LOAN_TYPES)},
-                      f"by-type {lei} {year}")
-    if types is None:
-        return None
-
-    by_purpose = _bucket(purposes, "loan_purposes", LOAN_PURPOSES)
-    by_type = _bucket(types, "loan_types", LOAN_TYPES)
-    if len(total) != 1 or by_purpose is None or by_type is None:
-        print(f"[hmda] originations {lei} {year}: unexpected aggregation rows")
-        return None
-    try:
-        total_count = int(total[0]["count"])
-        total_volume = float(total[0]["sum"])
-    except (KeyError, TypeError, ValueError):
-        print(f"[hmda] originations {lei} {year}: malformed total row")
-        return None
-
-    out = {
-        "lei": lei,
-        "year": year,
-        "total_count": total_count,
-        "total_volume_usd": total_volume,
-        "by_purpose": by_purpose,
-        "by_type": by_type,
-        "cached_at": datetime.now().isoformat(),
-    }
-    cache.put(key, out)
-    return out
-
-
-def get_lender_by_state(lei: str, year: int = LATEST_YEAR) -> list[dict] | None:
-    """
-    Originated-mortgage totals by state for one lender-year:
-    [{state, count, volume_usd}], volume-descending, zero-volume states
-    omitted. One aggregation call per state (the API filters by geography
-    but never groups by it); all 50+DC+territories are queried so a state
-    served only outside MSAs is never missed. None if ANY state call fails
-    — a partial list would be wrong by omission.
-    """
-    from data import cache
-
-    key = f"hmda:bystate:{lei}:{year}"
-    cached = cache.get(key)
-    if _is_fresh(cached):
+    year = int(year)
+    key = f"hmda:breakdown:v1:{lei}:{year}:{by}"
+    # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
+    cached = cache.get(key, max_age_s=None)
+    if _is_fresh(cached) and isinstance(cached.get("rows"), list):
         return cached["rows"]
 
-    rows: list[dict] = []
-    for state in STATES:
-        agg = _agg_rows(lei, year, {"states": state},
-                        f"by-state {lei} {year} {state}")
-        if agg is None or len(agg) != 1:
-            return None  # _agg_rows already logged
-        try:
-            count = int(agg[0]["count"])
-            volume = float(agg[0]["sum"])
-        except (KeyError, TypeError, ValueError):
-            print(f"[hmda] by-state {lei} {year} {state}: malformed row")
+    try:
+        from data.http import get_with_retry
+        # Loan-level rows for this lender-year (originations only); the
+        # aggregation endpoint can't group by geography, so we group here.
+        resp = get_with_retry(HMDA_CSV_URL, params={
+            "leis": lei,
+            "years": str(year),
+            "actions_taken": ACTION_ORIGINATED,
+        }, timeout=180)
+        if resp is None:
+            print(f"[hmda] csv {lei} {year}: retries exhausted (429)")
             return None
-        if count > 0:
-            rows.append({"state": state, "count": count, "volume_usd": volume})
+        rdr = csv.reader(io.StringIO(resp.text))
+        header = next(rdr, None) or []
+    except Exception as e:
+        print(f"[hmda] csv {lei} {year} error: {type(e).__name__}: {e}")
+        return None
 
-    rows.sort(key=lambda r: r["volume_usd"], reverse=True)
+    idx = {c.strip().lower(): i for i, c in enumerate(header)}
+    i_st, i_cty = idx.get("state_code"), idx.get("county_code")
+    i_amt = idx.get("loan_amount")
+    if i_st is None or i_cty is None or i_amt is None:
+        print(f"[hmda] csv {lei} {year}: expected columns missing")
+        return None
+
+    groups: dict = {}
+    needed = max(i_st, i_cty, i_amt)
+    for row in rdr:
+        if not row or len(row) <= needed:
+            continue
+        # HMDA 2018+ loan_amount is RAW dollars (see module docstring) — no
+        # unit conversion. An unparseable amount would make every total
+        # silently partial, so it fails the whole breakdown (n/a, not wrong).
+        try:
+            amt = float(row[i_amt])
+        except ValueError:
+            print(f"[hmda] csv {lei} {year}: unparseable loan_amount "
+                  f"{row[i_amt]!r} — refusing partial totals")
+            return None
+        st = row[i_st].strip() or None
+        gkey = st if by == "state" else (row[i_cty].strip() or None, st)
+        cur = groups.setdefault(gkey, [0, 0.0])
+        cur[0] += 1
+        cur[1] += amt
+
+    rows = []
+    for gkey, (n, vol) in groups.items():
+        if by == "state":
+            rows.append({"state": gkey, "count": n, "volume_usd": vol})
+        else:
+            county, st = gkey
+            rows.append({"county": county, "state": st,
+                         "count": n, "volume_usd": vol})
+    rows.sort(key=lambda r: -r["count"])
+
     cache.put(key, {"rows": rows, "cached_at": datetime.now().isoformat()})
     return rows
-
-
-def find_lei(name_or_rssd: str | int, year: int = LATEST_YEAR) -> str | None:
-    """
-    Resolve a bank to its HMDA LEI.
-
-    • Name → case-insensitive match against the year's HMDA filers list
-      (exact first, then unique substring; ambiguity returns None — never
-      a guess).
-    • RSSD (int, or all-digits string) → the HMDA public API cannot search
-      by RSSD (verified: admin-api auth-gated, RSSD-in-path 404s), so the
-      chain is RSSD → FDIC institutions name → filers match, then the
-      candidate LEI's own institution record must report the same RSSD or
-      this returns None.
-    """
-    s = str(name_or_rssd).strip()
-    if not s:
-        return None
-
-    if not s.isdigit():
-        return _match_filer_name(s, year)
-
-    # RSSD path
-    name = _fdic_name_for_rssd(s)
-    if name is None:
-        return None
-    lei = _match_filer_name(name, year)
-    if lei is None:
-        return None
-    inst = _get_json(INSTITUTION_URL.format(lei=lei, year=year), None,
-                     f"institution {lei} {year}")
-    if not isinstance(inst, dict) or str(inst.get("rssd")) != s:
-        print(f"[hmda] find_lei {s}: candidate {lei} ({name!r}) reports "
-              f"rssd {inst.get('rssd') if isinstance(inst, dict) else '?'} — mismatch")
-        return None
-    return lei
-
-
-# ── find_lei internals ────────────────────────────────────────────────────
-
-def _filers(year: int) -> list[dict] | None:
-    """The year's HMDA filers list [{lei, name, period}], cached 30d."""
-    from data import cache
-
-    key = f"hmda:filers:{year}"
-    cached = cache.get(key)
-    if _is_fresh(cached):
-        return cached["institutions"]
-
-    data = _get_json(FILERS_URL.format(year=year), None, f"filers {year}")
-    if data is None:
-        return None
-    institutions = data.get("institutions") if isinstance(data, dict) else None
-    if not isinstance(institutions, list):
-        print(f"[hmda] filers {year}: unexpected response shape")
-        return None
-    cache.put(key, {"institutions": institutions,
-                    "cached_at": datetime.now().isoformat()})
-    return institutions
-
-
-def _match_filer_name(name: str, year: int) -> str | None:
-    """Case-insensitive filer-name match: exact, else unique substring."""
-    filers = _filers(year)
-    if filers is None:
-        return None
-    needle = name.strip().lower()
-
-    exact = [f for f in filers if (f.get("name") or "").strip().lower() == needle]
-    if len(exact) == 1:
-        return exact[0].get("lei")
-    if len(exact) > 1:  # same name filed under multiple LEIs — don't guess
-        print(f"[hmda] find_lei {name!r}: {len(exact)} exact name matches")
-        return None
-
-    partial = [f for f in filers if needle in (f.get("name") or "").lower()]
-    if len(partial) == 1:
-        return partial[0].get("lei")
-    print(f"[hmda] find_lei {name!r}: {len(partial)} matches in {year} filers")
-    return None
-
-
-def _fdic_name_for_rssd(rssd: str) -> str | None:
-    """RSSD → institution name via the FDIC institutions API (the HMDA
-    side has no public RSSD search)."""
-    from data.fdic_client import FDIC_INSTITUTIONS_URL
-
-    data = _get_json(FDIC_INSTITUTIONS_URL,
-                     {"filters": f"FED_RSSD:{rssd}", "fields": "NAME", "limit": 2},
-                     f"fdic rssd {rssd}")
-    if data is None:
-        return None
-    rows = data.get("data") if isinstance(data, dict) else None
-    if not isinstance(rows, list) or len(rows) != 1:
-        print(f"[hmda] fdic rssd {rssd}: expected exactly 1 institution, "
-              f"got {len(rows) if isinstance(rows, list) else 'bad shape'}")
-        return None
-    name = (rows[0].get("data") or {}).get("NAME")
-    return name or None

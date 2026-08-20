@@ -47,6 +47,15 @@ python -m unittest tests.test_audit_regressions.TestTtmWindowIntegrity   # singl
 # Legacy suites run as scripts and need UTF-8 on Windows (cp1252 chokes on '→')
 $env:PYTHONIOENCODING='utf-8'; python tests/test_metric_formulas.py
 
+# Full local discovery (CI's exact form). The `-t .` is LOAD-BEARING: it makes
+# modules import as tests.* so tests/__init__.py installs the streamlit stub
+# first (the cross-module cache-poisoning guard). Without it, 30+ tests fail
+# from st.cache_data leaking one module's data into another and AppTest suites
+# inheriting the stub — phantom failures, not real breakage (diagnosed 2026-08-20).
+$env:PYTHONIOENCODING='utf-8'; python -m unittest discover -s tests -t .
+# AppTest suites skip under discovery by design — run them as scripts:
+python tests/test_nav_renders.py; python tests/test_transactions_ui.py
+
 # Golden dataset (live EDGAR fetch, ~2 min) — run after any data-pipeline change
 python -m tests.golden_dataset
 

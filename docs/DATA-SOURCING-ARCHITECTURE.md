@@ -44,21 +44,25 @@ SNL's Capital Adequacy is holding-company basis. Source it from the SEC filing
 RC-R walk stays as a labeled complement.
 
 ## Build increments (each verified vs Regions/Banner before wiring)
-> **STATUS RECONCILED 2026-08-04** (supersedes 2026-06-17) — verified against
-> `data/sec_filing_scraper.py`, `data/sec_composition.py`, `data/sec_earnings_8k.py`,
-> `data/ir_provider.py`, `ui/company_nav.py`. Increments 1, 2, 5, and 6 are DONE;
-> 3 is PARTIAL (resolver refactor is the only open piece).
+> **STATUS RECONCILED 2026-08-20** (supersedes 2026-08-04) — ALL SIX increments
+> closed: 1/2/4/5/6 DONE, 3 done-as-evolved (freshest-wins layer + basis split;
+> see its entry). This build plan is COMPLETE.
 
 1. **SECFilingProvider core** — ✅ DONE. `latest_filing()` + `instance_facts()` +
    `parse_inline_xbrl[_documentset]()` in `data/sec_filing_scraper.py`; handles
    multi-document mega-filers (USB/WFC/TFC). Used by every downstream extractor.
 2. **Capital-table extractor** — ✅ DONE. `extract_holdco_capital()` /
    `_build_capital_walk()`; FDIC-CET1-anchored, walk rendered only when it reconciles.
-3. **Source resolver + provenance** — 🔧 PARTIAL. Provenance (source + as-of +
-   doc-link) IS surfaced per tab, but there is **no unified `resolve()` freshest-wins
-   layer**: holdco (SEC) shows in Company Reported → Regulatory Capital, bank-sub
-   (FDIC) in Templated → Capital Adequacy — two tabs, not one merged view. Remaining
-   work = the resolver refactor (IRProvider below is now done).
+3. **Source resolver + provenance** — ✅ DONE-AS-EVOLVED (closed 2026-08-20).
+   The increment's substance ships: provenance (source + as-of + doc-link) per
+   tab, and a freshest-wins layer in data/ir_provider — fresh_capital feeds
+   Regulatory Capital (ui/capital_dynamics.py) and fresh_diluted_eps feeds
+   Performance, each shown ONLY when the release quarter is fresher than the
+   latest periodic filing. The original "one merged holdco+bank-sub view" is
+   SUPERSEDED by the deliberate Templated / Company-Reported basis split the
+   whole Financials section is built on (holdco-SEC and bank-sub-FDIC are
+   different entities — merging them into one column risks the wrong-entity
+   joins data/validation.py exists to catch). No remaining work.
 4. **Capital Adequacy tab** — ✅ DONE. `_render_holdco_capital()` (highlights block +
    walk, n/a when not reconciling, LCR/HQLA n/a w/ note) wired in company_nav.
 5. **IRProvider** — ✅ DONE (verified 2026-08-04; this entry was stale). The 8-K
