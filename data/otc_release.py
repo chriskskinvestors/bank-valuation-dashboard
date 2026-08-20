@@ -292,6 +292,11 @@ def otc_release_metrics(ticker: str) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v9 (2026-08-20): release_metrics v18 — EPS tie-out input rows (NI
+    # applicable to common + weighted average diluted shares). OTC banks
+    # never reach the composite-EPS tie-out (no CIK), but the coupling rule
+    # below is unconditional: the shared extractor's spec moved, so cached
+    # OTC extractions re-run once and stay shape-identical to SEC banks'.
     # v8 (2026-08-02): release_metrics v17 — TBV/share dollar-change-then-level
     # form ("increased $1.67, or 15.6%, to $12.38", FSRL 2Q26). OTC banks are
     # exactly the population that narrates figures in prose rather than tagging
@@ -312,7 +317,7 @@ def otc_release_metrics(ticker: str) -> dict | None:
     # v4 subject guard + title-governed qend; v3 prose-EPS connector
     # (release_metrics v12). COUPLING: any release_metrics extraction-spec
     # bump must bump THIS version too (extractions immutable per URL).
-    key = f"otc_release:v8:{ticker.upper()}"
+    key = f"otc_release:v9:{ticker.upper()}"
     try:
         # Freshness is judged below (15-min is_fresh + URL-match re-stamp);
         # the default 24h read ceiling would drop `prev` after any >24h gap

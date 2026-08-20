@@ -22,6 +22,12 @@ Pinned here:
   outside the band, or components missing -> XBRL TTM serves +
   eps_conflict=True (the mis-extraction shape); composite absent
   -> XBRL TTM as "reconstructed"; nothing -> (None, None, False).
+- The release-internal tie-out (second gate, 2026-08-20): when the release
+  also printed NI applicable to common + weighted average diluted shares,
+  their ratio must reproduce the extracted EPS (scale-agnostic — the count
+  tried at x1/x1e3/x1e6, sec_earnings_8k._internal_tie_out discipline). A
+  contradiction VETOES a median-gate pass (conservative conflict path); a
+  tie is additional confirmation; absent inputs change nothing.
 - PERF GUARD: outside the release->10-Q window (latest earnings 8-K covers a
   quarter <= sec_as_of) the composite is never attempted — zero added
   fetches in the 440-bank screen build (call-counted via mocks).
@@ -192,11 +198,14 @@ class _ResolveBase(unittest.TestCase):
         (self.bm.get_cik, self.s8k._latest_earnings_8k) = self._orig
 
 
-def _components(rel_eps, quarters):
+def _components(rel_eps, quarters, ni_common=None, dil_shares=None):
     """A composite provenance dict in the composite_ttm_eps shape: release
-    quarter EPS + the three shared prior quarters (newest-first)."""
+    quarter EPS + the three shared prior quarters (newest-first). ni_common
+    / dil_shares default absent, as for a release whose tables never
+    printed them — the tie-out then cannot speak (PR #54 behavior)."""
     labels = [lab for lab, _ in _priors(EXPECTED)]
     return {"release": {"qend": EXPECTED, "eps": rel_eps,
+                        "ni_common": ni_common, "dil_shares": dil_shares,
                         "accession": "x", "url": "u"},
             "quarters": dict(zip(labels, quarters)),
             "quarter_sources": {}}
@@ -234,6 +243,41 @@ class TestResolveEps(_ResolveBase):
                           return_value=(6.50, EXPECTED, comp)):
             self.assertEqual(va._resolve_eps("JPM", 2.00, self.AS_OF),
                              (2.00, "reconstructed", True))
+
+    def test_tie_out_confirms_genuine_swing(self):
+        """ONB 2Q26 (real figures from onb_exhibit991er2q26.htm): NI
+        applicable to common $249,381K ÷ 383,273K weighted average diluted
+        shares = $0.6507 vs extracted 0.65 — the release's own arithmetic
+        confirms the quarter (at the ×1e3 share scale), so the divergent
+        composite serves with the median gate's pass doubly confirmed."""
+        comp = _components(0.65, [0.59, 0.56, 0.46],
+                           ni_common=249_381_000.0, dil_shares=383_273.0)
+        with patch.object(re_mod, "composite_ttm_eps",
+                          return_value=(2.26, EXPECTED, comp)):
+            self.assertEqual(va._resolve_eps("ONB", 1.95, self.AS_OF),
+                             (2.26, "release_ttm", False))
+
+    def test_tie_out_contradiction_vetoes_median_pass(self):
+        """The median gate passes (0.65 vs median 0.56) but the release's
+        own NI/shares arithmetic gives $1.30 at every plausible scale — a
+        contradiction INSIDE the release vetoes: one of the three figures
+        was mis-extracted, so the XBRL TTM serves, flagged (the owner-
+        recommended conservative conflict path)."""
+        comp = _components(0.65, [0.59, 0.56, 0.46],
+                           ni_common=498_762_000.0, dil_shares=383_273.0)
+        with patch.object(re_mod, "composite_ttm_eps",
+                          return_value=(2.26, EXPECTED, comp)):
+            self.assertEqual(va._resolve_eps("ONB", 1.95, self.AS_OF),
+                             (1.95, "reconstructed", True))
+
+    def test_tie_out_inputs_absent_median_gate_alone_decides(self):
+        """No NI/share rows in the release → the tie-out cannot speak and
+        the median gate decides alone (the PR #54 behavior, unchanged)."""
+        comp = _components(0.65, [0.59, 0.56, 0.46])  # ni/shares absent
+        with patch.object(re_mod, "composite_ttm_eps",
+                          return_value=(2.26, EXPECTED, comp)):
+            self.assertEqual(va._resolve_eps("ONB", 1.95, self.AS_OF),
+                             (2.26, "release_ttm", False))
 
     def test_divergence_without_components_stays_conservative(self):
         """>=15% apart and no provenance components to gate on: the gate
@@ -295,6 +339,55 @@ class TestReleaseQuarterGate(unittest.TestCase):
         gate, not signed ratios."""
         self.assertTrue(va._release_quarter_plausible(
             _components(0.55, [-0.50, -0.52, -0.48])))
+
+
+class TestReleaseEpsTieOut(unittest.TestCase):
+    """_release_eps_tie_out three-valued semantics: True = some scale
+    reproduces the extracted EPS; False = both inputs present, no scale
+    does (contradiction); None = an input absent (cannot speak)."""
+
+    QS = [0.59, 0.56, 0.46]
+
+    def test_thousands_scale_ties(self):
+        """ONB: 249,381,000 / (383,273 × 1e3) = 0.6507 vs 0.65 → ties."""
+        self.assertIs(va._release_eps_tie_out(_components(
+            0.65, self.QS, ni_common=249_381_000.0, dil_shares=383_273.0)),
+            True)
+
+    def test_raw_scale_ties(self):
+        """Shares printed raw: 5,000,000 / 7,692,308 = 0.65 → ties at ×1."""
+        self.assertIs(va._release_eps_tie_out(_components(
+            0.65, self.QS, ni_common=5_000_000.0, dil_shares=7_692_308.0)),
+            True)
+
+    def test_millions_scale_ties(self):
+        """Shares printed in a millions table: 249,381,000 / (383.3 × 1e6)
+        = 0.6507 → ties at ×1e6."""
+        self.assertIs(va._release_eps_tie_out(_components(
+            0.65, self.QS, ni_common=249_381_000.0, dil_shares=383.3)),
+            True)
+
+    def test_no_scale_reproduces_is_contradiction(self):
+        """NI implies $1.30 — off 2x at the near scale and 1000x at the
+        rest; no scale ties → False (never rescued by scale trying)."""
+        self.assertIs(va._release_eps_tie_out(_components(
+            0.65, self.QS, ni_common=498_762_000.0, dil_shares=383_273.0)),
+            False)
+
+    def test_cent_rounding_floor_covers_low_eps(self):
+        """Printed EPS rounds to cents: at $0.10 a true ratio of 0.1045 is
+        4.5% off — inside the half-cent absolute floor, so a genuine tie is
+        never false-vetoed on a low-EPS bank."""
+        self.assertIs(va._release_eps_tie_out(_components(
+            0.10, self.QS, ni_common=40_053_000.0, dil_shares=383_273.0)),
+            True)
+
+    def test_missing_either_input_cannot_speak(self):
+        self.assertIsNone(va._release_eps_tie_out(_components(
+            0.65, self.QS, ni_common=249_381_000.0)))
+        self.assertIsNone(va._release_eps_tie_out(_components(
+            0.65, self.QS, dil_shares=383_273.0)))
+        self.assertIsNone(va._release_eps_tie_out(None))
 
 
 class TestPerfGuard(_ResolveBase):

@@ -260,7 +260,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
             value["ai_attempts"] = attempts
         # Key version must track data/release_metrics.py's current spec
         # version or the seed is invisible and every test re-extracts.
-        self.store[f"release_metrics:v17:{1}"] = {
+        self.store[f"release_metrics:v18:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):

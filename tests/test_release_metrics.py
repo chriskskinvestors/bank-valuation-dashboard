@@ -475,6 +475,95 @@ class TestEpsRevenueSpecs(unittest.TestCase):
         self.assertIsNone(m.get("total_revenue"))  # magnitude never guessed
 
 
+class TestTieOutInputSpecs(unittest.TestCase):
+    """ni_common ("$K") + dil_shares ("#") — the release-internal EPS
+    tie-out inputs (analysis/valuation._release_eps_tie_out). ONB 2Q26
+    shape: NI applicable to common $249,381K, 383,273K weighted average
+    diluted shares (real figures from onb_exhibit991er2q26.htm)."""
+    HDR = ["(dollars in thousands, except per share data)",
+           "Jun 2026", "Mar 2026"]
+
+    def test_onb_shape_extracts_both(self):
+        html = _tbl(self.HDR,
+                    ["Net income applicable to common shares",
+                     "249,381", "140,616"],
+                    ["Weighted average diluted shares", "383,273", "383,109"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertEqual(m.get("ni_common"), 249_381_000.0)  # $K scale-sniffed
+        # The share count is the raw PRINTED value — its scale is unknown
+        # ("dollars in thousands" says nothing about share rows); the
+        # tie-out tries ×1/×1e3/×1e6 instead of a guess here.
+        self.assertEqual(m.get("dil_shares"), 383_273.0)
+
+    def test_postfix_and_prefix_share_labels_match(self):
+        for label in ("Weighted average common shares outstanding - diluted",
+                      "Diluted weighted average shares outstanding",
+                      "Weighted average number of common shares outstanding "
+                      "- diluted"):
+            m = extract_table_metrics(
+                _tbl(self.HDR, [label, "383,273", "383,109"]), "2026-06-30")
+            self.assertEqual(m.get("dil_shares"), 383_273.0, label)
+
+    def test_basic_share_row_never_matches(self):
+        html = _tbl(self.HDR,
+                    ["Weighted average common shares outstanding - basic",
+                     "381,002", "380,950"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("dil_shares"))
+
+    def test_plain_net_income_never_fills_ni_common(self):
+        """Plain 'Net income' includes preferred dividends — the label must
+        carry the applicable/available-to-common anchor."""
+        html = _tbl(self.HDR, ["Net income", "253,406", "144,641"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("ni_common"))
+
+    def test_per_share_variant_never_matches_ni_common(self):
+        """The end anchor keeps 'Net income available to common shareholders
+        per diluted share' out of the magnitude slot."""
+        html = _tbl(self.HDR,
+                    ["Net income available to common shareholders per "
+                     "diluted share", "0.65", "0.37"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("ni_common"))
+
+    def test_ni_refused_without_stated_unit_shares_still_extract(self):
+        """The NI magnitude is never guessed from size (total_revenue
+        discipline); a count needs no unit and still extracts."""
+        html = _tbl(["", "Jun 2026", "Mar 2026"],
+                    ["Net income applicable to common shares",
+                     "249,381", "140,616"],
+                    ["Weighted average diluted shares", "383,273", "383,109"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("ni_common"))
+        self.assertEqual(m.get("dil_shares"), 383_273.0)
+
+    def test_adjusted_ni_row_refused(self):
+        html = _tbl(self.HDR,
+                    ["Adjusted net income available to common shareholders",
+                     "260,000", "150,000"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("ni_common"))
+
+    def test_cross_scale_share_candidates_refuse(self):
+        """Two tables printing the count at different magnitudes (thousands
+        vs raw) must disagree and refuse — the tie-out then degrades to the
+        median gate alone, never a scale guess."""
+        html = (_tbl(self.HDR,
+                     ["Weighted average diluted shares", "383,273", "383,109"])
+                + _tbl(["", "Jun 2026", "Mar 2026"],
+                       ["Weighted average diluted shares",
+                        "383,273,000", "383,109,000"]))
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("dil_shares"))
+
+    def test_dollar_bearing_row_never_a_share_count(self):
+        html = _tbl(self.HDR,
+                    ["Weighted average diluted shares", "$383,273", "$383,109"])
+        m = extract_table_metrics(html, "2026-06-30")
+        self.assertIsNone(m.get("dil_shares"))
+
+
 class TestPriorQuarterEnd(unittest.TestCase):
     def test_transitions(self):
         from data.release_metrics import _prior_quarter_end

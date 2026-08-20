@@ -792,6 +792,13 @@ def _resolve_eps(
     (or the same XBRL construction the anchor uses), so a shared-quarter
     error is common-mode and the release quarter is the only free variable.
 
+    A SECOND, release-internal gate rides on the same branch
+    (_release_eps_tie_out): when the release also printed NI applicable to
+    common and weighted average diluted shares, their ratio must reproduce
+    the extracted EPS — a contradiction VETOES a median-gate pass (the
+    conservative conflict path); a tie is additional confirmation only;
+    absent inputs leave the median gate to decide alone.
+
     PERF GUARD (screen build: 440 banks, release_metrics has no warm path
     there): the composite is only ATTEMPTED inside the window where it can
     differ from the XBRL TTM — when the (2h-cached, already fetched by the
@@ -824,19 +831,31 @@ def _resolve_eps(
                 and abs(composite - reconstructed)
                 / abs(reconstructed) < 0.15):
             return composite, "release_ttm", False
-        if _release_quarter_plausible(components):
+        tie = _release_eps_tie_out(components)
+        if tie is False:
+            conflict = True
+            print(f"[valuation] EPS CONFLICT {ticker}: the release's own "
+                  f"NI-applicable-to-common / diluted-share rows contradict "
+                  f"its extracted release-quarter EPS at every plausible "
+                  f"scale (tie-out veto) — one of the three was "
+                  f"mis-extracted; serving the XBRL TTM {reconstructed}, "
+                  f"flagging eps_conflict")
+        elif _release_quarter_plausible(components):
             print(f"[valuation] EPS swing accepted {ticker}: composite TTM "
                   f"{composite} is >=15% from the stale XBRL TTM "
                   f"{reconstructed}, but the release quarter is plausible "
-                  f"against the shared quarters — genuine YoY swing, "
-                  f"serving the composite")
+                  f"against the shared quarters"
+                  + (" and ties out against the release's own NI/diluted-"
+                     "share rows" if tie else "")
+                  + " — genuine YoY swing, serving the composite")
             return composite, "release_ttm", False
-        conflict = True
-        print(f"[valuation] EPS CONFLICT {ticker}: release-anchored composite "
-              f"TTM {composite} disagrees >=15% with the XBRL TTM "
-              f"{reconstructed} and the release quarter failed the "
-              f"plausibility gate — one of them is wrong; serving the XBRL "
-              f"TTM, flagging eps_conflict")
+        else:
+            conflict = True
+            print(f"[valuation] EPS CONFLICT {ticker}: release-anchored "
+                  f"composite TTM {composite} disagrees >=15% with the XBRL "
+                  f"TTM {reconstructed} and the release quarter failed the "
+                  f"plausibility gate — one of them is wrong; serving the "
+                  f"XBRL TTM, flagging eps_conflict")
     return (reconstructed,
             "reconstructed" if reconstructed is not None else None,
             conflict)
@@ -872,6 +891,51 @@ def _release_quarter_plausible(components: dict | None) -> bool:
         return False
     ratio = abs(rel) / abs(median)
     return _REL_Q_MULT[0] <= ratio <= _REL_Q_MULT[1]
+
+
+def _release_eps_tie_out(components: dict | None) -> bool | None:
+    """Release-INTERNAL EPS tie-out (the second gate deferred from the
+    2026-08-19 plausibility-gate change): net income applicable to common ÷
+    weighted average diluted shares from the SAME release must reproduce the
+    extracted release-quarter EPS. Three-valued:
+
+      True  — some scale reproduces it: the extracted EPS is arithmetically
+              the release's own figure. An ADDITIONAL confirmation only —
+              the median gate still decides, because a consistently wrong
+              COLUMN (all three rows read from the same wrong period) would
+              tie out internally; the median gate is the release-independent
+              check that catches that.
+      False — both inputs present and NO scale reproduces it: the release
+              contradicts its own extracted EPS, so one of the three figures
+              was mis-extracted. This VETOES a median-gate pass (owner-
+              recommended conservative path): the XBRL TTM serves and
+              eps_conflict flags, even when the magnitude looked plausible.
+      None  — either input absent: the tie-out cannot speak and the median
+              gate decides alone (the pre-tie-out behavior).
+
+    Scope: consulted only on the >=15% divergence branch. Within the band
+    the composite already agrees with the independent XBRL anchor, so a
+    tie-out failure there is far more likely a wrong NI/share ROW than a
+    wrong EPS confirmed by two independent sources — it must not veto.
+
+    The two inputs carry unknown, independent scales (NI is sniffed to raw
+    dollars from its table's stated unit; the share count is the raw PRINTED
+    value — data/release_metrics deliberately never scales it), so the
+    ratio is tried with the count at ×1/×1e3/×1e6 — mirroring
+    data/sec_earnings_8k._internal_tie_out. The ~2% band is far tighter
+    than any cross-scale gap (×1000), so a wrong scale can never fake a
+    tie; a half-cent absolute floor covers the printed EPS's cent rounding
+    (at $0.10 a bare 2% band would false-veto a genuine tie)."""
+    if not isinstance(components, dict):
+        return None
+    rel = components.get("release") or {}
+    eps = rel.get("eps")
+    ni = rel.get("ni_common")
+    sh = rel.get("dil_shares")
+    if not eps or ni is None or not sh:
+        return None
+    tol = max(0.02 * abs(eps), 0.006)
+    return any(abs(ni / (sh * s) - eps) <= tol for s in (1.0, 1e3, 1e6))
 
 
 def _release_newer_than_filings(cik, sec_as_of) -> bool:
