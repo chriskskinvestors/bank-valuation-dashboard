@@ -153,6 +153,10 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
         ("ROAA", _fd_pct("ROA")),
         ("Net Interest Margin", _fd_pct("NIMY")),
         ("Efficiency Ratio", _fd_pct("EEFFR")),
+        # The bank's own released holdco efficiency — ALONGSIDE the FDIC
+        # bank-sub row, never replacing it (different bases, often FTE;
+        # owner decision 2026-08-19). _kv_table drops the row when absent.
+        ("Efficiency (co. release)", disp("efficiency_release")),
         ("CET1 Ratio", _fd_pct("IDT1CER")),
         ("NPL Ratio", _fd_pct("NCLNLSR")),
     ]

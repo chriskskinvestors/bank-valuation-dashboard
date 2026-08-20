@@ -92,6 +92,10 @@ def build_bank_metrics(
     #  "reconstructed" = the XBRL TTM from data/sec_client).
     result["eps_source"] = computed.get("eps_source")
     result["eps_conflict"] = computed.get("eps_conflict")
+    # efficiency_release rides as a declared column; its quarter-end tags
+    # along so the release figure's staleness is visible (increment 3 —
+    # no conflict flag by design: holdco vs bank-sub are different bases).
+    result["efficiency_release_qend"] = computed.get("efficiency_release_qend")
 
     return result
 

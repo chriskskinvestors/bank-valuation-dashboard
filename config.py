@@ -286,6 +286,18 @@ METRICS = [
         "color_rule": "lower_better", "thresholds": {"good": 55, "warn": 65},
         "category": "Profitability",
     },
+    {
+        # The bank's OWN released (holding-company) efficiency ratio —
+        # ADD-ALONGSIDE (owner decision 2026-08-19): EEFFR above stays THE
+        # efficiency for all banks (uniform, screener-stable); this column
+        # fills only where the release discloses it. HoldCo vs bank-sub are
+        # legitimately different bases (often FTE, 100-300bp apart) —
+        # deliberately never cross-gated against the FDIC figure.
+        "key": "efficiency_release", "label": "Eff (Rel)", "source": "computed",
+        "format": "pct", "decimals": 1,
+        "color_rule": "lower_better", "thresholds": {"good": 55, "warn": 65},
+        "category": "Profitability",
+    },
 
     # ── Credit Quality ──────────────────────────────────────────────────
     {
@@ -1073,7 +1085,8 @@ TABS = [
             "eps", "pe_ratio", "tbvps", "ptbv_ratio", "dividend_yield",
             "roatce_blended", "roatce_normalized", "earnings_distorted",
             "fair_ptbv", "fair_price", "ptbv_discount",
-            "roaa", "roaa_4q", "roatce", "roatce_4q", "nim", "nim_4q", "efficiency_ratio",
+            "roaa", "roaa_4q", "roatce", "roatce_4q", "nim", "nim_4q",
+            "efficiency_ratio", "efficiency_release",
             "npl_ratio", "cet1_ratio", "total_assets",
         ],
     },

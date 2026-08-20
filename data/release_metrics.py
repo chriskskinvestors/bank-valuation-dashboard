@@ -841,6 +841,34 @@ def _current_accession(cik) -> str | None:
     return cands[0]["accession"] if cands else None
 
 
+def cached_release_metrics(cik) -> dict | None:
+    """The stored release_metrics() extraction for the CIK — CACHE ONLY,
+    never a fetch. Built for the 440-bank metrics build (release-first
+    increment 3): release_metrics() itself puts a submissions-index
+    re-check — and, cold, a full release fetch + extraction — on the call
+    path, which is exactly the 2026-07-27 timeout class at build scale. A
+    bank with no cached extraction returns None (the column renders '—')
+    until the Results board / poll-events warms the cache through the
+    normal release_metrics() path.
+
+    No TTL on the read: an old extraction is DATA (the bank's last
+    release), and every caller must gate on the stored `qend` itself (the
+    _otc_release_ps ~200-day staleness precedent) — never trust this value
+    as current.
+
+    COUPLING: the key literal below must match release_metrics()'s key —
+    a version bump that misses one of the two silently deadens this
+    reader. tests/test_release_first_efficiency.py pins them equal."""
+    if not cik:
+        return None
+    from data import cache as _cache
+    try:
+        cached = _cache.get(f"release_metrics:v17:{int(cik)}", max_age_s=None)
+    except Exception:
+        return None
+    return (cached or {}).get("value") or None
+
+
 def release_metrics(cik) -> dict | None:
     """Extracted metrics for the CIK's latest earnings release:
     {metrics: {...}, capital: {...}, url, filed_date, accession} or None.
