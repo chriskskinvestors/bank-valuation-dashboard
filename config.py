@@ -119,7 +119,10 @@ METRICS = [
 
     # ── Valuation ───────────────────────────────────────────────────────
     {
-        "key": "eps", "label": "EPS", "source": "sec", "sec_concept": "eps",
+        # RESOLVED release-first TTM eps (analysis/valuation._resolve_eps) —
+        # the same figure pe_ratio prices off (was the raw sec_data XBRL TTM,
+        # which could differ from the P/E's input in the release→10-Q window).
+        "key": "eps", "label": "EPS", "source": "computed",
         "format": "currency", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 2.0, "warn": 0.5},
         "category": "Valuation",

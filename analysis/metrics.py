@@ -86,6 +86,12 @@ def build_bank_metrics(
     # the two numbers IS wrong). See analysis/valuation._resolve_tbvps/_bvps.
     result["tbvps_conflict"] = computed.get("tbvps_conflict")
     result["bvps_conflict"] = computed.get("bvps_conflict")
+    # eps siblings (release-first increment 2): eps_conflict feeds the same
+    # validation loop; eps_source labels the bank-detail EPS row
+    # ("release_ttm" = release-anchored composite TTM,
+    #  "reconstructed" = the XBRL TTM from data/sec_client).
+    result["eps_source"] = computed.get("eps_source")
+    result["eps_conflict"] = computed.get("eps_conflict")
 
     return result
 

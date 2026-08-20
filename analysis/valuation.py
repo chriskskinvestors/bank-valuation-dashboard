@@ -410,7 +410,13 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     price = price_data.get("price")
     prev_close = price_data.get("close")
 
-    eps = sec_data.get("eps")
+    # EPS resolves release-first too (increment 2, owner decision 2026-08-19):
+    # in the release→10-Q window the XBRL TTM is one quarter behind, so the
+    # release-anchored composite TTM (analysis/release_eps) serves when it
+    # cleanly assembles and agrees; see _resolve_eps for the band/conflict
+    # semantics and the screen-build perf guard.
+    eps, eps_source, eps_conflict = _resolve_eps(
+        ticker, sec_data.get("eps"), sec_data.get("sec_as_of"))
     # Company-Reported principle (release-first, owner directive 2026-08-19):
     # prefer the bank's OWN reported per-share book values (from its earnings
     # release) over our reconstruction. The reconstruction is the FALLBACK
@@ -538,7 +544,20 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "change_pct": compute_change_pct(price, prev_close),
         "volume": price_data.get("volume"),
         "market_cap": compute_market_cap(price, shares),
+        # pe_ratio prices off the RESOLVED eps — the same figure the eps key
+        # displays (never two different EPS values on one row).
         "pe_ratio": compute_pe_ratio(price, eps),
+        # The RESOLVED TTM diluted EPS — release-anchored composite in the
+        # release→10-Q window, XBRL TTM otherwise.
+        # eps_source: "release_ttm" | "reconstructed" | None — NOTE:
+        # "reconstructed" here means the XBRL TTM from data/sec_client (the
+        # pipeline-derived figure; vocabulary kept consistent with
+        # tbvps_source/bvps_source).
+        "eps": eps,
+        "eps_source": eps_source,
+        # True when the composite assembled AND disagrees with the XBRL TTM
+        # >=15% — one of them IS wrong; the XBRL TTM serves, flagged.
+        "eps_conflict": eps_conflict,
         "pb_ratio": compute_pb_ratio(price, bvps),
         "ptbv_ratio": compute_ptbv_ratio(price, tbvps),
         # The RESOLVED tangible book value — the same figure ptbv_ratio and
@@ -720,6 +739,90 @@ def _resolve_bvps(
     return (reconstructed,
             "reconstructed" if reconstructed is not None else None,
             conflict)
+
+
+def _resolve_eps(
+    ticker: str | None,
+    reconstructed: float | None,
+    sec_as_of: str | None,
+) -> tuple[float | None, str | None, bool]:
+    """(TTM diluted EPS, source, conflict) — release-first increment 2
+    (owner decision 2026-08-19). The site's EPS stays TTM-basis (a lone
+    release quarter as "EPS" is the P/E ~4x trap), but between a bank's
+    earnings release and its 10-Q the XBRL TTM is one quarter behind — the
+    release-anchored COMPOSITE TTM (analysis/release_eps: release quarter's
+    diluted EPS + the prior three discrete Company-Reported quarters) serves
+    in that window.
+
+    Source vocabulary mirrors _resolve_tbvps: "release_ttm" (composite) |
+    "reconstructed" | None. NOTE: "reconstructed" here means the XBRL TTM
+    from data/sec_client (sec_data["eps"], TTM-or-None invariant) — the
+    pipeline-derived figure, named consistently with tbvps/bvps.
+
+    conflict=True: the composite ASSEMBLED (all four quarters, fresh
+    release) yet disagrees with the XBRL TTM >=15% — one of them IS wrong.
+    The XBRL TTM serves (the longer-standing anchor), flagged via
+    eps_conflict so validation pages instead of a silent pick (FSUN lesson).
+
+    PERF GUARD (screen build: 440 banks, release_metrics has no warm path
+    there): the composite is only ATTEMPTED inside the window where it can
+    differ from the XBRL TTM — when the (2h-cached, already fetched by the
+    tbvps path) latest earnings 8-K covers a quarter-end NEWER than the
+    freshest 10-Q/10-K facts (sec_as_of). Outside the window: the XBRL TTM
+    with ZERO added fetches."""
+    conflict = False
+    cik = None
+    if ticker:
+        try:
+            from data.bank_mapping import get_cik
+            cik = get_cik(ticker)
+        except Exception:
+            cik = None
+    composite = None
+    if cik:
+        try:
+            if _release_newer_than_filings(cik, sec_as_of):
+                from analysis.release_eps import composite_ttm_eps
+                composite, _, _ = composite_ttm_eps(cik)
+        except Exception as e:
+            print(f"[valuation] composite eps lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    if composite is not None:
+        if reconstructed is None:
+            return composite, "release_ttm", False
+        if composite == reconstructed or (
+                reconstructed != 0
+                and abs(composite - reconstructed)
+                / abs(reconstructed) < 0.15):
+            return composite, "release_ttm", False
+        conflict = True
+        print(f"[valuation] EPS CONFLICT {ticker}: release-anchored composite "
+              f"TTM {composite} disagrees >=15% with the XBRL TTM "
+              f"{reconstructed} — one of them is wrong; serving the XBRL TTM, "
+              f"flagging eps_conflict")
+    return (reconstructed,
+            "reconstructed" if reconstructed is not None else None,
+            conflict)
+
+
+def _release_newer_than_filings(cik, sec_as_of) -> bool:
+    """True only in the window where the composite TTM EPS can differ from
+    the XBRL TTM: the latest earnings 8-K (data/sec_earnings_8k, 2h-cached —
+    the tbvps path already fetches it per bank, so this adds nothing) covers
+    a quarter-end NEWER than the freshest 10-Q/10-K fact end
+    (sec_data["sec_as_of"]). Once the 10-Q for the release quarter files,
+    sec_as_of catches up and the guard closes. No sec_as_of at all (empty
+    companyfacts) leaves the composite as the only possible TTM source, so
+    the window stays open there."""
+    from data.ir_provider import _quarter_end_before
+    from data.sec_earnings_8k import _latest_earnings_8k
+    f8k = _latest_earnings_8k(cik)
+    if not f8k:
+        return False
+    rel_qend = _quarter_end_before(f8k.get("date") or "")
+    if not rel_qend:
+        return False
+    return not sec_as_of or rel_qend > str(sec_as_of)
 
 
 def _otc_tbvps(ticker: str) -> float | None:
