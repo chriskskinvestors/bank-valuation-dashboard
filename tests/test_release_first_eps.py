@@ -14,7 +14,13 @@ Pinned here:
 - Stale-release refusal: release qend != the expected most-recent completed
   quarter -> None (and the statement stitch is never even fetched).
 - _resolve_eps: band agreement -> composite serves as "release_ttm";
-  >=15% divergence -> XBRL TTM serves + eps_conflict=True; composite absent
+  >=15% divergence -> the RELEASE-QUARTER plausibility gate decides (the two
+  TTMs share three quarters, so in-window the disagreement reduces to the
+  release quarter vs the dropped year-ago quarter): release quarter within
+  0.25x-4x of the shared-quarter median -> genuine YoY swing, composite
+  serves (the ONB Bremer-merger shape: composite 2.26 vs stale XBRL 1.95);
+  outside the band, or components missing -> XBRL TTM serves +
+  eps_conflict=True (the mis-extraction shape); composite absent
   -> XBRL TTM as "reconstructed"; nothing -> (None, None, False).
 - PERF GUARD: outside the release->10-Q window (latest earnings 8-K covers a
   quarter <= sec_as_of) the composite is never attempted — zero added
@@ -186,6 +192,16 @@ class _ResolveBase(unittest.TestCase):
         (self.bm.get_cik, self.s8k._latest_earnings_8k) = self._orig
 
 
+def _components(rel_eps, quarters):
+    """A composite provenance dict in the composite_ttm_eps shape: release
+    quarter EPS + the three shared prior quarters (newest-first)."""
+    labels = [lab for lab, _ in _priors(EXPECTED)]
+    return {"release": {"qend": EXPECTED, "eps": rel_eps,
+                        "accession": "x", "url": "u"},
+            "quarters": dict(zip(labels, quarters)),
+            "quarter_sources": {}}
+
+
 class TestResolveEps(_ResolveBase):
     # sec_as_of one quarter behind the release -> window open.
     AS_OF = _quarter_end_before(EXPECTED)
@@ -196,8 +212,32 @@ class TestResolveEps(_ResolveBase):
             self.assertEqual(va._resolve_eps("JPM", 2.00, self.AS_OF),
                              (2.05, "release_ttm", False))
 
-    def test_divergence_serves_xbrl_with_conflict(self):
-        """>=15% apart: one IS wrong — the XBRL TTM serves, flagged."""
+    def test_genuine_swing_serves_composite_beyond_band(self):
+        """The ONB shape (2Q26, Bremer-merger quarter, hand-verified against
+        the release 2026-08-20): composite 2.26 (release 0.65 + shared
+        0.59/0.56/0.46) vs stale XBRL TTM 1.95 — 15.9% apart, but the
+        release quarter is plausible against the shared-quarter median
+        (0.65 / 0.56 = 1.16x), so the genuine YoY swing serves as
+        release_ttm without conflict."""
+        comp = _components(0.65, [0.59, 0.56, 0.46])
+        with patch.object(re_mod, "composite_ttm_eps",
+                          return_value=(2.26, EXPECTED, comp)):
+            self.assertEqual(va._resolve_eps("ONB", 1.95, self.AS_OF),
+                             (2.26, "release_ttm", False))
+
+    def test_misextracted_release_quarter_conflicts(self):
+        """The mis-extraction shape: a release quarter 10x the shared-quarter
+        median (a YTD/aggregate grabbed into the EPS slot) fails the
+        plausibility gate — the XBRL TTM serves, flagged."""
+        comp = _components(5.00, [0.52, 0.50, 0.48])
+        with patch.object(re_mod, "composite_ttm_eps",
+                          return_value=(6.50, EXPECTED, comp)):
+            self.assertEqual(va._resolve_eps("JPM", 2.00, self.AS_OF),
+                             (2.00, "reconstructed", True))
+
+    def test_divergence_without_components_stays_conservative(self):
+        """>=15% apart and no provenance components to gate on: the gate
+        cannot prove plausibility — the XBRL TTM serves, flagged."""
         with patch.object(re_mod, "composite_ttm_eps",
                           return_value=(3.00, EXPECTED, {})):
             self.assertEqual(va._resolve_eps("JPM", 2.00, self.AS_OF),
@@ -227,6 +267,34 @@ class TestResolveEps(_ResolveBase):
                           return_value=(-1.05, EXPECTED, {})):
             self.assertEqual(va._resolve_eps("X", -1.00, self.AS_OF),
                              (-1.05, "release_ttm", False))
+
+
+class TestReleaseQuarterGate(unittest.TestCase):
+    """_release_quarter_plausible edge cases — anything unprovable refuses
+    (the conservative conflict path), never a guess."""
+
+    def test_low_side_refused(self):
+        """A release quarter far BELOW the shared median (a cents-scale
+        mis-parse) fails too — the band is two-sided."""
+        self.assertFalse(va._release_quarter_plausible(
+            _components(0.05, [0.52, 0.50, 0.48])))
+
+    def test_zero_median_refused(self):
+        self.assertFalse(va._release_quarter_plausible(
+            _components(0.50, [0.10, 0.00, -0.10])))
+
+    def test_missing_quarter_refused(self):
+        self.assertFalse(va._release_quarter_plausible(
+            _components(0.50, [0.52, None, 0.48])))
+
+    def test_none_components_refused(self):
+        self.assertFalse(va._release_quarter_plausible(None))
+
+    def test_sign_flip_recovery_passes_on_magnitude(self):
+        """Loss-making bank posting a genuine recovery quarter: magnitudes
+        gate, not signed ratios."""
+        self.assertTrue(va._release_quarter_plausible(
+            _components(0.55, [-0.50, -0.52, -0.48])))
 
 
 class TestPerfGuard(_ResolveBase):
