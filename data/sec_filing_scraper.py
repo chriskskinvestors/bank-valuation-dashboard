@@ -1810,6 +1810,7 @@ def extract_nim_by_year(html_bytes: bytes) -> dict:
     no such table."""
     from lxml import html as lhtml
     root = lhtml.fromstring(html_bytes)
+    single_year_nims: dict[int, float] = {}   # FMAO-class one-table-per-year
     for tbl in root.iter("table"):
         # Gate on the NIM line OR its synonym 'net yield on … earning assets'
         # (CBSH and others state the margin only under that name, in a table that
@@ -1821,6 +1822,20 @@ def extract_nim_by_year(html_bytes: bytes) -> dict:
                  for td in tr.iter("td", "th")] for tr in tbl.iter("tr")]
         year_cols = _year_columns(rows)
         if not year_cols:
+            # FMAO-class layout: ONE average-balance table PER YEAR with no
+            # year header row — the year appears exactly once in the table's
+            # own text. Safe only when both the year and the NIM value are
+            # unambiguous (one distinct year, one in-band percentage).
+            yrs_in = set(re.findall(r"\b(20\d{2})\b", tbl.text_content()))
+            single_row = next(
+                (r for r in rows if r and re.match(
+                    r"net\s+interest\s+margin\b", r[0].strip(), re.I)
+                 and "trading activities" not in r[0].lower()), None)
+            if len(yrs_in) == 1 and single_row is not None:
+                vals = [v for v in (_num_cell(c) for c in single_row[1:])
+                        if v is not None and 0 < v < 15]
+                if len(vals) == 1:
+                    single_year_nims[int(yrs_in.pop())] = vals[0] / 100.0
             continue
         years = [y for _, y in year_cols]
 
@@ -1890,8 +1905,10 @@ def extract_nim_by_year(html_bytes: bytes) -> dict:
         table_nims = {}
     # Prose fills only the years the table didn't yield (table value preferred when
     # both exist). Filers that state NIM only in narrative prose (no table row) get
-    # their whole series from here; the rest get nothing extra.
+    # their whole series from here; the rest get nothing extra. Single-year
+    # tables (FMAO-class) rank between: below a real multi-year table, above prose.
     merged = dict(extract_nim_prose(html_bytes))
+    merged.update(single_year_nims)
     merged.update(table_nims)
     return merged
 
@@ -1991,11 +2008,12 @@ def company_asset_quality_nim(cik) -> dict | None:
     # in-window year's NPL/NCO that the 3-filing window dropped. v3: prose-NIM
     # fallback + performance-status nonaccrual + WriteOffs casing. (_HISTORY_FILINGS
     # is in the key, so the depth bump alone already invalidates old entries.)
-    # v6: lease-inclusive rollforward concepts (...AndNetInvestmentInLease...)
-    # recover WFC-class NPL/NCO. v5: split-filer NIM — scan every document part
-    # for the MD&A average-balance table (WFC's lives outside the primary doc;
-    # v4 read only the primary and returned no NIM for document-set filers).
-    ckey = f"asset_quality_nim:v6:{latest['accession']}:{_HISTORY_FILINGS}"
+    # v7: FMAO-class single-year NIM tables (one table per year, year in table
+    # text). v6: lease-inclusive rollforward concepts (...AndNetInvestmentIn
+    # Lease...) recover WFC-class NPL/NCO. v5: split-filer NIM — scan every
+    # document part for the MD&A average-balance table (WFC's lives outside
+    # the primary doc; v4 read only the primary).
+    ckey = f"asset_quality_nim:v7:{latest['accession']}:{_HISTORY_FILINGS}"
     by_year = cache.get(ckey)
     if by_year is None:
         bundle: list[tuple] = []

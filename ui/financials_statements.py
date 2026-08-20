@@ -3310,6 +3310,22 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
         # "assets, total" = the SEC standard-label reversed word order (ASB/
         # EFSC/PRK); bare "assets" = the total row of OVLY/SLBK-style sheets.
         ta = _b(["total assets", "assets, total", "assets"], year)
+        if ta is None and year in bal_years:
+            # EWBC labels its assets total just "TOTAL". A bare "total" row is
+            # accepted ONLY when it is the largest value on the sheet — total
+            # assets is definitionally the max line, and a bare liabilities+
+            # equity total equals it by the accounting identity; any section
+            # subtotal fails the guard.
+            _ci = bal_years.index(year)
+            _cands = [vals[_ci] for nlab, vals in bin_.items()
+                      if nlab == "total" and _ci < len(vals)
+                      and vals[_ci] is not None]
+            if _cands:
+                _mx = max((vals[_ci] for vals in bin_.values()
+                           if _ci < len(vals) and vals[_ci] is not None),
+                          default=None)
+                if _mx is not None and any(abs(c - _mx) < 0.5 for c in _cands):
+                    ta = _mx
         nl = _b(["loans, net", "total loans, net", "net loans"], year)
         # Gross loans = the pre-allowance carrying line ("Loans, net of unearned
         # income"). Distinct key from "Loans, net" (exact-match _b), so no collision.
@@ -3405,6 +3421,31 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
                     "total other operating expenses"], year)
         prov = _i(["provision for credit losses", "provision for loan losses",
                    "(reversal of) provision for credit losses"], year)
+        # Ambiguous noninterest labels ("total fee revenue", "total operating
+        # expenses", 'other' forms) may name a NARROWER line than the true
+        # total — trusting them blind could overstate efficiency. They are
+        # accepted per bank/per year ONLY when the full income walk ties:
+        # NII + candidate income − candidate expense − provision − tax ≈ net
+        # income (2% / $2M). A walk that doesn't tie (or missing walk inputs)
+        # leaves the metric n/a — the gate turns label ambiguity into
+        # arithmetic proof, never a guess.
+        if (nonii is None or nonix is None) and None not in (nii, ni):
+            _c_nonii = nonii if nonii is not None else _i(
+                ["total fee revenue", "total other non-interest income",
+                 "total other noninterest income"], year)
+            _c_nonix = nonix if nonix is not None else _i(
+                ["total operating expenses", "total other non-interest expenses",
+                 "total other noninterest expenses",
+                 "total other noninterest expense"], year)
+            _tax = _i(["income tax expense", "provision for income taxes",
+                       "income taxes", "income tax provision",
+                       "provision for income tax", "applicable income taxes",
+                       "income tax expense (benefit)",
+                       "provision (benefit) for income taxes"], year)
+            if None not in (_c_nonii, _c_nonix, _tax) and prov is not None:
+                _walk = nii + _c_nonii - _c_nonix - prov - _tax
+                if abs(_walk - ni) <= max(abs(ni) * 0.02, 2e6):
+                    nonii, nonix = _c_nonii, _c_nonix
         eps_dil = _i(["diluted earnings per common share (in dollars per share)",
                       "diluted earnings per share (in dollars per share)",
                       "diluted earnings per common share (in usd per share)",

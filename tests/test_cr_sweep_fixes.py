@@ -16,6 +16,17 @@ F4 — freshness gate: a DEREGISTERED filer's decade-old statements
      (CCNB/FOTB/OSBK, last 10-K 2012-13) must stay n/a — rendering them as
      "Company Reported" beside live FDIC tabs would mislead. Current filers'
      full history is untouched (only the newest filing's age is gated).
+F5 — highlights label variants (two harvest rounds across the metric-fill
+     tails): before-provision NII, plural/"revenues"/"other operating"
+     noninterest totals, loss-first and to-parent/to-common net income,
+     reversed "Assets, Total".
+F6 — nonaccrual split-sum: with-allowance + no-allowance components sum to
+     total nonaccrual ONLY when both exist (verified to the dollar vs
+     TRST's own combined tag).
+F7 — reconcile-gated ambiguous labels: "total fee revenue"/"total operating
+     expenses" accepted per bank/year only when the income walk ties NI.
+F8 — bare-"TOTAL" balance rows (EWBC) accepted only as the sheet's maximum
+     value (total assets by definition / L+E identity).
 """
 from __future__ import annotations
 
@@ -268,6 +279,88 @@ class TestHighlightsLabelVariants(unittest.TestCase):
         d = dicts[0]
         self.assertIsNone(d["nii"])
         self.assertIsNone(d["efficiency"])
+
+
+class TestReconcileGatedAmbiguousLabels(unittest.TestCase):
+    """F7 — ambiguous noninterest labels ("total fee revenue", "total operating
+    expenses") are accepted ONLY when the full income walk ties net income;
+    an untied walk leaves the metrics n/a (arithmetic proof over label trust)."""
+
+    M = 1e6
+
+    def _income(self, fee, opex, ni):
+        return TestHighlightsLabelVariants._stmt([
+            ("Net interest income", 400.0 * self.M),
+            ("Total fee revenue", fee),
+            ("Total operating expenses", opex),
+            ("Provision for credit losses", 20.0 * self.M),
+            ("Income tax expense", 50.0 * self.M),
+            ("Net income", ni),
+        ])
+
+    def _run(self, inc):
+        bal = TestHighlightsLabelVariants._stmt(
+            [("Total assets", 15000.0), ("Total deposits", 12000.0),
+             ("Total stockholders' equity", 2000.0)])
+        import ui.financials_statements as fs
+        import data.sec_statements as ss
+        with mock.patch.object(fs, "get_bank_info", return_value={"cik": 1, "name": "T"}), \
+             mock.patch.object(ss, "as_reported_statement_multiyear",
+                               side_effect=lambda cik, st, n: inc if st == "income" else bal), \
+             mock.patch("data.sec_filing_scraper.holdco_capital_for",
+                        return_value=None), \
+             mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
+                        return_value=None):
+            _y, dicts, _s = fs._cr_highlights_by_year("TEST")
+        return dicts[0]
+
+    def test_tied_walk_accepts_ambiguous_labels(self):
+        # 400 + 100 − 250 − 20 − 50 = 180 = NI → labels proven complete.
+        d = self._run(self._income(fee=100e6, opex=250e6, ni=180e6))
+        self.assertEqual(d["noninterest_income"], 100e6)
+        self.assertAlmostEqual(d["efficiency"], 250.0 / 500.0, places=6)
+
+    def test_untied_walk_stays_na(self):
+        # Same labels but NI=250 → the walk misses by 70 (fee revenue was only
+        # PART of income) → efficiency must stay n/a, never a wrong ratio.
+        d = self._run(self._income(fee=100e6, opex=250e6, ni=250e6))
+        self.assertIsNone(d["noninterest_income"])
+        self.assertIsNone(d["efficiency"])
+
+
+class TestBareTotalAssetsGuard(unittest.TestCase):
+    """F8 — EWBC labels its assets total just "TOTAL": accepted only when it
+    is the largest value on the sheet (total assets by definition/identity)."""
+
+    def _run(self, bal_rows):
+        inc = TestHighlightsLabelVariants._stmt([
+            ("Net interest income", 400.0), ("Total noninterest income", 100.0),
+            ("Total noninterest expense", 250.0), ("Net income", 180.0)])
+        bal = TestHighlightsLabelVariants._stmt(bal_rows)
+        import ui.financials_statements as fs
+        import data.sec_statements as ss
+        with mock.patch.object(fs, "get_bank_info", return_value={"cik": 1, "name": "T"}), \
+             mock.patch.object(ss, "as_reported_statement_multiyear",
+                               side_effect=lambda cik, st, n: inc if st == "income" else bal), \
+             mock.patch("data.sec_filing_scraper.holdco_capital_for",
+                        return_value=None), \
+             mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
+                        return_value=None):
+            _y, dicts, _s = fs._cr_highlights_by_year("TEST")
+        return dicts[0]
+
+    def test_max_bare_total_is_assets(self):
+        d = self._run([("Cash", 500.0), ("TOTAL", 15000.0),
+                       ("Total deposits", 12000.0),
+                       ("Total stockholders' equity", 2000.0)])
+        self.assertEqual(d["total_assets"], 15000.0)
+
+    def test_non_max_bare_total_rejected(self):
+        # A bare "TOTAL" that is only a section subtotal must not become
+        # total assets.
+        d = self._run([("TOTAL", 3000.0), ("Total deposits", 12000.0),
+                       ("Total stockholders' equity", 2000.0)])
+        self.assertIsNone(d["total_assets"])
 
 
 if __name__ == "__main__":
