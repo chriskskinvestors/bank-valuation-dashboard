@@ -109,8 +109,10 @@ jobs:
           # OPTIONAL secrets — mounted IF they exist, skipped silently if not (so a
           # deploy never fails on their absence). external-access-password gates
           # non-kskinvestors.com users (ui/access_gate.py); the app runs
-          # gate-dormant until the secret is created.
-          for s in external-access-password; do
+          # gate-dormant until the secret is created. census-api-key powers the
+          # Market Demographics sub-tab (data/census_client.py) — dormant until
+          # the owner creates the secret from their api.census.gov signup.
+          for s in external-access-password census-api-key; do
             if gcloud secrets describe "$s" --quiet >/dev/null 2>&1; then
               env_var=$(echo "$s" | tr '[:lower:]-' '[:upper:]_')
               SECRETS="${SECRETS:+$SECRETS,}${env_var}=${s}:latest"
