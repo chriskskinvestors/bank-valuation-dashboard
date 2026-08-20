@@ -63,21 +63,21 @@ _MACRO_NAV_CSS = """
 .st-key-bank_sector_sub_nav div[role="radiogroup"]{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:flex-end;border-bottom:1px solid rgba(148,163,184,0.22);margin:0 0 12px;}
 .st-key-bank_sector_sub_nav div[role="radiogroup"]>label{margin:0!important;padding:5px 12px;cursor:pointer;border-bottom:2px solid transparent;transition:border-color .12s,color .12s;}
 .st-key-bank_sector_sub_nav div[role="radiogroup"]>label:hover{background:rgba(37,99,235,0.05);}
-.st-key-bank_sector_sub_nav div[role="radiogroup"]>label>div:first-of-type{display:none!important;}
+.st-key-bank_sector_sub_nav div[role="radiogroup"]>label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])){display:none!important;}
 .st-key-bank_sector_sub_nav div[role="radiogroup"]>label p{font-size:0.86rem;color:var(--text-secondary);font-weight:600;}
 .st-key-bank_sector_sub_nav div[role="radiogroup"]>label:has(input:checked){border-bottom-color:#3b82f6;}
 .st-key-bank_sector_sub_nav div[role="radiogroup"]>label:has(input:checked) p{color:#1e40af;font-weight:700;}
 .st-key-macro_section_nav div[role="radiogroup"]{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:flex-end;border-bottom:1px solid rgba(148,163,184,0.28);margin-bottom:8px;}
 .st-key-macro_section_nav div[role="radiogroup"]>label{margin:0!important;padding:7px 14px;cursor:pointer;border-bottom:2px solid transparent;border-radius:0;transition:background .12s,border-color .12s;}
 .st-key-macro_section_nav div[role="radiogroup"]>label:hover{background:rgba(37,99,235,0.06);}
-.st-key-macro_section_nav div[role="radiogroup"]>label>div:first-of-type{display:none!important;}
+.st-key-macro_section_nav div[role="radiogroup"]>label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])){display:none!important;}
 .st-key-macro_section_nav div[role="radiogroup"]>label p{font-size:0.95rem;color:var(--text-secondary);font-weight:600;}
 .st-key-macro_section_nav div[role="radiogroup"]>label:has(input:checked){border-bottom-color:#2563eb;}
 .st-key-macro_section_nav div[role="radiogroup"]>label:has(input:checked) p{color:#2563eb;font-weight:700;}
 .st-key-bank_sector_etf div[role="radiogroup"],.st-key-bank_sector_period div[role="radiogroup"],.st-key-macro_cal_window div[role="radiogroup"]{display:flex;flex-wrap:wrap;gap:2px 14px;align-items:flex-end;margin:2px 0 8px;}
 .st-key-bank_sector_etf div[role="radiogroup"]>label,.st-key-bank_sector_period div[role="radiogroup"]>label,.st-key-macro_cal_window div[role="radiogroup"]>label{margin:0!important;padding:2px 2px;cursor:pointer;border-bottom:2px solid transparent;transition:border-color .12s,color .12s;}
 .st-key-bank_sector_etf div[role="radiogroup"]>label:hover p,.st-key-bank_sector_period div[role="radiogroup"]>label:hover p,.st-key-macro_cal_window div[role="radiogroup"]>label:hover p{color:var(--text-secondary);}
-.st-key-bank_sector_etf div[role="radiogroup"]>label>div:first-of-type,.st-key-bank_sector_period div[role="radiogroup"]>label>div:first-of-type,.st-key-macro_cal_window div[role="radiogroup"]>label>div:first-of-type{display:none!important;}
+.st-key-bank_sector_etf div[role="radiogroup"]>label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])),.st-key-bank_sector_period div[role="radiogroup"]>label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])),.st-key-macro_cal_window div[role="radiogroup"]>label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])){display:none!important;}
 .st-key-bank_sector_etf div[role="radiogroup"]>label p,.st-key-bank_sector_period div[role="radiogroup"]>label p,.st-key-macro_cal_window div[role="radiogroup"]>label p{font-size:0.78rem;color:var(--text-muted);font-weight:500;letter-spacing:0.04em;text-transform:uppercase;}
 .st-key-bank_sector_etf div[role="radiogroup"]>label:has(input:checked),.st-key-bank_sector_period div[role="radiogroup"]>label:has(input:checked),.st-key-macro_cal_window div[role="radiogroup"]>label:has(input:checked){border-bottom-color:#3b82f6;}
 .st-key-bank_sector_etf div[role="radiogroup"]>label:has(input:checked) p,.st-key-bank_sector_period div[role="radiogroup"]>label:has(input:checked) p,.st-key-macro_cal_window div[role="radiogroup"]>label:has(input:checked) p{color:#1e40af;font-weight:700;}
