@@ -150,6 +150,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
         import data.estimates as est
         import data.econ_calendar as ec
         import data.earnings_call as ecall
+        import data.macro_calendar as mc
         fake = [
             {"date": "2026-07-02", "event": "Nonfarm Payrolls <YoY>",
              "estimate": 180.0, "previous": 175.0, "unit": "K",
@@ -161,16 +162,19 @@ class TestHomeRendersPopulated(unittest.TestCase):
              "released": False},
         ]
         saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-                 ecall.merged_call_info, ecall.earnings_timing_map)
+                 ecall.merged_call_info, ecall.earnings_timing_map,
+                 mc.get_upcoming_prints)
         try:
             est.fetch_earnings_calendar = lambda w: []
             ec.get_upcoming_releases = lambda days=14: list(fake)
             ecall.merged_call_info = lambda: {}
             ecall.earnings_timing_map = lambda: {}
+            mc.get_upcoming_prints = lambda days=7: []
             h = self.home._af_calendar_table([])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-             ecall.merged_call_info, ecall.earnings_timing_map) = saved
+             ecall.merged_call_info, ecall.earnings_timing_map,
+             mc.get_upcoming_prints) = saved
         self.assertIn("180K / 175K", h)      # consensus / previous column
         self.assertIn("3.2% / 3.1%", h)
         self.assertIn("8:30 AM ET", h)       # FMP UTC 12:30 -> 8:30 AM EDT
@@ -186,6 +190,7 @@ class TestHomeRendersPopulated(unittest.TestCase):
         import data.estimates as est
         import data.econ_calendar as ec
         import data.earnings_call as ecall
+        import data.macro_calendar as mc
         base = _dt.date.today()
         macro = [{"date": (base + _dt.timedelta(days=d)).isoformat(),
                   "event": f"Initial Jobless Claims {d}", "estimate": 230.0,
@@ -196,16 +201,19 @@ class TestHomeRendersPopulated(unittest.TestCase):
                  "next_earnings_date": (base + _dt.timedelta(days=35)).isoformat(),
                  "eps_estimate": 1.23}]
         saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-                 ecall.merged_call_info, ecall.earnings_timing_map)
+                 ecall.merged_call_info, ecall.earnings_timing_map,
+                 mc.get_upcoming_prints)
         try:
             est.fetch_earnings_calendar = lambda w: list(earn)
             ec.get_upcoming_releases = lambda days=14: list(macro)
             ecall.merged_call_info = lambda: {}
             ecall.earnings_timing_map = lambda: {}
+            mc.get_upcoming_prints = lambda days=7: []
             h = self.home._af_calendar_table(["BANR"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-             ecall.merged_call_info, ecall.earnings_timing_map) = saved
+             ecall.merged_call_info, ecall.earnings_timing_map,
+             mc.get_upcoming_prints) = saved
         # 20 nearer macro events must NOT bury the (later) bank earnings.
         self.assertIn("BANR", h)
 
@@ -223,9 +231,11 @@ class TestHomeRendersPopulated(unittest.TestCase):
         import data.estimates as est
         import data.econ_calendar as ec
         import data.earnings_call as ecall
+        import data.macro_calendar as mc
         soon = (_dt.date.today() + _dt.timedelta(days=10)).isoformat()
         saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-                 ecall.merged_call_info, ecall.earnings_timing_map)
+                 ecall.merged_call_info, ecall.earnings_timing_map,
+                 mc.get_upcoming_prints)
         try:
             est.fetch_earnings_calendar = lambda w: [
                 {"ticker": "NWBI", "next_earnings_date": soon, "eps_estimate": 1.2}]
@@ -235,10 +245,12 @@ class TestHomeRendersPopulated(unittest.TestCase):
                 "call_time": "10:00a ET",
                 "webcast_url": "https://investor.example.com/webcast",
                 "dial_in": "1-800-555-1234 (ID 99)"}}
+            mc.get_upcoming_prints = lambda days=7: []
             h = self.home._af_calendar_table(["NWBI"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-             ecall.merged_call_info, ecall.earnings_timing_map) = saved
+             ecall.merged_call_info, ecall.earnings_timing_map,
+             mc.get_upcoming_prints) = saved
         self.assertIn("10:00a ET", h)                               # call time
         self.assertIn("webcast", h)                                 # indicator
         self.assertIn('href="https://investor.example.com/webcast"', h)  # row → webcast
@@ -252,9 +264,11 @@ class TestHomeRendersPopulated(unittest.TestCase):
         import data.estimates as est
         import data.econ_calendar as ec
         import data.earnings_call as ecall
+        import data.macro_calendar as mc
         soon = (_dt.date.today() + _dt.timedelta(days=12)).isoformat()
         saved = (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-                 ecall.merged_call_info, ecall.earnings_timing_map)
+                 ecall.merged_call_info, ecall.earnings_timing_map,
+                 mc.get_upcoming_prints)
         try:
             est.fetch_earnings_calendar = lambda w: [
                 {"ticker": "JPM", "next_earnings_date": soon, "eps_estimate": 5.4}]
@@ -262,10 +276,12 @@ class TestHomeRendersPopulated(unittest.TestCase):
             ecall.merged_call_info = lambda: {}                   # no precise call info
             ecall.earnings_timing_map = lambda: {"JPM": {"when": "Before open",
                                                          "confirmed": True}}
+            mc.get_upcoming_prints = lambda days=7: []
             h = self.home._af_calendar_table(["JPM"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
-             ecall.merged_call_info, ecall.earnings_timing_map) = saved
+             ecall.merged_call_info, ecall.earnings_timing_map,
+             mc.get_upcoming_prints) = saved
         self.assertIn("Before open", h)      # FMP timing fills the column
 
     def test_movers_premarket_window(self):

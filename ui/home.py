@@ -651,6 +651,65 @@ def _af_movers_table(all_metrics: list[dict], mv: str, mh: str, msz: str) -> str
     return f'<div class="body">{body}</div>'
 
 
+# FRED-schedule release name (data/macro_calendar) → lowercase substrings that
+# identify the SAME print in FMP's economics-calendar event names. Built from
+# observed names on both sides: FRED side is the fixed TRACKED_RELEASES /
+# FOMC names; FMP side per the calendar payloads pinned in
+# tests/test_econ_calendar.py ("Core CPI YoY (May)", "PCE Price Index MoM",
+# "Nonfarm Payrolls (May)", "Unemployment Rate (May)", "Initial Jobless
+# Claims (Jun/06)", "GDP Growth Rate QoQ", "Retail Sales MoM (May)",
+# "Fed Interest Rate Decision"). A FRED release with no entry here, or with
+# no same-day FMP match, renders as its own row — when unsure, show both
+# rows rather than guess two prints are one.
+_MACRO_DEDUPE_TERMS = {
+    "CPI": ("cpi", "consumer price", "inflation rate"),
+    "PCE (Personal Income & Outlays)": (
+        "pce", "personal income", "personal spending", "personal consumption"),
+    "Employment Situation (NFP)": (
+        "nonfarm payroll", "non-farm payroll", "non farm payroll",
+        "unemployment rate", "hourly earnings", "participation rate",
+        "employment situation"),
+    "GDP": ("gdp",),
+    "Retail Sales": ("retail sales",),
+    "PPI": ("ppi", "producer price"),
+    "Jobless Claims": ("jobless claims",),
+    "FOMC Rate Decision": (
+        "fomc", "interest rate decision", "fed press conference",
+        "fed economic projection"),
+}
+
+
+def _merge_macro_calendar(fmp_rows: list[dict],
+                          fred_events: list[dict]) -> list[dict]:
+    """Merge FRED-scheduled print days (data/macro_calendar entries) into the
+    FMP macro rows of the Home calendar pane. Pure / unit-tested.
+
+    An FMP row and a FRED event for the same print on the same date render
+    once — the FMP row wins (it carries consensus/prior, which the FRED
+    schedule lacks). "Same print" = same ISO date AND the FMP event name
+    contains one of the FRED release's aliases in _MACRO_DEDUPE_TERMS; an
+    unmapped or unmatched FRED event is appended as its own row (FOMC
+    decisions arrive this way when FMP's calendar lacks them).
+
+    fmp_rows are pane-schema items ({kind, date, name, mid, detail, ...});
+    fred_events are macro_calendar entries ({date, name, kind, time, ...}).
+    Returns pane-schema rows, unsorted — the caller sorts and caps."""
+    out = list(fmp_rows)
+    for ev in fred_events:
+        d, name = ev.get("date"), ev.get("name") or ""
+        if not d:
+            continue
+        terms = _MACRO_DEDUPE_TERMS.get(name, ())
+        if terms and any(t in (r.get("name") or "").lower()
+                         for r in fmp_rows if r.get("date") == d
+                         for t in terms):
+            continue  # FMP already shows this print, with cons./prior
+        out.append({"kind": "macro", "date": d, "ticker": None,
+                    "name": name, "mid": "",
+                    "detail": ev.get("time") or "—"})
+    return out
+
+
 def _af_calendar_table(watchlist: list[str]) -> str:
     import datetime as dt
     items = []
@@ -702,6 +761,22 @@ def _af_calendar_table(watchlist: list[str]) -> str:
             items.append({"kind": "macro", "date": p.get("date"),
                           "ticker": None, "name": p.get("event") or "", "mid": mid,
                           "detail": _ec.et_time(p.get("datetime")) or "—"})
+    except Exception:
+        pass
+    try:
+        # FRED-based print days + FOMC decision dates (data/macro_calendar,
+        # 24h-cached in data.cache — same served-from-cache pattern as the FMP
+        # leg above, so no network on a warm render). FMP carries most of the
+        # same prints, so same-day duplicates collapse onto the richer FMP row;
+        # FOMC days and any FRED-only print get their own amber rows. Guarded
+        # exactly like the FMP leg: a macro_calendar failure leaves the FMP
+        # rows (and the pane) intact.
+        from data import macro_calendar as _mc
+        fred = _mc.get_upcoming_prints(days=14)  # match FMP's forward window
+        if fred:
+            fmp_macro = [i for i in items if i["kind"] == "macro"]
+            items = ([i for i in items if i["kind"] != "macro"]
+                     + _merge_macro_calendar(fmp_macro, fred))
     except Exception:
         pass
     items = [i for i in items if i.get("date")]
