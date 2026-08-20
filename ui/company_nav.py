@@ -43,7 +43,10 @@ COMPANY_NAV = {
     "News & Filings": ["Recent Documents", "Filings & Reports", "Key Exhibits",
                        "Press Releases", "Transcripts & Presentations",
                        "Events Calendar"],
-    "Market Analysis": ["Market Share & Branches", "Deposit Market Share"],
+    "Market Analysis": ["Market Share & Branches", "Deposit Market Share",
+                        "Branch List", "Branch Map", "Branch Competitors",
+                        "Branch Proximity", "Merger Planning (HHI)",
+                        "Market Demographics"],
     # SNL nav puts compensation under Overview, not Ownership (plan §12/§13);
     # the old "Executive Compensation" leaf moved there 2026-07-11.
     "Ownership": ["Institutional (13F)", "Detailed", "Holder History",
@@ -245,6 +248,36 @@ def _deposit_market_share(t, ctx):
     render_deposit_market_share(t)
 
 
+def _branch_list(t, ctx):
+    from ui.branch_analytics import render_branch_list
+    render_branch_list(t)
+
+
+def _branch_map(t, ctx):
+    from ui.branch_analytics import render_branch_map
+    render_branch_map(t)
+
+
+def _branch_competitors(t, ctx):
+    from ui.branch_analytics import render_branch_competitors
+    render_branch_competitors(t)
+
+
+def _branch_proximity(t, ctx):
+    from ui.branch_analytics import render_branch_proximity
+    render_branch_proximity(t)
+
+
+def _merger_planning(t, ctx):
+    from ui.branch_analytics import render_merger_planning
+    render_merger_planning(t)
+
+
+def _market_demographics(t, ctx):
+    from ui.branch_analytics import render_market_demographics
+    render_market_demographics(t)
+
+
 def _ownership_13f(t, ctx):
     from ui.ownership import render_ownership
     render_ownership(t)
@@ -397,6 +430,12 @@ _RENDERERS = {
     "Deposit Trends": _deposit_trends,
     "Market Share & Branches": _market_share,
     "Deposit Market Share": _deposit_market_share,
+    "Branch List": _branch_list,
+    "Branch Map": _branch_map,
+    "Branch Competitors": _branch_competitors,
+    "Branch Proximity": _branch_proximity,
+    "Merger Planning (HHI)": _merger_planning,
+    "Market Demographics": _market_demographics,
     "Institutional (13F)": _ownership_13f,
     "Detailed": _ownership_detailed,
     "Holder History": _holder_history,

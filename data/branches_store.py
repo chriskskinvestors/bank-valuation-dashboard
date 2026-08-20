@@ -38,9 +38,6 @@ Provides:
 """
 
 from __future__ import annotations
-import json
-from datetime import datetime
-from typing import Iterable
 
 import pandas as pd
 
@@ -69,10 +66,8 @@ def init_branches_schema():
     eng = get_engine()
     if _USE_POSTGRES:
         ts_default = "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
-        ts_col = "TIMESTAMP WITH TIME ZONE"
     else:
         ts_default = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
-        ts_col = "TIMESTAMP"
 
     with eng.begin() as conn:
         conn.execute(text(f"""
@@ -375,6 +370,31 @@ def list_counties() -> pd.DataFrame:
         GROUP BY stcntybr
         ORDER BY MAX(state), MAX(county)
     """, {})
+
+
+def get_branches_by_cert(cert: int, year: int | None = None) -> pd.DataFrame:
+    """One bank's full branch roster (latest survey year for that cert unless
+    `year` given): branch name/address/geo/deposits/lat/lng, deposits desc.
+    Powers the Market Analysis branch tabs (list / map / proximity)."""
+    params: dict = {"cert": int(cert)}
+    if year is None:
+        ydf = _q_to_df("SELECT MAX(year) AS y FROM branches WHERE cert = :cert",
+                       params)
+        if ydf.empty or pd.isna(ydf.iloc[0]["y"]):
+            return pd.DataFrame()
+        year = int(ydf.iloc[0]["y"])
+    params["year"] = year
+    sql = """
+        SELECT brnum, branch_name, address, city, state, zip, county,
+               stcntybr, msa_code, msa_name, deposits, lat, lng, year
+        FROM branches
+        WHERE cert = :cert AND year = :year
+        ORDER BY deposits DESC NULLS LAST
+    """
+    if not _USE_POSTGRES:                      # sqlite: no NULLS LAST syntax
+        sql = sql.replace("ORDER BY deposits DESC NULLS LAST",
+                          "ORDER BY deposits IS NULL, deposits DESC")
+    return _q_to_df(sql, params)
 
 
 def get_latest_year() -> int | None:
