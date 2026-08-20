@@ -539,6 +539,13 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     ptbv_discount = compute_ptbv_discount(actual_ptbv, fair_ptbv)
     fair_price = compute_fair_value_price(fair_ptbv, tbvps)
 
+    # Released holdco efficiency — ADD-ALONGSIDE (increment 3, owner decision
+    # 2026-08-19): the FDIC bank-sub EEFFR column stays THE efficiency;
+    # this carries the bank's own released figure where disclosed. Cache-only
+    # for SEC filers — see _resolve_release_efficiency's perf contract.
+    efficiency_release, efficiency_release_qend = _resolve_release_efficiency(
+        ticker, sec_has_xbrl=reconstructed_bvps is not None)
+
     return {
         "price": price,
         "change_pct": compute_change_pct(price, prev_close),
@@ -602,6 +609,13 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "nim_spread": nim_spread,
         "cost_of_funds": cost_of_funds,
         "nonint_burden": nonint_burden,
+        # The bank's own released (holding-company) efficiency ratio — a
+        # DIFFERENT base than the FDIC bank-sub EEFFR column (often FTE,
+        # 100-300bp apart), shown alongside it, never gated against it.
+        "efficiency_release": efficiency_release,
+        # The release quarter-end the figure covers — staleness stays
+        # visible downstream without re-deriving it.
+        "efficiency_release_qend": efficiency_release_qend,
         "roatce_blended": roatce_blended,
         "roatce_normalized": roatce_normalized,
         "earnings_norm_factor": earnings_norm_factor,
@@ -823,6 +837,71 @@ def _release_newer_than_filings(cik, sec_as_of) -> bool:
     if not rel_qend:
         return False
     return not sec_as_of or rel_qend > str(sec_as_of)
+
+
+def _resolve_release_efficiency(
+    ticker: str | None,
+    sec_has_xbrl: bool,
+) -> tuple[float | None, str | None]:
+    """(efficiency %, release quarter-end) — the bank's OWN released
+    holding-company efficiency ratio (release-first increment 3, owner
+    decision 2026-08-19). ADD-ALONGSIDE, never a replacement: the FDIC
+    bank-sub EEFFR column stays THE efficiency for every bank (uniform,
+    screener-stable); this rides alongside where the release discloses it.
+    HoldCo vs bank-sub are legitimately different bases (often FTE-adjusted,
+    100-300bp apart), so deliberately NO conflict flag and NO ±band gate
+    between them — the release extractor's own guards (20-110 band,
+    adjusted-variant exclusion, cross-candidate agreement) are the gates.
+
+    STALENESS: a release quarter-end older than ~200 days means the bank
+    stopped publishing (or never warmed) — None, mirroring _otc_release_ps.
+
+    PERF (440-bank screen build): the SEC path reads the release_metrics
+    CACHE ONLY (data.release_metrics.cached_release_metrics — structurally
+    incapable of a fetch); a bank whose release was never extracted shows
+    n/a until the Results board / poll-events warms it. The OTC path is
+    reached only for banks with no XBRL at all — the same banks whose wire
+    release the tbvps/bvps resolvers already fetched this build, so it
+    serves from otc_release's 15-min envelope."""
+    if not ticker:
+        return None, None
+    from datetime import date
+
+    def _fresh_qend(qend) -> bool:
+        if not qend:
+            return False
+        try:
+            return (date.today() - date.fromisoformat(qend)).days <= 200
+        except ValueError:
+            return False
+
+    cik = None
+    try:
+        from data.bank_mapping import get_cik
+        cik = get_cik(ticker)
+    except Exception:
+        cik = None
+    if cik:
+        try:
+            from data.release_metrics import cached_release_metrics
+            rm = cached_release_metrics(cik) or {}
+            v = (rm.get("metrics") or {}).get("efficiency")
+            if v is not None and _fresh_qend(rm.get("qend")):
+                return v, rm.get("qend")
+        except Exception as e:
+            print(f"[valuation] release efficiency lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    if not sec_has_xbrl:
+        try:
+            v = _otc_release_ps(ticker, "efficiency")
+            if v is not None:
+                # Second call is served from the 15-min cache envelope.
+                from data.otc_release import otc_release_metrics
+                return v, (otc_release_metrics(ticker) or {}).get("qend")
+        except Exception as e:
+            print(f"[valuation] otc efficiency lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    return None, None
 
 
 def _otc_tbvps(ticker: str) -> float | None:
