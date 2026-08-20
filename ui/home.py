@@ -282,6 +282,18 @@ div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"] p{fo
 div[class*="st-key-afpane"] [data-baseweb="select"]>div{min-height:22px!important;height:22px!important;}
 div[class*="st-key-afpane"] [data-baseweb="select"]>div>div{padding-top:0!important;padding-bottom:0!important;}
 div[class*="st-key-afpane"] [data-baseweb="select"] *{font-size:var(--fs-grid-10_5)!important;}
+/* Overnight & Breaking: four topic columns in one full-width strip above the
+   grid. Items reuse the feed pane's fhl/fwhen typography for density. */
+.afwrap .ovngrid{display:grid;grid-template-columns:repeat(4,1fr);}
+.afwrap .ovncol{border-right:1px solid #eceff4;min-width:0;}
+.afwrap .ovncol:last-child{border-right:none;}
+.afwrap .ovnc{font-size:var(--fs-grid-8_5);font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#1e3a8a;padding:5px 12px 3px;border-bottom:1px solid #f4f6f9;}
+.afwrap .ovnitem{display:grid;grid-template-columns:1fr auto;column-gap:8px;align-items:center;height:19px;padding:0 12px;border-bottom:1px solid #f6f8fa;white-space:nowrap;}
+.afwrap .ovnitem>*{min-width:0;}
+.afwrap .ovnitem:last-child{border-bottom:none;}
+/* Sector valuation strip below the grid: Tier | P/TBV | Δ | P/E | Δ | Yld | Δ */
+.afwrap .erow.sv{grid-template-columns:1.15fr 1fr .62fr 1fr .62fr 1fr .62fr;column-gap:8px;padding:0 12px;}
+.afwrap .erow.sv .num{font-size:var(--fs-grid-10);}
 </style>
 """
 
@@ -1328,6 +1340,223 @@ def _af_pane_volume(all_metrics):
     _md(_af_volume_table(all_metrics, szkey, vp.lower()))
 
 
+# ── Overnight & Breaking (docs/HOME-MACRO-PLAN.md priority #1) ────────────
+# Curated general-news topic feeds (Google News adapter → events store →
+# topic_curation whitelist/relevance ranking), four categories above the grid.
+# Bank/company alerts stay in the Bank News Feed pane — this strip is the
+# non-bank half only.
+_OVN_CATEGORIES = [("macro", "Macro"), ("geopolitical", "Geopolitical"),
+                   ("domestic", "Domestic"), ("markets", "Markets")]
+_OVN_HOURS = 24          # generous overnight window
+_OVN_PER_CAT = 5         # curate_topic_news default cap per category
+_OVN_SNAP_KEY = "home_overnight_news_v1"
+_OVN_SNAP_TTL = 300      # same safety-net TTL as the feed snapshot
+
+
+def _af_overnight_items() -> dict[str, list[dict]]:
+    """Curated topic headlines per category, {category: [items]}, cross-
+    instance cached (served_snapshot — the pane pattern) so the four events
+    queries never run per rerun. {} / empty lists on any failure."""
+    def build():
+        from data.events.store import get_topic_news
+        from data.events.topic_curation import curate_topic_news
+        out = {}
+        for key, _lbl in _OVN_CATEGORIES:
+            try:
+                items = curate_topic_news(
+                    get_topic_news(key, hours=_OVN_HOURS, limit=60),
+                    key, limit=_OVN_PER_CAT)
+            except Exception as e:
+                print(f"[home.ovn] topic {key} failed: {type(e).__name__}: {e}")
+                items = []
+            # Slim + stringify (the snapshot JSON round-trips through cache).
+            out[key] = [{"headline": i.get("headline"), "url": i.get("url"),
+                         "source_name": i.get("source_name"),
+                         "published_at": str(i.get("published_at") or "")}
+                        for i in items]
+        return out
+    from data.cache import served_snapshot
+    try:
+        return served_snapshot(_OVN_SNAP_KEY, _OVN_SNAP_TTL, build) or {}
+    except Exception as e:
+        print(f"[home.ovn] snapshot failed: {type(e).__name__}: {e}")
+        return {}
+
+
+def _af_overnight_table(topics: dict[str, list[dict]]) -> str:
+    """Overnight & Breaking strip HTML. Pure / unit-tested.
+
+    A category with no stored items renders an honest 'no items' line; every
+    category empty (or no store at all) returns "" — the caller collapses the
+    section entirely rather than showing an empty box."""
+    if not topics or not any(topics.get(k) for k, _ in _OVN_CATEGORIES):
+        return ""
+    cols = ""
+    for key, lbl in _OVN_CATEGORIES:
+        rows = ""
+        for it in (topics.get(key) or [])[:_OVN_PER_CAT]:
+            head = _esc((it.get("headline") or "")[:110])
+            url = it.get("url") or ""
+            if url:
+                head = (f'<a class="fstory" href="{_esc(url)}" target="_blank" '
+                        f'rel="noopener noreferrer">{head}</a>')
+            src = _esc((it.get("source_name") or "")[:14])
+            when = _relative_time(it.get("published_at"))
+            meta = " · ".join(x for x in (src, when) if x)
+            rows += (f'<div class="ovnitem"><span class="fhl">{head}</span>'
+                     f'<span class="fwhen">{meta}</span></div>')
+        if not rows:
+            rows = f'<div class="pend">no items in the last {_OVN_HOURS}h</div>'
+        cols += f'<div class="ovncol"><div class="ovnc">{lbl}</div>{rows}</div>'
+    return (_af_hd("Overnight &amp; Breaking", f"last {_OVN_HOURS}h · curated wires")
+            + f'<div class="body"><div class="ovngrid">{cols}</div></div>')
+
+
+# ── Sector valuation snapshot (docs/HOME-MACRO-PLAN.md) ───────────────────
+# Median P/TBV / P/E / dividend yield by _AF_TIERS size tier, computed at
+# render from the metrics rows the page already loads. The "vs 1y ago" column
+# reads ONLY the self-populating daily history that jobs/refresh_home_snapshot
+# appends under sector_val_hist — never an approximation from anything else.
+_SECVAL_HIST_KEY = "sector_val_hist"
+_SECVAL_MIN_N = 5        # a "median" of fewer banks is noise → n/a
+_SECVAL_MIN_AGE_DAYS = 350   # Δ1Y stays n/a until history is ~a year deep
+_SECVAL_KEEP_DAYS = 420
+# stat key → metrics-row field (analysis/valuation.py; dividend_yield is %).
+_SECVAL_STATS = [("ptbv", "ptbv_ratio"), ("pe", "pe_ratio"),
+                 ("divyield", "dividend_yield")]
+
+
+def sector_val_medians(all_metrics: list[dict]) -> dict:
+    """Per-size-tier medians over banks with a REAL value only. Pure /
+    unit-tested; also the job-side builder for the daily history record.
+
+    Returns {tier_key: {"<stat>_median": float|None, "<stat>_n": int}} for
+    every _AF_TIERS key ("all" = whole universe). None/NaN values are
+    excluded from both the median and n; a stat with n < _SECVAL_MIN_N gets
+    median None (n/a) — never a 2-bank "median"."""
+    from statistics import median
+    from analysis.peer_groups import asset_size_tier
+    name_to_key = {name: k for k, name in _AF_TIER_NAME.items()}
+    groups: dict[str, list[dict]] = {k: [] for k, _ in _AF_TIERS}
+    for m in (all_metrics or []):
+        groups["all"].append(m)
+        k = name_to_key.get(asset_size_tier(m.get("total_assets")))
+        if k:
+            groups[k].append(m)
+    out = {}
+    for k, rows in groups.items():
+        rec = {}
+        for stat, field in _SECVAL_STATS:
+            vals = [float(v) for m in rows for v in [m.get(field)]
+                    if isinstance(v, (int, float))
+                    and not isinstance(v, bool) and v == v]
+            rec[f"{stat}_n"] = len(vals)
+            rec[f"{stat}_median"] = (median(vals)
+                                     if len(vals) >= _SECVAL_MIN_N else None)
+        out[k] = rec
+    return out
+
+
+def sector_val_yoy(hist: dict | None, today=None):
+    """The stored daily record nearest 365 days back, for the strip's Δ1Y.
+    Pure / unit-tested.
+
+    hist = {"records": [{"date": "YYYY-MM-DD", "tiers": {...}}, ...]} (the
+    sector_val_hist cache value). Returns (tiers_dict | None, collecting_since
+    | None): n/a (None tiers) until the OLDEST record is at least
+    _SECVAL_MIN_AGE_DAYS old — the 1y-ago value is NEVER approximated from
+    younger history; collecting_since is the oldest record's 'YYYY-MM' while
+    still collecting. Malformed record dates are skipped, not raised."""
+    import datetime as dt
+    today = today or dt.date.today()
+    recs = []
+    for r in ((hist or {}).get("records") or []):
+        try:
+            d = dt.datetime.strptime(str(r.get("date")), "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        recs.append((d, r))
+    if not recs:
+        return None, None
+    recs.sort(key=lambda t: t[0])
+    oldest = recs[0][0]
+    if (today - oldest).days < _SECVAL_MIN_AGE_DAYS:
+        return None, oldest.strftime("%Y-%m")
+    target = today - dt.timedelta(days=365)
+    _, r = min(recs, key=lambda t: abs((t[0] - target).days))
+    return (r.get("tiers") or None), None
+
+
+def sector_hist_append(hist: dict | None, record: dict,
+                       keep_days: int = _SECVAL_KEEP_DAYS, today=None) -> dict:
+    """Append/replace one daily record in the sector_val_hist value, pruning
+    records older than keep_days. Pure / unit-tested; the job is the only
+    writer. Same-date re-runs replace (idempotent), records stay date-sorted."""
+    import datetime as dt
+    today = today or dt.date.today()
+    floor = (today - dt.timedelta(days=keep_days)).isoformat()
+    out = [r for r in ((hist or {}).get("records") or [])
+           if str(r.get("date") or "") >= floor
+           and str(r.get("date")) != str(record.get("date"))]
+    out.append(record)
+    out.sort(key=lambda r: str(r.get("date")))
+    return {"records": out}
+
+
+def _sector_val_history():
+    from data import cache
+    try:
+        return cache.get(_SECVAL_HIST_KEY)
+    except Exception:
+        return None
+
+
+def _sv_val(v, n, unit, dp) -> str:
+    txt = "n/a" if v is None else f"{v:.{dp}f}{unit}"
+    return f'{txt} <span class="mut">(n={n})</span>'
+
+
+def _sv_delta(cur, prior, unit, dp) -> str:
+    """Signed Δ vs the 1y-ago median, colored by direction (a multiple
+    expanding isn't 'good' per se — direction only, like econ surprises)."""
+    if cur is None or prior is None:
+        return '<span class="num mut">n/a</span>'
+    d = cur - prior
+    cls = "up" if d > 0 else ("dn" if d < 0 else "mut")
+    return f'<span class="num {cls}">{d:+.{dp}f}{unit}</span>'
+
+
+def _sector_val_strip_html(all_metrics: list[dict], hist: dict | None) -> str:
+    """Sector valuation strip HTML ('' when there are no metrics rows)."""
+    if not all_metrics:
+        return ""
+    med = sector_val_medians(all_metrics)
+    yoy, since = sector_val_yoy(hist)
+    if yoy is None:
+        import datetime as _dt
+        status = ("Δ1Y n/a · collecting since "
+                  + (since or _dt.date.today().strftime("%Y-%m")))
+    else:
+        status = "Δ1Y vs stored daily history"
+    rows = ('<div class="erow sv eh"><span class="h">Tier</span>'
+            '<span class="num h">P/TBV</span><span class="num h">Δ1Y</span>'
+            '<span class="num h">P/E</span><span class="num h">Δ1Y</span>'
+            '<span class="num h">Div Yld</span><span class="num h">Δ1Y</span></div>')
+    specs = [("ptbv", "x", 2), ("pe", "x", 1), ("divyield", "pp", 2)]
+    for k, lbl in _AF_TIERS:
+        rec = med.get(k) or {}
+        prior = (yoy or {}).get(k) or {}
+        cells = ""
+        for stat, unit, dp in specs:
+            v, n = rec.get(f"{stat}_median"), rec.get(f"{stat}_n", 0)
+            vu = "%" if stat == "divyield" else unit
+            cells += (f'<span class="num">{_sv_val(v, n, vu, dp)}</span>'
+                      + _sv_delta(v, prior.get(f"{stat}_median"), unit, dp))
+        rows += f'<div class="erow sv ed"><span class="nm">{_esc(lbl)}</span>{cells}</div>'
+    return (_af_hd("Sector Valuation · Medians by Size Tier", status)
+            + f'<div class="body"><div class="etf">{rows}</div></div>')
+
+
 @st.fragment
 def _af_grid(all_metrics: list[dict], watchlist: list[str]):
     """Owner-locked above-the-fold, rendered as a fragment so a selector change
@@ -1349,7 +1578,32 @@ def _af_grid(all_metrics: list[dict], watchlist: list[str]):
 
 
 def _render_above_fold(all_metrics: list[dict], watchlist: list[str]):
+    # Overnight & Breaking ABOVE the grid (plan priority #1: what moved while
+    # you slept). Optional via the Extras popover; collapses silently when the
+    # topic store has nothing — never an empty box, never fabricated items.
+    if st.session_state.get("home_show_overnight", True):
+        try:
+            ovn = _af_overnight_table(_af_overnight_items())
+        except Exception as e:  # noqa: BLE001 — degrade, never take Home down
+            print(f"[home.af] overnight strip failed: {type(e).__name__}: {e}")
+            ovn = ""
+        if ovn:
+            # st-key-afpane* class hooks the grid cards' compaction CSS;
+            # _AF_CSS itself is emitted once by _af_grid below (CSS is
+            # global, so it styles this strip too).
+            with st.container(border=True, key="afpane_overnight"):
+                _md(ovn)
     _af_grid(all_metrics, watchlist)
+    # Sector valuation snapshot BELOW the grid (context tier of the plan).
+    if st.session_state.get("home_show_secval", True):
+        try:
+            sv = _sector_val_strip_html(all_metrics, _sector_val_history())
+        except Exception as e:  # noqa: BLE001
+            print(f"[home.af] sector valuation strip failed: {type(e).__name__}: {e}")
+            sv = ""
+        if sv:
+            with st.container(border=True, key="afpane_secval"):
+                _md(sv)
 
 
 def render_home(all_metrics: list[dict], watchlist: list[str]):
@@ -1375,11 +1629,22 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
     # freshness strip ("Live · FDIC …") clear the nav and aren't clipped.
     st.markdown("<div style='height:9px'></div>", unsafe_allow_html=True)
 
-    # ── Title bar (DESIGN-SYSTEM.md) ──────────────────────────────────
+    # ── Title bar (DESIGN-SYSTEM.md) + Extras menu ────────────────────
+    # Extras: the plan's configurable-sections popover (app.py nav-popover
+    # pattern). Toggles the OPTIONAL sections only — the core grid always
+    # renders. Session-persisted via the widget keys.
     from ui.chrome import title_bar
-    title_bar("KSK Investors", "Home",
-              f'<span class="ksk-dot ok"></span>Live · FDIC · SEC EDGAR · FMP · '
-              f'{len(watchlist)} US banks covered')
+    _tb_c, _ex_c = st.columns([11, 1], vertical_alignment="center")
+    with _tb_c:
+        title_bar("KSK Investors", "Home",
+                  f'<span class="ksk-dot ok"></span>Live · FDIC · SEC EDGAR · FMP · '
+                  f'{len(watchlist)} US banks covered')
+    with _ex_c:
+        with st.popover("Extras", use_container_width=True):
+            st.checkbox("Overnight & Breaking", value=True,
+                        key="home_show_overnight")
+            st.checkbox("Sector valuation strip", value=True,
+                        key="home_show_secval")
 
     from utils.timing import timed
 

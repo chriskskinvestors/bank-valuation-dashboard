@@ -313,10 +313,20 @@ class TestHomeRendersPopulated(unittest.TestCase):
         # End-to-end grid assembly. Network sources are mocked off; every
         # other pane reads local cache/snapshots, and _af_safe isolates any
         # failure into its own error pane — the call itself must not raise.
+        # The optional sections (Overnight & Breaking / sector valuation) are
+        # stubbed at their data seams (events store, sector_val_hist cache) —
+        # same unstubbed-live-seam class as the macro_calendar stubs above.
         import data.fmp_client as fmp
         import data.earnings_call as ecall
         self.home._af_feed_items = lambda w: list(FAKE_FEED)
         self.home._fred_points = lambda sid: (None, None, None)
+        self.home._af_overnight_items = lambda: {"macro": [
+            {"headline": 'CPI cools <b>"fast"</b> & yields drop',
+             "url": "https://example.com/cpi", "source_name": "Reuters",
+             "published_at": ""}]}
+        self.home._sector_val_history = lambda: None
+        metrics = [{"ticker": "BANR", "total_assets": 5e9, "ptbv_ratio": 1.2,
+                    "pe_ratio": 10.0, "dividend_yield": 3.0}]
         saved = (fmp.get_history, fmp.get_quote_batch,
                  ecall.merged_call_info, ecall.earnings_timing_map)
         try:
@@ -324,10 +334,33 @@ class TestHomeRendersPopulated(unittest.TestCase):
             fmp.get_quote_batch = lambda *a, **k: {}
             ecall.merged_call_info = lambda: {}
             ecall.earnings_timing_map = lambda: {}
-            self.home._render_above_fold([], ["BANR"])
+            self.home._render_above_fold(metrics, ["BANR"])
         finally:
             (fmp.get_history, fmp.get_quote_batch,
              ecall.merged_call_info, ecall.earnings_timing_map) = saved
+
+    def test_overnight_strip_escapes_populated_content(self):
+        # The strip's escaping loop must actually execute on hostile content
+        # (the 2026-06-12 _esc crash class) — drive the pure builder directly.
+        h = self.home._af_overnight_table({"macro": [
+            {"headline": 'CPI cools <b>"fast"</b> & yields drop',
+             "url": "https://example.com/cpi", "source_name": "Reuters",
+             "published_at": ""}]})
+        self.assertIn("&lt;b&gt;", h)
+        self.assertNotIn("<b>", h)
+        self.assertIn("&amp;", h)
+        self.assertIn('href="https://example.com/cpi"', h)
+
+    def test_sector_val_strip_renders_from_metrics(self):
+        # The strip must render medians from the page's own metrics rows with
+        # per-stat n, and an honest collecting-since Δ1Y while no history.
+        metrics = [{"ticker": f"B{i}", "total_assets": 5e9,
+                    "ptbv_ratio": 1.0 + i * 0.1, "pe_ratio": 8.0 + i,
+                    "dividend_yield": 2.0 + i * 0.5} for i in range(5)]
+        h = self.home._sector_val_strip_html(metrics, None)
+        self.assertIn("1.20x", h)
+        self.assertIn("(n=5)", h)
+        self.assertIn("collecting since", h)
 
     def test_pins_the_esc_regression(self):
         # Removing the _esc import must reproduce the production crash on a
