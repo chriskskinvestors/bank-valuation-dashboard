@@ -233,7 +233,14 @@ METRICS = [
         "category": "Fair Value",
     },
     {
-        "key": "ptbv_discount", "label": "Discount", "source": "computed",
+        # Upside to model fair PRICE = (fair_price − price)/price (audit
+        # 2026-08-20 finding c). The KEY stays "ptbv_discount" for continuity
+        # (saved screens, peer highlights, snapshot rows) but the value is no
+        # longer the multiple-based discount, which put −785% on screen for
+        # low-return banks. Sign convention unchanged: positive = undervalued,
+        # so the higher_better rule and the +15% "buying opportunity"
+        # threshold still read correctly.
+        "key": "ptbv_discount", "label": "Upside to Fair", "source": "computed",
         "format": "pct", "decimals": 1,
         "color_rule": "higher_better", "thresholds": {"good": 15, "warn": 0},
         "category": "Fair Value",

@@ -85,7 +85,7 @@ _HIGHLIGHTS = [
     ("Cheapest P/TBV", "ptbv_ratio", "min"),
     # ptbv_discount is positive-when-undervalued (analysis/valuation.py), so the
     # biggest discount is the MAX — "min" here picked the most overvalued bank.
-    ("Biggest discount", "ptbv_discount", "max"),
+    ("Most upside to fair", "ptbv_discount", "max"),
     ("Highest ROATCE", "roatce_normalized", "max"),
     ("Best efficiency", "efficiency_ratio", "min"),
     ("Highest NIM", "nim", "max"),
@@ -100,7 +100,7 @@ _RANK_OPTIONS = [("__score__", "Overall score")] + [
     (k, lbl) for k, lbl in [
         ("roatce_normalized", "ROATCE"), ("nim", "NIM"),
         ("efficiency_ratio", "Efficiency"), ("cet1_ratio", "CET1"),
-        ("ptbv_ratio", "P/TBV"), ("ptbv_discount", "Discount to fair"),
+        ("ptbv_ratio", "P/TBV"), ("ptbv_discount", "Upside to fair"),
         ("npl_ratio", "NPL"), ("market_cap", "Market cap"),
         ("total_assets", "Total assets"),
     ] if k in METRICS_BY_KEY

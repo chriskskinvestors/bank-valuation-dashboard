@@ -30,7 +30,7 @@ from analysis import dcf  # noqa: E402
 from analysis.valuation import (  # noqa: E402
     compute_fair_ptbv,
     compute_fair_value_price,
-    compute_ptbv_discount,
+    compute_upside_to_fair,
 )
 
 COE, G = dcf.FAIR_VALUE_COE_PCT, dcf.FAIR_VALUE_TERMINAL_GROWTH_PCT
@@ -52,8 +52,18 @@ class TestOneModelBothSurfaces(unittest.TestCase):
         self.assertAlmostEqual(compute_fair_ptbv(15.0), 12.5 / 7.5, places=12)
         self.assertAlmostEqual(compute_fair_ptbv(7.88), 5.38 / 7.5, places=12)
 
-    def test_cap_is_the_shared_constant(self):
-        self.assertEqual(compute_fair_ptbv(40.0), dcf.FAIR_PTBV_CAP)
+    def test_no_cap_on_the_multiple(self):
+        """Owner decision 2026-08-20: the 2.5x backstop is gone — it made
+        elite-return banks (BNY, TBBK, CASH…) read overvalued by construction
+        and masked a corrupt input (KFFB's 1555% ROATCE from a filer XBRL
+        error). Bad inputs are stopped at the source instead."""
+        self.assertAlmostEqual(compute_fair_ptbv(33.1), (33.1 - 2.5) / 7.5,
+                               places=12)      # TBBK: 4.08x, uncapped
+        self.assertGreater(compute_fair_ptbv(40.0), 2.5)
+        self.assertFalse(hasattr(dcf, "FAIR_PTBV_CAP"),
+                         "FAIR_PTBV_CAP is back — the cap was dropped by "
+                         "owner decision; re-introducing it silently re-hides "
+                         "corrupt-input blowups")
 
     def test_constants_are_sane(self):
         self.assertGreater(COE, G)
@@ -76,7 +86,8 @@ class TestNotApplicableIsNone(unittest.TestCase):
     def test_none_propagates_to_price_and_discount(self):
         fair = compute_fair_ptbv(-5.0)
         self.assertIsNone(compute_fair_value_price(fair, 11.11))
-        self.assertIsNone(compute_ptbv_discount(0.83, fair))
+        self.assertIsNone(compute_upside_to_fair(9.17, 
+                                                 compute_fair_value_price(fair, 11.11)))
 
     def test_just_above_growth_is_small_positive(self):
         v = compute_fair_ptbv(G + 0.75)
@@ -100,6 +111,39 @@ class TestCompanyPageUsesSharedConstants(unittest.TestCase):
     def test_page_seeds_from_holdco_first(self):
         src = (REPO / "ui/valuation_model.py").read_text(encoding="utf-8")
         self.assertIn("compute_roatce_holdco(sec)", src)
+
+
+class TestUpsideToFairIsBounded(unittest.TestCase):
+    """Finding (c): the old (fair_ptbv − actual_ptbv)/fair_ptbv put −785% on
+    screen for low-return banks (31 of 364 below −100%). Upside to fair PRICE
+    divides by the price, so −100% is the floor."""
+
+    def test_hand_computed(self):
+        self.assertAlmostEqual(compute_upside_to_fair(10.0, 12.5), 25.0, places=12)
+        self.assertAlmostEqual(compute_upside_to_fair(10.0, 8.0), -20.0, places=12)
+
+    def test_floor_is_minus_100(self):
+        """Even a fair price of zero cannot read worse than −100%."""
+        self.assertAlmostEqual(compute_upside_to_fair(9.17, 0.0), -100.0, places=12)
+
+    def test_bsbk_shape_no_longer_explodes(self):
+        """BSBK: price 9.17, fair multiple 0.18x x TBV 11.11 = fair ~$2.02.
+        Old metric read -352%; the bounded one reads ~-78%."""
+        fair_price = compute_fair_value_price(0.18, 11.11)
+        v = compute_upside_to_fair(9.17, fair_price)
+        self.assertGreater(v, -100.0)
+        self.assertAlmostEqual(v, -78.2, places=1)
+
+    def test_sign_convention_unchanged(self):
+        """Positive still means undervalued — the peer 'most upside' chip and
+        the higher_better/+15% threshold depend on it."""
+        self.assertGreater(compute_upside_to_fair(10.0, 15.0), 0)
+        self.assertLess(compute_upside_to_fair(15.0, 10.0), 0)
+
+    def test_missing_inputs_are_none(self):
+        self.assertIsNone(compute_upside_to_fair(None, 12.0))
+        self.assertIsNone(compute_upside_to_fair(10.0, None))
+        self.assertIsNone(compute_upside_to_fair(0.0, 12.0))
 
 
 if __name__ == "__main__":

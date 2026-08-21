@@ -19,7 +19,7 @@ from analysis.valuation import (  # noqa: E402
     compute_dividend_yield, compute_market_cap, compute_change_pct,
     _infer_quarter, _annualize_ytd, _derive_quarterly_value,
     compute_roatce, compute_roatce_holdco, compute_4q_avg, compute_roatce_4q,
-    compute_roatce_blended, compute_fair_ptbv, compute_ptbv_discount,
+    compute_roatce_blended, compute_fair_ptbv, compute_upside_to_fair,
     compute_fair_value_price,
 )
 
@@ -139,10 +139,11 @@ def test_fair_value_chain():
     assert compute_fair_ptbv(-3.0) is None                        # n/a, never 0.0x
     assert compute_fair_ptbv(2.5) is None                         # ROATCE == g → n/a
     assert compute_fair_ptbv(None) is None
-    # Discount: (1.5 - 1.2)/1.5 * 100 = 20% undervalued
-    assert approx(compute_ptbv_discount(1.2, 1.5), 20.0)
-    assert approx(compute_ptbv_discount(1.3, 1.0), -30.0)     # overvalued
-    assert compute_ptbv_discount(1.2, 0.0) is None
+    # Upside to fair PRICE (2026-08-20): (fair - price)/price
+    assert approx(compute_upside_to_fair(10.0, 12.0), 20.0)   # 20% upside
+    assert approx(compute_upside_to_fair(10.0, 7.0), -30.0)   # 30% downside
+    assert compute_upside_to_fair(0.0, 12.0) is None          # no price
+    assert compute_upside_to_fair(10.0, None) is None         # fair n/a
     # Fair price = fair_ptbv * tbvps
     assert approx(compute_fair_value_price(1.5, 10.0), 15.0)
     assert compute_fair_value_price(1.5, 0.0) is None

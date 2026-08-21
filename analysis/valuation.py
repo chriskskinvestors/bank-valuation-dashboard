@@ -363,39 +363,57 @@ def compute_fair_ptbv(roatce_blended: float | None) -> float | None:
     model assumes, so the multiple is ≤ 0 — meaningless for a going concern.
     The old floor of 0.0x put "Fair Price $0.00" on 20 banks (BANC, EGBN,
     BMRC…); a loss-making bank with tangible book is not worth zero, the
-    model simply doesn't apply. Capped at FAIR_PTBV_CAP as a backstop.
+    model simply doesn't apply.
+
+    NO CAP (owner decision 2026-08-20). A 2.5x backstop used to clip the
+    multiple, which made six genuinely elite-return banks (BNY, TBBK, CASH,
+    KFFB, STLE, TMP) read as overvalued by construction and — worse — MASKED
+    a corrupt input: KFFB's holdco ROATCE was 1555% from a filer XBRL error,
+    which the cap hid behind a plausible-looking 2.5x. Garbage inputs are now
+    stopped at the source (the NI-to-common identity gate in
+    data/sec_client) and by the one-time-earnings winsorizer, so the model
+    is free to say what the returns imply.
     """
     if roatce_blended is None:
         return None
     from analysis.dcf import (
-        FAIR_PTBV_CAP, FAIR_VALUE_COE_PCT, FAIR_VALUE_TERMINAL_GROWTH_PCT,
-        warranted_ptbv,
+        FAIR_VALUE_COE_PCT, FAIR_VALUE_TERMINAL_GROWTH_PCT, warranted_ptbv,
     )
     w = warranted_ptbv(roatce_blended, FAIR_VALUE_COE_PCT,
                        FAIR_VALUE_TERMINAL_GROWTH_PCT)
     if w is None or w <= 0:
         return None
-    return min(FAIR_PTBV_CAP, w)
+    return w
 
 
-def compute_ptbv_discount(
-    actual_ptbv: float | None,
-    fair_ptbv: float | None,
+def compute_upside_to_fair(
+    price: float | None,
+    fair_price: float | None,
 ) -> float | None:
     """
-    Discount of actual P/TBV vs fair P/TBV, as a percentage.
+    Upside to model fair value, as a percentage of the CURRENT PRICE:
 
-    Positive = undervalued (actual is below fair).
-    Negative = overvalued (actual is above fair).
+        upside = (fair_price − price) / price × 100
 
-    Example: fair=1.5x, actual=1.2x → discount = 20% (undervalued by 20%)
-    Example: fair=1.0x, actual=1.3x → discount = -30% (overvalued by 30%)
+    Positive = the model says there is room to rise (cheap).
+    Negative = the price sits above fair value (expensive).
+
+    Bounded below at −100% (worst case: a fair price of $0), which the old
+    multiple-based "discount" — (fair_ptbv − actual_ptbv) / fair_ptbv — was
+    NOT: with the fair MULTIPLE in the denominator, a low-return bank
+    produced readings like BRBS −785%, BSPA −519%, CLBK −443% (audit
+    2026-08-20: 31 of 364 banks below −100%). "Overvalued by 785%" is not a
+    statement an investor can act on — it is a model artifact of a tiny
+    denominator. Dividing by the price is how the number is conventionally
+    read ("+20% upside", "−35% downside") and keeps banks comparable.
+
+    The metric key stays `ptbv_discount` for continuity (saved screens, peer
+    highlights, snapshot rows); the sign convention is unchanged — positive
+    still means undervalued — so every consumer stays correct.
     """
-    if actual_ptbv is None or fair_ptbv is None:
+    if price is None or fair_price is None or price <= 0:
         return None
-    if fair_ptbv <= 0:
-        return None
-    return ((fair_ptbv - actual_ptbv) / fair_ptbv) * 100
+    return ((fair_price - price) / price) * 100
 
 
 def compute_fair_value_price(
@@ -530,9 +548,6 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     if nonixay is not None and noniiay is not None:
         nonint_burden = nonixay - noniiay
 
-    # Core valuation ratios
-    actual_ptbv = compute_ptbv_ratio(price, tbvps)
-
     # Profitability
     roatce_current = compute_roatce(fdic_data)   # sub-bank
     roatce_4q = compute_roatce_4q(fdic_hist or [])   # sub-bank TTM
@@ -550,8 +565,11 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         roatce_blended * earnings_norm_factor if roatce_blended is not None else None
     )
     fair_ptbv = compute_fair_ptbv(roatce_normalized)
-    ptbv_discount = compute_ptbv_discount(actual_ptbv, fair_ptbv)
     fair_price = compute_fair_value_price(fair_ptbv, tbvps)
+    # Key kept as ptbv_discount (saved screens / peer highlights); the VALUE
+    # is now upside to fair PRICE — bounded, conventionally read. Same sign
+    # convention: positive = undervalued. See compute_upside_to_fair.
+    ptbv_discount = compute_upside_to_fair(price, fair_price)
 
     # Released holdco efficiency — ADD-ALONGSIDE (increment 3, owner decision
     # 2026-08-19): the FDIC bank-sub EEFFR column stays THE efficiency;

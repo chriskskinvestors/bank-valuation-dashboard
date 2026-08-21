@@ -982,7 +982,7 @@ _METRIC_DESC = {
     "earnings_distorted": "Flag: a non-recurring item distorted the latest earnings.",
     "fair_ptbv": "Warranted P/TBV = (ROATCE − g) ÷ (cost of equity − g), CoE 10%, g 2.5% — the multiple the returns justify; n/a when ROATCE ≤ g.",
     "fair_price": "Model fair value per share (warranted P/TBV × TBV/share).",
-    "ptbv_discount": "How far the price sits below model fair value. Higher = cheaper.",
+    "ptbv_discount": "Upside to fair value = (fair price − price) ÷ price. Positive = room to rise; −100% is the floor.",
     "roaa": "Annualized net income ÷ average assets.",
     "roaa_4q": "Trailing-4-quarter ROAA (smoother).",
     "roatce_sub": "ROATCE at the bank subsidiary (FDIC Call Report).",
