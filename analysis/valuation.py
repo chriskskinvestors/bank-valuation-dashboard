@@ -268,14 +268,18 @@ def compute_roatce_4q(fdic_hist: list[dict]) -> float | None:
 
 # ── Fair Value Screening ────────────────────────────────────────────────
 #
-# Model: A bank's fair P/TBV multiple is a function of its profitability.
-#   - 10% ROATCE → 1.0x TBV
-#   - 12% ROATCE → 1.2x TBV
-#   - 15% ROATCE → 1.5x TBV
-#   - Linear: fair_ptbv = blended_roatce / 10
+# Model: A bank's fair P/TBV multiple is a function of its profitability —
+# the Gordon form shared with the Company → Valuation Model page:
+#   fair_ptbv = (ROATCE − g) / (CoE − g), CoE 10%, g 2.5% (analysis/dcf)
+#   - 10% ROATCE → 1.00x TBV
+#   - 12% ROATCE → 1.27x TBV
+#   - 15% ROATCE → 1.67x TBV
+#   - ROATCE ≤ g → n/a (model not applicable; never a $0 fair value)
 #
-# Blended ROATCE weights the trailing 4Q average at 75% (smooths noise)
-# and the most recent quarter at 25% (captures inflection points).
+# ROATCE input: the SEC holding-company TTM common-basis figure when it
+# resolves (what the stock represents), else the FDIC sub-bank blend (75%
+# trailing-4Q average + 25% current quarter); then one-time spikes are
+# winsorized out (_normalized_earnings_factor).
 #
 # A bank is flagged as undervalued when its actual P/TBV is more than
 # 15% below the fair P/TBV implied by its blended ROATCE.
@@ -345,23 +349,33 @@ def _normalized_earnings_factor(fdic_hist: list[dict] | None) -> float:
 
 def compute_fair_ptbv(roatce_blended: float | None) -> float | None:
     """
-    Implied fair P/TBV multiple from blended ROATCE.
+    Fair (warranted) P/TBV from normalized ROATCE — the SAME Gordon-form
+    model the Company → Valuation Model page uses, with the shared defaults
+    in analysis/dcf (audit 2026-08-20 unified the two; the screen previously
+    used ROATCE/10, i.e. g=0, and disagreed with the Company page >20% on 38
+    of 364 banks):
 
-    Linear model: fair_ptbv = roatce / 10
-      10% ROATCE → 1.0x
-      12% ROATCE → 1.2x
-      15% ROATCE → 1.5x
+        fair_ptbv = (ROATCE − g) / (CoE − g)     CoE 10%, g 2.5%
+          10.0% → 1.00x   12% → 1.27x   15% → 1.67x
 
-    Floors at 0.0x for negative/zero ROATCE (no meaningful fair value).
+    NOT APPLICABLE → None (cardinal rule — n/a, never a plausible-wrong
+    number): a ROATCE at or below g means returns don't cover the growth the
+    model assumes, so the multiple is ≤ 0 — meaningless for a going concern.
+    The old floor of 0.0x put "Fair Price $0.00" on 20 banks (BANC, EGBN,
+    BMRC…); a loss-making bank with tangible book is not worth zero, the
+    model simply doesn't apply. Capped at FAIR_PTBV_CAP as a backstop.
     """
     if roatce_blended is None:
         return None
-    if roatce_blended <= 0:
-        return 0.0
-    # Cap at 2.5x: even a sustainably high-ROATCE bank rarely warrants more
-    # than ~2.5x tangible book, and the cap is a backstop against any residual
-    # earnings distortion slipping through normalization.
-    return min(2.5, roatce_blended / 10.0)
+    from analysis.dcf import (
+        FAIR_PTBV_CAP, FAIR_VALUE_COE_PCT, FAIR_VALUE_TERMINAL_GROWTH_PCT,
+        warranted_ptbv,
+    )
+    w = warranted_ptbv(roatce_blended, FAIR_VALUE_COE_PCT,
+                       FAIR_VALUE_TERMINAL_GROWTH_PCT)
+    if w is None or w <= 0:
+        return None
+    return min(FAIR_PTBV_CAP, w)
 
 
 def compute_ptbv_discount(

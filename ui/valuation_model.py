@@ -87,16 +87,25 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
         return {}
 
     from analysis.valuation import (
-        compute_roatce, compute_roatce_4q, _normalized_earnings_factor,
+        compute_roatce, compute_roatce_4q, compute_roatce_holdco,
+        compute_roatce_blended, _normalized_earnings_factor,
     )
     latest = hist[0]
     # Trailing EPS
     base_eps = sec.get("eps") or 0.0
-    # ROATCE default — use the trailing-4Q figure (smoother than a single
-    # quarter) and winsorize one-time spikes, so the warranted-P/TBV model
-    # isn't seeded off a non-recurring quarter (e.g. CARE's loan-recovery
-    # quarter would otherwise default to ~71%). Matches the fair-value screen.
-    roatce_raw = compute_roatce_4q(hist) or compute_roatce(latest) or 12.0
+    # ROATCE default — the SAME input the Screen & Compare fair-value column
+    # uses (audit 2026-08-20: this page seeded from the FDIC sub-bank 4Q figure
+    # while the screen used the SEC holdco TTM for 326 of 364 banks, so the
+    # two surfaces started from different returns). Order mirrors
+    # analysis.valuation.compute_all_valuations: holdco common-basis TTM when
+    # it resolves, else the sub-bank 75/25 blend; then one-time spikes are
+    # winsorized out (CARE's loan-recovery quarter would otherwise seed ~71%).
+    roatce_raw = compute_roatce_holdco(sec)
+    if roatce_raw is None:
+        roatce_raw = compute_roatce_blended(compute_roatce(latest),
+                                            compute_roatce_4q(hist))
+    if roatce_raw is None:
+        roatce_raw = 12.0
     roatce_pct = roatce_raw * _normalized_earnings_factor(hist)
     # Shares
     shares = sec.get("shares_outstanding") or 0
@@ -411,14 +420,22 @@ def render_valuation_model(ticker: str):
 
         with col3:
             st.markdown("**Terminal & discount**")
+            # Defaults are the platform's shared fair-value constants — the
+            # Screen & Compare "Fair P/TBV" column is computed with exactly
+            # these, so the page opens on the screen's number.
+            from analysis.dcf import (
+                FAIR_VALUE_COE_PCT, FAIR_VALUE_TERMINAL_GROWTH_PCT,
+            )
             cost_of_equity = st.slider(
                 "Cost of equity (%)",
-                min_value=6.0, max_value=16.0, value=10.0, step=0.25,
+                min_value=6.0, max_value=16.0, value=FAIR_VALUE_COE_PCT,
+                step=0.25,
                 key=f"dcf_coe_{ticker}",
             )
             terminal_growth = st.slider(
                 "Terminal growth (%)",
-                min_value=0.0, max_value=5.0, value=2.5, step=0.25,
+                min_value=0.0, max_value=5.0,
+                value=FAIR_VALUE_TERMINAL_GROWTH_PCT, step=0.25,
                 key=f"dcf_tg_{ticker}",
             )
             target_cet1 = st.slider(

@@ -30,6 +30,22 @@ def _safe(v, default=None):
         return default
 
 
+# ── Fair-value model constants (ONE model, both surfaces) ───────────────
+# The Screen & Compare "Fair P/TBV" column and the Company → Valuation Model
+# page MUST price off the same model with the same defaults (audit
+# 2026-08-20: the screen used ROATCE/10 — Gordon with g=0 — while this page
+# defaulted to g=2.5%, so 38 of 364 banks showed fair multiples differing
+# >20% between pages). Change these here and nowhere else.
+#   P/TBV = (ROATCE − g) / (CoE − g)
+FAIR_VALUE_COE_PCT = 10.0             # cost of equity, % (~4.7% 10y + beta×ERP)
+FAIR_VALUE_TERMINAL_GROWTH_PCT = 2.5  # long-run tangible-book growth, %
+# Backstop cap on the screen's multiple: even a sustainably elite-ROATCE bank
+# rarely warrants more than ~2.5x tangible book; guards against residual
+# one-time distortion. The Valuation Model page shows the uncapped figure
+# beside its sliders. (Owner decision pending on whether to keep it.)
+FAIR_PTBV_CAP = 2.5
+
+
 # ── Warranted P/TBV ─────────────────────────────────────────────────────
 
 def warranted_ptbv(

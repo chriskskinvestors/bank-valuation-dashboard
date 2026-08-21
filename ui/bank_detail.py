@@ -980,7 +980,7 @@ _METRIC_DESC = {
     "roatce": "Net income ÷ tangible common equity (equity − intangibles).",
     "roatce_normalized": "ROATCE with one-time items removed — the sustainable run-rate.",
     "earnings_distorted": "Flag: a non-recurring item distorted the latest earnings.",
-    "fair_ptbv": "Warranted P/TBV = ROATCE ÷ cost of equity. The multiple the returns justify.",
+    "fair_ptbv": "Warranted P/TBV = (ROATCE − g) ÷ (cost of equity − g), CoE 10%, g 2.5% — the multiple the returns justify; n/a when ROATCE ≤ g.",
     "fair_price": "Model fair value per share (warranted P/TBV × TBV/share).",
     "ptbv_discount": "How far the price sits below model fair value. Higher = cheaper.",
     "roaa": "Annualized net income ÷ average assets.",

@@ -133,9 +133,11 @@ def test_fair_value_chain():
     assert approx(compute_roatce_blended(None, 16.0), 16.0)   # fallback to 4q
     assert approx(compute_roatce_blended(12.0, None), 12.0)   # fallback to current
     assert compute_roatce_blended(None, None) is None
-    # Fair P/TBV = roatce / 10
-    assert approx(compute_fair_ptbv(15.0), 1.5)
-    assert approx(compute_fair_ptbv(-3.0), 0.0)               # floor at 0
+    # Fair P/TBV = (roatce − g)/(CoE − g), CoE 10, g 2.5 (unified 2026-08-20)
+    assert approx(compute_fair_ptbv(15.0), (15.0 - 2.5) / 7.5)   # 1.6667x
+    assert approx(compute_fair_ptbv(10.0), 1.0)                   # CoE → 1.0x
+    assert compute_fair_ptbv(-3.0) is None                        # n/a, never 0.0x
+    assert compute_fair_ptbv(2.5) is None                         # ROATCE == g → n/a
     assert compute_fair_ptbv(None) is None
     # Discount: (1.5 - 1.2)/1.5 * 100 = 20% undervalued
     assert approx(compute_ptbv_discount(1.2, 1.5), 20.0)
