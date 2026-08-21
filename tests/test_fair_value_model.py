@@ -52,8 +52,18 @@ class TestOneModelBothSurfaces(unittest.TestCase):
         self.assertAlmostEqual(compute_fair_ptbv(15.0), 12.5 / 7.5, places=12)
         self.assertAlmostEqual(compute_fair_ptbv(7.88), 5.38 / 7.5, places=12)
 
-    def test_cap_is_the_shared_constant(self):
-        self.assertEqual(compute_fair_ptbv(40.0), dcf.FAIR_PTBV_CAP)
+    def test_no_cap_on_the_multiple(self):
+        """Owner decision 2026-08-20: the 2.5x backstop is gone — it made
+        elite-return banks (BNY, TBBK, CASH…) read overvalued by construction
+        and masked a corrupt input (KFFB's 1555% ROATCE from a filer XBRL
+        error). Bad inputs are stopped at the source instead."""
+        self.assertAlmostEqual(compute_fair_ptbv(33.1), (33.1 - 2.5) / 7.5,
+                               places=12)      # TBBK: 4.08x, uncapped
+        self.assertGreater(compute_fair_ptbv(40.0), 2.5)
+        self.assertFalse(hasattr(dcf, "FAIR_PTBV_CAP"),
+                         "FAIR_PTBV_CAP is back — the cap was dropped by "
+                         "owner decision; re-introducing it silently re-hides "
+                         "corrupt-input blowups")
 
     def test_constants_are_sane(self):
         self.assertGreater(COE, G)

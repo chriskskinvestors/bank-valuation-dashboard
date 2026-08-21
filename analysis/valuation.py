@@ -363,19 +363,27 @@ def compute_fair_ptbv(roatce_blended: float | None) -> float | None:
     model assumes, so the multiple is ≤ 0 — meaningless for a going concern.
     The old floor of 0.0x put "Fair Price $0.00" on 20 banks (BANC, EGBN,
     BMRC…); a loss-making bank with tangible book is not worth zero, the
-    model simply doesn't apply. Capped at FAIR_PTBV_CAP as a backstop.
+    model simply doesn't apply.
+
+    NO CAP (owner decision 2026-08-20). A 2.5x backstop used to clip the
+    multiple, which made six genuinely elite-return banks (BNY, TBBK, CASH,
+    KFFB, STLE, TMP) read as overvalued by construction and — worse — MASKED
+    a corrupt input: KFFB's holdco ROATCE was 1555% from a filer XBRL error,
+    which the cap hid behind a plausible-looking 2.5x. Garbage inputs are now
+    stopped at the source (the NI-to-common identity gate in
+    data/sec_client) and by the one-time-earnings winsorizer, so the model
+    is free to say what the returns imply.
     """
     if roatce_blended is None:
         return None
     from analysis.dcf import (
-        FAIR_PTBV_CAP, FAIR_VALUE_COE_PCT, FAIR_VALUE_TERMINAL_GROWTH_PCT,
-        warranted_ptbv,
+        FAIR_VALUE_COE_PCT, FAIR_VALUE_TERMINAL_GROWTH_PCT, warranted_ptbv,
     )
     w = warranted_ptbv(roatce_blended, FAIR_VALUE_COE_PCT,
                        FAIR_VALUE_TERMINAL_GROWTH_PCT)
     if w is None or w <= 0:
         return None
-    return min(FAIR_PTBV_CAP, w)
+    return w
 
 
 def compute_upside_to_fair(

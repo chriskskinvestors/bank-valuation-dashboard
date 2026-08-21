@@ -554,8 +554,34 @@ def get_latest_fundamentals(cik: int) -> dict:
     # issuers (ROATCE = return on tangible COMMON equity). None when the filer
     # doesn't tag it; compute_roatce_holdco falls back to total NI only when the
     # bank has no preferred (then to-common == total).
-    result["net_income_to_common_ttm"] = _extract_ttm_value(
+    niac = _extract_ttm_value(
         facts, "NetIncomeLossAvailableToCommonStockholdersBasic")
+    # SCALE-CORRUPTION GATE (2026-08-20). NI-to-common = NI − preferred
+    # dividends, so for the SAME reporting period NIAC can never be a
+    # multiple of NI. KFFB (CIK 1297341) tags
+    # NetIncomeLossAvailableToCommonStockholdersBasic 1000x too large in
+    # several periods — $181,000,000 for FY2025 where its own NetIncomeLoss
+    # says $181,000 — which drove holdco ROATCE to 1555% and an uncapped
+    # fair value of $1,247 on a $4.77 stock.
+    #
+    # The test is deliberately SAME-PERIOD and order-of-magnitude. Comparing
+    # the two TTM sums instead would fire on banks that are fine: ABCB tags
+    # NIAC only annually (its "TTM" is calendar-2025 while NI's is the
+    # trailing four quarters through Q2-2026) and HOMB's two series expose
+    # different durations — both showed a small excess from WINDOW
+    # COMPOSITION, not corruption, and gating them would have silently moved
+    # ABCB's ROATCE from 14.0% to 12.5%. Only a same-period multiple is
+    # unambiguous. (A legitimate excess also exists: preferred repurchased
+    # below carrying value ADDS to income available to common under ASC 260 —
+    # a percentage, never a multiple.)
+    if niac is not None and _niac_scale_is_corrupt(facts):
+        pref_present = _resolve_preferred_stock(facts)[1]
+        print(f"[SEC] NIAC SCALE CORRUPTION cik {cik}: the filer's "
+              f"net-income-to-common series is a multiple of its own net "
+              f"income in matched periods; "
+              f"{'substituting total NI (no preferred)' if not pref_present else 'rendering n/a (preferred present)'}")
+        niac = ni_ttm if not pref_present else None
+    result["net_income_to_common_ttm"] = niac
 
     # Same TTM treatment for EPS — quarterly Q1/Q2/Q3 filings would otherwise
     # give a single-period EPS, producing P/E values 4× too high.
@@ -813,6 +839,51 @@ def _best_share_evidence_end(facts: dict) -> str | None:
     ends.append(_latest_dei_share_count(facts)[1])
     ends = [e for e in ends if e]
     return max(ends) if ends else None
+
+
+def _niac_scale_is_corrupt(facts: dict, factor: float = 10.0,
+                           max_age_days: int = 460) -> bool:
+    """True when the filer's NetIncomeLossAvailableToCommonStockholdersBasic
+    is a MULTIPLE of its own NetIncomeLoss for an identical (start, end)
+    period that still feeds the current TTM — a units/scale tagging error,
+    not an accounting difference.
+
+    NIAC = NI − preferred dividends, so same-period NIAC can exceed NI only
+    by a percentage (e.g. a preferred repurchase below carrying value under
+    ASC 260), never by 10x. KFFB tags 1000x. Both signs must be positive for
+    the ratio to mean anything, so loss periods are skipped.
+
+    RECENT-PERIOD ONLY (~15 months, the TTM window plus filing lag). The
+    1000x error is common in old filings — GSBC (2019), NBHC (2011) and
+    FNWD (2017) all carry it — but their CURRENT figures are clean, and
+    substituting there would degrade a good number (and, for a preferred
+    issuer, replace it with n/a). Only corruption inside the window that
+    feeds today's value may change today's value.
+    """
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=max_age_days)).strftime("%Y-%m-%d")
+    ug = (facts or {}).get("facts", {}).get("us-gaap", {})
+
+    def _by_period(concept):
+        """{(start, end): val} for the concept's filed USD facts."""
+        out = {}
+        for e in ug.get(concept, {}).get("units", {}).get("USD", []):
+            if (e.get("form") in ("10-K", "10-Q")
+                    and e.get("start") and e.get("end")):
+                out[(e["start"], e["end"])] = e.get("val")
+        return out
+
+    ni = _by_period("NetIncomeLoss")
+    niac = _by_period("NetIncomeLossAvailableToCommonStockholdersBasic")
+    for period, nv in ni.items():
+        if period[1] < cutoff:          # end date outside the TTM window
+            continue
+        cv = niac.get(period)
+        if nv is None or cv is None or nv <= 0 or cv <= 0:
+            continue
+        if cv / nv >= factor:
+            return True
+    return False
 
 
 def _latest_dei_share_count(facts: dict) -> tuple[float | None, str | None]:

@@ -39,11 +39,6 @@ def _safe(v, default=None):
 #   P/TBV = (ROATCE − g) / (CoE − g)
 FAIR_VALUE_COE_PCT = 10.0             # cost of equity, % (~4.7% 10y + beta×ERP)
 FAIR_VALUE_TERMINAL_GROWTH_PCT = 2.5  # long-run tangible-book growth, %
-# Backstop cap on the screen's multiple: even a sustainably elite-ROATCE bank
-# rarely warrants more than ~2.5x tangible book; guards against residual
-# one-time distortion. The Valuation Model page shows the uncapped figure
-# beside its sliders. (Owner decision pending on whether to keep it.)
-FAIR_PTBV_CAP = 2.5
 
 
 # ── Warranted P/TBV ─────────────────────────────────────────────────────
