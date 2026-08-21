@@ -193,8 +193,12 @@ METRICS = [
     },
 
     # ── Fair Value Screen ──────────────────────────────────────────────
-    # Blended ROATCE (75% 4Q avg + 25% current) drives a fair P/TBV.
-    # 10% ROATCE = 1.0x TBV, 12% = 1.2x, etc. (linear: ROATCE/10).
+    # Normalized ROATCE (SEC holdco TTM when it resolves, else the FDIC
+    # sub-bank 75% 4Q avg + 25% current blend; one-time spikes winsorized)
+    # drives a fair P/TBV via the Gordon form shared with the Company →
+    # Valuation Model page: (ROATCE − g)/(CoE − g), CoE 10%, g 2.5%
+    # (constants in analysis/dcf). 10% → 1.00x, 12% → 1.27x, 15% → 1.67x;
+    # ROATCE ≤ g → n/a (model not applicable — never a $0 fair value).
     # Discount > 15% flags a potential buying opportunity.
     {
         "key": "roatce_blended", "label": "ROATCE Bl.", "source": "computed",
