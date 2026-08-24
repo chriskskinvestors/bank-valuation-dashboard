@@ -111,16 +111,28 @@ def _parse_date(raw) -> date | None:
         return None
 
 
-def _fetch_release_dates() -> dict[str, list[str]] | None:
+def _fetch_release_dates(
+        cache_only: bool = False) -> dict[str, list[str]] | None:
     """Scheduled dates per tracked release (or the cached copy).
 
     Returns {str(release_id): ["YYYY-MM-DD", ...]} or None on any failure
-    — missing key, HTTP error, retries exhausted, unparseable payload."""
+    — missing key, HTTP error, retries exhausted, unparseable payload.
+
+    cache_only: serve the cached map at WHATEVER age and NEVER fetch — the
+    render-path contract. The loop below is one get_with_retry PER tracked
+    release (7 of them), serial, each timeout=15 x 3 attempts plus backoff
+    (429 waits capped at 30s) — up to ~350s total. Nothing warmed this cache,
+    so every lapse of its 24h TTL rebuilt INLINE on the render thread and
+    Home's calendar pane (and the news feed rendered after it) went missing
+    for minutes: measured home.af.calendar 350716ms against a 3s budget.
+    jobs/refresh_macro now warms it; renders only read."""
     from data import cache
 
     cached = cache.get(CACHE_KEY)
     if _is_fresh(cached) and cached.get("by_release"):
         return cached["by_release"]
+    if cache_only:
+        return (cached or {}).get("by_release") or None
 
     api_key = os.environ.get("FRED_API_KEY", "").strip()
     if not api_key:
@@ -156,11 +168,12 @@ def _fetch_release_dates() -> dict[str, list[str]] | None:
     return by_release
 
 
-def _entries_in_window(start: date, end: date) -> list[dict] | None:
+def _entries_in_window(start: date, end: date,
+                       cache_only: bool = False) -> list[dict] | None:
     """All calendar entries with start <= date <= end (FRED prints + FOMC),
     sorted by date, then importance (high first), then name. None when the
     FRED fetch failed — callers translate that to []."""
-    by_release = _fetch_release_dates()
+    by_release = _fetch_release_dates(cache_only=cache_only)
     if by_release is None:
         return None
 
@@ -201,15 +214,19 @@ def _entries_in_window(start: date, end: date) -> list[dict] | None:
 # Public API
 # ──────────────────────────────────────────────────────────────────────────
 
-def get_upcoming_prints(days: int = 7) -> list[dict]:
+def get_upcoming_prints(days: int = 7, cache_only: bool = False) -> list[dict]:
     """Macro prints + FOMC decisions scheduled in [today, today + days],
     inclusive on both ends, sorted by date then importance.
 
     Each entry: {date: "YYYY-MM-DD", name, release_id: int|None,
     kind: "print"|"fomc", importance: "high"|"medium"}.
-    Returns [] on any failure (already logged by the fetch)."""
+    Returns [] on any failure (already logged by the fetch).
+
+    cache_only passes through to _fetch_release_dates (the render-path
+    contract — see there)."""
     today = date.today()
-    entries = _entries_in_window(today, today + timedelta(days=days))
+    entries = _entries_in_window(today, today + timedelta(days=days),
+                                 cache_only=cache_only)
     return entries if entries is not None else []
 
 

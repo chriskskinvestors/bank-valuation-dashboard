@@ -125,6 +125,20 @@ def main() -> int:
         print(f"[macro-warm] econ calendar warm failed: "
               f"{type(e).__name__}: {e}", flush=True)
 
+    # Home's calendar ALSO reads the FRED release-date map (macro_calendar),
+    # which had no warmer at all: 7 serial get_with_retry calls rebuilt inline
+    # on the render thread every time its 24h TTL lapsed (home.af.calendar up
+    # to 350716ms against a 3s budget). The render is cache_only now, so this
+    # warm is what keeps the FRED rows on the pane at all.
+    try:
+        from data.macro_calendar import get_upcoming_prints
+        prints = get_upcoming_prints(days=14)
+        print(f"[{time.strftime('%H:%M:%S')}] warmed macro calendar "
+              f"({len(prints)} entries)", flush=True)
+    except Exception as e:
+        print(f"[macro-warm] macro calendar warm failed: "
+              f"{type(e).__name__}: {e}", flush=True)
+
     print(f"[{time.strftime('%H:%M:%S')}] warmed {ok}/{len(series)} series "
           f"in {time.time() - t0:.0f}s", flush=True)
     return 0

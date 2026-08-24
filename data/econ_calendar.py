@@ -106,9 +106,20 @@ def is_marquee(event_name: str) -> bool:
     return any(t in n for t in _MARQUEE_TERMS)
 
 
-def get_us_calendar(back_days: int = 10, fwd_days: int = 14) -> list[dict]:
+def get_us_calendar(back_days: int = 10, fwd_days: int = 14,
+                    cache_only: bool = False) -> list[dict]:
     """Parsed US economic events in [today-back, today+fwd], 1h-cached.
-    Empty list on no key / denial / failure."""
+    Empty list on no key / denial / failure.
+
+    cache_only: serve the cached events at WHATEVER age and NEVER fetch — the
+    render-path contract. The two live FMP calls below are timeout=20 x 3
+    attempts EACH (data/http retry policy), so a render that reached them
+    blocked for up to ~2 min; with a 1h TTL and a job that warms this far less
+    often, the interactive path hit that cold cache routinely (measured
+    home.af.calendar 112091ms/117997ms against Home's 3s budget, 2026-08-24).
+    Same doctrine as fetch_earnings_calendar/fmp_announcement_call_info: an
+    hours-old macro calendar is correct — a two-minute stall is not.
+    jobs/refresh_macro rebuilds it."""
     from data import cache
     from data.freshness import is_fresh
 
@@ -118,6 +129,8 @@ def get_us_calendar(back_days: int = 10, fwd_days: int = 14) -> list[dict]:
     cached = cache.get(key)
     if is_fresh(cached, CACHE_TTL_SECONDS) and cached.get("events") is not None:
         return cached["events"]
+    if cache_only:
+        return (cached or {}).get("events") or []
 
     today = date.today()
     params = {"from": (today - timedelta(days=back_days)).isoformat(),
@@ -174,11 +187,13 @@ def get_recent_releases(days: int = 10, limit: int = 14) -> list[dict]:
     return rows[:limit]
 
 
-def get_upcoming_releases(days: int = 14, limit: int = 20) -> list[dict]:
+def get_upcoming_releases(days: int = 14, limit: int = 20,
+                          cache_only: bool = False) -> list[dict]:
     """Upcoming marquee US macro releases (no actual yet) within the forward
-    window, soonest first."""
+    window, soonest first. cache_only passes through to get_us_calendar (the
+    render-path contract — see there)."""
     today = date.today().isoformat()
-    rows = [e for e in get_us_calendar()
+    rows = [e for e in get_us_calendar(cache_only=cache_only)
             if not e["released"] and e["date"] >= today and is_marquee(e["event"])]
     rows.sort(key=lambda e: e["datetime"])
     return rows[:limit]
