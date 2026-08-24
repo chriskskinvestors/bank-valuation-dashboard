@@ -166,10 +166,10 @@ class TestHomeRendersPopulated(unittest.TestCase):
                  mc.get_upcoming_prints)
         try:
             est.fetch_earnings_calendar = lambda w: []
-            ec.get_upcoming_releases = lambda days=14: list(fake)
+            ec.get_upcoming_releases = lambda days=14, cache_only=False: list(fake)
             ecall.merged_call_info = lambda: {}
             ecall.earnings_timing_map = lambda: {}
-            mc.get_upcoming_prints = lambda days=7: []
+            mc.get_upcoming_prints = lambda days=7, cache_only=False: []
             h = self.home._af_calendar_table([])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
@@ -205,10 +205,10 @@ class TestHomeRendersPopulated(unittest.TestCase):
                  mc.get_upcoming_prints)
         try:
             est.fetch_earnings_calendar = lambda w: list(earn)
-            ec.get_upcoming_releases = lambda days=14: list(macro)
+            ec.get_upcoming_releases = lambda days=14, cache_only=False: list(macro)
             ecall.merged_call_info = lambda: {}
             ecall.earnings_timing_map = lambda: {}
-            mc.get_upcoming_prints = lambda days=7: []
+            mc.get_upcoming_prints = lambda days=7, cache_only=False: []
             h = self.home._af_calendar_table(["BANR"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
@@ -239,13 +239,13 @@ class TestHomeRendersPopulated(unittest.TestCase):
         try:
             est.fetch_earnings_calendar = lambda w: [
                 {"ticker": "NWBI", "next_earnings_date": soon, "eps_estimate": 1.2}]
-            ec.get_upcoming_releases = lambda days=14: []
+            ec.get_upcoming_releases = lambda days=14, cache_only=False: []
             ecall.earnings_timing_map = lambda: {}
             ecall.merged_call_info = lambda: {"NWBI": {
                 "call_time": "10:00a ET",
                 "webcast_url": "https://investor.example.com/webcast",
                 "dial_in": "1-800-555-1234 (ID 99)"}}
-            mc.get_upcoming_prints = lambda days=7: []
+            mc.get_upcoming_prints = lambda days=7, cache_only=False: []
             h = self.home._af_calendar_table(["NWBI"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,
@@ -272,11 +272,11 @@ class TestHomeRendersPopulated(unittest.TestCase):
         try:
             est.fetch_earnings_calendar = lambda w: [
                 {"ticker": "JPM", "next_earnings_date": soon, "eps_estimate": 5.4}]
-            ec.get_upcoming_releases = lambda days=14: []
+            ec.get_upcoming_releases = lambda days=14, cache_only=False: []
             ecall.merged_call_info = lambda: {}                   # no precise call info
             ecall.earnings_timing_map = lambda: {"JPM": {"when": "Before open",
                                                          "confirmed": True}}
-            mc.get_upcoming_prints = lambda days=7: []
+            mc.get_upcoming_prints = lambda days=7, cache_only=False: []
             h = self.home._af_calendar_table(["JPM"])
         finally:
             (est.fetch_earnings_calendar, ec.get_upcoming_releases,

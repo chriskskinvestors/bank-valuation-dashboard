@@ -765,8 +765,10 @@ def _af_calendar_table(watchlist: list[str]) -> str:
     try:
         # Econ prints from FMP's economic calendar (consensus + previous, which
         # the FRED schedule lacks) — marquee US releases only, soonest first.
+        # cache_only: NEVER the two 20s-timeout FMP calls on the render thread
+        # (jobs/refresh_macro warms them) — see get_us_calendar.
         from data import econ_calendar as _ec
-        for p in _ec.get_upcoming_releases(days=30):
+        for p in _ec.get_upcoming_releases(days=30, cache_only=True):
             est = _ec.fmt_value(p.get("estimate"), p.get("unit"))
             prev = _ec.fmt_value(p.get("previous"), p.get("unit"))
             mid = f"{est or '—'} / {prev or '—'}" if (est or prev) else ""
@@ -777,14 +779,18 @@ def _af_calendar_table(watchlist: list[str]) -> str:
         pass
     try:
         # FRED-based print days + FOMC decision dates (data/macro_calendar,
-        # 24h-cached in data.cache — same served-from-cache pattern as the FMP
-        # leg above, so no network on a warm render). FMP carries most of the
-        # same prints, so same-day duplicates collapse onto the richer FMP row;
-        # FOMC days and any FRED-only print get their own amber rows. Guarded
-        # exactly like the FMP leg: a macro_calendar failure leaves the FMP
-        # rows (and the pane) intact.
+        # 24h-cached in data.cache). cache_only: a WARM render was never the
+        # problem — a COLD one fanned out 7 serial FRED fetches here and hung
+        # the pane for minutes (see _fetch_release_dates), and because this
+        # column renders before the news feed, col3 stayed empty the whole
+        # time. jobs/refresh_macro warms it; the render only reads.
+        # FMP carries most of the same prints, so same-day duplicates collapse
+        # onto the richer FMP row; FOMC days and any FRED-only print get their
+        # own amber rows. Guarded exactly like the FMP leg: a macro_calendar
+        # failure leaves the FMP rows (and the pane) intact.
         from data import macro_calendar as _mc
-        fred = _mc.get_upcoming_prints(days=14)  # match FMP's forward window
+        # days=14 matches FMP's forward window above.
+        fred = _mc.get_upcoming_prints(days=14, cache_only=True)
         if fred:
             fmp_macro = [i for i in items if i["kind"] == "macro"]
             items = ([i for i in items if i["kind"] != "macro"]

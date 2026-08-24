@@ -109,7 +109,11 @@ class TestCalendarPaneMacroMerge(unittest.TestCase):
                  mc.get_upcoming_prints)
         try:
             est.fetch_earnings_calendar = lambda w: []
-            ec.get_upcoming_releases = lambda days=14: list(fmp_events)
+            # Stubs must accept cache_only — the render passes it (the
+            # 2026-08-24 render-path fix); a stub that rejects it raises into
+            # the pane's `except Exception: pass` and silently drops the rows.
+            ec.get_upcoming_releases = (lambda days=14, cache_only=False:
+                                        list(fmp_events))
             ecall.merged_call_info = lambda: {}
             ecall.earnings_timing_map = lambda: {}
             mc.get_upcoming_prints = macro_fn
@@ -125,8 +129,9 @@ class TestCalendarPaneMacroMerge(unittest.TestCase):
 
     def test_fomc_row_renders_in_pane(self):
         h = self._render(
-            [], lambda days=7: [_fred(self._iso(5), "FOMC Rate Decision",
-                                      kind="fomc", time="2:00 ET")])
+            [], lambda days=7, cache_only=False: [
+                _fred(self._iso(5), "FOMC Rate Decision",
+                      kind="fomc", time="2:00 ET")])
         self.assertIn("FOMC Rate Decision", h)
         self.assertIn("2:00 ET", h)
         self.assertIn("background:#b45309", h)  # amber macro dot
@@ -136,7 +141,8 @@ class TestCalendarPaneMacroMerge(unittest.TestCase):
         fmp = [{"date": d, "event": "Core CPI YoY (May)", "estimate": 3.2,
                 "previous": 3.1, "unit": "%", "impact": "High",
                 "datetime": d + " 12:30:00", "released": False}]
-        h = self._render(fmp, lambda days=7: [_fred(d, "CPI")])
+        h = self._render(fmp,
+                         lambda days=7, cache_only=False: [_fred(d, "CPI")])
         self.assertEqual(h.count('class="erow a4 ed calrow"'), 1)
         self.assertIn("Core CPI YoY (May)", h)   # the FMP row won
         self.assertIn("3.2% / 3.1%", h)          # with its cons./prior
@@ -148,7 +154,7 @@ class TestCalendarPaneMacroMerge(unittest.TestCase):
                 "previous": 175.0, "unit": "K", "impact": "High",
                 "datetime": d + " 12:30:00", "released": False}]
 
-        def boom(days=7):
+        def boom(days=7, cache_only=False):
             raise RuntimeError("FRED down")
 
         h = self._render(fmp, boom)                  # must not raise
@@ -164,7 +170,7 @@ class TestCalendarPaneMacroMerge(unittest.TestCase):
                 "released": False} for i in range(1, 9)]
         fred = [_fred(self._iso(9 + i), "FOMC Rate Decision", kind="fomc",
                       time="2:00 ET") for i in range(4)]
-        h = self._render(fmp, lambda days=7: list(fred))
+        h = self._render(fmp, lambda days=7, cache_only=False: list(fred))
         self.assertEqual(h.count('class="erow a4 ed calrow"'), 10)
 
 
