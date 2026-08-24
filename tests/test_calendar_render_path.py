@@ -120,6 +120,61 @@ class TestMacroCalendarCacheOnly(unittest.TestCase):
                          len(macro_calendar.TRACKED_RELEASES))
 
 
+class TestCallInfoMapIsSnapshotOnly(unittest.TestCase):
+    """call_info_map was the LAST call-detail source still building inline:
+    an 800-row events query with no event_type index, under Streamlit's
+    cache lock, so concurrent sessions queued behind one build (observed
+    home.af.calendar 1065234ms / 138761ms / 78539ms flushing at the same
+    instant). Its three siblings were already snapshot-only."""
+
+    def test_serves_snapshot_at_any_age_without_querying(self):
+        from data import earnings_call as ec
+
+        stale = _stale({"value": {"ABC": {"call_time": "9:00 AM ET"}}})
+        with patch("data.cache.get", return_value=stale), \
+             patch("data.events.store.get_events_by_type") as mock_q:
+            out = ec.call_info_map()
+        mock_q.assert_not_called()
+        self.assertEqual(out, {"ABC": {"call_time": "9:00 AM ET"}})
+
+    def test_no_snapshot_degrades_to_empty_without_querying(self):
+        from data import earnings_call as ec
+
+        with patch("data.cache.get", return_value=None), \
+             patch("data.events.store.get_events_by_type") as mock_q:
+            out = ec.call_info_map()
+        self.assertEqual(out, {})
+        mock_q.assert_not_called()
+
+    def test_refresher_builds_and_persists(self):
+        """The job path must still do the query — it is what fills the
+        snapshot the render now reads."""
+        from data import earnings_call as ec
+
+        rows = [{"ticker": "ABC", "summary": "", "headline": ""}]
+        with patch("data.events.store.get_events_by_type",
+                   return_value=rows) as mock_q, \
+             patch("data.earnings_call._announced_release_date",
+                   return_value="2026-09-01"), \
+             patch("data.cache.put") as mock_put:
+            out = ec.refresh_call_info_snapshot()
+        mock_q.assert_called_once()
+        self.assertEqual(out, {"ABC": {"release_date": "2026-09-01"}})
+        key, blob = mock_put.call_args[0]
+        self.assertEqual(key, ec.CALL_INFO_SNAP_KEY)
+        self.assertEqual(blob["value"], out)
+
+    def test_failed_build_never_overwrites_the_snapshot(self):
+        from data import earnings_call as ec
+
+        with patch("data.events.store.get_events_by_type",
+                   side_effect=RuntimeError("db down")), \
+             patch("data.cache.put") as mock_put:
+            out = ec.refresh_call_info_snapshot()
+        self.assertEqual(out, {})
+        mock_put.assert_not_called()
+
+
 class TestHomeCalendarPaneDoesNoNetwork(unittest.TestCase):
     """The integration pin: with every cache cold, rendering the Calendar pane
     must not make a single outbound call. This is the bug — the pane blocked
@@ -137,11 +192,13 @@ class TestHomeCalendarPaneDoesNoNetwork(unittest.TestCase):
         # this test would pass even with the bug present.
         with patch("data.cache.get", return_value=None), \
              patch("data.http.get_with_retry") as mock_http, \
-             patch("data.econ_calendar._get") as mock_fmp:
+             patch("data.econ_calendar._get") as mock_fmp, \
+             patch("data.events.store.get_events_by_type") as mock_events:
             html = home._af_calendar_table([])
 
         mock_http.assert_not_called()           # no FRED fan-out
         mock_fmp.assert_not_called()            # no FMP econ-calendar calls
+        mock_events.assert_not_called()         # no inline 800-row events scan
         self.assertIn("Calendar", html)         # header always renders
 
 

@@ -184,6 +184,15 @@ def init_schema():
             "CREATE INDEX IF NOT EXISTS idx_events_published "
             "ON events(published_at DESC)"
         ))
+        # get_events_by_type filters event_type and orders by published_at.
+        # Without this, Postgres walks idx_events_published skipping every
+        # non-matching row — and the topic-feed rows behind Overnight &
+        # Breaking make that pile deeper every day. The earnings-typed rows
+        # are sparse, so the scan ran long enough to stall the caller.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_events_type_published "
+            "ON events(event_type, published_at DESC)"
+        ))
 
 
 def _existing_content_rows(eng, events: list[Event]) -> dict[str, tuple[str, str]]:

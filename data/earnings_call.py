@@ -272,64 +272,105 @@ def _parse_release_timing(text: str) -> str | None:
     return None
 
 
-def call_info_map() -> dict:
-    """{ticker: {call_time, webcast_url, dial_in, call_date, release_date}} parsed
-    from each bank's earnings-announcement press release.
+CALL_INFO_SNAP_KEY = "call_info_snap"
 
-    ONE events query, 1h-cached (st.cache_data) so the calendar render never
-    re-queries/re-parses. Queries 'earnings'-typed events directly (not a flat
-    recency window): the call-details PR is often weeks old by the report date,
-    so it would otherwise fall outside the most-recent rows. A parsed webcast URL
-    is dropped unless it passes the news feed's safety filter. Empty on failure."""
-    import streamlit as st
 
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def _build() -> dict:
-        try:
-            from data.events.store import get_events_by_type
-            from data.events.wire_base import is_safe_news_url
-        except Exception:
-            return {}
-        try:
-            rows = get_events_by_type("earnings", limit=800)
-        except Exception:
-            return {}
-        today_iso = date.today().isoformat()
-        out: dict = {}
-        for r in rows:                               # newest-first
-            tk = r.get("ticker")
-            if not tk:
-                continue
-            cur = out.get(tk) or {}
-            # Call logistics from the PR body (best-effort, when not already found
-            # from a newer PR for this ticker).
-            if not any(cur.get(k) for k in ("call_time", "webcast_url", "dial_in")):
-                ci = parse_call_info(r.get("summary") or "")
-                url = ci.get("webcast_url")
-                if url and not is_safe_news_url(url):
-                    ci["webcast_url"] = None
-                for k in ("call_time", "webcast_url", "dial_in", "when"):
-                    if ci.get(k):
-                        cur[k] = ci[k]
-            # Conference-call date from the body (when stated up front).
-            if not cur.get("call_date"):
-                cd = _parse_call_date(r.get("summary") or "", today_iso)
-                if cd:
-                    cur["call_date"] = cd
-            # Announced release date from the HEADLINE — captured even when the
-            # body has no parseable call logistics (the universe-wide signal).
-            if not cur.get("release_date"):
-                rd = _announced_release_date(r.get("headline") or "", today_iso)
-                if rd:
-                    cur["release_date"] = rd
-            if any(cur.values()):
-                out[tk] = cur
-        return out
+def _build_call_info_map() -> dict:
+    """Parse the snippet-level call details out of stored 'earnings' events.
 
+    Queries 'earnings'-typed events directly (not a flat recency window): the
+    call-details PR is often weeks old by the report date, so it would
+    otherwise fall outside the most-recent rows. A parsed webcast URL is
+    dropped unless it passes the news feed's safety filter. {} on failure.
+
+    Background-only — see call_info_map for why this must never run on a
+    render thread."""
     try:
-        return _build()
+        from data.events.store import get_events_by_type
+        from data.events.wire_base import is_safe_news_url
     except Exception:
         return {}
+    try:
+        rows = get_events_by_type("earnings", limit=800)
+    except Exception:
+        return {}
+    today_iso = date.today().isoformat()
+    out: dict = {}
+    for r in rows:                                   # newest-first
+        tk = r.get("ticker")
+        if not tk:
+            continue
+        cur = out.get(tk) or {}
+        # Call logistics from the PR body (best-effort, when not already found
+        # from a newer PR for this ticker).
+        if not any(cur.get(k) for k in ("call_time", "webcast_url", "dial_in")):
+            ci = parse_call_info(r.get("summary") or "")
+            url = ci.get("webcast_url")
+            if url and not is_safe_news_url(url):
+                ci["webcast_url"] = None
+            for k in ("call_time", "webcast_url", "dial_in", "when"):
+                if ci.get(k):
+                    cur[k] = ci[k]
+        # Conference-call date from the body (when stated up front).
+        if not cur.get("call_date"):
+            cd = _parse_call_date(r.get("summary") or "", today_iso)
+            if cd:
+                cur["call_date"] = cd
+        # Announced release date from the HEADLINE — captured even when the
+        # body has no parseable call logistics (the universe-wide signal).
+        if not cur.get("release_date"):
+            rd = _announced_release_date(r.get("headline") or "", today_iso)
+            if rd:
+                cur["release_date"] = rd
+        if any(cur.values()):
+            out[tk] = cur
+    return out
+
+
+def refresh_call_info_snapshot() -> dict:
+    """Build + persist the snippet-parsed call-detail map (cross-instance
+    'call_info_snap'). Background-only; poll-events rebuilds it alongside its
+    three siblings. {} on failure — a failed build never overwrites the
+    stored snapshot."""
+    out = _build_call_info_map()
+    if not out:
+        return {}
+    from data import cache
+    cache.put(CALL_INFO_SNAP_KEY,
+              {"cached_at": datetime.now().isoformat(), "value": out})
+    return out
+
+
+def call_info_map() -> dict:
+    """{ticker: {call_time, webcast_url, dial_in, call_date, release_date}}
+    parsed from each bank's earnings-announcement press release — served from
+    the cross-instance snapshot at WHATEVER age and NEVER built on the
+    interactive path. {} before the first poll-events rebuild (the calendar
+    degrades to the other call-detail layers).
+
+    Regression class (measured 2026-08-24): this was a per-instance
+    @st.cache_data(1h) whose builder ran get_events_by_type('earnings',
+    limit=800) INLINE on the render thread. The events table is indexed on
+    (ticker, published_at) and (published_at) but NOT on event_type, so that
+    query scans published_at DESC skipping every non-earnings row — including
+    the topic-feed rows the Overnight & Breaking strip pours in. Worse,
+    Streamlit's cache lock made concurrent sessions queue behind one build:
+    three sessions were observed flushing at the SAME instant with
+    home.af.calendar at 1065234ms / 138761ms / 78539ms against a 3s budget.
+    Because the calendar renders before the news feed, the feed (col3) never
+    rendered at all while this blocked.
+
+    Same failure shape — and same fix — as fmp_announcement_call_info's
+    2026-08-17 regression, whose docstring named the identical cache-lock
+    queueing. Jobs build, renders read."""
+    try:
+        from data import cache
+        snap = cache.get(CALL_INFO_SNAP_KEY, max_age_s=None)
+    except Exception:
+        snap = None
+    if snap and isinstance(snap.get("value"), dict):
+        return snap["value"]
+    return {}
 
 
 def _fetch_pr_body(url: str) -> str:
