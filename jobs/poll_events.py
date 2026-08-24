@@ -273,6 +273,7 @@ def main() -> int:
     try:
         from data.events.ir_site import refresh_q4_calls_snapshot
         from data.earnings_call import (refresh_announcement_call_snapshot,
+                                        refresh_call_info_snapshot,
                                         refresh_pr_call_snapshot)
         tq = time.time()
         n_q4 = len(refresh_q4_calls_snapshot())
@@ -281,9 +282,14 @@ def main() -> int:
         # per-instance on the RENDER thread — 208s Home stalls on cold
         # instances during earnings season. Jobs build, renders read.
         n_ann = len(refresh_announcement_call_snapshot())
+        # Fourth sibling (2026-08-24): the snippet-parsed map was the LAST
+        # call-detail source still building inline — an unindexed 800-row
+        # events query under Streamlit's cache lock, measured at
+        # home.af.calendar 1065234ms with sessions queued behind it.
+        n_ci = len(refresh_call_info_snapshot())
         print(f"▶ Call details refreshed — Q4 {n_q4} banks, PR {n_pr} banks, "
-              f"announcements {n_ann} banks ({time.time()-tq:.0f}s)",
-              flush=True)
+              f"announcements {n_ann} banks, snippets {n_ci} banks "
+              f"({time.time()-tq:.0f}s)", flush=True)
     except Exception as e:
         print(f"  [calls] snapshot refresh failed: {type(e).__name__}: {e}",
               flush=True)
