@@ -1,24 +1,38 @@
 """
-Render-path contract for Home's Calendar pane (the 2026-08-24 stall).
+Render-path contract for Home's above-the-fold grid (the 2026-08-24 stalls).
 
-Home's grid renders col1 -> col2 -> col3 in script order, so the Bank News
-Feed (col3) is the LAST thing on the page and sits directly behind the
-Calendar pane (col2). Two calendar data sources fetched live whenever their
-Postgres cache lapsed, ON the render thread:
+THE INVARIANT: no pane may fetch on the render thread. Jobs build, renders
+read.
 
-  • econ_calendar.get_us_calendar   — 2 FMP calls, timeout=20 x 3 attempts
-  • macro_calendar._fetch_release_dates — 7 serial FRED calls (one per
-    TRACKED_RELEASE), timeout=15 x 3 attempts + backoff, and NOTHING warmed it
+Why it matters more than "that pane is slow": the grid renders col1 (etf,
+overlay, rates) -> col2 (movers, volume, calendar) -> col3 (feed) in strict
+script order, so a slow pane leaves every pane AFTER it unrendered. Nothing
+errors — _af_card catches Exception, and a stall is latency, not failure — so
+the symptom is a silently blank region, reported as "where did my news feed
+go?" The feed is last, so it is the usual casualty.
 
-Measured in prod: home.af.calendar 112091ms / 117997ms / 350716ms against a
-documented 3s budget. While it stalled, the Calendar pane AND the news feed
-below it simply never rendered — column 3 sat empty for minutes with no error
-logged anywhere, because execution had not reached it.
+Three sources were fetching inline when their cache lapsed:
 
-These pin the fix: the render passes cache_only=True, which serves whatever is
-cached at ANY age and never fetches; jobs/refresh_macro does the fetching. Same
-doctrine as fetch_earnings_calendar (2026-06-13) and fmp_announcement_call_info
-(2026-08-17), which were both fixed for this identical failure shape.
+  • econ_calendar.get_us_calendar — 2 FMP calls, timeout=20 x 3 attempts
+  • macro_calendar._fetch_release_dates — 7 SERIAL FRED calls (one per
+    TRACKED_RELEASE), timeout=15 x 3 attempts + backoff, nothing warmed it
+  • earnings_call.call_info_map — an 800-row events query with no event_type
+    index, under Streamlit's @st.cache_data lock, so concurrent sessions
+    queued behind ONE build
+  • ui.home._rates_bundle — 26 FRED fetch_series calls once its 30-min
+    snapshot lapsed, plus a per-series live fallback for every gap
+
+Measured in prod against a documented 3s budget: home.af.calendar 112091ms,
+350716ms and 1065234ms (17.7 min, three sessions flushing at the same instant
+= lock contention); home.af.rates 9760ms to 21902ms.
+
+These tests COUNT calls rather than raising: the panes wrap each leg in
+`except Exception: pass`, so a raising mock is swallowed and the test would
+pass with the bug present. The warm (job) paths are pinned too — they must
+keep fetching, since they fill the caches the renders now read.
+
+Same doctrine, and the same failure shape, as fetch_earnings_calendar
+(2026-06-13) and fmp_announcement_call_info (2026-08-17).
 """
 import unittest
 from datetime import datetime, timedelta
@@ -173,6 +187,44 @@ class TestCallInfoMapIsSnapshotOnly(unittest.TestCase):
             out = ec.refresh_call_info_snapshot()
         self.assertEqual(out, {})
         mock_put.assert_not_called()
+
+
+class TestRatesPaneIsReadOnly(unittest.TestCase):
+    """The rates pane rebuilt its FRED anchor bundle inline once its 30-min
+    snapshot lapsed — 26 fetch_series calls on the request thread (measured
+    home.af.rates 9760ms / 12732ms / 20145ms / 21902ms), plus a per-series
+    live fallback for every gap. It renders BEFORE movers/volume/calendar/feed,
+    so it could blank all of them."""
+
+    def test_stale_bundle_beyond_the_bound_renders_dashes_not_a_rebuild(self):
+        """Past the 24h bound the pane must degrade to '—', never rebuild and
+        never show a day-old level as current."""
+        from ui import home
+
+        with patch("data.cache.get", return_value=None), \
+             patch("data.fred_client.fetch_series") as mock_fred:
+            self.assertEqual(home._rates_bundle(), {})
+            html = home._af_rates_table()
+
+        mock_fred.assert_not_called()
+        self.assertIn("Rates", html)
+
+    def test_bundle_is_read_at_the_bounded_age(self):
+        from ui import home
+
+        with patch("data.cache.get") as mock_get:
+            mock_get.return_value = {"value": {"DGS10": {"level": 4.2}}}
+            out = home._rates_bundle()
+        self.assertEqual(out, {"DGS10": {"level": 4.2}})
+        self.assertEqual(mock_get.call_args.kwargs["max_age_s"],
+                         home._RATES_SNAP_MAX_AGE)
+
+    def test_missing_series_returns_none_without_a_live_fetch(self):
+        from ui import home
+
+        with patch("data.fred_client.fetch_series") as mock_fred:
+            self.assertIsNone(home._rate_anchors("DGS10", {}))
+        mock_fred.assert_not_called()
 
 
 class TestHomeCalendarPaneDoesNoNetwork(unittest.TestCase):

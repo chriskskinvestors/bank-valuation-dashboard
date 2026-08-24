@@ -14,22 +14,42 @@ from data.bank_mapping import get_name
 # Markets & Rates
 # ══════════════════════════════════════════════════════════════════════
 
+# The board serves the job-warmed bundle up to this age; past it the rows
+# render "—". NOT served-at-any-age like the calendar: these are displayed rate
+# LEVELS, and a level older than a day shown as current is exactly the
+# plausible-wrong number the cardinal rule forbids. The series are daily FRED.
+_RATES_SNAP_MAX_AGE = 86400   # 24h
+
+
 def _rates_bundle() -> dict:
     """The Rates · Credit anchor bundle ({series_id: {level,d1,w1,m1,ytd,lo,hi}}),
-    job-warmed (home_rates_full_snap, 30-min TTL) so the render reads cache
-    instead of fanning out ~25 FRED fetches on the request thread. Falls back to
-    a live build only if no instance/job has warmed it yet."""
-    from data.cache import served_snapshot
-    from data.live_rates import build_rates_anchor_bundle
-    return served_snapshot("home_rates_full_snap", 1800, build_rates_anchor_bundle)
+    job-warmed by jobs/refresh_home_snapshot (_warm_rates_bundle).
+
+    READ-ONLY — never builds at render time. It used to fall back to
+    served_snapshot's live build once its 30-min TTL lapsed, which is 26 FRED
+    fetch_series calls ON the request thread: measured home.af.rates at 9760ms,
+    12732ms, 20145ms and 21902ms against Home's 3s budget. Because the grid
+    renders col1 -> col2 -> col3 in script order, every pane after this one —
+    movers, volume, calendar and the news feed — waited on it (a cold load on
+    2026-08-24 was observed blocked here, before the calendar was reached).
+
+    Same doctrine as live_yields in data/live_rates (whose docstring already
+    named "the same trap as the FRED bundle") and as the 2026-08-24 calendar
+    fix: jobs build, renders read."""
+    from data import cache
+    snap = cache.get("home_rates_full_snap", max_age_s=_RATES_SNAP_MAX_AGE)
+    return (snap or {}).get("value") or {}
 
 
 def _rate_anchors(series_id: str, bundle: dict):
-    """Anchors for one series from the warmed bundle; live fallback for any id
-    the bundle is missing (JSON round-trip keeps the dict shape)."""
-    from data.live_rates import rate_anchors_live
-    a = bundle.get(series_id)
-    return a if a is not None else rate_anchors_live(series_id)
+    """Anchors for one series from the warmed bundle, or None when the bundle
+    lacks it — every caller does `or {}`, so the row renders '—', never a guess.
+
+    The old rate_anchors_live fallback put a FRED fetch on the render thread for
+    EVERY series the bundle was missing, so a partially-built bundle cost one
+    round-trip per gap on top of the full-rebuild case above. Filling gaps is
+    the warm job's business (JSON round-trip keeps the dict shape)."""
+    return bundle.get(series_id)
 
 
 # ── Feed helpers (shared by the above-the-fold news rail) ─────────────
