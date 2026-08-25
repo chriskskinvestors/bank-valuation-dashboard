@@ -303,7 +303,13 @@ def _apply(rows: list[dict]) -> None:
         t = r["ticker"]
         if t in existing:
             continue
-        name = (r.get("namehcr") or r.get("fdic_name") or t).title()
+        # This `name` IS the dashboard display name (bank_mapping.get_name
+        # reads this file), and utils.formatting.format_bank_name normalizes
+        # case/suffixes but does NOT expand abbreviations — so taking FDIC's
+        # NAMEHCR first would print "High Country Bcorp" to users. Prefer the
+        # vendor's proper legal name; fall back to FDIC only when absent.
+        name = (r.get("fmp_name")
+                or (r.get("namehcr") or r.get("fdic_name") or t).title())
         entry = (f' "{t}": {{\n  "cik": null,\n  "fdic_cert": {r["cert"]},\n'
                  f'  "fdic_score": 1.0,\n  "name": {json.dumps(name)}\n }},\n')
         anchor = None
