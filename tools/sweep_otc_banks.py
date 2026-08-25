@@ -45,15 +45,35 @@ _SUFFIX = {"INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY",
            "LTD", "LIMITED", "PLC", "SA", "NA", "N.A.", "INC.", "CORP.",
            "CO.", "THE"}
 
+# FDIC abbreviates holding-company names in NAMEHCR; market-data vendors spell
+# them out. Without this the EXACT compare can never match those banks — e.g.
+# HCBC (High Country Bancorp, FDIC cert 29783) sat unadmitted because FDIC says
+# "HIGH COUNTRY BCORP INC" and FMP says "High Country Bancorp, Inc.".
+#
+# Frequency in the 3,556 active FDIC institutions carrying a NAMEHCR (measured
+# 2026-08-25): BCORP 870 vs BANCORP 11, FINL 83, BK 35, NATL 32, TR 30, CMTY 27
+# — so ~24% of holding-company names were structurally unmatchable.
+#
+# This is a CANONICALIZATION, applied to both sides, so equality still means
+# full-phrase identity — NOT fuzzy matching. Each entry maps an abbreviation to
+# the one word it unambiguously stands for. BANC is deliberately ABSENT: it is a
+# real spelling (Banc of California), so folding it into BANK would equate
+# genuinely different institutions. If an expansion ever does collide, the
+# sweep's existing ambiguity guard sends it to review rather than auto-admitting.
+_ABBREV = {"BCORP": "BANCORP", "BSHRS": "BANCSHARES", "FINL": "FINANCIAL",
+           "NATL": "NATIONAL", "CMTY": "COMMUNITY", "BK": "BANK",
+           "TR": "TRUST"}
+
 
 def _norm(name: str) -> str:
-    """Uppercase, punctuation-free, suffix-stripped phrase for EXACT compare."""
+    """Uppercase, punctuation-free, suffix-stripped, abbreviation-expanded
+    phrase for EXACT compare."""
     toks = re.sub(r"[^A-Z0-9& ]+", " ", (name or "").upper()).split()
     while toks and toks[0] == "THE":
         toks.pop(0)
     while toks and toks[-1] in _SUFFIX:
         toks.pop()
-    return " ".join(toks)
+    return " ".join(_ABBREV.get(t, t) for t in toks)
 
 
 def _fdic_active() -> list[dict]:
@@ -61,7 +81,10 @@ def _fdic_active() -> list[dict]:
     resp = get_with_retry(
         "https://banks.data.fdic.gov/api/institutions",
         params={"filters": "ACTIVE:1",
-                "fields": "NAME,CERT,NAMEHCR,ASSET,STALP,BKCLASS",
+                # RSSDHCR (the holding company's RSSD id) is what distinguishes
+                # one holdco running several charters from several UNRELATED
+                # banks that merely share a name — see the de-dup below.
+                "fields": "NAME,CERT,NAMEHCR,ASSET,STALP,BKCLASS,RSSDHCR",
                 "limit": 10000, "format": "json"},
         headers={"User-Agent": "BankValuationDashboard research@kskinvestors.com"},
         timeout=60)
@@ -161,6 +184,7 @@ def sweep(apply: bool = False) -> dict:
             hits = by_name[n]
             row = {"cert": cert, "fdic_name": bank.get("NAME"),
                    "namehcr": bank.get("NAMEHCR"), "state": bank.get("STALP"),
+                   "rssdhcr": bank.get("RSSDHCR"),
                    "assets_k": bank.get("ASSET"), "matched_on": which,
                    "symbols": ";".join(h.get("symbol", "") for h in hits),
                    "fmp_name": hits[0].get("companyName") or hits[0].get("name")}
@@ -178,20 +202,40 @@ def sweep(apply: bool = False) -> dict:
                 auto.append(row)
             break                                 # one match slot per bank
 
-    # De-dup (a holdco with several bank certs matches once per cert — keep
-    # the largest-asset cert per ticker; extra certs go to review).
-    by_ticker: dict[str, dict] = {}
+    # De-dup certs that matched the same ticker. TWO different situations hide
+    # here and they must not be treated alike:
+    #
+    #   ONE holdco, several charters (RSSDHCR identical) — legitimate; keep the
+    #   largest-asset cert, the others are the same company.
+    #
+    #   SEVERAL UNRELATED banks sharing a common name (RSSDHCR differs) — e.g.
+    #   "Citizens Bancorp" is six distinct holding companies in LA/OR/MO/TX/WI/
+    #   IL. Picking the largest would price the ticker off a coin-flip bank and
+    #   be WRONG for the other five: precisely the wrong-ticker join this sweep
+    #   exists to prevent. None of them may be auto-admitted.
+    #
+    # A missing RSSDHCR counts as its own identity — unknown is not "same".
+    groups: dict[str, list[dict]] = {}
     for row in auto:
-        t = row["ticker"]
-        prev = by_ticker.get(t)
-        if prev is None:
-            by_ticker[t] = row
-        else:
-            keep, drop = ((row, prev) if (row.get("assets_k") or 0) >
-                          (prev.get("assets_k") or 0) else (prev, row))
-            drop["why"] = f"second cert for {t} (kept {keep['cert']})"
-            review.append(drop)
-            by_ticker[t] = keep
+        groups.setdefault(row["ticker"], []).append(row)
+
+    by_ticker: dict[str, dict] = {}
+    for t, rows_t in groups.items():
+        ids = {(r.get("rssdhcr") or f"?cert{r['cert']}") for r in rows_t}
+        if len(ids) > 1:
+            states = ",".join(sorted({str(r.get("state")) for r in rows_t}))
+            for r in rows_t:
+                r["why"] = (f"AMBIGUOUS: {len(ids)} unrelated holdcos share "
+                            f"this name ({states}) — cannot tell which one "
+                            f"{t} prices")
+                review.append(r)
+            continue
+        keep = max(rows_t, key=lambda r: (r.get("assets_k") or 0))
+        for r in rows_t:
+            if r is not keep:
+                r["why"] = f"second cert for {t} (kept {keep['cert']})"
+                review.append(r)
+        by_ticker[t] = keep
     auto = list(by_ticker.values())
 
     # Price gate: an auto candidate must show a REAL EOD close. Sub-$1
