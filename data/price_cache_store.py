@@ -208,6 +208,46 @@ def upsert_prices(quotes: dict[str, dict]) -> int:
     if dropped:
         print(f"[price_cache] dropped {len(dropped)} frozen-quote row(s) "
               f"(FMP timestamp >5d old): {', '.join(sorted(dropped))}")
+        # RETIRE the stored row too when IT is also stale (2026-08-25).
+        # Refusing only the incoming write left the last-good row serving
+        # forever: FFWM merged away 2026-04-01, every upsert since was
+        # refused here as frozen — and get_prices (no age check by default)
+        # kept serving its March 31 print as tonight's price for five
+        # months. Same for FFIC (Jun) and NFBK (Jul).
+        #
+        # The discriminator is the stored row's OWN updated_at (the write
+        # heartbeat, which only advances on a successful write):
+        #   • delisted ticker → last good write was months ago → retire;
+        #     n/a, never a stale number. A resumed listing's next fresh
+        #     quote simply re-inserts it.
+        #   • live ticker whose quote carried a junk old timestamp for one
+        #     poll → updated_at is minutes old → keep (stale-but-real beats
+        #     junk, the doctrine the existing preserve test pins).
+        try:
+            from sqlalchemy import bindparam, text as _text
+            sel = _text(
+                "SELECT ticker, updated_at FROM price_cache "
+                "WHERE ticker IN :tks"
+            ).bindparams(bindparam("tks", expanding=True))
+            with _get_engine().begin() as conn:
+                stored = conn.execute(sel, {"tks": dropped}).fetchall()
+                retire = []
+                for tk, ua in stored:
+                    ts = _parse_ts(ua)
+                    if ts is None or (
+                            now - ts).total_seconds() > _FROZEN_QUOTE_MAX_AGE_S:
+                        retire.append(tk)
+                if retire:
+                    dele = _text(
+                        "DELETE FROM price_cache WHERE ticker IN :tks"
+                    ).bindparams(bindparam("tks", expanding=True))
+                    conn.execute(dele, {"tks": retire})
+                    print(f"[price_cache] retired {len(retire)} stored "
+                          f"row(s) whose last good write was itself >5d "
+                          f"old (delisted): {', '.join(sorted(retire))}")
+        except Exception as e:
+            print(f"[price_cache] could not retire frozen rows: "
+                  f"{type(e).__name__}: {e}")
     if not rows:
         return 0
 

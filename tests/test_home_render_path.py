@@ -52,8 +52,12 @@ def _stale(payload: dict) -> dict:
                 cached_at=(datetime.now() - timedelta(days=30)).isoformat())
 
 
-_EVENT = {"date": "2026-08-25", "event": "CPI", "released": False,
-          "datetime": "2026-08-25T08:30:00", "estimate": 0.2,
+# Tomorrow, computed at import: get_upcoming_releases filters e["date"] >=
+# today, so a hardcoded date turns into a midnight-rollover flake (this
+# fixture was born "2026-08-25" and started failing at 00:00 on the 26th).
+_EVENT_DAY = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+_EVENT = {"date": _EVENT_DAY, "event": "CPI", "released": False,
+          "datetime": f"{_EVENT_DAY}T08:30:00", "estimate": 0.2,
           "previous": 0.1, "unit": "%"}
 
 
