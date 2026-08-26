@@ -157,9 +157,13 @@ def _clean(n: str) -> str:
     return n.strip()
 
 
-def _fetch_fdic_banks() -> dict[str, list[dict]]:
-    """Fetch all ACTIVE FDIC institutions and build the HC lookup:
-    {holding-company name: [candidate banks, largest first]}.
+def _fetch_fdic_banks() -> tuple[dict[str, list[dict]], set[int]]:
+    """Fetch all ACTIVE FDIC institutions. Returns (hc_lookup, active_certs):
+    the HC lookup {holding-company name: [candidate banks, largest first]},
+    and the complete set of ACTIVE cert numbers — taken from the full walk
+    BEFORE the name grouping, so banks with no holding company are in it.
+    active_certs is what lets the curated fold-in refuse a mapping whose bank
+    no longer exists (the FFWM class, 2026-08-25).
 
     A LIST, not one bank: holding-company names are not unique. "COMMERCE
     BANCSHARES INC" is the regulatory high holder of both Commerce Bank
@@ -240,6 +244,10 @@ def _fetch_fdic_banks() -> dict[str, list[dict]]:
     except Exception as e:
         print(f"[warn] cert-group map warm failed: {type(e).__name__}: {e}")
 
+    # The complete active-cert set, taken BEFORE the name grouping below (which
+    # drops banks with no/short NAMEHCR — their certs must still count as alive).
+    active_certs = {b["cert"] for b in fdic_banks}
+
     # Group: HC name -> every bank under it, largest first.
     hc_lookup: dict[str, list[dict]] = {}
     for b in fdic_banks:
@@ -249,7 +257,7 @@ def _fetch_fdic_banks() -> dict[str, list[dict]]:
         hc_lookup.setdefault(hc, []).append(b)
     for banks in hc_lookup.values():
         banks.sort(key=lambda b: b["asset"], reverse=True)
-    return hc_lookup
+    return hc_lookup, active_certs
 
 
 def _profile_from_submissions(sub: dict | None) -> dict:
@@ -441,11 +449,27 @@ def refresh_universe_snapshot() -> dict[str, dict]:
     return universe
 
 
+def curated_entry_is_dead(ticker: str, cert, active_certs: set,
+                          sec_tickers) -> bool:
+    """True when BOTH primary sources agree a curated bank no longer exists:
+    its FDIC cert is not in the ACTIVE set *and* SEC's ticker file no longer
+    lists the ticker. Pure / unit-tested (tests/test_universe_liveness).
+
+    One-source signals deliberately do NOT kill an entry:
+      • inactive cert alone — can be intra-holdco charter consolidation
+        (the WTFC multi-charter class);
+      • SEC-absence alone — every deregistered-but-alive OTC bank
+        (the HCBC class admitted 2026-08-25).
+    A cert-less entry can't be liveness-checked here and is left alone."""
+    return (bool(cert) and int(cert) not in active_certs
+            and ticker.upper() not in sec_tickers)
+
+
 def _build_universe_live() -> dict[str, dict]:
     """The actual SEC×FDIC fetch + match. ~6-7 minutes; never call from an
     interactive request path — use build_universe()."""
     sec_rows = _fetch_sec_companies()
-    hc_lookup = _fetch_fdic_banks()
+    hc_lookup, active_certs = _fetch_fdic_banks()
 
     # Authoritative ticker -> exchange from SEC, used as the reconcile fallback
     # below: a curated BANK_MAP entry carries no exchange, and defaulting it to
@@ -650,6 +674,7 @@ def _build_universe_live() -> dict[str, dict]:
             curated.setdefault(t, info)
     except Exception:
         pass
+    dead_curated: list[str] = []
     for ticker, info in curated.items():
         t = ticker.upper()
         if t in _SKIP_TICKERS or t in _NON_COVERABLE:
@@ -657,6 +682,19 @@ def _build_universe_live() -> dict[str, dict]:
         cik = info.get("cik")
         cert = info.get("fdic_cert")
         if not cik and not cert:
+            continue
+        # Liveness gate (FFWM class, found 2026-08-25): a curated mapping
+        # outlives its bank. FFWM (merged into FSUN 2026-04-01) and FFIC
+        # (merged into OCFC 2026-06-01) kept re-entering the universe every
+        # nightly rebuild through this fold-in — and get_universe_tickers'
+        # _resolves() short-circuits on a curated CIK without checking the
+        # cert, so nothing downstream caught them either. The dead ticker
+        # then rendered a months-stale FMP last print as a live price.
+        # Drop an entry only when BOTH primary sources agree the bank is
+        # gone — see curated_entry_is_dead for the one-source guard cases.
+        if curated_entry_is_dead(t, cert, active_certs, sec_exchange):
+            dead_curated.append(t)
+            universe.pop(t, None)
             continue
         # Curated mappings are verified CIK+CERT pairs — they OVERWRITE any
         # phase-1 fuzzy name-match for the same ticker (verified beats fuzzy;
@@ -670,6 +708,11 @@ def _build_universe_live() -> dict[str, dict]:
             "exchange": (info.get("exchange") or existing.get("exchange")
                          or sec_exchange.get(t) or "OTC"),
         }
+    if dead_curated:
+        print(f"[universe] {len(dead_curated)} curated entr"
+              f"{'y' if len(dead_curated) == 1 else 'ies'} dropped — cert "
+              f"inactive at FDIC AND ticker absent from SEC (merged/closed): "
+              f"{', '.join(sorted(dead_curated))}")
 
     # ── Share-class classification ───────────────────────────────────────
     # Tag each ticker common/preferred so non-common classes (preferred series,

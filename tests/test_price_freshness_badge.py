@@ -193,5 +193,70 @@ class TestPriceBadgeState(unittest.TestCase):
         self.assertEqual(cls, "freshness-live")
 
 
+class TestFrozenRowRetirement(_DbCase):
+    """The FFWM class (2026-08-25): FFWM merged into FSUN on 2026-04-01;
+    every upsert after that was correctly refused as frozen — but the
+    March 31 row it could no longer refresh kept serving as tonight's
+    price for five months (FFIC and NFBK identically). A frozen quote now
+    also RETIRES the stored row, but only when that row's own updated_at
+    (the write heartbeat) is itself >5d stale — the delisting signature.
+    A live ticker glitching one junk timestamp has a fresh heartbeat and
+    keeps its row (test_frozen_row_preserves_prior_cached_value)."""
+
+    def _backdate(self, ticker: str, days: int):
+        from sqlalchemy import text
+        ts = (datetime.now(timezone.utc) - timedelta(days=days)
+              ).strftime("%Y-%m-%d %H:%M:%S")
+        with self._store._get_engine().begin() as conn:
+            conn.execute(text(
+                "UPDATE price_cache SET updated_at = :ts WHERE ticker = :t"),
+                {"ts": ts, "t": ticker})
+
+    def test_delisted_ticker_row_is_retired(self):
+        now = datetime.now(timezone.utc)
+        self._store.upsert_prices({"DEAD": {"price": 5.90}})
+        self._backdate("DEAD", 30)            # last good write: a month ago
+        n = self._store.upsert_prices(
+            {"DEAD": {"price": 5.90,
+                      "timestamp": (now - timedelta(days=147)).timestamp()}})
+        self.assertEqual(n, 0)
+        self.assertEqual(self._store.get_prices(["DEAD"]), {})   # n/a, not $5.90
+
+    def test_live_ticker_with_one_junk_timestamp_keeps_row(self):
+        """Fresh heartbeat -> transient FMP glitch, not a delisting."""
+        now = datetime.now(timezone.utc)
+        self._store.upsert_prices({"LIVE": {"price": 10.0}})     # heartbeat now
+        self._store.upsert_prices(
+            {"LIVE": {"price": 99.0,
+                      "timestamp": (now - timedelta(days=30)).timestamp()}})
+        self.assertEqual(self._store.get_prices(["LIVE"])["LIVE"]["price"], 10.0)
+
+    def test_relisted_ticker_reinserts_on_next_fresh_quote(self):
+        now = datetime.now(timezone.utc)
+        self._store.upsert_prices({"BACK": {"price": 5.0}})
+        self._backdate("BACK", 30)
+        self._store.upsert_prices(
+            {"BACK": {"price": 5.0,
+                      "timestamp": (now - timedelta(days=30)).timestamp()}})
+        self.assertEqual(self._store.get_prices(["BACK"]), {})   # retired
+        n = self._store.upsert_prices(
+            {"BACK": {"price": 7.5,
+                      "timestamp": (now - timedelta(hours=1)).timestamp()}})
+        self.assertEqual(n, 1)
+        self.assertEqual(self._store.get_prices(["BACK"])["BACK"]["price"], 7.5)
+
+    def test_retirement_only_touches_the_frozen_ticker(self):
+        now = datetime.now(timezone.utc)
+        self._store.upsert_prices({"DEAD": {"price": 5.0},
+                                   "OK": {"price": 12.0}})
+        self._backdate("DEAD", 30)
+        self._store.upsert_prices(
+            {"DEAD": {"price": 5.0,
+                      "timestamp": (now - timedelta(days=30)).timestamp()}})
+        got = self._store.get_prices(["DEAD", "OK"])
+        self.assertNotIn("DEAD", got)
+        self.assertEqual(got["OK"]["price"], 12.0)
+
+
 if __name__ == "__main__":
     unittest.main()
