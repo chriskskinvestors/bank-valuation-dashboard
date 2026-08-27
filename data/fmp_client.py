@@ -159,6 +159,22 @@ def get_quote(ticker: str) -> dict:
         # under a fresh heartbeat).
         "timestamp": row.get("timestamp"),
     }
+    # Frozen-quote gate AT THE SOURCE (2026-08-27): FMP keeps serving a
+    # delisted ticker's last print indefinitely — FFWM (merged into FSUN
+    # 2026-04-01) still "quoted" its March 31 $5.90 in late August. The
+    # price-cache ingest guard protected the store, but the Company page
+    # reads THIS function live (ui/bank_detail) and displayed the dead
+    # print as Last Price. When FMP's own timestamp proves the quote >5d
+    # old, null the market fields — n/a, never a stale number. The
+    # timestamp itself is KEPT: upsert_prices keys its stored-row
+    # retirement off it (a nulled frozen quote must still retire the dead
+    # row, or NFBK's July print would have lingered in the cache).
+    from data.price_cache_store import _is_frozen_quote
+    from datetime import datetime as _dt, timezone as _tz
+    if _is_frozen_quote(out, _dt.now(_tz.utc)):
+        for k in ("price", "bid", "ask", "close", "open", "high", "low",
+                  "volume", "change", "change_pct"):
+            out[k] = None
     _cache_put(cache_key, out)
     return out
 
