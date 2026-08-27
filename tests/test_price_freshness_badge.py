@@ -42,17 +42,20 @@ class TestFmpQuoteKeepsTimestamp(unittest.TestCase):
 
     def test_parse_keeps_fmp_timestamp(self):
         """get_quote must carry FMP's quote timestamp through — the cache's
-        ingest guard needs it to detect frozen quotes."""
+        ingest guard needs it to detect frozen quotes. Timestamp computed
+        fresh: a hardcoded epoch ages past the 5d frozen gate (added
+        2026-08-27) and the gate then rightly nulls the price."""
         from data import fmp_client
+        ts = (datetime.now(timezone.utc) - timedelta(hours=2)).timestamp()
         row = {"symbol": "HTBK", "price": 8.71, "previousClose": 8.65,
                "change": 0.06, "changePercentage": 0.69, "volume": 12345,
-               "timestamp": 1744920000}   # 2025-04-17-ish epoch seconds
+               "timestamp": ts}
         with patch.object(fmp_client, "_has_key", return_value=True), \
              patch.object(fmp_client, "_cache_get", return_value=None), \
              patch.object(fmp_client, "_cache_put"), \
              patch.object(fmp_client, "_get", return_value=[row]):
             q = fmp_client.get_quote("HTBK")
-        self.assertEqual(q["timestamp"], 1744920000)
+        self.assertEqual(q["timestamp"], ts)
         self.assertEqual(q["price"], 8.71)
 
     def test_empty_quote_has_timestamp_key(self):
@@ -193,6 +196,44 @@ class TestPriceBadgeState(unittest.TestCase):
         self.assertEqual(cls, "freshness-live")
 
 
+class TestGetQuoteFrozenGate(unittest.TestCase):
+    """get_quote nulls a frozen quote's market fields AT THE SOURCE
+    (2026-08-27): the Company page reads get_quote live (ui/bank_detail),
+    so FFWM's March 31 $5.90 rendered as Last Price for five months even
+    after the price-cache ingest guard existed. The timestamp is KEPT so
+    upsert_prices' stored-row retirement still fires."""
+
+    def _fmp_row(self, ts):
+        return [{"price": 5.90, "previousClose": 5.85, "open": 5.88,
+                 "dayHigh": 5.95, "dayLow": 5.80, "volume": 2300000,
+                 "change": 0.05, "changePercentage": 0.85, "timestamp": ts}]
+
+    def test_frozen_quote_is_nulled_but_keeps_timestamp(self):
+        from unittest.mock import patch
+        from data import fmp_client
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=147)).timestamp()
+        with patch.dict("os.environ", {"FMP_API_KEY": "k"}), \
+             patch("data.fmp_client._cache_get", return_value=None), \
+             patch("data.fmp_client._cache_put"), \
+             patch("data.fmp_client._get", return_value=self._fmp_row(old_ts)):
+            q = fmp_client.get_quote("FFWM")
+        self.assertIsNone(q["price"])            # n/a, never $5.90
+        self.assertIsNone(q["change"])
+        self.assertIsNone(q["volume"])
+        self.assertEqual(q["timestamp"], old_ts)  # retirement still keyed
+
+    def test_fresh_quote_passes_untouched(self):
+        from unittest.mock import patch
+        from data import fmp_client
+        ts = (datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()
+        with patch.dict("os.environ", {"FMP_API_KEY": "k"}), \
+             patch("data.fmp_client._cache_get", return_value=None), \
+             patch("data.fmp_client._cache_put"), \
+             patch("data.fmp_client._get", return_value=self._fmp_row(ts)):
+            q = fmp_client.get_quote("LIVE")
+        self.assertEqual(q["price"], 5.90)
+
+
 class TestFrozenRowRetirement(_DbCase):
     """The FFWM class (2026-08-25): FFWM merged into FSUN on 2026-04-01;
     every upsert after that was correctly refused as frozen — but the
@@ -244,6 +285,20 @@ class TestFrozenRowRetirement(_DbCase):
                       "timestamp": (now - timedelta(hours=1)).timestamp()}})
         self.assertEqual(n, 1)
         self.assertEqual(self._store.get_prices(["BACK"])["BACK"]["price"], 7.5)
+
+    def test_nulled_frozen_quote_still_retires_the_stored_row(self):
+        """get_quote nulls a frozen quote's price at the source, so the
+        delisted ticker reaches upsert as price=None + old timestamp. The
+        frozen check must run BEFORE the missing-price skip, or the dead
+        stored row would never be retired."""
+        now = datetime.now(timezone.utc)
+        self._store.upsert_prices({"DEAD": {"price": 5.90}})
+        self._backdate("DEAD", 30)
+        n = self._store.upsert_prices(
+            {"DEAD": {"price": None,     # nulled by get_quote's gate
+                      "timestamp": (now - timedelta(days=147)).timestamp()}})
+        self.assertEqual(n, 0)
+        self.assertEqual(self._store.get_prices(["DEAD"]), {})
 
     def test_retirement_only_touches_the_frozen_ticker(self):
         now = datetime.now(timezone.utc)

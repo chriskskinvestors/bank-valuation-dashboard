@@ -189,11 +189,16 @@ def upsert_prices(quotes: dict[str, dict]) -> int:
     for ticker, q in quotes.items():
         if not q:
             continue
-        price = _coerce(q.get("price"))
-        if price is None:
-            continue
+        # Frozen check BEFORE the missing-price skip (2026-08-27):
+        # get_quote now nulls a frozen quote's price at the source, so a
+        # delisted ticker arrives here as price=None + a months-old
+        # timestamp. Checking price first would skip it silently and the
+        # dead stored row would never be retired below.
         if _is_frozen_quote(q, now):
             dropped.append(ticker.upper())
+            continue
+        price = _coerce(q.get("price"))
+        if price is None:
             continue
         rows.append({
             "ticker": ticker.upper(),
