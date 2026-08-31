@@ -189,6 +189,15 @@ def main() -> int:
               f"banks in {time.time() - t0:.0f}s", flush=True)
 
     _append_sector_val_history(metrics)
+    # OTC release envelopes — AFTER the snapshot write, deliberately. The
+    # valuation resolvers went serve-only (2026-08-31): they used to fetch
+    # inline, and the once-daily lapse of the 24h IR-crawl throttle made ONE
+    # run per day pay ~80 no-wire banks' 30-100s crawls serially inside
+    # build_metrics (818s/1438s spikes vs the ~120s norm), holding that
+    # run's snapshot hostage for 14-24 min. The same crawls could also fire
+    # on a Company-page render. Now the snapshot lands in ~2 min every run,
+    # and the crawl budget is spent here where nothing waits on it.
+    _warm_otc_releases(tickers, sec)
     _warm_overlay_history()
     _warm_bank_sector_history()
     _warm_feed_insider_aggregate(tickers)
@@ -246,6 +255,35 @@ def _append_sector_val_history(metrics: list[dict]) -> None:
     except Exception as e:
         print(f"[home-snap] sector_val_hist append failed: "
               f"{type(e).__name__}: {e}", flush=True)
+
+
+def _warm_otc_releases(tickers: list[str], sec: dict) -> None:
+    """Warm the otc_release envelopes for every bank the valuation resolvers
+    would consult them for — exactly the no-XBRL set (`sec` is this run's
+    loaded companyfacts dict, so `t not in sec` is the same condition
+    _resolve_tbvps sees as reconstructed=None). otc_release_metrics' own
+    throttles still apply per bank (15-min envelope serve, cheap wire-index
+    recheck, 24h IR-crawl TTL), so most banks cost one cache read here; the
+    expensive IR crawls still happen once per day per bank — just in this
+    post-write phase now, where nothing waits on them. Per-bank guard: one
+    bank's crawl blowing up must not stop the rest."""
+    import time as _t
+    t0 = _t.time()
+    from data.otc_release import otc_release_metrics
+
+    targets = [t for t in tickers if t not in sec]
+    warmed = failed = 0
+    for t in targets:
+        try:
+            otc_release_metrics(t, allow_fetch=True)
+            warmed += 1
+        except Exception as e:
+            failed += 1
+            print(f"[home-snap] otc release warm failed for {t}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+    print(f"[{time.strftime('%H:%M:%S')}] otc releases warmed: {warmed} banks"
+          f"{f', {failed} failed' if failed else ''} "
+          f"in {_t.time() - t0:.0f}s", flush=True)
 
 
 def _warm_rates_bundle() -> None:

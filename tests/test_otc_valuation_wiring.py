@@ -31,21 +31,21 @@ class TestOtcTbvps(unittest.TestCase):
         self.orl.otc_release_metrics = self._orig
 
     def test_fresh_release_tbv_served(self):
-        self.orl.otc_release_metrics = lambda t: {
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
             "qend": _RECENT_QEND, "metrics": {"tbv_ps": 49.57}}
         self.assertEqual(va._otc_tbvps("PBAM"), 49.57)
 
     def test_stale_release_refused(self):
         # A bank that stopped publishing must not price today's quote
         # against an old TBV.
-        self.orl.otc_release_metrics = lambda t: {
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
             "qend": "2025-01-31", "metrics": {"tbv_ps": 42.20}}
         self.assertIsNone(va._otc_tbvps("PBAM"))
 
     def test_missing_release_or_tbv_is_none(self):
-        self.orl.otc_release_metrics = lambda t: None
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: None
         self.assertIsNone(va._otc_tbvps("PBAM"))
-        self.orl.otc_release_metrics = lambda t: {
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
             "qend": _RECENT_QEND, "metrics": {"tbv_ps": None}}
         self.assertIsNone(va._otc_tbvps("PBAM"))
 
@@ -62,20 +62,20 @@ class TestResolveTbvps(unittest.TestCase):
 
     def test_cikless_bank_uses_company_release(self):
         self.bm.get_cik = lambda t: None
-        self.orl.otc_release_metrics = lambda t: {
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
             "qend": _RECENT_QEND, "metrics": {"tbv_ps": 49.57}}
         self.assertEqual(va._resolve_tbvps("PBAM", None, None),
                          (49.57, "company_release", False))
 
     def test_reconstruction_fallback_keeps_source(self):
         self.bm.get_cik = lambda t: None
-        self.orl.otc_release_metrics = lambda t: None
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: None
         self.assertEqual(va._resolve_tbvps("PBAM", 12.34, None),
                          (12.34, "reconstructed", False))
 
     def test_nothing_available_is_none_none(self):
         self.bm.get_cik = lambda t: None
-        self.orl.otc_release_metrics = lambda t: None
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: None
         self.assertEqual(va._resolve_tbvps("PBAM", None, None),
                          (None, None, False))
 
@@ -103,7 +103,7 @@ class TestComputeAllValuationsWiring(unittest.TestCase):
         import data.otc_release as orl
         orig = (bm.get_cik, orl.otc_release_metrics)
         bm.get_cik = lambda t: None
-        orl.otc_release_metrics = lambda t: {
+        orl.otc_release_metrics = lambda t, allow_fetch=True: {
             "qend": _RECENT_QEND, "metrics": {"tbv_ps": 49.57}}
         try:
             out = va.compute_all_valuations(

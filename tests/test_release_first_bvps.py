@@ -121,7 +121,7 @@ class TestResolveBvps(unittest.TestCase):
     def test_cikless_bank_uses_wire_release(self):
         from datetime import date, timedelta
         self.bm.get_cik = lambda t: None
-        self.orl.otc_release_metrics = lambda t: {
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
             "qend": (date.today() - timedelta(days=40)).isoformat(),
             "metrics": {"bv_ps": 51.20}}
         self.assertEqual(va._resolve_bvps("PBAM", None, None),
@@ -129,7 +129,7 @@ class TestResolveBvps(unittest.TestCase):
 
     def test_nothing_available_is_none(self):
         self.bm.get_cik = lambda t: None
-        self.orl.otc_release_metrics = lambda t: None
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: None
         self.assertEqual(va._resolve_bvps("PBAM", None, None),
                          (None, None, False))
 

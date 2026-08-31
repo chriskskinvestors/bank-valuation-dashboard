@@ -1046,9 +1046,10 @@ def _resolve_release_efficiency(
         try:
             v = _otc_release_ps(ticker, "efficiency")
             if v is not None:
-                # Second call is served from the 15-min cache envelope.
+                # Serve-only, like every otc_release read on this path.
                 from data.otc_release import otc_release_metrics
-                return v, (otc_release_metrics(ticker) or {}).get("qend")
+                return v, (otc_release_metrics(ticker, allow_fetch=False)
+                           or {}).get("qend")
         except Exception as e:
             print(f"[valuation] otc efficiency lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
@@ -1066,10 +1067,15 @@ def _otc_release_ps(ticker: str, key: str) -> float | None:
     (guarded extraction, band-checked at the source in data/otc_release +
     release_metrics/release_ai specs). STALENESS GATE: a release quarter-end
     older than ~200 days means the bank stopped publishing — pricing today's
-    quote against that figure drifts, so None (n/a) instead."""
+    quote against that figure drifts, so None (n/a) instead.
+
+    SERVE-ONLY (2026-08-31): this resolver runs inside the 592-bank snapshot
+    build AND on single-bank Company-page renders, so it must never trigger
+    the wire fetch or the 30-100s IR-site crawl — jobs/refresh_home_snapshot
+    warms the envelope after the snapshot write; this reads it at any age."""
     from datetime import date
     from data.otc_release import otc_release_metrics
-    val = otc_release_metrics(ticker) or {}
+    val = otc_release_metrics(ticker, allow_fetch=False) or {}
     v = (val.get("metrics") or {}).get(key)
     qend = val.get("qend")
     if v is None or not qend:

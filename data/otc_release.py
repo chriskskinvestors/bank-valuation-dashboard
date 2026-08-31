@@ -280,13 +280,25 @@ def _fetch_document(url: str, kind: str) -> str | None:
         return None
 
 
-def otc_release_metrics(ticker: str) -> dict | None:
+def otc_release_metrics(ticker: str, *, allow_fetch: bool = True) -> dict | None:
     """Extracted metrics for a non-SEC bank's latest earnings release:
     same shape as release_metrics() plus {source: "company_release",
     title}. Cached per ticker; an extraction is immutable per story URL, so
     a fresh-within-15-min cache serves directly and past that only the
     (cheap) press-release index is re-checked — a new story URL triggers
-    re-extraction, anything else re-stamps."""
+    re-extraction, anything else re-stamps.
+
+    allow_fetch=False is the SERVE-ONLY contract (2026-08-31): return the
+    cached envelope at WHATEVER age — no index check, no story fetch, no
+    IR-site crawl, and no re-stamp write. The metric-resolution paths
+    (analysis/valuation) pass False, because they run on BOTH the snapshot
+    job's build loop and single-bank Company-page renders: the IR crawl
+    costs 30-100s per no-wire bank, and with the 24h crawl throttle those
+    all lapse together — one refresh-home-snapshot run per day was spending
+    14-24 min inside build_metrics paying them serially (measured 818s /
+    1438s spikes, 2026-08-31), and an unlucky Company-page load could pay
+    one inline. jobs/refresh_home_snapshot warms this AFTER the snapshot
+    write instead; renders and metric builds only read."""
     if not ticker:
         return None
     from data import cache as _cache
@@ -325,6 +337,10 @@ def otc_release_metrics(ticker: str) -> dict | None:
         cached = _cache.get(key, max_age_s=None)
     except Exception:
         cached = None
+    if not allow_fetch:
+        v = (cached or {}).get("value")
+        return None if not v or v.get("empty") else v
+
     if cached is not None and is_fresh(cached, 900):
         v = cached.get("value")
         return None if (v or {}).get("empty") else v
