@@ -36,12 +36,22 @@ NEW_JOBS = [
      ("30 4 * * 1-5", "America/New_York")),
     # Home metrics snapshot (watchlist_metrics_snap) — keep it warm so cold
     # instances never pay the 60s+ inline rebuild (the symptom: page paints but
-    # native controls aren't wired yet) and Movers stay fresh. Every 15 min ≈
-    # ~$7/mo of compute; tune the cron for snappier Movers (*/5 ≈ ~$20/mo,
-    # */2 ≈ ~$50/mo). Reads the warm caches the other jobs already fill, so
-    # frequency scales COMPUTE, not external API load.
+    # native controls aren't wired yet) and Movers stay fresh. Reads the warm
+    # caches the other jobs already fill, so frequency scales COMPUTE, not
+    # external API load.
+    #
+    # LIVE CRON DIVERGES from the entry below (cost retune, owner-approved
+    # 2026-08-31): the job had grown to 13-28 min/run, making a 24/7 cadence
+    # the pipeline's biggest compute line. Prod now runs THREE schedulers,
+    # edited/created in the Console (this script only creates missing jobs, so
+    # re-running it will not fight them):
+    #   refresh-home-snapshot-sched         */30 5-20 * * 1-5   (weekday days)
+    #   refresh-home-snapshot-sched-nights  0 0-4,21-23 * * *   (hourly nights)
+    #   refresh-home-snapshot-sched-wknd    0 5-20 * * 0,6      (hourly wknd)
+    # Max gap 1h — comfortably inside the snapshot's 6h TTL, so the off-hours
+    # thinning can never resurrect the inline-rebuild-on-render class.
     ("refresh-home-snapshot", "jobs.refresh_home_snapshot",
-     ("*/15 * * * *", "America/New_York")),
+     ("*/30 5-20 * * 1-5", "America/New_York")),
 ]
 
 
