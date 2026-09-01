@@ -1,4 +1,10 @@
 {
+ "ABBB": {
+  "cik": null,
+  "fdic_cert": 28288,
+  "fdic_score": 1.0,
+  "name": "Auburn Bancorp, Inc."
+ },
  "ABCB": {
   "cik": 351569,
   "fdic_cert": 20504,
@@ -178,6 +184,12 @@
   "fdic_cert": 28489,
   "fdic_score": 1.0,
   "name": "Banner"
+ },
+ "BAOB": {
+  "cik": null,
+  "fdic_cert": 12788,
+  "fdic_score": 1.0,
+  "name": "The Baraboo Bancorporation, Inc."
  },
  "BBBK": {
   "cik": null,
@@ -875,6 +887,12 @@
   "fdic_score": 1.0,
   "name": "Dime Community Bancshares"
  },
+ "DENI": {
+  "cik": null,
+  "fdic_cert": 26530,
+  "fdic_score": 1.0,
+  "name": "Denali Bancorporation, Inc."
+ },
  "DMNB": {
   "cik": null,
   "fdic_cert": 14523,
@@ -1487,6 +1505,12 @@
   "fdic_score": 1.0,
   "name": "First Carolina Bancshares M H C"
  },
+ "FSMK": {
+  "cik": null,
+  "fdic_cert": 8426,
+  "fdic_score": 1.0,
+  "name": "1ST SUMMIT BANCORP of Johnstown, Inc."
+ },
  "FSRL": {
   "cik": null,
   "fdic_cert": 35214,
@@ -2087,6 +2111,12 @@
   "fdic_score": 1.0,
   "name": "M&F Bancorp, Inc."
  },
+ "MFDB": {
+  "cik": null,
+  "fdic_cert": 28302,
+  "fdic_score": 1.0,
+  "name": "Mutual Federal Bancorp, Inc."
+ },
  "MFG": {
   "cik": 1335730,
   "fdic_cert": 21843,
@@ -2116,6 +2146,12 @@
   "fdic_cert": 23749,
   "fdic_score": 1.0,
   "name": "Mnb Holdings Corp"
+ },
+ "MNMB": {
+  "cik": null,
+  "fdic_cert": 12203,
+  "fdic_score": 1.0,
+  "name": "Merchants & Marine Bancorp, Inc."
  },
  "MNSB": {
   "cik": 1693577,
@@ -2939,6 +2975,12 @@
   "fdic_score": 1.0,
   "name": "Steele Bancorp"
  },
+ "SVBT": {
+  "cik": null,
+  "fdic_cert": 4419,
+  "fdic_score": 1.0,
+  "name": "SVB & T Corporation"
+ },
  "SYBT": {
   "cik": 835324,
   "fdic_cert": 258,
@@ -3136,6 +3178,12 @@
   "fdic_cert": 14587,
   "fdic_score": 1.0,
   "name": "University Bancorp"
+ },
+ "UNIF": {
+  "cik": null,
+  "fdic_cert": 58407,
+  "fdic_score": 1.0,
+  "name": "U & I Financial Corp."
  },
  "UNTN": {
   "cik": null,
