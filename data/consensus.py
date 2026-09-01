@@ -194,8 +194,8 @@ def _anthropic_client():
             key = None
     if not key:
         raise RuntimeError(
-            "PDF parsing is unavailable — ANTHROPIC_API_KEY is not configured. "
-            "Use Excel/CSV or Manual Entry instead.")
+            "AI-assisted PDF parsing is retired (owner decision 2026-09-01 — "
+            "no Anthropic API usage). Use Excel/CSV or Manual Entry instead.")
     return anthropic.Anthropic(api_key=key)
 
 

@@ -22,8 +22,13 @@ DEPLOY_YML = Path(__file__).resolve().parent.parent / ".github" / "workflows" / 
 
 # Every secret the running SERVICE must have mounted. Dropping any of these is
 # what caused the outage; the app reads them as the FMP_API_KEY etc. env vars.
+#
+# anthropic-api-key was REMOVED from this contract on purpose (owner decision
+# 2026-09-01: all Anthropic API usage retired — every consumer degrades
+# gracefully keyless, which is the daily-exercised local-dev path). If it ever
+# reappears in deploy.yml's required list, that's a deliberate revival: add it
+# back here too.
 REQUIRED_SECRETS = {
-    "anthropic-api-key",
     "fred-api-key",
     "fmp-api-key",
     "ffiec-username",

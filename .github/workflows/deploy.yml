@@ -92,9 +92,17 @@ jobs:
           # missing that key (e.g. blank prices when FMP_API_KEY is absent — the
           # 2026-06-24 outage). If a secret is missing/inaccessible, fail loudly
           # here instead of deploying a half-keyed service.
+          # anthropic-api-key is DELIBERATELY NOT MOUNTED (owner decision
+          # 2026-09-01: retire everything that consumes Anthropic API credits).
+          # Every consumer degrades gracefully keyless — the daily-exercised
+          # local-dev path: poll-events skips its summarize pass entirely,
+          # filing summaries fall back to the extractive (non-AI) summary,
+          # People/Governance/release-AI/consensus-PDF return honest n/a.
+          # Cached AI extractions keep serving (already paid for). To revive:
+          # add anthropic-api-key back to the required list below.
           SECRETS=""
           MISSING=""
-          for s in anthropic-api-key fred-api-key fmp-api-key ffiec-username ffiec-jwt-token; do
+          for s in fred-api-key fmp-api-key ffiec-username ffiec-jwt-token; do
             if gcloud secrets describe "$s" --quiet >/dev/null 2>&1; then
               env_var=$(echo "$s" | tr '[:lower:]-' '[:upper:]_')
               SECRETS="${SECRETS:+$SECRETS,}${env_var}=${s}:latest"
