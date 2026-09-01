@@ -291,7 +291,11 @@ def summarize_filing(filing_text: str, form_type: str, ticker: str) -> str:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
 
     if not api_key:
-        return _extractive_summary(filing_text, form_type)
+        # No key = the permanent state (owner decision 2026-09-01: Anthropic
+        # API usage retired). Label the summary's nature so it is never read
+        # as an AI synthesis — same honesty rule as the exception path below.
+        return (_extractive_summary(filing_text, form_type)
+                + "\n\n*_(extractive summary)_*")
 
     # Call Claude API
     try:
