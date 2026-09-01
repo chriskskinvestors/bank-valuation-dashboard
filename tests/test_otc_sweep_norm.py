@@ -48,6 +48,37 @@ class TestAbbreviationExpansion(unittest.TestCase):
         """HCBC / FDIC cert 29783 — the bank that surfaced this."""
         self.assertEqual(_norm("HIGH COUNTRY BCORP INC"), "HIGH COUNTRY BANCORP")
 
+    def test_triage_additions_2026_08_31(self):
+        """The four gaps the 36-bank triage exposed."""
+        cases = [
+            # ampersand tokenization (FDIC writes it unspaced)
+            ("MERCHANTS&MARINE BCORP INC", "Merchants & Marine Bancorp, Inc."),
+            ("SVB&T CORP", "SVB & T Corporation"),
+            # BANCORPORATION spelled out
+            ("DENALI BCORP INC", "Denali Bancorporation, Inc."),
+            ("BARABOO BCORP INC THE", "The Baraboo Bancorporation, Inc."),
+            # OF as connective
+            ("1ST SUMMIT BCORP JOHNSTOWN INC",
+             "1ST SUMMIT BANCORP of Johnstown, Inc."),
+            # trailing MHC structural suffix
+            ("AUBURN BCORP MHC", "Auburn Bancorp, Inc."),
+            ("MUTUAL FEDERAL BCORP MHC", "Mutual Federal Bancorp, Inc."),
+        ]
+        for fdic, vendor in cases:
+            with self.subTest(fdic=fdic):
+                self.assertEqual(_norm(fdic), _norm(vendor))
+
+    def test_triage_guards_2026_08_31(self):
+        """What the new canonicalizations must NOT equate."""
+        # & is kept as an identity-bearing token
+        self.assertNotEqual(_norm("M&T BANK"), _norm("MT BANK"))
+        # OF-drop preserves word order
+        self.assertNotEqual(_norm("BANK OF AMERICA"), _norm("AMERICA BANK"))
+        # MHC strips only trailing — a mid-name MHC-ish token survives
+        self.assertNotEqual(_norm("TEB MHC"), _norm("TEB BANCORP"))
+        # Signature Bank (failed NY) vs Signature Bancorp (Ohio) stay distinct
+        self.assertNotEqual(_norm("SIGNATURE BANK"), _norm("SIGNATURE BCORP INC"))
+
 
 class TestSafetyGuards(unittest.TestCase):
 

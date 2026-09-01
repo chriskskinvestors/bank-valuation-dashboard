@@ -43,7 +43,13 @@ _OUT_DIR = Path(__file__).parent.parent / "tests"
 # collapse different institutions onto each other.
 _SUFFIX = {"INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY",
            "LTD", "LIMITED", "PLC", "SA", "NA", "N.A.", "INC.", "CORP.",
-           "CO.", "THE"}
+           "CO.", "THE",
+           # Mutual-holding-company structural suffix (2026-08-31 triage):
+           # FDIC records thrift holdcos as "AUBURN BCORP MHC" while the
+           # vendor lists "Auburn Bancorp, Inc." — the MHC tag is corporate
+           # form, not identity, and stripping it is trailing-only like the
+           # rest of this set.
+           "MHC"}
 
 # FDIC abbreviates holding-company names in NAMEHCR; market-data vendors spell
 # them out. Without this the EXACT compare can never match those banks — e.g.
@@ -62,18 +68,31 @@ _SUFFIX = {"INC", "INCORPORATED", "CORP", "CORPORATION", "CO", "COMPANY",
 # sweep's existing ambiguity guard sends it to review rather than auto-admitting.
 _ABBREV = {"BCORP": "BANCORP", "BSHRS": "BANCSHARES", "FINL": "FINANCIAL",
            "NATL": "NATIONAL", "CMTY": "COMMUNITY", "BK": "BANK",
-           "TR": "TRUST"}
+           "TR": "TRUST",
+           # Spelled-out long form of the same word (Denali/Baraboo
+           # "Bancorporation" vs FDIC "BCORP", 2026-08-31 triage).
+           "BANCORPORATION": "BANCORP"}
 
 
 def _norm(name: str) -> str:
     """Uppercase, punctuation-free, suffix-stripped, abbreviation-expanded
-    phrase for EXACT compare."""
-    toks = re.sub(r"[^A-Z0-9& ]+", " ", (name or "").upper()).split()
+    phrase for EXACT compare.
+
+    2026-08-31 triage additions, all canonicalizations (equality still means
+    full-phrase identity):
+      • "&" becomes its own token — FDIC writes "MERCHANTS&MARINE" and
+        "SVB&T" unspaced while vendors space them; the token itself is KEPT
+        (it is identity-bearing: M&T).
+      • "OF" is dropped as a connective — "1ST SUMMIT BANCORP OF JOHNSTOWN"
+        vs FDIC's "1ST SUMMIT BCORP JOHNSTOWN". Order still matters, so
+        BANK AMERICA ≠ AMERICA BANK."""
+    up = (name or "").upper().replace("&", " & ")
+    toks = re.sub(r"[^A-Z0-9& ]+", " ", up).split()
     while toks and toks[0] == "THE":
         toks.pop(0)
     while toks and toks[-1] in _SUFFIX:
         toks.pop()
-    return " ".join(_ABBREV.get(t, t) for t in toks)
+    return " ".join(_ABBREV.get(t, t) for t in toks if t != "OF")
 
 
 def _fdic_active() -> list[dict]:
