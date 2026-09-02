@@ -972,6 +972,10 @@ CUSTOM_CSS = """
 # deliberately do NOT scale yet — phase 2.
 TEXT_SCALES = {"sm": 0.9, "md": 1.0, "lg": 1.12}
 TEXT_SCALE_DEFAULT = "md"
+# Streamlit's real root font-size — measured on prod 2026-09-02 (15px, NOT the
+# browser's 16px; Streamlit sets its own). Scales must be computed off this or
+# "sm" (16*0.9=14.4) is a near-no-op next to the true 15px baseline.
+_ROOT_BASE_PX = 15
 
 
 def text_scale_css(size_key: str) -> str:
@@ -981,4 +985,4 @@ def text_scale_css(size_key: str) -> str:
     scale = TEXT_SCALES.get(size_key, TEXT_SCALES[TEXT_SCALE_DEFAULT])
     if scale == 1.0:
         return ""
-    return f"<style>html {{ font-size: {16 * scale:.2f}px; }}</style>"
+    return f"<style>html {{ font-size: {_ROOT_BASE_PX * scale:.2f}px; }}</style>"
