@@ -315,3 +315,102 @@ class TestFrozenRowRetirement(_DbCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUpsertDeadlockHardening(_DbCase):
+    """Live incident 2026-09-02: refresh-prices' 2-min cadence overlaps its own
+    ~4-min runs and two executemany upserts deadlocked (7 failed executions).
+    Hardening = deterministic row order (same lock order for every writer) +
+    one retry on a deadlock error."""
+
+    def test_upsert_input_list_is_lock_ordered(self):
+        # The contract the deadlock fix depends on: whatever dict order comes
+        # in, the write batch is sorted by ticker before executing.
+        captured = []
+        store = self._store
+        real_get_engine = store._get_engine
+
+        class _Conn:
+            def execute(self, sql, params=None):
+                if isinstance(params, list):
+                    captured.extend(p["ticker"] for p in params)
+                elif isinstance(params, dict) and "ticker" in params:
+                    captured.append(params["ticker"])
+
+        class _Ctx:
+            def __enter__(self):
+                return _Conn()
+
+            def __exit__(self, *a):
+                return False
+
+        class _Eng:
+            def begin(self):
+                return _Ctx()
+
+        store._get_engine = lambda: _Eng()
+        try:
+            store.upsert_prices({"ZION": {"price": 1.0},
+                                 "ABCB": {"price": 2.0},
+                                 "MS": {"price": 3.0}})
+        finally:
+            store._get_engine = real_get_engine
+        self.assertEqual(["ABCB", "MS", "ZION"], captured)
+
+    def test_deadlock_is_retried_once_then_raises(self):
+        store = self._store
+        real_get_engine = store._get_engine
+        attempts = []
+
+        class _Conn:
+            def execute(self, sql, params=None):
+                raise RuntimeError("deadlock detected")
+
+        class _Ctx:
+            def __enter__(self):
+                return _Conn()
+
+            def __exit__(self, *a):
+                return False
+
+        class _Eng:
+            def begin(self):
+                attempts.append(1)
+                return _Ctx()
+
+        store._get_engine = lambda: _Eng()
+        try:
+            with self.assertRaises(RuntimeError):
+                store.upsert_prices({"ZION": {"price": 1.0}})
+        finally:
+            store._get_engine = real_get_engine
+        self.assertEqual(2, len(attempts), "one retry, then raise")
+
+    def test_non_deadlock_error_is_not_retried(self):
+        store = self._store
+        real_get_engine = store._get_engine
+        attempts = []
+
+        class _Conn:
+            def execute(self, sql, params=None):
+                raise RuntimeError("relation does not exist")
+
+        class _Ctx:
+            def __enter__(self):
+                return _Conn()
+
+            def __exit__(self, *a):
+                return False
+
+        class _Eng:
+            def begin(self):
+                attempts.append(1)
+                return _Ctx()
+
+        store._get_engine = lambda: _Eng()
+        try:
+            with self.assertRaises(RuntimeError):
+                store.upsert_prices({"ZION": {"price": 1.0}})
+        finally:
+            store._get_engine = real_get_engine
+        self.assertEqual(1, len(attempts), "no retry for non-deadlock errors")
