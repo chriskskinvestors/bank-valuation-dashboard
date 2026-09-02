@@ -1671,6 +1671,29 @@ def render_home(all_metrics: list[dict], watchlist: list[str]):
                         key="home_show_overnight")
             st.checkbox("Sector valuation strip", value=True,
                         key="home_show_secval")
+            # Text size: writes the session preference app.py injects as one
+            # root-font-size rule; ?fs= mirrors it so a bookmark keeps the
+            # size. Default writes NO param and NO css (zero-change path).
+            from ui.styles import TEXT_SCALE_DEFAULT, TEXT_SCALES
+            _fs_labels = {"sm": "A−", "md": "A", "lg": "A+"}
+            _cur = st.session_state.get("ui_text_scale", TEXT_SCALE_DEFAULT)
+            if _cur not in TEXT_SCALES:
+                _cur = TEXT_SCALE_DEFAULT
+            _sel = st.radio(
+                "Text size", list(_fs_labels), horizontal=True,
+                format_func=_fs_labels.get,
+                index=list(_fs_labels).index(_cur),
+                key="ui_text_scale_widget")
+            if _sel != _cur:
+                st.session_state["ui_text_scale"] = _sel
+                if _sel == TEXT_SCALE_DEFAULT:
+                    try:
+                        del st.query_params["fs"]
+                    except Exception:
+                        pass
+                else:
+                    st.query_params["fs"] = _sel
+                st.rerun()
 
     from utils.timing import timed
 

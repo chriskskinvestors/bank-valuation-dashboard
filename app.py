@@ -31,6 +31,17 @@ st.set_page_config(
 )
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
+# User text-size preference (Extras ▸ Text size on Home): seeded once from the
+# ?fs= query param so a bookmarked size survives a fresh session, then injected
+# as a single root-font-size override that every rem-sized token follows.
+from ui.styles import TEXT_SCALE_DEFAULT, text_scale_css  # noqa: E402
+if "ui_text_scale" not in st.session_state:
+    st.session_state["ui_text_scale"] = (
+        st.query_params.get("fs") or TEXT_SCALE_DEFAULT)
+_fs_css = text_scale_css(st.session_state["ui_text_scale"])
+if _fs_css:
+    st.markdown(_fs_css, unsafe_allow_html=True)
+
 # External-access gate (defense-in-depth on top of IAP): @kskinvestors.com users
 # pass on Google login alone; other emails must also enter a shared password.
 # DORMANT until the EXTERNAL_ACCESS_PASSWORD secret is set. See ui/access_gate.py.

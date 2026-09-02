@@ -963,3 +963,22 @@ CUSTOM_CSS = """
     .afwrap .dotc { border-radius: 50% !important; }
 </style>
 """
+
+# ── User text-size preference (Extras ▸ Text size) ───────────────────────────
+# One root font-size rule scales every rem-sized token above (the whole sheet
+# is rem-based by design); mock-verified 2026-09-02 before shipping. Keys are
+# what the ?fs= query param and the Extras widget store; values are multiples
+# of the 16px default root size. Charts (utils/chart_style.py, fixed pt sizes)
+# deliberately do NOT scale yet — phase 2.
+TEXT_SCALES = {"sm": 0.9, "md": 1.0, "lg": 1.12}
+TEXT_SCALE_DEFAULT = "md"
+
+
+def text_scale_css(size_key: str) -> str:
+    """The <style> block for a stored text-size choice. Unknown/mangled keys
+    fall back to the default, and the default injects NOTHING — zero behaviour
+    change for users who never touch the control."""
+    scale = TEXT_SCALES.get(size_key, TEXT_SCALES[TEXT_SCALE_DEFAULT])
+    if scale == 1.0:
+        return ""
+    return f"<style>html {{ font-size: {16 * scale:.2f}px; }}</style>"
