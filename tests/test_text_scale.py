@@ -46,3 +46,40 @@ class TestTextScaleCss(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestChartTextScale(unittest.TestCase):
+    """Phase 2: chart text follows the same ladder (utils/chart_style)."""
+
+    def setUp(self):
+        import streamlit as st
+        st.session_state.pop("ui_text_scale", None)
+
+    tearDown = setUp
+
+    def test_default_chart_sizes_are_scaled(self):
+        # md = 1.12: base tick/axis 11 → 12.3, body 12 → 13.4 (hand-computed).
+        from utils.chart_style import chart_layout
+        lay = chart_layout()
+        self.assertEqual(13.4, lay["font"]["size"])
+        self.assertEqual(12.3, lay["xaxis"]["tickfont"]["size"])
+        self.assertEqual(12.3, lay["yaxis"]["title_font"]["size"])
+        self.assertEqual(12.3, lay["hoverlabel"]["font_size"])
+
+    def test_selected_scale_is_honored(self):
+        import streamlit as st
+        from utils.chart_style import chart_layout
+        st.session_state["ui_text_scale"] = "lg"          # 1.25
+        self.assertEqual(13.8, chart_layout()["xaxis"]["tickfont"]["size"])
+        st.session_state["ui_text_scale"] = "sm"          # 1.0
+        self.assertEqual(11.0, chart_layout()["xaxis"]["tickfont"]["size"])
+
+    def test_module_constant_stays_pristine(self):
+        # chart_layout() must return copies — mutating the shared CHART_LAYOUT
+        # would leak one session's size into every other session.
+        import streamlit as st
+        from utils.chart_style import CHART_LAYOUT, chart_layout
+        st.session_state["ui_text_scale"] = "lg"
+        chart_layout()
+        self.assertEqual(11, CHART_LAYOUT["xaxis"]["tickfont"]["size"])
+        self.assertEqual(12, CHART_LAYOUT["font"]["size"])

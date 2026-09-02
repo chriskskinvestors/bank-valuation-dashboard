@@ -84,6 +84,35 @@ CHART_LAYOUT = dict(
 )
 
 
+def _text_scale() -> float:
+    """The user's text-size multiplier (Extras ▸ Text size): charts follow the
+    same ladder as the CSS root override (ui/styles.py TEXT_SCALES). Safe
+    anywhere — outside a Streamlit session (jobs, tests, scripts) or with a
+    mangled stored key it falls back to the default step."""
+    from ui.styles import TEXT_SCALE_DEFAULT, TEXT_SCALES
+    try:
+        import streamlit as st
+        key = st.session_state.get("ui_text_scale", TEXT_SCALE_DEFAULT)
+    except Exception:
+        key = TEXT_SCALE_DEFAULT
+    return TEXT_SCALES.get(key, TEXT_SCALES[TEXT_SCALE_DEFAULT])
+
+
+def chart_layout() -> dict:
+    """CHART_LAYOUT with every font size multiplied by the user's text scale —
+    a fresh deep copy per call; the module constant stays pristine. Use this
+    (or apply_standard_layout, which calls it) instead of **CHART_LAYOUT."""
+    import copy
+    s = _text_scale()
+    lay = copy.deepcopy(CHART_LAYOUT)
+    lay["font"]["size"] = round(12 * s, 1)
+    lay["hoverlabel"]["font_size"] = round(11 * s, 1)
+    for ax in ("xaxis", "yaxis"):
+        lay[ax]["tickfont"]["size"] = round(11 * s, 1)
+        lay[ax]["title_font"]["size"] = round(11 * s, 1)
+    return lay
+
+
 def apply_standard_layout(fig, title: str = None, height: int = CHART_HEIGHT_FULL,
                           yaxis_title: str = None, xaxis_title: str = None,
                           show_legend: bool = True, hovermode: str = "x unified",
@@ -100,8 +129,9 @@ def apply_standard_layout(fig, title: str = None, height: int = CHART_HEIGHT_FUL
     # Title only when given: update_layout(title=None) serializes to a null
     # title that plotly.js renders as a literal "undefined" above the plot
     # (caught on the earnings surprise chart, 2026-07-07).
+    _s = _text_scale()
     title_kw = dict(title=dict(
-        text=title, font=dict(size=13, color=_TEXT_PRIMARY),
+        text=title, font=dict(size=round(13 * _s, 1), color=_TEXT_PRIMARY),
         x=0, xanchor="left", y=0.98, yanchor="top")) if title else {}
     fig.update_layout(
         **title_kw,
@@ -113,11 +143,11 @@ def apply_standard_layout(fig, title: str = None, height: int = CHART_HEIGHT_FUL
             orientation="h",
             yanchor="top", y=-0.18,
             xanchor="center", x=0.5,
-            font=dict(size=11),
+            font=dict(size=round(11 * _s, 1)),
         ) if show_legend else None,
         showlegend=show_legend,
         hovermode=hovermode,
-        **CHART_LAYOUT,
+        **chart_layout(),
     )
     return fig
 
