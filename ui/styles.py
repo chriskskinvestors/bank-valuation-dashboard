@@ -970,7 +970,10 @@ CUSTOM_CSS = """
 # what the ?fs= query param and the Extras widget store; values are multiples
 # of the 16px default root size. Charts (utils/chart_style.py, fixed pt sizes)
 # deliberately do NOT scale yet — phase 2.
-TEXT_SCALES = {"sm": 0.9, "md": 1.0, "lg": 1.12}
+# Ladder shifted up one notch (owner 2026-09-02, "make all three bigger"):
+# A− is the old default size, and the DEFAULT (md) is now 112% for everyone —
+# the md rule injects CSS; there is no inject-nothing path anymore.
+TEXT_SCALES = {"sm": 1.0, "md": 1.12, "lg": 1.25}
 TEXT_SCALE_DEFAULT = "md"
 # Streamlit's real root font-size — measured on prod 2026-09-02 (15px, NOT the
 # browser's 16px; Streamlit sets its own). Scales must be computed off this or
@@ -983,6 +986,4 @@ def text_scale_css(size_key: str) -> str:
     fall back to the default, and the default injects NOTHING — zero behaviour
     change for users who never touch the control."""
     scale = TEXT_SCALES.get(size_key, TEXT_SCALES[TEXT_SCALE_DEFAULT])
-    if scale == 1.0:
-        return ""
     return f"<style>html {{ font-size: {_ROOT_BASE_PX * scale:.2f}px; }}</style>"
