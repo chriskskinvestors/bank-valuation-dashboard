@@ -16,9 +16,10 @@ class TestTextScaleCss(unittest.TestCase):
         self.assertEqual("", text_scale_css(TEXT_SCALE_DEFAULT))
 
     def test_small_and_large_pixel_values(self):
-        # 16px × 0.9 and 16px × 1.12 — hand-computed.
-        self.assertIn("font-size: 14.40px", text_scale_css("sm"))
-        self.assertIn("font-size: 17.92px", text_scale_css("lg"))
+        # 15px × 0.9 and 15px × 1.12 — hand-computed off Streamlit's REAL root
+        # font-size (measured on prod 2026-09-02), not the browser's 16px.
+        self.assertIn("font-size: 13.50px", text_scale_css("sm"))
+        self.assertIn("font-size: 16.80px", text_scale_css("lg"))
 
     def test_rule_targets_the_root_element(self):
         m = re.search(r"<style>html \{ font-size: [\d.]+px; \}</style>",
