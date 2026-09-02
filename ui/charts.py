@@ -9,7 +9,7 @@ from plotly.subplots import make_subplots
 from config import METRICS_BY_KEY
 
 
-from utils.chart_style import CHART_LAYOUT
+from utils.chart_style import chart_layout
 
 
 def price_readout(df: pd.DataFrame, ticker: str, over_period: bool = True) -> str:
@@ -235,7 +235,7 @@ def peer_radar_chart(radar_data: dict) -> go.Figure:
 
     if not categories or not series:
         fig = go.Figure()
-        fig.update_layout(title="Peer Comparison — No data", **CHART_LAYOUT)
+        fig.update_layout(title="Peer Comparison — No data", **chart_layout())
         return fig
 
     fig = go.Figure()
@@ -264,7 +264,7 @@ def peer_radar_chart(radar_data: dict) -> go.Figure:
                             gridcolor="rgba(15, 23, 42, 0.10)"),
             angularaxis=dict(gridcolor="rgba(15, 23, 42, 0.10)"),
         ),
-        **CHART_LAYOUT,
+        **chart_layout(),
     )
     return fig
 
@@ -306,7 +306,7 @@ def _donut(labels, values, title, colors):
     pairs = [(l, v, c) for l, v, c in zip(labels, values, colors) if v and v > 0]
     if not pairs:
         fig = go.Figure()
-        fig.update_layout(title=f"{title} — no data", height=390, **CHART_LAYOUT)
+        fig.update_layout(title=f"{title} — no data", height=390, **chart_layout())
         return fig
     ls, vs, cs = zip(*pairs)
     fig = go.Figure(go.Pie(
@@ -320,7 +320,7 @@ def _donut(labels, values, title, colors):
         legend=dict(orientation="v", x=0.54, xanchor="left", y=0.5, yanchor="middle",
                     font=dict(size=9.5)),
         margin=dict(l=6, r=6, t=34, b=6),
-        **CHART_LAYOUT)
+        **chart_layout())
     return fig
 
 
