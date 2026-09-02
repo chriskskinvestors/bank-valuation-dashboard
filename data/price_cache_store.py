@@ -256,37 +256,58 @@ def upsert_prices(quotes: dict[str, dict]) -> int:
     if not rows:
         return 0
 
-    eng = _get_engine()
-    with eng.begin() as conn:
-        if _USE_POSTGRES:
-            sql = text("""
-                INSERT INTO price_cache
-                  (ticker, price, prev_close, change, change_pct, volume,
-                   dividend_yield, updated_at)
-                VALUES (:ticker, :price, :prev_close, :change, :change_pct,
-                        :volume, :dividend_yield, NOW())
-                ON CONFLICT (ticker) DO UPDATE SET
-                  price = EXCLUDED.price,
-                  prev_close = EXCLUDED.prev_close,
-                  change = EXCLUDED.change,
-                  change_pct = EXCLUDED.change_pct,
-                  volume = EXCLUDED.volume,
-                  dividend_yield = COALESCE(EXCLUDED.dividend_yield,
-                                            price_cache.dividend_yield),
-                  updated_at = NOW()
-            """)
-            conn.execute(sql, rows)
-        else:
-            # SQLite: CURRENT_TIMESTAMP for updated_at
-            sql = text("""
-                INSERT OR REPLACE INTO price_cache
-                  (ticker, price, prev_close, change, change_pct, volume,
-                   dividend_yield, updated_at)
-                VALUES (:ticker, :price, :prev_close, :change, :change_pct,
-                        :volume, :dividend_yield, CURRENT_TIMESTAMP)
-            """)
-            for r in rows:
-                conn.execute(sql, r)
+    # Deterministic lock order + one deadlock retry (live incident 2026-09-02:
+    # 7 refresh-prices failures, psycopg2 DeadlockDetected). The job's 2-min
+    # cadence overlaps its own ~4-min runs, and two executemany upserts hitting
+    # the same ~600 tickers in different fetch-completion orders deadlock
+    # probabilistically. Sorting gives every writer the same row-lock order —
+    # an overlapping run then WAITS instead of deadlocking; the single retry
+    # covers any writer that slips through with a different order.
+    rows.sort(key=lambda r: r.get("ticker") or "")
+
+    for attempt in (1, 2):
+        try:
+            eng = _get_engine()
+            with eng.begin() as conn:
+                if _USE_POSTGRES:
+                    sql = text("""
+                        INSERT INTO price_cache
+                          (ticker, price, prev_close, change, change_pct, volume,
+                           dividend_yield, updated_at)
+                        VALUES (:ticker, :price, :prev_close, :change, :change_pct,
+                                :volume, :dividend_yield, NOW())
+                        ON CONFLICT (ticker) DO UPDATE SET
+                          price = EXCLUDED.price,
+                          prev_close = EXCLUDED.prev_close,
+                          change = EXCLUDED.change,
+                          change_pct = EXCLUDED.change_pct,
+                          volume = EXCLUDED.volume,
+                          dividend_yield = COALESCE(EXCLUDED.dividend_yield,
+                                                    price_cache.dividend_yield),
+                          updated_at = NOW()
+                    """)
+                    conn.execute(sql, rows)
+                else:
+                    # SQLite: CURRENT_TIMESTAMP for updated_at
+                    sql = text("""
+                        INSERT OR REPLACE INTO price_cache
+                          (ticker, price, prev_close, change, change_pct, volume,
+                           dividend_yield, updated_at)
+                        VALUES (:ticker, :price, :prev_close, :change, :change_pct,
+                                :volume, :dividend_yield, CURRENT_TIMESTAMP)
+                    """)
+                    for r in rows:
+                        conn.execute(sql, r)
+            break
+        except Exception as e:
+            if attempt == 2 or "deadlock" not in str(e).lower():
+                raise
+            import random
+            import time as _time
+            wait = random.uniform(0.5, 2.0)
+            print(f"[price_cache] deadlock on upsert — retrying once "
+                  f"in {wait:.1f}s")
+            _time.sleep(wait)
     return len(rows)
 
 
