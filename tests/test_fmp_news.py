@@ -29,7 +29,7 @@ _streamlit_stub.install()
 import data.fmp_client as fmp  # noqa: E402
 import data.bank_mapping as bank_mapping  # noqa: E402
 from data.events.fmp_news import (  # noqa: E402
-    FMPPressReleaseAdapter, _is_subject, _subject_phrase,
+    FMPPressReleaseAdapter, _is_subject, _subject_phrase, _title_is_scenery,
 )
 
 NOW = datetime.now(timezone.utc)
@@ -253,3 +253,42 @@ class TestNoKey(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTitleSceneryVeto(unittest.TestCase):
+    """Host-clause / street-address veto on the FMP path (live-feed mis-tags
+    2026-09-01/02): _is_subject passes because the release BODY repeats the
+    conference host's name, so the TITLE veto must reject independently."""
+
+    def test_conference_host_titles_are_vetoed(self):
+        for tk, name, title in [
+            ("MS", "Morgan Stanley",
+             "Carrier to Present at Morgan Stanley's 14th Annual Laguna "
+             "Conference"),
+            ("MS", "Morgan Stanley", "Otis CEO to Speak at Morgan Stanley Conference"),
+            ("GS", "Goldman Sachs Group",
+             "Charter to Participate in Goldman Sachs Investor Conference"),
+            ("GS", "Goldman Sachs Group",
+             "Jack Henry CEO Greg Adelson to Present at Goldman Sachs Conference"),
+        ]:
+            with self.subTest(title=title):
+                with patch.object(bank_mapping, "get_name", return_value=name):
+                    self.assertTrue(_title_is_scenery(tk, title))
+
+    def test_street_address_title_is_vetoed(self):
+        with patch.object(bank_mapping, "get_name", return_value="State Street Corporation"):
+            self.assertTrue(_title_is_scenery(
+                "STT", "TaxHawk Opens New Headquarters on State Street"))
+
+    def test_banks_own_announcements_are_not_vetoed(self):
+        for tk, name, title in [
+            ("MS", "Morgan Stanley",
+             "Morgan Stanley to Present at the Barclays Conference"),
+            ("STT", "State Street Corporation",
+             "State Street Opens New Headquarters in Boston"),
+            ("MS", "Morgan Stanley",
+             "Morgan Stanley Reports Third Quarter 2026 Results"),
+        ]:
+            with self.subTest(title=title):
+                with patch.object(bank_mapping, "get_name", return_value=name):
+                    self.assertFalse(_title_is_scenery(tk, title))

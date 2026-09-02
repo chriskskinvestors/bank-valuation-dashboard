@@ -336,7 +336,7 @@ def _purge_junk_events() -> int:
     from sqlalchemy import text
     from data.events.store import _get_engine, TOPIC_SOURCE
     from data.events.wire_base import is_safe_news_url, is_junk_news, match_tickers
-    from data.events.fmp_news import _is_subject
+    from data.events.fmp_news import _is_subject, _title_is_scenery
 
     # Wire/aggregator sources that assign a ticker by name-matching the headline
     # (match_tickers). Re-running the matcher purges historical mis-tags that the
@@ -366,6 +366,11 @@ def _purge_junk_events() -> int:
         if r["source"] == "fmp_news":
             blob = f"{r['headline']}. {(r['summary'] or '')[:1000]}"
             if not _is_subject(r["ticker"], blob):
+                return True
+            # Positional veto (host-clause / street-address in the TITLE) —
+            # _is_subject passes on the body's repeats of the host's name, so
+            # re-apply the ingest-side title veto to purge historical rows.
+            if _title_is_scenery(r["ticker"], r["headline"] or ""):
                 return True
         # Name-matched wire/aggregator rows: drop if the current matcher would no
         # longer tag this ticker from the same headline (a corrected mis-tag).
