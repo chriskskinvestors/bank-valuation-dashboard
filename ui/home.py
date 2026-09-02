@@ -180,11 +180,11 @@ _AF_CSS = r"""
    (nowrap) bank name ellipsizes instead of forcing its track wide and
    spilling the row past the card. Canonical grid/flex overflow fix. */
 .afwrap .erow>*,.afwrap .fitem>*{min-width:0;}
-.afwrap .erow.eh{flex:0 0 auto;height:21px;border-bottom:1px solid #eceff4;}
+.afwrap .erow.eh{flex:0 0 auto;height:1.3125rem;border-bottom:1px solid #eceff4;}
 /* Fixed, tight row height (top-aligned) so density is uniform across panes —
    sparse panes (e.g. Calendar) get whitespace at the bottom, never stretched
    rows; full panes (11 ETFs) still fit without a scroll. */
-.afwrap .erow.ed{flex:0 0 auto;height:16px;}
+.afwrap .erow.ed{flex:0 0 auto;height:1rem;}
 .afwrap .erow.r2{grid-template-columns:1.55fr 1fr .8fr .85fr;}
 .afwrap .erow.m5{grid-template-columns:1.5fr .62fr 1fr .8fr;}
 .afwrap .erow.a4{grid-template-columns:.58fr 1.5fr .92fr .72fr;}
@@ -243,7 +243,7 @@ _AF_CSS = r"""
 .afwrap .evt a.evlink:hover{text-decoration:underline;}
 .afwrap .evt a.symlink{text-decoration:none;}
 .afwrap .evt a.symlink:hover{color:#1e3a8a;text-decoration:underline;}
-.afwrap .fitem{display:grid;grid-template-columns:34px 1fr auto;align-items:center;column-gap:8px;height:19px;padding:0 12px;border-bottom:1px solid #f6f8fa;white-space:nowrap;text-decoration:none;}
+.afwrap .fitem{display:grid;grid-template-columns:2.125rem 1fr auto;align-items:center;column-gap:8px;height:1.1875rem;padding:0 12px;border-bottom:1px solid #f6f8fa;white-space:nowrap;text-decoration:none;}
 .afwrap a.fitem:hover,.afwrap div.fitem:hover{background:#f7f9fc;}
 .afwrap .ftag{font-family:var(--mono);font-size:var(--fs-grid-8);font-weight:700;}
 .afwrap .ftag.ma{color:#1e3a8a;}.afwrap .ftag.k,.afwrap .ftag.pr,.afwrap .ftag.ex,.afwrap .ftag.tr{color:#9aa6b4;}
@@ -283,7 +283,7 @@ div[class*="st-key-afpane"] .afwrap,div[class*="st-key-afpane"] .body,div[class*
 /* Calendar pane scrolls past ~17 rows (owner request) so the broad econ
    calendar + bank earnings both fit without growing the pane unboundedly.
    Overrides the .body overflow:visible above via later source order. */
-div[class*="st-key-afpane"] .calbody{max-height:292px!important;overflow-y:auto!important;}
+div[class*="st-key-afpane"] .calbody{max-height:18.25rem!important;overflow-y:auto!important;}
 div[class*="st-key-afpane"] [data-testid="stVerticalBlock"]{gap:.3rem!important;}
 div[class*="st-key-afpane"] [data-testid="stElementContainer"]{padding:0!important;}
 div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"]{padding:3px 10px 0!important;gap:.35rem!important;}
@@ -294,12 +294,12 @@ div[class*="st-key-afpane"] [data-testid="stElementContainer"]:has(>[data-testid
 div[class*="st-key-afpane"] [data-testid="stElementContainer"]:has(>div>[data-testid="stSelectbox"]){padding:3px 10px 0!important;}
 div[class*="st-key-afpane"] [data-testid="stHorizontalBlock"] [data-testid="stElementContainer"]{padding:0!important;}
 div[class*="st-key-afpane"] [data-testid="stButtonGroup"]{gap:2px!important;}
-div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"]{min-height:0!important;height:22px!important;padding:0 9px!important;border-radius:0!important;}
+div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"]{min-height:0!important;height:1.375rem!important;padding:0 9px!important;border-radius:0!important;}
 div[class*="st-key-afpane"] [data-testid^="stBaseButton-segmented_control"] p{font-size:var(--fs-grid-10)!important;line-height:1!important;font-weight:600!important;}
 /* Match the Size dropdown to the 22px segmented-control pills: force the height
    and kill BaseWeb's ~7.5px inner vertical padding (that padding, not min-height,
    is what inflates the select to ~38px). */
-div[class*="st-key-afpane"] [data-baseweb="select"]>div{min-height:22px!important;height:22px!important;}
+div[class*="st-key-afpane"] [data-baseweb="select"]>div{min-height:1.375rem!important;height:1.375rem!important;}
 div[class*="st-key-afpane"] [data-baseweb="select"]>div>div{padding-top:0!important;padding-bottom:0!important;}
 div[class*="st-key-afpane"] [data-baseweb="select"] *{font-size:var(--fs-grid-10_5)!important;}
 /* Overnight & Breaking: four topic columns in one full-width strip above the
@@ -308,7 +308,7 @@ div[class*="st-key-afpane"] [data-baseweb="select"] *{font-size:var(--fs-grid-10
 .afwrap .ovncol{border-right:1px solid #eceff4;min-width:0;}
 .afwrap .ovncol:last-child{border-right:none;}
 .afwrap .ovnc{font-size:var(--fs-grid-8_5);font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#1e3a8a;padding:5px 12px 3px;border-bottom:1px solid #f4f6f9;}
-.afwrap .ovnitem{display:grid;grid-template-columns:1fr auto;column-gap:8px;align-items:center;height:19px;padding:0 12px;border-bottom:1px solid #f6f8fa;white-space:nowrap;}
+.afwrap .ovnitem{display:grid;grid-template-columns:1fr auto;column-gap:8px;align-items:center;height:1.1875rem;padding:0 12px;border-bottom:1px solid #f6f8fa;white-space:nowrap;}
 .afwrap .ovnitem>*{min-width:0;}
 .afwrap .ovnitem:last-child{border-bottom:none;}
 /* Sector valuation strip below the grid: Tier | P/TBV | Δ | P/E | Δ | Yld | Δ */
