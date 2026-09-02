@@ -159,3 +159,53 @@ class TestAggregatorCap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHostClauseAndStreetMisTags(unittest.TestCase):
+    """Live-feed mis-tags 2026-09-01: banks tagged as conference HOSTS in other
+    companies' participation PRs, and 'State Street' the street tagged as STT.
+    All five headlines are verbatim from the production feed."""
+
+    def test_conference_host_is_not_tagged(self):
+        _require_index(self)
+        for h, host in [
+            ("Carrier to Present at Morgan Stanley's 14th Annual Laguna "
+             "Conference", "MS"),
+            ("Otis CEO to Speak at Morgan Stanley Conference", "MS"),
+            ("Charter to Participate in Goldman Sachs Investor Conference",
+             "GS"),
+            ("Jack Henry CEO Greg Adelson to Present at Goldman Sachs "
+             "Conference", "GS"),
+        ]:
+            with self.subTest(h=h):
+                self.assertNotIn(host, match_tickers(h))
+
+    def test_bank_announcing_its_own_appearance_keeps_tag(self):
+        _require_index(self)
+        for h, tk in [
+            ("ZIONS BANCORPORATION TO PRESENT AT THE BARCLAYS GLOBAL "
+             "FINANCIAL SERVICES CONFERENCE", "ZION"),
+            ("Banc of California, Inc. to Participate in the Barclays 24th "
+             "Annual Global Financial Services Conference", "BANC"),
+            ("Morgan Stanley to Present at the Barclays Conference", "MS"),
+        ]:
+            with self.subTest(h=h):
+                self.assertIn(tk, match_tickers(h))
+
+    def test_street_address_is_not_tagged(self):
+        _require_index(self)
+        self.assertNotIn(
+            "STT",
+            match_tickers("TaxHawk Opens New Headquarters on State Street"))
+
+    def test_state_street_as_actor_keeps_tag(self):
+        _require_index(self)
+        self.assertIn(
+            "STT",
+            match_tickers("State Street Opens New Headquarters in Boston"))
+
+    def test_spanish_syndicated_release_is_junk(self):
+        # The BAC mis-tag rode a Spanish-language Lowe's Foundation release.
+        self.assertTrue(is_junk_news(
+            "La Lowe's Foundation pone en marcha la mayor coalición del país "
+            "dedicada a los oficios cualificados", "BAC"))
