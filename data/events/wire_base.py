@@ -361,6 +361,44 @@ def _first_real_occurrence(haystack_padded: str, name: str) -> int:
     return -1
 
 
+# A bank named only as the HOST of an investor conference someone ELSE is
+# presenting at ("Carrier to Present at Morgan Stanley's 14th Annual Laguna
+# Conference") is scenery, not the story's subject — live-feed mis-tags
+# 2026-09-01 (MS ×2, GS ×2). The subject company sits BEFORE the participation
+# verb; the host is named after it. Both regexes run on the normalized
+# (uppercased, punctuation-stripped) padded haystack.
+_HOST_VERB_RE = re.compile(
+    r"\b(?:TO|WILL)\s+(?:PRESENT|PARTICIPATE|SPEAK|ATTEND|APPEAR|WEBCAST|DISCUSS)\b")
+_CONFERENCE_WORD_RE = re.compile(r"\b(?:CONFERENCE|FORUM|SUMMIT|SYMPOSIUM)\b")
+
+
+def _is_host_clause_mention(haystack_padded: str, idx: int) -> bool:
+    """True when the name occurrence at `idx` sits AFTER a participation verb
+    in a conference headline — i.e. the bank is the event's host, not the
+    story's subject. A bank announcing its OWN appearance names itself before
+    the verb ("ZIONS BANCORPORATION TO PRESENT AT THE BARCLAYS ... CONFERENCE"),
+    so those keep their tag."""
+    if not _CONFERENCE_WORD_RE.search(haystack_padded):
+        return False
+    m = _HOST_VERB_RE.search(haystack_padded)
+    return bool(m) and m.start() < idx
+
+
+# A bank name used as a street address ("TaxHawk Opens New Headquarters on
+# State Street" → STT mis-tag, live feed 2026-09-01): locative noun earlier in
+# the headline + the name directly after "ON".
+_LOCATIVE_NOUN_RE = re.compile(
+    r"\b(?:HEADQUARTERS|HQ|OFFICE|OFFICES|BRANCH|BRANCHES|LOCATION|STORE"
+    r"|BUILDING|CAMPUS|RESTAURANT)\b")
+
+
+def _is_street_address_mention(haystack_padded: str, idx: int) -> bool:
+    """True when the name at `idx` reads as a street address: immediately
+    preceded by "ON" with a premises noun somewhere before it."""
+    before = haystack_padded[:idx]
+    return before.endswith(" ON") and bool(_LOCATIVE_NOUN_RE.search(before))
+
+
 def phrase_in_text(haystack_padded: str, phrase: str) -> bool:
     """True if `phrase` occurs as a genuine word-boundary mention in
     `haystack_padded` (space-normalized, space-padded), not swallowed by a larger
@@ -501,6 +539,12 @@ def match_tickers(text: str, context: str = "") -> list[str]:
         if _is_risky_single(name) and not (
                 _word_after(haystack, name) in _SUFFIX_TOKENS
                 or _has_exchange_ticker(text, context, ticker)):
+            continue
+        # Scenery, not subject: the bank as conference HOST in someone else's
+        # participation PR, or as a street address (mis-tags, live feed
+        # 2026-09-01). Both leave the tag intact when the bank is the actor.
+        if (_is_host_clause_mention(haystack, idx)
+                or _is_street_address_mention(haystack, idx)):
             continue
         consumed.append((idx, end))
         if ticker not in found:
@@ -957,6 +1001,8 @@ _FOREIGN_LANG_RE = re.compile(
     r"|\bpour\s+l(?:es|a|e)\b"                   # FR: for the
     r"|\banuncia\b|\bpara\s+los\b"               # ES: announces / for the
     r"|\bdistribuciones\b|\ben\s+efectivo\b"     # ES: distributions / in cash
+    r"|\bpone\s+en\s+marcha\b|\bjunto\s+a\b"     # ES: launches / together with
+    r"|\bdedicad[oa]s?\s+a\b|\bdel\s+pa[ií]s\b"  # ES: dedicated to / of the country
     r"|\bk[uü]ndigt\b|\bf[uü]r\s+die\b"          # DE: announces / for the
     r"|\baussch[uü]ttung",                       # DE: distribution
     re.IGNORECASE,
