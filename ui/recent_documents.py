@@ -210,8 +210,8 @@ _CSS = """
 /* Scoped compact chrome: the More/Show-all buttons and the date-range picker
    inside this page only — global button/input styling stays untouched. */
 .st-key-rd_page .stButton > button { padding:0 8px !important; min-height:0 !important;
-  height:20px !important; font-size:0.68rem !important; line-height:1 !important; }
-.st-key-rd_page div[data-baseweb="select"] > div { min-height:24px !important;
+  height:1.25rem !important; font-size:0.68rem !important; line-height:1 !important; }
+.st-key-rd_page div[data-baseweb="select"] > div { min-height:1.5rem !important;
   padding-top:0 !important; padding-bottom:0 !important; font-size:0.74rem !important; }
 .st-key-rd_page [data-testid="stVerticalBlock"] { gap:0.15rem !important; }
 </style>
