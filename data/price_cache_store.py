@@ -1,9 +1,9 @@
 """
 Warm price-cache storage layer.
 
-FMP's plan is rate-capped (~300 req/min, one symbol per call, no batch
-endpoint), so fetching all ~355 universe prices live on every screen load
-takes ~70s cold. Instead a small Cloud Run job (jobs/refresh_prices.py)
+Fetching every universe price live on a screen load is slow (per-symbol
+calls are rate-capped ~300/min; stable/batch-quote may or may not be plan-
+entitled — fmp_client probes it). Instead a small Cloud Run job (jobs/refresh_prices.py)
 refreshes every bank's price into this table every couple of minutes during
 market hours, and the dashboard reads warm prices instantly.
 

@@ -127,6 +127,45 @@ def _empty_quote() -> dict:
     }
 
 
+def _normalize_quote_row(row: dict) -> dict:
+    """Map one FMP stable-quote row to the IBKR-compatible shape and apply
+    the frozen-quote gate. Shared by get_quote and the batch path so a quote
+    is identical whichever transport fetched it.
+
+    Frozen-quote gate AT THE SOURCE (2026-08-27): FMP keeps serving a
+    delisted ticker's last print indefinitely — FFWM (merged into FSUN
+    2026-04-01) still "quoted" its March 31 $5.90 in late August. The
+    price-cache ingest guard protected the store, but the Company page
+    reads quotes live (ui/bank_detail) and displayed the dead print as
+    Last Price. When FMP's own timestamp proves the quote >5d old, null
+    the market fields — n/a, never a stale number. The timestamp itself
+    is KEPT: upsert_prices keys its stored-row retirement off it (a nulled
+    frozen quote must still retire the dead row, or NFBK's July print
+    would have lingered in the cache)."""
+    out = {
+        "price": row.get("price"),
+        "bid": None,  # not in stable/quote
+        "ask": None,
+        "close": row.get("previousClose"),
+        "open": row.get("open"),
+        "high": row.get("dayHigh"),
+        "low": row.get("dayLow"),
+        "volume": row.get("volume"),
+        "change": row.get("change"),
+        "change_pct": row.get("changePercentage"),
+        # FMP's own quote time (epoch seconds) — the price cache's ingest
+        # guard drops quotes this proves frozen.
+        "timestamp": row.get("timestamp"),
+    }
+    from data.price_cache_store import _is_frozen_quote
+    from datetime import datetime as _dt, timezone as _tz
+    if _is_frozen_quote(out, _dt.now(_tz.utc)):
+        for k in ("price", "bid", "ask", "close", "open", "high", "low",
+                  "volume", "change", "change_pct"):
+            out[k] = None
+    return out
+
+
 def get_quote(ticker: str) -> dict:
     """Single-ticker quote. Returns dict with same keys as IBKR client."""
     if not _has_key():
@@ -140,50 +179,60 @@ def get_quote(ticker: str) -> dict:
     data = _get("quote", {"symbol": ticker})
     if not data or not isinstance(data, list) or not data:
         return _empty_quote()
-    row = data[0]
-
-    out = {
-        "price": row.get("price"),
-        "bid": None,  # not in stable/quote
-        "ask": None,
-        "close": row.get("previousClose"),
-        "open": row.get("open"),
-        "high": row.get("dayHigh"),
-        "low": row.get("dayLow"),
-        "volume": row.get("volume"),
-        "change": row.get("change"),
-        "change_pct": row.get("changePercentage"),
-        # FMP's own quote time (epoch seconds) — the price cache's ingest
-        # guard drops quotes this proves frozen (FMP sometimes serves a
-        # weeks-old quote as if current; caching it would show stale data
-        # under a fresh heartbeat).
-        "timestamp": row.get("timestamp"),
-    }
-    # Frozen-quote gate AT THE SOURCE (2026-08-27): FMP keeps serving a
-    # delisted ticker's last print indefinitely — FFWM (merged into FSUN
-    # 2026-04-01) still "quoted" its March 31 $5.90 in late August. The
-    # price-cache ingest guard protected the store, but the Company page
-    # reads THIS function live (ui/bank_detail) and displayed the dead
-    # print as Last Price. When FMP's own timestamp proves the quote >5d
-    # old, null the market fields — n/a, never a stale number. The
-    # timestamp itself is KEPT: upsert_prices keys its stored-row
-    # retirement off it (a nulled frozen quote must still retire the dead
-    # row, or NFBK's July print would have lingered in the cache).
-    from data.price_cache_store import _is_frozen_quote
-    from datetime import datetime as _dt, timezone as _tz
-    if _is_frozen_quote(out, _dt.now(_tz.utc)):
-        for k in ("price", "bid", "ask", "close", "open", "high", "low",
-                  "volume", "change", "change_pct"):
-            out[k] = None
+    out = _normalize_quote_row(data[0])
     _cache_put(cache_key, out)
+    return out
+
+
+# stable/batch-quote: many symbols per call. Whether the plan allows it is
+# discovered EMPIRICALLY on first use (a denial memoizes for the process and
+# every later batch falls straight back to the per-symbol fan-out) — never
+# assumed, so this ships safely without knowing the plan's entitlements.
+_BATCH_QUOTE_CHUNK = 100
+_batch_quote_denied = False
+
+
+def _try_batch_quote(tickers: list[str]) -> dict[str, dict] | None:
+    """Fetch quotes via stable/batch-quote in chunks. Returns None when the
+    endpoint is unavailable (plan denial / error / empty) — the caller then
+    uses the per-symbol fan-out, so behavior can only improve, never break.
+    Rows are normalized by the SAME helper as get_quote (frozen gate incl.);
+    symbols the response omits get an empty quote, same as a failed single."""
+    global _batch_quote_denied
+    if _batch_quote_denied:
+        return None
+    out: dict[str, dict] = {}
+    for i in range(0, len(tickers), _BATCH_QUOTE_CHUNK):
+        chunk = tickers[i:i + _BATCH_QUOTE_CHUNK]
+        data = _get("batch-quote", {"symbols": ",".join(chunk)})
+        if not isinstance(data, list) or not data:
+            if i == 0:
+                _batch_quote_denied = True
+                print("[FMP] batch-quote unavailable on this plan — "
+                      "memoized; using per-symbol quotes")
+            else:
+                print("[FMP] batch-quote failed mid-stream — discarding "
+                      "partial batch, using per-symbol quotes")
+            return None
+        for row in data:
+            sym = (row.get("symbol") or "").upper()
+            if sym:
+                q = _normalize_quote_row(row)
+                out[sym] = q
+                _cache_put(f"fmp_quote:{sym}", q)   # parity with get_quote
+    for t in tickers:
+        out.setdefault(t, _empty_quote())
+    print(f"[FMP] batch-quote path: {len(tickers)} symbols in "
+          f"{-(-len(tickers) // _BATCH_QUOTE_CHUNK)} calls")
     return out
 
 
 def get_quote_batch(tickers: Iterable[str],
                     max_per_min: int | None = None) -> dict[str, dict]:
     """
-    Bulk-fetch quotes. FMP's stable endpoint accepts a single symbol per
-    call; we fan out in a small thread pool and cache each response.
+    Bulk-fetch quotes. Tries FMP's stable/batch-quote first (600 symbols in
+    ~6 calls — seconds instead of the fan-out's paced minutes); if the plan
+    denies it, falls back to the per-symbol fan-out below.
 
     max_per_min: when set, pace request submission so we stay under FMP's
     per-minute rate cap. A cold full-universe burst (~369 symbols) otherwise
@@ -199,6 +248,13 @@ def get_quote_batch(tickers: Iterable[str],
         return {}
     if not _has_key():
         return {t: _empty_quote() for t in tickers}
+
+    # Batch path only for real bulk work — the live UI's handful of
+    # cache-miss tickers stays on singles (per-ticker cache reads).
+    if len(tickers) >= 25:
+        got = _try_batch_quote(tickers)
+        if got is not None:
+            return got
 
     interval = (60.0 / max_per_min) if max_per_min else 0.0
 
