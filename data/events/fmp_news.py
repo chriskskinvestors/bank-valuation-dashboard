@@ -160,6 +160,35 @@ def _is_subject(ticker: str, text_blob: str) -> bool:
     return False
 
 
+def _title_is_scenery(ticker: str, title: str) -> bool:
+    """TITLE-level veto with the wire matcher's positional guards: a headline
+    that names the bank only as the conference HOST someone else presents at
+    ("Carrier to Present at Morgan Stanley's ... Conference") or as a street
+    address ("... Headquarters on State Street") is not the bank's story —
+    even though the release BODY repeats the host's name enough to satisfy
+    _is_subject (live-feed mis-tags 2026-09-01/02: MS, GS, STT via fmp_news).
+    Deterministic: same resolved-name phrase + aliases as _is_subject."""
+    from data.bank_mapping import get_name
+    from data.events.wire_base import (_first_real_occurrence,
+                                       _is_host_clause_mention,
+                                       _is_street_address_mention)
+    hay = " " + " ".join(_canon_tokens(title)) + " "
+    phrases = []
+    name = (get_name(ticker) or "").strip()
+    if name and name.upper() != ticker.upper():
+        phrases.append(_subject_phrase(name, ticker))
+    phrases += [" ".join(_canon_tokens(a))
+                for a in _BRAND_ALIASES.get(ticker.upper(), [])]
+    for phrase in phrases:
+        if not phrase:
+            continue
+        idx = _first_real_occurrence(hay, phrase)
+        if idx >= 0 and (_is_host_clause_mention(hay, idx)
+                         or _is_street_address_mention(hay, idx)):
+            return True
+    return False
+
+
 def _slug(headline: str) -> str:
     """Stable key from a headline so the same release dedups across polls and,
     via the store's cross-source content key, against the wire/Google copies."""
@@ -233,6 +262,11 @@ class FMPPressReleaseAdapter(SourceAdapter):
                 # Confirm THIS bank is actually the subject (FMP's symbol index
                 # is polluted for short/ambiguous tickers — "CMA Fest" → CMA).
                 if not _is_subject(sym, f"{title}. {body[:1000]}"):
+                    continue
+                # Positional veto: bank named in the title only as conference
+                # host / street address — the body repeating the host's name
+                # passes _is_subject, so this must be checked separately.
+                if _title_is_scenery(sym, title):
                     continue
 
                 pub = _parse_dt(r.get("published_at", ""))
