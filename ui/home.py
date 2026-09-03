@@ -175,6 +175,12 @@ _AF_CSS = r"""
 .afwrap .body{flex:0 0 auto;overflow:visible;}
 .afwrap .etf{display:flex;flex-direction:column;}
 .afwrap .erow{display:grid;align-items:center;column-gap:6px;padding:0 14px;border-bottom:1px solid #f6f8fa;grid-template-columns:20px 1.5fr .7fr 1fr 1fr .75fr .85fr;box-sizing:border-box;}
+/* Wrap-proof every cell in every fixed-height .erow variant: at larger text
+   sizes a cell whose content outgrows its fr-column would WRAP inside the
+   fixed-height row and paint over the next one (calendar overlap, owner
+   screenshot 2026-09-03). nowrap+hidden+ellipsis, and min-width:0 so grid
+   items may actually shrink. .dd popups keep their overflow:visible!important. */
+.afwrap .erow>*{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .afwrap .erow:last-child{border-bottom:none;}
 /* Let grid cells shrink below their content's intrinsic width so a long
    (nowrap) bank name ellipsizes instead of forcing its track wide and
