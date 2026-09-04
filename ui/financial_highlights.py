@@ -18,6 +18,7 @@ import json
 from datetime import datetime
 
 import streamlit as st
+from ui.states import skeleton as _skeleton
 import streamlit.components.v1 as components
 import pandas as pd
 
@@ -400,7 +401,7 @@ def render_financial_highlights(ticker: str):
     if not cert:
         st.info("No FDIC Call Report data mapped for this bank.")
         return
-    with st.spinner("Loading financials…"):
+    with _skeleton():
         from data.loaders import load_fdic_hist_df
         hist = load_fdic_hist_df(ticker, 36)   # group-aware: the WHOLE bank
     if hist is None or hist.empty:

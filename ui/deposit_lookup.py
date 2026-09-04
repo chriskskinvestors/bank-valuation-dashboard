@@ -5,6 +5,7 @@ Uses FDIC Summary of Deposits (SOD) data.
 """
 
 import streamlit as st
+from ui.states import skeleton as _skeleton
 import pandas as pd
 
 from data.sod_client import (
@@ -126,7 +127,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     st.markdown("---")
     st.subheader(f"{selected_name}")
 
-    with st.spinner("Loading branch data..."):
+    with _skeleton():
         branches_df = fetch_branches(selected_cert)
 
     if branches_df.empty:
@@ -226,7 +227,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
             )
 
             if selected_county:
-                with st.spinner("Loading county market share..."):
+                with _skeleton():
                     ms_df = fetch_county_market_share(str(int(selected_county)))
 
                 if not ms_df.empty:
@@ -287,7 +288,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
             )
 
             if selected_msa:
-                with st.spinner("Loading MSA market share..."):
+                with _skeleton():
                     ms_df = fetch_msa_market_share(int(selected_msa))
 
                 if not ms_df.empty:

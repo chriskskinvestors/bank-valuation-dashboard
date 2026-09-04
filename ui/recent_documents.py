@@ -42,6 +42,7 @@ from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
+from ui.states import skeleton as _skeleton
 
 from data.bank_mapping import get_cik, get_fdic_cert, get_name
 from data.sec_client import get_filing_info
@@ -571,7 +572,7 @@ def _render_body(ticker: str, cik: int) -> None:
                            key=f"rd_range_{ticker}",
                            label_visibility="collapsed")
 
-    with st.spinner("Loading EDGAR submissions…"):
+    with _skeleton():
         info = get_filing_info(cik, max_filings=1000)
     if not info:
         st.error("Failed to load filing data from SEC EDGAR.")

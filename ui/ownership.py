@@ -3,6 +3,7 @@ Institutional Ownership UI — 13F holdings for a bank.
 """
 
 import streamlit as st
+from ui.states import skeleton as _skeleton
 import pandas as pd
 
 from data.bank_mapping import get_name
@@ -408,7 +409,7 @@ def render_ownership_detailed(ticker: str, metrics: dict):
     name = get_name(ticker)
     title_bar(f"{name} ({ticker})", "Ownership Detailed")
 
-    with st.spinner("Loading 13F holders..."):
+    with _skeleton():
         holders = fetch_institutional_holdings(ticker, name, max_filers=30)
     if not holders:
         st.info("No 13F holders found for this bank (limited institutional "

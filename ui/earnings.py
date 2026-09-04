@@ -13,6 +13,7 @@ Features:
 import html as _html
 
 import streamlit as st
+from ui.states import skeleton as _skeleton
 import pandas as pd
 
 from data.bank_mapping import get_name, get_fdic_cert, get_cik
@@ -314,12 +315,12 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
     st.markdown(_EC_CSS, unsafe_allow_html=True)
 
     # ── This bank's upcoming report + last reported quarter ──────────────
-    with st.spinner("Loading earnings data..."):
+    with _skeleton():
         _render_next_report_strip(ticker)
         _render_reported_panel(ticker)
 
     # ── Auto-populated estimates from yfinance ──────────────────────────
-    with st.spinner("Loading analyst estimates..."):
+    with _skeleton():
         estimates = fetch_estimates_cached(ticker)
 
     if estimates and not estimates.get("error"):
@@ -1034,7 +1035,7 @@ def _render_surprise_heatmap(watchlist: list[str]):
     from data.estimates import fetch_all_estimates
     from data.bank_mapping import get_name
 
-    with st.spinner("Loading earnings history..."):
+    with _skeleton():
         estimates = fetch_all_estimates(tuple(watchlist))
 
     # Build rows (banks) × columns (quarters) matrix of surprise %
@@ -1326,7 +1327,7 @@ def _render_earnings_calendar(watchlist: list[str]):
 
     horizon_days = 75            # full upcoming-season window
     today = date.today()
-    with st.spinner("Loading earnings calendar..."):
+    with _skeleton():
         try:
             from data.bank_universe import get_universe
             # Common shares only — preferred/note listings share the parent's
@@ -1829,7 +1830,7 @@ def _render_results_board():
     from data.earnings_results import results_board
 
     st.subheader("Reported Results")
-    with st.spinner("Loading reported results..."):
+    with _skeleton():
         rows = results_board()
 
     if not rows:
@@ -2155,7 +2156,7 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
                     })
 
     # From yfinance earnings history
-    with st.spinner("Loading historical surprises..."):
+    with _skeleton():
         estimates = fetch_all_estimates(tuple(watchlist[:30]))
 
     for ticker, est in estimates.items():
@@ -2300,7 +2301,7 @@ def _render_sector_aggregates(all_consensus: dict, watchlist: list[str]):
                     metric_stats[key]["surprises"].append(c["delta_pct"])
 
     # Also collect EPS surprises from yfinance
-    with st.spinner("Loading sector data..."):
+    with _skeleton():
         estimates = fetch_all_estimates(tuple(watchlist[:30]))
 
     yf_eps_stats = {"beats": 0, "misses": 0, "inlines": 0, "total": 0, "surprises": []}

@@ -279,7 +279,9 @@ def _render_latest_activity(ticker, info):
                             f'font-size:0.82rem;line-height:1.3;">{link}</div>')
             st.markdown("".join(rows), unsafe_allow_html=True)
         else:
-            st.caption("No recent company news.")
+            from ui.states import empty_state
+            empty_state("No recent company news",
+                        "Wire and aggregator stories land here as they publish")
     with c_docs:
         st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;'
                     'color:var(--brand-hover);font-weight:700;margin:0 0 3px;">Recent Filings</div>',
@@ -296,7 +298,9 @@ def _render_latest_activity(ticker, info):
                             f'font-size:0.82rem;">{link}</div>')
             st.markdown("".join(rows), unsafe_allow_html=True)
         else:
-            st.caption("No recent filings.")
+            from ui.states import empty_state
+            empty_state("No recent SEC filings",
+                        "New filings appear within minutes of hitting EDGAR")
 
 
 def _render_snapshot(ticker, info, name, row, fdic_rec=None):
