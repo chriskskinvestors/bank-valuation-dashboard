@@ -988,6 +988,31 @@ CUSTOM_CSS = """
     .kskt td.num { font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
         font-variant-numeric: tabular-nums; }
     .kskt tr:hover td { background: var(--bg-hover); }
+
+    /* Streamlit pins a custom-HTML block's measured height at mount; the
+       text-size root override then enlarges the content and the stale fixed
+       height lets it spill over the following block (insider ledger/table
+       overlap, found live 2026-09-03). Blocks must size to their content. */
+    div[data-testid="stMarkdown"], div[data-testid="stMarkdownContainer"] {
+        height: auto !important;
+    }
+
+    /* .kskt (ui/tables.py): the owner-approved refined table treatment —
+       uppercase muted headers, hairline rows — scoped so the legacy
+       bordered .ksk-grid spreadsheet tables are untouched. */
+    .kskt table { width: 100%; }
+    .kskt th, .kskt thead td {
+        border: 0; background: transparent;
+        font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.08em;
+        text-transform: uppercase; color: var(--text-muted);
+        border-bottom: 1px solid var(--border-default);
+        padding: 0.5rem var(--cell-pad-x) 0.3rem;
+    }
+    .kskt td {
+        border: 0; border-bottom: 1px solid var(--border-subtle);
+        padding: 0.42rem var(--cell-pad-x);
+    }
+    .kskt tr:last-child td { border-bottom: 0; }
 </style>
 """
 
