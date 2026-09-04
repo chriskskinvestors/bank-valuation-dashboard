@@ -58,7 +58,12 @@ def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
     for _, row in df.iterrows():
         out.append("<tr>")
         for c in cols:
-            v = "—" if row[c] is None else str(row[c])
+            raw = row[c]
+            try:
+                import pandas as _pd
+                v = "—" if raw is None or (_pd.isna(raw)) else str(raw)
+            except (TypeError, ValueError):
+                v = str(raw)
             klass = aligns[c]
             if c in signed_cols and v not in _DASH:
                 sem = _cell_class(v)
