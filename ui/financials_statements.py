@@ -410,13 +410,15 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     st.caption("From the FDIC Call Report. Click any number for its source field "
                "and, where computed, the formula and inputs.")
     if not cert:
-        st.info("No FDIC Call Report data mapped for this bank.")
+        from ui.states import empty_state
+        empty_state('No FDIC Call Report data mapped for this bank')
         return
     with st.spinner("Loading…"):
         from data.loaders import load_fdic_hist_df
         hist = load_fdic_hist_df(ticker, 44)   # group-aware: the WHOLE bank
     if hist is None or hist.empty:
-        st.info("No FDIC history available.")
+        from ui.states import empty_state
+        empty_state('No FDIC history available')
         return
 
     hist = hist.copy()
@@ -430,7 +432,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         recs_list = list(hist.tail(8).to_dict("records"))
         labels = [f"Q{(r['REPDTE'].month-1)//3+1} '{str(r['REPDTE'].year)[2:]}" for r in recs_list]
     if not recs_list:
-        st.info("No periods available.")
+        from ui.states import empty_state
+        empty_state('No periods available')
         return
 
     # FFIEC Schedule RI / RI-E stored detail (Income Statement only) — joined
@@ -2040,7 +2043,8 @@ def _render_as_reported_statement(ticker: str, stype: str):
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
-        st.info("No SEC filer mapping for this bank — As-Reported view unavailable.")
+        from ui.states import empty_state
+        empty_state('No SEC filer mapping for this bank — As-Reported view unavailable')
         return
     try:
         from data.sec_statements import as_reported_statements_for
@@ -2146,7 +2150,8 @@ def _render_company_statement(ticker: str, stype: str):
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
-        st.info("No SEC filer mapping for this bank.")
+        from ui.states import empty_state
+        empty_state('No SEC filer mapping for this bank')
         return
     view = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
                     key=f"cr_period_{stype}_{ticker}", label_visibility="collapsed")
@@ -2534,7 +2539,8 @@ def _render_company_composition(ticker, kind):
     info = get_bank_info(ticker)
     cik = info.get("cik") if info else None
     if not cik:
-        st.info("No SEC filer mapping for this bank.")
+        from ui.states import empty_state
+        empty_state('No SEC filer mapping for this bank')
         return
     _qtr = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
                     key=f"crcomp_{kind}_period_{ticker}",

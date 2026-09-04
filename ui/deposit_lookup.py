@@ -111,7 +111,9 @@ def render_deposit_lookup():
                 selected_cert = options[choice]["cert"]
                 selected_name = options[choice]["name"]
         else:
-            st.info("No banks found. Try a different name.")
+            from ui.states import empty_state
+            empty_state('No banks found',
+                        'Try a different name')
 
     if not selected_cert:
         st.info("Search for a bank above to see its branch map and deposit market share.")
@@ -170,7 +172,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
         st.map(map_df, latitude="latitude", longitude="longitude", size="size")
     else:
-        st.info("No geographic data available for this bank's branches.")
+        from ui.states import empty_state
+        empty_state("No geographic data available for this bank's branches")
 
     # ── Branch detail table ──────────────────────────────────────────────
     st.subheader("Branch Details")
@@ -213,7 +216,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
     if _dl_sel == _dl_tabs[0]:
         if county_options.empty:
-            st.info("No county data available.")
+            from ui.states import empty_state
+            empty_state('No county data available')
         else:
             selected_county = st.selectbox(
                 "Select county",
@@ -274,7 +278,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
     elif _dl_sel == _dl_tabs[1]:
         if msa_options.empty:
-            st.info("No MSA data available.")
+            from ui.states import empty_state
+            empty_state('No MSA data available')
         else:
             selected_msa = st.selectbox(
                 "Select MSA",

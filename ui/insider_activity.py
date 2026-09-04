@@ -56,7 +56,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
     """
     cik = get_cik(ticker)
     if not cik:
-        st.info("No SEC CIK available for this ticker.")
+        from ui.states import empty_state
+        empty_state('No SEC CIK available for this ticker')
         return
 
     if show_title:
@@ -68,7 +69,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
         summary = summarize_insider_activity(txs)
 
     if not txs:
-        st.info("No Form 4 filings found in the last 12 months.")
+        from ui.states import empty_state
+        empty_state('No Form 4 filings found in the last 12 months')
         return
 
     # ── Headline metrics (boxless ledger) ───────────────────────────────
@@ -151,8 +153,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
         fig.update_yaxes(tickprefix="$")
         st.plotly_chart(fig, use_container_width=True)
         if not mk:
-            st.caption("No open-market trades in the window — markers appear "
-                       "when insiders buy or sell at market.")
+            from ui.states import empty_state
+            empty_state('No open-market trades in the window — markers appear when insiders buy or sell at market')
 
     st.markdown("---")
 
@@ -192,7 +194,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
 
     # ── Transactions table ─────────────────────────────────────────────
     if not filtered:
-        st.info("No transactions match the current filter.")
+        from ui.states import empty_state
+        empty_state('No transactions match the current filter')
     else:
         rows = []
         for t in filtered[:limit]:

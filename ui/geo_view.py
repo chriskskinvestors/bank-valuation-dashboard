@@ -141,12 +141,14 @@ def _render_map(df: pd.DataFrame, title: str = "",
     bank would land in a single "nan" colour group, indistinguishable from each
     other on the map the user picked them for."""
     if df.empty:
-        st.info("No branches found for the selected filter.")
+        from ui.states import empty_state
+        empty_state('No branches found for the selected filter')
         return
 
     plot_df = df.dropna(subset=["lat", "lng"]).copy()
     if plot_df.empty:
-        st.info("No branches with geographic coordinates available.")
+        from ui.states import empty_state
+        empty_state('No branches with geographic coordinates available')
         return
 
     # Uniform small dots (owner decision 2026-08-03, after a side-by-side
@@ -261,7 +263,8 @@ def render_geo_view():
     if _geo_tab == "By State":
         states = _c_states()
         if not states:
-            st.info("No states loaded yet — wait for the refresh job to finish.")
+            from ui.states import empty_state
+            empty_state('No states loaded yet — wait for the refresh job to finish')
         else:
             col1, col2 = st.columns([1, 3])
             with col1:
@@ -313,7 +316,8 @@ def render_geo_view():
     elif _geo_tab == "By MSA":
         msas_df = _c_msas()
         if msas_df.empty:
-            st.info("No MSAs loaded yet — wait for the refresh job.")
+            from ui.states import empty_state
+            empty_state('No MSAs loaded yet — wait for the refresh job')
         else:
             opts = msas_df.to_dict("records")
             opts.sort(key=lambda r: r["msa_name"])
@@ -366,7 +370,8 @@ def render_geo_view():
     elif _geo_tab == "By County":
         counties_df = _c_counties()
         if counties_df.empty:
-            st.info("No counties loaded yet — wait for the refresh job.")
+            from ui.states import empty_state
+            empty_state('No counties loaded yet — wait for the refresh job')
         else:
             opts = counties_df.to_dict("records")
             labels = [f"{r['county']}, {r['state']}" for r in opts]
@@ -419,7 +424,8 @@ def render_geo_view():
     elif _geo_tab == "By Bank(s)":
         coverage = _c_branch_counts()
         if coverage.empty:
-            st.info("No banks loaded yet.")
+            from ui.states import empty_state
+            empty_state('No banks loaded yet')
             return
 
         # Keyed on CERT, not ticker: every FDIC institution has a cert, only the

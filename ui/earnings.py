@@ -159,7 +159,8 @@ def _render_next_report_strip(ticker: str):
         agenda = []
     row = agenda[0]["rows"][0] if agenda and agenda[0].get("rows") else None
     if row is None:
-        st.caption("No report scheduled within the next 75 days.")
+        from ui.states import empty_state
+        empty_state('No report scheduled within the next 75 days')
         return
     try:
         rel_lbl = date.fromisoformat(row["date"]).strftime("%b %d, %Y")
@@ -396,7 +397,8 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
                                "filings don't carry a clean average-earning-assets "
                                "or common-tangible-equity basis to compare on.")
             else:
-                st.info("No comparable metrics found.")
+                from ui.states import empty_state
+                empty_state('No comparable metrics found')
 
             # Per-firm breakdown — what each firm estimated (reuses the same
             # matrix as the Estimates browser).
@@ -1051,10 +1053,9 @@ def _render_surprise_heatmap(watchlist: list[str]):
 
     col_labels, placed = _heatmap_columns(bank_data)
     if not bank_data or not col_labels:
-        st.info(
-            "No earnings history available yet. Visit a few banks to populate "
-            "the cache, or upload consensus files."
-        )
+        from ui.states import empty_state
+        empty_state('No earnings history available yet',
+                    'Visit a few banks to populate the cache, or upload consensus files')
         return
 
     quarter_to_idx = {q: i for i, q in enumerate(col_labels)}
@@ -1371,7 +1372,8 @@ def _render_earnings_calendar(watchlist: list[str]):
             st.info("Earnings calendar is temporarily unavailable. Please try "
                     "again shortly.")
         else:
-            st.info("No upcoming bank earnings found in the next 75 days.")
+            from ui.states import empty_state
+            empty_state('No upcoming bank earnings found in the next 75 days')
         return
 
     all_rows = [r for b in agenda for r in b["rows"]]
@@ -1841,8 +1843,8 @@ def _render_results_board():
         # the KPI bar's earnings_calendar_available branch above).
         from data.earnings_results import results_board_available
         if results_board_available():
-            st.info("No universe bank has reported in the trailing 30 days yet — "
-                    "this board fills as results land.")
+            from ui.states import empty_state
+            empty_state('No universe bank has reported in the trailing 30 days yet — this board fills as results land')
         else:
             st.warning("Reported results are unavailable right now — the earnings "
                        "calendar source didn't respond and there's no cached board "
@@ -1983,8 +1985,9 @@ def _render_estimates_browser(all_consensus: dict):
     st.subheader("Consensus Estimates by Company")
 
     if not all_consensus:
-        st.info("No estimates uploaded yet. Add a firm's research note on the "
-                "**Upload / Input** tab — it's stored per firm and combined here.")
+        from ui.states import empty_state
+        empty_state('No estimates uploaded yet',
+                    "Add a firm's research note on the **Upload / Input** tab — it's stored per firm and combined here")
         return
 
     tickers = sorted(all_consensus.keys())
@@ -2005,7 +2008,8 @@ def _render_estimates_browser(all_consensus: dict):
 
     detail = consensus_detail(ticker, period) if period else None
     if not detail or not detail.get("metrics"):
-        st.info("No estimates for this selection.")
+        from ui.states import empty_state
+        empty_state('No estimates for this selection')
         return
 
     firms = detail["firms"]
@@ -2021,7 +2025,9 @@ def _render_beat_miss_summary(all_consensus: dict):
     st.subheader("Beat / Miss Summary")
 
     if not all_consensus:
-        st.info("No consensus data uploaded yet. Go to the Upload / Input tab to add data.")
+        from ui.states import empty_state
+        empty_state('No consensus data uploaded yet',
+                    'Go to the Upload / Input tab to add data')
         return
 
     rows = []
@@ -2099,7 +2105,8 @@ def _render_beat_miss_summary(all_consensus: dict):
         )
         table_export(df, "beat_miss_summary", key="exp_beat_miss_summary")
     else:
-        st.info("No consensus comparisons available yet.")
+        from ui.states import empty_state
+        empty_state('No consensus comparisons available yet')
 
 
 # ── Surprise Rankings ──────────────────────────────────────────────────
@@ -2121,7 +2128,9 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
     st.subheader("Surprise Magnitude Rankings")
 
     if not all_consensus:
-        st.info("No consensus data available. Upload estimates to see surprise rankings.")
+        from ui.states import empty_state
+        empty_state('No consensus data available',
+                    'Upload estimates to see surprise rankings')
         return
 
     # Also include yfinance earnings history
@@ -2175,7 +2184,8 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
                 })
 
     if not all_surprises:
-        st.info("No surprise data available yet.")
+        from ui.states import empty_state
+        empty_state('No surprise data available yet')
         return
 
     # Sort by absolute surprise
@@ -2252,7 +2262,8 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
             for s in top_misses:
                 st.markdown(_surprise_line(s))
     else:
-        st.info("No surprises match the current filter.")
+        from ui.states import empty_state
+        empty_state('No surprises match the current filter')
 
 
 # ── Sector Aggregates ──────────────────────────────────────────────────
@@ -2374,7 +2385,9 @@ def _render_sector_aggregates(all_consensus: dict, watchlist: list[str]):
             table_export(df, "sector_metric_breakdown",
                          key="exp_sector_metric_breakdown")
     elif not yf_eps_stats["total"]:
-        st.info("No aggregate data available yet. Upload consensus estimates to see sector-level statistics.")
+        from ui.states import empty_state
+        empty_state('No aggregate data available yet',
+                    'Upload consensus estimates to see sector-level statistics')
 
 
 # ── Upload / Input Section ─────────────────────────────────────────────

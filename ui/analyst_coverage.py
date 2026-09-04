@@ -68,9 +68,8 @@ def render_analyst_coverage(ticker: str):
     rating = get_ratings_snapshot(ticker)
 
     if not consensus and not summary and not grades and not rating:
-        st.info("No sell-side coverage data is available for this company "
-                "from the analyst-data provider (most smaller banks have no "
-                "published price targets or grade actions).")
+        from ui.states import empty_state
+        empty_state('No sell-side coverage data is available for this company from the analyst-data provider (most smaller banks have no published price targets or grade actions)')
         return
 
     price = (get_quote(ticker) or {}).get("price")

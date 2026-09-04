@@ -181,11 +181,9 @@ def render_key_exhibits(ticker: str):
         exhibits = fetch_key_exhibits(cik)
 
     if not exhibits:
-        st.info(
-            "No notable exhibits (EX-21 / EX-3 / EX-4 / EX-10 / EX-99) found "
-            "in this bank's most recent filings, or EDGAR index pages could "
-            "not be fetched. Use Filings & Reports for the full filing list."
-        )
+        from ui.states import empty_state
+        empty_state("No notable exhibits (EX-21 / EX-3 / EX-4 / EX-10 / EX-99) found in this bank's most recent filings, or EDGAR index pages could not be fetched",
+                    'Use Filings & Reports for the full filing list')
         return
 
     families = sorted({e["family"] for e in exhibits})
@@ -193,7 +191,8 @@ def render_key_exhibits(ticker: str):
                             default=families, key=f"keyex_fam_{ticker}")
     shown = [e for e in exhibits if e["family"] in picked]
     if not shown:
-        st.info("No exhibits match the selected categories.")
+        from ui.states import empty_state
+        empty_state('No exhibits match the selected categories')
         return
 
     st.markdown(_exhibit_table(shown), unsafe_allow_html=True)

@@ -47,7 +47,8 @@ def _proximity_map(subject_label: str, subj: pd.DataFrame,
         frames.append(uniq_comp[_MAP_COLS].assign(
             Role="Competitors in range"))
     if not frames:
-        st.info("No branches with coordinates to map.")
+        from ui.states import empty_state
+        empty_state('No branches with coordinates to map')
         return
     _render_map(pd.concat(frames, ignore_index=True),
                 color_col="Role", color_label="")
@@ -61,8 +62,8 @@ def _nearest_fallback(cert: int, ticker: str, subj: pd.DataFrame,
 
     subj_plot = subj[subj["lat"].notna() & subj["lng"].notna()]
     if subj_plot.empty:
-        st.info("No subject branches carry coordinates in the SOD store — "
-                "proximity cannot be computed for this bank.")
+        from ui.states import empty_state
+        empty_state('No subject branches carry coordinates in the SOD store — proximity cannot be computed for this bank')
         return
     anchor = subj_plot.sort_values("deposits", ascending=False).iloc[0]
     where = (f"{anchor['branch_name']} ({anchor['city']}, "
@@ -164,8 +165,8 @@ def render_branch_proximity(ticker: str):
 
     cert = get_fdic_cert(ticker)
     if not cert:
-        st.info("No FDIC certificate mapping for this company — branch "
-                "proximity needs SOD branch data.")
+        from ui.states import empty_state
+        empty_state('No FDIC certificate mapping for this company — branch proximity needs SOD branch data')
         return
 
     radius = st.selectbox("Competitor radius (miles)", _RADII, index=2,

@@ -255,7 +255,9 @@ class TestMergerPlanningUI(_SqliteStoreCase):
     def test_no_cert_mapping(self):
         self.PAGE_MODULE.get_fdic_cert = lambda t: None
         self._render()
-        self.assertIn("No FDIC certificate mapping", self.ui.info_text())
+        # The notice is an empty_state (rendered via markdown) since the
+        # 2026-09-03 polish pass — no longer an st.info box.
+        self.assertIn("No FDIC certificate mapping", self.ui.md())
 
 
 class TestBranchProximityUI(_SqliteStoreCase):

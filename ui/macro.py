@@ -816,7 +816,8 @@ def _render_surprise_summary(recent):
     items = [e for e in (recent or []) if e.get("surprise") is not None]
     if not items:
         st.markdown("**Surprise tracker**")
-        st.caption("No released surprises in the window.")
+        from ui.states import empty_state
+        empty_state('No released surprises in the window')
         return
     beats = sum(1 for e in items if e["surprise"] > 0)
     misses = sum(1 for e in items if e["surprise"] < 0)

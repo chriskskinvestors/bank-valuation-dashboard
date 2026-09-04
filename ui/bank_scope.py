@@ -95,7 +95,8 @@ def render_scope_sub(
             bucket = group_banks(all_metrics)["by_mix"]
         options = list(bucket.keys())
         if not options:
-            st.info("No cohorts computed yet — load more banks.")
+            from ui.states import empty_state
+            empty_state('No cohorts computed yet — load more banks')
             return [], [], scope_type
         picked = st.selectbox(
             scope_type, options,
@@ -118,7 +119,8 @@ def render_scope_sub(
             buckets.setdefault(key, []).append(m)
         options = sorted(buckets, key=lambda k: (k in ("Unknown", "Other"), k))
         if not options:
-            st.info("No geography resolved yet.")
+            from ui.states import empty_state
+            empty_state('No geography resolved yet')
             return [], [], scope_type
         picked = st.selectbox(
             scope_type, options,
@@ -131,8 +133,9 @@ def render_scope_sub(
     if scope_type == "Saved group":
         glist = bank_groups.list_groups()
         if not glist:
-            st.info("No saved groups yet. Build one with the **Groups** button on a "
-                    "screen, or pick **Manual** to assemble one.")
+            from ui.states import empty_state
+            empty_state('No saved groups yet',
+                        'Build one with the **Groups** button on a screen, or pick **Manual** to assemble one')
             return [], [], "Saved group"
         # Order by tag (folder) then name so tagged groups cluster; the option label
         # carries the tag + count, and the group's description shows beneath.

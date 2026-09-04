@@ -95,8 +95,8 @@ def render_merger_planning(ticker: str):
 
     cert = get_fdic_cert(ticker)
     if not cert:
-        st.info("No FDIC certificate mapping for this company — merger "
-                "screening needs SOD branch data.")
+        from ui.states import empty_state
+        empty_state('No FDIC certificate mapping for this company — merger screening needs SOD branch data')
         return
 
     st.caption("Screen a hypothetical combination on FDIC Summary-of-"

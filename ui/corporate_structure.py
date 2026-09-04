@@ -72,10 +72,9 @@ def render_corporate_structure(ticker: str):
     cert = get_fdic_cert(ticker)
     rssd = get_rssd_for_cert(cert) if cert else None
     if not rssd:
-        st.info("No Fed NIC hierarchy is available for this company (no FDIC "
-                "bank-subsidiary mapping to key the lookup). The company's own "
-                "EX-21 subsidiaries exhibit under News & Filings ▸ Key Exhibits "
-                "is the alternative source.")
+        from ui.states import empty_state
+        empty_state('No Fed NIC hierarchy is available for this company (no FDIC bank-subsidiary mapping to key the lookup)',
+                    "The company's own EX-21 subsidiaries exhibit under News & Filings ▸ Key Exhibits is the alternative source")
         return
 
     with st.spinner("Loading the Fed NIC organizational hierarchy "

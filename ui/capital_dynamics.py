@@ -221,7 +221,8 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     """Render the Capital Adequacy & Buyback Capacity panel."""
     hist = _load_hist(ticker)
     if not hist:
-        st.info("No FDIC history available for capital analysis.")
+        from ui.states import empty_state
+        empty_state('No FDIC history available for capital analysis')
         return
 
     shares = _load_shares(ticker)
