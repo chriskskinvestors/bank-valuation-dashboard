@@ -109,19 +109,20 @@ CUSTOM_CSS = """
        hidden WIDGET label ("Navigate") and the `display:inline-flex !important`
        was force-un-hiding it (it leaked above the bar on every page). Scoping
        lets Streamlit's label_visibility="collapsed" keep "Navigate" hidden. */
-    .st-key-topnav { border-bottom: 1px solid var(--grid-head); }
-    .st-key-topnav [role="radiogroup"] { display: flex; gap: 4px; flex-wrap: wrap; }
+    .st-key-topnav { border-bottom: none; }
+    .st-key-topnav [role="radiogroup"] { display: flex; gap: 2px; flex-wrap: wrap; }
     .st-key-topnav [role="radiogroup"] label {
         border: none !important; background: transparent !important;
-        padding: 4px 10px !important; margin: 0 !important;
-        font-size: var(--fs-sm) !important; color: var(--text-secondary) !important;
-        border-radius: 0 !important; cursor: pointer;
-        border-bottom: 2px solid transparent !important;
+        padding: 5px 11px !important; margin: 0 !important;
+        font-size: var(--fs-sm) !important; color: #b9c5e0 !important;
+        border-radius: 6px !important; cursor: pointer;
+        border-bottom: none !important;
     }
+    .st-key-topnav [role="radiogroup"] label:hover { color: #ffffff !important; }
     .st-key-topnav [role="radiogroup"] label:has(input:checked) {
-        color: var(--brand-primary) !important; font-weight: 600 !important;
-        border-bottom: 2px solid var(--brand-primary) !important;
-        background: transparent !important;
+        color: #ffffff !important; font-weight: 600 !important;
+        background: rgba(255,255,255,0.13) !important;
+        border-bottom: none !important;
     }
     /* Render the radio as clean text tabs: hide every label div that
        neither IS nor CONTAINS the stMarkdownContainer text — i.e. the radio
@@ -1019,6 +1020,71 @@ CUSTOM_CSS = """
         padding: 0.42rem var(--cell-pad-x);
     }
     .kskt tr:last-child td { border-bottom: 0; }
+
+    /* ═══ Visual refresh (owner-approved mockup 2026-09-04) ═══
+       Command band: the top_nav columns row (identified structurally via
+       :has(.st-key-topnav) — no emotion class names). Painted navy; its
+       children (brand, nav pills, search, live pill, utility popover)
+       restyle for the dark ground. */
+    div[data-testid="stHorizontalBlock"]:has(.st-key-topnav) {
+        background: linear-gradient(180deg, #12224e 0%, #16306e 100%);
+        border-radius: 8px; padding: 6px 14px; align-items: center;
+        box-shadow: 0 2px 10px rgba(15, 23, 42, 0.18);
+    }
+    .ksk-brand { display: flex; align-items: center; gap: 8px; }
+    .ksk-seal { width: 22px; height: 22px; border-radius: 5px; flex: 0 0 auto;
+        background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+        display: inline-flex; align-items: center; justify-content: center;
+        font-weight: 800; font-size: var(--fs-sm); color: #ffffff; }
+    .ksk-wordmark { font-size: var(--fs-sm); font-weight: 700;
+        letter-spacing: 0.15em; color: #ffffff; white-space: nowrap; }
+    .ksk-livepill { display: inline-flex; align-items: center; gap: 5px;
+        font-family: var(--mono); font-size: var(--fs-2xs); font-weight: 600;
+        color: #9fe8c9; background: rgba(5,150,105,0.18);
+        border: 1px solid rgba(5,150,105,0.35); border-radius: 99px;
+        padding: 3px 9px; white-space: nowrap; }
+    /* Bank search + the utilities popover trigger, restyled for the band. */
+    div[data-testid="stHorizontalBlock"]:has(.st-key-topnav)
+        .st-key-nav_bank_search [data-baseweb="select"] > div {
+        background: rgba(255,255,255,0.10) !important;
+        border-color: rgba(255,255,255,0.18) !important; }
+    div[data-testid="stHorizontalBlock"]:has(.st-key-topnav)
+        .st-key-nav_bank_search [data-baseweb="select"] * {
+        color: #dfe6f3 !important; }
+    div[data-testid="stHorizontalBlock"]:has(.st-key-topnav)
+        .st-key-nav_bank_search svg { fill: #b9c5e0 !important; }
+    div[data-testid="stHorizontalBlock"]:has(.st-key-topnav)
+        button[data-testid="stPopoverButton"] {
+        background: transparent !important; color: #b9c5e0 !important;
+        border: 1px solid rgba(255,255,255,0.18) !important; }
+
+    /* Soft content ground; white cards carry subtle elevation. */
+    .stApp { background: #f2f4f8; }
+    div[class*="st-key-afpane"],
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: #ffffff; border-radius: 7px;
+        box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 4px 14px rgba(15,23,42,0.045);
+    }
+
+    /* Title bar: stronger hierarchy — big entity, muted small-caps page chip. */
+    .ksk-titlebar { padding: 2px 0 8px; border-bottom: 1px solid var(--border-subtle);
+        margin-bottom: 4px; }
+    .ksk-titlebar .tb-main { font-size: 1.05rem !important; font-weight: 700 !important;
+        letter-spacing: -0.01em; }
+    .ksk-titlebar .tb-sep { display: none; }
+    .ksk-titlebar .tb-page { font-size: var(--fs-2xs) !important;
+        color: var(--text-muted) !important; background: var(--bg-inset);
+        border: 1px solid var(--border-subtle); border-radius: 4px;
+        padding: 2px 7px; margin-left: 10px; vertical-align: 2px; }
+
+    /* Provenance footer. */
+    .ksk-provfoot { display: flex; gap: 1.6rem; align-items: center;
+        margin-top: 2rem; padding: 8px 16px; border-radius: 8px;
+        background: #12224e; font-family: var(--mono);
+        font-size: var(--fs-2xs); color: #8fa3cd; }
+    .ksk-provfoot b { color: #c9d6ef; font-weight: 600; }
+    .ksk-provfoot b.ok { color: #4ade80; }
+    .ksk-provfoot .right { margin-left: auto; letter-spacing: 0.12em; }
 </style>
 """
 
