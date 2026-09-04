@@ -187,12 +187,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     )
     branch_display = branch_display.sort_values("Branch").reset_index(drop=True)
 
-    st.dataframe(
-        branch_display,
-        use_container_width=True,
-        hide_index=True,
-        height=min(400, 40 + 35 * len(branch_display)),
-    )
+    from ui.tables import ksk_table
+    ksk_table(branch_display, max_height_px=400)
     # Underlying numeric frame (deposits in $K, unformatted)
     table_export(
         branches_df[["NAMEBR", "CITYBR", "STALPBR", "CNTYNAMB", "DEPSUMBR"]],

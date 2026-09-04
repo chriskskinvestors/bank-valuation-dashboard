@@ -78,8 +78,8 @@ def render_hmda_mortgages(ticker):
     with lt:
         st.markdown(f"**Residential-mortgage originations** — public CFPB "
                     f"HMDA, LEI `{lei}`")
-        st.dataframe(pd.DataFrame(rows), use_container_width=True,
-                     hide_index=True)
+        from ui.tables import ksk_table
+        ksk_table(pd.DataFrame(rows))
     with rt:
         st.plotly_chart(fig, use_container_width=True,
                         key=f"hmda_yr_{ticker}")
@@ -93,7 +93,8 @@ def render_hmda_mortgages(ticker):
              "% of volume": round(r["volume_usd"] / tot * 100, 1)}
             for r in sorted(bd, key=lambda r: -r["volume_usd"])[:15]])
         st.markdown(f"**{latest_yr} by state** (top {len(tbl)})")
-        st.dataframe(tbl, use_container_width=True, hide_index=True)
+        from ui.tables import ksk_table
+        ksk_table(tbl)
     st.caption(
         "Originated loans only (HMDA action taken = 1). Public HMDA disclosure "
         "rounds each loan amount to its $10,000-bucket midpoint — counts are "
