@@ -199,7 +199,8 @@ def render_rate_sensitivity(ticker: str):
     regression."""
     hist = _load_hist(ticker)
     if not hist:
-        st.info("No FDIC history available for rate-sensitivity analysis.")
+        from ui.states import empty_state
+        empty_state('No FDIC history available for rate-sensitivity analysis')
         return
 
     latest = hist[0]

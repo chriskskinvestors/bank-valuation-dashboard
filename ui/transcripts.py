@@ -74,15 +74,15 @@ def render_transcripts(ticker: str):
         st.caption(f"{len(decks)} EX-99 exhibit{'s' if len(decks) != 1 else ''} "
                    "from recent 8-Ks · source: SEC EDGAR filing indexes")
     else:
-        st.info("No EX-99 exhibits found in this bank's recent 8-K filings, "
-                "or EDGAR index pages could not be fetched.")
+        from ui.states import empty_state
+        empty_state("No EX-99 exhibits found in this bank's recent 8-K filings, or EDGAR index pages could not be fetched")
 
     # ── Earnings-call transcripts (FMP full text) ────────────────────────
     st.markdown("#### Earnings-Call Transcripts")
     dates = get_transcript_dates(ticker)
     if not dates:
-        st.info("No earnings-call transcripts are available for this company "
-                "from the transcript provider.")
+        from ui.states import empty_state
+        empty_state('No earnings-call transcripts are available for this company from the transcript provider')
         return
 
     labels = [

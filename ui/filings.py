@@ -337,7 +337,8 @@ def _render_filings_core(ticker: str):
             _render_filings_table(earnings, key_prefix="earn",
                                    ticker=ticker, cik=raw_cik, show_summary=True)
         else:
-            st.info("No earnings releases found in recent filings.")
+            from ui.states import empty_state
+            empty_state('No earnings releases found in recent filings')
 
     elif _fl_sel == _fl_tabs[3]:
         annual_quarterly = [
@@ -348,7 +349,8 @@ def _render_filings_core(ticker: str):
             _render_filings_table(annual_quarterly, key_prefix="aq",
                                    ticker=ticker, cik=raw_cik, show_summary=True)
         else:
-            st.info("No 10-K or 10-Q filings found.")
+            from ui.states import empty_state
+            empty_state('No 10-K or 10-Q filings found')
 
 
 def _render_press_releases(press_releases: list[dict], ticker: str, cik: int):
@@ -404,7 +406,8 @@ def _render_press_releases(press_releases: list[dict], ticker: str, cik: int):
                     else:
                         st.caption("Could not fetch filing content for summary.")
             else:
-                st.caption("No document URL available.")
+                from ui.states import empty_state
+                empty_state('No document URL available')
 
 
 def _render_filings_section(filings: list[dict], show_filters: bool = False,

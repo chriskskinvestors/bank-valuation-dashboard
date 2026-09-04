@@ -283,11 +283,9 @@ def render_activity_overview(limit: int = 50):
     events = events[:limit]
 
     if not events:
-        st.info(
-            "No events match the current filters. "
-            "If the events table is empty, the poll job hasn't run yet — "
-            "give it 30 minutes after deploy."
-        )
+        from ui.states import empty_state
+        empty_state('No events match the current filters',
+                    "If the events table is empty, the poll job hasn't run yet — give it 30 minutes after deploy")
         return
 
     _render_feed(events, show_ticker=True)

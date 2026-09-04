@@ -46,8 +46,8 @@ def render_hmda_mortgages(ticker):
     with st.spinner("Fetching HMDA originations..."):
         by_year = originations_by_year(lei, years)
     if not by_year:
-        st.caption("No HMDA originations found for this lender in the last "
-                   "7 reported years — n/a.")
+        from ui.states import empty_state
+        empty_state('No HMDA originations found for this lender in the last 7 reported years — n/a')
         return
 
     rows = [{"Year": y,

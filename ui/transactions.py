@@ -199,7 +199,8 @@ def _render_summary():
         top = sorted((d for d in deals if d.get("value_usd")),
                      key=lambda d: d["value_usd"], reverse=True)[:10]
         if not top:
-            st.caption("No deals with a sourceable value.")
+            from ui.states import empty_state
+            empty_state('No deals with a sourceable value')
         else:
             body = ""
             for d in top:
@@ -269,7 +270,8 @@ def _render_summary():
     # ── Buyback announcement feed ──
     st.markdown("**Buyback announcements**")
     if not buybacks:
-        st.caption("No buyback-program 8-Ks found (EDGAR full-text, 2001+).")
+        from ui.states import empty_state
+        empty_state('No buyback-program 8-Ks found (EDGAR full-text, 2001+)')
     else:
         body = "".join(
             "<tr>"
@@ -442,8 +444,8 @@ def _render_pe():
     if d13:
         st.markdown(_stake_table(d13), unsafe_allow_html=True)
     else:
-        st.caption("No 13D has ever been filed on this bank — no holder "
-                   "has declared activist or control intent above 5%.")
+        from ui.states import empty_state
+        empty_state('No 13D has ever been filed on this bank — no holder has declared activist or control intent above 5%')
 
     st.markdown("**Private placements (8-K Item 3.02)**")
     if pps:
@@ -470,7 +472,8 @@ def _render_pe():
         st.caption("Private placements unavailable (EDGAR fetch failed) — "
                    "retry shortly.")
     else:
-        st.caption("No Item 3.02 private placements on record.")
+        from ui.states import empty_state
+        empty_state('No Item 3.02 private placements on record')
 
     with st.expander(f"Schedule 13G filings (passive) — {len(g13):,}"):
         if g13:

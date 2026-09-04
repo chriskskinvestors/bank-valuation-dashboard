@@ -30,9 +30,8 @@ def render_people_summary(ticker: str):
 
     cik = get_cik(ticker)
     if not cik:
-        st.info("No SEC filer mapping for this company — the proxy-based "
-                "people roster needs a CIK (FDIC-only banks have no proxy "
-                "on EDGAR).")
+        from ui.states import empty_state
+        empty_state('No SEC filer mapping for this company — the proxy-based people roster needs a CIK (FDIC-only banks have no proxy on EDGAR)')
         return
 
     with st.spinner("Reading the latest proxy statement (first view runs "
@@ -91,9 +90,9 @@ def render_people_summary(ticker: str):
         } for p in people])
         table_export(df, f"{ticker}_people", key=f"exp_people_{ticker}")
     else:
-        st.info("No proxy-based roster is available for this company — the "
-                "extraction needs a DEF 14A on EDGAR and the summarizer API. "
-                "The Section 16 roster below still reflects insider filings.")
+        from ui.states import empty_state
+        empty_state('No proxy-based roster is available for this company — the extraction needs a DEF 14A on EDGAR and the summarizer API',
+                    'The Section 16 roster below still reflects insider filings')
 
     # ── Section 16 roster (Form 4 activity) ──────────────────────────────
     roster = get_insider_roster(cik)

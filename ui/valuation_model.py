@@ -313,7 +313,8 @@ def render_valuation_model(ticker: str):
     price = _load_price(ticker)
 
     if not hist:
-        st.info("No FDIC history available for valuation model.")
+        from ui.states import empty_state
+        empty_state('No FDIC history available for valuation model')
         return
     if not sec:
         st.warning("Limited SEC data — EPS/shares may be missing.")
@@ -331,10 +332,9 @@ def render_valuation_model(ticker: str):
     with st.expander("Use uploaded consensus data"):
         available = list_consensus(ticker)
         if not available:
-            st.caption(
-                "No consensus data uploaded for this bank. Go to the Earnings tab "
-                "to upload a consensus file, then return here to select the period."
-            )
+            from ui.states import empty_state
+            empty_state('No consensus data uploaded for this bank',
+                        'Go to the Earnings tab to upload a consensus file, then return here to select the period')
         else:
             period_labels = [f"{p['period']} ({p['source']}, {p['metric_count']} metrics)" for p in available]
             sel_idx = st.selectbox(
@@ -958,10 +958,9 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
     available = list_consensus(ticker)
     if not available:
         st.markdown("##### Model vs Consensus")
-        st.caption(
-            "No consensus uploaded for this bank yet. Upload estimates in the "
-            "Earnings tab to compare your model projection against street consensus."
-        )
+        from ui.states import empty_state
+        empty_state('No consensus uploaded for this bank yet',
+                    'Upload estimates in the Earnings tab to compare your model projection against street consensus')
         return
 
     st.markdown("##### Model vs Consensus")
@@ -1070,7 +1069,8 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
         })
 
     if not rows:
-        st.info("No comparable metrics between your model and the consensus upload.")
+        from ui.states import empty_state
+        empty_state('No comparable metrics between your model and the consensus upload')
         return
 
     df = pd.DataFrame(rows)

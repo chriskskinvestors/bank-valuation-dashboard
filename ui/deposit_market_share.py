@@ -76,7 +76,8 @@ def _share_rows(df: pd.DataFrame, subject_cert: int) -> list[dict]:
 def _render_market_table(rows: list[dict], heading: str, key: str):
     st.markdown(f"#### {heading}")
     if not rows:
-        st.info("No markets with recorded deposits for this bank at this level.")
+        from ui.states import empty_state
+        empty_state('No markets with recorded deposits for this bank at this level')
         return
     from data.bank_universe import cert_ticker_map
     cmap = cert_ticker_map()
@@ -129,8 +130,8 @@ def render_deposit_market_share(ticker: str):
 
     cert = get_fdic_cert(ticker)
     if not cert:
-        st.info("No FDIC certificate mapping for this company — deposit "
-                "market share needs SOD branch data.")
+        from ui.states import empty_state
+        empty_state('No FDIC certificate mapping for this company — deposit market share needs SOD branch data')
         return
 
     with st.spinner("Aggregating deposit markets from the SOD store…"):
@@ -141,8 +142,8 @@ def render_deposit_market_share(ticker: str):
     county_rows = _share_rows(county, cert)
     msa_rows = _share_rows(msa, cert)
     if not county_rows and not msa_rows:
-        st.info("No branch/deposit records for this bank in the SOD store "
-                "yet — the store fills from the nightly refresh-sod job.")
+        from ui.states import empty_state
+        empty_state('No branch/deposit records for this bank in the SOD store yet — the store fills from the nightly refresh-sod job')
         return
 
     _render_market_table(county_rows, "By County", f"county_{ticker}")

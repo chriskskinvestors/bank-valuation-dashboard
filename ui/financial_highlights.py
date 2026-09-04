@@ -399,13 +399,15 @@ def render_financial_highlights(ticker: str):
                "(holding company). Click any number to see the calculation and its sources.")
 
     if not cert:
-        st.info("No FDIC Call Report data mapped for this bank.")
+        from ui.states import empty_state
+        empty_state('No FDIC Call Report data mapped for this bank')
         return
     with _skeleton():
         from data.loaders import load_fdic_hist_df
         hist = load_fdic_hist_df(ticker, 36)   # group-aware: the WHOLE bank
     if hist is None or hist.empty:
-        st.info("No FDIC history available.")
+        from ui.states import empty_state
+        empty_state('No FDIC history available')
         return
 
     hist = hist.copy()

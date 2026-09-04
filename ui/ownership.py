@@ -28,10 +28,9 @@ def render_ownership(ticker: str):
         summary = summarize_holdings(holders)
 
     if not holders:
-        st.info(
-            "No 13F filings found. This can happen for smaller banks with limited "
-            "institutional coverage, or if the SEC full-text search fails for the ticker."
-        )
+        from ui.states import empty_state
+        empty_state('No 13F filings found',
+                    'This can happen for smaller banks with limited institutional coverage, or if the SEC full-text search fails for the ticker')
         return
 
     # ── Headline metrics (click any value for its source) ──
@@ -183,11 +182,9 @@ def render_holder_history(ticker: str):
         hist = get_holder_history(ticker, quarters=20)
 
     if not hist:
-        st.info(
-            "No stored 13F quarter snapshots for this bank yet. History "
-            "accumulates as the quarterly 13F refresh runs — open the "
-            "Institutional (13F) tab once to seed the current quarter."
-        )
+        from ui.states import empty_state
+        empty_state('No stored 13F quarter snapshots for this bank yet',
+                    'History accumulates as the quarterly 13F refresh runs — open the Institutional (13F) tab once to seed the current quarter')
         return
 
     quarters = sorted({q for m in hist.values() for q in m}, reverse=True)
@@ -264,14 +261,16 @@ def render_holder_history(ticker: str):
             st.dataframe(pd.DataFrame(_fmt(buyers)), use_container_width=True,
                          hide_index=True, height=36 + 35 * len(buyers))
         else:
-            st.caption("No adds among stored holders.")
+            from ui.states import empty_state
+            empty_state('No adds among stored holders')
     with sc:
         st.markdown("**Sellers**")
         if sellers:
             st.dataframe(pd.DataFrame(_fmt(sellers)), use_container_width=True,
                          hide_index=True, height=36 + 35 * len(sellers))
         else:
-            st.caption("No trims/exits among stored holders.")
+            from ui.states import empty_state
+            empty_state('No trims/exits among stored holders')
     st.caption(
         "Δ compares each institution's stored share count between the two most "
         "recent snapshot quarters. 'New'/'Exited' reflect presence in the stored "
@@ -293,12 +292,9 @@ def render_crossholdings(ticker: str):
         x = get_crossholdings(ticker)
 
     if not x or not x.get("rows"):
-        st.info(
-            "No stored 13F snapshot for this bank yet — open the "
-            "Institutional (13F) tab once to seed it. Crossholdings are "
-            "inferred from stored snapshots, so coverage grows as more banks' "
-            "13F tabs are viewed."
-        )
+        from ui.states import empty_state
+        empty_state('No stored 13F snapshot for this bank yet — open the Institutional (13F) tab once to seed it',
+                    "Crossholdings are inferred from stored snapshots, so coverage grows as more banks' 13F tabs are viewed")
         return
 
     st.caption(
@@ -308,8 +304,8 @@ def render_crossholdings(ticker: str):
         "other banks not shown here."
     )
     if x["coverage"] == 0:
-        st.info("No other banks have a stored snapshot for this quarter yet — "
-                "the cross-join will populate as 13F tabs are viewed.")
+        from ui.states import empty_state
+        empty_state('No other banks have a stored snapshot for this quarter yet — the cross-join will populate as 13F tabs are viewed')
         return
 
     # ksk-grid HTML (not st.dataframe): the "Largest other positions" cell
@@ -412,8 +408,8 @@ def render_ownership_detailed(ticker: str, metrics: dict):
     with _skeleton():
         holders = fetch_institutional_holdings(ticker, name, max_filers=30)
     if not holders:
-        st.info("No 13F holders found for this bank (limited institutional "
-                "coverage is normal for small banks).")
+        from ui.states import empty_state
+        empty_state('No 13F holders found for this bank (limited institutional coverage is normal for small banks)')
         return
 
     # Prior-quarter shares for QoQ deltas — needs ≥2 stored snapshots.

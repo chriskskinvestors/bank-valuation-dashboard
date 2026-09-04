@@ -98,8 +98,8 @@ def render_stock_chart(ticker: str, peer_cohort: list[dict]):
 
     hist = get_history(ticker, period)
     if hist is None or hist.empty:
-        st.info("No price history is available for this ticker from the "
-                "market-data provider.")
+        from ui.states import empty_state
+        empty_state('No price history is available for this ticker from the market-data provider')
         return
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,

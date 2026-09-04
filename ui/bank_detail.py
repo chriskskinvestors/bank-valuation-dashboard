@@ -739,7 +739,8 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
 
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
     if bank_row.empty:
-        st.info("No metrics available for this bank yet.")
+        from ui.states import empty_state
+        empty_state('No metrics available for this bank yet')
         return
     row = bank_row.iloc[0]
     # Warm the independent per-bank fetches in parallel before the serial render
@@ -931,7 +932,8 @@ def render_all_metrics_section(ticker: str, all_metrics_df: pd.DataFrame):
                 url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_clean}"
                 st.markdown(f"- **{f['form']}** — {f['date']} — [{f.get('description', 'View')}]({url})")
         else:
-            st.info("No recent filings found.")
+            from ui.states import empty_state
+            empty_state('No recent filings found')
     else:
         st.info("SEC CIK not mapped for this bank.")
 

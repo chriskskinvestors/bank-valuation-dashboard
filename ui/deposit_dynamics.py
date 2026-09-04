@@ -145,7 +145,8 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     """
     hist = _load_hist(ticker)
     if not hist:
-        st.info("No FDIC history available for deposit dynamics analysis.")
+        from ui.states import empty_state
+        empty_state('No FDIC history available for deposit dynamics analysis')
         return
 
     summary = summarize_bank_deposits(hist)

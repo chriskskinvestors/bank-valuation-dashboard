@@ -38,9 +38,8 @@ def render_compensation(ticker: str):
 def _render_neo_tables(ticker: str):
     rows = get_executive_compensation(ticker)
     if not rows:
-        st.info("No named-executive compensation is available for this company "
-                "from the proxy-statement provider (many smaller banks are not "
-                "covered).")
+        from ui.states import empty_state
+        empty_state('No named-executive compensation is available for this company from the proxy-statement provider (many smaller banks are not covered)')
         return
 
     years = sorted({r["year"] for r in rows}, reverse=True)

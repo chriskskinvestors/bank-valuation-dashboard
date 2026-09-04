@@ -132,7 +132,8 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     """
     hist = _load_hist(ticker)
     if not hist:
-        st.info("No FDIC history available for credit analysis.")
+        from ui.states import empty_state
+        empty_state('No FDIC history available for credit analysis')
         return
 
     peer_median = _load_peer_median_reserve_coverage(watchlist or [])
