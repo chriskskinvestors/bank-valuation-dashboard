@@ -989,18 +989,19 @@ CUSTOM_CSS = """
         font-variant-numeric: tabular-nums; }
     .kskt tr:hover td { background: var(--bg-hover); }
 
-    /* Streamlit pins a custom-HTML block's measured height at mount; the
-       text-size root override then enlarges the content and the stale fixed
-       height lets it spill over the following block (insider ledger/table
-       overlap, found live 2026-09-03). Blocks must size to their content. */
-    div[data-testid="stMarkdown"], div[data-testid="stMarkdownContainer"],
-    div[data-testid="stMarkdown"] > div {
-        height: auto !important;
+    /* THE stMarkdown-overlap root cause (nailed live 2026-09-03 after two
+       wrong height-based fixes): Streamlit's stMarkdownContainer carries
+       margin-bottom:-1rem to cancel a trailing <p> margin. Our custom
+       top-level blocks END IN DIVS with no trailing margin, so the -1rem
+       swallows 1rem of real content — the wrapper lays out short and the
+       NEXT element overlaps (AMAL insider ledger vs table: exactly -16.8px
+       at the 112% root). Zero it only where one of ours is the last child;
+       normal markdown keeps Streamlit's intended cancellation. */
+    div[data-testid="stMarkdownContainer"]:has(> .ksk-ledger:last-child),
+    div[data-testid="stMarkdownContainer"]:has(> .kskt:last-child),
+    div[data-testid="stMarkdownContainer"]:has(> .ksk-empty:last-child) {
+        margin-bottom: 0 !important;
     }
-    /* ^ the middle selector matters: Streamlit's pinned inline height sits on
-       an anonymous emotion-cache div BETWEEN stMarkdown and the container
-       (measured live 2026-09-03: 130.7px pinned around 147.5px of content).
-       Structural child selector — emotion class names churn across versions. */
 
     /* .kskt (ui/tables.py): the owner-approved refined table treatment —
        uppercase muted headers, hairline rows — scoped so the legacy
