@@ -14,6 +14,7 @@ import html as _h
 import re
 
 import streamlit as st
+from ui.states import skeleton as _skeleton
 
 from data.bank_mapping import get_cik, get_name
 from data.fmp_transcripts import get_transcript_dates, get_transcript
@@ -89,7 +90,7 @@ def render_transcripts(ticker: str):
     choice = st.selectbox("Earnings call", labels, index=0, key=f"tx_pick_{ticker}")
     sel = dates[labels.index(choice)]
 
-    with st.spinner("Loading transcript…"):
+    with _skeleton():
         tx = get_transcript(ticker, sel["year"], sel["quarter"])
     if not tx or not tx.get("content"):
         st.info("The transcript text for this call is unavailable.")

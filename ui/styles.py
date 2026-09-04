@@ -961,6 +961,25 @@ CUSTOM_CSS = """
     .afwrap .live,
     .afwrap .rngdot,
     .afwrap .dotc { border-radius: 50% !important; }
+
+    /* ── Loading skeleton + empty state (ui/states.py, polish pass) ────── */
+    .ksk-skel { padding: 6px 0; }
+    .ksk-skel .row { display: grid; grid-template-columns: 1.4fr .6fr 1fr 1fr;
+        column-gap: 14px; padding: 6px 14px; align-items: center; }
+    .ksk-skel i { display: block; height: .62rem; border-radius: 3px;
+        background: linear-gradient(90deg, #eef1f5 25%, #f7f9fc 45%, #eef1f5 65%);
+        background-size: 200% 100%; animation: ksk-shimmer 1.4s linear infinite; }
+    @keyframes ksk-shimmer { to { background-position: -200% 0; } }
+    @media (prefers-reduced-motion: reduce) { .ksk-skel i { animation: none; } }
+
+    .ksk-empty { min-height: 108px; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 6px; padding: 14px; }
+    .ksk-empty .ico { width: 26px; height: 26px; border-radius: 50%;
+        background: var(--bg-inset); border: 1px solid var(--border-subtle);
+        display: flex; align-items: center; justify-content: center;
+        color: var(--text-muted); font-size: .8rem; }
+    .ksk-empty .l1 { font-size: .72rem; font-weight: 600; color: var(--text-secondary); }
+    .ksk-empty .l2 { font-size: .66rem; color: var(--text-muted); }
 </style>
 """
 

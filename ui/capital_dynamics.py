@@ -6,6 +6,7 @@ in the Company Analysis > Capital tab.
 import html as _html
 
 import streamlit as st
+from ui.states import skeleton as _skeleton
 import pandas as pd
 
 from data.bank_mapping import get_fdic_cert, get_cik, get_name
@@ -935,7 +936,7 @@ def _render_capital_return_attribution(ticker: str):
     except Exception:
         pass
 
-    with st.spinner("Loading SEC capital return data..."):
+    with _skeleton():
         result = summarize_capital_return(cik, market_cap=market_cap, lookback_quarters=20)
 
     timeline = result.get("timeline")

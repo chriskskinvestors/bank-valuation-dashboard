@@ -8,6 +8,7 @@ Includes AI-generated summaries when Anthropic API key is configured.
 import html as _html
 
 import streamlit as st
+from ui.states import skeleton as _skeleton
 import pandas as pd
 
 from data.sec_client import get_filing_info
@@ -233,7 +234,7 @@ def _render_filings_core(ticker: str):
     ir_url = get_ir_url(ticker)
 
     # ── Load filing data ─────────────────────────────────────────────────
-    with st.spinner("Loading SEC filings..."):
+    with _skeleton():
         info = get_filing_info(cik, max_filings=80)
 
     if not info:
@@ -288,7 +289,9 @@ def _render_filings_core(ticker: str):
     # ── Filing data ──────────────────────────────────────────────────────
     filings = info.get("recent_filings", [])
     if not filings:
-        st.warning("No filings found.")
+        from ui.states import empty_state
+        empty_state("No filings found for this company",
+                    "EDGAR shows no filings under this CIK yet")
         return
 
     raw_cik = info.get("cik", cik)
@@ -349,7 +352,9 @@ def _render_press_releases(press_releases: list[dict], ticker: str, cik: int):
     """Render the press releases tab with AI summaries."""
 
     if not press_releases:
-        st.info("No press releases found. Press releases are identified from 8-K earnings filings (Item 2.02).")
+        from ui.states import empty_state
+        empty_state("No press releases found",
+                    "Press releases are identified from 8-K earnings filings (Item 2.02)")
         return
 
     st.markdown(
@@ -441,7 +446,9 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
     """Render a styled filings table with links and optional summaries."""
 
     if not filings:
-        st.info("No filings match the current filters.")
+        from ui.states import empty_state
+        empty_state("No filings match the current filters",
+                    "Clear a form-type or date filter to widen the list")
         return
 
     # One shared URL-safety gate (rejects javascript:/data:/social/shorteners),
