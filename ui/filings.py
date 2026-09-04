@@ -227,7 +227,10 @@ def _render_filings_core(ticker: str):
     # ── Resolve CIK ──────────────────────────────────────────────────────
     cik = get_cik(ticker)
     if not cik:
-        st.warning(f"No SEC CIK found for **{ticker}**. This bank may not file with the SEC.")
+        from ui.states import empty_state
+        empty_state(f"{ticker} does not file with the SEC",
+                    "OTC banks without SEC registration show FDIC call-report "
+                    "data only — see Financials")
         return
 
     cert = get_fdic_cert(ticker)

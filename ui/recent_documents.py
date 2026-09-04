@@ -545,8 +545,10 @@ def _panel_rows(key: str, rows: list[str]) -> list[str]:
 def render_recent_documents(ticker: str) -> None:
     cik = get_cik(ticker)
     if not cik:
-        st.warning(f"No SEC CIK found for **{ticker}**. "
-                   "This bank may not file with the SEC.")
+        from ui.states import empty_state
+        empty_state(f"{ticker} does not file with the SEC",
+                    "OTC banks without SEC registration show FDIC call-report "
+                    "data only — see Financials")
         return
 
     name = get_name(ticker) or ticker
