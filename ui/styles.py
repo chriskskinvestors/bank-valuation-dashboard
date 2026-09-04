@@ -980,6 +980,14 @@ CUSTOM_CSS = """
         color: var(--text-muted); font-size: .8rem; }
     .ksk-empty .l1 { font-size: .72rem; font-weight: 600; color: var(--text-secondary); }
     .ksk-empty .l2 { font-size: .66rem; color: var(--text-muted); }
+
+    /* ── ksk_table (ui/tables.py): per-cell alignment inside ksk-grid ── */
+    .kskt td.txt, .kskt th.txt { text-align: left;
+        font-family: 'Inter', system-ui, sans-serif; }
+    .kskt td.num, .kskt th.num { text-align: right; }
+    .kskt td.num { font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+        font-variant-numeric: tabular-nums; }
+    .kskt tr:hover td { background: var(--bg-hover); }
 </style>
 """
 

@@ -220,8 +220,8 @@ def render_holder_history(ticker: str):
                 row[q] = fmt_dollars(v) if v is not None else "—"
         rows.append(row)
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True,
-                 height=min(640, 36 + 35 * len(df)))
+    from ui.tables import ksk_table
+    ksk_table(df, max_height_px=640)
     # Raw holder × quarter records (unformatted shares / value_usd)
     flat = [{"institution": h, "quarter": q, **(hist[h][q] or {})}
             for h in holders for q in sorted(hist[h], reverse=True)]
