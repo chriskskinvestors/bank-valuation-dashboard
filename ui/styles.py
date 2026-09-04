@@ -993,9 +993,14 @@ CUSTOM_CSS = """
        text-size root override then enlarges the content and the stale fixed
        height lets it spill over the following block (insider ledger/table
        overlap, found live 2026-09-03). Blocks must size to their content. */
-    div[data-testid="stMarkdown"], div[data-testid="stMarkdownContainer"] {
+    div[data-testid="stMarkdown"], div[data-testid="stMarkdownContainer"],
+    div[data-testid="stMarkdown"] > div {
         height: auto !important;
     }
+    /* ^ the middle selector matters: Streamlit's pinned inline height sits on
+       an anonymous emotion-cache div BETWEEN stMarkdown and the container
+       (measured live 2026-09-03: 130.7px pinned around 147.5px of content).
+       Structural child selector — emotion class names churn across versions. */
 
     /* .kskt (ui/tables.py): the owner-approved refined table treatment —
        uppercase muted headers, hairline rows — scoped so the legacy
