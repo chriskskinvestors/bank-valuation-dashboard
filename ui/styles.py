@@ -119,9 +119,17 @@ CUSTOM_CSS = """
         border-bottom: none !important;
     }
     .st-key-topnav [role="radiogroup"] label:hover { color: #ffffff !important; }
+    /* Concrete colors, not `inherit`: an intermediate wrapper between the
+       label and the text computes the default dark ink, and inherit
+       faithfully picks THAT up (live-debugged 2026-09-04). */
     .st-key-topnav [role="radiogroup"] label [data-testid="stMarkdownContainer"],
     .st-key-topnav [role="radiogroup"] label [data-testid="stMarkdownContainer"] p {
-        color: inherit !important; }
+        color: #b9c5e0 !important; }
+    .st-key-topnav [role="radiogroup"] label:hover [data-testid="stMarkdownContainer"] p {
+        color: #ffffff !important; }
+    .st-key-topnav [role="radiogroup"] label:has(input:checked) [data-testid="stMarkdownContainer"],
+    .st-key-topnav [role="radiogroup"] label:has(input:checked) [data-testid="stMarkdownContainer"] p {
+        color: #ffffff !important; }
     .st-key-topnav [role="radiogroup"] label:has(input:checked) {
         color: #ffffff !important; font-weight: 600 !important;
         background: rgba(255,255,255,0.13) !important;
