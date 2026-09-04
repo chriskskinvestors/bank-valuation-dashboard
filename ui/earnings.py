@@ -1970,8 +1970,8 @@ def _render_firm_matrix(detail: dict, key_suffix: str):
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True,
-                 height=min(720, 45 + 32 * len(df)))
+    from ui.tables import ksk_table
+    ksk_table(df, max_height_px=720)
     table_export(df, f"estimates_{key_suffix}",
                  key=f"exp_estimates_{key_suffix}")
 
@@ -2369,7 +2369,8 @@ def _render_sector_aggregates(all_consensus: dict, watchlist: list[str]):
 
         if rows:
             df = pd.DataFrame(rows)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            from ui.tables import ksk_table
+            ksk_table(df, signed_cols=("Avg Surprise",))
             table_export(df, "sector_metric_breakdown",
                          key="exp_sector_metric_breakdown")
     elif not yf_eps_stats["total"]:

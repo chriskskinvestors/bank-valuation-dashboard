@@ -44,3 +44,14 @@ class TestKskTableHtml(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNanHandling(unittest.TestCase):
+    def test_nan_and_none_render_as_dash(self):
+        import numpy as np
+        df = pd.DataFrame([{"A": "x", "B": np.nan, "C": None},
+                           {"A": "y", "B": 1.25, "C": "ok"}])
+        h = ksk_table_html(df)
+        self.assertNotIn("nan", h.lower().replace("financial", ""))
+        self.assertEqual(2, h.count(">—<"))
+        self.assertIn(">1.25<", h)

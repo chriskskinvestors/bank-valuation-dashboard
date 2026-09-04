@@ -850,7 +850,8 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
             "Δ High %": f"{t['high_delta_pct']:+.1f}%",
             "Range ($)": f"${t['range']:.2f}",
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    from ui.tables import ksk_table
+    ksk_table(pd.DataFrame(rows), signed_cols=("Δ Low %", "Δ High %"))
 
 
 
