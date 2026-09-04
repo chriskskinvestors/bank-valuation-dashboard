@@ -119,6 +119,9 @@ CUSTOM_CSS = """
         border-bottom: none !important;
     }
     .st-key-topnav [role="radiogroup"] label:hover { color: #ffffff !important; }
+    .st-key-topnav [role="radiogroup"] label [data-testid="stMarkdownContainer"],
+    .st-key-topnav [role="radiogroup"] label [data-testid="stMarkdownContainer"] p {
+        color: inherit !important; }
     .st-key-topnav [role="radiogroup"] label:has(input:checked) {
         color: #ffffff !important; font-weight: 600 !important;
         background: rgba(255,255,255,0.13) !important;
@@ -1045,8 +1048,11 @@ CUSTOM_CSS = """
         padding: 3px 9px; white-space: nowrap; }
     /* Bank search + the utilities popover trigger, restyled for the band. */
     div[data-testid="stHorizontalBlock"]:has(.st-key-topnav)
-        .st-key-nav_bank_search [data-baseweb="select"] > div {
+        .st-key-nav_bank_search [data-baseweb="select"] > div,
+    div[data-testid="stHorizontalBlock"]:has(.st-key-topnav)
+        .st-key-nav_bank_search [data-baseweb="select"] > div > div {
         background: rgba(255,255,255,0.10) !important;
+        background-color: rgba(255,255,255,0.10) !important;
         border-color: rgba(255,255,255,0.18) !important; }
     div[data-testid="stHorizontalBlock"]:has(.st-key-topnav)
         .st-key-nav_bank_search [data-baseweb="select"] * {
@@ -1059,7 +1065,8 @@ CUSTOM_CSS = """
         border: 1px solid rgba(255,255,255,0.18) !important; }
 
     /* Soft content ground; white cards carry subtle elevation. */
-    .stApp { background: #f2f4f8; }
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
+    [data-testid="stMain"] > div { background: #f2f4f8; }
     div[class*="st-key-afpane"],
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background: #ffffff; border-radius: 7px;
