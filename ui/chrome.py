@@ -24,15 +24,33 @@ def top_nav(sections: list[str], key: str = "nav_section",
     wm, nav, search, right = st.columns([0.85, 4.0, 1.55, 1.1],
                                         vertical_alignment="center")
     with wm:
+        # Command-bar brand block (visual refresh, owner-approved mockup
+        # 2026-09-04): seal + wordmark, white on the navy band.
         st.markdown(
-            f'<div style="font-size:var(--fs-sm);font-weight:600;'
-            f'letter-spacing:0.08em;color:var(--brand-primary);">'
-            f'{_html.escape(wordmark)}</div>', unsafe_allow_html=True)
+            f'<div class="ksk-brand"><span class="ksk-seal">K</span>'
+            f'<span class="ksk-wordmark">{_html.escape(wordmark)}</span></div>',
+            unsafe_allow_html=True)
     with nav:
         with st.container(key="topnav"):
             section = st.radio("Navigate", sections, key=key, horizontal=True,
                                label_visibility="collapsed")
     return section, search, right
+
+
+def provenance_footer(n_banks: int, price_asof: str | None = None) -> None:
+    """Navy provenance footer (visual refresh 2026-09-04): data sources +
+    freshness stamps, terminal-style. Renders at the very bottom of every
+    page. All values caller-supplied and cheap — this must never trigger a
+    data fetch of its own."""
+    stamps = ['<span><b class="ok">●</b> <b>FDIC</b> live</span>',
+              "<span><b>SEC EDGAR</b> · primary</span>"]
+    if price_asof:
+        stamps.append(f"<span><b>PRICES</b> {_html.escape(price_asof)}</span>")
+    stamps.append(f"<span><b>{n_banks}</b> US banks</span>")
+    st.markdown(
+        '<div class="ksk-provfoot">' + "".join(stamps)
+        + '<span class="right">KSK INVESTORS</span></div>',
+        unsafe_allow_html=True)
 
 
 def lazy_tabs(labels: list[str], key: str, default: int = 0) -> str:

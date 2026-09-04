@@ -135,8 +135,9 @@ with _nav_right:
     _u1, _u2 = st.columns([3, 1.2], vertical_alignment="center")
     with _u1:
         st.markdown(
-            f'<div style="text-align:right;font-size:var(--fs-2xs);color:var(--text-secondary);">'
-            f'<span class="ksk-dot ok"></span>{len(watchlist)} banks · FDIC live</div>',
+            f'<div style="text-align:right;">'
+            f'<span class="ksk-livepill"><span class="ksk-dot ok"></span>'
+            f'{len(watchlist)} banks · live</span></div>',
             unsafe_allow_html=True)
     with _u2:
         with st.popover("⋯", use_container_width=True):
@@ -1756,6 +1757,26 @@ elif section == "Geographic":
     with timed("render:Geographic"):
         render_geo_view()
 
+
+# ── Provenance footer (visual refresh 2026-09-04) — every page ends with
+# sources + freshness. Cheap by contract: bank count is already in memory
+# and the price stamp is one indexed query memoized for 2 minutes.
+@st.cache_data(ttl=120, show_spinner=False)
+def _price_asof() -> str | None:
+    try:
+        from data.price_cache_store import get_max_updated_at
+        ts = get_max_updated_at()
+        if ts is None:
+            return None
+        from zoneinfo import ZoneInfo
+        return ts.astimezone(ZoneInfo("America/New_York")).strftime(
+            "%H:%M ET · %b %d")
+    except Exception:
+        return None
+
+
+from ui.chrome import provenance_footer as _prov_footer
+_prov_footer(len(watchlist), _price_asof())
 
 # ── Auto-refresh ─────────────────────────────────────────────────────────
 if auto_refresh and st.session_state.ibkr_connected:
