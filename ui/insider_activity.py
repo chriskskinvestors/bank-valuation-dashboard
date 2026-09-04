@@ -108,8 +108,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
             "Buyers : Sellers": (f"{w['buyers']} : {w['sellers']}"
                                  if (w["buyers"] or w["sellers"]) else "—"),
         })
-    st.dataframe(pd.DataFrame(win_rows), use_container_width=True,
-                 hide_index=True, height=36 + 35 * len(win_rows))
+    from ui.tables import ksk_table
+    ksk_table(pd.DataFrame(win_rows), signed_cols=("Net",))
     st.caption(
         "Open-market P/S trades only. The 12-month fetch reads each CIK's 30 "
         "most recent Form 4s, so very active filers may truncate the older "
@@ -254,21 +254,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                 })
             idf = pd.DataFrame(insider_rows)
 
-            def _color_net(row):
-                net_str = row.get("Net", "")
-                try:
-                    is_positive = net_str and not net_str.startswith("-")
-                    is_nonzero = net_str not in ("$0", "—")
-                    if is_positive and is_nonzero:
-                        return ["background-color: rgba(5, 150, 105, 0.08);"] * len(row)
-                    elif not is_positive and is_nonzero:
-                        return ["background-color: rgba(220, 38, 38, 0.08);"] * len(row)
-                except Exception:
-                    pass
-                return [""] * len(row)
-
-            styled = idf.style.apply(_color_net, axis=1)
-            st.dataframe(styled, use_container_width=True, hide_index=True)
+            from ui.tables import ksk_table
+            ksk_table(idf, signed_cols=("Net",))
             # Underlying numeric per-insider totals (unformatted USD)
             table_export(pd.DataFrame(summary["insiders"]),
                          f"insider_summary_{ticker}",
