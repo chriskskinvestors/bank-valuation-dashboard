@@ -25,6 +25,21 @@ def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[
     from data.bank_mapping import get_fdic_cert
     from data.cert_group import fetch_group_history
 
+    # Deep requests (beyond the 20-quarter warm window) read the backfilled
+    # history store (DEEP-HISTORY-PLAN.md, owner-approved 2026-09-08). The
+    # ≤20-quarter path below is UNTOUCHED — current pages get zero slower.
+    # An unpopulated store (pre-backfill, or a brand-new bank) returns [] and
+    # falls through to the live 20-quarter path: honest available depth, no
+    # live deep fetch on a render thread ever.
+    if limit > 20:
+        try:
+            from data.fdic_history_store import deep_group_history
+            deep = deep_group_history(ticker, limit=limit)
+        except Exception:
+            deep = []
+        if len(deep) >= min_quarters:
+            return deep
+
     hist = cache_get(f"fdic_hist:{ticker}")
     if hist and len(hist) >= min_quarters:
         return hist
@@ -35,7 +50,11 @@ def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[
     # are multi-bank holdcos and were showing one charter's figures (WTFC $9.3B
     # of $72.4B). fetch_group_history returns one consolidated record per
     # quarter, so every consumer of this list gets the real bank.
-    records = fetch_group_history(ticker, limit=limit, cert=cert)
+    # Live fallback stays capped at the warm window: a deep request with an
+    # unpopulated store must NOT trigger a 140-quarter live fetch on a render
+    # thread (jobs build, renders read) — it shows the honest 20 quarters
+    # until the backfill job has run.
+    records = fetch_group_history(ticker, limit=min(limit, 20), cert=cert)
     if not records:
         return hist or []
     cache_put(f"fdic_hist:{ticker}", records)
