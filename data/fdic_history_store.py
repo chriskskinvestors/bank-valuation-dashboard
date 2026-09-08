@@ -18,8 +18,21 @@ from __future__ import annotations
 import json
 
 import math
+import re
 
 from data.db import USE_POSTGRES as _USE_POSTGRES
+
+
+def _norm_repdte(raw) -> str | None:
+    """Normalize any REPDTE rendering to 8-digit YYYYMMDD. The live API hands
+    records whose REPDTE serializes longer than YYYYMMDD (second live
+    backfill failure 2026-09-08: StringDataRightTruncation on varchar(8) —
+    pandas renders the value as a full timestamp). Digits-only, first 8,
+    sanity-checked century — anything else is unkeyable and dropped."""
+    digits = re.sub(r"\D", "", str(raw or ""))[:8]
+    if len(digits) == 8 and digits[:2] in ("19", "20"):
+        return digits
+    return None
 
 
 def _strict_json(rec: dict) -> str:
@@ -75,7 +88,7 @@ def upsert_history(cert: int, records: list[dict]) -> int:
     from sqlalchemy import text
     rows = []
     for rec in records or []:
-        repdte = str(rec.get("REPDTE") or "").strip()
+        repdte = _norm_repdte(rec.get("REPDTE"))
         if not repdte:
             continue
         rows.append({"cert": int(cert), "repdte": repdte,
