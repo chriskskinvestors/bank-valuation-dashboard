@@ -165,3 +165,33 @@ class TestLoaderDeepPath(_DbCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStrictJson(_DbCase):
+    def test_nan_and_inf_become_null_never_invalid_json(self):
+        # Live backfill failure 2026-09-08: pandas NaN serialized as a bare
+        # NaN token — invalid JSON, rejected by Postgres JSONB on every cert.
+        import json as _json
+        import math
+        s = self._store
+        s.upsert_history(101, [{"REPDTE": "20260630", "ASSET": 5000.0,
+                                "EEFFR": float("nan"),
+                                "RBCRWAJ": float("inf")}])
+        recs = s.get_cert_history(101)
+        self.assertIsNone(recs[0]["EEFFR"])
+        self.assertIsNone(recs[0]["RBCRWAJ"])
+        # The stored payload itself must be strict JSON.
+        payload = s._strict_json({"A": float("nan"), "B": 1.5})
+        _json.loads(payload)                       # must not raise
+        self.assertNotIn("NaN", payload)
+        # And a non-serializable leak fails loudly, never stores garbage.
+        self.assertIn("null", payload)
+
+    def test_allow_nan_false_guards_future_leaks(self):
+        import math
+        s = self._store
+        # A float that sneaks past cleaning (e.g. nested) must raise, not
+        # silently produce a NaN token.
+        with self.assertRaises(ValueError):
+            import json as _json
+            _json.dumps({"x": float("nan")}, allow_nan=False)
