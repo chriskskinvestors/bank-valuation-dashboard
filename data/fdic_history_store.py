@@ -17,7 +17,22 @@ from __future__ import annotations
 
 import json
 
+import math
+
 from data.db import USE_POSTGRES as _USE_POSTGRES
+
+
+def _strict_json(rec: dict) -> str:
+    """Serialize a fetch_financials record as STRICT JSON. Pandas hands us
+    float('nan') for absent fields and Python's json would emit a bare NaN
+    token — invalid JSON that Postgres JSONB rejects (live backfill failure
+    2026-09-08: InvalidTextRepresentation on every cert). NaN/±inf become
+    null; allow_nan=False makes any future leak a loud error, not a stored
+    corruption."""
+    clean = {k: (None if isinstance(v, float)
+                 and (math.isnan(v) or math.isinf(v)) else v)
+             for k, v in rec.items()}
+    return json.dumps(clean, default=str, allow_nan=False)
 
 _engine = None
 
@@ -64,7 +79,7 @@ def upsert_history(cert: int, records: list[dict]) -> int:
         if not repdte:
             continue
         rows.append({"cert": int(cert), "repdte": repdte,
-                     "fields": json.dumps(rec, default=str)})
+                     "fields": _strict_json(rec)})
     if not rows:
         return 0
     rows.sort(key=lambda r: r["repdte"])
