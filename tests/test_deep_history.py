@@ -195,3 +195,23 @@ class TestStrictJson(_DbCase):
         with self.assertRaises(ValueError):
             import json as _json
             _json.dumps({"x": float("nan")}, allow_nan=False)
+
+
+class TestRepdteNormalization(_DbCase):
+    def test_timestamp_rendering_normalizes_to_yyyymmdd(self):
+        # Live failure #2 (2026-09-08): REPDTE serialized as a full
+        # timestamp blew past varchar(8).
+        s = self._store
+        n = s.upsert_history(101, [
+            {"REPDTE": "2026-06-30 00:00:00", "ASSET": 1.0},
+            {"REPDTE": "20260331", "ASSET": 2.0},
+        ])
+        self.assertEqual(2, n)
+        self.assertEqual(["20260630", "20260331"],
+                         [r for r in (s.max_repdte(101), s.min_repdte(101))])
+
+    def test_garbage_repdte_is_dropped(self):
+        from data.fdic_history_store import _norm_repdte
+        for bad in (None, "", "junk", "123", "00001231"):
+            self.assertIsNone(_norm_repdte(bad), bad)
+        self.assertEqual("19951231", _norm_repdte("1995-12-31"))
