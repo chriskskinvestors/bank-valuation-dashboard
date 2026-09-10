@@ -84,14 +84,16 @@ def render_branch_map(ticker):
     import plotly.express as px
     from ui.geo_view import _fit_viewport
     center, zoom = _fit_viewport(pts["lat"], pts["lng"])
-    fig = px.scatter_mapbox(
+    # scatter_map/MapLibre, not scatter_mapbox: CARTO raster tiles now
+    # watermark "API KEY REQUIRED"; the vector gl styles stay anonymous.
+    fig = px.scatter_map(
         pts, lat="lat", lon="lng",
         size=pts["deposits"].fillna(0).clip(lower=1),
         hover_name="branch_name",
         hover_data={"city": True, "state": True, "lat": False, "lng": False,
                     "deposits": ":,"},
         size_max=18, zoom=zoom, center=center)
-    fig.update_layout(mapbox_style="carto-positron", height=560,
+    fig.update_layout(map_style="carto-positron", height=560,
                       margin=dict(l=0, r=0, t=0, b=0))
     st.plotly_chart(fig, use_container_width=True, key=f"brmap_{ticker}")
     st.caption(f"{len(pts)} mapped branches (dot size = SOD deposits, "

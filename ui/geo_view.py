@@ -164,7 +164,12 @@ def _render_map(df: pd.DataFrame, title: str = "",
 
     center, zoom = _fit_viewport(plot_df["lat"], plot_df["lng"])
 
-    fig = px.scatter_mapbox(
+    # px.scatter_map (MapLibre), not the deprecated scatter_mapbox: CARTO
+    # ended anonymous access to the RASTER tiles the mapbox trace pulls —
+    # live maps watermarked "API KEY REQUIRED" (found 2026-09-10). The
+    # MapLibre trace uses CARTO's vector gl styles, which stay anonymous,
+    # and keeps the same carto-positron look.
+    fig = px.scatter_map(
         plot_df,
         lat="lat", lon="lng",
         color=color_col,
@@ -174,7 +179,7 @@ def _render_map(df: pd.DataFrame, title: str = "",
         center=center,
         zoom=zoom,
         height=620,
-        mapbox_style="carto-positron",
+        map_style="carto-positron",
         title=title or None,
     )
     # A labelled tooltip instead of plotly's raw "column=value" dump.
