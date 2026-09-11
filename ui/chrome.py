@@ -21,7 +21,11 @@ def top_nav(sections: list[str], key: str = "nav_section",
     (section, search_column, right_column) — the caller renders the global
     bank-search box into search_column and its status chip / refresh / settings
     into right_column so both stay in the bar."""
-    wm, nav, search, right = st.columns([0.85, 4.0, 1.55, 1.1],
+    # Nav takes a slightly larger share of the band: at laptop widths the
+    # 9 sections were wrapping to a second band row ("Geographic" dangling —
+    # owner clunk pass 2026-09-11). Paired with the <1700px compact-pill
+    # media query in styles.py, one row holds everywhere ≥1280px.
+    wm, nav, search, right = st.columns([0.78, 4.35, 1.42, 0.95],
                                         vertical_alignment="center")
     with wm:
         # Command-bar brand block (visual refresh, owner-approved mockup

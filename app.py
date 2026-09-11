@@ -1022,7 +1022,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # screen; or open / delete a saved one.
     if not st.session_state.get("_screen_open"):
         st.markdown("")
-        _lc1, _lc2 = st.columns([1.5, 4])
+        _lc1, _lc2 = st.columns([1, 5])
         with _lc1:
             if st.button("➕  New screen", type="primary", use_container_width=True,
                          key="screen_new_btn"):
@@ -1547,10 +1547,10 @@ elif section == "Company":
 
     # Narrow box (it doesn't need full width); a short visible label keeps the
     # selected value from rendering clipped (a known collapsed-label quirk).
-    _pcol, _ = st.columns([2, 3])
+    _pcol, _ = st.columns([1.4, 3.6])
     with _pcol:
         st.selectbox(
-            "🔎 Search a bank",
+            "Search a bank",
             options=_opts,
             format_func=_fmt_pick,
             placeholder="Ticker or name… (e.g. BANR, JPM)",
