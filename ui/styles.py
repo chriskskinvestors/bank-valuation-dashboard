@@ -1115,6 +1115,16 @@ CUSTOM_CSS = """
     /* Segmented controls (chart ranges, movers toggles): compact one-row
        pills everywhere — the default chunky boxes wrapped to two rows in
        the Company chart headers. Matches the Home-pane treatment. */
+    /* This Streamlit version renders segmented_control as stButtonGroup
+       with anonymous buttons (live-DOM-verified 2026-09-11) — the
+       stBaseButton-segmented_control testid the Home rule targets does
+       not exist here. Target the group. */
+    div[data-testid="stButtonGroup"] button {
+        min-height: 0 !important; height: 1.6rem !important;
+        padding: 0 0.65rem !important; }
+    div[data-testid="stButtonGroup"] button p {
+        font-size: var(--fs-xs) !important; line-height: 1 !important;
+        white-space: nowrap; }
     button[data-testid^="stBaseButton-segmented_control"] {
         min-height: 0 !important; height: 1.6rem !important;
         padding: 0 0.65rem !important; }
