@@ -1100,6 +1100,45 @@ CUSTOM_CSS = """
     .ksk-provfoot b { color: #c9d6ef; font-weight: 600; }
     .ksk-provfoot b.ok { color: #4ade80; }
     .ksk-provfoot .right { margin-left: auto; letter-spacing: 0.12em; }
+
+    /* ── Clunk pass (owner 2026-09-11) ─────────────────────────────────── */
+    /* Nav pills: never wrap; compact below 1700px so all 9 sections hold
+       one band row on laptops. */
+    .st-key-topnav [role="radiogroup"] label [data-testid="stMarkdownContainer"] p {
+        white-space: nowrap; }
+    @media (max-width: 1700px) {
+        .st-key-topnav [role="radiogroup"] { gap: 0 !important; }
+        .st-key-topnav [role="radiogroup"] label {
+            padding: 4px 8px !important; font-size: var(--fs-xs) !important; }
+    }
+
+    /* Segmented controls (chart ranges, movers toggles): compact one-row
+       pills everywhere — the default chunky boxes wrapped to two rows in
+       the Company chart headers. Matches the Home-pane treatment. */
+    button[data-testid^="stBaseButton-segmented_control"] {
+        min-height: 0 !important; height: 1.6rem !important;
+        padding: 0 0.65rem !important; }
+    button[data-testid^="stBaseButton-segmented_control"] p {
+        font-size: var(--fs-xs) !important; line-height: 1 !important;
+        white-space: nowrap; }
+
+    /* Primary buttons: house navy, not the theme's bright indigo slab. */
+    button[data-testid="stBaseButton-primary"] {
+        background: var(--brand-primary) !important;
+        border: 1px solid var(--brand-primary) !important;
+        border-radius: 6px !important; min-height: 0 !important;
+        padding: 0.4rem 1rem !important; }
+    button[data-testid="stBaseButton-primary"]:hover {
+        background: var(--brand-hover) !important;
+        border-color: var(--brand-hover) !important; }
+    button[data-testid="stBaseButton-primary"] p {
+        font-size: var(--fs-sm) !important; font-weight: 600 !important; }
+
+    /* The Company bank picker: compact height to match the band search. */
+    .st-key-company_pick [data-baseweb="select"] > div {
+        min-height: 2.1rem !important; }
+    .st-key-company_pick label p { font-size: var(--fs-xs) !important;
+        color: var(--text-muted) !important; }
 </style>
 """
 
