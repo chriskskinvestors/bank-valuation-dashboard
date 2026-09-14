@@ -811,3 +811,30 @@ class TestEightKAcceptanceStamp(unittest.TestCase):
         parsed = datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S").replace(
             tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc)
         self.assertEqual("2026-09-14T11:56:54+00:00", parsed.isoformat())
+
+
+class TestRestampEvents(unittest.TestCase):
+    """restamp_events converges stored published_at to the adapter's freshly
+    computed stamp (the 8-K acceptance-time fix can't reach existing rows
+    through conflict-ignore inserts), then no-ops."""
+
+    def setUp(self):
+        _fresh_db()
+
+    def test_restamps_then_noops(self):
+        from datetime import datetime, timezone
+        from data.events.store import insert_events, restamp_events
+        wrong = _ev("KEY", "sec_8k", "8-K · Reg FD Disclosure",
+                    "acc-1", age_min=720)          # the midnight-stamp era
+        insert_events([wrong])
+        right = _ev("KEY", "sec_8k", "8-K · Reg FD Disclosure",
+                    "acc-1", age_min=60)           # acceptance-time stamp
+        self.assertEqual(1, restamp_events([right]))
+        self.assertEqual(0, restamp_events([right]), "idempotent")
+        from sqlalchemy import text
+        eng = db._engine
+        with eng.connect() as conn:
+            ts = conn.execute(text(
+                "SELECT published_at FROM events WHERE external_id='acc-1'"
+            )).fetchone()[0]
+        self.assertEqual(str(right.published_at)[:16], str(ts)[:16])

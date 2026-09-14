@@ -367,6 +367,31 @@ def insert_events_returning_new(events: Iterable[Event]) -> list[Event]:
     return new
 
 
+def restamp_events(events: Iterable[Event]) -> int:
+    """Repair published_at on ALREADY-STORED rows from freshly-polled events
+    (matched on source+external_id). Inserts are conflict-ignore, so a
+    corrected timestamp computation (the 2026-09-14 8-K midnight-stamp fix)
+    never reaches existing rows on its own — this pass converges them in one
+    cycle and then no-ops (UPDATE guarded by <>). Idempotent and cheap;
+    also self-heals any future upstream timestamp corrections."""
+    from sqlalchemy import text
+    rows = [{"source": e.source, "eid": e.external_id,
+             "ts": e.published_at}
+            for e in events if e.external_id and e.published_at]
+    if not rows:
+        return 0
+    eng = _get_engine()
+    n = 0
+    with eng.begin() as conn:
+        for r in rows:
+            res = conn.execute(text(
+                "UPDATE events SET published_at = :ts "
+                "WHERE source = :source AND external_id = :eid "
+                "AND published_at <> :ts"), r)
+            n += res.rowcount or 0
+    return n
+
+
 def insert_events(events: Iterable[Event]) -> int:
     """Insert events idempotently. Returns count of NEW rows written."""
     return len(insert_events_returning_new(events))
