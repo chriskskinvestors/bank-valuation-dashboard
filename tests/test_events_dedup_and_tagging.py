@@ -795,3 +795,19 @@ class TestGoogleNewsRegulatoryCoverage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEightKAcceptanceStamp(unittest.TestCase):
+    """8-K published_at = EDGAR acceptance time (owner report 2026-09-14:
+    KEY's 7:56 AM ET Reg FD showed '12h ago'). EDGAR quirk pinned here:
+    acceptanceDateTime digits are EASTERN despite the .000Z suffix —
+    verified against the filing-index page, which displays ET and shows
+    the identical digits."""
+
+    def test_fake_z_suffix_is_parsed_as_eastern(self):
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        raw = "2026-09-14T07:56:54.000Z"          # KEY's actual stamp
+        parsed = datetime.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc)
+        self.assertEqual("2026-09-14T11:56:54+00:00", parsed.isoformat())

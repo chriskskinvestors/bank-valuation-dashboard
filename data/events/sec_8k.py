@@ -183,6 +183,7 @@ class SEC8KAdapter(SourceAdapter):
         recent = data.get("filings", {}).get("recent", {})
         forms = recent.get("form", [])
         dates = recent.get("filingDate", [])
+        acceptances = recent.get("acceptanceDateTime", [])
         accessions = recent.get("accessionNumber", [])
         primary_docs = recent.get("primaryDocument", [])
         items_list = recent.get("items", [])
@@ -198,10 +199,28 @@ class SEC8KAdapter(SourceAdapter):
             is_periodic = form in ("10-K", "10-K/A", "10-Q", "10-Q/A")
             if not (is_8k or is_periodic):
                 continue
-            try:
-                filed_at = datetime.strptime(dates[i], "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            except (ValueError, IndexError):
-                continue
+            # Real acceptance time, not midnight-of-filing-date: the old
+            # midnight-UTC stamp rendered as "8 PM ET yesterday", sinking
+            # every fresh 8-K below the morning wire items (KEY Reg FD,
+            # owner report 2026-09-14). EDGAR QUIRK, verified against the
+            # filing-index page that day: acceptanceDateTime's digits are
+            # EASTERN despite the .000Z suffix — parse as ET, store UTC.
+            # Missing/garbage acceptance falls back to the old date stamp.
+            filed_at = None
+            if i < len(acceptances) and acceptances[i]:
+                try:
+                    from zoneinfo import ZoneInfo
+                    filed_at = datetime.strptime(
+                        str(acceptances[i])[:19], "%Y-%m-%dT%H:%M:%S"
+                    ).replace(tzinfo=ZoneInfo("America/New_York")
+                              ).astimezone(timezone.utc)
+                except (ValueError, IndexError):
+                    filed_at = None
+            if filed_at is None:
+                try:
+                    filed_at = datetime.strptime(dates[i], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                except (ValueError, IndexError):
+                    continue
             if filed_at < cutoff:
                 # Sorted newest first, so we can stop scanning once we're past cutoff
                 break
