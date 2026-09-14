@@ -199,6 +199,16 @@ def main() -> int:
             new_events.extend(newly)
             total_new += len(newly)
             print(f"  [{adapter.name}] {len(events)} fetched, {len(newly)} new")
+            # Timestamp repair (2026-09-14): existing rows keep their stamp on
+            # conflict-ignore inserts, so converge them to the adapter's
+            # freshly computed published_at (8-K acceptance-time fix). No-ops
+            # once converged.
+            if adapter.name == "sec_8k":
+                from data.events.store import restamp_events
+                n_restamped = restamp_events(events)
+                if n_restamped:
+                    print(f"  [{adapter.name}] restamped {n_restamped} "
+                          "stored rows to acceptance time")
         except TimeoutError:
             timeouts += 1
             print(f"  [{adapter.name}] TIMEOUT after {cap:.0f}s — abandoned, "
