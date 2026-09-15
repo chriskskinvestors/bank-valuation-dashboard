@@ -1004,9 +1004,15 @@ def _af_feed_items_live(watchlist: list[str]) -> list[dict]:
             cik = tx.get("cik")
             edgar = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
                      f"&CIK={cik}&type=4&dateb=&owner=include&count=40") if cik else None
+            # Rank at the real filing-acceptance instant when known: the
+            # date-only stamp sorted as midnight, so a same-day Form 4 lost to
+            # every intraday news item and fell off the 40-item cap (the RVSB
+            # director buy was live in the aggregate but invisible on Home,
+            # 2026-09-15). Older aggregate rows without filed_at keep the date.
             out.append({"tag": "BUY" if buy else "SELL", "cls": "tr",
                         "tk": tx["ticker"], "url": tx.get("url") or edgar,
-                        "head": f"{who} {verb} {qty}{nm}", "ts": tx.get("date")})
+                        "head": f"{who} {verb} {qty}{nm}",
+                        "ts": tx.get("filed_at") or tx.get("date")})
     except Exception:
         pass
 
