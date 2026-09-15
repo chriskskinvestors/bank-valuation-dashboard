@@ -85,6 +85,26 @@ class TestAcquiredDisposedDirection(unittest.TestCase):
         txs = _parse_form4(_form4_xml("J", ""))
         self.assertIsNone(txs[0]["direction"])
 
+    def test_director_flag_accepts_both_boolean_spellings(self):
+        # Filers spell the relationship booleans "1" AND "true" — the real
+        # RVSB filing used "true" and its director rendered as "Insider".
+        txs = _parse_form4(_form4_xml("P", _AD_ACQUIRED))
+        self.assertEqual(txs[0]["role"], "Director")  # helper uses "1"
+        alt = _form4_xml("P", _AD_ACQUIRED).replace(
+            "<isDirector>1</isDirector>", "<isDirector>true</isDirector>")
+        txs = _parse_form4(alt)
+        self.assertEqual(txs[0]["role"], "Director")
+
+
+class TestAcceptanceToUtc(unittest.TestCase):
+    def test_fake_z_digits_are_eastern(self):
+        # Same EDGAR quirk the 8-K lane pins: digits are ET despite ".000Z".
+        from data.form4_client import _acceptance_to_utc_iso
+        self.assertEqual(_acceptance_to_utc_iso("2026-09-15T10:50:27.000Z"),
+                         "2026-09-15T14:50:27+00:00")
+        self.assertIsNone(_acceptance_to_utc_iso(None))
+        self.assertIsNone(_acceptance_to_utc_iso("garbage"))
+
 
 # ── Firehose delta (poll_form4_firehose) ─────────────────────────────────
 # Hermetic: requests.get and the GCS cache I/O are patched. The Atom page is
@@ -190,6 +210,9 @@ class TestFirehoseDelta(unittest.TestCase):
         tx = obj["transactions"][0]
         self.assertEqual(tx["accession"], _RVSB_ACC)
         self.assertEqual(tx["filing_date"], "2026-09-15")
+        # Real acceptance instant, UTC (feed entry says 10:50:27-04:00) —
+        # this is what lets the Home feed rank the row at filing time.
+        self.assertEqual(tx["filed_at"], "2026-09-15T14:50:27+00:00")
         self.assertEqual(tx["direction"], "Buy")
         self.assertEqual(tx["code"], "P")
         # The non-universe issuer's XML must never be fetched.

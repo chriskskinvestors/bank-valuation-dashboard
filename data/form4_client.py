@@ -19,7 +19,7 @@ import os
 import re
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -53,6 +53,22 @@ TRANSACTION_CODES = {
 
 def _pad_cik(cik: int) -> str:
     return str(cik).zfill(10)
+
+
+def _acceptance_to_utc_iso(acc: str | None) -> str | None:
+    """EDGAR submissions acceptanceDateTime → UTC ISO string, or None.
+
+    EDGAR QUIRK (pinned with evidence on the 8-K lane, 2026-09-14): the
+    digits are EASTERN despite the .000Z suffix — parse as ET, store UTC."""
+    if not acc:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.strptime(str(acc)[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            tzinfo=ZoneInfo("America/New_York")
+        ).astimezone(timezone.utc).isoformat()
+    except (ValueError, IndexError):
+        return None
 
 
 # Shared freshness check (data/freshness) bound to this module's TTL.
@@ -108,8 +124,12 @@ def _parse_form4(xml_text: str) -> list[dict]:
     is_officer = False
     officer_title = None
     if relationship is not None:
-        is_director = relationship.findtext("isDirector") == "1"
-        is_officer = relationship.findtext("isOfficer") == "1"
+        # Filers spell the boolean both ways — "1" and "true" (RVSB's
+        # 2026-09-15 filing used "true" and its director rendered as the
+        # generic "Insider").
+        _true = ("1", "true")
+        is_director = (relationship.findtext("isDirector") or "").strip().lower() in _true
+        is_officer = (relationship.findtext("isOfficer") or "").strip().lower() in _true
         officer_title = relationship.findtext("officerTitle")
 
     role = []
@@ -232,6 +252,7 @@ def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
     accessions = recent.get("accessionNumber", [])
     filing_dates = recent.get("filingDate", [])
     report_dates = recent.get("reportDate", [])
+    acceptances = recent.get("acceptanceDateTime", [])
 
     cutoff_date = (datetime.now() - timedelta(days=30 * months_back)).date()
 
@@ -250,6 +271,8 @@ def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
             "accession": accessions[i],
             "filing_date": filing_dates[i],
             "report_date": report_dates[i] if i < len(report_dates) else None,
+            "filed_at": _acceptance_to_utc_iso(
+                acceptances[i] if i < len(acceptances) else None),
         })
 
     # Limit to most recent 30 to avoid hammering SEC (each filing = 1-2 requests)
@@ -264,6 +287,10 @@ def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
         for tx in txs:
             tx["filing_date"] = entry["filing_date"]
             tx["accession"] = entry["accession"]
+            # UTC acceptance instant — lets the Home feed rank an insider row
+            # at its real filing time instead of midnight-of-transaction-date
+            # (where it lost to every intraday news item and fell off the cap).
+            tx["filed_at"] = entry.get("filed_at")
         all_transactions.extend(txs)
 
     # Sort by transaction date desc
@@ -339,6 +366,9 @@ def recent_open_market_transactions(ticker_ciks: dict, days: int = 30,
                 "direction": tx.get("direction"), "code": tx.get("code"),
                 "shares": tx.get("shares"), "value_usd": tx.get("value_usd"),
                 "date": tx.get("date"),
+                # UTC filing-acceptance instant when known (feed ranking);
+                # rows parsed before this field existed simply lack it.
+                "filed_at": tx.get("filed_at"),
             })
     out.sort(key=lambda r: r["date"], reverse=True)
     return out[:limit]
@@ -396,11 +426,20 @@ def _recent_form4_filings(pages: int = 2) -> list[dict]:
             if not am or am.group(1) in seen:
                 continue
             seen.add(am.group(1))
+            # <updated> carries a real UTC offset ("2026-09-15T10:50:27-04:00"),
+            # unlike the fake-Z acceptanceDateTime — parse it directly.
             updated = entry.findtext(f"{_ATOM_NS}updated") or ""
+            filed_at = None
+            try:
+                filed_at = datetime.fromisoformat(updated).astimezone(
+                    timezone.utc).isoformat()
+            except ValueError:
+                pass
             out.append({
                 "cik": int(m.group(1)),
                 "accession": am.group(1),
                 "filed": updated[:10] or datetime.now().strftime("%Y-%m-%d"),
+                "filed_at": filed_at,
             })
     return out
 
@@ -447,6 +486,7 @@ def poll_form4_firehose(ticker_ciks: dict, pages: int = 2) -> tuple[int, int]:
         for tx in txs:
             tx["filing_date"] = f["filed"]
             tx["accession"] = accession
+            tx["filed_at"] = f.get("filed_at")
         merged = txs + existing
         merged.sort(key=lambda x: x.get("date") or "", reverse=True)
         try:
