@@ -73,6 +73,7 @@ CHART_LAYOUT = dict(
         zerolinecolor=_AXIS_COLOR,
         tickfont=dict(color=_TEXT_SECONDARY, size=11),
         title_font=dict(color=_TEXT_SECONDARY, size=11),
+        automargin=True,
     ),
     yaxis=dict(
         gridcolor=_GRID_COLOR,
@@ -80,6 +81,11 @@ CHART_LAYOUT = dict(
         zerolinecolor=_AXIS_COLOR,
         tickfont=dict(color=_TEXT_SECONDARY, size=11),
         title_font=dict(color=_TEXT_SECONDARY, size=11),
+        # automargin: the fixed 42px left margin clipped the leading digit
+        # of scaled tick labels ("1.4x" -> ".4x", TFC valuation chart,
+        # owner report 2026-09-15). The margin now grows to fit the ticks
+        # at ANY text scale instead of assuming the 11px-era width.
+        automargin=True,
     ),
 )
 
