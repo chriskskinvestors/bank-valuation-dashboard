@@ -127,7 +127,12 @@ def _parse_form4(xml_text: str) -> list[dict]:
     for t in root.findall(".//nonDerivativeTransaction"):
         date = t.findtext(".//transactionDate/value")
         code = t.findtext(".//transactionCoding/transactionCode")
-        acq_disp = t.findtext(".//transactionCoding/transactionAcquiredDisposedCode")
+        # acquiredDisposedCode lives under transactionAmounts with a <value>
+        # child (SEC ownershipDocument schema) — the old transactionCoding path
+        # matched nothing, so every transaction (purchases included) rendered
+        # as direction "Sell" (caught on the RVSB director buy, 2026-09-15).
+        acq_disp = t.findtext(
+            ".//transactionAmounts/transactionAcquiredDisposedCode/value")
         shares = t.findtext(".//transactionAmounts/transactionShares/value")
         price = t.findtext(".//transactionAmounts/transactionPricePerShare/value")
         shares_after = t.findtext(".//postTransactionAmounts/sharesOwnedFollowingTransaction/value")
@@ -148,7 +153,12 @@ def _parse_form4(xml_text: str) -> list[dict]:
             "price": price_f,
             "value_usd": (shares_f * price_f) if (shares_f and price_f) else None,
             "shares_after": float(shares_after) if shares_after else None,
-            "direction": "Buy" if acq_disp == "A" else "Sell",
+            # A=acquired, D=disposed. If a filing omits the A/D flag, fall back
+            # to the SEC's own code semantics (P = open-market purchase,
+            # S = open-market sale); anything else stays None — never a guess.
+            "direction": ("Buy" if acq_disp == "A" else
+                          "Sell" if acq_disp == "D" else
+                          {"P": "Buy", "S": "Sell"}.get(code)),
             "form_type": "non-derivative",
         })
 
