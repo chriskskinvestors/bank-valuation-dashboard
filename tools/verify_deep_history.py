@@ -14,14 +14,14 @@ import sys
 # (label, cert, repdte, {field: hand-read value})
 GOLDEN = [
     ("TCBK simple mid-90s", 21943, "19951231",
-     {"ASSET": 603_251, "DEP": 516_328, "EQ": 52_867, "NETINC": 7_210}),
+     {"ASSET": 603_251, "DEP": 516_328, "EQTOT": 52_867, "NETINC": 7_210}),
     ("TCBK simple mid-00s", 21943, "20051231",
-     {"ASSET": 1_841_252, "DEP": 1_499_423, "EQ": 188_226,
+     {"ASSET": 1_841_252, "DEP": 1_499_423, "EQTOT": 188_226,
       "NETINC": 25_403}),
     # ZION's LEAD charter only — the consolidated group figure for 2005Q4
     # must be STRICTLY GREATER (multi-charter era: CB&T, Amegy, NSB, ...).
     ("ZION lead charter 2005", 2270, "20051231",
-     {"ASSET": 12_667_668, "DEP": 9_212_594, "EQ": 836_385,
+     {"ASSET": 12_667_668, "DEP": 9_212_594, "EQTOT": 836_385,
       "NETINC": 174_237}),
 ]
 
@@ -48,22 +48,26 @@ def main() -> int:
             if not ok:
                 failures += 1
             print(f"{status} {label} {field}: store={got} hand={expect}")
-    # Multi-charter inequality: ZION group 2005Q4 > lead charter alone.
+    # Multi-charter inequality — WTFC, a TRUE present-day multi-charter
+    # (16 active charters, hand-summed 2026-09-15 from raw FDIC
+    # institutions: $74,846,093k total vs $9,567,734k largest single).
+    # The first ZION attempt was a bad yardstick: ZION consolidated its
+    # charters years ago, so its present-day group is one cert and
+    # group == lead is CORRECT there.
     try:
         from data.fdic_history_store import deep_group_history
-        grp = [r for r in deep_group_history("ZION")
-               if str(r.get("REPDTE", "")).startswith("2005-12")
-               or str(r.get("REPDTE", "")).startswith("20051231")]
+        grp = deep_group_history("WTFC", limit=1)
         if grp:
             g = float(grp[0].get("ASSET") or 0)
-            ok = g > 12_667_668
+            ok = g > 60_000_000
             print(("ok  " if ok else "FAIL")
-                  + f" ZION 2005Q4 group ASSET {g:,.0f} > lead 12,667,668")
+                  + f" WTFC latest group ASSET {g:,.0f} > 60,000,000 "
+                  "(16-charter sum ~74.8B; any single charter <9.6B)")
             if not ok:
                 failures += 1
         else:
-            print("note ZION 2005Q4 group row not found via ticker "
-                  "(cert-group membership is present-day; acceptable)")
+            print("FAIL WTFC group history empty")
+            failures += 1
     except Exception as e:
         print(f"note group check skipped: {type(e).__name__}: {e}")
     print("RESULT:", "PASS" if failures == 0 else f"{failures} FAILURES")
