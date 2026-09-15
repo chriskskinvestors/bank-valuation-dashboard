@@ -344,6 +344,126 @@ def recent_open_market_transactions(ticker_ciks: dict, days: int = 30,
     return out[:limit]
 
 
+# ── Near-real-time delta: EDGAR's current-filings firehose ────────────────
+# The nightly refresh-insider sweep discovers filings per bank (~640 CIK
+# submissions walks), which is why it can only run nightly. Discovery is the
+# expensive part — EDGAR's getcurrent Atom feed solves it in ONE request:
+# the latest filings market-wide, newest first, each entry carrying the
+# issuer CIK (title), the accession (<id>) and the exact form type
+# (<category term>). Poll it each poll-events cycle, keep only true Form 4s
+# for universe banks, fetch just those XMLs, and merge into the same per-CIK
+# cache the nightly job owns. The nightly sweep stays the completeness
+# backstop (the feed window is finite; `type=4` PREFIX-matches, so ~90% of
+# entries are 424B2 structured-note noise to be filtered out here).
+
+_GETCURRENT_FORM4_URL = (
+    "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4"
+    "&company=&dateb=&owner=include&count=100&start={start}&output=atom"
+)
+_ATOM_NS = "{http://www.w3.org/2005/Atom}"
+_ISSUER_CIK_RE = re.compile(r"\((\d{4,10})\)\s*\(Issuer\)", re.IGNORECASE)
+_ACCESSION_RE = re.compile(r"accession-number=([\d-]+)")
+
+# cached_at sentinel for a cache object the firehose CREATED (bank never yet
+# swept nightly): always stale, so the next nightly run does the full
+# 12-month pull; meanwhile the feed aggregate already sees the delta rows.
+_EPOCH_STAMP = "1970-01-01T00:00:00"
+
+
+def _recent_form4_filings(pages: int = 2) -> list[dict]:
+    """Parse EDGAR's current-filings Atom feed → [{cik, accession, filed}]
+    for true Form 4 issuer entries, newest first. One HTTP call per page."""
+    out, seen = [], set()
+    for p in range(pages):
+        url = _GETCURRENT_FORM4_URL.format(start=p * 100)
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        try:
+            root = ET.fromstring(r.text)
+        except ET.ParseError:
+            break
+        for entry in root.findall(f"{_ATOM_NS}entry"):
+            cat = entry.find(f"{_ATOM_NS}category")
+            # Exact form match: `type=4` prefix-matches 424B2/424B3/425/…
+            if cat is None or cat.get("term") != "4":
+                continue
+            # Each filing lists twice — (Reporting) person + (Issuer) company;
+            # only the issuer entry carries the CIK we can map to a ticker.
+            m = _ISSUER_CIK_RE.search(entry.findtext(f"{_ATOM_NS}title") or "")
+            if not m:
+                continue
+            am = _ACCESSION_RE.search(entry.findtext(f"{_ATOM_NS}id") or "")
+            if not am or am.group(1) in seen:
+                continue
+            seen.add(am.group(1))
+            updated = entry.findtext(f"{_ATOM_NS}updated") or ""
+            out.append({
+                "cik": int(m.group(1)),
+                "accession": am.group(1),
+                "filed": updated[:10] or datetime.now().strftime("%Y-%m-%d"),
+            })
+    return out
+
+
+def poll_form4_firehose(ticker_ciks: dict, pages: int = 2) -> tuple[int, int]:
+    """Merge just-filed Form 4s for universe banks into the per-CIK cache,
+    within minutes of EDGAR acceptance instead of the nightly sweep's
+    next-morning latency (the RVSB director buy of 2026-09-15 sat invisible
+    for a day). Returns (filings_merged, transactions_added); the caller
+    rebuilds the feed aggregate when filings_merged > 0.
+
+    Cost: `pages` feed requests per poll + 2 requests per matched filing
+    (a handful per day universe-wide). Cache freshness is untouched — an
+    existing object keeps its cached_at (the nightly full sweep still runs),
+    and a created one is stamped permanently stale so nightly backfills it.
+    """
+    universe_ciks = {int(c) for c in (ticker_ciks or {}).values() if c}
+    if not universe_ciks:
+        return 0, 0
+    tick_by_cik = {}
+    for t, c in ticker_ciks.items():
+        if c:
+            tick_by_cik.setdefault(int(c), t)
+
+    filings = [f for f in _recent_form4_filings(pages)
+               if f["cik"] in universe_ciks]
+    n_filings = n_tx = 0
+    for f in filings:
+        cik, accession = f["cik"], f["accession"]
+        cached = None
+        try:
+            cached = load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
+        except Exception:
+            pass
+        existing = (cached or {}).get("transactions", [])
+        if any(tx.get("accession") == accession for tx in existing):
+            continue  # already merged (or the nightly sweep got it first)
+        xml = _fetch_form4_xml(accession, cik)
+        if not xml:
+            continue
+        txs = _parse_form4(xml)
+        if not txs:
+            continue
+        for tx in txs:
+            tx["filing_date"] = f["filed"]
+            tx["accession"] = accession
+        merged = txs + existing
+        merged.sort(key=lambda x: x.get("date") or "", reverse=True)
+        try:
+            save_json(FORM4_CACHE_PREFIX, f"{cik}.json", {
+                "cik": cik,
+                "cached_at": (cached or {}).get("cached_at") or _EPOCH_STAMP,
+                "transactions": merged,
+            })
+        except Exception:
+            continue
+        n_filings += 1
+        n_tx += len(txs)
+        print(f"  [form4-delta] {tick_by_cik.get(cik, cik)}: merged {accession} "
+              f"({len(txs)} tx)", flush=True)
+    return n_filings, n_tx
+
+
 # Postgres cache key for the pre-aggregated universe insider feed. Bumped (_v1)
 # if the row shape changes so a stale aggregate is rebuilt, not mis-read.
 _OPEN_MARKET_UNIVERSE_KEY = "form4_open_market_universe_v1"
