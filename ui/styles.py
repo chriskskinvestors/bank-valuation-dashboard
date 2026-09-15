@@ -1119,9 +1119,10 @@ CUSTOM_CSS = """
        with anonymous buttons (live-DOM-verified 2026-09-11) — the
        stBaseButton-segmented_control testid the Home rule targets does
        not exist here. Target the group. */
+    div[data-testid="stButtonGroup"] { gap: 2px !important; }
     div[data-testid="stButtonGroup"] button {
         min-height: 0 !important; height: 1.6rem !important;
-        padding: 0 0.65rem !important; }
+        padding: 0 0.5rem !important; }
     div[data-testid="stButtonGroup"] button p {
         font-size: var(--fs-xs) !important; line-height: 1 !important;
         white-space: nowrap; }

@@ -562,8 +562,15 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
     # Each visible line keeps a slim axis COLORED to it (P/TBV blue left, P/E
     # orange right when both). One metric → no right axis, so the plot fills the
     # card edge-to-edge like the price chart. x clamped to the data; automargin
-    # off so nothing re-expands.
-    fig.update_layout(title_text="", margin=dict(l=30, r=26 if dual else 8, t=8))
+    # off so nothing re-expands. The hand margins SCALE with the text-size
+    # ladder: the fixed l=30 was tuned for 11px ticks and clipped the leading
+    # digit of "1.35x" once ticks scaled to 12.3px ("sloppy" owner screenshot
+    # 2026-09-15 — TFC showed ".4x"). Width fits a 5-char "1.35x" tick at the
+    # active scale.
+    from utils.chart_style import _text_scale
+    _s = _text_scale()
+    fig.update_layout(title_text="", margin=dict(
+        l=round(36 * _s) + 6, r=(round(24 * _s) + 4) if dual else 8, t=8))
     _grid = "rgba(148,163,184,0.12)"
     fig.update_xaxes(showgrid=True, gridcolor=_grid, ticks="outside", ticklen=3,
                      tickcolor=_grid, range=[val["date"].min(), val["date"].max()])
