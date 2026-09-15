@@ -218,6 +218,28 @@ def main() -> int:
             print(f"  [{adapter.name}] CRASH {type(e).__name__}: {e}")
             traceback.print_exc()
 
+    # Near-real-time Form 4 delta: poll EDGAR's current-filings firehose for
+    # just-filed insider trades on universe banks and merge them into the
+    # per-CIK cache the nightly refresh-insider sweep owns, then rebuild the
+    # Home feed's insider aggregate. Turns the feed's insider latency from
+    # "next morning" into "same poll cycle" (RVSB director buy, 2026-09-15).
+    # A failure here never fails the poll; the nightly sweep is the backstop.
+    try:
+        from data.form4_client import (poll_form4_firehose,
+                                       build_open_market_universe_cache)
+        from data.bank_mapping import get_cik as _cik
+        ticker_ciks = {t: c for t in universe if (c := _cik(t))}
+        n_f4, n_f4tx = _run_with_timeout(
+            "form4_delta", lambda: poll_form4_firehose(ticker_ciks), 90)
+        if n_f4:
+            n_rows = build_open_market_universe_cache(ticker_ciks)
+            print(f"▶ Form 4 delta: {n_f4} new filings ({n_f4tx} transactions) "
+                  f"— insider feed aggregate rebuilt ({n_rows} rows)")
+    except TimeoutError:
+        print("  [form4-delta] hit 90s cap — abandoned (nightly sweep backstops)")
+    except Exception as e:
+        print(f"  [form4-delta] failed: {type(e).__name__}: {e}")
+
     # A new 10-K/10-Q means the company's XBRL facts changed — drop the cached
     # SEC facts for those banks so the next dashboard load re-pulls fresh data
     # (new figures AND new source-document links) instead of serving up to 24h
