@@ -105,11 +105,119 @@ class TestBankFootprint(unittest.TestCase):
         self.assertEqual(len(df), 2)                    # never an error
         self.assertEqual(absorbed, [])
 
+    def test_store_miss_backfills_absorbed_cert_from_live_sod(self):
+        # The prod Beacon gap: refresh-sod iterates ACTIVE institutions, so a
+        # cert absorbed before ingest has NO stored survey rows. The union
+        # must live-fetch the dead cert's same-year SOD, persist it, and use it.
+        import pandas as pd
+        with self._eng.begin() as c:
+            c.execute(text("DELETE FROM branches WHERE cert = :c"),
+                      {"c": _ABSORBED})
+        live = pd.DataFrame([
+            {"BRNUM": 1, "YEAR": 2025, "NAMEFULL": "Berkshire Bank",
+             "NAMEBR": "Pittsfield Main", "CITYBR": "Pittsfield",
+             "STALPBR": "MA", "CNTYNAMB": "Berkshire", "STCNTYBR": "25003",
+             "DEPSUMBR": 900},
+            {"BRNUM": 2, "YEAR": 2025, "NAMEFULL": "Berkshire Bank",
+             "NAMEBR": "Albany", "CITYBR": "Albany", "STALPBR": "NY",
+             "CNTYNAMB": "Albany", "STCNTYBR": "36001", "DEPSUMBR": 200},
+        ])
+        with patch("data.fdic_structure.get_structure_events",
+                   return_value=[_event("2026-02-01", _ABSORBED,
+                                        "Berkshire Bank")]), \
+             patch("data.sod_client.fetch_branches", return_value=live):
+            df, absorbed = bs.get_bank_footprint(_SURVIVOR)
+        self.assertEqual(len(df), 4)                    # 2 own + 2 backfilled
+        self.assertEqual(absorbed[0]["n_branches"], 2)
+        # and the store now holds the dead cert's rows (self-healed)
+        again = bs.get_branches_by_cert(_ABSORBED, year=2025)
+        self.assertEqual(len(again), 2)
+
+    def test_store_miss_with_live_fetch_empty_degrades_quietly(self):
+        import pandas as pd
+        with self._eng.begin() as c:
+            c.execute(text("DELETE FROM branches WHERE cert = :c"),
+                      {"c": _ABSORBED})
+        with patch("data.fdic_structure.get_structure_events",
+                   return_value=[_event("2026-02-01", _ABSORBED,
+                                        "Berkshire Bank")]), \
+             patch("data.sod_client.fetch_branches",
+                   return_value=pd.DataFrame()):
+            df, absorbed = bs.get_bank_footprint(_SURVIVOR)
+        self.assertEqual(len(df), 2)                    # plain roster
+        self.assertEqual(absorbed, [])
+
     def test_unknown_cert_stays_empty(self):
         with patch("data.fdic_structure.get_structure_events",
                    return_value=[]):
             df, absorbed = bs.get_bank_footprint(555555)
         self.assertTrue(df.empty)
+        self.assertEqual(absorbed, [])
+
+
+class TestAbsorbedCertsAfter(unittest.TestCase):
+    """The shared seam both footprint surfaces (store + live SOD) ride."""
+
+    def test_filters_direction_date_and_dedupes(self):
+        from data.fdic_structure import absorbed_certs_after
+        events = [
+            _event("2025-09-02", _ABSORBED, "Berkshire Bank"),
+            _event("2025-09-02", _ABSORBED, "Berkshire Bank"),   # dupe cert
+            _event("2024-01-15", _OLD_DEAL, "Old Deal Bank"),    # pre-asof
+            _event("2025-09-02", _SURVIVOR, "Self", direction="other"),
+            _event("2025-09-02", None, "No-cert row"),           # cert missing
+        ]
+        with patch("data.fdic_structure.get_structure_events",
+                   return_value=events):
+            out = absorbed_certs_after(_SURVIVOR, "2025-06-30")
+        self.assertEqual(out, [{"name": "Berkshire Bank", "cert": _ABSORBED,
+                                "date": "2025-09-02"}])
+
+    def test_boundary_date_is_exclusive(self):
+        from data.fdic_structure import absorbed_certs_after
+        with patch("data.fdic_structure.get_structure_events",
+                   return_value=[_event("2025-06-30", _ABSORBED, "X")]):
+            self.assertEqual(absorbed_certs_after(_SURVIVOR, "2025-06-30"), [])
+
+
+class TestLiveSodFootprint(unittest.TestCase):
+    """ui.deposit_lookup._fetch_footprint — the live-SOD twin of the store
+    union (the Market Share & Branches tab fetches SOD directly)."""
+
+    def _frames(self):
+        import pandas as pd
+        own = pd.DataFrame([{"YEAR": 2025, "DEPSUMBR": 500, "STALPBR": "MA",
+                             "STCNTYBR": "25001"}])
+        legacy = pd.DataFrame([{"YEAR": 2025, "DEPSUMBR": 900, "STALPBR": "NY",
+                                "STCNTYBR": "36001"},
+                               {"YEAR": 2025, "DEPSUMBR": 100, "STALPBR": "VT",
+                                "STCNTYBR": "50001"}])
+        return own, legacy
+
+    def test_unions_absorbed_cert_branches(self):
+        import ui.deposit_lookup as dl
+        own, legacy = self._frames()
+
+        def _fetch(cert, year=None):
+            return own if cert == _SURVIVOR else legacy
+
+        with patch.object(dl, "fetch_branches", side_effect=_fetch), \
+             patch("data.fdic_structure.get_structure_events",
+                   return_value=[_event("2025-09-02", _ABSORBED,
+                                        "Berkshire Bank")]):
+            df, absorbed = dl._fetch_footprint(_SURVIVOR)
+        self.assertEqual(len(df), 3)
+        self.assertEqual(int(df["DEPSUMBR"].sum()), 1500)
+        self.assertEqual(absorbed[0]["n_branches"], 2)
+
+    def test_no_absorptions_passes_frame_through(self):
+        import ui.deposit_lookup as dl
+        own, _ = self._frames()
+        with patch.object(dl, "fetch_branches", return_value=own), \
+             patch("data.fdic_structure.get_structure_events",
+                   return_value=[]):
+            df, absorbed = dl._fetch_footprint(_SURVIVOR)
+        self.assertEqual(len(df), 1)
         self.assertEqual(absorbed, [])
 
 

@@ -126,6 +126,38 @@ def render_deposit_lookup():
     _render_deposits_core(selected_cert, selected_name)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_footprint(cert: int):
+    """(branches, absorbed) — live-SOD twin of branches_store.get_bank_footprint:
+    the cert's latest-survey branches unioned with same-survey branches of
+    charters absorbed into it AFTER the survey's June-30 as-of date (Beacon
+    Financial showed 28 of its ~150 branches here, 2026-09-16). Structure-
+    history failure degrades to the single-cert frame — never an error."""
+    df = fetch_branches(cert)
+    if df.empty or "YEAR" not in df.columns:
+        return df, []
+    try:
+        year = int(pd.to_numeric(df["YEAR"], errors="coerce").max())
+    except (TypeError, ValueError):
+        return df, []
+    absorbed: list[dict] = []
+    try:
+        from data.fdic_structure import absorbed_certs_after
+        merged_in = absorbed_certs_after(int(cert), f"{year}-06-30")
+    except Exception:
+        return df, []
+    parts = [df]
+    for m in merged_in:
+        legacy = fetch_branches(m["cert"], year=year)
+        if legacy.empty:
+            continue
+        parts.append(legacy)
+        absorbed.append({**m, "n_branches": len(legacy)})
+    if len(parts) == 1:
+        return df, []
+    return pd.concat(parts, ignore_index=True), absorbed
+
+
 def _render_deposits_core(selected_cert: int, selected_name: str):
     """Core deposit rendering logic."""
 
@@ -134,7 +166,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     st.subheader(f"{selected_name}")
 
     with _skeleton():
-        branches_df = fetch_branches(selected_cert)
+        branches_df, absorbed = _fetch_footprint(selected_cert)
 
     if branches_df.empty:
         st.warning("No branch data found for this bank.")
@@ -154,6 +186,12 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
         ("States", f"{states}"),
         ("Counties", f"{counties}"),
     ])
+    if absorbed:
+        parts = ", ".join(f"{a['n_branches']} branches of {a['name']} "
+                          f"(merged in {a['date']})" for a in absorbed)
+        st.caption(f"Includes {parts} — the merger closed after the SOD "
+                   "survey date, so those branches still report under the "
+                   "absorbed charter until the next survey publishes.")
 
     # ── Branch map ───────────────────────────────────────────────────────
     st.subheader("Branch Map")
