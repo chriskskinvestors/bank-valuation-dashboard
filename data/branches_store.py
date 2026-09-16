@@ -405,28 +405,38 @@ def get_bank_footprint(cert: int) -> tuple[pd.DataFrame, list[dict]]:
 
     absorbed: list[dict] = []
     try:
-        from data.fdic_structure import get_structure_events
-        events = get_structure_events(int(cert))
+        from data.fdic_structure import absorbed_certs_after
+        merged_in = absorbed_certs_after(int(cert), survey_asof)
     except Exception:
         return base, []
     parts = [base]
-    seen: set[int] = set()
-    for e in events:
-        other = e.get("other_institution") or {}
-        ocert = other.get("cert")
-        if (e.get("direction") != "acquired" or not ocert
-                or (e.get("date") or "") <= survey_asof or ocert in seen):
-            continue
-        seen.add(int(ocert))
-        legacy = get_branches_by_cert(int(ocert), year=year)
+    for m in merged_in:
+        legacy = get_branches_by_cert(m["cert"], year=year)
         if legacy.empty:
-            continue
+            # The nightly refresh-sod job iterates ACTIVE institutions, and a
+            # cert absorbed between the survey date and ingest was already
+            # dead at ingest time — its survey rows were never stored (the
+            # Beacon gap: prod kept showing 28 branches because certs
+            # 23621/34147/15995 had no 2025 rows). FDIC still serves SOD for
+            # dead certs, so backfill the store once, live, and re-read.
+            try:
+                from data.sod_client import fetch_branches
+                live = fetch_branches(m["cert"], year=year)
+                if live is None or live.empty:
+                    continue
+                # ticker=None on purpose: as-of-survey these were separate
+                # institutions; county/state views keep reporting them under
+                # their own names, exactly as the survey filed them.
+                upsert_branches(None, m["cert"], live)
+                legacy = get_branches_by_cert(m["cert"], year=year)
+            except Exception:
+                continue
+            if legacy.empty:
+                continue
         legacy = legacy.copy()
-        legacy["legacy_bank"] = other.get("name") or f"cert {ocert}"
+        legacy["legacy_bank"] = m["name"]
         parts.append(legacy)
-        absorbed.append({"name": other.get("name") or f"cert {ocert}",
-                         "cert": int(ocert), "date": e.get("date"),
-                         "n_branches": len(legacy)})
+        absorbed.append({**m, "n_branches": len(legacy)})
     if len(parts) == 1:
         return base, []
     roster = pd.concat(parts, ignore_index=True)

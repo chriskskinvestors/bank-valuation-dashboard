@@ -188,6 +188,30 @@ def get_structure_events(cert: int) -> list[dict]:
     return events
 
 
+def absorbed_certs_after(cert: int, asof_date: str) -> list[dict]:
+    """Charters absorbed INTO this cert strictly after ``asof_date``
+    ('YYYY-MM-DD'), deduped, newest-first: [{name, cert, date}].
+
+    The seam for representing a merged bank against a dataset snapshotted
+    before the merger — e.g. the annual SOD survey (June 30): branches of a
+    charter absorbed after the survey date still sit under its dead cert
+    until the next survey publishes (the Beacon Financial four-charter
+    consolidation, 2026-09-16). Failures inherit get_structure_events'
+    contract: [] — never raise, never a guess."""
+    seen: set[int] = set()
+    out: list[dict] = []
+    for e in get_structure_events(cert):
+        other = e.get("other_institution") or {}
+        ocert = other.get("cert")
+        if (e.get("direction") != "acquired" or not ocert
+                or (e.get("date") or "") <= asof_date or int(ocert) in seen):
+            continue
+        seen.add(int(ocert))
+        out.append({"name": other.get("name") or f"cert {ocert}",
+                    "cert": int(ocert), "date": e.get("date")})
+    return out
+
+
 def get_acquisition_history(cert: int) -> list[dict]:
     """
     Completed acquisitions (institutions absorbed by this cert), newest-first,
