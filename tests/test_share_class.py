@@ -251,5 +251,45 @@ class TestForeignTwinExclusion(unittest.TestCase):
             bu._NONCOMMON_CACHE = None
 
 
+class TestCertTickerMap(unittest.TestCase):
+    """cert -> ticker deep links resolve to the registrant's primary common,
+    never a shared-cert ETN/preferred sibling. Prod regression 2026-09-16:
+    Norfolk County, MA deposit market-share table linked "JPMorgan Chase Bank,
+    National Association" to AMJB (a JPMorgan-issued ETN under the same cert)
+    instead of JPM — first-seen setdefault over the RAW universe."""
+
+    def setUp(self):
+        import data.bank_universe as bu
+        self.bu = bu
+        self._saved = (bu._UNIVERSE_CACHE, bu._NONCOMMON_CACHE,
+                       bu._NONCOMMON_PRIMARY_CACHE)
+        bu._NONCOMMON_CACHE = None
+        bu._NONCOMMON_PRIMARY_CACHE = None
+
+    def tearDown(self):
+        (self.bu._UNIVERSE_CACHE, self.bu._NONCOMMON_CACHE,
+         self.bu._NONCOMMON_PRIMARY_CACHE) = self._saved
+
+    def test_shared_cert_etn_sibling_never_wins(self):
+        # AMJB deliberately FIRST in insertion order — the old first-wins
+        # setdefault handed it the cert.
+        self.bu._UNIVERSE_CACHE = {
+            "AMJB": {"cik": 19617, "fdic_cert": 628,
+                     "name": "JPMorgan Chase", "exchange": "NYSE Arca"},
+            "JPM":  {"cik": 19617, "fdic_cert": 628,
+                     "name": "JPMorgan Chase", "exchange": "NYSE"},
+        }
+        self.assertEqual(self.bu.cert_ticker_map().get(628), "JPM")
+
+    def test_skip_listed_twin_stays_unlinked(self):
+        # MZHOF (skip-listed OTC twin, no Company page) must not claim its
+        # cert — better an unlinked name than a link to an uncovered page.
+        self.bu._UNIVERSE_CACHE = {
+            "MZHOF": {"cik": 1335730, "fdic_cert": 21843,
+                      "name": "MIZUHO FINANCIAL GROUP INC", "exchange": "OTC"},
+        }
+        self.assertNotIn(21843, self.bu.cert_ticker_map())
+
+
 if __name__ == "__main__":
     unittest.main()

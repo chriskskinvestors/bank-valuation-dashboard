@@ -808,12 +808,20 @@ def get_noncommon_primary_map() -> dict[str, str]:
 def cert_ticker_map() -> dict[int, str]:
     """fdic_cert -> covered universe ticker, for Company-page deep links on
     surfaces that carry FDIC certs but bank NAMES (deal parties, deposit-share
-    competitors — the universal linking rule). Fail-open: get_universe serves
-    the snapshot (stale-tolerant, never live-builds on the interactive path);
-    any hiccup just means unlinked names."""
+    competitors — the universal linking rule). Non-covered tickers (preferred
+    series, bank-issued ETNs, skip-listed twins) share their registrant's cert
+    but have no Company page, so they must never win the cert — e.g. AMJB (a
+    JPMorgan ETN) beating JPM linked "JPMorgan Chase Bank" deposit-share rows
+    to the ETN (the 8-K ">VYLD" mis-tag class, sec_8k._canonical_cik_map).
+    Fail-open: get_universe serves the snapshot (stale-tolerant, never
+    live-builds on the interactive path); any hiccup just means unlinked
+    names."""
     try:
+        excluded = coverage_excluded()
         out: dict[int, str] = {}
         for t, info in get_universe().items():
+            if t in excluded:
+                continue
             try:
                 cert = int(info.get("fdic_cert") or 0)
             except (TypeError, ValueError):
