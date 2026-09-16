@@ -4,10 +4,12 @@ language (polish lane 2, owner-approved via the KSK Polish Pass mockup).
 Replaces display-only ``st.dataframe`` sites: uppercase muted headers,
 monospace tabular figures, hairline rows, hover highlight, semantic
 red/green. NOT for tables that need st.dataframe's column sorting
-(screeners) or LinkColumn machinery — those keep the widget.
+(screeners) — those keep the widget. Linked-ticker tables convert via
+``html_cols`` (caller-built anchors) instead of LinkColumn.
 
-Cells are plain text (HTML-escaped here). Values are expected already
-formatted by utils/formatting — this module renders, never computes.
+Cells are plain text (HTML-escaped here) except ``html_cols``. Values are
+expected already formatted by utils/formatting — this module renders,
+never computes.
 """
 from __future__ import annotations
 
@@ -32,10 +34,16 @@ def _cell_class(val: str) -> str:
 
 
 def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
+                   html_cols: tuple[str, ...] = (),
                    max_height_px: int | None = None) -> str:
     """The HTML for a ksk-grid table.
 
     signed_cols: columns whose +/- prefixed values color green/red.
+    html_cols: columns whose cells are CALLER-BUILT safe HTML (e.g. the
+    universal-linking-rule ticker anchors) inserted verbatim — the caller
+    owns escaping any data inside them; every other cell stays escaped
+    here. This is what lets linked-ticker tables leave st.dataframe's
+    LinkColumn for the house style.
     max_height_px: wrap in a scroll container when the table can be tall
     (mirrors the height=min(640, ...) idiom the dataframe sites used).
     """
@@ -43,6 +51,9 @@ def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
     # Alignment per column: right when most non-dash values look numeric.
     aligns = {}
     for c in cols:
+        if c in html_cols:
+            aligns[c] = "txt"
+            continue
         vals = [str(v) for v in df[c].tolist() if str(v) not in _DASH]
         num = sum(1 for v in vals if _NUM_RE.match(v))
         aligns[c] = "num" if vals and num / len(vals) >= 0.6 else "txt"
@@ -69,7 +80,8 @@ def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
                 sem = _cell_class(v)
                 if sem:
                     klass += " " + sem
-            out.append(f'<td class="{klass}">{html.escape(v)}</td>')
+            cell = v if c in html_cols else html.escape(v)
+            out.append(f'<td class="{klass}">{cell}</td>')
         out.append("</tr>")
     out.append("</tbody></table>")
     table = "".join(out)
@@ -79,10 +91,12 @@ def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
 
 
 def ksk_table(df, *, signed_cols: tuple[str, ...] = (),
+              html_cols: tuple[str, ...] = (),
               max_height_px: int | None = None) -> None:
     """Render `df` as a house-style table (see module docstring)."""
     if df is None or len(df) == 0:
         return
     st.markdown(ksk_table_html(df, signed_cols=signed_cols,
+                               html_cols=html_cols,
                                max_height_px=max_height_px),
                 unsafe_allow_html=True)

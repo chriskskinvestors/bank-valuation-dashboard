@@ -41,6 +41,21 @@ class TestKskTableHtml(unittest.TestCase):
         self.assertIn("max-height:640px;overflow-y:auto", h)
         self.assertNotIn("max-height", ksk_table_html(self._df()))
 
+    def test_html_cols_insert_verbatim_others_stay_escaped(self):
+        # Linked-ticker conversion (deposit market-share tables, owner
+        # formatting report 2026-09-16): the Ticker anchor passes through,
+        # every other cell keeps its escaping.
+        df = pd.DataFrame([{
+            "Rank": "1",
+            "Ticker": '<a href="?s=Company&bank=BAC" target="_self">BAC</a>',
+            "Bank": "Bank <of> America",
+        }])
+        h = ksk_table_html(df, html_cols=("Ticker",))
+        self.assertIn('<a href="?s=Company&bank=BAC"', h)
+        self.assertIn("Bank &lt;of&gt; America", h)
+        # html_cols never right-align, whatever their content looks like
+        self.assertIn('<th class="txt">Ticker</th>', h)
+
 
 if __name__ == "__main__":
     unittest.main()
