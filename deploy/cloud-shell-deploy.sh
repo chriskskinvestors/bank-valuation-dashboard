@@ -51,9 +51,9 @@ gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 echo "▶ Building image (Cloud Build, ~3-5 min)..."
 gcloud builds submit --tag "${IMAGE}" --quiet
 
-# DATABASE_URL via the Cloud SQL Unix socket — no IP, no proxy needed
-DB_PASSWORD=$(gcloud secrets versions access latest --secret=db-password)
-DATABASE_URL="postgresql+psycopg2://${SQL_USER}:${DB_PASSWORD}@/${SQL_DB_NAME}?host=/cloudsql/${INSTANCE_CONN}"
+# Database: connection PARTS as plain env + the password as a secret mount
+# (DB_PASSWORD <- db-password, required below); data/db.py assembles the
+# unix-socket URL. Never read the password here or pass it as a plain env var.
 
 # Build --set-secrets. Because --set-secrets REPLACES the entire secret set, a
 # missing REQUIRED secret ships a half-keyed service (the 2026-06-24 outage:
@@ -61,7 +61,7 @@ DATABASE_URL="postgresql+psycopg2://${SQL_USER}:${DB_PASSWORD}@/${SQL_DB_NAME}?h
 # any missing required secret rather than silently skipping it.
 SECRETS_ARG=""
 MISSING=""
-for SECRET_NAME in anthropic-api-key fred-api-key fmp-api-key ffiec-username ffiec-jwt-token; do
+for SECRET_NAME in anthropic-api-key fred-api-key fmp-api-key ffiec-username ffiec-jwt-token db-password; do
     if gcloud secrets describe "${SECRET_NAME}" --quiet >/dev/null 2>&1; then
         ENV_VAR=$(echo "${SECRET_NAME}" | tr '[:lower:]-' '[:upper:]_')
         SECRETS_ARG="${SECRETS_ARG:+${SECRETS_ARG},}${ENV_VAR}=${SECRET_NAME}:latest"
@@ -91,7 +91,7 @@ DEPLOY_ARGS=(
     --region="${REGION}"
     --service-account="${SA_EMAIL}"
     --add-cloudsql-instances="${INSTANCE_CONN}"
-    --set-env-vars="GCS_BUCKET=${GCS_BUCKET},GCLOUD_PROJECT=${PROJECT_ID},DATABASE_URL=${DATABASE_URL}"
+    --set-env-vars="GCS_BUCKET=${GCS_BUCKET},GCLOUD_PROJECT=${PROJECT_ID},DB_USER=${SQL_USER},DB_NAME=${SQL_DB_NAME},INSTANCE_CONNECTION_NAME=${INSTANCE_CONN}"
     --memory=2Gi
     --cpu=1
     --min-instances=0
