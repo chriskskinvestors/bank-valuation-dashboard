@@ -16,24 +16,28 @@ from data.sod_client import (
 )
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
-from ui.chrome import (ledger, table_export, title_bar, lazy_tabs,
-                       ticker_company_url, ticker_linkcol)
+from ui.chrome import ledger, table_export, title_bar, lazy_tabs
+from ui.tables import ksk_table
 
 
 def _linked_tickers(certs) -> list:
-    """Company-page link URLs for a market-share table's CERT column —
-    covered banks get a linked Ticker cell, private banks a blank one
-    (universal linking rule)."""
+    """Ticker anchor cells for a market-share table's CERT column — covered
+    banks get an in-app Company-page link, private banks a blank cell
+    (universal linking rule). House anchor markup for ksk_table html_cols."""
+    import html as _html
     from data.bank_universe import cert_ticker_map
     cmap = cert_ticker_map()
 
     def _one(c):
         try:
-            # ticker_company_url returns "" (never None) for private banks —
-            # an all-None LinkColumn renders the literal string "None".
-            return ticker_company_url(cmap.get(int(c)))
+            tk = cmap.get(int(c))
         except (TypeError, ValueError):
             return ""
+        if not tk:
+            return ""
+        e = _html.escape(str(tk))
+        return (f'<a href="?s=Company&bank={e}" target="_self" '
+                f'title="Open the {e} company page">{e}</a>')
     return [_one(c) for c in certs]
 
 
@@ -260,13 +264,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                     # linked Ticker column (private banks show a blank cell).
                     show_df.insert(1, "Ticker", _linked_tickers(display["CERT"]))
 
-                    st.dataframe(
-                        show_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=min(600, 40 + 35 * len(show_df)),
-                        column_config=ticker_linkcol(),
-                    )
+                    ksk_table(show_df, html_cols=("Ticker",),
+                              max_height_px=600)
                     # Underlying numeric frame (deposits $K / share %)
                     table_export(
                         display[["rank", "NAMEFULL", "branches",
@@ -318,13 +317,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                     show_df.columns = ["Rank", "Bank", "Branches", "Deposits", "Market Share"]
                     show_df.insert(1, "Ticker", _linked_tickers(display["CERT"]))
 
-                    st.dataframe(
-                        show_df,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=min(600, 40 + 35 * len(show_df)),
-                        column_config=ticker_linkcol(),
-                    )
+                    ksk_table(show_df, html_cols=("Ticker",),
+                              max_height_px=600)
                     # Underlying numeric frame (deposits $K / share %)
                     table_export(
                         display[["rank", "NAMEFULL", "branches",
