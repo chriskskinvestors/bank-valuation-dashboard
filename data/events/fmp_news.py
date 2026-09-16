@@ -196,15 +196,22 @@ def _slug(headline: str) -> str:
 
 
 def _parse_dt(s: str) -> datetime | None:
-    """FMP timestamps read 'YYYY-MM-DD HH:MM:SS' (naive). Treat as UTC — a few
-    hours' tz drift is immaterial against the multi-day lookback, and ordering
-    stays correct."""
+    """FMP timestamps read 'YYYY-MM-DD HH:MM:SS' (naive) and the digits are
+    EASTERN — parse as ET, store UTC. Proven 2026-09-16: FMP said 16:10:00
+    for the BCB Bancorp offering PR that crossed GlobeNewswire at 4:10 PM ET
+    (and pre-market earnings releases consistently read 07:00, the classic
+    ET slot). The old treat-as-UTC shortcut ranked every FMP item 4-5 hours
+    too old — with the 5-min release-window sweep, a fresh 4 PM offering PR
+    sorted below lunchtime news."""
     s = (s or "").strip()
     if not s:
         return None
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
-            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+            from zoneinfo import ZoneInfo
+            return datetime.strptime(s, fmt).replace(
+                tzinfo=ZoneInfo("America/New_York")
+            ).astimezone(timezone.utc)
         except ValueError:
             continue
     try:

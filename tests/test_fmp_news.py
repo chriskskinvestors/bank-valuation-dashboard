@@ -292,3 +292,32 @@ class TestTitleSceneryVeto(unittest.TestCase):
             with self.subTest(title=title):
                 with patch.object(bank_mapping, "get_name", return_value=name):
                     self.assertFalse(_title_is_scenery(tk, title))
+
+
+class TestParseDtIsEastern(unittest.TestCase):
+    """FMP's naive 'YYYY-MM-DD HH:MM:SS' digits are EASTERN, not UTC.
+
+    Pinned on the BCB Bancorp offering PR (2026-09-16): FMP said 16:10:00
+    for a release that crossed GlobeNewswire at 4:10 PM ET. The old
+    treat-as-UTC parse stamped it 12:10 ET — "4h ago" the moment it
+    published, sinking it below stale items on every published_at-sorted
+    feed (defeating the 5-minute release-window sweep)."""
+
+    def test_naive_stamp_parses_as_eastern(self):
+        from data.events.fmp_news import _parse_dt
+        dt = _parse_dt("2026-09-16 16:10:00")
+        self.assertEqual(dt.isoformat(), "2026-09-16T20:10:00+00:00")
+
+    def test_date_only_and_iso_forms_still_parse(self):
+        from data.events.fmp_news import _parse_dt
+        self.assertEqual(_parse_dt("2026-09-16").isoformat(),
+                         "2026-09-16T04:00:00+00:00")  # ET midnight
+        self.assertEqual(_parse_dt("2026-09-16T20:10:00Z").isoformat(),
+                         "2026-09-16T20:10:00+00:00")  # explicit tz untouched
+        self.assertIsNone(_parse_dt(""))
+        self.assertIsNone(_parse_dt("garbage"))
+
+    def test_winter_offset_is_five_hours(self):
+        from data.events.fmp_news import _parse_dt
+        self.assertEqual(_parse_dt("2026-01-15 07:00:00").isoformat(),
+                         "2026-01-15T12:00:00+00:00")
