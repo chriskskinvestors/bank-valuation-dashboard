@@ -209,14 +209,17 @@ def get_insider_roster(cik: int) -> list[dict]:
     from data.form4_client import fetch_insider_trades
     by_name: dict[str, dict] = {}
     for t in fetch_insider_trades(int(cik)):
-        name = t.get("insider")
-        if not name:
-            continue
-        cur = by_name.get(name)
-        date = t.get("date") or ""
-        if cur is None or date > cur["latest_date"]:
-            by_name[name] = {"name": name, "role": t.get("role") or "Insider",
-                             "latest_date": date}
+        # A joint-filing row (dedupe_joint_filings) carries every co-owner in
+        # `insiders`; the roster lists each of them, not the joined string.
+        for name in t.get("insiders") or [t.get("insider")]:
+            if not name:
+                continue
+            cur = by_name.get(name)
+            date = t.get("date") or ""
+            if cur is None or date > cur["latest_date"]:
+                by_name[name] = {"name": name,
+                                 "role": t.get("role") or "Insider",
+                                 "latest_date": date}
     # Officers (any role beyond a bare Director/Insider) first; newest
     # activity first within each group (two-pass stable sort).
     rows = sorted(by_name.values(), key=lambda r: r["latest_date"], reverse=True)

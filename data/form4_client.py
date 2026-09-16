@@ -222,6 +222,63 @@ def _parse_form4(xml_text: str) -> list[dict]:
     return transactions
 
 
+def dedupe_joint_filings(transactions: list[dict]) -> list[dict]:
+    """Collapse co-filed Form 4s of the SAME economic transaction into one
+    row — the SNL convention (one row per economic transaction).
+
+    A jointly held position is reported by EVERY co-owner group: AMAL's
+    Workers United bloc files two Form 4s per trade (EDGAR accessions
+    0000902664-26-003825/-003826, verified 2026-09-16 — identical date,
+    code, shares, price AND shares_after across the pair; the post-holding
+    is the group total), so each sale rendered twice in the feed and the
+    per-bank table.
+
+    Merge rule: identical (form_type, date, code, shares, price,
+    shares_after) AND a different insider name. Same-name rows never merge
+    (IBCP's CEO legitimately sold ten same-size lots in one day), and
+    unrelated insiders trading the same size at the same price stay apart
+    because their post-holdings differ. Runs at READ time — the per-CIK
+    cache keeps every filing raw, so the firehose's incremental merge and
+    existing cache objects are untouched.
+
+    A merged row keeps the first-seen row's metadata (accession,
+    filing_date, filed_at), joins names into `insider` with " / " (the
+    names themselves contain commas), and carries them in `insiders`.
+    """
+    out: list[dict] = []
+    heads: dict[tuple, list[dict]] = {}
+    names: dict[int, list[str]] = {}
+    roles: dict[int, list[str]] = {}
+    for tx in transactions:
+        key = (tx.get("form_type"), tx.get("date"), tx.get("code"),
+               tx.get("shares"), tx.get("price"), tx.get("shares_after"))
+        name = tx.get("insider")
+        head = None
+        if name:
+            # A row joins the first head its filer isn't already part of, so
+            # co-owners who each report N identical lots pair up lot-for-lot
+            # instead of collapsing N economic transactions into one.
+            head = next((h for h in heads.get(key, [])
+                         if names[id(h)] and name not in names[id(h)]), None)
+        if head is None:
+            head = dict(tx)
+            out.append(head)
+            heads.setdefault(key, []).append(head)
+            names[id(head)] = [name] if name else []
+            roles[id(head)] = [tx["role"]] if tx.get("role") else []
+        else:
+            names[id(head)].append(name)
+            if tx.get("role") and tx["role"] not in roles[id(head)]:
+                roles[id(head)].append(tx["role"])
+    for head in out:
+        ns = names[id(head)]
+        if len(ns) > 1:
+            head["insider"] = " / ".join(ns)
+            head["insiders"] = ns
+            head["role"] = " / ".join(roles[id(head)])
+    return out
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
     """
@@ -233,7 +290,7 @@ def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
     # Check cache
     cached = load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
     if _is_fresh(cached) and "transactions" in cached:
-        return cached["transactions"]
+        return dedupe_joint_filings(cached["transactions"])
 
     try:
         url = SEC_SUBMISSIONS_URL.format(cik=_pad_cik(cik))
@@ -296,7 +353,8 @@ def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
     # Sort by transaction date desc
     all_transactions.sort(key=lambda x: x.get("date") or "", reverse=True)
 
-    # Cache
+    # Cache RAW (one row per filing) — dedupe is a read-time policy, so the
+    # firehose's per-accession incremental merge stays exact.
     try:
         save_json(FORM4_CACHE_PREFIX, f"{cik}.json", {
             "cik": cik,
@@ -306,7 +364,7 @@ def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
     except Exception:
         pass
 
-    return all_transactions
+    return dedupe_joint_filings(all_transactions)
 
 
 def recent_open_market_transactions(ticker_ciks: dict, days: int = 30,
@@ -349,7 +407,7 @@ def recent_open_market_transactions(ticker_ciks: dict, days: int = 30,
     for ticker, cik, cached in fetched:
         if not cached:
             continue
-        for tx in cached.get("transactions", []):
+        for tx in dedupe_joint_filings(cached.get("transactions", [])):
             if tx.get("form_type") != "non-derivative":
                 continue
             if tx.get("code") not in ("P", "S"):
