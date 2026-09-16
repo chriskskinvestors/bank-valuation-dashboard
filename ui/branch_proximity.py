@@ -159,7 +159,7 @@ def _per_branch_table(pairs: pd.DataFrame) -> None:
 
 
 def render_branch_proximity(ticker: str):
-    from data.branches_store import get_branch_competitors, _q_to_df
+    from data.branches_store import get_branch_competitors, get_owner_branches
 
     title_bar(f"{get_name(ticker) or ticker} ({ticker})", "Branch Proximity")
 
@@ -187,9 +187,9 @@ def render_branch_proximity(ticker: str):
     # A competitor branch in range of two subject branches appears in two
     # pairs — the rollup and map count each BRANCH once, keyed (cert, brnum).
     uniq_comp = pairs.drop_duplicates(subset=["cert", "brnum"])
-    subj = _q_to_df(
-        "SELECT * FROM branches WHERE cert = :cert AND year = :year",
-        {"cert": int(cert), "year": int(res["year"])})
+    # The company's whole roster (sibling charters + re-attributed branches),
+    # matching the subject set get_branch_competitors searched from.
+    subj = get_owner_branches(int(cert), int(res["year"]))
 
     pill_row([
         stat_pill("SUBJECT BRANCHES", f"{res['n_subject_branches']:,}"),

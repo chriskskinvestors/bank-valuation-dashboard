@@ -28,22 +28,26 @@ def _cert(ticker):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _roster(cert: int):
-    """(roster, absorbed) — the bank's combined footprint: latest SOD survey
-    plus same-survey branches of charters merged into this cert AFTER the
-    survey date (see data.branches_store.get_bank_footprint; the Beacon
-    Financial case — 28 Brookline branches shown for a 151-office bank)."""
+    """(roster, notes) — the bank's whole footprint: every charter the company
+    owns plus branches re-attributed from charters absorbed after the survey
+    (data.branches_store.get_bank_footprint)."""
     from data.branches_store import get_bank_footprint
     return get_bank_footprint(cert)
 
 
-def _survey_note(yr: int, absorbed: list[dict]) -> str:
-    """Honest provenance for the SOD vintage: names any post-survey absorbed
-    charter whose branches are unioned in, so the combined footprint is never
-    passed off as a single-survey figure."""
+def _survey_note(yr: int, notes: list[dict]) -> str:
+    """Honest provenance for the SOD vintage: names every sibling charter and
+    post-survey absorbed charter included, so a combined footprint is never
+    passed off as one charter's single-survey filing."""
     note = f"FDIC SOD {yr}"
-    if absorbed:
-        parts = ", ".join(f"{a['n_branches']} branches of {a['name']} "
-                          f"(merged in {a['date']})" for a in absorbed)
+    merged = [n for n in notes if n.get("kind") == "merged"]
+    charters = [n for n in notes if n.get("kind") == "charter"]
+    if charters:
+        note += " · includes sibling charter" + ("s " if len(charters) > 1 else " ")             + ", ".join(f"{c['name']} ({c['n_branches']} branches)"
+                        for c in charters)
+    if merged:
+        parts = ", ".join(f"{m['n_branches']} branches of {m['name']} "
+                          f"(merged in {m['date']})" for m in merged)
         note += (f" · includes {parts} — merger closed after the {yr} survey; "
                  "the next survey reports the combined bank directly")
     return note
@@ -72,14 +76,14 @@ def render_branch_list(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df, absorbed = _roster(cert)
+    df, notes = _roster(cert)
     if df.empty:
         return _empty(ticker)
     yr = int(df.iloc[0]["year"])
     total = df["deposits"].sum(skipna=True)
     st.markdown(f"**{len(df)} branches** · {df['state'].nunique()} states · "
                 f"{df['stcntybr'].nunique()} counties · "
-                f"deposits {_dep_usd(total)} — {_survey_note(yr, absorbed)}")
+                f"deposits {_dep_usd(total)} — {_survey_note(yr, notes)}")
     out = df[["branch_name", "address", "city", "state", "county", "msa_name",
               "deposits"]].copy()
     out["share_of_bank"] = (df["deposits"] / total * 100).round(2) if total else None
@@ -94,7 +98,7 @@ def render_branch_map(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df, absorbed = _roster(cert)
+    df, notes = _roster(cert)
     pts = df.dropna(subset=["lat", "lng"]) if not df.empty else df
     if pts.empty:
         return _empty(ticker)
@@ -115,7 +119,7 @@ def render_branch_map(ticker):
     st.plotly_chart(fig, use_container_width=True, key=f"brmap_{ticker}")
     st.caption(f"{len(pts)} mapped branches (dot size = SOD deposits, "
                f"$thousands as reported) — "
-               f"{_survey_note(int(pts.iloc[0]['year']), absorbed)}.")
+               f"{_survey_note(int(pts.iloc[0]['year']), notes)}.")
 
 
 # ── Branch Competitors ───────────────────────────────────────────────────────
@@ -125,7 +129,7 @@ def render_branch_competitors(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df, absorbed = _roster(cert)
+    df, notes = _roster(cert)
     if df.empty:
         return _empty(ticker)
     yr = int(df.iloc[0]["year"])
@@ -139,15 +143,17 @@ def render_branch_competitors(ticker):
             continue
         fp_total += float(cb["total_deposits"].sum())
         for _, r in cb.iterrows():
-            key = r["bank_name"]
-            d = rows.setdefault(key, {"ticker": r["ticker"], "counties": 0,
-                                      "branches": 0, "deposits": 0.0})
+            # Keyed by the bank's identity (lead cert), not its name: distinct
+            # private banks share names ("First National Bank") across counties.
+            d = rows.setdefault(int(r["cert"]), {
+                "Bank": r["bank_name"], "ticker": r["ticker"], "counties": 0,
+                "branches": 0, "deposits": 0.0})
             d["counties"] += 1
             d["branches"] += int(r["n_branches"])
             d["deposits"] += float(r["total_deposits"] or 0)
     if not rows:
         return _empty(ticker)
-    tbl = (pd.DataFrame([{"Bank": k, **v} for k, v in rows.items()])
+    tbl = (pd.DataFrame(list(rows.values()))
            .sort_values("deposits", ascending=False).head(26))
     tbl["share_of_footprint"] = (tbl["deposits"] / fp_total * 100).round(2)
     tbl["deposits"] = tbl["deposits"].map(_dep_usd)
@@ -155,7 +161,7 @@ def render_branch_competitors(ticker):
                               "branches": "Branches", "deposits": "Deposits",
                               "share_of_footprint": "% of footprint deposits"})
     st.markdown(f"**Competitors across {name}'s {len(footprint)}-county "
-                f"footprint** — {_survey_note(yr, absorbed)} (subject bank "
+                f"footprint** — {_survey_note(yr, notes)} (subject bank "
                 "included for rank context)")
     st.dataframe(tbl, use_container_width=True, hide_index=True, height=520)
 
@@ -174,7 +180,7 @@ def render_market_demographics(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df, _absorbed = _roster(cert)
+    df, _notes = _roster(cert)
     if df.empty:
         return _empty(ticker)
     from data.census_client import get_county_demographics

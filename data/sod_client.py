@@ -1,8 +1,8 @@
 """
 FDIC Summary of Deposits (SOD) API client.
 
-Provides branch-level deposit data, geographic coordinates, and
-market share analysis by county/MSA.
+Provides branch-level deposit data and geographic coordinates. (Market
+share is computed from the owner-resolved store, data/branches_store.)
 
 Rate-limit hardening: FDIC's public API throttles aggressive callers with
 429s. All fetches go through the shared data.http.get_with_retry (previously
@@ -31,6 +31,10 @@ BRANCH_FIELDS = [
     "DEPSUMBR", "DEPSUM", "ASSET",
     "SIMS_LATITUDE", "SIMS_LONGITUDE",
     "BRSERTYP", "SIMS_ESTABLISHED_DATE",
+    # FDIC's nationally unique branch id — the stable key for a branch
+    # re-attributed to its post-merger owner (data/branches_store), where the
+    # per-charter BRNUM would collide with the owner's own numbering.
+    "UNINUMBR",
 ]
 
 
@@ -102,90 +106,6 @@ def fetch_branches(cert: int, year: int | None = None) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
-
-
-def fetch_county_market_share(stcntybr: str, year: int | None = None) -> pd.DataFrame:
-    """
-    Fetch all branches in a county (FIPS code) and compute market share by bank.
-
-    Returns DataFrame with columns: CERT, NAMEFULL, branches, deposits, market_share.
-    Sorted by deposits descending.
-    """
-    if year is None:
-        year = get_latest_sod_year()
-
-    params = {
-        "filters": f"STCNTYBR:{stcntybr} AND YEAR:{year}",
-        "fields": "CERT,NAMEFULL,DEPSUMBR,BRNUM",
-        "limit": 10000,
-    }
-    try:
-        resp = _get_with_retry(SOD_URL, params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        print(f"[SOD] Error fetching county {stcntybr}: {e}")
-        return pd.DataFrame()
-
-    rows = [r["data"] for r in data.get("data", [])]
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-    df["DEPSUMBR"] = pd.to_numeric(df["DEPSUMBR"], errors="coerce").fillna(0)
-
-    # Aggregate by bank
-    agg = df.groupby(["CERT", "NAMEFULL"]).agg(
-        branches=("BRNUM", "count"),
-        deposits=("DEPSUMBR", "sum"),
-    ).reset_index()
-
-    total = agg["deposits"].sum()
-    agg["market_share"] = (agg["deposits"] / total * 100) if total > 0 else 0
-    agg = agg.sort_values("deposits", ascending=False).reset_index(drop=True)
-    agg["rank"] = range(1, len(agg) + 1)
-    return agg
-
-
-def fetch_msa_market_share(msabr: int, year: int | None = None) -> pd.DataFrame:
-    """
-    Fetch all branches in an MSA and compute market share by bank.
-
-    Returns DataFrame with columns: CERT, NAMEFULL, branches, deposits, market_share.
-    """
-    if year is None:
-        year = get_latest_sod_year()
-
-    params = {
-        "filters": f"MSABR:{msabr} AND YEAR:{year}",
-        "fields": "CERT,NAMEFULL,DEPSUMBR,BRNUM",
-        "limit": 10000,
-    }
-    try:
-        resp = _get_with_retry(SOD_URL, params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        print(f"[SOD] Error fetching MSA {msabr}: {e}")
-        return pd.DataFrame()
-
-    rows = [r["data"] for r in data.get("data", [])]
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-    df["DEPSUMBR"] = pd.to_numeric(df["DEPSUMBR"], errors="coerce").fillna(0)
-
-    agg = df.groupby(["CERT", "NAMEFULL"]).agg(
-        branches=("BRNUM", "count"),
-        deposits=("DEPSUMBR", "sum"),
-    ).reset_index()
-
-    total = agg["deposits"].sum()
-    agg["market_share"] = (agg["deposits"] / total * 100) if total > 0 else 0
-    agg = agg.sort_values("deposits", ascending=False).reset_index(drop=True)
-    agg["rank"] = range(1, len(agg) + 1)
-    return agg
 
 
 def search_bank_by_name(name: str) -> list[dict]:

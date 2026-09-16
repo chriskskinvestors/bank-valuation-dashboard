@@ -66,11 +66,16 @@ def _build_cert_to_ticker() -> dict[int, str]:
     so the ~350 single-charter banks map exactly as before.
     """
     from data.bank_mapping import BANK_MAP, get_fdic_cert
-    from data.bank_universe import get_universe_tickers
+    from data.bank_universe import get_universe_tickers, coverage_excluded
     from data.cert_group import get_cert_group
 
     cert_to_ticker: dict[int, str] = {}
-    for ticker in sorted(get_universe_tickers()):
+    # Non-common share classes / bank-issued ETNs share their registrant's
+    # cert, and with first-claim-wins over a SORTED list they won the race
+    # (AMJB < JPM tagged JPMorgan's branches AMJB — the shared-registrant
+    # sibling mis-tag class, fixed for cert_ticker_map in PR #114).
+    excluded = coverage_excluded()
+    for ticker in sorted(set(get_universe_tickers()) - excluded):
         try:
             cert = get_fdic_cert(ticker)
         except Exception:
@@ -110,12 +115,90 @@ def _build_cert_to_ticker() -> dict[int, str]:
     return cert_to_ticker
 
 
+def apply_post_survey_ownership(year: int, cert_to_ticker: dict[int, str],
+                                name_by_cert: dict[int, str]) -> bool:
+    """Re-attribute branches of charters absorbed AFTER the survey's June-30
+    as-of date to their current owner (data/branches_store OWNERSHIP MODEL).
+
+    The main sweep only ingests ACTIVE institutions, so an absorbed charter's
+    survey rows are either missing (it died before ingest — Beacon's three
+    legacy charters) or stranded under a dead cert. Every whole-bank merger
+    since the survey is resolved in one FDIC history query (chains followed),
+    and each absorbed charter's survey branches are fetched and written under
+    the owner. Already-attributed charters are skipped unless their owner
+    changed. Returns False only when the merger list itself couldn't load."""
+    from data.fdic_structure import fetch_absorptions_since, resolve_owners
+    from data.sod_client import fetch_branches
+    from data.branches_store import (get_reattributed_certs,
+                                     reattribute_absorbed_branches, _q_to_df)
+
+    absorptions = fetch_absorptions_since(f"{year}-06-30")
+    if absorptions is None:
+        print("⚠ ownership: FDIC merger history unavailable — branch "
+              "ownership left as last built", flush=True)
+        return False
+    owners = resolve_owners(absorptions)
+    done = get_reattributed_certs(year)
+    stats = {"merged_charters": len(owners), "already": 0, "no_rows": 0,
+             "written": 0, "renamed": 0, "no_uninumbr": 0, "charters": 0}
+    for absorbed, rec in sorted(owners.items()):
+        owner = rec["owner"]
+        if owner == absorbed:
+            continue
+        if done.get(absorbed) == owner:
+            stats["already"] += 1
+            continue
+        df = fetch_branches(absorbed, year=year)
+        if df.empty:
+            stats["no_rows"] += 1    # no branches in that survey (or fetch miss)
+            continue
+        name = name_by_cert.get(owner)
+        if not name:
+            stored = _q_to_df("SELECT MAX(bank_name) AS n FROM branches "
+                              "WHERE cert = :c AND year = :y",
+                              {"c": owner, "y": year})
+            name = (None if stored.empty else stored["n"].iloc[0]) \
+                or f"cert {owner}"
+        res = reattribute_absorbed_branches(
+            absorbed, owner, cert_to_ticker.get(owner), name, rec["date"],
+            df, year)
+        stats["charters"] += 1
+        stats["written"] += res["written"]
+        stats["renamed"] += res["renamed"]
+        stats["no_uninumbr"] += res["skipped_no_uninumbr"]
+    print(f"  ownership ({year} survey): {stats['merged_charters']} charters "
+          f"absorbed since {year}-06-30 · {stats['charters']} re-attributed "
+          f"now ({stats['written']:,} branches, {stats['renamed']:,} owner "
+          f"rows renamed) · {stats['already']} already current · "
+          f"{stats['no_rows']} with no survey branches"
+          + (f" · {stats['no_uninumbr']} branches lacked UNINUMBR (skipped)"
+             if stats["no_uninumbr"] else ""), flush=True)
+    return True
+
+
 def main() -> int:
     import warnings; warnings.filterwarnings("ignore")
     from data.branches_store import init_branches_schema
     from data.fdic_client import list_all_active_institutions
 
     init_branches_schema()
+
+    # `python -m jobs.refresh_sod ownership` — only the post-survey ownership
+    # pass (cheap: one history query + fetches for newly merged charters).
+    # Scheduled nightly so a merger closing mid-month shows as one bank the
+    # next morning instead of waiting for the monthly full sweep.
+    if "ownership" in sys.argv[1:]:
+        from data.sod_client import get_latest_sod_year
+        from data.branches_store import retag_tickers
+        year = get_latest_sod_year()
+        cert_to_ticker = _build_cert_to_ticker()
+        n = retag_tickers(year, cert_to_ticker)
+        print(f"  tickers ({year} survey): {n:,} branch rows re-tagged to the "
+              "current cert→ticker map", flush=True)
+        names = {int(i["cert"]): i.get("name") or ""
+                 for i in list_all_active_institutions() if i.get("cert")}
+        ok = apply_post_survey_ownership(year, cert_to_ticker, names)
+        return 0 if ok else 1
 
     cert_to_ticker = _build_cert_to_ticker()
 
@@ -180,6 +263,13 @@ def main() -> int:
         print("\nError sample (first 10):")
         for cert, err in errors[:10]:
             print(f"  cert={cert} {err}")
+
+    # Ownership pass AFTER the sweep: the sweep's upserts refresh the owner's
+    # own rows, then absorbed charters are re-attributed on top.
+    apply_post_survey_ownership(
+        sod_year, cert_to_ticker,
+        {int(i["cert"]): i.get("name") or "" for i in institutions
+         if i.get("cert")})
 
     # Tolerate <5% failure rate (FDIC's free API will hiccup at this volume)
     success_rate = success / max(1, len(institutions))

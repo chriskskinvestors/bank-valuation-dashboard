@@ -8,37 +8,26 @@ import streamlit as st
 from ui.states import skeleton as _skeleton
 import pandas as pd
 
-from data.sod_client import (
-    fetch_branches,
-    fetch_county_market_share,
-    fetch_msa_market_share,
-    search_bank_by_name,
-)
+from data.sod_client import fetch_branches, search_bank_by_name
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
 from ui.chrome import ledger, table_export, title_bar, lazy_tabs
 from ui.tables import ksk_table
 
 
-def _linked_tickers(certs) -> list:
-    """Ticker anchor cells for a market-share table's CERT column — covered
-    banks get an in-app Company-page link, private banks a blank cell
-    (universal linking rule). House anchor markup for ksk_table html_cols."""
+def _linked_tickers(tickers) -> list:
+    """Ticker anchor cells for a market-share table — covered banks get an
+    in-app Company-page link, private banks a blank cell (universal linking
+    rule). House anchor markup for ksk_table html_cols."""
     import html as _html
-    from data.bank_universe import cert_ticker_map
-    cmap = cert_ticker_map()
 
-    def _one(c):
-        try:
-            tk = cmap.get(int(c))
-        except (TypeError, ValueError):
+    def _one(tk):
+        if tk is None or (isinstance(tk, float) and pd.isna(tk)) or not str(tk).strip():
             return ""
-        if not tk:
-            return ""
-        e = _html.escape(str(tk))
+        e = _html.escape(str(tk).strip())
         return (f'<a href="?s=Company&bank={e}" target="_self" '
                 f'title="Open the {e} company page">{e}</a>')
-    return [_one(c) for c in certs]
+    return [_one(t) for t in tickers]
 
 
 def render_deposits_for_ticker(ticker: str):
@@ -126,36 +115,56 @@ def render_deposit_lookup():
     _render_deposits_core(selected_cert, selected_name)
 
 
+# Store column -> the SOD field names this page renders with.
+_STORE_TO_SOD = {"branch_name": "NAMEBR", "city": "CITYBR", "state": "STALPBR",
+                 "county": "CNTYNAMB", "deposits": "DEPSUMBR",
+                 "stcntybr": "STCNTYBR", "msa_code": "MSABR",
+                 "msa_name": "MSANAMB", "lat": "SIMS_LATITUDE",
+                 "lng": "SIMS_LONGITUDE", "year": "YEAR"}
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_footprint(cert: int):
-    """(branches, absorbed) — live-SOD twin of branches_store.get_bank_footprint:
-    the cert's latest-survey branches unioned with same-survey branches of
-    charters absorbed into it AFTER the survey's June-30 as-of date (Beacon
-    Financial showed 28 of its ~150 branches here, 2026-09-16). Structure-
-    history failure degrades to the single-cert frame — never an error."""
-    df = fetch_branches(cert)
-    if df.empty or "YEAR" not in df.columns:
-        return df, []
-    try:
-        year = int(pd.to_numeric(df["YEAR"], errors="coerce").max())
-    except (TypeError, ValueError):
-        return df, []
-    absorbed: list[dict] = []
-    try:
-        from data.fdic_structure import absorbed_certs_after
-        merged_in = absorbed_certs_after(int(cert), f"{year}-06-30")
-    except Exception:
-        return df, []
-    parts = [df]
-    for m in merged_in:
-        legacy = fetch_branches(m["cert"], year=year)
-        if legacy.empty:
-            continue
-        parts.append(legacy)
-        absorbed.append({**m, "n_branches": len(legacy)})
-    if len(parts) == 1:
-        return df, []
-    return pd.concat(parts, ignore_index=True), absorbed
+    """(branches in SOD field names, notes, survey year) — the bank's whole
+    footprint from the owner-resolved SOD store: every charter the company
+    owns plus branches re-attributed from post-survey mergers (Beacon
+    Financial showed 28 of its 150 branches here, 2026-09-16). A cert the
+    store doesn't hold falls back to its own live SOD filing (notes empty)."""
+    from data.branches_store import get_bank_footprint
+    roster, notes = get_bank_footprint(int(cert))
+    if roster.empty:
+        live = fetch_branches(cert)
+        year = (int(pd.to_numeric(live["YEAR"], errors="coerce").max())
+                if not live.empty and "YEAR" in live.columns else None)
+        return live, [], year
+    df = roster.rename(columns=_STORE_TO_SOD)
+    for col in ("DEPSUMBR", "SIMS_LATITUDE", "SIMS_LONGITUDE"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["MSABR"] = pd.to_numeric(df["MSABR"], errors="coerce")
+    return df, notes, int(roster["year"].iloc[0])
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _market_share(kind: str, key: str, year: int | None) -> pd.DataFrame:
+    """Ranked market share for a county (stcntybr) or MSA (msa_code) from the
+    SOD store, one row per OWNER — a company's charters and re-attributed
+    branches count as one bank, matching every other ranking on the site.
+    Columns: owner_key, CERT, TICKER, NAMEFULL, branches, deposits,
+    market_share, rank."""
+    from data.branches_store import get_banks_by_county, get_banks_by_msa
+    df = (get_banks_by_county(str(key), year=year) if kind == "county"
+          else get_banks_by_msa(str(key), year=year))
+    if df.empty:
+        return df
+    df = df.rename(columns={"cert": "CERT", "ticker": "TICKER",
+                            "bank_name": "NAMEFULL", "n_branches": "branches",
+                            "total_deposits": "deposits"})
+    df["deposits"] = pd.to_numeric(df["deposits"], errors="coerce").fillna(0)
+    df = df.sort_values("deposits", ascending=False).reset_index(drop=True)
+    total = df["deposits"].sum()
+    df["market_share"] = (df["deposits"] / total * 100) if total > 0 else 0.0
+    df["rank"] = range(1, len(df) + 1)
+    return df
 
 
 def _render_deposits_core(selected_cert: int, selected_name: str):
@@ -166,7 +175,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     st.subheader(f"{selected_name}")
 
     with _skeleton():
-        branches_df, absorbed = _fetch_footprint(selected_cert)
+        branches_df, notes, sod_year = _fetch_footprint(selected_cert)
 
     if branches_df.empty:
         st.warning("No branch data found for this bank.")
@@ -186,12 +195,31 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
         ("States", f"{states}"),
         ("Counties", f"{counties}"),
     ])
-    if absorbed:
-        parts = ", ".join(f"{a['n_branches']} branches of {a['name']} "
-                          f"(merged in {a['date']})" for a in absorbed)
+    charters = [n for n in notes if n.get("kind") == "charter"]
+    merged = [n for n in notes if n.get("kind") == "merged"]
+    if charters:
+        st.caption("Includes sibling charter" + ("s " if len(charters) > 1 else " ")
+                   + ", ".join(f"{c['name']} ({c['n_branches']} branches)"
+                               for c in charters)
+                   + " — one company, counted as one bank.")
+    if merged:
+        parts = ", ".join(f"{m['n_branches']} branches of {m['name']} "
+                          f"(merged in {m['date']})" for m in merged)
         st.caption(f"Includes {parts} — the merger closed after the SOD "
-                   "survey date, so those branches still report under the "
-                   "absorbed charter until the next survey publishes.")
+                   "survey date, so the survey still files those branches "
+                   "under the absorbed charter; they are counted with the "
+                   "bank that owns them today.")
+
+    # The subject's identity in owner-grouped rankings: its company ticker,
+    # else its (owning) cert — matches branches_store's owner key.
+    _tk = (branches_df["ticker"].dropna().astype(str).str.strip()
+           if "ticker" in branches_df.columns else pd.Series(dtype=str))
+    _tk = _tk[_tk != ""]
+    subject_okey = (_tk.iloc[0] if not _tk.empty
+                    else f"c{int(branches_df['cert'].iloc[0])}"
+                    if "cert" in branches_df.columns else None)
+    from utils.formatting import fmt_dollars_from_thousands as _fdt
+    _dep_fmt = lambda v: _fdt(v, 2)
 
     # ── Branch map ───────────────────────────────────────────────────────
     st.subheader("Branch Map")
@@ -229,7 +257,6 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     )
     branch_display = branch_display.sort_values("Branch").reset_index(drop=True)
 
-    from ui.tables import ksk_table
     ksk_table(branch_display, max_height_px=400)
     # Underlying numeric frame (deposits in $K, unformatted)
     table_export(
@@ -244,6 +271,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     # Get unique counties for this bank
     county_options = branches_df[["STCNTYBR", "CNTYNAMB", "STALPBR"]].drop_duplicates()
     county_options = county_options.dropna(subset=["STCNTYBR"])
+    county_options = county_options[~county_options["STCNTYBR"].astype(str)
+                                    .str.strip().isin(["", "0"])]
     county_options["label"] = county_options.apply(
         lambda r: f"{r['CNTYNAMB']} County, {r['STALPBR']}", axis=1
     )
@@ -270,19 +299,18 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
             if selected_county:
                 with _skeleton():
-                    ms_df = fetch_county_market_share(str(int(selected_county)))
+                    ms_df = _market_share("county", str(selected_county), sod_year)
 
                 if not ms_df.empty:
                     county_label = county_options[county_options["STCNTYBR"] == selected_county]["label"].iloc[0]
                     total_county_deps = ms_df["deposits"].sum()
 
                     # Highlight the selected bank
-                    bank_row = ms_df[ms_df["CERT"] == selected_cert]
+                    bank_row = ms_df[ms_df["owner_key"] == subject_okey]
                     if not bank_row.empty:
                         rank = bank_row.iloc[0]["rank"]
                         share = bank_row.iloc[0]["market_share"]
                         deps = bank_row.iloc[0]["deposits"]
-                        _dep_fmt = lambda v: fmt_dollars_from_thousands(v, 2)
 
                         st.markdown(
                             (f"**{selected_name}** ranks **#{int(rank)}** in {county_label} "
@@ -300,16 +328,16 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                     show_df.columns = ["Rank", "Bank", "Branches", "Deposits", "Market Share"]
                     # Universal linking rule: covered participants get a
                     # linked Ticker column (private banks show a blank cell).
-                    show_df.insert(1, "Ticker", _linked_tickers(display["CERT"]))
+                    show_df.insert(1, "Ticker", _linked_tickers(display["TICKER"]))
 
                     ksk_table(show_df, html_cols=("Ticker",),
                               max_height_px=600)
                     # Underlying numeric frame (deposits $K / share %)
                     table_export(
-                        display[["rank", "NAMEFULL", "branches",
+                        display[["rank", "TICKER", "NAMEFULL", "branches",
                                  "deposits", "market_share"]],
-                        f"county_market_share_{int(selected_county)}",
-                        key=f"exp_county_market_share_{int(selected_county)}")
+                        f"county_market_share_{selected_county}",
+                        key=f"exp_county_market_share_{selected_county}")
                 else:
                     st.warning("Could not load market share data for this county.")
 
@@ -327,15 +355,15 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
             if selected_msa:
                 with _skeleton():
-                    ms_df = fetch_msa_market_share(int(selected_msa))
+                    ms_df = _market_share("msa", str(int(selected_msa)), sod_year)
 
                 if not ms_df.empty:
                     msa_label = msa_options[msa_options["MSABR"] == selected_msa]["MSANAMB"].iloc[0]
                     total_msa_deps = ms_df["deposits"].sum()
 
-                    _dep_fmt_msa = lambda v: fmt_dollars_from_thousands(v, 2)
+                    _dep_fmt_msa = _dep_fmt
 
-                    bank_row = ms_df[ms_df["CERT"] == selected_cert]
+                    bank_row = ms_df[ms_df["owner_key"] == subject_okey]
                     if not bank_row.empty:
                         rank = bank_row.iloc[0]["rank"]
                         share = bank_row.iloc[0]["market_share"]
@@ -353,13 +381,13 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
 
                     show_df = display[["rank", "NAMEFULL", "branches", "deposits_fmt", "market_share_fmt"]].copy()
                     show_df.columns = ["Rank", "Bank", "Branches", "Deposits", "Market Share"]
-                    show_df.insert(1, "Ticker", _linked_tickers(display["CERT"]))
+                    show_df.insert(1, "Ticker", _linked_tickers(display["TICKER"]))
 
                     ksk_table(show_df, html_cols=("Ticker",),
                               max_height_px=600)
                     # Underlying numeric frame (deposits $K / share %)
                     table_export(
-                        display[["rank", "NAMEFULL", "branches",
+                        display[["rank", "TICKER", "NAMEFULL", "branches",
                                  "deposits", "market_share"]],
                         f"msa_market_share_{int(selected_msa)}",
                         key=f"exp_msa_market_share_{int(selected_msa)}")
