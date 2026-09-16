@@ -458,39 +458,40 @@ def render_geo_view():
             st.info("Pick one or more banks above.")
             return
 
-        # Pull branches for the selected certs across all states
-        from data.branches_store import _q_to_df
-        from data.branches_store import _USE_POSTGRES
-        params: dict = {"year": year}
-        if _USE_POSTGRES:
-            params["certs"] = certs
-            sql = ("SELECT * FROM branches "
-                   "WHERE cert = ANY(:certs) AND year = :year "
-                   "ORDER BY deposits DESC")
-        else:
-            placeholders = ",".join(f":c{i}" for i in range(len(certs)))
-            for i, c in enumerate(certs):
-                params[f"c{i}"] = c
-            sql = (f"SELECT * FROM branches WHERE cert IN ({placeholders}) "
-                   f"AND year = :year ORDER BY deposits DESC")
-        branches = _q_to_df(sql, params)
+        # Each pick is a BANK: expand its lead cert to everything the company
+        # owns — sibling charters (MTB's M&T Bank + Wilmington Trust) and
+        # branches re-attributed from post-survey mergers (Beacon's Berkshire,
+        # Bank Rhode Island, PCSB). Picking one charter used to show part of
+        # a footprint as if it were the whole bank.
+        from data.branches_store import get_owner_branches
+        label_by_cert = {c: lb for lb, c in label_to_cert.items()}
+        frames = []
+        for c in certs:
+            f = get_owner_branches(int(c), year)
+            if not f.empty:
+                frames.append(f.assign(Bank=label_by_cert[c]))
+        branches = (pd.concat(frames, ignore_index=True) if frames
+                    else pd.DataFrame())
 
-        # Summary table per selected bank. Grouped on CERT (dropna=False so a
-        # null ticker can't drop the row): two distinct private banks can share a
-        # name, and grouping by name would silently merge their deposits.
+        # Summary table per selected bank, grouped on the pick (not on name or
+        # a single cert: a company spans charters, and distinct private banks
+        # share names). Cert lists every charter included.
         if not branches.empty:
-            agg = (branches.groupby("cert", dropna=False)
+            agg = (branches.groupby("Bank", sort=False)
                    .agg(ticker=("ticker", "first"),
                         bank_name=("bank_name", "first"),
+                        certs=("cert", lambda x: ", ".join(
+                            str(int(v)) for v in sorted(set(x)))),
                         n_branches=("brnum", "count"),
                         total_deposits=("deposits", "sum"))
                    .reset_index()
                    .sort_values("total_deposits", ascending=False))
             agg["Deposits"] = agg["total_deposits"].apply(_fmt_dollars_k)
             agg = agg.rename(columns={
-                "cert": "Cert", "ticker": "Ticker", "bank_name": "Bank",
+                "certs": "Cert", "ticker": "Ticker", "bank_name": "Bank Name",
                 "n_branches": "Branches",
-            })[["Ticker", "Bank", "Cert", "Branches", "Deposits"]]
+            })[["Ticker", "Bank Name", "Cert", "Branches", "Deposits"]]
+            agg = agg.rename(columns={"Bank Name": "Bank"})
             st.markdown(f"### Selected banks — combined {len(branches):,} branches")
             # Display copy gets link URLs (blank for private banks — they have no
             # Company page); the export keeps plain tickers and carries Cert, the
@@ -503,12 +504,7 @@ def render_geo_view():
             table_export(agg, "selected_banks_branch_summary",
                          key="exp_selected_banks_branch_summary")
 
-        # Colour each SELECTED institution separately — ticker when it has one,
-        # otherwise its name, so private banks are distinguishable from each
-        # other rather than sharing one "nan" group. (An empty frame falls
-        # through to _render_map's own "no branches" message.)
-        if not branches.empty:
-            branches = branches.copy()
-            branches["Bank"] = [
-                _bank_option_label(r) for r in branches.to_dict("records")]
+        # Colour each SELECTED bank separately — its picker label, so private
+        # banks are distinguishable rather than sharing one "nan" group. (An
+        # empty frame falls through to _render_map's "no branches" message.)
         _render_map(branches, color_col="Bank", color_label="Bank")

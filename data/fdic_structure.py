@@ -188,28 +188,54 @@ def get_structure_events(cert: int) -> list[dict]:
     return events
 
 
-def absorbed_certs_after(cert: int, asof_date: str) -> list[dict]:
-    """Charters absorbed INTO this cert strictly after ``asof_date``
-    ('YYYY-MM-DD'), deduped, newest-first: [{name, cert, date}].
+def fetch_absorptions_since(date_iso: str) -> list[dict] | None:
+    """Every whole-bank absorption (CHANGECODE 810-812) effective STRICTLY
+    after ``date_iso`` ('YYYY-MM-DD'), universe-wide, one paginated query:
+    [{absorbed, survivor, date, absorbed_name}]. None on fetch failure (so a
+    transient outage is never mistaken for "no mergers").
 
-    The seam for representing a merged bank against a dataset snapshotted
-    before the merger — e.g. the annual SOD survey (June 30): branches of a
-    charter absorbed after the survey date still sit under its dead cert
-    until the next survey publishes (the Beacon Financial four-charter
-    consolidation, 2026-09-16). Failures inherit get_structure_events'
-    contract: [] — never raise, never a guess."""
-    seen: set[int] = set()
+    The input to branch ownership: the annual SOD survey (June 30) files
+    branches under the charter that held them THEN, so a merger closing
+    after the survey leaves the absorbed charter's branches under a dead
+    cert until the next survey publishes — the Beacon Financial case (three
+    charters absorbed into cert 17798 on 2025-09-02; 194 absorptions
+    universe-wide in that window, verified live 2026-09-16)."""
+    rows = fetch_history_rows(
+        f'CHANGECODE:[810 TO 812] AND EFFDATE:["{date_iso}" TO *]',
+        fields="EFFDATE,CHANGECODE,OUT_CERT,OUT_INSTNAME,SUR_CERT",
+        log_tag="fdic_structure.absorptions")
+    if rows is None:
+        return None
     out: list[dict] = []
-    for e in get_structure_events(cert):
-        other = e.get("other_institution") or {}
-        ocert = other.get("cert")
-        if (e.get("direction") != "acquired" or not ocert
-                or (e.get("date") or "") <= asof_date or int(ocert) in seen):
+    for d in rows:
+        date = (d.get("EFFDATE") or "")[:10]
+        absorbed, survivor = to_cert(d.get("OUT_CERT")), to_cert(d.get("SUR_CERT"))
+        # The range filter is inclusive; the survey-date boundary is not.
+        if not date or date <= date_iso or not absorbed or not survivor \
+                or absorbed == survivor:
             continue
-        seen.add(int(ocert))
-        out.append({"name": other.get("name") or f"cert {ocert}",
-                    "cert": int(ocert), "date": e.get("date")})
+        out.append({"absorbed": absorbed, "survivor": survivor, "date": date,
+                    "absorbed_name": d.get("OUT_INSTNAME") or ""})
     return out
+
+
+def resolve_owners(absorptions: list[dict]) -> dict[int, dict]:
+    """{absorbed_cert: {owner, date, absorbed_name}} — each absorbed charter
+    mapped to its CURRENT owner, following chains (A→B then B→C makes C the
+    owner of A). A cycle in the input (never valid, but never trusted) stops
+    at the first repeat instead of looping. Pure: no I/O."""
+    direct: dict[int, dict] = {}
+    for a in sorted(absorptions, key=lambda r: r["date"]):
+        direct[a["absorbed"]] = a          # latest record wins on a re-report
+    owners: dict[int, dict] = {}
+    for absorbed, rec in direct.items():
+        owner, seen = rec["survivor"], {absorbed}
+        while owner in direct and owner not in seen:
+            seen.add(owner)
+            owner = direct[owner]["survivor"]
+        owners[absorbed] = {"owner": owner, "date": rec["date"],
+                            "absorbed_name": rec["absorbed_name"]}
+    return owners
 
 
 def get_acquisition_history(cert: int) -> list[dict]:

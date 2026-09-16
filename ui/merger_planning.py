@@ -42,7 +42,7 @@ def bank_link(name, cert, ticker) -> str:
     return esc
 
 
-def _partner_picker(subject_cert: int):
+def _partner_picker(subject_cert: int, subject_ticker: str | None = None):
     """(cert, name, ticker) of the picked partner, or (None, None, None).
 
     Options = every FDIC institution in the SOD store (public AND private —
@@ -57,8 +57,13 @@ def _partner_picker(subject_cert: int):
         st.info("The SOD branches store is empty — the nightly refresh-sod "
                 "job fills it.")
         return None, None, None
-    coverage = coverage[pd.to_numeric(coverage["cert"], errors="coerce")
-                        != subject_cert]
+    # One option per BANK (a company's charters are one row); drop the
+    # subject itself by cert AND by ticker — its lead charter in the store
+    # need not be the curated cert the page was opened with.
+    same = pd.to_numeric(coverage["cert"], errors="coerce") == subject_cert
+    if subject_ticker:
+        same |= coverage["ticker"].fillna("").astype(str).str.upper()             == subject_ticker.upper()
+    coverage = coverage[~same]
     labels, by_label = _bank_options(coverage)
     label = st.selectbox(
         "Merger partner", options=labels, index=None,
@@ -103,7 +108,7 @@ def render_merger_planning(ticker: str):
                "Deposits shares: every market where both banks take "
                "deposits, with the DOJ HHI screen applied per market.")
 
-    p_cert, p_name, p_tk = _partner_picker(int(cert))
+    p_cert, p_name, p_tk = _partner_picker(int(cert), ticker)
     if not p_cert:
         st.info("Pick a merger partner to screen the combination.")
         return
