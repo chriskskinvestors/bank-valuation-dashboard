@@ -27,9 +27,26 @@ def _cert(ticker):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _roster(cert: int) -> pd.DataFrame:
-    from data.branches_store import get_branches_by_cert
-    return get_branches_by_cert(cert)
+def _roster(cert: int):
+    """(roster, absorbed) — the bank's combined footprint: latest SOD survey
+    plus same-survey branches of charters merged into this cert AFTER the
+    survey date (see data.branches_store.get_bank_footprint; the Beacon
+    Financial case — 28 Brookline branches shown for a 151-office bank)."""
+    from data.branches_store import get_bank_footprint
+    return get_bank_footprint(cert)
+
+
+def _survey_note(yr: int, absorbed: list[dict]) -> str:
+    """Honest provenance for the SOD vintage: names any post-survey absorbed
+    charter whose branches are unioned in, so the combined footprint is never
+    passed off as a single-survey figure."""
+    note = f"FDIC SOD {yr}"
+    if absorbed:
+        parts = ", ".join(f"{a['n_branches']} branches of {a['name']} "
+                          f"(merged in {a['date']})" for a in absorbed)
+        note += (f" · includes {parts} — merger closed after the {yr} survey; "
+                 "the next survey reports the combined bank directly")
+    return note
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -55,14 +72,14 @@ def render_branch_list(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df = _roster(cert)
+    df, absorbed = _roster(cert)
     if df.empty:
         return _empty(ticker)
     yr = int(df.iloc[0]["year"])
     total = df["deposits"].sum(skipna=True)
     st.markdown(f"**{len(df)} branches** · {df['state'].nunique()} states · "
                 f"{df['stcntybr'].nunique()} counties · "
-                f"deposits {_dep_usd(total)} — FDIC SOD {yr}")
+                f"deposits {_dep_usd(total)} — {_survey_note(yr, absorbed)}")
     out = df[["branch_name", "address", "city", "state", "county", "msa_name",
               "deposits"]].copy()
     out["share_of_bank"] = (df["deposits"] / total * 100).round(2) if total else None
@@ -77,7 +94,7 @@ def render_branch_map(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df = _roster(cert)
+    df, absorbed = _roster(cert)
     pts = df.dropna(subset=["lat", "lng"]) if not df.empty else df
     if pts.empty:
         return _empty(ticker)
@@ -97,7 +114,8 @@ def render_branch_map(ticker):
                       margin=dict(l=0, r=0, t=0, b=0))
     st.plotly_chart(fig, use_container_width=True, key=f"brmap_{ticker}")
     st.caption(f"{len(pts)} mapped branches (dot size = SOD deposits, "
-               f"$thousands as reported); survey year {int(pts.iloc[0]['year'])}.")
+               f"$thousands as reported) — "
+               f"{_survey_note(int(pts.iloc[0]['year']), absorbed)}.")
 
 
 # ── Branch Competitors ───────────────────────────────────────────────────────
@@ -107,7 +125,7 @@ def render_branch_competitors(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df = _roster(cert)
+    df, absorbed = _roster(cert)
     if df.empty:
         return _empty(ticker)
     yr = int(df.iloc[0]["year"])
@@ -137,8 +155,8 @@ def render_branch_competitors(ticker):
                               "branches": "Branches", "deposits": "Deposits",
                               "share_of_footprint": "% of footprint deposits"})
     st.markdown(f"**Competitors across {name}'s {len(footprint)}-county "
-                f"footprint** — FDIC SOD {yr} (subject bank included for rank "
-                "context)")
+                f"footprint** — {_survey_note(yr, absorbed)} (subject bank "
+                "included for rank context)")
     st.dataframe(tbl, use_container_width=True, hide_index=True, height=520)
 
 
@@ -156,7 +174,7 @@ def render_market_demographics(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df = _roster(cert)
+    df, _absorbed = _roster(cert)
     if df.empty:
         return _empty(ticker)
     from data.census_client import get_county_demographics

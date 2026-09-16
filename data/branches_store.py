@@ -377,6 +377,64 @@ def list_counties() -> pd.DataFrame:
     """, {})
 
 
+def get_bank_footprint(cert: int) -> tuple[pd.DataFrame, list[dict]]:
+    """A bank's CURRENT branch footprint from the latest stored SOD survey:
+    the cert's own roster, UNIONED with the same-survey rosters of charters
+    absorbed into it AFTER that survey's June-30 as-of date.
+
+    Why: SOD is annual. When a whole-bank merger closes between surveys, the
+    absorbed charter's branches sit under its old (now-inactive) cert until
+    the next survey publishes — so the survivor's single-cert roster is a
+    plausible-wrong footprint (Beacon Financial cert 17798 showed 28 legacy
+    Brookline branches while its 85 legacy Berkshire branches sat under dead
+    cert 23621; owner report 2026-09-16). Absorptions come from the FDIC
+    structure history (data/fdic_structure, 810-family rows on the survivor);
+    the union self-retires when a survey dated after the merger lands.
+
+    Returns (roster, absorbed): roster has a `legacy_bank` column (None on
+    the survivor's own rows); absorbed lists {name, cert, date, n_branches}
+    for provenance captions. On any structure-history failure, falls back to
+    the plain single-cert roster — never an error, never a guess."""
+    base = get_branches_by_cert(cert)
+    if base.empty:
+        return base, []
+    base = base.copy()
+    base["legacy_bank"] = None
+    year = int(base["year"].iloc[0])
+    survey_asof = f"{year}-06-30"
+
+    absorbed: list[dict] = []
+    try:
+        from data.fdic_structure import get_structure_events
+        events = get_structure_events(int(cert))
+    except Exception:
+        return base, []
+    parts = [base]
+    seen: set[int] = set()
+    for e in events:
+        other = e.get("other_institution") or {}
+        ocert = other.get("cert")
+        if (e.get("direction") != "acquired" or not ocert
+                or (e.get("date") or "") <= survey_asof or ocert in seen):
+            continue
+        seen.add(int(ocert))
+        legacy = get_branches_by_cert(int(ocert), year=year)
+        if legacy.empty:
+            continue
+        legacy = legacy.copy()
+        legacy["legacy_bank"] = other.get("name") or f"cert {ocert}"
+        parts.append(legacy)
+        absorbed.append({"name": other.get("name") or f"cert {ocert}",
+                         "cert": int(ocert), "date": e.get("date"),
+                         "n_branches": len(legacy)})
+    if len(parts) == 1:
+        return base, []
+    roster = pd.concat(parts, ignore_index=True)
+    roster = roster.sort_values("deposits", ascending=False,
+                                na_position="last").reset_index(drop=True)
+    return roster, absorbed
+
+
 def get_branches_by_cert(cert: int, year: int | None = None) -> pd.DataFrame:
     """One bank's full branch roster (latest survey year for that cert unless
     `year` given): branch name/address/geo/deposits/lat/lng, deposits desc.
