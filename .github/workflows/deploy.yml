@@ -102,7 +102,9 @@ jobs:
           # add anthropic-api-key back to the required list below.
           SECRETS=""
           MISSING=""
-          for s in fred-api-key fmp-api-key ffiec-username ffiec-jwt-token; do
+          # db-password mounts as DB_PASSWORD (data/db.py assembles the URL):
+          # the password is never read by this workflow, never a plain env var.
+          for s in fred-api-key fmp-api-key ffiec-username ffiec-jwt-token db-password; do
             if gcloud secrets describe "$s" --quiet >/dev/null 2>&1; then
               env_var=$(echo "$s" | tr '[:lower:]-' '[:upper:]_')
               SECRETS="${SECRETS:+$SECRETS,}${env_var}=${s}:latest"
@@ -129,16 +131,15 @@ jobs:
           done
           echo "secrets=${SECRETS}" >> $GITHUB_OUTPUT
 
-      - name: Build DATABASE_URL
+      # Connection PARTS only. The service used to get DATABASE_URL — password
+      # embedded — as a plain env var, readable by anyone with run.viewer and
+      # printed in revision YAML (pre-assessment security sweep 2026-09-16).
+      # The password now arrives solely as the DB_PASSWORD secret mount.
+      - name: Resolve Cloud SQL connection
         id: db
         run: |
           INSTANCE_CONN=$(gcloud sql instances describe "${{ env.SQL_INSTANCE }}" --format='value(connectionName)')
-          DB_PASSWORD=$(gcloud secrets versions access latest --secret=db-password)
-          URL="postgresql+psycopg2://${{ env.SQL_USER }}:${DB_PASSWORD}@/${{ env.SQL_DB }}?host=/cloudsql/${INSTANCE_CONN}"
-          # Mask the password in logs
-          echo "::add-mask::${DB_PASSWORD}"
           echo "instance_conn=${INSTANCE_CONN}" >> $GITHUB_OUTPUT
-          echo "url=${URL}" >> $GITHUB_OUTPUT
 
       - name: Deploy to Cloud Run
         run: |
@@ -147,7 +148,7 @@ jobs:
             --region="${{ env.REGION }}"
             --service-account="${{ env.SA_EMAIL }}"
             --add-cloudsql-instances="${{ steps.db.outputs.instance_conn }}"
-            --set-env-vars="GCS_BUCKET=${{ env.GCS_BUCKET }},GCLOUD_PROJECT=${{ env.PROJECT_ID }},DATABASE_URL=${{ steps.db.outputs.url }}"
+            --set-env-vars="GCS_BUCKET=${{ env.GCS_BUCKET }},GCLOUD_PROJECT=${{ env.PROJECT_ID }},DB_USER=${{ env.SQL_USER }},DB_NAME=${{ env.SQL_DB }},INSTANCE_CONNECTION_NAME=${{ steps.db.outputs.instance_conn }}"
             --memory=4Gi
             --cpu=2
             --cpu-boost
@@ -201,7 +202,7 @@ jobs:
       - name: Sync Cloud Run Jobs to deployed image
         run: |
           for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices refresh-avg-volume refresh-insider refresh-live-yields verify-metrics refresh-capital refresh-company-financials refresh-home-snapshot refresh-macro refresh-premarket refresh-trends refresh-13f refresh-deal-comps refresh-cr-quarterly nic-mirror-verify; do
-            if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
+            if DESC=$(gcloud run jobs describe "$job" --region="${{ env.REGION }}" --format=json --quiet 2>/dev/null); then
               echo "  Updating $job..."
               # refresh-universe: 3600s, not the 1800s default. Its 30-min
               # ceiling killed the 2026-08-04 run at bank 400/595 (and
@@ -212,10 +213,24 @@ jobs:
               if [ "$job" = "refresh-universe" ]; then
                 EXTRA="--task-timeout=3600"
               fi
+              # Jobs that talk to Cloud SQL (carry DATABASE_URL, or already
+              # migrated to DB_PASSWORD) get the password as a secret mount +
+              # plain connection parts, and the plaintext DATABASE_URL is
+              # removed. Jobs without a DB (e.g. nic-mirror-verify) are left
+              # alone so they can't flip from SQLite to an unreachable Postgres.
+              DB_FLAGS=()
+              if echo "$DESC" | grep -qE '"(DATABASE_URL|DB_PASSWORD)"'; then
+                DB_FLAGS+=(--update-secrets="DB_PASSWORD=db-password:latest")
+                DB_FLAGS+=(--update-env-vars="DB_USER=${{ env.SQL_USER }},DB_NAME=${{ env.SQL_DB }},INSTANCE_CONNECTION_NAME=${{ steps.db.outputs.instance_conn }}")
+                if echo "$DESC" | grep -q '"DATABASE_URL"'; then
+                  DB_FLAGS+=(--remove-env-vars="DATABASE_URL")
+                fi
+              fi
               gcloud run jobs update "$job" \
                 --region="${{ env.REGION }}" \
                 --image="${{ env.IMAGE }}" \
                 $EXTRA \
+                "${DB_FLAGS[@]}" \
                 --quiet >/dev/null
             else
               echo "  Skipping $job (not deployed yet)"

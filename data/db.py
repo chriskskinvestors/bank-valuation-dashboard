@@ -8,14 +8,43 @@ pools to the same database (up to ~25 connections on a small Cloud Run
 instance), and one copy (events/store) pointed local SQLite at a different
 path than the rest.
 
-Backends, selected by env var ``DATABASE_URL``:
-  • Postgres (cloud)  — ``DATABASE_URL=postgresql+psycopg2://...``
-  • SQLite (default)  — ./cache.db at the repo root, for local dev.
+Backends:
+  • Postgres (cloud) — assembled from the Cloud SQL parts: DB_USER, DB_NAME,
+    INSTANCE_CONNECTION_NAME (plain env) + DB_PASSWORD (mounted from Secret
+    Manager `db-password`). Connects over the Cloud SQL unix socket.
+  • Postgres via ``DATABASE_URL=postgresql+psycopg2://...`` — explicit
+    override (local tooling against prod, one-off scripts).
+  • SQLite (default) — ./cache.db at the repo root, for local dev.
+
+Why parts, not one URL: the deploy used to set DATABASE_URL — password
+embedded — as a PLAIN environment variable on the service and every job,
+readable by anyone with Cloud Run viewer access and printed in revision
+YAML (pre-assessment security sweep, 2026-09-16). The password now only ever
+exists as a secret reference.
 """
 import os
 from pathlib import Path
+from urllib.parse import quote_plus
 
-_DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
+def database_url(env=None) -> str:
+    """The Postgres URL for this process, or "" for SQLite. An explicit
+    DATABASE_URL wins; otherwise all four Cloud SQL parts must be present —
+    a partial set is treated as absent (never a half-built URL)."""
+    env = os.environ if env is None else env
+    explicit = (env.get("DATABASE_URL") or "").strip()
+    if explicit:
+        return explicit
+    parts = {k: (env.get(k) or "").strip() for k in
+             ("DB_USER", "DB_PASSWORD", "DB_NAME", "INSTANCE_CONNECTION_NAME")}
+    if not all(parts.values()):
+        return ""
+    return (f"postgresql+psycopg2://{quote_plus(parts['DB_USER'])}:"
+            f"{quote_plus(parts['DB_PASSWORD'])}@/{parts['DB_NAME']}"
+            f"?host=/cloudsql/{parts['INSTANCE_CONNECTION_NAME']}")
+
+
+_DATABASE_URL = database_url()
 USE_POSTGRES = _DATABASE_URL.startswith(
     ("postgres://", "postgresql://", "postgresql+psycopg2://")
 )

@@ -33,6 +33,9 @@ REQUIRED_SECRETS = {
     "fmp-api-key",
     "ffiec-username",
     "ffiec-jwt-token",
+    # Mounted as DB_PASSWORD (2026-09-16): the database password used to ride
+    # in a plain DATABASE_URL env var. Dropping it = a service with no DB.
+    "db-password",
 }
 
 
@@ -72,6 +75,37 @@ class TestDeploySecretContract(unittest.TestCase):
         # guard would be theatre.
         self.assertIn("--set-secrets=", self.text)
         self.assertIn("steps.secrets_arg.outputs.secrets", self.text)
+
+
+class TestDatabasePasswordNeverPlaintext(unittest.TestCase):
+    """The pre-assessment security sweep (2026-09-16) found DATABASE_URL —
+    password embedded — set as a PLAIN env var on the service and every job
+    (visible to run.viewer, printed in revision YAML). Lock the fix."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = DEPLOY_YML.read_text(encoding="utf-8")
+
+    def test_workflow_never_reads_the_password(self):
+        self.assertNotRegex(
+            self.text, r"secrets\s+versions\s+access[^\n]*db-password",
+            "deploy.yml reads the DB password — it must only be mounted")
+
+    def test_service_env_carries_parts_not_a_url(self):
+        env_lines = re.findall(r"--set-env-vars=\"([^\"]+)\"", self.text)
+        self.assertTrue(env_lines, "no --set-env-vars on the service deploy")
+        for line in env_lines:
+            self.assertNotIn("DATABASE_URL", line)
+            self.assertNotIn("DB_PASSWORD", line)
+        joined = " ".join(env_lines)
+        for part in ("DB_USER=", "DB_NAME=", "INSTANCE_CONNECTION_NAME="):
+            self.assertIn(part, joined)
+
+    def test_jobs_are_migrated_to_the_secret_mount(self):
+        self.assertIn('--update-secrets="DB_PASSWORD=db-password:latest"', self.text)
+        self.assertIn('--remove-env-vars="DATABASE_URL"', self.text)
+        self.assertIn('"${DB_FLAGS[@]}"', self.text,
+                      "job DB flags are built but never passed to jobs update")
 
 
 class TestJobSecretCoverageMap(unittest.TestCase):
