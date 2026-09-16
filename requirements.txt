@@ -18,7 +18,7 @@ certifi==2026.7.22
 cffi==2.1.0
 charset_normalizer==3.4.9
 click==8.4.2
-cryptography==49.0.0
+cryptography==50.0.0
 curl_cffi==0.15.0
 defusedxml==0.7.1
 distro==1.9.0
@@ -26,7 +26,7 @@ docstring-parser==0.18.0
 et-xmlfile==2.0.0
 ffiec-data-connect==3.0.0
 gitdb==4.0.12
-gitpython==3.1.57
+gitpython==3.1.59
 google-api-core==2.33.0
 google-auth==2.56.2
 google-cloud-core==2.6.0
@@ -74,7 +74,7 @@ pydantic-core==2.46.4
 pydantic==2.13.4
 pydeck==0.9.3
 pygments==2.20.0
-pypdf==6.14.2
+pypdf==6.16.1
 python-dateutil==2.9.0.post0
 python-multipart==0.0.32
 pytz==2026.3.post1
