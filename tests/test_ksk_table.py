@@ -56,6 +56,20 @@ class TestKskTableHtml(unittest.TestCase):
         # html_cols never right-align, whatever their content looks like
         self.assertIn('<th class="txt">Ticker</th>', h)
 
+    def test_txt_cols_force_left_alignment(self):
+        # Street addresses start with digits — auto-detect would right-align
+        # them in the numeric font (Market Share & Branches, 2026-09-17).
+        df = pd.DataFrame([{"Branch": "Main", "Address": "6 Verdae Blvd",
+                            "Deposits": "$1.2B"},
+                           {"Branch": "Paces", "Address": "309 E Paces Ferry Rd",
+                            "Deposits": "$469.7M"}])
+        auto = ksk_table_html(df)
+        self.assertIn('<th class="num">Address</th>', auto)
+        forced = ksk_table_html(df, txt_cols=("Address",))
+        self.assertIn('<th class="txt">Address</th>', forced)
+        self.assertIn('<td class="txt">6 Verdae Blvd</td>', forced)
+        self.assertIn('<th class="num">Deposits</th>', forced)
+
 
 if __name__ == "__main__":
     unittest.main()

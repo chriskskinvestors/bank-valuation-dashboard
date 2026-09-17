@@ -112,8 +112,13 @@ def table_export(df, filename: str, key: str) -> None:
     their own bytes through st.download_button directly."""
     buf = io.StringIO()
     df.to_csv(buf, index=False)
-    st.download_button("Export", buf.getvalue(), file_name=f"{filename}.csv",
-                       mime="text/csv", key=key)
+    # The keyed container carries the compact right-aligned styling
+    # (styles.py `st-key-tblexp_`); a bare download_button rendered as a
+    # full-size button parked at the left under every table.
+    with st.container(key=f"tblexp_{key}"):
+        st.download_button("Export", buf.getvalue(),
+                           file_name=f"{filename}.csv", mime="text/csv",
+                           key=key)
 
 
 def ticker_company_url(ticker) -> str:

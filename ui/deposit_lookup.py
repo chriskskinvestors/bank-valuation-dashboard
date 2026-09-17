@@ -12,6 +12,7 @@ from data.sod_client import fetch_branches, search_bank_by_name
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
 from ui.chrome import ledger, table_export, title_bar, lazy_tabs
+from ui.components import section_header
 from ui.tables import ksk_table, ticker_anchor_cells as _linked_tickers
 
 
@@ -207,11 +208,10 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     _dep_fmt = lambda v: _fdt(v, 2)
 
     # ── Branch map ───────────────────────────────────────────────────────
-    st.subheader("Branch Map")
-
     map_df = branches_df[
         branches_df["SIMS_LATITUDE"].notna() & branches_df["SIMS_LONGITUDE"].notna()
     ].copy()
+    section_header("", "Branch map", _count(len(map_df), "mapped branch"))
 
     if not map_df.empty:
         map_df = map_df.rename(columns={
@@ -230,30 +230,36 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
         from ui.states import empty_state
         empty_state("No geographic data available for this bank's branches")
 
-    # ── Branch detail table ──────────────────────────────────────────────
-    st.subheader("Branch Details")
-
-    branch_display = branches_df[[
-        "NAMEBR", "CITYBR", "STALPBR", "CNTYNAMB", "DEPSUMBR",
-    ]].copy()
-    branch_display.columns = ["Branch", "City", "State", "County", "Deposits ($K)"]
-    branch_display["Deposits ($K)"] = branch_display["Deposits ($K)"].apply(
-        lambda v: f"${v:,.0f}" if pd.notna(v) else "—"
-    )
-    branch_display = branch_display.sort_values("Branch").reset_index(drop=True)
-
-    ksk_table(branch_display, max_height_px=400)
+    # ── Branch details ───────────────────────────────────────────────────
+    # Deposits-descending (the branches that matter first), in $M with each
+    # branch's share of the bank — the width carries information instead of
+    # whitespace between five spread-out columns.
+    section_header("", "Branch details",
+                   f"{_count(num_branches, 'branch')} · "
+                   f"{_count(counties, 'county')} · "
+                   f"{_dep_fmt(total_deposits)} deposits")
+    detail = branches_df.sort_values("DEPSUMBR", ascending=False,
+                                     na_position="last")
+    addr_col = "address" if "address" in detail.columns else "ADDRESBR"
+    deps = pd.to_numeric(detail["DEPSUMBR"], errors="coerce")
+    ksk_table(pd.DataFrame({
+        "Branch": detail["NAMEBR"].fillna("—").values,
+        "Address": (detail[addr_col].fillna("—").values
+                    if addr_col in detail.columns else ["—"] * len(detail)),
+        "City": detail["CITYBR"].fillna("—").values,
+        "ST": detail["STALPBR"].fillna("—").values,
+        "County": detail["CNTYNAMB"].fillna("—").values,
+        "Deposits": [_fdt(v, 1) if pd.notna(v) else "—" for v in deps],
+        "% of bank": [f"{v / total_deposits * 100:.1f}%"
+                      if pd.notna(v) and total_deposits else "—" for v in deps],
+    }), txt_cols=("Address",), max_height_px=360)
     # Underlying numeric frame (deposits in $K, unformatted)
     table_export(
-        branches_df[["NAMEBR", "CITYBR", "STALPBR", "CNTYNAMB", "DEPSUMBR"]],
+        detail[["NAMEBR", "CITYBR", "STALPBR", "CNTYNAMB", "DEPSUMBR"]],
         f"branch_details_cert{selected_cert}",
         key=f"exp_branch_details_cert{selected_cert}")
 
-    # ── Market share by county ───────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("Deposit Market Share")
-
-    # Get unique counties for this bank
+    # ── Deposit market share ─────────────────────────────────────────────
     county_options = branches_df[["STCNTYBR", "CNTYNAMB", "STALPBR"]].drop_duplicates()
     county_options = county_options.dropna(subset=["STCNTYBR"])
     county_options = county_options[~county_options["STCNTYBR"].astype(str)
@@ -261,120 +267,86 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     county_options["label"] = county_options.apply(
         lambda r: f"{r['CNTYNAMB']} County, {r['STALPBR']}", axis=1
     )
-
-    # Also get unique MSAs
     msa_options = branches_df[["MSABR", "MSANAMB"]].drop_duplicates()
     msa_options = msa_options.dropna(subset=["MSABR"])
     msa_options = msa_options[msa_options["MSABR"] > 0]
 
-    _dl_tabs = ["By County", "By MSA"]
-    _dl_sel = lazy_tabs(_dl_tabs, key="deposit")
+    section_header("", "Deposit market share",
+                   f"FDIC SOD {sod_year} · ranked by deposits" if sod_year
+                   else "FDIC SOD · ranked by deposits")
+    # One compact control row: market-type pills + the market picker, no
+    # stacked label (the pills already say what the picker holds).
+    with st.container(key="dl_ms_controls"):
+        c_kind, c_pick = st.columns([1, 3], vertical_alignment="center")
+        with c_kind:
+            _dl_sel = lazy_tabs(["By County", "By MSA"], key="deposit")
+        with c_pick:
+            if _dl_sel == "By County":
+                opts = county_options["STCNTYBR"].tolist()
+                labels = dict(zip(county_options["STCNTYBR"], county_options["label"]))
+                picked = (st.selectbox("County", opts, format_func=labels.get,
+                                       key="county_select",
+                                       label_visibility="collapsed")
+                          if opts else None)
+            else:
+                opts = msa_options["MSABR"].tolist()
+                labels = dict(zip(msa_options["MSABR"], msa_options["MSANAMB"]))
+                picked = (st.selectbox("MSA", opts, format_func=labels.get,
+                                       key="msa_select",
+                                       label_visibility="collapsed")
+                          if opts else None)
 
-    if _dl_sel == _dl_tabs[0]:
-        if county_options.empty:
-            from ui.states import empty_state
-            empty_state('No county data available')
-        else:
-            selected_county = st.selectbox(
-                "Select county",
-                options=county_options["STCNTYBR"].tolist(),
-                format_func=lambda c: county_options[county_options["STCNTYBR"] == c]["label"].iloc[0],
-                key="county_select",
-            )
+    kind = "county" if _dl_sel == "By County" else "msa"
+    if picked is None:
+        from ui.states import empty_state
+        empty_state("No county data available" if kind == "county"
+                    else "No MSA data available")
+        return
+    key = str(picked) if kind == "county" else str(int(picked))
+    _render_market_share(kind, key, labels[picked], sod_year, subject_okey,
+                         selected_name, _dep_fmt)
 
-            if selected_county:
-                with _skeleton():
-                    ms_df = _market_share("county", str(selected_county), sod_year)
 
-                if not ms_df.empty:
-                    county_label = county_options[county_options["STCNTYBR"] == selected_county]["label"].iloc[0]
-                    total_county_deps = ms_df["deposits"].sum()
+def _count(n: int, noun: str) -> str:
+    """'1 branch' / '150 branches' / '29 counties' — count with agreeing noun."""
+    if n == 1:
+        return f"1 {noun}"
+    if noun.endswith("y") and not noun.endswith(("ay", "ey", "oy")):
+        return f"{n:,} {noun[:-1]}ies"
+    return f"{n:,} {noun}{'es' if noun.endswith(('ch', 'sh', 's', 'x')) else 's'}"
 
-                    # Highlight the selected bank
-                    bank_row = ms_df[ms_df["owner_key"] == subject_okey]
-                    if not bank_row.empty:
-                        rank = bank_row.iloc[0]["rank"]
-                        share = bank_row.iloc[0]["market_share"]
-                        deps = bank_row.iloc[0]["deposits"]
 
-                        st.markdown(
-                            (f"**{selected_name}** ranks **#{int(rank)}** in {county_label} "
-                             f"with **{share:.1f}%** market share "
-                             f"({_dep_fmt(deps)} of {_dep_fmt(total_county_deps)} total)"
-                             ).replace("$", "\\$")  # don't let $X of $Y render as LaTeX
-                        )
-
-                    # Display top banks
-                    display = ms_df.head(25).copy()
-                    display["deposits_fmt"] = display["deposits"].apply(_dep_fmt)
-                    display["market_share_fmt"] = display["market_share"].apply(lambda v: f"{v:.1f}%")
-
-                    show_df = display[["rank", "NAMEFULL", "branches", "deposits_fmt", "market_share_fmt"]].copy()
-                    show_df.columns = ["Rank", "Bank", "Branches", "Deposits", "Market Share"]
-                    # Universal linking rule: covered participants get a
-                    # linked Ticker column (private banks show a blank cell).
-                    show_df.insert(1, "Ticker", _linked_tickers(display["TICKER"]))
-
-                    ksk_table(show_df, html_cols=("Ticker",),
-                              max_height_px=600)
-                    # Underlying numeric frame (deposits $K / share %)
-                    table_export(
-                        display[["rank", "TICKER", "NAMEFULL", "branches",
-                                 "deposits", "market_share"]],
-                        f"county_market_share_{selected_county}",
-                        key=f"exp_county_market_share_{selected_county}")
-                else:
-                    st.warning("Could not load market share data for this county.")
-
-    elif _dl_sel == _dl_tabs[1]:
-        if msa_options.empty:
-            from ui.states import empty_state
-            empty_state('No MSA data available')
-        else:
-            selected_msa = st.selectbox(
-                "Select MSA",
-                options=msa_options["MSABR"].tolist(),
-                format_func=lambda m: msa_options[msa_options["MSABR"] == m]["MSANAMB"].iloc[0],
-                key="msa_select",
-            )
-
-            if selected_msa:
-                with _skeleton():
-                    ms_df = _market_share("msa", str(int(selected_msa)), sod_year)
-
-                if not ms_df.empty:
-                    msa_label = msa_options[msa_options["MSABR"] == selected_msa]["MSANAMB"].iloc[0]
-                    total_msa_deps = ms_df["deposits"].sum()
-
-                    _dep_fmt_msa = _dep_fmt
-
-                    bank_row = ms_df[ms_df["owner_key"] == subject_okey]
-                    if not bank_row.empty:
-                        rank = bank_row.iloc[0]["rank"]
-                        share = bank_row.iloc[0]["market_share"]
-                        deps = bank_row.iloc[0]["deposits"]
-                        st.markdown(
-                            (f"**{selected_name}** ranks **#{int(rank)}** in {msa_label} "
-                             f"with **{share:.1f}%** market share "
-                             f"({_dep_fmt_msa(deps)} of {_dep_fmt_msa(total_msa_deps)} total)"
-                             ).replace("$", "\\$")  # don't let $X of $Y render as LaTeX
-                        )
-
-                    display = ms_df.head(25).copy()
-                    display["deposits_fmt"] = display["deposits"].apply(_dep_fmt_msa)
-                    display["market_share_fmt"] = display["market_share"].apply(lambda v: f"{v:.1f}%")
-
-                    show_df = display[["rank", "NAMEFULL", "branches", "deposits_fmt", "market_share_fmt"]].copy()
-                    show_df.columns = ["Rank", "Bank", "Branches", "Deposits", "Market Share"]
-                    show_df.insert(1, "Ticker", _linked_tickers(display["TICKER"]))
-
-                    ksk_table(show_df, html_cols=("Ticker",),
-                              max_height_px=600)
-                    # Underlying numeric frame (deposits $K / share %)
-                    table_export(
-                        display[["rank", "TICKER", "NAMEFULL", "branches",
-                                 "deposits", "market_share"]],
-                        f"msa_market_share_{int(selected_msa)}",
-                        key=f"exp_msa_market_share_{int(selected_msa)}")
-                else:
-                    st.warning("Could not load market share data for this MSA.")
+def _render_market_share(kind: str, key: str, market_label: str,
+                         sod_year, subject_okey, selected_name: str,
+                         dep_fmt) -> None:
+    """Ranked market share for one county/MSA: the subject's rank as a
+    one-line caption, then the top 25 in the house table style."""
+    with _skeleton():
+        ms_df = _market_share(kind, key, sod_year)
+    if ms_df.empty:
+        st.warning("Could not load market share data for this "
+                   + ("county." if kind == "county" else "MSA."))
+        return
+    total = ms_df["deposits"].sum()
+    bank_row = ms_df[ms_df["owner_key"] == subject_okey]
+    if not bank_row.empty:
+        r = bank_row.iloc[0]
+        st.caption(
+            (f"**{selected_name}** ranks **#{int(r['rank'])}** of {len(ms_df)} in "
+             f"{market_label} · **{r['market_share']:.1f}%** share · "
+             f"{dep_fmt(r['deposits'])} of {dep_fmt(total)}"
+             ).replace("$", "\\$"))  # don't let $X of $Y render as LaTeX
+    display = ms_df.head(25)
+    ksk_table(pd.DataFrame({
+        "Rank": display["rank"].values,
+        "Ticker": _linked_tickers(display["TICKER"]),
+        "Bank": display["NAMEFULL"].values,
+        "Branches": [f"{int(v):,}" for v in display["branches"]],
+        "Deposits": [dep_fmt(v) for v in display["deposits"]],
+        "Share": [f"{v:.1f}%" for v in display["market_share"]],
+    }), html_cols=("Ticker",), max_height_px=420)
+    # Underlying numeric frame (deposits $K / share %)
+    table_export(
+        display[["rank", "TICKER", "NAMEFULL", "branches", "deposits",
+                 "market_share"]],
+        f"{kind}_market_share_{key}", key=f"exp_{kind}_market_share_{key}")
