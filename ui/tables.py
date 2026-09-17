@@ -90,6 +90,21 @@ def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
     return f'<div class="ksk-grid kskt"{style}>{table}</div>'
 
 
+def ticker_anchor_cells(tickers) -> list[str]:
+    """Ticker link cells for a ksk_table ``html_cols`` column: covered banks
+    get an in-app Company-page anchor, private banks a blank cell (universal
+    linking rule)."""
+    import pandas as _pd
+
+    def _one(tk):
+        if tk is None or (isinstance(tk, float) and _pd.isna(tk)) or not str(tk).strip():
+            return ""
+        e = html.escape(str(tk).strip())
+        return (f'<a href="?s=Company&bank={e}" target="_self" '
+                f'title="Open the {e} company page">{e}</a>')
+    return [_one(t) for t in tickers]
+
+
 def ksk_table(df, *, signed_cols: tuple[str, ...] = (),
               html_cols: tuple[str, ...] = (),
               max_height_px: int | None = None) -> None:

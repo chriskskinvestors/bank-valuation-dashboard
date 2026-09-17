@@ -12,22 +12,7 @@ from data.sod_client import fetch_branches, search_bank_by_name
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
 from ui.chrome import ledger, table_export, title_bar, lazy_tabs
-from ui.tables import ksk_table
-
-
-def _linked_tickers(tickers) -> list:
-    """Ticker anchor cells for a market-share table — covered banks get an
-    in-app Company-page link, private banks a blank cell (universal linking
-    rule). House anchor markup for ksk_table html_cols."""
-    import html as _html
-
-    def _one(tk):
-        if tk is None or (isinstance(tk, float) and pd.isna(tk)) or not str(tk).strip():
-            return ""
-        e = _html.escape(str(tk).strip())
-        return (f'<a href="?s=Company&bank={e}" target="_self" '
-                f'title="Open the {e} company page">{e}</a>')
-    return [_one(t) for t in tickers]
+from ui.tables import ksk_table, ticker_anchor_cells as _linked_tickers
 
 
 def render_deposits_for_ticker(ticker: str):

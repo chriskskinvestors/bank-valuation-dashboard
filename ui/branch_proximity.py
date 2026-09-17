@@ -51,7 +51,7 @@ def _proximity_map(subject_label: str, subj: pd.DataFrame,
         empty_state('No branches with coordinates to map')
         return
     _render_map(pd.concat(frames, ignore_index=True),
-                color_col="Role", color_label="")
+                color_col="Role")
 
 
 def _nearest_fallback(cert: int, ticker: str, subj: pd.DataFrame,

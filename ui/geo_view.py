@@ -28,6 +28,8 @@ from data.branches_store import (
     get_branch_counts_by_bank,
 )
 from ui.chrome import table_export, lazy_tabs
+from ui.components import section_header
+from ui.tables import ksk_table, ticker_anchor_cells
 
 
 # ── Cached read wrappers ────────────────────────────────────────────────────
@@ -54,12 +56,6 @@ def _c_banks_msa(code, year): return get_banks_by_msa(code, year=year)
 def _c_branches_county(fips, year): return get_branches_by_county(fips, year=year)
 @st.cache_data(ttl=900, show_spinner=False)
 def _c_banks_county(fips, year): return get_banks_by_county(fips, year=year)
-
-
-# Shared universal-linking helpers (ui.chrome) — private banks (no ticker)
-# render a blank cell; link cells open the Company page in a new tab.
-from ui.chrome import ticker_company_url as _ticker_url
-from ui.chrome import ticker_linkcol as _ticker_linkcol
 
 
 def _bank_option_label(row) -> str:
@@ -130,8 +126,40 @@ def _fmt_dollars_k(thousands: float | int | None) -> str:
     return f"${v:.0f}"
 
 
+def _n(count: int, noun: str) -> str:
+    """'1 branch' / '1,172 branches' — count with its noun agreeing."""
+    plural = noun + ("es" if noun.endswith(("ch", "sh", "s", "x")) else "s")
+    return f"{count:,} {noun if count == 1 else plural}"
+
+
+def _ranking_table(banks: pd.DataFrame, market: str, export_name: str,
+                   export_key: str) -> None:
+    """Deposit ranking for one market in the house table style: rank, linked
+    ticker, bank, branches, deposits, share of the market — under a compact
+    section heading that carries the totals. (Was a raw st.dataframe: wide
+    empty columns, numbers stranded far from their headers.)"""
+    deps = pd.to_numeric(banks["total_deposits"], errors="coerce").fillna(0)
+    total = float(deps.sum())
+    n_br = int(pd.to_numeric(banks["n_branches"], errors="coerce").fillna(0).sum())
+    section_header("", f"Banks operating in {market}",
+                   f"{_n(len(banks), 'institution')} · {_n(n_br, 'branch')} · "
+                   f"{_fmt_dollars_k(total)} deposits")
+    table = pd.DataFrame({
+        "Rank": range(1, len(banks) + 1),
+        "Ticker": ticker_anchor_cells(banks["ticker"]),
+        "Bank": banks["bank_name"].fillna("—").values,
+        "Branches": [f"{int(v):,}" for v in pd.to_numeric(
+            banks["n_branches"], errors="coerce").fillna(0)],
+        "Deposits": [_fmt_dollars_k(v) for v in deps],
+        "Share": [f"{v / total * 100:.1f}%" if total > 0 else "—" for v in deps],
+    })
+    ksk_table(table, html_cols=("Ticker",), max_height_px=520)
+    # Underlying numeric frame (deposits in $K, unformatted)
+    table_export(banks, export_name, key=export_key)
+
+
 def _render_map(df: pd.DataFrame, title: str = "",
-                color_col: str = "ticker", color_label: str = "Ticker"):
+                color_col: str = "ticker"):
     """Render a branch map from a DataFrame of branches.
 
     `color_col` defaults to ticker (the whole-market tabs plot every bank in a
@@ -200,12 +228,20 @@ def _render_map(df: pd.DataFrame, title: str = "",
     fig.update_layout(
         margin=dict(l=0, r=0, t=40 if title else 0, b=0),
         showlegend=n_series <= 15,
-        legend_title_text=color_label,
         font=dict(family="Inter, -apple-system, system-ui, sans-serif", size=12),
         hoverlabel=dict(bgcolor="#ffffff",
                         font=dict(family="Inter, system-ui, sans-serif",
                                   size=12)),
-        legend=dict(bgcolor="rgba(255,255,255,0.85)", borderwidth=0),
+        # Legend floats INSIDE the map's top-left corner as a compact key.
+        # Plotly's default parks it in a white column right of the map, which
+        # shrank the map and left a mostly-empty panel (owner "sloppy" report,
+        # 2026-09-16). No title: the entries ("BBT — Beacon Bank and Trust")
+        # already say what they are.
+        legend=dict(title_text="", orientation="v",
+                    x=0.01, xanchor="left", y=0.99, yanchor="top",
+                    bgcolor="rgba(255,255,255,0.92)",
+                    bordercolor="#dde3ec", borderwidth=1,
+                    font=dict(size=11), itemsizing="constant"),
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -296,25 +332,10 @@ def render_geo_view():
                 banks_disp = banks
                 branches_disp = branches
 
-            st.markdown(f"### Banks operating in {state} — {len(banks_disp)} institutions")
             if not banks_disp.empty:
-                table = banks_disp.copy()
-                # Public banks' tickers deep-link to their Company page;
-                # private banks (ticker=None) render a blank cell.
-                table["ticker"] = table["ticker"].map(_ticker_url)
-                table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
-                table = table.rename(columns={
-                    "ticker": "Ticker", "bank_name": "Bank",
-                    "n_branches": "Branches",
-                })[["Ticker", "Bank", "Branches", "Deposits"]]
-                st.dataframe(table, use_container_width=True, hide_index=True,
-                              height=min(500, 38 * (len(table) + 1) + 4),
-                              column_config=_ticker_linkcol())
-                # Underlying numeric frame (deposits in $K, unformatted)
-                table_export(banks_disp, f"banks_by_state_{state}",
-                             key=f"exp_banks_by_state_{state}")
-
-            st.markdown(f"### Branch map — {len(branches_disp):,} branches")
+                _ranking_table(banks_disp, state, f"banks_by_state_{state}",
+                               f"exp_banks_by_state_{state}")
+            section_header("", "Branch map", _n(len(branches_disp), "branch"))
             _render_map(branches_disp)
 
     # ───────── MSA view ─────────
@@ -352,23 +373,10 @@ def render_geo_view():
                 banks_disp = banks
                 branches_disp = branches
 
-            st.markdown(f"### Banks operating in {msa_label} — {len(banks_disp)} institutions")
             if not banks_disp.empty:
-                table = banks_disp.copy()
-                table["ticker"] = table["ticker"].map(_ticker_url)
-                table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
-                table = table.rename(columns={
-                    "ticker": "Ticker", "bank_name": "Bank",
-                    "n_branches": "Branches",
-                })[["Ticker", "Bank", "Branches", "Deposits"]]
-                st.dataframe(table, use_container_width=True, hide_index=True,
-                              height=min(500, 38 * (len(table) + 1) + 4),
-                              column_config=_ticker_linkcol())
-                # Underlying numeric frame (deposits in $K, unformatted)
-                table_export(banks_disp, f"banks_by_msa_{msa_code}",
-                             key=f"exp_banks_by_msa_{msa_code}")
-
-            st.markdown(f"### Branch map — {len(branches_disp):,} branches")
+                _ranking_table(banks_disp, msa_label, f"banks_by_msa_{msa_code}",
+                               f"exp_banks_by_msa_{msa_code}")
+            section_header("", "Branch map", _n(len(branches_disp), "branch"))
             _render_map(branches_disp)
 
     # ───────── County view ─────────
@@ -407,22 +415,11 @@ def render_geo_view():
                 banks_disp = banks
                 branches_disp = branches
 
-            st.markdown(f"### Banks operating in {county_label} — {len(banks_disp)} institutions")
             if not banks_disp.empty:
-                table = banks_disp.copy()
-                table["ticker"] = table["ticker"].map(_ticker_url)
-                table["Deposits"] = table["total_deposits"].apply(_fmt_dollars_k)
-                table = table.rename(columns={
-                    "ticker": "Ticker", "bank_name": "Bank",
-                    "n_branches": "Branches",
-                })[["Ticker", "Bank", "Branches", "Deposits"]]
-                st.dataframe(table, use_container_width=True, hide_index=True,
-                              height=min(500, 38 * (len(table) + 1) + 4),
-                              column_config=_ticker_linkcol())
-                table_export(banks_disp, f"banks_by_county_{stcntybr}",
-                             key=f"exp_banks_by_county_{stcntybr}")
-
-            st.markdown(f"### Branch map — {len(branches_disp):,} branches")
+                _ranking_table(banks_disp, county_label,
+                               f"banks_by_county_{stcntybr}",
+                               f"exp_banks_by_county_{stcntybr}")
+            section_header("", "Branch map", _n(len(branches_disp), "branch"))
             _render_map(branches_disp)
 
     # ───────── Multi-bank view ─────────
@@ -484,27 +481,29 @@ def render_geo_view():
                             str(int(v)) for v in sorted(set(x)))),
                         n_branches=("brnum", "count"),
                         total_deposits=("deposits", "sum"))
-                   .reset_index()
+                   .reset_index(drop=True)
                    .sort_values("total_deposits", ascending=False))
-            agg["Deposits"] = agg["total_deposits"].apply(_fmt_dollars_k)
-            agg = agg.rename(columns={
-                "certs": "Cert", "ticker": "Ticker", "bank_name": "Bank Name",
-                "n_branches": "Branches",
-            })[["Ticker", "Bank Name", "Cert", "Branches", "Deposits"]]
-            agg = agg.rename(columns={"Bank Name": "Bank"})
-            st.markdown(f"### Selected banks — combined {len(branches):,} branches")
-            # Display copy gets link URLs (blank for private banks — they have no
-            # Company page); the export keeps plain tickers and carries Cert, the
-            # only identifier every institution has.
-            agg_disp = agg.copy()
-            agg_disp["Ticker"] = agg_disp["Ticker"].map(_ticker_url)
-            st.dataframe(agg_disp, use_container_width=True, hide_index=True,
-                          height=min(280, 38 * (len(agg) + 1) + 4),
-                          column_config=_ticker_linkcol())
-            table_export(agg, "selected_banks_branch_summary",
-                         key="exp_selected_banks_branch_summary")
+            deps = pd.to_numeric(agg["total_deposits"], errors="coerce").fillna(0)
+            section_header("", "Selected banks",
+                           f"{_n(len(agg), 'bank')} · {_n(len(branches), 'branch')} · "
+                           f"{_fmt_dollars_k(float(deps.sum()))} deposits")
+            ksk_table(pd.DataFrame({
+                "Ticker": ticker_anchor_cells(agg["ticker"]),
+                "Bank": agg["bank_name"].fillna("—").values,
+                "FDIC cert": agg["certs"].values,
+                "Branches": [f"{int(v):,}" for v in agg["n_branches"]],
+                "Deposits": [_fmt_dollars_k(v) for v in deps],
+            }), html_cols=("Ticker",))
+            # Export keeps plain tickers and carries the certs, the only
+            # identifier every institution has.
+            table_export(agg.rename(columns={
+                "ticker": "Ticker", "bank_name": "Bank", "certs": "FDIC cert",
+                "n_branches": "Branches", "total_deposits": "Deposits ($K)"}),
+                "selected_banks_branch_summary",
+                key="exp_selected_banks_branch_summary")
+            section_header("", "Branch map", _n(len(branches), "branch"))
 
         # Colour each SELECTED bank separately — its picker label, so private
         # banks are distinguishable rather than sharing one "nan" group. (An
         # empty frame falls through to _render_map's "no branches" message.)
-        _render_map(branches, color_col="Bank", color_label="Bank")
+        _render_map(branches, color_col="Bank")
