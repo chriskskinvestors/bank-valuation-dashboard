@@ -100,11 +100,21 @@ def save_json(prefix: str, filename: str, data: dict) -> bool:
     Cloud Run the local copy lives on ephemeral disk and evaporates on
     instance recycle, so reporting success here meant user uploads (e.g.
     consensus estimates) could silently vanish."""
-    # Always save locally too (for dev and as cache)
-    local_dir = Path(__file__).parent.parent / prefix
-    local_dir.mkdir(exist_ok=True)
-    local_path = local_dir / filename
-    local_path.write_text(json.dumps(data, indent=2, default=str))
+    # Always save locally too (for dev and as cache). The container runs as a
+    # NON-ROOT user with a read-only code tree (only the known cache dirs are
+    # writable — see Dockerfile), so a new prefix nobody pre-created must not
+    # abort the durable GCS write below: with GCS on, the local copy is only a
+    # cache, and losing it is harmless. Without GCS it IS the persistence.
+    try:
+        local_dir = Path(__file__).parent.parent / prefix
+        local_dir.mkdir(exist_ok=True)
+        (local_dir / filename).write_text(json.dumps(data, indent=2, default=str))
+    except OSError as e:
+        if not is_gcs_enabled():
+            print(f"[storage] Error saving {prefix}/{filename} locally: {e}")
+            return False
+        print(f"[storage] local cache copy skipped for {prefix}/{filename}: "
+              f"{type(e).__name__}")
 
     if is_gcs_enabled():
         try:
