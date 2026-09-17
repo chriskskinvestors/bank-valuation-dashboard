@@ -1145,6 +1145,28 @@ CUSTOM_CSS = """
     button[data-testid="stBaseButton-primary"] p {
         font-size: var(--fs-sm) !important; font-weight: 600 !important; }
 
+    /* table_export (ui/chrome.py): a small quiet action tucked under the
+       table's right edge, not a full-size button at the left margin. */
+    [class*="st-key-tblexp_"] { align-items: flex-end !important;
+        margin-top: -0.55rem !important; }
+    [class*="st-key-tblexp_"] .stDownloadButton > button {
+        min-height: 0 !important; height: 1.5rem !important;
+        padding: 0 0.55rem !important; background: transparent !important;
+        color: var(--text-muted) !important;
+        border-color: var(--border-subtle, var(--border-default)) !important; }
+    [class*="st-key-tblexp_"] .stDownloadButton > button:hover {
+        color: var(--brand-primary) !important;
+        border-color: var(--brand-primary) !important; }
+    [class*="st-key-tblexp_"] .stDownloadButton > button p {
+        font-size: var(--fs-2xs, 0.72rem) !important; font-weight: 600 !important;
+        letter-spacing: 0.02em; }
+
+    /* Market Share & Branches control row: picker height matches the pills. */
+    .st-key-dl_ms_controls [data-baseweb="select"] > div {
+        min-height: 2.1rem !important; }
+    .st-key-dl_ms_controls div[data-testid="stHorizontalBlock"] {
+        gap: 0.75rem !important; }
+
     /* The Company bank picker: compact height to match the band search. */
     .st-key-company_pick [data-baseweb="select"] > div {
         min-height: 2.1rem !important; }

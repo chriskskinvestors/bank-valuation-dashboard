@@ -35,6 +35,7 @@ def _cell_class(val: str) -> str:
 
 def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
                    html_cols: tuple[str, ...] = (),
+                   txt_cols: tuple[str, ...] = (),
                    max_height_px: int | None = None) -> str:
     """The HTML for a ksk-grid table.
 
@@ -44,6 +45,8 @@ def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
     owns escaping any data inside them; every other cell stays escaped
     here. This is what lets linked-ticker tables leave st.dataframe's
     LinkColumn for the house style.
+    txt_cols: columns forced left-aligned text even when values look
+    numeric (street addresses start with digits: "6 Verdae Blvd").
     max_height_px: wrap in a scroll container when the table can be tall
     (mirrors the height=min(640, ...) idiom the dataframe sites used).
     """
@@ -51,7 +54,7 @@ def ksk_table_html(df, *, signed_cols: tuple[str, ...] = (),
     # Alignment per column: right when most non-dash values look numeric.
     aligns = {}
     for c in cols:
-        if c in html_cols:
+        if c in html_cols or c in txt_cols:
             aligns[c] = "txt"
             continue
         vals = [str(v) for v in df[c].tolist() if str(v) not in _DASH]
@@ -107,11 +110,12 @@ def ticker_anchor_cells(tickers) -> list[str]:
 
 def ksk_table(df, *, signed_cols: tuple[str, ...] = (),
               html_cols: tuple[str, ...] = (),
+              txt_cols: tuple[str, ...] = (),
               max_height_px: int | None = None) -> None:
     """Render `df` as a house-style table (see module docstring)."""
     if df is None or len(df) == 0:
         return
     st.markdown(ksk_table_html(df, signed_cols=signed_cols,
-                               html_cols=html_cols,
+                               html_cols=html_cols, txt_cols=txt_cols,
                                max_height_px=max_height_px),
                 unsafe_allow_html=True)
