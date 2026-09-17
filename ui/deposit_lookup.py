@@ -230,81 +230,85 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
         from ui.states import empty_state
         empty_state("No geographic data available for this bank's branches")
 
+    # Branch details and deposit market share sit side by side (owner
+    # request 2026-09-17: both are compact enough to share the row), so each
+    # table is sized for half the width.
+    col_branches, col_share = st.columns(2, gap="large")
+
     # ── Branch details ───────────────────────────────────────────────────
-    # Deposits-descending (the branches that matter first), in $M with each
-    # branch's share of the bank — the width carries information instead of
-    # whitespace between five spread-out columns.
-    section_header("", "Branch details",
-                   f"{_count(num_branches, 'branch')} · "
-                   f"{_count(counties, 'county')} · "
-                   f"{_dep_fmt(total_deposits)} deposits")
-    detail = branches_df.sort_values("DEPSUMBR", ascending=False,
-                                     na_position="last")
-    addr_col = "address" if "address" in detail.columns else "ADDRESBR"
-    deps = pd.to_numeric(detail["DEPSUMBR"], errors="coerce")
-    ksk_table(pd.DataFrame({
-        "Branch": detail["NAMEBR"].fillna("—").values,
-        "Address": (detail[addr_col].fillna("—").values
-                    if addr_col in detail.columns else ["—"] * len(detail)),
-        "City": detail["CITYBR"].fillna("—").values,
-        "ST": detail["STALPBR"].fillna("—").values,
-        "County": detail["CNTYNAMB"].fillna("—").values,
-        "Deposits": [_fdt(v, 1) if pd.notna(v) else "—" for v in deps],
-        "% of bank": [f"{v / total_deposits * 100:.1f}%"
-                      if pd.notna(v) and total_deposits else "—" for v in deps],
-    }), txt_cols=("Address",), max_height_px=360)
-    # Underlying numeric frame (deposits in $K, unformatted)
-    table_export(
-        detail[["NAMEBR", "CITYBR", "STALPBR", "CNTYNAMB", "DEPSUMBR"]],
-        f"branch_details_cert{selected_cert}",
-        key=f"exp_branch_details_cert{selected_cert}")
+    with col_branches:
+        section_header("", "Branch details",
+                       f"{_count(num_branches, 'branch')} · "
+                       f"{_count(counties, 'county')} · "
+                       f"{_dep_fmt(total_deposits)} deposits")
+        # Deposits-descending — the branches that matter first, each with its
+        # share of the bank. Street address / county live in the export.
+        detail = branches_df.sort_values("DEPSUMBR", ascending=False,
+                                         na_position="last")
+        deps = pd.to_numeric(detail["DEPSUMBR"], errors="coerce")
+        ksk_table(pd.DataFrame({
+            "Branch": detail["NAMEBR"].fillna("—").values,
+            "Location": [f"{c}, {st_}" if isinstance(c, str) and c else "—"
+                         for c, st_ in zip(detail["CITYBR"], detail["STALPBR"])],
+            "Deposits": [_fdt(v, 1) if pd.notna(v) else "—" for v in deps],
+            "% of bank": [f"{v / total_deposits * 100:.1f}%"
+                          if pd.notna(v) and total_deposits else "—" for v in deps],
+        }), max_height_px=420)
+        # Underlying numeric frame (deposits in $K, unformatted)
+        addr_col = "address" if "address" in detail.columns else "ADDRESBR"
+        export_cols = ["NAMEBR"] + ([addr_col] if addr_col in detail.columns else []) \
+            + ["CITYBR", "STALPBR", "CNTYNAMB", "DEPSUMBR"]
+        table_export(detail[export_cols],
+                     f"branch_details_cert{selected_cert}",
+                     key=f"exp_branch_details_cert{selected_cert}")
 
     # ── Deposit market share ─────────────────────────────────────────────
-    county_options = branches_df[["STCNTYBR", "CNTYNAMB", "STALPBR"]].drop_duplicates()
-    county_options = county_options.dropna(subset=["STCNTYBR"])
-    county_options = county_options[~county_options["STCNTYBR"].astype(str)
-                                    .str.strip().isin(["", "0"])]
-    county_options["label"] = county_options.apply(
-        lambda r: f"{r['CNTYNAMB']} County, {r['STALPBR']}", axis=1
-    )
-    msa_options = branches_df[["MSABR", "MSANAMB"]].drop_duplicates()
-    msa_options = msa_options.dropna(subset=["MSABR"])
-    msa_options = msa_options[msa_options["MSABR"] > 0]
+    with col_share:
+        county_options = branches_df[["STCNTYBR", "CNTYNAMB", "STALPBR"]].drop_duplicates()
+        county_options = county_options.dropna(subset=["STCNTYBR"])
+        county_options = county_options[~county_options["STCNTYBR"].astype(str)
+                                        .str.strip().isin(["", "0"])]
+        county_options["label"] = county_options.apply(
+            lambda r: f"{r['CNTYNAMB']} County, {r['STALPBR']}", axis=1
+        )
+        msa_options = branches_df[["MSABR", "MSANAMB"]].drop_duplicates()
+        msa_options = msa_options.dropna(subset=["MSABR"])
+        msa_options = msa_options[msa_options["MSABR"] > 0]
 
-    section_header("", "Deposit market share",
-                   f"FDIC SOD {sod_year} · ranked by deposits" if sod_year
-                   else "FDIC SOD · ranked by deposits")
-    # One compact control row: market-type pills + the market picker, no
-    # stacked label (the pills already say what the picker holds).
-    with st.container(key="dl_ms_controls"):
-        c_kind, c_pick = st.columns([1, 3], vertical_alignment="center")
-        with c_kind:
-            _dl_sel = lazy_tabs(["By County", "By MSA"], key="deposit")
-        with c_pick:
-            if _dl_sel == "By County":
-                opts = county_options["STCNTYBR"].tolist()
-                labels = dict(zip(county_options["STCNTYBR"], county_options["label"]))
-                picked = (st.selectbox("County", opts, format_func=labels.get,
-                                       key="county_select",
-                                       label_visibility="collapsed")
-                          if opts else None)
-            else:
-                opts = msa_options["MSABR"].tolist()
-                labels = dict(zip(msa_options["MSABR"], msa_options["MSANAMB"]))
-                picked = (st.selectbox("MSA", opts, format_func=labels.get,
-                                       key="msa_select",
-                                       label_visibility="collapsed")
-                          if opts else None)
+        section_header("", "Deposit market share",
+                       f"FDIC SOD {sod_year} · ranked by deposits" if sod_year
+                       else "FDIC SOD · ranked by deposits")
+        # One compact control row: market-type pills + the market picker, no
+        # stacked label (the pills already say what the picker holds).
+        with st.container(key="dl_ms_controls"):
+            c_kind, c_pick = st.columns([2, 3], vertical_alignment="center")
+            with c_kind:
+                _dl_sel = lazy_tabs(["By County", "By MSA"], key="deposit")
+            with c_pick:
+                if _dl_sel == "By County":
+                    opts = county_options["STCNTYBR"].tolist()
+                    labels = dict(zip(county_options["STCNTYBR"], county_options["label"]))
+                    picked = (st.selectbox("County", opts, format_func=labels.get,
+                                           key="county_select",
+                                           label_visibility="collapsed")
+                              if opts else None)
+                else:
+                    opts = msa_options["MSABR"].tolist()
+                    labels = dict(zip(msa_options["MSABR"], msa_options["MSANAMB"]))
+                    picked = (st.selectbox("MSA", opts, format_func=labels.get,
+                                           key="msa_select",
+                                           label_visibility="collapsed")
+                              if opts else None)
 
-    kind = "county" if _dl_sel == "By County" else "msa"
-    if picked is None:
-        from ui.states import empty_state
-        empty_state("No county data available" if kind == "county"
-                    else "No MSA data available")
-        return
-    key = str(picked) if kind == "county" else str(int(picked))
-    _render_market_share(kind, key, labels[picked], sod_year, subject_okey,
-                         selected_name, _dep_fmt)
+        kind = "county" if _dl_sel == "By County" else "msa"
+        if picked is None:
+            from ui.states import empty_state
+            empty_state("No county data available" if kind == "county"
+                        else "No MSA data available")
+            return
+        key = str(picked) if kind == "county" else str(int(picked))
+        _render_market_share(kind, key, labels[picked], sod_year, subject_okey,
+                             selected_name, _dep_fmt)
 
 
 def _count(n: int, noun: str) -> str:
