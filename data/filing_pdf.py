@@ -86,8 +86,9 @@ def html_to_pdf_bytes(html: str, base_url: str | None = None,
         src.write_text(html, encoding="utf-8")
         cmd = [
             binary, "--headless=new", "--disable-gpu",
-            # Cloud Run runs the container as root with a small /dev/shm;
-            # both flags are required there and harmless locally.
+            # Cloud Run's gVisor sandbox can't host chromium's own
+            # namespace sandbox, and /dev/shm is small; both flags are
+            # required there and harmless locally.
             "--no-sandbox", "--disable-dev-shm-usage",
             "--no-pdf-header-footer",
             f"--user-agent={HEADERS['User-Agent']}",
