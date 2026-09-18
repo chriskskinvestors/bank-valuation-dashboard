@@ -98,6 +98,9 @@ def render_deposit_lookup():
         st.info("Search for a bank above to see its branch map and deposit market share.")
         return
 
+    # This page's title bar is generic ("KSK Investors | DEPOSIT MARKET
+    # SHARE & BRANCH MAP"), so name the searched bank here.
+    section_header("", selected_name, f"FDIC cert {selected_cert}")
     _render_deposits_core(selected_cert, selected_name)
 
 
@@ -156,10 +159,10 @@ def _market_share(kind: str, key: str, year: int | None) -> pd.DataFrame:
 def _render_deposits_core(selected_cert: int, selected_name: str):
     """Core deposit rendering logic."""
 
-    # ── Load branch data ─────────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader(f"{selected_name}")
-
+    # No bank-name heading here: on the Company tab the title bar already
+    # reads "Beacon Financial (BBT) | MARKET SHARE & BRANCHES", so this
+    # repeated the name under a stray divider (owner report 2026-09-18).
+    # The standalone search page names the bank itself before calling in.
     with _skeleton():
         branches_df, notes, sod_year = _fetch_footprint(selected_cert)
 
