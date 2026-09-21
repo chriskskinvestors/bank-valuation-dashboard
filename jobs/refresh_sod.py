@@ -189,8 +189,11 @@ def main() -> int:
     # next morning instead of waiting for the monthly full sweep.
     if "ownership" in sys.argv[1:]:
         from data.sod_client import get_latest_sod_year
-        from data.branches_store import retag_tickers
-        year = get_latest_sod_year()
+        from data.branches_store import retag_tickers, get_latest_year
+        # The survey the STORE serves — not FDIC's newest. Re-attributing
+        # into a survey the monthly sweep hasn't ingested wrote 440 rows
+        # into a near-empty 2026 and emptied every branch page (2026-09-19).
+        year = get_latest_year() or get_latest_sod_year()
         cert_to_ticker = _build_cert_to_ticker()
         n = retag_tickers(year, cert_to_ticker)
         print(f"  tickers ({year} survey): {n:,} branch rows re-tagged to the "

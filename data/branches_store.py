@@ -616,11 +616,9 @@ def get_branches_by_cert(cert: int, year: int | None = None) -> pd.DataFrame:
     Powers the Market Analysis branch tabs (list / map / proximity)."""
     params: dict = {"cert": int(cert)}
     if year is None:
-        ydf = _q_to_df("SELECT MAX(year) AS y FROM branches WHERE cert = :cert",
-                       params)
-        if ydf.empty or pd.isna(ydf.iloc[0]["y"]):
+        year = _cert_year(int(cert))
+        if year is None:
             return pd.DataFrame()
-        year = int(ydf.iloc[0]["y"])
     params["year"] = year
     sql = """
         SELECT brnum, branch_name, address, city, state, zip, county,
@@ -635,12 +633,51 @@ def get_branches_by_cert(cert: int, year: int | None = None) -> pd.DataFrame:
     return _q_to_df(sql, params)
 
 
+# A survey year serves only once it holds at least this share of the
+# largest year's rows. Year-over-year branch counts move a few percent
+# (closures, consolidation), so a genuinely ingested survey clears it; the
+# handful of rows the nightly ownership pass writes into a brand-new survey
+# year never does.
+_SERVING_YEAR_MIN_SHARE = 0.9
+
+
+def _cert_year(cert: int) -> int | None:
+    """The survey year to show for one institution: the serving year when the
+    cert has rows in it, else that cert's own latest year (never a partial
+    newer year for a bank the serving survey covers)."""
+    serving = get_latest_year()
+    if serving is not None:
+        hit = _q_to_df("SELECT COUNT(*) AS n FROM branches "
+                       "WHERE cert = :cert AND year = :year",
+                       {"cert": int(cert), "year": int(serving)})
+        if not hit.empty and int(hit["n"].iloc[0]) > 0:
+            return int(serving)
+    ydf = _q_to_df("SELECT MAX(year) AS y FROM branches WHERE cert = :cert",
+                   {"cert": int(cert)})
+    if ydf.empty or pd.isna(ydf.iloc[0]["y"]):
+        return None
+    return int(ydf.iloc[0]["y"])
+
+
 def get_latest_year() -> int | None:
-    """Most recent SOD year present in the table."""
-    df = _q_to_df("SELECT MAX(year) AS y FROM branches", {})
+    """The SOD survey year every view serves: the most recent year that is
+    COMPLETE in the store, not merely present.
+
+    FDIC began publishing the 2026 survey ~2026-09-18; the nightly ownership
+    pass then wrote 440 re-attributed branches into 2026 while the full sweep
+    (monthly) had not ingested it, and "MAX(year)" switched every page to a
+    nearly empty year — Geographic showed 0 branches for California for
+    ~2.5 days (found 2026-09-21). A year serves once it holds
+    _SERVING_YEAR_MIN_SHARE of the largest year's rows."""
+    df = _q_to_df("SELECT year, COUNT(*) AS n FROM branches GROUP BY year", {})
     if df.empty:
         return None
-    return int(df["y"].iloc[0]) if df["y"].iloc[0] else None
+    df = df.dropna()
+    if df.empty:
+        return None
+    df["n"] = df["n"].astype(int)
+    full = df[df["n"] >= _SERVING_YEAR_MIN_SHARE * df["n"].max()]
+    return int(full["year"].max())
 
 
 def get_branch_counts_by_ticker() -> pd.DataFrame:
@@ -655,11 +692,11 @@ def get_branch_counts_by_ticker() -> pd.DataFrame:
                COUNT(*) AS n_branches,
                SUM(deposits) AS total_deposits
         FROM branches
-        WHERE year = (SELECT MAX(year) FROM branches)
+        WHERE year = :year
         GROUP BY ticker
         ORDER BY total_deposits DESC
     """
-    return _q_to_df(sql, {})
+    return _q_to_df(sql, {"year": get_latest_year()})
 
 
 def get_branch_counts_by_bank() -> pd.DataFrame:
@@ -744,13 +781,10 @@ def get_owner_branches(cert: int, year: int | None = None) -> pd.DataFrame:
     absorbed after the survey — the roster behind every Company-page branch
     view. Latest survey year that has rows for the cert unless `year` given.
     All columns, deposits-descending."""
-    params: dict = {"cert": int(cert)}
     if year is None:
-        ydf = _q_to_df("SELECT MAX(year) AS y FROM branches WHERE cert = :cert",
-                       params)
-        if ydf.empty or pd.isna(ydf.iloc[0]["y"]):
+        year = _cert_year(int(cert))
+        if year is None:
             return pd.DataFrame()
-        year = int(ydf.iloc[0]["y"])
     okey = _owner_key_of(int(cert), int(year))
     sql = f"""
         SELECT * FROM branches

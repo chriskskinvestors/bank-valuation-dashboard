@@ -332,3 +332,51 @@ class TestMarketShareSurface(_StoreCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestServingYear(_StoreCase):
+    """2026-09-19: FDIC published the 2026 survey, the nightly ownership pass
+    wrote 440 re-attributed rows into 2026 before the monthly sweep ingested
+    it, and MAX(year) flipped every branch page to a near-empty year (CA
+    showed 0 branches). Views serve the latest COMPLETE survey."""
+
+    def _partial_2026(self):
+        _insert(self._eng, [
+            dict(cert=BBT, brnum=-16536, year=2026, ticker="BBT",
+                 bank_name="Beacon Bank and Trust", stcntybr="25003",
+                 deposits=900)])
+
+    def test_partial_newer_year_does_not_serve(self):
+        self._partial_2026()
+        self.assertEqual(bs.get_latest_year(), Y)
+        self.assertEqual(len(bs.get_owner_branches(BBT)), 2)   # 2025 roster
+        self.assertEqual(len(bs.get_branches_by_cert(BBT)), 2)
+        counts = bs.get_branch_counts_by_bank()
+        self.assertEqual(int(counts[counts["ticker"] == "MTB"]
+                             ["n_branches"].iloc[0]), 4)
+
+    def test_complete_newer_year_serves(self):
+        with self._eng.begin() as c:
+            c.execute(text("UPDATE branches SET year = 2026"))
+        self.assertEqual(bs.get_latest_year(), 2026)
+
+    def test_cert_only_in_newer_year_falls_back_to_its_own_year(self):
+        _insert(self._eng, [dict(cert=77777, brnum=0, year=2026, ticker=None,
+                                 bank_name="De Novo Bank", stcntybr="25021",
+                                 deposits=10)])
+        self.assertEqual(bs.get_latest_year(), Y)
+        self.assertEqual(len(bs.get_owner_branches(77777)), 1)
+
+    def test_ownership_job_uses_store_serving_year(self):
+        from jobs import refresh_sod
+        self._partial_2026()
+        with patch("sys.argv", ["refresh_sod", "ownership"]), \
+             patch("data.sod_client.get_latest_sod_year", return_value=2026), \
+             patch.object(refresh_sod, "_build_cert_to_ticker",
+                          return_value={BBT: "BBT"}), \
+             patch("data.fdic_client.list_all_active_institutions",
+                   return_value=[]), \
+             patch.object(refresh_sod, "apply_post_survey_ownership",
+                          return_value=True) as app:
+            self.assertEqual(refresh_sod.main(), 0)
+        self.assertEqual(app.call_args[0][0], Y)
