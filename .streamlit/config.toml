@@ -8,8 +8,12 @@ font = "sans serif"
 
 [server]
 headless = true
-enableCORS = true
-enableXsrfProtection = false
+# XSRF protection ON (partner security assessment, 2026-09-22): the three
+# file_uploader widgets are POST endpoints; the token cookie rides the same
+# origin through the load balancer + IAP. Streamlit forces CORS off when
+# XSRF is on.
+enableCORS = false
+enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false
