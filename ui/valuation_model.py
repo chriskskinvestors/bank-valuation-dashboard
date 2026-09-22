@@ -20,7 +20,44 @@ from analysis.deposit_dynamics import summarize_bank_deposits  # reuse helpers
 from data.consensus import list_consensus, compile_consensus
 from utils.formatting import fmt_dollars
 from utils.chart_style import COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY
-from ui.chrome import ledger, title_bar, lazy_tabs
+from ui.chrome import ledger, title_bar, lazy_tabs, table_export
+
+
+def _avg_pct(rates: list[float] | None) -> float | None:
+    """Mean of a per-year fraction list as a percent (the slider value the
+    list was built from: [0.05]*5 → 5.0)."""
+    return (sum(rates) / len(rates) * 100) if rates else None
+
+
+def _model_provenance(ticker: str, name: str, price, asof, params: dict,
+                      table: str, **extra) -> dict:
+    """Source-sheet rows shared by every table the DCF / warranted-P/TBV model
+    feeds: what the numbers are, where the seed inputs came from, and EVERY
+    model assumption — a valuation export must be reproducible from its
+    Source sheet alone. ``extra`` appends table-specific rows."""
+    return {
+        "Page": f"Company Analysis › Valuation › Valuation Model › {table}",
+        "Ticker": ticker,
+        "Company": name,
+        "Source": ("Model output (analysis/dcf). Seed inputs: SEC companyfacts "
+                   "XBRL (diluted EPS TTM, shares, TBV/share) and FDIC call-report "
+                   "history (loans, ROATCE); price is market data (FMP/IBKR quote "
+                   "at render time, no as-of stamp); every other input is a model "
+                   "assumption listed below (editable under Model inputs)."),
+        "FDIC data as of (REPDTE)": asof,
+        "Price ($)": price,
+        "Base EPS ($, annual)": params.get("base_eps"),
+        "EPS growth (avg %, 5-yr)": _avg_pct(params.get("eps_growth_rates")),
+        "Loan growth (avg %, 5-yr)": _avg_pct(params.get("loan_growth_rates")),
+        "Payout ratio (%)": (params["payout_ratio"] * 100
+                             if params.get("payout_ratio") is not None else None),
+        "Starting loans / share ($)": params.get("starting_loans_per_share"),
+        "Target CET1 (%)": params.get("target_cet1_pct"),
+        "Cost of equity (%)": params.get("cost_of_equity_pct"),
+        "Terminal growth (%)": params.get("terminal_growth_pct"),
+        "ROATCE (normalized, %)": params.get("roatce_pct"),
+        **extra,
+    }
 
 
 # Shared loader (data/loaders); this tab keeps its lower history threshold
@@ -517,6 +554,13 @@ def render_valuation_model(ticker: str):
 
     st.markdown("---")
 
+    # Source-sheet rows every model table shares (page, seed sources, every
+    # assumption in base_params); each site appends its own outputs.
+    asof = hist[0].get("REPDTE")
+
+    def _prov(table: str, **extra) -> dict:
+        return _model_provenance(ticker, name, price, asof, base_params, table, **extra)
+
     # ── DCF cash flow waterfall ────────────────────────────────────────
     st.markdown("#### Projected FCFE & Terminal Value")
     projected_eps = dcf.get("projected_eps", [])
@@ -540,6 +584,30 @@ def render_valuation_model(ticker: str):
     st.dataframe(df_cf, hide_index=True, use_container_width=True)
 
     tv_pct = (pv_terminal / dcf_fv * 100) if (pv_terminal and dcf_fv) else None
+    # Export the RAW per-share projections. On screen the Terminal row's
+    # Gordon value sits under "FCFE / share"; the export gives it its own
+    # column so the header is the unit's only, honest home.
+    _c_eps, _c_fcfe, _c_tv = ("Projected EPS ($/sh)", "FCFE / share ($/sh)",
+                              "Terminal value ($/sh)")
+    exp_rows = [{"Year": years[i], _c_eps: projected_eps[i],
+                 _c_fcfe: projected_fcfe[i], _c_tv: None}
+                for i in range(len(projected_fcfe))]
+    if tv is not None:
+        exp_rows.append({"Year": "Terminal", _c_eps: dcf.get("terminal_eps"),
+                         _c_fcfe: None, _c_tv: tv})
+    table_export(
+        pd.DataFrame(exp_rows, columns=["Year", _c_eps, _c_fcfe, _c_tv]),
+        f"{ticker}_valuation_fcfe", f"exp_val_fcfe_{ticker}",
+        formats={_c_eps: "usd2", _c_fcfe: "usd2", _c_tv: "usd2"},
+        provenance=_prov(
+            "Projected FCFE & Terminal Value",
+            **{"Terminal payout ratio used (%)":
+               (dcf["terminal_payout_ratio_used"] * 100
+                if dcf.get("terminal_payout_ratio_used") is not None else None),
+               "PV of 5-yr FCFE ($/sh)": pv_explicit,
+               "PV of terminal value ($/sh)": pv_terminal,
+               "Terminal / total (%)": tv_pct,
+               "DCF fair value ($/sh)": dcf_fv}))
     ledger("Present Value", [
         ("PV of 5-Year FCFE", f"${pv_explicit:.2f}" if pv_explicit else "—"),
         ("PV of Terminal Value", f"${pv_terminal:.2f}" if pv_terminal else "—"),
@@ -558,6 +626,26 @@ def render_valuation_model(ticker: str):
     ]
     _vm_sel = lazy_tabs(_vm_tabs, key="valmodel")
 
+    # Cell color for BOTH sensitivity grids (upside vs market price). Defined
+    # before the dispatch: lazy_tabs runs only the selected pane, so a helper
+    # defined inside pane 0 was unbound whenever pane 1 rendered alone
+    # (UnboundLocalError on the ROATCE × CoE tab since b38ffbf).
+    def _color_dcf(val):
+        if val is None or pd.isna(val):
+            return "background-color: #f1f5f9; color: #999;"
+        if price is None:
+            return ""
+        upside = (val / price - 1) * 100
+        if upside > 20:
+            return "background-color: #c8e6c9;"
+        elif upside > 5:
+            return "background-color: rgba(5, 150, 105, 0.08);"
+        elif upside < -20:
+            return "background-color: rgba(220, 38, 38, 0.24);"
+        elif upside < -5:
+            return "background-color: rgba(220, 38, 38, 0.08);"
+        return "background-color: #fff3e0;"
+
     if _vm_sel == _vm_tabs[0]:
         st.markdown("**DCF Fair Value under different discount & growth assumptions**")
         coe_range = [cost_of_equity - 2, cost_of_equity - 1, cost_of_equity,
@@ -573,24 +661,22 @@ def render_valuation_model(ticker: str):
             columns=[f"g {g:.1f}%" for g in g_range],
         )
         # Format and color
-        def _color_dcf(val):
-            if val is None or pd.isna(val):
-                return "background-color: #f1f5f9; color: #999;"
-            if price is None:
-                return ""
-            upside = (val / price - 1) * 100
-            if upside > 20:
-                return "background-color: #c8e6c9;"
-            elif upside > 5:
-                return "background-color: rgba(5, 150, 105, 0.08);"
-            elif upside < -20:
-                return "background-color: rgba(220, 38, 38, 0.24);"
-            elif upside < -5:
-                return "background-color: rgba(220, 38, 38, 0.08);"
-            return "background-color: #fff3e0;"
-
         styled1 = grid_df.style.map(_color_dcf).format("${:.2f}", na_rep="—")
         st.dataframe(styled1, use_container_width=True)
+        # Export: the raw grid (fair value $/sh) with the row axis as a real
+        # numeric column, so the sheet sorts/filters on cost of equity.
+        exp_g1 = pd.DataFrame(grid1, columns=[f"FV @ g {g:.1f}% ($/sh)" for g in g_range])
+        exp_g1.insert(0, "Cost of equity (%)", coe_range)
+        table_export(
+            exp_g1, f"{ticker}_valuation_dcf_sensitivity", f"exp_val_dcf_sens_{ticker}",
+            formats={"Cost of equity (%)": "pct1",
+                     **{c: "usd2" for c in exp_g1.columns[1:]}},
+            provenance=_prov("CoE × Terminal Growth",
+                             **{"Grid rows": "cost of equity (%)",
+                                "Grid columns": "terminal growth (%)",
+                                "Cell": "DCF fair value per share; the base case "
+                                        "sits at the listed CoE and terminal growth"}),
+            freeze_cols=1)
         if price:
             st.caption(
                 f"Green = upside vs market price ${price:.2f}; red = downside. "
@@ -612,6 +698,18 @@ def render_valuation_model(ticker: str):
         )
         styled2 = grid2_df.style.map(_color_dcf).format("${:.2f}", na_rep="—")
         st.dataframe(styled2, use_container_width=True)
+        exp_g2 = pd.DataFrame(grid2, columns=[f"FV @ CoE {c:.1f}% ($/sh)" for c in coe_range2])
+        exp_g2.insert(0, "ROATCE (%)", roatce_range)
+        table_export(
+            exp_g2, f"{ticker}_valuation_ptbv_sensitivity", f"exp_val_ptbv_sens_{ticker}",
+            formats={"ROATCE (%)": "pct1", **{c: "usd2" for c in exp_g2.columns[1:]}},
+            provenance=_prov("ROATCE × CoE (Warranted P/TBV)",
+                             **{"Grid rows": "ROATCE (%)",
+                                "Grid columns": "cost of equity (%)",
+                                "Cell": "warranted price per share = "
+                                        "(ROATCE − g) ÷ (CoE − g) × TBV/share",
+                                "TBV / share ($)": tbvps}),
+            freeze_cols=1)
         if price:
             st.caption(
                 f"Rows = ROATCE, columns = cost of equity. "
@@ -640,17 +738,25 @@ def render_valuation_model(ticker: str):
 
         scenarios = run_scenarios(base_params, bull_adj, bear_adj)
 
-        scen_rows = []
-        for name, color in [("bull", COLOR_SUCCESS), ("base", "#666"), ("bear", COLOR_DANGER)]:
-            s = scenarios[name]
+        scen_rows, scen_raw = [], []
+        # (`scen`, not `name`: the company name stays bound for the exports.)
+        for scen, color in [("bull", COLOR_SUCCESS), ("base", "#666"), ("bear", COLOR_DANGER)]:
+            s = scenarios[scen]
             fv = s.get("fair_value_per_share")
             upside = ((fv / price - 1) * 100) if (fv and price) else None
             scen_rows.append({
-                "Scenario": name.title(),
+                "Scenario": scen.title(),
                 "Fair Value": f"${fv:.2f}" if fv else "—",
                 "Upside vs Price": f"{upside:+.1f}%" if upside is not None else "—",
                 "PV Explicit": f"${s.get('pv_explicit', 0):.2f}",
                 "PV Terminal": f"${s.get('pv_terminal', 0):.2f}" if s.get("pv_terminal") else "—",
+            })
+            scen_raw.append({
+                "Scenario": scen.title(),
+                "Fair Value ($/sh)": fv,
+                "Upside vs Price (%)": upside,
+                "PV Explicit ($/sh)": s.get("pv_explicit"),
+                "PV Terminal ($/sh)": s.get("pv_terminal"),
             })
 
         scen_df = pd.DataFrame(scen_rows)
@@ -665,6 +771,19 @@ def render_valuation_model(ticker: str):
 
         styled3 = scen_df.style.apply(_color_scen, axis=1)
         st.dataframe(styled3, use_container_width=True, hide_index=True)
+        table_export(
+            pd.DataFrame(scen_raw), f"{ticker}_valuation_scenarios",
+            f"exp_val_scenarios_{ticker}",
+            formats={"Fair Value ($/sh)": "usd2", "Upside vs Price (%)": "pct1",
+                     "PV Explicit ($/sh)": "usd2", "PV Terminal ($/sh)": "usd2"},
+            provenance=_prov("Bull / Base / Bear",
+                             **{"Bull EPS growth adjustment (pp)": bull_eps_delta,
+                                "Bull CoE adjustment (pp)": bull_coe_delta,
+                                "Bear EPS growth adjustment (pp)": bear_eps_delta,
+                                "Bear CoE adjustment (pp)": bear_coe_delta,
+                                "Scenario inputs": "base assumptions above plus the "
+                                                   "listed adjustments; Upside is vs "
+                                                   "the Price row"}))
 
         # Bar chart
         import plotly.graph_objects as go
@@ -698,7 +817,8 @@ def render_valuation_model(ticker: str):
 
     # ── Tab 4: Tornado + Implied IRR ──────────────────────────────────
     elif _vm_sel == _vm_tabs[3]:
-        _render_tornado_and_irr(base_params, price)
+        _render_tornado_and_irr(base_params, price, ticker=ticker,
+                                prov=_prov("Tornado: Input Sensitivity"))
 
     # ── Tab 5: Peer-Relative Warranted P/TBV ──────────────────────────
     elif _vm_sel == _vm_tabs[4]:
@@ -736,8 +856,10 @@ def render_valuation_model(ticker: str):
 
 # ── Tornado + Implied IRR ────────────────────────────────────────────
 
-def _render_tornado_and_irr(base_params: dict, price: float | None):
-    """Tornado chart showing which inputs move fair value most + implied IRR."""
+def _render_tornado_and_irr(base_params: dict, price: float | None, *,
+                            ticker: str, prov: dict):
+    """Tornado chart showing which inputs move fair value most + implied IRR.
+    ``prov`` is the model's shared Source-sheet rows (see _model_provenance)."""
     from analysis.dcf import tornado_sensitivity, implied_irr
 
     st.markdown("**Which inputs matter most?**")
@@ -840,7 +962,7 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
     st.plotly_chart(fig, use_container_width=True)
 
     # Tornado table
-    rows = []
+    rows, raw = [], []
     for t in tornado:
         rows.append({
             "Input": labels_map.get(t["input"], t["input"]),
@@ -850,8 +972,26 @@ def _render_tornado_and_irr(base_params: dict, price: float | None):
             "Δ High %": f"{t['high_delta_pct']:+.1f}%",
             "Range ($)": f"${t['range']:.2f}",
         })
+        raw.append({
+            "Input": labels_map.get(t["input"], t["input"]),
+            "Low-case FV ($/sh)": t["low_fv"],
+            "Δ Low (%)": t["low_delta_pct"],
+            "High-case FV ($/sh)": t["high_fv"],
+            "Δ High (%)": t["high_delta_pct"],
+            "Range ($/sh)": t["range"],
+        })
     from ui.tables import ksk_table
     ksk_table(pd.DataFrame(rows), signed_cols=("Δ Low %", "Δ High %"))
+    table_export(
+        pd.DataFrame(raw), f"{ticker}_valuation_tornado", f"exp_val_tornado_{ticker}",
+        formats={"Low-case FV ($/sh)": "usd2", "Δ Low (%)": "pct1",
+                 "High-case FV ($/sh)": "usd2", "Δ High (%)": "pct1",
+                 "Range ($/sh)": "usd2"},
+        provenance={**prov,
+                    "Base fair value ($/sh)": base_fv,
+                    "Implied IRR at price (%)": irr,
+                    "Perturbation": "one input at a time by the ± shown in its "
+                                    "label; Δ columns are vs the base fair value"})
 
 
 
@@ -891,7 +1031,7 @@ def _render_peer_warranted(ticker: str, coe_pct: float, terminal_g_pct: float):
         st.info("Not enough peer data to rank (need ROATCE, TBV/share, price).")
         return
 
-    rows = []
+    rows, raw = [], []
     for r in ranked:
         t = r["ticker"]
         is_self = (t == ticker)
@@ -905,6 +1045,17 @@ def _render_peer_warranted(ticker: str, coe_pct: float, terminal_g_pct: float):
             "Price": f"${r['price']:.2f}" if r["price"] else "—",
             "Fair Price": f"${r['fair_price']:.2f}",
             "Upside": f"{r['upside_pct']:+.1f}%" if r["upside_pct"] is not None else "—",
+        })
+        raw.append({
+            "Subject bank": "Yes" if is_self else "No",
+            "Ticker": t,
+            "Bank": get_name(t),
+            "ROATCE (%)": r["roatce"],
+            "Actual P/TBV (x)": r["ptbv_actual"],
+            "Warranted P/TBV (x)": r["ptbv_warranted"],
+            "Price ($)": r["price"],
+            "Fair Price ($/sh)": r["fair_price"],
+            "Upside (%)": r["upside_pct"],
         })
 
     df = pd.DataFrame(rows)
@@ -939,6 +1090,27 @@ def _render_peer_warranted(ticker: str, coe_pct: float, terminal_g_pct: float):
     st.dataframe(styled, use_container_width=True, hide_index=True,
                  height=min(700, 50 + 32 * len(df)),
                  column_config=ticker_linkcol())
+    table_export(
+        pd.DataFrame(raw), f"{ticker}_valuation_peer_warranted",
+        f"exp_val_peer_warranted_{ticker}",
+        formats={"ROATCE (%)": "pct1", "Actual P/TBV (x)": "x",
+                 "Warranted P/TBV (x)": "x", "Price ($)": "usd2",
+                 "Fair Price ($/sh)": "usd2", "Upside (%)": "pct1"},
+        provenance={
+            "Page": "Company Analysis › Valuation › Valuation Model › Peer Warranted P/TBV",
+            "Ticker": ticker,
+            "Company": get_name(ticker),
+            "Source": ("Universe metrics cache (analysis/metrics.build_all_bank_metrics, "
+                       "rebuilt nightly): ROATCE and TBV/share from SEC companyfacts XBRL "
+                       "and FDIC; actual P/TBV and Price are market data (FMP). Warranted "
+                       "P/TBV = (ROATCE − g) ÷ (CoE − g); Fair Price = warranted × TBV/share; "
+                       "Upside = Fair Price ÷ Price − 1."),
+            "Cost of equity (%)": coe_pct,
+            "Terminal growth (%)": terminal_g_pct,
+            "Banks ranked": len(raw),
+            "Excluded": "banks missing ROATCE or TBV/share, or where CoE ≤ g",
+        },
+        freeze_cols=2)
 
     st.caption(
         "**Reading the table:** Banks at top have the largest implied upside under "
@@ -1006,7 +1178,7 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
         if (model_eps_annual_y1 and annualize) else None
     )
 
-    rows = []
+    rows, raw, row_formats = [], [], {}
     for m in consensus.get("metrics", []):
         key = m.get("key")
         name = m.get("name") or key
@@ -1068,6 +1240,20 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
             "Δ %": f"{delta_pct:+.1f}%" if delta_pct is not None else "—",
             "Verdict": verdict,
         })
+        # Export row: raw values in the upload's unit (Unit column; the row
+        # label drives the number format), never rescaled — "$M" stays $M.
+        raw.append({
+            "Metric": name,
+            "Unit": unit,
+            "Consensus": consensus_val,
+            "Model / Actual": comp_val,
+            "Δ": delta,
+            "Δ (%)": delta_pct,
+            "Basis": ("Model Year-1 EPS on the period's basis" if model_val is not None
+                      else "FDIC latest quarter (trailing actual)"),
+            "Verdict": verdict,
+        })
+        row_formats[name] = {"$": "usd2", "%": "pct"}.get(unit, "num")
 
     if not rows:
         from ui.states import empty_state
@@ -1091,6 +1277,30 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
     )
     st.dataframe(styled, use_container_width=True, hide_index=True,
                  height=min(450, 50 + 35 * len(df)))
+    sel_period = available[sel_idx]["period"]
+    table_export(
+        pd.DataFrame(raw), f"{ticker}_valuation_vs_consensus",
+        f"exp_val_vs_consensus_{ticker}",
+        formats={"Δ (%)": "pct1"}, row_formats=row_formats,
+        provenance={
+            "Page": "Company Analysis › Valuation › Valuation Model › Model vs Consensus",
+            "Ticker": ticker,
+            "Company": get_name(ticker),
+            "Source": ("Consensus: uploaded estimates (Earnings tab, data/consensus). "
+                       "Model: Year-1 projected EPS from this page's FCFE DCF, put on "
+                       "the period's basis (quarterly ÷ 4, annual as-is). Actual: FDIC "
+                       "latest quarter — NIMY, EEFFR, ROA, NCLNLSR as reported; ROATCE "
+                       "= annualized NETINC ÷ (EQTOT − INTAN)."),
+            "Consensus period": sel_period,
+            "FDIC data as of (REPDTE)": fdic_latest.get("REPDTE"),
+            "Model Year-1 EPS ($, annual)": model_eps_annual_y1,
+            "Period annualizer": annualize,
+            "Value units": ("Unit column carries each row's unit: $ = per share, "
+                            "% = percent units, $M = millions of dollars as uploaded "
+                            "(unscaled). Δ = Model/Actual − Consensus in that unit; "
+                            "Δ (%) = Δ ÷ |Consensus|."),
+            "Verdict bands": "|Δ (%)| < 2 = In line",
+        })
 
     st.caption(
         "'Model / Actual' = your Year-1 EPS projection for earnings, or most recent "

@@ -15,14 +15,46 @@ import streamlit.components.v1 as components
 import pandas as pd
 
 from data.bank_mapping import get_bank_info
+from ui.export import table_export
 from ui.financial_highlights import _build_component
 
 
 # Shared numeric primitives — one implementation in utils/formatting.
 from utils.formatting import (
-    num as _num, thou as _thou, pct as _pct,
-    usd_compact_from_thousands as _usd,
+    num as _num, thou as _thou, pct as _pct_plain,
+    usd_compact_from_thousands as _usd_plain,
 )
+
+
+class _V(str):
+    """A display string that remembers the RAW value and unit it was formatted
+    from, so the Excel export (ui.export) gets numbers, never parsed strings.
+    Behaves exactly like str everywhere else (HTML, JSON, comparisons)."""
+    raw = None
+    unit = None
+
+    def __new__(cls, text, raw=None, unit=None):
+        o = super().__new__(cls, text)
+        o.raw, o.unit = raw, unit
+        return o
+
+
+def _usd(v):
+    """FDIC $thousands → compact display; raw stays in $K (unit usd_k)."""
+    t = _usd_plain(v)
+    r = _num(v)
+    return _V(t, r if t != "—" else None, "usd_k")
+
+
+def _pct(v, dp: int = 2):
+    t = _pct_plain(v, dp)
+    r = _num(v)
+    return _V(t, r if t != "—" else None, "pct")
+
+
+def _pc(x, dp: int = 2):
+    """Inline percent (percent units already) with the raw value attached."""
+    return _V(f"{x:.{dp}f}%", x, "pct")
 
 
 def _yr(repdte):
@@ -42,7 +74,7 @@ def _disp(repdte):
 
 def _psd(v):
     v = _num(v)
-    return f"${v:,.2f}" if v is not None else "—"
+    return _V(f"${v:,.2f}", v, "usd2") if v is not None else "—"
 
 
 def _eff_tax(rec):
@@ -573,7 +605,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                             {"label": f2, "val": _thou(b) + " ($000)"}], f"{f1} − {f2}", False)
         if kind == "ratio":
             f1, f2 = args; a, b = _num(rec.get(f1)), _num(rec.get(f2))
-            v = f"{a/b*100:.2f}%" if (a is not None and b) else "—"
+            v = _pc(a/b*100) if (a is not None and b) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": f1, "val": _thou(a) + " ($000)"},
                             {"label": f2, "val": _thou(b) + " ($000)"}], f"{f1} ÷ {f2} × 100", False)
@@ -606,7 +638,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "etr":
             # Effective tax rate = income tax ÷ pre-tax income × 100
             tax, ptx = _num(rec.get("ITAX")), _num(rec.get("PTAXNETINC"))
-            v = f"{tax/ptx*100:.2f}%" if (tax is not None and ptx) else "—"
+            v = _pc(tax/ptx*100) if (tax is not None and ptx) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Income tax (ITAX)", "val": _thou(tax) + " ($000)"},
                             {"label": "Pre-tax net income (PTAXNETINC)", "val": _thou(ptx) + " ($000)"}],
@@ -630,7 +662,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             intan = _avg(ci, "INTAN") or 0
             tce = (eq - intan) if eq is not None else None
-            v = f"{ni*fq/tce*100:.2f}%" if (ni is not None and tce and tce > 0) else "—"
+            v = _pc(ni*fq/tce*100) if (ni is not None and tce and tce > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
@@ -639,7 +671,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "Net income ÷ avg tangible common equity × 100", False)
         if kind == "marginrev":   # flow ÷ total revenue × 100 (both YTD, no annualizing)
             fl = args[0]; n = _num(rec.get(fl)); rev = _revenue(rec)
-            v = f"{n/rev*100:.2f}%" if (n is not None and rev) else "—"
+            v = _pc(n/rev*100) if (n is not None and rev) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": fl, "val": _thou(n) + " ($000)"},
                             {"label": "Total revenue (NII + non-int income)",
@@ -647,13 +679,13 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            f"{fl} ÷ total revenue × 100", False)
         if kind == "pctdiff":     # A% − B%
             a, b = _num(rec.get(args[0])), _num(rec.get(args[1]))
-            v = f"{a-b:.2f}%" if (a is not None and b is not None) else "—"
+            v = _pc(a-b) if (a is not None and b is not None) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": args[0], "val": _pct(a)},
                             {"label": args[1], "val": _pct(b)}], f"{args[0]} − {args[1]}", False)
         if kind == "yield":       # flow (annualized) ÷ avg balance × 100
             nf, df_ = args; n, fq = _flow(ci, nf); d = _avg(ci, df_)
-            v = f"{n*fq/d*100:.2f}%" if (n is not None and d) else "—"
+            v = _pc(n*fq/d*100) if (n is not None and d) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": nf + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(n*fq)) + " ($000)" if n is not None else "—"},
@@ -662,7 +694,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "yield2":      # (A − B) annualized ÷ avg balance × 100
             af_, bf_, df_ = args
             a, fq = _flow(ci, af_); b, _fb = _flow(ci, bf_); d = _avg(ci, df_)
-            v = f"{(a-b)*fq/d*100:.2f}%" if (a is not None and b is not None and d) else "—"
+            v = _pc((a-b)*fq/d*100) if (a is not None and b is not None and d) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": f"{af_} − {bf_}" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round((a-b)*fq)) + " ($000)" if (a is not None and b is not None) else "—"},
@@ -673,7 +705,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             intan = _avg(ci, "INTAN") or 0
             te = (eq - intan) if eq is not None else None
-            v = f"{ni*fq/te*100:.2f}%" if (ni is not None and te and te > 0) else "—"
+            v = _pc(ni*fq/te*100) if (ni is not None and te and te > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
@@ -698,7 +730,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                     {"label": label,
                                      "val": "n/a — needs RI-A preferred dividends (later phase)"}],
                                    "(Net income − preferred dividends) ÷ avg common equity × 100", False)
-            v = f"{ni*fq/ce*100:.2f}%" if (ni is not None and ce and ce > 0) else "—"
+            v = _pc(ni*fq/ce*100) if (ni is not None and ce and ce > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
@@ -709,7 +741,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             nonx, fq = _flow(ci, "NONIX"); noni, _fb = _flow(ci, "NONII")
             a = _avg(ci, "ASSET")
             net = (nonx - noni) if (nonx is not None and noni is not None) else None
-            v = f"{net*fq/a*100:.2f}%" if (net is not None and a) else "—"
+            v = _pc(net*fq/a*100) if (net is not None and a) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net op. expense (NONIX − NONII)" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(net*fq)) + " ($000)" if net is not None else "—"},
@@ -721,7 +753,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             # SUBND is the sub-debt BALANCE (ESUBND is its interest expense —
             # never mix an expense into a balance denominator).
             fund = _avgsum(ci, ["DEP", "FREPP", "OTHBFHLB", "SUBND"])
-            v = f"{ie*fq/fund*100:.2f}%" if (ie is not None and fund) else "—"
+            v = _pc(ie*fq/fund*100) if (ie is not None and fund) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Total interest expense (EINTEXP)" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(ie*fq)) + " ($000)" if ie is not None else "—"},
@@ -746,7 +778,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                      "val": _thou(round(bor)) + " ($000)" if bor else "n/a"},
                                     {"label": label, "val": "n/a — " + why}],
                                    "(EINTEXP − EDEP) ÷ avg borrowings × 100", False)
-            v = f"{rate:.2f}%"
+            v = _pc(rate)
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Borrowings interest (EINTEXP − EDEP)" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(borint*fq)) + " ($000)" if borint is not None else "—"},
@@ -828,7 +860,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                      "val": "n/a — tax-exempt income not reported"}],
                                    op, False, source="FFIEC Call Report — Schedule RI",
                                    link=doc_link)
-            v = f"{nim + fte * f / ea * 100:.2f}%"
+            v = _pc(nim + fte * f / ea * 100)
             return v, calc(label, v, asof, "computed — statutory 21% federal rate",
                            [{"label": "Reported NIM (NIMY)", "val": _pct(nim)},
                             {"label": "FTE adjustment" + (" (annualized)" if f != 1 else ""),
@@ -976,7 +1008,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                         op, False, source=src, link=doc_link)
                 terms.append({"label": "Mean of quarterly averages",
                               "val": _thou(round(sum(avgs) / 4.0)) + " ($000)"})
-                v = f"{rate:.2f}%"
+                v = _pc(rate)
                 return v, calc(label, v, asof, ref, terms, op, False,
                                source=src, link=doc_link)
             q = (dt.month - 1) // 3 + 1
@@ -1015,7 +1047,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "n/a", calc(label, "n/a", asof, ref, terms + [
                     {"label": label, "val": f"n/a — {reason}"}],
                     op, False, source=src, link=doc_link)
-            v = f"{rate:.2f}%"
+            v = _pc(rate)
             return v, calc(label, v, asof, ref, terms, op, False,
                            source=src, link=doc_link)
         # ── Balance-sheet computed kinds ─────────────────────────────────
@@ -1144,7 +1176,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "n/a", calc(label, "n/a — non-positive balance ratio",
                                    asof, "Computed from Call Report", terms, op, False)
             g = ((ratio ** 4 - 1.0) if quarterly else (ratio - 1.0)) * 100.0
-            return f"{g:.2f}%", calc(label, f"{g:.2f}%", asof,
+            return _pc(g), calc(label, _pc(g), asof,
                                      "Computed from Call Report", terms, op, False)
         if kind == "flow":
             # Income-statement flow shown as a PERIOD dollar amount (not a
@@ -1194,7 +1226,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             if not nok or not dok or dv <= 0:
                 return "—", calc(label, "—", asof, "Computed from Call Report",
                                  terms, op, False)
-            v = f"{nv / dv * 100:.2f}%"
+            v = _pc(nv / dv * 100)
             return v, calc(label, v, asof, "Computed from Call Report", terms, op, False)
         if kind == "flowratio":
             # Ratio of two FLOWS over the same span (e.g. Provision ÷ NCO):
@@ -1229,7 +1261,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "NM", calc(label, "NM — not meaningful (negative flow "
                                   "in the period)", asof,
                                   "Computed from Call Report", terms, op, False)
-            v = f"{nv / dv * 100:.2f}%"
+            v = _pc(nv / dv * 100)
             return v, calc(label, v, asof, "Computed from Call Report", terms, op, False)
         if kind == "crit":
             # Criticized/classified loan grades from the company's OWN
@@ -1258,7 +1290,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                     return "—", calc(label, "—", asof, ref, terms,
                                      "graded ÷ LNLSGR × 100", False,
                                      source="SEC filing XBRL", link=link)
-                v = f"{graded_total / 1000.0 / loans * 100:.1f}%"
+                v = _pc(graded_total / 1000.0 / loans * 100, 1)
                 return v, calc(label, v, asof, ref, terms,
                                "graded ÷ LNLSGR × 100", False,
                                source="SEC filing XBRL", link=link)
@@ -1289,13 +1321,13 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "shares":
             key = args[0] if args else "shares"
             sh = _num(ps.get(key))
-            v = f"{sh:,.0f}" if sh is not None else "—"
+            v = _V(f"{sh:,.0f}", sh, "int") if sh is not None else "—"
             return v, calc(label, v, asof, "SEC filing (holding company)",
                            [{"label": label, "val": v}], None, True,
                            source="SEC filing", link=sec_filing_link)
         if kind == "payout":
             dps, eps = _num(ps.get("dps")), _num(ps.get("eps"))
-            v = f"{dps/eps*100:.2f}%" if (dps is not None and eps) else "—"
+            v = _pc(dps/eps*100) if (dps is not None and eps) else "—"
             return v, calc(label, v, asof, "Computed from SEC per-share",
                            [{"label": "Dividends / share", "val": _psd(dps)},
                             {"label": "Diluted EPS", "val": _psd(eps)}],
@@ -1313,7 +1345,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "Net income − after-tax securities gains/losses", False)
         if kind == "core_roaa":
             core, fq = _core_flow(ci); a = _avg(ci, "ASSET")
-            v = f"{core*fq/a*100:.2f}%" if (core is not None and a) else "—"
+            v = _pc(core*fq/a*100) if (core is not None and a) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Core income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(core*fq)) + " ($000)" if core is not None else "—"},
@@ -1321,7 +1353,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "Core income ÷ avg assets × 100", False)
         if kind == "core_roae":
             core, fq = _core_flow(ci); e = _avg(ci, "EQTOT")
-            v = f"{core*fq/e*100:.2f}%" if (core is not None and e) else "—"
+            v = _pc(core*fq/e*100) if (core is not None and e) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Core income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(core*fq)) + " ($000)" if core is not None else "—"},
@@ -1329,7 +1361,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "Core income ÷ avg equity × 100", False)
         if kind == "core_eps":
             core = _core_income(rec); sh = _num(ps.get("shares"))
-            v = f"${core*1000/sh:,.2f}" if (core is not None and sh) else "—"
+            v = _V(f"${core*1000/sh:,.2f}", core*1000/sh, "usd2") if (core is not None and sh) else "—"
             return v, calc(label, v, asof, "Computed (FDIC core income ÷ SEC shares)",
                            [{"label": "Core income", "val": _usd(core)},
                             {"label": "Avg diluted shares", "val": f"{sh:,.0f}" if sh else "—"}],
@@ -1338,7 +1370,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "nonrecur":
             igl = _num(rec.get("IGLSEC")) or 0.0; extra = _num(rec.get("EXTRA")) or 0.0
             pti = _num(rec.get("PTAXNETINC"))
-            v = f"{(igl+extra)/pti*100:.2f}%" if pti else "—"
+            v = _pc((igl+extra)/pti*100) if pti else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Securities gains + extraordinary",
                              "val": _thou(round(igl+extra)) + " ($000)"},
@@ -1348,12 +1380,15 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
 
     cells, rows_html, ri = {}, [], 0
     cell_errors: list[str] = []
+    xrows = []   # (label, kind, raw values) for the Excel export — raw, never parsed
     ncol = len(recs_list)
     for sec_name, rows in spec:
         rows_html.append(f'<tr><td class="sec" colspan="{ncol+1}">{sec_name}</td></tr>')
+        xrows.append((sec_name, "header", []))
         for row in rows:
             label, kind, args = row[0], row[1], row[2:]
             tds = [f'<td class="lbl">{label}</td>']
+            raws, unit = [], None
             for ci, rec in enumerate(recs_list):
                 try:
                     v, c = cell(ci, kind, args, label)
@@ -1362,6 +1397,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                     # "not reported" — collect and log once per render.
                     cell_errors.append(f"{label}[{ci}]: {type(e).__name__}: {e}")
                     v, c = "—", None
+                raws.append(getattr(v, "raw", None))
+                unit = unit or getattr(v, "unit", None)
                 cid = f"{ri}_{ci}"
                 if c:
                     cells[cid] = c
@@ -1371,6 +1408,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             zebra = ' class="zebra"' if ri % 2 == 1 else ""
             rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
+            xrows.append((f"{label} ($K)" if unit == "usd_k" else label,
+                          _STMT_XKIND.get(unit, "text"), raws))
 
     if cell_errors:
         print(f"[statements] {ticker} {title}: {len(cell_errors)} cell(s) "
@@ -1384,7 +1423,28 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
 
     tr = _DEFAULT_TRENDS if trends is None else trends
+    latest_iso = pd.Timestamp(recs_list[-1].get("REPDTE")).date().isoformat()
     cap = f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load."
+
+    def _export():
+        _cr_export(labels, xrows,
+                   filename=f"{ticker}_{key_prefix}_{period.lower()}_{latest_iso}",
+                   key=f"exp_stmt_{key_prefix}_{ticker}",
+                   provenance={
+                       "Page": f"Company Analysis › Financials › Templated › {title}",
+                       "Period": period,
+                       "Ticker": ticker, "Company": name, "FDIC cert": cert,
+                       "SEC CIK": cik if with_persh else None,
+                       "Source": ("FDIC Call Report (bank subsidiary)"
+                                  + ("; per-share lines from SEC filings (holding company)"
+                                     if with_persh else "")),
+                       "Latest report date": latest_iso,
+                       "Value units": ("Dollar lines are FDIC-reported thousands ($K), "
+                                       "unscaled; ratio lines are percent units; per-share "
+                                       "lines are $/share; share counts are raw. Interim "
+                                       "ratios are annualized exactly as on screen."),
+                   })
+
     if side_by_side:
         # Page pattern (user 2026-06-25): click-to-source table on the left,
         # trend charts tiled two-per-row (2×2) on the right — like Financial
@@ -1393,6 +1453,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         with _lt:
             components.html(html, height=height, scrolling=False)
             st.caption(cap)
+            _export()
         with _rt:
             _render_statement_trends(hist, ticker, key_prefix, tr)
     else:
@@ -1401,6 +1462,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         # (user 2026-06-14: more charts, multi-metric, real axes).
         components.html(html, height=height, scrolling=False)
         st.caption(cap)
+        _export()
         _render_statement_trends(hist, ticker, key_prefix, tr)
 
 
@@ -2141,6 +2203,60 @@ def _cr_usd(raw):
     return _usd(raw / 1000.0) if raw is not None else ""   # _usd takes $thousands
 
 
+# Export row kind -> ui.export FORMATS key. "frac" is a FRACTION in the data
+# (0.0123) exported ×100 as percent units (1.23), the same conversion every
+# Company-Reported screen applies; "header" carries no format.
+_CR_XFMT = {"usd": "usd", "eps": "usd2", "shares": "int", "frac": "pct", "x": "x",
+            # Templated (FDIC) statement units — see _V / _STMT_XKIND
+            "usd_k": "usd_k", "pct": "pct"}
+# Templated cell unit (from _V.unit) → export kind. "text" rows carry no format.
+_STMT_XKIND = {"usd_k": "usd_k", "pct": "pct", "usd2": "eps", "int": "shares"}
+
+
+def _cr_export(cols, xrows, *, filename, key, provenance) -> None:
+    """Excel export for a Company-Reported table (ui.export.table_export), built
+    from RAW values — never the display strings _cr_component renders.
+    xrows: [(label, kind, raw_values)] parallel to the rendered rows, kind in
+    "header" | "usd" (raw dollars) | "eps" ($/share) | "shares" (raw count) |
+    "frac" (fraction → percent units) | "x" (raw ratio). A header row keeps its
+    label with every period n/a so the section structure survives."""
+    recs, row_formats = [], {}
+    for label, kind, vals in xrows:
+        if kind == "header":
+            recs.append([label] + [None] * len(cols))
+            continue
+        vals = (list(vals) + [None] * len(cols))[:len(cols)]
+        if kind == "frac":
+            vals = [None if v is None else v * 100.0 for v in vals]
+        recs.append([label] + vals)
+        if kind in _CR_XFMT:
+            row_formats[str(label)] = _CR_XFMT[kind]
+    df = pd.DataFrame(recs, columns=["Line item"] + [str(c) for c in cols])
+    table_export(df, filename, key, row_formats=row_formats,
+                 provenance=provenance, freeze_cols=1)
+
+
+def _cr_provenance(page, ticker, info, cik, *, source, periods, src=None,
+                   latest_date=None, basis=None, units=None) -> dict:
+    """Source-sheet rows shared by every Company-Reported export."""
+    if src and latest_date:
+        latest = f"{latest_date} — {src}"
+    else:
+        latest = src or latest_date
+    return {
+        "Page": f"Company Analysis › Financials › Company Reported › {page}",
+        "Basis": basis,
+        "Ticker": ticker,
+        "Company": (info or {}).get("name"),
+        "SEC CIK": cik,
+        "Source": source,
+        "Latest filing": latest,
+        "Periods": (f"{len(periods)} ({periods[0]} – {periods[-1]})"
+                    if periods else None),
+        "Value units": units,
+    }
+
+
 def _render_company_statement(ticker: str, stype: str):
     """Company-Reported statement (stype = "income" | "balance"), stitched from
     the bank's own SEC filings. An Annual/Quarterly toggle switches between the
@@ -2205,23 +2321,43 @@ def _render_company_statement_annual(ticker, stype, cik, info):
         # Dollar lines: raw dollars -> Templated $-compact; negatives in parens.
         return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
 
-    rows = []
+    def _kind(label):
+        return "eps" if _eps.search(label) else "shares" if _shares.search(label) else "usd"
+
+    rows, xrows = [], []
     for r in stmt["rows"]:
         if r["header"]:
             rows.append({"label": r["label"], "values": [], "kind": "header"})
+            xrows.append((r["label"], "header", []))
         else:
             vals = r["values"][::-1]
             rows.append({"label": r["label"],
                          "values": [_m(r["label"], v) for v in vals],
                          "kind": "data"})
+            xrows.append((r["label"], _kind(r["label"]), vals))
 
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(cols, rows, entity=entity, src=src)
+        _cr_export(cols, xrows,
+                   filename=f"{ticker}_cr_{stype}_annual_{latest['date']}",
+                   key=f"exp_cr_{stype}_annual_{ticker}",
+                   provenance=_cr_provenance(
+                       _CR_STMT_PAGE[stype], ticker, info, cik,
+                       basis="Annual — fiscal years stitched from the company's 10-Ks",
+                       source="Company 10-K filings (as-reported statements, stitched)",
+                       src=src, latest_date=latest["date"], periods=cols,
+                       units=_CR_STMT_UNITS))
     with _rt:
         _cr_statement_trends(stmt, ticker, f"cr{stype}",
                              _CR_INCOME_TRENDS if stype == "income" else _CR_BALANCE_TRENDS)
+
+
+_CR_STMT_PAGE = {"income": "Income Statement", "balance": "Balance Sheet"}
+_CR_STMT_UNITS = ("Dollar lines are whole US dollars; per-share lines are $/share; "
+                  "share-count lines ('in shares') are raw share counts (the screen "
+                  "shows millions). Line kinds follow the as-reported label, as on screen.")
 
 
 def _render_company_statement_quarterly(ticker, stype, cik, info):
@@ -2269,20 +2405,36 @@ def _render_company_statement_quarterly(ticker, stype, cik, info):
             return f"{v / 1e6:,.1f}M"
         return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
 
-    rows = []
+    def _kind(label):
+        return "eps" if _eps.search(label) else "shares" if _shares.search(label) else "usd"
+
+    rows, xrows = [], []
     for r in stmt["rows"]:
         if r["header"]:
             rows.append({"label": r["label"], "values": [], "kind": "header"})
+            xrows.append((r["label"], "header", []))
         else:
             vals = r["values"][::-1]
             rows.append({"label": r["label"],
                          "values": [_m(r["label"], v) for v in vals],
                          "kind": "data"})
+            xrows.append((r["label"], _kind(r["label"]), vals))
 
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(cols, rows, entity=entity, src=src)
+        _cr_export(cols, xrows,
+                   filename=f"{ticker}_cr_{stype}_quarterly_{latest['date']}",
+                   key=f"exp_cr_{stype}_quarterly_{ticker}",
+                   provenance=_cr_provenance(
+                       _CR_STMT_PAGE[stype], ticker, info, cik,
+                       basis=("Quarterly — discrete quarters stitched from the company's "
+                              "10-Qs/10-Ks" + ("" if stype == "balance" else
+                                               "; Q4 = annual 10-K minus the nine-month 10-Q")),
+                       source="Company 10-Q/10-K filings (as-reported statements, stitched)",
+                       src=src, latest_date=latest["date"], periods=cols,
+                       units=_CR_STMT_UNITS))
     with _rt:
         _cr_statement_trends(stmt, ticker, f"crq{stype}",
                              _CR_INCOME_TRENDS if stype == "income" else _CR_BALANCE_TRENDS)
@@ -2608,15 +2760,17 @@ def _render_company_composition(ticker, kind):
     latest = periods[-1]
     order.sort(key=lambda k: (-(per_val[k].get(latest) or -1), display[k].lower()))
 
-    rows = []
+    rows, xrows = [], []
     for key in order:
-        vals = [_cr_usd(per_val[key].get(p)) if per_val[key].get(p) is not None else None
-                for p in periods]
+        raw = [per_val[key].get(p) for p in periods]
+        vals = [_cr_usd(v) if v is not None else None for v in raw]
         if all(v is None for v in vals):
             continue                         # category None for every in-view period
         rows.append({"label": display[key], "values": vals, "kind": "data"})
+        xrows.append((display[key], "usd", raw))
     rows.append({"label": "Total",
                  "values": [_cr_usd(comp[p]["total"]) for p in periods], "kind": "data"})
+    xrows.append(("Total", "usd", [comp[p]["total"] for p in periods]))
 
     latest_total = comp[latest]["total"]
     _span = (f"{len(periods)} quarter-end{'s' if len(periods) != 1 else ''}"
@@ -2632,6 +2786,19 @@ def _render_company_composition(ticker, kind):
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(cols, rows, entity=entity, src=src)
+        _basis = "quarterly" if _qtr else "annual"
+        _cr_export(cols, xrows,
+                   filename=f"{ticker}_cr_{kind}_composition_{_basis}_{meta['date']}",
+                   key=f"exp_cr_{kind}_composition_{_basis}_{ticker}",
+                   provenance=_cr_provenance(
+                       f"{kind.capitalize()} Composition", ticker, info, cik,
+                       basis=("Quarterly — quarter-end snapshots (10-Q/10-K)" if _qtr
+                              else "Annual — fiscal year-ends (10-K)"),
+                       source=(f"Company {'10-Q/10-K' if _qtr else '10-K'} inline XBRL "
+                               f"(as-reported {kind} composition; lines reconcile to the "
+                               "disclosed total each period)"),
+                       src=src, latest_date=meta["date"], periods=cols,
+                       units="All lines are whole US dollars (the company's own categories)."))
     with _rt:
         # Mix trend: each category as % of the period's reconciled total —
         # faithful by construction (every in-view period reconciles to its
@@ -2797,12 +2964,13 @@ def _render_fair_value_hierarchy(ticker):
            f"{meta['accession']}/{meta['doc']}")
     cols = [_cr_plabel(p, quarterly) for p in periods]
 
-    def _cell(period, side, key, fmt):
-        """Formatted cell, or None (blank) when the year doesn't disclose it."""
+    def _raw(period, side, key):
+        """Raw value, or None when the year doesn't disclose it."""
         d = (fv.get(period) or {}).get(side)
-        if not d:
-            return None
-        v = d.get(key)
+        return d.get(key) if d else None
+
+    def _cell(v, fmt):
+        """Formatted cell, or None (blank)."""
         if v is None:
             return None
         if fmt == "pct":
@@ -2813,7 +2981,7 @@ def _render_fair_value_hierarchy(ticker):
         (fv.get(p) or {}).get(side) and not (fv[p][side]).get("_reconciles")
         for p in periods for side, _ in _CR_FV_SIDES)
 
-    rows = []
+    rows, xrows = [], []
     for side, band in _CR_FV_SIDES:
         metrics = list(_FV_LEVEL_ROWS)
         if needs_netting:
@@ -2821,14 +2989,18 @@ def _render_fair_value_hierarchy(ticker):
                 ("Counterparty/collateral netting", "netting", "usd"),
                 ("Total per filing", "grand", "usd")]
         metrics = metrics + [("Level 3 % of total", "l3_pct", "pct")]
-        side_rows = []
+        side_rows, side_x = [], []
         for label, key, fmt in metrics:
-            vals = [_cell(p, side, key, fmt) for p in periods]
+            raw = [_raw(p, side, key) for p in periods]
+            vals = [_cell(v, fmt) for v in raw]
             if any(v is not None for v in vals):        # drop rows n/a every year
                 side_rows.append({"label": label, "values": vals, "kind": "data"})
+                side_x.append((label, "frac" if fmt == "pct" else "usd", raw))
         if side_rows:
             rows.append({"label": band, "values": [], "kind": "header"})
             rows.extend(side_rows)
+            xrows.append((band, "header", []))
+            xrows.extend(side_x)
 
     if not rows:
         st.caption("Fair-value hierarchy rollup not tagged in this filer's 10-Ks — "
@@ -2849,6 +3021,19 @@ def _render_fair_value_hierarchy(ticker):
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(cols, rows, entity=entity, src=src)
+        _basis = "quarterly" if quarterly else "annual"
+        _cr_export(cols, xrows,
+                   filename=f"{ticker}_cr_fair_value_{_basis}_{meta['date']}",
+                   key=f"exp_cr_fair_value_{_basis}_{ticker}",
+                   provenance=_cr_provenance(
+                       "Fair Value", ticker, info, cik,
+                       basis=("Quarterly — quarter-ends (10-Q/10-K)" if quarterly
+                              else "Annual — fiscal year-ends (10-K)"),
+                       source=(f"Company {_forms} filings (recurring ASC 820 fair-value "
+                               "hierarchy, holding company; each period reconcile-gated)"),
+                       src=src, latest_date=meta["date"], periods=cols,
+                       units=("Level and total lines are whole US dollars; 'Level 3 % of "
+                              "total' is percent units (Level 3 ÷ sum of levels × 100).")))
         if needs_netting:
             st.caption("Level totals are gross; for a year whose filer-tagged grand "
                        "total nets counterparty/collateral arrangements, the netting "
@@ -2965,12 +3150,13 @@ def _render_securities_portfolio(ticker):
            f"{meta['accession']}/{meta['doc']}")
     cols = [_cr_plabel(p, quarterly) for p in periods]
 
-    def _cell(period, port, key, fmt):
-        """Formatted cell, or None (blank) when the year doesn't disclose it."""
+    def _raw(period, port, key):
+        """Raw value, or None when the year doesn't disclose it."""
         d = (sec.get(period) or {}).get(port)
-        if not d:
-            return None
-        v = d.get(key)
+        return d.get(key) if d else None
+
+    def _cell(v, fmt):
+        """Formatted cell, or None (blank)."""
         if v is None:
             return None
         if fmt == "pct":
@@ -2978,16 +3164,20 @@ def _render_securities_portfolio(ticker):
         return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
 
     any_gross_gated = False
-    rows = []
+    rows, xrows = [], []
     for port, band, metrics in _CR_SECURITIES_SECTIONS:
-        sec_rows = []
+        sec_rows, sec_x = [], []
         for label, key, fmt in metrics:
-            vals = [_cell(p, port, key, fmt) for p in periods]
+            raw = [_raw(p, port, key) for p in periods]
+            vals = [_cell(v, fmt) for v in raw]
             if any(v is not None for v in vals):       # drop rows n/a every year
                 sec_rows.append({"label": label, "values": vals, "kind": "data"})
+                sec_x.append((label, "frac" if fmt == "pct" else "usd", raw))
         if sec_rows:
             rows.append({"label": band, "values": [], "kind": "header"})
             rows.extend(sec_rows)
+            xrows.append((band, "header", []))
+            xrows.extend(sec_x)
         # Flag if any in-view period tagged this portfolio but not a tying split.
         for p in periods:
             d = (sec.get(p) or {}).get(port)
@@ -3011,6 +3201,20 @@ def _render_securities_portfolio(ticker):
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(cols, rows, entity=entity, src=src)
+        _basis = "quarterly" if quarterly else "annual"
+        _cr_export(cols, xrows,
+                   filename=f"{ticker}_cr_securities_{_basis}_{meta['date']}",
+                   key=f"exp_cr_securities_{_basis}_{ticker}",
+                   provenance=_cr_provenance(
+                       "Securities Portfolio", ticker, info, cik,
+                       basis=("Quarterly — quarter-ends (10-Q/10-K)" if quarterly
+                              else "Annual — fiscal year-ends (10-K)"),
+                       source=(f"Company {'10-Q/10-K' if quarterly else '10-K'} filings "
+                               "(AFS/HTM debt-securities amortized cost → fair value "
+                               "bridge, holding company; each period reconcile-gated)"),
+                       src=src, latest_date=meta["date"], periods=cols,
+                       units=("Dollar lines are whole US dollars; 'Net unrealized, % of "
+                              "amortized cost' is percent units (signed).")))
         if any_gross_gated:
             st.caption("Gross gain/loss split shown only for a year that tags a split "
                        "tying the amortized-cost → fair-value bridge; otherwise blank "
@@ -3121,17 +3325,21 @@ def _render_credit_quality(ticker):
             return f"{v:.2f}x"
         return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
 
-    rows = []
+    rows, xrows = [], []
     for sec_name, metrics in _CR_CREDIT_SECTIONS:
-        sec_rows = []
+        sec_rows, sec_x = [], []
         for label, key, kind in metrics:
-            vals = [_fmt(dicts[i].get(key), kind) for i in order]
+            raw = [dicts[i].get(key) for i in order]
+            vals = [_fmt(v, kind) for v in raw]
             # Drop a row that is n/a for every year; keep if any year has data.
             if any(v is not None for v in vals):
                 sec_rows.append({"label": label, "values": vals, "kind": "data"})
+                sec_x.append((label, _CR_HL_XKIND[kind], raw))
         if sec_rows:
             rows.append({"label": sec_name, "values": [], "kind": "header"})
             rows.extend(sec_rows)
+            xrows.append((sec_name, "header", []))
+            xrows.extend(sec_x)
 
     if not rows:
         st.caption("Company-reported allowance / asset-quality figures not available "
@@ -3150,6 +3358,22 @@ def _render_credit_quality(ticker):
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(periods, rows, entity=entity, src=src)
+        _basis = "quarterly" if _q else "annual"
+        _cr_export(periods, xrows,
+                   filename=f"{ticker}_cr_credit_quality_{_basis}",
+                   key=f"exp_cr_credit_quality_{_basis}_{ticker}",
+                   provenance=_cr_provenance(
+                       "Credit Quality / Allowance", ticker, info, cik,
+                       basis=("Quarterly — discrete quarters (10-Q/10-K); nonaccrual and "
+                              "net charge-off rates are 10-K-only and blank" if _q
+                              else "Annual — fiscal years (10-K)"),
+                       source=("Company 10-K/10-Q filings (as-reported balance sheet + "
+                               "income statement; 10-K asset-quality table and allowance "
+                               "rollforward)"),
+                       src=src, periods=periods,
+                       units=("Dollar lines are whole US dollars; ratio lines are percent "
+                              "units (as-reported fraction × 100); coverage is the raw "
+                              "multiple (ACL ÷ nonaccrual loans).")))
     with _rt:
         _cr_credit_trends(years, dicts, ticker, "crcq")
 
@@ -3535,6 +3759,9 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
 
 # Financial-Highlights sections: (section name, [(row label, metric key, fmt)]).
 # fmt: "usd" = $-compact dollars; "pct2" = x.xx%. A None value renders blank.
+# _CR_HL_XKIND maps these screen fmts (shared by the Highlights, Performance and
+# Credit-Quality tables) to _cr_export row kinds: pct2 values are FRACTIONS.
+_CR_HL_XKIND = {"usd": "usd", "pct2": "frac", "eps": "eps", "x": "x"}
 _CR_HL_SECTIONS = [
     ("Balance Sheet", [
         ("Total assets", "total_assets", "usd"),
@@ -3948,12 +4175,15 @@ def _render_financial_highlights(ticker):
             return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
         return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
 
-    rows = []
+    rows, xrows = [], []
     for sec_name, metrics in _CR_HL_SECTIONS:
         rows.append({"label": sec_name, "values": [], "kind": "header"})
+        xrows.append((sec_name, "header", []))
         for label, key, kind in metrics:
-            vals = [_fmt(dicts[i].get(key), kind) for i in order]
-            rows.append({"label": label, "values": vals, "kind": "data"})
+            raw = [dicts[i].get(key) for i in order]
+            rows.append({"label": label, "values": [_fmt(v, kind) for v in raw],
+                         "kind": "data"})
+            xrows.append((label, _CR_HL_XKIND[kind], raw))
 
     st.caption(
         f"Source: company 10-K filings ([latest]({src})); {len(periods)} fiscal "
@@ -3966,6 +4196,22 @@ def _render_financial_highlights(ticker):
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(periods, rows, entity=entity, src=src)
+        _basis = "quarterly" if _q else "annual"
+        _cr_export(periods, xrows,
+                   filename=f"{ticker}_cr_financial_highlights_{_basis}",
+                   key=f"exp_cr_financial_highlights_{_basis}_{ticker}",
+                   provenance=_cr_provenance(
+                       "Financial Highlights", ticker, info, cik,
+                       basis=("Quarterly — discrete quarters (10-Q/10-K); ROAA/ROAE/ROATCE "
+                              "annualized ×4; NIM and asset-quality rates 10-K-only and "
+                              "blank" if _q else "Annual — fiscal years (10-K)"),
+                       source=("Company 10-K/10-Q filings (as-reported income and balance "
+                               "statements; 10-K MD&A average-balance table, allowance "
+                               "rollforward and holdco regulatory-capital table)"),
+                       src=src, periods=periods,
+                       units=("Dollar lines are whole US dollars; ratio lines are percent "
+                              "units (derived fraction × 100), on average balances where "
+                              "a prior period is in view.")))
     with _rt:
         _cr_highlights_trends(years, dicts, ticker, "crhl")
 
@@ -4031,17 +4277,21 @@ def _render_performance(ticker):
             return f"$({abs(v):,.2f})" if v < 0 else f"${v:,.2f}"
         return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
 
-    rows = []
+    rows, xrows = [], []
     for sec_name, metrics in _CR_PERF_SECTIONS:
-        sec_rows = []
+        sec_rows, sec_x = [], []
         for label, key, kind in metrics:
-            vals = [_fmt(dicts[i].get(key), kind) for i in order]
+            raw = [dicts[i].get(key) for i in order]
+            vals = [_fmt(v, kind) for v in raw]
             # Drop a row that is n/a for every year; keep if any year has data.
             if any(v is not None for v in vals):
                 sec_rows.append({"label": label, "values": vals, "kind": "data"})
+                sec_x.append((label, _CR_HL_XKIND[kind], raw))
         if sec_rows:
             rows.append({"label": sec_name, "values": [], "kind": "header"})
             rows.extend(sec_rows)
+            xrows.append((sec_name, "header", []))
+            xrows.extend(sec_x)
 
     st.caption(
         f"Source: company 10-K filings ([latest]({src})); {len(periods)} fiscal "
@@ -4055,6 +4305,21 @@ def _render_performance(ticker):
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(periods, rows, entity=entity, src=src)
+        _basis = "quarterly" if _qtr else "annual"
+        _cr_export(periods, xrows,
+                   filename=f"{ticker}_cr_performance_{_basis}",
+                   key=f"exp_cr_performance_{_basis}_{ticker}",
+                   provenance=_cr_provenance(
+                       "Performance Analysis", ticker, info, cik,
+                       basis=("Quarterly — discrete single quarters (10-Q/10-K); "
+                              "ROAA/ROAE/ROATCE annualized ×4; NIM 10-K-only and blank"
+                              if _qtr else "Annual — fiscal years (10-K)"),
+                       source=("Company 10-K/10-Q filings (as-reported income statement; "
+                               "ratios on average balances; NIM from the 10-K MD&A "
+                               "average-balance table)"),
+                       src=src, periods=periods,
+                       units=("Dollar lines are whole US dollars; ratio lines are percent "
+                              "units (derived fraction × 100); Diluted EPS is $/share.")))
     with _rt:
         _cr_perf_trends(years, dicts, ticker, "crperf")
 
@@ -4134,19 +4399,24 @@ def _render_segments(ticker):
     def _band(title, key, *, residual=False, consolidated=False):
         """One metric section: a header row, one row per segment across the FY
         columns, and (net income only) the reconciling residual + consolidated
-        rows. A segment row that is n/a in every year is dropped."""
+        rows. A segment row that is n/a in every year is dropped. Returns
+        (display rows, export rows) — the latter carry the raw dollars."""
         rows = [{"label": title, "values": [], "kind": "header"}]
-        body = []
+        xrows = [(title, "header", [])]
+        body, xbody = [], []
         for lbl in seg_order:
-            vals = []
+            raw = []
             for p in periods:
                 seg = next((s for s in seg_data[p]["segments"] if s["label"] == lbl), None)
-                vals.append(_b(seg[key]) if seg is not None and seg.get(key) is not None else "")
+                raw.append(seg.get(key) if seg is not None else None)
+            vals = [_b(v) if v is not None else "" for v in raw]
             if any(v not in ("", "n/a") for v in vals):
                 body.append({"label": lbl, "values": vals, "kind": "data"})
+                xbody.append((lbl, "usd", raw))
         if not body and not (residual or consolidated):
-            return []                                # metric untagged across all years
+            return [], []                            # metric untagged across all years
         rows += body
+        xrows += xbody
         # Residual / consolidated come from whichever measure this period carries
         # (NI for NI-tagged filers, the disclosed measure otherwise) so the rows
         # always tie the SAME column they reconcile.
@@ -4158,23 +4428,39 @@ def _render_segments(ticker):
             d = seg_data[p]
             return d["consolidated_net_income"] if d.get("ni_measure") else d.get("disclosed_consolidated")
         if residual:
+            resid = [_resid(p) for p in periods]
             rows.append({"label": "Corporate / other & reconciling items",
-                         "values": [_b(_resid(p)) for p in periods],
-                         "kind": "data"})
+                         "values": [_b(v) for v in resid], "kind": "data"})
+            xrows.append(("Corporate / other & reconciling items", "usd", resid))
         if consolidated:
+            consol = [_consol(p) for p in periods]
             rows.append({"label": primary_consol_label,
-                         "values": [_b(_consol(p)) for p in periods],
-                         "kind": "data"})
-        return rows
+                         "values": [_b(v) for v in consol], "kind": "data"})
+            xrows.append((primary_consol_label, "usd", consol))
+        return rows, xrows
 
-    grid_rows = []
-    grid_rows += _band(primary_title, primary_key, residual=True, consolidated=True)
-    grid_rows += _band("Revenue ($)", "revenue")
-    grid_rows += _band("Total assets ($)", "assets")
+    grid_rows, xrows = [], []
+    for band_rows, band_x in (
+            _band(primary_title, primary_key, residual=True, consolidated=True),
+            _band("Revenue ($)", "revenue"),
+            _band("Total assets ($)", "assets")):
+        grid_rows += band_rows
+        xrows += band_x
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
     with _lt:
         _cr_component(cols, grid_rows, entity=entity, src=src)
+        _cr_export(cols, xrows,
+                   filename=f"{ticker}_cr_segments_annual_{m['date']}",
+                   key=f"exp_cr_segments_annual_{ticker}",
+                   provenance=_cr_provenance(
+                       "Segment Reporting", ticker, info, cik,
+                       basis="Annual — fiscal years (10-K)",
+                       source=("Company 10-K filings (ASC 280 segment footnote, "
+                               "dimensional XBRL, holding company; each period "
+                               "reconcile-gated). " + measure_note),
+                       src=src, latest_date=m["date"], periods=cols,
+                       units="All lines are whole US dollars."))
     with _rt:
         # Primary-measure trend per reportable segment (the residual/consolidated
         # reconciling rows are table-only — they'd read as phantom "segments").
@@ -4322,6 +4608,7 @@ def _render_rate_risk(ticker):
 
     afs_row, htm_row, tot_row, eq_row, loss_eq_row, loss_cet1_row = ([] for _ in range(6))
     eq_pct_series = []                                   # for the trend chart
+    raw_by_year = []                                     # (afs, htm, tot, eq, loss_eq, loss_cet1) for the export
     for y in yrs:
         afs, htm, tot = _marks(y)
         eq = equity_by_year.get(y)
@@ -4338,6 +4625,7 @@ def _render_rate_risk(ticker):
         loss_eq_row.append(_pct_cell(loss_eq))
         loss_cet1_row.append(_pct_cell(loss_cet1))
         eq_pct_series.append(loss_eq * 100 if loss_eq is not None else None)
+        raw_by_year.append((afs, htm, tot, eq, loss_eq, loss_cet1))
 
     candidate_rows = [
         ("AFS unrealized gain / (loss)", afs_row),
@@ -4347,9 +4635,13 @@ def _render_rate_risk(ticker):
         ("Unrealized as % of equity", loss_eq_row),
         ("Unrealized as % of CET1 capital", loss_cet1_row),
     ]
+    _xkinds = ("usd", "usd", "usd", "usd", "frac", "frac")
     rows = [{"label": lab, "values": vals, "kind": "data"}
             for lab, vals in candidate_rows
             if any(v is not None for v in vals)]    # drop all-n/a rows
+    xrows = [(lab, k, [t[i] for t in raw_by_year])
+             for i, ((lab, vals), k) in enumerate(zip(candidate_rows, _xkinds))
+             if any(v is not None for v in vals)]
     if not rows:
         st.caption("AFS/HTM unrealized marks not tagged in this filer's 10-Ks — n/a. "
                    "Forward rate-shock (NII/EVE) sensitivity is disclosed in Item 7A "
@@ -4370,15 +4662,33 @@ def _render_rate_risk(ticker):
         "year(s) it cleanly discloses. Forward NII/EVE rate-shock sensitivity is "
         "narrative in Item 7A (not standardized XBRL). Company-reported, never FDIC.")
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
+    _basis = "quarterly" if _rrq else "annual"
+
+    def _export():
+        _cr_export(cols, xrows,
+                   filename=f"{ticker}_cr_rate_risk_{_basis}_{meta['date']}",
+                   key=f"exp_cr_rate_risk_{_basis}_{ticker}",
+                   provenance=_cr_provenance(
+                       "Interest Rate Risk", ticker, info, cik,
+                       basis=("Quarterly — quarter-ends (10-Q/10-K)" if _rrq
+                              else "Annual — fiscal year-ends (10-K)"),
+                       source=("Company 10-K/10-Q filings (AFS/HTM net unrealized marks, "
+                               "as-reported total equity, holdco CET1 capital where tagged)"),
+                       src=src, latest_date=meta["date"], periods=cols,
+                       units=("Dollar lines are whole US dollars; 'Unrealized as % of …' "
+                              "lines are percent units (total mark ÷ base × 100).")))
+
     # Chart the loss/equity % only when a clean multi-year series exists (≥3 points).
     if sum(1 for v in eq_pct_series if v is not None) >= 3:
         _lt, _rt = st.columns([1, 1], vertical_alignment="top")
         with _lt:
             _cr_component(cols, rows, entity=entity, src=src)
+            _export()
         with _rt:
             _rate_risk_trend(cols, eq_pct_series, ticker)
     else:
         _cr_component(cols, rows, entity=entity, src=src)
+        _export()
 
 
 def _rate_risk_trend(xs, ys, ticker):

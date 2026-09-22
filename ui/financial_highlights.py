@@ -23,7 +23,7 @@ import streamlit.components.v1 as components
 import pandas as pd
 
 from data.bank_mapping import get_bank_info
-from ui.chrome import title_bar
+from ui.chrome import table_export, title_bar
 from data import sec_client
 
 
@@ -385,6 +385,16 @@ _DEFS = {
 }
 
 
+# Drill-down "unit" → (export row-label suffix, ui.export FORMATS key). FDIC
+# dollar rows are Call Report $thousands and export UNSCALED under "($K)".
+_EXPORT_UNIT = {
+    "$ in thousands": (" ($K)", "usd_k"),
+    "%": (" (%)", "pct"),
+    "$ / share": (" ($/share)", "usd2"),
+    "shares": ("", "int"),
+}
+
+
 # ── the table ───────────────────────────────────────────────────────────────
 def render_financial_highlights(ticker: str):
     info = get_bank_info(ticker)
@@ -446,9 +456,11 @@ def render_financial_highlights(ticker: str):
         m = _month(r.get("REPDTE")) or 12
         return 12.0 / m if m else 1.0
 
-    # payload builders ── each returns {"v": display, "calc": {...}}
-    def P(v, metric, source, asof_s, unit, ref, terms, op, reported, link):
-        return {"v": v, "calc": {
+    # payload builders ── each returns {"v": display, "raw": number, "calc": {...}};
+    # `raw` is the unformatted value the display string was made from — it
+    # feeds the .xlsx export so the sheet carries numbers, never "$1.2B".
+    def P(v, metric, source, asof_s, unit, ref, terms, op, reported, link, raw=None):
+        return {"v": v, "raw": raw, "calc": {
             "metric": metric, "entity": entity, "source": source, "asof": asof_s,
             "unit": unit, "ref": ref, "definition": _DEFS.get(metric, ""),
             "terms": terms, "op": op, "reported": reported, "link": link}}
@@ -459,7 +471,7 @@ def render_financial_highlights(ticker: str):
             return P(_usd(raw), metric, "FDIC Call Report", asof[k], "$ in thousands",
                      f"FDIC field {field}",
                      [{"label": metric, "val": _thou(raw) + " ($000)"}],
-                     None, True, fdic_link)
+                     None, True, fdic_link, raw=raw)
         return b
 
     def fdic_pct(metric, field):
@@ -468,7 +480,7 @@ def render_financial_highlights(ticker: str):
             return P(_pct(raw), metric, "FDIC Call Report", asof[k], "%",
                      f"FDIC field {field}",
                      [{"label": metric + " (as reported)", "val": _pct(raw)}],
-                     None, True, fdic_link)
+                     None, True, fdic_link, raw=raw)
         return b
 
     def fdic_ratio(metric, nf, df_, nlbl, dlbl):
@@ -478,26 +490,29 @@ def render_financial_highlights(ticker: str):
                      "Computed from Call Report",
                      [{"label": nlbl, "val": _thou(n) + " ($000)"},
                       {"label": dlbl, "val": _thou(d) + " ($000)"}],
-                     f"{nlbl} ÷ {dlbl} × 100", False, fdic_link)
+                     f"{nlbl} ÷ {dlbl} × 100", False, fdic_link,
+                     raw=(n / d * 100) if (n is not None and d) else None)
         return b
 
     def roae(k):
         r = recs[k]; ni, eq = _num(r.get("NETINC")), _num(r.get("EQTOT"))
         f = _annual_factor(r)
-        v = f"{ni*f/eq*100:.2f}%" if (ni is not None and eq) else "—"
+        raw = (ni * f / eq * 100) if (ni is not None and eq) else None
+        v = f"{raw:.2f}%" if raw is not None else "—"
         ni_a = round(ni * f) if ni is not None else None
         terms = [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
                   "val": _thou(ni_a) + " ($000)",
                   "sub": (f"YTD {_thou(ni)} × 12/{int(round(12/f))}" if f != 1 else None)},
                  {"label": "Total equity", "val": _thou(eq) + " ($000)"}]
         return P(v, "ROAE", "FDIC Call Report", asof[k], "%", "Computed from Call Report",
-                 terms, "Net income ÷ Total equity × 100", False, fdic_link)
+                 terms, "Net income ÷ Total equity × 100", False, fdic_link, raw=raw)
 
     def roatce(k):
         r = recs[k]; ni = _num(r.get("NETINC")); eq = _num(r.get("EQTOT"))
         intan = _num(r.get("INTAN")) or 0
         f = _annual_factor(r); tce = (eq - intan) if eq is not None else None
-        v = f"{ni*f/tce*100:.2f}%" if (ni is not None and tce and tce > 0) else "—"
+        raw = (ni * f / tce * 100) if (ni is not None and tce and tce > 0) else None
+        v = f"{raw:.2f}%" if raw is not None else "—"
         ni_a = round(ni * f) if ni is not None else None
         terms = [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
                   "val": _thou(ni_a) + " ($000)",
@@ -505,7 +520,8 @@ def render_financial_highlights(ticker: str):
                  {"label": "Tangible common equity", "val": _thou(tce) + " ($000)",
                   "sub": f"Equity {_thou(eq)} − Intangibles {_thou(intan)}"}]
         return P(v, "ROATCE", "FDIC Call Report", asof[k], "%", "Computed from Call Report",
-                 terms, "Net income ÷ Tangible common equity × 100", False, fdic_link)
+                 terms, "Net income ÷ Tangible common equity × 100", False, fdic_link,
+                 raw=raw)
 
     def sec_eps(k):
         ps = col_ps.get(k, {}); v = ps.get("eps")
@@ -514,7 +530,8 @@ def render_financial_highlights(ticker: str):
                   "sub": ps.get("eps_note"), "doc": doc}]
         return P(_dollars_ps(v), "Diluted EPS", "SEC filing (10-K/10-Q)",
                  _disp_date(ends[k]), "$ / share", "XBRL EarningsPerShareDiluted",
-                 terms, None, ps.get("eps_note") is None, (doc or {}).get("url") or sec_link)
+                 terms, None, ps.get("eps_note") is None, (doc or {}).get("url") or sec_link,
+                 raw=v)
 
     def sec_dps(k):
         ps = col_ps.get(k, {}); v = ps.get("dps")
@@ -524,7 +541,8 @@ def render_financial_highlights(ticker: str):
         return P(_dollars_ps(v), "Dividends / share", "SEC filing (10-K/10-Q)",
                  _disp_date(ends[k]), "$ / share",
                  "XBRL CommonStockDividendsPerShareDeclared",
-                 terms, None, ps.get("dps_note") is None, (doc or {}).get("url") or sec_link)
+                 terms, None, ps.get("dps_note") is None, (doc or {}).get("url") or sec_link,
+                 raw=v)
 
     def sec_bvps(k):
         ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
@@ -540,7 +558,7 @@ def render_financial_highlights(ticker: str):
                  "SEC filing (10-K/10-Q)", _disp_date(ends[k]), "$ / share",
                  "Computed: equity ÷ shares", terms,
                  "Total common equity ÷ shares outstanding", False,
-                 (eq_doc or {}).get("url") or sec_link)
+                 (eq_doc or {}).get("url") or sec_link, raw=ps.get("bvps"))
 
     def sec_tbvps(k):
         ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
@@ -558,7 +576,7 @@ def render_financial_highlights(ticker: str):
                  "SEC filing (10-K/10-Q)", _disp_date(ends[k]), "$ / share",
                  "Computed: (equity − intangibles) ÷ shares", terms,
                  "Tangible common equity ÷ shares outstanding", False,
-                 (eq_doc or {}).get("url") or sec_link)
+                 (eq_doc or {}).get("url") or sec_link, raw=ps.get("tbvps"))
 
     def sec_shares(k):
         ps = col_ps.get(k, {}); sh = ps.get("shares")
@@ -568,7 +586,7 @@ def render_financial_highlights(ticker: str):
                   "doc": doc}]
         return P(_count(sh), "Shares outstanding", "SEC filing (10-K/10-Q)",
                  _disp_date(ends[k]), "shares", "XBRL EntityCommonStockSharesOutstanding",
-                 terms, None, True, (doc or {}).get("url") or sec_link)
+                 terms, None, True, (doc or {}).get("url") or sec_link, raw=sh)
 
     sections = [
         ("Balance Sheet", [
@@ -614,16 +632,19 @@ def render_financial_highlights(ticker: str):
         ]),
     ]
 
-    # Build cells + HTML rows
+    # Build cells + HTML rows (+ the raw numeric rows behind the export)
     cells: dict[str, dict] = {}
     rows_html = []
     ri = 0
     cell_errors: list[str] = []
+    export_rows: list[dict] = []
+    export_row_formats: dict[str, str] = {}
     for sec_name, rows in sections:
         rows_html.append(
             f'<tr><td class="sec" colspan="{len(keys)+1}">{sec_name}</td></tr>')
         for label, fn in rows:
             tds = [f'<td class="lbl">{label}</td>']
+            raw_by_col, unit = {}, None
             for ci, k in enumerate(keys):
                 try:
                     payload = fn(k)
@@ -633,8 +654,10 @@ def render_financial_highlights(ticker: str):
                     cell_errors.append(f"{label}[{k}]: {type(e).__name__}: {e}")
                     payload = {"v": "—", "calc": None}
                 cid = f"{ri}_{ci}"
+                raw_by_col[labels[k]] = payload.get("raw")
                 if payload.get("calc"):
                     calc = payload["calc"]
+                    unit = unit or calc.get("unit")
                     # FDIC terms all trace to the same quarterly Call Report.
                     if calc.get("source", "").startswith("FDIC"):
                         cr_doc = _fdic_doc(cert, recs[k].get("REPDTE"), recs[k])
@@ -647,6 +670,13 @@ def render_financial_highlights(ticker: str):
             zebra = ' class="zebra"' if ri % 2 == 1 else ""
             rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
+            # Export row: the unit lives in the row label (FDIC $thousands stay
+            # unscaled under "($K)"; ratios are percent units; per-share $).
+            suffix, fmt = _EXPORT_UNIT.get(unit, ("", None))
+            xlabel = f"{label}{suffix}"
+            if fmt:
+                export_row_formats[xlabel] = fmt
+            export_rows.append({"Line item": xlabel, "Section": sec_name, **raw_by_col})
 
     if cell_errors:
         print(f"[financial_highlights] {ticker}: {len(cell_errors)} cell(s) "
@@ -664,6 +694,23 @@ def render_financial_highlights(ticker: str):
     _tbl_col, _chart_col = st.columns([1, 1])
     with _tbl_col:
         components.html(html, height=height, scrolling=False)
+        table_export(
+            pd.DataFrame(export_rows, columns=["Line item", "Section"] + [labels[k] for k in keys]),
+            f"financial_highlights_{ticker}_{period}_{labels[keys[-1]]}",
+            key=f"exp_fh_{ticker}_{period}", sheet="Financial Highlights",
+            row_formats=export_row_formats, freeze_cols=2,
+            provenance={
+                "Page": "Company Analysis · Financial Highlights",
+                "Ticker": ticker, "Company": name,
+                "FDIC cert": cert, "SEC CIK": cik,
+                "Source": ("FDIC Call Report (bank subsidiary); Per Share (HoldCo) "
+                           "rows: SEC companyfacts (holding company)"),
+                "Period": f"{period} — {labels[keys[0]]} to {labels[keys[-1]]}",
+                "Report date": asof[keys[-1]],
+                "Notes": ("ROAE / ROATCE annualize year-to-date net income "
+                          "(× 12 / months elapsed) in Quarterly view; per-share "
+                          "rows are the holding company's SEC figures."),
+            })
     with _chart_col:
         _render_fh_trends(hist, ticker)
 
@@ -712,14 +759,16 @@ def _tce_ta_builder(recs, asof, fdic_link, P):
         intan = _num(recs[k].get("INTAN")) or 0
         asset = _num(recs[k].get("ASSET")) or 0
         tce, ta = eq - intan, asset - intan
-        v = f"{tce/ta*100:.2f}%" if ta else "—"
+        raw = (tce / ta * 100) if ta else None
+        v = f"{raw:.2f}%" if raw is not None else "—"
         terms = [{"label": "Tangible common equity", "val": _thou(tce) + " ($000)",
                   "sub": f"Equity {_thou(eq)} − Intangibles {_thou(intan)}"},
                  {"label": "Tangible assets", "val": _thou(ta) + " ($000)",
                   "sub": f"Assets {_thou(asset)} − Intangibles {_thou(intan)}"}]
         return P(v, "Tang. common equity / tang. assets", "FDIC Call Report", asof[k],
                  "%", "Computed from Call Report", terms,
-                 "Tangible common equity ÷ tangible assets × 100", False, fdic_link)
+                 "Tangible common equity ÷ tangible assets × 100", False, fdic_link,
+                 raw=raw)
     return b
 
 

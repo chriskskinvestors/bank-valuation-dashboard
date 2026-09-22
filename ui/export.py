@@ -195,18 +195,25 @@ def _units_note(columns, formats: dict[str, str]) -> str:
 
 def build_workbook(df: pd.DataFrame, *, sheet: str = "Data",
                    formats: dict[str, str] | None = None,
+                   row_formats: dict[str, str] | None = None,
                    provenance: dict[str, object] | None = None,
                    freeze_cols: int = 0) -> bytes:
     """The .xlsx bytes for one table. ``formats`` maps column → FORMATS key
-    (or a raw Excel number format). ``provenance`` rows land on the Source
-    sheet after the always-present ``Exported`` stamp."""
+    (or a raw Excel number format). ``row_formats`` maps the FIRST column's
+    value (a statement's line-item label) → FORMATS key, for tables whose unit
+    varies by row (financial statements: dollar, percent and per-share lines
+    share the period columns); a column format wins where both apply.
+    ``provenance`` rows land on the Source sheet after the always-present
+    ``Exported`` stamp."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     formats = dict(formats or {})
+    row_formats = dict(row_formats or {})
     cols = [str(c) for c in df.columns]
     nf_by_col = _validate_formats(cols, formats)
+    nf_by_row = _validate_formats(list(row_formats), row_formats)   # same ($K) rule, on the label
 
     wb = Workbook()
     ws = wb.active
@@ -234,10 +241,13 @@ def build_workbook(df: pd.DataFrame, *, sheet: str = "Data",
         ws.append(row)
 
     last_row = ws.max_row
+    row_nf = ({rr: nf_by_row.get(str(ws.cell(rr, 1).value))
+               for rr in range(2, last_row + 1)} if nf_by_row else {})
     for ci, col in enumerate(cols, start=1):
-        nf = nf_by_col.get(col)
+        col_nf = nf_by_col.get(col)
         for rr in range(2, last_row + 1):
             c = ws.cell(rr, ci)
+            nf = col_nf or (row_nf.get(rr) if ci > 1 else None)
             if c.value == NA:
                 c.font, c.alignment = na_font, na_align
             elif nf and (isinstance(c.value, (int, float, _dt.date))
@@ -261,7 +271,7 @@ def build_workbook(df: pd.DataFrame, *, sheet: str = "Data",
         if v is None or (isinstance(v, str) and not v.strip()):
             continue
         rows.append((str(k), v if isinstance(v, (int, float)) else str(v)))
-    rows.append(("Units", _units_note(cols, formats)))
+    rows.append(("Units", _units_note(cols, {**row_formats, **formats})))
     rows.append(("Missing values", f'"{NA}" = the source does not report the value or a '
                                    "precondition failed; nothing is estimated."))
     for k, v in rows:
@@ -320,6 +330,7 @@ def metric_columns(keys) -> tuple[dict[str, str], dict[str, str]]:
 
 def table_export(df, filename: str, key: str, *, sheet: str | None = None,
                  formats: dict[str, str] | None = None,
+                 row_formats: dict[str, str] | None = None,
                  provenance: dict[str, object] | None = None,
                  freeze_cols: int = 0, label: str = "Export") -> None:
     """Small right-aligned Export action for a data table. Writes one
@@ -329,7 +340,8 @@ def table_export(df, filename: str, key: str, *, sheet: str | None = None,
 
     def _build() -> bytes:
         return build_workbook(df, sheet=sheet_name, formats=formats,
-                              provenance=provenance, freeze_cols=freeze_cols)
+                              row_formats=row_formats, provenance=provenance,
+                              freeze_cols=freeze_cols)
 
     # The keyed container carries the compact right-aligned styling
     # (styles.py `st-key-tblexp_`); a bare download_button rendered as a

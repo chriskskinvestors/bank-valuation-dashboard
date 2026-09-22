@@ -28,11 +28,33 @@ from utils.chart_style import (
     apply_standard_layout, CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT,
     COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING, COLOR_PRIMARY,
 )
-from ui.chrome import ledger, title_bar, lazy_tabs
+from ui.chrome import ledger, title_bar, lazy_tabs, table_export
 
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
 from data.loaders import load_fdic_hist as _load_hist
+
+# Export provenance shared by the four scenario tables: every figure is a
+# MODEL OUTPUT anchored on FDIC Call Report fields, never a reported number.
+_MODEL_SOURCE = ("NIM scenario model (analysis/rate_sensitivity) anchored on FDIC "
+                 "Call Report fields (bank subsidiary): NIMY, ERNAST, Schedule RC-E "
+                 "deposit mix. First-order annualized impacts — model output, not a "
+                 "reported figure.")
+
+
+def _repdte_iso(latest) -> str | None:
+    """ISO date of the anchoring FDIC quarter (REPDTE arrives as a datetime
+    from the warm cache or a YYYYMMDD string from the API); None when absent."""
+    ts = pd.to_datetime(latest.get("REPDTE"), errors="coerce") if latest else None
+    return None if ts is None or pd.isna(ts) else ts.date().isoformat()
+
+
+def _export_provenance(ticker, latest, page, **extra) -> dict:
+    prov = {"Page": f"Interest Rate Risk › {page}", "Ticker": ticker,
+            "Company": get_name(ticker), "FDIC cert": get_fdic_cert(ticker),
+            "Source": _MODEL_SOURCE, "Report date": _repdte_iso(latest)}
+    prov.update(extra)
+    return prov
 
 
 def _kg_rows(rows):
@@ -303,10 +325,10 @@ def render_rate_sensitivity(ticker: str):
         _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta)
 
     elif _rs_sel == _rs_tabs[1]:
-        _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta)
+        _render_named_scenarios(ticker, latest, hist, mode_key, custom_beta, asset_beta)
 
     elif _rs_sel == _rs_tabs[2]:
-        _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta)
+        _render_curve_matrix(ticker, latest, hist, mode_key, custom_beta, asset_beta)
 
     elif _rs_sel == _rs_tabs[3]:
         _render_backtest(ticker, hist, mode_key, custom_beta)
@@ -739,9 +761,11 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     st.markdown(f"### NIM / EPS impact by year — horizon: {horizon}Y")
 
     rows = []
+    raw_rows, raw_formats = [], {"Rate shock (bp)": "int"}
     for s in result["scenarios"]:
         bps = s["rate_change_bps"]
         row = {"Scenario": f"{bps:+d}bps"}
+        raw = {"Rate shock (bp)": bps}
         for y in s["years"]:
             yr = y["year"]
             nim_d = y["nim_delta_bps"]
@@ -749,8 +773,40 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
             row[f"Yr{yr} ΔNIM"] = f"{nim_d:+.0f}bps"
             row[f"Yr{yr} ΔNII"] = fmt_dollars(y["nii_delta_usd"])
             row[f"Yr{yr} ΔEPS"] = f"${eps_d:+.2f}" if eps_d is not None else "—"
+            # Raw model output: bps, whole dollars (earning_assets_usd is
+            # FDIC $K ×1000 at build_rate_sensitivity_inputs), $/share.
+            raw[f"Yr{yr} ΔNIM (bp)"] = nim_d
+            raw[f"Yr{yr} ΔNII ($)"] = y["nii_delta_usd"]
+            raw[f"Yr{yr} ΔEPS ($)"] = eps_d
+            raw_formats[f"Yr{yr} ΔNIM (bp)"] = "num"
+            raw_formats[f"Yr{yr} ΔNII ($)"] = "usd"
+            raw_formats[f"Yr{yr} ΔEPS ($)"] = "usd2"
         rows.append(row)
+        raw_rows.append(raw)
     _kg_rows(rows)
+    shares = result.get("shares_outstanding")
+    table_export(
+        pd.DataFrame(raw_rows), f"nim_phased_{ticker}_{_repdte_iso(latest) or 'latest'}",
+        f"exp_nim_phased_{ticker}", formats=raw_formats,
+        provenance=_export_provenance(
+            ticker, latest, "Multi-Year Impact (phased)", **{
+                "Horizon (years)": horizon,
+                "Rate shocks (bp)": ", ".join(f"{s['rate_change_bps']:+d}"
+                                              for s in result["scenarios"]),
+                "Deposit beta (interest-bearing)": result.get("beta_used"),
+                "Deposit beta mode": result.get("beta_mode"),
+                "Floating-rate loan share": f"{floating_share*100:.0f}%",
+                "Securities repricing source": (
+                    f"FFIEC RC-B Memo 2 ladder ({securities_ladder.get('reporting_period', '—')})"
+                    if securities_ladder else "generic industry average (~29%/yr)"),
+                "Repricing pace (cumulative)": ", ".join(
+                    f"Yr{k}={v*100:.0f}%" for k, v in pace.items()),
+                "NIB→IB mix-shift (rate-up)": "on" if apply_shift else "off",
+                "Volume effects": "on" if apply_volume else "off",
+                "Effective tax rate": f"{result.get('tax_rate_used', 0)*100:.0f}%",
+                "Shares outstanding (SEC, TTM)": shares if shares else None,
+                "Analyst overrides": "on" if subcategory_betas else "off",
+            }))
 
     # Honest disclosure
     with st.expander("Model assumptions + known limitations"):
@@ -934,7 +990,7 @@ sizing trades.
 """)
 
 
-def _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta):
+def _render_named_scenarios(ticker, latest, hist, mode_key, custom_beta, asset_beta):
     result = run_curve_sensitivity(
         latest, hist, beta_mode=mode_key,
         custom_deposit_beta=custom_beta, asset_beta=asset_beta,
@@ -987,6 +1043,28 @@ def _render_named_scenarios(latest, hist, mode_key, custom_beta, asset_beta):
         **{"font-size": "0.82rem", "padding": "4px 8px"}
     )
     st.dataframe(styled, use_container_width=True, hide_index=True, height=40 + 35 * len(df))
+    table_export(
+        pd.DataFrame([{
+            "Scenario": s["name"],
+            "Δ3M (bp)": s["short_change_bps"],
+            "Δ5Y (bp)": s["long_change_bps"],
+            "New NIM (%)": s["nim_new_pct"],
+            "ΔNIM (bp)": s["nim_delta_bps"],
+            "ΔNII annual ($)": s.get("nii_delta_usd"),
+            "Description": s.get("description", ""),
+        } for s in scenarios]),
+        f"nim_scenarios_{ticker}_{_repdte_iso(latest) or 'latest'}",
+        f"exp_nim_scenarios_{ticker}",
+        formats={"Δ3M (bp)": "int", "Δ5Y (bp)": "int", "New NIM (%)": "pct",
+                 "ΔNIM (bp)": "num", "ΔNII annual ($)": "usd"},
+        provenance=_export_provenance(
+            ticker, latest, "Named Curve Scenarios", **{
+                "Current NIM (%)": inputs.get("current_nim_pct"),
+                "Earning assets ($)": inputs.get("earning_assets_usd"),
+                "Deposit beta (interest-bearing)": result.get("beta_used"),
+                "Deposit beta mode": result.get("beta_mode"),
+                "Asset beta (5Y pass-through to yields)": asset_beta,
+            }))
 
     # Bar chart
     import plotly.graph_objects as go
@@ -1195,7 +1273,7 @@ def _render_historical_nim_scatter(hist: list[dict]):
 
 # ── 2D Curve Matrix ────────────────────────────────────────────────────
 
-def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
+def _render_curve_matrix(ticker, latest, hist, mode_key, custom_beta, asset_beta):
     """Render the 5x5 heat-map of NIM/NII deltas across 3M × 5Y."""
 
     # Range controls
@@ -1229,6 +1307,26 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
 
     nim_df = pd.DataFrame(nim_mat, index=row_labels, columns=col_labels)
 
+    # Export frames keep the matrix shape: the 3M shock as a real integer
+    # column, one unit-labeled column per 5Y shock. Same raw model output
+    # the styled grids format (bps; whole dollars — never the $K/$M/$B
+    # display scale picked below).
+    def _matrix_export(mat, unit, formats_key):
+        hdrs = [f"Δ5Y {l:+d}bp {unit}" for l in long_range]
+        frame = pd.DataFrame(
+            [{"Δ3M (bp)": s, **dict(zip(hdrs, row))} for s, row in zip(short_range, mat)])
+        return frame, {"Δ3M (bp)": "int", **{h: formats_key for h in hdrs}}
+
+    _matrix_prov = {
+        "3M shocks (bp)": ", ".join(f"{s:+d}" for s in short_range),
+        "5Y shocks (bp)": ", ".join(f"{l:+d}" for l in long_range),
+        "Current NIM (%)": matrix["inputs"].get("current_nim_pct"),
+        "Earning assets ($)": matrix["inputs"].get("earning_assets_usd"),
+        "Deposit beta (interest-bearing)": matrix.get("beta_used"),
+        "Deposit beta mode": matrix.get("beta_mode"),
+        "Asset beta (5Y pass-through to yields)": asset_beta}
+    _stem = f"{ticker}_{_repdte_iso(latest) or 'latest'}"
+
     def _cell_color(val):
         if val is None or pd.isna(val):
             return "background-color: #f1f5f9;"
@@ -1244,6 +1342,11 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
                 unsafe_allow_html=True)
     styled_nim = nim_df.style.map(_cell_color).format("{:+.0f}")
     st.dataframe(styled_nim, use_container_width=True)
+    _nim_x, _nim_f = _matrix_export(nim_mat, "ΔNIM (bp)", "num")
+    table_export(_nim_x, f"nim_matrix_{_stem}", f"exp_nim_matrix_{ticker}",
+                 formats=_nim_f,
+                 provenance=_export_provenance(
+                     ticker, latest, "Curve Matrix (3M × 5Y) › ΔNIM", **_matrix_prov))
 
     st.caption(
         "Rows = change in 3-Month Treasury (funding proxy). "
@@ -1276,6 +1379,11 @@ def _render_curve_matrix(latest, hist, mode_key, custom_beta, asset_beta):
     st.markdown(f"##### Δ NII Matrix (annualized, ${nii_unit})")
     styled_nii = nii_df.style.map(_nii_cell_color).format("${:+,.2f}")
     st.dataframe(styled_nii, use_container_width=True)
+    _nii_x, _nii_f = _matrix_export(nii_mat, "ΔNII annual ($)", "usd")
+    table_export(_nii_x, f"nii_matrix_{_stem}", f"exp_nii_matrix_{ticker}",
+                 formats=_nii_f,
+                 provenance=_export_provenance(
+                     ticker, latest, "Curve Matrix (3M × 5Y) › ΔNII", **_matrix_prov))
 
     # Plotly heat-map (optional visual)
     import plotly.graph_objects as go

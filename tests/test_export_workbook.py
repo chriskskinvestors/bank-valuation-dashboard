@@ -173,6 +173,49 @@ class TestUnitsContract(unittest.TestCase):
         self.assertEqual(ws["A2"].number_format, "$#,##0")
 
 
+class TestRowFormats(unittest.TestCase):
+    """Statements carry the unit per ROW (line item), not per column."""
+
+    def _stmt(self):
+        df = pd.DataFrame({
+            "Line item": ["Net income", "ROA", "Diluted EPS", "Deposits ($K)", "Header only"],
+            "FY2025": [1_250_000, 1.12, 3.41, 812_000, None],
+            "FY2026": [1_400_000, None, 3.85, 845_500, None],
+        })
+        return ex.build_workbook(df, row_formats={
+            "Net income": "usd", "ROA": "pct", "Diluted EPS": "usd2",
+            "Deposits ($K)": "usd_k"})
+
+    def test_row_label_drives_the_format_across_period_columns(self):
+        ws = _load(self._stmt()).worksheets[0]
+        self.assertEqual((ws["B2"].value, ws["B2"].number_format), (1_250_000, "$#,##0"))
+        self.assertEqual((ws["C2"].value, ws["C2"].number_format), (1_400_000, "$#,##0"))
+        self.assertEqual((ws["B3"].value, ws["B3"].number_format), (1.12, '0.00"%"'))
+        self.assertEqual(ws["C3"].value, "n/a")
+        self.assertEqual((ws["B4"].value, ws["B4"].number_format), (3.41, "$#,##0.00"))
+        self.assertEqual((ws["B5"].value, ws["B5"].number_format), (812_000, "#,##0"))
+        self.assertEqual(ws["A2"].number_format, "General")   # the label column itself
+        self.assertEqual(ws["B6"].value, "n/a")
+
+    def test_column_format_wins_over_row_format(self):
+        df = pd.DataFrame({"Line item": ["ROA"], "FY2025": [1.12], "Rank": [3]})
+        ws = _load(ex.build_workbook(df, formats={"Rank": "int"},
+                                     row_formats={"ROA": "pct"})).worksheets[0]
+        self.assertEqual(ws["B2"].number_format, '0.00"%"')
+        self.assertEqual(ws["C2"].number_format, "#,##0")
+
+    def test_usd_k_row_label_must_say_k(self):
+        df = pd.DataFrame({"Line item": ["Deposits"], "FY2025": [1]})
+        with self.assertRaises(ValueError):
+            ex.build_workbook(df, row_formats={"Deposits": "usd_k"})
+
+    def test_units_note_covers_row_formats(self):
+        d = dict(_grid(_load(self._stmt())["Source"]))
+        self.assertIn("whole US dollars", d["Units"])
+        self.assertIn("percent units", d["Units"])
+        self.assertIn("($K)", d["Units"])
+
+
 class TestSheetStructure(unittest.TestCase):
 
     def test_sheet_title_legal_truncated_unique(self):

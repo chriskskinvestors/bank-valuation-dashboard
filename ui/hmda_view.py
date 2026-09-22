@@ -15,7 +15,15 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from ui.chrome import table_export
 from utils.formatting import fmt_dollars
+
+# Volumes are Σ loan_amount — RAW dollars in HMDA 2018+ (data/hmda_client
+# docstring, verified against the CFPB aggregation), rounded per loan to the
+# $10k-bucket midpoint by the public disclosure. Never FDIC/SEC data.
+_HMDA_VOLUME_NOTE = ("Originated loans only (action taken = 1). Public HMDA rounds "
+                     "each loan amount to its $10,000-bucket midpoint — counts exact, "
+                     "dollar volumes approximate by design.")
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
@@ -80,6 +88,19 @@ def render_hmda_mortgages(ticker):
                     f"HMDA, LEI `{lei}`")
         from ui.tables import ksk_table
         ksk_table(pd.DataFrame(rows))
+        table_export(
+            pd.DataFrame([{"Year": y, "Originations": d["count"],
+                           "Volume ($)": d["volume_usd"]}
+                          for y, d in sorted(by_year.items(), reverse=True)]),
+            f"hmda_originations_{ticker}_{min(by_year)}_{latest_yr}",
+            f"exp_hmda_years_{ticker}",
+            formats={"Year": "int", "Originations": "int", "Volume ($)": "usd"},
+            provenance={"Page": "Company › HMDA Mortgages", "Ticker": ticker,
+                        "LEI": lei,
+                        "Source": f"CFPB HMDA LAR {min(by_year)}–{latest_yr} "
+                                  "(public loan-level data)",
+                        "HMDA years": f"{min(by_year)}–{latest_yr}",
+                        "Note": _HMDA_VOLUME_NOTE})
     with rt:
         st.plotly_chart(fig, use_container_width=True,
                         key=f"hmda_yr_{ticker}")
@@ -87,14 +108,30 @@ def render_hmda_mortgages(ticker):
     bd = latest_breakdown(lei, latest_yr, by="state")
     if bd:
         tot = sum(r["volume_usd"] for r in bd) or 1
+        top = sorted(bd, key=lambda r: -r["volume_usd"])[:15]
         tbl = pd.DataFrame([
             {"State": r["state"], "Originations": f"{r['count']:,}",
              "Volume": fmt_dollars(r["volume_usd"], 2),
              "% of volume": round(r["volume_usd"] / tot * 100, 1)}
-            for r in sorted(bd, key=lambda r: -r["volume_usd"])[:15]])
+            for r in top])
         st.markdown(f"**{latest_yr} by state** (top {len(tbl)})")
         from ui.tables import ksk_table
         ksk_table(tbl)
+        table_export(
+            pd.DataFrame([{"State": r["state"], "Originations": r["count"],
+                           "Volume ($)": r["volume_usd"],
+                           "% of volume (%)": r["volume_usd"] / tot * 100}
+                          for r in top]),
+            f"hmda_by_state_{ticker}_{latest_yr}", f"exp_hmda_states_{ticker}",
+            formats={"Originations": "int", "Volume ($)": "usd",
+                     "% of volume (%)": "pct1"},
+            provenance={"Page": "Company › HMDA Mortgages", "Ticker": ticker,
+                        "LEI": lei,
+                        "Source": f"CFPB HMDA LAR {latest_yr} (public loan-level data)",
+                        "HMDA year": latest_yr,
+                        "States": f"top {len(top)} of {len(bd)} by volume; "
+                                  "share is of ALL states' volume",
+                        "Note": _HMDA_VOLUME_NOTE})
     st.caption(
         "Originated loans only (HMDA action taken = 1). Public HMDA disclosure "
         "rounds each loan amount to its $10,000-bucket midpoint — counts are "
