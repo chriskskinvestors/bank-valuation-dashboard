@@ -92,6 +92,11 @@ def build_bank_metrics(
     #  "reconstructed" = the XBRL TTM from data/sec_client).
     result["eps_source"] = computed.get("eps_source")
     result["eps_conflict"] = computed.get("eps_conflict")
+    # SEC XBRL-API lag diagnostics (analysis/valuation._sec_facts_lag): the
+    # bank-detail card dates its reconstructed per-share values by these.
+    for key in ("sec_facts_lag", "sec_facts_as_of", "sec_filed_period",
+                "sec_filed_date", "sec_filed_form"):
+        result[key] = computed.get(key)
     # efficiency_release rides as a declared column; its quarter-end tags
     # along so the release figure's staleness is visible (increment 3 —
     # no conflict flag by design: holdco vs bank-sub are different bases).

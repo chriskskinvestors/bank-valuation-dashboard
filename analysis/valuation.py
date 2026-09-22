@@ -464,6 +464,7 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         ticker, reconstructed_bvps, tbvps)
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
+    facts_lag = _sec_facts_lag(ticker, sec_data.get("sec_as_of"))
 
     # ── Deposit composition ─────────────────────────────────────────────
     dep = fdic_data.get("DEP")
@@ -594,6 +595,19 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         # tbvps_source/bvps_source).
         "eps": eps,
         "eps_source": eps_source,
+        # SEC's XBRL API lagging the bank's OWN latest 10-Q/10-K (see
+        # _sec_facts_lag): every XBRL-derived figure on the row is as of
+        # sec_facts_as_of, one or more quarters behind sec_filed_period.
+        # Cards label the reconstructed per-share values with that date and
+        # show the filed-but-unavailable quarter, so a quarter-old book value
+        # never renders as current (2026-09-22: ONB/CCBG/FRME/HBAN Q2, Citi
+        # Q1+Q2). None when the filing index is unavailable — the label is
+        # then simply absent, never a guess.
+        "sec_facts_lag": facts_lag["lag"],
+        "sec_facts_as_of": facts_lag["facts_as_of"],
+        "sec_filed_period": facts_lag["filed_period"],
+        "sec_filed_date": facts_lag["filed_date"],
+        "sec_filed_form": facts_lag["filed_form"],
         # True when the composite assembled, disagrees with the XBRL TTM
         # >=15%, AND the release quarter failed the plausibility gate (a
         # genuine YoY swing passes the gate and serves as release_ttm) —
@@ -968,6 +982,36 @@ def _release_eps_tie_out(components: dict | None) -> bool | None:
         return None
     tol = max(0.02 * abs(eps), 0.006)
     return any(abs(ni / (sh * s) - eps) <= tol for s in (1.0, 1e3, 1e6))
+
+
+def _sec_facts_lag(ticker: str | None, sec_as_of) -> dict:
+    """Does SEC's XBRL API lag the bank's latest periodic filing?
+
+    {lag, facts_as_of, filed_period, filed_date, filed_form}. lag is True when
+    the newest 10-Q/10-K in the (2h-cached, already-fetched) submissions
+    index covers a period-end NEWER than the freshest companyfacts fact
+    (sec_as_of); False when they agree; None when either side is unknown.
+    Unknown is not "fine": a missing filing index leaves the card unlabeled,
+    never labeled current."""
+    out = {"lag": None, "facts_as_of": str(sec_as_of) if sec_as_of else None,
+           "filed_period": None, "filed_date": None, "filed_form": None}
+    if not ticker or not sec_as_of:
+        return out
+    try:
+        from data.bank_mapping import get_cik
+        from data.sec_earnings_8k import latest_periodic_filing
+        cik = get_cik(ticker)
+        filed = latest_periodic_filing(cik) if cik else None
+    except Exception as e:
+        print(f"[valuation] filing index lookup failed for {ticker}: "
+              f"{type(e).__name__}: {e}")
+        return out
+    if not filed or not filed.get("report_date"):
+        return out
+    out.update(filed_period=filed["report_date"], filed_date=filed.get("date"),
+               filed_form=filed.get("form"),
+               lag=filed["report_date"] > str(sec_as_of))
+    return out
 
 
 def _release_newer_than_filings(cik, sec_as_of) -> bool:

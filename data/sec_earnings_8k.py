@@ -57,11 +57,26 @@ def _latest_earnings_8k(cik) -> dict | None:
     was the bulk of the build's EDGAR load (the 2026-07-27 refresh-home-snapshot
     timeout incident). A new release is picked up within the TTL; a transient
     fetch EXCEPTION propagates uncached, as before."""
+    return _submissions_record(cik).get("f8k")
+
+
+def latest_periodic_filing(cik) -> dict | None:
+    """Most-recent 10-Q/10-K from the SAME cached submissions record:
+    {form, date (filed), report_date (period end)} or None. Lets the valuation
+    layer tell when SEC's XBRL API (companyfacts) lags a filing the bank has
+    already made — ONB/FRME/HBAN/CCBG's Q2-2026 10-Qs sat un-ingested for two
+    months (found 2026-09-22) while every HoldCo book value rendered as
+    current. Zero added fetches: the tbvps path already loads this record."""
+    return _submissions_record(cik).get("periodic")
+
+
+def _submissions_record(cik) -> dict:
+    """{f8k, periodic} for a CIK, cached ~2h (see _latest_earnings_8k)."""
     from data import cache
     ckey = f"earnings_8k_latest:v1:{int(cik)}"
     hit = cache.get(ckey, max_age_s=_LATEST_8K_TTL_S)
-    if hit is not None:
-        return hit.get("f8k")
+    if hit is not None and "periodic" in hit:
+        return hit
     cik10 = str(int(cik)).zfill(10)
     data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
     rec = data.get("filings", {}).get("recent", {})
@@ -69,6 +84,14 @@ def _latest_earnings_8k(cik) -> dict | None:
     items = rec.get("items", [])
     accs = rec.get("accessionNumber", [])
     dates = rec.get("filingDate", [])
+    rdates = rec.get("reportDate", [])
+    periodic = None
+    for i, form in enumerate(forms):
+        if form in ("10-Q", "10-K"):
+            periodic = {"form": form,
+                        "date": dates[i] if i < len(dates) else "",
+                        "report_date": rdates[i] if i < len(rdates) else ""}
+            break
     f8k = None
     for i, form in enumerate(forms):
         if form != "8-K":
@@ -82,11 +105,12 @@ def _latest_earnings_8k(cik) -> dict | None:
         f8k = {"accession_dash": acc_dash, "accession": acc_dash.replace("-", ""),
                "date": dates[i] if i < len(dates) else "", "cik": int(cik)}
         break
+    record = {"f8k": f8k, "periodic": periodic}
     try:
-        cache.put(ckey, {"f8k": f8k})
+        cache.put(ckey, record)
     except Exception:
         pass
-    return f8k
+    return record
 
 
 def _ex991_document(cik, accession_dash) -> str | None:
