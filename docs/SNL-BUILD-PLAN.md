@@ -88,12 +88,21 @@ source); **n/a** = honest gap, shown as such.
 > **SHIPPED 2026-07-13 (sweep).** `_CAPITAL_ADEQUACY` statement table
 > (5FY/8Q + toggle) replaced the 6-row Annual-only left pane in
 > ui/capital_dynamics.py; charts/holdco/RC-R sections unchanged. Verified:
-> RBCT1J/RWAJ = IDT1CER exactly (RBCT1J is CET1 $), RBCT1+RBCT2 = RBC to
-> the dollar; leverage stays RBCT1JR (config convention, not RBC1AAJ).
+> RBCT1+RBCT2 = RBC to the dollar; leverage stays RBCT1JR (config
+> convention, not RBC1AAJ).
+>
+> **CORRECTED 2026-09-22:** the original note "RBCT1J/RWAJ = IDT1CER (RBCT1J
+> is CET1 $)" held only on TCBK/BANR, which have no AT1. Re-verified on 17
+> charters incl. OZK/USB/JPM (bank-level preferred): **RBCT1C is CET1 $**
+> (RBCT1C/RWAJ = IDT1CER exactly); RBCT1J and RBCT1 are both total Tier 1.
+> The CET1 line and CET1 growth now use RBCT1C, AT1 = RBCT1 − RBCT1C, and
+> cert_group recomputes a multi-charter group's IDT1CER from ΣRBCT1C/ΣRWAJ.
+> FDIC reports RBCT1C/IDT1CER as literal 0 before 2015Q1 — nulled at the
+> fetch and store-read boundaries (fdic_client.null_unreported_cet1).
 
 | SNL line | Source |
 |---|---|
-| CET1 / T1 / T2 / Total capital ($) | FDIC RBCT1J, RBCT1, RBCT2, RBC |
+| CET1 / T1 / T2 / Total capital ($) | FDIC RBCT1C, RBCT1, RBCT2, RBC |
 | RWA | FDIC RWAJ |
 | CET1 / T1 / Total / Leverage ratios | FDIC RBCRWAJ, RBC1RWAJ, calc RBC/RWAJ, RBC1AAJ |
 | T1 component walk (intangibles, AOCI, DTA adj) | RC-R Part I parse |

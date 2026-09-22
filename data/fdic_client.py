@@ -42,7 +42,11 @@ _BASE_FINANCIALS_FIELDS = {
     "TRADE", "ITRADE", "IFIDUC", "ISERCHG", "IINSOTH", "IINVFEE", "IOTHII", "NETIMIN",
     "SCAF", "ORE", "MSA", "INTANMSR", "BKPREM", "CHBALI", "FREPO",
     "OTHBFHLB", "SUBND", "EQPP", "EQCS", "EQUPTOT",
-    "RBCT1J", "RBCT1", "RBCT2", "RBC", "RWAJ", "RBC1RWAJ", "RBC1AAJ",
+    # RBCT1C is CET1 capital ($K); RBCT1J and RBCT1 are BOTH total Tier 1
+    # (verified live 2026-09-22 on 17 charters incl. OZK/USB/JPM, which carry
+    # AT1: RBCT1C/RWAJ reproduces IDT1CER exactly, RBCT1J/RWAJ reproduces
+    # RBC1RWAJ). Before this, the CET1 $ line was RBCT1J — Tier 1 mislabeled.
+    "RBCT1C", "RBCT1J", "RBCT1", "RBCT2", "RBC", "RWAJ", "RBC1RWAJ", "RBC1AAJ",
     # Asset Quality Detail (SNL plan §4): levels, flows (YTD + the filed
     # single-quarter *Q variants for the Quarterly view) and NPERFV, the
     # FDIC's reported NPA/assets ratio.
@@ -342,6 +346,37 @@ def get_holdco_rssd_for_cert(cert: int, ttl_seconds: int = 30 * 86400) -> int | 
         return None
 
 
+def _fnum(v):
+    """float(v) or None for absent/unparseable (NaN counts as absent)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if f != f else f
+
+
+def null_unreported_cet1(rec: dict) -> dict:
+    """Null the CET1 fields FDIC reports as a literal 0 for quarters before the
+    Basel III CET1 line existed (through 2014Q4 for most banks; verified live
+    2026-09-22 on OZK cert 110: 2014-12-31 RBCT1C=0, IDT1CER=0 with
+    RBCT1J=824,120). A bank with positive Tier 1 capital cannot have zero
+    CET1 — CET1 is the core of Tier 1 — so ratio 0 with Tier 1 present means
+    "not yet reported", and charting it would put a 0% CET1 ratio and a $0
+    CET1 capital line on every deep-range view. Mutates and returns `rec`.
+    Applied at both boundaries: the live fetch and the history-store read
+    (stored rows pre-date this rule)."""
+    tier1 = _fnum(rec.get("RBCT1J"))
+    if tier1 is None:
+        tier1 = _fnum(rec.get("RBCT1"))
+    ratio = _fnum(rec.get("IDT1CER"))
+    cap = _fnum(rec.get("RBCT1C"))
+    if tier1 is not None and tier1 > 0 and ratio == 0 and cap in (None, 0):
+        rec["IDT1CER"] = None
+        if "RBCT1C" in rec:
+            rec["RBCT1C"] = None
+    return rec
+
+
 def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     """
     Fetch recent quarterly financials for a bank by FDIC cert number.
@@ -368,7 +403,7 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
         print(f"[FDIC] Error fetching cert {cert}: {e}")
         return pd.DataFrame()
 
-    rows = [r["data"] for r in data.get("data", [])]
+    rows = [null_unreported_cet1(r["data"]) for r in data.get("data", [])]
     if not rows:
         return pd.DataFrame()
 
