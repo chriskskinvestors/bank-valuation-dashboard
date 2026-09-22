@@ -195,13 +195,46 @@ jobs:
             | python -c 'import sys,json; print(json.load(sys.stdin)["token"])')"
           IAP_TOKEN="$IAP_TOKEN" APP_URL="$APP_URL" python tests/smoke_live.py --warm || true
 
+      # backfill-fdic-history: the ONE-TIME deep FDIC call-report backfill
+      # (jobs/backfill_fdic_history.py, resumable by per-cert checkpoint), so
+      # the 1992-depth store can be rebuilt by hand or via run-job.yml without
+      # a local gcloud (owner call 2026-09-22). Its NIGHTLY incremental append
+      # rides inside refresh-universe, not here. Every other job was created
+      # by hand; this one is created if absent, mirroring refresh-universe's
+      # spec (SA, Cloud SQL, DB parts + password secret, 2Gi/1cpu, 3600s, no
+      # retries), then the image-sync loop below keeps it on the deployed
+      # image like the rest. Creation failure warns loudly but never blocks
+      # the service deploy — the sync loop then reports it as not deployed.
+      - name: Ensure backfill-fdic-history job exists
+        run: |
+          if gcloud run jobs describe backfill-fdic-history --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
+            echo "  backfill-fdic-history exists"
+          else
+            echo "  Creating backfill-fdic-history..."
+            gcloud run jobs create backfill-fdic-history \
+              --region="${{ env.REGION }}" \
+              --image="${{ env.IMAGE }}" \
+              --command=python \
+              --args="-m,jobs.backfill_fdic_history,backfill" \
+              --service-account="${{ env.SA_EMAIL }}" \
+              --set-cloudsql-instances="${{ steps.db.outputs.instance_conn }}" \
+              --set-env-vars="GCS_BUCKET=${{ env.GCS_BUCKET }},GCLOUD_PROJECT=${{ env.PROJECT_ID }},DB_USER=${{ env.SQL_USER }},DB_NAME=${{ env.SQL_DB }},INSTANCE_CONNECTION_NAME=${{ steps.db.outputs.instance_conn }}" \
+              --set-secrets="DB_PASSWORD=db-password:latest" \
+              --memory=2Gi \
+              --cpu=1 \
+              --task-timeout=3600 \
+              --max-retries=0 \
+              --quiet \
+              || echo "::warning::could not create backfill-fdic-history (deployer lacks run.jobs.create?) — create it by hand with the command above"
+          fi
+
       # Keep every Cloud Run Job pinned to the just-built image so scheduled
       # jobs (refresh-universe, refresh-sod, poll-events) get the same code
       # the web service is serving. Without this, jobs stay on whatever
       # image they were created with — easy to forget, painful to debug.
       - name: Sync Cloud Run Jobs to deployed image
         run: |
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices refresh-avg-volume refresh-insider refresh-live-yields verify-metrics refresh-capital refresh-company-financials refresh-home-snapshot refresh-macro refresh-premarket refresh-trends refresh-13f refresh-deal-comps refresh-cr-quarterly nic-mirror-verify; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices refresh-avg-volume refresh-insider refresh-live-yields verify-metrics refresh-capital refresh-company-financials refresh-home-snapshot refresh-macro refresh-premarket refresh-trends refresh-13f refresh-deal-comps refresh-cr-quarterly nic-mirror-verify backfill-fdic-history; do
             if DESC=$(gcloud run jobs describe "$job" --region="${{ env.REGION }}" --format=json --quiet 2>/dev/null); then
               echo "  Updating $job..."
               # refresh-universe: 3600s, not the 1800s default. Its 30-min
