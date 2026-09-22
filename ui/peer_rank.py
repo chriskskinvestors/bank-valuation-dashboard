@@ -14,11 +14,13 @@ import html as _html
 import pandas as pd
 import streamlit as st
 
+from config import METRICS_BY_KEY
 from data.bank_mapping import get_name
 from analysis.peer_groups import (
     metric_percentile_context, get_peer_group_for_bank, _higher_is_better,
 )
 from ui.chrome import table_export, title_bar
+from ui.export import metric_format
 
 
 # Metric groups for the scorecard. Missing metrics / thin cohorts auto-skip.
@@ -193,14 +195,25 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
         "Rank #1 = best in the peer set. Bars show the goodness percentile. "
         "Peer median is the same-tier median for context."
     )
-    # Underlying numeric scorecard (value / percentile / rank / median)
+    # Underlying numeric scorecard (value / percentile / rank / median).
+    # Every RANK_GROUPS metric is a percent (config.METRICS format "pct";
+    # _metric_row prints each as "x.xx%"), so the value columns say (%).
     exp_df = pd.DataFrame([
-        {"Metric": _LABELS.get(k, k), "Value": ctx[k]["value"],
+        {"Metric": _LABELS.get(k, k), "Value (%)": ctx[k]["value"],
          "Percentile": ctx[k]["percentile"], "Rank": ctx[k].get("rank"),
-         "Out of": ctx[k].get("out_of"), "Peer median": ctx[k]["median"]}
+         "Out of": ctx[k].get("out_of"), "Peer median (%)": ctx[k]["median"]}
         for k in _ALL_KEYS if k in ctx
     ])
-    table_export(exp_df, f"peer_rank_{ticker}", key=f"exp_peer_rank_{ticker}")
+    table_export(exp_df, f"peer_rank_{ticker}", key=f"exp_peer_rank_{ticker}",
+                 formats={"Value (%)": "pct", "Percentile": "num", "Rank": "int",
+                          "Out of": "int", "Peer median (%)": "pct"},
+                 provenance={"Page": "Company Analysis › Peers › Peer Rank",
+                             "Ticker": ticker, "Company": name,
+                             "Peer set": f"{mode_label} — {n} tracked {tier} peers ({set_desc})",
+                             "Source": "Platform bank metrics (FDIC/FFIEC + SEC), "
+                                       "ranked within the peer set",
+                             "Note": "Percentile is goodness-adjusted (higher = better; "
+                                     "inverted for efficiency / NPL / NCO). Rank #1 = best."})
 
     # ── Full leaderboard for a chosen metric ───────────────────────────
     st.markdown("---")
@@ -259,5 +272,17 @@ def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str):
         {"Rank": i, "Ticker": tk, "Bank": get_name(tk), "Value": v}
         for i, (tk, v) in enumerate(rows, start=1)
     ])
+    metric = METRICS_BY_KEY.get(key)
     table_export(exp_df, f"peer_leaderboard_{ticker}_{key}",
-                 key=f"exp_peer_leaderboard_{ticker}_{key}")
+                 key=f"exp_peer_leaderboard_{ticker}_{key}",
+                 formats={"Rank": "int",
+                          "Value": metric_format(metric) if metric else "num"},
+                 provenance={"Page": "Company Analysis › Peers › Peer Rank › Leaderboard",
+                             "Ticker": ticker,
+                             "Metric": f"{_LABELS.get(key, key)} ({key}) — "
+                                       f"{'higher' if hib else 'lower'} is better",
+                             "Peer set": ("same asset-size tier" if mode == "size"
+                                          else "same business-mix profile")
+                                         + f", {len(rows)} banks",
+                             "Source": "Platform bank metrics (FDIC/FFIEC + SEC), "
+                                       "ranked within the peer set"})

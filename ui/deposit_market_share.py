@@ -19,6 +19,28 @@ from utils.formatting import fmt_dollars_from_thousands
 from ui.chrome import title_bar, table_export
 
 
+# Source row on every SOD export (one constant in ui.export).
+from ui.export import SOD_SOURCE as _SOD_SOURCE
+
+# _share_rows keys → export headers. Deposits are FDIC $thousands (header
+# says so); the *_pct values are already percent units (deposits / total
+# × 100, see _share_rows).
+_EXPORT_COLS = {
+    "market_key": "Market key", "market": "Market",
+    "subj_branches": "Branches", "subj_deposits_k": "Deposits ($K)",
+    "market_total_k": "Market total ($K)", "share_pct": "Share (%)",
+    "rank": "Rank", "n_banks": "Banks in market", "hhi": "HHI",
+    "top_competitor": "Top competitor",
+    "top_competitor_share_pct": "Top competitor share (%)",
+    "top_competitor_cert": "Top competitor FDIC cert",
+}
+_EXPORT_FORMATS = {
+    "Branches": "int", "Deposits ($K)": "usd_k", "Market total ($K)": "usd_k",
+    "Share (%)": "pct", "Rank": "int", "Banks in market": "int", "HHI": "int",
+    "Top competitor share (%)": "pct", "Top competitor FDIC cert": "int",
+}
+
+
 def _share_rows(df: pd.DataFrame, subject_cert: int) -> list[dict]:
     """Per-market share rows from the participants frame (market × bank).
 
@@ -73,7 +95,10 @@ def _share_rows(df: pd.DataFrame, subject_cert: int) -> list[dict]:
     return rows
 
 
-def _render_market_table(rows: list[dict], heading: str, key: str):
+def _render_market_table(rows: list[dict], heading: str, key: str, *,
+                         ticker: str | None = None, cert: int | None = None,
+                         year: int | None = None):
+    """`ticker` / `cert` / `year` only feed the export's provenance."""
     st.markdown(f"#### {heading}")
     if not rows:
         from ui.states import empty_state
@@ -119,8 +144,15 @@ def _render_market_table(rows: list[dict], heading: str, key: str):
         '<th style="text-align:left;">Top Competitor</th>'
         f"</tr></thead><tbody>{body}</tbody></table></div>",
         unsafe_allow_html=True)
-    table_export(pd.DataFrame(rows), f"deposit_share_{key}",
-                 key=f"exp_depshare_{key}")
+    table_export(pd.DataFrame(rows).rename(columns=_EXPORT_COLS),
+                 f"deposit_share_{key}" + (f"_{year}" if year else ""),
+                 key=f"exp_depshare_{key}",
+                 formats=_EXPORT_FORMATS,
+                 provenance={"Page": f"Deposit Market Share › {heading}",
+                             "Ticker": ticker,
+                             "FDIC cert": cert,
+                             "Source": _SOD_SOURCE,
+                             "SOD survey year": year})
 
 
 def render_deposit_market_share(ticker: str):
@@ -146,8 +178,10 @@ def render_deposit_market_share(ticker: str):
         empty_state('No branch/deposit records for this bank in the SOD store yet — the store fills from the nightly refresh-sod job')
         return
 
-    _render_market_table(county_rows, "By County", f"county_{ticker}")
-    _render_market_table(msa_rows, "By MSA", f"msa_{ticker}")
+    _render_market_table(county_rows, "By County", f"county_{ticker}",
+                         ticker=ticker, cert=int(cert), year=year)
+    _render_market_table(msa_rows, "By MSA", f"msa_{ticker}",
+                         ticker=ticker, cert=int(cert), year=year)
 
     st.caption(
         f"FDIC Summary of Deposits, {year or 'latest'} survey (June 30 "

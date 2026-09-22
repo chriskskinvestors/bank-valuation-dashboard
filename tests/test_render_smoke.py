@@ -1077,65 +1077,82 @@ class TestPerformanceComputedLines(unittest.TestCase):
 
 class TestTableExports(unittest.TestCase):
     """Design-system decision #12: every data table gets an Export action.
-    Pins the table_export contract (CSV bytes, .csv filename, widget key)
-    and exercises one of the new call sites (peer_rank leaderboard) with
-    populated data, asserting the exported CSV carries the UNFORMATTED
-    numeric values."""
+    Pins the table_export contract (label "Export", ONE .xlsx, deferred
+    build — data is a callable, widget key) and exercises one of the call
+    sites (peer_rank leaderboard) with populated data, asserting the
+    workbook carries the UNFORMATTED numeric values (owner directive
+    2026-09-22: exports are Excel, never display strings)."""
 
     @classmethod
     def setUpClass(cls):
-        _install_streamlit_stub()
+        st_fake = _install_streamlit_stub()
         import ui.chrome
+        import ui.export
         cls.chrome = ui.chrome
+        cls.export = ui.export
+        # ui.export may already be imported under another suite's thinner
+        # stub (tests/__init__ installs one before discovery imports); bind
+        # it to THIS rich fake so download_button/container exist.
+        cls.export.st = st_fake
 
     def _capture_downloads(self):
-        """Patch download_button on the st module ui.chrome is bound to."""
+        """Patch download_button on the st module ui.export is bound to."""
         calls = []
-        saved = self.chrome.st.download_button
-        self.chrome.st.download_button = (
+        saved = self.export.st.download_button
+        self.export.st.download_button = (
             lambda label, data, **k: calls.append((label, data, k)))
         return calls, saved
 
-    def test_table_export_emits_csv_download(self):
+    @staticmethod
+    def _sheet(data):
+        import io
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(data() if callable(data) else data))
+        return wb, wb.worksheets[0]
+
+    def test_table_export_emits_xlsx_download(self):
         import pandas as pd
         calls, saved = self._capture_downloads()
         try:
             df = pd.DataFrame({"Ticker": ["BANR"], "NPL Ratio": [0.42]})
             self.chrome.table_export(df, "peers_BANR", key="exp_peers_BANR")
         finally:
-            self.chrome.st.download_button = saved
+            self.export.st.download_button = saved
         self.assertEqual(len(calls), 1, "table_export did not render a button")
         label, data, kw = calls[0]
         self.assertEqual(label, "Export")
-        self.assertEqual(kw["file_name"], "peers_BANR.csv")
+        self.assertEqual(kw["file_name"], "peers_BANR.xlsx")
         self.assertEqual(kw["key"], "exp_peers_BANR")
-        self.assertEqual(kw["mime"], "text/csv")
-        self.assertIn("BANR", data)
-        self.assertIn("0.42", data)
+        self.assertEqual(kw["mime"], self.export.XLSX_MIME)
+        self.assertTrue(callable(data), "workbook must build on click, not on render")
+        _wb, ws = self._sheet(data)
+        self.assertEqual([c.value for c in ws[2]], ["BANR", 0.42])
 
-    def test_peer_rank_leaderboard_exports_numeric_csv(self):
+    def test_peer_rank_leaderboard_exports_numeric_xlsx(self):
         import ui.peer_rank as pr
         calls, saved = self._capture_downloads()
-        saved_grp, saved_name = pr.get_peer_group_for_bank, pr.get_name
+        saved_grp, saved_name, saved_st = pr.get_peer_group_for_bank, pr.get_name, pr.st
         try:
+            pr.st = self.export.st          # same rich fake (see setUpClass)
             pr.get_peer_group_for_bank = lambda t, m, mode="size": m
             pr.get_name = lambda t: f"{t} Bancorp"
             cohort = [{"ticker": "BANR", "npl_ratio": 0.31},
                       {"ticker": "EWBC", "npl_ratio": 0.55}]
             pr._render_leaderboard("BANR", cohort, "npl_ratio", "size")
         finally:
-            pr.get_peer_group_for_bank, pr.get_name = saved_grp, saved_name
-            self.chrome.st.download_button = saved
+            pr.get_peer_group_for_bank, pr.get_name, pr.st = saved_grp, saved_name, saved_st
+            self.export.st.download_button = saved
         self.assertEqual(len(calls), 1, "leaderboard export was not rendered")
         _label, data, kw = calls[0]
-        self.assertEqual(kw["file_name"], "peer_leaderboard_BANR_npl_ratio.csv")
+        self.assertEqual(kw["file_name"], "peer_leaderboard_BANR_npl_ratio.xlsx")
         self.assertEqual(kw["key"], "exp_peer_leaderboard_BANR_npl_ratio")
-        # npl_ratio is lower-is-better → BANR (0.31) ranks #1; values are the
+        # npl_ratio is lower-is-better → BANR (0.31) ranks #1; cells are the
         # raw numerics, not display strings like "0.31%".
-        lines = data.strip().splitlines()
-        self.assertEqual(lines[0], "Rank,Ticker,Bank,Value")
-        self.assertEqual(lines[1], "1,BANR,BANR Bancorp,0.31")
-        self.assertEqual(lines[2], "2,EWBC,EWBC Bancorp,0.55")
+        _wb, ws = self._sheet(data)
+        rows = [[c.value for c in r] for r in ws.iter_rows(min_row=1, max_row=3)]
+        self.assertEqual(rows[0][:4], ["Rank", "Ticker", "Bank", "Value"])
+        self.assertEqual(rows[1][:4], [1, "BANR", "BANR Bancorp", 0.31])
+        self.assertEqual(rows[2][:4], [2, "EWBC", "EWBC Bancorp", 0.55])
 
 
 class TestPerformanceDepositCostRendersPopulated(unittest.TestCase):

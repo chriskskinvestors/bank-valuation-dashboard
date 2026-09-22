@@ -137,6 +137,27 @@ def _annualize(df: pd.DataFrame) -> pd.DataFrame:
     return result.sort_values("Period", ascending=False).reset_index(drop=True)
 
 
+def _export_table(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str]]:
+    """(frame, formats) for the Excel export: FDIC field codes renamed to
+    their HIST_METRICS labels, whose suffix carries the unit — ($K) = FDIC
+    thousands exported UNSCALED, (%) = percent units. Period stays first."""
+    cols = {"Period": frame["Period"]}
+    formats = {}
+    for field, label, _fmt, _category in HIST_METRICS:
+        if field not in frame.columns:
+            continue
+        cols[label] = frame[field]
+        formats[label] = ("usd_k" if "($K)" in label
+                          else "pct" if "(%)" in label else "num")
+    return pd.DataFrame(cols), formats
+
+
+_EXPORT_NOTE = ("FDIC income items (Net Income, Interest Income/Expense, "
+                "Noninterest Inc/Exp, Net Charge-Offs) are year-to-date "
+                "cumulative as reported; ratios are FDIC YTD-annualized or "
+                "point-in-time.")
+
+
 def render_historicals(ticker: str):
     """Render historical financials for a single bank."""
 
@@ -254,8 +275,15 @@ def render_historicals(ticker: str):
                 height=min(700, 32 + 24 * len(qtr_df)),
             )
             # Underlying numeric FDIC frame ($K, unformatted)
-            table_export(df, f"historicals_quarterly_{ticker}",
-                         key=f"exp_historicals_quarterly_{ticker}")
+            exp_df, exp_fmt = _export_table(df)
+            table_export(exp_df, f"historicals_quarterly_{ticker}",
+                         key=f"exp_historicals_quarterly_{ticker}",
+                         formats=exp_fmt, freeze_cols=1, provenance={
+                             "Page": "Company Analysis › Historical Financials › Quarterly Detail",
+                             "Ticker": ticker, "Company": bank_name, "FDIC cert": cert,
+                             "Source": "FDIC/FFIEC bank-subsidiary financials",
+                             "Latest quarter": df["Period"].iloc[0],
+                             "Note": _EXPORT_NOTE})
 
     # ── TAB 3: Annual Summary ────────────────────────────────────────────
     elif _h_sel == _h_tabs[2]:
@@ -292,5 +320,13 @@ def render_historicals(ticker: str):
                 height=min(700, 32 + 24 * len(ann_df_display)),
             )
             # Underlying numeric annualized frame ($K, unformatted)
-            table_export(annual_df, f"historicals_annual_{ticker}",
-                         key=f"exp_historicals_annual_{ticker}")
+            exp_df, exp_fmt = _export_table(annual_df)
+            table_export(exp_df, f"historicals_annual_{ticker}",
+                         key=f"exp_historicals_annual_{ticker}",
+                         formats=exp_fmt, freeze_cols=1, provenance={
+                             "Page": "Company Analysis › Historical Financials › Annual Summary",
+                             "Ticker": ticker, "Company": bank_name, "FDIC cert": cert,
+                             "Source": "FDIC/FFIEC bank-subsidiary financials",
+                             "Latest quarter": df["Period"].iloc[0],
+                             "Note": _EXPORT_NOTE + " A '<year> YTD' period is "
+                                     "an in-progress year, not a full year."})

@@ -387,7 +387,8 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
                         "the bank files for this period.")
             comparison = compare_consensus_to_actual(consensus, period_actual or {})
             if comparison:
-                _render_comparison_table(comparison)
+                _render_comparison_table(comparison, ticker=ticker,
+                                         period=selected_period)
                 if period_actual is not None:
                     st.caption("Actuals are the company's as-reported figures for "
                                "this period (SEC companyfacts — the same holding-"
@@ -470,9 +471,18 @@ def _render_surprise_history_grid(ticker: str, past: list[dict]):
          ("Surprise", ""), ("Result", "")], trs,
         col_widths=["28%", "18%", "18%", "18%", "18%"])
     # Underlying numeric history (unformatted EPS / surprise)
-    table_export(pd.DataFrame(past[:8]),
-                 f"earnings_surprises_{ticker}",
-                 key=f"exp_earnings_surprises_{ticker}")
+    table_export(
+        pd.DataFrame([{"Date": e.get("date"),
+                       "EPS Est ($)": e.get("eps_estimate"),
+                       "EPS Act ($)": e.get("eps_actual"),
+                       "Surprise (%)": e.get("surprise_pct")} for e in past[:8]]),
+        f"earnings_surprises_{ticker}", key=f"exp_earnings_surprises_{ticker}",
+        formats={"Date": "date", "EPS Est ($)": "usd2", "EPS Act ($)": "usd2",
+                 "Surprise (%)": "pct"},
+        provenance={"Page": "Company Analysis › Earnings › Earnings Surprise History",
+                    "Ticker": ticker,
+                    "Source": "Yahoo Finance earnings history (analyst EPS estimate "
+                              "vs reported EPS per announcement; market data)"})
 
 
 def _render_manual_input(ticker: str):
@@ -638,8 +648,10 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
 
 
 
-def _render_comparison_table(comparison: list[dict]):
-    """Render the beat/miss comparison table."""
+def _render_comparison_table(comparison: list[dict], ticker: str | None = None,
+                             period: str | None = None):
+    """Render the beat/miss comparison table. `ticker` / `period` only name
+    the export (filename + Source sheet)."""
     rows = []
     for c in comparison:
         beat_miss = c["beat_miss"]
@@ -692,9 +704,28 @@ def _render_comparison_table(comparison: list[dict]):
             f"<td class='{rcls}'>{_ec_cell(res)}</td></tr>")
     st.markdown(f'<div class="ksk-grid ec-grid"><table><thead>{head}</thead>'
                 f'<tbody>{body}</tbody></table></div>', unsafe_allow_html=True)
-    # Underlying numeric comparison (unformatted consensus/actual/deltas)
-    table_export(pd.DataFrame(comparison), "consensus_vs_actual",
-                 key="exp_consensus_vs_actual")
+    # Underlying numeric comparison (unformatted consensus/actual/deltas). One
+    # row per metric, so the unit varies BY ROW — it travels in the Unit
+    # column ($ per share, % percent units, $M millions) rather than a header.
+    table_export(
+        pd.DataFrame([{"Metric": c["metric_name"], "Unit": c.get("unit") or None,
+                       "Consensus": c.get("consensus"), "Low": c.get("low"),
+                       "High": c.get("high"), "Firms": c.get("n_firms"),
+                       "Actual": c.get("actual"), "Δ": c.get("delta"),
+                       "Δ (%)": c.get("delta_pct"), "Result": c["beat_miss"]}
+                      for c in comparison]),
+        "_".join(s for s in ("consensus_vs_actual", ticker, period) if s),
+        key="exp_consensus_vs_actual",
+        formats={"Consensus": "num", "Low": "num", "High": "num", "Firms": "int",
+                 "Actual": "num", "Δ": "num", "Δ (%)": "pct"},
+        provenance={"Page": "Company Analysis › Earnings › Consensus vs Actual",
+                    "Ticker": ticker, "Period": period,
+                    "Source": "Uploaded consensus (mean across firms; Low–High = "
+                              "firm range) vs the company's as-reported figures "
+                              "for the period (SEC companyfacts)",
+                    "Value units": "Per row, in the Unit column: $ = per share, "
+                                   "% = percent units, $M = millions of dollars, "
+                                   "$B = billions"})
 
     # Summary stats
     beats = sum(1 for c in comparison if c["beat_miss"] == "beat")
@@ -1152,7 +1183,7 @@ def _render_surprise_heatmap(watchlist: list[str]):
 
     # Summary stats — consistency metrics
     st.markdown("##### Consistency Metrics")
-    stats_rows = []
+    stats_rows, export_rows = [], []
     for ticker in tickers_list:
         history = bank_data[ticker]
         surprises = [e.get("surprise_pct") for e in history
@@ -1176,6 +1207,16 @@ def _render_surprise_heatmap(watchlist: list[str]):
             "Avg Surprise": f"{avg_surprise:+.1f}%",
             "Volatility": f"{vol:.1f}pp" if vol else "—",
             "Last Qtr": f"{surprises[0]:+.1f}%",
+        })
+        # The same stats, unformatted, for the export.
+        export_rows.append({
+            "Ticker": ticker, "Bank": get_name(ticker),
+            "Quarters": len(surprises), "Beats": beat_count,
+            "Misses": miss_count, "Inline": inline_count,
+            "Beat Rate (%)": beat_count / len(surprises) * 100,
+            "Avg Surprise (%)": avg_surprise,
+            "Volatility (pp)": vol,
+            "Last Qtr Surprise (%)": surprises[0],
         })
     if stats_rows:
         stats_df = pd.DataFrame(stats_rows)
@@ -1202,9 +1243,19 @@ def _render_surprise_heatmap(watchlist: list[str]):
         st.dataframe(styled, use_container_width=True, hide_index=True,
                       height=min(500, 50 + 32 * len(stats_df)),
                       column_config=_df_ticker_linkcol())
-        # Display frame (formatted) — stats are built as strings here
-        table_export(stats_df, "earnings_consistency_metrics",
-                     key="exp_earnings_consistency_metrics")
+        table_export(
+            pd.DataFrame(export_rows), "earnings_consistency_metrics",
+            key="exp_earnings_consistency_metrics",
+            formats={"Quarters": "int", "Beats": "int", "Misses": "int",
+                     "Inline": "int", "Beat Rate (%)": "pct1",
+                     "Avg Surprise (%)": "pct1", "Volatility (pp)": "num",
+                     "Last Qtr Surprise (%)": "pct1"},
+            provenance={"Page": "Earnings › Surprise Heat-Map › Consistency Metrics",
+                        "Banks": len(export_rows),
+                        "Source": "Yahoo Finance earnings history — EPS surprise % "
+                                  "per announcement, up to the last 8 quarters per "
+                                  "bank (beat > +1%, miss < -1%, else inline; "
+                                  "Volatility = sample std dev of surprise %)"})
 
 
 
@@ -1429,8 +1480,31 @@ def _render_earnings_calendar(watchlist: list[str]):
         else:
             _render_earnings_grid(headers, trs, col_widths=col_widths)
 
-    table_export(pd.DataFrame(all_rows), "earnings_calendar",
-                 key="exp_earnings_calendar")
+    # rev_est is FMP's revenueEstimated in RAW dollars (see _fmt_rev_est).
+    table_export(
+        pd.DataFrame([{"Ticker": r["ticker"], "Bank": get_name(r["ticker"]),
+                       "Release Date": r.get("date"),
+                       "Days Until": r.get("days_until"), "When": r.get("when"),
+                       "Confirmed": bool(r.get("confirmed")),
+                       "Period Ending": r.get("period_ending"),
+                       "Call Date": r.get("call_date"),
+                       "Call Time": r.get("call_time"),
+                       "Webcast URL": r.get("webcast_url"),
+                       "Dial-in": r.get("dial_in"),
+                       "EPS Est ($)": r.get("eps_est"),
+                       "Rev Est ($)": r.get("rev_est")} for r in all_rows]),
+        f"earnings_calendar_{today.isoformat()}", key="exp_earnings_calendar",
+        formats={"Release Date": "date", "Days Until": "int",
+                 "Period Ending": "date", "Call Date": "date",
+                 "EPS Est ($)": "usd2", "Rev Est ($)": "usd"},
+        provenance={"Page": "Earnings › Earnings Calendar",
+                    "Data as of": today.isoformat(),
+                    "Horizon": f"{horizon_days} days",
+                    "Source": "Release date + EPS estimate: yfinance earnings "
+                              "calendar (FMP fallback); timing, confirmed flag, "
+                              "revenue estimate, period ending: FMP earnings "
+                              "calendar; call date/time, webcast, dial-in: the "
+                              "bank's own IR / press-release announcements"})
 
 
 # ── Earnings call helpers ─────────────────────────────────────────────
@@ -1942,14 +2016,63 @@ def _render_results_board():
         _render_earnings_grid(headers,
                               [_results_tr(r, len(headers)) for r in grp],
                               col_widths=col_widths)
-    export_rows = [{**{k: v for k, v in r.items() if k != "rel"},
-                    **{f"rel_{key}": ((r.get("rel") or {}).get("metrics", {}) |
-                                      (r.get("rel") or {}).get("capital", {})
-                                      ).get(key)
-                       for key, _, _ in _REL_METRICS}}
-                   for r in rows]
-    table_export(pd.DataFrame(export_rows), "earnings_results",
-                 key="exp_earnings_results")
+    # Revenue (FMP revenueActual/Estimated and the release's total_revenue)
+    # is RAW dollars — _REL_METRICS' "$M" is only how _rel_val_str displays
+    # it — so those columns export under ($) with the usd format, unscaled.
+    export_rows, rel_formats = [], {}
+    for r in rows:
+        rel = r.get("rel") or {}
+        relm = (rel.get("metrics") or {}) | (rel.get("capital") or {})
+        row = {
+            "Ticker": r["ticker"], "Bank": get_name(r["ticker"]),
+            "Reported": r.get("date"), "When": r.get("when"),
+            "Period Ending": r.get("period_ending"),
+            "Status": ("awaiting" if r.get("awaiting")
+                       else "pending" if r.get("pending") else "reported"),
+            "EPS Act ($)": r.get("eps_act"),
+            "EPS Act Source": r.get("eps_act_src") or (
+                "FMP" if r.get("eps_act") is not None else None),
+            "EPS Est ($)": r.get("eps_est"),
+            "EPS Surprise (%)": r.get("eps_surprise"),
+            "Rev Act ($)": r.get("rev_act"),
+            "Rev Act Source": r.get("rev_act_src") or (
+                "FMP" if r.get("rev_act") is not None else None),
+            "Rev Est ($)": r.get("rev_est"),
+            "Rev Surprise (%)": r.get("rev_surprise"),
+            "Px React (%)": r.get("px_react"),
+            "Px React Live": bool(r.get("px_react_live")),
+            "Reaction Session": r.get("reaction_session"),
+            "Release URL": r.get("pr_url") or rel.get("url"),
+            "Release Headline": r.get("pr_headline"),
+            "Release Period End": rel.get("qend"),
+        }
+        for key, label, unit in _REL_METRICS:
+            col = f"Release {label} ({'%' if unit == '%' else '$'})"
+            row[col] = relm.get(key)
+            rel_formats[col] = ("pct" if unit == "%"
+                                else "usd" if unit == "$M" else "usd2")
+        export_rows.append(row)
+    table_export(
+        pd.DataFrame(export_rows), f"earnings_results_{today.isoformat()}",
+        key="exp_earnings_results",
+        formats={"Reported": "date", "Period Ending": "date",
+                 "EPS Act ($)": "usd2", "EPS Est ($)": "usd2",
+                 "EPS Surprise (%)": "pct", "Rev Act ($)": "usd",
+                 "Rev Est ($)": "usd", "Rev Surprise (%)": "pct",
+                 "Px React (%)": "pct", "Reaction Session": "date",
+                 "Release Period End": "date", **rel_formats},
+        provenance={"Page": "Earnings › Reported Results",
+                    "Data as of": today.isoformat(),
+                    "Window": "banks reporting in the trailing 30 days",
+                    "Source": "FMP earnings calendar (report date/timing, actual "
+                              "and estimated EPS / revenue); an EPS or Rev Act "
+                              "Source of 'release…' means the value was filled "
+                              "from the bank's own earnings release (SEC 8-K "
+                              "EX-99.1); 'Release …' columns are parsed from that "
+                              "release (prose-confirmed, else n/a); Px React = "
+                              "release-session close over prior close from EOD "
+                              "price history; Release link from the news feed / "
+                              "8-K"})
 
 
 # ── Beat / Miss Summary ───────────────────────────────────────────────
@@ -1960,22 +2083,40 @@ def _render_firm_matrix(detail: dict, key_suffix: str):
     Range. Shared by the Estimates browser and the per-bank Earnings tab so both
     show the SAME 'what each firm estimated' view. `detail` is consensus_detail()."""
     firms = detail["firms"]
-    rows = []
+    rows, export_rows = [], []
     for m in sorted(detail["metrics"], key=lambda x: x["name"]):
         row = {"Metric": m["name"]}
+        raw = {"Metric": m["name"], "Unit": m["unit"] or None}
         for f in firms:
             v = m["by_firm"].get(f)
             row[f] = _format_val(v, m["unit"]) if v is not None else "—"
+            raw[f] = v
         row["Mean"] = _format_val(m["mean"], m["unit"])
         row["Range"] = (f'{_format_val(m["low"], m["unit"])}–'
                         f'{_format_val(m["high"], m["unit"])}') if m["n"] > 1 else "—"
         rows.append(row)
+        raw.update({"Mean": m["mean"], "Low": m["low"], "High": m["high"],
+                    "Firms": m["n"]})
+        export_rows.append(raw)
 
     df = pd.DataFrame(rows)
     from ui.tables import ksk_table
     ksk_table(df, max_height_px=720)
-    table_export(df, f"estimates_{key_suffix}",
-                 key=f"exp_estimates_{key_suffix}")
+    # Export the raw estimates: one row per metric, so the unit varies by
+    # row and travels in the Unit column (each metric's canonical unit).
+    table_export(
+        pd.DataFrame(export_rows), f"estimates_{key_suffix}",
+        key=f"exp_estimates_{key_suffix}",
+        formats={**{f: "num" for f in firms}, "Mean": "num", "Low": "num",
+                 "High": "num", "Firms": "int"},
+        provenance={"Page": "Earnings › Per-firm estimate matrix",
+                    "Ticker": detail.get("ticker"), "Period": detail.get("period"),
+                    "Firms": ", ".join(firms),
+                    "Source": "Uploaded consensus — each firm's research note / "
+                              "manual entry, in the metric's canonical unit",
+                    "Value units": "Per row, in the Unit column: $ = per share, "
+                                   "% = percent units, $M = millions of dollars, "
+                                   "$B = billions"})
 
 
 def _render_estimates_browser(all_consensus: dict):
@@ -2069,6 +2210,9 @@ def _render_beat_miss_summary(all_consensus: dict):
                 "Score": f"{beats}/{total}" if total > 0 else "—",
                 "_beats": beats,
                 "_misses": misses,
+                # Unformatted deltas for the export (EPS in $, NIM in % units).
+                "_eps_delta": eps_result["delta"] if eps_result else None,
+                "_nim_delta": nim_result["delta"] if nim_result else None,
             })
 
     if rows:
@@ -2103,7 +2247,19 @@ def _render_beat_miss_summary(all_consensus: dict):
             height=min(600, 40 + 35 * len(df)),
             column_config=_df_ticker_linkcol(),
         )
-        table_export(df, "beat_miss_summary", key="exp_beat_miss_summary")
+        table_export(
+            df_full.drop(columns=["EPS Δ", "NIM Δ", "Score", "_beats", "_misses"])
+                   .rename(columns={"_eps_delta": "EPS Δ ($)",
+                                    "_nim_delta": "NIM Δ (%)"}),
+            "beat_miss_summary", key="exp_beat_miss_summary",
+            formats={"Metrics": "int", "Beats": "int", "Misses": "int",
+                     "Inline": "int", "EPS Δ ($)": "usd2", "NIM Δ (%)": "pct"},
+            provenance={"Page": "Earnings › Beat / Miss Summary",
+                        "Period": "latest uploaded period per bank (Period column)",
+                        "Source": "Uploaded consensus (mean across firms) vs "
+                                  "period-matched as-reported actuals (SEC "
+                                  "companyfacts); |Δ %| ≤ 1 = inline; Δ = actual "
+                                  "− consensus"})
     else:
         from ui.states import empty_state
         empty_state('No consensus comparisons available yet')
@@ -2162,6 +2318,9 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
                         "Surprise %": c["delta_pct"],
                         "Result": c["beat_miss"],
                         "Source": "Uploaded",
+                        # Unformatted values for the export.
+                        "_consensus": c["consensus"], "_actual": c["actual"],
+                        "_unit": c["unit"],
                     })
 
     # From yfinance earnings history
@@ -2181,6 +2340,8 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
                     "Surprise %": e["surprise_pct"],
                     "Result": "beat" if e["surprise_pct"] > 1 else ("miss" if e["surprise_pct"] < -1 else "inline"),
                     "Source": "Yahoo Finance",
+                    "_consensus": e.get("eps_estimate"), "_actual": e["eps_actual"],
+                    "_unit": "$",
                 })
 
     if not all_surprises:
@@ -2244,9 +2405,26 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
         st.dataframe(styled, use_container_width=True, hide_index=True,
                       height=min(600, 40 + 35 * len(df)),
                       column_config=_df_ticker_linkcol())
-        # Underlying numeric rows (unformatted Surprise %)
-        table_export(pd.DataFrame(filtered[:50]), "surprise_rankings",
-                     key="exp_surprise_rankings")
+        # Underlying numeric rows (unformatted consensus / actual / surprise);
+        # the unit varies by row and travels in the Unit column.
+        table_export(
+            pd.DataFrame([{"Ticker": s["Ticker"], "Bank": s["Bank"],
+                           "Metric": s["Metric"], "Unit": s["_unit"] or None,
+                           "Period": s["Period"], "Consensus": s["_consensus"],
+                           "Actual": s["_actual"], "Surprise (%)": s["Surprise %"],
+                           "Result": s["Result"], "Source": s["Source"]}
+                          for s in filtered[:50]]),
+            "surprise_rankings", key="exp_surprise_rankings",
+            formats={"Consensus": "num", "Actual": "num", "Surprise (%)": "pct"},
+            provenance={"Page": "Earnings › Surprise Magnitude Rankings",
+                        "Filter": f"{filter_type} · {metric_filter}",
+                        "Source": "Per row (Source column): uploaded consensus vs "
+                                  "period-matched as-reported actuals (SEC "
+                                  "companyfacts), or Yahoo Finance EPS surprise "
+                                  "history (last 4 announcements per bank)",
+                        "Value units": "Per row, in the Unit column: $ = per "
+                                       "share, % = percent units, $M = millions "
+                                       "of dollars, $B = billions"})
 
         # Top beats / top misses summary
         top_beats = [s for s in all_surprises if s["Result"] == "beat"][:5]
@@ -2363,7 +2541,7 @@ def _render_sector_aggregates(all_consensus: dict, watchlist: list[str]):
     if metric_stats:
         st.markdown("##### Per-Metric Breakdown (Uploaded Consensus)")
 
-        rows = []
+        rows, export_rows = [], []
         for key, stats in sorted(metric_stats.items(), key=lambda x: x[1]["total"], reverse=True):
             total = stats["total"]
             avg_surprise = sum(stats["surprises"]) / len(stats["surprises"]) if stats["surprises"] else 0
@@ -2377,13 +2555,32 @@ def _render_sector_aggregates(all_consensus: dict, watchlist: list[str]):
                 "Beat %": f"{stats['beats']/total*100:.0f}%" if total else "—",
                 "Avg Surprise": f"{avg_surprise:+.1f}%",
             })
+            # Unformatted for the export; no surprises → n/a, not 0.
+            export_rows.append({
+                "Metric": stats["name"], "Banks": total,
+                "Beat": stats["beats"], "Miss": stats["misses"],
+                "Inline": stats["inlines"],
+                "Beat Rate (%)": stats["beats"] / total * 100 if total else None,
+                "Avg Surprise (%)": avg_surprise if stats["surprises"] else None,
+            })
 
         if rows:
             df = pd.DataFrame(rows)
             from ui.tables import ksk_table
             ksk_table(df, signed_cols=("Avg Surprise",))
-            table_export(df, "sector_metric_breakdown",
-                         key="exp_sector_metric_breakdown")
+            table_export(
+                pd.DataFrame(export_rows), "sector_metric_breakdown",
+                key="exp_sector_metric_breakdown",
+                formats={"Banks": "int", "Beat": "int", "Miss": "int",
+                         "Inline": "int", "Beat Rate (%)": "pct1",
+                         "Avg Surprise (%)": "pct1"},
+                provenance={"Page": "Earnings › Sector Aggregate Statistics › "
+                                    "Per-Metric Breakdown",
+                            "Period": "latest uploaded period per bank",
+                            "Source": "Uploaded consensus (mean across firms) vs "
+                                      "period-matched as-reported actuals (SEC "
+                                      "companyfacts); Avg Surprise = mean Δ % "
+                                      "across banks; |Δ %| ≤ 1 = inline"})
     elif not yf_eps_stats["total"]:
         from ui.states import empty_state
         empty_state('No aggregate data available yet',

@@ -98,6 +98,7 @@ def render_ownership(ticker: str):
         return f"{pct:+.0f}%"
 
     rows = []
+    exp_rows = []      # raw numerics for the export (never display strings)
     total_val = summary["total_value_usd"] or 1
     for h in holders:
         pct_of_inst = (h["value_usd"] / total_val * 100) if total_val else 0
@@ -110,6 +111,22 @@ def render_ownership(ticker: str):
             "Value": fmt_dollars(h["value_usd"], 2),
             "% of Inst": f"{pct_of_inst:.1f}%",
             "Filing": h.get("filing_url") or None,
+        })
+        exp_rows.append({
+            "Rank": len(exp_rows) + 1,
+            "Institution": h["filer_name"],
+            "Filer CIK": h.get("filer_cik"),
+            "Date Filed": h.get("date_filed"),
+            "Shares": h.get("shares"),
+            "Value ($)": h.get("value_usd"),
+            "% of Sampled Inst Value (%)": (h["value_usd"] / tot_val * 100
+                                            if tot_val and h.get("value_usd") is not None
+                                            else None),
+            "Δ QoQ Status": h.get("change_status"),
+            "Δ QoQ Shares (%)": h.get("change_pct"),
+            "Prior Qtr Shares": h.get("prior_shares"),
+            "Accession": h.get("accession"),
+            "Filing URL": h.get("filing_url"),
         })
 
     df = pd.DataFrame(rows)
@@ -126,8 +143,21 @@ def render_ownership(ticker: str):
         },
     )
     # Underlying numeric holder records (unformatted shares / value_usd)
-    table_export(pd.DataFrame(holders), f"institutional_holders_{ticker}",
-                 key=f"exp_institutional_holders_{ticker}")
+    table_export(pd.DataFrame(exp_rows), f"institutional_holders_{ticker}",
+                 key=f"exp_institutional_holders_{ticker}",
+                 sheet="Institutional holders",
+                 formats={"Rank": "int", "Filer CIK": "text", "Date Filed": "date",
+                          "Shares": "int", "Value ($)": "usd",
+                          "% of Sampled Inst Value (%)": "pct",
+                          "Δ QoQ Shares (%)": "pct", "Prior Qtr Shares": "int"},
+                 provenance={"Page": "Company Analysis › Ownership › Institutional (13F)",
+                             "Ticker": ticker, "Company": name,
+                             "Source": SRC,
+                             "Coverage": f"{nf} largest 13F-HR filers found in the "
+                                         "last ~90 days — a sample, not the full "
+                                         "institutional base",
+                             "Δ QoQ": "share change vs each filer's prior 13F-HR"},
+                 freeze_cols=2)
 
     st.caption(
         "13F filings are required for institutions managing >$100M, cover equity holdings "
@@ -220,10 +250,23 @@ def render_holder_history(ticker: str):
     from ui.tables import ksk_table
     ksk_table(df, max_height_px=640)
     # Raw holder × quarter records (unformatted shares / value_usd)
-    flat = [{"institution": h, "quarter": q, **(hist[h][q] or {})}
+    flat = [{"Institution": h, "Quarter": q,
+             "Shares": (hist[h][q] or {}).get("shares"),
+             "Reported Value ($)": (hist[h][q] or {}).get("value_usd")}
             for h in holders for q in sorted(hist[h], reverse=True)]
-    table_export(pd.DataFrame(flat), f"holder_history_{ticker}",
-                 key=f"exp_holder_history_{ticker}")
+    table_export(pd.DataFrame(flat), f"holder_history_{ticker}_{quarters[0]}",
+                 key=f"exp_holder_history_{ticker}",
+                 sheet="Holder history",
+                 formats={"Shares": "int", "Reported Value ($)": "usd"},
+                 provenance={"Page": "Company Analysis › Ownership › Holder History",
+                             "Ticker": ticker, "Company": name,
+                             "Source": "SEC EDGAR Form 13F-HR filings — stored "
+                                       "quarterly snapshots of the largest filers found",
+                             "Quarters": f"{quarters[-1]} to {quarters[0]} "
+                                         f"({len(quarters)} stored)",
+                             "Reported Value": "each filing's own quarter-end "
+                                               "position value"},
+                 freeze_cols=1)
 
     # ── Top Buyers / Sellers: latest stored quarter vs the prior one ────
     if len(quarters) < 2:
@@ -341,12 +384,28 @@ def render_crossholdings(ticker: str):
         "</tr></thead><tbody>" + body + "</tbody></table></div>",
         unsafe_allow_html=True,
     )
-    flat = [{"holder": r["holder"], "ticker": o["ticker"],
-             "shares": o.get("shares"), "value_usd": o.get("value_usd")}
+    flat = [{"Institution": r["holder"],
+             f"Position in {ticker} ($)": r.get("subject_value_usd"),
+             "Other Bank": o["ticker"],
+             "Shares": o.get("shares"), "Reported Value ($)": o.get("value_usd")}
             for r in x["rows"] for o in r["others"]]
     if flat:
-        table_export(pd.DataFrame(flat), f"crossholdings_{ticker}",
-                     key=f"exp_crossholdings_{ticker}")
+        table_export(pd.DataFrame(flat), f"crossholdings_{ticker}_{x['quarter']}",
+                     key=f"exp_crossholdings_{ticker}",
+                     sheet="Crossholdings",
+                     formats={f"Position in {ticker} ($)": "usd",
+                              "Shares": "int", "Reported Value ($)": "usd"},
+                     provenance={"Page": "Company Analysis › Ownership › Crossholdings",
+                                 "Ticker": ticker, "Company": name,
+                                 "Source": "SEC EDGAR Form 13F-HR filings — stored "
+                                           "quarterly snapshots, cross-joined across "
+                                           "universe banks",
+                                 "Quarter": x["quarter"],
+                                 "Coverage": f"{x['coverage']} other universe banks "
+                                             "with a stored snapshot for this quarter "
+                                             "(inferred from the stored sample — an "
+                                             "institution can hold banks not shown)"},
+                     freeze_cols=1)
 
 
 # ── Ownership Detailed (SNL plan §13, phase 1) ─────────────────────────
@@ -479,5 +538,27 @@ def render_ownership_detailed(ticker: str, metrics: dict):
                  "full 13F book (phase 2).")
     st.caption(" ".join(notes))
 
-    table_export(pd.DataFrame(rows), f"ownership_detailed_{ticker}",
-                 key=f"exp_owndet_{ticker}")
+    exp = pd.DataFrame(rows).rename(columns={
+        "holder": "Holder", "filer_cik": "Filer CIK", "accession": "Accession",
+        "shares": "Shares", "d_shares": "Δ Shares (QoQ)", "d_pct": "Δ Shares (QoQ) (%)",
+        "is_new": "New Position", "pct_cso": "% CSO (%)",
+        "mkt_value": "Mkt Value ($)", "reported_value": "Reported Value ($)",
+        "filed": "Date Filed"})
+    table_export(exp, f"ownership_detailed_{ticker}",
+                 key=f"exp_owndet_{ticker}",
+                 sheet="Ownership detailed",
+                 formats={"Filer CIK": "text", "Shares": "int",
+                          "Δ Shares (QoQ)": "int", "Δ Shares (QoQ) (%)": "pct",
+                          "% CSO (%)": "pct", "Mkt Value ($)": "usd",
+                          "Reported Value ($)": "usd", "Date Filed": "date"},
+                 provenance={"Page": "Company Analysis › Ownership › Ownership Detailed",
+                             "Ticker": ticker, "Company": name,
+                             "Source": "SEC EDGAR Form 13F-HR filings (largest filers "
+                                       "found via full-text search — a coverage sample)",
+                             "Prior quarter (QoQ)": prior_q or "n/a — needs two stored "
+                                                               "quarterly snapshots",
+                             "Shares outstanding (% CSO)": shares_out,
+                             "Price ($) (Mkt Value)": price,
+                             "Mkt Value": "shares × current price; Reported Value = the "
+                                          "filing's own quarter-end value"},
+                 freeze_cols=1)

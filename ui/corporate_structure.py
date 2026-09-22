@@ -124,9 +124,23 @@ def render_corporate_structure(ticker: str):
         notes.insert(0, f"Ownership chain above the bank: {path}.")
     st.caption(" ".join(notes))
 
+    as_of = tree.get("as_of")
     df = pd.DataFrame([{
-        "Entity": ("  " * r["depth"]) + (r["name"] or ""),
+        "Entity": r["name"], "Depth": r["depth"],
         "Type": r["type"], "Location": r["location"],
-        "Ownership %": r["ownership_pct"], "Control": r["relationship"],
+        "Ownership (%)": r["ownership_pct"], "Control": r["relationship"],
     } for r in rows])
-    table_export(df, f"{ticker}_corporate_structure", key=f"exp_struct_{ticker}")
+    table_export(df, f"{ticker}_corporate_structure" + (f"_{as_of}" if as_of else ""),
+                 key=f"exp_struct_{ticker}",
+                 sheet="Corporate structure",
+                 formats={"Depth": "int", "Ownership (%)": "pct"},
+                 provenance={"Page": "Company Analysis › Overview › Corporate Structure",
+                             "Ticker": ticker, "FDIC cert": cert,
+                             "Bank RSSD": rssd, "Top holder RSSD": top_rssd,
+                             "Source": "Federal Reserve NIC organizational hierarchy "
+                                       "(Ownership = PCT_EQUITY as reported to the "
+                                       "Fed; regulated entities only)",
+                             "As of": as_of,
+                             "Depth": "0 = top regulated holder; rows are in "
+                                      "tree (pre-order) display order"},
+                 freeze_cols=1)

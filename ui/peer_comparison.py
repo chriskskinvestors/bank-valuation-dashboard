@@ -315,7 +315,7 @@ def render_peer_comparison(all_metrics: list[dict]):
     # ── Peer group composition ─────────────────────────────────────────
     st.markdown("---")
     with st.expander("Peer group composition"):
-        comp_rows = []
+        comp_rows, raw_rows = [], []
         for m in cohort:
             # total_assets is always raw dollars (converted at the metrics
             # boundary) — no unit guessing.
@@ -327,6 +327,8 @@ def render_peer_comparison(all_metrics: list[dict]):
                 "Size Tier": asset_size_tier(assets) or "—",
                 "Business Mix": business_mix_tier(m),
             })
+            # Export row: raw dollars, not the "$16.20B" display string.
+            raw_rows.append({**comp_rows[-1], "Assets ($)": assets})
         comp_df = pd.DataFrame(comp_rows)
         # Display copy gets Company-page links (universal linking rule); the
         # export keeps plain tickers.
@@ -335,8 +337,15 @@ def render_peer_comparison(all_metrics: list[dict]):
         comp_disp["Ticker"] = comp_disp["Ticker"].map(ticker_company_url)
         st.dataframe(comp_disp, use_container_width=True, hide_index=True,
                      column_config=ticker_linkcol())
-        table_export(comp_df, "peer_group_composition",
-                     key="exp_peer_group_composition")
+        table_export(pd.DataFrame(raw_rows)[["Ticker", "Bank", "Assets ($)",
+                                             "Size Tier", "Business Mix"]],
+                     "peer_group_composition",
+                     key="exp_peer_group_composition",
+                     formats={"Assets ($)": "usd"},
+                     provenance={"Page": "Peer Comparison › Peer group composition",
+                                 "Banks in cohort": len(cohort),
+                                 "Source": "FDIC/FFIEC + SEC companyfacts "
+                                           "(total assets, whole dollars)"})
 
 
 def _render_highlights(peers: list[dict]):
@@ -469,67 +478,44 @@ def _render_headline_charts(display_peers: list[dict]):
     )
 
 
-def _compare_export_bytes(cohort: list[dict], categories: list[str]):
-    """Build (xlsx, csv) of the WHOLE cohort as a SORTABLE sheet: banks in rows,
-    each metric (across the selected categories) a RAW-number column + an overall-
-    score column. The xlsx has AutoFilter, a frozen header + ticker/bank columns,
-    and per-column number formats so Excel sorts numerically. No colors."""
-    import io
-    import csv as _csv
+def _compare_export_bytes(cohort: list[dict], categories: list[str],
+                          provenance: dict | None = None) -> bytes:
+    """The .xlsx of the WHOLE cohort as a SORTABLE sheet: banks in rows, each
+    metric (across the selected categories) a RAW-number column + an overall-
+    score column. Built on ui/export.py (AutoFilter, frozen header + Ticker/
+    Bank, per-column number formats, Source sheet). Scaled-unit labels
+    ("Mkt Cap ($B)") become "($)": the cells hold whole dollars."""
+    from ui.export import build_workbook, export_header, metric_format
 
-    mcols = []   # (key, label, format) — metrics with any data in the cohort
+    mcols = []   # (key, header, format-key) — metrics with any data in the cohort
     for cat in categories:
         for mkey in CATEGORY_METRICS.get(cat, []):
             m_def = METRICS_BY_KEY.get(mkey)
             if m_def and any(isinstance(b.get(mkey), (int, float)) for b in cohort):
-                mcols.append((mkey, m_def.get("label", mkey),
-                              m_def.get("format", "number")))
+                mcols.append((mkey, export_header(m_def.get("label", mkey)),
+                              metric_format(m_def)))
     scores = _peer_scores(cohort, cohort, categories)
-    headers = ["Ticker", "Bank", "Overall score"] + [lbl for _, lbl, _ in mcols]
     rows = []
     for b in cohort:
         tk = b.get("ticker")
         sc = scores.get(tk, {}).get("score")
-        r = [tk, get_name(tk), (round(sc) if sc is not None else None)]
-        for mkey, _, _ in mcols:
+        r = {"Ticker": tk, "Bank": get_name(tk),
+             "Overall score": (round(sc) if sc is not None else None)}
+        for mkey, hdr, _ in mcols:
             v = b.get(mkey)
-            r.append(v if isinstance(v, (int, float)) else None)
+            r[hdr] = v if isinstance(v, (int, float)) else None
         rows.append(r)
-
-    sbuf = io.StringIO()
-    _w = _csv.writer(sbuf)
-    _w.writerow(headers)
-    _w.writerows(rows)
-    csv_bytes = sbuf.getvalue().encode("utf-8")
-
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
-    from openpyxl.utils import get_column_letter
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Peer comparison"
-    ws.append(headers)
-    for r in rows:
-        ws.append(r)
-    for c in range(1, len(headers) + 1):
-        ws.cell(1, c).font = Font(bold=True)
-    for rr in range(2, ws.max_row + 1):
-        ws.cell(rr, 3).number_format = "0"   # score (integer)
-    for ci, (_, _, fmt) in enumerate(mcols, start=4):
-        nf = {"pct": '0.00"%"', "ratio": '0.00"x"'}.get(fmt, '#,##0.00')
-        for rr in range(2, ws.max_row + 1):
-            ws.cell(rr, ci).number_format = nf
-    ws.freeze_panes = "C2"   # freeze header row + Ticker/Bank
-    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{ws.max_row}"
-    ws.column_dimensions["A"].width = 9
-    ws.column_dimensions["B"].width = 26
-    ws.column_dimensions["C"].width = 13
-    for ci in range(4, len(headers) + 1):
-        ws.column_dimensions[get_column_letter(ci)].width = min(
-            22, max(10, len(headers[ci - 1]) + 2))
-    xbuf = io.BytesIO()
-    wb.save(xbuf)
-    return xbuf.getvalue(), csv_bytes
+    df = pd.DataFrame(rows, columns=["Ticker", "Bank", "Overall score"]
+                      + [hdr for _, hdr, _ in mcols])
+    formats = {"Overall score": "int", **{hdr: fk for _, hdr, fk in mcols}}
+    prov = {"Page": "Peer Comparison › Metrics Table",
+            "Banks in cohort": len(cohort),
+            "Categories": ", ".join(categories),
+            "Source": "FDIC/FFIEC bank-subsidiary + SEC companyfacts fundamentals; "
+                      "market prices as market data",
+            **(provenance or {})}
+    return build_workbook(df, sheet="Peer comparison", formats=formats,
+                          provenance=prov, freeze_cols=2)
 
 
 def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
@@ -677,20 +663,14 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
         def _cmp_export_dialog():
             st.caption(f"All {len(cohort)} banks in scope × {len(categories)} "
                        "categories — banks in rows, every metric a sortable column "
-                       "(raw numbers; the .xlsx has AutoFilter + frozen header).")
-            with st.spinner("Building…"):
-                _xlsx, _csv_bytes = _compare_export_bytes(cohort, categories)
-            e1, e2 = st.columns(2)
-            with e1:
-                st.download_button(
-                    "Excel (sortable)", _xlsx, file_name="peer_comparison.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument."
-                         "spreadsheetml.sheet",
-                    use_container_width=True, key="cmp_xlsx_dl")
-            with e2:
-                st.download_button(
-                    "CSV", _csv_bytes, file_name="peer_comparison.csv",
-                    mime="text/csv", use_container_width=True, key="cmp_csv_dl")
+                       "(raw numbers, Excel formats, AutoFilter, frozen header; "
+                       "a Source sheet carries scope and units).")
+            from ui.export import XLSX_MIME
+            st.download_button(
+                "Download Excel",
+                lambda: _compare_export_bytes(cohort, categories),
+                file_name="peer_comparison.xlsx", mime=XLSX_MIME,
+                use_container_width=True, key="cmp_xlsx_dl")
         if st.button("Export", key="cmp_export_btn"):
             _cmp_export_dialog()
 

@@ -47,7 +47,7 @@ from ui.states import skeleton as _skeleton
 from data.bank_mapping import get_cik, get_fdic_cert, get_name
 from data.sec_client import get_filing_info
 from ui.chrome import table_export, title_bar
-from ui.filings import _filing_primary, _safe
+from ui.filings import _filing_primary, _safe, filings_export_frame
 from ui.key_exhibits import fetch_key_exhibits
 
 # Mirrors app.py::_subtab_key("News & Filings", None) — the sub-tab radio's
@@ -732,7 +732,11 @@ def _render_body(ticker: str, cik: int) -> None:
 
     # ── Export ───────────────────────────────────────────────────────────
     if filings:
-        table_export(pd.DataFrame(filings), f"recent_documents_{ticker}",
-                     key=f"exp_rd_{ticker}")
+        exp_df, exp_fmt = filings_export_frame(filings)
+        table_export(exp_df, f"recent_documents_{ticker}",
+                     key=f"exp_rd_{ticker}", formats=exp_fmt,
+                     provenance={"Page": "Company Analysis › News & Filings › Recent Documents",
+                                 "Ticker": ticker, "CIK": raw_cik,
+                                 "Date range": rng, "Source": "SEC EDGAR"})
         st.caption(f"{len(filings)} EDGAR filings in range · click a document "
                    "for viewer / HTML / PDF")

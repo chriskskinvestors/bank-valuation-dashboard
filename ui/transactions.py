@@ -732,7 +732,59 @@ def _render_comps():
     try:
         import pandas as pd
         from ui.chrome import table_export
-        table_export(pd.DataFrame(shown), "deal_comps", key="comps_export")
+        # Dollar fields are RAW DOLLARS at source (ma_history value_usd /
+        # target_assets; deal_comps _fdic_at ×1000, _sec_assets_at raw SEC).
+        # price_assets / core_dep_premium are fractions — exported ×100 to
+        # match the table above, under a (%) header.
+        exp_df = pd.DataFrame([{
+            "Announced": d.get("announce_date"),
+            "Buyer": d.get("buyer_ticker"), "Buyer name": d.get("buyer_name"),
+            "Buyer FDIC cert": d.get("buyer_cert"),
+            "Target": d.get("target_name"), "Target FDIC cert": d.get("target_cert"),
+            "Status": d.get("status"),
+            "Completed": d.get("completion_date"),
+            "Terminated": d.get("termination_date"),
+            "Deal value ($)": d.get("value_usd"), "Value basis": d.get("value_basis"),
+            "Value note": d.get("value_note"),
+            "Target assets ($)": d.get("target_assets"),
+            "Target assets as of": d.get("target_assets_repdte"),
+            "Comp assets ($)": d.get("comp_assets"),
+            "TBV ($)": d.get("tbv_usd"), "TBV basis": d.get("tbv_basis"),
+            "TBV as of": d.get("tbv_asof"),
+            "P/TBV (x)": d.get("p_tbv"),
+            "P/Assets (%)": (d["price_assets"] * 100
+                             if d.get("price_assets") is not None else None),
+            "Core deposit premium (%)": (d["core_dep_premium"] * 100
+                                         if d.get("core_dep_premium") is not None else None),
+            "Flag": d.get("flagged"),
+            "Announcement URL": d.get("announce_url"),
+        } for d in shown])
+        built = str(snap.get("built_at", ""))[:10]
+        stem = "_".join(p for p in (
+            "deal_comps",
+            f"since{since}" if since != "All years" else "all",
+            status.lower() if status != "All" else None,
+            built) if p)
+        table_export(exp_df, stem, key="comps_export",
+                     formats={"Announced": "date", "Completed": "date", "Terminated": "date",
+                              "Target assets as of": "date", "TBV as of": "date",
+                              "Buyer FDIC cert": "int", "Target FDIC cert": "int",
+                              "Deal value ($)": "usd", "Target assets ($)": "usd",
+                              "Comp assets ($)": "usd", "TBV ($)": "usd",
+                              "P/TBV (x)": "x", "P/Assets (%)": "pct",
+                              "Core deposit premium (%)": "pct"},
+                     provenance={"Page": "Transactions › Comparable Deal Analysis",
+                                 "Source": "FDIC structure history + financials, EDGAR "
+                                           "announcement 8-Ks, SEC companyfacts",
+                                 "Snapshot built": built or None,
+                                 "Announced since": since, "Status filter": status,
+                                 "Note": "TBV basis: holdco = SEC tangible common equity of "
+                                         "the priced entity; bank-sub = FDIC EQTOT − INTAN. "
+                                         "P/TBV and P/Assets divide the deal value by TBV / "
+                                         "Comp assets at the last period ≤ announce; Target "
+                                         "assets is the FDIC figure at the last REPDTE ≤ "
+                                         "completion. Flagged multiples (outside the 0.2x–8x "
+                                         "sanity band) are n/a, never shown."})
     except Exception:
         pass
 

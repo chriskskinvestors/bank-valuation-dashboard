@@ -24,6 +24,32 @@ _BAND_SHORT = {"highly concentrated": "High",
                "moderately concentrated": "Moderate",
                "unconcentrated": "Unconc."}
 
+# Source row on every SOD export (one constant in ui.export).
+from ui.export import SOD_SOURCE as _SOD_SOURCE
+
+# analysis.merger_hhi.PRO_FORMA_COLS → export headers. Deposits are FDIC
+# $thousands (header says so); the *_pct values are already percent units
+# (deposits / market total × 100); HHI on the DOJ 0–10,000 scale.
+_EXPORT_COLS = {
+    "market_key": "Market key", "market_label": "Market",
+    "n_banks": "Banks in market", "market_total": "Market total ($K)",
+    "branches_a": "A branches", "deposits_a": "A deposits ($K)",
+    "share_a_pct": "A share (%)",
+    "branches_b": "B branches", "deposits_b": "B deposits ($K)",
+    "share_b_pct": "B share (%)",
+    "combined_share_pct": "Combined share (%)",
+    "hhi_pre": "HHI pre", "hhi_post": "HHI post", "hhi_delta": "ΔHHI",
+    "concentration_post": "Concentration (post)",
+    "screen_flag": "DOJ screen flagged", "screen_reason": "Screen reason",
+}
+_EXPORT_FORMATS = {
+    "Banks in market": "int", "Market total ($K)": "usd_k",
+    "A branches": "int", "A deposits ($K)": "usd_k", "A share (%)": "pct",
+    "B branches": "int", "B deposits ($K)": "usd_k", "B share (%)": "pct",
+    "Combined share (%)": "pct",
+    "HHI pre": "int", "HHI post": "int", "ΔHHI": "int",
+}
+
 
 def bank_link(name, cert, ticker) -> str:
     """Escaped bank-name cell under the universal linking rule: a covered
@@ -188,8 +214,19 @@ def render_merger_planning(ticker: str):
         '<th style="text-align:left;">Screen</th>'
         f"</tr></thead><tbody>{body}</tbody></table></div>",
         unsafe_allow_html=True)
-    table_export(df, f"merger_hhi_{ticker}_{int(p_cert)}_{kind}",
-                 key=f"mp_export_{kind}")
+    table_export(df.rename(columns=_EXPORT_COLS),
+                 f"merger_hhi_{ticker}_{int(p_cert)}_{kind}_{res['year']}",
+                 key=f"mp_export_{kind}",
+                 formats=_EXPORT_FORMATS,
+                 provenance={"Page": f"Merger Planning (HHI) › {kind_label}",
+                             "Ticker": ticker,
+                             "Company (A)": get_name(ticker) or ticker,
+                             "FDIC cert (A)": int(cert),
+                             "Partner (B)": p_name,
+                             "Partner ticker (B)": p_tk,
+                             "Partner FDIC cert (B)": int(p_cert),
+                             "Source": _SOD_SOURCE,
+                             "SOD survey year": res["year"]})
     _skipped_note(res["skipped"])
 
     st.caption(
