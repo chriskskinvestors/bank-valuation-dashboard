@@ -307,11 +307,38 @@ def main():
     # exit code. This job only DISCOVERS the IR endpoints (above) that the
     # poll-events snapshot builders consume.
 
+    # Deep FDIC history: append the newest quarters to the backfilled store
+    # (DEEP-HISTORY-PLAN.md "Nightly append", wired 2026-09-22). Runs LAST so
+    # a slow FDIC day degrades only this step, after the gate and the
+    # snapshot warms are already done; never touches this job's exit code.
+    append_deep_history()
+
     # Exit code reflects severity: new regressions or >5% failure rate fail
     # the execution (visible in Cloud Run job history).
     if new_failures:
         return 1
     return 0 if len(failed) < len(universe) * 0.05 else 1
+
+
+def append_deep_history() -> int | None:
+    """Run jobs.backfill_fdic_history in INCREMENTAL mode (last ~6 quarters
+    per cert, upsert — a no-op most nights, one new row per cert each
+    quarter-end; ~640 certs at 0.25s pacing ≈ 5-8 min). Returns the job's
+    exit code (0 healthy, 1 degraded, 2 hard failure) for the log, or None
+    when it crashed. Never raises: the deep store going a night stale is a
+    logged degradation, not a reason to fail the universe refresh whose
+    growth gate is this job's contract."""
+    t1 = time.time()
+    try:
+        from jobs.backfill_fdic_history import main as _deep_main
+        code = _deep_main("incremental")
+    except Exception as e:
+        print(f"[warn] deep-history append crashed: {type(e).__name__}: {e}",
+              flush=True)
+        return None
+    print(f"[{time.strftime('%H:%M:%S')}] Deep-history append exit={code} "
+          f"({time.time()-t1:.0f}s)", flush=True)
+    return code
 
 
 if __name__ == "__main__":

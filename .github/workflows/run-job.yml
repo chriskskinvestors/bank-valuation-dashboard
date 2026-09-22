@@ -18,6 +18,7 @@ on:
           - live-audit
           - refresh-prices
           - verify-metrics
+          - backfill-fdic-history
 
 env:
   PROJECT_ID: ace-beanbag-486220-a8

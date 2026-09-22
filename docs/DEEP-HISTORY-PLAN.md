@@ -6,10 +6,12 @@ Status: **DECIDED 2026-09-08 (owner: "go with your recommendations") —
 90,643 rows). Phases 1 + 2 SHIPPED 2026-09-22 (owner scope call:
 statement tables + the four dynamics tabs, 5Y / 10Y / 20Y / MAX picker
 defaulting to today's view, absent fields annotated + n/a) — see
-`ui/history_range.py`. Phase 3 not started. OPEN OPS ITEM: the nightly
-`incremental` append (`jobs/backfill_fdic_history.py incremental`) is not
-scheduled and the job is not in deploy.yml's image-pin list — Q3-2026 call
-reports (late Nov) will not reach the store until it is.** Cost brief delivered 2026-09-08: source data is free (primary
+`ui/history_range.py`. Phase 3 not started. Nightly append WIRED 2026-09-22:
+refresh-universe runs `jobs.backfill_fdic_history incremental` as its last
+step (logged, never affects the gate's exit code); deploy.yml creates the
+standalone `backfill-fdic-history` job (one-time deep backfill, resumable)
+if absent and pins it to each deployed image; run-job.yml can execute it.**
+Cost brief delivered 2026-09-08: source data is free (primary
 sources), storage fits the existing 10GB Cloud SQL provision (~+0.4-0.8GB),
 one-time backfill compute ~$5, recurring ~$0. The cost is engineering and
 validation care, not money.
