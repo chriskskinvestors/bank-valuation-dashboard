@@ -608,6 +608,9 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "sec_filed_period": facts_lag["filed_period"],
         "sec_filed_date": facts_lag["filed_date"],
         "sec_filed_form": facts_lag["filed_form"],
+        # {accession, form, report_date, filed} when the figures come from
+        # the bank's own latest filing overlaid onto a lagging blob.
+        "sec_facts_overlay": sec_data.get("sec_facts_overlay"),
         # True when the composite assembled, disagrees with the XBRL TTM
         # >=15%, AND the release quarter failed the plausibility gate (a
         # genuine YoY swing passes the gate and serves as release_ttm) —

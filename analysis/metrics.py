@@ -95,7 +95,7 @@ def build_bank_metrics(
     # SEC XBRL-API lag diagnostics (analysis/valuation._sec_facts_lag): the
     # bank-detail card dates its reconstructed per-share values by these.
     for key in ("sec_facts_lag", "sec_facts_as_of", "sec_filed_period",
-                "sec_filed_date", "sec_filed_form"):
+                "sec_filed_date", "sec_filed_form", "sec_facts_overlay"):
         result[key] = computed.get(key)
     # efficiency_release rides as a declared column; its quarter-end tags
     # along so the release figure's staleness is visible (increment 3 —
