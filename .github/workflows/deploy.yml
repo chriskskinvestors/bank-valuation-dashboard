@@ -242,9 +242,18 @@ jobs:
               # 2026-07-31 before any code change) — baseline ~21 min plus
               # FDIC-slow days plus the cert-group calls leaves no headroom.
               # Same fix as refresh-home-snapshot (2026-07-27 incident).
+              # refresh-sod: the monthly FULL sweep walks ~4,250 institutions
+              # at FDIC's rate limit (~45 min on a clean day); the 1800s
+              # default killed the 2026-09-22 run at 2,800/4,232 and had been
+              # ending every monthly run "Failed with errors" — the 2025
+              # survey only filled in because upserts accumulate across the
+              # timed-out attempts. 7200s leaves headroom for FDIC-slow days;
+              # the nightly `ownership` pass on the same job takes ~2 min.
               EXTRA=""
               if [ "$job" = "refresh-universe" ]; then
                 EXTRA="--task-timeout=3600"
+              elif [ "$job" = "refresh-sod" ]; then
+                EXTRA="--task-timeout=7200"
               fi
               # Jobs that talk to Cloud SQL (carry DATABASE_URL, or already
               # migrated to DB_PASSWORD) get the password as a secret mount +
