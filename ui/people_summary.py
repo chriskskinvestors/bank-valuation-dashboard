@@ -88,7 +88,19 @@ def render_people_summary(ticker: str):
             "Committees": ", ".join(p["committees"] or []),
             "Bio": p["bio"],
         } for p in people])
-        table_export(df, f"{ticker}_people", key=f"exp_people_{ticker}")
+        filed = proxy.get("filed")
+        table_export(df, f"{ticker}_people" + (f"_{filed}" if filed else ""),
+                     key=f"exp_people_{ticker}",
+                     sheet="Directors and officers",
+                     formats={"Age": "int", "Director Since": "0"},   # a year: no thousands separator
+                     provenance={"Page": "Company Analysis › Overview › People Summary",
+                                 "Ticker": ticker, "CIK": cik,
+                                 "Source": "DEF 14A proxy statement (AI-extracted, "
+                                           "names verified verbatim against the "
+                                           "filing; anything the proxy doesn't state "
+                                           "is n/a, never inferred)",
+                                 "Proxy filed": filed,
+                                 "Source URL": src})
     else:
         from ui.states import empty_state
         empty_state('No proxy-based roster is available for this company — the extraction needs a DEF 14A on EDGAR and the summarizer API',

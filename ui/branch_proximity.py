@@ -30,6 +30,34 @@ _RADII = [1, 3, 5, 10]
 _MAP_COLS = ["bank_name", "branch_name", "city", "state", "deposits",
              "lat", "lng"]
 
+# Source row on every SOD export (one constant in ui.export).
+from ui.export import SOD_SOURCE as _SOD_SOURCE
+
+# branches_store._COMPETITOR_PAIR_COLS → export headers: subject branch
+# (subj_*) then the competitor branch. Deposits are FDIC $thousands (header
+# says so); distance is great-circle miles.
+_EXPORT_COLS = {
+    "subj_brnum": "Subject branch number",
+    "subj_branch_name": "Subject branch", "subj_address": "Subject address",
+    "subj_city": "Subject city", "subj_state": "Subject state",
+    "subj_lat": "Subject latitude", "subj_lng": "Subject longitude",
+    "subj_deposits": "Subject deposits ($K)",
+    "cert": "Competitor FDIC cert", "brnum": "Competitor branch number",
+    "ticker": "Competitor ticker", "bank_name": "Competitor bank",
+    "branch_name": "Competitor branch", "address": "Competitor address",
+    "city": "Competitor city", "state": "Competitor state",
+    "zip": "Competitor ZIP", "deposits": "Competitor deposits ($K)",
+    "lat": "Competitor latitude", "lng": "Competitor longitude",
+    "serv_type": "Competitor service type (SOD code)",
+    "distance_miles": "Distance (mi)",
+}
+_EXPORT_FORMATS = {
+    "Subject branch number": "int", "Subject deposits ($K)": "usd_k",
+    "Competitor FDIC cert": "int", "Competitor branch number": "int",
+    "Competitor ZIP": "text", "Competitor deposits ($K)": "usd_k",
+    "Competitor service type (SOD code)": "text", "Distance (mi)": "num",
+}
+
 
 def _proximity_map(subject_label: str, subj: pd.DataFrame,
                    uniq_comp: pd.DataFrame) -> None:
@@ -210,8 +238,17 @@ def render_branch_proximity(ticker: str):
     else:
         _rollup_table(uniq_comp, float(radius))
         _per_branch_table(pairs)
-        table_export(pairs, f"branch_proximity_{ticker}_{radius}mi",
-                     key=f"bp_export_{radius}")
+        table_export(pairs.rename(columns=_EXPORT_COLS),
+                     f"branch_proximity_{ticker}_{radius}mi_{res['year']}",
+                     key=f"bp_export_{radius}",
+                     formats=_EXPORT_FORMATS,
+                     provenance={"Page": "Branch Proximity",
+                                 "Ticker": ticker,
+                                 "Company": get_name(ticker),
+                                 "FDIC cert": int(cert),
+                                 "Radius (mi)": radius,
+                                 "Source": _SOD_SOURCE,
+                                 "SOD survey year": res["year"]})
 
     cov = []
     if res["n_subject_missing_coords"]:

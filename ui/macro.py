@@ -380,14 +380,21 @@ def _render_funding_deposits():
                    "§337.7 cap (national rate + 75bps, or Treasury-yield-based). Cap room = "
                    "headroom to that cap. vs Fed Funds = how far pricing lags policy. Source: FDIC.")
         if hist:
+            # rate_pct is percent units (3.42 = 3.42%), as the table shows it.
             export_rows = []
             for r in hist:
-                row = {"asof": r["asof"]}
-                for field, _label in _DEPOSIT_PRODUCTS:
-                    row[field] = (r.get(field) or {}).get("rate_pct")
+                row = {"As of": r["asof"]}
+                for field, label in _DEPOSIT_PRODUCTS:
+                    row[f"{label} (%)"] = (r.get(field) or {}).get("rate_pct")
                 export_rows.append(row)
-            table_export(pd.DataFrame(export_rows), "fdic_national_rates",
-                         key="fdic_rates_export")
+            hist_asof = max(r["asof"] for r in hist)
+            table_export(pd.DataFrame(export_rows), f"fdic_national_rates_{hist_asof}",
+                         key="fdic_rates_export",
+                         formats={"As of": "date",
+                                  **{f"{label} (%)": "pct" for _f, label in _DEPOSIT_PRODUCTS}},
+                         provenance={"Page": "Macro › Funding & Deposits › National deposit rates",
+                                     "Source": "FDIC national rates (monthly publication)",
+                                     "Data as of": hist_asof})
 
     with chart_col:
         if not hist:
@@ -1143,14 +1150,32 @@ def _render_economy_calendar():
             "vs hist = z-score of the latest vs ~10y of its own history (±σ; bold if |z|≥2). "
             "Source: FRED."
         )
+        # Latest / Prior / Δ units differ per ROW (the Basis column says which:
+        # *_pct = percent units, *_k = thousands, level_idx = index level), so
+        # they carry a plain number format — never a % format on a mixed column.
         export_df = pd.DataFrame([{
-            "theme": r["theme"], "indicator": r["label"], "basis": r["basis"],
-            "latest": r["latest"], "prior": r["prior"], "delta": r["delta"],
-            "zscore": r.get("zscore"),
-            "as_of": r["as_of"].strftime("%Y-%m-%d") if r["as_of"] is not None else None,
-            "series_id": r["series_id"],
+            "Theme": r["theme"], "Indicator": r["label"], "Basis": r["basis"],
+            "Latest": r["latest"], "Prior": r["prior"], "Δ": r["delta"],
+            "Z-score": r.get("zscore"),
+            "As of": r["as_of"].strftime("%Y-%m-%d") if r["as_of"] is not None else None,
+            "FRED series": r["series_id"],
         } for r in rows])
-        table_export(export_df, "macro_print_board", key="macro_print_board_export")
+        board_asof = max((r["as_of"] for r in rows if r["as_of"] is not None),
+                         default=None)
+        board_asof = board_asof.strftime("%Y-%m-%d") if board_asof is not None else None
+        table_export(export_df, f"macro_print_board_{board_asof or 'undated'}",
+                     key="macro_print_board_export",
+                     formats={"Latest": "num", "Prior": "num", "Δ": "num",
+                              "Z-score": "num", "As of": "date"},
+                     provenance={"Page": "Macro › Economy & Calendar › Key indicators",
+                                 "Source": "FRED",
+                                 "Data as of": board_asof,
+                                 "Value units": "Latest / Prior / Δ are in the unit the Basis "
+                                                "column implies: yoy_pct / mom_pct / level_pct = "
+                                                "percent units (Δ in percentage points); "
+                                                "mom_chg_k / level_k / level_k_raw = thousands; "
+                                                "level_idx = index level. Z-score = latest vs "
+                                                "~10y of the series' own history (σ)."})
     with chart_col:
         _render_macro_grid()
 

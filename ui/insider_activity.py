@@ -237,9 +237,30 @@ def render_insider_activity(ticker: str, show_title: bool = True):
             },
         )
         # Underlying numeric transactions (unformatted shares/price/value)
-        table_export(pd.DataFrame(filtered[:limit]),
+        exp_rows = [{
+            "Date": t.get("date"), "Insider": t.get("insider"),
+            "Role": t.get("role"), "Type": t.get("type"), "Code": t.get("code"),
+            "Direction": t.get("direction"), "Security Type": t.get("form_type"),
+            "Shares": t.get("shares"), "Price ($)": t.get("price"),
+            "Value ($)": t.get("value_usd"), "Shares After": t.get("shares_after"),
+            "Accession": t.get("accession"), "Filed At (UTC)": t.get("filed_at"),
+            "Filing URL": _filing_url(cik, t.get("accession")),
+        } for t in filtered[:limit]]
+        table_export(pd.DataFrame(exp_rows),
                      f"insider_transactions_{ticker}",
-                     key=f"exp_insider_transactions_{ticker}")
+                     key=f"exp_insider_transactions_{ticker}",
+                     sheet="Insider transactions",
+                     formats={"Date": "date", "Shares": "int", "Price ($)": "usd2",
+                              "Value ($)": "usd", "Shares After": "int"},
+                     provenance={"Page": "Company Analysis › Insiders › Insider Activity",
+                                 "Ticker": ticker, "CIK": cik,
+                                 "Source": "SEC EDGAR Form 4 filings (trailing 12 "
+                                           "months; each CIK's 30 most recent Form 4s)",
+                                 "Filter": f"{txn_filter} · {role_filter} · "
+                                           f"limit {show_limit}",
+                                 "Price": "for option exercises (code M) the price is "
+                                          "the strike, and Value is n/a"},
+                     freeze_cols=2)
 
     # ── Insider summary table ──────────────────────────────────────────
     if summary["insiders"]:
@@ -260,9 +281,26 @@ def render_insider_activity(ticker: str, show_title: bool = True):
             from ui.tables import ksk_table
             ksk_table(idf, signed_cols=("Net",))
             # Underlying numeric per-insider totals (unformatted USD)
-            table_export(pd.DataFrame(summary["insiders"]),
+            exp_ins = [{"Insider": ins["name"], "Role": ins.get("role"),
+                        "Buys ($)": ins["buy_usd"], "Sells ($)": ins["sell_usd"],
+                        "Net ($)": ins["buy_usd"] - ins["sell_usd"],
+                        "Txns": ins["txn_count"]}
+                       for ins in summary["insiders"]]
+            table_export(pd.DataFrame(exp_ins),
                          f"insider_summary_{ticker}",
-                         key=f"exp_insider_summary_{ticker}")
+                         key=f"exp_insider_summary_{ticker}",
+                         sheet="Activity by insider",
+                         formats={"Buys ($)": "usd", "Sells ($)": "usd",
+                                  "Net ($)": "usd", "Txns": "int"},
+                         provenance={"Page": "Company Analysis › Insiders › Insider "
+                                             "Activity › Activity by insider",
+                                     "Ticker": ticker, "CIK": cik,
+                                     "Source": "SEC EDGAR Form 4 filings (trailing 12 "
+                                               "months; each CIK's 30 most recent Form 4s)",
+                                     "Scope": "open-market P/S non-derivative trades "
+                                              "only — grants, withholdings and "
+                                              "exercises excluded"},
+                         freeze_cols=1)
 
     st.caption(
         "Form 4 trades filed with SEC EDGAR. Only non-derivative market trades (P=purchase, S=sale) "

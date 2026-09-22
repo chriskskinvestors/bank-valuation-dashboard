@@ -104,6 +104,9 @@ def render_deposit_lookup():
     _render_deposits_core(selected_cert, selected_name)
 
 
+# Source row on every SOD export (one constant in ui.export).
+from ui.export import SOD_SOURCE as _SOD_SOURCE
+
 # Store column -> the SOD field names this page renders with.
 _STORE_TO_SOD = {"branch_name": "NAMEBR", "city": "CITYBR", "state": "STALPBR",
                  "county": "CNTYNAMB", "deposits": "DEPSUMBR",
@@ -257,13 +260,35 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
             "% of bank": [f"{v / total_deposits * 100:.1f}%"
                           if pd.notna(v) and total_deposits else "—" for v in deps],
         }), max_height_px=420)
-        # Underlying numeric frame (deposits in $K, unformatted)
+        # Underlying numeric frame — deposits stay in FDIC $thousands and the
+        # header says so (owner decision 2026-09-22); share of bank is the
+        # on-screen "% of bank" as a number (percent units).
         addr_col = "address" if "address" in detail.columns else "ADDRESBR"
         export_cols = ["NAMEBR"] + ([addr_col] if addr_col in detail.columns else []) \
             + ["CITYBR", "STALPBR", "CNTYNAMB", "DEPSUMBR"]
-        table_export(detail[export_cols],
-                     f"branch_details_cert{selected_cert}",
-                     key=f"exp_branch_details_cert{selected_cert}")
+        export = detail[export_cols].rename(columns={
+            "NAMEBR": "Branch", addr_col: "Address", "CITYBR": "City",
+            "STALPBR": "State", "CNTYNAMB": "County",
+            "DEPSUMBR": "Deposits ($K)"})
+        export["Share of bank (%)"] = [
+            v / total_deposits * 100 if pd.notna(v) and total_deposits else None
+            for v in deps]
+        table_export(export,
+                     f"branch_details_cert{selected_cert}"
+                     + (f"_{sod_year}" if sod_year else ""),
+                     key=f"exp_branch_details_cert{selected_cert}",
+                     formats={"Deposits ($K)": "usd_k",
+                              "Share of bank (%)": "pct1"},
+                     provenance={
+                         "Page": "Market Share & Branches › Branch details",
+                         "Company": selected_name,
+                         "FDIC cert": selected_cert,
+                         "Includes": ", ".join(
+                             f"{n['name']} ({n['n_branches']} branches, "
+                             f"{'merged ' + str(n['date']) if n.get('kind') == 'merged' else 'sibling charter'})"
+                             for n in notes) or None,
+                         "Source": _SOD_SOURCE,
+                         "SOD survey year": sod_year})
 
     # ── Deposit market share ─────────────────────────────────────────────
     with col_share:
@@ -352,8 +377,20 @@ def _render_market_share(kind: str, key: str, market_label: str,
         "Deposits": [dep_fmt(v) for v in display["deposits"]],
         "Share": [f"{v:.1f}%" for v in display["market_share"]],
     }), html_cols=("Ticker",), max_height_px=420)
-    # Underlying numeric frame (deposits $K / share %)
+    # Underlying numeric frame — deposits in FDIC $thousands (header says
+    # so); market_share is already percent units (deposits / total × 100).
     table_export(
-        display[["rank", "TICKER", "NAMEFULL", "branches", "deposits",
-                 "market_share"]],
-        f"{kind}_market_share_{key}", key=f"exp_{kind}_market_share_{key}")
+        display[["rank", "TICKER", "NAMEFULL", "CERT", "branches", "deposits",
+                 "market_share"]].rename(columns={
+            "rank": "Rank", "TICKER": "Ticker", "NAMEFULL": "Bank",
+            "CERT": "FDIC cert", "branches": "Branches",
+            "deposits": "Deposits ($K)", "market_share": "Market share (%)"}),
+        f"{kind}_market_share_{key}" + (f"_{sod_year}" if sod_year else ""),
+        key=f"exp_{kind}_market_share_{key}",
+        formats={"Rank": "int", "FDIC cert": "int", "Branches": "int",
+                 "Deposits ($K)": "usd_k", "Market share (%)": "pct"},
+        provenance={"Page": "Market Share & Branches › Deposit market share",
+                    "Company": selected_name,
+                    "Market": market_label,
+                    "Source": _SOD_SOURCE,
+                    "SOD survey year": sod_year})

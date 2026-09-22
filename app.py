@@ -1277,54 +1277,52 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                                   f"({METRICS_BY_KEY.get(k, {}).get('category', '—')})",
             key=f"custom_cols_{tab_key}")
 
-    # ── Export dialog — CSV / Excel of the current result set ──────────
+    # ── Export dialog — one .xlsx of the current result set ────────────
+    # ui/export.py is THE exporter: raw numbers + Excel formats, n/a for
+    # absent, Source sheet. Scaled-unit labels ("Mkt Cap ($B)") become "($)"
+    # because the cells hold whole dollars (audit 2026-09-22: the old sheet
+    # showed 2,100,000,000 under a "$B" header).
     @st.dialog("Export results")
     def _export_dialog():
         st.caption(f"Export the current {len(display_metrics)} banks × "
                    f"{len(display_cols_final)} columns, exactly as shown "
-                   "(scope, filters and sort applied).")
+                   "(scope, filters and sort applied). Raw numbers with Excel "
+                   "formats; a Source sheet carries scope, as-of and units.")
         if not display_metrics:
             st.warning("No banks to export.")
             return
+        from ui.export import (build_workbook, metric_columns, safe_filename,
+                               XLSX_MIME)
         export_df = pd.DataFrame(display_metrics)
-        export_cols = ["ticker"] + [c for c in display_cols_final
+        export_keys = ["ticker"] + [c for c in display_cols_final
                                     if c in export_df.columns]
-        export_df = export_df[export_cols].copy()
-        rename = {"ticker": "Ticker"}
-        for c in display_cols_final:
-            m = METRICS_BY_KEY.get(c)
-            if m:
-                rename[c] = m["label"]
-        export_df = export_df.rename(columns=rename)
-        ec1, ec2 = st.columns(2)
-        with ec1:
-            st.download_button(
-                "Download CSV", export_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"{tab_key}_{scope_slug}.csv", mime="text/csv",
-                use_container_width=True, key=f"csv_{tab_key}")
-        with ec2:
-            try:
-                import io
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-                    export_df.to_excel(writer, index=False, sheet_name=tab_key[:31])
-                    from openpyxl.utils import get_column_letter
-                    ws = writer.sheets[tab_key[:31]]
-                    ws.freeze_panes = "A2"
-                    for col_idx, col_name in enumerate(export_df.columns, start=1):
-                        # NaN-safe width: str() every value (Arrow-backed columns
-                        # keep NaN as a float, so .astype(str).map(len) TypeErrors).
-                        max_len = max([len(str(col_name))]
-                                      + [len(str(v)) for v in export_df[col_name].tolist()])
-                        ws.column_dimensions[get_column_letter(col_idx)].width = min(
-                            28, max_len + 2)
-                st.download_button(
-                    "Download Excel", buf.getvalue(),
-                    file_name=f"{tab_key}_{scope_slug}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True, key=f"xlsx_{tab_key}")
-            except Exception as e:
-                st.caption(f"Excel export unavailable: {type(e).__name__}")
+        rename, formats = metric_columns(export_keys)
+        rename["ticker"] = "Ticker"
+        export_df = export_df[export_keys].rename(columns=rename)
+        _sort_lbl = (f"{METRICS_BY_KEY.get(sort_key, {}).get('label', sort_key)} "
+                     f"({'ascending' if ascending else 'descending'})"
+                     if sort_key else "default")
+        provenance = {
+            "Page": f"Screener › {screening_tab['title']}",
+            "Scope": scope_label,
+            "Filters": len(filter_specs) if filter_specs else "none",
+            "Sort": _sort_lbl,
+            "As of": asof_q_label if is_asof else "Latest (live)",
+            "Source": ("FDIC point-in-time reconstruction; market & SEC "
+                       "metrics n/a" if is_asof else
+                       "FDIC/FFIEC bank-subsidiary + SEC companyfacts "
+                       "fundamentals; market prices as market data"),
+        }
+
+        def _build() -> bytes:
+            return build_workbook(export_df, sheet=screening_tab["title"],
+                                  formats=formats, provenance=provenance,
+                                  freeze_cols=1)
+
+        st.download_button(
+            "Download Excel", _build,
+            file_name=f"{safe_filename(f'{tab_key}_{scope_slug}')}.xlsx",
+            mime=XLSX_MIME, use_container_width=True, key=f"xlsx_{tab_key}")
 
     # ── Bank groups panel (folded into the Saved dialog) ───────────────
     def _render_groups_panel():

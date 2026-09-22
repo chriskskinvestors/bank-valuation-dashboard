@@ -446,6 +446,30 @@ def _render_filings_section(filings: list[dict], show_filters: bool = False,
                            ticker=ticker, cik=cik, show_summary=False)
 
 
+# Export columns for a list of sec_client `recent_filings` dicts:
+# (record key, header, FORMATS key or None). Shared with ui.recent_documents.
+_FILING_EXPORT_COLS = [
+    ("date", "Filed", "date"),
+    ("form", "Form", None),
+    ("description", "Description", None),
+    ("report_date", "Report date", "date"),
+    ("items", "Items", None),
+    ("accession", "Accession", None),
+    ("url", "URL", None),
+    ("index_url", "Index URL", None),
+    ("is_earnings", "Earnings-related", None),
+    ("size", "Size (bytes)", "int"),
+]
+
+
+def filings_export_frame(filings: list[dict]) -> tuple[pd.DataFrame, dict[str, str]]:
+    """(frame, formats) for the Excel export of EDGAR filing records."""
+    df = pd.DataFrame([{hdr: f.get(k) for k, hdr, _fmt in _FILING_EXPORT_COLS}
+                       for f in filings],
+                      columns=[hdr for _k, hdr, _fmt in _FILING_EXPORT_COLS])
+    return df, {hdr: fmt for _k, hdr, fmt in _FILING_EXPORT_COLS if fmt}
+
+
 def _render_filings_table(filings: list[dict], key_prefix: str = "",
                            ticker: str = "", cik: int = 0,
                            show_summary: bool = False):
@@ -540,8 +564,12 @@ def _render_filings_table(filings: list[dict], key_prefix: str = "",
     # (the whole <table> dumped verbatim) instead of rendering. Flush-left = HTML.
     st.markdown(_flush_html(table_html), unsafe_allow_html=True)
     # Raw filing records (date, form, items, accession, urls)
-    table_export(pd.DataFrame(filings), f"filings_{key_prefix}_{ticker}",
-                 key=f"exp_filings_{key_prefix}_{ticker}")
+    exp_df, exp_fmt = filings_export_frame(filings)
+    table_export(exp_df, f"filings_{key_prefix}_{ticker}",
+                 key=f"exp_filings_{key_prefix}_{ticker}", formats=exp_fmt,
+                 provenance={"Page": "Company Analysis › News & Filings › Filings",
+                             "Ticker": ticker or None, "CIK": cik or None,
+                             "Source": "SEC EDGAR"})
     n_summ = sum(1 for f in filings if summaries.get((f.get("accession") or "").strip()))
     cap = f"Showing {len(filings)} filing{'s' if len(filings) != 1 else ''}"
     if n_summ:

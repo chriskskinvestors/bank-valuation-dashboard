@@ -32,6 +32,10 @@ from ui.components import section_header
 from ui.tables import ksk_table, ticker_anchor_cells
 
 
+# Source row on every SOD export (one constant in ui.export).
+from ui.export import SOD_SOURCE as _SOD_SOURCE
+
+
 # ── Cached read wrappers ────────────────────────────────────────────────────
 # Each Geographic pane re-queries Postgres on EVERY rerun (selectbox change,
 # public-only checkbox, map zoom). st.cache_data keyed by region + year means
@@ -133,12 +137,15 @@ def _n(count: int, noun: str) -> str:
 
 
 def _ranking_table(banks: pd.DataFrame, market: str, export_name: str,
-                   export_key: str) -> None:
+                   export_key: str, *, tab: str | None = None,
+                   year: int | None = None) -> None:
     """Deposit ranking for one market in the house table style: rank, linked
     ticker, bank, branches, deposits, share of the market — under a compact
     section heading that carries the totals. (Was a raw st.dataframe: wide
-    empty columns, numbers stranded far from their headers.)"""
-    deps = pd.to_numeric(banks["total_deposits"], errors="coerce").fillna(0)
+    empty columns, numbers stranded far from their headers.) `tab` / `year`
+    only feed the export's provenance and filename."""
+    raw_deps = pd.to_numeric(banks["total_deposits"], errors="coerce")
+    deps = raw_deps.fillna(0)
     total = float(deps.sum())
     n_br = int(pd.to_numeric(banks["n_branches"], errors="coerce").fillna(0).sum())
     section_header("", f"Banks operating in {market}",
@@ -154,8 +161,27 @@ def _ranking_table(banks: pd.DataFrame, market: str, export_name: str,
         "Share": [f"{v / total * 100:.1f}%" if total > 0 else "—" for v in deps],
     })
     ksk_table(table, html_cols=("Ticker",), max_height_px=520)
-    # Underlying numeric frame (deposits in $K, unformatted)
-    table_export(banks, export_name, key=export_key)
+    # Underlying numeric frame — deposits in FDIC $thousands (header says
+    # so), share in percent units computed as displayed; a bank whose
+    # deposits are absent exports n/a, never 0%. owner_key stays internal.
+    export = pd.DataFrame({
+        "Rank": range(1, len(banks) + 1),
+        "Ticker": banks["ticker"].values,
+        "Bank": banks["bank_name"].values,
+        "FDIC cert": banks["cert"].values,
+        "Branches": pd.to_numeric(banks["n_branches"], errors="coerce").values,
+        "Deposits ($K)": raw_deps.values,
+        "Market share (%)": [v / total * 100 if pd.notna(v) and total > 0 else None
+                             for v in raw_deps],
+    })
+    table_export(export, export_name + (f"_{year}" if year else ""),
+                 key=export_key,
+                 formats={"Rank": "int", "FDIC cert": "int", "Branches": "int",
+                          "Deposits ($K)": "usd_k", "Market share (%)": "pct"},
+                 provenance={"Page": f"Geographic › {tab}" if tab else "Geographic",
+                             "Market": market,
+                             "Source": _SOD_SOURCE,
+                             "SOD survey year": year})
 
 
 def _render_map(df: pd.DataFrame, title: str = "",
@@ -334,7 +360,8 @@ def render_geo_view():
 
             if not banks_disp.empty:
                 _ranking_table(banks_disp, state, f"banks_by_state_{state}",
-                               f"exp_banks_by_state_{state}")
+                               f"exp_banks_by_state_{state}",
+                               tab="By State", year=year)
             section_header("", "Branch map", _n(len(branches_disp), "branch"))
             _render_map(branches_disp)
 
@@ -375,7 +402,8 @@ def render_geo_view():
 
             if not banks_disp.empty:
                 _ranking_table(banks_disp, msa_label, f"banks_by_msa_{msa_code}",
-                               f"exp_banks_by_msa_{msa_code}")
+                               f"exp_banks_by_msa_{msa_code}",
+                               tab="By MSA", year=year)
             section_header("", "Branch map", _n(len(branches_disp), "branch"))
             _render_map(branches_disp)
 
@@ -418,7 +446,8 @@ def render_geo_view():
             if not banks_disp.empty:
                 _ranking_table(banks_disp, county_label,
                                f"banks_by_county_{stcntybr}",
-                               f"exp_banks_by_county_{stcntybr}")
+                               f"exp_banks_by_county_{stcntybr}",
+                               tab="By County", year=year)
             section_header("", "Branch map", _n(len(branches_disp), "branch"))
             _render_map(branches_disp)
 
@@ -499,8 +528,12 @@ def render_geo_view():
             table_export(agg.rename(columns={
                 "ticker": "Ticker", "bank_name": "Bank", "certs": "FDIC cert",
                 "n_branches": "Branches", "total_deposits": "Deposits ($K)"}),
-                "selected_banks_branch_summary",
-                key="exp_selected_banks_branch_summary")
+                f"selected_banks_branch_summary_{year}",
+                key="exp_selected_banks_branch_summary",
+                formats={"Branches": "int", "Deposits ($K)": "usd_k"},
+                provenance={"Page": "Geographic › By Bank(s)",
+                            "Source": _SOD_SOURCE,
+                            "SOD survey year": year})
             section_header("", "Branch map", _n(len(branches), "branch"))
 
         # Colour each SELECTED bank separately — its picker label, so private

@@ -171,7 +171,14 @@ def render_analyst_coverage(ticker: str):
                             "Action": g.get("action"),
                             "From": g.get("from_grade"), "To": g.get("to_grade")}
                            for g in grades])
-        table_export(df, f"{ticker}_grade_actions", key=f"exp_grades_{ticker}")
+        table_export(df, f"{ticker}_grade_actions", key=f"exp_grades_{ticker}",
+                     sheet="Grade actions",
+                     formats={"Date": "date"},
+                     provenance={"Page": "Company Analysis › Overview › Analyst "
+                                         "Coverage › Recent Grade Actions",
+                                 "Ticker": ticker,
+                                 "Source": "FMP analyst grades (market data, not a "
+                                           "house view)"})
 
 
 def _yf_consensus(ticker: str) -> dict:

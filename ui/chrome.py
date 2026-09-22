@@ -9,7 +9,6 @@ from the styles.py tokens; no raw hexes or ad-hoc font sizes here.
 from __future__ import annotations
 
 import html as _html
-import io
 
 import streamlit as st
 
@@ -106,19 +105,10 @@ def status_dot(kind: str, label: str) -> str:
     return f'<span class="ksk-dot {kind}"></span>{_html.escape(label)}'
 
 
-def table_export(df, filename: str, key: str) -> None:
-    """Small right-aligned Export action for a data table (spec: every
-    data table gets one). CSV via download_button; Excel callers can pass
-    their own bytes through st.download_button directly."""
-    buf = io.StringIO()
-    df.to_csv(buf, index=False)
-    # The keyed container carries the compact right-aligned styling
-    # (styles.py `st-key-tblexp_`); a bare download_button rendered as a
-    # full-size button parked at the left under every table.
-    with st.container(key=f"tblexp_{key}"):
-        st.download_button("Export", buf.getvalue(),
-                           file_name=f"{filename}.csv", mime="text/csv",
-                           key=key)
+# table_export lives in ui/export.py (THE export helper: one .xlsx per table,
+# raw numbers + Excel formats, n/a for absent, Source sheet). Re-exported
+# here because every page imports it from ui.chrome.
+from ui.export import table_export  # noqa: E402,F401
 
 
 def ticker_company_url(ticker) -> str:
