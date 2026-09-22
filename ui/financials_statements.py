@@ -16,6 +16,9 @@ import pandas as pd
 
 from data.bank_mapping import get_bank_info
 from ui.financial_highlights import _build_component
+from ui.history_range import (table_range_picker, load_hist_df_for_range, range_years,
+                              first_live_index, structure_breaks, describe_window,
+                              entity_note)
 
 
 # Shared numeric primitives — one implementation in utils/formatting.
@@ -405,8 +408,15 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     # (Asset Quality Detail renders inside credit_dynamics' title_bar page).
     if header:
         st.markdown(f"### {name} ({ticker}) — {title}")
-    period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
-                      key=f"{key_prefix}_period_{ticker}", label_visibility="collapsed")
+    _pc, _rc = st.columns([1, 2])
+    with _pc:
+        period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                          key=f"{key_prefix}_period_{ticker}", label_visibility="collapsed")
+    with _rc:
+        # Deep-history range (ui/history_range): the default is exactly
+        # today's 5 FY / 8 quarters; deeper ranges read the backfilled store.
+        rng, _rng_default = table_range_picker(period, f"{key_prefix}_rng_{ticker}")
+    deep = rng != _rng_default
     st.caption("From the FDIC Call Report. Click any number for its source field "
                "and, where computed, the formula and inputs.")
     if not cert:
@@ -414,8 +424,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         empty_state('No FDIC Call Report data mapped for this bank')
         return
     with st.spinner("Loading…"):
-        from data.loaders import load_fdic_hist_df
-        hist = load_fdic_hist_df(ticker, 44)   # group-aware: the WHOLE bank
+        # group-aware: the WHOLE bank. 44 quarters is today's load (the
+        # trend charts' ALL); deeper ranges read the backfilled store.
+        hist = load_hist_df_for_range(ticker, rng, period, floor=44)
     if hist is None or hist.empty:
         from ui.states import empty_state
         empty_state('No FDIC history available')
@@ -424,12 +435,13 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     hist = hist.copy()
     hist["REPDTE"] = pd.to_datetime(hist["REPDTE"])
     hist = hist.sort_values("REPDTE")
+    _n = range_years(rng)
     if period == "Annual":
         ye = hist[hist["REPDTE"].dt.month == 12]
-        recs_list = list(ye.tail(5).to_dict("records"))
+        recs_list = list((ye if _n is None else ye.tail(_n)).to_dict("records"))
         labels = [f"FY{int(r['REPDTE'].year)}" for r in recs_list]
     else:
-        recs_list = list(hist.tail(8).to_dict("records"))
+        recs_list = list((hist if _n is None else hist.tail(4 * _n)).to_dict("records"))
         labels = [f"Q{(r['REPDTE'].month-1)//3+1} '{str(r['REPDTE'].year)[2:]}" for r in recs_list]
     if not recs_list:
         from ui.states import empty_state
@@ -1354,6 +1366,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         for row in rows:
             label, kind, args = row[0], row[1], row[2:]
             tds = [f'<td class="lbl">{label}</td>']
+            live_flags = []
             for ci, rec in enumerate(recs_list):
                 try:
                     v, c = cell(ci, kind, args, label)
@@ -1368,6 +1381,12 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                     tds.append(f'<td class="val" data-cid="{cid}">{v}</td>')
                 else:
                     tds.append(f'<td class="val dead">{v}</td>')
+                live_flags.append(v not in ("—", "n/a", ""))
+            _fl = first_live_index(live_flags)
+            if deep and _fl > 0:
+                # Series begins inside the window: say where, never pad.
+                tds[0] = (f'<td class="lbl">{label} <span class="from">from '
+                          f'{labels[_fl]}</span></td>')
             zebra = ' class="zebra"' if ri % 2 == 1 else ""
             rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
@@ -1378,13 +1397,19 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
 
     head = ('<th class="lblh">(figures in USD)</th>'
             + "".join(f'<th class="colh">{lb}</th>' for lb in labels))
-    height = 96 + 23 * (ri + len(spec) + 1)
+    height = 96 + 23 * (ri + len(spec) + 1) + (16 if deep else 0)
     sec_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K"
                 if cik else fdic_link)
-    html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
+    html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link,
+                            wide=deep)
 
     tr = _DEFAULT_TRENDS if trends is None else trends
     cap = f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load."
+    if deep:
+        cap = describe_window(
+            f"{len(recs_list)} columns · {labels[0]} – {labels[-1]}",
+            breaks=structure_breaks(hist.to_dict("records"), since=recs_list[0]["REPDTE"]),
+            entity=entity_note(ticker)) + " · " + cap
     if side_by_side:
         # Page pattern (user 2026-06-25): click-to-source table on the left,
         # trend charts tiled two-per-row (2×2) on the right — like Financial

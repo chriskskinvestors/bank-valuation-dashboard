@@ -53,12 +53,17 @@ def _get_fed_funds(date_str: str) -> float | None:
         return _FED_FUNDS_LIVE[date_str]
     try:
         from data.fred_client import fetch_series
-        df = fetch_series("FEDFUNDS", years=3)
+        # The FULL series in one read (deep-history ranges reach 1992):
+        # every quarter's average is memoized at once, so an 80-quarter
+        # timeline costs one series read, not eighty.
+        df = fetch_series("FEDFUNDS", years=40)
         if df is not None and not df.empty:
-            per = pd.Period(pd.Timestamp(date_str), freq="Q")
-            vals = df.loc[df["date"].dt.to_period("Q") == per, "value"].dropna()
-            if not vals.empty:
-                _FED_FUNDS_LIVE[date_str] = round(float(vals.mean()), 2)
+            d = df.dropna(subset=["value"]).copy()
+            d["_q"] = pd.to_datetime(d["date"], errors="coerce").dt.to_period("Q")
+            for per, vals in d.dropna(subset=["_q"]).groupby("_q")["value"]:
+                key = per.end_time.strftime("%Y-%m-%d")
+                _FED_FUNDS_LIVE.setdefault(key, round(float(vals.mean()), 2))
+            if date_str in _FED_FUNDS_LIVE:
                 return _FED_FUNDS_LIVE[date_str]
     except Exception as e:
         print(f"[deposit_dynamics] FRED fed-funds lookup failed for {date_str}: "

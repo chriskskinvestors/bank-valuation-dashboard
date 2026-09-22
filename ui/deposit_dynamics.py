@@ -16,7 +16,7 @@ from data.bank_mapping import get_fdic_cert, get_name
 from data.cache import get as cache_get
 from ui.chrome import title_bar
 from data import fdic_client
-from analysis.deposit_dynamics import summarize_bank_deposits
+from analysis.deposit_dynamics import summarize_bank_deposits, build_deposit_timeline
 from utils.formatting import fmt_dollars_from_thousands
 
 
@@ -37,6 +37,7 @@ def _fmt_quarter(ts) -> str:
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
 from data.loaders import load_fdic_hist as _load_hist
+from ui.history_range import range_picker, chart_timeline
 
 
 def _render_deposit_headline(ticker, hist, summary, timeline):
@@ -204,16 +205,32 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
                                    CHART_HEIGHT_FULL, CHART_HEIGHT_COMPACT)
 
+    # Owner layout (2026-07-13): statement table LEFT, charts RIGHT. The
+    # containers are created here so the chart-range picker (deep history,
+    # ui/history_range) sits above the charts it drives. `ctl` is what the
+    # charts plot: the page's own 20-quarter timeline on the default
+    # range, a deeper rebuild otherwise — alerts and cycle beta keep 5Y.
+    _left, _right = st.columns([1, 1])
+    with _right:
+        rng = range_picker(f"dep_rng_{ticker}")
+        ctl, _depth_cap = chart_timeline(
+            ticker, rng, timeline, build_deposit_timeline,
+            [("cost_of_deposits", "Cost of deposits"), ("fed_funds", "Fed funds"),
+             ("nonint_dep_pct", "Non-int bearing"), ("brokered_pct", "Brokered"),
+             ("uninsured_pct", "Uninsured")])
+        if _depth_cap:
+            st.caption(_depth_cap)
+
     # Chart 1: Cost of Deposits vs Fed Funds (main)
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(
-        x=timeline["date"], y=timeline["fed_funds"],
+        x=ctl["date"], y=ctl["fed_funds"],
         name="Fed Funds", mode="lines+markers",
         line=dict(color=COLOR_PRIMARY, width=2, dash="dot"),
         marker=dict(size=6),
     ))
     fig1.add_trace(go.Scatter(
-        x=timeline["date"], y=timeline["cost_of_deposits"],
+        x=ctl["date"], y=ctl["cost_of_deposits"],
         name="Cost of Deposits", mode="lines+markers",
         line=dict(color=COLOR_DANGER, width=2.5),
         marker=dict(size=7),
@@ -226,22 +243,22 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
 
     # Chart 2: Deposit Composition Trend
     fig2 = None
-    if "nonint_dep_pct" in timeline.columns:
+    if "nonint_dep_pct" in ctl.columns:
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["nonint_dep_pct"],
+            x=ctl["date"], y=ctl["nonint_dep_pct"],
             name="Non-Int Bearing", mode="lines+markers",
             line=dict(color=COLOR_SUCCESS, width=2.5),
         ))
-        if "brokered_pct" in timeline.columns and timeline["brokered_pct"].notna().any():
+        if "brokered_pct" in ctl.columns and ctl["brokered_pct"].notna().any():
             fig2.add_trace(go.Scatter(
-                x=timeline["date"], y=timeline["brokered_pct"],
+                x=ctl["date"], y=ctl["brokered_pct"],
                 name="Brokered", mode="lines+markers",
                 line=dict(color=COLOR_WARNING, width=2),
             ))
-        if "uninsured_pct" in timeline.columns and timeline["uninsured_pct"].notna().any():
+        if "uninsured_pct" in ctl.columns and ctl["uninsured_pct"].notna().any():
             fig2.add_trace(go.Scatter(
-                x=timeline["date"], y=timeline["uninsured_pct"],
+                x=ctl["date"], y=ctl["uninsured_pct"],
                 name="Uninsured", mode="lines+markers",
                 line=dict(color=COLOR_DANGER, width=2, dash="dash"),
             ))
@@ -255,10 +272,10 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     fig3 = go.Figure()
     colors = [
         COLOR_SUCCESS if (g is not None and g >= 0) else COLOR_DANGER
-        for g in timeline["dep_qoq_growth"]
+        for g in ctl["dep_qoq_growth"]
     ]
     fig3.add_trace(go.Bar(
-        x=timeline["date"], y=timeline["dep_qoq_growth"],
+        x=ctl["date"], y=ctl["dep_qoq_growth"],
         marker_color=colors, name="QoQ Growth",
     ))
     fig3.add_hline(y=0, line_color="#666", line_width=1)
@@ -277,7 +294,6 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     # mix lives on Deposit/Loan Composition; this page keeps the deposit
     # sections + growth next to its cost/beta charts on the RIGHT.
     from ui.financials_statements import render_deposit_trends_table
-    _left, _right = st.columns([1, 1])
     with _left:
         render_deposit_trends_table(ticker)
     with _right:
