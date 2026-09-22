@@ -77,10 +77,15 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
         row["errors"].append("no_mapping")
         return row
 
-    # Bust the cache for this ticker (forces fresh fetch)
+    # Bust the cache for this ticker (forces fresh fetch). The companyfacts
+    # blob is keyed by CIK, not ticker, and sat under a 24h TTL that expired
+    # on the same seconds-of-jitter as the gate baseline — so which banks
+    # actually re-downloaded each night was a coin flip until 2026-09-22.
     cache.invalidate(f"sec:{ticker}")
     cache.invalidate(f"fdic:{ticker}")
     cache.invalidate(f"fdic_hist:{ticker}")
+    if cik:
+        sec_client.invalidate_company_facts(cik)
 
     fdic_data, fdic_hist = {}, []
     sec_data = {}

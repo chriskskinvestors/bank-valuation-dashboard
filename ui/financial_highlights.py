@@ -674,7 +674,8 @@ def render_financial_highlights(ticker: str):
     fresh = f"Latest data: FDIC Call Report {asof[keys[-1]]}"
     try:
         from data import cache
-        age = cache.get_age(f"sec_facts:{int(cik)}") if cik else None
+        from data.sec_client import company_facts_cache_key
+        age = cache.get_age(company_facts_cache_key(cik)) if cik else None
         if age is not None:
             fresh += f" · SEC facts refreshed {age/3600:.0f}h ago"
     except Exception:
