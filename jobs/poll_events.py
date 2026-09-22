@@ -341,7 +341,7 @@ def _invalidate_fundamentals_for_filings(new_events) -> None:
     the next dashboard render re-pulls fresh figures + source-doc links."""
     periodic = {"10-K", "10-K/A", "10-Q", "10-Q/A"}
     try:
-        from data import cache
+        from data.sec_client import invalidate_company_facts
     except Exception:
         return
     seen = set()
@@ -353,12 +353,10 @@ def _invalidate_fundamentals_for_filings(new_events) -> None:
         if cik is None or cik in seen:
             continue
         seen.add(cik)
-        # Invalidate both key spellings (callers pass cik as int or str).
-        for kf in (f"sec_facts:{cik}", f"sec_facts:{int(cik)}"):
-            try:
-                cache.invalidate(kf)
-            except Exception:
-                pass
+        try:
+            invalidate_company_facts(int(cik))
+        except Exception:
+            pass
         print(f"  ↻ fundamentals cache invalidated for {e.ticker} ({raw.get('form')}) "
               f"— next load re-pulls SEC facts")
 

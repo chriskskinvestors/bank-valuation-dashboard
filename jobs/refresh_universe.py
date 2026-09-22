@@ -34,6 +34,28 @@ sys.path.insert(0, str(REPO_ROOT))
 warnings.filterwarnings("ignore")
 
 
+# Key under which each run persists its validation failure map — the next
+# run's growth-gate baseline.
+PREV_RUN_KEY = "nightly_validation_lastrun"
+
+
+def load_previous_run() -> dict:
+    """The previous execution's persisted validation summary ({} if none).
+
+    Read with NO age ceiling. The baseline is written once per run at the end
+    of the refresh phase and read at that same point ~24h later, so under
+    cache.get's default 24h TTL it was alive or expired by the seconds of
+    run-to-run jitter: an expired read came back {} and the whole stable
+    exception list printed as NEW, failing the job (2026-09-09..22: 8 of 14
+    nights, always the same 6 tickers; every failing night the baseline was
+    >86,400s old at the gate, every passing night <86,400s). The previous run
+    is the baseline whatever its age — same defect class as the snapshot
+    stale-fallback (AUDIT-2026-07-02 P1 #3).
+    """
+    from data import cache
+    return cache.get(PREV_RUN_KEY, max_age_s=None) or {}
+
+
 def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
     """Refresh a single bank's SEC + FDIC data. Returns a status dict.
 
@@ -55,10 +77,15 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
         row["errors"].append("no_mapping")
         return row
 
-    # Bust the cache for this ticker (forces fresh fetch)
+    # Bust the cache for this ticker (forces fresh fetch). The companyfacts
+    # blob is keyed by CIK, not ticker, and sat under a 24h TTL that expired
+    # on the same seconds-of-jitter as the gate baseline — so which banks
+    # actually re-downloaded each night was a coin flip until 2026-09-22.
     cache.invalidate(f"sec:{ticker}")
     cache.invalidate(f"fdic:{ticker}")
     cache.invalidate(f"fdic_hist:{ticker}")
+    if cik:
+        sec_client.invalidate_company_facts(cik)
 
     fdic_data, fdic_hist = {}, []
     sec_data = {}
@@ -182,21 +209,28 @@ def main():
     # tolerated, silent growth is not.
     from data import cache
     current = {r["ticker"]: r["errors"] for r in failed}
-    prev = {}
+    prev_run = {}
     try:
-        prev = (cache.get("nightly_validation_lastrun") or {}).get("failed", {})
+        prev_run = load_previous_run()
     except Exception as e:
         print(f"[warn] could not load previous validation run: {type(e).__name__}")
+    prev = prev_run.get("failed", {}) or {}
+    if prev_run:
+        print(f"Previous-run baseline: {prev_run.get('date')} "
+              f"({len(prev)} failing)", flush=True)
+    else:
+        print("No previous-run baseline — every failure above counts as NEW",
+              flush=True)
     new_failures = sorted(set(current) - set(prev))
     resolved = sorted(set(prev) - set(current))
     if new_failures:
-        print(f"\nNEW failures vs previous run ({len(new_failures)}):")
+        print(f"\nNEW failures vs previous run ({len(new_failures)}):", flush=True)
         for t in new_failures[:20]:
             print(f"  {t:<6} {' | '.join(current[t][:3])[:200]}")
     if resolved:
         print(f"Resolved since previous run: {', '.join(resolved[:20])}")
     try:
-        cache.put("nightly_validation_lastrun", {
+        cache.put(PREV_RUN_KEY, {
             "date": time.strftime("%Y-%m-%d %H:%M:%S"),
             "failed": current,
             "warnings": warns,
