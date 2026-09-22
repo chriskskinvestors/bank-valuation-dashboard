@@ -84,6 +84,9 @@ def _pick_scale(max_abs_dollars: float) -> tuple[float, str]:
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
 from data.loaders import load_fdic_hist as _load_hist
+from ui.history_range import (range_picker, chart_timeline, DEFAULT_CHART,
+                              RANGE_QUARTERS, MAX_QUARTERS)
+from analysis.capital_dynamics import build_capital_timeline
 
 
 def _load_shares(ticker: str) -> float | None:
@@ -279,10 +282,26 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
+    # Owner layout (2026-07-13): statement table LEFT, charts RIGHT. The
+    # containers are created here so the chart-range picker (deep history,
+    # ui/history_range) sits above the charts it drives. `ctl` is the
+    # timeline the charts plot: the page's own 20-quarter one on the
+    # default range, a deeper rebuild otherwise — the alerts, headline
+    # and buyback math above keep their 5Y basis either way.
+    _left, _right = st.columns([1, 1])
+    with _right:
+        rng = range_picker(f"cap_rng_{ticker}")
+        ctl, _depth_cap = chart_timeline(
+            ticker, rng, timeline, build_capital_timeline,
+            [("cet1_pct", "CET1"), ("tbv_per_share", "TBV/share")],
+            shares_outstanding=shares)
+        if _depth_cap:
+            st.caption(_depth_cap)
+
     # Chart 1: CET1 with regulatory floor lines
     fig1 = go.Figure()
     fig1.add_trace(go.Scatter(
-        x=timeline["date"], y=timeline["cet1_pct"],
+        x=ctl["date"], y=ctl["cet1_pct"],
         name="CET1", mode="lines+markers",
         line=dict(color=COLOR_PRIMARY, width=2.5),
         marker=dict(size=7),
@@ -307,16 +326,16 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     )
     # Zoom to the data + regulatory floors so the trend reads, instead of a
     # flat line pinned to the top of a 0-13% axis.
-    _c = [v for v in timeline["cet1_pct"].tolist() if v is not None]
+    _c = [v for v in ctl["cet1_pct"].tolist() if v is not None]
     _refs = [CET1_REG_MIN, CET1_BUFFER_FLOOR] + ([peer_cet1] if peer_cet1 else [])
     tighten_yaxis(fig1, _c + _refs, floor_zero=True, ticksuffix="%", pad_frac=0.20)
 
     # Chart 2: TBV/share trend
     fig2 = None
-    if "tbv_per_share" in timeline.columns and timeline["tbv_per_share"].notna().any():
+    if "tbv_per_share" in ctl.columns and ctl["tbv_per_share"].notna().any():
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["tbv_per_share"],
+            x=ctl["date"], y=ctl["tbv_per_share"],
             name="TBV / Share", mode="lines+markers",
             line=dict(color=COLOR_SUCCESS, width=2.5),
             marker=dict(size=6),
@@ -327,24 +346,24 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             show_legend=False, hovermode="x",
             wide_left_margin=True,
         )
-        tighten_yaxis(fig2, timeline["tbv_per_share"].dropna().tolist(), tickprefix="$")
+        tighten_yaxis(fig2, ctl["tbv_per_share"].dropna().tolist(), tickprefix="$")
 
     # Chart 3: Capital return mix — auto-scaled
     # Coerce to numeric first: columns may contain None from stale/missing FDIC
     # rows (e.g., banks right after their cert becomes active).
-    max_val = max(_absmax(timeline["net_income_k_qtr"]),
-                  _absmax(timeline["capital_returned_k"]))
+    max_val = max(_absmax(ctl["net_income_k_qtr"]),
+                  _absmax(ctl["capital_returned_k"]))
     scale, unit = _pick_scale(max_val * 1000)
-    ni_scaled = timeline["net_income_k_qtr"] * 1000 / scale
-    cr_scaled = timeline["capital_returned_k"] * 1000 / scale
+    ni_scaled = ctl["net_income_k_qtr"] * 1000 / scale
+    cr_scaled = ctl["capital_returned_k"] * 1000 / scale
 
     fig3 = go.Figure()
     fig3.add_trace(go.Bar(
-        x=timeline["date"], y=ni_scaled,
+        x=ctl["date"], y=ni_scaled,
         name="Net Income", marker_color=COLOR_PRIMARY, opacity=0.85,
     ))
     fig3.add_trace(go.Bar(
-        x=timeline["date"], y=cr_scaled,
+        x=ctl["date"], y=cr_scaled,
         name="Capital Returned", marker_color=COLOR_DANGER, opacity=0.85,
     ))
     apply_standard_layout(
@@ -421,7 +440,6 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     # statement table on the LEFT (Annual/Quarterly toggle, click-to-source),
     # trend charts tiled 2×2 on the RIGHT.
     from ui.financials_statements import render_capital_adequacy
-    _left, _right = st.columns([1, 1])
     with _left:
         render_capital_adequacy(ticker)
     with _right:
@@ -449,7 +467,7 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
 
     # ── Capital Return Attribution (SEC-sourced) ────────────────────────
     st.markdown("---")
-    _render_capital_return_attribution(ticker)
+    _render_capital_return_attribution(ticker, rng)
 
 
 def _render_holdco_capital(ticker: str):
@@ -1014,7 +1032,7 @@ def _render_rcr_capital_walk(ticker: str):
                "detail (refreshed quarterly by the refresh-ffiec job).")
 
 
-def _render_capital_return_attribution(ticker: str):
+def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
     """
     Show SEC-sourced dividend and buyback breakdown + total shareholder yield.
     """
@@ -1040,7 +1058,11 @@ def _render_capital_return_attribution(ticker: str):
         pass
 
     with _skeleton():
-        result = summarize_capital_return(cik, market_cap=market_cap, lookback_quarters=20)
+        # Chart range from the page picker (SEC XBRL reaches ~2009; MAX
+        # shows everything filed). TTM / YoY above are tail-based, unchanged.
+        result = summarize_capital_return(
+            cik, market_cap=market_cap,
+            lookback_quarters=RANGE_QUARTERS.get(rng) or MAX_QUARTERS)
 
     timeline = result.get("timeline")
     if timeline is None or timeline.empty:

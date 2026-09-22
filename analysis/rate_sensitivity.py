@@ -895,26 +895,34 @@ def backtest_bank(
         return str(d) if d else ""
 
     hist_sorted = sorted(fdic_hist, key=_q_str)
-    # We need FedFunds at each quarter end. Pull and align.
+    # We need FedFunds at each quarter end. Pull and align — deep enough for
+    # the whole history handed in (deep-history ranges reach 1992), never a
+    # fixed 10y window that silently drops earlier quarters from the score.
+    import pandas as pd
+    _first = pd.to_datetime(hist_sorted[0].get("REPDTE"), errors="coerce")
+    _years = 10
+    if pd.notna(_first):
+        _years = max(10, int((pd.Timestamp.now() - _first).days / 365) + 2)
     try:
         from data.fred_client import fetch_series
-        ff_df = fetch_series("FEDFUNDS", years=10)
+        ff_df = fetch_series("FEDFUNDS", years=_years)
     except Exception:
         ff_df = None
     if ff_df is None or ff_df.empty:
         return None
     # FRED FedFunds is monthly. Index by date for nearest-month lookup.
-    import pandas as pd
     ff_df = ff_df.copy()
     ff_df["date"] = pd.to_datetime(ff_df["date"])
     ff_df = ff_df.sort_values("date").reset_index(drop=True)
 
     def _fedfunds_at(rec) -> float | None:
-        d = rec.get("REPDTE")
-        if not hasattr(d, "strftime"):
+        # REPDTE is a Timestamp on a cold live fetch but a STRING once the
+        # record round-trips the JSON warm cache / deep store — coerce, so
+        # the backtest doesn't skip every quarter on the warm path.
+        target = pd.to_datetime(rec.get("REPDTE"), errors="coerce")
+        if pd.isna(target):
             return None
         # Find FedFunds value for the month containing REPDTE
-        target = pd.Timestamp(d)
         before = ff_df[ff_df["date"] <= target]
         if before.empty:
             return None

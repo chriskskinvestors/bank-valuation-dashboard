@@ -17,6 +17,9 @@ import pandas as pd
 from data.bank_mapping import get_bank_info
 from ui.export import table_export
 from ui.financial_highlights import _build_component
+from ui.history_range import (table_range_picker, load_hist_df_for_range, range_years,
+                              first_live_index, structure_breaks, describe_window,
+                              entity_note)
 
 
 # Shared numeric primitives — one implementation in utils/formatting.
@@ -52,7 +55,7 @@ def _pct(v, dp: int = 2):
     return _V(t, r if t != "—" else None, "pct")
 
 
-def _pc(x, dp: int = 2):
+def _pctv(x, dp: int = 2):
     """Inline percent (percent units already) with the raw value attached."""
     return _V(f"{x:.{dp}f}%", x, "pct")
 
@@ -437,8 +440,15 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     # (Asset Quality Detail renders inside credit_dynamics' title_bar page).
     if header:
         st.markdown(f"### {name} ({ticker}) — {title}")
-    period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
-                      key=f"{key_prefix}_period_{ticker}", label_visibility="collapsed")
+    _pc, _rc = st.columns([1, 2])
+    with _pc:
+        period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                          key=f"{key_prefix}_period_{ticker}", label_visibility="collapsed")
+    with _rc:
+        # Deep-history range (ui/history_range): the default is exactly
+        # today's 5 FY / 8 quarters; deeper ranges read the backfilled store.
+        rng, _rng_default = table_range_picker(period, f"{key_prefix}_rng_{ticker}")
+    deep = rng != _rng_default
     st.caption("From the FDIC Call Report. Click any number for its source field "
                "and, where computed, the formula and inputs.")
     if not cert:
@@ -446,8 +456,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         empty_state('No FDIC Call Report data mapped for this bank')
         return
     with st.spinner("Loading…"):
-        from data.loaders import load_fdic_hist_df
-        hist = load_fdic_hist_df(ticker, 44)   # group-aware: the WHOLE bank
+        # group-aware: the WHOLE bank. 44 quarters is today's load (the
+        # trend charts' ALL); deeper ranges read the backfilled store.
+        hist = load_hist_df_for_range(ticker, rng, period, floor=44)
     if hist is None or hist.empty:
         from ui.states import empty_state
         empty_state('No FDIC history available')
@@ -456,12 +467,13 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     hist = hist.copy()
     hist["REPDTE"] = pd.to_datetime(hist["REPDTE"])
     hist = hist.sort_values("REPDTE")
+    _n = range_years(rng)
     if period == "Annual":
         ye = hist[hist["REPDTE"].dt.month == 12]
-        recs_list = list(ye.tail(5).to_dict("records"))
+        recs_list = list((ye if _n is None else ye.tail(_n)).to_dict("records"))
         labels = [f"FY{int(r['REPDTE'].year)}" for r in recs_list]
     else:
-        recs_list = list(hist.tail(8).to_dict("records"))
+        recs_list = list((hist if _n is None else hist.tail(4 * _n)).to_dict("records"))
         labels = [f"Q{(r['REPDTE'].month-1)//3+1} '{str(r['REPDTE'].year)[2:]}" for r in recs_list]
     if not recs_list:
         from ui.states import empty_state
@@ -605,7 +617,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                             {"label": f2, "val": _thou(b) + " ($000)"}], f"{f1} − {f2}", False)
         if kind == "ratio":
             f1, f2 = args; a, b = _num(rec.get(f1)), _num(rec.get(f2))
-            v = _pc(a/b*100) if (a is not None and b) else "—"
+            v = _pctv(a/b*100) if (a is not None and b) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": f1, "val": _thou(a) + " ($000)"},
                             {"label": f2, "val": _thou(b) + " ($000)"}], f"{f1} ÷ {f2} × 100", False)
@@ -638,7 +650,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "etr":
             # Effective tax rate = income tax ÷ pre-tax income × 100
             tax, ptx = _num(rec.get("ITAX")), _num(rec.get("PTAXNETINC"))
-            v = _pc(tax/ptx*100) if (tax is not None and ptx) else "—"
+            v = _pctv(tax/ptx*100) if (tax is not None and ptx) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Income tax (ITAX)", "val": _thou(tax) + " ($000)"},
                             {"label": "Pre-tax net income (PTAXNETINC)", "val": _thou(ptx) + " ($000)"}],
@@ -662,7 +674,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             intan = _avg(ci, "INTAN") or 0
             tce = (eq - intan) if eq is not None else None
-            v = _pc(ni*fq/tce*100) if (ni is not None and tce and tce > 0) else "—"
+            v = _pctv(ni*fq/tce*100) if (ni is not None and tce and tce > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
@@ -671,7 +683,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "Net income ÷ avg tangible common equity × 100", False)
         if kind == "marginrev":   # flow ÷ total revenue × 100 (both YTD, no annualizing)
             fl = args[0]; n = _num(rec.get(fl)); rev = _revenue(rec)
-            v = _pc(n/rev*100) if (n is not None and rev) else "—"
+            v = _pctv(n/rev*100) if (n is not None and rev) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": fl, "val": _thou(n) + " ($000)"},
                             {"label": "Total revenue (NII + non-int income)",
@@ -679,13 +691,13 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            f"{fl} ÷ total revenue × 100", False)
         if kind == "pctdiff":     # A% − B%
             a, b = _num(rec.get(args[0])), _num(rec.get(args[1]))
-            v = _pc(a-b) if (a is not None and b is not None) else "—"
+            v = _pctv(a-b) if (a is not None and b is not None) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": args[0], "val": _pct(a)},
                             {"label": args[1], "val": _pct(b)}], f"{args[0]} − {args[1]}", False)
         if kind == "yield":       # flow (annualized) ÷ avg balance × 100
             nf, df_ = args; n, fq = _flow(ci, nf); d = _avg(ci, df_)
-            v = _pc(n*fq/d*100) if (n is not None and d) else "—"
+            v = _pctv(n*fq/d*100) if (n is not None and d) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": nf + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(n*fq)) + " ($000)" if n is not None else "—"},
@@ -694,7 +706,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "yield2":      # (A − B) annualized ÷ avg balance × 100
             af_, bf_, df_ = args
             a, fq = _flow(ci, af_); b, _fb = _flow(ci, bf_); d = _avg(ci, df_)
-            v = _pc((a-b)*fq/d*100) if (a is not None and b is not None and d) else "—"
+            v = _pctv((a-b)*fq/d*100) if (a is not None and b is not None and d) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": f"{af_} − {bf_}" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round((a-b)*fq)) + " ($000)" if (a is not None and b is not None) else "—"},
@@ -705,7 +717,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             intan = _avg(ci, "INTAN") or 0
             te = (eq - intan) if eq is not None else None
-            v = _pc(ni*fq/te*100) if (ni is not None and te and te > 0) else "—"
+            v = _pctv(ni*fq/te*100) if (ni is not None and te and te > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
@@ -730,7 +742,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                     {"label": label,
                                      "val": "n/a — needs RI-A preferred dividends (later phase)"}],
                                    "(Net income − preferred dividends) ÷ avg common equity × 100", False)
-            v = _pc(ni*fq/ce*100) if (ni is not None and ce and ce > 0) else "—"
+            v = _pctv(ni*fq/ce*100) if (ni is not None and ce and ce > 0) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(ni*fq)) + " ($000)" if ni is not None else "—"},
@@ -741,7 +753,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             nonx, fq = _flow(ci, "NONIX"); noni, _fb = _flow(ci, "NONII")
             a = _avg(ci, "ASSET")
             net = (nonx - noni) if (nonx is not None and noni is not None) else None
-            v = _pc(net*fq/a*100) if (net is not None and a) else "—"
+            v = _pctv(net*fq/a*100) if (net is not None and a) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Net op. expense (NONIX − NONII)" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(net*fq)) + " ($000)" if net is not None else "—"},
@@ -753,7 +765,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             # SUBND is the sub-debt BALANCE (ESUBND is its interest expense —
             # never mix an expense into a balance denominator).
             fund = _avgsum(ci, ["DEP", "FREPP", "OTHBFHLB", "SUBND"])
-            v = _pc(ie*fq/fund*100) if (ie is not None and fund) else "—"
+            v = _pctv(ie*fq/fund*100) if (ie is not None and fund) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Total interest expense (EINTEXP)" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(ie*fq)) + " ($000)" if ie is not None else "—"},
@@ -778,7 +790,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                      "val": _thou(round(bor)) + " ($000)" if bor else "n/a"},
                                     {"label": label, "val": "n/a — " + why}],
                                    "(EINTEXP − EDEP) ÷ avg borrowings × 100", False)
-            v = _pc(rate)
+            v = _pctv(rate)
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Borrowings interest (EINTEXP − EDEP)" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(borint*fq)) + " ($000)" if borint is not None else "—"},
@@ -860,7 +872,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                      "val": "n/a — tax-exempt income not reported"}],
                                    op, False, source="FFIEC Call Report — Schedule RI",
                                    link=doc_link)
-            v = _pc(nim + fte * f / ea * 100)
+            v = _pctv(nim + fte * f / ea * 100)
             return v, calc(label, v, asof, "computed — statutory 21% federal rate",
                            [{"label": "Reported NIM (NIMY)", "val": _pct(nim)},
                             {"label": "FTE adjustment" + (" (annualized)" if f != 1 else ""),
@@ -1008,7 +1020,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                         op, False, source=src, link=doc_link)
                 terms.append({"label": "Mean of quarterly averages",
                               "val": _thou(round(sum(avgs) / 4.0)) + " ($000)"})
-                v = _pc(rate)
+                v = _pctv(rate)
                 return v, calc(label, v, asof, ref, terms, op, False,
                                source=src, link=doc_link)
             q = (dt.month - 1) // 3 + 1
@@ -1047,7 +1059,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "n/a", calc(label, "n/a", asof, ref, terms + [
                     {"label": label, "val": f"n/a — {reason}"}],
                     op, False, source=src, link=doc_link)
-            v = _pc(rate)
+            v = _pctv(rate)
             return v, calc(label, v, asof, ref, terms, op, False,
                            source=src, link=doc_link)
         # ── Balance-sheet computed kinds ─────────────────────────────────
@@ -1176,7 +1188,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "n/a", calc(label, "n/a — non-positive balance ratio",
                                    asof, "Computed from Call Report", terms, op, False)
             g = ((ratio ** 4 - 1.0) if quarterly else (ratio - 1.0)) * 100.0
-            return _pc(g), calc(label, _pc(g), asof,
+            return _pctv(g), calc(label, _pctv(g), asof,
                                      "Computed from Call Report", terms, op, False)
         if kind == "flow":
             # Income-statement flow shown as a PERIOD dollar amount (not a
@@ -1226,7 +1238,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             if not nok or not dok or dv <= 0:
                 return "—", calc(label, "—", asof, "Computed from Call Report",
                                  terms, op, False)
-            v = _pc(nv / dv * 100)
+            v = _pctv(nv / dv * 100)
             return v, calc(label, v, asof, "Computed from Call Report", terms, op, False)
         if kind == "flowratio":
             # Ratio of two FLOWS over the same span (e.g. Provision ÷ NCO):
@@ -1261,7 +1273,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "NM", calc(label, "NM — not meaningful (negative flow "
                                   "in the period)", asof,
                                   "Computed from Call Report", terms, op, False)
-            v = _pc(nv / dv * 100)
+            v = _pctv(nv / dv * 100)
             return v, calc(label, v, asof, "Computed from Call Report", terms, op, False)
         if kind == "crit":
             # Criticized/classified loan grades from the company's OWN
@@ -1290,7 +1302,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                     return "—", calc(label, "—", asof, ref, terms,
                                      "graded ÷ LNLSGR × 100", False,
                                      source="SEC filing XBRL", link=link)
-                v = _pc(graded_total / 1000.0 / loans * 100, 1)
+                v = _pctv(graded_total / 1000.0 / loans * 100, 1)
                 return v, calc(label, v, asof, ref, terms,
                                "graded ÷ LNLSGR × 100", False,
                                source="SEC filing XBRL", link=link)
@@ -1327,7 +1339,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            source="SEC filing", link=sec_filing_link)
         if kind == "payout":
             dps, eps = _num(ps.get("dps")), _num(ps.get("eps"))
-            v = _pc(dps/eps*100) if (dps is not None and eps) else "—"
+            v = _pctv(dps/eps*100) if (dps is not None and eps) else "—"
             return v, calc(label, v, asof, "Computed from SEC per-share",
                            [{"label": "Dividends / share", "val": _psd(dps)},
                             {"label": "Diluted EPS", "val": _psd(eps)}],
@@ -1345,7 +1357,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "Net income − after-tax securities gains/losses", False)
         if kind == "core_roaa":
             core, fq = _core_flow(ci); a = _avg(ci, "ASSET")
-            v = _pc(core*fq/a*100) if (core is not None and a) else "—"
+            v = _pctv(core*fq/a*100) if (core is not None and a) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Core income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(core*fq)) + " ($000)" if core is not None else "—"},
@@ -1353,7 +1365,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "Core income ÷ avg assets × 100", False)
         if kind == "core_roae":
             core, fq = _core_flow(ci); e = _avg(ci, "EQTOT")
-            v = _pc(core*fq/e*100) if (core is not None and e) else "—"
+            v = _pctv(core*fq/e*100) if (core is not None and e) else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Core income" + (" (annualized)" if (fq or 1) != 1 else ""),
                              "val": _thou(round(core*fq)) + " ($000)" if core is not None else "—"},
@@ -1370,7 +1382,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "nonrecur":
             igl = _num(rec.get("IGLSEC")) or 0.0; extra = _num(rec.get("EXTRA")) or 0.0
             pti = _num(rec.get("PTAXNETINC"))
-            v = _pc((igl+extra)/pti*100) if pti else "—"
+            v = _pctv((igl+extra)/pti*100) if pti else "—"
             return v, calc(label, v, asof, "Computed from Call Report",
                            [{"label": "Securities gains + extraordinary",
                              "val": _thou(round(igl+extra)) + " ($000)"},
@@ -1389,6 +1401,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             label, kind, args = row[0], row[1], row[2:]
             tds = [f'<td class="lbl">{label}</td>']
             raws, unit = [], None
+            live_flags = []
             for ci, rec in enumerate(recs_list):
                 try:
                     v, c = cell(ci, kind, args, label)
@@ -1405,6 +1418,12 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                     tds.append(f'<td class="val" data-cid="{cid}">{v}</td>')
                 else:
                     tds.append(f'<td class="val dead">{v}</td>')
+                live_flags.append(v not in ("—", "n/a", ""))
+            _fl = first_live_index(live_flags)
+            if deep and _fl > 0:
+                # Series begins inside the window: say where, never pad.
+                tds[0] = (f'<td class="lbl">{label} <span class="from">from '
+                          f'{labels[_fl]}</span></td>')
             zebra = ' class="zebra"' if ri % 2 == 1 else ""
             rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
@@ -1417,10 +1436,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
 
     head = ('<th class="lblh">(figures in USD)</th>'
             + "".join(f'<th class="colh">{lb}</th>' for lb in labels))
-    height = 96 + 23 * (ri + len(spec) + 1)
+    height = 96 + 23 * (ri + len(spec) + 1) + (16 if deep else 0)
     sec_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K"
                 if cik else fdic_link)
-    html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
+    html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link,
+                            wide=deep)
 
     tr = _DEFAULT_TRENDS if trends is None else trends
     latest_iso = pd.Timestamp(recs_list[-1].get("REPDTE")).date().isoformat()
@@ -1445,6 +1465,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                                        "ratios are annualized exactly as on screen."),
                    })
 
+    if deep:
+        cap = describe_window(
+            f"{len(recs_list)} columns · {labels[0]} – {labels[-1]}",
+            breaks=structure_breaks(hist.to_dict("records"), since=recs_list[0]["REPDTE"]),
+            entity=entity_note(ticker)) + " · " + cap
     if side_by_side:
         # Page pattern (user 2026-06-25): click-to-source table on the left,
         # trend charts tiled two-per-row (2×2) on the right — like Financial

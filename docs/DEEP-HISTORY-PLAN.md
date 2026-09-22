@@ -1,7 +1,15 @@
 # Deep Financial History — build plan (2026-09-08)
 
 Status: **DECIDED 2026-09-08 (owner: "go with your recommendations") —
-1992 depth, the 212 in-use fields, charts-first. Foundation IN BUILD.** Cost brief delivered 2026-09-08: source data is free (primary
+1992 depth, the 212 in-use fields, charts-first. Foundation SHIPPED
+(PRs #98/#99/#100/#107; prod backfill complete 2026-09-15: 640 certs /
+90,643 rows). Phases 1 + 2 SHIPPED 2026-09-22 (owner scope call:
+statement tables + the four dynamics tabs, 5Y / 10Y / 20Y / MAX picker
+defaulting to today's view, absent fields annotated + n/a) — see
+`ui/history_range.py`. Phase 3 not started. OPEN OPS ITEM: the nightly
+`incremental` append (`jobs/backfill_fdic_history.py incremental`) is not
+scheduled and the job is not in deploy.yml's image-pin list — Q3-2026 call
+reports (late Nov) will not reach the store until it is.** Cost brief delivered 2026-09-08: source data is free (primary
 sources), storage fits the existing 10GB Cloud SQL provision (~+0.4-0.8GB),
 one-time backfill compute ~$5, recurring ~$0. The cost is engineering and
 validation care, not money.

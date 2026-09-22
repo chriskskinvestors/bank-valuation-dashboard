@@ -142,7 +142,7 @@ class TestTaggedStrings(unittest.TestCase):
     def test_pct_and_inline_pct(self):
         self.assertEqual((FS._pct(3.4567).raw, FS._pct(3.4567).unit, str(FS._pct(3.4567))),
                          (3.4567, "pct", "3.46%"))
-        self.assertEqual((str(FS._pc(12.345, 1)), FS._pc(12.345, 1).raw), ("12.3%", 12.345))
+        self.assertEqual((str(FS._pctv(12.345, 1)), FS._pctv(12.345, 1).raw), ("12.3%", 12.345))
 
     def test_per_share(self):
         v = FS._psd(23.349)
