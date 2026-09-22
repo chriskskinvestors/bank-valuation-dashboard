@@ -121,8 +121,13 @@ def build_capital_timeline(hist_records: list[dict], shares_outstanding: float |
 
     def _qoq(series):
         """Quarter-over-quarter change, n/a wherever the previous row is not the
-        immediately-preceding calendar quarter (also n/a on the first row)."""
-        return series.diff().mask(_gap)
+        immediately-preceding calendar quarter (also n/a on the first row).
+        Coerced to numeric first: a multi-charter group's consolidated record
+        carries None for every average-based ratio (cert_group drops them),
+        so `cet1_pct` arrives as an all-None object column and a raw .diff()
+        raised TypeError — the whole Capital Adequacy tab crashed for every
+        multi-charter holdco (found 2026-09-22 on MTB). n/a stays n/a."""
+        return pd.to_numeric(series, errors="coerce").diff().mask(_gap)
 
     # Equity QoQ change
     df["equity_qoq_k"] = _qoq(df["equity_k"])

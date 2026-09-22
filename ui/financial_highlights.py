@@ -23,6 +23,9 @@ import streamlit.components.v1 as components
 import pandas as pd
 
 from data.bank_mapping import get_bank_info
+from ui.history_range import (table_range_picker, load_hist_df_for_range, range_years,
+                              first_live_index, structure_breaks, describe_window,
+                              entity_note)
 from ui.chrome import title_bar
 from data import sec_client
 
@@ -393,8 +396,15 @@ def render_financial_highlights(ticker: str):
     cik = info.get("cik") if info else None
 
     title_bar(f"{name} ({ticker})", "Financial Highlights")
-    period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
-                      key=f"fh_period_{ticker}", label_visibility="collapsed")
+    _pc, _rc = st.columns([1, 2])
+    with _pc:
+        period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                          key=f"fh_period_{ticker}", label_visibility="collapsed")
+    with _rc:
+        # Deep-history range (ui/history_range): the default is exactly
+        # today's 5 FY / 8 quarters; deeper ranges read the backfilled store.
+        rng, _rng_default = table_range_picker(period, f"fh_rng_{ticker}")
+    deep = rng != _rng_default
     st.caption("Fiscal figures from FDIC Call Reports; per-share from SEC filings "
                "(holding company). Click any number to see the calculation and its sources.")
 
@@ -403,8 +413,9 @@ def render_financial_highlights(ticker: str):
         empty_state('No FDIC Call Report data mapped for this bank')
         return
     with _skeleton():
-        from data.loaders import load_fdic_hist_df
-        hist = load_fdic_hist_df(ticker, 36)   # group-aware: the WHOLE bank
+        # group-aware: the WHOLE bank. 36 quarters is today's load; deeper
+        # ranges read the backfilled store.
+        hist = load_hist_df_for_range(ticker, rng, period, floor=36)
     if hist is None or hist.empty:
         from ui.states import empty_state
         empty_state('No FDIC history available')
@@ -417,13 +428,16 @@ def render_financial_highlights(ticker: str):
 
     if period == "Annual":
         ye = hist[hist["_m"] == 12].dropna(subset=["_y"])
-        years = sorted({int(y) for y in ye["_y"]})[-5:]
+        _n = range_years(rng)
+        years = sorted({int(y) for y in ye["_y"]})
+        years = years if _n is None else years[-_n:]
         keys = years
         labels = {y: f"FY{y}" for y in years}
         recs = {y: ye[ye["_y"] == y].iloc[0].to_dict() for y in years}
         ends = {y: datetime(int(y), 12, 31) for y in years}
     else:
-        q = hist.tail(8)
+        _n = range_years(rng)
+        q = hist if _n is None else hist.tail(4 * _n)
         keys, labels, recs, ends = [], {}, {}, {}
         for _, r in q.iterrows():
             d = _iso(r["REPDTE"])
@@ -624,6 +638,7 @@ def render_financial_highlights(ticker: str):
             f'<tr><td class="sec" colspan="{len(keys)+1}">{sec_name}</td></tr>')
         for label, fn in rows:
             tds = [f'<td class="lbl">{label}</td>']
+            live_flags = []
             for ci, k in enumerate(keys):
                 try:
                     payload = fn(k)
@@ -644,6 +659,12 @@ def render_financial_highlights(ticker: str):
                     tds.append(f'<td class="val" data-cid="{cid}">{payload["v"]}</td>')
                 else:
                     tds.append(f'<td class="val dead">{payload.get("v", "—")}</td>')
+                live_flags.append(payload.get("v") not in ("—", "n/a", "", None))
+            _fl = first_live_index(live_flags)
+            if deep and _fl > 0:
+                # Series begins inside the window: say where, never pad.
+                tds[0] = (f'<td class="lbl">{label} <span class="from">from '
+                          f'{labels[keys[_fl]]}</span></td>')
             zebra = ' class="zebra"' if ri % 2 == 1 else ""
             rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
@@ -656,8 +677,9 @@ def render_financial_highlights(ticker: str):
             + "".join(f'<th class="colh">{labels[k]}</th>' for k in keys))
 
     n_rows = ri + len(sections) + 1
-    height = 96 + 23 * n_rows
-    html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link)
+    height = 96 + 23 * n_rows + (16 if deep else 0)
+    html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link,
+                            wide=deep)
 
     # Table left, trend charts right (2×2 grid) — balanced columns so the table
     # fills its side and the charts fill theirs, with no dead gap between.
@@ -672,6 +694,11 @@ def render_financial_highlights(ticker: str):
     # SEC facts are cached but invalidated within ~30 min of a new 10-K/10-Q
     # (poll-events job), with a 24h TTL backstop.
     fresh = f"Latest data: FDIC Call Report {asof[keys[-1]]}"
+    if deep:
+        fresh = describe_window(
+            f"{len(keys)} columns · {labels[keys[0]]} – {labels[keys[-1]]}",
+            breaks=structure_breaks(hist.to_dict("records"), since=ends[keys[0]]),
+            entity=entity_note(ticker)) + " · " + fresh
     try:
         from data import cache
         from data.sec_client import company_facts_cache_key
@@ -723,8 +750,22 @@ def _tce_ta_builder(recs, asof, fdic_link, P):
     return b
 
 
-def _build_component(head_html, body_html, cells, entity, fdic_link, sec_link):
+def _build_component(head_html, body_html, cells, entity, fdic_link, sec_link,
+                     wide: bool = False):
     data = json.dumps(cells)
+    # wide (deep ranges, ui/history_range): 10-135 period columns. The label
+    # column pins left and the periods scroll horizontally INSIDE the
+    # component, so the bordered SNL grid keeps its cell widths instead of
+    # crushing 40 columns into the pane. Default markup is byte-identical.
+    wide_css = ("""
+.wrap { overflow-x:auto; overflow-y:hidden; padding-bottom:6px; }
+table { width:auto; min-width:100%; }
+.lblh, td.lbl, td.sec { position:sticky; left:0; z-index:1; }
+.lblh { width:auto; min-width:220px; }
+td.lbl { min-width:220px; background:#fff; }
+.colh, td.val { min-width:76px; white-space:nowrap; }
+""" if wide else "")
+    wrap_open, wrap_close = ('<div class="wrap">', '</div>') if wide else ("", "")
     # FDIC is cited only when an fdic_link is supplied (Templated). Company-Reported
     # tables pass fdic_link=None — they are scraped purely from SEC filings and must
     # never cite FDIC, so the source line shows SEC EDGAR alone.
@@ -790,8 +831,11 @@ td.val:hover {{ background:rgba(30,64,175,0.14) !important; text-decoration:unde
 .rep {{ font-size:11.5px; color:#475569; padding:8px 0 2px; }}
 .src {{ display:inline-block; margin-top:10px; font-size:12px; color:#1e40af;
   text-decoration:none; }}
+.from {{ font-size:9px; color:#94a3b8; font-weight:400; margin-left:4px;
+  white-space:nowrap; }}
+{wide_css}
 </style></head><body>
-<table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>
+{wrap_open}<table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>{wrap_close}
 <div class="foot">Source:
   {fdic_src}<a href="{sec_link}" target="_blank">SEC EDGAR</a> — click any value for its calculation.</div>
 <div id="ov"><div id="card"></div></div>

@@ -66,7 +66,13 @@ def load_fdic_hist_df(ticker: str, quarters: int):
     fdic_client.get_historical_financials at ticker-scoped call sites.
     Same columns (raw FDIC fields), newest first, group-aware."""
     import pandas as pd
-    recs = load_fdic_hist(ticker, min_quarters=quarters,
+    # min_quarters is capped at the warm window: a deep request (44 / 84 /
+    # 200 — the deep-history table ranges) must serve a bank whose WHOLE
+    # stored history is shorter than asked (listed eight years ago → 32
+    # quarters) rather than reject it and fall back to 20. It also stops
+    # the unsatisfiable refetch the old threshold caused for young banks
+    # (min 44 could never be met, so every render re-hit FDIC live).
+    recs = load_fdic_hist(ticker, min_quarters=min(quarters, 20),
                           limit=max(quarters, 20))
     return pd.DataFrame(recs[:quarters]) if recs else pd.DataFrame()
 

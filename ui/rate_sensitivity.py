@@ -33,6 +33,9 @@ from ui.chrome import ledger, title_bar, lazy_tabs
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
 from data.loaders import load_fdic_hist as _load_hist
+from ui.history_range import (range_picker, load_hist_for_range, DEFAULT_CHART,
+                              describe_window, span_quarters, structure_breaks,
+                              entity_note)
 
 
 def _kg_rows(rows):
@@ -809,11 +812,22 @@ def _render_backtest(ticker, hist, mode_key, custom_beta):
     """
     st.markdown(
         "**Honest model self-test.** Walks forward through this bank's "
-        "available FDIC history (up to 20 quarters, minimum "
+        "FDIC history over the selected range (5Y = 20 quarters, minimum "
         f"{_BACKTEST_MIN_QUARTERS}), predicts NIM one year out from each "
         "baseline using the actual FedFunds rate change, then compares "
         "to the bank's reported NIM."
     )
+    # Deep-history range (ui/history_range): the default keeps today's
+    # 20-quarter test; deeper ranges score more rate cycles. "Quarters
+    # tested" in the strip below says exactly what was scored.
+    rng = range_picker(f"rs_bt_rng_{ticker}")
+    if rng != DEFAULT_CHART:
+        _deep = load_hist_for_range(ticker, rng)
+        if _deep:
+            hist = _deep
+            st.caption(describe_window(
+                span_quarters([r.get("REPDTE") for r in _deep]),
+                breaks=structure_breaks(_deep), entity=entity_note(ticker)))
 
     if not hist or len(hist) < _BACKTEST_MIN_QUARTERS:
         st.warning(f"Need at least {_BACKTEST_MIN_QUARTERS} quarters of "
@@ -904,7 +918,7 @@ def _render_backtest(ticker, hist, mode_key, custom_beta):
     with st.expander("How to read this backtest"):
         st.markdown("""
 **What the backtest is doing:**
-1. Takes each quarter t in the bank's available FDIC history (up to 20 quarters)
+1. Takes each quarter t in the bank's FDIC history over the selected range
 2. Goes back 4 quarters (to t-4) as a baseline
 3. Computes the actual FedFunds change from t-4 to t
 4. Runs the phased model with that rate change, 1-year horizon

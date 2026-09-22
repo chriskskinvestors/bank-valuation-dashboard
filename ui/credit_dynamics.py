@@ -23,6 +23,8 @@ from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
 
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
 from data.loaders import load_fdic_hist as _load_hist
+from ui.history_range import range_picker, chart_timeline
+from analysis.credit_dynamics import build_credit_timeline
 
 
 def _load_peer_median_reserve_coverage(watchlist: list[str]) -> float | None:
@@ -192,10 +194,26 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
                                    CHART_HEIGHT_COMPACT, COLOR_FILL_DANGER)
 
+    # Owner layout (2026-07-13): statement table LEFT, charts RIGHT. The
+    # containers are created here so the chart-range picker (deep history,
+    # ui/history_range) sits above the charts it drives. `ctl` is what the
+    # charts plot: the page's own 20-quarter timeline on the default
+    # range, a deeper rebuild otherwise — alerts and headline keep 5Y.
+    _left, _right = st.columns([1, 1])
+    with _right:
+        rng = range_picker(f"aq_rng_{ticker}")
+        ctl, _depth_cap = chart_timeline(
+            ticker, rng, timeline, build_credit_timeline,
+            [("nco_ratio", "NCO"), ("past_due_30_89_pct", "30-89 past due"),
+             ("past_due_90_pct", "90+ past due"),
+             ("reserve_coverage", "Reserve coverage")])
+        if _depth_cap:
+            st.caption(_depth_cap)
+
     # Chart 2: NCO trend
     fig2 = go.Figure()
     fig2.add_trace(go.Scatter(
-        x=timeline["date"], y=timeline["nco_ratio"],
+        x=ctl["date"], y=ctl["nco_ratio"],
         name="NCO Rate", mode="lines+markers",
         line=dict(color=COLOR_DANGER, width=2.5),
         marker=dict(size=6), fill="tozeroy",
@@ -207,15 +225,15 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
 
     # Chart 3: Past due migration
     fig3 = go.Figure()
-    if "past_due_30_89_pct" in timeline.columns:
+    if "past_due_30_89_pct" in ctl.columns:
         fig3.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["past_due_30_89_pct"],
+            x=ctl["date"], y=ctl["past_due_30_89_pct"],
             name="30-89 Past Due", mode="lines+markers",
             line=dict(color=COLOR_WARNING, width=2),
         ))
-    if "past_due_90_pct" in timeline.columns:
+    if "past_due_90_pct" in ctl.columns:
         fig3.add_trace(go.Scatter(
-            x=timeline["date"], y=timeline["past_due_90_pct"],
+            x=ctl["date"], y=ctl["past_due_90_pct"],
             name="90+ Past Due", mode="lines+markers",
             line=dict(color=COLOR_DANGER, width=2),
         ))
@@ -226,7 +244,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     # Chart 4: Reserve coverage trend with peer median line
     fig4 = go.Figure()
     fig4.add_trace(go.Scatter(
-        x=timeline["date"], y=timeline["reserve_coverage"],
+        x=ctl["date"], y=ctl["reserve_coverage"],
         name="Reserve / NPL", mode="lines+markers",
         line=dict(color=COLOR_SUCCESS, width=2.5),
         marker=dict(size=6),
@@ -238,7 +256,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
                         annotation_text=f"Peer median {peer_median:.0f}%", annotation_position="top right")
     apply_standard_layout(fig4, title="Reserve Coverage vs NPL", height=CHART_HEIGHT_COMPACT,
                           yaxis_title="Reserve / NPL", show_legend=False, hovermode="x")
-    _rc_vals = [v for v in timeline["reserve_coverage"].tolist() if v is not None] + [100]
+    _rc_vals = [v for v in ctl["reserve_coverage"].tolist() if v is not None] + [100]
     if peer_median:
         _rc_vals.append(peer_median)
     tighten_yaxis(fig4, _rc_vals, floor_zero=True, ticksuffix="%")
@@ -247,7 +265,6 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     # the LEFT (statement engine — Annual/Quarterly toggle, click-to-source),
     # the credit trend charts stacked on the RIGHT.
     from ui.financials_statements import render_asset_quality
-    _left, _right = st.columns([1, 1])
     with _left:
         render_asset_quality(ticker)
     with _right:
@@ -288,11 +305,18 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
         import plotly.graph_objects as go
         from utils.chart_style import (apply_standard_layout, tighten_yaxis,
                                        CHART_HEIGHT_COMPACT)
+        # Deep-history range for the segment chart (ui/history_range).
+        rng = range_picker(f"aqlt_rng_{ticker}")
+        ctl, _depth_cap = chart_timeline(
+            ticker, rng, timeline, build_credit_timeline,
+            [(k, lb) for k, lb, _c, _w in segments])
+        if _depth_cap:
+            st.caption(_depth_cap)
         fig = go.Figure()
         for key, label, color, width in segments:
-            if key in timeline.columns and timeline[key].notna().any():
+            if key in ctl.columns and ctl[key].notna().any():
                 fig.add_trace(go.Scatter(
-                    x=timeline["date"], y=timeline[key],
+                    x=ctl["date"], y=ctl[key],
                     name=label, mode="lines+markers",
                     line=dict(color=color, width=width),
                     marker=dict(size=5 if width < 3 else 7),
