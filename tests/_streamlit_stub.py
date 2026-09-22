@@ -76,6 +76,13 @@ def install():
             setattr(st, attr, _passthru)
     if not hasattr(st, "session_state"):
         st.session_state = {}
+    # ui.history_range.range_picker does `import streamlit as st` INSIDE the
+    # function, so it always sees this module, not a per-test fake bound onto
+    # the page module. The default pick keeps every table on today's range.
+    if not hasattr(st, "segmented_control"):
+        st.segmented_control = lambda label, options=None, **k: (
+            k["default"] if k.get("default") is not None
+            else (options[0] if options else None))
     comp = sys.modules.get("streamlit.components")
     if comp is None:
         comp = getattr(st, "components", None) or types.ModuleType(

@@ -16,6 +16,8 @@ import pandas as pd
 import streamlit as st
 
 from data.bank_mapping import get_bank_info, get_fdic_cert
+from ui.chrome import table_export
+from ui.export import SOD_SOURCE as _SOD_SOURCE
 from utils.formatting import fmt_dollars
 
 
@@ -71,6 +73,17 @@ def _empty(ticker):
                "networks; some charters report no branch offices.)")
 
 
+def _sod_provenance(page, ticker, cert, yr, notes, **extra) -> dict:
+    """Source-sheet rows shared by the three SOD-backed exports here. Deposits
+    export UNSCALED $thousands under a ($K) header (owner decision 2026-09-22)."""
+    prov = {"Page": f"Market Analysis › {page}", "Ticker": ticker,
+            "Company": (get_bank_info(ticker) or {}).get("name"),
+            "FDIC cert": cert, "Source": _SOD_SOURCE, "SOD survey year": yr,
+            "Footprint": _survey_note(yr, notes)}
+    prov.update(extra)
+    return prov
+
+
 # ── Branch List ──────────────────────────────────────────────────────────────
 def render_branch_list(ticker):
     cert = _cert(ticker)
@@ -87,10 +100,18 @@ def render_branch_list(ticker):
     out = df[["branch_name", "address", "city", "state", "county", "msa_name",
               "deposits"]].copy()
     out["share_of_bank"] = (df["deposits"] / total * 100).round(2) if total else None
+    # Raw frame for the export BEFORE deposits become display strings: SOD
+    # DEPSUMBR is $thousands as stored (data/branches_store), share is %.
+    export = out.copy()
+    export.columns = ["Branch", "Address", "City", "ST", "County", "MSA",
+                      "Deposits ($K)", "% of bank (%)"]
     out["deposits"] = df["deposits"].map(_dep_usd)
     out.columns = ["Branch", "Address", "City", "ST", "County", "MSA",
                    "Deposits", "% of bank"]
     st.dataframe(out, use_container_width=True, hide_index=True, height=520)
+    table_export(export, f"branches_{ticker}_{yr}", f"exp_branches_{ticker}",
+                 formats={"Deposits ($K)": "usd_k", "% of bank (%)": "pct"},
+                 provenance=_sod_provenance("Branch List", ticker, cert, yr, notes))
 
 
 # ── Branch Map ───────────────────────────────────────────────────────────────
@@ -156,6 +177,10 @@ def render_branch_competitors(ticker):
     tbl = (pd.DataFrame(list(rows.values()))
            .sort_values("deposits", ascending=False).head(26))
     tbl["share_of_footprint"] = (tbl["deposits"] / fp_total * 100).round(2)
+    # Raw frame for the export before the $K deposits become display strings.
+    export = tbl.rename(columns={
+        "ticker": "Ticker", "counties": "Shared counties", "branches": "Branches",
+        "deposits": "Deposits ($K)", "share_of_footprint": "% of footprint deposits (%)"})
     tbl["deposits"] = tbl["deposits"].map(_dep_usd)
     tbl = tbl.rename(columns={"ticker": "Ticker", "counties": "Shared counties",
                               "branches": "Branches", "deposits": "Deposits",
@@ -164,6 +189,17 @@ def render_branch_competitors(ticker):
                 f"footprint** — {_survey_note(yr, notes)} (subject bank "
                 "included for rank context)")
     st.dataframe(tbl, use_container_width=True, hide_index=True, height=520)
+    table_export(export, f"branch_competitors_{ticker}_{yr}",
+                 f"exp_branch_competitors_{ticker}",
+                 formats={"Shared counties": "int", "Branches": "int",
+                          "Deposits ($K)": "usd_k",
+                          "% of footprint deposits (%)": "pct"},
+                 provenance=_sod_provenance(
+                     "Branch Competitors", ticker, cert, yr, notes,
+                     **{"Footprint counties": len(footprint),
+                        "Footprint deposits, all banks ($K)": fp_total,
+                        "Note": "Top 26 banks by deposits across the subject's "
+                                "counties; subject bank included for rank context."}))
 
 
 # Branch Proximity + Merger Planning moved to the dedicated modules
@@ -180,15 +216,16 @@ def render_market_demographics(ticker):
     cert = _cert(ticker)
     if not cert:
         return _empty(ticker)
-    df, _notes = _roster(cert)
+    df, notes = _roster(cert)
     if df.empty:
         return _empty(ticker)
+    yr = int(df.iloc[0]["year"])
     from data.census_client import get_county_demographics
     by_cty = (df.groupby("stcntybr")
               .agg(deposits=("deposits", "sum"), county=("county", "max"),
                    state=("state", "max"))
               .sort_values("deposits", ascending=False).head(15))
-    rows, missing = [], 0
+    rows, raw_rows, missing = [], [], 0
     for fips, r in by_cty.iterrows():
         demo = None
         if fips and len(str(fips)) >= 5:
@@ -196,6 +233,19 @@ def render_market_demographics(ticker):
         if not demo:
             missing += 1
             continue
+        # Raw values for the export: SOD deposits $K as stored; Census
+        # dollars are whole dollars; unemployment is a percent (×100 in
+        # census_client._build_demographics). None → n/a, never 0.
+        raw_rows.append({
+            "County FIPS": str(fips),
+            "County": f"{r['county']}, {r['state']}",
+            "Bank deposits ($K)": r["deposits"],
+            "Population": demo.get("population"),
+            "Median HH income ($)": demo.get("median_hh_income"),
+            "Median home value ($)": demo.get("median_home_value"),
+            "Unemployment (%)": demo.get("unemployment_rate_pct"),
+            "Vintage": demo.get("vintage", ""),
+        })
         rows.append({
             "County": f"{r['county']}, {r['state']}",
             "Bank deposits": _dep_usd(r["deposits"]),
@@ -221,3 +271,14 @@ def render_market_demographics(ticker):
         st.caption(f"{missing} counties without a Census response are omitted.")
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
                  height=460)
+    table_export(pd.DataFrame(raw_rows), f"market_demographics_{ticker}_{yr}",
+                 f"exp_market_demographics_{ticker}",
+                 formats={"County FIPS": "text", "Bank deposits ($K)": "usd_k",
+                          "Population": "int", "Median HH income ($)": "usd",
+                          "Median home value ($)": "usd", "Unemployment (%)": "pct1"},
+                 provenance=_sod_provenance(
+                     "Market Demographics", ticker, cert, yr, notes,
+                     **{"Census source": "US Census Bureau ACS 5-year estimates "
+                                         "(county), joined on FDIC SOD county FIPS; "
+                                         "vintage per row",
+                        "Counties omitted (no Census response)": missing or None}))

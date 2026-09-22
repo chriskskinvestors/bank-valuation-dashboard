@@ -22,7 +22,7 @@ from utils.formatting import fmt_dollars_from_thousands
 from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
                                COLOR_PRIMARY, COLOR_SUCCESS, COLOR_WARNING, COLOR_DANGER,
                                CATEGORICAL_PALETTE)
-from ui.chrome import ledger, title_bar
+from ui.chrome import ledger, table_export, title_bar
 
 
 def _absmax(series) -> float:
@@ -567,16 +567,56 @@ def _render_holdco_capital(ticker: str):
             return "n/a"
         return f"{v * 100:.2f}%" if kind == "pct" else f"${v / 1e9:,.2f}B"
 
-    _kg_table("($)", [_plab(p) for p in periods],
+    plabs = [_plab(p) for p in periods]
+    _kg_table("($)", plabs,
               [(lab, [_cell(cap[p].get(k), kind) for p in periods])
                for lab, k, kind in rows])
+    # Export: the extracted values as stored — ratios are tagged FRACTIONS
+    # (0.1089) shown ×100 on screen, so the sheet carries percent units under
+    # "(%)"; capital and RWA are whole dollars as tagged, under "($)".
+    mode = "Quarterly" if _qtr else "Annual"
+    provenance = {
+        "Page": "Company Analysis · Capital Adequacy / Company Reported · Regulatory "
+                "Capital — holding company capital (SEC filing)",
+        "Ticker": ticker, "Company": get_name(ticker), "SEC CIK": cik,
+        "FDIC cert": get_fdic_cert(ticker),
+        "Source": f"SEC {meta['form']} filed {meta['date']} — inline XBRL, "
+                  "holding-company consolidated, anchored to the bank subsidiary's "
+                  f"FDIC CET1 ratio{note}",
+        "Filing": src,
+        "View": mode,
+        "Periods": f"{plabs[-1]} to {plabs[0]}",
+        "Report date": periods[0],
+    }
+    table_export(
+        pd.DataFrame(
+            [{"Line item": f"{lab} ({'%' if kind == 'pct' else '$'})",
+              **{pl: (None if cap[p].get(k) is None
+                      else cap[p][k] * 100 if kind == "pct" else cap[p][k])
+                 for p, pl in zip(periods, plabs)}}
+             for lab, k, kind in rows],
+            columns=["Line item"] + plabs),
+        f"capital_holdco_{ticker}_{mode}_{periods[0]}",
+        key=f"exp_hc_capital_{ticker}_{mode}", sheet="HoldCo Capital",
+        row_formats={f"{lab} ({'%' if kind == 'pct' else '$'})": kind
+                     for lab, k, kind in rows},
+        freeze_cols=1,
+        provenance={**provenance,
+                    "Notes": "Ratios are the filing's tagged fractions in percent "
+                             "units; capital and RWA are whole dollars. RWA, and a "
+                             "ratio or capital amount the filing reports only via "
+                             "its counterpart, are derived by exact identity "
+                             "(capital ÷ ratio) — see "
+                             "data.sec_filing_scraper.extract_holdco_capital."})
     st.caption("Liquidity Coverage Ratio · HQLA · Net cash outflows · Supplementary "
                "leverage: large-bank disclosures (FR 2052a) — not in this filing (n/a).")
 
-    _render_holdco_walk(cap, periods, _plab)
+    _render_holdco_walk(cap, periods, _plab, ticker=ticker, mode=mode,
+                        provenance=provenance)
 
 
-def _render_holdco_walk(cap: dict, periods: list, _plab) -> None:
+def _render_holdco_walk(cap: dict, periods: list, _plab, *, ticker: str,
+                        mode: str, provenance: dict) -> None:
     """SNL "Regulatory Capital ($000)" walk for the holding company. Each step
     is sourced from the filing's inline XBRL and the section renders ONLY where
     the CET1 build reconciles to the extracted CET1 capital — banks fold
@@ -597,52 +637,57 @@ def _render_holdco_walk(cap: dict, periods: list, _plab) -> None:
     st.markdown('<div class="ksk-sec">Regulatory capital walk — holding company</div>',
                 unsafe_allow_html=True)
 
+    # Row fns return the RAW dollar value (None = n/a; a str = a textual cell
+    # such as the opt-in AOCI marker); usd() formats for the screen and the
+    # same raw values feed the export unformatted.
     def usd(v):
+        if isinstance(v, str):
+            return v
         return "n/a" if v is None else f"${v / 1e9:,.2f}B"
 
     def comp(p, key, negate=False):
         """A WALK component cell — only for periods that reconcile."""
         d = cap[p]
         if not d.get("_walk_reconciles"):
-            return "n/a"
+            return None
         v = (d.get("_walk") or {}).get(key)
         if v is None:
-            return "n/a"
-        return usd(-v if negate else v)
+            return None
+        return -v if negate else v
 
     def aoci_removed(p):
         d = cap[p]
         if not d.get("_walk_reconciles"):
-            return "n/a"
+            return None
         w = d.get("_walk") or {}
         # AOCI is a CET1 step only for opt-out (excluded) banks; for opt-in the
         # AOCI already sits in CET1, so there's no walk adjustment.
         if w.get("aoci_treatment") != "excluded":
             return "— (in CET1)"
-        return usd(-(w.get("aoci") or 0.0))
+        return -(w.get("aoci") or 0.0)
 
     def bridge(p, key):
         """A bridge total from the extracted (anchored) capital amounts."""
-        return usd(cap[p].get(key))
+        return cap[p].get(key)
 
     def at1(p):
         d = cap[p]
         t1, cet1 = d.get("t1_cap"), d.get("cet1_cap")
-        return usd(t1 - cet1) if (t1 is not None and cet1 is not None) else "n/a"
+        return t1 - cet1 if (t1 is not None and cet1 is not None) else None
 
     def t2_other(p):
         """Tier 2 ex-sub-debt (allowance + adjustments) = Tier 2 − sub-debt,
         shown only when sub-debt is tagged for a reconciling period."""
         d = cap[p]
         if not d.get("_walk_reconciles"):
-            return "n/a"
+            return None
         sub = (d.get("_walk") or {}).get("subordinated_debt")
         t2 = d.get("tier2_cap")
         if sub is None or t2 is None:
-            return "n/a"
-        return usd(t2 - sub)
+            return None
+        return t2 - sub
 
-    # (label, fn) — fn(period) -> formatted cell.
+    # (label, fn) — fn(period) -> raw dollar value.
     walk_rows = [
         ("Total common equity", lambda p: comp(p, "common_equity")),
         ("Less: goodwill", lambda p: comp(p, "goodwill", negate=True)),
@@ -656,13 +701,39 @@ def _render_holdco_walk(cap: dict, periods: list, _plab) -> None:
         ("**= Tier 2 capital**", lambda p: bridge(p, "tier2_cap")),
         ("**= Total capital**", lambda p: bridge(p, "total_cap")),
     ]
-    _kg_table("Walk ($)", [_plab(p) for p in periods],
-              [(lab, [fn(p) for p in periods]) for lab, fn in walk_rows])
+    raw_rows = [(lab, [fn(p) for p in periods]) for lab, fn in walk_rows]
+    plabs = [_plab(p) for p in periods]
+    _kg_table("Walk ($)", plabs,
+              [(lab, [usd(v) for v in cells]) for lab, cells in raw_rows])
     st.caption("CET1 = common equity − intangibles ± AOCI − deductions; "
                "Tier 1 = CET1 + qualifying preferred; Tier 2 = sub-debt + "
                "allowance; Total = Tier 1 + Tier 2. Component steps are inline-XBRL "
                "tags; bridge totals are the FDIC-anchored extracted amounts. "
                "A step the filing doesn't tag is n/a.")
+    # Export: the same raw whole-dollar values (the "**" bold markers on the
+    # bridge labels are screen markup, dropped from the row labels).
+    xlabels = [f"{lab.strip('*')} ($)" for lab, _ in raw_rows]
+    table_export(
+        pd.DataFrame([{"Line item": xl, **dict(zip(plabs, cells))}
+                      for xl, (_, cells) in zip(xlabels, raw_rows)],
+                     columns=["Line item"] + plabs),
+        f"capital_walk_holdco_{ticker}_{mode}_{periods[0]}",
+        key=f"exp_hc_walk_{ticker}_{mode}", sheet="HoldCo Capital Walk",
+        row_formats={xl: "usd" for xl in xlabels}, freeze_cols=1,
+        provenance={**provenance,
+                    "Page": "Company Analysis · Capital Adequacy / Company Reported · "
+                            "Regulatory Capital — regulatory capital walk (holding "
+                            "company)",
+                    "Notes": "Whole dollars. \"Less\" lines are NEGATIVE amounts "
+                             "(deductions); \"= \" lines are the FDIC-anchored "
+                             "extracted capital amounts; other component steps are "
+                             "undimensioned inline-XBRL tags, n/a for a period whose "
+                             "CET1 build does not reconcile or a tag the filing "
+                             "lacks. Additional Tier 1 = Tier 1 − CET1; Other Tier 2 "
+                             "= Tier 2 − subordinated debt. The AOCI row reads "
+                             "\"— (in CET1)\" for an AOCI opt-in filer (no walk "
+                             "step); for opt-out it is −AOCI (unrealized losses "
+                             "added back are positive)."})
 
 
 def _render_rcr_capital_walk(ticker: str):
@@ -740,7 +811,8 @@ def _render_rcr_capital_walk(ticker: str):
         """$000 term value; absent stays honest — never rendered as $0."""
         return _thou(v) + " ($000)" if v is not None else "n/a — not in this filing"
 
-    # Row builders: each returns (display value, click-through calc dict).
+    # Row builders: each returns (display value, click-through calc dict,
+    # raw number for the export — $thousands as filed, or percent units).
     # Item numbers are cited only where verified (RC-R Part I items 1–9, per
     # the code map in data/ffiec_client); other lines cite the MDRM code.
     def _rep(label, key, ref):
@@ -749,7 +821,7 @@ def _render_rcr_capital_walk(ticker: str):
             v = _usd(raw)
             return v, _calc(label, v, asof, ref,
                             [{"label": label, "val": _t(raw), "doc": doc}],
-                            None, True, doc)
+                            None, True, doc), raw
         return b
 
     def _intangibles(det, asof, doc):
@@ -764,7 +836,7 @@ def _render_rcr_capital_walk(ticker: str):
                   "val": _t(oth), "doc": doc}]
         return v, _calc(label, v, asof, "Schedule RC-R Part I items 6 + 7",
                         terms, "Goodwill deduction + other-intangibles deduction",
-                        False, doc)
+                        False, doc), total
 
     def _aoci(det, asof, doc):
         label = "AOCI adjustment (positive = added back)"
@@ -787,7 +859,7 @@ def _render_rcr_capital_walk(ticker: str):
                         terms,
                         "−(sum of items 9.a–9.e \"LESS\" lines) — positive = "
                         "unrealized losses removed from regulatory capital",
-                        False, doc)
+                        False, doc), total
 
     def _other_adj(det, asof, doc):
         label = "Other CET1 adjustments (residual)"
@@ -806,7 +878,7 @@ def _render_rcr_capital_walk(ticker: str):
                         terms,
                         "CET1 − (CET1 before adj − intangibles − DTA + AOCI adj): "
                         "residual catching threshold deductions and all other "
-                        "\"LESS\" items", False, doc)
+                        "\"LESS\" items", False, doc), total
 
     def _t2_other(det, asof, doc):
         label = "Other tier 2 components"
@@ -825,65 +897,68 @@ def _render_rcr_capital_walk(ticker: str):
                         "MDRM P867 + P868 + residual (computed)", terms,
                         "Non-qualifying instruments + minority interest + "
                         "residual, so instruments + allowance + other = Tier 2",
-                        False, doc)
+                        False, doc), total
 
     def _ratio(label, num_key, num_label, num_code):
         def b(det, asof, doc):
             a, r = _n(det.get(num_key)), _n(det.get("rwa"))
-            v = f"{a / r * 100:.2f}%" if (a is not None and r) else "—"
+            raw = (a / r * 100) if (a is not None and r) else None
+            v = f"{raw:.2f}%" if raw is not None else "—"
             terms = [{"label": f"{num_label} (MDRM {num_code})", "val": _t(a), "doc": doc},
                      {"label": "Risk-weighted assets (MDRM A223)", "val": _t(r), "doc": doc}]
             return v, _calc(label, v, asof, "Computed from Schedule RC-R Part I",
                             terms, f"{num_label} ÷ risk-weighted assets × 100",
-                            False, doc)
+                            False, doc), raw
         return b
 
+    # (label, builder, export format): "usd_k" rows are $thousands as filed
+    # (exported unscaled under a "($K)" label), "pct" rows are percent units.
     spec = [
         ("Common Equity Tier 1", [
             ("CET1 before adjustments & deductions",
              _rep("CET1 before adjustments & deductions", "cet1_before_adjustments",
-                  "Schedule RC-R Part I item 5 (MDRM P840)")),
-            ("Less: intangibles (goodwill + other)", _intangibles),
+                  "Schedule RC-R Part I item 5 (MDRM P840)"), "usd_k"),
+            ("Less: intangibles (goodwill + other)", _intangibles, "usd_k"),
             ("Less: DTAs from carryforwards",
              _rep("Less: DTAs from carryforwards", "dta_deduction",
-                  "Schedule RC-R Part I item 8 (MDRM P843)")),
-            ("AOCI adjustment (positive = added back)", _aoci),
-            ("Other CET1 adjustments (residual)", _other_adj),
+                  "Schedule RC-R Part I item 8 (MDRM P843)"), "usd_k"),
+            ("AOCI adjustment (positive = added back)", _aoci, "usd_k"),
+            ("Other CET1 adjustments (residual)", _other_adj, "usd_k"),
             ("Common equity tier 1 capital",
              _rep("Common equity tier 1 capital", "cet1",
-                  "Schedule RC-R Part I (MDRM P859)")),
+                  "Schedule RC-R Part I (MDRM P859)"), "usd_k"),
         ]),
         ("Tier 1", [
             ("Additional tier 1 capital",
              _rep("Additional tier 1 capital", "additional_tier1",
-                  "Schedule RC-R Part I (MDRM P865)")),
+                  "Schedule RC-R Part I (MDRM P865)"), "usd_k"),
             ("Tier 1 capital",
              _rep("Tier 1 capital", "tier1",
-                  "Schedule RC-R Part I (MDRM 8274)")),
+                  "Schedule RC-R Part I (MDRM 8274)"), "usd_k"),
         ]),
         ("Tier 2 & Total Capital", [
             ("Tier 2 instruments + surplus",
              _rep("Tier 2 instruments + surplus", "t2_instruments",
-                  "Schedule RC-R Part I (MDRM P866)")),
+                  "Schedule RC-R Part I (MDRM P866)"), "usd_k"),
             ("Allowance includable in tier 2",
              _rep("Allowance includable in tier 2", "t2_allowance",
-                  "Schedule RC-R Part I (MDRM 5310)")),
-            ("Other tier 2 components", _t2_other),
+                  "Schedule RC-R Part I (MDRM 5310)"), "usd_k"),
+            ("Other tier 2 components", _t2_other, "usd_k"),
             ("Tier 2 capital",
              _rep("Tier 2 capital", "tier2",
-                  "Schedule RC-R Part I (MDRM 5311)")),
+                  "Schedule RC-R Part I (MDRM 5311)"), "usd_k"),
             ("Total capital",
              _rep("Total capital", "total_capital",
-                  "Schedule RC-R Part I (MDRM 3792)")),
+                  "Schedule RC-R Part I (MDRM 3792)"), "usd_k"),
         ]),
         ("Risk-Weighted Assets & Ratios", [
             ("Total risk-weighted assets",
              _rep("Total risk-weighted assets", "rwa",
-                  "Schedule RC-R Part I (MDRM A223)")),
-            ("CET1 ratio", _ratio("CET1 ratio", "cet1", "CET1 capital", "P859")),
-            ("Tier 1 ratio", _ratio("Tier 1 ratio", "tier1", "Tier 1 capital", "8274")),
+                  "Schedule RC-R Part I (MDRM A223)"), "usd_k"),
+            ("CET1 ratio", _ratio("CET1 ratio", "cet1", "CET1 capital", "P859"), "pct"),
+            ("Tier 1 ratio", _ratio("Tier 1 ratio", "tier1", "Tier 1 capital", "8274"), "pct"),
             ("Total capital ratio",
-             _ratio("Total capital ratio", "total_capital", "Total capital", "3792")),
+             _ratio("Total capital ratio", "total_capital", "Total capital", "3792"), "pct"),
         ]),
     ]
 
@@ -893,20 +968,25 @@ def _render_rcr_capital_walk(ticker: str):
 
     cells, rows_html, ri = {}, [], 0
     cell_errors: list[str] = []
+    export_rows: list[dict] = []
+    export_row_formats: dict[str, str] = {}
     ncol = len(details)
     for sec_name, rows in spec:
         rows_html.append(f'<tr><td class="sec" colspan="{ncol + 1}">{sec_name}</td></tr>')
-        for label, builder in rows:
+        for label, builder, fmt in rows:
             tds = [f'<td class="lbl">{label}</td>']
+            xlabel = f"{label} ($K)" if fmt == "usd_k" else f"{label} (%)"
+            xrow = {"Line item": xlabel, "Section": sec_name}
             for ci, det in enumerate(details):
                 try:
-                    v, c = builder(det, asofs[ci], docs[ci])
+                    v, c, raw = builder(det, asofs[ci], docs[ci])
                 except Exception as e:
                     # A computation bug must not be indistinguishable from
                     # "not reported" — collect and log once per render.
                     cell_errors.append(f"{label}[{ci}]: {type(e).__name__}: {e}")
-                    v, c = "—", None
+                    v, c, raw = "—", None, None
                 cid = f"rcr_{ri}_{ci}"
+                xrow[labels[ci]] = raw
                 if c:
                     cells[cid] = c
                     tds.append(f'<td class="val" data-cid="{cid}">{v}</td>')
@@ -915,6 +995,8 @@ def _render_rcr_capital_walk(ticker: str):
             zebra = ' class="zebra"' if ri % 2 == 1 else ""
             rows_html.append(f'<tr{zebra}>{"".join(tds)}</tr>')
             ri += 1
+            export_rows.append(xrow)
+            export_row_formats[xlabel] = fmt
 
     if cell_errors:
         print(f"[capital walk] {ticker}: {len(cell_errors)} cell(s) failed "
@@ -926,6 +1008,26 @@ def _render_rcr_capital_walk(ticker: str):
     html = _build_component(head, "".join(rows_html), cells, entity,
                             fdic_link, fdic_link)
     components.html(html, height=height, scrolling=False)
+    try:
+        latest_iso = datetime.strptime(asofs[-1], "%m/%d/%Y").strftime("%Y-%m-%d")
+    except ValueError:
+        latest_iso = asofs[-1]
+    table_export(
+        pd.DataFrame(export_rows, columns=["Line item", "Section"] + labels),
+        f"capital_walk_rcr_{ticker}_{latest_iso}", key=f"exp_rcr_walk_{ticker}",
+        sheet="RC-R Capital Walk", row_formats=export_row_formats, freeze_cols=2,
+        provenance={
+            "Page": "Company Analysis · Capital Adequacy — Regulatory Capital Walk "
+                    "(bank subsidiary)",
+            "Ticker": ticker, "Company": name, "FDIC cert": cert,
+            "Source": "FFIEC Call Report, Schedule RC-R Part I (bank subsidiary; "
+                      "stored call-report detail) — not holding-company FR Y-9C",
+            "Periods": f"{labels[0]} to {labels[-1]}",
+            "Report date": asofs[-1],
+            "Notes": "\"Less\" lines are filed as positive deduction amounts; the "
+                     "AOCI adjustment is positive when unrealized losses are added "
+                     "back; residual lines are computed, not filed.",
+        })
     st.caption(f"Latest: FFIEC Call Report {asofs[-1]} · stored RC-R Part I "
                "detail (refreshed quarterly by the refresh-ffiec job).")
 
@@ -1133,14 +1235,26 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
                 return "—"
             return f"{v*100:.1f}%"
 
-        rows = []
+        def _num(v):
+            """Raw numeric cell for the export: None where the timeline has
+            no observation (never 0)."""
+            return None if v is None or pd.isna(v) else float(v)
+
+        def _pct(v):
+            """Ratio stored as a FRACTION (0.42) → percent units (42.0), the
+            same ×100 the on-screen _fmt_pct applies."""
+            v = _num(v)
+            return None if v is None else v * 100
+
+        rows, export_rows = [], []
         for _, r in df_disp.iterrows():
+            q = (
+                f"{int(r.get('year', 0))}Q{int(r.get('quarter', 0))}"
+                if pd.notna(r.get('year')) and pd.notna(r.get('quarter'))
+                else str(r['date'].date()) if r.get('date') is not None else "—"
+            )
             rows.append({
-                "Quarter": (
-                    f"{int(r.get('year', 0))}Q{int(r.get('quarter', 0))}"
-                    if pd.notna(r.get('year')) and pd.notna(r.get('quarter'))
-                    else str(r['date'].date()) if r.get('date') is not None else "—"
-                ),
+                "Quarter": q,
                 "Net Income": _fmt_d(r.get("net_income_q")),
                 "Dividends": _fmt_d(r.get("dividends_q")),
                 "Buybacks": _fmt_d(r.get("buybacks_q")),
@@ -1154,4 +1268,49 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
                     else "—"
                 ),
             })
+            export_rows.append({
+                "Quarter": q,
+                "Net Income ($)": _num(r.get("net_income_q")),
+                "Dividends ($)": _num(r.get("dividends_q")),
+                "Buybacks ($)": _num(r.get("buybacks_q")),
+                "Total Returned ($)": _num(r.get("total_returned_q")),
+                "Payout (%)": _pct(r.get("payout_ratio_q")),
+                "Buyback (%)": _pct(r.get("buyback_ratio_q")),
+                "Total Ret (%)": _pct(r.get("total_return_ratio_q")),
+                # share_change_pct is ALREADY percent units (pct_change × 100).
+                "Share Chg (%)": _num(r.get("share_change_pct")),
+            })
         _kg_rows_table(rows)
+        if export_rows:
+            last = df_disp.iloc[-1]
+            last_date = (str(last["date"].date())
+                         if pd.notna(last.get("date")) else None)
+            table_export(
+                pd.DataFrame(export_rows),
+                f"capital_return_quarterly_{ticker}_{export_rows[-1]['Quarter']}",
+                key=f"exp_capret_q_{ticker}", sheet="Capital Return Quarterly",
+                formats={"Net Income ($)": "usd", "Dividends ($)": "usd",
+                         "Buybacks ($)": "usd", "Total Returned ($)": "usd",
+                         "Payout (%)": "pct1", "Buyback (%)": "pct1",
+                         "Total Ret (%)": "pct1", "Share Chg (%)": "pct"},
+                freeze_cols=1,
+                provenance={
+                    "Page": "Company Analysis · Capital Adequacy — Capital Return "
+                            "Attribution, quarterly detail (holding company)",
+                    "Ticker": ticker, "Company": get_name(ticker), "SEC CIK": cik,
+                    "Source": "SEC companyfacts (holding company) — 10-K / 10-Q "
+                              "cash-flow statement (dividends, buybacks) and income "
+                              "statement (net income); quarterly values derived "
+                              "from same-start YTD differences",
+                    "Dividend basis": f"{div_source} — {source_note}".strip(" —"),
+                    "Periods": f"{export_rows[0]['Quarter']} to "
+                               f"{export_rows[-1]['Quarter']}",
+                    "Report date": last_date,
+                    "Notes": "Whole dollars; ratios are the quarterly amount ÷ "
+                             "quarterly net income in percent units (n/a when net "
+                             "income is not positive). Total Returned = dividends + "
+                             "buybacks, one absent component treated as 0 only when "
+                             "the other is reported (both absent → n/a). Share Chg = "
+                             "quarter-over-quarter change in shares outstanding, "
+                             "percent units.",
+                })

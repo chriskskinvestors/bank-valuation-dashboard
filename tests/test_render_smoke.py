@@ -553,9 +553,15 @@ class TestCapitalWalkRendersPopulated(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        _install_streamlit_stub()
+        st_fake = _install_streamlit_stub()
         import ui.capital_dynamics
+        import ui.export
         cls.cd = ui.capital_dynamics
+        # Bind both modules to THIS stub: under discovery they may already be
+        # imported against an earlier suite's thinner stub, and the walk now
+        # renders an Export control through ui.export (see TestTableExports).
+        cls.cd.st = st_fake
+        ui.export.st = st_fake
 
     def _render(self, stored):
         """Run the walk against a fake store; returns captured iframe HTML
