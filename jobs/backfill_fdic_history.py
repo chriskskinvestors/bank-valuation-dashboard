@@ -4,6 +4,7 @@ DEEP-HISTORY-PLAN.md foundation. Two modes:
 
   python -m jobs.backfill_fdic_history backfill      # one-time, resumable
   python -m jobs.backfill_fdic_history incremental   # nightly append
+  python -m jobs.backfill_fdic_history refill        # full re-pull, no skip
 
 BACKFILL walks every cert in every universe ticker's charter group and
 pulls its full call-report history (limit=160 quarters reaches past 1992)
@@ -13,6 +14,10 @@ skipped, so a rerun continues where a kill left off.
 
 INCREMENTAL fetches only a handful of recent quarters per cert and
 upserts — a no-op most nights, one new row per cert each quarter-end.
+REFILL is BACKFILL without the checkpoint skip: every cert's full history
+is re-pulled and upserted. Run it once after a field is ADDED to the fetch
+(stored rows only carry the fields requested when they were written —
+2026-09-22: RBCT1C, so deep-range CET1 $ stays n/a until refilled).
 
 Exit codes: 0 healthy coverage, 1 degraded (logged), 2 hard failure.
 """
@@ -56,7 +61,7 @@ def main(mode: str = "incremental") -> int:
         print("[deep-hist] no certs resolved — universe snapshot missing?",
               flush=True)
         return 2
-    limit = _BACKFILL_LIMIT if mode == "backfill" else _INCR_LIMIT
+    limit = _BACKFILL_LIMIT if mode in ("backfill", "refill") else _INCR_LIMIT
     print(f"[deep-hist] {mode}: {len(certs)} certs, limit={limit}",
           flush=True)
 

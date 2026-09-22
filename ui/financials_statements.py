@@ -1835,16 +1835,20 @@ _CRIT_ROWS = [
 
 
 # ── Capital Adequacy (docs/SNL-BUILD-PLAN.md tab 3) ─────────────────────────
-# Live-verified TCBK/BANR 12/31/2025: RBCT1J/RWAJ reproduces IDT1CER exactly
-# (RBCT1J = CET1 $), RBCT1/RWAJ = RBC1RWAJ, RBCT1 + RBCT2 = RBC to the dollar.
+# Field semantics (re-verified live 2026-09-22 on 17 charters): RBCT1C is CET1
+# capital — RBCT1C/RWAJ reproduces IDT1CER exactly; RBCT1J and RBCT1 are BOTH
+# total Tier 1 (RBCT1J/RWAJ = RBC1RWAJ); RBCT1 + RBCT2 = RBC to the dollar.
+# The 2026-07-13 note that "RBCT1J = CET1 $" was checked only on TCBK/BANR,
+# which have no AT1 so CET1 == Tier 1 there; on OZK/USB/JPM (bank-level
+# preferred) it showed Tier 1 under the CET1 label and a fabricated $0 of AT1.
 # Leverage stays RBCT1JR — the field config.py's leverage_ratio metric already
 # uses platform-wide (RBC1AAJ differs a few bps; one convention everywhere).
 # T1/T2 component walks are the RC-R section further down the page; LCR/HQLA
 # are large-bank-only (SNL shows NA too) — covered by the holdco caption.
 _CAPITAL_ADEQUACY = [
     ("Regulatory Capital ($000)", [
-        ("Common Equity Tier 1 (CET1) Capital", "dollar", "RBCT1J"),
-        ("Additional Tier 1 Capital", "diff", "RBCT1", "RBCT1J"),
+        ("Common Equity Tier 1 (CET1) Capital", "dollar", "RBCT1C"),
+        ("Additional Tier 1 Capital", "diff", "RBCT1", "RBCT1C"),
         ("» Tier 1 Capital", "dollar", "RBCT1"),
         ("Tier 2 Capital", "dollar", "RBCT2"),
         ("» Total Risk-Based Capital", "dollar", "RBC"),
@@ -1865,7 +1869,7 @@ _CAPITAL_ADEQUACY = [
         ("Tangible Equity / Tangible Assets", "fratio", "EQTOT-INTAN", "ASSET-INTAN"),
     ]),
     ("Annualized Growth Rates (%)", [
-        ("CET1 Capital Growth", "growth", "RBCT1J"),
+        ("CET1 Capital Growth", "growth", "RBCT1C"),
         ("Risk-Weighted Asset Growth", "growth", "RWAJ"),
         ("Equity Growth", "growth", "EQTOT"),
     ]),

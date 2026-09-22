@@ -9,11 +9,13 @@ IBOC $9.9B of $17.3B, MS $391B of $633B.
 
 Pins:
   1. levels sum across charters (hand-computed on IBOC's real assets);
-  2. average-based ratios (ROA/ROE/NIM/leverage/CET1) go n/a rather than
+  2. average-based ratios (ROA/ROE/NIM/leverage) go n/a rather than
      silently carrying the LEAD charter's figure onto a consolidated label —
      FDIC computes them against average balances, which period-end levels
      cannot reconstruct;
-  3. the three exactly-recomputable ratios ARE rebuilt from the sums;
+  3. the four exactly-recomputable ratios ARE rebuilt from the sums — incl.
+     the CET1 ratio from ΣRBCT1C/ΣRWAJ (2026-09-22; it had been wrongly
+     listed as average-based, leaving every multi-charter bank's CET1 blank);
   4. a single-charter bank is bit-for-bit unchanged (the ~350 other banks);
   5. group resolution degrades to [cert] on failure — never fewer charters
      than we had before.
@@ -114,12 +116,46 @@ class TestExactRatiosRecomputed(unittest.TestCase):
 
     def test_capital_ratios_from_summed_dollars(self):
         recs = [
-            {"CERT": 1, "RBC": 1000, "RBCT1J": 800, "RWAJ": 8000},
-            {"CERT": 2, "RBC": 500, "RBCT1J": 400, "RWAJ": 4000},
+            {"CERT": 1, "RBC": 1000, "RBCT1J": 800, "RBCT1C": 760, "RWAJ": 8000},
+            {"CERT": 2, "RBC": 500, "RBCT1J": 400, "RBCT1C": 400, "RWAJ": 4000},
         ]
         agg = aggregate_records(recs)
         self.assertAlmostEqual(agg["RBCRWAJ"], 1500 / 12000 * 100, places=6)
         self.assertAlmostEqual(agg["RBC1RWAJ"], 1200 / 12000 * 100, places=6)
+        # CET1 = ΣRBCT1C / ΣRWAJ = 1160 / 12000 = 9.6667% — Tier 1 (10.0%)
+        # is NOT reused for it: charter 1 carries 40 of AT1.
+        self.assertAlmostEqual(agg["IDT1CER"], 1160 / 12000 * 100, places=6)
+        self.assertNotIn("IDT1CER", AVERAGE_BASED_RATIOS)
+
+    def test_cet1_ratio_is_na_when_cet1_dollars_absent(self):
+        """Cache rows written before RBCT1C was fetched: n/a, never the lead
+        charter's IDT1CER and never Tier 1 standing in for CET1."""
+        recs = [
+            {"CERT": 1, "RBC": 1000, "RBCT1J": 800, "RWAJ": 8000, "IDT1CER": 9.5},
+            {"CERT": 2, "RBC": 500, "RBCT1J": 400, "RWAJ": 4000, "IDT1CER": 10.0},
+        ]
+        agg = aggregate_records(recs)
+        self.assertIsNone(agg["IDT1CER"])
+        self.assertAlmostEqual(agg["RBC1RWAJ"], 10.0, places=6)
+
+    def test_missing_rwa_yields_na_not_a_sum_of_ratios(self):
+        """The summing loop adds the charters' REPORTED ratios into the key
+        before the recompute; with no RWA to divide by, that sum must be
+        replaced by n/a, never left as 9.5 + 10.0 = 19.5%."""
+        recs = [
+            {"CERT": 1, "RBC": 1000, "RBCT1J": 800, "RBCT1C": 760,
+             "IDT1CER": 9.5, "RBC1RWAJ": 10.0, "RBCRWAJ": 12.5},
+            {"CERT": 2, "RBC": 500, "RBCT1J": 400, "RBCT1C": 400,
+             "IDT1CER": 10.0, "RBC1RWAJ": 10.0, "RBCRWAJ": 12.5},
+        ]
+        agg = aggregate_records(recs)
+        for k in ("IDT1CER", "RBC1RWAJ", "RBCRWAJ"):
+            self.assertIsNone(agg[k], f"{k} must be n/a without RWA")
+
+    def test_missing_efficiency_component_yields_na_not_a_sum(self):
+        recs = [{"CERT": 1, "INTINC": 1000, "EINTEXP": 400, "NONII": 200, "EEFFR": 60.0},
+                {"CERT": 2, "INTINC": 500, "EINTEXP": 200, "NONII": 100, "EEFFR": 61.0}]
+        self.assertIsNone(aggregate_records(recs)["EEFFR"])   # NONIX absent
 
     def test_zero_revenue_yields_na_not_a_divide_error(self):
         recs = [{"CERT": 1, "INTINC": 100, "EINTEXP": 150, "NONII": 50, "NONIX": 10},

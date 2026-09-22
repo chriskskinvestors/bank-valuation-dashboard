@@ -27,14 +27,19 @@ assets. Ratios do not, and this module refuses to fake them:
 
   * RECOMPUTED from summed components — the formula is a pure ratio of two
     summed levels, so it is exact:
-        EEFFR     efficiency  = NONIX / (net interest income + NONII)
+        EEFFR     efficiency  = NONIX  / (net interest income + NONII)
         RBCRWAJ   total RBC   = RBC    / RWAJ
-        RBC1RWAJ  tier 1 RBC  = RBCT1J / RWAJ
+        RBC1RWAJ  tier 1 RBC  = RBCT1J / RWAJ   (RBCT1J = total Tier 1 $)
+        IDT1CER   CET1 ratio  = RBCT1C / RWAJ   (RBCT1C = CET1 $; added
+                  2026-09-22 — it had been dropped as "average-based", which
+                  left every multi-charter bank's CET1 blank on Capital
+                  Adequacy and in the screens; verified live on JPM/MS/BNY/
+                  WTFC/QCRH charters that RBCT1C/RWAJ reproduces IDT1CER)
   * n/a — FDIC computes these against AVERAGE balances over the period, which
     period-end levels cannot reconstruct. Carrying the lead charter's figure
     would be a plausible-wrong number on a consolidated label, so they are
     dropped and flagged instead:
-        ROA ROE NIMY RBCT1JR IDT1CER and their single-quarter *Q variants
+        ROA ROE NIMY RBCT1JR and their single-quarter *Q variants
 
 A future pass can restore the averaged ratios by aggregating each charter's
 HISTORY and forming 2-point averages, the way ui/financials_statements already
@@ -50,7 +55,7 @@ from __future__ import annotations
 # Fields FDIC computes against AVERAGE balances — unreconstructable from
 # period-end levels, so they are dropped for a group rather than guessed.
 AVERAGE_BASED_RATIOS = frozenset({
-    "ROA", "ROE", "NIMY", "RBCT1JR", "IDT1CER", "INTEXPY", "INTINCY",
+    "ROA", "ROE", "NIMY", "RBCT1JR", "INTEXPY", "INTINCY",
     "NONIIAY", "NONIXAY", "ROAPTX", "NCLNLSR", "NTLNLSR", "LNATRESR",
     "NPERFV", "ROAQ", "ROEQ", "NIMYQ", "EEFFQR", "NTLNLSQR",
 })
@@ -214,7 +219,7 @@ def aggregate_records(records: list[dict]) -> dict:
     """Consolidate one FDIC financials record per charter into one record.
 
     Levels are summed; average-based ratios are dropped (see module docstring);
-    the three exactly-recomputable ratios are rebuilt from the sums. Identity
+    the four exactly-recomputable ratios are rebuilt from the sums. Identity
     fields come from the LEAD charter — records must be largest-first.
 
     A single record passes through unchanged, so single-charter banks are
@@ -327,14 +332,22 @@ def _recompute_exact_ratios(out: dict) -> None:
         except (TypeError, ValueError):
             return None
 
+    # Every branch assigns: the summing loop in aggregate_records has already
+    # ADDED the charters' reported ratios into these keys (a ratio is not in
+    # AVERAGE_BASED_RATIOS), so leaving one untouched would ship a sum of
+    # percentages as the group's ratio. n/a when a component is absent.
     intinc, eintexp = _n("INTINC"), _n("EINTEXP")
     nonii, nonix = _n("NONII"), _n("NONIX")
+    out["EEFFR"] = None
     if None not in (intinc, eintexp, nonii, nonix):
         revenue = (intinc - eintexp) + nonii
         out["EEFFR"] = (nonix / revenue * 100) if revenue > 0 else None
 
     rwaj = _n("RWAJ")
-    if rwaj and rwaj > 0:
-        rbc, t1 = _n("RBC"), _n("RBCT1J")
-        out["RBCRWAJ"] = (rbc / rwaj * 100) if rbc is not None else None
-        out["RBC1RWAJ"] = (t1 / rwaj * 100) if t1 is not None else None
+    rbc, t1, cet1 = _n("RBC"), _n("RBCT1J"), _n("RBCT1C")
+    ok = rwaj is not None and rwaj > 0
+    out["RBCRWAJ"] = (rbc / rwaj * 100) if (ok and rbc is not None) else None
+    out["RBC1RWAJ"] = (t1 / rwaj * 100) if (ok and t1 is not None) else None
+    # n/a (not the lead charter's ratio) until every charter's RBCT1C is in
+    # the cache — the field was added to the fetch on 2026-09-22.
+    out["IDT1CER"] = (cet1 / rwaj * 100) if (ok and cet1 is not None) else None
