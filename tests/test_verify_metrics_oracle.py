@@ -18,7 +18,7 @@ from tests import _streamlit_stub
 
 _streamlit_stub.install()
 
-from tools.verify_metrics import _oracle  # noqa: E402
+from tools.verify_metrics import _oracle, _split_pe_basis  # noqa: E402
 
 
 def _sec(**over):
@@ -69,6 +69,7 @@ class TestWarnTierNeverFailsJob(unittest.TestCase):
         self.assertIn('_warn("fmp:tbvps"', src)
         self.assertIn('_warn("fmp:pe_ratio"', src)
         self.assertIn('_warn("ptbv_ratio"', src)
+        self.assertIn('_warn("pe_ratio:xbrl_basis"', src)
         # exit is decided by hard divergences only
         self.assertIn("return 1 if diverged else 0", src)
         self.assertNotIn("warnings else 1", src)
@@ -93,6 +94,47 @@ class TestDeclaredZeroDividend(unittest.TestCase):
     def test_missing_price_is_still_none(self):
         hard, _ = _oracle({}, _sec(dividends_per_share=0.0), price=None)
         self.assertIsNone(hard["dividend_yield"])
+
+
+class TestPeOnServedEpsBasis(unittest.TestCase):
+    """Every weekday run from ~2026-09-08 failed on pe_ratio for ONB, FRME,
+    HBAN, CCBG: the dashboard served the release-anchored composite TTM EPS
+    (SEC companyfacts still held only Q1-2026 for them) while the oracle
+    priced P/E off the stale XBRL TTM. ONB: price/2.26 = 11.17 vs
+    price/1.95 = 12.95. Convention skew must be WARN, and the hard check
+    must verify the identity on the basis actually served."""
+
+    def test_composite_basis_moves_xbrl_pe_to_warn_and_checks_identity(self):
+        price = 25.25
+        hard, warn = _oracle({}, _sec(eps=1.95), price=price)
+        self.assertAlmostEqual(hard["pe_ratio"], 25.25 / 1.95, places=9)
+        dash = {"eps": 2.26, "eps_source": "release_ttm",
+                "pe_ratio": 25.25 / 2.26}
+        _split_pe_basis(dash, hard, warn, price)
+        self.assertAlmostEqual(hard["pe_ratio"], 25.25 / 2.26, places=9)
+        self.assertAlmostEqual(warn["pe_ratio:xbrl_basis"], 25.25 / 1.95,
+                               places=9)
+
+    def test_composite_basis_still_catches_wiring_bug(self):
+        # The dashboard displays EPS 2.26 but priced P/E off something else.
+        hard, warn = _oracle({}, _sec(eps=1.95), price=25.25)
+        dash = {"eps": 2.26, "eps_source": "release_ttm", "pe_ratio": 9.0}
+        _split_pe_basis(dash, hard, warn, 25.25)
+        self.assertNotAlmostEqual(hard["pe_ratio"], dash["pe_ratio"], places=2)
+
+    def test_xbrl_basis_is_untouched(self):
+        hard, warn = _oracle({}, _sec(eps=3.53), price=20.0)
+        dash = {"eps": 3.53, "eps_source": "reconstructed", "pe_ratio": 20 / 3.53}
+        _split_pe_basis(dash, hard, warn, 20.0)
+        self.assertAlmostEqual(hard["pe_ratio"], 20 / 3.53, places=9)
+        self.assertNotIn("pe_ratio:xbrl_basis", warn)
+
+    def test_composite_with_no_price_is_none(self):
+        hard, warn = _oracle({}, _sec(eps=1.95), price=None)
+        dash = {"eps": 2.26, "eps_source": "release_ttm", "pe_ratio": None}
+        _split_pe_basis(dash, hard, warn, None)
+        self.assertIsNone(hard["pe_ratio"])
+        self.assertIsNone(warn["pe_ratio:xbrl_basis"])
 
 
 if __name__ == "__main__":

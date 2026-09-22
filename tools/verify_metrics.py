@@ -148,6 +148,29 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
     return out, out_warn
 
 
+def _split_pe_basis(dash: dict, oracle: dict, oracle_warn: dict, price) -> None:
+    """Put the P/E check on the EPS basis the dashboard actually serves.
+
+    In the release→10-Q window (analysis/valuation._resolve_eps) the dashboard
+    prices P/E off the release-anchored COMPOSITE TTM EPS (eps_source
+    "release_ttm"): the earnings release's quarter plus three XBRL quarters.
+    The oracle only has the XBRL TTM, which in that window is a quarter
+    stale — SEC companyfacts held Q1-2026 for ONB/FRME/HBAN/CCBG well into
+    September 2026, so every weekday run from ~09-08 failed on exactly that
+    gap (ONB 11.17 vs 12.95 = price/2.26 vs price/1.95). Convention skew,
+    not a derivation bug — the same class as ptbv_ratio (2026-07-09).
+
+    On the composite basis the HARD check becomes the identity the oracle
+    can verify independently — P/E == price ÷ the EPS the row displays
+    (catches price/EPS wiring bugs) — and the XBRL-basis P/E moves to the
+    WARN tier. On the XBRL basis nothing changes."""
+    if dash.get("eps_source") != "release_ttm":
+        return
+    oracle_warn["pe_ratio:xbrl_basis"] = oracle.get("pe_ratio")
+    eps = dash.get("eps")
+    oracle["pe_ratio"] = (price / eps) if (price and eps and eps > 0) else None
+
+
 def verify_ticker(ticker: str) -> dict:
     """Build dashboard metrics + independent oracle, return list of divergences."""
     from data.bank_mapping import get_cik, get_fdic_cert
@@ -194,6 +217,7 @@ def verify_ticker(ticker: str) -> dict:
         return row
 
     oracle, oracle_warn = _oracle(fdic, sec, price)
+    _split_pe_basis(dash, oracle, oracle_warn, price)
 
     for key, oref in oracle.items():
         dval = dash.get(key)
@@ -224,6 +248,10 @@ def verify_ticker(ticker: str) -> dict:
     # Reported-vs-reconstructed P/TBV (dashboard prefers the bank's own
     # reported TBVPS; the oracle reconstructs from XBRL).
     _warn("ptbv_ratio", dash.get("ptbv_ratio"), oracle_warn.get("ptbv_ratio"))
+    # XBRL-basis P/E vs the composite the dashboard serves in the
+    # release→10-Q window (see _split_pe_basis).
+    _warn("pe_ratio:xbrl_basis", dash.get("pe_ratio"),
+          oracle_warn.get("pe_ratio:xbrl_basis"))
 
     # Third source: FMP's pre-computed TTM fundamentals. These isolate OUR
     # SEC-derivation — TTM-EPS, goodwill/intangible handling, share count —
