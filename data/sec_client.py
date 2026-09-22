@@ -159,6 +159,20 @@ def _download_company_facts(cik: int) -> dict:
     return _download_company_facts_ok(cik)[0]
 
 
+def company_facts_cache_key(cik: int) -> str:
+    """THE persistent-store key for a CIK's slim companyfacts blob. Every
+    reader, writer and invalidator goes through here: two callers (poll_events'
+    new-filing invalidation, the Financial Highlights freshness caption) were
+    still building the pre-_SLIM_VER spelling and silently never hit."""
+    return f"sec_facts:{_SLIM_VER}:{int(cik)}"
+
+
+def invalidate_company_facts(cik: int) -> None:
+    """Drop the cached companyfacts blob so the next fetch re-downloads."""
+    from data import cache
+    cache.invalidate(company_facts_cache_key(cik))
+
+
 # In-process memo (1h) on top of the Postgres/SQLite store: the persistent
 # cache already spares the ~30s SEC download, but a warm cache HIT still pays a
 # DB round-trip + slim-dict deserialization on EVERY rerun. This function feeds
@@ -179,7 +193,7 @@ def fetch_company_facts(cik: int) -> dict:
     value) is preserved because we keep each kept concept's full unit arrays.
     """
     from data import cache
-    cache_key = f"sec_facts:{_SLIM_VER}:{cik}"
+    cache_key = company_facts_cache_key(cik)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -207,7 +221,7 @@ def fetch_company_facts_ok(cik: int) -> tuple[dict, bool]:
     Not @st.cache_data-memoized (unlike fetch_company_facts): the only caller
     is the batch deal-comps job, not an interactive tab."""
     from data import cache
-    cache_key = f"sec_facts:{_SLIM_VER}:{cik}"
+    cache_key = company_facts_cache_key(cik)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached, True
