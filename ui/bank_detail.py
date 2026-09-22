@@ -77,6 +77,76 @@ def _kv_table(title, pairs):
     return f'<div class="ksk-ledger"><div class="lg-title">{title}</div>{body}</div>' 
 
 
+def _facts_as_of_label(row) -> str | None:
+    """'Mar 2026' when SEC's XBRL API lags this bank's own latest filing
+    (row["sec_facts_lag"], analysis/valuation._sec_facts_lag) — the month
+    every XBRL-reconstructed figure on the card is actually as of. None when
+    the facts are current or the lag is unknown."""
+    if not row.get("sec_facts_lag"):
+        return None
+    try:
+        return pd.to_datetime(row.get("sec_facts_as_of")).strftime("%b %Y")
+    except Exception:
+        return None
+
+
+def _ps_label(row, base, src_key):
+    """Per-share book value label with its provenance.
+
+    Non-SEC filers (PBAM class): TBV comes from the bank's own wire earnings
+    release — labeled so the provenance is visible (owner decision
+    2026-07-16). Release-first: both the 8-K release path and the wire
+    release path are the bank's OWN reported figure — say so on the card.
+    A RECONSTRUCTED figure while SEC's XBRL API lags the bank's latest 10-Q
+    is dated ("TBV / Share (as of Mar 2026)") — a quarter-old book value
+    must never read as current (2026-09-22)."""
+    if row.get(src_key) in ("company_release", "reported_8k"):
+        return f"{base} (co. release)"
+    stale = _facts_as_of_label(row)
+    return f"{base} (as of {stale})" if stale else base
+
+
+def _eps_label(row):
+    """"release_ttm" = release-anchored composite TTM (latest quarter from the
+    bank's own earnings release + three Company-Reported quarters) — say so.
+    The XBRL TTM while SEC's API lags the latest filing is dated the same way
+    as the book values (Citi: two quarters behind, 2026-09-22)."""
+    if row.get("eps_source") == "release_ttm":
+        return "EPS (TTM, co. release)"
+    stale = _facts_as_of_label(row)
+    return f"EPS (TTM, thru {stale})" if stale else "EPS (TTM)"
+
+
+def _mdy(d) -> str:
+    """'Jul 29, 2026' — portable (strftime %-d is Linux-only)."""
+    return f"{d.strftime('%b')} {d.day}, {d.year}"
+
+
+def _sec_lag_note(row) -> str | None:
+    """One-line card footnote naming the filed-but-unavailable quarter, e.g.
+    'SEC XBRL data lags this filer: the Q2 2026 10-Q filed Jul 29, 2026 is not
+    yet in SEC companyfacts — HoldCo per-share figures above are as of Mar 31,
+    2026.' None when the facts are current or the lag is unknown."""
+    if not row.get("sec_facts_lag"):
+        return None
+    try:
+        filed = pd.to_datetime(row.get("sec_filed_period"))
+        facts = pd.to_datetime(row.get("sec_facts_as_of"))
+        filed_on = pd.to_datetime(row.get("sec_filed_date"))
+    except Exception:
+        return None
+    if pd.isna(filed) or pd.isna(facts):
+        return None
+    form = row.get("sec_filed_form") or "filing"
+    period = (f"FY{filed.year}" if form == "10-K"
+              else f"Q{(filed.month - 1) // 3 + 1} {filed.year}")
+    filed_txt = (f" filed {_mdy(filed_on)}"
+                 if not pd.isna(filed_on) else "")
+    return (f"SEC XBRL data lags this filer: the {period} {form}{filed_txt} "
+            f"is not yet in SEC companyfacts — HoldCo per-share figures above "
+            f"are as of {_mdy(facts)}.")
+
+
 def _render_valuation_performance_tables(row, fdic_rec=None):
     """Valuation + Performance as two side-by-side reference tables, matching the
     Market Data / Company Profile format above (consistent, dense).
@@ -102,22 +172,9 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
         c = "var(--success)" if chg >= 0 else "var(--danger)"
         chg_html = f'<span style="color:{c};">{chg:+.2f}%</span>'
 
-    # Non-SEC filers (PBAM class): TBV comes from the bank's own wire
-    # earnings release — labeled so the provenance is visible (owner
-    # decision 2026-07-16).
-    # Release-first provenance labels: both the 8-K release path and the wire
-    # release path are the bank's OWN reported figure — say so on the card.
-    def _ps_label(base, src_key):
-        return (f"{base} (co. release)"
-                if row.get(src_key) in ("company_release", "reported_8k")
-                else base)
-
-    tbv_label = _ps_label("TBV / Share", "tbvps_source")
-    bv_label = _ps_label("BV / Share", "bvps_source")
-    # "release_ttm" = release-anchored composite TTM (latest quarter from the
-    # bank's own earnings release + three Company-Reported quarters) — say so.
-    eps_label = ("EPS (TTM, co. release)"
-                 if row.get("eps_source") == "release_ttm" else "EPS (TTM)")
+    tbv_label = _ps_label(row, "TBV / Share", "tbvps_source")
+    bv_label = _ps_label(row, "BV / Share", "bvps_source")
+    eps_label = _eps_label(row)
     valuation = [
         ("Last Price", disp("price")),
         ("Change", chg_html),
@@ -793,6 +850,11 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     with _cols[3]:
         with timed("cp.val_panel"):
             _render_valuation_panel(ticker, info)
+    _lag = _sec_lag_note(row)
+    if _lag:
+        st.markdown(
+            f'<div style="margin-top:5px; font-size:0.75rem; color:var(--warning);">'
+            f'{_lag}</div>', unsafe_allow_html=True)
     st.markdown(
         '<div style="margin-top:5px; font-size:0.75rem; color:var(--text-secondary);">'
         'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
