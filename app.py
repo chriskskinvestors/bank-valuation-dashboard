@@ -1212,6 +1212,16 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     filter_specs.append({"kind": "absolute", "metric": filt_key,
                                          "op": fop, "value": fval})
 
+        # Explicit Apply (owner request 2026-09-22): the widgets above already
+        # live in session_state, so applying is just closing the dialog and
+        # rerunning the page with the current specs. Without a button the
+        # only way out was the X, which read as "cancel".
+        _, _apply_col = st.columns([5.4, 1.3])
+        with _apply_col:
+            if st.button("Apply", type="primary", key=f"filt_apply_{tab_key}",
+                         use_container_width=True):
+                st.rerun()
+
     # Live specs (independent of whether the dialog is open) drive the table.
     filter_specs = _filter_specs_from_state()
 
