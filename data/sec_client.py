@@ -196,7 +196,7 @@ def fetch_company_facts(cik: int) -> dict:
     cache_key = company_facts_cache_key(cik)
     cached = cache.get(cache_key)
     if cached is not None:
-        return cached
+        return _overlay(cik, cached)
 
     facts = _download_company_facts(cik)
     if not facts:
@@ -207,7 +207,19 @@ def fetch_company_facts(cik: int) -> dict:
     except Exception as e:
         # Cache failure shouldn't break the call — log and move on.
         print(f"[SEC] Cache put failed for CIK {cik}: {e}")
-    return slim
+    return _overlay(cik, slim)
+
+
+def _overlay(cik: int, slim: dict) -> dict:
+    """Complete the blob from the bank's own latest filing when SEC's API
+    lags it (data/sec_facts_overlay) — applied on the way OUT of the cache,
+    never written into it. A failure inside the overlay is a logged no-op."""
+    try:
+        from data.sec_facts_overlay import overlay_lagging_filing
+        return overlay_lagging_filing(cik, slim)
+    except Exception as e:
+        print(f"[SEC] overlay skipped for CIK {cik}: {type(e).__name__}: {e}")
+        return slim
 
 
 def fetch_company_facts_ok(cik: int) -> tuple[dict, bool]:
@@ -224,7 +236,7 @@ def fetch_company_facts_ok(cik: int) -> tuple[dict, bool]:
     cache_key = company_facts_cache_key(cik)
     cached = cache.get(cache_key)
     if cached is not None:
-        return cached, True
+        return _overlay(cik, cached), True
     facts, ok = _download_company_facts_ok(cik)
     if not facts:
         return {}, ok
@@ -233,7 +245,7 @@ def fetch_company_facts_ok(cik: int) -> tuple[dict, bool]:
         cache.put(cache_key, slim)
     except Exception as e:
         print(f"[SEC] Cache put failed for CIK {cik}: {e}")
-    return slim, True
+    return _overlay(cik, slim), True
 
 
 def _extract_latest_value_with_source(facts: dict, concept: str,
@@ -530,6 +542,9 @@ def get_latest_fundamentals(cik: int) -> dict:
         return {}
 
     result = {}
+    # Provenance: set when the latest filing was overlaid onto a lagging
+    # companyfacts blob (data/sec_facts_overlay) — the card says "(co. 10-Q)".
+    result["sec_facts_overlay"] = facts.get("_overlay")
     for xbrl_concept, short_name in CONCEPTS_OF_INTEREST.items():
         val = _extract_latest_value(facts, xbrl_concept)
         result[short_name] = val

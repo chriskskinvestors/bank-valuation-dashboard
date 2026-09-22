@@ -102,8 +102,21 @@ def _ps_label(row, base, src_key):
     must never read as current (2026-09-22)."""
     if row.get(src_key) in ("company_release", "reported_8k"):
         return f"{base} (co. release)"
+    form = _overlay_form(row)
+    if form:
+        return f"{base} (co. {form})"
     stale = _facts_as_of_label(row)
     return f"{base} (as of {stale})" if stale else base
+
+
+def _overlay_form(row) -> str | None:
+    """'10-Q' / '10-K' when the XBRL-derived figures were completed from the
+    bank's own latest filing because SEC's API lagged it
+    (data/sec_facts_overlay); None otherwise."""
+    ov = row.get("sec_facts_overlay")
+    if isinstance(ov, dict) and ov.get("form"):
+        return ov["form"]
+    return None
 
 
 def _eps_label(row):
@@ -113,6 +126,9 @@ def _eps_label(row):
     as the book values (Citi: two quarters behind, 2026-09-22)."""
     if row.get("eps_source") == "release_ttm":
         return "EPS (TTM, co. release)"
+    form = _overlay_form(row)
+    if form:
+        return f"EPS (TTM, co. {form})"
     stale = _facts_as_of_label(row)
     return f"EPS (TTM, thru {stale})" if stale else "EPS (TTM)"
 
@@ -127,6 +143,21 @@ def _sec_lag_note(row) -> str | None:
     'SEC XBRL data lags this filer: the Q2 2026 10-Q filed Jul 29, 2026 is not
     yet in SEC companyfacts — HoldCo per-share figures above are as of Mar 31,
     2026.' None when the facts are current or the lag is unknown."""
+    ov = row.get("sec_facts_overlay")
+    if isinstance(ov, dict) and ov.get("form"):
+        try:
+            rd = pd.to_datetime(ov.get("report_date"))
+            fd = pd.to_datetime(ov.get("filed"))
+        except Exception:
+            return None
+        if pd.isna(rd):
+            return None
+        period = (f"FY{rd.year}" if ov["form"] == "10-K"
+                  else f"Q{(rd.month - 1) // 3 + 1} {rd.year}")
+        filed_txt = f" filed {_mdy(fd)}" if not pd.isna(fd) else ""
+        return (f"HoldCo per-share figures above are from the {period} "
+                f"{ov['form']}{filed_txt} — read from the filing's own XBRL "
+                f"because SEC companyfacts has not yet published it.")
     if not row.get("sec_facts_lag"):
         return None
     try:
