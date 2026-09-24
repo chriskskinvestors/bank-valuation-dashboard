@@ -251,8 +251,25 @@ socket unless it is marked live (the memory note "local env live keys" records
 three prior incidents of this class). Test: the guard itself.
 
 No-store diff (discovery re-run from a `git archive` copy with no `cache.db`
-and no per-source cache dirs): the run completed; the pass/fail diff versus the
-warm run was not finished before this report was cut — NOT MEASURED.
+and no per-source cache dirs): NOT COMPLETED — the run stalled on test 19,
+`tests/test_adapters_ignore_since.py TestGoogleNewsIgnoresSince.test_per_ticker_item_older_than_since_kept`,
+which through `data/events/wire_base.py:505 → :184` triggers the **~6.5-minute
+live universe build** when no snapshot exists (stdout shows the
+`[universe] dropping … foreign-domiciled filer` walk). Two sibling modules
+(`tests/test_events_dedup_and_tagging.py:72`, `tests/test_feed_mistag_and_dupes.py:66`)
+guard that seam with `skipTest`; this one does not, so with the warm store
+present it silently runs against the real 435-bank index. Fix (S): stub the
+universe seam in that module the way its siblings do.
+
+Structural / source-string tests (49 sites classified by the sweep): 13 GENUINE
+(repo-wide single-owner scans, Dockerfile/deploy.yml contracts, AST-lift-and-execute),
+31 WEAK (a literal that a same-bug refactor evades — e.g. the two named above),
+5 THEATRE: `tests/test_tbv_small_bank_coverage.py:145` (exact version-string pins),
+`tests/test_frontier_from_events.py:100`, `tests/test_ui_p3_guards.py:117`
+(asserts a docstring), `tests/test_audit_regressions.py:397` and
+`tests/test_audit_20260727_p3.py:93,:121` (assert on an expression the test
+itself computes). Two assert-free tests (both must-not-raise smokes); zero
+tautological assertions by AST scan.
 
 ---
 
