@@ -86,6 +86,6 @@ jobs:
           gcloud logging read \
             "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }} AND timestamp>=\"${SINCE}\"" \
             --project="${{ env.PROJECT_ID }}" \
-            --order=asc --limit=400 \
+            --order=asc --limit=2000 \
             --format="value(timestamp,textPayload)" \
             || echo "::warning::could not read Cloud Logging (github-deployer lacks roles/logging.viewer?)"
