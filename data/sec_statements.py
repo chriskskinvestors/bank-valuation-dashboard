@@ -832,47 +832,6 @@ def _select_primary_rfile(base: str, stype: str):
     return None, None
 
 
-def as_reported_statements_for(cik) -> dict | None:
-    """Cached As-Reported primary statements (income, balance sheet, cash flows)
-    for a company, from its latest 10-K's SEC-rendered R-files. Returns
-    {"meta": {...}, "statements": {type: parsed}} or None. A transient
-    fetch/parse failure is never cached (so the next load retries)."""
-    if not cik:
-        return None
-    from data import cache
-    meta = latest_filing(cik, ("10-K",))
-    if not meta:
-        return None
-    ckey = f"asreported:v2:{meta['accession']}"
-    cached = cache.get(ckey)
-    if cached is not None:
-        return {"meta": meta, "statements": cached} if cached else None
-    base = _filing_base(meta["cik"], meta["accession"])
-    try:
-        stmts = {}
-        # Income/balance are chosen by CONTENT across title candidates; cashflow
-        # (and any other titled statement) by its unambiguous title.
-        for stype in ("income", "balance"):
-            _, parsed = _select_primary_rfile(base, stype)
-            if parsed and parsed["rows"]:
-                stmts[stype] = parsed
-        title_map = _statement_rfiles(base)
-        for stype, fn in title_map.items():
-            if stype in ("income", "balance"):
-                continue
-            parsed = parse_rfile(_get(base + fn))
-            if parsed and parsed["rows"]:
-                stmts[stype] = parsed
-    except Exception as e:
-        print(f"[sec_statements] failed for cik {cik}: {type(e).__name__}: {e}")
-        return None   # transient — do not cache
-    try:
-        cache.put(ckey, stmts)
-    except Exception:
-        pass
-    return {"meta": meta, "statements": stmts} if stmts else None
-
-
 # ── Multi-year stitching (Company Reported income statement) ────────────────
 # One 10-K carries ~3 fiscal years; SNL-style depth is ~5. We stitch successive
 # 10-Ks: union of the company's own line labels (each filing's order preserved),
