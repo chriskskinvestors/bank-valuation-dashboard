@@ -355,16 +355,29 @@ def _fnum(v):
     return None if f != f else f
 
 
-def null_unreported_cet1(rec: dict) -> dict:
-    """Null the CET1 fields FDIC reports as a literal 0 for quarters before the
-    Basel III CET1 line existed (through 2014Q4 for most banks; verified live
-    2026-09-22 on OZK cert 110: 2014-12-31 RBCT1C=0, IDT1CER=0 with
-    RBCT1J=824,120). A bank with positive Tier 1 capital cannot have zero
-    CET1 — CET1 is the core of Tier 1 — so ratio 0 with Tier 1 present means
-    "not yet reported", and charting it would put a 0% CET1 ratio and a $0
-    CET1 capital line on every deep-range view. Mutates and returns `rec`.
-    Applied at both boundaries: the live fetch and the history-store read
-    (stored rows pre-date this rule)."""
+_RISK_BASED_RATIOS = ("RBCRWAJ", "RBC1RWAJ", "IDT1CER")
+
+
+def null_unreported_capital(rec: dict) -> dict:
+    """Null capital ratios FDIC reports as a literal 0 for quarters before the
+    measure existed. Two verified patterns (live, 2026-09-22/24):
+
+      * Risk-based ratios before the 1990 risk-based capital rules: OZK cert
+        110 1986–1989 (and JPM 628, WFC 3511) carry RBCRWAJ=0 with RWAJ, RBC
+        and RBC1RWAJ all null. A ratio with no RWA denominator is unreported,
+        not zero — the MAX-range Capital Adequacy table printed 0.00% for
+        FY1986–FY1989.
+      * CET1 before the Basel III line (through 2014Q4 for most banks): OZK
+        2014-12-31 RBCT1C=0, IDT1CER=0 with RBCT1J=824,120; 1990–2014 rows
+        carry RBCT1C=None with IDT1CER=0. A bank with positive Tier 1 cannot
+        have zero CET1 (CET1 is the core of Tier 1), so ratio 0 with Tier 1
+        present means "not yet reported".
+
+    Mutates and returns `rec`. Applied at both boundaries: the live fetch and
+    the history-store read (stored rows pre-date this rule). The CET1 rule
+    runs first so its $-line (RBCT1C) is nulled alongside the ratio; the RWA
+    rule needs the RWAJ key PRESENT — a record that never carried RWAJ says
+    nothing about the denominator, and n/a-over-guess cuts both ways."""
     tier1 = _fnum(rec.get("RBCT1J"))
     if tier1 is None:
         tier1 = _fnum(rec.get("RBCT1"))
@@ -374,6 +387,10 @@ def null_unreported_cet1(rec: dict) -> dict:
         rec["IDT1CER"] = None
         if "RBCT1C" in rec:
             rec["RBCT1C"] = None
+    if "RWAJ" in rec and _fnum(rec.get("RWAJ")) in (None, 0):
+        for k in _RISK_BASED_RATIOS:
+            if _fnum(rec.get(k)) == 0:
+                rec[k] = None
     return rec
 
 
@@ -403,7 +420,7 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
         print(f"[FDIC] Error fetching cert {cert}: {e}")
         return pd.DataFrame()
 
-    rows = [null_unreported_cet1(r["data"]) for r in data.get("data", [])]
+    rows = [null_unreported_capital(r["data"]) for r in data.get("data", [])]
     if not rows:
         return pd.DataFrame()
 

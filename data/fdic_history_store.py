@@ -127,13 +127,14 @@ def get_cert_history(cert: int, limit: int | None = None) -> list[dict]:
         params["lim"] = int(limit)
     with eng.connect() as conn:
         rows = conn.execute(text(sql), params).fetchall()
-    from data.fdic_client import null_unreported_cet1
+    from data.fdic_client import null_unreported_capital
     out = []
     for (f,) in rows:
         rec = f if isinstance(f, dict) else json.loads(f)
-        # Stored rows pre-date the rule and carry FDIC's literal-0 CET1 for
-        # pre-2015 quarters; apply it on read so no re-backfill is needed.
-        out.append(null_unreported_cet1(rec))
+        # Stored rows pre-date the rule and carry FDIC's literal-0 ratios
+        # (CET1 pre-2015, risk-based pre-1990); apply it on read so no
+        # re-backfill is needed.
+        out.append(null_unreported_capital(rec))
     return out
 
 
