@@ -20,7 +20,7 @@ finding; an n/a where the source clearly discloses the figure is a finding.
 | WTFC | multi-charter | 16 FDIC charters aggregated |
 | CZWI | community <$2B | $1.8B, $ thousands filer |
 | LARK | community <$2B | $1.6B, late 10-K, 5% stock dividend |
-| PBAM | OTC, non-SEC | CalPrivate; TBV only from the wire release |
+| PBAM | mapped as OTC / non-SEC | CalPrivate; TBV only from the wire release — turned out to be an SEC registrant since 2026 (P1-8) |
 | FBIZ | preferred stock | TBVPS must exclude $12.0M preferred |
 | BBT | recent merger | Beacon = Berkshire (legal acquirer) + Brookline (accounting acquirer), 2025-09-01; ASU 2025-08 restatement |
 
