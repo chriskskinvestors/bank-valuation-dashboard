@@ -26,6 +26,19 @@
         "--server.port=8503"
       ],
       "port": 8503
+    },
+    {
+      "name": "bank-dashboard-8504",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "streamlit",
+        "run",
+        "app.py",
+        "--server.headless=true",
+        "--server.port=8504"
+      ],
+      "port": 8504
     }
   ]
 }

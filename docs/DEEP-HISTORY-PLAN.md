@@ -6,7 +6,13 @@ Status: **DECIDED 2026-09-08 (owner: "go with your recommendations") —
 90,643 rows). Phases 1 + 2 SHIPPED 2026-09-22 (owner scope call:
 statement tables + the four dynamics tabs, 5Y / 10Y / 20Y / MAX picker
 defaulting to today's view, absent fields annotated + n/a) — see
-`ui/history_range.py`. Phase 3 not started. Nightly append WIRED 2026-09-22:
+`ui/history_range.py`. Phase 3 SHIPPED 2026-09-24 (owner scope call:
+Valuation Model tab → “Long-run context” section; P/TBV + P/E percentile
+vs own daily history since SEC per-share data begins (~2009 — the honest
+ceiling, entities never blended) with a median / p10–p90 chart, plus
+ROAA / NIM / efficiency / TCE-TA / NCO percentile vs own call-report
+quarters since 1992; `analysis/long_run.py`). FMP price depth verified
+1995+ (FMP caps a request at 5,000 daily rows ≈ 20y). Nightly append WIRED 2026-09-22:
 refresh-universe runs `jobs.backfill_fdic_history incremental` as its last
 step (logged, never affects the gate's exit code); deploy.yml creates the
 standalone `backfill-fdic-history` job (one-time deep backfill, resumable)

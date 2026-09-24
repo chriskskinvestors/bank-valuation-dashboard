@@ -337,6 +337,109 @@ def _render_verdict_banner(price, blended, dcf_fv, w_fair_price, irr, coe_pct):
     st.markdown(banner, unsafe_allow_html=True)
 
 
+def _ordinal(n: float) -> str:
+    i = int(round(n))
+    suf = "th" if 10 <= i % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(i % 10, "th")
+    return f"{i}{suf}"
+
+
+def _render_long_run_context(ticker: str) -> None:
+    """Long-run context (DEEP-HISTORY-PLAN.md Phase 3, owner scope
+    2026-09-24): where today's multiples and call-report ratios sit in the
+    bank's OWN history. Multiples rank against every trading day since SEC
+    per-share data begins (~2009 — the honest ceiling: bank-sub call
+    reports carry no share count and entities are never blended);
+    fundamentals rank against every stored call-report quarter (1992 →).
+    Ranks and order statistics of values the dashboard already shows —
+    nothing modeled; too little history → n/a."""
+    from analysis.long_run import (multiple_context, fundamentals_context,
+                                   FUNDAMENTALS)
+    from ui.bank_detail import valuation_series
+    from ui.history_range import load_hist_for_range, qlabel, entity_note
+
+    st.markdown('<div class="ksk-sec">Long-run context — today vs the bank\'s '
+                'own history</div>', unsafe_allow_html=True)
+    _mut = "color:var(--text-muted);font-size:var(--fs-xs)"
+
+    info = {"fdic_cert": get_fdic_cert(ticker), "cik": get_cik(ticker)}
+    try:
+        val = valuation_series(ticker, info, "ALL")
+    except Exception:
+        val = None
+    mult = {k: (multiple_context(val, k) if val is not None else None)
+            for k in ("ptbv", "pe")}
+    deep = load_hist_for_range(ticker, "MAX")
+    fund = fundamentals_context(deep)
+
+    def _row(c, fmt):
+        if not c:
+            return "n/a"
+        return (f"<b>{fmt(c['current'])}</b> · <b>{_ordinal(c['pct_rank'])} pct</b> "
+                f'<span style="{_mut}">median {fmt(c["median"])} · '
+                f'p10–p90 {fmt(c["p10"])}–{fmt(c["p90"])} · '
+                f"since {qlabel(c['start'])} · n={c['n']:,}</span>")
+
+    _x = lambda v: f"{v:.2f}x"
+    _p = lambda v: f"{v:.2f}%"
+
+    left, right = st.columns([1, 1])
+    with left:
+        ledger("Valuation vs own history (daily)", [
+            ("P/TBV", _row(mult["ptbv"], _x)),
+            ("P/E (TTM)", _row(mult["pe"], _x)),
+        ])
+        st.caption("Price ÷ the most recently filed TBV/share and TTM diluted EPS "
+                   "(SEC XBRL, holding company), one point per trading day since "
+                   "per-share data begins. Percentile = share of days at or below "
+                   "today's multiple; n/a below one year of history"
+                   + (" — price history unavailable." if val is None else "."))
+        st.markdown("")
+        ledger("Fundamentals vs own history (quarterly)", [
+            (label + (" (lower = better)" if key in ("efficiency", "nco") else ""),
+             _row(fund.get(key), _p))
+            for key, label, _f in FUNDAMENTALS
+        ])
+        st.caption("FDIC-reported ratios as the Financial Highlights table shows "
+                   "them (YTD-annualized), every stored call-report quarter · "
+                   f"{entity_note(ticker)}. Percentile = share of quarters at or "
+                   "below today; n/a below two years of history.")
+
+    with right:
+        c = mult["ptbv"]
+        if c and val is not None:
+            import plotly.graph_objects as go
+            from utils.chart_style import apply_standard_layout, CHART_HEIGHT_FULL
+            d = val.dropna(subset=["ptbv"])
+            fig = go.Figure()
+            fig.add_hrect(y0=c["p10"], y1=c["p90"], fillcolor="rgba(30,64,175,0.07)",
+                          line_width=0, annotation_text="p10–p90",
+                          annotation_position="top left", annotation_font_size=10)
+            fig.add_trace(go.Scatter(
+                x=d["date"], y=d["ptbv"], mode="lines", name="P/TBV",
+                line=dict(color=COLOR_PRIMARY, width=1.6),
+                hovertemplate="%{x|%b %d, %Y}<br>P/TBV %{y:.2f}x<extra></extra>"))
+            fig.add_hline(y=c["median"], line_color=COLOR_SUCCESS, line_width=1,
+                          line_dash="dash",
+                          annotation_text=f"median {c['median']:.2f}x",
+                          annotation_position="bottom left", annotation_font_size=10)
+            fig.add_trace(go.Scatter(
+                x=[d["date"].iloc[-1]], y=[c["current"]], mode="markers",
+                name="Today", marker=dict(color=COLOR_DANGER, size=9),
+                hovertemplate=f"Today {c['current']:.2f}x · {_ordinal(c['pct_rank'])} pct"
+                              "<extra></extra>"))
+            apply_standard_layout(
+                fig, title=f"P/TBV since {qlabel(c['start'])} — today at the "
+                           f"{_ordinal(c['pct_rank'])} percentile of {c['n']:,} days",
+                height=CHART_HEIGHT_FULL, yaxis_title="P/TBV", show_legend=False,
+                hovermode="x unified")
+            fig.update_yaxes(ticksuffix="x")
+            st.plotly_chart(fig, use_container_width=True, key=f"lr_ptbv_{ticker}")
+        else:
+            from ui.states import empty_state
+            empty_state("No long-run P/TBV series for this bank",
+                        "Needs SEC per-share data and at least one year of price history")
+
+
 @st.fragment
 def render_valuation_model(ticker: str):
     """Render the full valuation model panel.
@@ -827,6 +930,10 @@ def render_valuation_model(ticker: str):
     # ── Consensus vs Model comparison (below tabs) ──────────────────
     st.markdown("---")
     _render_consensus_vs_model(ticker, projected_eps, hist[0])
+
+    # ── Long-run context (deep history, Phase 3) ───────────────────
+    st.markdown("---")
+    _render_long_run_context(ticker)
 
     # ── Notes ──────────────────────────────────────────────────────────
     with st.expander("Methodology"):

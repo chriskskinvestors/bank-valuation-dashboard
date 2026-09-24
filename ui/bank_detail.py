@@ -534,17 +534,16 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
     return _kv_table("Market Data", market), _kv_table("Company Profile", company), ids_html
 
 
-def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
-                             metrics: str = "both"):
-    """Daily P/TBV and/or P/E over `period` (the price card's 1W…ALL window).
-    `metrics` is "ptbv", "pe", or "both": one metric → a single clean axis that
-    fills the card like the price chart; "both" → color-matched dual axes. Each
-    trading day's close ÷ the most recently *filed* book value per share /
-    trailing-twelve-month EPS from SEC filings — fundamentals step in on their
-    10-Q/10-K filing date (no lookahead) while price moves daily."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-    from utils.chart_style import apply_standard_layout, COLOR_PRIMARY, COLOR_WARNING
+def valuation_series(ticker: str, info: dict, period: str = "1Y"):
+    """One row per trading day over `period` (1W…ALL): close, the most
+    recently FILED tangible book value per share and TTM diluted EPS, and
+    the daily P/TBV / P/E they imply. Fundamentals step in on their 10-Q /
+    10-K filing date (no lookahead); price moves daily. None when the bank
+    has no CIK, fewer than four quarter-ends, no price history, or no
+    positive book value anywhere. Consumers: the profile's valuation card
+    (_valuation_history_chart) and the Valuation Model tab's long-run
+    context (analysis.long_run), which ranks today's multiple against
+    every day of this series."""
     cert = info.get("fdic_cert") if info else None
     cik = info.get("cik") if info else None
     if not cik:
@@ -559,7 +558,15 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
     ends_all = []
     if cert:
         from data.loaders import load_fdic_hist_df
-        fh = load_fdic_hist_df(ticker, 44)   # group-aware
+        # Quarter-ends anchor the per-share lookups. 44 quarters is the card's
+        # window; the ALL window reaches through the deep store (1992 →) so the
+        # series runs as far back as SEC per-share data exists (~2009), not
+        # just eleven years — ends with no filed book value simply drop out.
+        if period == "ALL":
+            from ui.history_range import load_hist_df_for_range
+            fh = load_hist_df_for_range(ticker, "MAX", floor=44)   # group-aware
+        else:
+            fh = load_fdic_hist_df(ticker, 44)   # group-aware
         if fh is not None and not fh.empty:
             ds = pd.to_datetime(fh["REPDTE"]).dropna().sort_values()
             ends_all = [d.to_pydatetime() for d in ds]
@@ -622,6 +629,23 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
     val["ptbv"] = (val["close"] / val["tbvps"]).where(val["tbvps"] > 0)
     val["pe"] = (val["close"] / val["ttm_eps"]).where(val["ttm_eps"] > 0)
     if val.empty or val["ptbv"].isna().all():
+        return None
+    return val
+
+
+def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
+                             metrics: str = "both"):
+    """Daily P/TBV and/or P/E over `period` (the price card's 1W…ALL window).
+    `metrics` is "ptbv", "pe", or "both": one metric → a single clean axis that
+    fills the card like the price chart; "both" → color-matched dual axes. Each
+    trading day's close ÷ the most recently *filed* book value per share /
+    trailing-twelve-month EPS from SEC filings — fundamentals step in on their
+    10-Q/10-K filing date (no lookahead) while price moves daily."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    from utils.chart_style import apply_standard_layout, COLOR_PRIMARY, COLOR_WARNING
+    val = valuation_series(ticker, info, period)
+    if val is None:
         return None
 
     show_ptbv = metrics in ("both", "ptbv")
