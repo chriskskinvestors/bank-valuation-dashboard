@@ -39,7 +39,20 @@ from tests import _streamlit_stub  # noqa: E402
 
 _streamlit_stub.install()
 
-from data.fdic_client import null_unreported_cet1  # noqa: E402
+from data.fdic_client import null_unreported_capital  # noqa: E402
+
+null_unreported_cet1 = null_unreported_capital   # the CET1 rule kept its pins
+
+# OZK cert 110, live FDIC 2026-09-24: before the 1990 risk-based capital
+# rules FDIC reports the TOTAL capital ratio as 0 with RWA / RBC / Tier 1
+# ratio all null — the MAX-range table printed "0.00%" for FY1986–FY1989.
+_OZK_1988Q4 = {"CERT": 110, "REPDTE": "19881231", "RBCT1": 2660, "RBCT1J": 2660,
+               "RBC": None, "RBCT2": None, "RWAJ": None, "RBCRWAJ": 0,
+               "RBC1RWAJ": None, "IDT1CER": 0, "RBCT1C": None, "RBCT1JR": 7.509}
+_OZK_1990Q4 = {"CERT": 110, "REPDTE": "19901231", "RBCT1": 2942, "RBCT1J": 2942,
+               "RBC": 3321, "RBCT2": 379, "RWAJ": 30334.3,
+               "RBCRWAJ": 10.948002755956129, "RBC1RWAJ": 9.7, "IDT1CER": 0,
+               "RBCT1C": None}
 
 # OZK cert 110, live FDIC 2026-09-22.
 _OZK_2014Q4 = {"CERT": 110, "REPDTE": "20141231", "RBCT1C": 0, "IDT1CER": 0,
@@ -80,6 +93,43 @@ class TestNullUnreportedCet1(unittest.TestCase):
         """Only the both-zero signature is the pre-Basel pattern."""
         rec = null_unreported_cet1({"RBCT1C": 500, "IDT1CER": 0, "RBCT1J": 600})
         self.assertEqual(rec["IDT1CER"], 0)
+
+
+class TestPre1990RiskBasedZeros(unittest.TestCase):
+    def test_total_capital_ratio_zero_without_rwa_is_na(self):
+        rec = null_unreported_capital(dict(_OZK_1988Q4))
+        self.assertIsNone(rec["RBCRWAJ"])
+        self.assertIsNone(rec["IDT1CER"])
+        self.assertIsNone(rec["RBC1RWAJ"])          # was already null
+        self.assertEqual(rec["RBCT1JR"], 7.509)      # leverage is real, untouched
+        self.assertEqual(rec["RBCT1"], 2660)
+
+    def test_1990_onward_ratios_kept_and_cet1_still_nulled(self):
+        rec = null_unreported_capital(dict(_OZK_1990Q4))
+        self.assertAlmostEqual(rec["RBCRWAJ"], 10.948002755956129)
+        self.assertEqual(rec["RBC1RWAJ"], 9.7)
+        self.assertIsNone(rec["IDT1CER"])           # CET1 line did not exist yet
+        self.assertIsNone(rec["RBCT1C"])
+
+    def test_missing_rwa_key_is_unknown_not_absent(self):
+        """A record that never carried RWAJ (older cache shapes, fixtures) says
+        nothing about the denominator — the ratio is left as reported."""
+        rec = null_unreported_capital({"RBCRWAJ": 0, "RBC": 5})
+        self.assertEqual(rec["RBCRWAJ"], 0)
+
+    def test_cet1_dollar_line_nulled_even_when_rwa_is_absent(self):
+        """Order matters: the RWA rule alone would null the ratio and leave a
+        $0 CET1 line behind."""
+        rec = null_unreported_capital({"RWAJ": None, "RBCT1C": 0, "IDT1CER": 0,
+                                       "RBCRWAJ": 0, "RBCT1J": 100})
+        self.assertIsNone(rec["RBCT1C"])
+        self.assertIsNone(rec["IDT1CER"])
+        self.assertIsNone(rec["RBCRWAJ"])
+
+    def test_a_real_zero_ratio_with_rwa_present_is_kept(self):
+        """Only the no-denominator signature is the pre-adoption pattern."""
+        rec = null_unreported_capital({"RBCRWAJ": 0, "RWAJ": 1000, "RBC": 0})
+        self.assertEqual(rec["RBCRWAJ"], 0)
 
 
 class _Resp:
@@ -133,11 +183,12 @@ class TestStoreReadBoundary(unittest.TestCase):
     def test_stored_pre_basel_zero_reads_back_as_na(self):
         s = self._store
         # Stored as FDIC gave it (rows written before the rule existed).
-        s.upsert_history(110, [dict(_OZK_2014Q4), dict(_OZK_2015Q1)])
+        s.upsert_history(110, [dict(_OZK_2014Q4), dict(_OZK_2015Q1), dict(_OZK_1988Q4)])
         recs = {r["REPDTE"]: r for r in s.get_cert_history(110)}
         self.assertIsNone(recs["20141231"]["IDT1CER"])
         self.assertIsNone(recs["20141231"]["RBCT1C"])
         self.assertEqual(recs["20150331"]["RBCT1C"], 1108508)
+        self.assertIsNone(recs["19881231"]["RBCRWAJ"])   # pre-1990 total-capital 0
 
 
 class TestStatementSpec(unittest.TestCase):
