@@ -27,6 +27,14 @@ on:
         required: false
         type: string
         default: ""
+      logs_only:
+        description: >-
+          Skip execution; only print the job's recent Cloud Logging output
+          (the last 3 hours). Use to read the counts a finished execution
+          printed.
+        required: false
+        type: boolean
+        default: false
 
 env:
   PROJECT_ID: ace-beanbag-486220-a8
@@ -51,6 +59,7 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
 
       - name: Execute job and wait
+        if: ${{ !inputs.logs_only }}
         run: |
           ARGS=()
           if [ -n "${{ inputs.args }}" ]; then
@@ -60,3 +69,17 @@ jobs:
             --region="${{ env.REGION }}" \
             "${ARGS[@]}" \
             --wait
+
+      # gcloud's --wait streams only progress dots; the job's own prints
+      # (e.g. backfill-fdic-history's "store now N certs / M rows") land in
+      # Cloud Logging. Surface them here so an operator without a local
+      # gcloud can read a run's outcome from the Actions log.
+      - name: Print the job's container output (Cloud Logging, last 3h)
+        if: ${{ always() }}
+        run: |
+          gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }}" \
+            --project="${{ env.PROJECT_ID }}" \
+            --freshness=3h --order=asc --limit=400 \
+            --format="value(timestamp,textPayload)" \
+            || echo "::warning::could not read Cloud Logging (github-deployer lacks roles/logging.viewer?)"
