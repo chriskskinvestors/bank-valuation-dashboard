@@ -49,22 +49,21 @@ still lag; JPM, WTFC, CZWI, LARK, FBIZ, BBT are current.
 
 | Page | JPM | C | ONB | HBAN | WTFC | CZWI | LARK | PBAM | FBIZ | BBT |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Corporate Profile (market/valuation/performance/profile/highlights) | 3 | 3 | 2 | 1 | 2 | 1 | 1 | 2 | 1 | 3 |
+| Corporate Profile (market/valuation/performance/profile/highlights) | 3 | 3 | 2 | 1 | 2 | 1 | 1 | 3 | 1 | 3 |
 | Financials › Templated › Balance Sheet (quarterly) | 2 | 1 | OK | OK | 1 | OK | OK | OK | — | OK |
 | Financials › Templated › Income Statement (quarterly) | 1 | 1 | 1 | — | — | — | — | — | — | — |
 | Financials › Templated › Capital Adequacy | 3 | 2 | 2 | 1 | — | — | — | — | — | — |
 | Financials › Templated › Asset Quality Detail | CRASH | OK | — | — | — | — | — | — | — | — |
-| Financials › Company Reported › Income Statement | 1 | 2 | 1 | 3 | 2 | OK | 2 | n/a (no filer) | 1 | 4 |
+| Financials › Company Reported › Income Statement | 1 | 2 | 1 | 3 | 2 | OK | 2 | 1 (see P1-8) | 1 | 4 |
 | Financials › Company Reported › Balance Sheet | OK | OK | 1 | OK | — (blank at 10s) | — | — | n/a | — | 1 |
 | Valuation › Valuation Model | note | — | — | — | — | — | — | — | — | — |
 | Estimates / Earnings | 1 | 1 | OK | OK | 1 | OK | 1 | 1 | — | 1 |
 | Ownership › Institutional (13F) | — (still fetching at 10s) | — | — | — | — | — | — | — | — | — |
-| Market Analysis › Market Share & Branches | OK* | OK | OK | OK | OK | OK | OK | OK | — | OK |
+| Market Analysis › Market Share & Branches | OK | OK | OK | OK | OK | OK | OK | OK | — | OK |
 
-\* JPM branch count 5,142 not tied (JPM FDIC/SOD ground-truth pull was still
-rate-limited when this report was written); C 667, ONB 354, HBAN 1,452, WTFC 213,
-CZWI 21, LARK 29, BBT 150 all equal the SOD-2026 row counts, and every deposit
-total equals the SOD-2026 DEPSUMBR sum.
+JPM 5,142 (cert 628 5,141 + Dearborn 1), C 667, ONB 354, HBAN 1,452, WTFC 213,
+CZWI 21, LARK 29, PBAM 7, BBT 150 all equal the SOD-2026 row counts, and every
+deposit total equals the SOD-2026 DEPSUMBR sum.
 
 Findings that recur across banks are counted once per bank above but listed once
 below. Severity: P0 = a wrong number is displayed; P1 = unlabeled stale or
@@ -336,6 +335,31 @@ discloses, label/unit issues.
   "parser miss is a bug" standard applies.
 * Test: HBAN Q2-2026 R4 fixture → "Total noninterest income" = 785.
 
+### P1-8  PBAM is an SEC registrant (CIK 1705284, Nasdaq) but the map still says "no SEC filer"
+
+* Page: Corporate Profile header ("FDIC 58291 · FFIEC" only, no CIK, no
+  exchange, no shares / market cap / EPS / P/E / BVPS), "RECENT FILINGS — No
+  recent SEC filings", Financials › Company Reported ("No SEC filer mapping for
+  this bank"), Estimates / Earnings ("EPS —").
+* Source: SEC submissions for CIK 0001705284: name "Private Bancorp of America,
+  Inc.", tickers ['PBAM'], exchanges ['Nasdaq'], SIC 6021; filings include a
+  10-Q for 2026-06-30 (acc 0001705284-26-000008, filed 2026-09-04), 8-Ks in
+  Aug–Sep 2026, S-8 2026-07-31, Forms 3/4 and a Schedule 13G 2026-09-15. The
+  company registered on Form 10-12B in 2026 and its releases now read
+  "(NASDAQ: PBAM)".
+* Code path: `data/bank_mapping.py:94` BANK_MAP hardcode `"PBAM": {... "cik":
+  None}` and `data/bank_map_resolved.json` (`cik: null`) — the curated override
+  wins over discovery, so the nightly universe rebuild (SEC tickers × FDIC)
+  cannot pick the new CIK up. The OTC wire-release path (`data/otc_release`)
+  keeps supplying TBVPS, so the valuation card looks half-populated rather than
+  broken.
+* Fix: set the CIK, remove PBAM from any OTC/non-filer lists, and add a
+  nightly check that flags any `cik: None` ticker that appears in SEC
+  `company_tickers.json`.
+* Test: `company_tickers.json` fixture containing PBAM → the resolver must not
+  keep a curated `cik: None`; a structural test that every non-null exchange
+  ticker in the universe has a CIK.
+
 ---
 
 ## P2 — n/a where disclosed, labels, units
@@ -349,8 +373,9 @@ discloses, label/unit issues.
   $-compact** ("ASSETS ($000) … $4,091.39B"). Units contract: say "$" or
   drop the unit from the header; the click-through already gives $000.
 * **P2-3 PBAM EPS / P/E blank** although the wire release (already parsed
-  for TBVPS 49.57) states quarterly diluted EPS; the Earnings page's own
-  history shows 2.27 / 2.07 / 1.71 / 1.65 → TTM 7.70, P/E 11.1x.
+  for TBVPS 49.57) states quarterly diluted EPS 2.27 / 2.07 / 1.71 / 1.65 →
+  TTM 7.70, P/E 11.1x; the release also gives BVPS 49.87 and 5,725,696 shares
+  (market cap ≈ $491M). Resolves itself once P1-8 lands (the 10-Q is filed).
 * **P2-4 Earnings-surprise "EPS Act" is FMP adjusted EPS, unlabeled.** JPM
   2Q26 shows $6.14 (GAAP diluted $7.70; the 6.14 is "excluding significant
   items"); WTFC 3.28 vs GAAP 3.30; BBT 3Q25 0.44 vs GAAP -0.57 (restated
@@ -408,7 +433,9 @@ discloses, label/unit issues.
   figure would be 45.81; BVPS 45.81; TTM EPS 6.56; shares 8,368,320), BBT
   (TBVPS 23.98, TTM EPS 1.91 on the restated basis), JPM (TTM EPS 23.35 =
   5.07 + 4.63 + 5.94 + 7.70 — the 2Q26 GAAP EPS is $7.70; shares
-  2,658,186,195), ONB (TTM EPS 2.26 vs sum-of-quarters 2.25, rounding).
+  2,658,186,195; BVPS 133.01 = release), ONB (TTM EPS 2.26 vs sum-of-quarters
+  2.25, rounding), PBAM (TBVPS 49.57 = release; FDIC levels tie to the release
+  within $2K on loans, ALLL, intangibles and nonaccruals).
 * **Staleness labeling works where designed**: C, ONB, HBAN carry "(co. 10-Q)"
   / "(co. release)" labels and the footnote "read from the filing's own XBRL
   because SEC companyfacts has not yet published it"; ONB's overlaid TBVPS is
@@ -440,8 +467,6 @@ discloses, label/unit issues.
 * Templated Income Statement quarterly captured for JPM, C, ONB only (P0-1 is
   structural, so the other seven are affected identically); Capital Adequacy
   captured for JPM, C, ONB, HBAN.
-* JPM FDIC/SOD ground-truth pull (rate-limited) — the JPM FDIC figures above
-  were taken directly from the FDIC API by the reviewer instead.
 
 ## Suggested order of fixes
 
@@ -452,4 +477,5 @@ discloses, label/unit issues.
 3. P0-2 / P1-6 (Q4 derivation and merger basis) — needs a design decision on
    restated vs original.
 4. P1-4 (JPM group blanks) + P1-1 (crash) together.
-5. P1-5 entity labels on the Performance card; then the P2 list.
+5. P1-8 (PBAM CIK — a one-line map fix that unlocks the whole SEC side for
+   the bank) and P1-5 entity labels on the Performance card; then the P2 list.
