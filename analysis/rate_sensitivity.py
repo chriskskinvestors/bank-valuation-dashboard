@@ -255,6 +255,37 @@ def blend_deposit_betas(
     return (max(0.0, min(1.5, beta_int)), max(0.0, min(1.5, b_nib)))
 
 
+def _year_quarter(repdte) -> tuple[int, int] | None:
+    """(year, quarter) of an FDIC REPDTE — Timestamp, date, 'YYYYMMDD' or
+    'YYYY-MM-DD' (a string once the record round-trips the warm cache)."""
+    if repdte is None:
+        return None
+    import pandas as pd
+    ts = pd.to_datetime(str(repdte), errors="coerce")
+    if pd.isna(ts):
+        return None
+    return (ts.year, (ts.month - 1) // 3 + 1)
+
+
+def _year_ago_record(fdic_hist: list[dict], latest: dict) -> dict | None:
+    """The record exactly 4 quarters before `latest`, by REPDTE; None when
+    that quarter is absent from the history."""
+    yq = _year_quarter(latest.get("REPDTE"))
+    if yq is None:
+        return None
+    target = (yq[0] - 1, yq[1])
+    for rec in fdic_hist:
+        if _year_quarter(rec.get("REPDTE")) == target:
+            return rec
+    return None
+
+
+# Volume projection fallback for a growth rate the history cannot derive: hold
+# that balance flat (identical to volume effects off for it). Any substitution
+# is reported in `growth_rates_defaulted` so the UI can label it.
+_DEFAULT_GROWTH_UNDERIVABLE = 0.0
+
+
 def compute_historical_growth_rates(
     fdic_hist: list[dict] | None,
 ) -> dict | None:
@@ -269,25 +300,37 @@ def compute_historical_growth_rates(
         "earning_assets_growth":  0.05,
         "securities_growth":      0.03,
       }
-    or None if insufficient history (need ≥ 5 quarters).
+    or None if insufficient history (need ≥ 5 quarters). A field that cannot
+    be derived — either endpoint absent, a non-positive base, or the year-ago
+    quarter missing from the history — is None, never 0.0 (P0-7): 0.0 read as
+    "grew 0.0%" and became the projection's volume-growth assumption.
 
     Uses the most recent quarter vs the same quarter one year ago to
-    smooth seasonal effects.
+    smooth seasonal effects. The year-ago record is matched by REPDTE, not
+    by position: across a gap fdic_hist[4] is the wrong period.
     """
     if not fdic_hist or len(fdic_hist) < 5:
         return None
     # fdic_hist is newest-first
     latest = fdic_hist[0]
-    year_ago = fdic_hist[4] if len(fdic_hist) > 4 else fdic_hist[-1]
+    year_ago = _year_ago_record(fdic_hist, latest)
 
-    def _growth(field: str) -> float:
-        v1 = _safe(latest.get(field))
-        v0 = _safe(year_ago.get(field))
+    def _growth(field: str) -> float | None:
+        if year_ago is None:
+            return None
+        v1, v0 = latest.get(field), year_ago.get(field)
+        if v1 is None or v0 is None:
+            return None
+        v1, v0 = float(v1), float(v0)
         if v0 <= 0:
-            return 0.0
+            return None
         return (v1 - v0) / v0
 
-    ea_growth = _growth("ERNAST") if year_ago.get("ERNAST") else _growth("ASSET")
+    # Prefer true earning assets; fall back to total assets when ERNAST is not
+    # derivable for the pair (blank on one endpoint).
+    ea_growth = _growth("ERNAST")
+    if ea_growth is None:
+        ea_growth = _growth("ASSET")
     return {
         "loans_growth": _growth("LNLSNET"),
         "deposits_growth": _growth("DEP"),
@@ -303,21 +346,24 @@ def adjust_growth_for_rates(
     Apply rate-sensitivity to baseline growth rates.
 
     Higher rates dampen loan + deposit growth (industry-typical
-    coefficients). Returns a new dict with the adjusted rates.
+    coefficients). Returns a new dict with the adjusted rates; a base rate
+    that is None (underivable) stays None — there is nothing to adjust.
     """
     rate_pp_100 = rate_change_bps / 100.0
+
+    def _adj(key: str, coef: float) -> float | None:
+        base = base_growth.get(key)
+        return None if base is None else base + rate_pp_100 * coef
+
     return {
-        "loans_growth": base_growth.get("loans_growth", 0.0)
-            + rate_pp_100 * _VOLUME_SENSITIVITY["loans_per_100bps"],
-        "deposits_growth": base_growth.get("deposits_growth", 0.0)
-            + rate_pp_100 * _VOLUME_SENSITIVITY["deposits_per_100bps"],
-        "earning_assets_growth": base_growth.get("earning_assets_growth", 0.0)
-            + rate_pp_100 * (
-                _VOLUME_SENSITIVITY["loans_per_100bps"] * 0.7
-                + _VOLUME_SENSITIVITY["securities_per_100bps"] * 0.3
-            ),
-        "securities_growth": base_growth.get("securities_growth", 0.0)
-            + rate_pp_100 * _VOLUME_SENSITIVITY["securities_per_100bps"],
+        "loans_growth": _adj("loans_growth", _VOLUME_SENSITIVITY["loans_per_100bps"]),
+        "deposits_growth": _adj("deposits_growth", _VOLUME_SENSITIVITY["deposits_per_100bps"]),
+        "earning_assets_growth": _adj(
+            "earning_assets_growth",
+            _VOLUME_SENSITIVITY["loans_per_100bps"] * 0.7
+            + _VOLUME_SENSITIVITY["securities_per_100bps"] * 0.3,
+        ),
+        "securities_growth": _adj("securities_growth", _VOLUME_SENSITIVITY["securities_per_100bps"]),
     }
 
 
@@ -456,8 +502,15 @@ def apply_rate_scenario_phased(
     # Without this (the default), EA is held flat across the horizon — which
     # under-states NII for high-growth banks in down-rate scenarios.
     adj_growth = None
+    ea_growth_rate = None
+    growth_defaulted: list[str] = []
     if apply_volume_effects and base_growth_rates:
         adj_growth = adjust_growth_for_rates(base_growth_rates, rate_change_bps)
+        ea_growth_rate = adj_growth.get("earning_assets_growth")
+        if ea_growth_rate is None:
+            # Underivable from history: hold EA flat and say so.
+            ea_growth_rate = _DEFAULT_GROWTH_UNDERIVABLE
+            growth_defaulted.append("earning_assets_growth")
 
     years_out = []
     horizon = min(max(1, horizon_years), 5)
@@ -468,8 +521,7 @@ def apply_rate_scenario_phased(
         ea_yield_new = ea_yield + rate_pp * repriced_frac
 
         # Earning-asset balance for this projection year
-        if adj_growth is not None:
-            ea_growth_rate = adj_growth.get("earning_assets_growth", 0.0)
+        if ea_growth_rate is not None:
             ea_year = earning_assets * ((1 + ea_growth_rate) ** year)
         else:
             ea_year = earning_assets
@@ -528,6 +580,7 @@ def apply_rate_scenario_phased(
         "mix_shift_applied": apply_mix_shift and rate_pp > 0,
         "volume_effects_applied": apply_volume_effects and base_growth_rates is not None,
         "growth_rates_used": adj_growth,
+        "growth_rates_defaulted": growth_defaulted,
         "shares_outstanding": shares_outstanding,
         "tax_rate_used": tax_rate,
         "years": years_out,
@@ -849,6 +902,11 @@ def run_rate_sensitivity_phased(
         ),
         "base_growth_rates": growth_rates,
         "volume_effects_applied": apply_volume_effects and growth_rates is not None,
+        # Fields the projection could not derive from history and held flat
+        # (same for every scenario — it depends only on the base rates).
+        "growth_rates_defaulted": sorted({
+            f for s in scenario_results for f in s.get("growth_rates_defaulted", [])
+        }),
     }
 
 

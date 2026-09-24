@@ -663,12 +663,18 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     if apply_volume:
         from analysis.rate_sensitivity import compute_historical_growth_rates
         ghist = compute_historical_growth_rates(hist) or {}
-        ea_g = ghist.get("earning_assets_growth", 0.05) * 100
+
+        def _g(key):
+            # None = not derivable (endpoint absent / year-ago quarter missing):
+            # "—", never a placeholder rate dressed as history.
+            v = ghist.get(key)
+            return "—" if v is None else f"**{v * 100:+.1f}%**"
+
         st.caption(
-            f"Historical YoY: loans **{ghist.get('loans_growth', 0)*100:+.1f}%** · "
-            f"deposits **{ghist.get('deposits_growth', 0)*100:+.1f}%** · "
-            f"earning assets **{ea_g:+.1f}%** · "
-            f"securities **{ghist.get('securities_growth', 0)*100:+.1f}%**"
+            f"Historical YoY: loans {_g('loans_growth')} · "
+            f"deposits {_g('deposits_growth')} · "
+            f"earning assets {_g('earning_assets_growth')} · "
+            f"securities {_g('securities_growth')}"
         )
 
     # ── My Assumptions: per-bank subcategory betas + asset durations ───
@@ -698,6 +704,15 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
             ":violet-badge[Using your saved assumptions] &middot; "
             f"blended IB beta **{result.get('beta_used', 0):.2f}** · "
             "subcategory betas + durations override the selector above."
+        )
+    _defaulted = result.get("growth_rates_defaulted") or []
+    if _defaulted:
+        _labels = {"earning_assets_growth": "earning assets"}
+        st.caption(
+            "Volume effects: "
+            + ", ".join(_labels.get(f, f) for f in _defaulted)
+            + " growth not derivable from FDIC history — held at **+0.0% (default)** "
+              "across the horizon."
         )
 
     inputs = result["inputs"]

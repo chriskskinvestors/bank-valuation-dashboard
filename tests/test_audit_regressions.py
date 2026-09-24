@@ -91,10 +91,15 @@ class TestValuationEngineTceConvention(unittest.TestCase):
 
     def test_compute_roatce_4q_subtracts_total_intangibles(self):
         from analysis.valuation import compute_roatce_4q
-        # 4 Q1 records (different years) → each quarterly NI = its YTD, count=4
-        # (no scale-up): ttm_ni = 4×17.5 = 70, avg_tce = 1000−300 = 700 → 10.0%.
-        recs = [{"NETINC": 17.5, "EQTOT": 1000, "INTAN": 300, "INTANGW": 100,
-                 "REPDTE": f"{y}0331"} for y in (2025, 2024, 2023, 2022)]
+        # Four consecutive fiscal-2025 quarters, YTD NI +17.5 per quarter →
+        # each quarterly NI = 17.5, ttm_ni = 70, avg_tce = 1000−300 = 700 → 10.0%.
+        # (compute_roatce_4q requires a consecutive four-quarter window —
+        # REVIEW-2026-09-24 P0-3; the old fixture of four Q1s from different
+        # years is exactly the gapped window it now rejects.)
+        recs = [{"NETINC": ytd, "EQTOT": 1000, "INTAN": 300, "INTANGW": 100,
+                 "REPDTE": rep}
+                for ytd, rep in ((70.0, "20251231"), (52.5, "20250930"),
+                                 (35.0, "20250630"), (17.5, "20250331"))]
         got = compute_roatce_4q(recs)
         self.assertAlmostEqual(got, 70 / 700 * 100, places=2)      # 10.0% — INTAN
         self.assertNotAlmostEqual(got, 70 / 900 * 100, places=2)   # 7.78% — INTANGW
