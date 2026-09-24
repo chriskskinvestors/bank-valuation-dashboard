@@ -11,7 +11,7 @@ import pandas as pd
 
 from data.bank_mapping import get_fdic_cert, get_cik, get_name
 from data.cache import get as cache_get, put as cache_put
-from data import fdic_client, sec_client
+from data import sec_client
 from analysis.capital_dynamics import (
     summarize_bank_capital,
     CET1_REG_MIN, CET1_BUFFER_FLOOR,
