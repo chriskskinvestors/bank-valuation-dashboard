@@ -19,6 +19,14 @@ on:
           - refresh-prices
           - verify-metrics
           - backfill-fdic-history
+      args:
+        description: >-
+          Optional container args override, comma-separated (gcloud --args
+          syntax), e.g. "-m,jobs.backfill_fdic_history,refill". Empty = the
+          job's own configured args.
+        required: false
+        type: string
+        default: ""
 
 env:
   PROJECT_ID: ace-beanbag-486220-a8
@@ -44,6 +52,11 @@ jobs:
 
       - name: Execute job and wait
         run: |
+          ARGS=()
+          if [ -n "${{ inputs.args }}" ]; then
+            ARGS+=(--args="${{ inputs.args }}")
+          fi
           gcloud run jobs execute "${{ inputs.job }}" \
             --region="${{ env.REGION }}" \
+            "${ARGS[@]}" \
             --wait
