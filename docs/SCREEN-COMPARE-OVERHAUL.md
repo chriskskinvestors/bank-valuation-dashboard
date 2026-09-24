@@ -8,7 +8,8 @@ the Screen / Compare two-mode split but tie them together through a shared, save
 ## Audit (current state, pre-overhaul)
 
 Screen sub-view lives inline in `app.py` (the `Screen & Compare … sc_sub == "Screen"`
-block); Compare lives in `ui/peer_comparison.py`. Findings that drove this plan:
+block; since B8 it is launcher → builder → Run → results, see the build order
+below); Compare lives in `ui/peer_comparison.py`. Findings that drove this plan:
 
 1. **"Watchlist" and "All Banks" are the same set.** `watchlist = sorted(get_universe_tickers())`
    and the "All Banks" branch also calls `get_universe_tickers()`. Different load paths
@@ -92,6 +93,37 @@ Build order (each its own verified, shippable batch):
   — v1 pulled forward 2026-06-18, 20-quarter window). Saved-screen versioning
   BUILT (`data/saved_screens.py` versioned save/load + history,
   `tests/test_saved_screens.py`, wired in `app.py`).
+- **B8** ✅ SHIPPED 2026-09-24 (PR #144, CI follow-up #151) — **"build, then run"**
+  (owner directive: "refresh the entire selection process"; design approved on a
+  real-data mock). Launcher (New screen · Saved screens rows: name · table ·
+  filter count · version · saved date · "ran HH:MM" this session · Recent, this
+  session; a row loads AND runs). One builder panel replaces the control-bar
+  dropdowns and the Filters / Columns / Export / Saved dialogs: row 1 Table ·
+  Scope (+ secondary picker) · As of; row 2 filters inline, one line each
+  (Type / Metric / Op / Value, ✕, `+ Add filter`, cap 4); row 3 Columns
+  (popover) · Sort · Order; primary **Run screen**. Gating: the builder edits
+  the DRAFT (the same `filt_*_{tab}_{i}` / scope / sort / column session keys,
+  so saved screens restore unchanged); Run snapshots draft → `_screen_applied`,
+  evaluates ONCE through `analysis/screen_engine` (semantics untouched) and
+  stores the result set in `_screen_result`; the results block reads only those
+  two, and unrun edits are flagged next to Run. Results bar: Save screen
+  (popover; saves the screen AS LAST RUN, re-save bumps the version), Groups
+  (popover — the old bank-groups panel), Compare hand-off (≤30), heatmap,
+  Export via `ui/export.table_export`. As-of stays in the builder: picking a
+  quarter reconstructs that quarter's universe on pick (cached) so the scope
+  picker lists the right cohorts; evaluation still waits for Run. Dropped with
+  the owner's OK: the quick "Add bank" box (Manual scope has search) and
+  version rollback from the launcher (rows open the current version). Scope
+  types kept as the existing seven. Tests: `tests/test_screen_builder.py`
+  (hermetic — round trip incl. the pre-kind saved format, per-type spec
+  serialization, ✕ shifts every key suffix, structural pins: dialogs gone,
+  Run button, results block never reads the draft) and
+  `tests/test_screen_run_gating.py` (AppTest, own process in ci.yml — edits
+  change nothing until Run; Save → launcher → open reruns identically).
+  Prod-verified 2026-09-24: 599-bank universe; P/TBV < 1.2 left unrun kept
+  599 banks with the flag showing; Run → 96 banks · 1 filter · 270 excluded
+  (no data). Not done: persisted last-run time on saved screens (needs
+  `data/saved_screens.py`), Recent across sessions.
 
 ## Do-not-touch (other lanes)
 
