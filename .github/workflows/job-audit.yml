@@ -1,0 +1,46 @@
+name: Job timeout audit
+
+# Read-only: every Cloud Run job's configured task timeout next to its recent
+# execution runtimes (tools/job_timeout_audit.py). Red when a job was killed
+# at its timeout or has < 1.5x headroom — the refresh-sod class of silent
+# failure (2026-09-22). Manual, plus weekly so the next one is caught early.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Executions per job to inspect"
+        required: false
+        type: string
+        default: "12"
+  schedule:
+    - cron: "0 12 * * 1"   # Mondays 08:00 ET
+
+env:
+  PROJECT_ID: ace-beanbag-486220-a8
+  REGION: us-central1
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Audit job timeouts vs runtimes
+        run: |
+          python tools/job_timeout_audit.py \
+            --region="${{ env.REGION }}" \
+            --limit="${{ inputs.limit || '12' }}"

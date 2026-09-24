@@ -274,6 +274,13 @@ if section == "Screen & Compare":
               margin-top:7px;padding-top:9px;}
           .st-key-screen_actbtns [data-testid="stHorizontalBlock"]{gap:6px !important;}
           .st-key-screen_scopesub div[data-baseweb="select"]{max-width:340px;}
+          /* Builder panel (build, then run): one bordered surface holding
+             Table/Scope/As-of, the inline filter rows, Columns/Sort and Run. */
+          .st-key-screen_builder{border:0.5px solid var(--grid-head);
+              background:var(--bg-surface);padding:10px 14px 12px;margin-top:4px;}
+          .st-key-screen_builder div[data-testid="stVerticalBlock"]{gap:0.35rem;}
+          .st-key-screen_builder [data-testid="stPopover"] button{width:100%;}
+          .st-key-screen_actbtns [data-testid="stPopover"] button{width:100%;}
           /* Compact buttons (toolbar, launcher, dialogs) — outline, navy hover. */
           [data-testid="stButton"] button, button[data-testid^="stBaseButton"]{
               min-height:30px;padding:0 12px;}
@@ -302,17 +309,26 @@ if section == "Screen & Compare":
         unsafe_allow_html=True,
     )
 
-# ── Screen launcher helpers (New / Open a saved screen) ─────────────────────
+# ── Screen launcher helpers (New / Open a saved screen / Recent) ────────────
 # A "screen" is a saved filter/sort/columns template. The Screen home is a
-# launcher; a results table renders only INSIDE an open screen. These helpers
-# write the toolbar's widget-backed session keys, so they MUST run before those
-# widgets instantiate (i.e. in the resolution block below, never mid-render).
+# launcher; the builder + results render only INSIDE an open screen. These
+# helpers write the builder's widget-backed session keys (the DRAFT), so they
+# MUST run before those widgets instantiate (i.e. in the resolution block
+# below, never mid-render).
 _SCREEN_FILTER_FMTS = ("pct", "ratio", "currency", "number", "millions",
                        "billions", "dollars_auto")
+_SCREEN_MAX_FILTERS = 4
+# Every per-row filter key is filt_{suffix}_{tab}_{i}; saved screens restore
+# into these exact keys, and removing a row shifts them all down together.
+_SCREEN_FILTER_SUFFIXES = ("kind", "metric", "op", "val", "band", "pct",
+                           "basis", "chop", "chval", "dir", "q")
+# Scope widget keys (ui/bank_scope) are screen_{tab}_{suffix}.
+_SCREEN_SCOPE_SUFFIXES = ("scope_type", "cohort", "geo_State", "geo_Region",
+                          "group", "manual")
 
 
 def _screen_filter_key_to_idx():
-    """metric_key → filter-dropdown index. MIRRORS the toolbar's `filterable`
+    """metric_key → filter-dropdown index. MIRRORS the builder's `filterable`
     derivation (kept identical so a restored filter lands on the right metric)."""
     fk = sorted([(m["key"], m["label"]) for m in METRICS
                  if m.get("format") in _SCREEN_FILTER_FMTS], key=lambda x: x[1])
@@ -320,13 +336,18 @@ def _screen_filter_key_to_idx():
 
 
 def _screen_clear_filters(ss, tk):
-    """Reset tab `tk`'s filter + scope + sort widgets to a blank screen."""
-    ss[f"num_filters_{tk}"] = 1
-    for _fi in range(4):
-        ss.pop(f"filt_metric_{tk}_{_fi}", None)
-        ss.pop(f"filt_kind_{tk}_{_fi}", None)
+    """Reset tab `tk`'s draft (filters / scope / as-of / sort / columns) to a
+    blank screen."""
+    ss[f"num_filters_{tk}"] = 0
+    for _fi in range(_SCREEN_MAX_FILTERS):
+        for _sfx in _SCREEN_FILTER_SUFFIXES:
+            ss.pop(f"filt_{_sfx}_{tk}_{_fi}", None)
+    for _sfx in _SCREEN_SCOPE_SUFFIXES:
+        ss.pop(f"screen_{tk}_{_sfx}", None)
     ss[f"screen_{tk}_scope_type"] = "All banks"
+    ss[f"asof_{tk}"] = "Latest (live)"
     ss[f"sort_{tk}"] = 0
+    ss[f"order_{tk}"] = "Desc"
     ss.pop(f"custom_cols_{tk}", None)
 
 
@@ -337,9 +358,11 @@ def _screen_switch_tab(ss, tk):
 
 
 def _screen_restore_cfg(ss, cfg, tk):
-    """Restore a saved screen `cfg` into tab `tk`'s widgets — filters by metric
-    KEY (survives column/table changes; unknown keys are skipped, never
-    mis-mapped onto the wrong metric)."""
+    """Restore a screen `cfg` (saved-screen format) into tab `tk`'s draft —
+    filters by metric KEY (survives column/table changes; unknown keys are
+    skipped, never mis-mapped onto the wrong metric). Persisted saved screens
+    carry filters/sort/columns; this session's Recent entries also carry the
+    scope selection and as-of, restored when present."""
     k2i = _screen_filter_key_to_idx()
     if cfg.get("sort_idx") is not None:
         ss[f"sort_{tk}"] = cfg["sort_idx"]
@@ -348,7 +371,7 @@ def _screen_restore_cfg(ss, cfg, tk):
     restored = 0
     for flt in cfg.get("filters", []):
         mk = flt.get("metric_key")
-        if mk not in k2i:
+        if mk not in k2i or restored >= _SCREEN_MAX_FILTERS:
             continue
         ss[f"filt_metric_{tk}_{restored}"] = k2i[mk]
         kind = flt.get("kind", "absolute")
@@ -371,10 +394,14 @@ def _screen_restore_cfg(ss, cfg, tk):
             ss[f"filt_op_{tk}_{restored}"] = flt.get("op", "<")
             ss[f"filt_val_{tk}_{restored}"] = flt.get("value", 0.0)
         restored += 1
-    if restored:
-        ss[f"num_filters_{tk}"] = min(restored, 4)
+    ss[f"num_filters_{tk}"] = restored
     if cfg.get("columns"):
-        ss[f"custom_cols_{tk}"] = cfg["columns"]
+        ss[f"custom_cols_{tk}"] = list(cfg["columns"])
+    for _sfx, _v in (cfg.get("scope_keys") or {}).items():
+        if _sfx in _SCREEN_SCOPE_SUFFIXES and _v is not None:
+            ss[f"screen_{tk}_{_sfx}"] = _v
+    if cfg.get("asof"):
+        ss[f"asof_{tk}"] = cfg["asof"]
 
 
 def _subtab_key(sec, basis=None):
@@ -395,7 +422,7 @@ if section == "Screen & Compare" and sc_sub == "Screen":
     # are listed grouped by theme order under one "Table" control. screen_tab_key
     # holds the chosen table key. Resolved up front (before any Screen widget) so
     # screening_tab — and the gated data load below — is known; the Table selectbox
-    # in the control bar shares this exact key. First run falls back to the first
+    # in the builder shares this exact key. First run falls back to the first
     # table.
     _ordered_keys = []
     for _th in THEME_ORDER:
@@ -407,10 +434,12 @@ if section == "Screen & Compare" and sc_sub == "Screen":
         _cur_key = _ordered_keys[0]
     screening_tab = next(t for t in TABS if t["key"] == _cur_key)
 
-    # Launcher actions (New / Open / Close) set by a button last run. Applied
-    # HERE — before any Screen widget instantiates — so writing widget-backed
-    # keys (table/sort/filters/scope) is legal this run. "Open" may switch the
-    # active Table, so re-resolve screening_tab afterward.
+    # Launcher actions (New / Open / Recent / Close) set by a button last run.
+    # Applied HERE — before any Screen widget instantiates — so writing the
+    # widget-backed draft keys (table/sort/filters/scope) is legal this run.
+    # Open/Recent may switch the active Table, so re-resolve screening_tab
+    # afterward. Loading a screen sets the draft AND flags a pending run, so
+    # the builder's first render applies it (draft == applied) and shows results.
     _sa = st.session_state.pop("_screen_action", None)
     if _sa:
         _act = _sa.get("act")
@@ -419,35 +448,35 @@ if section == "Screen & Compare" and sc_sub == "Screen":
         elif _act == "new":
             _screen_clear_filters(st.session_state, screening_tab["key"])
             st.session_state["_screen_open"] = True
-        elif _act == "open":
-            from data.saved_screens import load_screen as _ls
-            _cfg = _ls(_sa.get("name"), _sa.get("version"))
+            st.session_state["_screen_name"] = None
+            st.session_state["_screen_applied"] = None
+            st.session_state["_screen_result"] = None
+            st.session_state[f"new_screen_name_{screening_tab['key']}"] = ""
+        elif _act in ("open", "recent"):
+            if _act == "open":
+                from data.saved_screens import load_screen as _ls
+                _cfg = _ls(_sa.get("name"), _sa.get("version"))
+                _nm = _sa.get("name")
+            else:
+                _cfg = (_sa.get("entry") or {}).get("cfg")
+                _nm = (_sa.get("entry") or {}).get("name")
+                _nm = None if _nm == "Untitled screen" else _nm
             if _cfg:
                 _tk = _cfg.get("tab_key") or _sa.get("tab") or screening_tab["key"]
                 _screen_switch_tab(st.session_state, _tk)
                 _screen_clear_filters(st.session_state, _tk)
                 _screen_restore_cfg(st.session_state, _cfg, _tk)
                 st.session_state["_screen_open"] = True
+                st.session_state["_screen_name"] = _nm
+                st.session_state["_screen_applied"] = None
+                st.session_state["_screen_result"] = None
+                st.session_state["_screen_run_pending"] = True
+                st.session_state[f"new_screen_name_{_tk}"] = _nm or ""
         # Re-resolve the active table in case Open switched it.
         _cur_key = st.session_state.get("screen_tab_key")
         if _cur_key not in _ordered_keys:
             _cur_key = _ordered_keys[0]
         screening_tab = next(t for t in TABS if t["key"] == _cur_key)
-
-    # Quick "add a bank by ticker" → accumulate the pick into the Manual scope so
-    # the chosen banks populate the table immediately. Handled HERE (before the
-    # scope/manual widgets render) so writing their session keys is legal; the
-    # search box is then reset to empty for the next add.
-    _addbank = st.session_state.get("screen_addbank")
-    if _addbank:
-        _mk = f"screen_{screening_tab['key']}_manual"
-        _cur_manual = list(st.session_state.get(_mk, []))
-        if _addbank not in _cur_manual:
-            _cur_manual.append(_addbank)
-        st.session_state[_mk] = _cur_manual
-        st.session_state[f"screen_{screening_tab['key']}_scope_type"] = "Manual"
-        st.session_state["screen_addbank"] = None   # reset the search box
-        st.session_state["_screen_open"] = True
 
 elif section == "Company":
     # Deep-link support: a metric card can link to ?bank=X&tab=<token> to jump
@@ -789,10 +818,15 @@ if section == "Home":
         render_home(all_metrics, watchlist)
 
 elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
-    # ── SCREEN: Multi-bank comparison tables ────────────────────────────
-    from data.saved_screens import (
-        save_screen, load_screen, list_screens, delete_screen, screen_versions,
-    )
+    # ── SCREEN: build, then run ─────────────────────────────────────────
+    # One builder panel (Table · Scope · As-of / inline filters / Columns · Sort)
+    # edits a DRAFT held in the widget-backed session keys. NOTHING is evaluated
+    # until **Run screen**: Run snapshots the draft into `_screen_applied`, runs
+    # the engine once and stores the result set in `_screen_result`; the results
+    # block below renders ONLY from those two. Editing the draft afterwards
+    # changes nothing on screen until the next Run (the old toolbar re-ran the
+    # full-universe evaluation on every dropdown change).
+    from data.saved_screens import save_screen, list_screens, delete_screen, screen_versions
 
     tab_key = screening_tab["key"]
     tab_columns = screening_tab["columns"]
@@ -801,26 +835,19 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     from data.bank_groups import save_group
 
     # Filterable metrics span the ENTIRE metric set (not just this table's
-    # columns) so you can screen on, say, CET1 and P/TBV from any table. Built
-    # once here because it no longer depends on the active tab.
-    _FILT_FORMATS = ("pct", "ratio", "currency", "number", "millions",
-                     "billions", "dollars_auto")
+    # columns) so you can screen on, say, CET1 and P/TBV from any table.
     filterable = sorted(
-        [(m["key"], m["label"]) for m in METRICS if m.get("format") in _FILT_FORMATS],
+        [(m["key"], m["label"]) for m in METRICS if m.get("format") in _SCREEN_FILTER_FMTS],
         key=lambda x: x[1],
     )
     filter_labels = ["—"] + [lbl for _, lbl in filterable]
     filter_keys = [None] + [k for k, _ in filterable]
-    filter_key_to_idx = {k: i + 1 for i, (k, _) in enumerate(filterable)}
 
     def _filter_specs_from_state():
-        """Rebuild active filter specs from session_state every run, so filters
-        apply even while the Metric Filters dialog is closed (a dialog body only
-        executes while open). Mirrors the widgets in _filters_dialog — same keys.
-        session_state is committed before each rerun, so this always reflects the
-        latest edits made inside the dialog."""
+        """Draft filter specs from the widget-backed session keys (the same keys
+        saved screens restore into). A row whose metric is '—' is ignored."""
         ss = st.session_state
-        n = ss.get(f"num_filters_{tab_key}", 1)
+        n = ss.get(f"num_filters_{tab_key}", 0)
         specs = []
         for fi in range(n):
             midx = ss.get(f"filt_metric_{tab_key}_{fi}", 0)
@@ -849,158 +876,12 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                               "value": ss.get(f"filt_val_{tab_key}_{fi}", 0.0)})
         return specs
 
-    # ── Saved screens dialog ───────────────────────────────────────────
-    # Saved screens capture the *how* (filters / sort / columns); the *who*
-    # (bank scope) is chosen live and persisted separately as a Bank Group.
-    # Opened from a toolbar button below; load/save/delete each st.rerun() so the
-    # toolbar controls (rendered above) pick up the restored state next run.
-    @st.dialog("Saved screens", width="large")
-    def _saved_dialog():
-        saved = list_screens()
-        saved_for_tab = [s for s in saved if s.get("tab") == tab_key]
+    def _specs_to_cfg_filters(specs):
+        """Engine specs → the saved-screen filter format (metric → metric_key)."""
+        return [{**{k: v for k, v in s.items() if k != "metric"}, "metric_key": s["metric"]}
+                for s in specs]
 
-        load_col, del_col, new_col = st.columns([2, 1, 2])
-
-        with load_col:
-            ver_by_name = {s["name"]: s.get("version", 1) for s in saved_for_tab}
-            load_options = ["— select —"] + [s["name"] for s in saved_for_tab]
-            load_choice = st.selectbox(
-                f"Load saved screen ({len(saved_for_tab)} available for this tab)",
-                load_options,
-                format_func=lambda n: (f"{n}  (v{ver_by_name[n]})" if n in ver_by_name else n),
-                key=f"load_screen_{tab_key}",
-            )
-            load_version = None
-            if load_choice != "— select —":
-                # Versioned templates: offer the current version + any prior
-                # revisions to roll back to.
-                versions = screen_versions(load_choice)
-                if len(versions) > 1:
-                    _vlabel = {v["version"]: (f"v{v['version']} · {v['saved_at'][:10]}"
-                                              + (" (current)" if v["current"] else ""))
-                               for v in versions}
-                    load_version = st.selectbox(
-                        "Version", [v["version"] for v in versions],
-                        format_func=lambda x: _vlabel.get(x, f"v{x}"),
-                        key=f"load_ver_{tab_key}",
-                    )
-                if st.button(f"Load '{load_choice}'", key=f"load_btn_{tab_key}"):
-                    cfg = load_screen(load_choice, load_version)
-                    if cfg:
-                        ss = st.session_state
-                        if cfg.get("sort_idx") is not None:
-                            ss[f"sort_{tab_key}"] = cfg["sort_idx"]
-                        if cfg.get("sort_order"):
-                            ss[f"order_{tab_key}"] = cfg["sort_order"]
-                        # Restore filters by metric KEY (stable across tables). An
-                        # old index-only save, or a key not in the current metric
-                        # set, is skipped — never restored to the wrong metric.
-                        restored = 0
-                        for flt in cfg.get("filters", []):
-                            mk = flt.get("metric_key")
-                            if mk not in filter_key_to_idx:
-                                continue
-                            ss[f"filt_metric_{tab_key}_{restored}"] = filter_key_to_idx[mk]
-                            # kind defaults to absolute so pre-kind saves restore
-                            # as threshold filters.
-                            kind = flt.get("kind", "absolute")
-                            if kind == "peer_relative":
-                                ss[f"filt_kind_{tab_key}_{restored}"] = "Peer-relative"
-                                ss[f"filt_band_{tab_key}_{restored}"] = flt.get("band", "Top")
-                                ss[f"filt_pct_{tab_key}_{restored}"] = float(flt.get("pct", 25.0))
-                            elif kind == "change":
-                                ss[f"filt_kind_{tab_key}_{restored}"] = "Change"
-                                ss[f"filt_basis_{tab_key}_{restored}"] = flt.get("basis", "QoQ")
-                                ss[f"filt_chop_{tab_key}_{restored}"] = flt.get("op", ">")
-                                ss[f"filt_chval_{tab_key}_{restored}"] = flt.get("value", 0.0)
-                            elif kind == "trend":
-                                ss[f"filt_kind_{tab_key}_{restored}"] = "Trend"
-                                ss[f"filt_dir_{tab_key}_{restored}"] = (
-                                    "Declining" if flt.get("direction") == "down" else "Rising")
-                                ss[f"filt_q_{tab_key}_{restored}"] = int(flt.get("quarters", 3))
-                            else:
-                                ss[f"filt_kind_{tab_key}_{restored}"] = "Absolute"
-                                ss[f"filt_op_{tab_key}_{restored}"] = flt.get("op", "<")
-                                ss[f"filt_val_{tab_key}_{restored}"] = flt.get("value", 0.0)
-                            restored += 1
-                        if restored:
-                            ss[f"num_filters_{tab_key}"] = min(restored, 4)
-                        ss[f"custom_cols_{tab_key}"] = cfg.get("columns") or tab_columns
-                        st.rerun()
-
-        with del_col:
-            if load_choice != "— select —":
-                if st.button("Delete", key=f"del_btn_{tab_key}"):
-                    delete_screen(load_choice)
-                    st.success(f"Deleted '{load_choice}'")
-                    st.rerun()
-
-        with new_col:
-            with st.form(f"save_form_{tab_key}", clear_on_submit=True):
-                new_name = st.text_input("Save current as…",
-                                          placeholder="e.g. Value CRE Overweight",
-                                          key=f"new_screen_name_{tab_key}")
-                if st.form_submit_button("Save Screen") and new_name:
-                    ss = st.session_state
-                    num_filt = ss.get(f"num_filters_{tab_key}", 1)
-                    filters = []
-                    for i in range(num_filt):
-                        mi = ss.get(f"filt_metric_{tab_key}_{i}", 0)
-                        mk = filter_keys[mi] if 0 < mi < len(filter_keys) else None
-                        if mk is None:
-                            continue
-                        fkind_s = ss.get(f"filt_kind_{tab_key}_{i}", "Absolute")
-                        if fkind_s == "Peer-relative":
-                            filters.append({
-                                "kind": "peer_relative", "metric_key": mk,
-                                "band": ss.get(f"filt_band_{tab_key}_{i}", "Top"),
-                                "pct": ss.get(f"filt_pct_{tab_key}_{i}", 25.0),
-                            })
-                        elif fkind_s == "Change":
-                            filters.append({
-                                "kind": "change", "metric_key": mk,
-                                "basis": ss.get(f"filt_basis_{tab_key}_{i}", "QoQ"),
-                                "op": ss.get(f"filt_chop_{tab_key}_{i}", ">"),
-                                "value": ss.get(f"filt_chval_{tab_key}_{i}", 0.0),
-                            })
-                        elif fkind_s == "Trend":
-                            filters.append({
-                                "kind": "trend", "metric_key": mk,
-                                "direction": ("down" if ss.get(f"filt_dir_{tab_key}_{i}") == "Declining"
-                                              else "up"),
-                                "quarters": ss.get(f"filt_q_{tab_key}_{i}", 3),
-                            })
-                        else:
-                            filters.append({
-                                "kind": "absolute", "metric_key": mk,
-                                "op": ss.get(f"filt_op_{tab_key}_{i}", "<"),
-                                "value": ss.get(f"filt_val_{tab_key}_{i}", 0.0),
-                            })
-                    cfg = {
-                        "tab_key": tab_key,
-                        "sort_idx": ss.get(f"sort_{tab_key}", 0),
-                        "sort_order": ss.get(f"order_{tab_key}", "Desc"),
-                        "num_filters": num_filt,
-                        "filters": filters,
-                        "columns": ss.get(f"custom_cols_{tab_key}") or tab_columns,
-                    }
-                    save_screen(new_name, cfg)
-                    _vs = screen_versions(new_name)
-                    _v = _vs[0]["version"] if _vs else 1
-                    st.success(f"Saved '{new_name}' (v{_v})")
-                    st.rerun()
-
-        st.divider()
-        with st.expander("Bank groups — save the result set or manage saved groups"):
-            _render_groups_panel()
-
-    # ── Controls row: As of · Scope · Sort · Order ─────────────────────
-    # One dense control row (was a stacked As-of band ABOVE a separate
-    # Scope/Sort/Order row). As-of reconstructs the universe as it FILED at a
-    # past quarter-end (FDIC point-in-time: includes since-failed/acquired banks
-    # for the quarters they filed, e.g. SVB in Q4-2022; market & SEC metrics are
-    # n/a then, never guessed) and feeds the scope selector. The rest are
-    # independent. Sort options are built before the row so c_sort can use them.
+    # ── Sort + as-of option lists (built before the builder renders) ───
     from data.as_of_metrics import (recent_quarter_ends, quarter_label,
                                      as_of_quarter_metrics)
     from data.entity_graph import KNOWN_PUBLIC_FAILURES, lineage_predecessors
@@ -1015,11 +896,11 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             sort_labels.append(m["label"])
             sort_keys.append(col_key)
 
+    _lbl_of = {t["key"]: t["label"] for t in TABS}
+
     # ── Screen HOME (launcher) ─────────────────────────────────────────
-    # No screen open → show ONLY the launcher and STOP, BEFORE the toolbar renders.
-    # Starting a screen is the required first step, so the Theme/Table/As-of/Scope/
-    # Sort/Order controls don't appear until you're in one. New screen → a blank
-    # screen; or open / delete a saved one.
+    # No screen open → the launcher only: New screen · Saved screens · Recent.
+    # Clicking a row loads it (draft + applied) and runs it.
     if not st.session_state.get("_screen_open"):
         st.markdown("")
         _lc1, _lc2 = st.columns([1, 5])
@@ -1028,333 +909,348 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                          key="screen_new_btn"):
                 st.session_state["_screen_action"] = {"act": "new"}
                 st.rerun()
-            st.caption("Start a blank screen, then pick the table, filters and scope.")
+            st.caption("Build a screen — table, scope, filters, columns — then run it.")
         with _lc2:
             _saved = list_screens()
+            _lastrun = st.session_state.get("_screen_lastrun", {})
+            st.markdown("**Saved screens**")
             if not _saved:
-                st.caption("No saved screens yet. Start one with **New screen**, set "
-                           "filters, then **Save** it from the action bar.")
-            else:
-                st.markdown("**Saved screens**")
-                _lbl_of = {t["key"]: t["label"] for t in TABS}
-                for _s in _saved:
-                    _oc, _mc, _dc = st.columns([2.4, 3, 0.7])
+                st.caption("No saved screens yet. Start one with **New screen**, run it, "
+                           "then **Save screen** from the results bar.")
+            for _s in _saved:
+                _oc, _mc, _dc, _ = st.columns([2.2, 3.4, 0.35, 2.0],
+                                              vertical_alignment="center")
+                with _oc:
+                    if st.button(_s["name"], key=f"open_{_s['filename']}",
+                                 use_container_width=True):
+                        st.session_state["_screen_action"] = {
+                            "act": "open", "name": _s["name"],
+                            "tab": _s.get("tab")}
+                        st.rerun()
+                with _mc:
+                    _tablab = _lbl_of.get(_s.get("tab"), _s.get("tab") or "—")
+                    _fc = _s.get("filter_count", 0)
+                    _ran = _lastrun.get(_s["name"])
+                    st.caption(f"{_tablab} · {_fc} filter{'' if _fc == 1 else 's'}"
+                               f" · v{_s.get('version', 1)}"
+                               f" · saved {(_s.get('saved_at') or '')[:10]}"
+                               + (f" · ran {_ran}" if _ran else ""))
+                with _dc:
+                    if st.button("✕", key=f"del_{_s['filename']}",
+                                 help=f"Delete '{_s['name']}'"):
+                        delete_screen(_s["name"])
+                        st.rerun()
+            _recent = st.session_state.get("_screen_recent", [])
+            if _recent:
+                st.markdown("**Recent** — this session")
+                for _ri, _r in enumerate(_recent):
+                    _oc, _mc, _ = st.columns([2.2, 3.75, 2.0], vertical_alignment="center")
                     with _oc:
-                        if st.button(_s["name"], key=f"open_{_s['filename']}",
+                        if st.button(_r["name"], key=f"recent_{_ri}",
                                      use_container_width=True):
-                            st.session_state["_screen_action"] = {
-                                "act": "open", "name": _s["name"],
-                                "tab": _s.get("tab")}
+                            st.session_state["_screen_action"] = {"act": "recent",
+                                                                  "entry": _r}
                             st.rerun()
                     with _mc:
-                        _tablab = _lbl_of.get(_s.get("tab"), _s.get("tab") or "—")
-                        _fc = _s.get("filter_count", 0)
-                        st.caption(f"{_tablab} · {_fc} filter"
-                                   f"{'' if _fc == 1 else 's'} · v{_s.get('version', 1)}")
-                    with _dc:
-                        if st.button("✕", key=f"del_{_s['filename']}",
-                                     help=f"Delete '{_s['name']}'"):
-                            delete_screen(_s["name"])
-                            st.rerun()
+                        _fc = _r.get("n_filters", 0)
+                        st.caption(f"{_lbl_of.get(_r['tab_key'], _r['tab_key'])}"
+                                   f" · {_r.get('scope_label', 'All banks')}"
+                                   f" · {_fc} filter{'' if _fc == 1 else 's'}"
+                                   f" · {_r.get('n_results', 0)} banks"
+                                   f" · ran {_r['ran_at']}")
         st.stop()
 
-    # ── Compact toolbar — configurator selects (left-aligned, content-width) ──
-    # Plain columns with a trailing SPACER column keep the selects content-width
-    # instead of stretching edge-to-edge. Theme is folded into Table. The action
-    # buttons render below under a thin divider (screen_actbtns).
-    c_table, c_asof, c_scope, c_sort, c_order, c_add, _c_spacer = st.columns(
-        [2.3, 1.3, 1.4, 1.2, 0.8, 2.3, 1.4])
-    with c_table:
-        # Theme folded in: one flat Table picker over all tables (ordered by
-        # theme). screen_tab_key holds the chosen key (resolved up top).
-        st.selectbox(
-            "Table", options=_ordered_keys,
-            format_func=lambda k: next(t["label"] for t in TABS if t["key"] == k),
-            key="screen_tab_key")
-    with c_asof:
-        _asof_pick = st.selectbox(
-            "As of", _asof_opts, key=f"asof_{tab_key}",
-            help="Screen the universe as it filed at a past quarter-end (FDIC "
-                 "point-in-time; market/SEC metrics are n/a in this mode).")
-    is_asof = _asof_pick != "Latest (live)"
-    asof_q_label = _asof_pick if is_asof else ""
-    if is_asof:
-        _q = _qs_list[_asof_opts.index(_asof_pick) - 1]
-        _cand = {get_fdic_cert(t): t for t in watchlist if get_fdic_cert(t)}
-        _company_certs = set(_cand)   # current public banks WITH a Company page
-        for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
-            _cand.setdefault(_c, _nm)
-        with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
-                        "(first load fetches a few years of FDIC history; then cached)"):
-            # Lineage: banks since absorbed by a current bank were separate at Q —
-            # re-add them (the as-of builder still gates each on filing at Q).
-            for _c, _info in lineage_predecessors(set(_cand), _q).items():
-                _cand.setdefault(_c, _info.get("name") or f"CERT:{_c}")
-            screen_metrics = as_of_quarter_metrics(_q, _cand)
-        # Tag rows with no current Company page (failures / since-acquired) so the
-        # table links them to FDIC BankFind instead of a dead ?bank= link.
-        for _m in screen_metrics:
-            _m["_defunct"] = _m.get("_fdic_cert") not in _company_certs
-        if not screen_metrics:
-            st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
+    # ── Header: back to launcher + screen name ─────────────────────────
+    _hc1, _hc2 = st.columns([1, 8], vertical_alignment="center")
+    with _hc1:
+        if st.button("← Screens", key=f"btn_close_{tab_key}",
+                     use_container_width=True, help="Back to the launcher"):
+            st.session_state["_screen_action"] = {"act": "close"}
+            st.rerun()
+    with _hc2:
+        _nm = st.session_state.get("_screen_name")
+        st.markdown(f"**{_nm}**" if _nm else "*Untitled screen*")
+
+    # ── Filter-row callbacks (run BEFORE the rerun, so writing widget keys is legal)
+    def _add_filter():
+        ss = st.session_state
+        n = ss.get(f"num_filters_{tab_key}", 0)
+        if n < _SCREEN_MAX_FILTERS:
+            ss[f"num_filters_{tab_key}"] = n + 1
+
+    def _remove_filter(i):
+        """Drop row i and shift the rows after it down one slot (every keyed
+        suffix moves together, so a Change row keeps its basis/op/Δ)."""
+        ss = st.session_state
+        n = ss.get(f"num_filters_{tab_key}", 0)
+        for j in range(i, n - 1):
+            for sfx in _SCREEN_FILTER_SUFFIXES:
+                src, dst = f"filt_{sfx}_{tab_key}_{j + 1}", f"filt_{sfx}_{tab_key}_{j}"
+                if src in ss:
+                    ss[dst] = ss[src]
+                else:
+                    ss.pop(dst, None)
+        for sfx in _SCREEN_FILTER_SUFFIXES:
+            ss.pop(f"filt_{sfx}_{tab_key}_{n - 1}", None)
+        ss[f"num_filters_{tab_key}"] = max(n - 1, 0)
+
+    # Columns draft: seed the multiselect's session value once (no `default=`
+    # alongside a session-set key — Streamlit warns on that combination).
+    _all_metric_keys = [m["key"] for m in METRICS if m.get("format") != "date"]
+    if (f"custom_cols_{tab_key}" not in st.session_state
+            or st.session_state.pop("_screen_cols_reset", False)):
+        st.session_state[f"custom_cols_{tab_key}"] = list(tab_columns)
     else:
-        screen_metrics = all_metrics
-    with c_scope:
-        _scope_type = st.selectbox("Scope", scope_type_options(),
-                                   key=f"screen_{tab_key}_scope_type")
-    with c_sort:
-        sort_idx = st.selectbox(
-            "Sort", options=list(range(len(sort_labels))),
-            format_func=lambda i: sort_labels[i], key=f"sort_{tab_key}")
-    with c_order:
-        sort_order = st.selectbox("Order", options=["Desc", "Asc"],
-                                  key=f"order_{tab_key}")
-    with c_add:
-        # Quick add: search a ticker/name → it's appended to the Manual scope and
-        # the table populates (handled in the resolution block above on rerun).
-        st.selectbox(
-            "Add bank", options=sorted(watchlist), index=None,
-            placeholder="ticker or name…",
-            format_func=lambda t: (f"{t} — {get_name(t)}"
-                                   if get_name(t) and get_name(t) != t else t),
-            key="screen_addbank")
-    # Scope's secondary picker — only when the type needs one; narrow, below the
-    # selects. For "All banks" render_scope_sub draws nothing (no empty band).
-    if _scope_type == "All banks":
-        display_metrics, display_tickers, scope_label = render_scope_sub(
-            screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
-    else:
-        with st.container(key="screen_scopesub"):
-            _ssub, _ = st.columns([3, 6])
-            with _ssub:
-                display_metrics, display_tickers, scope_label = render_scope_sub(
-                    screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
+        st.session_state[f"custom_cols_{tab_key}"] = [
+            c for c in st.session_state[f"custom_cols_{tab_key}"] if c in _all_metric_keys]
 
-    # ── Metric filters dialog (any metric; AND-combined) ───────────────
-    from analysis.screen_engine import evaluate as _evaluate_screen
+    # ── Builder panel ──────────────────────────────────────────────────
+    with st.container(key="screen_builder"):
+        # Row 1: Table · Scope (+ its secondary picker) · As of
+        r1 = st.columns([2.1, 1.35, 2.4, 1.3, 1.9])
+        with r1[0]:
+            st.selectbox(
+                "Table", options=_ordered_keys,
+                format_func=lambda k: _lbl_of.get(k, k), key="screen_tab_key")
+        with r1[3]:
+            _asof_pick = st.selectbox(
+                "As of", _asof_opts, key=f"asof_{tab_key}",
+                help="Screen the universe as it filed at a past quarter-end (FDIC "
+                     "point-in-time; market/SEC metrics are n/a in this mode).")
+        is_asof = _asof_pick != "Latest (live)"
+        asof_q_label = _asof_pick if is_asof else ""
+        if is_asof:
+            # Point-in-time universe (cached per quarter after the first build).
+            # Reconstructed here so the scope picker lists the cohorts of THAT
+            # quarter; the screen itself still only evaluates on Run.
+            _q = _qs_list[_asof_opts.index(_asof_pick) - 1]
+            _cand = {get_fdic_cert(t): t for t in watchlist if get_fdic_cert(t)}
+            _company_certs = set(_cand)   # current public banks WITH a Company page
+            for _c, _nm in KNOWN_PUBLIC_FAILURES.items():
+                _cand.setdefault(_c, _nm)
+            with st.spinner(f"Reconstructing the universe as of {_asof_pick}… "
+                            "(first load fetches a few years of FDIC history; then cached)"):
+                for _c, _info in lineage_predecessors(set(_cand), _q).items():
+                    _cand.setdefault(_c, _info.get("name") or f"CERT:{_c}")
+                screen_metrics = as_of_quarter_metrics(_q, _cand)
+            for _m in screen_metrics:
+                _m["_defunct"] = _m.get("_fdic_cert") not in _company_certs
+            if not screen_metrics:
+                st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
+        else:
+            screen_metrics = all_metrics
+        with r1[1]:
+            _scope_type = st.selectbox("Scope", scope_type_options(),
+                                       key=f"screen_{tab_key}_scope_type")
+        with r1[2]:
+            display_metrics, display_tickers, scope_label = render_scope_sub(
+                screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
 
-    @st.dialog("Metric filters", width="large")
-    def _filters_dialog():
-        # Local list is discarded; the specs actually applied are rebuilt from
-        # session_state below (_filter_specs_from_state) so they hold when closed.
-        filter_specs = []
-        st.caption("Filter on any metric, AND-combined. **Absolute** = value vs a "
-                   "threshold · **Peer-relative** = Top/Bottom % by value within the "
-                   "current scope · **Change** = QoQ/YoY move · **Trend** = N consecutive "
-                   "quarters one way. A bank with no value (or too little history) for a "
-                   "filter is excluded as no-data, never counted as failing.")
-        num_filters = st.selectbox(
-            "Number of filters",
-            options=[1, 2, 3, 4],
-            key=f"num_filters_{tab_key}",
-        )
-
-        for fi in range(num_filters):
-            kc, mc, c3, c4, c5 = st.columns([1.5, 2.6, 1.3, 1.3, 1.3])
+        # Row 2: filters, one line each, + Add filter
+        st.caption("Filters — AND-combined; a bank with no value for a filter is "
+                   "excluded as no-data, never failed.")
+        _nf = st.session_state.get(f"num_filters_{tab_key}", 0)
+        for fi in range(_nf):
+            kc, mc, c3, c4, c5, xc, _ = st.columns(
+                [1.15, 2.3, 1.0, 1.0, 1.0, 0.42, 2.2], vertical_alignment="bottom")
             lblvis = "collapsed" if fi > 0 else "visible"
             with kc:
                 fkind = st.selectbox(
                     "Type", ["Absolute", "Peer-relative", "Change", "Trend"],
-                    key=f"filt_kind_{tab_key}_{fi}", label_visibility=lblvis,
-                )
+                    key=f"filt_kind_{tab_key}_{fi}", label_visibility=lblvis)
             with mc:
-                filt_idx = st.selectbox(
-                    "Metric",
-                    options=list(range(len(filter_labels))),
+                st.selectbox(
+                    "Metric", options=list(range(len(filter_labels))),
                     format_func=lambda i, fl=filter_labels: fl[i],
-                    key=f"filt_metric_{tab_key}_{fi}", label_visibility=lblvis,
-                )
-            filt_key = filter_keys[filt_idx] if filt_idx > 0 else None
-
+                    key=f"filt_metric_{tab_key}_{fi}", label_visibility=lblvis)
             if fkind == "Peer-relative":
                 with c3:
-                    fband = st.selectbox("Band", ["Top", "Bottom"],
-                        key=f"filt_band_{tab_key}_{fi}", label_visibility=lblvis)
+                    st.selectbox("Band", ["Top", "Bottom"],
+                                 key=f"filt_band_{tab_key}_{fi}", label_visibility=lblvis)
                 with c4:
-                    fpct = st.number_input("Pct %", value=25.0, min_value=1.0,
-                        max_value=99.0, step=5.0, format="%.0f",
-                        key=f"filt_pct_{tab_key}_{fi}", label_visibility=lblvis)
-                if filt_key is not None:
-                    filter_specs.append({"kind": "peer_relative", "metric": filt_key,
-                                         "band": fband, "pct": fpct})
+                    st.number_input("Pct %", value=25.0, min_value=1.0, max_value=99.0,
+                                    step=5.0, format="%.0f",
+                                    key=f"filt_pct_{tab_key}_{fi}", label_visibility=lblvis)
             elif fkind == "Change":
                 with c3:
-                    fbasis = st.selectbox("Basis", ["QoQ", "YoY"],
-                        key=f"filt_basis_{tab_key}_{fi}", label_visibility=lblvis)
+                    st.selectbox("Basis", ["QoQ", "YoY"],
+                                 key=f"filt_basis_{tab_key}_{fi}", label_visibility=lblvis)
                 with c4:
-                    fchop = st.selectbox("Op", ["<", "≤", ">", "≥", "="],
-                        key=f"filt_chop_{tab_key}_{fi}", label_visibility=lblvis)
+                    st.selectbox("Op", ["<", "≤", ">", "≥", "="],
+                                 key=f"filt_chop_{tab_key}_{fi}", label_visibility=lblvis)
                 with c5:
-                    fchval = st.number_input("Δ", value=0.0, step=0.1, format="%.2f",
-                        key=f"filt_chval_{tab_key}_{fi}", label_visibility=lblvis)
-                if filt_key is not None:
-                    filter_specs.append({"kind": "change", "metric": filt_key,
-                                         "basis": fbasis, "op": fchop, "value": fchval})
+                    st.number_input("Δ", value=0.0, step=0.1, format="%.2f",
+                                    key=f"filt_chval_{tab_key}_{fi}", label_visibility=lblvis)
             elif fkind == "Trend":
                 with c3:
-                    fdir = st.selectbox("Direction", ["Declining", "Rising"],
-                        key=f"filt_dir_{tab_key}_{fi}", label_visibility=lblvis)
+                    st.selectbox("Direction", ["Declining", "Rising"],
+                                 key=f"filt_dir_{tab_key}_{fi}", label_visibility=lblvis)
                 with c4:
-                    fq = st.selectbox("Quarters", [2, 3, 4],
-                        key=f"filt_q_{tab_key}_{fi}", label_visibility=lblvis)
-                if filt_key is not None:
-                    filter_specs.append({"kind": "trend", "metric": filt_key,
-                                         "direction": "down" if fdir == "Declining" else "up",
-                                         "quarters": fq})
+                    st.selectbox("Quarters", [2, 3, 4],
+                                 key=f"filt_q_{tab_key}_{fi}", label_visibility=lblvis)
             else:  # Absolute
                 with c3:
-                    fop = st.selectbox("Op", ["<", "≤", ">", "≥", "="],
-                        key=f"filt_op_{tab_key}_{fi}", label_visibility=lblvis)
+                    st.selectbox("Op", ["<", "≤", ">", "≥", "="],
+                                 key=f"filt_op_{tab_key}_{fi}", label_visibility=lblvis)
                 with c4:
-                    fval = st.number_input("Value", value=0.0, step=0.1, format="%.2f",
-                        key=f"filt_val_{tab_key}_{fi}", label_visibility=lblvis)
-                if filt_key is not None:
-                    filter_specs.append({"kind": "absolute", "metric": filt_key,
-                                         "op": fop, "value": fval})
+                    st.number_input("Value", value=0.0, step=0.1, format="%.2f",
+                                    key=f"filt_val_{tab_key}_{fi}", label_visibility=lblvis)
+            with xc:
+                st.button("✕", key=f"filt_rm_{tab_key}_{fi}", on_click=_remove_filter,
+                          args=(fi,), help="Remove this filter")
+        _ac1, _ac2, _ = st.columns([1.15, 3, 5])
+        with _ac1:
+            st.button("+ Add filter", key=f"filt_add_{tab_key}", on_click=_add_filter,
+                      disabled=_nf >= _SCREEN_MAX_FILTERS, use_container_width=True)
+        with _ac2:
+            if _nf >= _SCREEN_MAX_FILTERS:
+                st.caption(f"Up to {_SCREEN_MAX_FILTERS} filters per screen.")
 
-        # Explicit Apply (owner request 2026-09-22): the widgets above already
-        # live in session_state, so applying is just closing the dialog and
-        # rerunning the page with the current specs. Without a button the
-        # only way out was the X, which read as "cancel".
-        _, _apply_col = st.columns([5.4, 1.3])
-        with _apply_col:
-            if st.button("Apply", type="primary", key=f"filt_apply_{tab_key}",
-                         use_container_width=True):
-                st.rerun()
+        # Row 3: Columns (popover — the full picker is ~25 chips tall) · Sort · Order
+        r3 = st.columns([1.15, 1.5, 0.9, 5.4], vertical_alignment="bottom")
+        with r3[0]:
+            _ncols = len(st.session_state.get(f"custom_cols_{tab_key}") or [])
+            with st.popover(f"Columns ({_ncols})", use_container_width=True):
+                st.multiselect(
+                    "Columns to display", _all_metric_keys,
+                    format_func=lambda k: f"{METRICS_BY_KEY.get(k, {}).get('label', k)}  "
+                                          f"({METRICS_BY_KEY.get(k, {}).get('category', '—')})",
+                    key=f"custom_cols_{tab_key}")
+                if st.button("Reset to table default", key=f"cols_reset_{tab_key}"):
+                    st.session_state[f"_screen_cols_reset"] = True
+                    st.rerun()
+        with r3[1]:
+            sort_idx = st.selectbox(
+                "Sort", options=list(range(len(sort_labels))),
+                format_func=lambda i: sort_labels[i], key=f"sort_{tab_key}")
+        with r3[2]:
+            sort_order = st.selectbox("Order", options=["Desc", "Asc"],
+                                      key=f"order_{tab_key}")
 
-    # Live specs (independent of whether the dialog is open) drive the table.
-    filter_specs = _filter_specs_from_state()
-
-    # A screen is "engaged" once it has a filter or a narrowed scope. A brand-new
-    # blank screen (no filter, All banks) shows a prompt instead of dumping the
-    # full universe — results appear as soon as you add a filter or pick a scope.
-    _engaged = bool(filter_specs) or (_scope_type != "All banks")
-
-    # Apply via the screening engine — it excludes no-data banks (counted) rather
-    # than silently scoring them as failures (cardinal rule). Change/trend specs
-    # need per-quarter history, computed lazily per bank and cached.
-    n_excluded_nodata = 0
-    if filter_specs and display_metrics:
-        ct_specs = [s for s in filter_specs if s["kind"] in ("change", "trend")]
-        if ct_specs:
-            ct_metrics = tuple(sorted({s["metric"] for s in ct_specs}))
-            max_lb = max(
-                [4 if s.get("basis") == "YoY" else 1 for s in ct_specs if s["kind"] == "change"]
-                + [int(s.get("quarters", 3)) for s in ct_specs if s["kind"] == "trend"] + [1])
-
-            def _hist_provider(tk, _m=ct_metrics, _n=max_lb):
-                return _screen_metric_series(tk, _m, _n)
-
-            with st.spinner("Computing quarterly history for change/trend filters…"):
-                display_metrics, n_excluded_nodata = _evaluate_screen(
-                    display_metrics, filter_specs, _hist_provider)
-        else:
-            display_metrics, n_excluded_nodata = _evaluate_screen(
-                display_metrics, filter_specs)
-
-    # Apply sorting
-    sort_key = sort_keys[sort_idx] if sort_idx > 0 else None
-    if sort_key and display_metrics:
-        ascending = sort_order == "Asc"
-        display_metrics = sorted(
-            display_metrics,
-            key=lambda m: (m.get(sort_key) is None, m.get(sort_key) or 0),
-            reverse=not ascending,
-        )
-
-    # Customized columns (computed here so the header's column count matches
-    # what actually renders below).
-    display_cols_final = st.session_state.get(f"custom_cols_{tab_key}") or tab_columns
-    if not display_cols_final:
-        display_cols_final = tab_columns
-    scope_slug = ("".join(c if c.isalnum() else "_"
-                          for c in scope_label.lower())[:30].strip("_") or "scope")
-
-    # The big SNL title bar is gone — the tab bar + Table name identify the view.
-    # The status line (count / provenance) and the results table render BELOW the
-    # control bar (after the action row); see the status block further down.
-
-    # ── Columns dialog (picker only — export is its own button now) ────
-    @st.dialog("Columns", width="large")
-    def _columns_dialog():
-        all_metric_keys = [m["key"] for m in METRICS if m.get("format") != "date"]
-        default_cols = st.session_state.get(f"custom_cols_{tab_key}", tab_columns)
-        default_cols = [c for c in default_cols if c in all_metric_keys]
-        st.multiselect(
-            "Columns to display (leave as-is for the tab's default view)",
-            all_metric_keys, default=default_cols,
-            format_func=lambda k: f"{METRICS_BY_KEY.get(k, {}).get('label', k)}  "
-                                  f"({METRICS_BY_KEY.get(k, {}).get('category', '—')})",
-            key=f"custom_cols_{tab_key}")
-
-    # ── Export dialog — one .xlsx of the current result set ────────────
-    # ui/export.py is THE exporter: raw numbers + Excel formats, n/a for
-    # absent, Source sheet. Scaled-unit labels ("Mkt Cap ($B)") become "($)"
-    # because the cells hold whole dollars (audit 2026-09-22: the old sheet
-    # showed 2,100,000,000 under a "$B" header).
-    @st.dialog("Export results")
-    def _export_dialog():
-        st.caption(f"Export the current {len(display_metrics)} banks × "
-                   f"{len(display_cols_final)} columns, exactly as shown "
-                   "(scope, filters and sort applied). Raw numbers with Excel "
-                   "formats; a Source sheet carries scope, as-of and units.")
-        if not display_metrics:
-            st.warning("No banks to export.")
-            return
-        from ui.export import (build_workbook, metric_columns, safe_filename,
-                               XLSX_MIME)
-        export_df = pd.DataFrame(display_metrics)
-        export_keys = ["ticker"] + [c for c in display_cols_final
-                                    if c in export_df.columns]
-        rename, formats = metric_columns(export_keys)
-        rename["ticker"] = "Ticker"
-        export_df = export_df[export_keys].rename(columns=rename)
-        _sort_lbl = (f"{METRICS_BY_KEY.get(sort_key, {}).get('label', sort_key)} "
-                     f"({'ascending' if ascending else 'descending'})"
-                     if sort_key else "default")
-        provenance = {
-            "Page": f"Screener › {screening_tab['title']}",
-            "Scope": scope_label,
-            "Filters": len(filter_specs) if filter_specs else "none",
-            "Sort": _sort_lbl,
-            "As of": asof_q_label if is_asof else "Latest (live)",
-            "Source": ("FDIC point-in-time reconstruction; market & SEC "
-                       "metrics n/a" if is_asof else
-                       "FDIC/FFIEC bank-subsidiary + SEC companyfacts "
-                       "fundamentals; market prices as market data"),
+        # Draft snapshot — what Run will apply. Compared to the applied spec to
+        # flag unrun edits.
+        filter_specs = _filter_specs_from_state()
+        sort_key = sort_keys[sort_idx] if 0 < sort_idx < len(sort_keys) else None
+        display_cols_draft = (st.session_state.get(f"custom_cols_{tab_key}")
+                              or list(tab_columns))
+        _draft = {
+            "tab_key": tab_key, "asof": _asof_pick, "is_asof": is_asof,
+            "scope_type": _scope_type, "scope_label": scope_label,
+            "scope_keys": {s: st.session_state.get(f"screen_{tab_key}_{s}")
+                           for s in _SCREEN_SCOPE_SUFFIXES
+                           if f"screen_{tab_key}_{s}" in st.session_state},
+            "tickers": list(display_tickers),
+            "filters": filter_specs, "sort_key": sort_key, "sort_order": sort_order,
+            "columns": list(display_cols_draft),
         }
+        _applied = st.session_state.get("_screen_applied")
 
-        def _build() -> bytes:
-            return build_workbook(export_df, sheet=screening_tab["title"],
-                                  formats=formats, provenance=provenance,
-                                  freeze_cols=1)
+        # Run row
+        _rc1, _rc2, _ = st.columns([1.15, 6, 2], vertical_alignment="center")
+        with _rc1:
+            _run = st.button("Run screen", type="primary", key=f"btn_run_{tab_key}",
+                             use_container_width=True)
+        with _rc2:
+            _run_note = st.empty()   # filled after the Run block below
 
-        st.download_button(
-            "Download Excel", _build,
-            file_name=f"{safe_filename(f'{tab_key}_{scope_slug}')}.xlsx",
-            mime=XLSX_MIME, use_container_width=True, key=f"xlsx_{tab_key}")
+    # ── Run: draft → applied, evaluate ONCE, store the result set ──────
+    from analysis.screen_engine import evaluate as _evaluate_screen
+    if _run or st.session_state.pop("_screen_run_pending", False):
+        kept, n_excluded_nodata = list(display_metrics), 0
+        if filter_specs and kept:
+            ct_specs = [s for s in filter_specs if s["kind"] in ("change", "trend")]
+            if ct_specs:
+                ct_metrics = tuple(sorted({s["metric"] for s in ct_specs}))
+                max_lb = max(
+                    [4 if s.get("basis") == "YoY" else 1
+                     for s in ct_specs if s["kind"] == "change"]
+                    + [int(s.get("quarters", 3)) for s in ct_specs if s["kind"] == "trend"]
+                    + [1])
 
-    # ── Bank groups panel (folded into the Saved dialog) ───────────────
+                def _hist_provider(tk, _m=ct_metrics, _n=max_lb):
+                    return _screen_metric_series(tk, _m, _n)
+
+                with st.spinner("Computing quarterly history for change/trend filters…"):
+                    kept, n_excluded_nodata = _evaluate_screen(
+                        kept, filter_specs, _hist_provider)
+            else:
+                kept, n_excluded_nodata = _evaluate_screen(kept, filter_specs)
+        if sort_key and kept:
+            kept = sorted(kept,
+                          key=lambda m: (m.get(sort_key) is None, m.get(sort_key) or 0),
+                          reverse=(sort_order != "Asc"))
+        _applied = _draft
+        st.session_state["_screen_applied"] = _applied
+        st.session_state["_screen_result"] = {"metrics": kept,
+                                              "n_excluded_nodata": n_excluded_nodata}
+        # Recent (this session): most-recent first, deduped on the spec, capped.
+        _ran_at = time.strftime("%H:%M")
+        st.session_state["_screen_ran_at"] = _ran_at
+        _nm = st.session_state.get("_screen_name")
+        _entry = {
+            "name": _nm or "Untitled screen", "tab_key": tab_key, "ran_at": _ran_at,
+            "scope_label": scope_label, "n_filters": len(filter_specs),
+            "n_results": len(kept),
+            "cfg": {
+                "tab_key": tab_key,
+                "sort_idx": sort_idx, "sort_order": sort_order,
+                "filters": _specs_to_cfg_filters(filter_specs),
+                "columns": list(display_cols_draft),
+                "scope_keys": _draft["scope_keys"], "asof": _asof_pick,
+            },
+        }
+        _rec = [r for r in st.session_state.get("_screen_recent", [])
+                if not (r["name"] == _entry["name"] and r["cfg"] == _entry["cfg"])]
+        st.session_state["_screen_recent"] = [_entry] + _rec[:7]
+        if _nm:
+            st.session_state.setdefault("_screen_lastrun", {})[_nm] = _ran_at
+
+    # Run-row note (written here so a load-and-run shows its result state).
+    if _applied is None:
+        _run_note.caption("Set up the screen, then **Run screen** — nothing is "
+                          "evaluated until you do.")
+    elif _draft != _applied:
+        _run_note.caption("Changed since the last run — press **Run screen** to apply.")
+    else:
+        _run_note.caption(f"Ran {st.session_state.get('_screen_ran_at', '')} — results below.")
+
+    # ── Results (read ONLY the applied spec + stored result) ───────────
+    from ui.chrome import status_dot
+    _res = st.session_state.get("_screen_result")
+    if _applied is None or _res is None:
+        st.stop()
+
+    res_metrics = _res["metrics"]
+    n_excluded_nodata = _res["n_excluded_nodata"]
+    ap_filters = _applied["filters"]
+    ap_cols = [c for c in _applied["columns"] if c in _all_metric_keys] or list(tab_columns)
+    ap_tab = next((t for t in TABS if t["key"] == _applied["tab_key"]), screening_tab)
+    ap_sort_key = _applied["sort_key"]
+    ap_asc = _applied["sort_order"] == "Asc"
+    ap_is_asof = _applied["is_asof"]
+    ap_scope_label = _applied["scope_label"]
+    scope_slug = ("".join(c if c.isalnum() else "_"
+                          for c in ap_scope_label.lower())[:30].strip("_") or "scope")
+
     def _render_groups_panel():
-        """Firm-wide bank groups (data/bank_groups), shown inside the Saved dialog.
-        Three tabs: save the current screen set, build from a pasted/CSV ticker
-        list, or manage an existing group (members, description, tag, rename, del)."""
+        """Firm-wide bank groups (data/bank_groups): save the result set as a
+        named group, build one from a pasted/CSV ticker list, or manage one."""
         from data.bank_groups import (list_groups, load_group, rename_group,
                                        delete_group, parse_tickers)
 
         _t_save, _t_paste, _t_manage = st.tabs(
-            ["Save current", "Paste / import", "Manage"])
+            ["Save results", "Paste / import", "Manage"])
 
         with _t_save:
-            st.caption("Save the current (filtered) screen set as a named group.")
+            st.caption("Save the current result set as a named group.")
             _gn = st.text_input("Group name", placeholder="e.g. CRE-heavy Southeast",
                                 key=f"grp_new_{tab_key}")
             _gd = st.text_input("Description (optional)", key=f"grp_newdesc_{tab_key}")
             _gt = st.text_input("Tag / folder (optional)", placeholder="e.g. Watchlists",
                                 key=f"grp_newtag_{tab_key}")
-            if st.button(f"Save {len(display_metrics)} banks", key=f"grp_newbtn_{tab_key}",
+            if st.button(f"Save {len(res_metrics)} banks", key=f"grp_newbtn_{tab_key}",
                          use_container_width=True):
-                _tk = [m["ticker"] for m in display_metrics if m.get("ticker")]
+                _tk = [m["ticker"] for m in res_metrics if m.get("ticker")]
                 if not _gn.strip():
                     st.warning("Enter a name first.")
                 elif not _tk:
@@ -1458,84 +1354,118 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 else:
                     st.error("Could not delete.")
 
-    # ── Compact toolbar — action buttons (small, left, under a thin divider) ──
-    # Groups is folded into Saved; Compare hands the set to the side-by-side
-    # Compare view and shows only when small enough to compare (engaged, ≤30). A
-    # trailing SPACER column keeps the buttons grouped left and content-sized.
-    _flabel = f"Filters ({len(filter_specs)})" if filter_specs else "Filters"
-    _show_compare = _engaged and 0 < len(display_metrics) <= 30
+    # ── Status line ────────────────────────────────────────────────────
+    filter_note = (f" · {len(ap_filters)} filter"
+                   f"{'s' if len(ap_filters) != 1 else ''}") if ap_filters else ""
+    nodata_note = (f" · {n_excluded_nodata} excluded (no data)"
+                   if n_excluded_nodata else "")
+    if ap_is_asof:
+        # Point-in-time: count banks no longer in today's coverage.
+        _live = {t for t in watchlist}
+        _exited = sum(1 for m in res_metrics if m.get("ticker") not in _live)
+        _exit_note = f" · incl. {_exited} since-exited" if _exited else ""
+        _meta = (status_dot("warn", f"As of {_applied['asof']}")
+                 + f" · {len(res_metrics)} banks · {ap_tab['title']}"
+                 + f" · {ap_scope_label}{filter_note}{nodata_note}{_exit_note}"
+                 + " · FDIC point-in-time (market & SEC metrics n/a)")
+    else:
+        _meta = (status_dot("ok", f"{len(res_metrics)} banks")
+                 + f" · {ap_tab['title']} · {ap_scope_label}{filter_note}"
+                 + f"{nodata_note} · FDIC + SEC fundamentals · "
+                 + f"{len(ap_cols)} columns")
+    st.markdown(
+        f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
+        f'margin:10px 0 4px;">{_meta}</div>',
+        unsafe_allow_html=True,
+    )
+    if not ap_is_asof:
+        _rt = [m.get("ticker") for m in res_metrics[:10]]
+        fdic_ages = {t: cache.fdic_age(t) for t in _rt}
+        sec_ages = {t: cache.sec_age(t) for t in _rt}
+        render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
+
+    # ── Results actions: Save screen · Groups · Compare · heatmap … Export ─
+    _show_compare = 0 < len(res_metrics) <= 30
     with st.container(key="screen_actbtns"):
-        _aw = [1.0, 1.0, 1.0, 1.0, 1.0] + ([1.5] if _show_compare else []) + [7.5]
-        _ac = st.columns(_aw)
+        _aw = [1.15, 1.0] + ([1.5] if _show_compare else []) + [1.9, 4.6, 0.9]
+        _ac = st.columns(_aw, vertical_alignment="center")
         with _ac[0]:
-            if st.button("← Screens", key=f"btn_close_{tab_key}",
-                         use_container_width=True, help="Back to the launcher"):
-                st.session_state["_screen_action"] = {"act": "close"}
-                st.rerun()
+            with st.popover("Save screen", use_container_width=True):
+                st.caption("Saves the screen as last run (table, filters, sort, "
+                           "columns). Re-saving a name bumps its version.")
+                _new_name = st.text_input("Name", placeholder="e.g. Value CRE Overweight",
+                                          key=f"new_screen_name_{tab_key}")
+                if st.button("Save", key=f"save_screen_btn_{tab_key}", type="primary"):
+                    if not _new_name.strip():
+                        st.warning("Enter a name first.")
+                    else:
+                        _cfg = {
+                            "tab_key": _applied["tab_key"],
+                            "sort_idx": (sort_keys.index(ap_sort_key)
+                                         if ap_sort_key in sort_keys else 0),
+                            "sort_order": _applied["sort_order"],
+                            "num_filters": len(ap_filters),
+                            "filters": _specs_to_cfg_filters(ap_filters),
+                            "columns": list(ap_cols),
+                        }
+                        if save_screen(_new_name, _cfg):
+                            _vs = screen_versions(_new_name)
+                            _v = _vs[0]["version"] if _vs else 1
+                            st.session_state["_screen_name"] = _new_name.strip()
+                            st.session_state.setdefault("_screen_lastrun", {})[
+                                _new_name.strip()] = time.strftime("%H:%M")
+                            st.success(f"Saved '{_new_name}' (v{_v})")
+                        else:
+                            st.error("Could not save.")
         with _ac[1]:
-            if st.button(_flabel, key=f"btn_filters_{tab_key}", use_container_width=True):
-                _filters_dialog()
-        with _ac[2]:
-            if st.button("Columns", key=f"btn_cols_{tab_key}", use_container_width=True):
-                _columns_dialog()
-        with _ac[3]:
-            if st.button("Saved", key=f"btn_saved_{tab_key}", use_container_width=True):
-                _saved_dialog()
-        with _ac[4]:
-            if st.button("Export", key=f"btn_export_{tab_key}", use_container_width=True):
-                _export_dialog()
+            with st.popover("Groups", use_container_width=True):
+                _render_groups_panel()
         if _show_compare:
-            with _ac[5]:
-                if st.button(f"Compare {len(display_metrics)} →", type="primary",
+            with _ac[2]:
+                if st.button(f"Compare {len(res_metrics)} →", type="primary",
                              key=f"compare_handoff_{tab_key}", use_container_width=True):
                     st.session_state["_compare_handoff_tickers"] = [
-                        m["ticker"] for m in display_metrics if m.get("ticker")]
+                        m["ticker"] for m in res_metrics if m.get("ticker")]
                     # sc_sub already instantiated; flag the switch for next run.
                     st.session_state["_goto_compare"] = True
                     st.rerun()
+        with _ac[-3]:
+            _heat = st.toggle(
+                "Percentile heatmap", key=f"heat_{tab_key}",
+                help="Color each column by its rank within the current results "
+                     "(green = top, red = bottom), instead of threshold shading.")
+        with _ac[-1]:
+            if res_metrics:
+                # ui/export.py is THE exporter: raw numbers + Excel formats, n/a
+                # for absent, Source sheet. Scaled-unit labels ("Mkt Cap ($B)")
+                # become "($)" because the cells hold whole dollars.
+                from ui.export import table_export, metric_columns
+                export_df = pd.DataFrame(res_metrics)
+                export_keys = ["ticker"] + [c for c in ap_cols if c in export_df.columns]
+                rename, formats = metric_columns(export_keys)
+                rename["ticker"] = "Ticker"
+                export_df = export_df[export_keys].rename(columns=rename)
+                _sort_lbl = (f"{METRICS_BY_KEY.get(ap_sort_key, {}).get('label', ap_sort_key)} "
+                             f"({'ascending' if ap_asc else 'descending'})"
+                             if ap_sort_key else "default")
+                table_export(
+                    export_df, f"{ap_tab['key']}_{scope_slug}", key=f"xlsx_{tab_key}",
+                    sheet=ap_tab["title"], formats=formats, freeze_cols=1,
+                    provenance={
+                        "Page": f"Screener › {ap_tab['title']}",
+                        "Scope": ap_scope_label,
+                        "Filters": len(ap_filters) if ap_filters else "none",
+                        "Sort": _sort_lbl,
+                        "As of": _applied["asof"],
+                        "Source": ("FDIC point-in-time reconstruction; market & SEC "
+                                   "metrics n/a" if ap_is_asof else
+                                   "FDIC/FFIEC bank-subsidiary + SEC companyfacts "
+                                   "fundamentals; market prices as market data"),
+                    })
 
-    # ── Status line + results (below the control bar) ──────────────────
-    from ui.chrome import status_dot
-    if not _engaged:
-        st.info("**Blank screen** — add a **Filter** or pick a **Scope** in the bar "
-                "above to populate results, or use **Saved** to load one. "
-                "**← Screens** goes back to the launcher.")
-    else:
-        filter_note = (f" · {len(filter_specs)} filter"
-                       f"{'s' if len(filter_specs) != 1 else ''}") if filter_specs else ""
-        nodata_note = (f" · {n_excluded_nodata} excluded (no data)"
-                       if n_excluded_nodata else "")
-        if is_asof:
-            # Point-in-time: count banks no longer in today's coverage.
-            _live = {t for t in watchlist}
-            _exited = sum(1 for m in display_metrics if m.get("ticker") not in _live)
-            _exit_note = f" · incl. {_exited} since-exited" if _exited else ""
-            _meta = (status_dot("warn", f"As of {asof_q_label}")
-                     + f" · {len(display_metrics)} banks · {screening_tab['title']}"
-                     + f" · {scope_label}{filter_note}{nodata_note}{_exit_note}"
-                     + " · FDIC point-in-time (market & SEC metrics n/a)")
-        else:
-            _meta = (status_dot("ok", f"{len(display_metrics)} banks")
-                     + f" · {screening_tab['title']} · {scope_label}{filter_note}"
-                     + f"{nodata_note} · FDIC + SEC fundamentals · "
-                     + f"{len(display_cols_final)} columns")
-        st.markdown(
-            f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
-            f'margin:8px 0 7px;">{_meta}</div>',
-            unsafe_allow_html=True,
-        )
-        if not is_asof:
-            fdic_ages = {t: cache.fdic_age(t) for t in display_tickers[:10]}
-            sec_ages = {t: cache.sec_age(t) for t in display_tickers[:10]}
-            render_data_freshness(fdic_ages, sec_ages, st.session_state.ibkr_connected)
-        _heat = st.toggle(
-            "Percentile heatmap", key=f"heat_{tab_key}",
-            help="Color each column by its rank within the current results "
-                 "(green = top, red = bottom), instead of threshold shading.")
-        render_generic_table(
-            display_metrics, display_cols_final, table_key=tab_key, show_legend=True,
-            heatmap=_heat,
-        )
+    render_generic_table(
+        res_metrics, ap_cols, table_key=tab_key, show_legend=True, heatmap=_heat,
+    )
 
 elif section == "Company":
     # ── COMPANY ANALYSIS: Single-bank deep dive ─────────────────────────

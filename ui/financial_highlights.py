@@ -782,11 +782,17 @@ def _render_fh_trends(hist, ticker: str):
 
 def _tce_ta_builder(recs, asof, fdic_link, P):
     def b(k):
-        eq = _num(recs[k].get("EQTOT")) or 0
+        # Equity / assets absent → the ratio is unknown (n/a), never computed
+        # from a fabricated 0. INTAN absent = no intangibles reported (the
+        # same convention the statement pages' TCE line uses).
+        eq = _num(recs[k].get("EQTOT"))
+        asset = _num(recs[k].get("ASSET"))
         intan = _num(recs[k].get("INTAN")) or 0
-        asset = _num(recs[k].get("ASSET")) or 0
-        tce, ta = eq - intan, asset - intan
-        raw = (tce / ta * 100) if ta else None
+        if eq is None or asset is None:
+            tce, ta, raw = None, None, None
+        else:
+            tce, ta = eq - intan, asset - intan
+            raw = (tce / ta * 100) if ta else None
         v = f"{raw:.2f}%" if raw is not None else "—"
         terms = [{"label": "Tangible common equity", "val": _thou(tce) + " ($000)",
                   "sub": f"Equity {_thou(eq)} − Intangibles {_thou(intan)}"},

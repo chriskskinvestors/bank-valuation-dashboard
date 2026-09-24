@@ -79,3 +79,4 @@ jobs:
         run: |
           python tests/test_nav_renders.py
           python tests/test_transactions_ui.py
+          python tests/test_screen_run_gating.py

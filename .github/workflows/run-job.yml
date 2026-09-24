@@ -30,7 +30,7 @@ on:
       logs_only:
         description: >-
           Skip execution; only print the job's recent Cloud Logging output
-          (the last 3 hours). Use to read the counts a finished execution
+          (the last 12 hours). Use to read the counts a finished execution
           printed.
         required: false
         type: boolean
@@ -74,12 +74,18 @@ jobs:
       # (e.g. backfill-fdic-history's "store now N certs / M rows") land in
       # Cloud Logging. Surface them here so an operator without a local
       # gcloud can read a run's outcome from the Actions log.
-      - name: Print the job's container output (Cloud Logging, last 3h)
+      #
+      # The window is an explicit timestamp bound in the filter, not
+      # --freshness: gcloud ignores --freshness under --order=asc, which
+      # silently returned the job's 400 OLDEST entries. 12h so a
+      # mid-morning read still covers the 06:00 ET nightly run.
+      - name: Print the job's container output (Cloud Logging, last 12h)
         if: ${{ always() }}
         run: |
+          SINCE="$(date -u -d '-12 hours' +%Y-%m-%dT%H:%M:%SZ)"
           gcloud logging read \
-            "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }}" \
+            "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }} AND timestamp>=\"${SINCE}\"" \
             --project="${{ env.PROJECT_ID }}" \
-            --freshness=3h --order=asc --limit=400 \
+            --order=asc --limit=400 \
             --format="value(timestamp,textPayload)" \
             || echo "::warning::could not read Cloud Logging (github-deployer lacks roles/logging.viewer?)"

@@ -2,7 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "bank-dashboard",
       "runtimeExecutable": "python",
       "runtimeArgs": [
         "-m",
@@ -12,10 +11,10 @@
         "--server.headless=true",
         "--server.port=8502"
       ],
+      "name": "bank-dashboard",
       "port": 8502
     },
     {
-      "name": "bank-dashboard-8503",
       "runtimeExecutable": "python",
       "runtimeArgs": [
         "-m",
@@ -25,10 +24,10 @@
         "--server.headless=true",
         "--server.port=8503"
       ],
+      "name": "bank-dashboard-8503",
       "port": 8503
     },
     {
-      "name": "bank-dashboard-8504",
       "runtimeExecutable": "python",
       "runtimeArgs": [
         "-m",
@@ -38,7 +37,21 @@
         "--server.headless=true",
         "--server.port=8504"
       ],
+      "name": "bank-dashboard-8504",
       "port": 8504
+    },
+    {
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "streamlit",
+        "run",
+        "app.py",
+        "--server.headless=true",
+        "--server.port=8505"
+      ],
+      "name": "bank-dashboard-8505",
+      "port": 8505
     }
   ]
 }
