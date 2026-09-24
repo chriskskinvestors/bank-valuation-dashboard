@@ -451,6 +451,41 @@ def check_staleness(as_of: str | None, max_age_days: int,
 
 # ───── FULL VALIDATION ─────────────────────────────────────────────────
 
+# SEC's XBRL API (companyfacts) can skip a filed 10-Q/10-K for months
+# (2026-09-22: five banks, Citi since February). The overlay
+# (data/sec_facts_overlay) serves the filing's own figures meanwhile and the
+# card says so, so nothing is wrong on screen — but a lag this long is a
+# source-health signal worth a look (is the filing malformed? did SEC drop
+# the filer?). Warning, never error: it must not trip the nightly growth
+# gate for a condition that is SEC's, not ours.
+SEC_FACTS_LAG_WARN_DAYS = 90
+
+
+def check_sec_facts_lag(metrics: dict) -> Finding | None:
+    """Warn when SEC companyfacts has lagged the bank's own latest periodic
+    filing for more than SEC_FACTS_LAG_WARN_DAYS. Reads the row's lag
+    diagnostics (analysis/valuation._sec_facts_lag) or the overlay record —
+    after the overlay runs, sec_as_of is current and only the overlay record
+    still says the API is behind."""
+    overlay = metrics.get("sec_facts_overlay")
+    if isinstance(overlay, dict) and overlay.get("filed"):
+        filed_on, form = overlay.get("filed"), overlay.get("form") or "filing"
+    elif metrics.get("sec_facts_lag"):
+        filed_on, form = metrics.get("sec_filed_date"), metrics.get("sec_filed_form") or "filing"
+    else:
+        return None
+    filed_str = _coerce_date_str(filed_on)
+    if not filed_str:
+        return None
+    age = (datetime.now().date() - datetime.strptime(filed_str, "%Y-%m-%d").date()).days
+    if age <= SEC_FACTS_LAG_WARN_DAYS:
+        return None
+    return Finding(
+        severity="warning", field="sec_facts_lag", value=age, source="SEC",
+        message=(f"SEC companyfacts has not published the {form} filed {filed_str} "
+                 f"({age} days) — figures served from the filing's own XBRL."))
+
+
 def validate_bank_metrics(metrics: dict, sec_data: dict | None = None,
                             fdic_data: dict | None = None) -> list[Finding]:
     """Run all validation checks on a bank's computed metrics."""
@@ -530,6 +565,9 @@ def validate_bank_metrics(metrics: dict, sec_data: dict | None = None,
             max_age_days=200, field_name="sec_filings")
         if f:
             findings.append(f)
+    f = check_sec_facts_lag(metrics)
+    if f:
+        findings.append(f)
 
     # Internal consistency
     ltd = metrics.get("loans_to_deposits")
