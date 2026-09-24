@@ -12,6 +12,7 @@ For each job in the region:
   timeout       configured task timeout (Cloud Run default 600s when unset)
   n / ok / fail recent executions (up to --limit) and how many succeeded
   max / p50     observed wall time of COMPLETED executions
+  last          the newest completed execution's date and verdict
   headroom      timeout ÷ max runtime; < 1.5x is flagged, a timed-out
                 execution (runtime ≈ timeout, failed) is flagged loudly
 
@@ -63,7 +64,7 @@ def audit(region: str, limit: int) -> int:
         timeout = _timeout_s(job)
         execs = _gcloud("run", "jobs", "executions", "list", f"--job={name}",
                         f"--region={region}", f"--limit={limit}")
-        durations, ok, fail, timed_out = [], 0, 0, 0
+        durations, ok, fail, timed_out, last = [], 0, 0, 0, ""
         for e in execs:
             st = e.get("status", {})
             start, end = _ts(st.get("startTime")), _ts(st.get("completionTime"))
@@ -77,6 +78,10 @@ def audit(region: str, limit: int) -> int:
                 fail += 1
                 if secs >= timeout * 0.97:
                     timed_out += 1
+            # executions list is newest-first: the first completed one is
+            # the latest verdict — "is it healthy NOW", not just lately.
+            if not last:
+                last = f"{end.strftime('%m-%d')} {'ok' if st.get('succeededCount') else 'FAIL'}"
         mx = max(durations) if durations else 0.0
         p50 = statistics.median(durations) if durations else 0.0
         headroom = (timeout / mx) if mx else float("inf")
@@ -87,13 +92,13 @@ def audit(region: str, limit: int) -> int:
             flag = f"headroom {headroom:.1f}x"
         if flag:
             flagged.append(name)
-        rows.append((name, timeout, len(durations), ok, fail, mx, p50, flag))
+        rows.append((name, timeout, len(durations), ok, fail, mx, p50, last, flag))
 
     print(f"{'job':<28} {'timeout':>8} {'n':>3} {'ok':>3} {'fail':>4} "
-          f"{'max':>8} {'p50':>8}  flag")
-    for name, timeout, n, ok, fail, mx, p50, flag in rows:
+          f"{'max':>8} {'p50':>8}  {'last':<11} flag")
+    for name, timeout, n, ok, fail, mx, p50, last, flag in rows:
         print(f"{name:<28} {timeout:>7}s {n:>3} {ok:>3} {fail:>4} "
-              f"{mx:>7.0f}s {p50:>7.0f}s  {flag}")
+              f"{mx:>7.0f}s {p50:>7.0f}s  {last:<11} {flag}")
     if flagged:
         print(f"\nFLAGGED ({len(flagged)}): {', '.join(flagged)}")
         return 1

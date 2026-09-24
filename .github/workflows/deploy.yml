@@ -254,6 +254,14 @@ jobs:
                 EXTRA="--task-timeout=3600"
               elif [ "$job" = "refresh-sod" ]; then
                 EXTRA="--task-timeout=7200"
+              # refresh-insider: first "Job timeout audit" run (2026-09-24)
+              # found 4 of its last 12 executions killed at the 1800s limit
+              # (max observed 1984s, p50 1675s) — the same silent class as
+              # refresh-sod. refresh-13f: 5400s vs a 3869s run = 1.4x headroom.
+              elif [ "$job" = "refresh-insider" ]; then
+                EXTRA="--task-timeout=3600"
+              elif [ "$job" = "refresh-13f" ]; then
+                EXTRA="--task-timeout=9000"
               fi
               # Jobs that talk to Cloud SQL (carry DATABASE_URL, or already
               # migrated to DB_PASSWORD) get the password as a secret mount +

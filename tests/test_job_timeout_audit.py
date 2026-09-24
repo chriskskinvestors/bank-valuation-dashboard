@@ -67,6 +67,8 @@ class TestAudit(unittest.TestCase):
         self.assertNotIn("headroom", lines["roomy"])
         self.assertIn("2700s", lines["roomy"])
         self.assertIn("  1   1    0", lines["roomy"])        # running one ignored
+        self.assertIn("09-22 FAIL", lines["sod"])             # newest completed verdict
+        self.assertIn("09-24 ok", lines["roomy"])
         self.assertIn("FLAGGED (2): sod, tight", out)
 
     def test_clean_when_nothing_flagged(self):
