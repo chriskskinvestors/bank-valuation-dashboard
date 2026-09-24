@@ -433,10 +433,19 @@ def _extract_ttm_dividend(
     Algorithm, anchored to the latest reported period-end E (so we never count
     stale quarters):
       1. If an annual (~365-day) entry ends at E → return it (authoritative).
-      2. Else sum single-quarter entries ending within (E−370d, E].
-      3. Else fall back to the latest year-to-date cumulative entry.
+      2. Else build single quarters exactly as _extract_ttm_value does —
+         direct ~3-month facts, then missing quarters derived from same-start
+         YTD differences (FY − 9M = Q4 …) — and sum the FOUR consecutive
+         quarters ending at E (each gap 80–100 days). Anything else is None.
+
+    The previous step 2 summed every 3-month fact inside a 370-day window,
+    which held FIVE quarter-ends for an issuer that tags a discrete Q4 (E−365d
+    is inside the window → +25 % on a flat dividend), substituted the year-ago
+    quarter for an untagged Q4, or returned ONE quarter for a YTD-only tagger;
+    a step 3 then served a 9-month cumulative under the TTM label
+    (REVIEW-2026-09-24 P0-2). Full window or None, never a partial.
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime
     units = facts.get("facts", {}).get("us-gaap", {}).get(concept, {}).get("units", {})
     entries: list[dict] = []
     for unit_type in ("USD/shares", "USD"):
@@ -472,24 +481,42 @@ def _extract_ttm_dividend(
         annual_at_e.sort(key=lambda x: x["filed"], reverse=True)
         return float(annual_at_e[0]["val"])
 
-    # 2) Sum single-quarter entries within the trailing 12 months of the anchor.
-    window_start = Ed - timedelta(days=370)
-    by_end: dict[str, dict] = {}
+    # 2) Four consecutive single quarters ending at E, or nothing.
+    # Dedup by (start, end), latest filing wins (restatements overwrite).
+    durations: dict[tuple[str, str], dict] = {}
     for e in entries:
-        if 80 <= e["span"] <= 100:
-            de = datetime.fromisoformat(e["end"])
-            if window_start < de <= Ed:
-                if e["end"] not in by_end or e["filed"] > by_end[e["end"]]["filed"]:
-                    by_end[e["end"]] = e
-    if by_end:
-        return float(sum(v["val"] for v in by_end.values()))
+        key = (e["start"], e["end"])
+        prev = durations.get(key)
+        if prev is None or e["filed"] > prev["filed"]:
+            durations[key] = e
 
-    # 3) Latest year-to-date cumulative entry (best available).
-    cumulative = [e for e in entries if e["span"] > 100]
-    if cumulative:
-        cumulative.sort(key=lambda x: (x["end"], x["filed"]), reverse=True)
-        return float(cumulative[0]["val"])
-    return None
+    def _gap_days(a: str, b: str) -> int:
+        return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).days
+
+    quarters: dict[str, float] = {
+        end: d["val"] for (start, end), d in durations.items() if 80 <= d["span"] <= 100
+    }
+    # Derive a missing quarter from two same-start cumulative facts whose ends
+    # are one quarter apart (FY − 9M = Q4, 9M − H1 = Q3, H1 − Q1 = Q2). Direct
+    # facts always beat derived ones.
+    for (s1, e1), d1 in durations.items():
+        if d1["span"] <= 100 or e1 in quarters:
+            continue
+        for (s2, e2), d2 in durations.items():
+            if s2 != s1 or e2 >= e1:
+                continue
+            if 80 <= _gap_days(e2, e1) <= 100:
+                quarters[e1] = d1["val"] - d2["val"]
+                break
+
+    if E not in quarters:
+        return None  # the anchor quarter itself is not a single quarter → unknown
+    ends = sorted(q for q in quarters if q <= E)[-4:]
+    if len(ends) < 4 or ends[-1] != E:
+        return None
+    if not all(80 <= _gap_days(a, b) <= 100 for a, b in zip(ends, ends[1:])):
+        return None
+    return float(sum(quarters[e] for e in ends))
 
 
 def _extract_time_series(facts: dict, concept: str) -> pd.DataFrame:

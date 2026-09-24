@@ -141,9 +141,13 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     if roatce_raw is None:
         roatce_raw = compute_roatce_blended(compute_roatce(latest),
                                             compute_roatce_4q(hist))
-    if roatce_raw is None:
-        roatce_raw = 12.0
-    roatce_pct = roatce_raw * _normalized_earnings_factor(hist)
+    # None (not a 12 % placeholder) when neither source resolves: the seed card
+    # labels this figure "trailing-4Q ROATCE from FDIC" and it drives the
+    # Warranted P/TBV headline — a placeholder there is a plausible-wrong
+    # number (REVIEW-2026-09-24 P0-1). The input renders empty; the model
+    # refuses a headline until a real (derived or typed) value exists.
+    roatce_pct = (roatce_raw * _normalized_earnings_factor(hist)
+                  if roatce_raw is not None else None)
     # Shares
     shares = sec.get("shares_outstanding") or 0
 
@@ -535,6 +539,14 @@ def render_valuation_model(ticker: str):
                 step=1.0, format="%.0f",
                 key=f"dcf_loans_ps_{ticker}",
             )
+            roatce_pct = st.number_input(
+                "ROATCE (normalized, %)",
+                value=(float(defaults["roatce_pct"])
+                       if defaults.get("roatce_pct") is not None else None),
+                step=0.25, format="%.2f",
+                placeholder="Not derivable — enter to model",
+                key=f"dcf_roatce_{ticker}",
+            )
 
         with col2:
             st.markdown("**Growth (5-year)**")
@@ -590,15 +602,17 @@ def render_valuation_model(ticker: str):
     # hasn't typed one, stop here with an honest message instead of a made-up
     # verdict. Requiring TBV/share also guarantees a real share count, so every
     # downstream per-share input (loans/share) is real too.
-    if base_eps is None or tbvps is None:
+    if base_eps is None or tbvps is None or roatce_pct is None:
         missing = []
         if base_eps is None:
             missing.append("trailing EPS")
         if tbvps is None:
             missing.append("tangible book value per share")
+        if roatce_pct is None:
+            missing.append("ROATCE")
         st.warning(
             "Cannot compute a DCF fair value or warranted price — "
-            + " and ".join(missing)
+            + ", ".join(missing)
             + " could not be derived from SEC/FDIC filings for this bank. "
             "Enter the missing value(s) under **Model inputs** above to run the "
             "model manually."
@@ -609,7 +623,6 @@ def render_valuation_model(ticker: str):
     eps_growth_rates = [eps_growth_avg / 100] * 5
     loan_growth_rates = [loan_growth_avg / 100] * 5
 
-    roatce_pct = defaults.get("roatce_pct") or 12.0
     base_params = {
         "base_eps": base_eps,
         "eps_growth_rates": eps_growth_rates,

@@ -121,7 +121,8 @@ def test_roatce_4q_and_avg():
     # → 400 / 9850 * 100 = 4.06091%
     assert approx(compute_roatce_4q(h), 400.0 / 9850.0 * 100, tol=1e-4)
     # 4q average of a ratio field
-    hr = [{"NIMY": 3.0}, {"NIMY": 3.2}, {"NIMY": 2.8}, {"NIMY": 3.0}]
+    hr = [{"NIMY": 3.0, "REPDTE": "20261231"}, {"NIMY": 3.2, "REPDTE": "20260930"},
+          {"NIMY": 2.8, "REPDTE": "20260630"}, {"NIMY": 3.0, "REPDTE": "20260331"}]
     assert approx(compute_4q_avg(hr, "NIMY"), 3.0)
     assert compute_4q_avg([], "NIMY") is None
     print("PASS: ROATCE 4Q + 4Q average")

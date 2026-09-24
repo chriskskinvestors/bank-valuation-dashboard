@@ -47,8 +47,15 @@ def build_capital_timeline(hist_records: list[dict], shares_outstanding: float |
             continue
         goodwill = r.get("INTANGW") or 0  # thousands (goodwill only)
         intangibles = r.get("INTAN") or 0  # thousands (total intangibles incl goodwill)
-        net_income = r.get("NETINC") or 0  # thousands (YTD)
-        total_loans = r.get("LNLSNET") or 0
+        # Same rule for NETINC and LNLSNET (P0-5): `or 0` turned an absent YTD
+        # NI into a fabricated quarterly NI of 0 (Q1) or −prior-YTD (Q2–Q4),
+        # which flowed into capital_returned_k, retention_ratio, the high_payout
+        # alert and the buyback waterfall; an absent loan balance became a
+        # −100% / +inf loan-growth pair. NaN here so every derived column is n/a.
+        net_income = r.get("NETINC")  # thousands (YTD)
+        net_income = float("nan") if net_income is None else net_income
+        total_loans = r.get("LNLSNET")
+        total_loans = float("nan") if total_loans is None else total_loans
         cet1 = r.get("IDT1CER")
         total_cap = r.get("RBCRWAJ")
         leverage = r.get("RBCT1JR")
@@ -97,7 +104,10 @@ def build_capital_timeline(hist_records: list[dict], shares_outstanding: float |
                     if p["quarter"] == row.quarter - 1:
                         prior_ytd = p["net_income_k_ytd"]
                         break
-                if prior_ytd is not None:
+                # A NaN prior YTD (NETINC absent that quarter) is unknown, not
+                # a value: YTD(Q3) − YTD(Q2 missing) cannot be derived, so the
+                # quarter AFTER a missing one is n/a too.
+                if prior_ytd is not None and not pd.isna(prior_ytd):
                     qtrly[i] = row.net_income_k_ytd - prior_ytd
                 else:
                     qtrly[i] = None
@@ -165,7 +175,11 @@ def compute_organic_capital_need(
     Assumes ~100% risk-weight on loan growth (conservative). Actual RWA
     depends on loan type but 100% is a reasonable approximation.
     """
-    if loan_growth_qoq_k is None or loan_growth_qoq_k <= 0:
+    # NaN is how build_capital_timeline marks an underivable quarter (LNLSNET
+    # absent, or a gap): unknown loan growth → unknown need, never 0.
+    if loan_growth_qoq_k is None or pd.isna(loan_growth_qoq_k):
+        return None
+    if loan_growth_qoq_k <= 0:
         return 0.0
     # capital needed = new loans * cet1_target (both in same units)
     return loan_growth_qoq_k * (cet1_target / 100)
@@ -184,16 +198,18 @@ def compute_buyback_capacity(
       organic_need: capital locked in for loan growth
       free_capital: remaining for buybacks
     """
-    if quarterly_ni_k is None:
+    # None or NaN in any term (NETINC / LNLSNET absent, or a gap in the
+    # timeline) means unknown: capacity is n/a, never NI minus a fabricated 0.
+    if any(v is None or pd.isna(v)
+           for v in (quarterly_ni_k, capital_returned_k, organic_need_k)):
         return {"retained": None, "organic_need": None, "free_capital": None}
 
-    retained = quarterly_ni_k - (capital_returned_k or 0)
-    organic = organic_need_k or 0
-    free = quarterly_ni_k - (capital_returned_k or 0) - organic
+    retained = quarterly_ni_k - capital_returned_k
+    free = retained - organic_need_k
 
     return {
         "retained": retained,
-        "organic_need": organic,
+        "organic_need": organic_need_k,
         "free_capital": free,
     }
 
