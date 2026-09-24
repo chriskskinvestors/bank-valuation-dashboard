@@ -78,6 +78,13 @@ def _owner_key(prefix: str = "") -> str:
             f"'c' || CAST({prefix}cert AS TEXT))")
 
 
+def _strict_sum_sql(col: str) -> str:
+    """SQL total that is NULL when ANY row's value is NULL. Plain SUM() skips
+    NULLs and would present a partial figure as the bank's total (the
+    fabricated-aggregate class). Portable across SQLite and Postgres."""
+    return f"CASE WHEN COUNT({col}) < COUNT(*) THEN NULL ELSE SUM({col}) END"
+
+
 def _get_engine():
     """Shared engine (data/db) + this store's first-use schema init."""
     global _engine
@@ -175,6 +182,15 @@ def upsert_branches(ticker: str, cert: int, df: pd.DataFrame) -> int:
         except (TypeError, ValueError):
             return 0
 
+    def _dep(v):
+        """DEPSUMBR → int, or None when FDIC left it blank / unparsable —
+        never 0: a stored 0 reads as "a branch with no deposits" (FDIC
+        reports a literal 0 for LPOs etc.), so absence must stay NULL."""
+        try:
+            return int(v) if v is not None and v != "" else None
+        except (TypeError, ValueError):
+            return None
+
     def _f(v):
         try:
             return float(v) if v is not None and v != "" else None
@@ -199,7 +215,7 @@ def upsert_branches(ticker: str, cert: int, df: pd.DataFrame) -> int:
             "stcntybr": _s(rd.get("STCNTYBR"), 10),
             "msa_code": _s(rd.get("MSABR"), 10),
             "msa_name": _s(rd.get("MSANAMB"), 500),
-            "deposits": _i(rd.get("DEPSUMBR")),
+            "deposits": _dep(rd.get("DEPSUMBR")),
             "lat": _f(rd.get("SIMS_LATITUDE")),
             "lng": _f(rd.get("SIMS_LONGITUDE")),
             "serv_type": _s(rd.get("BRSERTYP"), 10),
@@ -313,7 +329,7 @@ def reattribute_absorbed_branches(absorbed_cert: int, owner_cert: int,
             "stcntybr": str(rd.get("STCNTYBR") or "")[:10],
             "msa_code": str(rd.get("MSABR") or "")[:10],
             "msa_name": str(rd.get("MSANAMB") or "")[:500],
-            "deposits": int(dep) if dep is not None else 0,
+            "deposits": int(dep) if dep is not None else None,   # blank stays NULL, never 0
             "lat": _num(rd.get("SIMS_LATITUDE")),
             "lng": _num(rd.get("SIMS_LONGITUDE")),
             "serv_type": str(rd.get("BRSERTYP") or "")[:10],
@@ -490,11 +506,11 @@ def _banks_where(where_sql: str, params: dict, year: int | None,
                MIN(cert) AS cert,
                MAX(bank_name) AS bank_name,
                COUNT(*) AS n_branches,
-               SUM(deposits) AS total_deposits{extra_cols}
+               {_strict_sum_sql("deposits")} AS total_deposits{extra_cols}
         FROM branches
         WHERE {where_sql}
         GROUP BY {_owner_key()}
-        ORDER BY total_deposits DESC
+        ORDER BY total_deposits DESC NULLS LAST
     """, params)
     if df.empty:
         return df
@@ -737,7 +753,7 @@ def get_market_participants(cert: int, kind: str = "county",
                MAX(b.bank_name) AS bank_name,
                MAX(b.ticker) AS ticker,
                COUNT(*) AS n_branches,
-               SUM(b.deposits) AS deposits
+               {_strict_sum_sql("b.deposits")} AS deposits
         FROM branches b
         WHERE b.year = :year
           AND b.{key} IS NOT NULL AND b.{key} NOT IN ('', '0')
@@ -746,7 +762,7 @@ def get_market_participants(cert: int, kind: str = "county",
               WHERE {_owner_key('s.')} = :okey AND s.year = :year
           )
         GROUP BY b.{key}, {_owner_key('b.')}
-        ORDER BY b.{key}, SUM(b.deposits) DESC
+        ORDER BY b.{key}, deposits DESC NULLS LAST
     """
     df = _q_to_df(sql, {"year": y, "okey": okey})
     if df.empty:

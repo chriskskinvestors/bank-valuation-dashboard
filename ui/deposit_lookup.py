@@ -8,6 +8,8 @@ import streamlit as st
 from ui.states import skeleton as _skeleton
 import pandas as pd
 
+from utils.aggregate import strict_sum
+
 from data.sod_client import fetch_branches, search_bank_by_name
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
@@ -151,10 +153,14 @@ def _market_share(kind: str, key: str, year: int | None) -> pd.DataFrame:
     df = df.rename(columns={"cert": "CERT", "ticker": "TICKER",
                             "bank_name": "NAMEFULL", "n_branches": "branches",
                             "total_deposits": "deposits"})
-    df["deposits"] = pd.to_numeric(df["deposits"], errors="coerce").fillna(0)
-    df = df.sort_values("deposits", ascending=False).reset_index(drop=True)
-    total = df["deposits"].sum()
-    df["market_share"] = (df["deposits"] / total * 100) if total > 0 else 0.0
+    # An unknown deposit figure stays NaN (never 0): the market total — and so
+    # every bank's share — is known only when every participant's is.
+    df["deposits"] = pd.to_numeric(df["deposits"], errors="coerce")
+    df = df.sort_values("deposits", ascending=False,
+                        na_position="last").reset_index(drop=True)
+    total = strict_sum(df["deposits"], na=float("nan"))
+    df["market_share"] = ((df["deposits"] / total * 100) if total > 0
+                          else float("nan"))
     df["rank"] = range(1, len(df) + 1)
     return df
 
@@ -174,7 +180,9 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
         return
 
     # Summary stats
-    total_deposits = branches_df["DEPSUMBR"].sum()
+    # Known only when every branch's deposits are known (NaN otherwise).
+    total_deposits = strict_sum(pd.to_numeric(branches_df["DEPSUMBR"], errors="coerce"),
+                                na=float("nan"))
     num_branches = len(branches_df)
     states = branches_df["STALPBR"].nunique()
     counties = branches_df["STCNTYBR"].nunique()
@@ -258,7 +266,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
                          for c, st_ in zip(detail["CITYBR"], detail["STALPBR"])],
             "Deposits": [_fdt(v, 1) if pd.notna(v) else "—" for v in deps],
             "% of bank": [f"{v / total_deposits * 100:.1f}%"
-                          if pd.notna(v) and total_deposits else "—" for v in deps],
+                          if pd.notna(v) and pd.notna(total_deposits) and total_deposits else "—" for v in deps],
         }), max_height_px=420)
         # Underlying numeric frame — deposits stay in FDIC $thousands and the
         # header says so (owner decision 2026-09-22); share of bank is the
@@ -271,7 +279,7 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
             "STALPBR": "State", "CNTYNAMB": "County",
             "DEPSUMBR": "Deposits ($K)"})
         export["Share of bank (%)"] = [
-            v / total_deposits * 100 if pd.notna(v) and total_deposits else None
+            v / total_deposits * 100 if pd.notna(v) and pd.notna(total_deposits) and total_deposits else None
             for v in deps]
         table_export(export,
                      f"branch_details_cert{selected_cert}"
@@ -359,13 +367,15 @@ def _render_market_share(kind: str, key: str, market_label: str,
         st.warning("Could not load market share data for this "
                    + ("county." if kind == "county" else "MSA."))
         return
-    total = ms_df["deposits"].sum()
+    total = strict_sum(ms_df["deposits"], na=float("nan"))
     bank_row = ms_df[ms_df["owner_key"] == subject_okey]
     if not bank_row.empty:
         r = bank_row.iloc[0]
+        share_txt = (f"{r['market_share']:.1f}%" if pd.notna(r["market_share"])
+                     else "n/a")
         st.caption(
             (f"**{selected_name}** ranks **#{int(r['rank'])}** of {len(ms_df)} in "
-             f"{market_label} · **{r['market_share']:.1f}%** share · "
+             f"{market_label} · **{share_txt}** share · "
              f"{dep_fmt(r['deposits'])} of {dep_fmt(total)}"
              ).replace("$", "\\$"))  # don't let $X of $Y render as LaTeX
     display = ms_df.head(25)
@@ -375,7 +385,7 @@ def _render_market_share(kind: str, key: str, market_label: str,
         "Bank": display["NAMEFULL"].values,
         "Branches": [f"{int(v):,}" for v in display["branches"]],
         "Deposits": [dep_fmt(v) for v in display["deposits"]],
-        "Share": [f"{v:.1f}%" for v in display["market_share"]],
+        "Share": [f"{v:.1f}%" if pd.notna(v) else "—" for v in display["market_share"]],
     }), html_cols=("Ticker",), max_height_px=420)
     # Underlying numeric frame — deposits in FDIC $thousands (header says
     # so); market_share is already percent units (deposits / total × 100).
