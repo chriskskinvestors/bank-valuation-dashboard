@@ -13,6 +13,8 @@ A bank with no SOD rows renders an honest empty state, never zeros.
 from __future__ import annotations
 
 import pandas as pd
+
+from utils.aggregate import strict_sum
 import streamlit as st
 
 from data.bank_mapping import get_bank_info, get_fdic_cert
@@ -157,25 +159,30 @@ def render_branch_competitors(ticker):
     name = (get_bank_info(ticker) or {}).get("name") or ticker
     footprint = sorted(df["stcntybr"].dropna().unique())
     rows: dict[str, dict] = {}
-    fp_total = 0.0
+    # Footprint total = every county's every bank; unknown if any is unknown.
+    county_totals: list = []
     for fips in footprint:
         cb = _county_banks(str(fips), yr)
         if cb.empty:
             continue
-        fp_total += float(cb["total_deposits"].sum())
+        county_totals.append(strict_sum(cb["total_deposits"]))
         for _, r in cb.iterrows():
             # Keyed by the bank's identity (lead cert), not its name: distinct
             # private banks share names ("First National Bank") across counties.
             d = rows.setdefault(int(r["cert"]), {
                 "Bank": r["bank_name"], "ticker": r["ticker"], "counties": 0,
-                "branches": 0, "deposits": 0.0})
+                "branches": 0, "_deps": []})
             d["counties"] += 1
             d["branches"] += int(r["n_branches"])
-            d["deposits"] += float(r["total_deposits"] or 0)
+            d["_deps"].append(r["total_deposits"])
     if not rows:
         return _empty(ticker)
+    for d in rows.values():
+        # A bank's footprint deposits: known only when every county's is.
+        d["deposits"] = strict_sum(d.pop("_deps"), na=float("nan"))
+    fp_total = strict_sum(county_totals, na=float("nan"))
     tbl = (pd.DataFrame(list(rows.values()))
-           .sort_values("deposits", ascending=False).head(26))
+           .sort_values("deposits", ascending=False, na_position="last").head(26))
     tbl["share_of_footprint"] = (tbl["deposits"] / fp_total * 100).round(2)
     # Raw frame for the export before the $K deposits become display strings.
     export = tbl.rename(columns={
@@ -197,7 +204,8 @@ def render_branch_competitors(ticker):
                  provenance=_sod_provenance(
                      "Branch Competitors", ticker, cert, yr, notes,
                      **{"Footprint counties": len(footprint),
-                        "Footprint deposits, all banks ($K)": fp_total,
+                        "Footprint deposits, all banks ($K)":
+                            None if pd.isna(fp_total) else fp_total,
                         "Note": "Top 26 banks by deposits across the subject's "
                                 "counties; subject bank included for rank context."}))
 
@@ -221,10 +229,12 @@ def render_market_demographics(ticker):
         return _empty(ticker)
     yr = int(df.iloc[0]["year"])
     from data.census_client import get_county_demographics
+    # A county's bank deposits are known only when every branch's are —
+    # pandas' sum() would show $0 for a county of unreported branches.
     by_cty = (df.groupby("stcntybr")
-              .agg(deposits=("deposits", "sum"), county=("county", "max"),
-                   state=("state", "max"))
-              .sort_values("deposits", ascending=False).head(15))
+              .agg(deposits=("deposits", lambda s: strict_sum(s, na=float("nan"))),
+                   county=("county", "max"), state=("state", "max"))
+              .sort_values("deposits", ascending=False, na_position="last").head(15))
     rows, raw_rows, missing = [], [], 0
     for fips, r in by_cty.iterrows():
         demo = None

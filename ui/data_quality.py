@@ -290,7 +290,13 @@ def render_data_quality(ticker: str):
             rows, raw_rows, raw_row_fmt = [], [], {}
             for field_name, label, unit in key_fields:
                 v = fdic_data.get(field_name)
-                if v is None:
+                if v is None or (isinstance(v, float) and v != v):
+                    # Not reported: say so — never skip silently or show $nan.
+                    xlabel = f"{label} ($K)" if unit.startswith("$") else f"{label} (%)"
+                    raw_rows.append({"Label": xlabel, "FDIC Field": field_name,
+                                     "Value": None, "Unit": unit, "As Of": as_of})
+                    rows.append({"FDIC Field": field_name, "Label": label,
+                                 "Value": "n/a", "Unit": unit, "As Of": as_of})
                     continue
                 # Export row: the FDIC value as reported — $thousands stay
                 # unscaled under a "($K)" label; ratios are percent units.
@@ -399,10 +405,10 @@ def _render_ffiec_status(cert, ticker=None):
 
     fls = ladder.get("floating_loan_share")
     dur_raw = ladder.get("weighted_avg_duration_years")
-    dur = dur_raw or 0.0
     rows = [
         {"Field": "Reporting period", "Value": ladder.get("reporting_period", "—")},
-        {"Field": "Securities duration (wtd-avg)", "Value": f"{dur:.2f} yrs"},
+        {"Field": "Securities duration (wtd-avg)",
+         "Value": f"{dur_raw:.2f} yrs" if dur_raw is not None else "— (not reported)"},
         {"Field": "Floating-loan share (RC-C Memo 2)",
          "Value": f"{fls * 100:.1f}%" if fls is not None else "— (not reported)"},
         {"Field": "Source", "Value": ladder.get("source", "ffiec")},
