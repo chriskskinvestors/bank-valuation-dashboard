@@ -289,8 +289,11 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     prior_eq = timeline["equity_k"].iloc[-2] if len(timeline) >= 2 else None
     curr_eq = latest.get("equity_k")
     ni = latest.get("net_income_k_qtr")
-    if (prior_eq is not None and curr_eq is not None and ni is not None):
-        cap_returned = latest.get("capital_returned_k") or 0
+    cap_returned = latest.get("capital_returned_k")
+    # NaN = underivable quarter (NETINC absent, or a gap): no bridge, rather
+    # than one with a "$nan" step or a fabricated 0 capital-returned.
+    if (prior_eq is not None and curr_eq is not None
+            and pd.notna(ni) and pd.notna(cap_returned)):
 
         scale, unit = _pick_scale(curr_eq * 1000)
         wf_scaled = [

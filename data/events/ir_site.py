@@ -466,7 +466,7 @@ def get_ir_endpoints() -> dict[str, str]:
     try:
         from data import cache
         endpoints = dict(
-            (cache.get(_IR_ENDPOINTS_CACHE_KEY) or {}).get("endpoints") or {})
+            (cache.get(_IR_ENDPOINTS_CACHE_KEY, max_age_s=None) or {}).get("endpoints") or {})
     except Exception:
         pass
     endpoints.update(IR_URLS)
@@ -766,7 +766,7 @@ def refresh_q4_calls_snapshot(universe: dict | None = None, max_workers: int = 1
     try:
         from data import cache
         if not found:
-            prev = cache.get(_Q4_CALLS_SNAP_KEY)
+            prev = cache.get(_Q4_CALLS_SNAP_KEY, max_age_s=None)
             if prev and prev.get("value"):
                 # A transient all-fail scan must not clobber the last good
                 # snapshot with {} (audit P3): keep serving it — call dates
@@ -789,7 +789,7 @@ def get_q4_call_details() -> dict[str, dict]:
     never blocks)."""
     try:
         from data import cache
-        snap = cache.get(_Q4_CALLS_SNAP_KEY)
+        snap = cache.get(_Q4_CALLS_SNAP_KEY, max_age_s=None)
     except Exception:
         snap = None
     if snap and isinstance(snap.get("value"), dict):

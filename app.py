@@ -744,6 +744,9 @@ def get_watchlist_cohort() -> list[dict]:
 # rates) keep the freshness honest on screen.
 _METRICS_SNAP_KEY = "watchlist_metrics_snap"
 _METRICS_SNAP_TTL_S = 6 * 3600
+# Share of the requested universe a fresh snapshot may lack and still be served
+# (nightly churn is a handful of banks out of ~364; 5% ≈ 18).
+_METRICS_SNAP_CHURN = 0.05
 
 
 def load_all_data_fast(tickers: list[str]) -> list[dict]:
@@ -753,9 +756,25 @@ def load_all_data_fast(tickers: list[str]) -> list[dict]:
         snap = cache.get(_METRICS_SNAP_KEY)
     except Exception:
         snap = None
-    if (snap and is_fresh(snap, _METRICS_SNAP_TTL_S)
-            and snap.get("n_tickers") == len(tickers)):
-        return snap["metrics"]
+    # A fresh snapshot survives ordinary universe churn. The old exact
+    # `n_tickers == len(tickers)` guard made every Home / Screen / Compare
+    # render rebuild the full-universe metrics inline (~60s, one memo key so
+    # every session queued behind it) whenever the nightly universe gained or
+    # lost a bank, until refresh-home-snapshot next wrote (REVIEW-2026-09-24
+    # P1-6). But a snapshot built for a materially DIFFERENT set of banks
+    # (a partial build, a stub universe) must not stand in for the universe —
+    # that would silently drop banks from Home / Screen for hours. So: serve
+    # when at most _METRICS_SNAP_CHURN of the requested banks are missing,
+    # rebuild otherwise. Banks missing within the tolerance appear on the next
+    # refresh-home-snapshot run (≤1h).
+    if snap and is_fresh(snap, _METRICS_SNAP_TTL_S):
+        have = {m.get("ticker") for m in snap.get("metrics") or []}
+        missing = sum(1 for t in tickers if t not in have)
+        if missing <= _METRICS_SNAP_CHURN * len(tickers):
+            if missing:
+                print(f"[app] metrics snapshot lacks {missing} of {len(tickers)} "
+                      f"banks — serving it until the next refresh-home-snapshot run")
+            return snap["metrics"]
     metrics = load_all_data(tickers)
     try:
         from datetime import datetime

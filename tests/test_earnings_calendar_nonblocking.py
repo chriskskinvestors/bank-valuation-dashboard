@@ -44,7 +44,10 @@ class TestEarningsCalendarNonBlocking(unittest.TestCase):
     def _patch_cache(self, snap):
         import data.cache as cache
         orig = cache.get
-        cache.get = lambda k: snap if k == "earnings_calendar_snap" else orig(k)
+        # Same signature as cache.get: the reader passes max_age_s=None (the
+        # snapshot is served at ANY age — tests/test_snapshot_reads_any_age).
+        cache.get = lambda k, max_age_s=cache.TTL_SECONDS: (
+            snap if k == "earnings_calendar_snap" else orig(k, max_age_s=max_age_s))
         self.addCleanup(lambda: setattr(cache, "get", orig))
 
     def test_fresh_snapshot_served(self):

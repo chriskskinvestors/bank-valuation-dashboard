@@ -137,7 +137,7 @@ class TestHeadlineGuardOnMissingInputs(unittest.TestCase):
                          "TBV/share input must not fall back to a $20 placeholder")
 
     def test_guard_returns_before_computing_headline(self):
-        self.assertIn("if base_eps is None or tbvps is None:", _SRC,
+        self.assertIn("if base_eps is None or tbvps is None or roatce_pct is None:", _SRC,
                       "missing headline inputs must be guarded before the DCF run")
 
 

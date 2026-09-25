@@ -213,56 +213,82 @@ def compute_roatce_holdco(sec_data: dict) -> float | None:
     return (ni / tce) * 100
 
 
+def _quarter_index(repdte) -> int | None:
+    """Absolute quarter number (year*4 + quarter) from an FDIC REPDTE, or None."""
+    q = _infer_quarter(repdte)
+    if q is None:
+        return None
+    try:
+        year = repdte.year if hasattr(repdte, "year") else int(str(repdte)[:4])
+    except (TypeError, ValueError):
+        return None
+    return year * 4 + q
+
+
+def _four_consecutive_quarters(fdic_hist: list[dict]) -> bool:
+    """True when the first four records are four DIFFERENT consecutive calendar
+    quarters (newest first). A short or gapped history is not a 4-quarter
+    window — "4Q" figures built on it are partial totals under a full-window
+    label (audit A21 / REVIEW-2026-09-24 P0-3, P0-4)."""
+    if len(fdic_hist) < 4:
+        return False
+    idx = [_quarter_index(r.get("REPDTE")) for r in fdic_hist[:4]]
+    if any(i is None for i in idx):
+        return False
+    return all(a - b == 1 for a, b in zip(idx, idx[1:]))
+
+
 def compute_4q_avg(fdic_hist: list[dict], field: str) -> float | None:
     """
-    Average a FDIC field over last 4 quarters.
+    Average a FDIC field over the last 4 quarters.
 
     For FDIC ratio fields that are already annualized (NIMY, ROA, ROE, EEFFR, etc.),
     this is fine — just average. For YTD cumulative fields, use compute_4q_avg_annualized.
+
+    Requires four consecutive quarters ALL carrying the field; anything less is
+    None. A 1–3 quarter mean displayed as "NIM 4Q" / "ROAA 4Q" is a plausible
+    wrong number (multi-charter consolidated records carry None for every
+    average-based ratio, so this fired for the multi-charter holdcos).
     """
-    values = [q.get(field) for q in fdic_hist[:4] if q.get(field) is not None]
-    if not values:
+    if not _four_consecutive_quarters(fdic_hist):
         return None
-    return sum(values) / len(values)
+    values = [q.get(field) for q in fdic_hist[:4]]
+    if any(v is None for v in values):
+        return None
+    return sum(values) / 4
 
 
 def compute_roatce_4q(fdic_hist: list[dict]) -> float | None:
     """
-    Trailing 4-quarter ROATCE: sum of last 4 QUARTERLY net incomes (annualized)
-    divided by average TCE across those quarters, expressed as %.
+    Trailing 4-quarter ROATCE: sum of the last 4 QUARTERLY net incomes divided
+    by average TCE across those quarters, expressed as %.
 
     This is the canonical "TTM ROATCE" analysts use — it smooths quarter-to-quarter
     noise while reflecting a full year of earnings power on current-era equity.
+
+    Full window or None: every one of the four consecutive quarters must yield a
+    derivable single-quarter NI and an equity figure. The previous version
+    annualized 1–3 quarters (× 4/count) and reported the result as "ROATCE 4Q",
+    the same defect class as audit A21 ("3 quarters presented as twelve months").
     """
-    if not fdic_hist or len(fdic_hist) < 1:
+    if not _four_consecutive_quarters(fdic_hist):
         return None
 
-    # Derive actual single-quarter NI for last 4 quarters
     # (fdic_hist is desc-sorted: index 0 = most recent)
     ttm_ni = 0.0
     tce_values = []
-    count = 0
-    for i in range(min(4, len(fdic_hist))):
+    for i in range(4):
         ni_q = _derive_quarterly_value("NETINC", fdic_hist, i)
         eq = fdic_hist[i].get("EQTOT")
         intan = fdic_hist[i].get("INTAN") or 0  # total intangibles (house TCE convention)
         if ni_q is None or eq is None:
-            continue
+            return None
         ttm_ni += ni_q
         tce_values.append(eq - intan)
-        count += 1
 
-    if count == 0 or not tce_values:
-        return None
-    avg_tce = sum(tce_values) / len(tce_values)
+    avg_tce = sum(tce_values) / 4
     if avg_tce <= 0:
         return None
-
-    # TTM net income is already a "full year" — no annualization needed
-    # If we have fewer than 4 quarters, scale up to annualized
-    if count < 4:
-        ttm_ni = ttm_ni * (4 / count)
-
     return (ttm_ni / avg_tce) * 100
 
 

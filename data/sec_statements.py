@@ -13,12 +13,11 @@ design in docs/DATA-SOURCING-ARCHITECTURE.md.
 """
 from __future__ import annotations
 
-import json
 import re
 
 from lxml import etree, html as lhtml
 
-from data.sec_filing_scraper import latest_filing, _get
+from data.sec_filing_scraper import latest_filing, _get, _recent_metas
 
 # Match a statement type to its FilingSummary ShortName. (want, reject) — the
 # title is only a FIRST CUT that gathers CANDIDATES; CONTENT discriminators
@@ -862,20 +861,9 @@ def _period_year(p: str) -> int:
 
 def _recent_filing_metas(cik, forms: tuple, n: int) -> list:
     """Up to n most-recent filings among `forms` {accession, doc, date, form,
-    cik}, newest first (submissions recent list is reverse-chronological)."""
-    cik10 = str(int(cik)).zfill(10)
-    data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
-    rec = data.get("filings", {}).get("recent", {})
-    out = []
-    for i, form in enumerate(rec.get("form", [])):
-        if form in forms:
-            out.append({"accession": rec["accessionNumber"][i].replace("-", ""),
-                        "doc": rec["primaryDocument"][i],
-                        "date": rec["filingDate"][i], "form": form,
-                        "cik": int(cik)})
-            if len(out) >= n:
-                break
-    return out
+    cik}, newest first (submissions recent list is reverse-chronological).
+    One index fetch per CIK per 15 min — see sec_filing_scraper._recent_metas."""
+    return _recent_metas(cik, forms, n)
 
 
 def _recent_10k_metas(cik, n: int) -> list:
@@ -1324,18 +1312,7 @@ def _discrete_quarter_index(meta: list, q_end: tuple) -> int | None:
 def _recent_10q_metas(cik, n: int) -> list:
     """Up to n most-recent 10-Q filings {accession, doc, date, cik}, newest
     first — parallels _recent_10k_metas, filtering form == '10-Q'."""
-    cik10 = str(int(cik)).zfill(10)
-    data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
-    rec = data.get("filings", {}).get("recent", {})
-    out = []
-    for i, form in enumerate(rec.get("form", [])):
-        if form == "10-Q":
-            out.append({"accession": rec["accessionNumber"][i].replace("-", ""),
-                        "doc": rec["primaryDocument"][i],
-                        "date": rec["filingDate"][i], "cik": int(cik)})
-            if len(out) >= n:
-                break
-    return out
+    return _recent_filing_metas(cik, ("10-Q",), n)
 
 
 def _column_values(stmt: dict, idx: int) -> dict:
@@ -1512,7 +1489,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     if not q_metas:
         return None
     ckey = f"asreported_mq:v3:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v3: share scale
-    cached = cache.get(ckey)
+    cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
 
@@ -1614,7 +1591,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
         return None
     ckey = f"asreported_my:v7:{stype}:{metas[0]['accession']}:{n_years}"  # v7: share scale
-    cached = cache.get(ckey)
+    cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
     parsed = []

@@ -632,7 +632,7 @@ def _compositions_extract_cached(meta) -> dict | None:
     from data import cache
     # v2 (2026-07-14): rows carry the member QName as a third element.
     ckey = f"compositions_filing:v2:{meta['accession']}"
-    got = cache.get(ckey)
+    got = cache.get(ckey, max_age_s=None)
     if got is not None:
         return got or None
     fetched = _fetch_meta(meta)
