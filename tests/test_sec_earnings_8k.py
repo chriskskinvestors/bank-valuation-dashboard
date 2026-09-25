@@ -154,6 +154,23 @@ class TestReportedTbvpsLabelMatch(unittest.TestCase):
         ):
             self.assertTrue(_match_tbvps_label(_clean_label(lbl)), lbl)
 
+    def test_ocfc_end_of_period_rows(self):
+        """OCFC Q2-2026 release (8-K 0001004702-26-000116 EX-99.1) prints
+        "… per common share at end of period (4) (6)" — $24.50 / $18.19 on
+        98,416,195 common + NVCE shares. Missed before, so the reconstruction
+        (cover count omits the 1.812M NVCE shares, ~1.9% high) served."""
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(
+            _row("Book value per common share at end of period (6)",
+                 "24.50", "28.98", "28.97")
+            + _row("Tangible book value per common share at end of period (4) (6)",
+                   "18.19", "19.86", "19.79"))
+        # Anchors = the post-fix reconstruction (TBVPS 18.53, BVPS 24.95).
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=18.53, bvps=24.95), (18.19, "ok"))
+        self.assertEqual(extract_reported_bvps_status(
+            html, reconstructed=24.95, tbvps=18.19), (24.50, "ok"))
+
     def test_non_tbvps_labels_do_not_match(self):
         for lbl in (
             "Book value per share",            # NOT tangible → reconstruction
