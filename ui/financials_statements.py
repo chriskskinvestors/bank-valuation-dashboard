@@ -296,6 +296,60 @@ def _decum_flow(rec, field, quarterly, hist_by_date):
     return cur - pv, 4.0
 
 
+def _decum_record(rec, fields, hist_by_date):
+    """Single-quarter copy of an FDIC record for a flow statement's Quarterly
+    view (REVIEW-2026-09-24 P0-1). FDIC income fields are calendar-YTD, so a
+    column labeled "Q2 '26" that shows the raw field is the six-month figure
+    under a quarter label — a plausible-wrong number (JPM Q2'26 net income
+    rendered $31.34B; the quarter is $17.37B). Every field in `fields` is
+    replaced by _decum_flow's single-quarter value: Q1 = the YTD itself,
+    otherwise YTD(q) − YTD(q−1) from the FULL history; a field whose prior
+    quarter is missing becomes None (renders dead, never a mixed span).
+    Balance-sheet fields on the same record are untouched."""
+    out = dict(rec)
+    for fl in fields:
+        if fl in out:
+            out[fl] = _decum_flow(rec, fl, True, hist_by_date)[0]
+    return out
+
+
+def _decum_detail(cur, prev, dt):
+    """Single-quarter copy of a stored Schedule RI / RI-E detail dict (YTD
+    within the calendar year, like the SDI fields). Q1 = as filed. Otherwise
+    every numeric value is differenced against the prior quarter's detail;
+    a value absent (below threshold) in either quarter cannot be cleanly
+    derived and becomes None. Write-ins are matched by label. None when the
+    prior quarter's detail is not ingested (the column renders dead)."""
+    if pd.Timestamp(dt).month == 3:
+        return cur
+    if prev is None:
+        return None
+
+    def _d(a, b):
+        a, b = _num(a), _num(b)
+        return (a - b) if (a is not None and b is not None) else None
+
+    out = {}
+    for k, v in cur.items():
+        if isinstance(v, list):
+            prev_by_label = {str(w.get("label") or ""): w for w in (prev.get(k) or [])
+                             if isinstance(w, dict)}
+            rows = []
+            for w in v:
+                if not isinstance(w, dict):
+                    continue
+                pw = prev_by_label.get(str(w.get("label") or ""), {})
+                rows.append({**w,
+                             "value": _d(w.get("value"), pw.get("value")),
+                             "value_usd": _d(w.get("value_usd"), pw.get("value_usd"))})
+            out[k] = rows
+        elif isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = _d(v, prev.get(k))
+        else:
+            out[k] = v
+    return out
+
+
 def _dep_cost_by_date(cert):
     """{normalized report date → stored deposit-cost split dict}
     (data/call_report_store, ffiec_client.get_deposit_cost_detail shape).
@@ -321,14 +375,16 @@ def _dep_cost_by_date(cert):
     return out
 
 
-def _ri_details_by_column(cert, recs_list):
+def _ri_details_by_column(cert, recs_list, quarterly=False):
     """{column index → stored detail dict} for Schedule RI and Schedule RI-E
     (data/call_report_store), joined on report date. RI and RI-E are YTD
     within the calendar year — the SAME convention as the FDIC SDI income
-    fields this table already shows raw per column — so a date join is the
-    whole story: no diffing, no annualizing. Returns empty dicts when the
-    store is unavailable (local dev) or nothing is ingested; missing columns
-    render dead, never imputed."""
+    fields — so the Annual view is a date join: no diffing, no annualizing.
+    `quarterly=True` (the Income Statement's Quarterly view, whose SDI
+    columns are single-quarter) de-cumulates each detail against the prior
+    quarter's stored detail (_decum_detail) so the RI rows share the column's
+    span. Returns empty dicts when the store is unavailable (local dev) or
+    nothing is ingested; missing columns render dead, never imputed."""
     try:
         from data.call_report_store import (get_stored_ri_detail,
                                             get_stored_rie_detail)
@@ -355,10 +411,15 @@ def _ri_details_by_column(cert, recs_list):
             dt = pd.to_datetime(r.get("REPDTE")).normalize()
         except Exception:
             continue
+        prior = _prior_quarter_end(dt) if quarterly else None
         if dt in ri:
-            ri_by_ci[i] = ri[dt]
+            det = _decum_detail(ri[dt], ri.get(prior), dt) if quarterly else ri[dt]
+            if det is not None:
+                ri_by_ci[i] = det
         if dt in rie:
-            rie_by_ci[i] = rie[dt]
+            det = _decum_detail(rie[dt], rie.get(prior), dt) if quarterly else rie[dt]
+            if det is not None:
+                rie_by_ci[i] = det
     return ri_by_ci, rie_by_ci
 
 
@@ -430,7 +491,12 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                      trends: list | None = None, with_persh: bool = False,
                      with_ri: bool = False, with_dep_cost: bool = False,
                      with_fte: bool = False, side_by_side: bool = False,
-                     header: bool = True):
+                     header: bool = True, flow_fields: frozenset | None = None):
+    # flow_fields: the calendar-YTD FDIC income fields a flow statement shows
+    # (ui: _INCOME_FLOW_FIELDS). In the Quarterly view each column is
+    # de-cumulated to its single quarter before any kind sees the record
+    # (REVIEW-2026-09-24 P0-1); None = a point-in-time statement (balance
+    # sheet, capital) where the record is shown as filed.
     info = get_bank_info(ticker)
     name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
@@ -480,6 +546,21 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         empty_state('No periods available')
         return
 
+    # Flow statement, Quarterly view: every displayed record becomes its
+    # single quarter (P0-1). The as-filed YTD records stay in recs_ytd for the
+    # rate kinds' own de-cumulation (_flow), which must never diff twice.
+    recs_ytd = recs_list
+    _decum_active = bool(flow_fields) and period == "Quarterly"
+    _decum_fields = frozenset(flow_fields) if _decum_active else frozenset()
+    if _decum_active:
+        _full_by_date = {pd.Timestamp(r["REPDTE"]).normalize(): r
+                         for r in hist.to_dict("records")}
+        recs_list = [_decum_record(r, _decum_fields, _full_by_date) for r in recs_list]
+        st.caption("Quarterly columns show the SINGLE quarter — FDIC files income "
+                   "calendar-YTD, so each column is YTD(q) − YTD(q−1) (Q1 as "
+                   "filed); a quarter whose prior quarter is not available "
+                   "renders dead rather than as a year-to-date figure.")
+
     # FFIEC Schedule RI / RI-E stored detail (Income Statement only) — joined
     # by report date; the RI-E itemized-expense sub-block is inserted only
     # when the bank actually itemized something in the displayed window.
@@ -487,7 +568,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     if with_ri or with_fte:
         # with_fte loads RI tax-exempt income for the FTE-NIM line WITHOUT the
         # RI-E expense-row insertion (which only belongs on the Income tab).
-        ri_by_ci, rie_by_ci = _ri_details_by_column(cert, recs_list)
+        ri_by_ci, rie_by_ci = _ri_details_by_column(cert, recs_list,
+                                                    quarterly=_decum_active)
     if with_ri:
         spec = _spec_with_rie_rows(spec, rie_by_ci)
 
@@ -558,14 +640,16 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                      for r in hist.to_dict("records")}
 
     def _flow(ci, field):
-        return _decum_flow(recs_list[ci], field, _quarterly_view, _hist_by_date)
+        # recs_ytd, not recs_list: the flow statement's columns are already
+        # single-quarter in the Quarterly view and must not be diffed again.
+        return _decum_flow(recs_ytd[ci], field, _quarterly_view, _hist_by_date)
 
     def _core_flow(ci):
         """De-cumulated core income + factor (quarterly spans matched, #26 —
         see _core_income for the definition). Absent IGLSEC/EXTRA legitimately
         mean zero; present but un-decumulatable → (None, None). The effective
         tax rate is the current YTD ratio — a rate, not a flow, so no span mix."""
-        rec = recs_list[ci]
+        rec = recs_ytd[ci]
         ni, fq = _flow(ci, "NETINC")
         if ni is None:
             return None, None
@@ -597,12 +681,26 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         """$000 term value; absent stays honest — never rendered as $0."""
         return _thou(v) + " ($000)" if v is not None else "n/a — not reported in this filing"
 
+    # Click-through provenance for the de-cumulated columns: the number is no
+    # longer the filed field, it is a single quarter computed from two of them.
+    _Q_NOTE = " — single quarter: calendar-YTD(q) − YTD(q−1), Q1 as filed"
+    _computed_src = ("Computed from Call Report" + _Q_NOTE) if _decum_active \
+        else "Computed from Call Report"
+
     def cell(ci, kind, args, label):
         rec = recs_list[ci]
         asof = _disp(rec.get("REPDTE"))
         f = _af(rec)
         if kind == "dollar":
             fl = args[0]; raw = _num(rec.get(fl))
+            if fl in _decum_fields:
+                # Single-quarter column of a flow statement: the field was
+                # differenced from two filed YTD values (_decum_record).
+                return _usd(raw), calc(label, _usd(raw), asof,
+                                       f"FDIC field {fl}{_Q_NOTE}",
+                                       [{"label": label + " (single quarter)",
+                                         "val": _thou(raw) + " ($000)"}],
+                                       f"{fl}_YTD(q) − {fl}_YTD(q−1)", False)
             return _usd(raw), calc(label, _usd(raw), asof, f"FDIC field {fl}",
                                    [{"label": label, "val": _thou(raw) + " ($000)"}], None, True)
         if kind == "pct":
@@ -612,7 +710,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "diff":
             f1, f2 = args; a, b = _num(rec.get(f1)), _num(rec.get(f2))
             v = _usd(a - b) if (a is not None and b is not None) else "—"
-            return v, calc(label, v, asof, "Computed from Call Report",
+            return v, calc(label, v, asof, _computed_src,
                            [{"label": f1, "val": _thou(a) + " ($000)"},
                             {"label": f2, "val": _thou(b) + " ($000)"}], f"{f1} − {f2}", False)
         if kind == "ratio":
@@ -632,7 +730,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             terms = [{"label": "Total non-interest income (NONII)",
                       "val": _thou(total) + " ($000)"}]
             terms += [{"label": f"− {fl}", "val": _thou(p) + " ($000)"} for fl, p in parts]
-            return v, calc(label, v, asof, "Computed from Call Report", terms,
+            return v, calc(label, v, asof, _computed_src, terms,
                            "NONII − itemized non-interest income lines", False)
         if kind == "ppnr":
             # Pre-provision net revenue = NII + noninterest income − noninterest
@@ -641,7 +739,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             noni, nonx = _num(rec.get("NONII")), _num(rec.get("NONIX"))
             ok = None not in (ii, ie, noni, nonx)
             v = _usd(ii - ie + noni - nonx) if ok else "—"
-            return v, calc(label, v, asof, "Computed from Call Report",
+            return v, calc(label, v, asof, _computed_src,
                            [{"label": "Net interest income (INTINC − EINTEXP)",
                              "val": _thou(ii - ie) + " ($000)" if None not in (ii, ie) else "—"},
                             {"label": "Noninterest income (NONII)", "val": _thou(noni) + " ($000)"},
@@ -651,7 +749,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             # Effective tax rate = income tax ÷ pre-tax income × 100
             tax, ptx = _num(rec.get("ITAX")), _num(rec.get("PTAXNETINC"))
             v = _pctv(tax/ptx*100) if (tax is not None and ptx) else "—"
-            return v, calc(label, v, asof, "Computed from Call Report",
+            return v, calc(label, v, asof, _computed_src,
                            [{"label": "Income tax (ITAX)", "val": _thou(tax) + " ($000)"},
                             {"label": "Pre-tax net income (PTAXNETINC)", "val": _thou(ptx) + " ($000)"}],
                            "ITAX ÷ PTAXNETINC × 100", False)
@@ -1578,6 +1676,26 @@ _INCOME = [
         ("Net income", "dollar", "NETINC"),
     ]),
 ]
+
+
+def _fdic_fields_in_spec(spec) -> frozenset:
+    """Every FDIC field name a statement spec references (upper-case string
+    row args) — used to pin that the flow-field list covers the whole spec."""
+    out = set()
+    for _sec, rows in spec:
+        for row in rows:
+            for a in row[2:]:
+                if isinstance(a, str) and a.isupper() and a.isalnum():
+                    out.add(a)
+    return frozenset(out)
+
+
+# Every calendar-YTD income flow the Income Statement shows or computes from
+# (the "dollar"/"diff"/"noniother"/"ppnr"/"etr" inputs). In the Quarterly view
+# each column is de-cumulated over exactly this set (P0-1); a row added to
+# _INCOME that references a field outside it fails tests/test_templated_is_quarterly.
+_INCOME_FLOW_FIELDS = _fdic_fields_in_spec(_INCOME) | frozenset(
+    {"INTINC", "EINTEXP", "NONII", "NONIX", "ITAX", "PTAXNETINC"})
 
 # SNL "Balance Sheet" layout (docs/SNL-BUILD-PLAN.md tab 2), every field
 # value-verified live against Banner Bank (BANR, cert 28489) 03/31/2026.
@@ -2803,7 +2921,8 @@ def _render_company_composition(ticker, kind):
 @st.fragment
 def render_income_statement(ticker):
     render_statement(ticker, "is", "Income Statement", _INCOME, with_ri=True,
-                     trends=_INCOME_TRENDS, side_by_side=True)
+                     trends=_INCOME_TRENDS, side_by_side=True,
+                     flow_fields=_INCOME_FLOW_FIELDS)
 
 
 @st.fragment
