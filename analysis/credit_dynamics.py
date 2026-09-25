@@ -18,17 +18,18 @@ import pandas as pd
 _CREDIT_FIELDS = {
     # Ratios (%)
     "npl_ratio": "NCLNLSR",       # Total NPL to loans
-    "npl_cre": "NCRER",            # NPL CRE %
-    "npl_resi": "NCRECONR",        # NPL Residential %
+    "npl_cre": "NCRER",            # NPL ALL real estate % (not CRE)
+    "npl_resi": "NCRERESR",        # NPL 1-4 family % (was NCRECONR =
+                                   # construction until 2026-09-25)
     "npl_multifam": "NCREMULR",    # NPL Multifam %
     "npl_nres_re": "NCRENRER",     # NPL NonRes RE %
     "npl_ci": "IDNCCIR",           # NPL C&I %
     "npl_consumer": "IDNCCONR",    # NPL Consumer %
     "nco_ratio": "NTLNLSR",        # Total NCO rate
     "nco_re": "NTRER",             # NCO RE %
-    "nco_ci": "NTCOMRER",          # NCO C&I %
+    "nco_ci": "IDNTCIR",           # NCO C&I % (was NTCOMRER = CRE)
     "reserve_to_loans": "LNATRESR",  # Reserves / loans %
-    "reserve_coverage": "IDERNCVR",   # Reserves / NPL (coverage ratio)
+    "reserve_coverage": "LNRESNCR",   # Reserves / noncurrent loans %
     "allowance_loans": "ELNANTR",     # provision / NCOs % (NOT ALL/loans — title lies)
     # Dollar amounts (in thousands). Past-due ratios are LOANS past due over
     # GROSS loans (AUDIT-2026-07-02 #32): the loan-only past-due fields P3LNLS/
@@ -47,18 +48,20 @@ def _reserve_coverage(rec: dict) -> float | None:
     """Reserves/NPL coverage % for one FDIC record.
 
     Computed from the constituent ratios (LNATRESR reserves/loans ÷ NCLNLSR
-    NPL/loans) because FDIC's pre-computed IDERNCVR has holding-company scaling
-    issues; IDERNCVR is used only as a fallback when the constituents are
-    unavailable. Shared by the per-bank timeline AND the peer median so the two
-    sides of the thin-reserves alert are always the same quantity (P3 #33 — the
-    peer median previously read raw IDERNCVR while the bank used the computed
+    NPL/loans), falling back to FDIC's own LNRESNCR (LNATRESJ / NCLNLS) when
+    the constituents are unavailable. The fallback was IDERNCVR until
+    2026-09-25 — that is EARNINGS coverage of net charge-offs (x), not
+    reserves/NPL, and for a multi-charter group it was the charters' SUM.
+    Shared by the per-bank timeline AND the peer median so the two sides of
+    the thin-reserves alert are always the same quantity (P3 #33 — the peer
+    median previously read raw IDERNCVR while the bank used the computed
     value, comparing apples to oranges).
     """
     rtl = rec.get("LNATRESR")
     npl = rec.get("NCLNLSR")
     if rtl is not None and npl is not None and npl > 0:
         return rtl / npl * 100
-    return rec.get("IDERNCVR")
+    return rec.get("LNRESNCR")
 
 
 def build_credit_timeline(hist_records: list[dict]) -> pd.DataFrame:
@@ -91,7 +94,7 @@ def build_credit_timeline(hist_records: list[dict]) -> pd.DataFrame:
                 row["past_due_90_pct"] = row["past_due_90"] / total_loans * 100
 
         # Reserve coverage via the shared helper (computed from constituent
-        # ratios, IDERNCVR fallback) — same quantity the peer median uses.
+        # ratios, LNRESNCR fallback) — same quantity the peer median uses.
         row["reserve_coverage"] = _reserve_coverage(r)
 
         rows.append(row)
@@ -122,7 +125,7 @@ def detect_segment_hotspots(timeline_df: pd.DataFrame, threshold_multiplier: flo
         return []
 
     segments = {
-        "CRE": latest.get("npl_cre"),
+        "All RE": latest.get("npl_cre"),
         "Residential": latest.get("npl_resi"),
         "Multifamily": latest.get("npl_multifam"),
         "Non-Res RE": latest.get("npl_nres_re"),
