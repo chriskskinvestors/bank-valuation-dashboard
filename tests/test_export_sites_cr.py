@@ -249,6 +249,86 @@ class TestAnnualIncomeStatement(_CrExportSite):
         self.assertIn("whole US dollars", src["Units"])
 
 
+class TestBareLabelEpsRows(_CrExportSite):
+    """REVIEW-2026-09-24 P0-3: LARK and FBIZ label their EPS rows bare
+    "Basic" / "Diluted" under an "Earnings per share" header. The label regex
+    missed them and the dollar formatter printed 3.07 as "$3". The row's XBRL
+    kind (carried by the stitch) now decides the format; the label is only the
+    fallback for an untyped row."""
+
+    STMT = {
+        "statement": {
+            "periods": ["2025-12-31", "2024-12-31"],
+            "rows": [
+                {"label": "Net earnings", "header": False, "kind": "monetary",
+                 "values": [18_775_000, 12_977_000]},
+                {"label": "EARNINGS PER SHARE (1):", "header": True, "values": []},
+                {"label": "Basic", "header": False, "kind": "pershare",
+                 "values": [3.09, 2.06]},
+                {"label": "Diluted", "header": False, "kind": "pershare",
+                 "values": [3.07, 2.05]},
+                {"label": "Weighted average diluted", "header": False, "kind": "shares",
+                 "values": [6_115_000, 6_090_000]},
+            ],
+        },
+        "filings": [META_10K],
+        "meta": META_10K,
+    }
+
+    def test_annual_bare_basic_diluted_render_as_eps(self):
+        import data.sec_statements as S
+        with mock.patch.object(S, "as_reported_statement_multiyear",
+                               lambda cik, stype, n_years=5: self.STMT):
+            self.FS._render_company_statement_annual(TICKER, "income", CIK, INFO)
+        wb, ws, _kw = self._book()
+        html = self.htmls[0]
+        self.assertIn(">$3.07<", html)            # was ">$3<"
+        self.assertIn(">$2.05<", html)
+        self.assertIn(">$3.09<", html)
+        self.assertNotIn(">$3<", html)
+        self.assertIn(">6.1M<", html)             # typed share count, no "(in shares)"
+        self.assertIn(">$18.8M<", html)           # dollar line unchanged
+        g = self._grid(ws)
+        diluted = next(r for r in g if r[0] == "Diluted")
+        self.assertEqual(diluted, ["Diluted", 2.05, 3.07])
+        row = [r[0] for r in g].index("Diluted") + 1
+        self.assertEqual(ws.cell(row, 2).number_format, "$#,##0.00")
+        shares_row = [r[0] for r in g].index("Weighted average diluted") + 1
+        self.assertEqual(ws.cell(shares_row, 2).number_format, "#,##0")
+
+    def test_quarterly_bare_diluted_renders_as_eps(self):
+        import data.sec_statements as S
+        stmt = {"statement": {"periods": ["Q2'26", "Q1'26"], "rows": [
+                    {"label": "Diluted", "header": False, "kind": "pershare",
+                     "values": [0.88, 0.83]}]},
+                "filings": [META_10Q], "meta": META_10Q}
+        with mock.patch.object(S, "as_reported_statement_multiquarter",
+                               lambda cik, stype, n_quarters=12: stmt):
+            self.FS._render_company_statement_quarterly(TICKER, "income", CIK, INFO)
+        self.assertIn(">$0.88<", self.htmls[0])
+        self.assertIn(">$0.83<", self.htmls[0])
+
+    def test_line_kind_prefers_type_then_label(self):
+        k = self.FS._cr_line_kind
+        self.assertEqual(k({"label": "Basic", "kind": "pershare"}), "eps")
+        self.assertEqual(k({"label": "Basic", "kind": "shares"}), "shares")
+        # a typed monetary row wins over a misleading label
+        self.assertEqual(k({"label": "Dividends paid per share class", "kind": "monetary"}),
+                         "usd")
+        # untyped (cached pre-fix statements, older filers): label fallback
+        self.assertEqual(k({"label": "Diluted earnings per share"}), "eps")
+        self.assertEqual(k({"label": "Diluted (in shares)"}), "shares")
+        self.assertEqual(k({"label": "Net income"}), "usd")
+        self.assertEqual(k({"label": "Ratio", "kind": "other"}), "usd")
+
+    def test_fmt_hand_values(self):
+        f = self.FS._cr_fmt
+        self.assertEqual(f("eps", 3.07), "$3.07")
+        self.assertEqual(f("eps", -0.57), "$-0.57")
+        self.assertEqual(f("shares", 66_900_000), "66.9M")
+        self.assertEqual(f("usd", None), "")
+
+
 class TestQuarterlyBalanceSheet(_CrExportSite):
     """Site: _render_company_statement_quarterly (10-Q stitch, balance)."""
 
