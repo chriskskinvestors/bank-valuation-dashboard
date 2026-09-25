@@ -47,6 +47,10 @@ SLIM_USGAAP_CONCEPTS = {
     "Assets", "Liabilities",
     "StockholdersEquity",
     "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    # NCI — separates parent equity from the NCI-inclusive total
+    # (_resolve_parent_equity); absent from the slim blob, every such filer
+    # would read as NCI-free.
+    "MinorityInterest", "NetIncomeLossAttributableToNoncontrollingInterest",
     "CommonStockSharesOutstanding", "CommonStockSharesIssued",
     "TreasuryStockCommonShares", "WeightedAverageNumberOfSharesOutstandingBasic",
     "WeightedAverageNumberOfDilutedSharesOutstanding",
@@ -576,13 +580,11 @@ def get_latest_fundamentals(cik: int) -> dict:
         val = _extract_latest_value(facts, xbrl_concept)
         result[short_name] = val
 
-    # StockholdersEquity fallback — some issuers report the broader version with
-    # noncontrolling interest. Use that if primary is stale/missing.
-    if not result.get("book_value_total"):
-        result["book_value_total"] = _extract_latest_value(
-            facts, "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-            max_age_years=1,
-        )
+    # Parent equity AT the latest balance-sheet date, across both equity tags
+    # (a plain-SE-only read served tag-migrators' stale balances).
+    eq_tup, _, _ = _resolve_parent_equity(facts)
+    result["book_value_total"] = eq_tup[0] if eq_tup else None
+    equity_date = _balance_sheet_date(facts)
 
     # Net income — must be TTM, not the single quarter the issuer last filed.
     # When a bank files Q1 2026 10-Q, NetIncomeLoss returns the latest entry
@@ -673,7 +675,7 @@ def get_latest_fundamentals(cik: int) -> dict:
     # available, drop the placeholder so the fallback chain below resolves it.
     sh0 = result.get("shares_outstanding")
     if sh0 and sh0 % 100_000_000 == 0:
-        equity_end = _latest_end_date(facts, "StockholdersEquity")
+        equity_end = equity_date
         issued, iss_end = _val_end(facts, "CommonStockSharesIssued")
         treasury, tre_end = _val_end(facts, "TreasuryStockCommonShares")
         if (issued and issued > 0 and iss_end == equity_end
@@ -696,12 +698,7 @@ def get_latest_fundamentals(cik: int) -> dict:
     sh1 = result.get("shares_outstanding")
     if sh1:
         _, sh_end = _val_end(facts, "CommonStockSharesOutstanding", max_age_years=3)
-        equity_end = (
-            _latest_end_date(facts, "StockholdersEquity")
-            or _latest_end_date(
-                facts,
-                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
-        )
+        equity_end = equity_date
         if sh_end and equity_end and sh_end < equity_end:
             issued, iss_end = _val_end(facts, "CommonStockSharesIssued")
             treasury, tre_end = _val_end(facts, "TreasuryStockCommonShares")
@@ -767,12 +764,7 @@ def get_latest_fundamentals(cik: int) -> dict:
     # FCNCA, RBCAA, CBNA — already resolve no count and are unaffected.)
     result["shares_asof_incoherent"] = False
     if result.get("shares_outstanding"):
-        eq_end = (
-            _latest_end_date(facts, "StockholdersEquity")
-            or _latest_end_date(
-                facts,
-                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
-        )
+        eq_end = equity_date
         share_end = _best_share_evidence_end(facts)
         if eq_end and share_end and share_end < eq_end:
             from datetime import date
@@ -1154,6 +1146,96 @@ def _latest_end_date(facts: dict, concept: str) -> str | None:
         return None
 
 
+_SE = "StockholdersEquity"
+_SE_NCI = "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
+
+
+def _instant_at(facts: dict, concept: str, end: str) -> tuple | None:
+    """(value, end, filed, form, unit) of the latest-filed 10-K/10-Q USD fact
+    for `concept` dated exactly `end`, or None."""
+    rows = [e for e in facts.get("facts", {}).get("us-gaap", {}).get(concept, {})
+            .get("units", {}).get("USD", [])
+            if e.get("form") in ("10-K", "10-Q") and e.get("end") == end
+            and e.get("val") is not None]
+    if not rows:
+        return None
+    top = max(rows, key=lambda e: e.get("filed", ""))
+    return top["val"], end, top.get("filed", ""), top.get("form", ""), "USD"
+
+
+def _balance_sheet_date(facts: dict) -> str | None:
+    """Latest 10-K/10-Q balance-sheet date: the freshest end across total
+    assets and both equity tags."""
+    ends = [e.get("end")
+            for c in ("Assets", _SE, _SE_NCI)
+            for e in facts.get("facts", {}).get("us-gaap", {}).get(c, {})
+            .get("units", {}).get("USD", [])
+            if e.get("form") in ("10-K", "10-Q") and e.get("end")]
+    return max(ends) if ends else None
+
+
+def _nci_evidence(facts: dict, end: str) -> bool:
+    """True when the filer may carry a noncontrolling interest at `end` that
+    no MinorityInterest fact separates: NCI income in a period ending there,
+    or a nonzero NCI balance on the newest balance sheet that tagged one,
+    within the prior year. An older balance doesn't count: a year of later
+    balance sheets without it confirms it's gone (LNKB: $483K at 2023-12-31,
+    none since; FUSB: −$11K at 2018-12-31, none since)."""
+    from datetime import date, timedelta
+    ug = facts.get("facts", {}).get("us-gaap", {})
+    for e in ug.get("NetIncomeLossAttributableToNoncontrollingInterest", {}) \
+            .get("units", {}).get("USD", []):
+        if (e.get("form") in ("10-K", "10-Q") and e.get("end") == end
+                and e.get("val")):
+            return True
+    mi = [e for e in ug.get("MinorityInterest", {}).get("units", {}).get("USD", [])
+          if e.get("form") in ("10-K", "10-Q") and e.get("end")
+          and e["end"] < end]
+    if mi:
+        last = max(mi, key=lambda e: (e["end"], e.get("filed", "")))
+        year_ago = (date.fromisoformat(end) - timedelta(days=366)).isoformat()
+        return bool(last.get("val")) and last["end"] >= year_ago
+    return False
+
+
+def _resolve_parent_equity(facts: dict, max_age_years: int = 3):
+    """Equity attributable to the parent AT the latest balance-sheet date, as
+    ((value, end, filed, form, unit), concept, note) — value None when it
+    can't be resolved honestly.
+
+    Filers migrate the equity total between StockholdersEquity (parent only)
+    and the IncludingPortionAttributableToNoncontrollingInterest variant
+    (2026-09-25: TMP, AMAL, OCFC, FNWB, FRST, MVBF, RBB, LNKB). Reading plain
+    SE alone with a 3-year tolerance served each bank's LAST plain-SE
+    balance — OCFC $1.66B at 2025-12-31 vs $2.41B filed at 2026-06-30 — so
+    both tags are read, and only a value dated AT the balance-sheet date
+    counts. The NCI-inclusive total is parent equity only after removing a
+    same-date MinorityInterest (RBB: $535,177K − $72K); if NCI may exist but
+    isn't separable, n/a."""
+    from datetime import datetime, timedelta
+    bs = _balance_sheet_date(facts)
+    if bs is None:
+        return None, _SE, "No equity or asset facts in 10-K/10-Q filings"
+    cutoff = (datetime.now() - timedelta(days=365 * max_age_years)).strftime("%Y-%m-%d")
+    if bs < cutoff:
+        return None, _SE, f"Latest balance sheet ({bs}) is stale"
+    se = _instant_at(facts, _SE, bs)
+    if se is not None:
+        return se, _SE, None
+    incl = _instant_at(facts, _SE_NCI, bs)
+    if incl is None:
+        return None, _SE, (f"No equity total tagged at the latest balance-sheet "
+                           f"date ({bs})")
+    mi = _instant_at(facts, "MinorityInterest", bs)
+    if mi is not None:
+        return ((incl[0] - mi[0],) + incl[1:], f"{_SE_NCI} − MinorityInterest",
+                "Noncontrolling interest removed at the same balance-sheet date")
+    if _nci_evidence(facts, bs):
+        return None, _SE_NCI, ("NCI-inclusive total only, and a noncontrolling "
+                               "interest may exist that no fact separates")
+    return incl, _SE_NCI, "No noncontrolling interest — total equity is parent equity"
+
+
 def get_fundamentals_with_provenance(cik: int) -> dict:
     """
     Fetch fundamentals + track WHERE each value came from.
@@ -1195,15 +1277,11 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
     # parity requirement as audit #22 on TTM net income): a primary count
     # older than the equity's balance-sheet date is superseded by same-date
     # issued − treasury, then by the fresher dei cover count.
+    equity_date = _balance_sheet_date(facts)
     sh_wrap = result["shares_outstanding"]
     if sh_wrap["value"]:
         sh_end = sh_wrap["source"].as_of or ""
-        equity_end = (
-            _latest_end_date(facts, "StockholdersEquity")
-            or _latest_end_date(
-                facts,
-                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
-        )
+        equity_end = equity_date
         if sh_end and equity_end and sh_end < equity_end:
             iss = _extract_latest_value_with_source(
                 facts, "CommonStockSharesIssued", max_age_years=1)
@@ -1278,12 +1356,7 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
     # period, no source can be coherent and the display nulls the count — the
     # trace must show the same n/a with the reason.
     if result["shares_outstanding"]["value"]:
-        eq_end = (
-            _latest_end_date(facts, "StockholdersEquity")
-            or _latest_end_date(
-                facts,
-                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
-        )
+        eq_end = equity_date
         share_end = _best_share_evidence_end(facts)
         served_concept = getattr(
             result["shares_outstanding"]["source"], "concept", None)
@@ -1338,17 +1411,12 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
         ),
     }
 
-    # StockholdersEquity fallback
-    if result["book_value_total"]["value"] is None:
-        tup = _extract_latest_value_with_source(
-            facts, "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-            max_age_years=1,
-        )
-        if tup:
-            result["book_value_total"] = _wrap(
-                "book_value_total", tup,
-                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
-            )
+    # Parent equity at the balance-sheet date — same resolver as the display.
+    eq_tup, eq_concept, eq_note = _resolve_parent_equity(facts)
+    result["book_value_total"] = _wrap("book_value_total", eq_tup, eq_concept)
+    if eq_note:
+        result["book_value_total"]["source"] = Source(
+            **{**result["book_value_total"]["source"].__dict__, "notes": eq_note})
 
     # Derived values
     equity = result["book_value_total"]["value"]

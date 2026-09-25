@@ -95,9 +95,11 @@ def filing_entries(cik: int, filing: dict) -> list[dict]:
     immutably by accession. `filing` = latest_filing()-shaped meta:
     {accession, doc, date, form, cik} plus report_date."""
     from data import cache
-    from data.sec_client import SLIM_USGAAP_CONCEPTS
+    from data.sec_client import SLIM_USGAAP_CONCEPTS, _SLIM_VER
     from data.sec_filing_scraper import instance_facts
-    ckey = f"filing_overlay:{_OVERLAY_CKEY_V}:{filing['accession']}"
+    # Keyed on the slim concept set too: the cached entries are filtered by
+    # it, so a concept added later must not read as absent from old parses.
+    ckey = f"filing_overlay:{_OVERLAY_CKEY_V}:{_SLIM_VER}:{filing['accession']}"
     hit = cache.get(ckey, max_age_s=None)
     if hit is not None:
         return hit.get("entries", [])

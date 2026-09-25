@@ -293,6 +293,7 @@ _TBVPS_LABELS: frozenset = frozenset({
     "tangible common equity per share",
     "tangible common equity per common share",
     "tangible book value per common share outstanding",
+    "tangible book value per common share at end of period",   # OCFC
 })
 
 # Reported (GAAP) book value per COMMON share — the in-release cross-check anchor
@@ -302,6 +303,7 @@ _TBVPS_LABELS: frozenset = frozenset({
 _BVPS_LABELS: frozenset = frozenset({
     "book value per share",
     "book value per common share",
+    "book value per common share at end of period",            # OCFC
 })
 
 # Release-INTERNAL tie-out anchor (the MBIN case): when neither a reconstruction
@@ -718,7 +720,8 @@ def reported_bvps_status(
 
     rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
     tk = f"{tbvps:.4f}" if tbvps is not None else "na"
-    ckey = f"reported_bvps:v1:{f8k['accession']}:{rk}:{tk}"
+    # v2: "… per common share at end of period" label (OCFC miss).
+    ckey = f"reported_bvps:v2:{f8k['accession']}:{rk}:{tk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling.
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
@@ -747,7 +750,8 @@ def reported_bvps_status(
 # v4: value → (value, status); the stored shape gained "status".
 # v5: release-internal tie-out anchor (MBIN) — a v4 None for the no-anchor
 #     case would otherwise serve the miss forever.
-_REPORTED_TBVPS_CKEY_V = "v5"
+# v6: "… per common share at end of period" labels (OCFC miss).
+_REPORTED_TBVPS_CKEY_V = "v6"
 
 
 def reported_tbvps_status(
