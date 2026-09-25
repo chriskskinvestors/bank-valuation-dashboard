@@ -907,6 +907,10 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     with _cols[3]:
         with timed("cp.val_panel"):
             _render_valuation_panel(ticker, info)
+    from ui.states import group_ratio_note
+    _grp = group_ratio_note(ticker, fdic_rec)
+    if _grp:
+        st.caption(_grp)
     _lag = _sec_lag_note(row)
     if _lag:
         st.markdown(

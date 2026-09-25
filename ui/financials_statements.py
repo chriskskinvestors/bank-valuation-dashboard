@@ -493,7 +493,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                      trends: list | None = None, with_persh: bool = False,
                      with_ri: bool = False, with_dep_cost: bool = False,
                      with_fte: bool = False, side_by_side: bool = False,
-                     header: bool = True, flow_fields: frozenset | None = None):
+                     header: bool = True, flow_fields: frozenset | None = None,
+                     group_note: bool = False):
     # flow_fields: the calendar-YTD FDIC income fields a flow statement shows
     # (ui: _INCOME_FLOW_FIELDS). In the Quarterly view each column is
     # de-cumulated to its single quarter before any kind sees the record
@@ -536,6 +537,13 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     hist["REPDTE"] = pd.to_datetime(hist["REPDTE"])
     hist = hist.sort_values("REPDTE")
     _n = range_years(rng)
+    if group_note:
+        # Multi-charter bank: say why the average-based ratio rows are
+        # blank (UX review 2026-09-24 P0-05; ui.states.group_ratio_note).
+        from ui.states import group_ratio_note
+        _grp = group_ratio_note(ticker, hist.iloc[-1])
+        if _grp:
+            st.caption(_grp)
     if period == "Annual":
         ye = hist[hist["REPDTE"].dt.month == 12]
         recs_list = list((ye if _n is None else ye.tail(_n)).to_dict("records"))
@@ -2951,7 +2959,8 @@ def render_balance_sheet(ticker):
 def render_performance_analysis(ticker):
     render_statement(ticker, "perf", "Performance Analysis", _PERFORMANCE,
                      with_persh=True, with_dep_cost=True, with_fte=True,
-                     side_by_side=True)
+                     side_by_side=True,
+                     group_note=True)
 
 
 def render_aq_by_loan_type(ticker):

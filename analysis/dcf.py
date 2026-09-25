@@ -56,7 +56,12 @@ def warranted_ptbv(
     When ROATCE > CoE: P/TBV > 1 (value creator)
     When ROATCE < CoE: P/TBV < 1 (value destroyer)
 
-    Returns None if inputs are invalid (e.g., g >= CoE).
+    Returns None if inputs are invalid (e.g., g >= CoE), and when
+    ROATCE <= g: the formula then yields a zero or NEGATIVE multiple (BSBK,
+    ROATCE 1.82% vs g 2.5% → −0.09×, a −$1.00 "warranted price" on the live
+    Valuation Model, UX review 2026-09-24 P0-14). A bank that cannot earn its
+    growth rate has no steady state for this model to price — that is a
+    precondition failure, rendered n/a, never a negative price.
     """
     r = _safe(roatce_pct)
     coe = _safe(cost_of_equity_pct)
@@ -64,6 +69,8 @@ def warranted_ptbv(
     if r is None or coe is None:
         return None
     if coe <= g:  # model breaks down
+        return None
+    if r <= g:    # no positive warranted multiple exists (see docstring)
         return None
     return (r - g) / (coe - g)
 
@@ -176,11 +183,26 @@ def run_fcfe_dcf(
     # actual ROATCE. (The previous version substituted average EPS GROWTH for
     # ROE — a category error that produced ~33% payouts where real bank ROEs
     # of 10-15% imply ~65-75%, systematically distorting terminal value.)
+    #
+    # No invented ROE and no clamp to a zero payout: when ROATCE is unknown
+    # or <= g the identity has no positive payout, and clamping it to 0 made
+    # the terminal value 0 — the "fair value" then silently collapsed to the
+    # 5-year PV alone (BSBK: $2.28 on a $9 stock with $11 TBV/share, UX review
+    # 2026-09-24 P0-14). Both are precondition failures → n/a.
     if terminal_payout_ratio is None:
-        roe = roatce_pct if (roatce_pct and roatce_pct > 0) else 12.0  # bank-typical default
-        terminal_payout_ratio = max(0.0, min(0.99,
-            1.0 - (terminal_growth_pct / 100) / (roe / 100)
-        ))
+        if roatce_pct is None or roatce_pct <= terminal_growth_pct:
+            return {
+                "projected_eps": projected_eps,
+                "projected_fcfe": projected_fcfe,
+                "pv_explicit": pv_explicit,
+                "terminal_value": None,
+                "pv_terminal": None,
+                "fair_value_per_share": None,
+                "error": ("Terminal value undefined (ROATCE unknown or at/below "
+                          "terminal growth — no sustainable payout)"),
+            }
+        terminal_payout_ratio = min(0.99,
+            1.0 - (terminal_growth_pct / 100) / (roatce_pct / 100))
 
     terminal_eps = projected_eps[-1] * (1 + terminal_growth_pct / 100)
     terminal_fcfe = terminal_eps * terminal_payout_ratio
@@ -275,7 +297,11 @@ def tornado_sensitivity(base_params: dict, perturbations: dict | None = None) ->
     sorted by range descending.
     """
     base_result = run_fcfe_dcf(**base_params)
-    base_fv = base_result.get("fair_value_per_share") or 0
+    base_fv = base_result.get("fair_value_per_share")
+    if base_fv is None:
+        # No base fair value (model precondition failed) → no sensitivity to
+        # show. The old `or 0` charted every input's move around a $0 base.
+        return []
 
     if perturbations is None:
         # Each tuple is (low_adj, high_adj): the adjustment that produces the

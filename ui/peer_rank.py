@@ -18,6 +18,7 @@ from config import METRICS_BY_KEY
 from data.bank_mapping import get_name
 from analysis.peer_groups import (
     metric_percentile_context, get_peer_group_for_bank, _higher_is_better,
+    MIN_COHORT,
 )
 from ui.chrome import table_export, title_bar
 from ui.export import metric_format
@@ -130,22 +131,30 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
     tier = meta.get("tier")
     n = meta.get("cohort_size", 0)
 
-    if not ctx or n < 6:
-        st.info(
-            f"Not enough **{mode_label.lower()}** peers loaded to rank this bank yet. "
-            "Open **Home** or **Screen & Compare** once to load the "
-            "watchlist, then return — or this peer set has too few tracked banks for "
-            "a meaningful ranking (try the other peer set)."
-        )
+    if not ctx or n < MIN_COHORT:
+        st.info(f"Too few {mode_label.lower()} peers to rank this bank (n={n}). "
+                "Try the other peer set.")
         return
 
-    set_desc = ("the same asset-size tier" if mode == "size"
-                else "the same business-mix profile")
-    st.caption(
-        f"Ranked against **{n}** tracked **{_html.escape(str(tier))}** peers "
-        f"({set_desc}). Percentile is goodness-adjusted — higher is always better, "
-        "including for efficiency / NPL / NCO."
-    )
+    base_tier = meta.get("base_tier")
+    merged = bool(base_tier) and tier != base_tier
+    if merged:
+        # Thin size tier merged with its neighbour (peer_cohort) — say so.
+        # Short tier names ("Money-Center (>$1T)" → "Money-Center"): no "$"
+        # reaches the caption, so nothing renders as LaTeX.
+        tier_md = " + ".join(t.split(" (")[0] for t in str(tier).split(" + "))
+        set_desc = (f"the {base_tier.split(' (')[0]} tier alone has only "
+                    f"{meta.get('base_tier_size')} banks")
+        lead = f"Ranked against **{n}** **{_html.escape(tier_md)}** peers — {set_desc}. "
+    else:
+        set_desc = ("the same asset-size tier" if mode == "size"
+                    else "the same business-mix profile")
+        # Escape "$": two or more in one caption render as LaTeX (tier labels
+        # like "Large Regional ($100B-$1T)" carry two).
+        tier_md = _html.escape(str(tier)).replace("$", r"\$")
+        lead = f"Ranked against **{n}** tracked **{tier_md}** peers ({set_desc}). "
+    st.caption(lead + "Percentile is goodness-adjusted — higher is always better, "
+               "including for efficiency / NPL / NCO.")
 
     # ── At-a-glance verdict by category ────────────────────────────────
     glance = []
@@ -225,10 +234,12 @@ def render_peer_rank(ticker: str, all_metrics: list[dict]):
         key=f"peerrank_leaderboard_{ticker}",
     )
     if pick:
-        _render_leaderboard(ticker, metrics, pick, mode)
+        _render_leaderboard(ticker, metrics, pick, mode,
+                            set_desc=set_desc if merged else None)
 
 
-def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str):
+def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str,
+                        set_desc: str | None = None):
     """Rank every cohort bank on one metric, subject highlighted."""
     cohort = get_peer_group_for_bank(ticker, metrics, mode=mode)
     hib = _higher_is_better(key)
@@ -281,8 +292,8 @@ def _render_leaderboard(ticker: str, metrics: list[dict], key: str, mode: str):
                              "Ticker": ticker,
                              "Metric": f"{_LABELS.get(key, key)} ({key}) — "
                                        f"{'higher' if hib else 'lower'} is better",
-                             "Peer set": ("same asset-size tier" if mode == "size"
-                                          else "same business-mix profile")
+                             "Peer set": (set_desc or ("same asset-size tier" if mode == "size"
+                                                      else "same business-mix profile"))
                                          + f", {len(rows)} banks",
                              "Source": "Platform bank metrics (FDIC/FFIEC + SEC), "
                                        "ranked within the peer set"})

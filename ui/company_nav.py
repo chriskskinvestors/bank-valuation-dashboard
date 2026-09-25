@@ -482,9 +482,24 @@ def render_company_subtab(subtab: str, ticker: str, ctx: dict, basis: str | None
     Reported dispatches through _CR_RENDERERS, everything else through
     _RENDERERS. ctx keys: watchlist (list[str]), load_metrics (ticker -> dict),
     peer_cohort (() -> list[dict])."""
+    import streamlit as st
+    st.session_state["_last_company_bank"] = ticker  # Compare's default (UX-P0-04)
     registry = _CR_RENDERERS if basis == "Company Reported" else _RENDERERS
     renderer = registry.get(subtab)
     if renderer is None:
         return False
+    if basis == "Company Reported":
+        # Every CR leaf is scraped from SEC filings: a non-SEC (OTC) bank gets
+        # ONE explained absence here, never a blank page per leaf (UX-P0-15).
+        from data.bank_mapping import get_cik, get_name
+        if not get_cik(ticker):
+            from ui.chrome import title_bar
+            from ui.states import empty_state
+            title_bar(f"{get_name(ticker) or ticker} ({ticker})",
+                      f"{subtab} — Company Reported")
+            empty_state(f"{ticker} does not file with the SEC",
+                        "Company-reported statements come from SEC filings. Switch "
+                        "the basis to Templated for FDIC call-report financials.")
+            return True
     renderer(ticker, ctx)
     return True

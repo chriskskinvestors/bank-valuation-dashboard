@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 
 from data.fred_client import (
-    fetch_series, latest_value, recession_probability, SERIES,
+    fetch_series, latest_value, latest_date, recession_probability, SERIES,
 )
 from utils.chart_style import (
     apply_standard_layout, tighten_yaxis,
@@ -309,11 +309,16 @@ def _render_funding_deposits():
                 "the source may be temporarily unavailable.")
         return
 
-    ff = latest_value("FEDFUNDS")
+    # DFF = the DAILY effective rate. FEDFUNDS is a monthly average that lags
+    # a policy move by weeks (read 3.63 after the 2026-09-17 hike to 3.88,
+    # while the Rates board showed DFF) — UX-P0-03.
+    ff = latest_value("DFF")
+    ff_dt = latest_date("DFF")
     asof = rates.get("asof", "—")
-    ff_txt = f"{ff:.2f}%" if ff is not None else "n/a"
+    ff_txt = (f"{ff:.2f}%" + (f" as of {ff_dt:%Y-%m-%d}" if ff_dt is not None else "")
+              if ff is not None else "n/a")
     st.caption(f"FDIC national deposit rates · as of {asof} · published monthly "
-               f"(third Monday) · Fed Funds {ff_txt} for the spread.")
+               f"(third Monday) · Fed Funds (daily effective) {ff_txt} for the spread.")
     st.markdown(
         "<style>"
         'div[class*="st-key-fundchart"]{padding:2px 6px 0!important;}'
@@ -413,7 +418,7 @@ def _render_funding_deposits():
                     fig.add_trace(go.Scatter(
                         x=dates, y=ys, name=label, mode="lines",
                         line=dict(color=color, width=2)))
-            ffdf = fetch_series("FEDFUNDS", years=5)
+            ffdf = fetch_series("DFF", years=5)
             if not ffdf.empty:
                 fig.add_trace(go.Scatter(
                     x=ffdf["date"], y=ffdf["value"], name="Fed Funds", mode="lines",
@@ -549,6 +554,79 @@ def _et_time(dt_str: str) -> str:
     d = utc.astimezone(ZoneInfo("America/New_York"))
     h = d.hour % 12 or 12
     return f"{h}:{d.minute:02d} {'AM' if d.hour < 12 else 'PM'} ET"
+
+
+def _release_cell(e: dict) -> str:
+    """Release name with its impact tag inline (small, trailing) — the tag rides
+    in the Release cell rather than its own column, keeping the calendar tables
+    narrow enough to stay inside cal_col (UX-P0-01)."""
+    import html as _h
+    tag = _ECON_IMPACT_TAG.get(e.get("impact"), "")
+    tag = (f' <span style="font-size:var(--fs-2xs);white-space:nowrap;">{tag}</span>'
+           if tag else "")
+    return (f'<td style="text-align:left;white-space:normal;max-width:210px;">'
+            f'{_h.escape(e["event"])}{tag}</td>')
+
+
+def _recent_releases_table(recent: list[dict]) -> str:
+    """'Latest releases & surprises' table (Date · Release+impact · Actual ·
+    Cons. · Prior · Surprise). overflow-x:auto wrapper (as in _board_table) so
+    it scrolls within its column and can never paint under the board beside
+    it — the old 7th Impact column printed High/Med/Low over indicator names."""
+    from datetime import datetime as _dt2
+    srows = ""
+    for e in recent:
+        d = _dt2.strptime(e["date"], "%Y-%m-%d").date().strftime("%b %d").replace(" 0", " ")
+        srows += (
+            "<tr>"
+            f'<td style="white-space:nowrap;">{d}</td>'
+            f'{_release_cell(e)}'
+            f'<td style="text-align:right;"><strong>{_fmt_econ_val(e["actual"], e["unit"])}</strong></td>'
+            f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
+            f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e.get("previous"), e["unit"])}</td>'
+            f'<td style="text-align:right;">{_econ_surprise_html(e)}</td>'
+            "</tr>"
+        )
+    return (
+        '<div class="ksk-grid" style="overflow-x:auto;"><table>'
+        "<thead><tr>"
+        '<th style="text-align:left;">Date</th>'
+        '<th style="text-align:left;">Release</th>'
+        '<th style="text-align:right;">Actual</th>'
+        '<th style="text-align:right;">Cons.</th>'
+        '<th style="text-align:right;">Prior</th>'
+        '<th style="text-align:right;">Surprise</th>'
+        "</tr></thead><tbody>" + srows + "</tbody></table></div>"
+    )
+
+
+def _upcoming_releases_table(up: list[dict], today_iso: str) -> str:
+    """'Upcoming releases' table (Date · Time · Release+impact · Prior · Cons.),
+    today's rows (ET date `today_iso`) tinted; same overflow-x wrapper."""
+    from datetime import datetime as _dt2
+    urows = ""
+    for e in up:
+        d = _dt2.strptime(e["date"], "%Y-%m-%d").date()
+        row_bg = ' style="background:rgba(30,64,175,0.04);"' if e["date"] == today_iso else ""
+        urows += (
+            f"<tr{row_bg}>"
+            f'<td style="white-space:nowrap;">{d.strftime("%b %d").replace(" 0", " ")}</td>'
+            f'<td style="text-align:left;color:var(--text-secondary);white-space:nowrap;">{_et_time(e["datetime"])}</td>'
+            f'{_release_cell(e)}'
+            f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e.get("previous"), e["unit"])}</td>'
+            f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
+            "</tr>"
+        )
+    return (
+        '<div class="ksk-grid" style="overflow-x:auto;"><table>'
+        "<thead><tr>"
+        '<th style="text-align:left;">Date</th>'
+        '<th style="text-align:left;">Time</th>'
+        '<th style="text-align:left;">Release</th>'
+        '<th style="text-align:right;">Prior</th>'
+        '<th style="text-align:right;">Cons.</th>'
+        "</tr></thead><tbody>" + urows + "</tbody></table></div>"
+    )
 
 
 _BASIS_TAG = {"yoy_pct": "YoY", "mom_pct": "MoM", "mom_chg_k": "MoM chg",
@@ -1047,7 +1125,6 @@ def _cached_trend_fig(series_id: str, basis: str, label: str, years: int = 8):
 
 
 def _render_economy_calendar():
-    import html as _html
     from datetime import datetime as _dt
     from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
@@ -1070,33 +1147,7 @@ def _render_economy_calendar():
     with cal_col:
         st.markdown("**Latest releases & surprises**")
         if recent:
-            srows = ""
-            for e in recent:
-                d = _dt.strptime(e["date"], "%Y-%m-%d").date().strftime("%b %d").replace(" 0", " ")
-                srows += (
-                    "<tr>"
-                    f'<td style="white-space:nowrap;">{d}</td>'
-                    f'<td style="text-align:left;white-space:normal;max-width:210px;">{_html.escape(e["event"])}</td>'
-                    f'<td style="text-align:right;"><strong>{_fmt_econ_val(e["actual"], e["unit"])}</strong></td>'
-                    f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
-                    f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e.get("previous"), e["unit"])}</td>'
-                    f'<td style="text-align:right;">{_econ_surprise_html(e)}</td>'
-                    f'<td style="text-align:right;">{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
-                    "</tr>"
-                )
-            st.markdown(
-                '<div class="ksk-grid"><table>'
-                "<thead><tr>"
-                '<th style="text-align:left;">Date</th>'
-                '<th style="text-align:left;">Release</th>'
-                '<th style="text-align:right;">Actual</th>'
-                '<th style="text-align:right;">Cons.</th>'
-                '<th style="text-align:right;">Prior</th>'
-                '<th style="text-align:right;">Surprise</th>'
-                '<th style="text-align:right;">Impact</th>'
-                "</tr></thead><tbody>" + srows + "</tbody></table></div>",
-                unsafe_allow_html=True,
-            )
+            st.markdown(_recent_releases_table(recent), unsafe_allow_html=True)
             st.caption("Actual vs consensus; surprise colored by deviation (not good/bad). "
                        "Source: FMP economic calendar.")
         else:
@@ -1112,32 +1163,7 @@ def _render_economy_calendar():
             # ~8pm ET and would highlight tomorrow's rows (audit P3).
             from zoneinfo import ZoneInfo
             today_iso = _dt.now(ZoneInfo("America/New_York")).date().isoformat()
-            urows = ""
-            for e in up:
-                d = _dt.strptime(e["date"], "%Y-%m-%d").date()
-                row_bg = ' style="background:rgba(30,64,175,0.04);"' if e["date"] == today_iso else ""
-                urows += (
-                    f"<tr{row_bg}>"
-                    f'<td style="white-space:nowrap;">{d.strftime("%b %d").replace(" 0", " ")}</td>'
-                    f'<td style="text-align:left;color:var(--text-secondary);white-space:nowrap;">{_et_time(e["datetime"])}</td>'
-                    f'<td style="text-align:left;white-space:normal;max-width:210px;">{_html.escape(e["event"])}</td>'
-                    f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e.get("previous"), e["unit"])}</td>'
-                    f'<td style="text-align:right;color:var(--text-secondary);">{_fmt_econ_val(e["estimate"], e["unit"])}</td>'
-                    f'<td style="text-align:right;">{_ECON_IMPACT_TAG.get(e["impact"], "")}</td>'
-                    "</tr>"
-                )
-            st.markdown(
-                '<div class="ksk-grid"><table>'
-                "<thead><tr>"
-                '<th style="text-align:left;">Date</th>'
-                '<th style="text-align:left;">Time</th>'
-                '<th style="text-align:left;">Release</th>'
-                '<th style="text-align:right;">Prior</th>'
-                '<th style="text-align:right;">Cons.</th>'
-                '<th style="text-align:right;">Impact</th>'
-                "</tr></thead><tbody>" + urows + "</tbody></table></div>",
-                unsafe_allow_html=True,
-            )
+            st.markdown(_upcoming_releases_table(up, today_iso), unsafe_allow_html=True)
             st.caption("Scheduled US releases · consensus · impact · ET times. "
                        "Source: FMP economic calendar.")
     with board_col:
@@ -1296,8 +1322,8 @@ def _render_regime():
     s3m = latest_value("T10Y3M")
     s2_prior = _value_days_ago("T10Y2Y", 90)
     hy = latest_value("BAMLH0A0HYM2")
-    ff = latest_value("FEDFUNDS")
-    ff_prior = _value_days_ago("FEDFUNDS", 180)
+    ff = latest_value("DFF")          # daily effective, not the monthly FEDFUNDS avg
+    ff_prior = _value_days_ago("DFF", 180)
 
     curve = curve_regime(s2, s3m, s2_prior)
     credit = credit_regime(hy)

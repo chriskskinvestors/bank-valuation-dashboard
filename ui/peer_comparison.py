@@ -107,6 +107,33 @@ _RANK_OPTIONS = [("__score__", "Overall score")] + [
 ]
 
 
+def default_display_tickers(cohort: list[dict], last_bank: str | None,
+                            cap: int = 12) -> list[str]:
+    """Compare's default "Banks to tabulate" (owner rule, UX-P0-04): the bank
+    last opened on the Company page plus the ``cap - 1`` banks closest to it by
+    total assets — same size tier first, then the next-closest from the whole
+    scope when the tier is short. [] when no bank was opened or it is not in
+    this scope (never an arbitrary set). Banks without positive total assets
+    can't be ranked by closeness, so they are never picked as peers."""
+    subject = next((m for m in cohort if m.get("ticker") == last_bank), None)
+    if subject is None:
+        return []
+
+    def _assets(m):
+        a = m.get("total_assets")
+        return a if isinstance(a, (int, float)) and not pd.isna(a) and a > 0 else None
+
+    a0 = _assets(subject)
+    if a0 is None:
+        return [last_bank]
+    tier = asset_size_tier(a0)
+    others = [m for m in cohort
+              if m.get("ticker") != last_bank and _assets(m) is not None]
+    others.sort(key=lambda m: (asset_size_tier(_assets(m)) != tier,
+                               abs(_assets(m) - a0), m.get("ticker")))
+    return [last_bank] + [m["ticker"] for m in others[:cap - 1]]
+
+
 def _peer_scores(cohort: list[dict], display_peers: list[dict],
                  categories: list[str]) -> dict:
     """Per-displayed-bank composite: mean EFFECTIVE percentile (higher = better;
@@ -257,9 +284,17 @@ def render_peer_comparison(all_metrics: list[dict]):
         with _dl:
             disp_tickers = st.multiselect(
                 f"Banks to tabulate (of {len(cohort)}; percentiles vs the full scope)",
-                cohort_tickers, default=cohort_tickers[:TABLE_CAP],
+                cohort_tickers,
+                default=default_display_tickers(
+                    cohort, st.session_state.get("_last_company_bank"), TABLE_CAP),
                 max_selections=TABLE_CAP, key="compare_display")
-        display_peers = [m for m in cohort if m["ticker"] in disp_tickers] or cohort[:TABLE_CAP]
+        display_peers = [m for m in cohort if m["ticker"] in disp_tickers]
+        if not display_peers:
+            # No arbitrary fallback set (the old cohort[:12] was just the first
+            # 12 tickers alphabetically) — ask instead (UX-P0-04).
+            st.info("Pick banks to compare — or open a bank on the Company page "
+                    "and it will be preselected here with its closest peers.")
+            return
     else:
         display_peers = cohort
 

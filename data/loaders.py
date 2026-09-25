@@ -11,6 +11,16 @@ itself and could never have moved these panels).
 """
 
 
+def _scrub_capital(recs: list[dict]) -> list[dict]:
+    """null_unreported_capital on COPIES of every record: cache entries written
+    before that scrub existed (or by a path that skipped it) still carry the
+    literal-0 capital ratios — BSBK, a CBLR filer (RWAJ=0), rendered
+    "CET1 Ratio 0.00%" on Corporate Profile (UX-P0-13). Copies, because the
+    cached objects are shared with every other caller."""
+    from data.fdic_client import null_unreported_capital
+    return [null_unreported_capital(dict(r)) for r in recs]
+
+
 def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[dict]:
     """~20 quarters of FDIC history from the warm cache, fetching live when the
     cached series is shorter than ``min_quarters``.
@@ -46,14 +56,14 @@ def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[
         except Exception:
             deep = []
         if len(deep) >= min_quarters:
-            return deep
+            return _scrub_capital(deep)
 
     hist = cache_get(f"fdic_hist:{ticker}")
     if hist and len(hist) >= min_quarters:
-        return hist
+        return _scrub_capital(hist)
     cert = get_fdic_cert(ticker)
     if not cert:
-        return hist or []
+        return _scrub_capital(hist or [])
     # The WHOLE banking operation, not just the lead charter: 11 universe banks
     # are multi-bank holdcos and were showing one charter's figures (WTFC $9.3B
     # of $72.4B). fetch_group_history returns one consolidated record per
@@ -64,9 +74,9 @@ def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[
     # until the backfill job has run.
     records = fetch_group_history(ticker, limit=min(limit, 20), cert=cert)
     if not records:
-        return hist or []
+        return _scrub_capital(hist or [])
     cache_put(f"fdic_hist:{ticker}", records)
-    return records
+    return _scrub_capital(records)
 
 
 def load_fdic_hist_df(ticker: str, quarters: int):

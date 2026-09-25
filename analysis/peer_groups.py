@@ -127,21 +127,53 @@ def group_banks(all_metrics: list[dict]) -> dict:
     return {"by_size": by_size, "by_mix": by_mix}
 
 
-def get_peer_group_for_bank(ticker: str, all_metrics: list[dict], mode: str = "size") -> list[dict]:
-    """Return peer group (as metrics list) for a given ticker."""
-    groups = group_banks(all_metrics)
-    key = "by_size" if mode == "size" else "by_mix"
+# Fewest banks (subject included) a peer set needs for a meaningful rank: Peer
+# Rank's floor, and the trigger for the size-tier merge below.
+MIN_COHORT = 6
 
+# A size tier too thin to rank against merges with its adjacent tier: the next
+# tier DOWN in size; the smallest tier merges up (owner rule, UX-P0-10).
+_SIZE_TIER_FALLBACK = {
+    "Money-Center (>$1T)": "Large Regional ($100B-$1T)",
+    "Large Regional ($100B-$1T)": "Regional ($10-100B)",
+    "Regional ($10-100B)": "Community (<$10B)",
+    "Community (<$10B)": "Regional ($10-100B)",
+}
+
+
+def peer_cohort(ticker: str, all_metrics: list[dict], mode: str = "size",
+                min_cohort: int = MIN_COHORT) -> tuple[list[dict], str | None, int]:
+    """Return (cohort, tier_label, own_tier_size) for a ticker.
+
+    mode="size": when the bank's own tier has fewer than ``min_cohort`` banks
+    (e.g. Money-Center, 4 banks), the cohort is that tier merged with the
+    adjacent one and the label names both ("Money-Center (>$1T) + Large
+    Regional ($100B-$1T)"). ``own_tier_size`` is always the own tier's count, so
+    a caller can say why the merge happened. mode="mix" never merges.
+    """
     bank = next((m for m in all_metrics if m.get("ticker") == ticker), None)
     if not bank:
-        return []
+        return [], None, 0
 
-    if mode == "size":
-        my_tier = asset_size_tier(bank.get("total_assets"))
-    else:
-        my_tier = business_mix_tier(bank)
+    groups = group_banks(all_metrics)
+    if mode != "size":
+        tier = business_mix_tier(bank)
+        cohort = groups["by_mix"].get(tier, [])
+        return cohort, tier, len(cohort)
 
-    return groups[key].get(my_tier, [])
+    tier = asset_size_tier(bank.get("total_assets"))
+    cohort = groups["by_size"].get(tier, [])
+    nxt = _SIZE_TIER_FALLBACK.get(tier)
+    extra = groups["by_size"].get(nxt, [])
+    if len(cohort) < min_cohort and extra:
+        return cohort + extra, f"{tier} + {nxt}", len(cohort)
+    return cohort, tier, len(cohort)
+
+
+def get_peer_group_for_bank(ticker: str, all_metrics: list[dict], mode: str = "size") -> list[dict]:
+    """Return peer group (as metrics list) for a given ticker — the same cohort
+    metric_percentile_context ranks against (thin size tiers merged)."""
+    return peer_cohort(ticker, all_metrics, mode=mode)[0]
 
 
 # Curated headline metrics for peer-context badges — strong FDIC coverage so
@@ -161,7 +193,10 @@ def metric_percentile_context(ticker: str, all_metrics: list[dict],
     """Where a bank sits vs its same-tier peers on each headline metric.
 
     Returns {metric_key: {value, percentile, raw, median, n, higher_better, label}}
-    plus a "_meta" entry {tier, cohort_size, mode}. ``percentile`` is the
+    plus a "_meta" entry {tier, cohort_size, mode, base_tier, base_tier_size}
+    (``tier`` names both tiers when a thin size tier was merged — see
+    peer_cohort; ``base_tier``/``base_tier_size`` are the bank's own tier and
+    its count). ``percentile`` is the
     *goodness* percentile (higher = better; inverted for lower-is-better metrics
     like efficiency / NPL / NCO) so the same colour scale reads intuitively.
     Metrics with fewer than ``min_peers`` populated peers are omitted.
@@ -172,12 +207,11 @@ def metric_percentile_context(ticker: str, all_metrics: list[dict],
     self_m = next((m for m in all_metrics if m.get("ticker") == ticker), None)
     if not self_m:
         return {}
-    cohort = get_peer_group_for_bank(ticker, all_metrics, mode=mode)
-    if mode == "size":
-        tier = asset_size_tier(self_m.get("total_assets"))
-    else:
-        tier = business_mix_tier(self_m)
-    out = {"_meta": {"tier": tier, "cohort_size": len(cohort), "mode": mode}}
+    cohort, tier, own_n = peer_cohort(ticker, all_metrics, mode=mode)
+    base_tier = (asset_size_tier(self_m.get("total_assets")) if mode == "size"
+                 else business_mix_tier(self_m))
+    out = {"_meta": {"tier": tier, "cohort_size": len(cohort), "mode": mode,
+                     "base_tier": base_tier, "base_tier_size": own_n}}
     for k in (metric_keys or CONTEXT_METRIC_KEYS):
         v = self_m.get(k)
         # NaN is missing data, not a value — a pandas round-trip turns None
