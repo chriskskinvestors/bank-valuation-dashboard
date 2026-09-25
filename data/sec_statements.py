@@ -331,6 +331,18 @@ def _units_scale(title: str) -> float:
     return 1.0
 
 
+def _share_scale(title: str) -> float:
+    """Share-COUNT scale from a statement title's own 'shares in <unit>' clause
+    (JPM/C: 'shares in Millions, $ in Millions'; ONB/HBAN/WTFC: 'shares in
+    Thousands, $ in Thousands'). It governs sharesItemType rows only — a
+    weighted-average count filed as 2,048,311 under 'shares in Thousands' is
+    2,048,311,000 shares. Without the clause the count is in units (1.0).
+    REVIEW-2026-09-24 P0-4: this scale was never applied, so the screen
+    (which divides by 1e6) showed HBAN '2.0M' and JPM '0.0M'."""
+    m = re.search(r"shares\s+in\s+(thousands|millions|billions)", title.lower())
+    return _SCALE_WORD[m.group(1)] if m else 1.0
+
+
 def _num(text: str, scale: float):
     s = text.replace("$", "").replace(",", "").replace("\xa0", " ").strip()
     neg = s.startswith("(") and s.endswith(")")
@@ -386,6 +398,7 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
     tl = h.xpath("//th[contains(concat(' ', normalize-space(@class), ' '), ' tl ')]")
     title = " ".join(tl[0].text_content().split()) if tl else ""
     scale = _units_scale(title)
+    sscale = _share_scale(title)
     el_types = _element_types(h)
 
     header_rows, body = [], []
@@ -442,16 +455,19 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
         texts = [" ".join(c.text_content().split()) for c in valcells]
         # The "$ in <unit>" multiplier is a DOLLAR scale: it applies only to
         # monetary rows. Drive that off the row's XBRL element type (the unit
-        # the value is actually reported in); a share-count or per-share row is
-        # non-monetary and keeps scale 1.0 — scaling it ×1000 would inflate the
-        # number 1000×. When the R-file carries no type (older/odd filers), fall
-        # back to the per-share/in-shares LABEL heuristic.
+        # the value is actually reported in): a share-count row takes the
+        # title's OWN "shares in <unit>" scale (_share_scale; 1.0 when absent)
+        # and a per-share row is always $/share (1.0) — applying the dollar
+        # scale to either inflates it 1000×. When the R-file carries no type
+        # (older/odd filers), fall back to the LABEL heuristics in the same
+        # order: per-share, then share count, then monetary.
         element_id = _row_element_id(cells[0])
         etype = el_types.get(element_id, "")
-        if etype:
-            rscale = scale if _MONETARY_TYPE.search(etype) else 1.0
-        else:
-            rscale = 1.0 if _PERSHARE.search(label) else scale
+        rkind = _row_kind(label, etype) if etype else (
+            "pershare" if _PERSHARE_LABEL.search(label)
+            else "shares" if _SHARES_LABEL.search(label) or _PERSHARE.search(label)
+            else "monetary")
+        rscale = {"monetary": scale, "shares": sscale}.get(rkind, 1.0)
         parsed = [_num(t, rscale) for t in texts]
         is_header = bool(texts) and all(t in ("", "\xa0") for t in texts)
         rows.append({
@@ -473,8 +489,8 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
     last = max((i for i, r in enumerate(rows)
                 if any(v is not None for v in r["values"])), default=-1)
     rows = rows[:last + 1]
-    return {"title": title, "units_scale": scale, "periods": periods,
-            "basis": basis, "rows": rows}
+    return {"title": title, "units_scale": scale, "shares_scale": sscale,
+            "periods": periods, "basis": basis, "rows": rows}
 
 
 # ── Combined "Income AND Comprehensive Income" statements ────────────────────
@@ -1472,7 +1488,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v2:{stype}:{q_metas[0]['accession']}:{n_quarters}"
+    ckey = f"asreported_mq:v3:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v3: share scale
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
@@ -1574,7 +1590,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     from datetime import date, timedelta
     if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
         return None
-    ckey = f"asreported_my:v6:{stype}:{metas[0]['accession']}:{n_years}"
+    ckey = f"asreported_my:v7:{stype}:{metas[0]['accession']}:{n_years}"  # v7: share scale
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None

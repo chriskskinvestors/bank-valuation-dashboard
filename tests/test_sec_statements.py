@@ -9,7 +9,7 @@ rejecting comprehensive/parenthetical companions).
 import unittest
 from unittest import mock
 
-from data.sec_statements import parse_rfile, _units_scale, _statement_rfiles
+from data.sec_statements import parse_rfile, _units_scale, _share_scale, _statement_rfiles
 
 
 _INCOME = b"""<table class="report">
@@ -117,6 +117,97 @@ class TestParseRfile(unittest.TestCase):
         self.assertEqual(ni["values"][0], 2_500_000.0)        # monetary -> x1000
         self.assertAlmostEqual(eps["values"][0], 1.33)        # per-share -> unscaled
         self.assertEqual(shares["values"][0], 6_277_003.0)    # shares -> NOT x1000
+
+    # ── REVIEW-2026-09-24 P0-4: share counts carry the title's OWN scale ──
+    @staticmethod
+    def _typed_income(title: bytes, shares_text: bytes):
+        def ar(eid, dtype):
+            return (b'<table class="authRefData" id="defref_' + eid + b'">'
+                    b'<tr><td><strong> Data Type:</strong></td><td>' + dtype
+                    + b'</td></tr></table>')
+        return (b'<table class="report">'
+                b'<tr><th class="tl">' + title + b'</th>'
+                b'<th class="th">3 Months Ended</th></tr>'
+                b'<tr><th class="th">Jun. 30, 2026</th></tr>'
+                b'<tr><td class="pl"><a onclick="Show.showAR( this, '
+                b"'defref_us-gaap_NetIncomeLoss', window );\">Net income</a></td>"
+                b'<td class="nump">727</td></tr>'
+                b'<tr><td class="pl"><a onclick="Show.showAR( this, '
+                b"'defref_us-gaap_EarningsPerShareDiluted', window );\">"
+                b'Net income\xe2\x80\x94diluted (in usd per share)</a></td>'
+                b'<td class="nump">$ 0.33</td></tr>'
+                b'<tr><td class="pl"><a onclick="Show.showAR( this, '
+                b"'defref_us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding', "
+                b'window );">Average common shares\xe2\x80\x94diluted (in shares)</a></td>'
+                b'<td class="nump">' + shares_text + b'</td></tr>'
+                b'</table>'
+                + ar(b'us-gaap_NetIncomeLoss', b'xbrli:monetaryItemType')
+                + ar(b'us-gaap_EarningsPerShareDiluted', b'dtr-types:perShareItemType')
+                + ar(b'us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding',
+                     b'xbrli:sharesItemType'))
+
+    def _vals(self, rf):
+        rows = [r for r in parse_rfile(rf)["rows"] if not r["header"]]
+        return [r["values"][0] for r in rows]           # NI, EPS, shares
+
+    def test_share_scale_helper(self):
+        self.assertEqual(_share_scale("Income - USD ($) shares in Thousands, $ in Millions"), 1e3)
+        self.assertEqual(_share_scale("Income - USD ($) shares in Millions, $ in Millions"), 1e6)
+        self.assertEqual(_share_scale("Income - USD ($) $ in Thousands"), 1.0)
+        self.assertEqual(_share_scale("Balance - USD ($) $ in Millions"), 1.0)
+
+    def test_typed_share_row_takes_shares_in_thousands(self):
+        # HBAN Q2-2026 R4: "shares in Thousands, $ in Millions"; diluted average
+        # shares filed as 2,048,311 = 2,048,311,000 shares (the screen showed
+        # "2.0M" because the count was left in thousands). Dollars ×1e6, EPS
+        # untouched, shares ×1e3.
+        ni, eps, sh = self._vals(self._typed_income(
+            b'Consolidated Statements of Income - USD ($) shares in Thousands, $ in Millions',
+            b'2,048,311'))
+        self.assertEqual(ni, 727e6)
+        self.assertAlmostEqual(eps, 0.33)
+        self.assertEqual(sh, 2_048_311_000.0)
+
+    def test_typed_share_row_takes_shares_in_millions(self):
+        # JPM: "shares in Millions, $ in Millions"; 2,694.2 → 2,694,200,000
+        # (rendered "0.0M" before).
+        ni, eps, sh = self._vals(self._typed_income(
+            b'Consolidated Statements of Income - USD ($) shares in Millions, $ in Millions',
+            b'2,694.2'))
+        self.assertEqual(ni, 727e6)
+        self.assertAlmostEqual(sh, 2_694_200_000.0)
+
+    def test_typed_share_row_without_shares_clause_is_units(self):
+        # BBT (post-merger): "$ in Thousands" only → the count is already units;
+        # it must NOT pick up the dollar scale (the AFBI pin) nor any share scale.
+        ni, eps, sh = self._vals(self._typed_income(
+            b'Consolidated Statements of Income - USD ($) $ in Thousands', b'83,816,086'))
+        self.assertEqual(ni, 727e3)
+        self.assertEqual(sh, 83_816_086.0)
+
+    def test_untyped_share_label_takes_shares_scale_and_eps_stays(self):
+        # No authRefData (older filer): the LABEL fallback must route
+        # "(in shares)" to the share scale and "per share" to 1.0.
+        rf = (b'<table class="report">'
+              b'<tr><th class="tl">Statements of Income - USD ($) shares in Thousands, '
+              b'$ in Thousands</th><th class="th">12 Months Ended</th></tr>'
+              b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+              b'<tr><td class="pl">Net income</td><td class="nump">823,843</td></tr>'
+              b'<tr><td class="pl">Net income per common share-Diluted (usd per share)</td>'
+              b'<td class="nump">$ 11.40</td></tr>'
+              b'<tr><td class="pl">Weighted average common shares outstanding (in shares)</td>'
+              b'<td class="nump">66,900</td></tr>'
+              b'</table>')
+        ni, eps, sh = self._vals(rf)
+        self.assertEqual(ni, 823_843_000.0)
+        self.assertAlmostEqual(eps, 11.40)
+        self.assertEqual(sh, 66_900_000.0)             # WTFC: 0.1M → 66.9M on screen
+
+    def test_parse_result_reports_shares_scale(self):
+        p = parse_rfile(self._typed_income(
+            b'Income - USD ($) shares in Thousands, $ in Millions', b'1'))
+        self.assertEqual(p["shares_scale"], 1e3)
+        self.assertEqual(p["units_scale"], 1e6)
 
     def test_spacer_td_th_does_not_swallow_data_rows(self):
         # KEY (and peers) insert an empty spacer <td class="th"> into EVERY data
