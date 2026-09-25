@@ -550,6 +550,79 @@ class TestStitchIncome(unittest.TestCase):
         sba = [r for r in out["rows"] if r["label"] == "SBA gain"][0]
         self.assertEqual(sba["values"], [None, None, 4.0])   # 2024 NOT backfilled to 5.0
 
+    # ── REVIEW-2026-09-24 P0-3: stitched rows carry their value kind ──
+    def _typed(self, periods, rows):
+        """rows: (label, header, values, etype)."""
+        return {"periods": periods, "units_scale": 1e3,
+                "rows": [{"label": l, "header": h, "values": v, "etype": t}
+                         for l, h, v, t in rows]}
+
+    def test_stitched_rows_carry_kind_from_xbrl_type(self):
+        # LARK / FBIZ label EPS rows bare "Basic"/"Diluted" under an "Earnings
+        # per share" header; the label says nothing, the XBRL type says
+        # perShareItemType. The stitched row must carry kind="pershare" so the
+        # renderer shows $3.07, not "$3". The share-count twin labeled the same
+        # word stays a separate row with kind="shares".
+        from data.sec_statements import _stitch_statement
+        f = self._typed(["Dec. 31, 2025", "Dec. 31, 2024"], [
+            ("Net earnings", False, [18_775_000.0, 12_977_000.0], "xbrli:monetaryItemType"),
+            ("Earnings per share:", True, [], ""),
+            ("Basic", False, [3.07, 2.05], "dtr-types:perShareItemType"),
+            ("Basic", False, [6_115_000.0, 6_090_000.0], "xbrli:sharesItemType"),
+        ])
+        out = _stitch_statement([f], n_years=2)
+        data = [r for r in out["rows"] if not r["header"]]
+        self.assertEqual([(r["label"], r["kind"]) for r in data],
+                         [("Net earnings", "monetary"), ("Basic", "pershare"),
+                          ("Basic", "shares")])
+        self.assertEqual(data[1]["values"], [3.07, 2.05])
+
+    def test_untyped_rows_carry_label_kind(self):
+        from data.sec_statements import _stitch_statement
+        f = self._filing(["Dec. 31, 2025"], [
+            ("Diluted earnings per share", False, [1.5]),
+            ("Weighted average diluted shares (in shares)", False, [1_000_000.0]),
+            ("Net income", False, [9.0]),
+        ])
+        kinds = [r["kind"] for r in _stitch_statement([f], n_years=1)["rows"]]
+        self.assertEqual(kinds, ["pershare", "shares", "monetary"])
+
+    def test_quarterly_assemble_carries_kind(self):
+        from data.sec_statements import _assemble
+        parsed = [self._typed(["Jun. 30, 2026"], [
+            ("Diluted", False, [0.88], "dtr-types:perShareItemType")])]
+        col = {(2026, 6): {r_key: 0.88 for r_key in
+                           [("diluted", False, "pershare")]}}
+        out = _assemble(parsed, col, [(2026, 6)])
+        self.assertEqual(out["rows"][0]["kind"], "pershare")
+
+    def test_consolidation_never_merges_across_kinds(self):
+        # Two same-word rows of DIFFERENT kinds, never both populated in one
+        # period, would pass the value-overlap guard — the kind guard must keep
+        # them apart (a merged row would print a share count as $/share).
+        from data.sec_statements import _consolidate_variants
+        stmt = {"periods": ["2025", "2024"], "rows": [
+            {"label": "Basic", "header": False, "kind": "pershare",
+             "element_id": "", "values": [3.07, None]},
+            {"label": "Basic", "header": False, "kind": "shares",
+             "element_id": "", "values": [None, 6_090_000.0]},
+        ]}
+        out = _consolidate_variants(stmt)
+        self.assertEqual([(r["kind"], r["values"]) for r in out["rows"]],
+                         [("pershare", [3.07, None]), ("shares", [None, 6_090_000.0])])
+
+    def test_consolidation_same_kind_still_merges(self):
+        from data.sec_statements import _consolidate_variants
+        stmt = {"periods": ["2025", "2024"], "rows": [
+            {"label": "Net income", "header": False, "kind": "monetary",
+             "element_id": "", "values": [10.0, None]},
+            {"label": "Net income (loss)", "header": False, "kind": "monetary",
+             "element_id": "", "values": [None, 8.0]},
+        ]}
+        out = _consolidate_variants(stmt)
+        self.assertEqual(len(out["rows"]), 1)
+        self.assertEqual(out["rows"][0]["values"], [10.0, 8.0])
+
 
 _DEP_SUMMARY = b"""<?xml version="1.0"?>
 <FilingSummary><MyReports>
