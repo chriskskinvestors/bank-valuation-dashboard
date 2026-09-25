@@ -129,7 +129,7 @@ class TestIRDiscovery(unittest.TestCase):
         with patch.object(ir, "IR_URLS", {"PFS": "https://investorrelations.provident.bank/"}):
             class _C:
                 @staticmethod
-                def get(k):
+                def get(k, max_age_s=None):   # the reader passes max_age_s=None
                     return {"endpoints": {"ONB": "https://ir.oldnational.com/"}}
             import data.cache as real_cache
             with patch.object(real_cache, "get", _C.get):

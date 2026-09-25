@@ -231,7 +231,7 @@ def fetch_earnings_calendar(tickers: tuple) -> list[dict]:
     the per-instance Postgres round-trip; it never triggers a live build."""
     from data import cache as _cache
     try:
-        snap = _cache.get("earnings_calendar_snap")
+        snap = _cache.get("earnings_calendar_snap", max_age_s=None)
     except Exception:
         snap = None
     if snap and isinstance(snap.get("value"), list):
@@ -252,7 +252,7 @@ def earnings_calendar_available() -> bool:
     as fetch_earnings_calendar."""
     from data import cache as _cache
     try:
-        snap = _cache.get("earnings_calendar_snap")
+        snap = _cache.get("earnings_calendar_snap", max_age_s=None)
     except Exception:
         return False
     return bool(snap and isinstance(snap.get("value"), list))

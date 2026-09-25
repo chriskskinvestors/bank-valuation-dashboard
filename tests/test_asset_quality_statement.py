@@ -344,7 +344,7 @@ class TestCreditQualityHistory(unittest.TestCase):
         self.cache = {}
         import data.cache as dcache
         self._cache_orig = (dcache.get, dcache.put)
-        dcache.get = lambda k: self.cache.get(k)
+        dcache.get = lambda k, max_age_s=None: self.cache.get(k)
         dcache.put = lambda k, v: self.cache.__setitem__(k, v)
 
     def tearDown(self):

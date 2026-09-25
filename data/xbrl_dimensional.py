@@ -264,7 +264,7 @@ def fetch_dimensional_facts(cik: int, accession: str) -> dict | None:
 
     acc = accession.replace("-", "")
     key = f"xbrl_dim:{int(cik)}:{acc}"
-    cached = cache.get(key)
+    cached = cache.get(key, max_age_s=None)      # own 30d is_fresh below
     if is_fresh(cached, CACHE_TTL_SECONDS):
         return cached
 
@@ -569,7 +569,7 @@ def credit_quality_history(cik: int, quarterly: bool = False) -> dict:
 
     key = (f"crit_hist:v1:{int(cik)}:"
            f"{filings[0]['accession'].replace('-', '')}:{'q' if quarterly else 'a'}")
-    cached = cache.get(key)
+    cached = cache.get(key, max_age_s=None)      # own 30d is_fresh below
     if is_fresh(cached, CACHE_TTL_SECONDS):
         return cached.get("by_period", {})
 

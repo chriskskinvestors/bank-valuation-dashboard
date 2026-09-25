@@ -25,6 +25,14 @@ def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[
     from data.bank_mapping import get_fdic_cert
     from data.cert_group import fetch_group_history
 
+    # The warm window holds 20 quarters and the live fallback is capped at 20,
+    # so a min_quarters above 20 can NEVER be satisfied by either: the call
+    # refetched FDIC live on every render and rewrote the same 20 quarters
+    # (Corporate Profile prefetch asked for 44 — REVIEW-2026-09-24 P1-3).
+    # Cap here so every caller is safe; a deep request still serves the store
+    # whenever it holds at least the warm window's depth.
+    min_quarters = min(min_quarters, 20)
+
     # Deep requests (beyond the 20-quarter warm window) read the backfilled
     # history store (DEEP-HISTORY-PLAN.md, owner-approved 2026-09-08). The
     # ≤20-quarter path below is UNTOUCHED — current pages get zero slower.

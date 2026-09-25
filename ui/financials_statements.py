@@ -2522,7 +2522,7 @@ def _compositions_cached(cik):
         return None
     # v2 (2026-07-14): rows carry the member QName as a third element.
     ckey = f"compositions:v2:{meta['accession']}"
-    cached = cache.get(ckey)
+    cached = cache.get(ckey, max_age_s=None)     # immutable per accession
     if cached is not None:
         return cached or None
     from data.sec_composition import compositions_for

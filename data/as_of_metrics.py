@@ -75,7 +75,9 @@ def as_of_quarter_metrics(quarter, cert_to_id: dict, *, window: int = _WINDOW) -
         m["_fdic_cert"] = c     # lets the table link defunct banks to FDIC BankFind
         out.append(m)
 
-    cache.put(key, {"metrics": out, "cached_at": q.isoformat()})
+    # Stamp the WRITE time (the quarter is already in the key): a quarter-date
+    # stamp was always past _CACHE_TTL_S, so this key could never hit.
+    cache.put(key, {"metrics": out, "cached_at": pd.Timestamp.today().isoformat()})
     return out
 
 
@@ -136,7 +138,7 @@ def quarterly_series(cert_to_id: dict, n_quarters: int = _WINDOW, *,
     # A caller-supplied scope_id (e.g. "ALLBANKS") gives a STABLE key the pre-warm
     # job and the live view agree on; otherwise hash the exact cohort (scoped sets).
     key = f"trend_series:{scope_id or _cohort_key(certs)}:{n}"
-    cached = cache.get(key)
+    cached = cache.get(key, max_age_s=None)     # freshness is _GRID_TTL_S (36h), not the 24h default
     if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached
     if not build_if_missing:

@@ -836,7 +836,9 @@ def _prefetch_profile_data(ticker: str, info: dict) -> None:
         # One group-aware warm covers both the latest-record and history
         # readers below — they all go through load_fdic_hist's cache now.
         from data.loaders import load_fdic_hist
-        tasks.append(lambda: load_fdic_hist(ticker, min_quarters=44, limit=44))
+        # min_quarters is the WARM window (20): a deeper minimum is
+        # unsatisfiable and made this a live FDIC refetch on every render.
+        tasks.append(lambda: load_fdic_hist(ticker, min_quarters=20, limit=44))
     if cik:
         tasks.append(lambda: sec_client.fetch_company_facts(cik))
     tasks.append(lambda: get_history(ticker, "1Y"))  # price + val default window

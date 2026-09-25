@@ -226,9 +226,14 @@ class TestRefreshSnapshot(unittest.TestCase):
 class TestMergedCallInfo(unittest.TestCase):
     def setUp(self):
         self._cim = ec.call_info_map
+        self._q4 = ir.get_q4_call_details
 
     def tearDown(self):
         ec.call_info_map = self._cim
+        # Restore the real reader: leaving the EQBK fixture bound leaked it into
+        # every later module that reads the Q4 snapshot (found 2026-09-25 when
+        # tests/test_snapshot_reads_any_age.py got the EQBK fixture back).
+        ir.get_q4_call_details = self._q4
 
     def test_q4_wins_time_and_webcast_pr_keeps_dialin(self):
         ec.call_info_map = lambda: {
@@ -239,11 +244,7 @@ class TestMergedCallInfo(unittest.TestCase):
             "EQBK": {"call_time": "9:00a ET", "webcast_url": "https://events.q4inc.com/x",
                      "call_date": "2026-07-15", "detail_url": "z"},
         }
-        try:
-            m = ec.merged_call_info()
-        finally:
-            if hasattr(ir, "get_q4_call_details"):
-                pass
+        m = ec.merged_call_info()
         # Q4 supplies the call time + webcast EQBK's PR lacked; dial-in preserved.
         self.assertEqual(m["EQBK"]["call_time"], "9:00a ET")
         self.assertEqual(m["EQBK"]["webcast_url"], "https://events.q4inc.com/x")
