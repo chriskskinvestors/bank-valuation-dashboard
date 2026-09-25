@@ -146,6 +146,21 @@ def _row_key(r: dict) -> tuple:
     kind = "" if header else _row_kind(label, r.get("etype", ""))
     return (_norm_label(label), header, kind)
 
+
+def _keyed_rows(rows: list):
+    """(key, row) for each row of ONE filing, in order. A key that repeats
+    within the filing (a label the company uses twice — "Other" under both
+    income and expense) gets an occurrence suffix, so the second line is its
+    own row instead of silently overwriting the first in a per-period slice
+    (REVIEW-2026-09-24 P0-2 class). The first occurrence keeps the plain key,
+    so single-use labels match across filings exactly as before."""
+    seen: dict = {}
+    for r in rows:
+        k = _row_key(r)
+        n = seen.get(k, 0)
+        seen[k] = n + 1
+        yield (k if n == 0 else k + (n,)), r
+
 # As-reported NOTE tables (the SNL-depth disclosures past the primary statements).
 # Notes are rendered as their own "(Details)" R-files; we pick the by-type
 # composition table and reject sibling tables (maturities, narrative, rollforward)
@@ -488,9 +503,59 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
     # the rendered statement stops where the company's statement ends.
     last = max((i for i, r in enumerate(rows)
                 if any(v is not None for v in r["values"])), default=-1)
-    rows = rows[:last + 1]
+    rows = _fold_member_blocks(rows[:last + 1])
     return {"title": title, "units_scale": scale, "shares_scale": sscale,
             "periods": periods, "basis": basis, "rows": rows}
+
+
+# A dimensional block in an R-file opens with a header row whose defref is an
+# XBRL AXIS (srt_ProductOrServiceAxis, us-gaap_StatementEquityComponentsAxis …)
+# and whose label is the MEMBER ("Payments and cash management revenue").
+_AXIS_EID = re.compile(r"Axis$")
+
+
+def _fold_member_blocks(rows: list) -> list:
+    """Give rows inside dimensional member blocks their member's identity.
+
+    HBAN's income R-file (2025+) lays its fee lines out as one block per
+    ProductOrService member, each block repeating the SAME abstract header and
+    the SAME row label ("Noninterest income:" / "Noninterest income"), and an
+    equity-components block repeats "Income after income taxes" for the
+    non-controlling interest. Every repeat shares one stitch key, so the LAST
+    block silently overwrote the statement's own line in the per-period slice
+    (REVIEW-2026-09-24 P0-2: the 9M "Income after income taxes" read 14 — the
+    NCI block — instead of 1,706, and Q4 = FY − 9M rendered the full year;
+    P1-7: "Total noninterest income" vanished under the last fee member).
+
+    A block runs from its axis header to the next axis header (or the end).
+    A block with ONE data row is the company's own line item under the member
+    name, so that row is relabeled to the member and the block's headers are
+    dropped. A block with several data rows keeps the member header as its
+    section header; its repeated inner abstract headers are dropped. Rows
+    outside any block are untouched."""
+    if not any(r["header"] and _AXIS_EID.search(r.get("element_id") or "")
+               for r in rows):
+        return rows
+    out: list = []
+    i, n = 0, len(rows)
+    while i < n:
+        r = rows[i]
+        if not (r["header"] and _AXIS_EID.search(r.get("element_id") or "")):
+            out.append(r)
+            i += 1
+            continue
+        j = i + 1
+        while j < n and not (rows[j]["header"]
+                             and _AXIS_EID.search(rows[j].get("element_id") or "")):
+            j += 1
+        data = [x for x in rows[i + 1:j] if not x["header"]]
+        if len(data) == 1:
+            out.append({**data[0], "label": r["label"]})
+        elif data:
+            out.append(r)                        # member name as the block header
+            out.extend(data)
+        i = j
+    return out
 
 
 # ── Combined "Income AND Comprehensive Income" statements ────────────────────
@@ -1121,8 +1186,7 @@ def _merge_row_order(parsed: list) -> list:
     keys: list = []                            # parallel norm keys for .index
     for f in parsed:
         prev = -1
-        for r in f["rows"]:
-            k = _row_key(r)
+        for k, r in _keyed_rows(f["rows"]):
             if k in keys:
                 prev = keys.index(k)
             else:
@@ -1142,9 +1206,8 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
                          key=_period_year, reverse=True)[:n_years]
     def _column(f, period):
         idx = f["periods"].index(period)
-        return {_row_key(r):
-                (r["values"][idx] if idx < len(r["values"]) else None)
-                for r in f["rows"] if not r["header"]}
+        return {k: (r["values"][idx] if idx < len(r["values"]) else None)
+                for k, r in _keyed_rows(f["rows"]) if not r["header"]}
 
     # Per period, the OWNING filing is the newest one that lists the period; its
     # rows define which lines the company broke out for that year (a line the
@@ -1333,9 +1396,8 @@ def _column_values(stmt: dict, idx: int) -> dict:
     key carries the value KIND (_row_key), so a per-share / share-count row never
     shares a key with — and is never overwritten by — an additive $ flow, and the
     Q4 = FY − 9M derivation can gate differencing on that kind."""
-    return {_row_key(r):
-            (r["values"][idx] if idx < len(r["values"]) else None)
-            for r in stmt["rows"] if not r["header"]}
+    return {k: (r["values"][idx] if idx < len(r["values"]) else None)
+            for k, r in _keyed_rows(stmt["rows"]) if not r["header"]}
 
 
 def _q_label(q_end: tuple) -> str:
@@ -1409,14 +1471,100 @@ def _stitch_balance_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> di
     return _assemble(sources, col, q_ends)
 
 
-def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> dict | None:
+def _filed(f: dict) -> str:
+    """Filing date (ISO) of a parsed filing, '' when the fixture carries none."""
+    return str((f.get("_meta") or {}).get("date") or "")
+
+
+def _nearest_vintage(cands: list, ref_date: str):
+    """The (parsed 10-K, column) to take a fiscal year's 12-month figure from,
+    given every 10-K that reports that year (newest first) and the filing date
+    of the 9M column it will be differenced with: the FIRST 10-K filed on/after
+    the 9M source (the same reporting vintage), else the LATEST filed before it.
+    Without dates (unit fixtures) the newest 10-K — the prior behavior."""
+    dated = [(_filed(f), (f, i)) for f, i in cands]
+    if not ref_date or not all(d for d, _ in dated):
+        return cands[0]
+    after = sorted(((d, c) for d, c in dated if d >= ref_date), key=lambda x: x[0])
+    if after:
+        return after[0][1]
+    return max(dated, key=lambda x: x[0])[1]
+
+
+# Net-income concepts whose interim re-reporting marks a restated fiscal year.
+_RESTATE_CONCEPTS = ("NetIncomeLoss", "ProfitLoss")
+
+
+def _accn(f: dict) -> str:
+    """Accession of a parsed filing without dashes ('' when unknown)."""
+    return str((f.get("_meta") or {}).get("accession") or "").replace("-", "")
+
+
+def _interim_restated(facts: dict, qe: tuple, acc_q: str, acc_k: str) -> bool:
+    """True when the two filings being combined for Q4 = FY − 9M disagree about
+    the fiscal year's interim net income: for some INTERIM period (3/6/9-month
+    duration inside the fiscal year ending at quarter-end qe) that BOTH the 9M
+    source filing (acc_q) and the FY 10-K (acc_k) report in companyfacts, the
+    values differ beyond filer rounding — the 10-K restated or recast the
+    interims (Beacon: FY2025 10-K restated Q3-25 net income -50.2M -> -4.2M,
+    ASU 2025-08), so the 10-Q's 9M is on another basis and FY − 9M is not a
+    quarter. Only the two filings' own facts are compared, so a year that a
+    later filing recast CONSISTENTLY on both sides (Brookline's 9M-2024 in the
+    Q3-25 10-Q vs Brookline's FY2024 in the FY2025 10-K) is not flagged.
+    A 10-K that tags no interim period gives no evidence -> False."""
+    from datetime import date, timedelta
+    acc_q, acc_k = acc_q.replace("-", ""), acc_k.replace("-", "")
+    if not (facts and acc_q and acc_k) or acc_q == acc_k:
+        return False
+    y, m = qe
+    fy_end = date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)
+    fy_floor = fy_end - timedelta(days=372)
+    ug = (facts.get("facts") or {}).get("us-gaap") or {}
+    for concept in _RESTATE_CONCEPTS:
+        rows = ((ug.get(concept) or {}).get("units") or {}).get("USD") or []
+        by_filing: dict = {acc_q: {}, acc_k: {}}
+        for r in rows:
+            acc = str(r.get("accn") or "").replace("-", "")
+            if acc not in by_filing:
+                continue
+            s_, e_, val = r.get("start"), r.get("end"), r.get("val")
+            if not (s_ and e_) or val is None:
+                continue
+            try:
+                sd, ed = date.fromisoformat(s_), date.fromisoformat(e_)
+            except ValueError:
+                continue
+            if fy_floor < sd and ed < fy_end and (ed - sd).days < 300:
+                by_filing[acc][(s_, e_)] = float(val)
+        q_vals, k_vals = by_filing[acc_q], by_filing[acc_k]
+        for period in set(q_vals) & set(k_vals):
+            a, b = q_vals[period], k_vals[period]
+            if abs(a - b) > max(1000.0, abs(a) * 0.001):   # rounding is not a restatement
+                return True
+    return False
+
+
+def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
+                          facts: dict | None = None) -> dict | None:
     """Discrete-quarter stitch for a FLOW statement (income / cash flow). Q1–Q3
     are the "three months ended" column lifted straight from each 10-Q (no math,
     per A21). Q4 = FY (10-K 12-month column) − 9M (that fiscal year's Q3 10-Q
     nine-month YTD column), both ending at the same fiscal year-end; emitted only
     when BOTH are present, else that quarter is omitted (blank, never guessed).
     The differencing never crosses a fiscal year and never uses a single-quarter
-    column on either side."""
+    column on either side.
+
+    The two sides must be on the SAME reporting basis (REVIEW-2026-09-24 P0-2):
+      • the FY column comes from the 10-K filed NEAREST the 9M source (the
+        first one after it; else the latest before) — not blindly the newest
+        10-K, which after a reverse merger reports the year RECAST (Beacon's
+        FY2025 10-K shows FY2023 on Brookline's basis while the 9M came from
+        Berkshire's own 10-Q: Q4'23 NII rendered 59.1M, the quarter is 88.4M);
+      • when `facts` (companyfacts) shows the FY 10-K and the 9M 10-Q
+        reporting a different net income for the same interim period of that
+        fiscal year (_interim_restated — Beacon's FY2025 10-K restated Q3-25
+        under ASU 2025-08), no FY − 9M difference is valid and the Q4 column
+        stays blank. facts=None skips the check (no network in unit fixtures)."""
     q_by_qend: dict = {}                 # q_end -> (parsed, discrete_idx)
     nine_by_end: dict = {}               # nine-month-END (year, month) -> (parsed, idx)
     for f in parsed_q:
@@ -1436,13 +1584,13 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> dict 
         for i, (d, p) in enumerate(mc):
             if d == 9 and _period_key(p):
                 nine_by_end.setdefault(_period_key(p), (f, i))
-    k_by_fy: dict = {}                   # fiscal-year-end (year, month) -> (parsed, 12mo_idx)
+    k_by_fy: dict = {}                   # fiscal-year-end -> [(parsed, 12mo_idx)] newest first
     for f in parsed_k:
         mc = f["_colmeta"]
         for i, (d, p) in enumerate(mc):
             pk = _period_key(p)
-            if d == 12 and pk:
-                k_by_fy.setdefault(pk, (f, i))
+            if d == 12 and pk and all(x is not f for x, _ in k_by_fy.get(pk, [])):
+                k_by_fy.setdefault(pk, []).append((f, i))
 
     sources = parsed_q + parsed_k
     col: dict = {}
@@ -1457,8 +1605,10 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> dict 
         # year, so the difference never crosses a year boundary.
         nine_end = _minus_quarter(qe)
         if qe in k_by_fy and nine_end in nine_by_end:
-            fk, ik = k_by_fy[qe]
             fq, iq = nine_by_end[nine_end]
+            fk, ik = _nearest_vintage(k_by_fy[qe], _filed(fq))
+            if facts and _interim_restated(facts, qe, _accn(fq), _accn(fk)):
+                continue                          # restated interim -> blank Q4
             fy = _column_values(fk, ik)
             nine = _column_values(fq, iq)
             diff = {}
@@ -1501,7 +1651,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v4:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v4: row kind
+    ckey = f"asreported_mq:v5:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v5: member blocks + Q4 vintage (after v4 row kind)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
@@ -1569,16 +1719,28 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     if stype == "balance":
         stitched = _stitch_balance_quarters(parsed_q, parsed_k, q_ends)
     else:
-        stitched = _stitch_flow_quarters(parsed_q, parsed_k, q_ends)
+        # companyfacts gates Q4 = FY - 9M on the year's interims not having been
+        # restated between the two filings (_interim_restated). A TRANSIENT
+        # facts failure still renders (unchecked, the prior behavior) but is
+        # never cached, so the next load re-runs the check.
+        try:
+            from data.sec_client import fetch_company_facts_ok
+            facts, facts_ok = fetch_company_facts_ok(cik)
+        except Exception as e:
+            print(f"[sec_statements] restatement check skipped for cik {cik}: "
+                  f"{type(e).__name__}: {e}")
+            facts, facts_ok = None, False
+        stitched = _stitch_flow_quarters(parsed_q, parsed_k, q_ends, facts=facts)
     if not stitched:
         return None
     used = parsed_q + parsed_k
     result = {"meta": q_metas[0], "filings": [f["_meta"] for f in used],
               "statement": stitched}
-    try:
-        cache.put(ckey, result)
-    except Exception:
-        pass
+    if stype == "balance" or facts_ok:
+        try:
+            cache.put(ckey, result)
+        except Exception:
+            pass
     return result
 
 
@@ -1603,7 +1765,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     from datetime import date, timedelta
     if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
         return None
-    ckey = f"asreported_my:v8:{stype}:{metas[0]['accession']}:{n_years}"  # v8: row kind
+    ckey = f"asreported_my:v9:{stype}:{metas[0]['accession']}:{n_years}"  # v9: member blocks (after v8 row kind)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
