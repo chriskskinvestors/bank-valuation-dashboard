@@ -1544,7 +1544,7 @@ def sector_hist_append(hist: dict | None, record: dict,
 def _sector_val_history():
     from data import cache
     try:
-        return cache.get(_SECVAL_HIST_KEY)
+        return cache.get(_SECVAL_HIST_KEY, max_age_s=None)
     except Exception:
         return None
 

@@ -243,8 +243,10 @@ def _append_sector_val_history(metrics: list[dict]) -> None:
         from ui.home import sector_val_medians, sector_hist_append
         record = {"date": date.today().isoformat(),
                   "tiers": sector_val_medians(metrics)}
+        # Run-to-run state: read at ANY age — under the 24h default a >24h
+        # scheduler gap read None and rewrote the history as a single record.
         try:
-            hist = cache.get("sector_val_hist")
+            hist = cache.get("sector_val_hist", max_age_s=None)
         except Exception:
             hist = None
         new = sector_hist_append(hist, record)

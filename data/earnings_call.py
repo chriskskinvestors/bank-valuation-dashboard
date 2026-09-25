@@ -481,7 +481,7 @@ def get_pr_call_details() -> dict:
     before it has run (degrades to the snippet parser)."""
     try:
         from data import cache
-        snap = cache.get("pr_call_snap")
+        snap = cache.get("pr_call_snap", max_age_s=None)
     except Exception:
         snap = None
     if snap and isinstance(snap.get("value"), dict):

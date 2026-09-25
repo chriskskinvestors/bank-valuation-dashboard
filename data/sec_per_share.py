@@ -280,7 +280,7 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     # the CCFN share-count corroboration bump, v3 the intangible-adjustment
     # main-path mirror.)
     key = f"sec_pershare:v5:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
-    cached = cache.get(key)
+    cached = cache.get(key, max_age_s=None)     # freshness is _GRID_TTL_S (36h), not the 24h default
     if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached
     if not build_if_missing:

@@ -167,7 +167,9 @@ def lineage_predecessors(base_certs, since) -> dict[int, dict]:
             break
         offset += 1000
 
-    cache.put(key, {"map": out, "cached_at": q.isoformat()})
+    # Stamp the WRITE time (``since`` is already in the key): a since-date
+    # stamp was always past _LINEAGE_TTL_S, so this key could never hit.
+    cache.put(key, {"map": out, "cached_at": datetime.now().isoformat()})
     return out
 
 

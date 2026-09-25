@@ -209,6 +209,24 @@ class TestCallSitesReadWithoutCeiling(unittest.TestCase):
         ("data/fdic_client.py", r'key = f"fdic_rssd:'),
         ("data/fdic_client.py", r'key = f"fdic_rssdhcr:'),
         ("data/ma_announcements.py", r'key = _doc_404_key\(cik, adsh, doc\)'),
+        # (REVIEW-2026-09-24 P1-5) pre-warmed ALLBANKS grids: their own policy
+        # is _GRID_TTL_S (36h), so a 24h read made the 24-36h window unreachable.
+        ("data/as_of_metrics.py", r'key = f"trend_series:'),
+        ("data/sec_per_share.py", r'key = f"sec_pershare:v\d+:'),
+    ]
+
+    # (REVIEW-2026-09-24 P1-5) Job-produced snapshots read BY NAME (a literal
+    # or a module constant, so the SITES form above — which needs a `key =`
+    # line — can't express them). Nightly writer + 24h default reader flips
+    # on seconds of jitter (tests/test_nightly_gate_baseline), so EVERY read
+    # of each key in its module must pass max_age_s=None.
+    SNAPSHOT_KEYS = [
+        ("data/estimates.py", '"earnings_calendar_snap"'),
+        ("jobs/refresh_home_snapshot.py", '"sector_val_hist"'),
+        ("ui/home.py", "_SECVAL_HIST_KEY"),
+        ("data/events/ir_site.py", "_IR_ENDPOINTS_CACHE_KEY"),
+        ("data/events/ir_site.py", "_Q4_CALLS_SNAP_KEY"),
+        ("data/earnings_call.py", '"pr_call_snap"'),
     ]
 
     def test_each_site_passes_max_age_none(self):
@@ -220,6 +238,19 @@ class TestCallSitesReadWithoutCeiling(unittest.TestCase):
                 m, f"{rel}: cache read for '{key_marker}' no longer passes "
                    f"max_age_s=None — the 24h ceiling is back (see module "
                    f"docstring for why that re-opens the timeout incident)")
+
+    def test_each_snapshot_key_read_without_ceiling(self):
+        for rel, key in self.SNAPSHOT_KEYS:
+            src = (REPO / rel).read_text(encoding="utf-8")
+            reads = re.findall(r'cache\.get\(\s*' + re.escape(key)
+                               + r'\s*(,[^)]*)?\)', src)
+            self.assertTrue(reads, f"{rel}: no cache.get({key}) read found — "
+                                   f"the pin's marker is stale")
+            for extra in reads:
+                self.assertIn(
+                    "max_age_s=None", extra,
+                    f"{rel}: a cache.get({key}) read is back on the 24h "
+                    f"default ceiling — nightly-cadence state flips on jitter")
 
 
 if __name__ == "__main__":

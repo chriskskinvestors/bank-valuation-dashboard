@@ -12,6 +12,7 @@ dimensional members). Higher layers map concepts/members to display lines.
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 import threading
@@ -59,17 +60,51 @@ def _get(url: str) -> bytes:
     return resp.content
 
 
+# The submissions index (data.sec.gov/submissions/CIK….json, ~1-3 MB for a large
+# filer) is what every filing lookup reads. latest_filing, _list_10k_filings and
+# sec_statements' _recent_*_metas each fetched it afresh, so one Company Reported
+# rerun pulled the same index 3-6 times (measured 2026-09-24: 70% of a 3.4 s warm
+# rerun). It is parsed once per CIK per _INDEX_TTL_S (mirrors sec_client
+# .get_filing_info's ttl=900) into compact (form, accession, doc, date) tuples;
+# the lookups build fresh meta dicts from them (sec_facts_overlay annotates the
+# dict it gets). The fetch seam is part of the key so a rebound `_get` (the
+# refresh jobs' rate-limit wrapper, a test's stub) never serves an index fetched
+# through the previous one. maxsize bounds a job's universe walk to 32 indexes.
+_INDEX_TTL_S = 900
+
+
+def _index_bucket() -> int:
+    return int(time.time() // _INDEX_TTL_S)
+
+
+@functools.lru_cache(maxsize=32)
+def _recent_filings_cached(cik10: str, bucket: int, fetcher) -> tuple:
+    data = json.loads(fetcher(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
+    rec = data.get("filings", {}).get("recent", {})
+    return tuple((f, rec["accessionNumber"][i].replace("-", ""),
+                  rec["primaryDocument"][i], rec["filingDate"][i])
+                 for i, f in enumerate(rec.get("form", [])))
+
+
+def _recent_metas(cik, forms, n: int) -> list[dict]:
+    """Up to n most-recent filings among `forms`, newest first (the submissions
+    recent list is reverse-chronological), each {accession, doc, date, form,
+    cik} — a fresh dict per call. One index fetch per CIK per _INDEX_TTL_S."""
+    out: list[dict] = []
+    for form, acc, doc, dt in _recent_filings_cached(
+            str(int(cik)).zfill(10), _index_bucket(), _get):
+        if form in forms:
+            out.append({"accession": acc, "doc": doc, "date": dt, "form": form,
+                        "cik": int(cik)})
+            if len(out) >= n:
+                break
+    return out
+
+
 def latest_filing(cik, forms=("10-K",)) -> dict | None:
     """Most recent filing among `forms`: {accession, doc, date, form} or None."""
-    cik10 = str(int(cik)).zfill(10)
-    data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
-    rec = data.get("filings", {}).get("recent", {})
-    for i, f in enumerate(rec.get("form", [])):
-        if f in forms:
-            return {"accession": rec["accessionNumber"][i].replace("-", ""),
-                    "doc": rec["primaryDocument"][i],
-                    "date": rec["filingDate"][i], "form": f, "cik": int(cik)}
-    return None
+    metas = _recent_metas(cik, forms, 1)
+    return metas[0] if metas else None
 
 
 def filing_url(cik, accession, doc) -> str:
@@ -503,16 +538,29 @@ def instance_facts(meta: dict) -> list[Fact]:
     fetch every instance document and parse them together. Single-document filings
     — the overwhelming majority — never take the fallback and parse exactly as
     before, so capital / fair-value / composition extraction is unchanged for them
-    and simply gains the previously-unparseable large filers."""
-    primary = _get(filing_url(meta["cik"], meta["accession"], meta["doc"]))
+    and simply gains the previously-unparseable large filers.
+
+    Memoised per process (8 filings, LRU): one render walks the SAME accession
+    through ~8 extractors (fair value, securities, credit quality, performance,
+    highlights, segments, rate risk, FYE month), each behind its own cache key,
+    so a cold walk downloaded + parsed the ~7 MB filing once per extractor
+    (measured 2026-09-24). The list is shared, not copied — no caller mutates
+    it. A fetch/parse exception is not memoised (a transient 429 must never pin
+    an empty result), and the fetch seam is part of the key (see _recent_metas)."""
+    return _instance_facts_cached(int(meta["cik"]), meta["accession"], meta["doc"], _get)
+
+
+@functools.lru_cache(maxsize=8)
+def _instance_facts_cached(cik: int, accession: str, doc: str, fetcher) -> list[Fact]:
+    primary = fetcher(filing_url(cik, accession, doc))
     facts = parse_inline_xbrl(primary)
     if len(facts) >= _MULTIDOC_FACT_THRESHOLD:
         return facts
-    base = _filing_base(meta["cik"], meta["accession"])
+    base = _filing_base(cik, accession)
     docs = _instance_documents(base)
     if len(docs) <= 1:
         return facts                       # genuinely single-document; nothing more
-    blobs = [primary if d == meta["doc"] else _get(base + d) for d in docs]
+    blobs = [primary if d == doc else fetcher(base + d) for d in docs]
     return parse_inline_xbrl_documentset(blobs)
 
 
@@ -540,7 +588,7 @@ def _fye_month_for(meta: dict) -> str | None:
     None (→ caller falls back to December) when it cannot be derived."""
     from data import cache
     ckey = f"fyemonth:v1:{meta['accession']}"
-    mon = cache.get(ckey)
+    mon = cache.get(ckey, max_age_s=None)
     if mon is None:
         try:
             mon = _fye_month_from_facts(instance_facts(meta)) or ""
@@ -594,7 +642,7 @@ def _holdco_capital_extract_cached(meta: dict, anchor: float | None) -> dict:
     are abandoned so the freshly-extracted capital is always served, never stale."""
     from data import cache
     ckey = f"holdco_cap:v3:{meta['accession']}"
-    cap = cache.get(ckey)
+    cap = cache.get(ckey, max_age_s=None)
     if cap is None:
         try:
             cap = extract_holdco_capital(instance_facts(meta), anchor_cet1=anchor)
@@ -874,7 +922,7 @@ def fair_value_for(cik) -> dict | None:
         # is NEVER cached, or one SEC hiccup would pin the company to an older
         # filing (10-Q→10-K fallback) until the cache version bumps.
         ckey = f"fair_value:v2:{meta['accession']}"
-        fv = cache.get(ckey)
+        fv = cache.get(ckey, max_age_s=None)
         if fv is None:
             try:
                 fv = extract_fair_value(instance_facts(meta))
@@ -895,7 +943,7 @@ def _fair_value_extract_cached(meta: dict) -> dict:
     fair_value_for). {} on failure (never cache a transient None)."""
     from data import cache
     ckey = f"fair_value:v2:{meta['accession']}"
-    fv = cache.get(ckey)
+    fv = cache.get(ckey, max_age_s=None)
     if fv is None:
         try:
             fv = extract_fair_value(instance_facts(meta))
@@ -1109,7 +1157,7 @@ def securities_for(cik) -> dict | None:
         if not meta:
             continue
         ckey = f"securities:v1:{meta['accession']}"
-        sec = cache.get(ckey)
+        sec = cache.get(ckey, max_age_s=None)
         if sec is None:
             try:
                 sec = extract_securities(instance_facts(meta))
@@ -1130,7 +1178,7 @@ def _securities_extract_cached(meta: dict) -> dict:
     securities_for). {} on failure (never cache a transient None)."""
     from data import cache
     ckey = f"securities:v1:{meta['accession']}"
-    sec = cache.get(ckey)
+    sec = cache.get(ckey, max_age_s=None)
     if sec is None:
         try:
             sec = extract_securities(instance_facts(meta))
@@ -1448,7 +1496,7 @@ def credit_quality_for(cik) -> dict | None:
         if not meta:
             continue
         ckey = f"credit_quality:v2:{meta['accession']}"
-        cq = cache.get(ckey)
+        cq = cache.get(ckey, max_age_s=None)
         if cq is None:
             try:
                 facts = instance_facts(meta)
@@ -1916,18 +1964,7 @@ def extract_nim_by_year(html_bytes: bytes) -> dict:
 def _list_10k_filings(cik, limit: int) -> list[dict]:
     """Up to `limit` most-recent 10-K filing metas (newest first), each shaped like
     latest_filing()'s return so instance_facts()/filing_url() consume them as-is."""
-    cik10 = str(int(cik)).zfill(10)
-    data = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
-    rec = data.get("filings", {}).get("recent", {})
-    out: list[dict] = []
-    for i, f in enumerate(rec.get("form", [])):
-        if f == "10-K":
-            out.append({"accession": rec["accessionNumber"][i].replace("-", ""),
-                        "doc": rec["primaryDocument"][i],
-                        "date": rec["filingDate"][i], "form": f, "cik": int(cik)})
-            if len(out) >= limit:
-                break
-    return out
+    return _recent_metas(cik, ("10-K",), limit)
 
 
 # How many recent 10-Ks to merge. Many filers (ABCB) tag only the current + ONE
@@ -2014,7 +2051,7 @@ def company_asset_quality_nim(cik) -> dict | None:
     # document part for the MD&A average-balance table (WFC's lives outside
     # the primary doc; v4 read only the primary).
     ckey = f"asset_quality_nim:v7:{latest['accession']}:{_HISTORY_FILINGS}"
-    by_year = cache.get(ckey)
+    by_year = cache.get(ckey, max_age_s=None)
     if by_year is None:
         bundle: list[tuple] = []
         for meta in filings:
@@ -2185,7 +2222,7 @@ def performance_for(cik) -> dict | None:
     if not meta:
         return None
     ckey = f"performance:v1:{meta['accession']}"
-    perf = cache.get(ckey)
+    perf = cache.get(ckey, max_age_s=None)
     if perf is None:
         try:
             perf = extract_performance(instance_facts(meta))
@@ -2254,7 +2291,7 @@ def financial_highlights_for(cik, anchor_cet1=None) -> dict | None:
     if not meta:
         return None
     ckey = f"highlights:v1:{meta['accession']}:{anchor_cet1}"
-    hi = cache.get(ckey)
+    hi = cache.get(ckey, max_age_s=None)
     if hi is None:
         try:
             hi = extract_financial_highlights(instance_facts(meta), anchor_cet1=anchor_cet1)
@@ -2463,7 +2500,7 @@ def _segments_extract_cached(meta: dict) -> dict:
     segments_for). {} on failure (never cache a transient None)."""
     from data import cache
     ckey = f"segments:v1:{meta['accession']}"
-    seg = cache.get(ckey)
+    seg = cache.get(ckey, max_age_s=None)
     if seg is None:
         try:
             seg = extract_segments(instance_facts(meta))
@@ -2590,7 +2627,7 @@ def rate_risk_for(cik, anchor_cet1=None) -> dict | None:
         if not meta:
             continue
         ckey = f"rate_risk:v1:{meta['accession']}:{anchor_cet1}"
-        rr = cache.get(ckey)
+        rr = cache.get(ckey, max_age_s=None)
         if rr is None:
             try:
                 rr = extract_rate_risk(instance_facts(meta), anchor_cet1=anchor_cet1)
