@@ -77,6 +77,13 @@ _BASE_FINANCIALS_FIELDS = {
     "SCODOT", "SCFORD", "SCPLEDGE", "SCHA",
     "EQCS", "EQSUR", "FREPP", "TRADEL",
     "EQCDIV", "EQCDIVC", "EQCDIVP", "EQCSTKRX",
+    # Numerators/denominators of FDIC-reported ratios, per the risview
+    # dictionary, so data/cert_group can rebuild a multi-charter group's
+    # ratio as Σnum/Σden instead of summing the charters' ratios
+    # (cert_group._EXACT_QUOTIENTS; verified live 2026-09-25).
+    "EQ", "DEPDOM", "AVASSETJ", "LNLSGRJ", "NPERF", "LNATRESJ",
+    "NCCI", "NCCON", "NCRE", "LNREJ", "NCRECONS", "NCRELOC", "NCREMULT",
+    "NCRENRES", "NCRERES", "ELNLOS", "NTTOT", "CHFLA", "NTLNLSA",
 }
 
 

@@ -35,11 +35,20 @@ assets. Ratios do not, and this module refuses to fake them:
                   left every multi-charter bank's CET1 blank on Capital
                   Adequacy and in the screens; verified live on JPM/MS/BNY/
                   WTFC/QCRH charters that RBCT1C/RWAJ reproduces IDT1CER)
+    plus every other ratio in _EXACT_QUOTIENTS (2026-09-25). Before that,
+    every FDIC ratio NOT listed anywhere here fell through to the summing
+    loop and rendered as the SUM of the charters' ratios (WFC loans/deposits
+    233.3%). Each quotient there is the FDIC risview dictionary's own
+    numerator/denominator, verified live to reproduce the reported ratio on
+    23 banks x 2 quarters (6/30/2026, 3/31/2026) before it went in. A
+    quotient is n/a unless EVERY charter reported both components — a sum
+    over some charters is a partial numerator, not a group figure.
   * n/a — FDIC computes these against AVERAGE balances over the period, which
     period-end levels cannot reconstruct. Carrying the lead charter's figure
     would be a plausible-wrong number on a consolidated label, so they are
     dropped and flagged instead:
-        ROA ROE NIMY RBCT1JR and their single-quarter *Q variants
+        ROA ROE NIMY NTLNLSR NOIJY ELNATRY NTRER NTCOMRER IDNTCIR ... and
+        the single-quarter *Q variants (full list: AVERAGE_BASED_RATIOS)
 
 A future pass can restore the averaged ratios by aggregating each charter's
 HISTORY and forming 2-point averages, the way ui/financials_statements already
@@ -54,11 +63,58 @@ from __future__ import annotations
 
 # Fields FDIC computes against AVERAGE balances — unreconstructable from
 # period-end levels, so they are dropped for a group rather than guessed.
+# RBCT1JR NCLNLSR LNATRESR NPERFV were listed here until 2026-09-25, but the
+# dictionary defines each as a quotient of period-end levels — they moved to
+# _EXACT_QUOTIENTS. NOIJY ELNATRY NTRER NTCOMRER IDNTCIR (annualized flow ÷
+# 5-point average balance) were being SUMMED; they belong here.
 AVERAGE_BASED_RATIOS = frozenset({
-    "ROA", "ROE", "NIMY", "RBCT1JR", "INTEXPY", "INTINCY",
-    "NONIIAY", "NONIXAY", "ROAPTX", "NCLNLSR", "NTLNLSR", "LNATRESR",
-    "NPERFV", "ROAQ", "ROEQ", "NIMYQ", "EEFFQR", "NTLNLSQR",
+    "ROA", "ROE", "NIMY", "INTEXPY", "INTINCY",
+    "NONIIAY", "NONIXAY", "ROAPTX", "NTLNLSR",
+    "ROAQ", "ROEQ", "NIMYQ", "EEFFQR", "NTLNLSQR",
+    "NOIJY", "ELNATRY", "NTRER", "NTCOMRER", "IDNTCIR",
 })
+
+# Ratios that ARE a quotient of summable components, so a group's ratio is
+# exactly Σnumerator / Σdenominator × scale: {ratio: (num, den, scale)}.
+# Formulas are the FDIC risview dictionary's (x-source-mapping), each
+# verified live 2026-09-25 to reproduce the reported ratio (to its 2-dp
+# rounding or exactly) on 23 banks x 2 quarters — JPM WFC BAC USB PNC TFC
+# FITB KEY HBAN RF MTB CFG ZION OZK WAL FHN BOKF CFR EWBC CBSH TCBK BANR WTFC
+# lead charters (the three RWA ratios: 12 of them, plus 17 charters on
+# 2026-09-22). Then end-to-end: fetch_group_history for WFC (3 charters),
+# BAC (2), BK (4) equals Σnum/Σden of the raw per-charter records to 1e-9 on
+# every ratio. Components are period-end levels, except ELNANTR (YTD
+# flows) and IDERNCVR (annualized YTD flows) — flow ÷ flow over the same
+# period, so the sum-of-charters quotient is exact with no averaging.
+_EXACT_QUOTIENTS = {
+    "RBCRWAJ": ("RBC", "RWAJ", 100),        # total RBC ratio
+    "RBC1RWAJ": ("RBCT1J", "RWAJ", 100),    # tier 1 RBC ratio
+    "IDT1CER": ("RBCT1C", "RWAJ", 100),     # CET1 ratio (2026-09-22)
+    "RBCT1JR": ("RBCT1J", "ASSET", 100),    # platform leverage ratio
+    "RBC1AAJ": ("RBCT1", "AVASSETJ", 100),  # PCA leverage (quarter-avg assets
+                                            # as REPORTED — a summable level)
+    "LNLSDEPR": ("LNLSNET", "DEP", 100),
+    "LNLSNTV": ("LNLSNET", "ASSET", 100),
+    "IDLNCORR": ("LNLSNET", "COREDEP", 100),
+    "DEPDASTR": ("DEPDOM", "ASSET", 100),   # DEP/ASSET misses by up to 14pp
+    "ERNASTR": ("ERNAST", "ASSET", 100),
+    "EQV": ("EQ", "ASSET", 100),            # EQ, not EQTOT (minority int.)
+    "ASTEMPM": ("ASSET", "NUMEMP", 0.001),  # $K → $M per employee
+    "NPERFV": ("NPERF", "ASSET", 100),
+    "NCLNLSR": ("NCLNLS", "LNLSGRJ", 100),
+    "LNATRESR": ("LNATRES", "LNLSGR", 100),
+    "LNRESNCR": ("LNATRESJ", "NCLNLS", 100),  # reserve ÷ noncurrent loans
+    "IDNCCIR": ("NCCI", "LNCI", 100),
+    "IDNCCONR": ("NCCON", "LNCON", 100),
+    "NCRER": ("NCRE", "LNREJ", 100),
+    "NCRECONR": ("NCRECONS", "LNRECONS", 100),
+    "NCRELOCR": ("NCRELOC", "LNRELOC", 100),
+    "NCREMULR": ("NCREMULT", "LNREMULT", 100),
+    "NCRENRER": ("NCRENRES", "LNRENRES", 100),
+    "NCRERESR": ("NCRERES", "LNRERES", 100),
+    "ELNANTR": ("ELNLOS", "NTTOT", 100),    # provision ÷ net charge-offs
+    "IDERNCVR": ("CHFLA", "NTLNLSA", 1),    # earnings coverage of NCO (x)
+}
 
 # Identity/metadata — carried from the LEAD (largest) charter, never summed.
 _IDENTITY = frozenset({"CERT", "REPNM", "REPDTE", "NAME", "STALP", "CITY",
@@ -219,7 +275,7 @@ def aggregate_records(records: list[dict]) -> dict:
     """Consolidate one FDIC financials record per charter into one record.
 
     Levels are summed; average-based ratios are dropped (see module docstring);
-    the four exactly-recomputable ratios are rebuilt from the sums. Identity
+    the exactly-recomputable ratios are rebuilt from the sums. Identity
     fields come from the LEAD charter — records must be largest-first.
 
     A single record passes through unchanged, so single-charter banks are
@@ -260,7 +316,12 @@ def aggregate_records(records: list[dict]) -> dict:
         if k in keys:
             out[k] = None
 
-    _recompute_exact_ratios(out)
+    # A charter that did not report a component (a cache/deep-store row
+    # written before the field was fetched) leaves a PARTIAL sum above, and a
+    # partial numerator over a full denominator is a plausible-wrong ratio.
+    incomplete = {k for k in keys
+                  if any(_num(r.get(k)) is None for r in records)}
+    _recompute_exact_ratios(out, incomplete)
     out["_charter_count"] = len(records)
     out["_aggregated"] = True
     return out
@@ -323,19 +384,27 @@ def fetch_group_history(ticker: str, limit: int = 20,
     return out[:limit]
 
 
-def _recompute_exact_ratios(out: dict) -> None:
-    """Rebuild the ratios that ARE a pure quotient of summed levels."""
+def _num(v) -> float | None:
+    """float(v), or None for absent / NaN / non-numeric."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if f != f else f
+
+
+def _recompute_exact_ratios(out: dict, incomplete: frozenset | set = frozenset()) -> None:
+    """Rebuild the ratios that ARE a pure quotient of summed components.
+    `incomplete` names components some charter did not report."""
     def _n(k):
-        v = out.get(k)
-        try:
-            return float(v) if v is not None else None
-        except (TypeError, ValueError):
-            return None
+        return None if k in incomplete else _num(out.get(k))
 
     # Every branch assigns: the summing loop in aggregate_records has already
     # ADDED the charters' reported ratios into these keys (a ratio is not in
     # AVERAGE_BASED_RATIOS), so leaving one untouched would ship a sum of
-    # percentages as the group's ratio. n/a when a component is absent.
+    # percentages as the group's ratio. n/a when a component is absent, and
+    # when the denominator is not positive (FDIC's own quotient would be
+    # meaningless or undefined there, e.g. net recoveries under ELNANTR).
     intinc, eintexp = _n("INTINC"), _n("EINTEXP")
     nonii, nonix = _n("NONII"), _n("NONIX")
     out["EEFFR"] = None
@@ -343,11 +412,7 @@ def _recompute_exact_ratios(out: dict) -> None:
         revenue = (intinc - eintexp) + nonii
         out["EEFFR"] = (nonix / revenue * 100) if revenue > 0 else None
 
-    rwaj = _n("RWAJ")
-    rbc, t1, cet1 = _n("RBC"), _n("RBCT1J"), _n("RBCT1C")
-    ok = rwaj is not None and rwaj > 0
-    out["RBCRWAJ"] = (rbc / rwaj * 100) if (ok and rbc is not None) else None
-    out["RBC1RWAJ"] = (t1 / rwaj * 100) if (ok and t1 is not None) else None
-    # n/a (not the lead charter's ratio) until every charter's RBCT1C is in
-    # the cache — the field was added to the fetch on 2026-09-22.
-    out["IDT1CER"] = (cet1 / rwaj * 100) if (ok and cet1 is not None) else None
+    for ratio, (num_k, den_k, scale) in _EXACT_QUOTIENTS.items():
+        num, den = _n(num_k), _n(den_k)
+        out[ratio] = (num / den * scale) if (
+            num is not None and den is not None and den > 0) else None
