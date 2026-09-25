@@ -690,7 +690,9 @@ def _load_all_data_cached(tickers: tuple) -> list[dict]:
     fdic, hist = load_fdic_data(tickers)
     sec = load_sec_data(tickers)
     prices = load_prices(list(tickers))
-    return build_all_bank_metrics(list(tickers), fdic, sec, prices, hist)
+    from data.fred_client import bill_6m_series
+    return build_all_bank_metrics(list(tickers), fdic, sec, prices, hist,
+                                  bill_6m=bill_6m_series())
 
 
 def load_all_data(tickers: list[str]) -> list[dict]:
@@ -710,7 +712,9 @@ def load_single_bank_metrics_cached(ticker: str) -> dict:
     fdic, hist = load_fdic_data((ticker,))
     sec = load_sec_data((ticker,))
     prices = load_prices([ticker])
-    metrics = build_all_bank_metrics([ticker], fdic, sec, prices, hist)
+    from data.fred_client import bill_6m_series
+    metrics = build_all_bank_metrics([ticker], fdic, sec, prices, hist,
+                                     bill_6m=bill_6m_series())
     return metrics[0] if metrics else {"ticker": ticker}
 
 

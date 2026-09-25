@@ -84,6 +84,16 @@ _BASE_FINANCIALS_FIELDS = {
     "EQ", "DEPDOM", "AVASSETJ", "LNLSGRJ", "NPERF", "LNATRESJ",
     "NCCI", "NCCON", "NCRE", "LNREJ", "NCRECONS", "NCRELOC", "NCREMULT",
     "NCRENRES", "NCRERES", "ELNLOS", "NTTOT", "CHFLA", "NTLNLSA",
+    # Rate & Funding Risk (owner 2026-09-25; definitions from the FDIC
+    # risview dictionary, value-verified on 12 banks at 6/30/2026): HTM fair
+    # value (SCHF) + AFS amortized cost (SCAA) for the securities marks,
+    # domestic deposits (DEPDOM), CDs by remaining maturity or repricing —
+    # >$250K (CD3LES ≤3m, CD3T12 3-12m) and ≤$250K (CD3LESS, CD3T12S) — and
+    # single-QUARTER interest on those CDs (ECD100Q >$250K, EOTHTIMQ ≤$250K).
+    # NOT EQCCOMPI for AOCI: despite the title it is YEAR-TO-DATE OCI (JPM
+    # 2025: 3.1 → 5.2 → 7.0 → 8.5B, then −3.1B in Q1 2026), not the balance.
+    "SCHF", "SCAA",  # DEPDOM is fetched above
+    "CD3LES", "CD3T12", "CD3LESS", "CD3T12S", "ECD100Q", "EOTHTIMQ",
 }
 
 

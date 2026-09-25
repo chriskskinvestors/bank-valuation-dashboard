@@ -141,6 +141,20 @@ def fetch_series(series_id: str, years: int = 5) -> pd.DataFrame:
     return df[df["date"] >= cutoff].reset_index(drop=True)
 
 
+def bill_6m_series():
+    """FRED DGS6MO (6-month Treasury, %) as a date-indexed Series for the
+    screener's CD-rate-vs-bill spread, or None if FRED is unavailable (the
+    spread then renders n/a — never a stale or guessed yield)."""
+    try:
+        df = fetch_series("DGS6MO", years=6)
+    except Exception as e:
+        print(f"[FRED] DGS6MO unavailable: {type(e).__name__}")
+        return None
+    if df is None or df.empty:
+        return None
+    return df.set_index("date")["value"].sort_index()
+
+
 def latest_value(series_id: str) -> float | None:
     """Return the most recent non-null value for a series."""
     df = fetch_series(series_id, years=1)

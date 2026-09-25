@@ -19,21 +19,46 @@ FDIC_YTD_INCOME_FIELDS = {
 }
 
 
+def bill_yield_on(bill_6m, repdte, max_gap_days: int = 7) -> float | None:
+    """The 6-month Treasury yield (%) on ``repdte``: the last observation on or
+    before it, at most ``max_gap_days`` earlier (weekends/holidays). None when
+    the series is absent or has no observation in that window."""
+    import pandas as pd
+    if bill_6m is None or len(bill_6m) == 0 or repdte is None:
+        return None
+    try:
+        day = pd.Timestamp(repdte).normalize()
+    except (TypeError, ValueError):
+        return None
+    s = bill_6m.dropna()
+    s = s[(s.index <= day) & (s.index >= day - pd.Timedelta(days=max_gap_days))]
+    return float(s.iloc[-1]) if len(s) else None
+
+
 def build_bank_metrics(
     ticker: str,
     fdic_data: dict,
     sec_data: dict,
     price_data: dict,
     fdic_hist: list[dict] | None = None,
+    bill_6m=None,
 ) -> dict:
     """
     Build the full set of metrics for a single bank.
 
     Returns {metric_key: value} for every metric in the registry.
+
+    ``bill_6m``: the FRED DGS6MO series (date-indexed, %) for the CD-rate-vs-
+    bill spread; None leaves that one column n/a (tests, as-of mode).
     """
     # Compute derived valuations first (pass ticker so SEC-sourced capital
     # return metrics can look up CIK)
     computed = compute_all_valuations(price_data, sec_data, fdic_data, fdic_hist, ticker=ticker)
+    # CD book rate less the 6M bill on the SAME quarter-end (percentage points).
+    bill = bill_yield_on(bill_6m, fdic_data.get("REPDTE"))
+    cd_rate = computed.get("cd_book_rate")
+    computed["cd_rate_vs_6m_bill"] = (cd_rate - bill) if (
+        cd_rate is not None and bill is not None) else None
 
     result = {"ticker": ticker}
 
@@ -111,6 +136,7 @@ def build_all_bank_metrics(
     sec_all: dict[str, dict],
     prices_all: dict[str, dict],
     fdic_hist_all: dict[str, list[dict]] | None = None,
+    bill_6m=None,
 ) -> list[dict]:
     """
     Build metrics for all banks in the watchlist.
@@ -134,7 +160,7 @@ def build_all_bank_metrics(
         price = prices_all.get(ticker, {})
         fdic_hist = fdic_hist_all.get(ticker, [])
         _t0 = _t.time()
-        row = build_bank_metrics(ticker, fdic, sec, price, fdic_hist)
+        row = build_bank_metrics(ticker, fdic, sec, price, fdic_hist, bill_6m)
         per_bank.append((_t.time() - _t0, ticker))
         rows.append(row)
 

@@ -805,15 +805,56 @@ METRICS = [
         "category": "Securities",
     },
     {
-        "key": "sec_unreal_gl", "label": "Unreal G/L ($M)", "source": "fdic", "fdic_field": "IGLSEC",
+        # AFS fair value − amortized cost (SCAF − SCAA), pre-tax. Until
+        # 2026-09-25 this read IGLSEC — REALIZED securities gains — under an
+        # "unrealized" label. Key kept so saved screens keep resolving.
+        "key": "sec_unreal_gl", "label": "AFS Mark ($M, pre-tax)", "source": "computed",
         "format": "millions", "decimals": 1,
         "color_rule": "higher_better", "thresholds": {"good": 0, "warn": -50},
         "category": "Securities",
     },
     {
-        "key": "sec_htm_unreal", "label": "HTM Unreal ($M)", "source": "fdic", "fdic_field": "SCSNHAA",
+        # HTM fair value − amortized cost (SCHF − SCHA), pre-tax. Until
+        # 2026-09-25 this read SCSNHAA (structured-notes amortized cost):
+        # JPM showed $0 against a −$18.2B HTM mark. Key kept (saved screens).
+        "key": "sec_htm_unreal", "label": "HTM Mark ($M, pre-tax)", "source": "computed",
         "format": "millions", "decimals": 1,
+        "color_rule": "higher_better",
         "category": "Securities",
+    },
+    # ── Rate & Funding Risk (owner 2026-09-25) — bank-sub FDIC basis; see
+    # analysis/valuation.compute_rate_funding_risk for formulas + verification.
+    {
+        "key": "noncore_funding_pct", "label": "Non-Core Funding %", "source": "computed",
+        "format": "pct", "decimals": 1, "color_rule": "lower_better",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        "key": "time_dep_pct", "label": "Time Dep % Dom Dep", "source": "computed",
+        "format": "pct", "decimals": 1, "color_rule": "lower_better",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        "key": "cd_reprice_3m_pct", "label": "CDs Mature/Reprice ≤3M % Dom Dep",
+        "source": "computed",
+        "format": "pct", "decimals": 1, "color_rule": "lower_better",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        "key": "cd_reprice_12m_pct", "label": "CDs Mature/Reprice ≤12M % Dom Dep",
+        "source": "computed",
+        "format": "pct", "decimals": 1, "color_rule": "lower_better",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        "key": "cd_book_rate", "label": "CD Book Rate", "source": "computed",
+        "format": "pct", "decimals": 2, "color_rule": "lower_better",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        "key": "cd_rate_vs_6m_bill", "label": "CD Rate − 6M Bill (pp)", "source": "computed",
+        "format": "number", "decimals": 2,
+        "category": "Rate & Funding Risk",
     },
     {
         "key": "sec_to_assets_pct", "label": "Sec/Assets %", "source": "computed",
@@ -1236,6 +1277,22 @@ TABS = [
         ],
     },
     {
+        # Owner 2026-09-25 (the "Higher Rate Bank Screen" layout, no scoring):
+        # valuation context, securities marks, funding mix, CD repricing and
+        # CD pricing. Bank-sub FDIC basis throughout. The AOCI % TCE columns
+        # (bank sub via FFIEC RC-R B530, holdco via SEC) land next increment.
+        "key": "rate_funding_risk",
+        "label": "Rate & Funding Risk",
+        "title": "Rate & Funding Risk — AOCI, Funding Mix, CD Repricing",
+        "columns": [
+            "market_cap", "total_assets", "ptbv_ratio", "pe_ratio",
+            "sec_htm_unreal", "sec_unreal_gl",
+            "noncore_funding_pct", "uninsured_pct", "brokered_pct", "time_dep_pct",
+            "cd_reprice_3m_pct", "cd_reprice_12m_pct", "loans_to_deposits",
+            "cd_book_rate", "cd_rate_vs_6m_bill", "nim",
+        ],
+    },
+    {
         "key": "capital_return",
         "label": "Capital Return",
         "title": "Capital Return Attribution — Dividends, Buybacks, Shareholder Yield",
@@ -1283,6 +1340,7 @@ THEME_ORDER = ["Overview", "Financials"]
 TAB_META = {
     "valuation":          ("Overview", "Price, multiples, fair-value P/TBV and headline returns in one view."),
     "capital_return":     ("Overview", "Dividends, buybacks and total shareholder yield (TTM)."),
+    "rate_funding_risk":  ("Overview", "Higher-rate exposure: securities marks, funding mix, CD repricing and CD cost vs the 6M bill."),
     "balance_sheet":      ("Financials", "Assets, funding, equity and the key balance-sheet ratios."),
     "securities":         ("Financials", "AFS/HTM portfolio, sector mix and unrealized gains/losses."),
     "loan_mix":           ("Financials", "Loan book broken out by category, in dollars."),

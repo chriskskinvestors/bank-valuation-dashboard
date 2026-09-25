@@ -253,7 +253,9 @@ def main():
         sec_all = {t: (cache.get_sec(t) or {}) for t in universe}
         hist_all = {t: (cache.get(f"fdic_hist:{t}") or []) for t in universe}
         prices_all = get_prices(universe)
-        agg = build_all_bank_metrics(universe, fdic_all, sec_all, prices_all, hist_all)
+        from data.fred_client import bill_6m_series
+        agg = build_all_bank_metrics(universe, fdic_all, sec_all, prices_all, hist_all,
+                                     bill_6m=bill_6m_series())
         wrote = cache.put_snapshot_if_fresher("watchlist_metrics_snap", {
             "cached_at": datetime.now().isoformat(),
             "n_tickers": len(universe),
