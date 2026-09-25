@@ -170,8 +170,11 @@ def main() -> int:
     fdic, hist = _timed("load_fdic", lambda: _load_fdic(tickers))
     sec = _timed("load_sec", lambda: _load_sec(tickers))
     prices = _timed("load_prices", lambda: _load_prices(tickers))
+    from data.fred_client import bill_6m_series
+    bill = bill_6m_series()
     metrics = _timed("build_metrics",
-                     lambda: build_all_bank_metrics(tickers, fdic, sec, prices, hist))
+                     lambda: build_all_bank_metrics(tickers, fdic, sec, prices, hist,
+                                                    bill_6m=bill))
     if not metrics:
         print("[home-snap] build produced no metrics — keeping the last good "
               "snapshot", flush=True)

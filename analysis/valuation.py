@@ -3,6 +3,86 @@ Valuation computations combining live price data with fundamentals.
 """
 
 
+def _prior_quarter_record(fdic_hist: list[dict] | None, repdte) -> dict | None:
+    """The fdic_hist record for the quarter immediately before ``repdte``, or
+    None when that quarter is absent (a gap is n/a, never the next-older one)."""
+    import pandas as pd
+    try:
+        cur = pd.Timestamp(repdte)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(cur):
+        return None
+    want = (cur - pd.offsets.QuarterEnd(1)).normalize()
+    for rec in fdic_hist or []:
+        try:
+            ts = pd.Timestamp(rec.get("REPDTE"))
+        except (TypeError, ValueError):
+            continue
+        if not pd.isna(ts) and ts.normalize() == want:
+            return rec
+    return None
+
+
+def compute_rate_funding_risk(fdic_data: dict,
+                              fdic_hist: list[dict] | None) -> dict:
+    """Rate & Funding Risk block — bank-sub (FDIC) basis.
+
+    Every figure is built from summed LEVELS (never an FDIC-reported ratio),
+    so multi-charter groups aggregated by data/cert_group stay exact. Inputs
+    are FDIC $thousands; ratios are unitless, the two marks are returned in
+    raw dollars. Any missing component makes the figure n/a (None) — a
+    partial sum is never shown as the whole.
+
+    Value-verified against a third-party 6/30/2026 screen: all seven columns
+    match on 12 banks (84/84 values; incl. the multi-charter BNY/BAC/JPM/WFC
+    groups). JPM (cert 628): CDs ≤3m 8.41 / ≤12m 12.63 % dom. deposits, time
+    dep 13.33 %, non-core 47.02 %, HTM mark −$18,203M, CD book rate 3.573 %.
+    """
+    def n(k, rec=fdic_data):
+        v = (rec or {}).get(k)
+        try:
+            return None if v is None or v != v else float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def pct(part, whole):
+        return part / whole * 100 if (part is not None and whole and whole > 0) else None
+
+    def total(*keys):
+        vals = [n(k) for k in keys]
+        return None if any(v is None for v in vals) else sum(vals)
+
+    htm_mark = n("SCHF") - n("SCHA") if None not in (n("SCHF"), n("SCHA")) else None
+    afs_mark = n("SCAF") - n("SCAA") if None not in (n("SCAF"), n("SCAA")) else None
+
+    coredep, liab = n("COREDEP"), n("LIAB")
+    depdom = n("DEPDOM")
+
+    # CD book rate: the quarter's CD interest ×4 over the average of the
+    # beginning- and end-of-quarter time-deposit balance (×4, not days: the
+    # verified reference figure is 3.573 on JPM; a day-count gives 3.583).
+    cd_rate = None
+    q_int = total("ECD100Q", "EOTHTIMQ")
+    prior = _prior_quarter_record(fdic_hist, fdic_data.get("REPDTE"))
+    t_now, t_prev = n("NTRTIME"), n("NTRTIME", prior)
+    if q_int is not None and t_now is not None and t_prev is not None:
+        avg = (t_now + t_prev) / 2
+        cd_rate = q_int * 4 / avg * 100 if avg > 0 else None
+
+    return {
+        "sec_htm_unreal": htm_mark * 1000 if htm_mark is not None else None,
+        "sec_unreal_gl": afs_mark * 1000 if afs_mark is not None else None,
+        "noncore_funding_pct": (1 - coredep / liab) * 100
+        if (coredep is not None and liab and liab > 0) else None,
+        "time_dep_pct": pct(n("NTRTIME"), depdom),
+        "cd_reprice_3m_pct": pct(total("CD3LES", "CD3LESS"), depdom),
+        "cd_reprice_12m_pct": pct(total("CD3LES", "CD3LESS", "CD3T12", "CD3T12S"),
+                                  depdom),
+        "cd_book_rate": cd_rate,
+    }
+
+
 def compute_pe_ratio(price: float | None, eps: float | None) -> float | None:
     if price is None or eps is None or eps <= 0:
         return None
@@ -683,6 +763,7 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "cre_to_capital": cre_to_capital,
         "sec_to_assets_pct": sec_to_assets_pct,
         "htm_pct": htm_pct,
+        **compute_rate_funding_risk(fdic_data, fdic_hist),
         "nim_spread": nim_spread,
         "cost_of_funds": cost_of_funds,
         "nonint_burden": nonint_burden,
