@@ -244,5 +244,56 @@ class TestCurveScenarioBps(unittest.TestCase):
         self.assertAlmostEqual(r["nim_delta_bps"], -76.0, places=6)
 
 
+class TestRoatceBelowGrowthIsNa(unittest.TestCase):
+    """UX review 2026-09-24 P0-14: BSBK (ROATCE 1.82%, g 2.5%, CoE 10%) showed
+    Warranted P/TBV −0.09×, a warranted price of −$1.00 and a $2.28 DCF "fair
+    value" (terminal payout clamped to 0) on the live Valuation Model."""
+
+    BSBK = dict(
+        base_eps=0.22, eps_growth_rates=[0.05] * 5, payout_ratio=0.30,
+        loan_growth_rates=[0.04] * 5, starting_loans_per_share=50.0,
+        target_cet1_pct=10.0, cost_of_equity_pct=10.0,
+        terminal_growth_pct=2.5, roatce_pct=1.82,
+    )
+
+    def test_warranted_ptbv_na_when_roatce_below_g(self):
+        # Before: (1.82 − 2.5) / (10 − 2.5) = −0.0907 → a negative price.
+        self.assertIsNone(warranted_ptbv(1.82, 10.0, 2.5))
+
+    def test_warranted_ptbv_na_when_roatce_equals_g(self):
+        # (2.5 − 2.5) / 7.5 = 0 → a $0 warranted price is not a valuation.
+        self.assertIsNone(warranted_ptbv(2.5, 10.0, 2.5))
+
+    def test_warranted_ptbv_below_one_still_valid(self):
+        # g < ROATCE < CoE is a real (value-destroying) answer: (5 − 2.5)/7.5.
+        self.assertAlmostEqual(warranted_ptbv(5.0, 10.0, 2.5), 1.0 / 3.0, places=12)
+
+    def test_dcf_na_when_roatce_below_g(self):
+        r = run_fcfe_dcf(**self.BSBK)
+        self.assertIsNone(r["fair_value_per_share"])
+        self.assertIsNone(r["terminal_value"])
+        self.assertIn("ROATCE", r["error"])
+        # The explicit 5-year FCFE is still real and still reported.
+        self.assertEqual(len(r["projected_fcfe"]), 5)
+
+    def test_dcf_na_when_roatce_unknown(self):
+        # Before: an unknown ROATCE silently became a 12% "bank-typical" ROE.
+        r = run_fcfe_dcf(**{**self.BSBK, "roatce_pct": None})
+        self.assertIsNone(r["fair_value_per_share"])
+
+    def test_explicit_terminal_payout_still_bypasses_the_identity(self):
+        r = run_fcfe_dcf(**{**self.BSBK, "terminal_payout_ratio": 0.5})
+        self.assertIsNotNone(r["fair_value_per_share"])
+
+    def test_tornado_empty_without_base_fair_value(self):
+        from analysis.dcf import tornado_sensitivity
+        self.assertEqual(tornado_sensitivity(dict(self.BSBK)), [])
+
+    def test_screen_fair_ptbv_agrees(self):
+        # The Screen's Fair P/TBV already refused w <= 0; the model now agrees.
+        from analysis.valuation import compute_fair_ptbv
+        self.assertIsNone(compute_fair_ptbv(1.82))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

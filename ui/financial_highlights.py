@@ -435,6 +435,10 @@ def render_financial_highlights(ticker: str):
     hist["_y"] = hist["REPDTE"].apply(_year)
     hist["_m"] = hist["REPDTE"].apply(_month)
     hist = hist.sort_values("REPDTE")
+    from ui.states import group_ratio_note
+    _grp = group_ratio_note(ticker, hist.iloc[-1])
+    if _grp:
+        st.caption(_grp)
 
     if period == "Annual":
         ye = hist[hist["_m"] == 12].dropna(subset=["_y"])

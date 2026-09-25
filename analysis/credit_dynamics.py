@@ -10,6 +10,8 @@ Computes:
 """
 
 from __future__ import annotations
+import math
+
 import pandas as pd
 
 
@@ -42,6 +44,19 @@ _CREDIT_FIELDS = {
     "past_due_90": "P9LNLS",
     "total_loans": "LNLSGR",
 }
+
+
+def _num(x) -> float | None:
+    """A present, finite number — or None. The timeline's absent cells are
+    NaN (numeric columns), and NaN passes `is not None`: it must never reach
+    arithmetic, a comparison-driven alert, or an f-string as 'nan%'."""
+    if x is None:
+        return None
+    try:
+        f = float(x)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _reserve_coverage(rec: dict) -> float | None:
@@ -101,6 +116,14 @@ def build_credit_timeline(hist_records: list[dict]) -> pd.DataFrame:
 
     df = pd.DataFrame(rows).dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
 
+    # A field that is None in EVERY record (e.g. NTLNLSR for a multi-charter
+    # group — data/cert_group sets average-based ratios to None) builds an
+    # object column of None, and .diff() raised TypeError (UX-P0-06a).
+    # Coerce every metric column numeric: None stays NaN (absent), never 0.
+    for col in df.columns:
+        if col != "date":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     # QoQ changes for key alerts
     for col in ["nco_ratio", "npl_ratio", "past_due_30_89_pct", "past_due_90_pct", "reserve_coverage"]:
         if col in df.columns:
@@ -120,17 +143,17 @@ def detect_segment_hotspots(timeline_df: pd.DataFrame, threshold_multiplier: flo
         return []
 
     latest = timeline_df.iloc[-1]
-    total_npl = latest.get("npl_ratio")
+    total_npl = _num(latest.get("npl_ratio"))
     if total_npl is None or total_npl <= 0:
         return []
 
     segments = {
-        "All RE": latest.get("npl_cre"),
-        "Residential": latest.get("npl_resi"),
-        "Multifamily": latest.get("npl_multifam"),
-        "Non-Res RE": latest.get("npl_nres_re"),
-        "C&I": latest.get("npl_ci"),
-        "Consumer": latest.get("npl_consumer"),
+        "All RE": _num(latest.get("npl_cre")),
+        "Residential": _num(latest.get("npl_resi")),
+        "Multifamily": _num(latest.get("npl_multifam")),
+        "Non-Res RE": _num(latest.get("npl_nres_re")),
+        "C&I": _num(latest.get("npl_ci")),
+        "Consumer": _num(latest.get("npl_consumer")),
     }
 
     hotspots = []
@@ -182,8 +205,8 @@ def detect_credit_alerts(
 
     # 2. Past due 30-89 migration (rising QoQ meaningfully)
     if "past_due_30_89_pct_qoq" in timeline_df.columns:
-        pd_qoq = latest.get("past_due_30_89_pct_qoq")
-        pd_pct = latest.get("past_due_30_89_pct")
+        pd_qoq = _num(latest.get("past_due_30_89_pct_qoq"))
+        pd_pct = _num(latest.get("past_due_30_89_pct"))
         if pd_qoq is not None and pd_qoq > 0.10 and pd_pct is not None:
             alerts.append({
                 "severity": "medium",
@@ -193,7 +216,7 @@ def detect_credit_alerts(
             })
 
     # 3. Reserve coverage thinning
-    reserve_cov = latest.get("reserve_coverage")
+    reserve_cov = _num(latest.get("reserve_coverage"))
     if reserve_cov is not None:
         if reserve_cov < 100:
             alerts.append({
@@ -262,11 +285,15 @@ def summarize_bank_credit(
             "peer_reserve_median": peer_reserve_median,
         }
 
+    # Absent cells leave the timeline as NaN; the UI's `x is not None` guards
+    # would print them as "nan%" — hand consumers None (absent) instead.
+    latest = {k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+              for k, v in timeline.iloc[-1].to_dict().items()}
     return {
         "timeline": timeline,
         "alerts": detect_credit_alerts(timeline, peer_reserve_median),
         "hotspots": detect_segment_hotspots(timeline),
-        "latest": timeline.iloc[-1].to_dict(),
+        "latest": latest,
         "peer_reserve_median": peer_reserve_median,
     }
 
@@ -300,21 +327,21 @@ def compute_credit_screening_metrics(hist_records: list[dict]) -> dict:
     # 4Q trend in NCO (current vs 4Q ago, in bps)
     nco_trend_bps = None
     if len(timeline) >= 5:
-        nco_now = timeline["nco_ratio"].iloc[-1]
-        nco_4q_ago = timeline["nco_ratio"].iloc[-5]
+        nco_now = _num(timeline["nco_ratio"].iloc[-1])
+        nco_4q_ago = _num(timeline["nco_ratio"].iloc[-5])
         if nco_now is not None and nco_4q_ago is not None:
             nco_trend_bps = (nco_now - nco_4q_ago) * 100
 
     # NPL QoQ change (bps)
     npl_trend_bps = None
     if len(timeline) >= 2:
-        npl_qoq = latest.get("npl_ratio_qoq")
+        npl_qoq = _num(latest.get("npl_ratio_qoq"))
         if npl_qoq is not None:
             npl_trend_bps = npl_qoq * 100
 
     # PD 30-89 QoQ change (bps)
     pd_migration_bps = None
-    pd_qoq = latest.get("past_due_30_89_pct_qoq")
+    pd_qoq = _num(latest.get("past_due_30_89_pct_qoq"))
     if pd_qoq is not None:
         pd_migration_bps = pd_qoq * 100
 
@@ -329,6 +356,6 @@ def compute_credit_screening_metrics(hist_records: list[dict]) -> dict:
         "npl_trend_bps": npl_trend_bps,
         "pd_migration_bps": pd_migration_bps,
         "credit_alerts_count": len(alerts),
-        "reserve_coverage_pct": latest.get("reserve_coverage"),
+        "reserve_coverage_pct": _num(latest.get("reserve_coverage")),
         "worst_segment_npl": worst,
     }

@@ -12,6 +12,16 @@ from utils.formatting import fmt_dollars
 from ui.chrome import table_export, title_bar
 
 
+def sample_coverage_pct(shares_sum, shares_out) -> float | None:
+    """Sampled 13F shares as a % of shares outstanding — how much of the
+    company the holders FOUND actually cover (UX-P0-12: JPM's 26-filer sample
+    read as the whole institutional base). None when shares outstanding is
+    missing or non-positive: n/a, never a guess."""
+    if shares_sum is None or not shares_out or shares_out <= 0:
+        return None
+    return shares_sum / shares_out * 100
+
+
 def render_ownership(ticker: str):
     """Render 13F institutional holdings panel."""
     name = get_name(ticker)
@@ -19,8 +29,9 @@ def render_ownership(ticker: str):
     title_bar(f"{name} ({ticker})", "Institutional (13F)")
     st.subheader("Institutional Ownership (13F)")
     st.caption(
-        "Top institutional holders from most recent 13F-HR filings (last ~90 days). "
-        "Small banks may have limited 13F coverage."
+        "Institutional holders found via SEC EDGAR full-text search of recent "
+        "13F-HR filings (last ~90 days, up to 30 filers) — a sample, not the full "
+        "holder list. Small banks may have limited 13F coverage."
     )
 
     with st.spinner("Fetching 13F filings from SEC EDGAR..."):
@@ -39,7 +50,19 @@ def render_ownership(ticker: str):
     SRC = "SEC 13F-HR filings (EDGAR full-text search)"
     nf = summary["total_filers"]
     tot_val = summary.get("total_value_usd") or 0
-    top5_val = sum(h["value_usd"] for h in holders[:5] if h.get("value_usd"))
+    # Shares outstanding: the same SEC-fundamentals accessor Corporate Profile
+    # uses (1h memo over cached companyfacts — no new fetch path).
+    shares_out = None
+    from data.bank_mapping import get_cik
+    cik = get_cik(ticker)
+    if cik:
+        try:
+            from data import sec_client
+            shares_out = (sec_client.get_latest_fundamentals(cik) or {}).get(
+                "shares_outstanding")
+        except Exception:
+            shares_out = None
+    cov = sample_coverage_pct(summary["total_shares"], shares_out)
 
     def own_card(label, value, definition, terms, op=None):
         return {"label": label, "value": value,
@@ -48,28 +71,31 @@ def render_ownership(ticker: str):
                                   definition=definition, terms=terms, op=op, reported=(op is None))}
 
     cards = [
-        own_card("Institutional Filers", str(nf),
-                 "Number of institutions (>$100M AUM) reporting a position in their latest "
-                 "13F-HR filing over the last ~90 days.",
-                 [{"label": "13F-HR filers", "val": str(nf)}]),
-        own_card("Shares Held (top filers)", f"{summary['total_shares']:,.0f}",
-                 "Shares held across the largest reporting institutions found via "
-                 "EDGAR full-text search — a sample of the biggest filers, not the "
-                 "complete institutional base.",
+        own_card("13F Filers Found", str(nf),
+                 "Number of 13F-HR filers (last ~90 days) found by SEC EDGAR "
+                 "full-text search, capped at 30 — whatever the search returned, "
+                 "NOT the total institutional base and not necessarily the largest "
+                 "holders.",
+                 [{"label": "13F-HR filers found", "val": str(nf)}]),
+        own_card("Shares Held (filers found)", f"{summary['total_shares']:,.0f}",
+                 "Shares held across the 13F filers found via EDGAR full-text "
+                 "search — a sample, not the complete institutional base.",
                  [{"label": "Shares (summed across filers)", "val": f"{summary['total_shares']:,.0f}",
-                   "sub": f"across {nf} 13F-HR filings (largest found)"}]),
-        own_card("Value (top filers)", fmt_dollars(tot_val, 2),
-                 "Reported market value across the largest reporting institutions "
-                 "found via EDGAR full-text search — a sample of the biggest filers, "
-                 "not total institutional ownership.",
+                   "sub": f"across {nf} 13F-HR filings found"}]),
+        own_card("Value (filers found)", fmt_dollars(tot_val, 2),
+                 "Reported market value across the 13F filers found via EDGAR "
+                 "full-text search — a sample, not total institutional ownership.",
                  [{"label": "Value (summed across filers)", "val": fmt_dollars(tot_val, 2),
-                   "sub": f"across {nf} 13F-HR filings (largest found)"}]),
-        own_card("Top 5 Concentration", f"{summary['top_5_concentration']:.0f}%",
-                 "Share of the sampled institutional dollar value held by the five "
-                 "largest holders — a concentration/crowding gauge.",
-                 [{"label": "Top-5 holders' value", "val": fmt_dollars(top5_val, 2)},
-                  {"label": "Sampled institutional value", "val": fmt_dollars(tot_val, 2)}],
-                 op="Top-5 value ÷ sampled institutional value × 100"),
+                   "sub": f"across {nf} 13F-HR filings found"}]),
+        own_card("Sample Coverage", f"{cov:.2f}%" if cov is not None else "n/a",
+                 "Shares held by the sampled 13F filers as a share of shares "
+                 "outstanding — how much of the company this sample covers.",
+                 [{"label": "Sampled 13F shares", "val": f"{summary['total_shares']:,.0f}",
+                   "sub": f"across {nf} 13F-HR filings found"},
+                  {"label": "Shares outstanding",
+                   "val": f"{shares_out:,.0f}" if shares_out else "n/a",
+                   "sub": "latest SEC filing (same figure as Corporate Profile)"}],
+                 op="Sampled 13F shares ÷ shares outstanding × 100"),
     ]
     render_traceable_cards(cards, key=f"ownership_{ticker}", columns=4)
 
@@ -153,9 +179,9 @@ def render_ownership(ticker: str):
                  provenance={"Page": "Company Analysis › Ownership › Institutional (13F)",
                              "Ticker": ticker, "Company": name,
                              "Source": SRC,
-                             "Coverage": f"{nf} largest 13F-HR filers found in the "
-                                         "last ~90 days — a sample, not the full "
-                                         "institutional base",
+                             "Coverage": f"{nf} 13F-HR filers found by EDGAR full-text "
+                                         "search in the last ~90 days (capped at 30) — "
+                                         "a sample, not the full institutional base",
                              "Δ QoQ": "share change vs each filer's prior 13F-HR"},
                  freeze_cols=2)
 

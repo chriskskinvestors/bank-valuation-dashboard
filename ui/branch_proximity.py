@@ -27,6 +27,16 @@ from ui.merger_planning import bank_link
 
 
 _RADII = [1, 3, 5, 10]
+
+# Render caps (UX-P0-06b): JPM at 5 mi — 5,142 subject branches, 40,842
+# in-range competitor branches — built a 53,000 px HTML page that froze the
+# tab. Caps bound what is RENDERED only; the export always carries every
+# pair and the stat pills keep the full counts. Each applied cap is captioned.
+_TABLE_MAX_BRANCHES = 25       # largest subject branches (by subj_deposits)
+_TABLE_MAX_COMPETITORS = 10    # nearest competitors shown per subject branch
+_ROLLUP_MAX_BANKS = 50         # competitor banks, by in-range deposits
+_MAP_MAX_COMP_BRANCHES = 5_000  # above this, map only the top banks' branches
+
 _MAP_COLS = ["bank_name", "branch_name", "city", "state", "deposits",
              "lat", "lng"]
 
@@ -59,20 +69,61 @@ _EXPORT_FORMATS = {
 }
 
 
+def _bank_rollup(uniq_comp: pd.DataFrame) -> pd.DataFrame:
+    """One row per competitor bank — unique in-range branches + their total
+    deposits — largest in-range deposits first (cert breaks ties so a cap
+    cut is deterministic)."""
+    return (uniq_comp.groupby("cert", dropna=False)
+            .agg(ticker=("ticker", "first"), bank_name=("bank_name", "first"),
+                 n_branches=("brnum", "count"), deposits=("deposits", "sum"))
+            .reset_index()
+            .sort_values(["deposits", "cert"], ascending=[False, True]))
+
+
+def _map_competitors(uniq_comp: pd.DataFrame, max_branches: int,
+                     n_banks: int) -> pd.DataFrame:
+    """Competitor branches to plot: all of them up to `max_branches`;
+    beyond that, only the in-range branches of the top `n_banks` competitor
+    banks by in-range deposits."""
+    if len(uniq_comp) <= max_branches:
+        return uniq_comp
+    top = _bank_rollup(uniq_comp).head(n_banks)["cert"]
+    return uniq_comp[uniq_comp["cert"].isin(top)]
+
+
+def _select_branch_rows(pairs: pd.DataFrame, n_branches: int,
+                        n_competitors: int) -> pd.DataFrame:
+    """The rendered slice of `pairs`: the `n_branches` largest subject
+    branches by subj_deposits (absent deposits rank last), each with its
+    `n_competitors` nearest competitors. Returns a new frame — `pairs`
+    (the export input) is never modified."""
+    subj = (pairs.drop_duplicates("subj_brnum")[["subj_brnum", "subj_deposits"]]
+            .assign(_dep=lambda d: pd.to_numeric(d["subj_deposits"],
+                                                 errors="coerce"))
+            .sort_values(["_dep", "subj_brnum"], ascending=[False, True],
+                         na_position="last"))
+    rows = pairs[pairs["subj_brnum"].isin(subj["subj_brnum"].head(n_branches))]
+    return (rows.sort_values(["subj_brnum", "distance_miles"], kind="mergesort")
+            .groupby("subj_brnum", sort=False).head(n_competitors))
+
+
 def _proximity_map(subject_label: str, subj: pd.DataFrame,
                    uniq_comp: pd.DataFrame) -> None:
     """Two-color branch map: subject branches + in-range competitor
     branches, via the shared ui.geo_view map (the codebase's existing
-    color-by-column pattern — no new charting code)."""
+    color-by-column pattern — no new charting code). Subject branches are
+    always all plotted; competitors are capped (_map_competitors)."""
     from ui.geo_view import _render_map
 
     subj_plot = subj[subj["lat"].notna() & subj["lng"].notna()]
+    comp_plot = _map_competitors(uniq_comp, _MAP_MAX_COMP_BRANCHES,
+                                 _ROLLUP_MAX_BANKS)
     frames = []
     if not subj_plot.empty:
         frames.append(subj_plot[_MAP_COLS].assign(
             Role=f"{subject_label} branches"))
-    if not uniq_comp.empty:
-        frames.append(uniq_comp[_MAP_COLS].assign(
+    if not comp_plot.empty:
+        frames.append(comp_plot[_MAP_COLS].assign(
             Role="Competitors in range"))
     if not frames:
         from ui.states import empty_state
@@ -80,6 +131,13 @@ def _proximity_map(subject_label: str, subj: pd.DataFrame,
         return
     _render_map(pd.concat(frames, ignore_index=True),
                 color_col="Role")
+    if len(comp_plot) < len(uniq_comp):
+        st.caption(
+            f"Map shows {len(comp_plot):,} of {len(uniq_comp):,} competitor "
+            f"branches in range — those of the top {_ROLLUP_MAX_BANKS} "
+            "competitor banks by in-range deposits; every "
+            f"{subject_label} branch with coordinates is plotted. The export "
+            "has every in-range pair.")
 
 
 def _nearest_fallback(cert: int, ticker: str, subj: pd.DataFrame,
@@ -133,13 +191,9 @@ def _rollup_table(uniq_comp: pd.DataFrame, radius: float) -> None:
     """Compact 'who competes in range': one row per competitor bank —
     unique in-range branches + their total deposits."""
     st.markdown(f"#### Who competes within {radius:g} miles")
-    ro = (uniq_comp.groupby("cert", dropna=False)
-          .agg(ticker=("ticker", "first"), bank_name=("bank_name", "first"),
-               n_branches=("brnum", "count"), deposits=("deposits", "sum"))
-          .reset_index()
-          .sort_values("deposits", ascending=False))
+    ro = _bank_rollup(uniq_comp)
     body = ""
-    for r in ro.itertuples(index=False):
+    for r in ro.head(_ROLLUP_MAX_BANKS).itertuples(index=False):
         body += ("<tr>"
                  f'<td style="text-align:left;">{bank_link(r.bank_name, r.cert, r.ticker)}</td>'
                  f'<td style="text-align:right;">{int(r.n_branches)}</td>'
@@ -152,23 +206,34 @@ def _rollup_table(uniq_comp: pd.DataFrame, radius: float) -> None:
         '<th style="text-align:right;">In-Range Deposits</th>'
         f"</tr></thead><tbody>{body}</tbody></table></div>",
         unsafe_allow_html=True)
+    if len(ro) > _ROLLUP_MAX_BANKS:
+        st.caption(f"Showing the top {_ROLLUP_MAX_BANKS} of {len(ro):,} "
+                   "competitor banks by in-range deposits — the export has "
+                   "every in-range pair.")
 
 
 def _per_branch_table(pairs: pd.DataFrame) -> None:
     """The per-branch detail: a group-header row per subject branch, then
-    its in-range competitors nearest-first (pairs is already sorted by
-    (subj_brnum, distance))."""
+    its in-range competitors nearest-first — capped to the largest subject
+    branches and their nearest competitors (_select_branch_rows), with the
+    cap captioned."""
     st.markdown("#### Competitors by branch")
+    n_in_range = pairs.groupby("subj_brnum").size()
+    shown = _select_branch_rows(pairs, _TABLE_MAX_BRANCHES,
+                                _TABLE_MAX_COMPETITORS)
     body = ""
-    for _key, g in pairs.groupby("subj_brnum", sort=True):
+    for key, g in shown.groupby("subj_brnum", sort=True):
         s = g.iloc[0]
+        n = int(n_in_range[key])
+        cnt = f"{n:,} in range" + (f", nearest {len(g)} shown"
+                                   if len(g) < n else "")
         hdr = (f'{s["subj_branch_name"]} — {s["subj_address"]}, '
                f'{s["subj_city"]}, {s["subj_state"]}')
         body += (f'<tr><td colspan="4" style="text-align:left;'
                  f'font-weight:600;background:var(--bg-surface);">'
                  f'{_h.escape(hdr)} '
                  f'<span style="color:var(--text-muted);font-weight:500;">'
-                 f'({len(g)} in range)</span></td></tr>')
+                 f'({cnt})</span></td></tr>')
         for r in g.itertuples(index=False):
             body += ("<tr>"
                      f'<td style="text-align:left;">{bank_link(r.bank_name, r.cert, r.ticker)}</td>'
@@ -184,6 +249,18 @@ def _per_branch_table(pairs: pd.DataFrame) -> None:
         '<th style="text-align:right;">Deposits</th>'
         f"</tr></thead><tbody>{body}</tbody></table></div>",
         unsafe_allow_html=True)
+    if len(shown) < len(pairs):
+        n_br = len(n_in_range)
+        shown_keys = shown["subj_brnum"].unique()
+        which = (f"the {_TABLE_MAX_BRANCHES} largest (by branch deposits) of "
+                 f"{n_br:,} branches with competitors in range"
+                 if n_br > _TABLE_MAX_BRANCHES
+                 else f"all {n_br:,} branches with competitors in range")
+        each = (f"up to the {_TABLE_MAX_COMPETITORS} nearest competitors each"
+                if (n_in_range.loc[shown_keys] > _TABLE_MAX_COMPETITORS).any()
+                else "every in-range competitor")
+        st.caption(f"Showing {which}, {each} — the export has all "
+                   f"{len(pairs):,} pairs.")
 
 
 def render_branch_proximity(ticker: str):

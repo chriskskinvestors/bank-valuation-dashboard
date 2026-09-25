@@ -58,6 +58,29 @@ def skeleton(rows: int = 6, cols: int = 4):
             pass
 
 
+def group_ratio_note(ticker: str, rec) -> str | None:
+    """One-line explanation for a multi-charter bank's blank average-based
+    ratios, or None for a single-charter bank.
+
+    data/cert_group consolidates a multi-charter holdco's call reports and
+    deliberately sets FDIC's AVERAGE-balance ratios (ROA, ROE, NIMY, NTLNLSR,
+    yields/costs … AVERAGE_BASED_RATIOS) to None — they cannot be rebuilt
+    from period-end levels. Without this note JPM (two charters) showed five
+    silent dashes on Corporate Profile, Financial Highlights and Performance
+    Analysis (UX review 2026-09-24 P0-05). `rec` is the newest consolidated
+    record (dict or pandas row) carrying `_charter_count`."""
+    try:
+        n = int(rec.get("_charter_count"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if n <= 1:
+        return None
+    return (f"ROAA, ROAE, net interest margin, the net charge-off ratio and "
+            f"other ratios FDIC computes on average balances are n/a for "
+            f"{ticker}: its call-report figures consolidate {n} bank charters, "
+            "and those averages can't be combined across charters.")
+
+
 def empty_state(title: str, hint: str | None = None) -> None:
     """Standard explained-absence block. `title` says WHAT is absent
     ("No insider transactions in the last 90 days"); `hint` optionally says

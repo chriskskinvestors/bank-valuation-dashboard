@@ -1,16 +1,16 @@
 """
 Cloud Run Job: warm the live Treasury-yield snapshot.
 
-The Home Rates pane reads live intraday yields (yfinance CBOE indices +
-the 2Y yield future) from a persisted snapshot — READ-ONLY at render, so
-the page never makes a network call for rates. This job does the single
+The Home Rates pane reads live intraday yields (yfinance CBOE indices,
+data/live_rates.LIVE_YIELD_SYMBOLS) from a persisted snapshot — READ-ONLY
+at render, so the page never makes a network call for rates. This job does the single
 yfinance fetch and persists the snapshot; run it every ~2 min during US
 market hours via Cloud Scheduler. If it stalls, the pane falls back to
 FRED daily (a stale yield is never shown as live).
 
 Exit codes:
-  0  — wrote ≥4 of the 5 tenors
-  1  — partial (pane falls back to FRED for the missing tenors)
+  0  — wrote all tenors, or all but one
+  1  — two or more missing (pane falls back to FRED for the missing tenors)
 """
 from __future__ import annotations
 import sys
@@ -31,7 +31,7 @@ def main() -> int:
     got = sum(1 for v in (data or {}).values() if v and v[0] is not None)
     total = len(live_rates.LIVE_YIELD_SYMBOLS)
     print(f"[{time.strftime('%H:%M:%S')}] wrote {got}/{total} live tenors", flush=True)
-    return 0 if got >= 4 else 1
+    return 0 if got >= total - 1 else 1
 
 
 if __name__ == "__main__":

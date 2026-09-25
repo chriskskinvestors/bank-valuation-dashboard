@@ -106,6 +106,25 @@ def price_chart(df: pd.DataFrame, ticker: str, show_title: bool = True) -> go.Fi
     return fig
 
 
+NOT_REPORTED_TEXT = "Not reported for this bank"
+
+
+def _not_reported_figure(title: str, height: int) -> go.Figure:
+    """The honest empty state for a trend chart with no plottable series: no
+    axes (bare axes read as 'zero'/'loading'), one centered muted message, same
+    height as the normal chart so the grid doesn't jump (UX-P0-08)."""
+    from utils.chart_style import apply_standard_layout, COLOR_NEUTRAL
+    fig = go.Figure()
+    apply_standard_layout(fig, title=title, height=height, show_legend=False)
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+    fig.add_annotation(text=NOT_REPORTED_TEXT, xref="paper", yref="paper",
+                       x=0.5, y=0.5, showarrow=False,
+                       font=dict(color=COLOR_NEUTRAL,
+                                 size=chart_layout()["font"]["size"]))
+    return fig
+
+
 def metrics_trend_chart(
     fdic_df: pd.DataFrame,
     metric_keys: list[str],
@@ -115,9 +134,7 @@ def metrics_trend_chart(
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
                                    CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
     if fdic_df.empty:
-        fig = go.Figure()
-        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT, show_legend=False)
-        return fig
+        return _not_reported_figure(title, CHART_HEIGHT_COMPACT)
 
     fig = go.Figure()
     for i, key in enumerate(metric_keys):
@@ -125,7 +142,9 @@ def metrics_trend_chart(
         if not m:
             continue
         field = m.get("fdic_field")
-        if field and field in fdic_df.columns:
+        # An all-null series (e.g. ROA for a multi-charter group, deliberately
+        # None in data/cert_group.py) is not reported — never a bare axis.
+        if field and field in fdic_df.columns and fdic_df[field].notna().any():
             fig.add_trace(go.Scatter(
                 x=fdic_df["REPDTE"],
                 y=fdic_df[field],
@@ -134,6 +153,8 @@ def metrics_trend_chart(
                 line=dict(color=CATEGORICAL_PALETTE[i % len(CATEGORICAL_PALETTE)], width=2),
                 marker=dict(size=5),
             ))
+    if not fig.data:
+        return _not_reported_figure(title, CHART_HEIGHT_COMPACT)
 
     # Single-metric charts don't need a legend.
     apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
@@ -167,29 +188,28 @@ def grouped_trend_chart(
     Loan/Deposit ratio in %) gets a secondary y-axis on the right, each axis
     labelled with its unit. Dollar fields (FDIC $thousands) are scaled to $B so
     a $16B level and a 1.6% ratio are both legible. Keys with no FDIC field, or
-    fields absent from this bank's history, are silently skipped — a chart that
-    can't source any series renders empty (never fabricated)."""
+    fields absent/all-null in this bank's history, are silently skipped — a chart
+    that can't source any series renders "Not reported for this bank" (never
+    fabricated, never bare axes)."""
     from utils.chart_style import (apply_standard_layout, tighten_yaxis,
                                    CHART_HEIGHT_COMPACT, CATEGORICAL_PALETTE)
     fig = go.Figure()
     if fdic_df is None or fdic_df.empty:
-        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
-                              show_legend=False)
-        return fig
+        return _not_reported_figure(title, CHART_HEIGHT_COMPACT)
 
-    # Resolve the plottable series (key has a field present in this history).
+    # Resolve the plottable series (key has a field present in this history
+    # with at least one reported value — an all-null series is skipped so it
+    # neither draws a legend entry nor claims an axis).
     plot = []
     for key in metric_keys:
         m = METRICS_BY_KEY.get(key)
         if not m:
             continue
         field = m.get("fdic_field")
-        if field and field in fdic_df.columns:
+        if field and field in fdic_df.columns and fdic_df[field].notna().any():
             plot.append((m, field, _axis_family(m.get("format"))))
     if not plot:
-        apply_standard_layout(fig, title=title, height=CHART_HEIGHT_COMPACT,
-                              show_legend=False)
-        return fig
+        return _not_reported_figure(title, CHART_HEIGHT_COMPACT)
 
     # First family seen is primary; the first DIFFERING family is secondary.
     families = []

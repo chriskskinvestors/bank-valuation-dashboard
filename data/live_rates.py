@@ -4,9 +4,14 @@ Live(ish) Treasury yields — the CNBC-style intraday curve.
 FRED's DGS series are daily (≈1 business-day lag); for intraday movement we
 pull the yield-quoted instruments off yfinance:
   • CBOE yield indices  ^IRX (3M) · ^FVX (5Y) · ^TNX (10Y) · ^TYX (30Y)
-  • CME 2-Year *yield* future  2YY=F  (quoted directly in yield — no
-    note-future → yield conversion needed)
 All are already in percent (e.g. ^TNX = 4.447 → 4.447%), so no scaling.
+
+There is deliberately NO live 2Y. The only yield-quoted 2Y on Yahoo is the
+CME 2-Year yield FUTURE (2YY=F), which is not the cash constant-maturity
+yield: on 2026-09-25 it sat a persistent 30–40 bp below FRED DGS2 (4.40–4.47
+vs 4.67–4.85), printing Home's 2Y below the 3Y and 25 bp off the Market &
+Macro board (UX-P0-02). The CBOE indices above track their DGS series within
+~1–3 bp. So 2Y — and the 2Y − 10Y spread, via FRED T10Y2Y — are FRED daily.
 
 This is yfinance "market data" (≈15-min delayed) — labeled as such per the
 provenance rules, distinct from the authoritative daily FRED series used for
@@ -23,7 +28,7 @@ _SNAP_KEY = "home_live_yields_snap"
 
 # tenor → yfinance symbol (all yield-quoted, in percent)
 LIVE_YIELD_SYMBOLS = {
-    "3M": "^IRX", "2Y": "2YY=F", "5Y": "^FVX", "10Y": "^TNX", "30Y": "^TYX",
+    "3M": "^IRX", "5Y": "^FVX", "10Y": "^TNX", "30Y": "^TYX",
 }
 
 

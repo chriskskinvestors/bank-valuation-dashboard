@@ -269,11 +269,9 @@ def render_market_demographics(ticker):
             "Vintage": demo.get("vintage", ""),
         })
     if not rows:
-        st.caption(
-            "Census demographics unavailable — set CENSUS_API_KEY (free signup: "
-            "api.census.gov/data/key_signup.html) in the environment / Secret "
-            "Manager. The bank's footprint counties are ready to join the "
-            "moment the key lands.")
+        # Missing-key / API failures are logged server-side by census_client.
+        st.caption("Market demographics (county population, income and growth "
+                   "from the U.S. Census) are coming soon.")
         return
     st.markdown(f"**Top {len(rows)} footprint counties by deposits** — Census "
                 "ACS 5-year joined on FDIC SOD county FIPS")

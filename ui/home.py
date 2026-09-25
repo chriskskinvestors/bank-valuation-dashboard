@@ -106,7 +106,8 @@ _AF_DEFAULT_OVERLAY = ("SPY", "QQQ", "KRE")
 # Rates · Credit board, sectioned. Each row is (label, kind, a, b):
 #   tenor  — live yfinance level/1D/1W, FRED series `a` for the 1M/YTD/52w anchors
 #   fred   — everything from FRED series `a`
-#   spread — live 10Y−2Y level/1D/1W, FRED series `a` (T10Y2Y) for anchors
+#   spread — live 2Y−10Y level/1D/1W when BOTH legs are live (2Y never is —
+#            see data/live_rates), else all from FRED series `a` (−T10Y2Y)
 #   calc   — FRED series `a` minus `b`, all anchors (no live; 52w range n/a)
 # Live tenors map to their FRED fallback series for the history anchors.
 _LIVE_FRED = {"3M": "DGS3MO", "2Y": "DGS2", "5Y": "DGS5",
@@ -531,8 +532,12 @@ def _af_rates_table() -> str:
     refresh the level/1D/1W; the 1M/YTD/range anchors and everything else are
     daily FRED. Missing inputs render '—', never a guess."""
     try:
-        from data.live_rates import live_yields
-        ly = live_yields() or {}
+        from data.live_rates import LIVE_YIELD_SYMBOLS, live_yields
+        # Only tenors live_rates still publishes: a snapshot written before a
+        # symbol was dropped (e.g. the 2YY=F 2Y future, UX-P0-02) must not
+        # overlay — that tenor, and any spread built on it, stays FRED daily.
+        ly = {k: v for k, v in (live_yields() or {}).items()
+              if k in LIVE_YIELD_SYMBOLS}
     except Exception:
         ly = {}
     bundle = _rates_bundle()

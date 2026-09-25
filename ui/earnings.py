@@ -1060,6 +1060,20 @@ def _heatmap_columns(bank_data: dict) -> tuple[list[str], dict]:
     return col_labels, placed
 
 
+def _surprise_hover(ticker: str, quarter: str, est, actual, surprise) -> str:
+    """Hover text for one heat-map cell. A cell with a surprise % can still
+    lack the consensus (or actual) EPS — each part formats only when present,
+    'n/a' otherwise (formatting None with :.2f raised TypeError, UX-P0-06c)."""
+    if surprise is None:
+        return ""
+    est_s = f"${est:.2f}" if est is not None else "n/a"
+    act_s = f"${actual:.2f}" if actual is not None else "n/a"
+    return (f"{ticker} · {quarter}<br>"
+            f"Consensus: {est_s}<br>"
+            f"Actual: {act_s}<br>"
+            f"Surprise: {surprise:+.1f}%")
+
+
 def _render_surprise_heatmap(watchlist: list[str]):
     """
     Heat-map: rows = banks, columns = last 8 quarters, cells = EPS surprise %.
@@ -1129,13 +1143,8 @@ def _render_surprise_heatmap(watchlist: list[str]):
     ]
     hover_matrix = [
         [
-            (
-                f"{tickers_list[i]} · {col_labels[j]}<br>"
-                f"Consensus: ${est_matrix[i][j]:.2f}<br>"
-                f"Actual: ${actual_matrix[i][j]:.2f}<br>"
-                f"Surprise: {matrix[i][j]:+.1f}%"
-                if matrix[i][j] is not None else ""
-            )
+            _surprise_hover(tickers_list[i], col_labels[j], est_matrix[i][j],
+                            actual_matrix[i][j], matrix[i][j])
             for j in range(n_qtrs)
         ]
         for i in range(n_banks)

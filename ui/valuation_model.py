@@ -652,6 +652,19 @@ def render_valuation_model(ticker: str):
     pv_terminal = dcf.get("pv_terminal")
     blended = ((dcf_fv + w_fair_price) / 2) if (dcf_fv and w_fair_price) else None
 
+    # Model precondition (UX review 2026-09-24 P0-14): both legs assume the
+    # bank earns more than its terminal growth rate. At or below it there is
+    # no warranted multiple and no sustainable terminal payout — say so,
+    # instead of silently dropping the verdict (and never a negative price).
+    if roatce_pct <= terminal_growth:
+        st.warning(
+            f"ROATCE {roatce_pct:.2f}% is at or below the {terminal_growth:.2f}% "
+            "terminal growth rate: the bank does not earn its growth, so the "
+            "model has no warranted P/TBV and no DCF terminal value. Both — and "
+            "the blended fair value and verdict — are n/a. Raise ROATCE under "
+            "**Model inputs** to explore a recovery case."
+        )
+
     # ── Verdict banner (conclusion first) ──────────────────────────────
     try:
         from analysis.dcf import implied_irr
@@ -904,11 +917,16 @@ def render_valuation_model(ticker: str):
         # Bar chart
         import plotly.graph_objects as go
         fig = go.Figure()
-        scen_names = ["Bear", "Base", "Bull"]
-        scen_fvs = [scenarios["bear"].get("fair_value_per_share") or 0,
-                    scenarios["base"].get("fair_value_per_share") or 0,
-                    scenarios["bull"].get("fair_value_per_share") or 0]
-        colors = [COLOR_DANGER, COLOR_PRIMARY, COLOR_SUCCESS]
+        # Only scenarios with a fair value are plotted — an n/a scenario is
+        # absent, never a $0 bar (the old `or 0`).
+        _scen = [(nm, scenarios[k].get("fair_value_per_share"), c)
+                 for nm, k, c in (("Bear", "bear", COLOR_DANGER),
+                                  ("Base", "base", COLOR_PRIMARY),
+                                  ("Bull", "bull", COLOR_SUCCESS))]
+        _scen = [t for t in _scen if t[1] is not None]
+        scen_names = [t[0] for t in _scen]
+        scen_fvs = [t[1] for t in _scen]
+        colors = [t[2] for t in _scen]
         fig.add_trace(go.Bar(
             x=scen_names, y=scen_fvs,
             marker_color=colors,

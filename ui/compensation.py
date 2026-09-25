@@ -5,6 +5,12 @@ from FMP's governance-executive-compensation endpoint (data/fmp_compensation).
 Two views: the latest fiscal year's pay-component breakdown, and a multi-year
 total-compensation trend for the current named-executive group. Honest empty
 state when a bank has no proxy coverage.
+
+FMP's feed is NOT the filing (UX-P0-07: JPM FY2025 CEO total 43.00M in FMP
+vs 40,632,724 in the DEF 14A). A fiscal year's FMP figures are shown only
+when an FMP total for that year is within 1% of a PEO Summary Compensation
+Table total the issuer tagged in its own proxy XBRL (Pay versus Performance,
+data/sec_pvp); otherwise the year renders n/a with the reason.
 """
 from __future__ import annotations
 
@@ -31,16 +37,61 @@ def render_compensation(ticker: str):
     """Overview ▸ Compensation: proxy Summary Compensation Table (FMP) +
     pay-versus-performance (proxy inline XBRL, data/sec_pvp)."""
     title_bar(f"{get_name(ticker) or ticker} ({ticker})", "Compensation")
-    _render_neo_tables(ticker)
-    _render_pay_versus_performance(ticker)
+    from data.bank_mapping import get_cik
+    from data.sec_pvp import get_pay_versus_performance
+
+    cik = get_cik(ticker)
+    pvp = get_pay_versus_performance(cik) if cik else None
+    _render_neo_tables(ticker, pvp)
+    _render_pay_versus_performance(pvp)
 
 
-def _render_neo_tables(ticker: str):
+_VERIFY_TOL = 0.01  # owner rule: FMP total within 1% of the proxy's XBRL PEO total
+
+
+def verified_years(fmp_rows: list[dict], pvp: dict | None) -> dict[int, str]:
+    """{fiscal year: "ok" | "mismatch" | "unverifiable"} for every FMP year.
+
+    "ok" — at least one FMP row that year has a total within 1% (relative to
+    the XBRL value) of a PEO SCT total the issuer tagged for the same fiscal
+    year (pvp["years"][i]["peo_total"] is a list — several PEOs in a
+    transition year). "unverifiable" — no PvP PEO total for that year.
+    PvP years are keyed by the calendar year of the fiscal-year-end date."""
+    peo_by_year: dict[int, list] = {}
+    for r in (pvp or {}).get("years") or []:
+        try:
+            y = int(str(r.get("fy_end"))[:4])
+        except ValueError:
+            continue
+        peo_by_year[y] = [float(v) for v in (r.get("peo_total") or []) if v]
+    out = {}
+    for y in {r["year"] for r in fmp_rows}:
+        peos = peo_by_year.get(y)
+        if not peos:
+            out[y] = "unverifiable"
+            continue
+        totals = [r["total"] for r in fmp_rows
+                  if r["year"] == y and r.get("total") is not None]
+        match = any(abs(t - p) / abs(p) <= _VERIFY_TOL
+                    for t in totals for p in peos)
+        out[y] = "ok" if match else "mismatch"
+    return out
+
+
+def _unverified_note(y: int, status: str) -> str:
+    if status == "mismatch":
+        return (f"The compensation feed (FMP) disagrees with the proxy's own "
+                f"XBRL for FY{y} — not shown.")
+    return f"FY{y} cannot be verified against the proxy's XBRL — not shown."
+
+
+def _render_neo_tables(ticker: str, pvp: dict | None):
     rows = get_executive_compensation(ticker)
     if not rows:
         from ui.states import empty_state
         empty_state('No named-executive compensation is available for this company from the proxy-statement provider (many smaller banks are not covered)')
         return
+    status = verified_years(rows, pvp)
 
     years = sorted({r["year"] for r in rows}, reverse=True)
     latest = years[0]
@@ -50,6 +101,51 @@ def _render_neo_tables(ticker: str):
 
     # ── Latest-year Summary Compensation Table ───────────────────────────
     st.markdown(f"#### Summary Compensation — FY{latest}")
+    if status[latest] != "ok":
+        from ui.states import empty_state
+        empty_state(_unverified_note(latest, status[latest]),
+                    "The CEO's proxy-reported total is in Pay versus "
+                    "Performance below." if status[latest] == "mismatch" else None)
+    else:
+        _render_summary_table(latest, latest_rows, link)
+
+    # ── Multi-year total-comp trend (current NEO group) ──────────────────
+    trend_years = years[:5]
+    if len(trend_years) > 1:
+        st.markdown("#### Total compensation — 5-year trend")
+        by_exec_year = {}
+        for r in rows:
+            by_exec_year[(r["name_position"], r["year"])] = r.get("total")
+        hidden = [y for y in trend_years if status[y] != "ok"]
+        if len(hidden) < len(trend_years):
+            execs = [r["name_position"] for r in latest_rows]  # current NEOs, by FY total desc
+            th = ('<div class="ksk-grid"><table><thead><tr>'
+                  '<th style="text-align:left;">Executive</th>'
+                  + "".join(f'<th style="text-align:right;">FY{y}</th>' for y in trend_years)
+                  + "</tr></thead><tbody>")
+            tb = ""
+            for ex in execs:
+                tb += ("<tr>"
+                       f'<td style="text-align:left;">{_h.escape(ex)}</td>'
+                       + "".join(
+                           '<td style="text-align:right;">'
+                           + ("n/a" if y in hidden
+                              else fmt_dollars(by_exec_year.get((ex, y))))
+                           + "</td>"
+                           for y in trend_years)
+                       + "</tr>")
+            st.markdown(th + tb + "</tbody></table></div>", unsafe_allow_html=True)
+        cap = ("Total compensation per the FMP feed (proxy Summary Compensation "
+               "Table), shown only for years verified against the CEO total in "
+               "the proxy's XBRL; — where an executive was not a named "
+               "officer that year.")
+        if hidden:
+            cap += " Hidden (n/a): " + " ".join(_unverified_note(y, status[y])
+                                                for y in hidden)
+        st.caption(cap)
+
+
+def _render_summary_table(latest: int, latest_rows: list[dict], link):
     head = ('<div class="ksk-grid"><table><thead><tr>'
             '<th style="text-align:left;">Executive</th>'
             + "".join(f'<th style="text-align:right;">{lbl}</th>'
@@ -68,32 +164,10 @@ def _render_neo_tables(ticker: str):
                  "</tr>")
     st.markdown(head + body + "</tbody></table></div>", unsafe_allow_html=True)
     src = f" · [DEF 14A]({link})" if link else ""
-    st.caption(f"Named executive officers, FY{latest} proxy Summary Compensation "
-               f"Table. Source: FMP / SEC{src}.")
-
-    # ── Multi-year total-comp trend (current NEO group) ──────────────────
-    trend_years = years[:5]
-    if len(trend_years) > 1:
-        st.markdown("#### Total compensation — 5-year trend")
-        by_exec_year = {}
-        for r in rows:
-            by_exec_year[(r["name_position"], r["year"])] = r.get("total")
-        execs = [r["name_position"] for r in latest_rows]  # current NEOs, by FY total desc
-        th = ('<div class="ksk-grid"><table><thead><tr>'
-              '<th style="text-align:left;">Executive</th>'
-              + "".join(f'<th style="text-align:right;">FY{y}</th>' for y in trend_years)
-              + "</tr></thead><tbody>")
-        tb = ""
-        for ex in execs:
-            tb += ("<tr>"
-                   f'<td style="text-align:left;">{_h.escape(ex)}</td>'
-                   + "".join(
-                       f'<td style="text-align:right;">{fmt_dollars(by_exec_year.get((ex, y)))}</td>'
-                       for y in trend_years)
-                   + "</tr>")
-        st.markdown(th + tb + "</tbody></table></div>", unsafe_allow_html=True)
-        st.caption("Total compensation per the proxy Summary Compensation Table; "
-                   "blank where an executive was not a named officer that year.")
+    st.caption(f"Named executive officers, FY{latest}, from the FMP compensation "
+               f"feed (proxy Summary Compensation Table) — verified against the "
+               f"CEO total in the proxy's own XBRL (Pay versus Performance) "
+               f"within 1%. Source: FMP / SEC{src}.")
 
 
 # ── Pay versus Performance (Item 402(v), proxy inline XBRL) ──────────────
@@ -120,12 +194,7 @@ def _pvp_csm_cell(v) -> str:
     return fmt_dollars(v)
 
 
-def _render_pay_versus_performance(ticker: str):
-    from data.bank_mapping import get_cik
-    from data.sec_pvp import get_pay_versus_performance
-
-    cik = get_cik(ticker)
-    pvp = get_pay_versus_performance(cik) if cik else None
+def _render_pay_versus_performance(pvp: dict | None):
     if not pvp:
         st.caption("Pay-versus-performance: no tagged Item 402(v) disclosure "
                    "in this company's proxy XBRL.")
