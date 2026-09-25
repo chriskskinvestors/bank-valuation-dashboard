@@ -1142,6 +1142,12 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
                     or _variant_compatible(o["label"], r["label"])
                     or orphan_pair):
                 continue
+            # Never fold rows of different value kinds (an EPS row and a share-
+            # count row a filer labels the same bare word): the kind decides
+            # how the cell is formatted, so a cross-kind merge would print a
+            # share count as $/share or vice versa (P0-3).
+            if (o.get("kind") and r.get("kind")) and o["kind"] != r["kind"]:
+                continue
             # Guard: skip if ANY period already holds a value in BOTH rows.
             if any(o["values"][i] is not None and r["values"][i] is not None
                    for i in range(min(len(o["values"]), len(r["values"])))):
@@ -1171,7 +1177,11 @@ def _merge_row_order(parsed: list) -> list:
     """Union of rows across filings (newest first), preserving each filing's
     internal order. Rows are matched on the NORMALIZED label so a line whose
     label carries changing numbers stays one row; the DISPLAY label and element id
-    are the newest filing's. Returns [(norm_key, display_label, header, element_id), …]."""
+    are the newest filing's. Returns [(norm_key, display_label, header, element_id,
+    kind), …] — kind is the row's value kind from _row_key ('monetary' |
+    'pershare' | 'shares' | 'other'; '' for headers), carried to the stitched
+    rows so the renderer formats EPS / share counts by type, not by label
+    (REVIEW-2026-09-24 P0-3)."""
     merged: list = []
     keys: list = []                            # parallel norm keys for .index
     for f in parsed:
@@ -1181,7 +1191,8 @@ def _merge_row_order(parsed: list) -> list:
                 prev = keys.index(k)
             else:
                 prev += 1
-                merged.insert(prev, (k, r["label"], r["header"], r.get("element_id", "")))
+                merged.insert(prev, (k, r["label"], r["header"], r.get("element_id", ""),
+                                     k[2]))
                 keys.insert(prev, k)
     return merged
 
@@ -1224,11 +1235,12 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
                             break
         col[period] = merged
     rows = []
-    for key, label, header, element_id in _merge_row_order(parsed):
+    for key, label, header, element_id, kind in _merge_row_order(parsed):
         if header:
             rows.append({"label": label, "header": True, "values": []})
         else:
             rows.append({"label": label, "header": False, "element_id": element_id,
+                         "kind": kind,
                          "values": [col.get(p, {}).get(key) for p in all_periods]})
     return _consolidate_variants(
         {"periods": all_periods, "rows": rows,
@@ -1426,11 +1438,12 @@ def _assemble(parsed: list, col: dict, periods: list) -> dict | None:
     if not have:
         return None
     rows = []
-    for key, label, header, element_id in _merge_row_order(parsed):
+    for key, label, header, element_id, kind in _merge_row_order(parsed):
         if header:
             rows.append({"label": label, "header": True, "values": []})
         else:
             rows.append({"label": label, "header": False, "element_id": element_id,
+                         "kind": kind,
                          "values": [col.get(p, {}).get(key) for p in periods]})
     return _consolidate_variants(
         {"periods": [_q_label(p) for p in periods], "rows": rows,
@@ -1638,7 +1651,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v5:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v5: member blocks + Q4 vintage
+    ckey = f"asreported_mq:v5:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v5: member blocks + Q4 vintage (after v4 row kind)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
@@ -1752,7 +1765,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     from datetime import date, timedelta
     if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
         return None
-    ckey = f"asreported_my:v9:{stype}:{metas[0]['accession']}:{n_years}"  # v9: member blocks
+    ckey = f"asreported_my:v9:{stype}:{metas[0]['accession']}:{n_years}"  # v9: member blocks (after v8 row kind)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None

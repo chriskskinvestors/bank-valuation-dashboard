@@ -28,13 +28,21 @@ class TestReserveCoverageBasis(unittest.TestCase):
         self.assertEqual(_reserve_coverage(
             {"LNATRESR": 2.0, "NCLNLSR": 1.0, "IDERNCVR": 888}), 200.0)
 
-    def test_helper_falls_back_to_idercvr(self):
-        # NPL ratio missing -> can't compute -> use IDERNCVR
+    def test_helper_falls_back_to_lnresncr_never_idercvr(self):
+        """(2026-09-25) The fallback was IDERNCVR — FDIC's EARNINGS coverage
+        of net charge-offs (x), not reserves/NPL — and for a multi-charter
+        group (whose LNATRESR/NCLNLSR were n/a) it was the charters' SUM.
+        The fallback is FDIC's own reserve/noncurrent ratio, LNRESNCR."""
+        # NPL ratio missing -> can't compute -> use LNRESNCR
         self.assertEqual(_reserve_coverage(
-            {"LNATRESR": 2.0, "NCLNLSR": None, "IDERNCVR": 150}), 150)
-        # NPL ratio zero -> no coverage math -> IDERNCVR
+            {"LNATRESR": 2.0, "NCLNLSR": None, "LNRESNCR": 150,
+             "IDERNCVR": 7.3}), 150)
+        # NPL ratio zero -> no coverage math -> LNRESNCR
         self.assertEqual(_reserve_coverage(
-            {"LNATRESR": 2.0, "NCLNLSR": 0.0, "IDERNCVR": 250}), 250)
+            {"LNATRESR": 2.0, "NCLNLSR": 0.0, "LNRESNCR": 250}), 250)
+        # neither -> n/a, never earnings coverage
+        self.assertIsNone(_reserve_coverage(
+            {"LNATRESR": 2.0, "NCLNLSR": None, "IDERNCVR": 7.3}))
 
     def test_peer_median_uses_computed_not_raw_idercvr(self):
         # Computed coverages: A 300, B 200, C 100 -> median 200.

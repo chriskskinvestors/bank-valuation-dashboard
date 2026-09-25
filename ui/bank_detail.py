@@ -1125,7 +1125,7 @@ _METRIC_DESC = {
     "efficiency_ratio": "Non-interest expense ÷ revenue. Lower = more efficient.",
     "npl_ratio": "Non-current loans (90+ days / nonaccrual) ÷ total loans.",
     "nco_ratio": "Annualized net charge-offs ÷ loans.",
-    "allowance_loans": "Loan-loss reserves ÷ total loans (coverage).",
+    "allowance_loans": "Provision for loan losses ÷ net charge-offs (~100% = reserves held steady).",
     "cet1_ratio": "Common equity tier 1 capital ÷ risk-weighted assets.",
     "total_capital_ratio": "Total risk-based capital ÷ risk-weighted assets.",
     "leverage_ratio": "Tier 1 capital ÷ average total assets.",

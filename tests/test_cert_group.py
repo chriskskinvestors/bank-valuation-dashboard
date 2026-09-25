@@ -9,13 +9,15 @@ IBOC $9.9B of $17.3B, MS $391B of $633B.
 
 Pins:
   1. levels sum across charters (hand-computed on IBOC's real assets);
-  2. average-based ratios (ROA/ROE/NIM/leverage) go n/a rather than
+  2. average-based ratios (ROA/ROE/NIM/NCO rates) go n/a rather than
      silently carrying the LEAD charter's figure onto a consolidated label —
      FDIC computes them against average balances, which period-end levels
      cannot reconstruct;
-  3. the four exactly-recomputable ratios ARE rebuilt from the sums — incl.
+  3. the exactly-recomputable ratios ARE rebuilt from the sums — incl.
      the CET1 ratio from ΣRBCT1C/ΣRWAJ (2026-09-22; it had been wrongly
-     listed as average-based, leaving every multi-charter bank's CET1 blank);
+     listed as average-based, leaving every multi-charter bank's CET1 blank)
+     and, since 2026-09-25, every ratio in _EXACT_QUOTIENTS — before which
+     any FDIC ratio listed nowhere was SUMMED across charters;
   4. a single-charter bank is bit-for-bit unchanged (the ~350 other banks);
   5. group resolution degrades to [cert] on failure — never fewer charters
      than we had before.
@@ -372,3 +374,133 @@ class TestProducersUseTheSeam(unittest.TestCase):
                 if needle in src:
                     offenders.append(f"{p.name}: {needle}")
         self.assertEqual(offenders, [])
+
+
+class TestRatioClassNotSummed(unittest.TestCase):
+    """(2026-09-25) Every FDIC ratio neither dropped as average-based nor
+    rebuilt fell through to the summing loop: WFC's loans/deposits rendered
+    233.3% (its charters' LNLSDEPR added). Two charters whose reported ratios
+    differ, so a sum, a lead-charter carry and a simple average of the ratios
+    are all distinguishable from the right answer. Values hand-computed."""
+
+    A = {"CERT": 1, "ASSET": 900, "LNLSNET": 540, "DEPDOM": 700, "EQ": 90,
+         "EQTOT": 95, "NUMEMP": 3, "NCRERES": 6, "LNRERES": 200,
+         "LNATRESJ": 12, "NCLNLS": 8, "RBCT1": 80, "AVASSETJ": 880,
+         "ELNLOS": 11, "NTTOT": 10, "CHFLA": 50, "NTLNLSA": 10,
+         # the charters' own FDIC-reported ratios (what used to be summed)
+         "LNLSNTV": 60.0, "DEPDASTR": 77.78, "EQV": 10.0, "ASTEMPM": 0.3,
+         "NCRERESR": 3.0, "LNRESNCR": 150.0, "RBC1AAJ": 9.09,
+         "ELNANTR": 110.0, "IDERNCVR": 5.0,
+         "NOIJY": 1.2, "NTRER": 0.10, "NTCOMRER": 0.20, "ELNATRY": 0.30,
+         "IDNTCIR": 0.40}
+    B = {"CERT": 2, "ASSET": 100, "LNLSNET": 80, "DEPDOM": 60, "EQ": 12,
+         "EQTOT": 12, "NUMEMP": 1, "NCRERES": 4, "LNRERES": 50,
+         "LNATRESJ": 1, "NCLNLS": 4, "RBCT1": 10, "AVASSETJ": 95,
+         "ELNLOS": 3, "NTTOT": 5, "CHFLA": 6, "NTLNLSA": 3,
+         "LNLSNTV": 80.0, "DEPDASTR": 60.0, "EQV": 12.0, "ASTEMPM": 0.1,
+         "NCRERESR": 8.0, "LNRESNCR": 25.0, "RBC1AAJ": 10.53,
+         "ELNANTR": 60.0, "IDERNCVR": 2.0,
+         "NOIJY": 1.4, "NTRER": 0.30, "NTCOMRER": 0.40, "ELNATRY": 0.50,
+         "IDNTCIR": 0.60}
+
+    def test_level_quotients_are_ratio_of_sums(self):
+        g = aggregate_records([self.A, self.B])
+        # (540 + 80) / (900 + 100) = 620 / 1000        (sum would be 140.0)
+        self.assertAlmostEqual(g["LNLSNTV"], 62.0, places=12)
+        # (700 + 60) / 1000                            (sum 137.78)
+        self.assertAlmostEqual(g["DEPDASTR"], 76.0, places=12)
+        # (90 + 12) / 1000 — EQ, not EQTOT (which gives 10.7)
+        self.assertAlmostEqual(g["EQV"], 10.2, places=12)
+        # 1000 $K = $1.0M over 3 + 1 employees          (sum 0.4)
+        self.assertAlmostEqual(g["ASTEMPM"], 0.25, places=12)
+        # (6 + 4) / (200 + 50) = 10 / 250              (sum 11.0)
+        self.assertAlmostEqual(g["NCRERESR"], 4.0, places=12)
+        # (12 + 1) / (8 + 4) = 13 / 12                 (sum 175.0)
+        self.assertAlmostEqual(g["LNRESNCR"], 13 / 12 * 100, places=12)
+        # (80 + 10) / (880 + 95) = 90 / 975            (sum 19.62)
+        self.assertAlmostEqual(g["RBC1AAJ"], 90 / 975 * 100, places=12)
+
+    def test_same_period_flow_quotients_are_ratio_of_sums(self):
+        g = aggregate_records([self.A, self.B])
+        # provision / NCO: (11 + 3) / (10 + 5) = 14 / 15    (sum 170.0)
+        self.assertAlmostEqual(g["ELNANTR"], 14 / 15 * 100, places=12)
+        # earnings coverage (x): (50 + 6) / (10 + 3) = 56 / 13  (sum 7.0)
+        self.assertAlmostEqual(g["IDERNCVR"], 56 / 13, places=12)
+
+    def test_average_balance_ratios_are_na(self):
+        """annualized flow ÷ 5-point AVERAGE balance (dictionary: ASSET5,
+        LNRE5, LNCOMRE5, LNCI5) — n/a for a group, never a sum."""
+        g = aggregate_records([self.A, self.B])
+        for k in ("NOIJY", "NTRER", "NTCOMRER", "ELNATRY", "IDNTCIR"):
+            self.assertIn(k, AVERAGE_BASED_RATIOS)
+            self.assertIsNone(g[k], f"{k} must be n/a for a group")
+
+    def test_component_missing_on_one_charter_is_na_not_partial(self):
+        """A cache/deep-store row written before the component was fetched:
+        the sum over the other charters is a partial numerator — n/a."""
+        b = {k: v for k, v in self.B.items() if k != "NCRERES"}
+        g = aggregate_records([self.A, b])
+        self.assertIsNone(g["NCRERESR"])        # not 6 / 250 = 2.4%
+        self.assertEqual(g["NCRERES"], 6)       # the level loop is unchanged
+        self.assertAlmostEqual(g["LNLSNTV"], 62.0, places=12)
+        nan_b = dict(self.B, EQ=float("nan"))
+        self.assertIsNone(aggregate_records([self.A, nan_b])["EQV"])
+
+    def test_efficiency_needs_every_charter_too(self):
+        a = {"CERT": 1, "INTINC": 1000, "EINTEXP": 400, "NONII": 200, "NONIX": 480}
+        b = {"CERT": 2, "INTINC": 500, "EINTEXP": 200, "NONII": 100}
+        self.assertIsNone(aggregate_records([a, b])["EEFFR"])
+
+    def test_non_positive_denominator_is_na(self):
+        # net recoveries: ΣNTTOT = 10 + (-12) = -2
+        g = aggregate_records([self.A, dict(self.B, NTTOT=-12)])
+        self.assertIsNone(g["ELNANTR"])
+
+    def test_single_charter_passthrough_keeps_fdic_value(self):
+        self.assertEqual(aggregate_records([self.A])["LNRESNCR"], 150.0)
+
+
+class TestEveryRegistryRatioIsClassified(unittest.TestCase):
+    """The structural guard: a registry FDIC ratio that is neither dropped nor
+    rebuilt is SUMMED for multi-charter banks. That is how 18 of them shipped
+    wrong until 2026-09-25 — adding a pct/ratio metric must now classify it."""
+
+    def test_registry_pct_and_ratio_fields_are_classified(self):
+        import config
+        from data.cert_group import _EXACT_QUOTIENTS
+        handled = AVERAGE_BASED_RATIOS | set(_EXACT_QUOTIENTS) | {"EEFFR"}
+        unclassified = sorted(
+            f"{m['key']}={m['fdic_field']}" for m in config.METRICS
+            if m.get("source") == "fdic" and m.get("fdic_field")
+            and m.get("format") in ("pct", "ratio")
+            and m["fdic_field"] not in handled)
+        self.assertEqual(unclassified, [])
+
+    def test_quotient_components_are_fetched_and_classes_disjoint(self):
+        import config
+        from data.cert_group import _EXACT_QUOTIENTS
+        from data.fdic_client import _BASE_FINANCIALS_FIELDS
+        fetched = _BASE_FINANCIALS_FIELDS | config.get_fdic_fields()
+        missing = sorted({c for n, d, _ in _EXACT_QUOTIENTS.values()
+                          for c in (n, d)} - fetched)
+        self.assertEqual(missing, [], "a component that is never fetched "
+                         "makes its ratio permanently n/a for groups")
+        self.assertEqual(AVERAGE_BASED_RATIOS & set(_EXACT_QUOTIENTS), set())
+
+
+class TestRegistryLabelsMatchFields(unittest.TestCase):
+    """(2026-09-25) Five registry metrics displayed a DIFFERENT FDIC quantity
+    than their label (risview dictionary titles). Keys are kept for saved
+    screens; the field/label pairs are pinned here."""
+
+    def test_corrected_pairs(self):
+        import config
+        m = {x["key"]: x for x in config.METRICS}
+        self.assertEqual(m["npl_resi"]["fdic_field"], "NCRERESR")  # not construction
+        self.assertEqual(m["nco_ci"]["fdic_field"], "IDNTCIR")     # not CRE NCOs
+        self.assertEqual(m["npl_cre"]["label"], "NPL RE %")        # NCRER = all RE
+        self.assertEqual(m["reserve_coverage"]["fdic_field"], "LNRESNCR")
+        self.assertEqual(m["reserve_nco_coverage"]["fdic_field"], "IDERNCVR")
+        self.assertEqual(m["reserve_nco_coverage"]["format"], "ratio")
+        self.assertEqual(m["nco_to_reserve"]["label"], "Loans/Core Dep")
+        self.assertEqual(m["nco_to_reserve"]["category"], "Composition")

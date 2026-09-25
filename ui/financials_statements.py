@@ -10,6 +10,8 @@ financial_highlights. Rows are data-driven specs: (label, kind, *fields).
 """
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -2299,6 +2301,47 @@ def _cr_usd(raw):
     return _usd(raw / 1000.0) if raw is not None else ""   # _usd takes $thousands
 
 
+# Label fallback for a stitched Company-Reported row whose XBRL data type is
+# unknown (older / untyped R-files). A typed row never consults these.
+_CR_EPS_LABEL = re.compile(r"per share|per common share", re.I)
+_CR_SHARES_LABEL = re.compile(r"\(in shares\)|in shares", re.I)
+
+
+def _cr_line_kind(row) -> str:
+    """'eps' | 'shares' | 'usd' for a stitched Company-Reported row.
+
+    The row's own XBRL value kind (data/sec_statements._row_kind, carried as
+    row["kind"]) decides; the label regex is only the fallback for a row with
+    no type. REVIEW-2026-09-24 P0-3: LARK/FBIZ label their EPS rows bare
+    "Basic" / "Diluted" under an "Earnings per share" header, so the label
+    regex missed them and 3.07 rendered as "$3"."""
+    k = row.get("kind")
+    if k == "pershare":
+        return "eps"
+    if k == "shares":
+        return "shares"
+    if k == "monetary":
+        return "usd"
+    label = row.get("label", "")
+    if _CR_EPS_LABEL.search(label):
+        return "eps"
+    if _CR_SHARES_LABEL.search(label):
+        return "shares"
+    return "usd"
+
+
+def _cr_fmt(kind: str, v) -> str:
+    """Screen text for one Company-Reported cell of a given line kind."""
+    if v is None:
+        return ""
+    if kind == "eps":
+        return f"${v:,.2f}"                     # $/share (component escapes)
+    if kind == "shares":
+        return f"{v / 1e6:,.1f}M"               # share counts in millions
+    # Dollar lines: raw dollars -> Templated $-compact; negatives in parens.
+    return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+
+
 # Export row kind -> ui.export FORMATS key. "frac" is a FRACTION in the data
 # (0.0123) exported ×100 as percent units (1.23), the same conversion every
 # Company-Reported screen applies; "header" carries no format.
@@ -2395,9 +2438,7 @@ def _render_company_statement_annual(ticker, stype, cik, info):
         m = re.search(r"\d{4}", p or "")
         return m.group() if m else (p or "")
 
-    _eps = re.compile(r"per share|per common share", re.I)
-    _shares = re.compile(r"\(in shares\)|in shares", re.I)
-    _has_persh = any(_eps.search(r["label"]) or _shares.search(r["label"])
+    _has_persh = any(_cr_line_kind(r) != "usd"
                      for r in stmt["rows"] if not r["header"])
     _persh_note = " EPS in \\$/share, shares in millions;" if _has_persh else ""
     st.caption(f"Source: company 10-K filings — latest [{latest['date']}]({src}); "
@@ -2407,19 +2448,6 @@ def _render_company_statement_annual(ticker, stype, cik, info):
     periods = stmt["periods"][::-1]            # oldest → newest (matches Templated)
     cols = [f"FY{_yr(p)}" for p in periods]
 
-    def _m(label, v):
-        if v is None:
-            return ""
-        if _eps.search(label):
-            return f"${v:,.2f}"                 # EPS as $/share (component escapes)
-        if _shares.search(label):
-            return f"{v / 1e6:,.1f}M"           # share counts in millions
-        # Dollar lines: raw dollars -> Templated $-compact; negatives in parens.
-        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
-
-    def _kind(label):
-        return "eps" if _eps.search(label) else "shares" if _shares.search(label) else "usd"
-
     rows, xrows = [], []
     for r in stmt["rows"]:
         if r["header"]:
@@ -2427,10 +2455,11 @@ def _render_company_statement_annual(ticker, stype, cik, info):
             xrows.append((r["label"], "header", []))
         else:
             vals = r["values"][::-1]
+            lk = _cr_line_kind(r)
             rows.append({"label": r["label"],
-                         "values": [_m(r["label"], v) for v in vals],
+                         "values": [_cr_fmt(lk, v) for v in vals],
                          "kind": "data"})
-            xrows.append((r["label"], _kind(r["label"]), vals))
+            xrows.append((r["label"], lk, vals))
 
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")
@@ -2478,9 +2507,7 @@ def _render_company_statement_quarterly(ticker, stype, cik, info):
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(latest['cik'])}/"
            f"{latest['accession']}/{latest['doc']}")
 
-    _eps = re.compile(r"per share|per common share", re.I)
-    _shares = re.compile(r"\(in shares\)|in shares", re.I)
-    _has_persh = any(_eps.search(r["label"]) or _shares.search(r["label"])
+    _has_persh = any(_cr_line_kind(r) != "usd"
                      for r in stmt["rows"] if not r["header"])
     _persh_note = " EPS in \\$/share, shares in millions;" if _has_persh else ""
     _q4 = ("" if stype == "balance"
@@ -2492,18 +2519,6 @@ def _render_company_statement_quarterly(ticker, stype, cik, info):
     periods = stmt["periods"][::-1]            # oldest → newest (matches Annual)
     cols = list(periods)                       # already compact "Q3'25" labels
 
-    def _m(label, v):
-        if v is None:
-            return ""
-        if _eps.search(label):
-            return f"${v:,.2f}"
-        if _shares.search(label):
-            return f"{v / 1e6:,.1f}M"
-        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
-
-    def _kind(label):
-        return "eps" if _eps.search(label) else "shares" if _shares.search(label) else "usd"
-
     rows, xrows = [], []
     for r in stmt["rows"]:
         if r["header"]:
@@ -2511,10 +2526,11 @@ def _render_company_statement_quarterly(ticker, stype, cik, info):
             xrows.append((r["label"], "header", []))
         else:
             vals = r["values"][::-1]
+            lk = _cr_line_kind(r)
             rows.append({"label": r["label"],
-                         "values": [_m(r["label"], v) for v in vals],
+                         "values": [_cr_fmt(lk, v) for v in vals],
                          "kind": "data"})
-            xrows.append((r["label"], _kind(r["label"]), vals))
+            xrows.append((r["label"], lk, vals))
 
     entity = f"{(info or {}).get('name') or ticker} ({ticker})"
     _lt, _rt = st.columns([1, 1], vertical_alignment="top")

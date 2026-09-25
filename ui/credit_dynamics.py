@@ -286,7 +286,7 @@ def _render_by_loan_type(ticker: str, summary: dict, timeline):
     from utils.chart_style import CATEGORICAL_PALETTE
     segments = [
         ("npl_ratio", "Total", "#0f172a", 3),
-        ("npl_cre", "CRE", COLOR_DANGER, 2),
+        ("npl_cre", "All RE", COLOR_DANGER, 2),
         ("npl_resi", "Residential", COLOR_PRIMARY, 2),
         ("npl_multifam", "Multifamily", COLOR_WARNING, 2),
         ("npl_nres_re", "Non-Res RE", CATEGORICAL_PALETTE[4], 2),

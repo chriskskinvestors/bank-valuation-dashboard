@@ -833,6 +833,15 @@ METRICS = [
         "category": "Composition",
     },
     {
+        # IDLNCORR is "NET LOANS AND LEASES TO CORE DEPOSITS RATIO" (LNLSNET /
+        # COREDEP, FDIC risview dictionary; verified exact on 23 banks
+        # 2026-09-25). It was shown as "NCO/Rsv %" under Credit Detail until
+        # then; the key is a historical misnomer kept for saved screens.
+        "key": "nco_to_reserve", "label": "Loans/Core Dep", "source": "fdic", "fdic_field": "IDLNCORR",
+        "format": "pct", "decimals": 1,
+        "category": "Composition",
+    },
+    {
         "key": "loans_to_assets", "label": "Loans/Assets", "source": "fdic", "fdic_field": "LNLSNTV",
         "format": "pct", "decimals": 1,
         "category": "Composition",
@@ -857,13 +866,17 @@ METRICS = [
 
     # ── Credit Detail ────────────────────────────────────────────────────
     {
-        "key": "npl_cre", "label": "NPL CRE %", "source": "fdic", "fdic_field": "NCRER",
+        # NCRER is noncurrent ALL real-estate loans / RE loans (NCRE / LNREJ)
+        # — not CRE (that is npl_nres_re). Label corrected 2026-09-25.
+        "key": "npl_cre", "label": "NPL RE %", "source": "fdic", "fdic_field": "NCRER",
         "format": "pct", "decimals": 2,
         "color_rule": "lower_better", "thresholds": {"good": 1.0, "warn": 3.0},
         "category": "Credit Detail",
     },
     {
-        "key": "npl_resi", "label": "NPL Resi %", "source": "fdic", "fdic_field": "NCRECONR",
+        # NCRERESR = noncurrent 1-4 family / 1-4 family loans. Until
+        # 2026-09-25 this read NCRECONR — CONSTRUCTION — under the Resi label.
+        "key": "npl_resi", "label": "NPL Resi %", "source": "fdic", "fdic_field": "NCRERESR",
         "format": "pct", "decimals": 2,
         "color_rule": "lower_better", "thresholds": {"good": 1.0, "warn": 3.0},
         "category": "Credit Detail",
@@ -899,7 +912,9 @@ METRICS = [
         "category": "Credit Detail",
     },
     {
-        "key": "nco_ci", "label": "NCO C&I %", "source": "fdic", "fdic_field": "NTCOMRER",
+        # IDNTCIR = annualized C&I net charge-offs / avg C&I loans (NTCIA /
+        # LNCI5). Until 2026-09-25 this read NTCOMRER — COMMERCIAL RE NCOs.
+        "key": "nco_ci", "label": "NCO C&I %", "source": "fdic", "fdic_field": "IDNTCIR",
         "format": "pct", "decimals": 2,
         "color_rule": "lower_better", "thresholds": {"good": 0.3, "warn": 1.0},
         "category": "Credit Detail",
@@ -919,7 +934,10 @@ METRICS = [
         "category": "Credit Detail",
     },
     {
-        "key": "reserve_coverage", "label": "Rsv/NPL", "source": "fdic", "fdic_field": "IDERNCVR",
+        # LNRESNCR = loan-loss reserve / noncurrent loans (LNATRESJ / NCLNLS).
+        # Until 2026-09-25 this read IDERNCVR (earnings coverage of NCOs, in
+        # x) and reserve_nco_coverage below read LNRESNCR — fields swapped.
+        "key": "reserve_coverage", "label": "Rsv/NPL", "source": "fdic", "fdic_field": "LNRESNCR",
         "format": "pct", "decimals": 1,
         "color_rule": "higher_better", "thresholds": {"good": 100, "warn": 50},
         "category": "Credit Detail",
@@ -930,13 +948,9 @@ METRICS = [
         "category": "Credit Detail",
     },
     {
-        "key": "nco_to_reserve", "label": "NCO/Rsv %", "source": "fdic", "fdic_field": "IDLNCORR",
-        "format": "pct", "decimals": 1,
-        "color_rule": "lower_better", "thresholds": {"good": 30, "warn": 60},
-        "category": "Credit Detail",
-    },
-    {
-        "key": "reserve_nco_coverage", "label": "Rsv/NCO yrs", "source": "fdic", "fdic_field": "LNRESNCR",
+        # IDERNCVR = "EARNINGS COVERAGE OF NET LOAN CHARGE-OFFS (X)" (CHFLA /
+        # NTLNLSA, annualized). Key kept for saved screens.
+        "key": "reserve_nco_coverage", "label": "Earn Cov NCO (x)", "source": "fdic", "fdic_field": "IDERNCVR",
         "format": "ratio", "decimals": 1,
         "color_rule": "higher_better", "thresholds": {"good": 3, "warn": 1.5},
         "category": "Credit Detail",
@@ -1111,8 +1125,8 @@ TABS = [
             "total_assets", "total_loans", "total_loans_gross", "securities",
             "cash_balances", "fed_funds_sold", "total_liab", "total_equity",
             "intangibles", "ore", "trading_assets",
-            "loans_to_deposits", "loans_to_assets", "deposits_to_assets",
-            "earning_assets_pct", "equity_to_assets",
+            "loans_to_deposits", "nco_to_reserve", "loans_to_assets",
+            "deposits_to_assets", "earning_assets_pct", "equity_to_assets",
         ],
     },
     {
@@ -1188,8 +1202,7 @@ TABS = [
             "nco_ratio", "nco_re", "nco_ci",
             "past_due_30_89", "past_due_90",
             "reserve_coverage_pct", "reserve_to_loans",
-            "nco_to_reserve", "reserve_nco_coverage",
-            "allowance_loans",
+            "reserve_nco_coverage", "allowance_loans",
         ],
     },
     {
