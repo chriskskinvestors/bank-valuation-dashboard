@@ -11,7 +11,9 @@ The same fetched call report also yields Schedule RI income detail
 (ri_income_detail), Schedule RC-N past-due/nonaccrual loan detail
 (rcn_detail), the RC-R Part I capital walk (rcr_capital), RI-E
 itemizations (rie_detail), and the RI 2.a + RC-K deposit-cost split
-(deposit_cost_detail) — per-schedule failures are logged and counted
+(deposit_cost_detail), and the ENTIRE report — every MDRM line item —
+into call_report_full (data/call_report_full.py, the any-field screener
+source) — per-schedule failures are logged and counted
 in the end-of-run summary but never fatal to the job.
 
 Auth: requires FFIEC_USERNAME + FFIEC_JWT_TOKEN env vars (mounted from
@@ -41,13 +43,14 @@ _HOURLY_REQUEST_BUDGET = 2400
 
 # Schedules persisted off the one fetched call report per bank. Keys index
 # the per-bank status dict _refresh_one returns and the summary counters.
-_SCHEDULES = ("ri", "rcn", "rcr", "rie", "deposit_cost")
+_SCHEDULES = ("ri", "rcn", "rcr", "rie", "deposit_cost", "full")
 _SCHEDULE_LABELS = {
     "ri": "RI detail",
     "rcn": "RC-N detail",
     "rcr": "RC-R capital",
     "rie": "RI-E detail",
     "deposit_cost": "Deposit cost",
+    "full": "Full report",
 }
 
 
@@ -151,6 +154,20 @@ def _persist_deposit_cost(cert: int, rssd_id: int, period: str, df) -> str:
         return f"fail:{type(e).__name__}: {str(e)[:80]}"
 
 
+def _persist_full_report(cert: int, rssd_id: int, period: str, df) -> str:
+    """Store EVERY line item of the already-fetched Call Report
+    (data/call_report_full — the any-field screener's source). 'ok' /
+    'no_data' / 'fail:<reason>'; never raises. A late filer's
+    previous-quarter fallback frame fails the period check (never stored
+    under the wrong quarter)."""
+    from data.call_report_full import upsert_full_report
+    try:
+        n = upsert_full_report(cert, rssd_id, period, df)
+        return "ok" if n else "no_data"
+    except Exception as e:
+        return f"fail:{type(e).__name__}: {str(e)[:80]}"
+
+
 def _refresh_one(
     cert: int, rssd_id: int, period: str,
 ) -> tuple[int, int, str, dict[str, str]]:
@@ -183,9 +200,11 @@ def _refresh_one(
         "rcr": _persist_rcr_detail(cert, rssd_id, period, df),
         "rie": _persist_rie_detail(cert, rssd_id, period, df),
         "deposit_cost": _persist_deposit_cost(cert, rssd_id, period, df),
+        "full": _persist_full_report(cert, rssd_id, period, df),
     }
     warn = {s: v for s, v in statuses.items()
-            if s in ("rcr", "rie", "deposit_cost") and v.startswith("fail")}
+            if s in ("rcr", "rie", "deposit_cost", "full")
+            and v.startswith("fail")}
     if warn:
         print(f"  [warn] cert {cert}: "
               + " ".join(f"{s}={v}" for s, v in warn.items()), flush=True)
@@ -233,6 +252,14 @@ def main() -> int:
               flush=True)
 
     init_call_report_schema()
+    # Warm the MDRM title dictionary (30-day cache) here so the screener's
+    # catalog() never pays the ~8 MB download on a request. Non-fatal.
+    try:
+        from data.call_report_full import mdrm_titles
+        print(f"  MDRM titles: {len(mdrm_titles())} Call Report codes",
+              flush=True)
+    except Exception as e:
+        print(f"  [warn] MDRM titles: {type(e).__name__}: {e}", flush=True)
     # FFIEC_PERIOD overrides the auto-detected latest quarter (MM/DD/YYYY) —
     # used to backfill history for newly added schedules (RC-R/RI-E/deposit
     # cost shipped 2026-06-12 with only the latest quarter ingested; the IS
