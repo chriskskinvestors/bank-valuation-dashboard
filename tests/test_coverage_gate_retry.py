@@ -67,6 +67,7 @@ class TestGateRetryWrapper(unittest.TestCase):
         with patch("data.bank_universe.get_universe_tickers", return_value=["AAA"]), \
                 patch("config.DEFAULT_WATCHLIST", []), \
                 patch("data.bank_mapping.BANK_MAP", {}), \
+                patch("data.bank_mapping.get_fdic_cert", return_value=2), \
                 patch.object(gate, "_check_ticker", check), \
                 patch("time.sleep") as sleep, \
                 contextlib.redirect_stdout(io.StringIO()):
