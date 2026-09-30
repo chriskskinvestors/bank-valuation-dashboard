@@ -169,8 +169,9 @@ class TestFteRowsNotIngestedReason(unittest.TestCase):
             cells = _row_cells(self.q_html, label)
             # columns: Q4 '25 (no RI), Q1 '26 (ingested), Q2 '26 (not yet)
             tag, text = cells[-1]
-            self.assertEqual(text, "n/a", label)
-            self.assertNotEqual(text, "—", label)
+            # On screen, n/a is the one absent-value token "—" (UX-P1-19); the
+            # fix is that it is now a click-through carrying the reason.
+            self.assertEqual(text, "—", label)
             self.assertIn("data-cid", tag, label)             # click-through, not a dead cell
             self.assertNotIn("dead", tag, label)
         self.assertIn("Schedule RI detail not yet ingested for this period", self.q_html)
@@ -184,7 +185,7 @@ class TestFteRowsNotIngestedReason(unittest.TestCase):
 
     def test_annual_column_reason_has_no_decumulation_clause(self):
         tag, text = _row_cells(self.a_html, "FTE adjustment")[0]      # FY2025, no RI
-        self.assertEqual(text, "n/a")
+        self.assertEqual(text, "—")                                  # UX-P1-19 token
         self.assertIn("data-cid", tag)
         self.assertIn("Schedule RI detail not yet ingested for this period", self.a_html)
         self.assertNotIn("needed to de-cumulate YTD", self.a_html)
