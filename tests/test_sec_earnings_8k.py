@@ -171,6 +171,22 @@ class TestReportedTbvpsLabelMatch(unittest.TestCase):
         self.assertEqual(extract_reported_bvps_status(
             html, reconstructed=24.95, tbvps=18.19), (24.50, "ok"))
 
+    def test_egbn_at_period_end_rows(self):
+        """EGBN Q2-2026 release (image pages, text layer) prints "Book value
+        per common share at period end $ 37.73" and "Tangible book value per
+        common share at period end(1) $ 37.73" (no intangibles)."""
+        from data.sec_earnings_8k import (
+            _match_bvps_label, extract_reported_bvps_status)
+        self.assertTrue(_match_tbvps_label(_clean_label(
+            "Tangible book value per common share at period end(1)")))
+        self.assertTrue(_match_bvps_label(_clean_label(
+            "Book value per common share at period end")))
+        html = _html(
+            _row("Book value per common share at period end",
+                 "$", "37.73", "$", "37.56", "$", "39.03"))
+        self.assertEqual(extract_reported_bvps_status(
+            html, reconstructed=37.73), (37.73, "ok"))
+
     def test_non_tbvps_labels_do_not_match(self):
         for lbl in (
             "Book value per share",            # NOT tangible → reconstruction
