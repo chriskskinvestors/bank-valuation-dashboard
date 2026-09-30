@@ -1369,6 +1369,27 @@ def _instant_at(facts: dict, concept: str, end: str) -> tuple | None:
     return top["val"], end, top.get("filed", ""), top.get("form", ""), "USD"
 
 
+def _total_less_nci_same_filing(facts: dict, end: str) -> tuple | None:
+    """(total − NCI, end, filed, form, unit) at `end` from the latest 10-K/10-Q
+    that tags BOTH the NCI-inclusive total and MinorityInterest there — one
+    balance sheet's own arithmetic — or None."""
+    ug = facts.get("facts", {}).get("us-gaap", {})
+
+    def by_accn(concept):
+        return {e.get("accn"): e
+                for e in sorted(ug.get(concept, {}).get("units", {}).get("USD", []),
+                                key=lambda e: e.get("filed", ""))
+                if e.get("form") in ("10-K", "10-Q") and e.get("end") == end
+                and e.get("val") is not None and e.get("accn")}
+    tot, mi = by_accn(_SE_NCI), by_accn("MinorityInterest")
+    both = [a for a in tot if a in mi]
+    if not both:
+        return None
+    a = max(both, key=lambda a: tot[a].get("filed", ""))
+    t = tot[a]
+    return (t["val"] - mi[a]["val"], end, t.get("filed", ""), t.get("form", ""), "USD")
+
+
 def _balance_sheet_date(facts: dict) -> str | None:
     """Latest 10-K/10-Q balance-sheet date: the freshest end across total
     assets and both equity tags."""
@@ -1432,9 +1453,20 @@ def _parent_equity_at(facts: dict, end: str):
     """Equity attributable to the parent at balance-sheet date `end`, same
     return shape as _resolve_parent_equity: plain SE at `end`, else the
     NCI-inclusive total less same-date MinorityInterest, else n/a when a
-    noncontrolling interest may exist that no fact separates."""
+    noncontrolling interest may exist that no fact separates.
+
+    A plain-SE fact that disagrees with one filing's own total − NCI isn't
+    the balance-sheet line, and the balance-sheet arithmetic wins: RBB's only
+    plain SE (523,400,000 @ 2025-12-31) is Note 1's rounded "$523.4 million"
+    (10-K 0001437749-26-007387 R58), while R2 shows 523,410,000 total incl.
+    72,000 NCI → 523,338,000."""
     se = _instant_at(facts, _SE, end)
     if se is not None:
+        bs = _total_less_nci_same_filing(facts, end)
+        if bs is not None and bs[0] != se[0]:
+            return bs, f"{_SE_NCI} − MinorityInterest", (
+                "Plain StockholdersEquity disagrees with the balance-sheet total "
+                "less noncontrolling interest — the balance sheet wins")
         return se, _SE, None
     incl = _instant_at(facts, _SE_NCI, end)
     if incl is None:

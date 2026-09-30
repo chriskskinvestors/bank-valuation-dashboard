@@ -154,6 +154,32 @@ class TestResolveParentEquity(unittest.TestCase):
             rows[:] = [r for r in rows if r["end"] <= "2025-09-30"]
         self.assertEqual(self._val(f), (1_652_537_000, "2025-09-30", SE))
 
+    def test_narrative_plain_se_loses_to_balance_sheet(self):
+        # RBB's only plain SE is Note 1's rounded "$523.4 million" (10-K
+        # 0001437749-26-007387 R58). R2/R6/R35 of that 10-K all show
+        # 523,410,000 total incl. 72,000 NCI → parent 523,338,000; the Q2-26
+        # 10-Q (0001437749-26-026563) tags both at 2025-12-31.
+        tup, concept, _ = sc._parent_equity_at(RBB, "2025-12-31")
+        self.assertEqual(tup[0], 523_410_000 - 72_000)
+        self.assertEqual(tup[0], 523_338_000)
+        self.assertEqual(concept, f"{NCI} − MinorityInterest")
+
+    def test_consistent_plain_se_kept(self):
+        # OCFC 10-Q 0001004702-25-000129 at 2025-09-30: SE 1,652,537,000 ==
+        # 1,653,427,000 − 890,000 in the same filing → plain SE, unchanged.
+        tup, concept, _ = sc._parent_equity_at(OCFC, "2025-09-30")
+        self.assertEqual((tup[0], concept), (1_652_537_000, SE))
+
+    def test_no_filing_tags_both_keeps_plain_se(self):
+        # Total and NCI only in DIFFERENT filings: no one balance sheet's
+        # arithmetic to prefer → plain SE stands.
+        f = copy.deepcopy(RBB)
+        for r in f["facts"]["us-gaap"][MI]["units"]["USD"]:
+            if r["end"] == "2025-12-31":
+                r["accn"] = "0001437749-26-015865"
+        tup, concept, _ = sc._parent_equity_at(f, "2025-12-31")
+        self.assertEqual((tup[0], concept), (523_400_000, SE))
+
     def test_nci_present_but_unseparated_is_na(self):
         # RBB without the 2026-06-30 MinorityInterest fact: the newest NCI
         # balance ($72K at 2026-03-31) says NCI exists → n/a, not a guess.

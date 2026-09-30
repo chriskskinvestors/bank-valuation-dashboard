@@ -427,6 +427,9 @@ class TestParentEquityPerEnd(unittest.TestCase):
             eq = sps._equity_series(1)
         self.assertEqual(eq[Q1], 531_054_000 - 72_000)
         self.assertEqual(eq[pd.Timestamp("2026-06-30")], 535_177_000 - 72_000)
+        # Q4-25's only plain SE is a rounded narrative 523,400,000; the
+        # balance sheet's 523,410,000 − 72,000 wins.
+        self.assertEqual(eq[Q4], 523_338_000)
 
     def test_rbb_per_share_on_parent_equity(self):
         with _mock_hist(self.RBB_SHARES, facts=_pe.RBB):
