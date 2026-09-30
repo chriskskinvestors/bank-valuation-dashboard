@@ -311,6 +311,13 @@ def _extract_latest_value(facts: dict, concept: str, prefer_quarterly: bool = Tr
     ending after it are ignored and staleness is measured from it, not today
     (per-period readers, e.g. Financial Highlights' historical columns).
     """
+    return (_latest_fact(facts, concept, max_age_years, as_of) or {}).get("val")
+
+
+def _latest_fact(facts: dict, concept: str, max_age_years: int = 3,
+                 as_of: str | None = None) -> dict | None:
+    """The fact entry _extract_latest_value reads (same selection and
+    staleness rule), for callers that also need its `end`."""
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
     concept_data = us_gaap.get(concept, {})
     units = concept_data.get("units", {})
@@ -346,7 +353,7 @@ def _extract_latest_value(facts: dict, concept: str, prefer_quarterly: bool = Tr
             # the issuer likely stopped using this concept. Return None.
             if top.get("end", "") < cutoff:
                 return None
-            return top.get("val")
+            return top
 
     return None
 
@@ -1161,7 +1168,27 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
 
     as_of resolves the same ladder as the filer stood at a past balance-sheet
     date (Financial Highlights' historical per-share columns); None = today.
+
+    Each rung must also be plausible as a TOTAL against the same-date share
+    count (_not_a_carrying_total): OCFC tagged PreferredStockValue $1K (par)
+    over 57,370 shares while the ~$55M carrying value sat in APIC, and after
+    redeeming them kept tagging a per-share $1,000 liquidation preference.
+    A fresh explicit ZERO share count is the balance sheet saying none is
+    outstanding: it supersedes an older value (SFNC's 2023 $80M class-of-
+    stock liquidation figure vs 0 shares from Dec-2023) and dividend
+    evidence from a period ending no later than it (paid before a
+    redemption — OCFC Q2-2025, CUBI Q4-2025).
     """
+    share_facts = [f for f in (
+        _latest_fact(facts, "PreferredStockSharesOutstanding",
+                     max_age_years=1, as_of=as_of),
+        _latest_fact(facts, "PreferredStockSharesIssued",
+                     max_age_years=1, as_of=as_of),
+    ) if f and f.get("val") is not None]
+    shares = max((f["val"] for f in share_facts), default=None)
+    zero_end = (max(f.get("end", "") for f in share_facts)
+                if shares == 0 else "")
+
     value = None
     for concept in (
         "PreferredStockValue",
@@ -1173,17 +1200,14 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
         # A par-only tag can read exactly 0 while the real carrying value sits
         # in an untagged APIC line (PNC: PreferredStockValue $0 but ~$4B pfd
         # outstanding). Treat 0 as "keep looking" — never as a resolved value.
-        v = _extract_latest_value(facts, concept, max_age_years=1, as_of=as_of)
-        if v:
+        fact = _latest_fact(facts, concept, max_age_years=1, as_of=as_of)
+        v = fact.get("val") if fact else None
+        end = fact.get("end", "") if fact else ""
+        if v and end >= zero_end and not _not_a_carrying_total(
+                concept, v, _preferred_shares_at(facts, end)):
             value = v
             break
 
-    shares = (
-        _extract_latest_value(facts, "PreferredStockSharesOutstanding",
-                              max_age_years=1, as_of=as_of)
-        or _extract_latest_value(facts, "PreferredStockSharesIssued",
-                                 max_age_years=1, as_of=as_of)
-    )
     has_preferred = bool(value) or bool(shares and shares > 0)
 
     if not has_preferred:
@@ -1200,8 +1224,8 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
             "PaymentsOfDividendsPreferredStockAndPreferenceStock",
             "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock",
         ):
-            v = _extract_latest_value(facts, concept, max_age_years=1, as_of=as_of)
-            if v:
+            fact = _latest_fact(facts, concept, max_age_years=1, as_of=as_of)
+            if fact and fact.get("val") and fact.get("end", "") > zero_end:
                 has_preferred = True
                 break
 
@@ -1211,6 +1235,60 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
     # Filer has preferred; value is None when only a par-zero/stale tag exists
     # (unresolved → caller renders n/a per the cardinal rule).
     return value, True
+
+
+def _preferred_shares_at(facts: dict, end: str) -> float | None:
+    """Preferred share count reported for exactly `end` (see
+    _same_date_preferred_count), or None when none is."""
+    return _same_date_preferred_count([
+        e.get("val")
+        for c in ("PreferredStockSharesOutstanding", "PreferredStockSharesIssued")
+        for e in facts.get("facts", {}).get("us-gaap", {}).get(c, {})
+                      .get("units", {}).get("shares", [])
+        if e.get("end") == end and e.get("val") is not None])
+
+
+def _same_date_preferred_count(vals: list) -> float | None:
+    """One count from every PreferredStockShares(Outstanding|Issued) fact at a
+    date: the SMALLEST NONZERO, so a ×1000-mis-scaled duplicate (FMBM:
+    205,327 and 205,327,000 at 2020-12-31) can't make a real carrying
+    value look par-only, and a stray 0 beside a real count (NEWT: 0
+    outstanding / 20,000,000 issued) isn't read as none; 0 only when every
+    fact says 0; None when there are none."""
+    nonzero = [v for v in vals if v]
+    return min(nonzero) if nonzero else (0 if vals else None)
+
+
+# Below this per preferred share a ladder value is par only. Universe survey
+# 2026-09-30: par-only values sit at $0.002–0.017/share (OCFC, FLG, TCBI,
+# CCNE); real carrying values over share counts the filer tagged ×1000 (ASB
+# 165,000,000 for 165,000; NEWT, SBFG) sit at $0.93–0.99 — a $1 cut would
+# n/a them. The lowest correctly-tagged carrying value is PNFP's $9.86.
+_PAR_ONLY_PER_SHARE = 0.10
+
+
+def _not_a_carrying_total(concept: str, value: float, shares: float | None) -> bool:
+    """True when a nonzero preferred ladder value can't be the class's total
+    carrying/liquidation amount given the same-date share count:
+      • zero shares at the date → nothing is outstanding; every such case in
+        the 2016–2026 universe was a mis-tag with no preferred on the balance
+        sheet (BSRR tagged its $112.9M COMMON stock line; TCBK $62.9M; ABCB
+        $5M), or a per-share liquidation figure (OCFC, UCB, CMTV);
+      • under _PAR_ONLY_PER_SHARE per share is par only — the carrying value
+        sits in APIC (OCFC: PreferredStockValue $1K over 57,370
+        $1,000-liquidation shares);
+      • a liquidation preference is a per-share figure misread as a total
+        when it is under $25 a share (the smallest bank-preferred liquidation
+        amount; OCFC 2020 tagged its per-share $1,000 as $1,000,000 → $17.43
+        over 57,370 shares) or ≤ $100K over >1 share.
+    No same-date count → no evidence either way → accepted."""
+    if shares is None:
+        return False
+    if shares <= 0 or value / shares < _PAR_ONLY_PER_SHARE:
+        return True
+    if concept == "PreferredStockLiquidationPreferenceValue":
+        return value / shares < 25 or (shares > 1 and value <= 100_000)
+    return False
 
 
 def _latest_end_date(facts: dict, concept: str) -> str | None:
