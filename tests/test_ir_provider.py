@@ -452,6 +452,30 @@ class TestFreshCapitalGate(unittest.TestCase):
         self.ip._latest_filing_period_end = lambda cik: None
         self.assertIsNone(self.ip._compute_fresh_capital(1))
 
+    def test_filed_10q_without_tagged_capital_still_surfaces(self):
+        # P2-1: C's Q2 10-Q is on file (reports through the release's quarter)
+        # but tags no capital table, so the filed table covers only FY2025.
+        # Gated on the TABLE's coverage, the release ratio still surfaces — the
+        # latest-filing gate alone would hide the quarter everywhere.
+        self.ip.latest_earnings_release = lambda cik: self._REL
+        self.ip._latest_filing_period_end = lambda cik: "2026-03-31"
+        self.assertIsNone(self.ip._compute_fresh_capital(1))            # old gate
+        out = self.ip._compute_fresh_capital(1, covered_through="2025-12-31")
+        self.assertIsNotNone(out)
+        self.assertEqual(out["quarter"], "2026-03-31")
+        self.assertEqual(out["ratios"]["cet1_ratio"], 9.96)
+
+    def test_table_covering_quarter_suppressed(self):
+        # JPM-style: the filed table already carries the quarter → no callout,
+        # and the latest-filing lookup is not consulted.
+        self.ip.latest_earnings_release = lambda cik: self._REL
+
+        def _boom(cik):
+            raise AssertionError("covered_through must replace this lookup")
+        self.ip._latest_filing_period_end = _boom
+        self.assertIsNone(
+            self.ip._compute_fresh_capital(1, covered_through="2026-03-31"))
+
     def test_unconfirmed_cet1_suppressed(self):
         # No double-confirmed CET1 anchor in the release → nothing to surface
         # (filing period not even consulted).
