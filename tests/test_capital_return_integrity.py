@@ -12,6 +12,11 @@ D3 — absent dividend/buyback data fabricated 0% shareholder yields and
      $0 quarterly totals (fillna(0)).
 D6 — duration concepts (DPS, flows) deduped by end-date alone mixed 3-month
      and YTD-cumulative facts (JPM "DPS TTM" $14.60 vs true ~$5.70).
+D7 — equity read the first fresh concept (plain StockholdersEquity, 2-year
+     tolerance) and forward-filled it: tag-switchers carried their last
+     plain-SE balance into later quarters (TMP 713,444,000 @ 2024-12-31 in
+     every 2025-26 row) and RBB's NCI-inclusive total read as parent equity
+     (2026-09-30; real fragments from tests.test_parent_equity_resolution).
 
 All expectations hand-computed. Dates are generated relative to today so the
 2-year freshness cutoff in _extract_series never silently stales the fixtures.
@@ -21,6 +26,7 @@ from __future__ import annotations
 import sys
 import unittest
 from datetime import date
+from unittest.mock import patch
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +43,8 @@ from tests import _streamlit_stub  # noqa: E402
 
 _streamlit_stub.install()
 
+import analysis.capital_return as cr  # noqa: E402
+import tests.test_parent_equity_resolution as _pe  # noqa: E402
 from analysis.capital_return import (  # noqa: E402
     _derive_quarterly_from_ytd,
     _full_window_sum,
@@ -222,6 +230,167 @@ class TestDurationDerivation(unittest.TestCase):
         out = _derive_quarterly_from_ytd(entries)
         q3 = [e for e in out if e["quarter"] == 3][0]
         self.assertIsNone(q3["val_quarterly"])
+
+
+# ── P2-9 (numbers review 2026-09-24) ─────────────────────────────────────
+# JPM's "Dividend Payout" rendered "—" with "Dividend data not available in
+# SEC filings". JPM tags its cash-flow "Dividends paid" (common + preferred,
+# one line) as us-gaap:PaymentsOfDividends and buybacks as
+# PaymentsForRepurchaseOfCommonStock — but sec_client.SLIM_USGAAP_CONCEPTS
+# drops every dividend-$ / buyback-$ concept, so fetch_company_facts never
+# serves them. Values below are JPM's own filings, hand-read 2026-09-30:
+#   10-Q 2026-06-30 (acc 0001628280-26-054343) cash flow, $M:
+#     Dividends paid (8,716) 6M'26 / (8,028) 6M'25
+#     Treasury stock repurchased (15,113) 6M'26 / (15,034) 6M'25
+#   10-K 2025 (acc 0001628280-26-008131): Dividends paid (16,625),
+#     Treasury stock repurchased (31,591)
+#   10-Q Q1'26 / Q1'25 / Q3'25 companyfacts YTD: dividends 4,374 / 3,823 /
+#     12,208; buybacks 8,325 / 7,528 / 23,327.
+# TTM dividends paid = 16,625 − 8,028 + 8,716 = 17,313 $M;
+# TTM buybacks       = 31,591 − 15,034 + 15,113 = 31,670 $M.
+# Years are shifted to the latest completed June so the 2-year freshness
+# guard in _extract_series never stales the fixture; the values are JPM's.
+
+def _jpm_blob():
+    t = date.today()
+    y1 = t.year if t >= date(t.year, 7, 1) else t.year - 1   # "2026"
+    y0 = y1 - 1                                              # "2025"
+    M = 1e6
+
+    def ytd(end, v, fp, form="10-Q"):
+        return {"start": f"{end[:4]}-01-01", "end": end, "val": v * M,
+                "form": form, "filed": f"{y1}-08-06", "fp": fp, "fy": None}
+
+    def flows(vals):
+        q1a, h1a, m9a, fya, q1b, h1b = vals
+        return [ytd(f"{y0}-03-31", q1a, "Q1"), ytd(f"{y0}-06-30", h1a, "Q2"),
+                ytd(f"{y0}-09-30", m9a, "Q3"),
+                ytd(f"{y0}-12-31", fya, "FY", form="10-K"),
+                ytd(f"{y1}-03-31", q1b, "Q1"), ytd(f"{y1}-06-30", h1b, "Q2")]
+
+    def qtr(end, start, v):
+        return {"start": start, "end": end, "val": v * M, "form": "10-Q",
+                "filed": f"{y1}-08-06", "fp": None, "fy": None}
+
+    # Net income: synthetic (not JPM) 16,000 $M every quarter — only the
+    # payout arithmetic depends on it.
+    ni = [qtr(f"{y0}-09-30", f"{y0}-07-01", 16000),
+          qtr(f"{y0}-12-31", f"{y0}-10-01", 16000),
+          qtr(f"{y1}-03-31", f"{y1}-01-01", 16000),
+          qtr(f"{y1}-06-30", f"{y1}-04-01", 16000)]
+    return {"facts": {"us-gaap": {
+        "PaymentsOfDividends": {"units": {"USD": flows(
+            (3823, 8028, 12208, 16625, 4374, 8716))}},
+        "PaymentsForRepurchaseOfCommonStock": {"units": {"USD": flows(
+            (7528, 15034, 23327, 31591, 8325, 15113))}},
+        "NetIncomeLoss": {"units": {"USD": ni}},
+    }}}
+
+
+class TestP29DividendsFromCashFlow(unittest.TestCase):
+    """With the cash-flow concepts served, the pipeline yields JPM's filed
+    TTM figures — labeled as TOTAL dividends (JPM's line includes preferred),
+    never passed off as common."""
+
+    def _summarize(self, blob):
+        from unittest import mock
+        import analysis.capital_return as cr
+        with mock.patch.object(cr, "fetch_company_facts", lambda cik: blob):
+            return cr.summarize_capital_return(19617, market_cap=None)
+
+    def test_jpm_ttm_dividends_and_buybacks_match_filings(self):
+        res = self._summarize(_jpm_blob())
+        self.assertEqual(res["dividend_source"], "total (includes preferred)")
+        ttm = res["ttm"]
+        self.assertEqual(ttm["dividends_ttm"], 17_313e6)
+        self.assertEqual(ttm["buybacks_ttm"], 31_670e6)
+        # Quarters by YTD differencing: Q3 12,208−8,028; Q4 16,625−12,208;
+        # Q1 4,374; Q2 8,716−4,374.
+        tl = res["timeline"].tail(4)
+        self.assertEqual(list(tl["dividends_q"]),
+                         [4_180e6, 4_417e6, 4_374e6, 4_342e6])
+        # Payout = 17,313 / (4 × 16,000) against the synthetic NI.
+        self.assertAlmostEqual(ttm["payout_ratio_ttm"], 17_313 / 64_000, places=12)
+
+    def test_slim_projection_serves_dividend_and_buyback_concepts(self):
+        # THE P2-9 failure, end to end: the same blob through the slim
+        # companyfacts projection (what fetch_company_facts really serves)
+        # lost PaymentsOfDividends / PaymentsForRepurchaseOfCommonStock →
+        # "Dividend data not available".
+        from data.sec_client import _slim_facts
+        res = self._summarize(_slim_facts(_jpm_blob()))
+        self.assertEqual(res["ttm"]["dividends_ttm"], 17_313e6)
+        self.assertEqual(res["ttm"]["buybacks_ttm"], 31_670e6)
+
+    def test_every_capital_return_concept_is_slimmed_in(self):
+        # Any concept capital_return reads but the slim projection drops is
+        # silently absent in production (P2-9 class).
+        import analysis.capital_return as CR
+        from data.sec_client import SLIM_USGAAP_CONCEPTS
+        read = (CR._DIVIDEND_COMMON_CONCEPTS + CR._DIVIDEND_TOTAL_CONCEPTS
+                + CR._DIVIDEND_PREFERRED_CONCEPTS + CR._BUYBACK_CONCEPTS
+                + CR._NET_INCOME_CONCEPTS)
+        self.assertEqual([c for c in read if c not in SLIM_USGAAP_CONCEPTS], [])
+
+    def test_total_minus_preferred_matches_duration_not_just_end(self):
+        # A preferred concept tagged BOTH 3-month and YTD at the same end
+        # (equity-statement DividendsPreferredStockCash) was subtracted twice
+        # from the one YTD total when matched by end date alone:
+        # H1 common = 1,000 − 30 − 60 = 910 → Q2 460 (wrong).
+        # By duration: Q1 = 480 − 30 = 450; H1 = 1,000 − 60 = 940;
+        # Q2 = 940 − 450 = 490 (hand).
+        y = date.today().year - 1
+        M = 1e6
+
+        def e(start, end, v):
+            return {"start": start, "end": end, "val": v * M, "form": "10-Q",
+                    "filed": f"{y}-08-01", "fp": None, "fy": None}
+        blob = {"facts": {"us-gaap": {
+            "PaymentsOfDividends": {"units": {"USD": [
+                e(f"{y}-01-01", f"{y}-03-31", 480),
+                e(f"{y}-01-01", f"{y}-06-30", 1000)]}},
+            "DividendsPreferredStockCash": {"units": {"USD": [
+                e(f"{y}-01-01", f"{y}-03-31", 30),
+                e(f"{y}-04-01", f"{y}-06-30", 30),
+                e(f"{y}-01-01", f"{y}-06-30", 60)]}},
+        }}}
+        res = self._summarize(blob)
+        self.assertEqual(res["dividend_source"], "total minus preferred")
+        tl = res["timeline"]
+        self.assertEqual(list(tl["dividends_q"]), [450e6, 490e6])
+        self.assertEqual(list(tl["dividends_q_ytd"]), [450e6, 940e6])
+class TestParentEquityTimeline(unittest.TestCase):
+    """D7. Values hand-verified against R2.htm (see
+    tests.test_parent_equity_resolution): RBB Mar 31 2026 total 531,054,000
+    less NCI 72,000 = 530,982,000 (10-Q 0001437749-26-015865); TMP Jun 30
+    2026 "Total Equity" 959,932 ($K), no NCI (10-Q 0001005817-26-000112)."""
+
+    def _equity(self, facts):
+        with patch.object(cr, "fetch_company_facts", return_value=facts):
+            tl = cr.build_capital_return_timeline(1)
+        return dict(zip(tl["end"], tl["equity"]))
+
+    def test_tmp_stale_plain_se_not_carried_forward(self):
+        eq = self._equity(_pe.TMP)
+        self.assertEqual(eq["2026-06-30"], 959_932_000)     # was 713,444,000
+        self.assertEqual(eq["2026-03-31"], 946_741_000)
+        self.assertEqual(eq["2024-12-31"], 713_444_000)
+
+    def test_rbb_nci_removed(self):
+        eq = self._equity(_pe.RBB)
+        self.assertEqual(eq["2026-03-31"], 531_054_000 - 72_000)
+        self.assertEqual(eq["2026-06-30"], 535_177_000 - 72_000)
+
+    def test_unseparable_nci_is_na_not_forward_filled(self):
+        # RBB's real Q1-2026 dividend fact (10-Q 0001437749-26-015865) gives
+        # 2026-03-31 a timeline row even when equity can't resolve there.
+        facts = _pe._drop(_pe.RBB, _pe.MI, "2026-03-31")
+        facts["facts"]["us-gaap"]["PaymentsOfDividends"] = {"units": {"USD": [
+            _pe._e("2026-03-31", 2758000, "0001437749-26-015865", "10-Q",
+                   "2026-05-08", "2026-01-01")]}}
+        eq = self._equity(facts)
+        self.assertTrue(pd.isna(eq["2026-03-31"]))
+        self.assertEqual(eq["2026-06-30"], 535_105_000)
 
 
 if __name__ == "__main__":

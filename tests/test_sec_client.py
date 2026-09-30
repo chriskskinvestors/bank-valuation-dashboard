@@ -83,10 +83,11 @@ class TestFetchCompanyFactsOk(unittest.TestCase):
         self.assertEqual(facts, {})
         self.assertFalse(ok)
 
-    # The lag overlay on the way out reads the live submissions index.
+    # The out-of-cache overlay's filing index (EDGAR submissions) — None is
+    # its "companyfacts is current" no-op, so the served blob is the cached one.
     @patch("data.sec_earnings_8k.latest_periodic_filing", return_value=None)
     @patch("data.cache.get")
-    def test_cache_hit_is_ok_true(self, mock_cget, _lpf):
+    def test_cache_hit_is_ok_true(self, mock_cget, _periodic):
         from data.sec_client import fetch_company_facts_ok
         mock_cget.return_value = {"facts": {"dei": {}}}
         facts, ok = fetch_company_facts_ok(320193)

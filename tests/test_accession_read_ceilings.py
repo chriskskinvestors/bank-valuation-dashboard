@@ -75,7 +75,7 @@ class _IsolatedCache(unittest.TestCase):
 class TestScraperPayloadsServedPast24h(_IsolatedCache):
     def test_holdco_capital(self):
         cap = {"2025-12-31": {"cet1_ratio": 12.5}}
-        self._put_aged(f"holdco_cap:v3:{META['accession']}", cap)
+        self._put_aged(f"holdco_cap:v4:{META['accession']}", cap)
         with patch.object(sfs, "_get", _no_network):
             self.assertEqual(sfs._holdco_capital_extract_cached(META, None), cap)
 

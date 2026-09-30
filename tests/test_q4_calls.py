@@ -187,7 +187,7 @@ class TestRefreshSnapshot(unittest.TestCase):
         ir.get_ir_endpoints = lambda: {"ACME": "https://investor.acme.com",
                                        "NONE": "https://investor.none.com"}
         ir._q4_announcement = lambda url, today_iso: None   # no PR body in this test
-        # A bank with no Q4 events falls back to the IRapp RSS — live HTTP.
+        # The IRapp fallback for a host with no Q4 data (live RSS fetch).
         ir._irapp_announcement = lambda url, today_iso: None
 
     def tearDown(self):

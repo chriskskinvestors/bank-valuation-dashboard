@@ -136,6 +136,20 @@ class TestUndefinedQuotientsNulled(unittest.TestCase):
         self.assertEqual(r, jpm)
         self.assertAlmostEqual(r["EEFFR"], 48709000 / 89575000 * 100, places=12)
 
+    def test_quarterly_efficiency_non_positive_revenue_is_na(self):
+        """(2026-09-30) Over IEFFQ <= 0 FDIC reports the RAW quotient, not 0.
+        Live 6/30/2026: cert 12013 3,728 / -1,134 → -328.75; cert 11411
+        -668 / -762 → 87.66 (plausible-looking). JPM (628) 24,711,000 /
+        45,718,000 = 54.05% is kept."""
+        r = null_undefined_quotients({"EEFFQ": 3728, "IEFFQ": -1134, "EEFFQR": -328.75})
+        self.assertIsNone(r["EEFFQR"])
+        r = null_undefined_quotients({"EEFFQ": -668, "IEFFQ": -762, "EEFFQR": 87.66})
+        self.assertIsNone(r["EEFFQR"])
+        jpm = {"EEFFQ": 24711000, "IEFFQ": 45718000, "EEFFQR": 54.05}
+        r = null_undefined_quotients(dict(jpm))
+        self.assertEqual(r, jpm)
+        self.assertAlmostEqual(24711000 / 45718000 * 100, r["EEFFQR"], delta=0.005)
+
     def test_absent_denominator_key_means_no_inference(self):
         # A cache/history row written before NTTOT/NCLNLS were fetched.
         r = null_undefined_quotients({"ELNANTR": 0, "LNRESNCR": 0, "NCRECONR": 0})

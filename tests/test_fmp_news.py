@@ -28,7 +28,6 @@ _streamlit_stub.install()
 
 import data.fmp_client as fmp  # noqa: E402
 import data.bank_mapping as bank_mapping  # noqa: E402
-import data.events.wire_base as wire_base  # noqa: E402
 from data.events.fmp_news import (  # noqa: E402
     FMPPressReleaseAdapter, _is_subject, _subject_phrase, _title_is_scenery,
 )
@@ -48,13 +47,8 @@ def _poll(ticker, rows):
     tags each row with a `symbol`; the batch endpoint returns it, so inject
     `ticker` as the symbol on each fixture row."""
     tagged = [{**r, "symbol": ticker} for r in rows]
-    # is_junk_news's counterparty check lazily builds the wire name index from
-    # the FULL universe (get_universe → a live ~6-min rebuild when the local
-    # snapshot is stale). No fixture headline is analyst/deal-shaped, so the
-    # check is False for every row regardless of the index — stub it.
     with patch.object(fmp, "_has_key", return_value=True), \
-         patch.object(fmp, "get_press_releases_multi", return_value=tagged), \
-         patch.object(wire_base, "_is_counterparty_mention", return_value=False):
+         patch.object(fmp, "get_press_releases_multi", return_value=tagged):
         return FMPPressReleaseAdapter().poll([ticker])
 
 
@@ -68,8 +62,6 @@ class TestSubjectConfirmation(unittest.TestCase):
 
     def test_wrong_company_polluted_symbol_dropped(self):
         # The live CMA failure: FMP tagged Country-Music / mining releases to CMA.
-        # get_name pinned: CMA is no longer in the curated map, so it resolved
-        # through the local universe snapshot or a live SEC ticker lookup.
         with patch.object(bank_mapping, "get_name", return_value="Comerica Incorporated"):
             evs = _poll("CMA", [
                 _row("Tractor Supply Celebrates Country Music's Rising Stars at CMA Fest"),

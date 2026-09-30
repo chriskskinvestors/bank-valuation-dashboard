@@ -61,6 +61,8 @@ jobs:
       - name: Execute job and wait
         if: ${{ !inputs.logs_only }}
         run: |
+          # The log step below reads from HERE, not 12h back (see its note).
+          echo "RUN_START=$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           ARGS=()
           if [ -n "${{ inputs.args }}" ]; then
             ARGS+=(--args="${{ inputs.args }}")
@@ -77,15 +79,33 @@ jobs:
       #
       # The window is an explicit timestamp bound in the filter, not
       # --freshness: gcloud ignores --freshness under --order=asc, which
-      # silently returned the job's 400 OLDEST entries. 12h so a
-      # mid-morning read still covers the 06:00 ET nightly run.
-      - name: Print the job's container output (Cloud Logging, last 12h)
+      # silently returned the job's 400 OLDEST entries. logs_only reads the
+      # last 12h so a mid-morning read still covers the 06:00 ET nightly run.
+      # After an execution it reads from that execution's start instead: with
+      # --order=asc the --limit keeps the OLDEST lines, so on 2026-09-30 an
+      # earlier same-day verify-metrics run filled the window and this run's
+      # results block was cut off entirely.
+      #
+      # Cloud Logging ingests with a lag: read the instant --wait returns and
+      # the job's LAST lines (its summary) are missing — the same day, the
+      # first fixed read stopped at the results header. After an execution,
+      # re-read until the terminal "Container called exit" line is in (≤ ~2
+      # min), then print.
+      - name: Print the job's container output (Cloud Logging)
         if: ${{ always() }}
         run: |
-          SINCE="$(date -u -d '-12 hours' +%Y-%m-%dT%H:%M:%SZ)"
-          gcloud logging read \
-            "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }} AND timestamp>=\"${SINCE}\"" \
-            --project="${{ env.PROJECT_ID }}" \
-            --order=asc --limit=2000 \
-            --format="value(timestamp,textPayload)" \
-            || echo "::warning::could not read Cloud Logging (github-deployer lacks roles/logging.viewer?)"
+          SINCE="${RUN_START:-$(date -u -d '-12 hours' +%Y-%m-%dT%H:%M:%SZ)}"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            gcloud logging read \
+              "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }} AND timestamp>=\"${SINCE}\"" \
+              --project="${{ env.PROJECT_ID }}" \
+              --order=asc --limit=2000 \
+              --format="value(timestamp,textPayload)" > /tmp/job.log \
+              || { echo "::warning::could not read Cloud Logging (github-deployer lacks roles/logging.viewer?)"; break; }
+            if [ -z "${RUN_START}" ] || grep -q "Container called exit" /tmp/job.log; then
+              break
+            fi
+            echo "(log tail not ingested yet — retry ${attempt}/8 in 15s)"
+            sleep 15
+          done
+          cat /tmp/job.log 2>/dev/null || true

@@ -85,20 +85,17 @@ class TestQ4PressReleases(unittest.TestCase):
         self.assertTrue(all(u.startswith("https://investorrelations.provident.bank/")
                             for (u, _h, _d) in out))
 
-    # A markerless home falls back to the functional API probe (live GET), and
-    # _q4_site reads/writes a per-host cache row — stub both so the verdict
-    # comes from the fixture, not the network or whatever the local cache holds.
     def test_non_q4_site_returns_none(self):
         # No q4 marker / no apiKey → not Q4 → None so the caller HTML-scrapes.
+        # _q4_api_probe is the functional (live HTTP) fallback for a markerless
+        # homepage; a non-Q4 host fails it.
         with patch.object(ir, "_fetch", return_value="<html><body>plain site</body></html>"), \
-                patch.object(ir, "_q4_api_probe", return_value=False), \
-                patch("data.cache.get", return_value=None), patch("data.cache.put"):
+             patch.object(ir, "_q4_api_probe", return_value=False):
             self.assertIsNone(ir._q4_press_releases("https://example.com/ir", self.CUTOFF))
 
     def test_unfetchable_home_returns_none(self):
         with patch.object(ir, "_fetch", return_value=None), \
-                patch.object(ir, "_q4_api_probe", return_value=False), \
-                patch("data.cache.get", return_value=None), patch("data.cache.put"):
+             patch.object(ir, "_q4_api_probe", return_value=False):
             self.assertIsNone(ir._q4_press_releases("https://x/ir", self.CUTOFF))
 
     def test_adapter_emits_q4_events_for_pfs(self):
@@ -124,18 +121,15 @@ class TestIRDiscovery(unittest.TestCase):
         self.assertEqual(ir._domain_root(""), "")
 
     def test_discover_probes_subdomains(self):
-        # Q4 only on investorrelations.<domain>; ir./investors. miss.
-        # Discovery probes via _is_ir_platform → _q4_site + _irapp_site, then
-        # falls back to the main site's IR link (_fetch). Stub all three: the
-        # old _q4_apikey patch was no longer on this path, so the probes ran
-        # LIVE (or rode whatever the local cache held).
-        def fake_q4_site(url):
-            if url == "https://investorrelations.provident.bank/":
-                return True, "KEY"
-            return False, None
-        with patch.object(ir, "_q4_site", side_effect=fake_q4_site), \
-                patch.object(ir, "_irapp_site", return_value=False), \
-                patch.object(ir, "_fetch", return_value=None):
+        # Q4 only on investorrelations.<domain>; ir./investors. miss. Stubbed at
+        # the per-host platform probes (_is_ir_platform's two legs) and the
+        # main-page fetch of the investor-link fallback — all live HTTP.
+        def fake_site(url):
+            hit = url == "https://investorrelations.provident.bank/"
+            return (True, "KEY") if hit else (False, None)
+        with patch.object(ir, "_q4_site", side_effect=fake_site), \
+             patch.object(ir, "_irapp_site", return_value=False), \
+             patch.object(ir, "_fetch", return_value=None):
             self.assertEqual(ir.discover_q4_ir_url("www.provident.bank"),
                              "https://investorrelations.provident.bank/")
             self.assertIsNone(ir.discover_q4_ir_url("www.nonq4bank.com"))

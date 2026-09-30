@@ -88,8 +88,21 @@ def main() -> int:
         t for t, info in BANK_MAP.items()
         if info.get("cik") is None and info.get("fdic_cert") is None
     }
-    tickers = sorted((set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
+    covered = get_universe_tickers()
+    tickers = sorted((set(covered) | set(DEFAULT_WATCHLIST))
                        - explicit_exclusions)
+
+    # One charter, one screen row: two covered tickers on one FDIC cert list
+    # the same bank twice (FNFI + its Series A preferred FNFPA, 2026-09-30)
+    # or are a wrong-entity join. Either way the screens are wrong — fail.
+    from data.bank_mapping import get_fdic_cert
+    from data.bank_universe import shared_cert_claims
+    shared = shared_cert_claims({t: get_fdic_cert(t) for t in covered})
+    if shared:
+        print("\nFAILURE — FDIC cert claimed by 2+ covered tickers:")
+        for cert, ts in shared.items():
+            print(f"  cert {cert}: {', '.join(ts)}")
+        return 1
     if explicit_exclusions:
         print(f"(Skipping {len(explicit_exclusions)} explicit-exclusion tickers: "
               f"{', '.join(sorted(explicit_exclusions))})")

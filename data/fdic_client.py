@@ -31,8 +31,9 @@ _BASE_FINANCIALS_FIELDS = {
     "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR", "ITAX", "PTAXNETINC",
     "SC", "LNLSGR", "CHBAL", "DEPNIDOM", "LIAB", "ROA", "ROE", "EEFFR",
     # EEFFR's own components (risview: EEFFR = EEFF / IEFF) — multi-charter
-    # groups rebuild efficiency as ΣEEFF / ΣIEFF (data/cert_group).
-    "EEFF", "IEFF",
+    # groups rebuild efficiency as ΣEEFF / ΣIEFF (data/cert_group); EEFFQ/
+    # IEFFQ are the single-quarter pair behind EEFFQR.
+    "EEFF", "IEFF", "EEFFQ", "IEFFQ",
     "NCLNLSR", "NTLNLSR", "LNATRESR", "IDT1CER", "RBCRWAJ", "RBCT1JR", "INTAN",
     # Single-QUARTER ratio variants (the defaults above are YTD-annualized):
     # the earnings-exhibit history columns are quarters (EXHIBIT_FDIC_Q_MAP).
@@ -432,12 +433,15 @@ def null_unreported_capital(rec: dict) -> dict:
 # above). EEFFR joined 2026-09-30 once its dictionary components were known:
 # IEFF null or <= 0 gave EEFFR 0 in every case (17-19 institutions per
 # quarter, and every pre-1990 quarter — JPM's 1984 rows read "0.0%").
+# EEFFQR differs: FDIC reports the raw quotient over IEFFQ <= 0 (2-4 banks
+# per quarter: cert 12013 -328.75%, cert 11411 -668/-762 = 87.66%, a
+# plausible-looking figure) — undefined all the same, so it is nulled too.
 # Denominators are data/cert_group._EXACT_QUOTIENTS' — one formula table for
 # both paths.
 _DEN_ZERO_REPORTED_AS_ZERO = (
     "LNLSDEPR", "IDLNCORR", "NCLNLSR", "LNATRESR", "LNRESNCR",
     "IDNCCIR", "IDNCCONR", "NCRER", "NCRECONR", "NCRELOCR", "NCREMULR",
-    "NCRENRER", "NCRERESR", "ELNANTR", "IDERNCVR", "EEFFR",
+    "NCRENRER", "NCRERESR", "ELNANTR", "IDERNCVR", "EEFFR", "EEFFQR",
 )
 
 
