@@ -565,13 +565,49 @@ class TestTtmWindowIntegrity(unittest.TestCase):
         # The old 5-quarter window returned 5 + 6 + 8 + 9 = 28.
         self.assertEqual(ttm, 33.0)
 
-    def test_non_contiguous_quarters_fall_back_to_annual(self):
+    def test_q4_from_fy_minus_three_discrete_quarters(self):
         from data.sec_client import _extract_ttm_value
-        # No 9M YTD → Q4 underivable → the 4 newest quarters span 5
-        # calendar quarters and must be rejected in favor of the FY value.
+        # No 9M YTD, but Q1-Q3 are each tagged: Q4 = FY − (Q1+Q2+Q3)
+        # = 29 − (5+6+8) = 10, so TTM = 6 + 8 + 10 + 9 = 33 (HOMB 2025 shape;
+        # the old code served the FY 29 beside the newer Q1).
         entries = [r for r in self.SFST_SHAPE if r[:2] != ("2025-01-01", "2025-09-30")]
         ttm = _extract_ttm_value(_flow_facts(entries), "NetIncomeLoss")
-        self.assertEqual(ttm, 29.0)
+        self.assertEqual(ttm, 33.0)
+
+    def test_stale_annual_is_never_served_as_ttm(self):
+        from data.sec_client import _extract_ttm_value
+        # Q3 missing entirely (companyfacts skipped that 10-Q — PNFP/CBC/ENBP
+        # 2026-09): no window can form, and the FY that ended BEFORE the
+        # newest filed quarter is not the trailing twelve months → None
+        # (REVIEW-2026-09-24 P0-5; it used to return the FY 29).
+        entries = [r for r in self.SFST_SHAPE
+                   if r[:2] not in (("2025-01-01", "2025-09-30"),
+                                    ("2025-07-01", "2025-09-30"))]
+        self.assertIsNone(_extract_ttm_value(_flow_facts(entries), "NetIncomeLoss"))
+
+    def test_annual_only_filer_still_gets_fy(self):
+        from data.sec_client import _extract_ttm_value
+        # Nothing newer than the FY → the FY IS the latest twelve months.
+        entries = [("2025-01-01", "2025-12-31", 29.0, "10-K", "2026-02-20"),
+                   ("2024-01-01", "2024-12-31", 25.0, "10-K", "2025-02-20")]
+        self.assertEqual(_extract_ttm_value(_flow_facts(entries), "NetIncomeLoss"), 29.0)
+
+    def test_citi_overlay_gap_q1_from_h1_minus_q2(self):
+        from data.sec_client import _extract_ttm_value
+        # Citi 2026-09 ($M): companyfacts holds 2025 (Q3 3M, 9M, FY); the
+        # iXBRL overlay adds only the Q2-26 10-Q (Q2 3M + H1). Q1-26 is
+        # derived as H1 − Q2 = 11,616 − 5,831 = 5,785 (the company's Q1),
+        # Q4-25 = FY − 9M = 14,306 − 11,835 = 2,471. TTM = 3,752 + 2,471 +
+        # 5,785 + 5,831 = 17,839 — the supplement's figure, exactly. The old
+        # code returned the FY 14,306 under "EPS (TTM, co. 10-Q)".
+        entries = [
+            ("2025-07-01", "2025-09-30", 3_752.0, "10-Q", "2025-11-04"),
+            ("2025-01-01", "2025-09-30", 11_835.0, "10-Q", "2025-11-04"),
+            ("2025-01-01", "2025-12-31", 14_306.0, "10-K", "2026-02-20"),
+            ("2026-04-01", "2026-06-30", 5_831.0, "10-Q", "2026-08-06"),
+            ("2026-01-01", "2026-06-30", 11_616.0, "10-Q", "2026-08-06"),
+        ]
+        self.assertEqual(_extract_ttm_value(_flow_facts(entries), "NetIncomeLoss"), 17_839.0)
 
     def test_four_discrete_consecutive_quarters_sum_directly(self):
         from data.sec_client import _extract_ttm_value

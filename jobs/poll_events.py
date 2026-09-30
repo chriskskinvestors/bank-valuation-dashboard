@@ -24,11 +24,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-# Wall-clock budgets under the 900s Cloud Run task cap. _TASK_BUDGET_S is the
+# Wall-clock budgets under the Cloud Run task cap (1500s since 2026-09-30,
+# deploy.yml; was 900s). _TASK_BUDGET_S is the
 # overall ceiling for polling; _PER_ADAPTER_S caps any single source so one slow
 # adapter (e.g. Google News over the full ~440-ticker universe) can't run past
 # the kill — it's abandoned and we commit what completed. Tuned to leave room
-# for the post-loop summarize/purge and still finish well under 900s.
+# for the post-loop summarize/purge. The polling budget was deliberately NOT
+# raised with the cap: a 1018s run hit the old 900s kill in the TAIL, so the
+# extra cap is headroom for the tail, and the ~30-min cadence stays unchanged.
 _TASK_BUDGET_S = 780
 _PER_ADAPTER_S = 240
 
@@ -173,7 +176,7 @@ def main() -> int:
 
     for adapter in adapters:
         # Overall wall-clock budget: stop polling new sources before the hard
-        # 900s task kill so we always reach the commit/summarize tail. Events
+        # task kill so we always reach the commit/summarize tail. Events
         # commit per-adapter, so skipped sources just catch up next cycle.
         remaining = _TASK_BUDGET_S - (time.time() - t0)
         if remaining <= 0:
@@ -282,7 +285,7 @@ def main() -> int:
 
     # Optional: LLM-summarize events with empty summaries (most recent first),
     # but only with budget left — and under a hard cap so the summarize pass
-    # can't push the run past the 900s task kill on its own.
+    # can't push the run past the task kill on its own.
     if os.environ.get("ANTHROPIC_API_KEY"):
         sum_budget = _TASK_BUDGET_S + 60 - (time.time() - t0)
         if sum_budget < 30:
@@ -327,6 +330,31 @@ def main() -> int:
     except Exception as e:
         print(f"  [calls] snapshot refresh failed: {type(e).__name__}: {e}",
               flush=True)
+
+    # Fifth sibling (REVIEW-2026-09-24 P1-9): the Earnings Results board was
+    # built on the RENDER thread every 15 min (FMP calendar + EDGAR release
+    # metrics per reporting bank + an FDIC institutions walk). Build it here;
+    # renders serve it up to 2h old. Capped to the remaining budget like the
+    # summarizer — in earnings season the build can take minutes, and an
+    # overrun must not push the run past the task kill.
+    rb_budget = _TASK_BUDGET_S + 60 - (time.time() - t0)
+    if rb_budget < 30:
+        print(f"  [results] board skipped — only {rb_budget:.0f}s left in budget",
+              flush=True)
+    else:
+        try:
+            from data.earnings_results import refresh_results_board_snapshot
+            tr = time.time()
+            n_rb = _run_with_timeout("results board",
+                                     refresh_results_board_snapshot, rb_budget)
+            print(f"▶ Results board refreshed — {n_rb} rows "
+                  f"({time.time()-tr:.0f}s)", flush=True)
+        except TimeoutError:
+            print(f"  [results] board hit {rb_budget:.0f}s cap — last good board "
+                  "kept; renders rebuild it if it ages past 2h", flush=True)
+        except Exception as e:
+            print(f"  [results] board refresh failed: {type(e).__name__}: {e}",
+                  flush=True)
 
     elapsed = time.time() - t0
     print(f"✓ Done in {elapsed:.1f}s — {total_new} new events, "

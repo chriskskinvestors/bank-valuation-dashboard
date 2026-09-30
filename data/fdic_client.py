@@ -106,7 +106,9 @@ def _coerce_fin_record(d: dict) -> dict:
             rec[k] = v
         else:
             rec[k] = pd.to_numeric(v, errors="coerce")
-    return rec
+    # Same literal-0 scrubs as fetch_financials: this quarter-wide path (as-of
+    # metrics, earnings results) skipped them. Defined below; called at runtime.
+    return null_undefined_quotients(null_unreported_capital(rec))
 
 
 def _fetch_fin_page(filters: str, fields: str, offset: int) -> list[dict]:
@@ -408,6 +410,53 @@ def null_unreported_capital(rec: dict) -> dict:
         for k in _RISK_BASED_RATIOS:
             if _fnum(rec.get(k)) == 0:
                 rec[k] = None
+    # Same class, one more field: FDIC zero-fills LNRESNCR (reserves ÷
+    # noncurrent loans) when noncurrent loans are zero. x/0 is undefined, not
+    # 0% — AMBK/ALBY rendered "Rsv/NPL 0%" in bottom-quintile red (2026-09-30).
+    if "NCLNLS" in rec and _fnum(rec.get("NCLNLS")) == 0 \
+            and _fnum(rec.get("LNRESNCR")) == 0:
+        rec["LNRESNCR"] = None
+    return rec
+
+
+# FDIC quotient ratios reported as a literal 0 when their denominator is zero
+# or negative. Probed live over EVERY institution for 12/31/2025, 3/31/2026
+# and 6/30/2026 (~4,300 each): for these 15, den <= 0 gave ratio 0 in every
+# case (57-2,064 banks per ratio per quarter) and never any other value, e.g.
+# cert 639 NTTOT=-12,000 → ELNANTR 0; cert 23472 NCLNLS=0 → LNRESNCR 0; a
+# bank with no construction loans → NCRECONR 0. Deliberately NOT here: the
+# ASSET-denominated ratios (denominator never <= 0 in the probe), RBC1RWAJ and
+# ASTEMPM (FDIC already reports null), RBCRWAJ/IDT1CER (the RWAJ rule above),
+# and EEFFR (only 3 distinct certs across the 3 quarters, and its components
+# do not reproduce FDIC's figure for ~20% of banks). Denominators are
+# data/cert_group._EXACT_QUOTIENTS' — one formula table for both paths.
+_DEN_ZERO_REPORTED_AS_ZERO = (
+    "LNLSDEPR", "IDLNCORR", "NCLNLSR", "LNATRESR", "LNRESNCR",
+    "IDNCCIR", "IDNCCONR", "NCRER", "NCRECONR", "NCRELOCR", "NCREMULR",
+    "NCRENRER", "NCRERESR", "ELNANTR", "IDERNCVR",
+)
+
+
+def null_undefined_quotients(rec: dict) -> dict:
+    """Null an FDIC-reported ratio whose own denominator in the same record is
+    <= 0 or FDIC-null: the quotient is undefined (no loans of that type) or
+    meaningless (net recoveries under provision ÷ NCOs), and FDIC's literal 0
+    renders as a plausible-wrong "Rsv/NPL 0.0%" or "Prov/NCO 0.00%". (A null
+    denominator: 17 institutions at 6/30/2026, ratio 0 in every case.) A
+    genuine 0 — numerator 0 over a positive denominator — is left alone.
+    Requires the denominator key PRESENT: a record fetched before the
+    component was (cache or history-store rows) says nothing about it.
+    Multi-charter groups get the same rule from cert_group's Σnum/Σden
+    recompute.
+
+    Mutates and returns `rec`; applied wherever null_unreported_capital is."""
+    from data.cert_group import _EXACT_QUOTIENTS
+    for ratio in _DEN_ZERO_REPORTED_AS_ZERO:
+        den_k = _EXACT_QUOTIENTS[ratio][1]
+        if den_k in rec:
+            den = _fnum(rec.get(den_k))
+            if den is None or den <= 0:
+                rec[ratio] = None
     return rec
 
 
@@ -437,7 +486,8 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
         print(f"[FDIC] Error fetching cert {cert}: {e}")
         return pd.DataFrame()
 
-    rows = [null_unreported_capital(r["data"]) for r in data.get("data", [])]
+    rows = [null_undefined_quotients(null_unreported_capital(r["data"]))
+            for r in data.get("data", [])]
     if not rows:
         return pd.DataFrame()
 

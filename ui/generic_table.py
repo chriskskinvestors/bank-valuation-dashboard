@@ -3,6 +3,8 @@ Generic table renderer — works for any tab by accepting a column list.
 """
 
 import html as _html
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -21,6 +23,14 @@ _HEAT_SCALE = [
     (20, "#fef2f2", "#991b1b", False),
     (0,  "#fee2e2", "#991b1b", True),
 ]
+
+
+def ran_at_et(now: datetime | None = None) -> str:
+    """'HH:MM ET' stamp for a Screen run. time.strftime printed the Cloud Run
+    container's UTC clock unlabeled ("Ran 15:07" at 11:07 ET, UX-P1-08); this
+    matches the footer's "PRICES 11:03 ET" style. ``now`` must be tz-aware."""
+    now = now or datetime.now(timezone.utc)
+    return now.astimezone(ZoneInfo("America/New_York")).strftime("%H:%M ET")
 
 
 def _heat_color(pct: float | None, higher_better: bool = True) -> str:
@@ -189,7 +199,30 @@ def render_generic_table(
     st.markdown(
         "<style>"
         ".scrn-wrap{max-height:660px;overflow:auto;border:0.5px solid var(--grid-head);}"
+        # UX-P1-07: a wide screen (27 columns) scrolls sideways inside the box.
+        # The global scrollbar thumb (10% alpha) was near-invisible — give this
+        # box a visible one, and freeze Ticker + Bank on the left so a scrolled
+        # row stays readable. Ticker is fixed-width so Bank's offset is exact.
+        ".scrn-wrap::-webkit-scrollbar{width:12px;height:12px;}"
+        ".scrn-wrap::-webkit-scrollbar-track{background:var(--grid-head-bg);}"
+        ".scrn-wrap::-webkit-scrollbar-thumb{background:var(--text-muted);}"
+        "@supports not selector(::-webkit-scrollbar){.scrn-wrap{"
+        "scrollbar-color:var(--text-muted) var(--grid-head-bg);}}"
+        ".scrn-wrap th:nth-child(-n+2),.scrn-wrap td:nth-child(-n+2)"
+        "{position:sticky;z-index:1;}"
+        ".scrn-wrap td:nth-child(-n+2){background:var(--bg-base);}"
+        ".scrn-wrap th:first-child,.scrn-wrap td:first-child{left:0;"
+        "box-sizing:border-box;width:64px;min-width:64px;max-width:64px;"
+        "overflow:hidden;text-overflow:ellipsis;}"
+        ".scrn-wrap th:nth-child(2),.scrn-wrap td:nth-child(2){left:64px;"
+        "box-shadow:inset -1px 0 0 var(--grid-head);}"
         ".scrn-wrap thead th{position:sticky;top:0;z-index:2;}"
+        ".scrn-wrap thead th:nth-child(-n+2){z-index:3;}"
+        # Streamlit's stMarkdownContainer carries margin-bottom:-1rem (cancels a
+        # trailing <p>); ending in a div, it would let the next element cover
+        # the box's bottom 1rem — where the horizontal scrollbar lives.
+        'div[data-testid="stMarkdownContainer"]:has(> .scrn-wrap:last-child)'
+        "{margin-bottom:0 !important;}"
         ".scrn-wrap td.nm,.scrn-wrap th.nm{text-align:left;color:var(--text-secondary);"
         "max-width:240px;overflow:hidden;text-overflow:ellipsis;}"
         ".scrn-wrap a.tk{font-weight:700;text-decoration:none;}"

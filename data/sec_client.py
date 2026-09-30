@@ -220,10 +220,18 @@ def _overlay(cik: int, slim: dict) -> dict:
     never written into it. A failure inside the overlay is a logged no-op."""
     try:
         from data.sec_facts_overlay import overlay_lagging_filing
-        return overlay_lagging_filing(cik, slim)
+        slim = overlay_lagging_filing(cik, slim)
     except Exception as e:
         print(f"[SEC] overlay skipped for CIK {cik}: {type(e).__name__}: {e}")
-        return slim
+    # Multi-class share counts (OCFC/FCNCA/RBCAA) — runs on the lag-completed
+    # blob so its balance-sheet date is the freshest one.
+    try:
+        from data.sec_facts_overlay import overlay_class_shares
+        slim = overlay_class_shares(cik, slim)
+    except Exception as e:
+        print(f"[SEC] class-share overlay skipped for CIK {cik}: "
+              f"{type(e).__name__}: {e}")
+    return slim
 
 
 def fetch_company_facts_ok(cik: int) -> tuple[dict, bool]:
@@ -418,20 +426,64 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
                 quarters[e1] = d1["val"] - d2["val"]
                 break
 
+    # Same-END pairs give the EARLIER quarter: a YTD minus the direct quarter
+    # that closes it (H1 − Q2 = Q1; only a ~3-month remainder counts). This
+    # completes the window when SEC companyfacts skips an interim 10-Q and
+    # data/sec_facts_overlay supplies only the NEWEST filing: Citi 2026-09 had
+    # Q3-25, Q4-25 (FY − 9M) and the overlaid Q2-26 3M + H1 but no Q1-26, so
+    # the window broke and the FY2025 figure was served as "EPS (TTM, co.
+    # 10-Q)" $6.99 (REVIEW-2026-09-24 P0-5; the company's TTM is 9.26).
+    direct = {(s, e): d for (s, e), d in durations.items() if 80 <= d["span"] <= 100}
+
+    def _near_known(end: str) -> bool:
+        """A quarter ending within 15 days of `end` is already known — the
+        same period on a 52/53-week or odd-start calendar, never a new one
+        (a derived near-duplicate would break the consecutive-gap check)."""
+        return any(abs(_gap_days(end, e)) <= 15 for e in quarters)
+    for (s1, e1), d1 in durations.items():
+        if d1["span"] <= 100:
+            continue
+        for (s2, e2), d2 in direct.items():
+            if e2 != e1 or s2 <= s1:
+                continue
+            q_end = (datetime.fromisoformat(s2) - timedelta(days=1)).strftime("%Y-%m-%d")
+            if 80 <= _gap_days(s1, q_end) <= 100 and not _near_known(q_end):
+                quarters[q_end] = d1["val"] - d2["val"]
+
+    # Q4 = FY − (Q1 + Q2 + Q3) when a filer tags all three discrete quarters but
+    # no 9M YTD (HOMB 2025: FY − 9M impossible, so the window broke and the
+    # FY2025 figure was served as TTM beside June-2026 facts).
+    for (s1, e1), d1 in durations.items():
+        if not (350 <= d1["span"] <= 380) or _near_known(e1):
+            continue
+        inside = sorted(e for e in quarters if s1 < e < e1)
+        if (len(inside) == 3
+                and 80 <= _gap_days(s1, inside[0]) + 1 <= 100
+                and all(80 <= _gap_days(a, b) <= 100 for a, b in zip(inside, inside[1:]))
+                and 80 <= _gap_days(inside[-1], e1) <= 100):
+            quarters[e1] = d1["val"] - sum(quarters[e] for e in inside)
+
     # Path 1: latest 4 quarters, required consecutive (~3-month gaps)
     if len(quarters) >= 4:
         ends = sorted(quarters)[-4:]
         if all(80 <= _gap_days(a, b) <= 100 for a, b in zip(ends, ends[1:])):
             return float(sum(quarters[e] for e in ends))
 
-    # Path 2: latest annual report
+    # Path 2: latest annual report — ONLY when nothing newer exists. A fiscal
+    # year that ended before the freshest filed period is not the trailing
+    # twelve months: serving it as TTM put a quarter-or-two-old figure on the
+    # profile under a current label (Citi "EPS (TTM, co. 10-Q)" = FY2025,
+    # REVIEW-2026-09-24 P0-5; PNFP/CBC/ENBP, whose Q3-2025 10-Q companyfacts
+    # never ingested). None, never a stale figure dressed as current.
     annual = [
         {"end": end, "val": d["val"], "filed": d["filed"]}
         for (start, end), d in durations.items() if 350 <= d["span"] <= 380
     ]
     if annual:
         annual.sort(key=lambda x: (x["end"], x["filed"]), reverse=True)
-        return float(annual[0]["val"])
+        newest = max(end for (_s, end) in durations)
+        if annual[0]["end"] >= newest:
+            return float(annual[0]["val"])
 
     return None
 
@@ -723,13 +775,21 @@ def get_latest_fundamentals(cik: int) -> dict:
             elif dei_val and dei_val > 0 and dei_end and dei_end > sh_end:
                 result["shares_outstanding"] = dei_val
 
+    # Multi-class filer (data/sec_facts_overlay.overlay_class_shares): the
+    # per-class sum at the equity date is THE count — or None when it can't
+    # be resolved, and then no fallback below may substitute a single-class
+    # cover count (OCFC) or a weighted average (FCNCA) for the total.
+    class_shares = _class_shares_at(facts, equity_date)
+    if class_shares:
+        result["shares_outstanding"] = class_shares["value"]
+
     # Share-count fallback chain — some issuers (e.g., Citi) stopped
     # reporting CommonStockSharesOutstanding years ago. Fall back in order:
     # 1. CommonStockSharesOutstanding (primary)
     # 2. EntityCommonStockSharesOutstanding (DEI namespace — usually fresh)
     # 3. WeightedAverageNumberOfSharesOutstandingBasic (period average)
     # 4. CommonStockSharesIssued − TreasuryStockCommonShares (derived)
-    if not result.get("shares_outstanding"):
+    if not result.get("shares_outstanding") and not class_shares:
         # 2: try dei:EntityCommonStockSharesOutstanding (point-in-time)
         dei = facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding", {})
         for unit, entries in dei.get("units", {}).items():
@@ -740,12 +800,12 @@ def get_latest_fundamentals(cik: int) -> dict:
                 if entries[0].get("end", "") >= cutoff:
                     result["shares_outstanding"] = entries[0].get("val")
                     break
-    if not result.get("shares_outstanding"):
+    if not result.get("shares_outstanding") and not class_shares:
         # 3: weighted-average basic shares (from NI statement)
         result["shares_outstanding"] = _extract_latest_value(
             facts, "WeightedAverageNumberOfSharesOutstandingBasic", max_age_years=1,
         )
-    if not result.get("shares_outstanding"):
+    if not result.get("shares_outstanding") and not class_shares:
         # 4: issued − treasury (rarely needed)
         issued = _extract_latest_value(facts, "CommonStockSharesIssued", max_age_years=1)
         treasury = _extract_latest_value(facts, "TreasuryStockCommonShares", max_age_years=1) or 0
@@ -759,8 +819,10 @@ def get_latest_fundamentals(cik: int) -> dict:
     # Recorded here so validation can surface it; never silently "fixed".
     result["shares_outstanding_cover"] = _latest_dei_share_count(facts)[0]
     sh, cov = result.get("shares_outstanding"), result.get("shares_outstanding_cover")
+    # A multi-class filer's undimensioned cover count is one class at most
+    # (OCFC: voting only) — not comparable to the all-class total.
     result["shares_cover_divergence_pct"] = (
-        abs(sh - cov) / cov * 100 if sh and cov else None
+        abs(sh - cov) / cov * 100 if sh and cov and not class_shares else None
     )
 
     # Share/equity COHERENCE guard (the FSUN shape, 2026-08-18). The freshness
@@ -774,10 +836,12 @@ def get_latest_fundamentals(cik: int) -> dict:
     # share evidence ending more than a grace period BEFORE the equity date
     # means no source can be coherent — CARDINAL RULE: n/a, never a
     # mixed-period division. (Verified 2026-08-18: also PBHC 181d, MCHB 330d,
-    # CFBK ~5y, BYFC ~12y; multi-class filers with per-class-only tags —
-    # FCNCA, RBCAA, CBNA — already resolve no count and are unaffected.)
+    # CFBK ~5y, BYFC ~12y. Multi-class filers with per-class-only tags —
+    # FCNCA, RBCAA, CBNA, OCFC — are counted per class instead; see
+    # _class_shares_at.)
     result["shares_asof_incoherent"] = False
-    if result.get("shares_outstanding"):
+    # (A class-share total is dated AT the equity date by construction.)
+    if result.get("shares_outstanding") and not class_shares:
         eq_end = equity_date
         share_end = _best_share_evidence_end(facts)
         if eq_end and share_end and share_end < eq_end:
@@ -883,6 +947,16 @@ def _val_end(facts: dict, concept: str, max_age_years: int = 1) -> tuple[float |
 # no usable share count (the FSUN shape — its gap was 117 days, so the grace
 # must stay well under a quarter).
 _SHARE_COHERENCE_GRACE_DAYS = 30
+
+
+def _class_shares_at(facts: dict, equity_date: str | None) -> dict | None:
+    """The blob's multi-class share record (data/sec_facts_overlay
+    .overlay_class_shares) when it is dated at `equity_date`, else None.
+    value is the all-class total, or None when unresolved (→ n/a)."""
+    rec = facts.get("_class_shares")
+    if rec and equity_date and rec.get("end") == equity_date:
+        return rec
+    return None
 
 
 def _best_share_evidence_end(facts: dict) -> str | None:
@@ -1413,8 +1487,31 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
                     ),
                 }
 
+    # Multi-class filer — mirror of get_latest_fundamentals: the per-class sum
+    # at the equity date (or n/a, with no fallback substituting for it).
+    class_shares = _class_shares_at(facts, equity_date)
+    if class_shares:
+        classes = ", ".join(f"{c.split(':')[-1]} {v:,.0f}"
+                            for c, v in class_shares["classes"].items())
+        result["shares_outstanding"] = {
+            "value": class_shares["value"],
+            "source": Source(
+                origin="COMPUTED", identifier=str(cik),
+                concept="Σ CommonStockSharesOutstanding by StatementClassOfStockAxis",
+                as_of=equity_date, form=class_shares.get("form") or "",
+                unit="shares",
+                notes=(f"Multi-class common, summed per class from the "
+                       f"filing's iXBRL ({class_shares.get('accession')}): "
+                       f"{classes}"
+                       if class_shares["value"] is not None else
+                       f"Multi-class common, per-class count unresolved "
+                       f"({class_shares['reason']}) — per-share metrics "
+                       f"render n/a"),
+            ),
+        }
+
     # Share count fallback chain (same as get_latest_fundamentals but provenance-aware)
-    if result["shares_outstanding"]["value"] is None:
+    if result["shares_outstanding"]["value"] is None and not class_shares:
         dei = facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding", {})
         for unit, entries in dei.get("units", {}).items():
             if entries:
@@ -1434,7 +1531,7 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
                         ),
                     }
                     break
-    if result["shares_outstanding"]["value"] is None:
+    if result["shares_outstanding"]["value"] is None and not class_shares:
         tup = _extract_latest_value_with_source(
             facts, "WeightedAverageNumberOfSharesOutstandingBasic", max_age_years=1
         )
@@ -1452,7 +1549,7 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
     # filer's newest share evidence predates the equity date beyond the grace
     # period, no source can be coherent and the display nulls the count — the
     # trace must show the same n/a with the reason.
-    if result["shares_outstanding"]["value"]:
+    if result["shares_outstanding"]["value"] and not class_shares:
         eq_end = equity_date
         share_end = _best_share_evidence_end(facts)
         served_concept = getattr(
@@ -1706,12 +1803,35 @@ FILING_FORM_TYPES = {
 }
 
 
-# 15-min memo: this SEC-submissions fetch is called on several render paths and
-# up to 3× within a single Company page (bank_detail) plus the Filings tab, each
-# an uncached HTTP round-trip for the SAME cik. Memoizing dedupes those to one
-# fetch and makes repeat renders instant. Short TTL keeps a newly-filed 8-K
-# visible within ~15 min; the in-render dedup holds at any TTL. Only ui/ render
-# paths call this (no universe-loop job), so no job-memory concern.
+# The raw submissions JSON (1–3 MB for a large filer), memoised per CIK ONLY.
+# get_filing_info is called with five different max_filings values (1, 50, 80,
+# 200, 1000) across the Company page, Filings, Key Exhibits, Recent Documents,
+# People and the universe name guard; keyed on (cik, max_filings) that was up to
+# five downloads of the same document per CIK per 15 min (REVIEW-2026-09-24
+# P1-8). max_entries bounds memory: the nightly namehcr guard walks every CIK
+# through get_filing_info(cik, max_filings=1), so an unbounded raw memo would
+# hold hundreds of these documents for the TTL.
+@st.cache_data(ttl=900, max_entries=16, show_spinner=False)
+def _submissions_json(cik: int) -> dict | None:
+    """data.sec.gov submissions JSON for one CIK, or None on failure."""
+    # Shared retry (429 / timeouts) so the Filings page doesn't show
+    # "Failed to load" on a single hiccup. The old inline loop here swallowed
+    # ALL exceptions bare — including code bugs.
+    from data.http import get_with_retry
+    url = SEC_SUBMISSIONS_URL.format(cik=_pad_cik(cik))
+    try:
+        resp = get_with_retry(url, headers=HEADERS, timeout=15)
+        if resp is not None:
+            return resp.json()
+    except Exception as e:
+        print(f"[SEC] submissions fetch failed for CIK {cik}: {type(e).__name__}: {e}")
+    return None
+
+
+# 15-min memo of the parsed result: called up to 3× within a single Company page
+# (bank_detail) plus the Filings tab. Short TTL keeps a newly-filed 8-K visible
+# within ~15 min. The download itself is shared across max_filings values by
+# _submissions_json above.
 @st.cache_data(ttl=900, show_spinner=False)
 def get_filing_info(cik: int, max_filings: int = 50) -> dict:
     """
@@ -1721,19 +1841,7 @@ def get_filing_info(cik: int, max_filings: int = 50) -> dict:
       form, date, report_date, description, items, accession,
       url (direct link), index_url, is_earnings, size
     """
-    padded = _pad_cik(cik)
-    url = SEC_SUBMISSIONS_URL.format(cik=padded)
-    # Shared retry (429 / timeouts) so the Filings page doesn't show
-    # "Failed to load" on a single hiccup. The old inline loop here swallowed
-    # ALL exceptions bare — including code bugs.
-    from data.http import get_with_retry
-    data = None
-    try:
-        resp = get_with_retry(url, headers=HEADERS, timeout=15)
-        if resp is not None:
-            data = resp.json()
-    except Exception as e:
-        print(f"[SEC] submissions fetch failed for CIK {cik}: {type(e).__name__}: {e}")
+    data = _submissions_json(cik)
     if data is None:
         return {}
 

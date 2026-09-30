@@ -137,5 +137,56 @@ class TestPeOnServedEpsBasis(unittest.TestCase):
         self.assertIsNone(warn["pe_ratio:xbrl_basis"])
 
 
+class TestAbsentValuesAgree(unittest.TestCase):
+    """(2026-09-30) 10 of 12 nightly runs failed on 112 'divergences' that were
+    all `cet1_ratio` / `total_capital_ratio` with dashboard=nan oracle=nan:
+    CBLR banks (CBLRIND=1, RWAJ=0) whose FDIC literal-0 risk-based ratios are
+    nulled by null_unreported_capital, then arrive as NaN through
+    DataFrame.to_dict — and NaN is never "close" to NaN."""
+
+    def test_agreeing_absence_is_close(self):
+        from tools.verify_metrics import _abs_close, _rel_close
+        nan = float("nan")
+        for close in (_abs_close, _rel_close):
+            self.assertTrue(close(nan, nan))
+            self.assertTrue(close(None, nan))
+            self.assertTrue(close(None, None))
+
+    def test_one_sided_absence_still_diverges(self):
+        from tools.verify_metrics import _abs_close, _rel_close
+        nan = float("nan")
+        for close in (_abs_close, _rel_close):
+            self.assertFalse(close(nan, 12.0))
+            self.assertFalse(close(12.0, None))
+
+    def test_tolerances_unchanged(self):
+        from tools.verify_metrics import _abs_close, _rel_close
+        self.assertTrue(_abs_close(12.0, 12.005))     # within 1 bp
+        self.assertFalse(_abs_close(12.0, 12.02))
+        self.assertTrue(_rel_close(1000.0, 1004.0))   # 0.4% < 0.5%
+        self.assertFalse(_rel_close(1000.0, 1006.0))
+
+    def test_cblr_record_path_yields_nan_and_is_close(self):
+        """ASCN's real 6/30/2026 capital fields, through the same boundary the
+        job uses: null_unreported_capital, then fetch_financials' per-column
+        pd.to_numeric — which is what turns the None into NaN."""
+        import pandas as pd
+        from data.fdic_client import null_unreported_capital
+        from tools.verify_metrics import _abs_close
+        rec = null_unreported_capital({
+            "REPDTE": "20260630", "IDT1CER": 0, "RBCRWAJ": 0, "RWAJ": 0,
+            "RBCT1J": 20249, "RBC1AAJ": 10.208670488175004, "CBLRIND": 1})
+        df = pd.DataFrame([rec])
+        for col in df.columns:
+            if col != "REPDTE":
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        row = df.to_dict("records")[0]
+        for f in ("IDT1CER", "RBCRWAJ"):
+            v = row[f]
+            self.assertTrue(isinstance(v, float) and v != v,
+                            f"{f} arrives as NaN, not None")
+            self.assertTrue(_abs_close(v, v), f"{f}: n/a vs n/a is agreement")
+
+
 if __name__ == "__main__":
     unittest.main()

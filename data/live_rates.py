@@ -114,6 +114,53 @@ RATES_FRED_SERIES = [
 ]
 
 
+# Computed curve spreads the Home board quotes as a − b (ui.home
+# _AF_RATES_SECTIONS "calc" rows). Their range bars need the date-aligned a−b
+# history — min(a−b) ≠ min(a) − min(b) — so the bundle carries each one under
+# the key "a-b" (ui.home._af_row_anchors reads it; UX-P1-02).
+RATES_CALC_SPREADS = [("DGS3MO", "DGS5"), ("DGS10", "DGS30"), ("DFF", "DGS2")]
+
+
+def _anchors_from_frame(df) -> dict | None:
+    """{level, d1, w1, m1, ytd, lo, hi} + per-window min/max from a (date,
+    value) frame of daily observations — see rate_anchors_live."""
+    if df is None or df.empty:
+        return None
+    df = df.dropna(subset=["value"]).sort_values("date")
+    vals = [float(v) for v in df["value"].tolist()]
+    if not vals:
+        return None
+    import datetime as _dt
+    jan1 = _dt.datetime(_dt.date.today().year, 1, 1)
+    ytd = None
+    ytd_vals = []
+    for d, v in zip(df["date"].tolist(), vals):
+        dd = d.to_pydatetime() if hasattr(d, "to_pydatetime") else d
+        if dd >= jan1:
+            if ytd is None:
+                ytd = v
+            ytd_vals.append(v)
+
+    def _mm(seq):
+        return (min(seq), max(seq)) if seq else (None, None)
+
+    w_lo, w_hi = _mm(vals[-6:])    # ~last 5 business days (1W)
+    m_lo, m_hi = _mm(vals[-22:])   # ~last 22 business days (1M)
+    y_lo, y_hi = _mm(ytd_vals)
+    return {
+        "level": vals[-1],
+        "d1": vals[-2] if len(vals) >= 2 else None,
+        "w1": vals[-6] if len(vals) >= 6 else None,
+        "m1": vals[-22] if len(vals) >= 22 else None,
+        "ytd": ytd,
+        "lo": min(vals),
+        "hi": max(vals),
+        "w_lo": w_lo, "w_hi": w_hi,
+        "m_lo": m_lo, "m_hi": m_hi,
+        "y_lo": y_lo, "y_hi": y_hi,
+    }
+
+
 def rate_anchors_live(series_id: str) -> dict | None:
     """{level, d1, w1, m1, ytd, lo, hi} + per-window min/max for a daily FRED
     series from one year of history (one fetch_series call). d1/w1/m1 are the
@@ -124,42 +171,26 @@ def rate_anchors_live(series_id: str) -> dict | None:
     caller renders '—', never a guess."""
     try:
         from data.fred_client import fetch_series
-        df = fetch_series(series_id, years=1)
-        if df is None or df.empty:
-            return None
-        df = df.dropna(subset=["value"]).sort_values("date")
-        vals = [float(v) for v in df["value"].tolist()]
-        if not vals:
-            return None
-        import datetime as _dt
-        jan1 = _dt.datetime(_dt.date.today().year, 1, 1)
-        ytd = None
-        ytd_vals = []
-        for d, v in zip(df["date"].tolist(), vals):
-            dd = d.to_pydatetime() if hasattr(d, "to_pydatetime") else d
-            if dd >= jan1:
-                if ytd is None:
-                    ytd = v
-                ytd_vals.append(v)
+        return _anchors_from_frame(fetch_series(series_id, years=1))
+    except Exception:
+        return None
 
-        def _mm(seq):
-            return (min(seq), max(seq)) if seq else (None, None)
 
-        w_lo, w_hi = _mm(vals[-6:])    # ~last 5 business days (1W)
-        m_lo, m_hi = _mm(vals[-22:])   # ~last 22 business days (1M)
-        y_lo, y_hi = _mm(ytd_vals)
-        return {
-            "level": vals[-1],
-            "d1": vals[-2] if len(vals) >= 2 else None,
-            "w1": vals[-6] if len(vals) >= 6 else None,
-            "m1": vals[-22] if len(vals) >= 22 else None,
-            "ytd": ytd,
-            "lo": min(vals),
-            "hi": max(vals),
-            "w_lo": w_lo, "w_hi": w_hi,
-            "m_lo": m_lo, "m_hi": m_hi,
-            "y_lo": y_lo, "y_hi": y_hi,
-        }
+def calc_spread_anchors(a: str, b: str) -> dict | None:
+    """Anchors for the computed spread a − b over the DATE-ALIGNED history:
+    only dates where both legs printed (e.g. DFF's weekend rows drop against
+    DGS2's business days). None on any failure or no overlap."""
+    try:
+        import pandas as pd
+        from data.fred_client import fetch_series
+        fa = fetch_series(a, years=1)
+        fb = fetch_series(b, years=1)
+        if fa is None or fb is None or fa.empty or fb.empty:
+            return None
+        m = (fa.dropna(subset=["value"])
+             .merge(fb.dropna(subset=["value"]), on="date", suffixes=("_a", "_b")))
+        return _anchors_from_frame(pd.DataFrame(
+            {"date": m["date"], "value": m["value_a"] - m["value_b"]}))
     except Exception:
         return None
 
@@ -168,4 +199,7 @@ def build_rates_anchor_bundle() -> dict:
     """{series_id: anchors|None} for every RATES_FRED_SERIES — the cross-instance
     bundle the Rates board reads. Built by jobs/refresh_home_snapshot (off the
     render thread); ui.home._af_rates_table reads it via served_snapshot."""
-    return {sid: rate_anchors_live(sid) for sid in RATES_FRED_SERIES}
+    bundle = {sid: rate_anchors_live(sid) for sid in RATES_FRED_SERIES}
+    bundle.update({f"{a}-{b}": calc_spread_anchors(a, b)
+                   for a, b in RATES_CALC_SPREADS})
+    return bundle

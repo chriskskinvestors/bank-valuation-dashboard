@@ -748,8 +748,55 @@ def _build_universe_live() -> dict[str, dict]:
     return universe
 
 
-# Module-level cache to avoid re-deserializing the universe dict on every call
+# Module-level cache to avoid re-deserializing the universe dict on every call.
+# It FOLLOWS the snapshot: a Cloud Run instance outlives nightly
+# refresh-universe runs, and a memo frozen at boot never saw the banks a run
+# added or removed (review 2026-09-24 P1-7). At most once per _STAMP_CHECK_S,
+# get_universe() reads only the snapshot row's write timestamp (data.cache
+# get_age: one indexed single-column SELECT — never the 1-2 MB value) and
+# reloads when the row was written after the memo was loaded. The throttle
+# keeps the hot path (called many times per render) free of DB round-trips;
+# 10 min of lag on a once-a-night change is immaterial.
 _UNIVERSE_CACHE: dict | None = None
+_STAMP_CHECK_S = 600
+# The dict the loader last installed. Only a memo that `is` this one is
+# stamp-checked, so a directly assigned _UNIVERSE_CACHE (test stubs pinning a
+# universe mid-AppTest) is never replaced.
+_UNIVERSE_LOADED: dict | None = None
+_UNIVERSE_LOADED_AT = 0.0      # wall clock when that load STARTED
+_UNIVERSE_CHECKED_AT = 0.0     # monotonic, last stamp check
+# Bumped on every load; derived memos (here and in bank_mapping /
+# release_metrics / events.wire_base) rebuild when it moves.
+_UNIVERSE_GEN = 0
+
+
+def universe_generation() -> int:
+    """Counter bumped each time get_universe() (re)loads the snapshot. Derived
+    memos store the value they were built at and rebuild when it moves. Never
+    triggers a load itself."""
+    return _UNIVERSE_GEN
+
+
+def _snapshot_written_at() -> float | None:
+    """Wall-clock write time of the persisted snapshot row, or None when
+    absent/unreadable (a DB hiccup keeps the memo; the next window retries)."""
+    try:
+        from data import cache as _cache
+        age = _cache.get_age("bank_universe_lastgood")
+    except Exception:
+        return None
+    return None if age is None else time.time() - age
+
+
+def _load_universe() -> None:
+    global _UNIVERSE_CACHE, _UNIVERSE_LOADED, _UNIVERSE_LOADED_AT
+    global _UNIVERSE_CHECKED_AT, _UNIVERSE_GEN
+    started = time.time()
+    uni = build_universe()
+    _UNIVERSE_CACHE = _UNIVERSE_LOADED = uni
+    _UNIVERSE_LOADED_AT = started
+    _UNIVERSE_CHECKED_AT = time.monotonic()
+    _UNIVERSE_GEN += 1
 
 
 def universe_is_cached() -> bool:
@@ -768,40 +815,63 @@ def get_universe() -> dict[str, dict]:
     cert against it (a preferred ticker must still resolve). User-facing
     surfaces use the covered set instead (see get_noncommon_tickers,
     search_universe, get_universe_count)."""
-    global _UNIVERSE_CACHE
+    global _UNIVERSE_CHECKED_AT
     if _UNIVERSE_CACHE is None:
-        _UNIVERSE_CACHE = build_universe()
+        _load_universe()
+    elif (_UNIVERSE_CACHE is _UNIVERSE_LOADED
+          and time.monotonic() - _UNIVERSE_CHECKED_AT >= _STAMP_CHECK_S):
+        _UNIVERSE_CHECKED_AT = time.monotonic()
+        written = _snapshot_written_at()
+        if written is not None and written > _UNIVERSE_LOADED_AT:
+            # Drop the Streamlit memos layered on the old universe so the
+            # reload (and get_universe_tickers) see the new snapshot now, not
+            # after their TTLs. The unittest stub's cache_data is a
+            # pass-through without .clear().
+            for fn in (build_universe, get_universe_tickers):
+                getattr(fn, "clear", lambda: None)()
+            try:
+                _load_universe()
+            except Exception as e:  # keep serving the memo; next window retries
+                print(f"[universe] snapshot reload failed: {type(e).__name__}: {e}")
     return _UNIVERSE_CACHE
 
 
 # Memoized non-common set (preferred series, baby bonds, redundant/stale dup
-# listings). Cheap to compute but recomputed nowhere — pinned to the universe.
+# listings). Cheap to compute but recomputed nowhere — pinned to the universe
+# generation it was built at.
 _NONCOMMON_CACHE: set[str] | None = None
+_NONCOMMON_GEN = 0
 
 
 def get_noncommon_tickers() -> set[str]:
     """Universe tickers that are NOT a registrant's primary common stock, so
     they carry no valid per-common metrics. Hidden from search + the covered
     count and excluded from the valuation scope. See data/share_class.py."""
-    global _NONCOMMON_CACHE
-    if _NONCOMMON_CACHE is None:
+    global _NONCOMMON_CACHE, _NONCOMMON_GEN
+    universe = get_universe()   # first: a reload here bumps the generation
+    if _NONCOMMON_CACHE is None or _NONCOMMON_GEN != _UNIVERSE_GEN:
         from data.share_class import noncommon_tickers
-        _NONCOMMON_CACHE = noncommon_tickers(get_universe())
+        _NONCOMMON_CACHE = noncommon_tickers(universe)
+        _NONCOMMON_GEN = _UNIVERSE_GEN
     return _NONCOMMON_CACHE
 
 
 # Memoized sibling -> primary-common remap (inverse of the non-common set).
 _NONCOMMON_PRIMARY_CACHE: dict[str, str] | None = None
+_NONCOMMON_PRIMARY_GEN = 0
 
 
 def get_noncommon_primary_map() -> dict[str, str]:
     """Map each non-common sibling ticker -> its registrant's primary common
     (e.g. VYLD/AMJB -> JPM, FRMEP -> FRME). Canonicalizes a ticker that was
     attributed to a preferred/ETN sibling. See data/share_class.py."""
-    global _NONCOMMON_PRIMARY_CACHE
-    if _NONCOMMON_PRIMARY_CACHE is None:
+    global _NONCOMMON_PRIMARY_CACHE, _NONCOMMON_PRIMARY_GEN
+    universe = get_universe()   # first: a reload here bumps the generation
+    if (_NONCOMMON_PRIMARY_CACHE is None
+            or _NONCOMMON_PRIMARY_GEN != _UNIVERSE_GEN):
         from data.share_class import noncommon_to_primary
-        _NONCOMMON_PRIMARY_CACHE = noncommon_to_primary(get_universe())
+        _NONCOMMON_PRIMARY_CACHE = noncommon_to_primary(universe)
+        _NONCOMMON_PRIMARY_GEN = _UNIVERSE_GEN
     return _NONCOMMON_PRIMARY_CACHE
 
 
@@ -845,7 +915,6 @@ def coverage_excluded() -> set[str]:
     return get_noncommon_tickers() | (set(universe) & _SKIP_TICKERS)
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_universe_tickers() -> list[str]:
     """

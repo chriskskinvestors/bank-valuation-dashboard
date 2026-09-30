@@ -47,6 +47,29 @@ def render_market_share_for_ticker(ticker: str):
     _render_deposits_core(cert, get_name(ticker))
 
 
+def _branch_map_figure(map_df: pd.DataFrame):
+    """Branch map framed to the branches (UX review P1-27): st.map fits to
+    EVERY point, so a handful of mis-geocoded rows opened JPM's 5,142-branch
+    map on the Atlantic. Same framing as Market Analysis > Branch Map: the
+    1st-99th percentile box (ui.branch_analytics._map_extent) -> center/zoom.
+    Every branch is still plotted; only the initial view is fitted."""
+    import plotly.express as px
+    from ui.branch_analytics import _map_extent
+    from ui.geo_view import _fit_viewport
+    lat, lng = map_df["SIMS_LATITUDE"], map_df["SIMS_LONGITUDE"]
+    center, zoom = _fit_viewport(*_map_extent(lat, lng))
+    dep = pd.to_numeric(map_df["DEPSUMBR"], errors="coerce")
+    hover = {c: True for c in ("CITYBR", "STALPBR") if c in map_df.columns}
+    fig = px.scatter_map(
+        map_df, lat="SIMS_LATITUDE", lon="SIMS_LONGITUDE",
+        size=dep.fillna(0).clip(lower=1),
+        hover_name="NAMEBR" if "NAMEBR" in map_df.columns else None,
+        hover_data={**hover, "SIMS_LATITUDE": False, "SIMS_LONGITUDE": False},
+        size_max=18, zoom=zoom, center=center)
+    fig.update_layout(map_style="carto-positron", height=480,
+                      margin=dict(l=0, r=0, t=0, b=0))
+    return fig
+
 def render_deposit_lookup():
     """Render the deposit market share & branch map page with search."""
 
@@ -228,18 +251,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     section_header("", "Branch map", _count(len(map_df), "mapped branch"))
 
     if not map_df.empty:
-        map_df = map_df.rename(columns={
-            "SIMS_LATITUDE": "latitude",
-            "SIMS_LONGITUDE": "longitude",
-        })
-        # Size points by deposits
-        max_dep = map_df["DEPSUMBR"].max()
-        if max_dep > 0:
-            map_df["size"] = (map_df["DEPSUMBR"] / max_dep * 800).clip(lower=50)
-        else:
-            map_df["size"] = 100
-
-        st.map(map_df, latitude="latitude", longitude="longitude", size="size")
+        st.plotly_chart(_branch_map_figure(map_df), use_container_width=True,
+                        key=f"deplookup_map_{selected_cert}")
     else:
         from ui.states import empty_state
         empty_state("No geographic data available for this bank's branches")

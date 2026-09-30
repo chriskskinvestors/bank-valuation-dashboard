@@ -18,6 +18,7 @@ Family matching is boundary-aware: "EX-3" must NOT match EX-31/EX-32
 """
 from __future__ import annotations
 
+import html as _html
 import re
 
 import streamlit as st
@@ -100,7 +101,10 @@ def fetch_key_exhibits(cik: int, max_filings: int = 10) -> list[dict]:
             if href.startswith("/ix?doc="):          # iXBRL viewer wrapper
                 href = href[len("/ix?doc="):]
             url = f"https://www.sec.gov{href}" if href.startswith("/") else href
-            desc = re.sub(r"<[^>]+>", "", m.group("desc")).strip()
+            # EDGAR's index HTML entity-encodes the filer's description
+            # ("JPMORGAN CHASE &amp; CO. ...") — decode once here so every
+            # sink escapes plain text exactly once (UX review 2026-09-24).
+            desc = _html.unescape(re.sub(r"<[^>]+>", "", m.group("desc"))).strip()
             if not desc or desc.upper() == ex_type:
                 desc = fam[0]  # filer left the description blank / echoed type
             out.append({
@@ -116,47 +120,39 @@ def fetch_key_exhibits(cik: int, max_filings: int = 10) -> list[dict]:
 
 
 def _exhibit_table(rows: list[dict]) -> str:
-    """Dense HTML table, same visual family as the filings table."""
-    import html as _html
+    """House-style (ui/tables.ksk_table) exhibit table HTML. The exhibit badge,
+    category and link cells are built here (escaped here); every other cell is
+    escaped by ksk_table_html. Descriptions are unescaped first — defensive
+    against a cached pre-fix row still carrying "&amp;" — so the text is
+    escaped exactly once."""
+    import pandas as pd
+    from ui.tables import ksk_table_html
 
-    body = []
-    for i, r in enumerate(rows):
-        badge = (f'<span style="background:{r["color"]};color:white;'
-                 f'padding:2px 8px;border-radius:0;font-size:0.78em;'
-                 f'font-weight:600;white-space:nowrap;">{r["type"]}</span>')
-        fam = (f'<span style="color:{r["color"]};font-size:0.8em;'
-               f'font-weight:600;white-space:nowrap;">{r["family"]}</span>')
-        link = (f'<a href="{_html.escape(r["url"])}" target="_blank" '
-                f'style="color:var(--brand-accent);text-decoration:none;">View</a>')
-        zebra = "background:rgba(148,163,184,0.045);" if i % 2 else ""
-        body.append(
-            f"<tr style='{zebra}'>"
-            f"<td style='padding:7px 10px;white-space:nowrap;color:var(--text-secondary);'>{r['filed']}</td>"
-            f"<td style='padding:7px 10px;white-space:nowrap;color:var(--text-primary);'>{r['form']}</td>"
-            f"<td style='padding:7px 10px;'>{badge}</td>"
-            f"<td style='padding:7px 10px;'>{fam}</td>"
-            f"<td style='padding:7px 10px;color:var(--text-primary);'>{_html.escape(r['description'])}</td>"
-            f"<td style='padding:7px 10px;white-space:nowrap;'>{link}</td>"
-            f"</tr>"
-        )
-    return f"""
-    <style>
-    .exhibits-tbl {{ width:100%; border-collapse:collapse; font-size:13px;
-      border:1px solid rgba(148,163,184,0.22); border-radius:0; overflow:hidden; }}
-    .exhibits-tbl thead th {{ padding:8px 10px; text-align:left; color:var(--text-primary);
-      font-weight:600; border-bottom:1px solid rgba(148,163,184,0.3);
-      background:rgba(241,245,249,0.6); }}
-    .exhibits-tbl tbody tr {{ border-bottom:1px solid rgba(148,163,184,0.12); }}
-    .exhibits-tbl tbody tr:hover td {{ background:rgba(37,99,235,0.05) !important; }}
-    </style>
-    <div style="overflow-x:auto;">
-    <table class="exhibits-tbl">
-    <thead><tr><th>Filed</th><th>Form</th><th>Exhibit</th><th>Category</th>
-    <th>Description</th><th>Link</th></tr></thead>
-    <tbody>{"".join(body)}</tbody>
-    </table>
-    </div>
-    """
+    def _badge(r):
+        return (f'<span style="background:{r["color"]};color:white;'
+                f'padding:1px 7px;border-radius:0;font-size:0.78em;'
+                f'font-weight:600;white-space:nowrap;">'
+                f'{_html.escape(r["type"])}</span>')
+
+    def _fam(r):
+        return (f'<span style="color:{r["color"]};font-weight:600;'
+                f'white-space:nowrap;">{_html.escape(r["family"])}</span>')
+
+    def _link(r):
+        return (f'<a href="{_html.escape(r["url"])}" target="_blank" '
+                f'rel="noopener">View</a>') if r.get("url") else ""
+
+    df = pd.DataFrame({
+        "Filed": [r["filed"] or "—" for r in rows],
+        "Form": [r["form"] or "—" for r in rows],
+        "Exhibit": [_badge(r) for r in rows],
+        "Category": [_fam(r) for r in rows],
+        "Description": [_html.unescape(r["description"] or "") or "—"
+                        for r in rows],
+        "Link": [_link(r) for r in rows],
+    })
+    return ksk_table_html(df, html_cols=("Exhibit", "Category", "Link"),
+                          txt_cols=("Form",))
 
 
 def render_key_exhibits(ticker: str):
