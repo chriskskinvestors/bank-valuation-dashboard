@@ -290,7 +290,7 @@ def _extract_latest_value_with_source(facts: dict, concept: str,
 
 
 def _extract_latest_value(facts: dict, concept: str, prefer_quarterly: bool = True,
-                            max_age_years: int = 3) -> float | None:
+                            max_age_years: int = 3, as_of: str | None = None) -> float | None:
     """
     Extract the most recent value for a given XBRL concept.
 
@@ -298,17 +298,24 @@ def _extract_latest_value(facts: dict, concept: str, prefer_quarterly: bool = Tr
     caller can fall back to a different concept. Some companies (e.g. Citi)
     stopped reporting certain concepts years ago — we don't want to return
     15-year-old share counts silently.
+
+    as_of ('YYYY-MM-DD'): read the concept as it stood at that date — facts
+    ending after it are ignored and staleness is measured from it, not today
+    (per-period readers, e.g. Financial Highlights' historical columns).
     """
     us_gaap = facts.get("facts", {}).get("us-gaap", {})
     concept_data = us_gaap.get(concept, {})
     units = concept_data.get("units", {})
 
     from datetime import datetime, timedelta
-    cutoff = (datetime.now() - timedelta(days=365 * max_age_years)).strftime("%Y-%m-%d")
+    anchor = datetime.fromisoformat(as_of) if as_of else datetime.now()
+    cutoff = (anchor - timedelta(days=365 * max_age_years)).strftime("%Y-%m-%d")
 
     # Try USD first, then shares, then pure
     for unit_type in ["USD", "USD/shares", "shares", "pure"]:
         entries = units.get(unit_type, [])
+        if as_of:
+            entries = [e for e in entries if e.get("end", "") <= as_of]
         if not entries:
             continue
 
@@ -1089,7 +1096,7 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
     return adjustment
 
 
-def _resolve_preferred_stock(facts: dict) -> tuple[float | None, bool]:
+def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[float | None, bool]:
     """
     Return (preferred_carrying_value, filer_has_preferred).
 
@@ -1121,6 +1128,9 @@ def _resolve_preferred_stock(facts: dict) -> tuple[float | None, bool]:
     vs $39.93). Evidence-without-value → (None, True) → the cardinal-rule n/a
     path, and the bank's own released figure serves instead. A filer with no
     preferred at all still yields (0.0, False) → common_equity == equity.
+
+    as_of resolves the same ladder as the filer stood at a past balance-sheet
+    date (Financial Highlights' historical per-share columns); None = today.
     """
     value = None
     for concept in (
@@ -1133,14 +1143,16 @@ def _resolve_preferred_stock(facts: dict) -> tuple[float | None, bool]:
         # A par-only tag can read exactly 0 while the real carrying value sits
         # in an untagged APIC line (PNC: PreferredStockValue $0 but ~$4B pfd
         # outstanding). Treat 0 as "keep looking" — never as a resolved value.
-        v = _extract_latest_value(facts, concept, max_age_years=1)
+        v = _extract_latest_value(facts, concept, max_age_years=1, as_of=as_of)
         if v:
             value = v
             break
 
     shares = (
-        _extract_latest_value(facts, "PreferredStockSharesOutstanding", max_age_years=1)
-        or _extract_latest_value(facts, "PreferredStockSharesIssued", max_age_years=1)
+        _extract_latest_value(facts, "PreferredStockSharesOutstanding",
+                              max_age_years=1, as_of=as_of)
+        or _extract_latest_value(facts, "PreferredStockSharesIssued",
+                                 max_age_years=1, as_of=as_of)
     )
     has_preferred = bool(value) or bool(shares and shares > 0)
 
@@ -1158,7 +1170,7 @@ def _resolve_preferred_stock(facts: dict) -> tuple[float | None, bool]:
             "PaymentsOfDividendsPreferredStockAndPreferenceStock",
             "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock",
         ):
-            v = _extract_latest_value(facts, concept, max_age_years=1)
+            v = _extract_latest_value(facts, concept, max_age_years=1, as_of=as_of)
             if v:
                 has_preferred = True
                 break
@@ -1263,18 +1275,25 @@ def _resolve_parent_equity(facts: dict, max_age_years: int = 3):
     cutoff = (datetime.now() - timedelta(days=365 * max_age_years)).strftime("%Y-%m-%d")
     if bs < cutoff:
         return None, _SE, f"Latest balance sheet ({bs}) is stale"
-    se = _instant_at(facts, _SE, bs)
+    return _parent_equity_at(facts, bs)
+
+
+def _parent_equity_at(facts: dict, end: str):
+    """Equity attributable to the parent at balance-sheet date `end`, same
+    return shape as _resolve_parent_equity: plain SE at `end`, else the
+    NCI-inclusive total less same-date MinorityInterest, else n/a when a
+    noncontrolling interest may exist that no fact separates."""
+    se = _instant_at(facts, _SE, end)
     if se is not None:
         return se, _SE, None
-    incl = _instant_at(facts, _SE_NCI, bs)
+    incl = _instant_at(facts, _SE_NCI, end)
     if incl is None:
-        return None, _SE, (f"No equity total tagged at the latest balance-sheet "
-                           f"date ({bs})")
-    mi = _instant_at(facts, "MinorityInterest", bs)
+        return None, _SE, f"No equity total tagged at the balance-sheet date ({end})"
+    mi = _instant_at(facts, "MinorityInterest", end)
     if mi is not None:
         return ((incl[0] - mi[0],) + incl[1:], f"{_SE_NCI} − MinorityInterest",
                 "Noncontrolling interest removed at the same balance-sheet date")
-    if _nci_evidence(facts, bs):
+    if _nci_evidence(facts, end):
         return None, _SE_NCI, ("NCI-inclusive total only, and a noncontrolling "
                                "interest may exist that no fact separates")
     return incl, _SE_NCI, "No noncontrolling interest — total equity is parent equity"
