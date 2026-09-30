@@ -27,7 +27,6 @@ Public functions:
   • init_nim_assumptions_schema()        — idempotent CREATE TABLE
   • upsert_assumptions(cert, fields, by) — write one bank's overrides
   • get_assumptions(cert)                — read overrides or None
-  • get_all_assumptions()                — bulk read {cert: fields}
   • delete_assumptions(cert)             — clear overrides (revert to auto)
 """
 
@@ -183,29 +182,6 @@ def get_assumptions(cert: int) -> dict | None:
         "updated_by": r[7],
         "updated_at": str(r[8]) if r[8] is not None else None,
     }
-
-
-def get_all_assumptions() -> dict[int, dict]:
-    """Bulk read: {cert: fields} for every bank with saved overrides."""
-    from sqlalchemy import text
-    eng = _get_engine()
-    with eng.begin() as conn:
-        rows = conn.execute(text("""
-            SELECT cert, beta_nib, beta_ib_core, beta_brokered, sec_duration_yrs,
-                   floating_loan_share, fixed_loan_duration_yrs
-            FROM user_nim_assumptions
-        """)).fetchall()
-    out: dict[int, dict] = {}
-    for r in rows:
-        out[int(r[0])] = {
-            "beta_nib": r[1],
-            "beta_ib_core": r[2],
-            "beta_brokered": r[3],
-            "sec_duration_yrs": r[4],
-            "floating_loan_share": r[5],
-            "fixed_loan_duration_yrs": r[6],
-        }
-    return out
 
 
 def delete_assumptions(cert: int) -> int:

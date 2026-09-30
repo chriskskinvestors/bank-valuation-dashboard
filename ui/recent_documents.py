@@ -299,7 +299,10 @@ def _exhibit_menu(e: dict, ticker: str, label: str) -> str:
             path = url[len(prefix):]
             if _SECPATH_RE.match(path) and ".." not in path:
                 items.append(("Download PDF", _pdf_href(ticker, f"sec|{path}")))
-    return _menu_html(label, items, sub=e.get("description", ""))
+    # Unescape first (a cached pre-fix row may still carry EDGAR's "&amp;"):
+    # _menu_html escapes the sub text exactly once (UX review 2026-09-24).
+    return _menu_html(label, items,
+                      sub=_html.unescape(e.get("description") or ""))
 
 
 # ── PDF request handling (?pdf=…) ────────────────────────────────────────

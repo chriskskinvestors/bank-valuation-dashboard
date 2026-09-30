@@ -27,7 +27,12 @@ assets. Ratios do not, and this module refuses to fake them:
 
   * RECOMPUTED from summed components — the formula is a pure ratio of two
     summed levels, so it is exact:
-        EEFFR     efficiency  = NONIX  / (net interest income + NONII)
+        EEFFR     efficiency  = EEFF   / IEFF   (EEFF = NONIX - EAMINTAN,
+                  IEFF = NIM + NONII; until 2026-09-30 this was NONIX /
+                  revenue — amortization of intangibles left IN — which
+                  missed FDIC's figure by >0.02pp on 924 of 4,294 banks)
+        EEFFQR    single-quarter efficiency = EEFFQ / IEFFQ (was dropped
+                  as "average-based" until 2026-09-30 — it never was)
         RBCRWAJ   total RBC   = RBC    / RWAJ
         RBC1RWAJ  tier 1 RBC  = RBCT1J / RWAJ   (RBCT1J = total Tier 1 $)
         IDT1CER   CET1 ratio  = RBCT1C / RWAJ   (RBCT1C = CET1 $; added
@@ -66,11 +71,12 @@ from __future__ import annotations
 # RBCT1JR NCLNLSR LNATRESR NPERFV were listed here until 2026-09-25, but the
 # dictionary defines each as a quotient of period-end levels — they moved to
 # _EXACT_QUOTIENTS. NOIJY ELNATRY NTRER NTCOMRER IDNTCIR (annualized flow ÷
-# 5-point average balance) were being SUMMED; they belong here.
+# 5-point average balance) were being SUMMED; they belong here. EEFFQR was
+# listed here until 2026-09-30 — it is a flow ÷ flow quotient (EEFFQ/IEFFQ).
 AVERAGE_BASED_RATIOS = frozenset({
     "ROA", "ROE", "NIMY", "INTEXPY", "INTINCY",
     "NONIIAY", "NONIXAY", "ROAPTX", "NTLNLSR",
-    "ROAQ", "ROEQ", "NIMYQ", "EEFFQR", "NTLNLSQR",
+    "ROAQ", "ROEQ", "NIMYQ", "NTLNLSQR",
     "NOIJY", "ELNATRY", "NTRER", "NTCOMRER", "IDNTCIR",
 })
 
@@ -87,6 +93,16 @@ AVERAGE_BASED_RATIOS = frozenset({
 # flows) and IDERNCVR (annualized YTD flows) — flow ÷ flow over the same
 # period, so the sum-of-charters quotient is exact with no averaging.
 _EXACT_QUOTIENTS = {
+    # Efficiency (2026-09-30): the dictionary's own EEFF/IEFF — reproduces
+    # EEFFR exactly on every institution at 12/31/2025, 3/31/2026, 6/30/2026
+    # (~4,300 each, max diff 0.0) and on JPM/WFC 1990-2005. EEFF = NONIX -
+    # EAMINTAN and IEFF = NIM + NONII to the $K on all of them; YTD flows,
+    # so flow ÷ flow over the same period.
+    "EEFFR": ("EEFF", "IEFF", 100),
+    # Single-quarter efficiency (2026-09-30): EEFFQ/IEFFQ reproduces EEFFQR
+    # — which FDIC stores rounded half-up to 2 dp — on every institution at
+    # the same three quarters, and on JPM/WFC 1988-2005.
+    "EEFFQR": ("EEFFQ", "IEFFQ", 100),
     "RBCRWAJ": ("RBC", "RWAJ", 100),        # total RBC ratio
     "RBC1RWAJ": ("RBCT1J", "RWAJ", 100),    # tier 1 RBC ratio
     "IDT1CER": ("RBCT1C", "RWAJ", 100),     # CET1 ratio (2026-09-22)
@@ -405,13 +421,6 @@ def _recompute_exact_ratios(out: dict, incomplete: frozenset | set = frozenset()
     # percentages as the group's ratio. n/a when a component is absent, and
     # when the denominator is not positive (FDIC's own quotient would be
     # meaningless or undefined there, e.g. net recoveries under ELNANTR).
-    intinc, eintexp = _n("INTINC"), _n("EINTEXP")
-    nonii, nonix = _n("NONII"), _n("NONIX")
-    out["EEFFR"] = None
-    if None not in (intinc, eintexp, nonii, nonix):
-        revenue = (intinc - eintexp) + nonii
-        out["EEFFR"] = (nonix / revenue * 100) if revenue > 0 else None
-
     for ratio, (num_k, den_k, scale) in _EXACT_QUOTIENTS.items():
         num, den = _n(num_k), _n(den_k)
         out[ratio] = (num / den * scale) if (

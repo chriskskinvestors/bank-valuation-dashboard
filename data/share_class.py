@@ -67,16 +67,26 @@ _AMBIGUOUS_PRIMARY_COMMON: dict[int, str] = {
 }
 
 
-def _clusters(universe: dict[str, dict]) -> dict[int, list[str]]:
-    """CIK -> sorted tickers, for CIKs mapped by more than one universe
-    ticker. CIK is the SEC registrant key; a single-ticker CIK is an ordinary
-    bank and is never touched here."""
-    by_cik: dict[int, list[str]] = defaultdict(list)
+def _clusters(universe: dict[str, dict]) -> dict[int | str, list[str]]:
+    """Registrant key -> sorted tickers, for keys mapped by more than one
+    universe ticker. CIK is the SEC registrant key; a single-ticker CIK is an
+    ordinary bank and is never touched here.
+
+    A CIK-less entry (an FDIC-only bank that does not file with the SEC) has
+    no registrant key but its FDIC cert, so it clusters by "cert:<n>" instead:
+    First Niles common FNFI and its Series A preferred FNFPA share cert 28349
+    and no CIK, and keyed on CIK alone both were screened as separate banks.
+    The string key never collides with an int CIK in _AMBIGUOUS_PRIMARY_COMMON."""
+    by_key: dict[int | str, list[str]] = defaultdict(list)
     for ticker, info in universe.items():
-        cik = info.get("cik") if isinstance(info, dict) else None
+        if not isinstance(info, dict):
+            continue
+        cik, cert = info.get("cik"), info.get("fdic_cert")
         if cik:
-            by_cik[int(cik)].append(ticker)
-    return {c: sorted(ts) for c, ts in by_cik.items() if len(ts) > 1}
+            by_key[int(cik)].append(ticker)
+        elif cert:
+            by_key[f"cert:{int(cert)}"].append(ticker)
+    return {k: sorted(ts) for k, ts in by_key.items() if len(ts) > 1}
 
 
 def _is_major_exchange(exchange: str | None) -> bool:
@@ -87,16 +97,17 @@ def _is_major_exchange(exchange: str | None) -> bool:
     return bool(e) and not ("OTC" in e or "PINK" in e or "GREY" in e)
 
 
-def _pick_primary(cluster: list[str], cik: int,
+def _pick_primary(cluster: list[str], cik: int | str,
                   universe: dict[str, dict] | None = None) -> str | None:
-    """The registrant's primary common ticker within a CIK cluster, or None
+    """The registrant's primary common ticker within a cluster (see
+    _clusters for the key), or None
     when it cannot be identified (caller then drops the whole cluster — fail
     safe). Order: curated tie-breaker, prefer a major-exchange listing, then
     BANK_MAP membership, then the unique strictly-shortest ticker (the base
     listing, e.g. FITB over FITBP)."""
     members = set(cluster)
 
-    curated = _AMBIGUOUS_PRIMARY_COMMON.get(int(cik))
+    curated = _AMBIGUOUS_PRIMARY_COMMON.get(cik)
     if curated and curated in members:
         return curated
 

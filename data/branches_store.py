@@ -51,7 +51,6 @@ Provides:
   • upsert_branches(rows)        — bulk insert/update for one bank
   • get_branches_by_state(s)     — query for the new geo UI view
   • get_branches_by_msa(m)       — query
-  • get_branch_counts_by_ticker() — quick coverage check
   • haversine_miles(...)         — pure great-circle distance
   • get_nearest_branches(...)    — other-bank branches nearest a point
   • get_branch_competitors(...)  — competitor branches within a radius of
@@ -694,25 +693,6 @@ def get_latest_year() -> int | None:
     df["n"] = df["n"].astype(int)
     full = df[df["n"] >= _SERVING_YEAR_MIN_SHARE * df["n"].max()]
     return int(full["year"].max())
-
-
-def get_branch_counts_by_ticker() -> pd.DataFrame:
-    """Coverage check: how many branches per ticker (latest year only).
-
-    NOTE: every branch with no ticker collapses into ONE null-ticker row whose
-    deposits are the SUM across all ~4,200 private banks — fine as a coverage
-    diagnostic, misleading as a bank list. Use get_branch_counts_by_bank() for
-    anything that presents banks to a user."""
-    sql = """
-        SELECT ticker,
-               COUNT(*) AS n_branches,
-               SUM(deposits) AS total_deposits
-        FROM branches
-        WHERE year = :year
-        GROUP BY ticker
-        ORDER BY total_deposits DESC
-    """
-    return _q_to_df(sql, {"year": get_latest_year()})
 
 
 def get_branch_counts_by_bank() -> pd.DataFrame:

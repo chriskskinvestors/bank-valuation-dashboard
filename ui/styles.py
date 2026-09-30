@@ -986,10 +986,6 @@ CUSTOM_CSS = """
 
     .ksk-empty { min-height: 108px; display: flex; flex-direction: column;
         align-items: center; justify-content: center; gap: 6px; padding: 14px; }
-    .ksk-empty .ico { width: 26px; height: 26px; border-radius: 50%;
-        background: var(--bg-inset); border: 1px solid var(--border-subtle);
-        display: flex; align-items: center; justify-content: center;
-        color: var(--text-muted); font-size: .8rem; }
     .ksk-empty .l1 { font-size: .72rem; font-weight: 600; color: var(--text-secondary); }
     .ksk-empty .l2 { font-size: .66rem; color: var(--text-muted); }
 
@@ -1111,6 +1107,28 @@ CUSTOM_CSS = """
         .st-key-topnav [role="radiogroup"] label {
             padding: 4px 8px !important; font-size: var(--fs-xs) !important; }
     }
+    /* <1500px step (UX-P1-32): the 1700px step alone still wrapped
+       "Geographic" at ~1380px. Two levers, scoped to the band's columns
+       (identified by content, not position; top_nav's column ratios are
+       untouched): (1) the tab text itself shrinks — Streamlit sizes the
+       label's stMarkdownContainer directly, so the label font-size above
+       never reaches the text; (2) the band's widths are re-split: the brand
+       gets a fixed width that fits the wordmark (its 10.4% share overflowed
+       below ~1400px), and the search box cedes share to the nav. Sized for
+       one row down to 1280px at the default text size. */
+    @media (max-width: 1500px) {
+        .st-key-topnav [role="radiogroup"] label { padding: 4px 7px !important; }
+        .st-key-topnav [role="radiogroup"] label [data-testid="stMarkdownContainer"],
+        .st-key-topnav [role="radiogroup"] label [data-testid="stMarkdownContainer"] p {
+            font-size: var(--fs-sm) !important; }
+        div[data-testid="stColumn"]:has(.ksk-brand) {
+            flex: 0 0 9rem !important; width: 9rem !important; }
+        div[data-testid="stColumn"]:has(.st-key-topnav) {
+            flex: 1 1 calc(60% - 1rem) !important; width: calc(60% - 1rem) !important; }
+        div[data-testid="stColumn"]:has(.st-key-nav_bank_search) {
+            flex: 1 1 calc(16% - 1rem) !important; width: calc(16% - 1rem) !important;
+            min-width: 0 !important; }
+    }
 
     /* Segmented controls (chart ranges, movers toggles): compact one-row
        pills everywhere — the default chunky boxes wrapped to two rows in
@@ -1174,6 +1192,62 @@ CUSTOM_CSS = """
         color: var(--text-muted) !important; }
 </style>
 """
+
+# ── Horizontal radios as pill buttons (UX-P1-14, owner decision 2026-09-30) ──
+# Every un-keyed horizontal st.radio (Annual/Quarterly, chart periods, Peer
+# set/Sort, Aggregate/Details, ...) rendered as square checkboxes: the global
+# zero-radius rule squares the radio circle. Mutually exclusive choices render
+# as the Home segmented-control pill look instead (1D/1W/1M, Gainers/Losers):
+# bordered white pill, selected = primary-tinted fill + primary border/text
+# (Streamlit's segmented_controlActive: primary at 10% on white).
+# Streamlit 1.60 DOM (static/js/Radio.*.js): div[data-testid=stRadio] >
+# div[role=radiogroup][aria-orientation=horizontal|vertical] >
+# label[data-testid=stRadioOption]. aria-orientation keeps vertical radios
+# native. Radio groups that already have dedicated keyed styling are
+# excluded — keep this list in sync when a new keyed radio style is added.
+_RADIO_PILL_EXCLUDE = (
+    ".st-key-topnav",                    # top nav band (above)
+    'section[data-testid="stSidebar"]',  # sidebar nav pills (above)
+    ".st-key-company_section_nav",       # Company section tab bar (above)
+    ".st-key-company_subtab_nav",        # Company sub-tab pills (above)
+    ".st-key-company_basis_nav",         # Company Reported | Templated (above)
+    '[class*="st-key-lazytabs_"]',       # chrome.lazy_tabs pill bars (above)
+    ".st-key-sc_subnav",                 # Screen & Compare sub-nav (app.py)
+    ".st-key-macro_section_nav",         # Macro section tabs (ui/macro.py)
+    ".st-key-bank_sector_sub_nav",       # Bank-sector sub-tabs (ui/macro.py)
+    ".st-key-bank_sector_etf",           # ETF underline picker (ui/macro.py)
+    ".st-key-bank_sector_period",        # Window underline picker (ui/macro.py)
+    ".st-key-macro_cal_window",          # Calendar window picker (ui/macro.py)
+)
+_RADIO_PILL_GROUP = (
+    'div[data-testid="stRadio"] [role="radiogroup"][aria-orientation="horizontal"]'
+    ":not(:is(" + ", ".join(_RADIO_PILL_EXCLUDE) + ") *)")
+_RADIO_PILL_CSS = """
+    $G { display: flex !important; flex-wrap: wrap; gap: 2px !important;
+        align-items: center; }
+    $G > label {
+        margin: 0 !important; padding: 0 0.6rem !important;
+        min-height: 1.6rem; box-sizing: border-box;
+        display: inline-flex !important; align-items: center;
+        background: #ffffff; border: 1px solid rgba(49, 51, 63, 0.2);
+        cursor: pointer; transition: background 0.12s, border-color 0.12s; }
+    $G > label:hover { background: var(--bg-hover); }
+    $G > label div:not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])) {
+        display: none !important; }
+    $G > label [data-testid="stMarkdownContainer"] p {
+        margin: 0 !important; font-size: var(--fs-xs) !important;
+        font-weight: 600; line-height: 1 !important; white-space: nowrap;
+        color: var(--text-primary); }
+    $G > label:has(input:checked) {
+        background: rgba(37, 99, 235, 0.10); border-color: #2563eb; }
+    $G > label:has(input:checked) [data-testid="stMarkdownContainer"] p {
+        color: #2563eb; }
+    $G > label:has(input:focus-visible) {
+        outline: 2px solid #2563eb; outline-offset: 1px; }
+    $G > label:has(input:disabled) { opacity: 0.45; cursor: not-allowed; }
+""".replace("$G", _RADIO_PILL_GROUP)
+# Appended inside the one <style> block, after the global radius override.
+CUSTOM_CSS = CUSTOM_CSS.replace("</style>", _RADIO_PILL_CSS + "</style>")
 
 # ── User text-size preference (Extras ▸ Text size) ───────────────────────────
 # One root font-size rule scales every rem-sized token above (the whole sheet

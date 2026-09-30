@@ -82,8 +82,8 @@ def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[
 
 
 def load_fdic_hist_df(ticker: str, quarters: int):
-    """DataFrame view of load_fdic_hist — the drop-in for per-cert
-    fdic_client.get_historical_financials at ticker-scoped call sites.
+    """DataFrame view of load_fdic_hist — the ticker-scoped, group-aware
+    replacement for the removed per-cert fdic_client.get_historical_financials.
     Same columns (raw FDIC fields), newest first, group-aware."""
     import pandas as pd
     # min_quarters is capped at the warm window: a deep request (44 / 84 /
@@ -98,8 +98,8 @@ def load_fdic_hist_df(ticker: str, quarters: int):
 
 
 def load_fdic_latest(ticker: str) -> dict:
-    """Latest consolidated FDIC record — the drop-in for per-cert
-    fdic_client.get_latest_financials at ticker-scoped call sites. Served
+    """Latest consolidated FDIC record — the ticker-scoped, group-aware
+    replacement for the removed per-cert fdic_client.get_latest_financials. Served
     from the warm nightly cache (no live FDIC round-trip on render)."""
     recs = load_fdic_hist(ticker, min_quarters=1)
     return dict(recs[0]) if recs else {}

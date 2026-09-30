@@ -16,21 +16,6 @@ from utils.chart_style import (
 )
 
 
-def _trend_arrow(df: pd.DataFrame, lookback_days: int = 30) -> str:
-    """Return ↑/↓/→ based on trailing trend."""
-    if df.empty or len(df) < 2:
-        return "→"
-    recent = df["value"].tail(lookback_days).dropna()
-    if len(recent) < 2:
-        return "→"
-    change = recent.iloc[-1] - recent.iloc[0]
-    if change > 0.05:
-        return "↑"
-    elif change < -0.05:
-        return "↓"
-    return "→"
-
-
 # ── "Market & Macro" sections (docs/HOME-MACRO-PLAN.md, user-approved) ──
 # Sections-as-data, same principle as ui/company_nav.py: the list drives the
 # radio AND the dispatch. Sections marked pending render an honest note —
@@ -119,7 +104,8 @@ def _fmt_vol(v) -> str:
     return f"{v:,.0f}"
 
 
-_NA_HTML = '<span style="color:var(--text-muted);">n/a</span>'
+# Absent value on screen: the house em dash (owner rule 2026-09-30).
+_NA_HTML = '<span style="color:var(--text-muted);">—</span>'
 
 
 def _fmt_usd(v) -> str:
@@ -344,7 +330,9 @@ def _render_funding_deposits():
     # fills the freed space instead). See [[dense-html-table-no-slack]].
     # Narrow table column so its caption wraps to the table width (not past it),
     # chart sized to a fixed block, and the right kept open (owner-specified).
-    tbl_col, chart_col, _spacer = st.columns([1.15, 1.6, 1.0])
+    # tbl_col fits the table incl. its fixed-width Trend column at ~1536 px
+    # (UX-P1-01: it clipped to "Tre"); narrower windows scroll it (overflow-x).
+    tbl_col, chart_col, _spacer = st.columns([1.35, 1.6, 0.8])
     with tbl_col:
         body = ""
         for field, label in _DEPOSIT_PRODUCTS:
@@ -371,13 +359,13 @@ def _render_funding_deposits():
             )
         with st.container(border=True, key="fundtable", height=345):
             st.markdown(
-                '<div class="ksk-grid"><table><thead><tr>'
+                '<div class="ksk-grid" style="overflow-x:auto;"><table><thead><tr>'
                 '<th style="text-align:left;">Product</th>'
                 '<th style="text-align:right;">National Rate</th>'
                 '<th style="text-align:right;">Rate Cap</th>'
                 '<th style="text-align:right;">Cap room</th>'
                 '<th style="text-align:right;">vs Fed Funds</th>'
-                '<th style="text-align:center;">Trend (5Y)</th>'
+                + _trend_th("Trend (5Y)") +
                 "</tr></thead><tbody>" + body + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
@@ -491,6 +479,15 @@ def _sparkline_svg(values, width: int = 92, height: int = 22) -> str:
             f'<circle cx="{lx}" cy="{ly}" r="1.7" fill="#1e40af"/></svg>')
 
 
+def _trend_th(label: str, spark_w: int = 92) -> str:
+    """Header cell for a sparkline column, pinned to the sparkline's width plus
+    cell padding so neither the header nor the lines can be squeezed and
+    clipped ("Tre", "Trenc" — UX-P1-01). Pair it with an overflow-x:auto
+    wrapper: on a narrow column the table scrolls instead of being cut off."""
+    w = spark_w + 16
+    return f'<th style="text-align:center;width:{w}px;min-width:{w}px;">{label}</th>'
+
+
 def _fmt_z(z) -> str:
     """Historical context: z-score of the latest reading vs ~10y of its own
     history, as ±Nσ (bold when |z| ≥ 2, i.e. an unusual reading)."""
@@ -531,13 +528,16 @@ def _fmt_econ_val(v, unit) -> str:
 
 def _econ_surprise_html(ev: dict) -> str:
     """Signed actual−consensus surprise, colored by deviation (above consensus
-    green / below red) — direction vs expectations, not good/bad."""
+    green / below red) — direction vs expectations, not good/bad. Carries the
+    row's unit like Actual (+64K, -0.035M); a % release's surprise is in pp."""
     s = ev.get("surprise")
     if s is None:
         return '<span style="color:var(--text-muted);">—</span>'
     color = ("var(--success)" if s > 0 else
              "var(--danger)" if s < 0 else "var(--text-secondary)")
-    return f'<span style="color:{color};">{s:+g}</span>'
+    u = (ev.get("unit") or "").strip()
+    u = "pp" if u == "%" else u if u in ("M", "K", "B") else (f" {u}" if u else "")
+    return f'<span style="color:{color};">{s:+g}{u}</span>'
 
 
 def _et_time(dt_str: str) -> str:
@@ -558,14 +558,17 @@ def _et_time(dt_str: str) -> str:
 
 def _release_cell(e: dict) -> str:
     """Release name with its impact tag inline (small, trailing) — the tag rides
-    in the Release cell rather than its own column, keeping the calendar tables
-    narrow enough to stay inside cal_col (UX-P0-01)."""
+    in the Release cell rather than its own column (UX-P0-01). One line, capped
+    width, ellipsis + full-name tooltip: wrapped names made the releases table
+    ~2,900 px tall (UX-P1-03)."""
     import html as _h
     tag = _ECON_IMPACT_TAG.get(e.get("impact"), "")
     tag = (f' <span style="font-size:var(--fs-2xs);white-space:nowrap;">{tag}</span>'
            if tag else "")
-    return (f'<td style="text-align:left;white-space:normal;max-width:210px;">'
-            f'{_h.escape(e["event"])}{tag}</td>')
+    name = _h.escape(e["event"])
+    return (f'<td title="{name}" style="text-align:left;white-space:nowrap;'
+            f'overflow:hidden;text-overflow:ellipsis;max-width:280px;">'
+            f'{name}{tag}</td>')
 
 
 def _recent_releases_table(recent: list[dict]) -> str:
@@ -671,7 +674,7 @@ def _board_table(rows: list[dict]) -> str:
         '<th style="text-align:right;">Prior</th>'
         '<th style="text-align:right;">Δ</th>'
         '<th style="text-align:right;">vs hist</th>'
-        '<th style="text-align:center;">Trend</th>'
+        + _trend_th("Trend") +
         '<th style="text-align:right;">As of</th></tr></thead>'
         "<tbody>" + body + "</tbody></table></div>"
     )
@@ -893,54 +896,6 @@ def _macro_trend_fig(spec: dict, years: int = 8):
     return fig
 
 
-def _render_surprise_summary(recent):
-    """Compact tally of how recent releases printed vs consensus — direction vs
-    expectations (above/below), NOT good/bad. Fills the freed column beside the
-    calendars."""
-    import html as _h
-    items = [e for e in (recent or []) if e.get("surprise") is not None]
-    if not items:
-        st.markdown("**Surprise tracker**")
-        from ui.states import empty_state
-        empty_state('No released surprises in the window')
-        return
-    beats = sum(1 for e in items if e["surprise"] > 0)
-    misses = sum(1 for e in items if e["surprise"] < 0)
-    inline = len(items) - beats - misses
-    if beats > misses:
-        tilt, color = "Above consensus", "var(--success)"
-    elif misses > beats:
-        tilt, color = "Below consensus", "var(--danger)"
-    else:
-        tilt, color = "In line", "var(--text-secondary)"
-    ranked = sorted(items, key=lambda e: abs(e["surprise"]), reverse=True)[:3]
-    big = "".join(
-        f'<tr><td style="text-align:left;">{_h.escape(e["event"])}</td>'
-        f'<td style="text-align:right;">{_econ_surprise_html(e)}</td></tr>'
-        for e in ranked)
-    st.markdown("**Surprise tracker**")
-    st.markdown(
-        '<div class="ksk-grid"><table><tbody>'
-        f'<tr><td style="text-align:left;">Above cons.</td><td style="text-align:right;color:var(--success);font-weight:700;">{beats}</td></tr>'
-        f'<tr><td style="text-align:left;">Below cons.</td><td style="text-align:right;color:var(--danger);font-weight:700;">{misses}</td></tr>'
-        f'<tr><td style="text-align:left;">In line</td><td style="text-align:right;">{inline}</td></tr>'
-        '</tbody></table></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f'<div style="margin-top:4px;font-size:var(--fs-sm);">Net tilt: '
-        f'<span style="color:{color};font-weight:700;">{tilt}</span> '
-        f'<span style="color:var(--text-muted);">· {len(items)} releases</span></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div style="margin-top:6px;font-size:var(--fs-2xs);color:var(--text-muted);'
-        'letter-spacing:0.06em;">BIGGEST SURPRISES</div>'
-        f'<div class="ksk-grid"><table><tbody>{big}</tbody></table></div>',
-        unsafe_allow_html=True,
-    )
-
-
 # ── Cached figure builders (render-path perf) ────────────────────────────
 # Economic Data renders 6 grid charts + the explorer on EVERY Streamlit
 # rerun. A go.Figure build (data transforms + trace construction + layout)
@@ -1129,43 +1084,21 @@ def _render_economy_calendar():
     from data.econ_calendar import get_recent_releases, get_upcoming_releases
     from ui.chrome import table_export
 
-    # ── Calendars stacked (left) · Key indicators board (right) ──
+    # ── Key indicators board · chart grid, then the two calendars side by side ──
     # Limit generous so a heavy print day (the 8:30 ET cluster alone can be ~16
     # marquee US releases) doesn't crowd out the prior few days entirely.
     recent = get_recent_releases(days=10, limit=30)
     up = get_upcoming_releases(days=14, limit=20)
     rows = _cached_print_board()
-    # Calendars (left) · board (middle) · a 2×2 chart grid on the right:
-    # Inflation/Labor stacked beside Growth/Activity stacked. board_col is sized
-    # to hug the full 7-column board (indicator…Trend…As of) — wide enough not to
-    # clip, tight enough to leave only a thin seam before the charts (no right
-    # slack); the chart grid takes the rest and runs taller to fill it. On a
-    # narrower window the board table scrolls within its own column (overflow-x
-    # in _board_table) rather than pushing As-of under the charts — so this stays
-    # tight on a wide screen instead of widening the board and leaving a gap.
-    cal_col, board_col, chart_col = st.columns([1, 1.04, 1.62])
-    with cal_col:
-        st.markdown("**Latest releases & surprises**")
-        if recent:
-            st.markdown(_recent_releases_table(recent), unsafe_allow_html=True)
-            st.caption("Actual vs consensus; surprise colored by deviation (not good/bad). "
-                       "Source: FMP economic calendar.")
-        else:
-            st.info("Latest-release surprises use FMP's economic calendar (Premium key, "
-                    "mounted in production). Unavailable in this environment.")
-        st.markdown("**Upcoming releases**")
-        if not up:
-            st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
-                    "mounted in production). Unavailable in this environment.")
-        else:
-            # Rows carry ET dates/times ("· ET times" caption) — key "Today"
-            # to ET as well. The server clock is UTC, which rolls over at
-            # ~8pm ET and would highlight tomorrow's rows (audit P3).
-            from zoneinfo import ZoneInfo
-            today_iso = _dt.now(ZoneInfo("America/New_York")).date().isoformat()
-            st.markdown(_upcoming_releases_table(up, today_iso), unsafe_allow_html=True)
-            st.caption("Scheduled US releases · consensus · impact · ET times. "
-                       "Source: FMP economic calendar.")
+    # Board (left) · a 2×2 chart grid on the right: Inflation/Labor stacked
+    # beside Growth/Activity stacked. board_col is sized to hug the full
+    # 7-column board (indicator…Trend…As of) at ~1536 px; on a narrower window
+    # the board scrolls within its own column (overflow-x in _board_table)
+    # rather than pushing As-of under the charts. The release calendars used to
+    # be a third, narrow column on the left — wrapped names ran it ~2,900 px
+    # tall beside blank space (UX-P1-03) — so they now sit side by side in a
+    # full-width row below the band, one line per release.
+    board_col, chart_col = st.columns([1.36, 2.3])
     with board_col:
         st.markdown("**Key indicators**")
         st.markdown(_board_table(rows), unsafe_allow_html=True)
@@ -1204,6 +1137,31 @@ def _render_economy_calendar():
                                                 "~10y of the series' own history (σ)."})
     with chart_col:
         _render_macro_grid()
+
+    rec_col, up_col = st.columns(2)
+    with rec_col:
+        st.markdown("**Latest releases & surprises**")
+        if recent:
+            st.markdown(_recent_releases_table(recent), unsafe_allow_html=True)
+            st.caption("Actual vs consensus; surprise colored by deviation (not good/bad). "
+                       "Source: FMP economic calendar.")
+        else:
+            st.info("Latest-release surprises use FMP's economic calendar (Premium key, "
+                    "mounted in production). Unavailable in this environment.")
+    with up_col:
+        st.markdown("**Upcoming releases**")
+        if not up:
+            st.info("Upcoming-release calendar uses FMP's economic calendar (Premium key, "
+                    "mounted in production). Unavailable in this environment.")
+        else:
+            # Rows carry ET dates/times ("· ET times" caption) — key "Today"
+            # to ET as well. The server clock is UTC, which rolls over at
+            # ~8pm ET and would highlight tomorrow's rows (audit P3).
+            from zoneinfo import ZoneInfo
+            today_iso = _dt.now(ZoneInfo("America/New_York")).date().isoformat()
+            st.markdown(_upcoming_releases_table(up, today_iso), unsafe_allow_html=True)
+            st.caption("Scheduled US releases · consensus · impact · ET times. "
+                       "Source: FMP economic calendar.")
 
     st.markdown("---")
 
@@ -1515,13 +1473,13 @@ def _rates_board_table(rows) -> str:
                 "</tr>"
             )
     return (
-        '<div class="ksk-grid"><table style="width:100%;"><thead><tr>'
+        '<div class="ksk-grid" style="overflow-x:auto;"><table style="width:100%;"><thead><tr>'
         '<th style="text-align:left;">Instrument</th>'
         '<th style="text-align:right;">Latest</th>'
         '<th style="text-align:right;">Δ1W</th>'
         '<th style="text-align:right;">Δ3M</th>'
         '<th style="text-align:right;">vs hist</th>'
-        '<th style="text-align:center;">Trend (3Y)</th>'
+        + _trend_th("Trend (3Y)", 150) +
         '<th style="text-align:right;">As of</th></tr></thead><tbody>'
         + body + "</tbody></table></div>"
     )
@@ -1571,6 +1529,12 @@ def _fig_yield_curve():
                           height=_RATE_GRID_H, yaxis_title="Yield", xaxis_title="Maturity",
                           hovermode="x unified")
     fig.update_yaxes(ticksuffix="%")
+    # The only rates chart with an x-axis title: the standard below-plot legend
+    # (paper y=-0.18) printed over "Maturity" (UX-P1-06). Pin the legend to the
+    # figure's bottom edge (container coords, independent of plot height) and
+    # grow the bottom margin to hold tick labels + axis title + legend.
+    fig.update_layout(margin=dict(b=78),
+                      legend=dict(yref="container", y=0, yanchor="bottom"))
     return fig
 
 
@@ -1857,13 +1821,13 @@ def _render_credit_spreads():
              '<td style="text-align:right;color:var(--text-muted);">-</td>'
              '<td style="text-align:center;color:var(--text-muted);">-</td></tr>')
     table_html = (
-        '<div class="ksk-grid"><table style="width:100%;"><thead><tr>'
+        '<div class="ksk-grid" style="overflow-x:auto;"><table style="width:100%;"><thead><tr>'
         '<th style="text-align:left;">Spread</th>'
         '<th style="text-align:right;">OAS</th>'
         '<th style="text-align:right;">&Delta; 3M</th>'
         '<th style="text-align:right;">&Delta; 1Y</th>'
         '<th style="text-align:right;">5Y %ile</th>'
-        '<th style="text-align:center;">Trend (5Y)</th>'
+        + _trend_th("Trend (5Y)", 130) +
         "</tr></thead><tbody>" + body + "</tbody></table></div>"
     )
 
@@ -1872,7 +1836,10 @@ def _render_credit_spreads():
     # (no dead white band on the right inside the border), packed left next to
     # the table with a wide spacer absorbing the freed width. The table column is
     # held ~at its content width so the table→chart gap matches the chart→chart gap.
-    lc, cc, dp, _sp = st.columns([1.04, 1.0, 1.0, 1.0])
+    # lc widened from the spacer (charts unchanged) so the table incl. its
+    # fixed-width Trend column fits at ~1536 px (UX-P1-01); narrower windows
+    # scroll it within the column (overflow-x) instead of clipping.
+    lc, cc, dp, _sp = st.columns([1.3, 1.0, 1.0, 0.74])
     with lc:
         # Pin the table to the chart-card height (border=False = no visible box)
         # so its bottom lines up exactly with the two charts on the right.

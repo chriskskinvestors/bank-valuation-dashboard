@@ -219,7 +219,8 @@ class TestHighlightsLabelVariants(unittest.TestCase):
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
-                        return_value=None):
+                        return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None):
             years, dicts, _src = fs._cr_highlights_by_year("TEST")
         self.assertEqual(years, ["FY2025"])
         d = dicts[0]
@@ -248,7 +249,8 @@ class TestHighlightsLabelVariants(unittest.TestCase):
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
-                        return_value=None):
+                        return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None):
             _years, dicts, _src = fs._cr_highlights_by_year("TEST")
         d = dicts[0]
         self.assertEqual(d["net_income"], 209.0)
@@ -274,7 +276,8 @@ class TestHighlightsLabelVariants(unittest.TestCase):
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
-                        return_value=None):
+                        return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None):
             years, dicts, _src = fs._cr_highlights_by_year("TEST")
         d = dicts[0]
         self.assertIsNone(d["nii"])
@@ -310,7 +313,8 @@ class TestReconcileGatedAmbiguousLabels(unittest.TestCase):
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
-                        return_value=None):
+                        return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None):
             _y, dicts, _s = fs._cr_highlights_by_year("TEST")
         return dicts[0]
 
@@ -345,7 +349,8 @@ class TestBareTotalAssetsGuard(unittest.TestCase):
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
-                        return_value=None):
+                        return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None):
             _y, dicts, _s = fs._cr_highlights_by_year("TEST")
         return dicts[0]
 

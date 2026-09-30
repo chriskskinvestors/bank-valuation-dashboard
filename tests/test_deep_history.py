@@ -144,6 +144,7 @@ class TestLoaderDeepPath(_DbCase):
              patch("data.cert_group.fetch_group_history",
                    side_effect=fake_group), \
              patch("data.bank_mapping.get_fdic_cert", return_value=123), \
+             patch("data.cert_group.get_cert_group", return_value=[123]), \
              patch.object(cache, "get", return_value=None), \
              patch.object(cache, "put"):
             loaders.load_fdic_hist("FAKE", min_quarters=8, limit=140)

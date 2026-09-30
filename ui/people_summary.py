@@ -103,7 +103,7 @@ def render_people_summary(ticker: str):
                                  "Source URL": src})
     else:
         from ui.states import empty_state
-        empty_state('No proxy-based roster is available for this company — the extraction needs a DEF 14A on EDGAR and the summarizer API',
+        empty_state('No proxy statement has been processed for this company yet.',
                     'The Section 16 roster below still reflects insider filings')
 
     # ── Section 16 roster (Form 4 activity) ──────────────────────────────

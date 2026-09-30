@@ -649,9 +649,11 @@ class TestHoldcoCapitalRendersPopulated(unittest.TestCase):
         # another test class reinstalled it (see _install_streamlit_stub).
         st = self.cd.st
         import data.sec_filing_scraper as sfs
+        import data.ir_provider as irp
         md = []
         saved = (st.markdown, st.caption, st.subheader,
-                 self.cd.get_cik, self.cd.get_fdic_cert, sfs.holdco_capital_for)
+                 self.cd.get_cik, self.cd.get_fdic_cert, sfs.holdco_capital_for,
+                 irp.fresh_capital)
         try:
             st.markdown = lambda s, *a, **k: md.append(str(s))
             st.caption = lambda s, *a, **k: md.append(str(s))
@@ -659,11 +661,13 @@ class TestHoldcoCapitalRendersPopulated(unittest.TestCase):
             self.cd.get_cik = lambda t: 1281761
             self.cd.get_fdic_cert = lambda t: 12368
             sfs.holdco_capital_for = lambda cik, cert=None: res
+            # No fresher earnings-release capital (it reads EDGAR live).
+            irp.fresh_capital = lambda cik: None
             self.cd._render_holdco_capital("RF")
         finally:
             (st.markdown, st.caption, st.subheader,
              self.cd.get_cik, self.cd.get_fdic_cert,
-             sfs.holdco_capital_for) = saved
+             sfs.holdco_capital_for, irp.fresh_capital) = saved
         return "\n".join(md)
 
     def test_amounts_and_ratios_render(self):
@@ -787,10 +791,12 @@ class TestIncomeStatementRiRendersPopulated(unittest.TestCase):
         self.assertIn("Data processing expenses", h)
         self.assertIn("$30.8M", h)
         self.assertIn("30,787", h)
-        # Below-threshold preprinted lines render n/a with the reason — and
-        # appear at all because SOME line was itemized.
+        # Below-threshold preprinted lines render absent ("—" on screen, owner
+        # rule 2026-09-30 / UX-P1-19) with the reason in the click-through —
+        # and appear at all because SOME line was itemized.
         self.assertIn("Telecommunications expense", h)
-        self.assertIn(">n/a<", h)
+        self.assertIn(">—<", h)
+        self.assertNotIn(">n/a<", h)
         self.assertIn("below the RI-E itemization threshold", h)
         # Labeled income write-in (bank's own filed text).
         self.assertIn("Merchant Fee Income", h)

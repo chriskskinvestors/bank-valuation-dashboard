@@ -25,7 +25,6 @@ Public functions:
   • init_price_cache_schema()        — idempotent CREATE TABLE
   • upsert_prices(quotes)            — bulk write {ticker: quote_dict}
   • get_prices(tickers, max_age_s)   — bulk read, fresh rows only
-  • get_all_prices(max_age_s)        — bulk read everything fresh
   • get_max_updated_at()             — newest updated_at (freshness badge)
 
 updated_at is the job heartbeat (write time) — the ≤120-ticker repair path
@@ -439,33 +438,3 @@ def get_max_updated_at() -> datetime | None:
     except Exception:
         return None
     return _parse_ts(v)
-
-
-def get_all_prices(max_age_s: int | None = None) -> dict[str, dict]:
-    """Read every cached price (optionally only fresh rows)."""
-    from sqlalchemy import text
-    eng = _get_engine()
-    now = datetime.now(timezone.utc)
-    out: dict[str, dict] = {}
-    with eng.begin() as conn:
-        rows = conn.execute(text(
-            "SELECT ticker, price, prev_close, change, change_pct, volume, "
-            "dividend_yield, avg_volume, chg_1w, chg_ytd, relvol_1w, relvol_1m, "
-            "relvol_6m, updated_at FROM price_cache"
-        )).fetchall()
-    for r in rows:
-        ts = _parse_ts(r.updated_at)
-        age = (now - ts).total_seconds() if ts else None
-        if max_age_s is not None and (age is None or age > max_age_s):
-            continue
-        out[r.ticker] = {
-            "price": r.price, "close": r.prev_close, "prev_close": r.prev_close,
-            "change": r.change, "change_pct": r.change_pct, "volume": r.volume,
-            "dividend_yield": r.dividend_yield, "avg_volume": r.avg_volume,
-            "rel_volume": (r.volume / r.avg_volume
-                           if r.volume and r.avg_volume else None),
-            "chg_1w": r.chg_1w, "chg_ytd": r.chg_ytd, "relvol_1w": r.relvol_1w,
-            "relvol_1m": r.relvol_1m, "relvol_6m": r.relvol_6m,
-            "updated_at": ts.isoformat() if ts else None, "age_seconds": age,
-        }
-    return out

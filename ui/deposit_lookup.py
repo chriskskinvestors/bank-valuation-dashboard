@@ -10,7 +10,7 @@ import pandas as pd
 
 from utils.aggregate import strict_sum
 
-from data.sod_client import fetch_branches, search_bank_by_name
+from data.sod_client import fetch_branches
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
 from ui.chrome import ledger, table_export, title_bar, lazy_tabs
@@ -47,63 +47,28 @@ def render_market_share_for_ticker(ticker: str):
     _render_deposits_core(cert, get_name(ticker))
 
 
-def render_deposit_lookup():
-    """Render the deposit market share & branch map page with search."""
-
-    title_bar("KSK Investors", "Deposit Market Share & Branch Map", ids_html="")
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        search_query = st.text_input(
-            "Search by bank name",
-            placeholder="e.g. Southern First, JPMorgan Chase, Wells Fargo...",
-            key="bank_search",
-        )
-    with col2:
-        ticker_input = st.text_input(
-            "Or enter ticker",
-            placeholder="e.g. SFST, JPM, WFC",
-            key="ticker_search",
-        )
-
-    selected_cert = None
-    selected_name = None
-
-    if ticker_input:
-        ticker = ticker_input.strip().upper()
-        cert = get_fdic_cert(ticker)
-        if cert:
-            selected_cert = cert
-            selected_name = get_name(ticker) or ticker
-        else:
-            st.warning(f"Ticker '{ticker}' not found. Try searching by name instead.")
-
-    elif search_query and len(search_query) >= 3:
-        with st.spinner("Searching FDIC database..."):
-            results = search_bank_by_name(search_query)
-        if results:
-            options = {f"{r['name']} (CERT: {r['cert']})": r for r in results}
-            choice = st.selectbox(
-                f"Found {len(results)} match{'es' if len(results) > 1 else ''}",
-                options=list(options.keys()),
-                key="bank_search_results",
-            )
-            if choice:
-                selected_cert = options[choice]["cert"]
-                selected_name = options[choice]["name"]
-        else:
-            from ui.states import empty_state
-            empty_state('No banks found',
-                        'Try a different name')
-
-    if not selected_cert:
-        st.info("Search for a bank above to see its branch map and deposit market share.")
-        return
-
-    # This page's title bar is generic ("KSK Investors | DEPOSIT MARKET
-    # SHARE & BRANCH MAP"), so name the searched bank here.
-    section_header("", selected_name, f"FDIC cert {selected_cert}")
-    _render_deposits_core(selected_cert, selected_name)
+def _branch_map_figure(map_df: pd.DataFrame):
+    """Branch map framed to the branches (UX review P1-27): st.map fits to
+    EVERY point, so a handful of mis-geocoded rows opened JPM's 5,142-branch
+    map on the Atlantic. Same framing as Market Analysis > Branch Map: the
+    1st-99th percentile box (ui.branch_analytics._map_extent) -> center/zoom.
+    Every branch is still plotted; only the initial view is fitted."""
+    import plotly.express as px
+    from ui.branch_analytics import _map_extent
+    from ui.geo_view import _fit_viewport
+    lat, lng = map_df["SIMS_LATITUDE"], map_df["SIMS_LONGITUDE"]
+    center, zoom = _fit_viewport(*_map_extent(lat, lng))
+    dep = pd.to_numeric(map_df["DEPSUMBR"], errors="coerce")
+    hover = {c: True for c in ("CITYBR", "STALPBR") if c in map_df.columns}
+    fig = px.scatter_map(
+        map_df, lat="SIMS_LATITUDE", lon="SIMS_LONGITUDE",
+        size=dep.fillna(0).clip(lower=1),
+        hover_name="NAMEBR" if "NAMEBR" in map_df.columns else None,
+        hover_data={**hover, "SIMS_LATITUDE": False, "SIMS_LONGITUDE": False},
+        size_max=18, zoom=zoom, center=center)
+    fig.update_layout(map_style="carto-positron", height=480,
+                      margin=dict(l=0, r=0, t=0, b=0))
+    return fig
 
 
 # Source row on every SOD export (one constant in ui.export).
@@ -228,18 +193,8 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     section_header("", "Branch map", _count(len(map_df), "mapped branch"))
 
     if not map_df.empty:
-        map_df = map_df.rename(columns={
-            "SIMS_LATITUDE": "latitude",
-            "SIMS_LONGITUDE": "longitude",
-        })
-        # Size points by deposits
-        max_dep = map_df["DEPSUMBR"].max()
-        if max_dep > 0:
-            map_df["size"] = (map_df["DEPSUMBR"] / max_dep * 800).clip(lower=50)
-        else:
-            map_df["size"] = 100
-
-        st.map(map_df, latitude="latitude", longitude="longitude", size="size")
+        st.plotly_chart(_branch_map_figure(map_df), use_container_width=True,
+                        key=f"deplookup_map_{selected_cert}")
     else:
         from ui.states import empty_state
         empty_state("No geographic data available for this bank's branches")

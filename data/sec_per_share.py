@@ -14,7 +14,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data.sec_client import get_historical_fundamentals
+from data.sec_client import (
+    _not_a_carrying_total,
+    _parent_equity_series,
+    _same_date_preferred_count,
+    fetch_company_facts,
+    get_historical_fundamentals,
+)
 
 # Trends metrics sourced from SEC (key, label). HoldCo per-share, labelled (SEC).
 SEC_TREND_METRICS = [
@@ -121,16 +127,59 @@ def _merged_series(cik: int, concepts) -> dict:
 
 
 def _equity_series(cik: int) -> dict:
-    """Equity per end across the snapshot path's concept ladder (sec_client
-    get_latest_fundamentals falls back to the including-NCI tag when the
-    primary is missing/stale): AUBN/PRK tag ONLY the including-NCI concept, so
-    a primary-only read rendered their entire per-share history n/a. Per-END
-    merge (primary wins wherever both exist) so tag-switchers resolve both
-    eras."""
-    return _merged_series(cik, [
-        "StockholdersEquity",
-        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-    ])
+    """Parent equity per balance-sheet end, resolved exactly like the snapshot
+    (sec_client._parent_equity_at): plain StockholdersEquity, else the
+    including-NCI total less same-date MinorityInterest, else — when a
+    noncontrolling interest may exist that no fact separates — no value (the
+    quarter renders n/a). AUBN/PRK tag ONLY the including-NCI concept; RBB's
+    including-NCI total carries a $72K NCI at every end tagged since
+    2024-06-30 (2026-03-31: $531,054K total, $530,982K parent), which the old
+    per-end tag merge served as parent equity."""
+    facts = fetch_company_facts(cik)
+    if not facts:
+        return {}
+    return {pd.Timestamp(end).normalize(): v
+            for end, v in _parent_equity_series(facts).items() if v}
+
+
+def _preferred_share_counts(cik: int, common: dict) -> tuple[dict, set]:
+    """({end: [PreferredStockShares(Outstanding|Issued) values at that end]},
+    common-tagged ends). Explicit zeros are KEPT: a redemption quarter's 0
+    must end presence, not let the prior count carry ~1y. A value equal to
+    the same-end common count (`common`: {end: {counts}}) is the common line
+    tagged as preferred (sec_client._common_as_preferred_at; PLBC 2018-03-31):
+    it is dropped and its end returned, so no ladder value there is taken."""
+    out: dict = {}
+    tagged: set = set()
+    for con in ("PreferredStockSharesOutstanding", "PreferredStockSharesIssued"):
+        for q, v in _series(cik, [con]).items():
+            if v and v in common.get(q, ()):
+                tagged.add(q)
+                continue
+            out.setdefault(q, []).append(v)
+    return out, tagged
+
+
+def _preferred_value_series(cik: int, counts: dict, skip: set) -> dict:
+    """_merged_series over the preferred ladder, skipping any rung value that
+    can't be a carrying total against the same-end share count — the
+    snapshot's par-only / per-share guard (sec_client._not_a_carrying_total;
+    OCFC's $1K par over 57,370 shares, its per-share $1,000 liquidation
+    preference after redemption) — or that sits at a `skip` end (common
+    tagged as preferred). An end whose share counts are all
+    explicitly 0 and has no accepted value reads 0.0, so a pre-redemption
+    value doesn't forward-fill past the redemption."""
+    out: dict = {}
+    for con in _PREFERRED_VALUE_CONCEPTS:
+        for q, v in _series(cik, [con]).items():
+            if not v or q in out or q in skip or _not_a_carrying_total(
+                    con, v, _same_date_preferred_count(counts.get(q, []))):
+                continue
+            out[q] = v
+    for q, vals in counts.items():
+        if not any(vals):
+            out.setdefault(q, 0.0)
+    return out
 
 
 def _bank_per_share(cik: int, ends: list) -> dict:
@@ -158,9 +207,10 @@ def _bank_per_share(cik: int, ends: list) -> dict:
     it_fin = _series(cik, ["FiniteLivedIntangibleAssetsNet"])
     incl = _series(cik, ["IntangibleAssetsNetIncludingGoodwill"])
     msr = _series(cik, ["ServicingAssetAtFairValueAmount"])
-    pfd = _merged_series(cik, _PREFERRED_VALUE_CONCEPTS)
-    pfd_sh = _merged_series(cik, ["PreferredStockSharesOutstanding",
-                                  "PreferredStockSharesIssued"])
+    pfd_counts, common_tagged = _preferred_share_counts(
+        cik, {q: {sh.get(q), issued.get(q)} for q in set(sh) | set(issued)})
+    pfd = _preferred_value_series(cik, pfd_counts, common_tagged)
+    pfd_sh = {q: max(vals) for q, vals in pfd_counts.items()}
     universe = (set(eq) | set(sh) | set(issued) | set(wavg) | set(gw)
                 | set(it_ex) | set(it_fin) | set(incl) | set(msr)
                 | set(pfd) | set(pfd_sh) | set(ends))
@@ -178,7 +228,7 @@ def _bank_per_share(cik: int, ends: list) -> dict:
     # rendered every modern quarter n/a; WABC same from 2009). Value and
     # presence carry at most _PFD_MAX_AGE_DAYS past their origin.
     pfdo = _ffill_origin(pfd, universe)
-    psho = _ffill_origin({q: v for q, v in pfd_sh.items() if v}, universe)
+    psho = _ffill_origin(pfd_sh, universe)       # zeros carry too (redemption)
 
     def _shares(q):
         """Common share count at exactly q. The cover-page count rounded to a
@@ -220,7 +270,8 @@ def _bank_per_share(cik: int, ends: list) -> dict:
         row = {"tbvps_hist": None, "bvps_hist": None, "tce_hist": None}
         pv = pfdo.get(q)
         pval = pv[0] if _fresh(pv, q) else None
-        present = bool(pval) or _fresh(psho.get(q), q)
+        ps = psho.get(q)
+        present = bool(pval) or (_fresh(ps, q) and bool(ps[0]))
         # Preferred outstanding but carrying value unresolved — n/a rather
         # than a preferred-inflated figure (cardinal rule). Total TCE only
         # needs equity resolvable; the per-share keys also need shares.
@@ -273,13 +324,20 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     n = max(int(n_quarters), 1)
     ends = [pd.Timestamp(e).normalize() for e in recent_quarter_ends(n)]
     labels = [quarter_label(e) for e in ends]
+    # v8: equity is parent equity per end via sec_client._parent_equity_at
+    # (RBB's including-NCI total had its $72K NCI served as parent equity;
+    # unseparable NCI now n/a).
+    # v7: a preferred share count equal to the same-end common count is the
+    # common line tagged as preferred — no value subtracted there (PLBC).
+    # v6: preferred par-only / per-share liquidation values are no longer a
+    # carrying total, and an explicit zero share count ends presence (OCFC).
     # v5: equity reads fall back to the including-NCI tag (AUBN/PRK all-n/a)
     # and preferred presence/value staleness mirrors the snapshot path
     # (CTBI/WABC forever-n/a from abandoned tags) — the bump invalidates
     # pre-warmed v4 grids so the fixed values serve once re-warmed. (v4 was
     # the CCFN share-count corroboration bump, v3 the intangible-adjustment
     # main-path mirror.)
-    key = f"sec_pershare:v5:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
+    key = f"sec_pershare:v8:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
     cached = cache.get(key, max_age_s=None)     # freshness is _GRID_TTL_S (36h), not the 24h default
     if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached

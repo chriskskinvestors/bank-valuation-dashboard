@@ -48,27 +48,6 @@ def scope_type_options(include_manual: bool = True) -> list[str]:
     return SCOPE_TYPES if include_manual else [t for t in SCOPE_TYPES if t != "Manual"]
 
 
-def render_scope_selector(
-    all_metrics: list[dict],
-    key_prefix: str,
-    *,
-    include_manual: bool = True,
-) -> tuple[list[dict], list[str], str]:
-    """Render the scope picker (type + secondary) inline and return
-    (metrics_subset, tickers, label). Used where stacking the two controls is fine
-    (e.g. Compare). Screen splits them — type in the toolbar, secondary below —
-    via ``scope_type_options`` + ``render_scope_sub`` so its segmented toolbar
-    stays one row tall.
-
-    Streamlit widgets are keyed by ``key_prefix`` so Screen and Compare keep
-    independent selections.
-    """
-    scope_type = st.selectbox("Scope", scope_type_options(include_manual),
-                              key=f"{key_prefix}_scope_type")
-    return render_scope_sub(all_metrics, scope_type, key_prefix,
-                            include_manual=include_manual)
-
-
 def render_scope_sub(
     all_metrics: list[dict],
     scope_type: str,

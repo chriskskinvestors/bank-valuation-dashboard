@@ -8,7 +8,8 @@ Sources:
     - CommonStockSharesOutstanding  (point-in-time share count, for buyback inference)
     - CommonStockDividendsPerShareDeclared  (DPS)
     - NetIncomeLoss  (net income)
-    - StockholdersEquity  (book equity)
+    - parent equity (sec_client._parent_equity_series: StockholdersEquity,
+      else the including-NCI total less same-date MinorityInterest)
     - CommonStockSharesRepurchased  (alternative share-count measure)
 
 Key outputs per period:
@@ -26,7 +27,7 @@ from __future__ import annotations
 import pandas as pd
 from datetime import datetime
 
-from data.sec_client import fetch_company_facts
+from data.sec_client import _parent_equity_series, fetch_company_facts
 
 
 # XBRL concepts we look up, in priority order (first successful match wins).
@@ -65,10 +66,6 @@ _NET_INCOME_CONCEPTS = [
     "NetIncomeLoss",                                      # standard — most banks
     "NetIncomeLossAvailableToCommonStockholdersBasic",    # PNC-style — NI to common
     "ProfitLoss",                                         # broadest — includes minority int
-]
-_EQUITY_CONCEPTS = [
-    "StockholdersEquity",
-    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
 ]
 _SHARES_CONCEPTS = [
     "CommonStockSharesOutstanding",
@@ -289,17 +286,23 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
             # Subtract preferred from total to estimate common.
             # Guard against None values on either side (some banks file
             # a total without a matching preferred at every period).
-            by_end = {e["end"]: e for e in total_divs}
+            # Match on the SAME DURATION (end, start) — the key the series
+            # were deduped on. Keyed by end alone, a preferred concept tagged
+            # both 3-month and YTD (equity-statement DividendsPreferredStockCash)
+            # was subtracted TWICE from one YTD total, and a total's 3-month and
+            # YTD facts collapsed into one (the D6 duration-mix class).
+            by_key = {(e["end"], e.get("start")): e for e in total_divs}
             for p in pref_divs:
-                if p["end"] in by_end:
-                    total = by_end[p["end"]].copy()
+                k = (p["end"], p.get("start"))
+                if k in by_key:
+                    total = by_key[k].copy()
                     tv = total.get("val")
                     pv = p.get("val")
                     if tv is None:
                         continue  # can't subtract from nothing
                     total["val"] = tv - (pv or 0)  # treat missing preferred as 0
-                    by_end[p["end"]] = total
-            divs = _derive_quarterly_from_ytd(sorted(by_end.values(), key=lambda x: x["end"]))
+                    by_key[k] = total
+            divs = _derive_quarterly_from_ytd(sorted(by_key.values(), key=lambda x: x["end"]))
             dividend_source = "total minus preferred"
         elif total_divs:
             divs = _derive_quarterly_from_ytd(total_divs)
@@ -319,9 +322,13 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
     # derivation as the flows. Merging the raw fact used to mix durations and
     # sum cumulatives into "DPS TTM" (JPM: $14.60 vs true ~$5.70).
     dps = _derive_quarterly_from_ytd(_extract_series(gaap, _DPS_CONCEPTS))
-    # Shares and equity are point-in-time, not YTD
+    # Shares and equity are point-in-time, not YTD. Equity is parent equity AT
+    # each end, resolved like the snapshot: a first-fresh-concept read served
+    # tag-switchers' last plain-SE balance (OCFC 2025-12-31 into 2026) and
+    # RBB's NCI-inclusive total as parent equity.
     shares = _extract_series(gaap, _SHARES_CONCEPTS)
-    equity = _extract_series(gaap, _EQUITY_CONCEPTS)
+    equity = [{"end": end, "val": v}
+              for end, v in sorted(_parent_equity_series(facts).items())]
 
     # Merge on 'end' date
     rows = {}
@@ -354,9 +361,10 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
         if col not in df.columns:
             df[col] = None
 
-    # Fill shares & equity forward where reported less frequently
-    for col in ["shares_outstanding", "equity"]:
-        df[col] = df[col].ffill()
+    # Fill shares forward where reported less frequently. Equity is NOT
+    # filled: an end it can't resolve (unseparable NCI) stays n/a rather than
+    # carrying a prior quarter's balance.
+    df["shares_outstanding"] = df["shares_outstanding"].ffill()
 
     # Total capital returned per quarter. One known component treats the other
     # as 0 (a bank tagging dividends but no buyback concept genuinely didn't

@@ -20,6 +20,7 @@ import streamlit as st
 from data.bank_mapping import get_bank_info, get_fdic_cert
 from ui.chrome import table_export
 from ui.export import SOD_SOURCE as _SOD_SOURCE
+from ui.tables import ksk_table, ticker_anchor_cells
 from utils.formatting import fmt_dollars
 
 
@@ -63,10 +64,45 @@ def _county_banks(stcntybr: str, year: int) -> pd.DataFrame:
     return get_banks_by_county(stcntybr, year=year)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+def _footprint_participants(cert: int, year: int) -> dict:
+    """{stcntybr: per-bank aggregate frame} for every county the bank
+    operates in, from one query (data.branches_store.get_market_participants),
+    shaped like get_banks_by_county's frame (total_deposits, n_branches,
+    cert, bank_name, ticker). {} on any failure — callers fall back per
+    county."""
+    try:
+        from data.branches_store import get_market_participants
+        mp = get_market_participants(int(cert), kind="county", year=year)
+    except Exception:
+        return {}
+    if mp is None or mp.empty:
+        return {}
+    mp = mp.rename(columns={"deposits": "total_deposits"})
+    return {str(k): g.reset_index(drop=True)
+            for k, g in mp.groupby("market_key", sort=False)}
+
+
 def _dep_usd(v) -> str:
     """SOD deposits are $thousands — convert at the display boundary."""
     return "—" if v is None or pd.isna(v) else fmt_dollars(float(v) * 1000, 1)
+
+
+def _pct_cell(v) -> str:
+    """Share-of-total display cell: "12.34%"; absent → "—" (never "None"/"nan")."""
+    return "—" if v is None or pd.isna(v) else f"{float(v):.2f}%"
+
+
+def _map_extent(lats, lngs):
+    """(lats, lngs) bounds to fit the branch map to: the 1st–99th percentile
+    box, so a stray mis-geocoded branch can't drag a national footprint's view
+    off the US (UX review 2026-09-24: JPM's 5,142-branch map opened on the
+    Atlantic while BSBK's fit). Small rosters (< 20 points) use the full
+    extent — every branch is shown."""
+    lats = pd.to_numeric(pd.Series(lats), errors="coerce").dropna()
+    lngs = pd.to_numeric(pd.Series(lngs), errors="coerce").dropna()
+    if len(lats) < 20 or len(lngs) < 20:
+        return lats, lngs
+    return lats.quantile([0.01, 0.99]), lngs.quantile([0.01, 0.99])
 
 
 def _empty(ticker):
@@ -108,8 +144,12 @@ def render_branch_list(ticker):
     export.columns = ["Branch", "Address", "City", "ST", "County", "MSA",
                       "Deposits ($K)", "% of bank (%)"]
     out["deposits"] = df["deposits"].map(_dep_usd)
+    out["share_of_bank"] = out["share_of_bank"].map(_pct_cell)
     out.columns = ["Branch", "Address", "City", "ST", "County", "MSA",
                    "Deposits", "% of bank"]
+    # Kept on st.dataframe (not ksk_table): a national roster is thousands of
+    # rows (JPM 5,142) — the grid virtualizes the scroll; a house HTML table
+    # would ship every row as markup on each render.
     st.dataframe(out, use_container_width=True, hide_index=True, height=520)
     table_export(export, f"branches_{ticker}_{yr}", f"exp_branches_{ticker}",
                  formats={"Deposits ($K)": "usd_k", "% of bank (%)": "pct"},
@@ -127,7 +167,7 @@ def render_branch_map(ticker):
         return _empty(ticker)
     import plotly.express as px
     from ui.geo_view import _fit_viewport
-    center, zoom = _fit_viewport(pts["lat"], pts["lng"])
+    center, zoom = _fit_viewport(*_map_extent(pts["lat"], pts["lng"]))
     # scatter_map/MapLibre, not scatter_mapbox: CARTO raster tiles now
     # watermark "API KEY REQUIRED"; the vector gl styles stay anonymous.
     fig = px.scatter_map(
@@ -157,19 +197,33 @@ def render_branch_competitors(ticker):
         return _empty(ticker)
     yr = int(df.iloc[0]["year"])
     name = (get_bank_info(ticker) or {}).get("name") or ticker
-    footprint = sorted(df["stcntybr"].dropna().unique())
+    # Blank / '0' county codes are not a county: querying them would sweep in
+    # every blank-coded branch nationwide.
+    footprint = sorted(c for c in df["stcntybr"].dropna().astype(str).unique()
+                       if c.strip() not in ("", "0"))
     rows: dict[str, dict] = {}
     # Footprint total = every county's every bank; unknown if any is unknown.
     county_totals: list = []
+    # ONE query for every bank in every footprint county (P1-05, 2026-09-30):
+    # the per-county loop ran a query + owner canonicalisation per county —
+    # 635 round trips for JPM, ~40 s warm. get_market_participants returns the
+    # same per-(county, owner) aggregates; any footprint county it doesn't
+    # cover falls back to the per-county query, so the result is unchanged.
+    by_county = _footprint_participants(cert, yr)
     for fips in footprint:
-        cb = _county_banks(str(fips), yr)
+        cb = by_county.get(str(fips))
+        if cb is None:
+            cb = _county_banks(str(fips), yr)
         if cb.empty:
             continue
         county_totals.append(strict_sum(cb["total_deposits"]))
         for _, r in cb.iterrows():
-            # Keyed by the bank's identity (lead cert), not its name: distinct
-            # private banks share names ("First National Bank") across counties.
-            d = rows.setdefault(int(r["cert"]), {
+            # Keyed by the bank's owner identity, not its name: distinct
+            # private banks share names ("First National Bank") across
+            # counties. owner_key (not cert) because the one-query path labels
+            # the subject with the caller's cert, the per-county path with its
+            # lead charter — cert would split the subject across the two.
+            d = rows.setdefault(str(r["owner_key"]), {
                 "Bank": r["bank_name"], "ticker": r["ticker"], "counties": 0,
                 "branches": 0, "_deps": []})
             d["counties"] += 1
@@ -189,13 +243,18 @@ def render_branch_competitors(ticker):
         "ticker": "Ticker", "counties": "Shared counties", "branches": "Branches",
         "deposits": "Deposits ($K)", "share_of_footprint": "% of footprint deposits (%)"})
     tbl["deposits"] = tbl["deposits"].map(_dep_usd)
+    tbl["share_of_footprint"] = tbl["share_of_footprint"].map(_pct_cell)
+    tbl["counties"] = tbl["counties"].map(lambda v: f"{int(v):,}")
+    tbl["branches"] = tbl["branches"].map(lambda v: f"{int(v):,}")
+    tbl["ticker"] = ticker_anchor_cells(tbl["ticker"].tolist())
     tbl = tbl.rename(columns={"ticker": "Ticker", "counties": "Shared counties",
                               "branches": "Branches", "deposits": "Deposits",
                               "share_of_footprint": "% of footprint deposits"})
     st.markdown(f"**Competitors across {name}'s {len(footprint)}-county "
                 f"footprint** — {_survey_note(yr, notes)} (subject bank "
                 "included for rank context)")
-    st.dataframe(tbl, use_container_width=True, hide_index=True, height=520)
+    # House table: ≤26 pre-ranked rows, display-only (UX review P1-23).
+    ksk_table(tbl, html_cols=("Ticker",), max_height_px=520)
     table_export(export, f"branch_competitors_{ticker}_{yr}",
                  f"exp_branch_competitors_{ticker}",
                  formats={"Shared counties": "int", "Branches": "int",

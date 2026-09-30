@@ -11,7 +11,7 @@ sink the batch, and the walk stays inside its own budget.
 
 Offline: _poll_one is stubbed; no SEC calls.
 """
-import time
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -36,10 +36,15 @@ class TestSec8kBudget(unittest.TestCase):
     def test_slow_straggler_does_not_discard_the_whole_batch(self):
         ad = SEC8KAdapter()
         ad.MAX_POLL_SECONDS = 1.0
+        # The straggler hangs until the test releases it (after poll() has
+        # returned) — a bare sleep(30) outlived the test on its worker thread
+        # and held the process open ~29s after the suite finished.
+        release = threading.Event()
+        self.addCleanup(release.set)
 
         def fake(ticker, cutoff):
             if ticker == "SLOW":
-                time.sleep(30)          # hangs past the budget
+                release.wait(30)        # hangs past the budget
             return [_ev(ticker)]
 
         with patch.object(SEC8KAdapter, "_poll_one", side_effect=fake,

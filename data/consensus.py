@@ -199,105 +199,6 @@ def _anthropic_client():
     return anthropic.Anthropic(api_key=key)
 
 
-def parse_consensus_pdf(file_bytes: bytes, ticker: str, period: str) -> dict:
-    """
-    Parse a consensus PDF using Anthropic Claude to extract structured metrics.
-
-    Returns: {ticker, period, source: "pdf", metrics: [{name, key, value, unit}]}
-    """
-    try:
-        import base64
-
-        client = _anthropic_client()
-
-        b64_pdf = base64.standard_b64encode(file_bytes).decode("utf-8")
-
-        prompt = """Extract ALL consensus estimate metrics from this document.
-For each metric, provide:
-- name: the metric name exactly as written
-- value: the numeric consensus/estimate value
-- unit: the unit (%, $, $M, $B, bps, x, or blank)
-
-Return ONLY a JSON array like:
-[
-  {"name": "EPS", "value": 1.25, "unit": "$"},
-  {"name": "Net Interest Margin", "value": 3.45, "unit": "%"},
-  {"name": "Efficiency Ratio", "value": 58.0, "unit": "%"}
-]
-
-Extract every metric you can find — EPS, revenue, NIM, efficiency, ROAA, ROATCE, NPL, CET1, net income, provision, deposits, loans, TBV, dividends, charge-offs, yields, costs, growth rates, etc.
-
-Return ONLY the JSON array, no other text."""
-
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=8000,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": b64_pdf,
-                        },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }],
-        )
-
-        # Parse the response
-        text = response.content[0].text.strip()
-        if response.stop_reason == "max_tokens":
-            return {
-                "ticker": ticker.upper(), "period": period, "source": "pdf",
-                "metrics": [],
-                "error": "The document is too large — the AI response was "
-                         "truncated. Try a shorter excerpt or split the file.",
-            }
-        # Extract JSON from response (might have markdown code blocks)
-        json_match = re.search(r'\[.*\]', text, re.DOTALL)
-        if json_match:
-            raw_metrics = json.loads(json_match.group())
-        else:
-            raw_metrics = json.loads(text)
-
-        # Map to our internal keys — every field defensive (the model's JSON shape
-        # varies); a non-numeric / NaN value is dropped, never fabricated.
-        metrics = []
-        for m in raw_metrics:
-            if not isinstance(m, dict):
-                continue
-            mname = str(m.get("name", "")).strip()
-            val = _finite_float(m.get("value"))
-            if not mname or val is None:
-                continue
-            metrics.append({
-                "name": mname,
-                "key": _normalize_key(mname),
-                "value": val,
-                "unit": m.get("unit", ""),
-            })
-
-        return {
-            "ticker": ticker.upper(),
-            "period": period,
-            "source": "pdf",
-            "metrics": metrics,
-        }
-
-    except Exception as e:
-        return {
-            "ticker": ticker.upper(),
-            "period": period,
-            "source": "pdf",
-            "metrics": [],
-            "error": str(e),
-        }
-
-
 def _clean_metric_list(raw_metrics) -> list[dict]:
     """Map/validate a raw metric list from the model — drop non-numeric / unnamed."""
     out = []
@@ -1148,27 +1049,6 @@ def save_manual_consensus(ticker: str, period: str, metrics_dict: dict,
         "metrics": metrics,
     }
     return save_consensus(data)
-
-
-def load_consensus(ticker: str, period: str | None = None) -> dict | None:
-    """Load consensus for a ticker. If period is None, loads the latest."""
-    ticker = ticker.upper()
-
-    # Get all files for this ticker (from GCS + local)
-    all_files = sorted(
-        [f for f in list_files(CONSENSUS_PREFIX) if f.startswith(f"{ticker}_")],
-        reverse=True,
-    )
-
-    if period:
-        period_clean = period.replace("/", "-").replace(" ", "_")
-        target = f"{ticker}_{period_clean}.json"     # exact, not substring
-        for f in all_files:                          # ("2026Q1" must not hit "2026Q10")
-            if f == target:
-                return load_json(CONSENSUS_PREFIX, f)
-    elif all_files:
-        return load_json(CONSENSUS_PREFIX, all_files[0])
-    return None
 
 
 def list_consensus(ticker: str) -> list[dict]:

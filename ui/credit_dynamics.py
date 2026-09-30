@@ -6,7 +6,7 @@ in the Company Analysis > Credit tab.
 import streamlit as st
 import pandas as pd
 
-from data.bank_mapping import get_fdic_cert, get_name
+from data.bank_mapping import get_name
 from ui.chrome import title_bar
 from data.cache import get as cache_get, put as cache_put
 from data import fdic_client
@@ -27,6 +27,12 @@ from ui.history_range import range_picker, chart_timeline
 from analysis.credit_dynamics import build_credit_timeline
 
 
+# Memoized for an hour (UX review P1-05, 2026-09-30): the loop reads ~600
+# cached FDIC histories (tens of MB of JSON) on EVERY Asset Quality render for
+# one median of nightly-refreshed data — most of the page's ~13 s. The median
+# can only move when the nightly job rewrites fdic_hist:*, so an hour-old
+# value is the same number.
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_peer_median_reserve_coverage(watchlist: list[str]) -> float | None:
     """Compute reserve-coverage peer median from cached watchlist histories."""
     covs = []
@@ -42,80 +48,6 @@ def _load_peer_median_reserve_coverage(watchlist: list[str]) -> float | None:
     if not covs:
         return None
     return float(pd.Series(covs).median())
-
-
-def _render_credit_headline(ticker, hist, summary, peer_median):
-    """Credit headline cards — every number click-to-source. Reported FDIC
-    ratios link to the Call Report facsimile; computed ratios (reserve
-    coverage, past-due %) show their formula + the raw Call Report inputs."""
-    from ui.source_trace import render_traceable_cards, fdic_calc, make_calc
-    from ui.financial_highlights import _fdic_doc, _disp_date, _thou, _num
-
-    cert = get_fdic_cert(ticker)
-    entity = f"{get_name(ticker)} ({ticker})"
-    rec = hist[0]
-    latest = summary["latest"]
-    cr_doc = _fdic_doc(cert, rec.get("REPDTE")) if cert else None
-    asof = _disp_date(rec.get("REPDTE"))
-
-    def pct(x):
-        return f"{x:.2f}%" if x is not None else "—"
-
-    def qoq(val, q, fmt, worse_up=True):
-        if q is None:
-            return val
-        bad = (q >= 0) if worse_up else (q < 0)
-        col = "var(--danger)" if bad else "var(--success)"
-        return f"{val} <span style='font-size:var(--fs-xs); color:{col}; font-weight:600;'>{fmt(q)}</span>"
-
-    npl = latest.get("npl_ratio"); nco = latest.get("nco_ratio")
-    rc = latest.get("reserve_coverage"); pd89 = latest.get("past_due_30_89_pct")
-    rtl = latest.get("reserve_to_loans")
-    # Loans past due (P3LNLS) over GROSS loans (LNLSGR) — see AUDIT #32; the
-    # total-asset fields P3ASSET/P9ASSET add past-due securities/other assets.
-    p3 = _num(rec.get("P3LNLS")); loans = _num(rec.get("LNLSGR"))
-    cov_val = f"{rc:.0f}%" if rc is not None else "—"
-
-    cards = [
-        {"label": "NPL Ratio",
-         "value": qoq(pct(npl), latest.get("npl_ratio_qoq"), lambda q: f"{q*100:+.0f}bps"),
-         "calc": fdic_calc("NPL ratio", "NCLNLSR", rec, cert, unit="%", entity=entity,
-                           value=pct(npl), reported=True,
-                           definition="Non-current loans (90+ days past due or nonaccrual) "
-                                       "as a percent of total loans.")},
-        {"label": "NCO Ratio",
-         "value": qoq(pct(nco), latest.get("nco_ratio_qoq"), lambda q: f"{q*100:+.0f}bps"),
-         "calc": fdic_calc("NCO ratio", "NTLNLSR", rec, cert, unit="%", entity=entity,
-                           value=pct(nco), reported=True,
-                           definition="Annualized net charge-offs as a percent of total loans.")},
-        {"label": "Reserve / NPL", "value": cov_val,
-         "calc": make_calc("Reserve coverage (reserves / NPL)", cov_val, entity=entity,
-                           source="FDIC Call Report", asof=asof, unit="%",
-                           ref="Computed from Call Report",
-                           definition="Loan-loss reserves as a multiple of non-current loans — "
-                                       "how well reserves cover NPLs."
-                                       + (f" Peer median {peer_median:.0f}%." if peer_median else ""),
-                           terms=[{"label": "Reserves / loans (%)", "val": pct(rtl), "doc": cr_doc},
-                                  {"label": "NPL ratio (%)", "val": pct(npl), "doc": cr_doc}],
-                           op="Reserves/loans ÷ NPL ratio × 100", reported=False,
-                           link=(cr_doc or {}).get("url"))},
-        {"label": "Past Due 30-89",
-         "value": qoq(pct(pd89), latest.get("past_due_30_89_pct_qoq"), lambda q: f"{q:+.2f}pp"),
-         "calc": make_calc("Past due 30-89 days", pct(pd89), entity=entity,
-                           source="FDIC Call Report", asof=asof, unit="%",
-                           ref="Computed from Call Report",
-                           definition="Loans 30-89 days past due as a percent of total loans "
-                                       "(early-delinquency signal).",
-                           terms=[{"label": "30-89 days past due ($000)", "val": _thou(p3), "doc": cr_doc},
-                                  {"label": "Total loans ($000)", "val": _thou(loans), "doc": cr_doc}],
-                           op="30-89 past due ÷ total loans × 100", reported=False,
-                           link=(cr_doc or {}).get("url"))},
-        {"label": "Reserves / Loans", "value": pct(rtl),
-         "calc": fdic_calc("Reserves / loans", "LNATRESR", rec, cert, unit="%", entity=entity,
-                           value=pct(rtl), reported=True,
-                           definition="Allowance for credit losses as a percent of total loans.")},
-    ]
-    render_traceable_cards(cards, key=f"credit_{ticker}", columns=5)
 
 
 # @st.fragment for the same reason as the statement pages: the Annual/

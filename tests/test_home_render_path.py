@@ -169,7 +169,8 @@ class TestCallInfoMapIsSnapshotOnly(unittest.TestCase):
         snapshot the render now reads."""
         from data import earnings_call as ec
 
-        rows = [{"ticker": "ABC", "summary": "", "headline": ""}]
+        rows = [{"ticker": "ABC", "summary": "", "headline": "",
+                 "source": "prnewswire"}]
         with patch("data.events.store.get_events_by_type",
                    return_value=rows) as mock_q, \
              patch("data.earnings_call._announced_release_date",
@@ -181,6 +182,24 @@ class TestCallInfoMapIsSnapshotOnly(unittest.TestCase):
         key, blob = mock_put.call_args[0]
         self.assertEqual(key, ec.CALL_INFO_SNAP_KEY)
         self.assertEqual(blob["value"], out)
+
+    def test_snippet_map_ignores_aggregator_events(self):
+        """MTB 2026-09-30: a google_news item typed 'earnings' supplied the
+        snippet map's release_date (a dividend PAYABLE date) — aggregator
+        rewrites are not the bank's announcement. Same first-party gate as
+        the Results board: only first-party rows are parsed."""
+        from data import earnings_call as ec
+
+        # Far-future date: the builder compares against the real clock.
+        hl = "Acme Will Announce Third Quarter 2036 Results on October 16, 2036"
+        rows = [{"ticker": "AGG", "summary": "", "headline": hl,
+                 "source": "google_news"},
+                {"ticker": "NOSRC", "summary": "", "headline": hl},
+                {"ticker": "WIRE", "summary": "", "headline": hl,
+                 "source": "businesswire"}]
+        with patch("data.events.store.get_events_by_type", return_value=rows):
+            out = ec._build_call_info_map()
+        self.assertEqual(out, {"WIRE": {"release_date": "2036-10-16"}})
 
     def test_failed_build_never_overwrites_the_snapshot(self):
         from data import earnings_call as ec

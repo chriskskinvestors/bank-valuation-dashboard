@@ -109,12 +109,42 @@ class TestAverageBasedRatiosGoNa(unittest.TestCase):
 
 class TestExactRatiosRecomputed(unittest.TestCase):
     def test_efficiency_from_summed_components(self):
+        """FDIC's EEFFR = EEFF / IEFF (risview dictionary), EEFF = NONIX -
+        EAMINTAN, IEFF = NIM + NONII. Charter 1 carries 30 of intangible
+        amortization, so every wrong answer is distinguishable."""
         recs = [
-            {"CERT": 1, "INTINC": 1000, "EINTEXP": 400, "NONII": 200, "NONIX": 480},
-            {"CERT": 2, "INTINC": 500, "EINTEXP": 200, "NONII": 100, "NONIX": 240},
+            {"CERT": 1, "INTINC": 1000, "EINTEXP": 400, "NONII": 200,
+             "NONIX": 480, "EAMINTAN": 30, "EEFF": 450, "IEFF": 800,
+             "EEFFR": 56.25},
+            {"CERT": 2, "INTINC": 500, "EINTEXP": 200, "NONII": 100,
+             "NONIX": 240, "EAMINTAN": 0, "EEFF": 240, "IEFF": 400,
+             "EEFFR": 60.0},
         ]
-        # revenue = (1500-600) + 300 = 1200 ; expense 720 -> 60.00%
-        self.assertAlmostEqual(aggregate_records(recs)["EEFFR"], 60.0, places=6)
+        # (450 + 240) / (800 + 400) = 690 / 1200 = 57.50%. The pre-2026-09-30
+        # formula NONIX / revenue gave 720 / 1200 = 60.00%; a sum of the
+        # ratios 116.25; the lead charter 56.25.
+        self.assertAlmostEqual(aggregate_records(recs)["EEFFR"], 57.5, places=12)
+
+    def test_efficiency_bk_group_live_values(self):
+        """BNY's four charters (639, 7946, 23472, 24867), live FDIC 6/30/2026
+        ($K). Each charter's EEFF/IEFF equals its reported EEFFR exactly."""
+        recs = [
+            {"CERT": 639, "ASSET": 4, "NONIX": 5081000, "EAMINTAN": 13000,
+             "EEFF": 5068000, "IEFF": 8815000, "EEFFR": 57.49290981281906},
+            {"CERT": 7946, "ASSET": 3, "NONIX": 432000, "EAMINTAN": 2000,
+             "EEFF": 430000, "IEFF": 604000, "EEFFR": 71.19205298013244},
+            {"CERT": 23472, "ASSET": 2, "NONIX": 94291, "EAMINTAN": 0,
+             "EEFF": 94291, "IEFF": 233217, "EEFFR": 40.43058610650167},
+            {"CERT": 24867, "ASSET": 1, "NONIX": 2900, "EAMINTAN": 9,
+             "EEFF": 2891, "IEFF": 12679, "EEFFR": 22.801482766779717},
+        ]
+        for r in recs:
+            self.assertAlmostEqual(r["EEFF"] / r["IEFF"] * 100, r["EEFFR"],
+                                   places=12)
+        # 5,595,182 / 9,664,896 = 57.8918% (old formula 58.0471%; lead
+        # charter 57.4929%; the four ratios summed 191.92%)
+        self.assertAlmostEqual(aggregate_records(recs)["EEFFR"],
+                               5595182 / 9664896 * 100, places=12)
 
     def test_capital_ratios_from_summed_dollars(self):
         recs = [
@@ -154,14 +184,48 @@ class TestExactRatiosRecomputed(unittest.TestCase):
         for k in ("IDT1CER", "RBC1RWAJ", "RBCRWAJ"):
             self.assertIsNone(agg[k], f"{k} must be n/a without RWA")
 
+    def test_quarterly_efficiency_bk_group_live_values(self):
+        """(2026-09-30) EEFFQR was dropped as "average-based" — it is EEFFQ /
+        IEFFQ, single-quarter flow ÷ flow. BNY's four charters, live FDIC
+        6/30/2026 ($K); FDIC stores each charter's EEFFQR rounded to 2 dp."""
+        recs = [
+            {"CERT": 639, "EEFFQ": 2577000, "IEFFQ": 4562000, "EEFFQR": 56.49},
+            {"CERT": 7946, "EEFFQ": 209000, "IEFFQ": 303000, "EEFFQR": 68.98},
+            {"CERT": 23472, "EEFFQ": 51928, "IEFFQ": 116147, "EEFFQR": 44.71},
+            {"CERT": 24867, "EEFFQ": 1581, "IEFFQ": 6321, "EEFFQR": 25.01},
+        ]
+        for r in recs:
+            self.assertAlmostEqual(r["EEFFQ"] / r["IEFFQ"] * 100, r["EEFFQR"],
+                                   delta=0.005)
+        self.assertNotIn("EEFFQR", AVERAGE_BASED_RATIOS)
+        # 2,839,509 / 4,987,468 = 56.9329% (lead charter 56.49%; the four
+        # ratios summed 195.19%; n/a before this change)
+        self.assertAlmostEqual(aggregate_records(recs)["EEFFQR"],
+                               2839509 / 4987468 * 100, places=12)
+
+    def test_quarterly_efficiency_na_when_incomplete_or_non_positive(self):
+        a = {"CERT": 1, "EEFFQ": 450, "IEFFQ": 800}
+        self.assertIsNone(aggregate_records([a, {"CERT": 2, "EEFFQ": 240}])["EEFFQR"])
+        self.assertIsNone(aggregate_records(
+            [a, {"CERT": 2, "EEFFQ": 100, "IEFFQ": -900}])["EEFFQR"])  # Σ = -100
+
     def test_missing_efficiency_component_yields_na_not_a_sum(self):
-        recs = [{"CERT": 1, "INTINC": 1000, "EINTEXP": 400, "NONII": 200, "EEFFR": 60.0},
-                {"CERT": 2, "INTINC": 500, "EINTEXP": 200, "NONII": 100, "EEFFR": 61.0}]
-        self.assertIsNone(aggregate_records(recs)["EEFFR"])   # NONIX absent
+        """A cache/deep-store row written before EEFF/IEFF were fetched: n/a,
+        never the sum of the charters' ratios and never the old NONIX-based
+        approximation from the components that ARE present."""
+        recs = [{"CERT": 1, "INTINC": 1000, "EINTEXP": 400, "NONII": 200,
+                 "NONIX": 480, "EEFFR": 60.0},
+                {"CERT": 2, "INTINC": 500, "EINTEXP": 200, "NONII": 100,
+                 "NONIX": 240, "EEFFR": 61.0}]
+        self.assertIsNone(aggregate_records(recs)["EEFFR"])
 
     def test_zero_revenue_yields_na_not_a_divide_error(self):
-        recs = [{"CERT": 1, "INTINC": 100, "EINTEXP": 150, "NONII": 50, "NONIX": 10},
-                {"CERT": 2, "INTINC": 0, "EINTEXP": 0, "NONII": 0, "NONIX": 0}]
+        recs = [{"CERT": 1, "EEFF": 10, "IEFF": 0},
+                {"CERT": 2, "EEFF": 0, "IEFF": 0}]
+        self.assertIsNone(aggregate_records(recs)["EEFFR"])
+        # negative revenue (cert 12013 live 6/30/2026: IEFF -2,607)
+        recs = [{"CERT": 1, "EEFF": 7318, "IEFF": -2607},
+                {"CERT": 2, "EEFF": 100, "IEFF": 200}]
         self.assertIsNone(aggregate_records(recs)["EEFFR"])
 
 
@@ -447,9 +511,9 @@ class TestRatioClassNotSummed(unittest.TestCase):
         self.assertIsNone(aggregate_records([self.A, nan_b])["EQV"])
 
     def test_efficiency_needs_every_charter_too(self):
-        a = {"CERT": 1, "INTINC": 1000, "EINTEXP": 400, "NONII": 200, "NONIX": 480}
-        b = {"CERT": 2, "INTINC": 500, "EINTEXP": 200, "NONII": 100}
-        self.assertIsNone(aggregate_records([a, b])["EEFFR"])
+        a = {"CERT": 1, "EEFF": 450, "IEFF": 800}
+        b = {"CERT": 2, "EEFF": 240}
+        self.assertIsNone(aggregate_records([a, b])["EEFFR"])   # not 690/800
 
     def test_non_positive_denominator_is_na(self):
         # net recoveries: ΣNTTOT = 10 + (-12) = -2
@@ -468,7 +532,7 @@ class TestEveryRegistryRatioIsClassified(unittest.TestCase):
     def test_registry_pct_and_ratio_fields_are_classified(self):
         import config
         from data.cert_group import _EXACT_QUOTIENTS
-        handled = AVERAGE_BASED_RATIOS | set(_EXACT_QUOTIENTS) | {"EEFFR"}
+        handled = AVERAGE_BASED_RATIOS | set(_EXACT_QUOTIENTS)
         unclassified = sorted(
             f"{m['key']}={m['fdic_field']}" for m in config.METRICS
             if m.get("source") == "fdic" and m.get("fdic_field")
@@ -486,6 +550,27 @@ class TestEveryRegistryRatioIsClassified(unittest.TestCase):
         self.assertEqual(missing, [], "a component that is never fetched "
                          "makes its ratio permanently n/a for groups")
         self.assertEqual(AVERAGE_BASED_RATIOS & set(_EXACT_QUOTIENTS), set())
+
+    def test_ui_direct_ratio_reads_are_classified(self):
+        """Statement pages read FDIC's REPORTED ratios outside the registry:
+        `("label", "pct", "FIELD")` row specs and `fdic_pct("label", "FIELD")`.
+        Same hazard — an unclassified field there is summed for groups.
+        (`"ratio", NUM, DEN` rows compute from summed levels: exact already.)"""
+        import re
+        from data.cert_group import _EXACT_QUOTIENTS
+        handled = AVERAGE_BASED_RATIOS | set(_EXACT_QUOTIENTS) | {"EEFFR"}
+        shapes = re.compile(r'"pct",\s*"([A-Z0-9_]+)"\s*\)'
+                            r'|fdic_pct\(\s*"[^"]*",\s*"([A-Z0-9_]+)"\s*\)')
+        found: dict[str, set] = {}
+        for p in sorted((REPO / "ui").glob("*.py")):
+            for m in shapes.finditer(p.read_text(encoding="utf-8")):
+                found.setdefault(m.group(1) or m.group(2), set()).add(p.name)
+        # A refactor that changes the row shape must not turn this into a
+        # silent no-op: 23 distinct fields matched on 2026-09-30.
+        self.assertGreaterEqual(len(found), 20)
+        unclassified = sorted(f"{f} ({', '.join(sorted(w))})"
+                              for f, w in found.items() if f not in handled)
+        self.assertEqual(unclassified, [])
 
 
 class TestRegistryLabelsMatchFields(unittest.TestCase):

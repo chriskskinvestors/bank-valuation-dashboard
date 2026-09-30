@@ -23,29 +23,22 @@ sys.path.insert(0, str(REPO_ROOT))
 UA = {"User-Agent": "BankValuationDashboard test@kskinvestors.com"}
 
 
-import random
 import time
 
 
 def _get_with_retry(url: str, params: dict | None = None,
                     timeout: int = 10, max_attempts: int = 4) -> requests.Response | None:
-    """GET with exponential backoff for 429s — needed because the gate
-    hammers FDIC + SEC with hundreds of requests in parallel."""
-    for attempt in range(max_attempts):
-        try:
-            r = requests.get(url, params=params, headers=UA, timeout=timeout)
-            if r.status_code == 429:
-                wait = float(r.headers.get("Retry-After", 0)) or (
-                    (2 ** attempt) + random.uniform(0, 1)
-                )
-                time.sleep(min(wait, 30))
-                continue
-            return r
-        except (requests.ConnectionError, requests.Timeout):
-            if attempt == max_attempts - 1:
-                return None
-            time.sleep((2 ** attempt) + random.uniform(0, 1))
-    return None
+    """THE retry policy (data/http.get_with_retry — 429 backoff honoring
+    Retry-After), needed because the gate hammers FDIC + SEC with hundreds of
+    requests in parallel. This gate only asks yes/no, so any request failure
+    (exhausted 429s, a non-2xx status, the final connection error) is None —
+    the same answers the gate's former private copy of the loop gave."""
+    from data.http import get_with_retry
+    try:
+        return get_with_retry(url, params=params, headers=UA, timeout=timeout,
+                              max_attempts=max_attempts)
+    except requests.RequestException:
+        return None
 
 
 def _has_sec_xbrl(cik: int) -> bool:
@@ -95,8 +88,21 @@ def main() -> int:
         t for t, info in BANK_MAP.items()
         if info.get("cik") is None and info.get("fdic_cert") is None
     }
-    tickers = sorted((set(get_universe_tickers()) | set(DEFAULT_WATCHLIST))
+    covered = get_universe_tickers()
+    tickers = sorted((set(covered) | set(DEFAULT_WATCHLIST))
                        - explicit_exclusions)
+
+    # One charter, one screen row: two covered tickers on one FDIC cert list
+    # the same bank twice (FNFI + its Series A preferred FNFPA, 2026-09-30)
+    # or are a wrong-entity join. Either way the screens are wrong — fail.
+    from data.bank_mapping import get_fdic_cert
+    from data.bank_universe import shared_cert_claims
+    shared = shared_cert_claims({t: get_fdic_cert(t) for t in covered})
+    if shared:
+        print("\nFAILURE — FDIC cert claimed by 2+ covered tickers:")
+        for cert, ts in shared.items():
+            print(f"  cert {cert}: {', '.join(ts)}")
+        return 1
     if explicit_exclusions:
         print(f"(Skipping {len(explicit_exclusions)} explicit-exclusion tickers: "
               f"{', '.join(sorted(explicit_exclusions))})")

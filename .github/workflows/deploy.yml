@@ -8,14 +8,16 @@ on:
 # Deploy only the latest push to main. Several sessions push within seconds;
 # without coordination two `gcloud run deploy`s race the same Cloud Run service
 # and one ABORTs with a version conflict (a red "deploy failed" email on a
-# change that was actually fine). cancel-in-progress: true cancels older
-# in-flight runs so the service is never updated by two deploys at once, and a
-# rapid burst collapses to one deploy of the newest commit instead of a queue.
-# Trade-off vs serialize (false): intermediate commits in a burst don't get
-# their own deploy/smoke — only the newest does.
+# change that was actually fine). The group serializes them: one run at a time,
+# at most ONE pending — a newer push replaces the pending run, so a burst still
+# collapses to the in-flight deploy plus one deploy of the newest commit.
+# cancel-in-progress stays false: with it true, every push cancelled the
+# in-flight run mid-build, and at a merge every 2-3 min (parallel sessions,
+# 2026-09-30) 17 consecutive deploys were cancelled and nothing reached prod
+# for ~2h. Letting the running deploy finish guarantees progress.
 concurrency:
   group: deploy-cloud-run
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   PROJECT_ID: ace-beanbag-486220-a8
@@ -266,8 +268,15 @@ jobs:
                 EXTRA="--task-timeout=5400"
               elif [ "$job" = "refresh-13f" ]; then
                 EXTRA="--task-timeout=9000"
+              # poll-events: the 2026-09-28 audit found 1 of 9 executions
+              # killed at the 900s limit (max 1018s, p50 567s). Its 780s
+              # polling budget (jobs/poll_events._TASK_BUDGET_S) already stops
+              # new sources in time; the overrun was the post-loop tail, so
+              # 1500s is tail headroom. Owner call 2026-09-30: 1500s, not
+              # 1800s — 1800s equals the ~30-min full-poll cadence, so a
+              # max-length run could still be live when the next one fires.
               elif [ "$job" = "poll-events" ]; then
-                EXTRA="--task-timeout=1800"
+                EXTRA="--task-timeout=1500"
               fi
               # Jobs that talk to Cloud SQL (carry DATABASE_URL, or already
               # migrated to DB_PASSWORD) get the password as a secret mount +
