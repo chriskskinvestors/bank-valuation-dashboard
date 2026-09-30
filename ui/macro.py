@@ -16,21 +16,6 @@ from utils.chart_style import (
 )
 
 
-def _trend_arrow(df: pd.DataFrame, lookback_days: int = 30) -> str:
-    """Return ↑/↓/→ based on trailing trend."""
-    if df.empty or len(df) < 2:
-        return "→"
-    recent = df["value"].tail(lookback_days).dropna()
-    if len(recent) < 2:
-        return "→"
-    change = recent.iloc[-1] - recent.iloc[0]
-    if change > 0.05:
-        return "↑"
-    elif change < -0.05:
-        return "↓"
-    return "→"
-
-
 # ── "Market & Macro" sections (docs/HOME-MACRO-PLAN.md, user-approved) ──
 # Sections-as-data, same principle as ui/company_nav.py: the list drives the
 # radio AND the dispatch. Sections marked pending render an honest note —
@@ -909,54 +894,6 @@ def _macro_trend_fig(spec: dict, years: int = 8):
     if pct:
         fig.update_yaxes(ticksuffix="%")
     return fig
-
-
-def _render_surprise_summary(recent):
-    """Compact tally of how recent releases printed vs consensus — direction vs
-    expectations (above/below), NOT good/bad. Fills the freed column beside the
-    calendars."""
-    import html as _h
-    items = [e for e in (recent or []) if e.get("surprise") is not None]
-    if not items:
-        st.markdown("**Surprise tracker**")
-        from ui.states import empty_state
-        empty_state('No released surprises in the window')
-        return
-    beats = sum(1 for e in items if e["surprise"] > 0)
-    misses = sum(1 for e in items if e["surprise"] < 0)
-    inline = len(items) - beats - misses
-    if beats > misses:
-        tilt, color = "Above consensus", "var(--success)"
-    elif misses > beats:
-        tilt, color = "Below consensus", "var(--danger)"
-    else:
-        tilt, color = "In line", "var(--text-secondary)"
-    ranked = sorted(items, key=lambda e: abs(e["surprise"]), reverse=True)[:3]
-    big = "".join(
-        f'<tr><td style="text-align:left;">{_h.escape(e["event"])}</td>'
-        f'<td style="text-align:right;">{_econ_surprise_html(e)}</td></tr>'
-        for e in ranked)
-    st.markdown("**Surprise tracker**")
-    st.markdown(
-        '<div class="ksk-grid"><table><tbody>'
-        f'<tr><td style="text-align:left;">Above cons.</td><td style="text-align:right;color:var(--success);font-weight:700;">{beats}</td></tr>'
-        f'<tr><td style="text-align:left;">Below cons.</td><td style="text-align:right;color:var(--danger);font-weight:700;">{misses}</td></tr>'
-        f'<tr><td style="text-align:left;">In line</td><td style="text-align:right;">{inline}</td></tr>'
-        '</tbody></table></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f'<div style="margin-top:4px;font-size:var(--fs-sm);">Net tilt: '
-        f'<span style="color:{color};font-weight:700;">{tilt}</span> '
-        f'<span style="color:var(--text-muted);">· {len(items)} releases</span></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div style="margin-top:6px;font-size:var(--fs-2xs);color:var(--text-muted);'
-        'letter-spacing:0.06em;">BIGGEST SURPRISES</div>'
-        f'<div class="ksk-grid"><table><tbody>{big}</tbody></table></div>',
-        unsafe_allow_html=True,
-    )
 
 
 # ── Cached figure builders (render-path perf) ────────────────────────────

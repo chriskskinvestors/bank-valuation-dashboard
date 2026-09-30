@@ -396,12 +396,17 @@ def _render_financial_highlights_table(ticker, info):
 
 def _render_latest_activity(ticker, info):
     """SNL-style Latest Activity — recent first-party news + recent filings."""
-    from data.events.wire_base import is_safe_news_url, is_routine_noise
+    # THE junk filter (CLAUDE.md shared infrastructure): the same rules as the
+    # Home feed and Recent Activity. This used is_routine_noise alone, so 13F
+    # churn / SEO / law-firm headlines the Home feed rejects showed here.
+    from data.events.wire_base import is_safe_news_url, is_junk_news
     evs = []
     try:
         from data.events import get_recent_events
         evs = [e for e in get_recent_events(ticker, limit=12)
-               if is_safe_news_url(e.get("url")) and not is_routine_noise(e.get("headline"))][:6]
+               if is_safe_news_url(e.get("url"))
+               and not is_junk_news(e.get("headline") or "", e.get("ticker"),
+                                    e.get("source"))][:6]
     except Exception:
         evs = []
 

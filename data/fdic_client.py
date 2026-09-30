@@ -13,7 +13,6 @@ import time
 from datetime import datetime
 
 import pandas as pd
-import streamlit as st
 
 from config import get_fdic_fields
 # The shared retry policy (data/http.py) — this module's local implementation
@@ -510,24 +509,6 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     return df.sort_values("REPDTE", ascending=False).reset_index(drop=True)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_latest_financials(cert: int) -> dict:
-    """
-    Return the most recent quarter's financial data as a flat dict.
-    Keys are FDIC field names (e.g. ROA, ROE, NIMY, ASSET, etc.).
-
-    In-process memo (1h): Call Report data is quarterly, so caching the latest
-    row is functionally invisible but spares every Company tab a ~600ms FDIC
-    round-trip on each rerun. (Outside Streamlit — jobs — this just no-ops.)
-    """
-    df = fetch_financials(cert, limit=1)
-    if df.empty:
-        return {}
-    row = df.iloc[0].to_dict()
-    # Convert NaT/NaN to None for JSON safety
-    return {k: (None if pd.isna(v) else v) for k, v in row.items()}
-
-
 def build_fdic_provenance(cert: int, field: str, repdte,
                           charter_count: int = 1) -> dict:
     """Return a Source dict describing a FDIC Call Report field.
@@ -566,16 +547,6 @@ def build_fdic_provenance(cert: int, field: str, repdte,
             "INTINCY", "INTEXPY", "RBCT1JR", "RBCRWAJ",
         ) else "",
     )
-
-
-# In-process memo (1h): the multi-quarter FDIC pull feeds the valuation-history
-# chart (44Q), historicals, and trend tabs — re-fetched every rerun otherwise.
-# Quarterly data, so 1h staleness is invisible to values. Mirrors the
-# get_latest_financials memo above.
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_historical_financials(cert: int, quarters: int = 20) -> pd.DataFrame:
-    """Fetch historical quarterly data for trend charts."""
-    return fetch_financials(cert, limit=quarters)
 
 
 def fetch_multiple_banks_parallel(

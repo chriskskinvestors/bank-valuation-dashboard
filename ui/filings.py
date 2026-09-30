@@ -188,39 +188,6 @@ def render_filings_for_ticker(ticker: str):
     _render_filings_core(ticker)
 
 
-def render_filings(watchlist: list[str]):
-    """Render the SEC & FDIC filings page with bank selector."""
-
-    title_bar("KSK Investors", "Filings")
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        selected = st.selectbox(
-            "Select bank",
-            options=[""] + watchlist,
-            format_func=lambda t: f"{t} — {get_name(t)}" if t else "Choose a bank...",
-            key="filings_bank_select",
-        )
-    with col2:
-        ticker_input = st.text_input(
-            "Or enter any ticker",
-            placeholder="e.g. JPM, WFC, SFST",
-            key="filings_ticker_input",
-        )
-
-    ticker = None
-    if ticker_input:
-        ticker = ticker_input.strip().upper()
-    elif selected:
-        ticker = selected
-
-    if not ticker:
-        st.info("Select a bank above to view its SEC filings and earnings releases.")
-        return
-
-    _render_filings_core(ticker)
-
-
 def _render_filings_core(ticker: str):
     """Core filings rendering logic for a given ticker."""
 

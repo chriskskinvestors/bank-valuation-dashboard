@@ -89,8 +89,6 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-import pandas as pd
-
 from data.db import USE_POSTGRES as _USE_POSTGRES
 
 _engine = None
@@ -671,43 +669,6 @@ def get_stored_rcn_detail(cert: int, quarters: int = 8) -> list[dict]:
         detail["rssd_id"] = int(row.rssd_id or 0)
         out.append(detail)
     return out
-
-
-def get_all_latest_ladders() -> pd.DataFrame:
-    """
-    Return the latest ladder per bank as a DataFrame. Powers the
-    cross-bank ranking view if we build it later.
-    """
-    from sqlalchemy import text
-    eng = _get_engine()
-    with eng.begin() as conn:
-        if _USE_POSTGRES:
-            sql = text("""
-                SELECT DISTINCT ON (cert)
-                  cert, rssd_id, report_date, total_securities,
-                  buckets_json, weighted_dur_yrs, floating_loan_share, source
-                FROM call_report_securities
-                ORDER BY cert, report_date DESC
-            """)
-        else:
-            # SQLite — emulate DISTINCT ON via subquery
-            sql = text("""
-                SELECT c.cert, c.rssd_id, c.report_date, c.total_securities,
-                       c.buckets_json, c.weighted_dur_yrs,
-                       c.floating_loan_share, c.source
-                FROM call_report_securities c
-                INNER JOIN (
-                  SELECT cert, MAX(report_date) AS max_dt
-                  FROM call_report_securities GROUP BY cert
-                ) m ON m.cert = c.cert AND m.max_dt = c.report_date
-            """)
-        rows = list(conn.execute(sql))
-    if not rows:
-        return pd.DataFrame()
-    return pd.DataFrame(rows, columns=[
-        "cert", "rssd_id", "report_date", "total_securities",
-        "buckets_json", "weighted_dur_yrs", "floating_loan_share", "source",
-    ])
 
 
 def coverage_summary() -> dict:

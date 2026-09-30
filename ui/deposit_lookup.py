@@ -10,7 +10,7 @@ import pandas as pd
 
 from utils.aggregate import strict_sum
 
-from data.sod_client import fetch_branches, search_bank_by_name
+from data.sod_client import fetch_branches
 from data.bank_mapping import get_fdic_cert, get_name
 from data.bank_universe import get_universe_tickers, get_universe_bank
 from ui.chrome import ledger, table_export, title_bar, lazy_tabs
@@ -69,64 +69,6 @@ def _branch_map_figure(map_df: pd.DataFrame):
     fig.update_layout(map_style="carto-positron", height=480,
                       margin=dict(l=0, r=0, t=0, b=0))
     return fig
-
-def render_deposit_lookup():
-    """Render the deposit market share & branch map page with search."""
-
-    title_bar("KSK Investors", "Deposit Market Share & Branch Map", ids_html="")
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        search_query = st.text_input(
-            "Search by bank name",
-            placeholder="e.g. Southern First, JPMorgan Chase, Wells Fargo...",
-            key="bank_search",
-        )
-    with col2:
-        ticker_input = st.text_input(
-            "Or enter ticker",
-            placeholder="e.g. SFST, JPM, WFC",
-            key="ticker_search",
-        )
-
-    selected_cert = None
-    selected_name = None
-
-    if ticker_input:
-        ticker = ticker_input.strip().upper()
-        cert = get_fdic_cert(ticker)
-        if cert:
-            selected_cert = cert
-            selected_name = get_name(ticker) or ticker
-        else:
-            st.warning(f"Ticker '{ticker}' not found. Try searching by name instead.")
-
-    elif search_query and len(search_query) >= 3:
-        with st.spinner("Searching FDIC database..."):
-            results = search_bank_by_name(search_query)
-        if results:
-            options = {f"{r['name']} (CERT: {r['cert']})": r for r in results}
-            choice = st.selectbox(
-                f"Found {len(results)} match{'es' if len(results) > 1 else ''}",
-                options=list(options.keys()),
-                key="bank_search_results",
-            )
-            if choice:
-                selected_cert = options[choice]["cert"]
-                selected_name = options[choice]["name"]
-        else:
-            from ui.states import empty_state
-            empty_state('No banks found',
-                        'Try a different name')
-
-    if not selected_cert:
-        st.info("Search for a bank above to see its branch map and deposit market share.")
-        return
-
-    # This page's title bar is generic ("KSK Investors | DEPOSIT MARKET
-    # SHARE & BRANCH MAP"), so name the searched bank here.
-    section_header("", selected_name, f"FDIC cert {selected_cert}")
-    _render_deposits_core(selected_cert, selected_name)
 
 
 # Source row on every SOD export (one constant in ui.export).

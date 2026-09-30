@@ -284,12 +284,6 @@ def _q4_site(ir_home: str) -> tuple[bool, str | None]:
     return is_q4, (key or None)
 
 
-def _q4_apikey(ir_home: str) -> str | None:
-    """Back-compat shim: the Q4 site's apiKey (or None). Prefer _q4_site() when you
-    also need the is-Q4 signal — a keyless Q4 site returns (True, None) there."""
-    return _q4_site(ir_home)[1]
-
-
 def _q4_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, datetime]] | None:
     """If `ir_home` is a Q4 site, return [(url, headline, published)] from its
     PressRelease JSON API. Returns None when it's NOT a Q4 site or the API can't

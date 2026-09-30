@@ -1588,6 +1588,16 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
         comp_pkg.v1 = comp_v1
         st.components = comp_pkg
         import importlib
+        from unittest.mock import patch
+        # The statement's Export control (ui.export.table_export) renders via
+        # st.container + st.download_button on ui.export's OWN `st` binding —
+        # which this local stub never reaches once ui.export is imported, and
+        # which lacks .container when this module runs alone (under discovery
+        # another module's stub happened to supply it). Import it before the
+        # swap and bind a private stub, so the class is order-independent.
+        import ui.export as _export
+        export_st = _t.SimpleNamespace(container=lambda *a, **k: _Ctx(),
+                                       download_button=lambda *a, **k: None)
         keys = ("streamlit", "streamlit.components", "streamlit.components.v1")
         saved_mods = {k: sys.modules.get(k) for k in keys}
         sys.modules["streamlit"] = st
@@ -1606,7 +1616,8 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
                 "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
             dl.load_fdic_hist_df = (
                 lambda ticker, quarters=44: pd.DataFrame([dict(r) for r in hist_rows]))
-            fs.render_balance_sheet("BANR")
+            with patch.object(_export, "st", export_st):
+                fs.render_balance_sheet("BANR")
         finally:
             fs.get_bank_info, dl.load_fdic_hist_df = saved
             # Restore the module table and reload fs against the real streamlit

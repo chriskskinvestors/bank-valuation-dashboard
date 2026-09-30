@@ -43,23 +43,6 @@ class Source:
     # For COMPUTED values, record what inputs fed it:
     derived_from: tuple = field(default_factory=tuple)  # tuple of Source
 
-    def describe(self) -> str:
-        """One-line human-readable description."""
-        if self.origin == "COMPUTED":
-            inputs = ", ".join(s.concept for s in self.derived_from) if self.derived_from else "—"
-            return f"Computed from: {inputs}"
-        if self.origin == "SEC":
-            return f"SEC XBRL · CIK {self.identifier} · {self.concept} · {self.form} as of {self.as_of}"
-        if self.origin == "FDIC":
-            return f"FDIC Call Report · Cert {self.identifier} · {self.concept} as of {self.as_of}"
-        if self.origin == "FRED":
-            return f"FRED · Series {self.identifier or self.concept} as of {self.as_of}"
-        if self.origin == "YFINANCE":
-            return f"Yahoo Finance · {self.concept} as of {self.as_of}"
-        if self.origin == "IBKR":
-            return f"IBKR live · {self.concept}"
-        return f"{self.origin} · {self.concept} · {self.as_of}"
-
     def age_days(self) -> int | None:
         """How old is this data, in days? Returns None if as_of missing."""
         if not self.as_of:
@@ -113,10 +96,3 @@ def unwrap(v):
 def unwrap_dict(d: dict) -> dict:
     """Recursively unwrap a dict of Valued objects."""
     return {k: unwrap(v) if not isinstance(v, dict) else unwrap_dict(v) for k, v in d.items()}
-
-
-def provenance_of(v) -> Source | None:
-    """Extract provenance from a Valued, else None."""
-    if isinstance(v, Valued):
-        return v.source
-    return None
