@@ -103,8 +103,22 @@ class TestReleaseFallbackNotGatedOnMissingCik(unittest.TestCase):
         self.assertEqual(src, "company_release")
         self.assertIs(conflict, False)
 
-    def test_reconstruction_still_wins_over_the_release(self):
-        """The release is a FALLBACK — a working reconstruction is not replaced."""
+    def test_release_beats_reconstruction_within_the_band(self):
+        """Owner, 2026-09-30: company-reported always takes priority — the
+        release replaces a working reconstruction (PBAM: 49.57 vs 49.87)."""
+        from analysis import valuation
+        with patch("data.bank_mapping.get_cik", return_value=123456), \
+                patch("data.sec_earnings_8k.reported_tbvps_status",
+                      return_value=(None, "not_disclosed")), \
+                patch.object(valuation, "_otc_tbvps", return_value=19.50):
+            val, src, conflict = valuation._resolve_tbvps("XYZ", 20.00, 22.00)
+        self.assertAlmostEqual(val, 19.50, places=6)
+        self.assertEqual(src, "company_release")
+        self.assertIs(conflict, False)
+
+    def test_release_far_from_reconstruction_is_a_flagged_conflict(self):
+        """99.99 vs 20.00: one of them is wrong — serve the reconstruction
+        and flag it (the 8-K gate's semantics), never silently either one."""
         from analysis import valuation
         with patch("data.bank_mapping.get_cik", return_value=123456), \
                 patch("data.sec_earnings_8k.reported_tbvps_status",
@@ -113,7 +127,7 @@ class TestReleaseFallbackNotGatedOnMissingCik(unittest.TestCase):
             val, src, conflict = valuation._resolve_tbvps("XYZ", 20.00, 22.00)
         self.assertAlmostEqual(val, 20.00, places=6)
         self.assertEqual(src, "reconstructed")
-        self.assertIs(conflict, False)
+        self.assertIs(conflict, True)
 
     def test_reported_8k_still_outranks_everything(self):
         from analysis import valuation

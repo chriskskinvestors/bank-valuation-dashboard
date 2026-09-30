@@ -10,7 +10,8 @@ snapshot for 14-24 minutes; a Company-page render could pay one crawl inline.
 
 Now: valuation passes allow_fetch=False (serve the cached envelope at ANY
 age, no network, no re-stamp), and jobs/refresh_home_snapshot warms the
-envelopes AFTER the snapshot write (_warm_otc_releases, no-XBRL banks only).
+envelopes AFTER the snapshot write (_warm_otc_releases: no-XBRL banks, plus
+wire-only for SEC filers with no recent Item 2.02 8-K).
 
 Pins:
   • allow_fetch=False + envelope of any age -> value served; the wire index,
@@ -20,7 +21,8 @@ Pins:
   • the default (allow_fetch=True) is unchanged — test_otc_ir_throttle and
     test_cache_read_ceilings keep pinning that behavior
   • valuation's _otc_release_ps is wired serve-only end to end
-  • _warm_otc_releases targets exactly the no-XBRL set, fetch allowed
+  • _warm_otc_releases targets the no-XBRL set (fetch + IR crawl) and SEC
+    filers without a recent earnings 8-K (wire lookup only)
 """
 import unittest
 from datetime import datetime, timedelta
@@ -92,6 +94,20 @@ class TestServeOnly(_ServeOnlyHarness):
         self.assertEqual(calls["pr"], 1)
 
 
+class TestWireOnlyWarm(unittest.TestCase):
+
+    def test_ir_crawl_false_never_crawls_or_writes_when_no_wire_story(self):
+        env = _envelope(minutes_ago=3 * 24 * 60)
+        with patch("data.cache.get", return_value=env), \
+                patch("data.cache.put") as mock_put, \
+                patch.object(otc, "_latest_earnings_pr", return_value=None), \
+                patch.object(otc, "_latest_ir_release") as mock_ir:
+            v = otc.otc_release_metrics("PBAM", allow_fetch=True, ir_crawl=False)
+        self.assertEqual(v["metrics"]["tbv_ps"], 12.34)   # prior envelope served
+        mock_ir.assert_not_called()
+        mock_put.assert_not_called()
+
+
 class TestValuationIsServeOnly(unittest.TestCase):
 
     def test_otc_release_ps_never_fetches(self):
@@ -119,10 +135,44 @@ class TestWarmTargetsNoXbrlSet(unittest.TestCase):
 
         seen = []
         with patch.object(otc, "otc_release_metrics",
-                          side_effect=lambda t, allow_fetch=True:
-                          seen.append((t, allow_fetch))):
+                          side_effect=lambda t, allow_fetch=True, ir_crawl=True:
+                          seen.append((t, allow_fetch, ir_crawl))), \
+                patch.object(job, "_no_recent_earnings_8k", return_value=False):
             job._warm_otc_releases(["AAA", "BBB", "CCC"], sec={"AAA": {"x": 1}})
-        self.assertEqual(seen, [("BBB", True), ("CCC", True)])
+        self.assertEqual(seen, [("BBB", True, True), ("CCC", True, True)])
+
+    def test_sec_filer_without_earnings_8k_gets_wire_only_warm(self):
+        # PBAM class (2026-09-30): an SEC filer whose earnings go out on the
+        # wire only is warmed so its company-reported TBVPS can win — but
+        # through the wire lookup only, never the 30-100s IR-site crawl.
+        from jobs import refresh_home_snapshot as job
+
+        seen = []
+        with patch.object(otc, "otc_release_metrics",
+                          side_effect=lambda t, allow_fetch=True, ir_crawl=True:
+                          seen.append((t, allow_fetch, ir_crawl))), \
+                patch.object(job, "_no_recent_earnings_8k",
+                             side_effect=lambda t: t == "PBAM"):
+            job._warm_otc_releases(["FBK", "PBAM", "CCC"],
+                                   sec={"FBK": {"x": 1}, "PBAM": {"x": 1}})
+        self.assertEqual(seen, [("CCC", True, True), ("PBAM", True, False)])
+
+    def test_no_recent_8k_rule(self):
+        from datetime import date, timedelta
+        from jobs import refresh_home_snapshot as job
+        import data.bank_mapping as bm
+        import data.sec_earnings_8k as s8k
+        recent = (date.today() - timedelta(days=30)).isoformat()
+        old = (date.today() - timedelta(days=400)).isoformat()
+        cases = [(None, 1, True), ({"date": old}, 1, True),
+                 ({"date": recent}, 1, False), ({"date": recent}, None, False)]
+        for f8k, cik, want in cases:
+            with patch.object(bm, "get_cik", return_value=cik), \
+                    patch.object(s8k, "_latest_earnings_8k", return_value=f8k):
+                self.assertEqual(job._no_recent_earnings_8k("T"), want, (f8k, cik))
+        with patch.object(bm, "get_cik", return_value=1), \
+                patch.object(s8k, "_latest_earnings_8k", side_effect=RuntimeError):
+            self.assertFalse(job._no_recent_earnings_8k("T"))
 
 
 if __name__ == "__main__":

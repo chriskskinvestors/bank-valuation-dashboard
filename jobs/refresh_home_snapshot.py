@@ -262,11 +262,30 @@ def _append_sector_val_history(metrics: list[dict]) -> None:
               f"{type(e).__name__}: {e}", flush=True)
 
 
+def _no_recent_earnings_8k(ticker: str, max_age_days: int = 200) -> bool:
+    """True when the bank has a CIK but no Item 2.02 earnings 8-K within
+    max_age_days (cached submissions read, ~2h). A lookup failure is False —
+    never widen the warm on an error."""
+    from datetime import date
+    from data.bank_mapping import get_cik
+    from data.sec_earnings_8k import _latest_earnings_8k
+    try:
+        cik = get_cik(ticker)
+        if not cik:
+            return False
+        f = _latest_earnings_8k(cik)
+        return f is None or (date.today()
+                             - date.fromisoformat(f["date"])).days > max_age_days
+    except Exception:
+        return False
+
+
 def _warm_otc_releases(tickers: list[str], sec: dict) -> None:
     """Warm the otc_release envelopes for every bank the valuation resolvers
-    would consult them for — exactly the no-XBRL set (`sec` is this run's
-    loaded companyfacts dict, so `t not in sec` is the same condition
-    _resolve_tbvps sees as reconstructed=None). otc_release_metrics' own
+    would consult them for: the no-XBRL set (`sec` is this run's loaded
+    companyfacts dict, so `t not in sec` is the same condition _resolve_tbvps
+    sees as reconstructed=None), plus — wire lookup only — SEC filers with no
+    recent Item 2.02 8-K (see below). otc_release_metrics' own
     throttles still apply per bank (15-min envelope serve, cheap wire-index
     recheck, 24h IR-crawl TTL), so most banks cost one cache read here; the
     expensive IR crawls still happen once per day per bank — just in this
@@ -277,10 +296,15 @@ def _warm_otc_releases(tickers: list[str], sec: dict) -> None:
     from data.otc_release import otc_release_metrics
 
     targets = [t for t in tickers if t not in sec]
+    # Company-reported first (owner, 2026-09-30): _resolve_tbvps/_bvps also
+    # prefer the wire release for SEC filers whose earnings never reach an
+    # Item 2.02 8-K (PBAM class, ~38 banks measured 2026-09-30) — warm those
+    # through the cheap wire lookup only (no 30-100s IR-site crawl).
+    wire_only = [t for t in tickers if t in sec and _no_recent_earnings_8k(t)]
     warmed = failed = 0
-    for t in targets:
+    for t, crawl in [(t, True) for t in targets] + [(t, False) for t in wire_only]:
         try:
-            otc_release_metrics(t, allow_fetch=True)
+            otc_release_metrics(t, allow_fetch=True, ir_crawl=crawl)
             warmed += 1
         except Exception as e:
             failed += 1

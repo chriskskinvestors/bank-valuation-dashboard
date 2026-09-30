@@ -97,6 +97,63 @@ class TestResolveTbvps(unittest.TestCase):
             s8k.reported_tbvps_status = orig
 
 
+class TestCompanyReportedFirstForSecFilers(unittest.TestCase):
+    """Owner, 2026-09-30: "Company reported should always take priority".
+    PBAM became an SEC registrant (CIK 1705284) but publishes earnings only
+    on GlobeNewswire (no Item 2.02 8-K). Q2-2026 release: TBVPS $49.57 =
+    (285,516 − 1,717 servicing asset) / 5,725,696; BVPS $49.87. Our
+    reconstruction keeps the servicing asset (TCE convention) → $49.87."""
+
+    def setUp(self):
+        import data.bank_mapping as bm
+        import data.otc_release as orl
+        import data.sec_earnings_8k as s8k
+        self.bm, self.orl, self.s8k = bm, orl, s8k
+        self._orig = (bm.get_cik, orl.otc_release_metrics,
+                      s8k.reported_tbvps_status, s8k.reported_bvps_status)
+        bm.get_cik = lambda t: 1705284
+        s8k.reported_tbvps_status = (
+            lambda cik, reconstructed=None, bvps=None: (None, "not_disclosed"))
+        s8k.reported_bvps_status = (
+            lambda cik, reconstructed=None, tbvps=None: (None, "not_disclosed"))
+
+    def tearDown(self):
+        (self.bm.get_cik, self.orl.otc_release_metrics,
+         self.s8k.reported_tbvps_status, self.s8k.reported_bvps_status) = self._orig
+
+    def _release(self, tbv, bv):
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
+            "qend": _RECENT_QEND, "metrics": {"tbv_ps": tbv, "bv_ps": bv}}
+
+    def test_pbam_release_beats_reconstruction(self):
+        self._release(49.57, 49.87)
+        self.assertEqual(va._resolve_tbvps("PBAM", 49.87, 49.87),
+                         (49.57, "company_release", False))
+        self.assertEqual(va._resolve_bvps("PBAM", 49.87, 49.57),
+                         (49.87, "company_release", False))
+
+    def test_release_15pct_off_reconstruction_is_a_conflict(self):
+        # One of the two is wrong (a mis-grabbed figure, a stale input):
+        # flag it and serve the reconstruction, same as the 8-K gate.
+        self._release(60.00, 60.00)
+        self.assertEqual(va._resolve_tbvps("PBAM", 49.87, 49.87),
+                         (49.87, "reconstructed", True))
+        self.assertEqual(va._resolve_bvps("PBAM", 49.87, 49.87),
+                         (49.87, "reconstructed", True))
+
+    def test_8k_conflict_is_not_papered_over_by_the_wire_copy(self):
+        self._release(49.57, 49.87)
+        self.s8k.reported_tbvps_status = (
+            lambda cik, reconstructed=None, bvps=None: (None, "gate_rejected"))
+        self.assertEqual(va._resolve_tbvps("PBAM", 49.87, 49.87),
+                         (49.87, "reconstructed", True))
+
+    def test_no_release_keeps_reconstruction(self):
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: None
+        self.assertEqual(va._resolve_tbvps("PBAM", 49.87, 49.87),
+                         (49.87, "reconstructed", False))
+
+
 class TestComputeAllValuationsWiring(unittest.TestCase):
     def test_ptbv_prices_off_release_tbv_for_cikless_bank(self):
         import data.bank_mapping as bm

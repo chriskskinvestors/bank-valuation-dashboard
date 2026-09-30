@@ -280,7 +280,8 @@ def _fetch_document(url: str, kind: str) -> str | None:
         return None
 
 
-def otc_release_metrics(ticker: str, *, allow_fetch: bool = True) -> dict | None:
+def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
+                        ir_crawl: bool = True) -> dict | None:
     """Extracted metrics for a non-SEC bank's latest earnings release:
     same shape as release_metrics() plus {source: "company_release",
     title}. Cached per ticker; an extraction is immutable per story URL, so
@@ -363,6 +364,10 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True) -> dict | None
         prev = None
     pr = _latest_earnings_pr(ticker)
     transport = "wire"
+    if pr is None and not ir_crawl:
+        # Wire-only warm (SEC filers without an Item 2.02 8-K — the PBAM
+        # class): no 30-100s site crawl; serve what we had, write nothing.
+        return prev
     if pr is None:
         # No wire release — the bank's own site is the disclosure channel.
         # THROTTLE (2026-08-17): the two-hop site crawl below costs 30-84s

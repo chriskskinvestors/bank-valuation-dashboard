@@ -683,7 +683,7 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # this carries the bank's own released figure where disclosed. Cache-only
     # for SEC filers — see _resolve_release_efficiency's perf contract.
     efficiency_release, efficiency_release_qend = _resolve_release_efficiency(
-        ticker, sec_has_xbrl=reconstructed_bvps is not None)
+        ticker)
 
     return {
         "price": price,
@@ -846,18 +846,24 @@ def _resolve_tbvps(
         except Exception as e:
             print(f"[valuation] reported_tbvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
-    # The release fallback is gated on having NOTHING from SEC — not on the bank
-    # lacking a CIK. It used to be an `elif cik`, so a registrant that HAS a CIK
-    # but no usable XBRL never tried its own earnings release and rendered n/a
-    # permanently: of the 75 smallest universe banks, PNSB and DWNX return no
-    # facts at all and CMHF's companyfacts 404s (measured 2026-08-02). For a
-    # bank with no CIK `reconstructed` is always None, so the previous behaviour
-    # is unchanged — this only ADDS the with-CIK-but-empty case.
-    if reconstructed is None and ticker:
+    # Company-reported first (owner, 2026-09-30: "Company reported should
+    # always take priority"): the bank's wire/IR release is consulted whenever
+    # the 8-K path produced no figure — not only when there's no reconstruction.
+    # PBAM (SEC registrant since 2026-07, earnings on GlobeNewswire only, no
+    # Item 2.02 8-K): release $49.57 (deducts its $1,717K servicing asset) vs
+    # reconstruction $49.87. Same ±15% cross-check as the 8-K path: beyond it
+    # one of the two is wrong → flag the conflict, serve the reconstruction.
+    # A CIK-less bank (reconstructed None) is served the release as before.
+    if ticker and not conflict:
         try:
             otc = _otc_tbvps(ticker)
             if otc is not None:
-                return otc, "company_release", False
+                if reconstructed and abs(otc - reconstructed) / reconstructed >= 0.15:
+                    conflict = True
+                    print(f"[valuation] TBVPS CONFLICT {ticker}: wire release "
+                          f"{otc} vs reconstruction {reconstructed} (>=15%)")
+                else:
+                    return otc, "company_release", False
         except Exception as e:
             print(f"[valuation] otc tbvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
@@ -874,8 +880,8 @@ def _resolve_bvps(
     """(Book value per common share, source, conflict) — the BVPS sibling of
     _resolve_tbvps (release-first increment 1, owner directive 2026-08-19).
     Same source vocabulary and conflict semantics; anchored by the RESOLVED
-    tbvps (book ≥ tangible). Non-SEC / empty-XBRL banks fall back to the wire
-    release's bv_ps under the same 200-day staleness gate."""
+    tbvps (book ≥ tangible). With no 8-K figure, the wire/IR release's bv_ps
+    wins (±15% vs the reconstruction; 200-day staleness gate)."""
     cik = None
     conflict = False
     if ticker:
@@ -900,11 +906,17 @@ def _resolve_bvps(
         except Exception as e:
             print(f"[valuation] reported_bvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
-    if reconstructed is None and ticker:
+    # Company-reported first — same rule and gate as _resolve_tbvps.
+    if ticker and not conflict:
         try:
             otc = _otc_release_ps(ticker, "bv_ps")
             if otc is not None:
-                return otc, "company_release", False
+                if reconstructed and abs(otc - reconstructed) / reconstructed >= 0.15:
+                    conflict = True
+                    print(f"[valuation] BVPS CONFLICT {ticker}: wire release "
+                          f"{otc} vs reconstruction {reconstructed} (>=15%)")
+                else:
+                    return otc, "company_release", False
         except Exception as e:
             print(f"[valuation] otc bvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
@@ -1146,7 +1158,6 @@ def _release_newer_than_filings(cik, sec_as_of) -> bool:
 
 def _resolve_release_efficiency(
     ticker: str | None,
-    sec_has_xbrl: bool,
 ) -> tuple[float | None, str | None]:
     """(efficiency %, release quarter-end) — the bank's OWN released
     holding-company efficiency ratio (release-first increment 3, owner
@@ -1164,10 +1175,10 @@ def _resolve_release_efficiency(
     PERF (440-bank screen build): the SEC path reads the release_metrics
     CACHE ONLY (data.release_metrics.cached_release_metrics — structurally
     incapable of a fetch); a bank whose release was never extracted shows
-    n/a until the Results board / poll-events warms it. The OTC path is
-    reached only for banks with no XBRL at all — the same banks whose wire
-    release the tbvps/bvps resolvers already fetched this build, so it
-    serves from otc_release's 15-min envelope."""
+    n/a until the Results board / poll-events warms it. With no 8-K figure
+    the wire/IR release envelope is read (serve-only, allow_fetch=False) —
+    company-reported first (owner, 2026-09-30), so a wire-only SEC filer
+    (PBAM class) keeps its released efficiency."""
     if not ticker:
         return None, None
     from datetime import date
@@ -1196,17 +1207,16 @@ def _resolve_release_efficiency(
         except Exception as e:
             print(f"[valuation] release efficiency lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
-    if not sec_has_xbrl:
-        try:
-            v = _otc_release_ps(ticker, "efficiency")
-            if v is not None:
-                # Serve-only, like every otc_release read on this path.
-                from data.otc_release import otc_release_metrics
-                return v, (otc_release_metrics(ticker, allow_fetch=False)
-                           or {}).get("qend")
-        except Exception as e:
-            print(f"[valuation] otc efficiency lookup failed for {ticker}: "
-                  f"{type(e).__name__}: {e}")
+    try:
+        v = _otc_release_ps(ticker, "efficiency")
+        if v is not None:
+            # Serve-only, like every otc_release read on this path.
+            from data.otc_release import otc_release_metrics
+            return v, (otc_release_metrics(ticker, allow_fetch=False)
+                       or {}).get("qend")
+    except Exception as e:
+        print(f"[valuation] otc efficiency lookup failed for {ticker}: "
+              f"{type(e).__name__}: {e}")
     return None, None
 
 

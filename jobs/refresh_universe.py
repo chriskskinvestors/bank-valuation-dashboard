@@ -152,6 +152,9 @@ def main():
         run_namehcr_guard(snapshot)
     except Exception as e:
         print(f"[warn] namehcr guard crashed: {type(e).__name__}: {e}", flush=True)
+    # Curated cik=None banks that became SEC filers (PBAM class) — observe-only.
+    from data.bank_universe import run_curated_cik_guard
+    run_curated_cik_guard()
 
     universe = sorted(set(snapshot.keys()) | set(DEFAULT_WATCHLIST))
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Refreshing {len(universe)} banks", flush=True)
