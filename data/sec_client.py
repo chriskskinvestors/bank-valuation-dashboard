@@ -1178,13 +1178,18 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
     stock liquidation figure vs 0 shares from Dec-2023) and dividend
     evidence from a period ending no later than it (paid before a
     redemption — OCFC Q2-2025, CUBI Q4-2025).
+
+    A preferred share count equal to a same-date COMMON share count is the
+    common line tagged as preferred (_common_as_preferred_at): that count is
+    not preferred evidence and no ladder value at that date is accepted.
     """
     share_facts = [f for f in (
         _latest_fact(facts, "PreferredStockSharesOutstanding",
                      max_age_years=1, as_of=as_of),
         _latest_fact(facts, "PreferredStockSharesIssued",
                      max_age_years=1, as_of=as_of),
-    ) if f and f.get("val") is not None]
+    ) if f and f.get("val") is not None
+        and f["val"] not in _common_counts_at(facts, f.get("end", ""))]
     shares = max((f["val"] for f in share_facts), default=None)
     zero_end = (max(f.get("end", "") for f in share_facts)
                 if shares == 0 else "")
@@ -1203,7 +1208,8 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
         fact = _latest_fact(facts, concept, max_age_years=1, as_of=as_of)
         v = fact.get("val") if fact else None
         end = fact.get("end", "") if fact else ""
-        if v and end >= zero_end and not _not_a_carrying_total(
+        if v and end >= zero_end and not _common_as_preferred_at(
+                facts, end) and not _not_a_carrying_total(
                 concept, v, _preferred_shares_at(facts, end)):
             value = v
             break
@@ -1237,15 +1243,43 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
     return value, True
 
 
+def _share_counts_at(facts: dict, end: str, concepts) -> list:
+    """Every share-count value the concepts carry for exactly `end`."""
+    return [
+        e.get("val")
+        for c in concepts
+        for e in facts.get("facts", {}).get("us-gaap", {}).get(c, {})
+                      .get("units", {}).get("shares", [])
+        if e.get("end") == end and e.get("val") is not None]
+
+
+def _common_counts_at(facts: dict, end: str) -> set:
+    """Nonzero CommonStockShares(Outstanding|Issued) values at exactly `end`."""
+    return {v for v in _share_counts_at(
+        facts, end, ("CommonStockSharesOutstanding", "CommonStockSharesIssued"))
+        if v}
+
+
+def _common_as_preferred_at(facts: dict, end: str) -> bool:
+    """True when a preferred share count at `end` EQUALS a same-date common
+    share count: the filer tagged its common line as preferred. PLBC (CIK
+    1168455) 10-Q 0001437749-18-008338: R2 has no preferred line — "Common
+    stock, no par value; ... 5,082,676 shares" $6,544K is tagged
+    PreferredStockValue and R3 tags 5,082,676 as PreferredStockShares-
+    Outstanding (5,064,972 / $6,415K at the Dec-2017 comparative). Exact
+    equality only: universe near-matches are real preferred or scale noise
+    (TFC's $6.67B preferred vs $6.63–6.69B common stock; FBP 2010 22,004,000
+    preferred vs 21,963,522 common; ASB's ×1000 preferred count)."""
+    common = _common_counts_at(facts, end)
+    return bool(common) and any(v in common for v in _share_counts_at(
+        facts, end, ("PreferredStockSharesOutstanding", "PreferredStockSharesIssued")))
+
+
 def _preferred_shares_at(facts: dict, end: str) -> float | None:
     """Preferred share count reported for exactly `end` (see
     _same_date_preferred_count), or None when none is."""
-    return _same_date_preferred_count([
-        e.get("val")
-        for c in ("PreferredStockSharesOutstanding", "PreferredStockSharesIssued")
-        for e in facts.get("facts", {}).get("us-gaap", {}).get(c, {})
-                      .get("units", {}).get("shares", [])
-        if e.get("end") == end and e.get("val") is not None])
+    return _same_date_preferred_count(_share_counts_at(
+        facts, end, ("PreferredStockSharesOutstanding", "PreferredStockSharesIssued")))
 
 
 def _same_date_preferred_count(vals: list) -> float | None:
