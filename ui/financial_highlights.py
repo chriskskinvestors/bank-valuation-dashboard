@@ -265,6 +265,16 @@ def _flow_for(d: datetime, q_map: dict, a_map: dict, quarterly: bool):
     return None, None
 
 
+def _recent_intangibles(end: str, *maps) -> bool:
+    """A nonzero intangibles balance on the newest balance sheet at or before
+    `end` that tagged one, within the prior year — the deduction exists but
+    isn't tagged at `end` (mirrors sec_client._nci_evidence's window)."""
+    from datetime import date, timedelta
+    year_ago = (date.fromisoformat(end) - timedelta(days=366)).isoformat()
+    prior = [(k, v) for m in maps for k, v in m.items() if year_ago <= k <= end]
+    return bool(prior) and bool(max(prior)[1])
+
+
 def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> dict:
     """{end_date(datetime): {...per-share values + raw inputs for drill-down}}."""
     if not cik:
@@ -284,13 +294,19 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
     amort_a = _sec_map(facts, "AmortizationOfIntangibleAssets", instant=False, span="annual")
     dps_q = _sec_map(facts, "CommonStockDividendsPerShareDeclared", instant=False, span="quarter")
     dps_a = _sec_map(facts, "CommonStockDividendsPerShareDeclared", instant=False, span="annual")
-    equity = _sec_map(facts, "StockholdersEquity", instant=True)
+    # Dates with an equity total under EITHER tag — filers migrate between
+    # plain SE and the NCI-inclusive variant (TMP/AMAL/LNKB/FNWB in 2025,
+    # FRST/MVBF/OCFC/RBB in 2026); each period's parent equity is resolved at
+    # its own date by the snapshot path's rule (sec_client._parent_equity_at).
+    eq_dates = {**_sec_map(facts, sec_client._SE_NCI, instant=True),
+                **_sec_map(facts, sec_client._SE, instant=True)}
     goodwill = _sec_map(facts, "Goodwill", instant=True)
     intang = _sec_map(facts, "IntangibleAssetsNetExcludingGoodwill", instant=True)
     incl = _sec_map(facts, "IntangibleAssetsNetIncludingGoodwill", instant=True)
     shares = _shares_map(facts)
     # provenance (original filing accession/form per period) for source-doc links
-    eq_prov = _sec_prov_map(facts, "StockholdersEquity", instant=True)
+    eq_prov = {**_sec_prov_map(facts, sec_client._SE_NCI, instant=True),
+               **_sec_prov_map(facts, sec_client._SE, instant=True)}
     sh_prov = _shares_prov_map(facts)
     epsq_prov = _sec_prov_map(facts, "EarningsPerShareDiluted", instant=False, span="quarter")
     epsa_prov = _sec_prov_map(facts, "EarningsPerShareDiluted", instant=False, span="annual")
@@ -302,10 +318,17 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
     out = {}
     for d in ends:
         key = d.strftime("%Y-%m-%d")
-        if key in equity:
-            eq, eq_date = equity[key], key
-        else:
-            eq_date, eq = _nearest_kv(equity, d, 12, 12)
+        eq_date = key if key in eq_dates else _nearest_kv(eq_dates, d, 12, 12)[0]
+        eq, eq_concept = None, None
+        if eq_date:
+            eq_tup, eq_concept, _ = sec_client._parent_equity_at(facts, eq_date)
+            eq = float(eq_tup[0]) if eq_tup else None
+        # Per COMMON share: remove preferred as the filer stood at eq_date.
+        # Preferred outstanding but its value unresolved → n/a (cardinal rule),
+        # never a preferred-inflated "common" book value.
+        pfd, pfd_present = (sec_client._resolve_preferred_stock(facts, as_of=eq_date)
+                            if eq is not None else (None, False))
+        ce = None if (eq is None or (pfd_present and pfd is None)) else eq - (pfd or 0)
         if key in shares:
             sh, sh_date = shares[key], key
         else:
@@ -319,11 +342,20 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
         if gw is not None:
             adj = gw + (other or 0)
             adj_basis = "goodwill + other intangibles" if other else "goodwill"
-        else:
+        elif incl.get(eq_date) is not None:
             adj = incl.get(eq_date)
             adj_basis = "intangibles incl. goodwill"
-        bvps = (eq / sh) if (eq and sh) else None
-        tbvps = ((eq - adj) / sh) if (eq and sh and adj is not None) else bvps
+        elif (not eq_date or _recent_intangibles(eq_date, goodwill, incl)
+              or (other is None and _recent_intangibles(eq_date, intang))):
+            # Goodwill (or other intangibles) on a recent balance sheet but not
+            # tagged at eq_date: n/a, never a TBVPS with part or all of the
+            # deduction silently dropped (it used to fall back to BVPS).
+            adj, adj_basis = None, "intangibles not tagged at this date"
+        else:
+            adj = other or 0.0
+            adj_basis = "other intangibles" if other else "no intangibles reported"
+        bvps = (ce / sh) if (ce and sh) else None
+        tbvps = ((ce - adj) / sh) if (ce and sh and adj is not None) else None
         eps, eps_note = _flow_for(d, eps_q, eps_a, quarterly)
         dps, dps_note = _flow_for(d, dps_q, dps_a, quarterly)
         basic_eps, _ = _flow_for(d, epsb_q, epsb_a, quarterly)
@@ -341,7 +373,9 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
             "basic_eps": basic_eps, "avg_diluted_shares": avg_dil,
             "eps_before_amort": eps_before_amort, "_amort": amort,
             "bvps": bvps, "tbvps": tbvps, "shares": sh,
-            "_eq": eq, "_eq_date": eq_date, "_sh_date": sh_date,
+            "_eq": eq, "_eq_concept": eq_concept, "_pfd": pfd,
+            "_pfd_present": pfd_present, "_ce": ce,
+            "_eq_date": eq_date, "_sh_date": sh_date,
             "_adj": adj, "_gw": gw, "_other": other, "_incl": incl.get(eq_date),
             "_adj_basis": adj_basis,
             "_eq_prov": eq_prov.get(eq_date) if eq_date else None,
@@ -562,14 +596,24 @@ def render_financial_highlights(ticker: str):
                  terms, None, ps.get("dps_note") is None, (doc or {}).get("url") or sec_link,
                  raw=v)
 
+    def _ce_sub(ps):
+        """Where common equity came from: the equity tag that resolved at
+        eq_date (NCI removed when needed), less preferred when outstanding."""
+        eq, pfd = ps.get("_eq"), ps.get("_pfd")
+        sub = (f"as of {ps.get('_eq_date') or '—'} · "
+               f"XBRL {ps.get('_eq_concept') or 'StockholdersEquity'}")
+        if ps.get("_pfd_present"):
+            sub += (f" {_thou(eq / 1000 if eq is not None else None)} − preferred "
+                    f"{_thou(pfd / 1000) if pfd is not None else 'unresolved (n/a)'} ($000)")
+        return sub
+
     def sec_bvps(k):
-        ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
+        ps = col_ps.get(k, {}); ce = ps.get("_ce"); sh = ps.get("shares")
         eq_doc = _sec_doc(cik, ps.get("_eq_prov")); sh_doc = _sec_doc(cik, ps.get("_sh_prov"))
         # Missing equity renders the honest "—", never a fake "0 ($000)" (audit P3).
         terms = [{"label": "Total common equity",
-                  "val": f"{_thou(eq / 1000)} ($000)" if eq is not None else "—",
-                  "sub": f"as of {ps.get('_eq_date') or '—'} · XBRL StockholdersEquity",
-                  "doc": eq_doc},
+                  "val": f"{_thou(ce / 1000)} ($000)" if ce is not None else "—",
+                  "sub": _ce_sub(ps), "doc": eq_doc},
                  {"label": "Shares outstanding", "val": _count(sh),
                   "sub": f"as of {ps.get('_sh_date') or '—'}", "doc": sh_doc}]
         return P(_dollars_ps(ps.get("bvps")), "Book value / share",
@@ -579,14 +623,14 @@ def render_financial_highlights(ticker: str):
                  (eq_doc or {}).get("url") or sec_link, raw=ps.get("bvps"))
 
     def sec_tbvps(k):
-        ps = col_ps.get(k, {}); eq = ps.get("_eq"); sh = ps.get("shares")
-        adj = ps.get("_adj"); tce = (eq - adj) if (eq is not None and adj is not None) else None
+        ps = col_ps.get(k, {}); ce = ps.get("_ce"); sh = ps.get("shares")
+        adj = ps.get("_adj"); tce = (ce - adj) if (ce is not None and adj is not None) else None
         basis = ps.get("_adj_basis", "intangibles")
         eq_doc = _sec_doc(cik, ps.get("_eq_prov")); sh_doc = _sec_doc(cik, ps.get("_sh_prov"))
         # Missing inputs render the honest "—" (_thou(None)), never "0 ($000)".
         terms = [{"label": "Tangible common equity",
                   "val": f"{_thou(tce / 1000)} ($000)" if tce is not None else "—",
-                  "sub": (f"Equity {_thou(eq / 1000 if eq is not None else None)} − {basis} "
+                  "sub": (f"Common equity {_thou(ce / 1000 if ce is not None else None)} − {basis} "
                           f"{_thou(adj / 1000 if adj is not None else None)} ($000)"), "doc": eq_doc},
                  {"label": "Shares outstanding", "val": _count(sh),
                   "sub": f"as of {ps.get('_sh_date') or '—'}", "doc": sh_doc}]

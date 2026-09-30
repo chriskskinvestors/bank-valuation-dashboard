@@ -110,6 +110,11 @@ class _IsolatedCache(unittest.TestCase):
         p = patch.object(cache, "_engine", eng)
         p.start()
         self.addCleanup(p.stop)
+        # Hermetic: the skipped-quarter fill reads the filing index only when
+        # the blob has a gap; by default there is no index (no network).
+        m = patch("data.sec_filing_scraper._recent_metas", return_value=[])
+        m.start()
+        self.addCleanup(m.stop)
 
     def _overlay(self, blob, periodic=_PERIODIC, meta=_FILING, facts=None):
         with patch("data.sec_earnings_8k.latest_periodic_filing", return_value=periodic), \
@@ -216,6 +221,120 @@ class TestEndToEnd(_IsolatedCache):
             r = sc.get_latest_fundamentals(707179)
         self.assertEqual(r["sec_as_of"], "2026-03-31")
         self.assertIsNone(r["sec_facts_overlay"])
+
+
+def _gap_blob():
+    """PNFP 2026-09 shape: companyfacts holds 2025 Q1/H1/FY and 2026 Q1/H1/Q2
+    but NOTHING from the Q3-2025 10-Q (no 3M, no 9M), so no TTM window can
+    form (Q3 and Q4 both underivable)."""
+    def q(fp, filed):
+        return {"form": "10-Q", "filed": filed, "accn": f"a-{fp}", "fp": fp}
+    k = {"form": "10-K", "filed": "2026-02-25", "accn": "a-K", "fp": "FY"}
+    ni = [
+        {"start": "2025-01-01", "end": "2025-03-31", "val": 140e6, **q("Q1", "2025-05-01")},
+        {"start": "2025-01-01", "end": "2025-06-30", "val": 299e6, **q("Q2", "2025-08-01")},
+        {"start": "2025-04-01", "end": "2025-06-30", "val": 159e6, **q("Q2", "2025-08-01")},
+        {"start": "2025-01-01", "end": "2025-12-31", "val": 641.865e6, **k},
+        {"start": "2026-01-01", "end": "2026-03-31", "val": 150e6, **q("Q1", "2026-05-01")},
+        {"start": "2026-01-01", "end": "2026-06-30", "val": 478e6, **q("Q2", "2026-08-01")},
+        {"start": "2026-04-01", "end": "2026-06-30", "val": 328e6, **q("Q2", "2026-08-01")},
+    ]
+    return {"cik": 1115055, "facts": {"us-gaap": {
+        "NetIncomeLoss": {"units": {"USD": ni}},
+        "StockholdersEquity": {"units": {"USD": [
+            {"end": "2026-06-30", "val": 20e9, **q("Q2", "2026-08-01")}]}},
+    }, "dei": {}}}
+
+
+_Q3_META = {"accession": "000111505525000077", "doc": "pnfp-20250930.htm",
+            "date": "2025-11-04", "form": "10-Q", "cik": 1115055}
+_METAS = [  # newest first, as the index returns them
+    {"accession": "000111505526000050", "doc": "q2.htm", "date": "2026-08-01",
+     "form": "10-Q", "cik": 1115055},
+    {"accession": "000111505526000030", "doc": "q1.htm", "date": "2026-05-01",
+     "form": "10-Q", "cik": 1115055},
+    {"accession": "000111505526000010", "doc": "k.htm", "date": "2026-02-25",
+     "form": "10-K", "cik": 1115055},
+    _Q3_META,
+    {"accession": "000111505525000050", "doc": "q2-25.htm", "date": "2025-08-01",
+     "form": "10-Q", "cik": 1115055},
+]
+_CURRENT = {"form": "10-Q", "date": "2026-08-01", "report_date": "2026-06-30"}
+
+
+def _q3_instance():
+    """The skipped Q3-2025 10-Q's own facts: Q3 3M, 9M YTD, a comparative
+    and a dimensioned member (neither of the last two may be added)."""
+    def f(concept, val, end="2025-09-30", start=None, members=None):
+        return Fact(concept, val, end, start, members or {}, "usd")
+    return [
+        f("us-gaap:NetIncomeLoss", 170e6, start="2025-07-01"),
+        f("us-gaap:NetIncomeLoss", 469e6, start="2025-01-01"),
+        f("us-gaap:NetIncomeLoss", 120e6, end="2024-09-30", start="2024-07-01"),
+        f("us-gaap:NetIncomeLoss", 9e6, start="2025-07-01", members={"seg": "A"}),
+        f("us-gaap:StockholdersEquity", 6.5e9),
+    ]
+
+
+class TestSkippedQuarterFill(_IsolatedCache):
+    """companyfacts skipped a MIDDLE 10-Q (PNFP/CBC/ENBP, 2026-09): the
+    latest-filing overlay has nothing to do (the blob is current), so the
+    Q3-2025 filing is found by date in the index and its own facts fill the
+    gap. Q3 = 170, Q4 = FY - 9M = 641.865 - 469 = 172.865, TTM = 170 +
+    172.865 + 150 + 328 = 820.865 ($M). Before #170 the FY 641.865 was
+    served as TTM; after #170 alone it is None; with this fill it is real."""
+
+    def _fill(self, blob, metas=_METAS, facts=None):
+        with patch("data.sec_earnings_8k.latest_periodic_filing", return_value=_CURRENT), \
+             patch("data.sec_filing_scraper._recent_metas", return_value=metas), \
+             patch("data.sec_filing_scraper.instance_facts",
+                   return_value=_q3_instance() if facts is None else facts) as inst:
+            return ov.overlay_lagging_filing(1115055, blob), inst
+
+    def test_gap_filled_from_the_skipped_filing(self):
+        blob = _gap_blob()
+        before = copy.deepcopy(blob)
+        out, inst = self._fill(blob)
+        self.assertEqual(blob, before)                          # cached blob untouched
+        self.assertEqual(inst.call_args[0][0]["accession"], _Q3_META["accession"])
+        ni = out["facts"]["us-gaap"]["NetIncomeLoss"]["units"]["USD"]
+        added = sorted((e["start"], e["end"], e["val"]) for e in ni if e.get("overlay"))
+        self.assertEqual(added, [("2025-01-01", "2025-09-30", 469e6),
+                                 ("2025-07-01", "2025-09-30", 170e6)])
+        self.assertEqual(out["_overlay_gaps"], [{
+            "accession": _Q3_META["accession"], "form": "10-Q",
+            "report_date": "2025-09-30", "filed": "2025-11-04", "n_facts": 3}])
+        self.assertNotIn("_overlay", out)                       # head label untouched
+        self.assertAlmostEqual(sc._extract_ttm_value(out, "NetIncomeLoss"),
+                               820.865e6, places=0)
+
+    def test_no_gap_reads_nothing(self):
+        blob = _gap_blob()
+        blob["facts"]["us-gaap"]["NetIncomeLoss"]["units"]["USD"].append(
+            {"start": "2025-07-01", "end": "2025-09-30", "val": 170e6,
+             "form": "10-Q", "filed": "2025-11-04", "accn": "a-Q3", "fp": "Q3"})
+        with patch("data.sec_earnings_8k.latest_periodic_filing", return_value=_CURRENT), \
+             patch("data.sec_filing_scraper._recent_metas") as idx:
+            self.assertIs(ov.overlay_lagging_filing(1115055, blob), blob)
+        idx.assert_not_called()                                 # healthy bank: zero fetches
+
+    def test_index_or_parse_failure_is_noop(self):
+        blob = _gap_blob()
+        out, _ = self._fill(blob, metas=[])
+        self.assertIs(out, blob)
+        with patch("data.sec_earnings_8k.latest_periodic_filing", return_value=_CURRENT), \
+             patch("data.sec_filing_scraper._recent_metas", side_effect=RuntimeError("503")):
+            self.assertIs(ov.overlay_lagging_filing(1115055, blob), blob)
+        with patch("data.sec_earnings_8k.latest_periodic_filing", return_value=_CURRENT), \
+             patch("data.sec_filing_scraper._recent_metas", return_value=_METAS), \
+             patch("data.sec_filing_scraper.instance_facts", side_effect=RuntimeError("503")):
+            self.assertIs(ov.overlay_lagging_filing(1115055, blob), blob)
+
+    def test_quarter_end_helper(self):
+        self.assertEqual(ov._quarter_end_before("2026-06-30", 9), "2025-09-30")
+        self.assertEqual(ov._quarter_end_before("2026-06-30", 6), "2025-12-31")
+        self.assertEqual(ov._quarter_end_before("2026-03-31", 3), "2025-12-31")
+        self.assertEqual(ov._quarter_end_before("2025-09-30", 3), "2025-06-30")
 
 
 class TestCardLabels(unittest.TestCase):
