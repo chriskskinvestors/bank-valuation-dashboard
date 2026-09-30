@@ -405,8 +405,16 @@ class TestBuildCallsAgenda(unittest.TestCase):
         bksc = rows["BKSC"]
         self.assertEqual(bksc["date"], "2026-07-16")        # report date unchanged
         self.assertFalse(bksc["confirmed"])                 # still (proj.)
+        self.assertTrue(bksc["call_consistent"])            # softer ◐ signal
         self.assertEqual(bksc["call_date"], "2026-07-17")   # carried for display
         self.assertEqual(bksc["call_time"], "9:00a ET")
+        # A confirmed row never also carries the softer flag (✓ wins).
+        rows2 = {r["ticker"]: r for b in build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE,
+            {"BKSC": {"release_date": "2026-07-16", "call_date": "2026-07-17"}},
+            date(2026, 7, 13)) for r in b["rows"]}
+        self.assertTrue(rows2["BKSC"]["confirmed"])
+        self.assertFalse(rows2["BKSC"]["call_consistent"])
 
     def test_fmp_confirmed_flag_only_confirms_fmp_own_date(self):
         """MTB 2026-09-30 (owner report): the Calendar showed "2026-09-30 ✓"
@@ -462,6 +470,7 @@ class TestBuildCallsAgenda(unittest.TestCase):
             self._yf(), self._fmp(), self.UNIVERSE, calls, date(2026, 7, 13))
         rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
         self.assertFalse(rows["BKSC"]["confirmed"])         # gap too large → stays (proj.)
+        self.assertFalse(rows["BKSC"]["call_consistent"])   # and no ◐ either
 
     def test_announced_release_date_overrides_estimate_and_confirms(self):
         # An announced release date (from the PR headline) is authoritative — it
