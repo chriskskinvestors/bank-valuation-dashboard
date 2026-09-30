@@ -787,10 +787,12 @@ class TestIncomeStatementRiRendersPopulated(unittest.TestCase):
         self.assertIn("Data processing expenses", h)
         self.assertIn("$30.8M", h)
         self.assertIn("30,787", h)
-        # Below-threshold preprinted lines render n/a with the reason — and
-        # appear at all because SOME line was itemized.
+        # Below-threshold preprinted lines render absent ("—" on screen, owner
+        # rule 2026-09-30 / UX-P1-19) with the reason in the click-through —
+        # and appear at all because SOME line was itemized.
         self.assertIn("Telecommunications expense", h)
-        self.assertIn(">n/a<", h)
+        self.assertIn(">—<", h)
+        self.assertNotIn(">n/a<", h)
         self.assertIn("below the RI-E itemization threshold", h)
         # Labeled income write-in (bank's own filed text).
         self.assertIn("Merchant Fee Income", h)

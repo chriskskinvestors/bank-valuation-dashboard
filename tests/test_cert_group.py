@@ -526,6 +526,27 @@ class TestEveryRegistryRatioIsClassified(unittest.TestCase):
                          "makes its ratio permanently n/a for groups")
         self.assertEqual(AVERAGE_BASED_RATIOS & set(_EXACT_QUOTIENTS), set())
 
+    def test_ui_direct_ratio_reads_are_classified(self):
+        """Statement pages read FDIC's REPORTED ratios outside the registry:
+        `("label", "pct", "FIELD")` row specs and `fdic_pct("label", "FIELD")`.
+        Same hazard — an unclassified field there is summed for groups.
+        (`"ratio", NUM, DEN` rows compute from summed levels: exact already.)"""
+        import re
+        from data.cert_group import _EXACT_QUOTIENTS
+        handled = AVERAGE_BASED_RATIOS | set(_EXACT_QUOTIENTS) | {"EEFFR"}
+        shapes = re.compile(r'"pct",\s*"([A-Z0-9_]+)"\s*\)'
+                            r'|fdic_pct\(\s*"[^"]*",\s*"([A-Z0-9_]+)"\s*\)')
+        found: dict[str, set] = {}
+        for p in sorted((REPO / "ui").glob("*.py")):
+            for m in shapes.finditer(p.read_text(encoding="utf-8")):
+                found.setdefault(m.group(1) or m.group(2), set()).add(p.name)
+        # A refactor that changes the row shape must not turn this into a
+        # silent no-op: 23 distinct fields matched on 2026-09-30.
+        self.assertGreaterEqual(len(found), 20)
+        unclassified = sorted(f"{f} ({', '.join(sorted(w))})"
+                              for f, w in found.items() if f not in handled)
+        self.assertEqual(unclassified, [])
+
 
 class TestRegistryLabelsMatchFields(unittest.TestCase):
     """(2026-09-25) Five registry metrics displayed a DIFFERENT FDIC quantity

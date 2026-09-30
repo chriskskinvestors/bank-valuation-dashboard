@@ -22,6 +22,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))  # _apptest_store, not via tests/__init__
+
+from _apptest_store import isolate_store  # noqa: E402
 
 
 # Bounded universe for AppTest runs. Without this the app's script run does the
@@ -47,6 +50,7 @@ class TestNavRendersFunctional(unittest.TestCase):
                 "Earnings", "News & Research", "Geographic"]
 
     def setUp(self):
+        self.store = isolate_store(self)   # never the dev's real cache.db
         import data.bank_universe as bu
         self._bu = bu
         self._saved = (bu._UNIVERSE_CACHE, bu._NONCOMMON_CACHE,
@@ -77,6 +81,16 @@ class TestNavRendersFunctional(unittest.TestCase):
             "Section nav radio not found in rendered app — the top nav "
             "would be missing/blank. Radios present: "
             f"{[list(r.options) for r in at.radio]}")
+        # Pin (2026-09-25): Home's 2-bank metrics snapshot — which used to
+        # overwrite the dev's real 364-bank one — landed in the private store.
+        import json
+        from sqlalchemy import text
+        with self.store.connect() as conn:
+            row = conn.execute(text("SELECT value FROM cache WHERE key = "
+                                    "'watchlist_metrics_snap'")).fetchone()
+        self.assertIsNotNone(row, "Home's metrics snapshot write did not reach "
+                             "the isolated store — where did it go?")
+        self.assertEqual(json.loads(row[0])["n_tickers"], len(_STUB_UNIVERSE))
 
     def test_can_leave_company_when_bank_in_url(self):
         """Regression (2026-06-22): on a Company page reached via ?bank=, clicking

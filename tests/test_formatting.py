@@ -115,7 +115,8 @@ class TestUsdCompactFromThousands(unittest.TestCase):
         self.assertEqual(usd(1), "$1K")                # 1 ($000) = $1,000 -> $1K
 
     def test_negative(self):
-        self.assertEqual(usd(-843), "$-843K")
+        # Sign before the "$" (UX-P2-10 / owner rule 2026-09-30): never "$-843K".
+        self.assertEqual(usd(-843), "-$843K")
 
     def test_none_and_unparseable(self):
         self.assertEqual(usd(None), "—")

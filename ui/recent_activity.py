@@ -25,6 +25,7 @@ SOURCE_LABELS = {
     "yfinance_news": "Yahoo News",
     "ir_site": "IR Site",
     "google_news": "Google News",
+    "fmp_news": "FMP",
 }
 
 EVENT_TYPE_LABELS = {
@@ -35,7 +36,18 @@ EVENT_TYPE_LABELS = {
     "shareholder_vote": "Shareholder Vote",
     "regulatory": "Regulatory",
     "news": "News",
+    "capital_raise": "Capital Raise",
+    "capital_return": "Capital Return",
 }
+
+
+def tag_label(key, labels: dict) -> str:
+    """Display label for a stored event_type / source key: the curated label,
+    else snake_case → Title Case — a raw store key ("capital_raise",
+    "fmp_news") is never shown as a chip (UX review 2026-09-24)."""
+    k = str(key or "")
+    return labels.get(k) or " ".join(w.capitalize() for w in k.split("_") if w)
+
 
 EVENT_TYPE_COLORS = {
     "earnings": "#2563eb",       # blue — categorical; consumed via {color}14 hex-alpha, must stay hex
@@ -91,6 +103,20 @@ a.ev-tk:hover { color: var(--brand-accent); text-decoration: underline; }
 """
 
 
+def _google_title_mistag(ev: dict) -> bool:
+    """True for a Google News row whose title does not name its tagged bank
+    under the CURRENT matcher. Ingest already requires this, so it only bites
+    rows stored under an older, looser matcher — the Venezuela "...Elections
+    Need To Happen" story tagged HAPN (UX review 2026-09-24) stays on the
+    bank's page forever otherwise. Scoped to google_news: its tag comes from a
+    per-bank search, so the title match is the ONLY attribution evidence."""
+    if ev.get("source") != "google_news" or not ev.get("ticker"):
+        return False
+    from data.events.wire_base import match_tickers
+    tagged = str(ev["ticker"]).upper()
+    return tagged not in {t.upper() for t in match_tickers(ev.get("headline") or "")}
+
+
 def _summary_text(ev: dict) -> str:
     """The best one/two-line summary for an event, trimmed; never just echo the
     headline back."""
@@ -104,9 +130,9 @@ def _summary_text(ev: dict) -> str:
 
 
 def _event_row(ev: dict, show_ticker: bool) -> str:
-    type_label = EVENT_TYPE_LABELS.get(ev["event_type"], ev["event_type"])
+    type_label = tag_label(ev["event_type"], EVENT_TYPE_LABELS)
     color = EVENT_TYPE_COLORS.get(ev["event_type"], "#6b7280")
-    src_label = SOURCE_LABELS.get(ev["source"], ev["source"])
+    src_label = tag_label(ev["source"], SOURCE_LABELS)
     ago = _fmt_ago(ev.get("published_at"))
     url = ev.get("url")
     link = f'<a class="ev-src" href="{_html.escape(str(url))}" target="_blank">↗</a>' if url else ""
@@ -141,7 +167,8 @@ def _render_feed(events: list[dict], show_ticker: bool = False):
     # filtered these but this surface didn't — a documented gap, 2026-06-15).
     events = [e for e in events
               if is_safe_news_url(e.get("url"))
-              and not is_junk_news(e.get("headline") or "", e.get("ticker"))]
+              and not is_junk_news(e.get("headline") or "", e.get("ticker"))
+              and not _google_title_mistag(e)]
     body = "".join(_event_row(e, show_ticker) for e in events)
     st.markdown(_FEED_CSS + f'<div class="ev-feed">{body}</div>', unsafe_allow_html=True)
 
@@ -212,7 +239,8 @@ def render_events_calendar(ticker: str, limit: int = 15):
     from data.events.wire_base import is_safe_news_url, is_junk_news
     events = [e for e in events
               if is_safe_news_url(e.get("url"))
-              and not is_junk_news(e.get("headline") or "", e.get("ticker"))]
+              and not is_junk_news(e.get("headline") or "", e.get("ticker"))
+              and not _google_title_mistag(e)]
     if not events:
         st.caption(
             f"No events ingested yet for {ticker}. The dashboard polls SEC EDGAR "
@@ -223,7 +251,7 @@ def render_events_calendar(ticker: str, limit: int = 15):
     rows = []
     for ev in events:
         date = _fmt_date(ev.get("published_at"))
-        type_label = EVENT_TYPE_LABELS.get(ev["event_type"], ev["event_type"])
+        type_label = tag_label(ev["event_type"], EVENT_TYPE_LABELS)
         color = EVENT_TYPE_COLORS.get(ev["event_type"], "#6b7280")
         headline = _html.escape(ev.get("headline") or "(no headline)")
         url = ev.get("url")
@@ -256,14 +284,14 @@ def render_activity_overview(limit: int = 50):
             "Filter by type",
             options=list(EVENT_TYPE_LABELS.keys()),
             default=[],
-            format_func=lambda x: EVENT_TYPE_LABELS.get(x, x),
+            format_func=lambda x: tag_label(x, EVENT_TYPE_LABELS),
         )
     with col2:
         source_filter = st.multiselect(
             "Filter by source",
             options=list(SOURCE_LABELS.keys()),
             default=[],
-            format_func=lambda x: SOURCE_LABELS.get(x, x),
+            format_func=lambda x: tag_label(x, SOURCE_LABELS),
         )
 
     from data.events.wire_base import is_junk_news
@@ -275,7 +303,8 @@ def render_activity_overview(limit: int = 50):
     # already canonicalized sibling tickers and dropped out-of-scope names.
     events = [e for e in events
               if not is_junk_news(e.get("headline") or "", e.get("ticker"),
-                                  e.get("source"))]
+                                  e.get("source"))
+              and not _google_title_mistag(e)]
     if type_filter:
         events = [e for e in events if e["event_type"] in type_filter]
     if source_filter:

@@ -76,7 +76,14 @@ def _reserve_coverage(rec: dict) -> float | None:
     npl = rec.get("NCLNLSR")
     if rtl is not None and npl is not None and npl > 0:
         return rtl / npl * 100
-    return rec.get("LNRESNCR")
+    if npl is not None and npl == 0:
+        # Zero NPLs: reserves/NPL is undefined, never 0%. FDIC zero-fills
+        # LNRESNCR on a zero denominator, so the fallback printed "0%" in the
+        # bottom-quintile red for AMBK/ALBY on Compare (UX review P1 wave,
+        # 2026-09-30). Absent, not zero.
+        return None
+    v = rec.get("LNRESNCR")
+    return v if v is not None and v > 0 else None
 
 
 def build_credit_timeline(hist_records: list[dict]) -> pd.DataFrame:

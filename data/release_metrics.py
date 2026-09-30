@@ -786,28 +786,32 @@ def _year_ago_qend(qend: str | None) -> str | None:
 _POLLER_LIVENESS_S = 3 * 3600
 
 _CIK_TICKER: dict[int, str] = {}
+_CIK_TICKER_GEN = 0
 
 
 def _ticker_for_cik(cik) -> str | None:
     """CIK → the ticker its 8-Ks are attributed to, resolved the SAME canonical
     way the adapter used when it wrote those rows (a registrant with preferred /
     ETN siblings must land on the same primary common or the lookup misses).
-    Memoized, but an EMPTY map is never pinned — that was audit P1 #3's bug."""
-    global _CIK_TICKER
+    Memoized, but an EMPTY map is never pinned — that was audit P1 #3's bug —
+    and rebuilt when bank_universe reloads a newer snapshot (P1-7)."""
+    global _CIK_TICKER, _CIK_TICKER_GEN
     try:
         key = int(cik)
     except (TypeError, ValueError):
         return None
-    if not _CIK_TICKER:
+    from data.bank_universe import universe_generation
+    gen = universe_generation()
+    if not _CIK_TICKER or _CIK_TICKER_GEN != gen:
         try:
             from data.bank_universe import get_universe_tickers
             from data.events.sec_8k import _canonical_cik_map
             built = _canonical_cik_map(sorted(get_universe_tickers()))
         except Exception:
-            return None
+            built = {}
         if not built:
-            return None                      # retry on the next call
-        _CIK_TICKER = built
+            return _CIK_TICKER.get(key)      # prior map (or None); retry next call
+        _CIK_TICKER, _CIK_TICKER_GEN = built, gen
     return _CIK_TICKER.get(key)
 
 
