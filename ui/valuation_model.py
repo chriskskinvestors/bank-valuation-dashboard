@@ -18,7 +18,7 @@ from analysis.dcf import (
 )
 from analysis.deposit_dynamics import summarize_bank_deposits  # reuse helpers
 from data.consensus import list_consensus, compile_consensus
-from utils.formatting import fmt_dollars
+from utils.formatting import fmt_dollars, format_value
 from utils.chart_style import COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY
 from ui.chrome import ledger, title_bar, lazy_tabs, table_export
 
@@ -100,6 +100,21 @@ def _load_price(ticker: str) -> float | None:
     except Exception:
         pass
     return None
+
+
+def _fcfe_display_df(projected_eps, projected_fcfe, terminal_eps, tv) -> pd.DataFrame:
+    """On-screen Projected FCFE & Terminal Value rows (house table, UX-P1-23),
+    formatted by the shared formatter. An absent terminal EPS is "—" — the old
+    `get('terminal_eps', 0)` printed a plausible-wrong $0.00."""
+    def usd(v):
+        return format_value(v, "currency", 2)
+    rows = [{"Year": f"Y{i+1}", "Projected EPS": usd(projected_eps[i]),
+             "FCFE / share": usd(projected_fcfe[i])}
+            for i in range(len(projected_fcfe))]
+    if tv is not None:
+        rows.append({"Year": "Terminal", "Projected EPS": usd(terminal_eps),
+                     "FCFE / share": usd(tv)})
+    return pd.DataFrame(rows, columns=["Year", "Projected EPS", "FCFE / share"])
 
 
 def _consensus_annualizer(period: str) -> float | None:
@@ -699,18 +714,10 @@ def render_valuation_model(ticker: str):
     pv_explicit = dcf.get("pv_explicit")
 
     years = [f"Y{i+1}" for i in range(len(projected_fcfe))]
-    rows = []
-    for i in range(len(projected_fcfe)):
-        rows.append({
-            "Year": years[i],
-            "Projected EPS": f"${projected_eps[i]:.2f}",
-            "FCFE / share": f"${projected_fcfe[i]:.2f}",
-        })
-    if tv is not None:
-        rows.append({"Year": "Terminal", "Projected EPS": f"${dcf.get('terminal_eps', 0):.2f}", "FCFE / share": f"${tv:.2f}"})
-
-    df_cf = pd.DataFrame(rows)
-    st.dataframe(df_cf, hide_index=True, use_container_width=True)
+    df_cf = _fcfe_display_df(projected_eps, projected_fcfe,
+                             dcf.get("terminal_eps"), tv)
+    from ui.tables import ksk_table
+    ksk_table(df_cf)
 
     tv_pct = (pv_terminal / dcf_fv * 100) if (pv_terminal and dcf_fv) else None
     # Export the RAW per-share projections. On screen the Terminal row's

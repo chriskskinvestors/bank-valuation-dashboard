@@ -84,8 +84,9 @@ def group_ratio_note(ticker: str, rec) -> str | None:
 def empty_state(title: str, hint: str | None = None) -> None:
     """Standard explained-absence block. `title` says WHAT is absent
     ("No insider transactions in the last 90 days"); `hint` optionally says
-    why/when it would appear. Both are plain text (HTML-escaped here)."""
-    body = (f'<div class="ksk-empty"><div class="ico">&#9702;</div>'
+    why/when it would appear. Both are plain text (HTML-escaped here).
+    No icon: the old "◦"-in-a-box glyph read as a broken image (UX-P1-17)."""
+    body = (f'<div class="ksk-empty">'
             f'<div class="l1">{html.escape(title)}</div>')
     if hint:
         body += f'<div class="l2">{html.escape(hint)}</div>'

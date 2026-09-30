@@ -53,7 +53,7 @@ def parse_event(e: dict) -> dict | None:
     surprise = (actual - est) if (actual is not None and est is not None) else None
     surprise_pct = (surprise / abs(est) * 100.0) if (surprise is not None and est not in (None, 0)) else None
     impact = e.get("impact") if e.get("impact") in _IMPACT_RANK else "Low"
-    return {
+    return normalize_scale({
         "datetime": str(raw),
         "date": str(raw)[:10],
         "event": name,
@@ -65,7 +65,53 @@ def parse_event(e: dict) -> dict | None:
         "impact": impact,
         "unit": e.get("unit"),
         "released": actual is not None,
-    }
+    })
+
+
+# FMP labels magnitude with one unit per row, but a row's values can sit a
+# thousand apart (UX-P1-04, live 2026-09-24): New Home Sales (Aug) came back
+# actual 684 / previous 607 / estimate 0.62, all labelled "M" — "684M" beside
+# "0.62M" and a +683.38 "surprise". The label rides with the consensus scale:
+# the same release's pre-print rows (estimate + previous only, cached
+# 2026-07-16: 0.6 / 0.58 "M") match it, and new home sales run ~0.6-0.7M SAAR.
+# So the printed side is re-expressed one rung down the ladder (684 → 684K)
+# and the consensus is moved onto that scale (0.62M → 620K).
+_SCALE_LADDER = ("K", "M", "B", "T")
+
+
+def _r(x: float) -> float:
+    return float(f"{x:.12g}")   # drop ×/÷1000 float noise (0.62*1000 → 620.0)
+
+
+def normalize_scale(ev: dict) -> dict:
+    """Put a row's consensus on the same scale as its actual/previous when they
+    sit ~1000× apart under one K/M/B/T label (see _SCALE_LADDER note), then
+    recompute surprise. Idempotent (a normalized row is ~1× apart), so it is
+    safe on already-cached events. A ~1000× mismatch that can't be resolved
+    (unit off the ladder, or actual and previous on different scales) keeps the
+    reported values but drops the surprise — a difference across two scales is
+    a wrong number, never shown. Pure / unit-tested."""
+    est, act, prev = ev.get("estimate"), ev.get("actual"), ev.get("previous")
+    refs = [v for v in (act, prev) if v not in (None, 0)]
+    if est in (None, 0) or not refs:
+        return ev
+    ratios = [abs(v / est) for v in refs]
+    up = all(300 <= r <= 3000 for r in ratios)             # printed side ×1000
+    down = all(1 / 3000 <= r <= 1 / 300 for r in ratios)   # printed side ÷1000
+    if not (up or down):
+        if act not in (None, 0) and not (1 / 300 < abs(act / est) < 300):
+            return {**ev, "surprise": None, "surprise_pct": None}
+        return ev
+    unit = (ev.get("unit") or "").strip()
+    idx = _SCALE_LADDER.index(unit) if unit in _SCALE_LADDER else None
+    new_idx = None if idx is None else idx + (-1 if up else 1)
+    if new_idx is None or not 0 <= new_idx < len(_SCALE_LADDER):
+        return {**ev, "surprise": None, "surprise_pct": None}
+    est = _r(est * 1000 if up else est / 1000)
+    surprise = _r(act - est) if act is not None else None
+    return {**ev, "estimate": est, "unit": _SCALE_LADDER[new_idx],
+            "surprise": surprise,
+            "surprise_pct": (surprise / abs(est) * 100.0) if surprise is not None else None}
 
 
 def _impact_ok(ev: dict, min_impact: str) -> bool:
@@ -127,10 +173,12 @@ def get_us_calendar(back_days: int = 10, fwd_days: int = 14,
     # date ranges and must never serve each other's cached payloads.
     key = f"{CACHE_KEY}:{back_days}:{fwd_days}"
     cached = cache.get(key)
+    # normalize_scale again on the cached rows: payloads written before it
+    # existed are served at any age on the render path (idempotent on new ones).
     if is_fresh(cached, CACHE_TTL_SECONDS) and cached.get("events") is not None:
-        return cached["events"]
+        return [normalize_scale(e) for e in cached["events"]]
     if cache_only:
-        return (cached or {}).get("events") or []
+        return [normalize_scale(e) for e in (cached or {}).get("events") or []]
 
     today = date.today()
     params = {"from": (today - timedelta(days=back_days)).isoformat(),

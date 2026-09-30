@@ -27,6 +27,12 @@ from ui.history_range import range_picker, chart_timeline
 from analysis.credit_dynamics import build_credit_timeline
 
 
+# Memoized for an hour (UX review P1-05, 2026-09-30): the loop reads ~600
+# cached FDIC histories (tens of MB of JSON) on EVERY Asset Quality render for
+# one median of nightly-refreshed data — most of the page's ~13 s. The median
+# can only move when the nightly job rewrites fdic_hist:*, so an hour-old
+# value is the same number.
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_peer_median_reserve_coverage(watchlist: list[str]) -> float | None:
     """Compute reserve-coverage peer median from cached watchlist histories."""
     covs = []

@@ -57,21 +57,26 @@ def _month(repdte):
 # names because several modules import them from here.
 from utils.formatting import (
     num as _num, thou as _thou, pct as _pct,
-    usd_compact_from_thousands as _usd,
+    usd_compact_from_thousands as _usd, format_value,
 )
 _count = _thou  # was a same-bodied duplicate of _thou
+
+# Negatives: these helpers emit the shared leading-minus text ("-$1.54",
+# "-4.27%"); the table component (_build_component) renders every leading-minus
+# cell as red accounting parens — the statement-table convention (owner rule
+# 2026-09-30). Never "$-1.54" (the component's regex can't see that one).
 
 
 def _ratio_pct(num, den, dp=2):
     n, d = _num(num), _num(den)
     if n is None or not d:
         return "—"
-    return f"{n/d*100:.{dp}f}%"
+    return _pct(n / d * 100, dp)
 
 
 def _dollars_ps(v, dp=2):
     v = _num(v)
-    return f"${v:.{dp}f}" if v is not None else "—"
+    return format_value(v, "currency", dp) if v is not None else "—"
 
 
 def _iso(d):
@@ -516,7 +521,7 @@ def render_financial_highlights(ticker: str):
         r = recs[k]; ni, eq = _num(r.get("NETINC")), _num(r.get("EQTOT"))
         f = _annual_factor(r)
         raw = (ni * f / eq * 100) if (ni is not None and eq) else None
-        v = f"{raw:.2f}%" if raw is not None else "—"
+        v = _pct(raw)
         ni_a = round(ni * f) if ni is not None else None
         terms = [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
                   "val": _thou(ni_a) + " ($000)",
@@ -530,7 +535,7 @@ def render_financial_highlights(ticker: str):
         intan = _num(r.get("INTAN")) or 0
         f = _annual_factor(r); tce = (eq - intan) if eq is not None else None
         raw = (ni * f / tce * 100) if (ni is not None and tce and tce > 0) else None
-        v = f"{raw:.2f}%" if raw is not None else "—"
+        v = _pct(raw)
         ni_a = round(ni * f) if ni is not None else None
         terms = [{"label": "Net income" + (" (annualized)" if f != 1 else ""),
                   "val": _thou(ni_a) + " ($000)",
@@ -797,7 +802,7 @@ def _tce_ta_builder(recs, asof, fdic_link, P):
         else:
             tce, ta = eq - intan, asset - intan
             raw = (tce / ta * 100) if ta else None
-        v = f"{raw:.2f}%" if raw is not None else "—"
+        v = _pct(raw)
         terms = [{"label": "Tangible common equity", "val": _thou(tce) + " ($000)",
                   "sub": f"Equity {_thou(eq)} − Intangibles {_thou(intan)}"},
                  {"label": "Tangible assets", "val": _thou(ta) + " ($000)",
