@@ -95,6 +95,14 @@ SLIM_USGAAP_CONCEPTS = {
     "LoansAndLeasesReceivableNetReportedAmount",
     "LoansAndLeasesReceivableNetOfDeferredIncome",
     "LoansReceivableHeldForInvestmentNet", "NotesReceivableNet",
+    # Capital return (analysis/capital_return.py): dividends paid + buybacks.
+    # Absent from the slim blob, every bank's Capital Return read "Dividend
+    # data not available" (REVIEW-2026-09-24 P2-9). PaymentsOfDividends-
+    # PreferredStockAndPreferenceStock is already kept above.
+    "PaymentsOfDividendsCommonStock", "DividendsCommonStockCash",
+    "PaymentsOfDividends", "DividendsPreferredStockCash",
+    "PaymentsForRepurchaseOfCommonStock",
+    "StockRepurchasedAndRetiredDuringPeriodValue",
 }
 
 # Cache the slim projection under a key that embeds a hash of the kept-concept

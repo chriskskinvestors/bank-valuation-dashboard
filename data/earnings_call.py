@@ -961,6 +961,11 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         # confirms nothing — it stays "(proj.)" (owner rule 2026-09-30).
         confirmed = bool(rel_d) or (
             bool(frow.get("confirmed")) and (fmp or {}).get("d") == d)
+        # Softer signal, kept apart from the fact: the company has published
+        # a call date that fits the estimate (same day, or a next-morning call
+        # up to 4 days later). The date stays projected; the UI shows ◐.
+        call_consistent = (not confirmed and call_d is not None
+                           and 0 <= (call_d - d).days <= 4)
         # Report timing: FMP's before/after-open code; else the timing the bank
         # stated in its own announcement ("after the market closes"); else inferred
         # — a call the NEXT morning means the release went out after close.
@@ -976,6 +981,7 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
             "days_until": (d - today).days,
             "when": when,
             "confirmed": confirmed,
+            "call_consistent": call_consistent,
             "eps_est": eps,
             "rev_est": frow.get("revenueEstimated"),
             "period_ending": frow.get("periodEnding"),
