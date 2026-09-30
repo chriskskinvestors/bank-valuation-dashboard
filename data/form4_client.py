@@ -32,6 +32,9 @@ from config import SEC_USER_AGENT
 
 FORM4_CACHE_PREFIX = "form4_cache"
 CACHE_TTL_SECONDS = 86400  # 24 hours
+# Render-path file TTL: spans the weekday job's weekend gap plus run-to-run
+# jitter; the intraday firehose delta keeps active filers current meanwhile.
+RENDER_TTL_SECONDS = 4 * 86400
 
 HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept": "application/json"}
 
@@ -74,7 +77,7 @@ def _acceptance_to_utc_iso(acc: str | None) -> str | None:
 # Shared freshness check (data/freshness) bound to this module's TTL.
 def _is_fresh(cached: dict | None) -> bool:
     from data.freshness import is_fresh
-    return is_fresh(cached, CACHE_TTL_SECONDS)
+    return is_fresh(cached, RENDER_TTL_SECONDS)
 
 
 def _fetch_form4_xml(accession: str, cik: int) -> str | None:
@@ -280,15 +283,19 @@ def dedupe_joint_filings(transactions: list[dict]) -> list[dict]:
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def fetch_insider_trades(cik: int, months_back: int = 12) -> list[dict]:
+def fetch_insider_trades(cik: int, months_back: int = 12, *,
+                         force: bool = False) -> list[dict]:
     """
     Fetch all Form 4 filings for a CIK and parse into transactions.
+
+    force=True skips the cached-file read and refetches + persists — the
+    warming job's path (a fresh file would otherwise be handed back unrefreshed).
     """
     if not cik:
         return []
 
-    # Check cache
-    cached = load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
+    # Check cache (skipped when forced)
+    cached = None if force else load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
     if _is_fresh(cached) and "transactions" in cached:
         return dedupe_joint_filings(cached["transactions"])
 

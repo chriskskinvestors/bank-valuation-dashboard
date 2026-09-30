@@ -346,7 +346,8 @@ class TestBareLabelEpsRows(_CrExportSite):
     def test_fmt_hand_values(self):
         f = self.FS._cr_fmt
         self.assertEqual(f("eps", 3.07), "$3.07")
-        self.assertEqual(f("eps", -0.57), "$-0.57")
+        # Statement table: accounting parens (owner rule 2026-09-30), never "$-0.57".
+        self.assertEqual(f("eps", -0.57), "($0.57)")
         self.assertEqual(f("shares", 66_900_000), "66.9M")
         self.assertEqual(f("usd", None), "")
 

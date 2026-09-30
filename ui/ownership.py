@@ -22,6 +22,13 @@ def sample_coverage_pct(shares_sum, shares_out) -> float | None:
     return shares_sum / shares_out * 100
 
 
+def signed_pct0(p: float) -> str:
+    """Whole-percent change with sign: "+12%" / "-3%"; a change that rounds
+    to zero prints "0%", never "-0%" (UX review P1, Ownership Detailed)."""
+    r = round(float(p))
+    return "0%" if r == 0 else f"{r:+d}%"
+
+
 def render_ownership(ticker: str):
     """Render 13F institutional holdings panel."""
     name = get_name(ticker)
@@ -121,7 +128,7 @@ def render_ownership(ticker: str):
             return "— Unch."
         if pct is None:
             return "—"
-        return f"{pct:+.0f}%"
+        return signed_pct0(pct)
 
     rows = []
     exp_rows = []      # raw numerics for the export (never display strings)
@@ -313,7 +320,7 @@ def render_holder_history(ticker: str):
         return [{"Institution": r["Institution"],
                  "Status": r["Status"] or "—",
                  "Δ Shares": f"{r['Δ Shares']:+,.0f}",
-                 "Δ %": (f"{r['Δ %']:+.0f}%" if r["Δ %"] is not None else
+                 "Δ %": (signed_pct0(r["Δ %"]) if r["Δ %"] is not None else
                          ("New" if r["Status"] == "New" else "—"))}
                 for r in rows_]
 
@@ -519,9 +526,9 @@ def render_ownership_detailed(ticker: str, metrics: dict):
         if r["is_new"]:
             return '<span style="color:#059669;font-weight:600;">New</span>'
         if r["d_shares"] is None:
-            return "n/a"
+            return "—"
         color = "#059669" if r["d_shares"] >= 0 else "#dc2626"
-        pct = f' ({r["d_pct"]:+.0f}%)' if r["d_pct"] is not None else ""
+        pct = f' ({signed_pct0(r["d_pct"])})' if r["d_pct"] is not None else ""
         return (f'<span style="color:{color};">{r["d_shares"]:+,.0f}{pct}</span>')
 
     body = ""

@@ -553,6 +553,16 @@ def _compare_export_bytes(cohort: list[dict], categories: list[str],
                           provenance=prov, freeze_cols=2)
 
 
+def _delta_cell(dv: float, fmt: str, dec: int) -> str:
+    """Signed difference vs the peer median: "+1.20%" / "−$3.4M". A
+    difference that DISPLAYS as zero carries no sign ("0.00%", not "+0.00%" /
+    "−0.00%"); a tiny non-zero one keeps it ("+<$0.1M" = up by under $0.1M)."""
+    mag = format_value(abs(dv), fmt, dec)
+    if not any(c in "123456789" for c in mag) and not mag.startswith("<"):
+        return mag
+    return ("+" if dv >= 0 else "−") + mag
+
+
 def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
                           categories: list[str], scores: dict | None = None,
                           delta: bool = False):
@@ -590,9 +600,7 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
                 if v is None or not isinstance(v, (int, float)):
                     row[t] = "—"
                 elif delta:
-                    dv = v - peer_median
-                    row[t] = ("+" if dv >= 0 else "−") + format_value(
-                        abs(dv), fmt, dec)
+                    row[t] = _delta_cell(v - peer_median, fmt, dec)
                 else:
                     row[t] = format_value(v, fmt, dec)
                 pct = compute_peer_percentile(v, numeric)   # vs full cohort
@@ -686,6 +694,11 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
             ".cmp-wrap thead th a.tk{color:inherit;text-decoration:none;font-weight:600;}"
             ".cmp-wrap thead th a.tk:hover{color:var(--brand-primary);"
             "text-decoration:underline;}"
+            # UX-P1-10: Streamlit's stMarkdownContainer carries margin-bottom:
+            # -1rem (cancels a trailing <p>); this block ends in a div, so the
+            # Export button below was pulled up 1rem over the last visible row.
+            'div[data-testid="stMarkdownContainer"]:has(> .cmp-wrap:last-child)'
+            "{margin-bottom:0 !important;}"
             "</style>"
             f'<div class="cmp-wrap"><table class="ksk-grid">'
             f'<thead><tr>{head}</tr></thead><tbody>{"".join(body_rows)}</tbody></table></div>',
@@ -854,11 +867,16 @@ def _build_scatter(peers: list[dict], preset: dict, height: int = 415):
     x_vals = [pt["x"] for pt in points]
     y_vals = [pt["y"] for pt in points]
 
-    # Size: scale to [12, 40] bubble area
-    if size_key and any(pt.get("size") is not None for pt in points):
-        raw_sizes = [pt.get("size") or 0 for pt in points]
-        max_s = max(abs(s) for s in raw_sizes) or 1
-        sizes = [12 + 28 * (abs(s) / max_s) for s in raw_sizes]
+    # Size: scale to [12, 40] bubble area. An ABSENT size must not draw as the
+    # smallest bubble (`or 0` made it read as a reported zero): it gets the
+    # uniform bubble, hollow, and its hover says "—".
+    has_size = [isinstance(pt.get("size"), (int, float)) for pt in points]
+    symbols = ["circle"] * len(points)
+    if size_key and any(has_size):
+        max_s = max(abs(pt["size"]) for pt, h in zip(points, has_size) if h) or 1
+        sizes = [12 + 28 * (abs(pt["size"]) / max_s) if h else 18
+                 for pt, h in zip(points, has_size)]
+        symbols = ["circle" if h else "circle-open" for h in has_size]
     else:
         sizes = [18] * len(points)
 
@@ -871,15 +889,23 @@ def _build_scatter(peers: list[dict], preset: dict, height: int = 415):
         textfont=dict(size=10, color=COLOR_NEUTRAL),
         marker=dict(
             size=sizes,
+            symbol=symbols,
             color=COLOR_PRIMARY,
             opacity=0.65,
             line=dict(color=COLOR_PRIMARY, width=1),
         ),
-        customdata=[[pt["name"], pt["x"], pt["y"]] for pt in points],
+        customdata=[[pt["name"], pt["x"], pt["y"],
+                     format_value(pt["size"] if h else None,
+                                  METRICS_BY_KEY.get(size_key, {}).get("format", "number"),
+                                  METRICS_BY_KEY.get(size_key, {}).get("decimals", 2))]
+                    for pt, h in zip(points, has_size)],
         hovertemplate=(
             "<b>%{text}</b> — %{customdata[0]}<br>"
             f"{preset['x_label']}: %{{x:.2f}}<br>"
-            f"{preset['y_label']}: %{{y:.2f}}<extra></extra>"
+            f"{preset['y_label']}: %{{y:.2f}}"
+            + (f"<br>Size ({METRICS_BY_KEY.get(size_key, {}).get('label', size_key)}): "
+               "%{customdata[3]}" if size_key else "")
+            + "<extra></extra>"
         ),
     ))
 
