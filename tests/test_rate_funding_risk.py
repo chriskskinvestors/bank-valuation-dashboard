@@ -25,6 +25,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -155,12 +156,14 @@ class TestBillSpread(unittest.TestCase):
         self.assertIsNone(bill_yield_on(pd.Series(dtype=float), "20260630"))
 
     def test_wired_through_build_bank_metrics(self):
-        # ticker=None: the as-of/metric-history path — no release, SEC or
-        # network lookups (verified with a socket guard), so this stays
-        # hermetic in keyless CI and on a workstation with live keys alike.
-        with_bill = build_bank_metrics(None, JPM_Q2, {}, {}, [JPM_Q2, JPM_Q1],
-                                       bill_6m=self.BILL)
-        no_bill = build_bank_metrics(None, JPM_Q2, {}, {}, [JPM_Q2, JPM_Q1])
+        # ticker=None: the as-of/metric-history path — no release or SEC
+        # lookups. The deposit-dynamics block reads FRED FEDFUNDS for quarters
+        # past its static table (2026-06-30 is) — stubbed empty (that block's
+        # n/a), since the tests/__init__ socket guard fails any live call.
+        with patch("data.fred_client.fetch_series", return_value=pd.DataFrame()):
+            with_bill = build_bank_metrics(None, JPM_Q2, {}, {}, [JPM_Q2, JPM_Q1],
+                                           bill_6m=self.BILL)
+            no_bill = build_bank_metrics(None, JPM_Q2, {}, {}, [JPM_Q2, JPM_Q1])
         self.assertAlmostEqual(with_bill["cd_rate_vs_6m_bill"],
                                with_bill["cd_book_rate"] - 4.01, places=12)
         self.assertAlmostEqual(round(with_bill["cd_rate_vs_6m_bill"], 3), -0.437)

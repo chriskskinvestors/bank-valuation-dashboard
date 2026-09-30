@@ -121,7 +121,9 @@ class TestSecFactsLag(unittest.TestCase):
              patch.object(val, "_resolve_eps", return_value=(1.95, "reconstructed", False)), \
              patch.object(val, "_resolve_tbvps", return_value=(13.96, "reconstructed", False)), \
              patch.object(val, "_resolve_bvps", return_value=(21.43, "reconstructed", False)), \
-             patch.object(val, "_resolve_release_efficiency", return_value=(None, None)):
+             patch.object(val, "_resolve_release_efficiency", return_value=(None, None)), \
+             patch.object(val, "_compute_capital_return_for_ticker",
+                          return_value=dict(val._CAPITAL_RETURN_DEFAULTS)):
             row = val.compute_all_valuations({"price": 25.08}, sec, {}, None, "ONB")
         self.assertIs(row["sec_facts_lag"], True)
         self.assertEqual(row["sec_filed_period"], "2026-06-30")

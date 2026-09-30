@@ -48,9 +48,14 @@ class TestA1PeerTierUnits(unittest.TestCase):
     def test_metrics_boundary_converts_asset_to_dollars(self):
         # The contract A1 relies on: build_bank_metrics emits total_assets in
         # raw dollars (FDIC reports $thousands).
+        from unittest.mock import patch
         from analysis.metrics import build_bank_metrics
-        out = build_bank_metrics("X", {"ASSET": 800_000, "REPDTE": "2025-12-31"},
-                                 {}, {}, [])
+        # "X" is a placeholder: resolve it as unknown rather than via the live
+        # SEC ticker search (it's a real non-bank ticker there).
+        with patch("data.bank_mapping.resolve_ticker",
+                   return_value={"ticker": "X"}):
+            out = build_bank_metrics("X", {"ASSET": 800_000, "REPDTE": "2025-12-31"},
+                                     {}, {}, [])
         self.assertEqual(out.get("total_assets"), 800_000 * 1000)
 
 
@@ -479,7 +484,11 @@ class TestPastDueLoansNotAssets(unittest.TestCase):
         fdic = {"REPDTE": "2025-12-31",
                 "P3LNLS": 8_000, "P9LNLS": 2_000,       # $thousands (FDIC)
                 "P3ASSET": 10_000, "P9ASSET": 3_000}    # must NOT be picked
-        row = build_bank_metrics("X", fdic, {}, {"price": None}, [])
+        from unittest.mock import patch
+        # "X": placeholder — unknown, not the live SEC ticker search's non-bank.
+        with patch("data.bank_mapping.resolve_ticker",
+                   return_value={"ticker": "X"}):
+            row = build_bank_metrics("X", fdic, {}, {"price": None}, [])
         # 8,000 $K -> $8.0M raw dollars (thousands conversion at the boundary)
         self.assertEqual(row.get("past_due_30_89"), 8_000_000)
         self.assertEqual(row.get("past_due_90"), 2_000_000)
