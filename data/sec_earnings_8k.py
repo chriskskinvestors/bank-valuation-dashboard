@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 
 from data.sec_filing_scraper import (
     _get, latest_filing, instance_facts, _undimensioned_total,
@@ -241,6 +242,88 @@ def _table_rows(html_bytes: bytes) -> list[tuple]:
     return rows
 
 
+# ── Table-less releases: the page text layer ─────────────────────────────────
+# Some EX-99.1s have NO <table> at all: the release is filed as page images
+# (Workiva "print to image" — one <img> per page) with the page's text in a
+# hidden 1pt white-font layer beneath each image. AMAL Q2-2026 (8-K
+# 0001823608-26-000177): 18 page JPGs, zero tables, and the text layer reads
+# "… 1.75  Book value per common share $ 27.93 $ 27.05 $ 24.79 $ 27.93 $ 24.79
+# Tangible book value per share (non-GAAP) $ 27.47 …" — one flat string per
+# page. _table_rows found nothing, so a cleanly printed TBVPS read as
+# not-disclosed. Same shape in the 2026-09-30 universe sweep: ACNB, BAC, CBC,
+# EGBN, FGBI, GABC, NEWT (8 of 320 releases).
+_BLOCK_TAGS = frozenset({"div", "p", "font", "pre", "span"})
+# A short parenthesized token right after a label is a footnote ref ("(1)",
+# "(a)"), not a negative one — label-side, like it is inside a table cell.
+_FOOTNOTE_TOKEN = re.compile(r"^\([a-z0-9]{1,3}\)$", re.I)
+# Rows sharing one value count before a block counts as tabular.
+_MIN_ALIGNED_ROWS = 3
+
+
+def _text_layer_rows(root) -> list[tuple]:
+    """(clean_label, nums) rows, in _table_rows' shape, from the leaf text
+    blocks of a table-less document. A row is a run of label words followed
+    by a run of numbers ('$'/'%' decoration tokens skipped).
+
+    COLUMN ALIGNMENT (audit P3) cannot be read from cell positions here: a
+    blank cell simply vanishes from flat text, so a missing latest quarter
+    would shift the prior period into nums[0]. The alignment evidence is the
+    block itself: a statement page prints every row with the SAME number of
+    period columns, so a row is trusted only when its value count equals the
+    block's modal count AND at least _MIN_ALIGNED_ROWS rows share that count.
+    Any other row keeps its label with nums = [None] — the same "blank latest
+    cell → n/a" outcome a table gives, and it still wins first-match, so a
+    later clean-looking occurrence can never stand in for it."""
+    rows: list[tuple] = []
+    for el in root.iter():
+        if not isinstance(el.tag, str) or el.tag.lower() not in _BLOCK_TAGS:
+            continue
+        if any(isinstance(d.tag, str) and d.tag.lower() in _BLOCK_TAGS
+               for d in el.iterdescendants()):
+            continue                       # not a leaf block
+        block: list[tuple] = []
+        label: list[str] = []
+        nums: list = []
+        for tok in el.text_content().replace("\xa0", " ").split():
+            if tok in ("$", "%"):
+                continue
+            v = None if (not nums and _FOOTNOTE_TOKEN.match(tok)) else _num(tok)
+            if v is None:
+                if nums:
+                    block.append((label, nums))
+                    label, nums = [], []
+                label.append(tok)
+            else:
+                nums.append(v)
+        if nums:
+            block.append((label, nums))
+        counts = Counter(len(n) for _, n in block)
+        modal, freq = counts.most_common(1)[0] if counts else (0, 0)
+        for label, nums in block:
+            cl = _clean_label(" ".join(label))
+            if not cl:
+                continue
+            aligned = freq >= _MIN_ALIGNED_ROWS and len(nums) == modal
+            rows.append((cl, nums if aligned else [None]))
+    return rows
+
+
+def _book_value_rows(html_bytes: bytes) -> list[tuple]:
+    """Rows for the per-share BOOK VALUE extractors: the table rows, or — for a
+    table-less release only — the page text-layer rows. Deliberately NOT used
+    for extract_earnings_figures: an image release mixes $-billion summary
+    pages with $-million statements, and its single release-wide scale then
+    mis-scales a first-matched flow (BAC Q2-2026: "Net income $9.1" billion
+    read as $9.1M). Per-share values carry no scale, and the book-value gates
+    (±15% vs the reconstruction, tangible < book) cross-check every pick."""
+    rows = _table_rows(html_bytes)
+    if rows:
+        return rows
+    from lxml import html as lhtml
+    root = lhtml.fromstring(html_bytes)
+    return rows if root.findall(".//table") else _text_layer_rows(root)
+
+
 # Exact label sets per figure. The FIRST row whose cleaned label is in the set
 # wins, and its FIRST numeric column (latest quarter) is taken. Sets are kept
 # tight to avoid grabbing a non-GAAP / segment / share-count sibling row.
@@ -294,6 +377,7 @@ _TBVPS_LABELS: frozenset = frozenset({
     "tangible common equity per common share",
     "tangible book value per common share outstanding",
     "tangible book value per common share at end of period",   # OCFC
+    "tangible book value per common share at period end",      # EGBN
 })
 
 # Reported (GAAP) book value per COMMON share — the in-release cross-check anchor
@@ -304,6 +388,7 @@ _BVPS_LABELS: frozenset = frozenset({
     "book value per share",
     "book value per common share",
     "book value per common share at end of period",            # OCFC
+    "book value per common share at period end",               # EGBN
 })
 
 # Release-INTERNAL tie-out anchor (the MBIN case): when neither a reconstruction
@@ -508,7 +593,7 @@ def extract_reported_tbvps_status(
     explicit per-share row first, then a bare "tangible (common) book value"
     row (ONB), then the prose statement (JPM) — every tier faces the same gates.
     """
-    rows = _table_rows(ex991_html)
+    rows = _book_value_rows(ex991_html)
     # In-release reported book value per common share, the fallback cross-check
     # anchor when the caller had none (same first-column / most-recent period).
     if bvps is None:
@@ -737,7 +822,7 @@ def extract_reported_bvps_status(
         from the same document) anchors it; with NOTHING to tie to →
         "not_disclosed".
     """
-    rows = _table_rows(ex991_html)
+    rows = _book_value_rows(ex991_html)
     if tbvps is None:
         for cl, nums in rows:
             # A blank latest-quarter cell must not anchor (audit P3).
@@ -800,7 +885,8 @@ def reported_bvps_status(
     tk = f"{tbvps:.4f}" if tbvps is not None else "na"
     # v2: "… per common share at end of period" label (OCFC miss).
     # v3: "(end of period)" qualifier (BBT) + bare "book value" tier (ONB).
-    ckey = f"reported_bvps:v3:{f8k['accession']}:{rk}:{tk}"
+    # v4: table-less text-layer rows (AMAL) + "at period end" label (EGBN).
+    ckey = f"reported_bvps:v4:{f8k['accession']}:{rk}:{tk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling.
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
@@ -832,7 +918,10 @@ def reported_bvps_status(
 # v6: "… per common share at end of period" labels (OCFC miss).
 # v7: bare "tangible (common) book value" rows (ONB) + prose statement (JPM).
 # v8: "(end of period)" trailing qualifier (BBT) — changes which row matches.
-_REPORTED_TBVPS_CKEY_V = "v8"
+# v9: table-less releases read from the page text layer (AMAL miss) and
+#     "… at period end" labels (EGBN). (Parallel branches bumped the same
+#     numbers for different specs — v9 so no spec's cache serves another.)
+_REPORTED_TBVPS_CKEY_V = "v9"
 
 
 def reported_tbvps_status(
