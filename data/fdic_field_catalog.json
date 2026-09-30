@@ -1,0 +1,8766 @@
+{
+"ABCUBK": {
+"kind": "level",
+"title": "ASST-BCK UNUSED COMMIT - RELATED"
+},
+"ABCUBKR": {
+"kind": "ratio",
+"title": "ASST-BCK UNUSED COMMIT - RELATED RATIO"
+},
+"ABCUOTHR": {
+"kind": "ratio",
+"title": "ASSET-BACK UNUSED COMMIT - OTHER RATIO"
+},
+"ABCXBK": {
+"kind": "level",
+"title": "ASSET-BACK CREDIT EX-RELATED"
+},
+"ABCXBKR": {
+"kind": "ratio",
+"title": "ASSET-BACK CREDIT EX-RELATED RATIO"
+},
+"ABCXOTHR": {
+"kind": "ratio",
+"title": "ASSET-BACK CREDIT EX-OTHER RATIO"
+},
+"ACEPT": {
+"kind": "asis",
+"title": "BANKS LIABILITY ON ACCEPTANCES"
+},
+"ADDNONII": {
+"kind": "level",
+"title": "ADDITIONAL NONINTEREST INCOME"
+},
+"ADDNONIIQ": {
+"kind": "level",
+"title": "ADDITIONAL NONINTEREST INCOME QUARTERLY"
+},
+"ADDNONIIQR": {
+"kind": "ratio",
+"title": "ADDITIONAL NONINTEREST INCOME QUARTERLY RATIO"
+},
+"ADDNONIIR": {
+"kind": "ratio",
+"title": "ADDITIONAL NONINTEREST INCOME RATIO"
+},
+"ADDNONINTEXP": {
+"kind": "level",
+"title": "ADDITIONAL NONINTEREST EXPENSE"
+},
+"ADDNONINTEXPQ": {
+"kind": "level",
+"title": "ADDITIONAL NONINTEREST EXPENSE QUARTERLY"
+},
+"ADDNONINTEXPQR": {
+"kind": "ratio",
+"title": "ADDITIONAL NONINTEREST EXPENSE QUARTERLY RATIO"
+},
+"ADDNONINTEXPR": {
+"kind": "ratio",
+"title": "ADDITIONAL NONINTEREST EXPENSE RATIO"
+},
+"ALLOTHL": {
+"kind": "level",
+"title": "ALL OTHER LIABILITIES"
+},
+"ALLOTHLR": {
+"kind": "ratio",
+"title": "ALL OTHER LIABILITIES RATIO"
+},
+"AOA": {
+"kind": "level",
+"title": "ALL OTH ASSETS"
+},
+"AOAR": {
+"kind": "ratio",
+"title": "ALL OTH ASSETS RATIO"
+},
+"ASCEOTH": {
+"kind": "level",
+"title": "C.E. RECOURSE NOT SECUR. - OTH"
+},
+"ASCEOTHR": {
+"kind": "ratio",
+"title": "C.E. RECOURSE NOT SECUR. - OTH RATIO"
+},
+"ASCERES": {
+"kind": "level",
+"title": "C.E. RECOURSE NOT SECUR. - RES"
+},
+"ASCERESR": {
+"kind": "ratio",
+"title": "C.E. RECOURSE NOT SECUR. - RES RATIO"
+},
+"ASDROTH": {
+"kind": "level",
+"title": "SOLD W/RECOURSE N/SECUR. - OTH"
+},
+"ASDROTHR": {
+"kind": "ratio",
+"title": "SOLD W/RECOURSE N/SECUR. - OTH RATIO"
+},
+"ASDRRES": {
+"kind": "level",
+"title": "SOLD W/RECOURSE N/SECUR.- RES"
+},
+"ASDRRESR": {
+"kind": "ratio",
+"title": "SOLD W/RECOURSE N/SECUR.- RES RATIO"
+},
+"ASSET": {
+"kind": "level",
+"title": "Total assets"
+},
+"ASSET2": {
+"kind": "level",
+"title": "TOTAL ASSETS-CAVG2"
+},
+"ASSET5": {
+"kind": "level",
+"title": "TOTAL ASSETS-CAVG5"
+},
+"ASSETFOR": {
+"kind": "level",
+"title": "TOTAL ASSETS-FOR"
+},
+"ASSETR": {
+"kind": "ratio",
+"title": "Total Assets Ratio"
+},
+"ASSTLT": {
+"kind": "level",
+"title": "LONG-TERM ASSETS (5+ YEARS)-QBP"
+},
+"ASSTLTR": {
+"kind": "ratio",
+"title": "LONG-TERM ASSETS (5+ YEARS) RATIO"
+},
+"ASTEMPM": {
+"kind": "ratio",
+"title": "ASSETS PER EMPLOYEE IN MILLION"
+},
+"AVASSET": {
+"kind": "level",
+"title": "AVG TOTAL ASSETS"
+},
+"AVASSETJ": {
+"kind": "level",
+"title": "AVERAGE ASSETS-ADJUSTED-PCA"
+},
+"AVASSETJR": {
+"kind": "ratio",
+"title": "AVERAGE ASSETS-ADJUSTED-PCA RATIO"
+},
+"AVMMLF": {
+"kind": "asis",
+"title": "Quarterly average amount of assets purchased under the MMLF and excluded from “Total assets for the leverage ratio.”"
+},
+"AVMMLFR": {
+"kind": "ratio",
+"title": "Quarterly average amount of assets purchased under the MMLF and excluded from “Total assets for the leverage ratio.” ratio"
+},
+"AVPPPPLG": {
+"kind": "ratio",
+"title": "Quarterly average amount of PPP loans pledged to the PPPLF and excluded from “Total assets for the leverage ratio.”"
+},
+"AVPPPPLGR": {
+"kind": "ratio",
+"title": "Quarterly average amount of PPP loans pledged to the PPPLF and excluded from “Total assets for the leverage ratio.” ratio"
+},
+"BKPREM": {
+"kind": "level",
+"title": "PREMISES AND FIXED ASSETS"
+},
+"BKPREMR": {
+"kind": "ratio",
+"title": "PREMISES AND FIXED ASSETS RATIO"
+},
+"BRO": {
+"kind": "level",
+"title": "BROKERED DEP"
+},
+"BROINS": {
+"kind": "level",
+"title": "BROKERED DEP-INSURED"
+},
+"BROINSLG": {
+"kind": "asis",
+"title": "BROKERED DEP-INSURED-LARGE"
+},
+"BROINSR": {
+"kind": "ratio",
+"title": "BROKERED DEP-INSURED RATIO"
+},
+"BROR": {
+"kind": "ratio",
+"title": "BROKERED RATIO"
+},
+"CBLRIND": {
+"kind": "ratio",
+"title": "Community Bank Ratio"
+},
+"CBSADIV": {
+"kind": "level",
+"title": "Core Based Statistical Division Number"
+},
+"CD1T3": {
+"kind": "level",
+"title": "TIME DEP $250,000 OR MORE REMAINING MATURITY REPRICING OF 1-3 YEARS"
+},
+"CD1T3R": {
+"kind": "ratio",
+"title": "TIME DEP $250,000 OR MORE REMAINING MATURITY REPRICING OF 1-3 YEARS RATIO"
+},
+"CD1T3S": {
+"kind": "level",
+"title": "TIME DEP $250,000 OR LESS REMAINING MATURITY OR REPRICING 1-3 YEARS"
+},
+"CD1T3SR": {
+"kind": "ratio",
+"title": "TIME DEP $250,000 OR LESS REMAINING MATURITY OR REPRICING 1-3 YEARS RATIO"
+},
+"CD3LES": {
+"kind": "level",
+"title": "TIME DEP $250,000 OR MORE REMAINING MATURITY REPRICING OF 3 MONTH OR LESS"
+},
+"CD3LESR": {
+"kind": "ratio",
+"title": "TIME DEP $250,000 OR MORE REMAINING MATURITY REPRICING OF 3 MONTH OR LESS RATIO"
+},
+"CD3LESS": {
+"kind": "level",
+"title": "TIME DEP $250,000 OR LESS REMAINING MATURITY REPRICING OF 3 MONTH OR LESS"
+},
+"CD3LESSR": {
+"kind": "ratio",
+"title": "TIME DEP $250,000 OR LESS REMAINING MATURITY REPRICING OF 3 MONTH OR LESS RATIO"
+},
+"CD3T12": {
+"kind": "level",
+"title": "TIME DEP $250,000 OR MORE REMAINING MATURITY OR REPRICING 3-12 MONTHS"
+},
+"CD3T12R": {
+"kind": "ratio",
+"title": "TIME DEP $250,000 OR MORE REMAINING MATURITY OR REPRICING 3-12 MONTHS RATIO"
+},
+"CD3T12S": {
+"kind": "level",
+"title": "TIME DEP $250,000 OR LESS REMAINING MATURITY OR REPRICING 3-12 MONTHS"
+},
+"CD3T12SR": {
+"kind": "ratio",
+"title": "TIME DEP $250,000 OR LESS REMAINING MATURITY OR REPRICING 3-12 MONTHS RATIO"
+},
+"CDOV3": {
+"kind": "level",
+"title": "TIME DEP $250,000 OR MORE REMAINING MATURITY OR REPRICING OVER 3 YEARS"
+},
+"CDOV3R": {
+"kind": "ratio",
+"title": "TIME DEP $250,000 OR MORE REMAINING MATURITY OR REPRICING OVER 3 YEARS RATIO"
+},
+"CDOV3S": {
+"kind": "level",
+"title": "TIME DEP $250,000 OR LESS REMAINING MATURITY OR REPRICING OVER 3 YEARS"
+},
+"CDOV3SR": {
+"kind": "ratio",
+"title": "TIME DEP $250,000 OR LESS REMAINING MATURITY OR REPRICING OVER 3 YEARS RATIO"
+},
+"CHBAL": {
+"kind": "level",
+"title": "CASH & DUE FROM DEPOSITORY INST"
+},
+"CHBALFOR": {
+"kind": "level",
+"title": "CASH & DUE FROM DEP INST-FOR"
+},
+"CHBALI": {
+"kind": "level",
+"title": "INTEREST-BEARING CASH & DUE"
+},
+"CHBALIR": {
+"kind": "ratio",
+"title": "INTEREST-BEARING CASH & DUE RATIO"
+},
+"CHBALNI": {
+"kind": "level",
+"title": "NONINTEREST-BEARING CASH & DUE"
+},
+"CHBALNIR": {
+"kind": "ratio",
+"title": "NONINTEREST-BEARING CASH & DUE RATIO"
+},
+"CHBALR": {
+"kind": "ratio",
+"title": "CASH & DUE FROM DEPOSITORY INST RATIO"
+},
+"CHCIC": {
+"kind": "level",
+"title": "CASH ITEMS"
+},
+"CHCICR": {
+"kind": "ratio",
+"title": "CASH ITEMS RATIO"
+},
+"CHCOIN": {
+"kind": "level",
+"title": "CURRENCY & COIN"
+},
+"CHCOINR": {
+"kind": "ratio",
+"title": "CURRENCY & COIN RATIO"
+},
+"CHFLA": {
+"kind": "level",
+"title": "NET OPERATING CASH FLOW-ANN"
+},
+"CHFLQ": {
+"kind": "level",
+"title": "NET OPERATING CASH FLOW-ANN Quarterly"
+},
+"CHFRB": {
+"kind": "level",
+"title": "BAL DUE FROM FRB"
+},
+"CHFRBR": {
+"kind": "ratio",
+"title": "BAL DUE FROM FRB RATIO"
+},
+"CHITEM": {
+"kind": "level",
+"title": "CASH ITEM COLLEC IN DOMESTIC OFFICES"
+},
+"CHITEMR": {
+"kind": "ratio",
+"title": "CASH ITEMS COLLEC IN DOMESTIC OFFICES RATIO"
+},
+"CHNUS": {
+"kind": "level",
+"title": "BAL DUE FROM BK FOR COUNTRY"
+},
+"CHNUSFBK": {
+"kind": "asis",
+"title": "BAL DUE FROM FOR BR OF OTH US BK"
+},
+"CHNUSR": {
+"kind": "ratio",
+"title": "BAL DUE FROM BK FOR COUNTRY RATIOS"
+},
+"CHUS": {
+"kind": "level",
+"title": "BAL DUE FROM DEP INST U.S."
+},
+"CHUSFBK": {
+"kind": "asis",
+"title": "BAL DUE FROM U.S. BR OF FOR BKS"
+},
+"CHUSR": {
+"kind": "ratio",
+"title": "BAL DUE FROM DEP INST U.S. RATIO"
+},
+"CNTRYNUM": {
+"kind": "level",
+"title": "FIPS Country Number"
+},
+"COREDEP": {
+"kind": "level",
+"title": "CORE DEPOSITS"
+},
+"COREDEPR": {
+"kind": "ratio",
+"title": "CORE DEPOSITS RATIO"
+},
+"CRAG": {
+"kind": "level",
+"title": "AGRICULTURAL LOAN RECOVERIES"
+},
+"CRAGQ": {
+"kind": "asis",
+"title": "AGRICULTURAL LOAN RECOVERIES QUARTERLY"
+},
+"CRAGQR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOAN RECOVERIES QUARTERLY RATIO"
+},
+"CRAGR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOAN RECOVERIES RATIO"
+},
+"CRAGSM": {
+"kind": "level",
+"title": "AG LOAN RECOVERIES*SMALL BKS"
+},
+"CRAGSMQ": {
+"kind": "level",
+"title": "AG LOAN RECOVERIES*SMALL BKS QUARTERLY"
+},
+"CRAGSMQR": {
+"kind": "ratio",
+"title": "AG LOAN RECOVERIES*SMALL BKS QUARTERLY RATIO"
+},
+"CRAGSMR": {
+"kind": "ratio",
+"title": "AAG LOAN RECOVERIES*SMALL BKS RATIO"
+},
+"CRAUTO": {
+"kind": "level",
+"title": "AUTO LOANS - RECOVERIES"
+},
+"CRAUTOQ": {
+"kind": "level",
+"title": "AUTO LOANS - RECOVERIES QUARTERLY"
+},
+"CRAUTOQR": {
+"kind": "ratio",
+"title": "AUTO LOANS - RECOVERIES QUARTERLY RATIO"
+},
+"CRAUTOR": {
+"kind": "ratio",
+"title": "AUTO LOANS - RECOVERIES RATIO"
+},
+"CRCI": {
+"kind": "level",
+"title": "COMMERCIAL LOAN RECOVERIES"
+},
+"CRCINUS": {
+"kind": "level",
+"title": "COMMERCIAL LOAN RECOVERIES NON-U.S."
+},
+"CRCINUSQ": {
+"kind": "level",
+"title": "COMMERCIAL LOAN RECOVERIES NON-U.S. QUARTERLY"
+},
+"CRCINUSQR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN RECOVERIES NON-U.S. QUARTERLY RATIO"
+},
+"CRCINUSR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN RECOVERIES NON-U.S. RATIO"
+},
+"CRCIQ": {
+"kind": "level",
+"title": "COMMERCIAL LOAN RECOVERIES QUARTERLY"
+},
+"CRCIQR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN RECOVERIES QUARTERLY RATIO"
+},
+"CRCIR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN RECOVERIES RATIO"
+},
+"CRCON": {
+"kind": "level",
+"title": "CONSUMER LOAN RECOVERIES"
+},
+"CRCONOTH": {
+"kind": "level",
+"title": "OTHER CONSUMER LOAN RECOVERIES"
+},
+"CRCONOTHR": {
+"kind": "ratio",
+"title": "OTHER CONSUMER LOAN RECOVERIES RATIO"
+},
+"CRCONOTQ": {
+"kind": "level",
+"title": "OTHER CONSUMER LOAN RECOVERIES QUARTERLY"
+},
+"CRCONOTQR": {
+"kind": "ratio",
+"title": "OTHER CONSUMER LOAN RECOVERIES QUARTERLY RATIO"
+},
+"CRCONQ": {
+"kind": "level",
+"title": "CONSUMER LOAN RECOVERIES QUARTERLY"
+},
+"CRCONQR": {
+"kind": "ratio",
+"title": "CONSUMER LOAN RECOVERIES QUARTERLY RATIO"
+},
+"CRCONR": {
+"kind": "ratio",
+"title": "CONSUMER LOAN RECOVERIES RATIO"
+},
+"CRCRCD": {
+"kind": "level",
+"title": "CREDIT CARD LOAN RECOVERIES"
+},
+"CRCRCDQ": {
+"kind": "level",
+"title": "CREDIT CARD LOAN RECOVERIES QUARTERLY"
+},
+"CRCRCDQR": {
+"kind": "ratio",
+"title": "CREDIT CARD LOAN RECOVERIES QUARTERLY RATIO"
+},
+"CRCRCDR": {
+"kind": "ratio",
+"title": "CREDIT CARD LOAN RECOVERIES RATIO"
+},
+"CRDEP": {
+"kind": "asis",
+"title": "DEPOSITORY INST LOAN RECOVERIES"
+},
+"CRDEPNUQ": {
+"kind": "asis",
+"title": "FOREIGN DEPS INST LN RECOVERIES QUARTERLY"
+},
+"CRDEPNUQR": {
+"kind": "ratio",
+"title": "FOREIGN DEPS INST LN RECOVERIES QUARTERLY RATIO"
+},
+"CRDEPNUS": {
+"kind": "asis",
+"title": "FOREIGN DEPS INST LN RECOVERIES"
+},
+"CRDEPNUSR": {
+"kind": "ratio",
+"title": "FOREIGN DEPS INST LN RECOVERIES RATIO"
+},
+"CRDEPQ": {
+"kind": "asis",
+"title": "DEPOSITORY INST LOAN RECOVERIES QUARTERLY"
+},
+"CRDEPQR": {
+"kind": "ratio",
+"title": "DEPOSITORY INST LOAN RECOVERIES Quarterly RATIO"
+},
+"CRDEPR": {
+"kind": "ratio",
+"title": "DEPOSITORY INST LOAN RECOVERIES RATIO"
+},
+"CRFORGVQR": {
+"kind": "ratio",
+"title": "FOREIGN GOVERNMENT LN RECOVERIES QUARTERLY RATIO"
+},
+"CRFORGVR": {
+"kind": "ratio",
+"title": "FOREIGN GOVERNMENT LN RECOVERIES RATIO"
+},
+"CRLNLS": {
+"kind": "level",
+"title": "TOTAL LN&LS RECOVERIES"
+},
+"CRLNLSQ": {
+"kind": "level",
+"title": "TOTAL LN&LS RECOVERIES QUARTERLY"
+},
+"CRLNLSQR": {
+"kind": "ratio",
+"title": "TOTAL LN&LS RECOVERIES QUARTERLY RATIO"
+},
+"CRLNLSR": {
+"kind": "ratio",
+"title": "TOTAL LN&LS RECOVERIES RATIO"
+},
+"CRLS": {
+"kind": "level",
+"title": "LEASE RECOVERIES"
+},
+"CRLSQ": {
+"kind": "asis",
+"title": "LEASE RECOVERIES QUARTERLY"
+},
+"CRLSQR": {
+"kind": "ratio",
+"title": "LEASE RECOVERIES QUARTERLY RATIO"
+},
+"CRLSR": {
+"kind": "ratio",
+"title": "LEASE RECOVERIES RATIO"
+},
+"CROTHER": {
+"kind": "level",
+"title": "ALL OTHER LOAN RECOVERIES"
+},
+"CROTHERR": {
+"kind": "ratio",
+"title": "ALL OTHER LOAN RECOVERIES RATIO"
+},
+"CROTHQ": {
+"kind": "level",
+"title": "ALL OTHER LOAN RECOVERIES QUARTERLY"
+},
+"CROTHQR": {
+"kind": "ratio",
+"title": "ALL OTHER LOAN RECOVERIES QUARTERLY RATIO"
+},
+"CRRE": {
+"kind": "level",
+"title": "REAL ESTATE LOAN RECOVERIES"
+},
+"CRREAG": {
+"kind": "asis",
+"title": "FARMLAND RE LN RECOVERIES"
+},
+"CRREAGQ": {
+"kind": "asis",
+"title": "FARMLAND RE LN RECOVERIES-QTR"
+},
+"CRREAGQR": {
+"kind": "ratio",
+"title": "FARMLAND RE LN RECOVERIES QUARTERLY RATIO"
+},
+"CRREAGR": {
+"kind": "ratio",
+"title": "FARMLAND RE LN RECOVERIES RATIO"
+},
+"CRRECNFM": {
+"kind": "asis",
+"title": "1-4 FAM CONSTRUCT LN RECOVERIES"
+},
+"CRRECNOT": {
+"kind": "level",
+"title": "OTHER CONSTRUCT LN RECOVERIES"
+},
+"CRRECONQ": {
+"kind": "asis",
+"title": "CONSTRUCTION RE LN RECOVER-QTR"
+},
+"CRRECONQR": {
+"kind": "ratio",
+"title": "CONSTRUCTION RE LN RECOVERIES QUARTERLY RATIO"
+},
+"CRRECONS": {
+"kind": "level",
+"title": "CONSTRUCTION RE LN RECOVERIES"
+},
+"CRRECONSR": {
+"kind": "ratio",
+"title": "CONSTRUCTION RE LN RECOVERIES RATIO"
+},
+"CRREFOR": {
+"kind": "level",
+"title": "REAL ESTATE LN RECOVERIES - FOR"
+},
+"CRREFORQR": {
+"kind": "ratio",
+"title": "REAL ESTATE LN RECOVERIES - FOR QUARTERLY RATIO"
+},
+"CRREFORR": {
+"kind": "ratio",
+"title": "REAL ESTATE LN RECOVERIES - FOR RATIO"
+},
+"CRRELOC": {
+"kind": "level",
+"title": "LINE OF CREDIT RE LN RECOVERIES"
+},
+"CRRELOCQ": {
+"kind": "level",
+"title": "LINE OF CREDIT RE LN RECOVERIES QUARTERLY"
+},
+"CRRELOCQR": {
+"kind": "ratio",
+"title": "LINE OF CREDIT RE LN RECOVERIES QUARTERLY RATIO"
+},
+"CRRELOCR": {
+"kind": "ratio",
+"title": "LINE OF CREDIT RE LN RECOVERIES RATIO"
+},
+"CRREMULQ": {
+"kind": "asis",
+"title": "MULTIFAMILY RE LN RECOVERIES-QTR"
+},
+"CRREMULQR": {
+"kind": "ratio",
+"title": "MULTIFAMILY RES RE LN RECOVERIES QUARTERLY RATIO"
+},
+"CRREMULT": {
+"kind": "level",
+"title": "MULTIFAMILY RES RE LN RECOVERIES"
+},
+"CRREMULTR": {
+"kind": "ratio",
+"title": "MULTIFAMILY RES RE LN RECOVERIES RATIO"
+},
+"CRRENRES": {
+"kind": "level",
+"title": "NONFARM NONRES RE LN RECOVERIES"
+},
+"CRRENRESR": {
+"kind": "ratio",
+"title": "NONFARM NONRES RE LN RECOVERIES RATIO"
+},
+"CRRENROT": {
+"kind": "level",
+"title": "OTHER NONFARM NONRES RECOVERIES"
+},
+"CRRENROW": {
+"kind": "level",
+"title": "OWN-OCCUP NONFARM NONRES RECOV"
+},
+"CRRENRSQ": {
+"kind": "level",
+"title": "NONFARM NONRES RE LN RECOVER-QTR"
+},
+"CRRENRSQR": {
+"kind": "ratio",
+"title": "NONFARM NONRES RE LN RECOVER-QTR RATIO"
+},
+"CRRENUS": {
+"kind": "level",
+"title": "NON-U.S. RE LN RECOVERIES"
+},
+"CRRENUSQ": {
+"kind": "level",
+"title": "NON-U.S. RE LN RECOVERIES QUARTERLY"
+},
+"CRRENUSQR": {
+"kind": "ratio",
+"title": "NON-U.S. RE LN RECOVERIES QUARTERLY RATIO"
+},
+"CRRENUSR": {
+"kind": "ratio",
+"title": "NON-U.S. RE LN RECOVERIES RATIO"
+},
+"CRREOFFDOM": {
+"kind": "level",
+"title": "RE LOAN RECOVERIES DOMESTIC OFFICES"
+},
+"CRREOFFDOMQ": {
+"kind": "level",
+"title": "RE LOAN RECOVERIES DOMESTIC OFFICES QUARTERLY"
+},
+"CRREOFFDOMQR": {
+"kind": "ratio",
+"title": "RE LOAN RECOVERIES DOMESTIC OFFICES QUARTERLY RATIO"
+},
+"CRREOFFDOMR": {
+"kind": "ratio",
+"title": "RE LOAN RECOVERIES DOMESTIC OFFICES RATIO"
+},
+"CRREQ": {
+"kind": "level",
+"title": "REAL ESTATE LOAN RECOVERIES QUARTERLY"
+},
+"CRREQR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN RECOVERIES QUARTERLY RATIO"
+},
+"CRRER": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN RECOVERIES RATIO"
+},
+"CRRERES": {
+"kind": "level",
+"title": "RE LOANS 1-4 FAMILY RECOVERIES"
+},
+"CRRERESQ": {
+"kind": "level",
+"title": "RE LOANS 1-4 FAMILY RECOVER-QTR"
+},
+"CRRERESQR": {
+"kind": "ratio",
+"title": "RE LOANS 1-4 FAMILY RECOVERIES QUARTERLY RATIO"
+},
+"CRRERESR": {
+"kind": "ratio",
+"title": "RE LOANS 1-4 FAMILY RECOVERIES RATIO"
+},
+"CRRERS2Q": {
+"kind": "asis",
+"title": "RE LOAN 1-4 FAM JR LIEN-RECOVER QUARTERLY"
+},
+"CRRERS2QR": {
+"kind": "ratio",
+"title": "RE LOAN 1-4 FAM JR LIEN-RECOVER QUARTERLY RATIO"
+},
+"CRRERSF2": {
+"kind": "asis",
+"title": "RE LOAN 1-4 FAM JR LIEN-RECOVER"
+},
+"CRRERSF2R": {
+"kind": "ratio",
+"title": "RE LOAN 1-4 FAM JR LIEN-RECOVER RATIO"
+},
+"CRRERSFM": {
+"kind": "level",
+"title": "RE LOAN 1-4 FAM FIRST LIEN-RECOV"
+},
+"CRRERSFMR": {
+"kind": "ratio",
+"title": "RE LOAN 1-4 FAM FIRST LIEN-RECOV RATIO"
+},
+"CRRERSFQ": {
+"kind": "level",
+"title": "RE LOAN 1-4 FAM FIRST LIEN-RECOV QUARTERLY"
+},
+"CRRERSFQR": {
+"kind": "ratio",
+"title": "RE LOAN 1-4 FAM FIRST LIEN-RECOV QUARTERLY RATIO"
+},
+"CT1AJTOT": {
+"kind": "level",
+"title": "RC-R TOTAL ADJ & DED COM EQ T1"
+},
+"CT1BADJ": {
+"kind": "level",
+"title": "RC-R COM EQUITY T1 BEFORE ADJ"
+},
+"CTDERBEN": {
+"kind": "level",
+"title": "CR DER (NET)-PURCHASE PROTECT"
+},
+"CTDERGTY": {
+"kind": "level",
+"title": "CR DER(NET) - SOLD PROTECTION"
+},
+"CUSLI": {
+"kind": "asis",
+"title": "CUSTOMERS ACCEPTANCES"
+},
+"DDT": {
+"kind": "level",
+"title": "DDA TRANS-TOTAL"
+},
+"DDTR": {
+"kind": "ratio",
+"title": "DDA TRANS-TOTAL RATIO"
+},
+"DEP": {
+"kind": "level",
+"title": "Total deposits"
+},
+"DEP2": {
+"kind": "level",
+"title": "TOTAL DEPOSITS-CAVG2"
+},
+"DEP5": {
+"kind": "level",
+"title": "TOTAL DEPOSITS-CAVG5"
+},
+"DEPALLEX": {
+"kind": "level",
+"title": "TOTAL ALLOWABLE EXCLUSIONS (INCLUDING FOREIGN DEPOSITS)"
+},
+"DEPBEFEX": {
+"kind": "level",
+"title": "TOTAL DEPOSIT LIAB BEF EXCLUSION"
+},
+"DEPCSBQ": {
+"kind": "level",
+"title": "DEPOSIT LIABILITIES AFTER EXCLUSIONS"
+},
+"DEPCSBQR": {
+"kind": "ratio",
+"title": "DEPOSIT LIABILITIES AFTER EXCLUSIONS RATIO"
+},
+"DEPDASTR": {
+"kind": "ratio",
+"title": "TOT DOMESTIC DEPOSIT / ASSET"
+},
+"DEPDOM": {
+"kind": "level",
+"title": "Deposits held in domestic offices"
+},
+"DEPDOMR": {
+"kind": "ratio",
+"title": "DEPOSITS HELD IN DOM OFF RATIO"
+},
+"DEPFBKF": {
+"kind": "level",
+"title": "FOREIGN BANKS-FOR"
+},
+"DEPFBKFR": {
+"kind": "ratio",
+"title": "FOREIGN BANKS-FOR RATIO"
+},
+"DEPFGOVF": {
+"kind": "level",
+"title": "FOREIGN GOVERNMENTS-FOR"
+},
+"DEPFGOVFR": {
+"kind": "ratio",
+"title": "FOREIGN GOVERNMENTS-FOR RATIO"
+},
+"DEPFOR": {
+"kind": "level",
+"title": "TOTAL DEPOSITS-FOR"
+},
+"DEPFORR": {
+"kind": "ratio",
+"title": "TOTAL DEPOSITS-FOR RATIO"
+},
+"DEPI": {
+"kind": "level",
+"title": "INTEREST-BEARING DEP"
+},
+"DEPIDOM": {
+"kind": "level",
+"title": "INTEREST-BEARING DEP-DOM"
+},
+"DEPIDOMR": {
+"kind": "ratio",
+"title": "INTEREST-BEARING DEP-DOM RATIO"
+},
+"DEPIFOR": {
+"kind": "level",
+"title": "INTEREST-BEARING DEP-FOR"
+},
+"DEPIFORR": {
+"kind": "ratio",
+"title": "INTEREST-BEARING DEP-FOR RATIO"
+},
+"DEPINS": {
+"kind": "level",
+"title": "ESTIMATED INSURED DEPOSITS"
+},
+"DEPINSR": {
+"kind": "ratio",
+"title": "ESTIMATED INSURED DEPOSITS RATIO"
+},
+"DEPIPCCF": {
+"kind": "level",
+"title": "IPC & OFFICIAL CHECKS-FOR"
+},
+"DEPIPCCFR": {
+"kind": "ratio",
+"title": "IPC & OFFICIAL CHECKS-FOR RATIO"
+},
+"DEPIY1": {
+"kind": "ratio",
+"title": "INTEREST-BEARING-DEP-Y1"
+},
+"DEPLGAMT": {
+"kind": "level",
+"title": "AMT DEP ACC GREATER THAN $250,000"
+},
+"DEPLGAMTR": {
+"kind": "ratio",
+"title": "AMT DEP ACC GREATER THAN $250,000 RATIO"
+},
+"DEPLGB": {
+"kind": "level",
+"title": "NUM DEP ACC GREATER THAN $250,000"
+},
+"DEPLGRA": {
+"kind": "level",
+"title": "AMT OF RETIREMENT DEP ACC OF MORE THAN $250,000"
+},
+"DEPLGRAR": {
+"kind": "ratio",
+"title": "AMT OF RETIREMENT DEP ACC OF MORE THAN $250,000 RATIO"
+},
+"DEPLGRN": {
+"kind": "count",
+"title": "NUM OF RETIREMENT DEP ACC MORE THAN $250,000"
+},
+"DEPLSNB": {
+"kind": "level",
+"title": "DEP THRU LIST SVC NOT BROKERED"
+},
+"DEPLSNBR": {
+"kind": "ratio",
+"title": "DEP THRU LIST SVC NOT BROKERED RATIO"
+},
+"DEPNI": {
+"kind": "level",
+"title": "NONINTEREST-BEARING DEP"
+},
+"DEPNIDOM": {
+"kind": "level",
+"title": "NONINTEREST-BEARING DEP-DOM"
+},
+"DEPNIDOMR": {
+"kind": "ratio",
+"title": "NONINTEREST-BEARING DEP-DOM RATIO"
+},
+"DEPNIFOR": {
+"kind": "level",
+"title": "NONINTEREST-BEARING DEP-FOR"
+},
+"DEPNIFORR": {
+"kind": "ratio",
+"title": "NONINTEREST-BEARING DEP-FOR RATIO"
+},
+"DEPR": {
+"kind": "ratio",
+"title": "TOTAL DEPOSITS RATIO"
+},
+"DEPSMAMT": {
+"kind": "level",
+"title": "AMT DEP ACC AT $250,000 OR LESS"
+},
+"DEPSMAMTR": {
+"kind": "ratio",
+"title": "AMT DEP ACC AT $250,000 OR LESS RATIO"
+},
+"DEPSMB": {
+"kind": "level",
+"title": "NUM DEP ACC EQUAL OR LESS THAN EQUAL TO $250,000"
+},
+"DEPSMRA": {
+"kind": "level",
+"title": "AMT RETIREMENT DEP ACC OF $250,000 OR LESS"
+},
+"DEPSMRAR": {
+"kind": "ratio",
+"title": "AMT RETIREMENT DEP ACC OF $250,000 OR LESS RATIO"
+},
+"DEPSMRN": {
+"kind": "level",
+"title": "NUM RETIREMENT DEP ACC OF $250,000"
+},
+"DEPUNA": {
+"kind": "level",
+"title": "EST UNINSURED DEP IN DOM-OFF IN INSURED BRANCHES IN US TERR AND POSSESSIONS"
+},
+"DEPUNAR": {
+"kind": "ratio",
+"title": "EST UNINSURED DEP IN DOM-OFF IN INSURED BRANCHES IN US TERR AND POSSESSIONS"
+},
+"DEPUNINS": {
+"kind": "level",
+"title": "ESTIMATED UNINSURED DEPOSITS IN DOMESTIC OFFICES AND IN INSURED BRANCHES IN US TERRITORIES AND POSSESSIONS"
+},
+"DEPUSBKF": {
+"kind": "level",
+"title": "U.S. BANKS&OTH.US INST-FOR"
+},
+"DEPUSBKFR": {
+"kind": "ratio",
+"title": "U.S. BANKS&OTH.US INST-FOR RATIO"
+},
+"DEPUSMF": {
+"kind": "level",
+"title": "U.S.GOVT & ST & POL SUBS-FOR"
+},
+"DEPUSMFR": {
+"kind": "ratio",
+"title": "U.S.GOVT & ST & POL SUBS-FOR RATIO"
+},
+"DRAG": {
+"kind": "level",
+"title": "AGRICULTURAL LOAN CHARGE-OFFS"
+},
+"DRAGQ": {
+"kind": "asis",
+"title": "AGRICULTURAL LOAN CHARGE-OFFS QUARTERLY"
+},
+"DRAGQR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOAN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRAGR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOAN CHARGE-OFFS RATIO"
+},
+"DRAGSM": {
+"kind": "level",
+"title": "AG LOAN CHARGE-OFFS*SMALL BKS"
+},
+"DRAGSMQ": {
+"kind": "level",
+"title": "AG LOAN CHARGE-OFFS*SMALL BKS QUARTERLY"
+},
+"DRAGSMQR": {
+"kind": "ratio",
+"title": "AG LOAN CHARGE-OFFS*SMALL BKS QUARTERLY RATIO"
+},
+"DRAGSMR": {
+"kind": "ratio",
+"title": "AG LOAN CHARGE-OFFS*SMALL BKS RATIO"
+},
+"DRAUTO": {
+"kind": "level",
+"title": "AUTO LOANS - CHARGE-OFFS"
+},
+"DRAUTOQ": {
+"kind": "level",
+"title": "AUTO LOANS - CHARGE-OFFS QUARTERLY"
+},
+"DRAUTOQR": {
+"kind": "ratio",
+"title": "AUTO LOANS - CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRAUTOR": {
+"kind": "ratio",
+"title": "AUTO LOANS - CHARGE-OFFS RATIO"
+},
+"DRCI": {
+"kind": "level",
+"title": "COMMERCIAL LOAN CHARGE-OFFS"
+},
+"DRCINUS": {
+"kind": "level",
+"title": "COMMERCIAL LOAN CHARGE-OFFS NON-U.S."
+},
+"DRCINUSQ": {
+"kind": "level",
+"title": "COMMERCIAL LOAN CHARGE-OFFS NON-U.S. QUARTERLY"
+},
+"DRCINUSQR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN CHARGE-OFFS NON-U.S. QUARTERLY RATIO"
+},
+"DRCINUSR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN CHARGE-OFFS NON-U.S. RATIO"
+},
+"DRCIQ": {
+"kind": "level",
+"title": "COMMERCIAL LOAN CHARGE-OFFS QUARTERLY"
+},
+"DRCIQR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRCIR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN CHARGE-OFFS RATIO"
+},
+"DRCON": {
+"kind": "level",
+"title": "CONSUMER LOAN CHARGE-OFFS"
+},
+"DRCONOTH": {
+"kind": "level",
+"title": "OTHER CONSUMER LOAN CHARGE-OFFS"
+},
+"DRCONOTHR": {
+"kind": "ratio",
+"title": "OTHER CONSUMER LOAN CHARGE-OFFS RATIO"
+},
+"DRCONOTQ": {
+"kind": "level",
+"title": "OTHER CONSUMER LOAN CHARGE-OFFS QUARTERLY"
+},
+"DRCONOTQR": {
+"kind": "ratio",
+"title": "OTHER CONSUMER LOAN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRCONQ": {
+"kind": "level",
+"title": "CONSUMER LOAN CHARGE-OFFS QUARTERLY"
+},
+"DRCONQR": {
+"kind": "ratio",
+"title": "CONSUMER LOAN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRCONR": {
+"kind": "ratio",
+"title": "CONSUMER LOAN CHARGE-OFFS RATIO"
+},
+"DRCRCD": {
+"kind": "level",
+"title": "CREDIT CARD LOAN CHARGE-OFFS"
+},
+"DRCRCDQ": {
+"kind": "level",
+"title": "CREDIT CARD LOAN CHARGE-OFFS QUARTERLY"
+},
+"DRCRCDQR": {
+"kind": "ratio",
+"title": "CREDIT CARD LOAN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRCRCDR": {
+"kind": "ratio",
+"title": "CREDIT CARD LOAN CHARGE-OFFS RATIO"
+},
+"DRDEP": {
+"kind": "asis",
+"title": "DEPOSITORY INST LOAN CHARGE-OFFS"
+},
+"DRDEPNUQ": {
+"kind": "asis",
+"title": "FOREIGN DEPS INST LN CHG-OFFS QUARTERLY"
+},
+"DRDEPNUQR": {
+"kind": "ratio",
+"title": "FOREIGN DEPS INST LN CHG-OFFS QUARTERLY RATIO"
+},
+"DRDEPNUS": {
+"kind": "asis",
+"title": "FOREIGN DEPS INST LN CHG-OFFS"
+},
+"DRDEPNUSR": {
+"kind": "ratio",
+"title": "FOREIGN DEPS INST LN CHG-OFFS RATIO"
+},
+"DRDEPQ": {
+"kind": "asis",
+"title": "DEPOSITORY INST LOAN CHARGE-OFFS QUARTERLY"
+},
+"DRDEPQR": {
+"kind": "ratio",
+"title": "DEPOSITORY INST LOAN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRDEPR": {
+"kind": "ratio",
+"title": "DEPOSITORY INST LOAN CHARGE-OFFS RATIO"
+},
+"DRFORGV": {
+"kind": "asis",
+"title": "FOREIGN GOVERNMENT LN CHG-OFFS"
+},
+"DRFORGVQ": {
+"kind": "asis",
+"title": "FOREIGN GOVERNMENT LN CHG-OFFS QUARTERLY"
+},
+"DRFORGVQR": {
+"kind": "ratio",
+"title": "FOREIGN GOVERNMENT LN CHG-OFFS QUARTERLY RATIO"
+},
+"DRFORGVR": {
+"kind": "ratio",
+"title": "FOREIGN GOVERNMENT LN CHG-OFFS RATIO"
+},
+"DRLNLS": {
+"kind": "level",
+"title": "TOTAL LN&LS CHARGE-OFFS"
+},
+"DRLNLSQ": {
+"kind": "level",
+"title": "TOTAL LN&LS CHARGE-OFFS QUARTERLY"
+},
+"DRLNLSQR": {
+"kind": "ratio",
+"title": "TOTAL LN&LS CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRLNLSR": {
+"kind": "ratio",
+"title": "TOTAL LN&LS CHARGE-OFFS RATIO"
+},
+"DRLS": {
+"kind": "level",
+"title": "LEASE CHARGE-OFFS"
+},
+"DRLSQ": {
+"kind": "level",
+"title": "LEASE CHARGE-OFFS QUARTERLY"
+},
+"DRLSQR": {
+"kind": "ratio",
+"title": "LEASE CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRLSR": {
+"kind": "ratio",
+"title": "LEASE CHARGE-OFFS RATIO"
+},
+"DROTHER": {
+"kind": "level",
+"title": "ALL OTHER LOAN CHARGE-OFFS"
+},
+"DROTHERR": {
+"kind": "ratio",
+"title": "ALL OTHER LOAN CHARGE-OFFS RATIO"
+},
+"DROTHQ": {
+"kind": "level",
+"title": "ALL OTHER LOAN CHARGE-OFFS QUARTERLY"
+},
+"DROTHQR": {
+"kind": "ratio",
+"title": "ALL OTHER LOAN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRRE": {
+"kind": "level",
+"title": "REAL ESTATE LOAN CHARGE-OFFS"
+},
+"DRREAG": {
+"kind": "asis",
+"title": "FARMLAND RE LN CHARGE-OFFS"
+},
+"DRREAGQ": {
+"kind": "asis",
+"title": "FARMLAND RE LN CHG-OFFS-QTR"
+},
+"DRREAGQR": {
+"kind": "ratio",
+"title": "FARMLAND RE LN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRREAGR": {
+"kind": "ratio",
+"title": "FARMLAND RE LN CHARGE-OFFS RATIO"
+},
+"DRRECNFM": {
+"kind": "asis",
+"title": "1-4 FAM CONSTRUCT LN CHARGE-OFFS"
+},
+"DRRECNOT": {
+"kind": "level",
+"title": "OTHER CONSTRUCT LN CHARGE-OFFS"
+},
+"DRRECONQ": {
+"kind": "level",
+"title": "CONSTRUCTION RE LN CHG-OFFS-QTR"
+},
+"DRRECONQR": {
+"kind": "ratio",
+"title": "CONSTRUCTION RE LN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRRECONS": {
+"kind": "level",
+"title": "CONSTRUCTION RE LN CHARGE-OFFS"
+},
+"DRRECONSR": {
+"kind": "ratio",
+"title": "CONSTRUCTION RE LN CHARGE-OFFS RATIO"
+},
+"DRREFOR": {
+"kind": "asis",
+"title": "REAL ESTATE LOAN CHRG-OFFS-FOR"
+},
+"DRREFORQ": {
+"kind": "asis",
+"title": "REAL ESTATE LOAN CHRG-OFFS-FOR QUARTERLY"
+},
+"DRREFORQR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN CHRG-OFFS-FOR QUARTERLY RATIO"
+},
+"DRREFORR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN CHRG-OFFS-FOR RATIO"
+},
+"DRRELOC": {
+"kind": "level",
+"title": "LINE OF CREDIT RE LN CHARGE-OFFS"
+},
+"DRRELOCQ": {
+"kind": "level",
+"title": "LINE OF CREDIT RE LN CHARGE-OFFS QUARTERLY"
+},
+"DRRELOCQR": {
+"kind": "ratio",
+"title": "LINE OF CREDIT RE LN CHARGE-OFFS RATIO"
+},
+"DRRELOCR": {
+"kind": "ratio",
+"title": "LINE OF CREDIT RE LN CHARGE-OFFS RATIO"
+},
+"DRREMULQ": {
+"kind": "level",
+"title": "MULTIFAMILY RE LN CHG-OFFS-QTR"
+},
+"DRREMULQR": {
+"kind": "ratio",
+"title": "MULTIFAMILY RES RE LN CHARGE-OFF QUARTERLY RATIO"
+},
+"DRREMULT": {
+"kind": "level",
+"title": "MULTIFAMILY RES RE LN CHARGE-OFF"
+},
+"DRREMULTR": {
+"kind": "ratio",
+"title": "MULTIFAMILY RES RE LN CHARGE-OFF RATIO"
+},
+"DRRENRES": {
+"kind": "level",
+"title": "NONFARM NONRES RE LN CHARGE-OFFS"
+},
+"DRRENRESR": {
+"kind": "ratio",
+"title": "NONFARM NONRES RE LN CHARGE-OFFS RATIO"
+},
+"DRRENROT": {
+"kind": "level",
+"title": "OTHER NONFARM NONRES RE CHG-OFF"
+},
+"DRRENROW": {
+"kind": "level",
+"title": "OWN-OCCUP NONFARM NONRES CHG-OFF"
+},
+"DRRENRSQ": {
+"kind": "level",
+"title": "NONFARM NONRES RE LN CHG-OFF-QTR"
+},
+"DRRENRSQR": {
+"kind": "ratio",
+"title": "NONFARM NONRES RE LN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRRENUS": {
+"kind": "level",
+"title": "NON-U.S. RE LN CHARGE-OFFS"
+},
+"DRRENUSQ": {
+"kind": "asis",
+"title": "NON-U.S. RE LN CHARGE-OFFS QUARTERLY"
+},
+"DRRENUSQR": {
+"kind": "ratio",
+"title": "NON-U.S. RE LN CHARGE-OFFS RATIO"
+},
+"DRRENUSR": {
+"kind": "ratio",
+"title": "NON-U.S. RE LN CHARGE-OFFS RATIO"
+},
+"DRREOFFDOM": {
+"kind": "level",
+"title": "REAL ESTATE LOAN CHARGE-OFFS DOMESTIC OFFICES"
+},
+"DRREOFFDOMQ": {
+"kind": "level",
+"title": "REAL ESTATE LOAN CHARGE-OFFS DOMESTIC OFFICES QUARTERLY"
+},
+"DRREOFFDOMQR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN CHARGE-OFFS DOMESTIC OFFICES QUARTERLY RATIO"
+},
+"DRREOFFDOMR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN CHARGE-OFFS DOMESTIC OFFICES RATIO"
+},
+"DRREQ": {
+"kind": "level",
+"title": "REAL ESTATE LOAN CHARGE-OFFS QUARTERLY"
+},
+"DRREQR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRRER": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN CHARGE-OFFS RATIO"
+},
+"DRRERES": {
+"kind": "level",
+"title": "RE LOANS 1-4 FAMILY CHARGE-OFFS"
+},
+"DRRERESQ": {
+"kind": "level",
+"title": "RE LOANS 1-4 FAMILY CHG-OFFS-QTR"
+},
+"DRRERESQR": {
+"kind": "ratio",
+"title": "RE LOANS 1-4 FAMILY CHARGE-OFFS QUARTERLY RATIO"
+},
+"DRRERESR": {
+"kind": "ratio",
+"title": "RE LOANS 1-4 FAMILY CHARGE-OFFS RATIO"
+},
+"DRRERS2Q": {
+"kind": "asis",
+"title": "RE LN 1-4 FAM JR LIEN-CHG-OFF QUARTERLY"
+},
+"DRRERS2QR": {
+"kind": "ratio",
+"title": "RE LN 1-4 FAM JR LIEN-CHG-OFF QUARTERLY RATIO"
+},
+"DRRERSF2": {
+"kind": "asis",
+"title": "RE LN 1-4 FAM JR LIEN-CHG-OFF"
+},
+"DRRERSF2R": {
+"kind": "ratio",
+"title": "RE LN 1-4 FAM JR LIEN-CHG-OFF RATIO"
+},
+"DRRERSFM": {
+"kind": "level",
+"title": "RE LN 1-4 FAM FIRST LIEN-CHG-OFF"
+},
+"DRRERSFMR": {
+"kind": "ratio",
+"title": "RE LN 1-4 FAM FIRST LIEN-CHG-OFF RATIO"
+},
+"DRRERSFQ": {
+"kind": "asis",
+"title": "RE LN 1-4 FAM FIRST LIEN-CHG-OFF QUARTERLY"
+},
+"DRRERSFQR": {
+"kind": "ratio",
+"title": "RE LN 1-4 FAM FIRST LIEN-CHG-OFF QUARTERLY RATIO"
+},
+"EAMINTAN": {
+"kind": "level",
+"title": "AMORT & IMPAIR LOSS AST"
+},
+"EAMINTANR": {
+"kind": "ratio",
+"title": "AMORT & IMPAIR LOSS AST RATIO"
+},
+"EAMINTQ": {
+"kind": "level",
+"title": "AMORT & IMPAIR LOSS AST QUARTERLY"
+},
+"EAMINTQR": {
+"kind": "ratio",
+"title": "AMORT & IMPAIR LOSS AST QUARTERLY RATIO"
+},
+"ECD100": {
+"kind": "level",
+"title": "INT EXPENSE TIME CD GT $250"
+},
+"ECD100A": {
+"kind": "level",
+"title": "INT EXP TIME CD GT $250"
+},
+"ECD100Q": {
+"kind": "level",
+"title": "INT EXP TIME CD GT $250"
+},
+"EDCM": {
+"kind": "level",
+"title": "EQUITY"
+},
+"EDEP": {
+"kind": "level",
+"title": "DEPOSIT INTEREST EXPENSE"
+},
+"EDEPDOM": {
+"kind": "level",
+"title": "DEPOSIT INTEREST EXPENSE-DOM"
+},
+"EDEPDOMQ": {
+"kind": "level",
+"title": "DEPOSIT INTEREST EXPENSE-DOM QUARTERLY"
+},
+"EDEPDOMQR": {
+"kind": "ratio",
+"title": "DEPOSIT INTEREST EXPENSE-DOM QUARTERLY RATIO"
+},
+"EDEPDOMR": {
+"kind": "ratio",
+"title": "DEPOSIT INTEREST EXPENSE-DOM RATIO"
+},
+"EDEPFOR": {
+"kind": "level",
+"title": "DEPOSIT INTEREST EXPENSE-FOR"
+},
+"EDEPFORQ": {
+"kind": "level",
+"title": "DEPOSIT INTEREST EXPENSE-FOR QUARTERLY"
+},
+"EDEPFORQR": {
+"kind": "ratio",
+"title": "DEPOSIT INTEREST EXPENSE-FOR QUARTERLY RATIO"
+},
+"EDEPFORR": {
+"kind": "ratio",
+"title": "DEPOSIT INTEREST EXPENSE-FOR RATIO"
+},
+"EEFF": {
+"kind": "level",
+"title": "EFFICIENCY RATIO EXPENSE"
+},
+"EEFFQ": {
+"kind": "level",
+"title": "EFFICIENCY RATIO EXPENSE QUARTERLY"
+},
+"EEFFQR": {
+"kind": "ratio",
+"title": "EFFICIENCY QUARTERLY RATIO"
+},
+"EEFFR": {
+"kind": "ratio",
+"title": "EFFICIENCY RATIO"
+},
+"EFHLBADV": {
+"kind": "asis",
+"title": "ADVANCES FROM FHLBANK INT EXP"
+},
+"EFREPP": {
+"kind": "level",
+"title": "FED FUNDS & REPOS INT EXPENSE"
+},
+"EFREPPA": {
+"kind": "level",
+"title": "FED FUNDS & REPO INT EXPENSE-ANN"
+},
+"EFREPPQ": {
+"kind": "level",
+"title": "FED FUNDS & REPOS INT EXPENSE QUARTERLY"
+},
+"EFREPPQR": {
+"kind": "ratio",
+"title": "FED FUNDS & REPOS INT EXPENSE QUARTERLY RATIO"
+},
+"EFREPPR": {
+"kind": "ratio",
+"title": "FED FUNDS & REPOS INT EXPENSE RATIO"
+},
+"EINTEXP": {
+"kind": "level",
+"title": "TOTAL INTEREST EXPENSE"
+},
+"EINTEXPA": {
+"kind": "level",
+"title": "TOTAL INTEREST EXPENSE ANNUALLY"
+},
+"EINTEXPR": {
+"kind": "ratio",
+"title": "TOTAL INTEREST EXPENSE RATIO"
+},
+"EINTGWQR": {
+"kind": "ratio",
+"title": "GOODWILL IMPAIRMENT LOSSES QUARTERLY RATIO"
+},
+"EINTGWR": {
+"kind": "ratio",
+"title": "GOODWILL IMPAIRMENT LOSSES RATIO"
+},
+"EINTOTH": {
+"kind": "level",
+"title": "AMORT & IMPAIR LOSSES OTH INTAN"
+},
+"EINTOTHQ": {
+"kind": "level",
+"title": "AMORT & IMPAIR LOSSES OTH INTAN QUARTERLY"
+},
+"EINTOTHQR": {
+"kind": "ratio",
+"title": "AMORT & IMPAIR LOSSES OTH INTAN QUARTERLY RATIO"
+},
+"EINTOTHR": {
+"kind": "ratio",
+"title": "AMORT & IMPAIR LOSSES OTH INTAN RATIO"
+},
+"EINTXQ": {
+"kind": "level",
+"title": "TOTAL INTEREST EXPENSE QUARTERLY"
+},
+"EINTXQA": {
+"kind": "level",
+"title": "TOTAL INTEREST EXPENSE QUARTERLY"
+},
+"EINTXQR": {
+"kind": "ratio",
+"title": "TOTAL INTEREST EXPENSE QUARTERLY RATIO"
+},
+"ELNANTR": {
+"kind": "ratio",
+"title": "LOAN LOSS PROV/NT CHG-OFFS"
+},
+"ELNATQ": {
+"kind": "level",
+"title": "PROVISIONS FOR CREDIT LOSSES QUARTERLY"
+},
+"ELNATQA": {
+"kind": "level",
+"title": "PROVISIONS FOR CREDIT LOSSES QUARTERLY"
+},
+"ELNATQR": {
+"kind": "ratio",
+"title": "PROVISIONS FOR CREDIT LOSSES QUARTERLY RATIO"
+},
+"ELNATR": {
+"kind": "level",
+"title": "PROVISIONS FOR CREDIT LOSSES"
+},
+"ELNATRA": {
+"kind": "level",
+"title": "ELNATRA"
+},
+"ELNATRR": {
+"kind": "ratio",
+"title": "PROVISIONS FOR CREDIT LOSSES RATIO"
+},
+"ELNATRY": {
+"kind": "ratio",
+"title": "CREDIT LOSS PROV/AVE ASSETS"
+},
+"ELNATRYQ": {
+"kind": "ratio",
+"title": "CREDIT LOSS PROV/AVE ASSETS QUARTERLY"
+},
+"ELNLOS": {
+"kind": "level",
+"title": "PROVISIONS FOR LN & LEASE LOSSES"
+},
+"ELNLOSQ": {
+"kind": "level",
+"title": "PROVISIONS FOR CREDIT LOSSES QUARTERLY RATIO"
+},
+"EMTGLS": {
+"kind": "asis",
+"title": "MORTGAGE DEBT INTEREST EXPENSE"
+},
+"ENCEAUTO": {
+"kind": "level",
+"title": "CR EXPOSURE-ENHANCEMENTS - AUTO"
+},
+"ENCEAUTOR": {
+"kind": "ratio",
+"title": "CR EXPOSURE-ENHANCEMENTS - AUTO RATIO"
+},
+"ENCECI": {
+"kind": "level",
+"title": "CR EXPOSURE - ENHANCEMENTS - CI"
+},
+"ENCECIR": {
+"kind": "ratio",
+"title": "CR EXPOSURE - ENHANCEMENTS - CI RATIO"
+},
+"ENCECON": {
+"kind": "level",
+"title": "CR EXPOSURE - ENHANCEMENTS - CON"
+},
+"ENCECONR": {
+"kind": "ratio",
+"title": "CR EXPOSURE - ENHANCEMENTS - CON RATIO"
+},
+"ENCEOTH": {
+"kind": "level",
+"title": "CR EXPOSURE - ENHANCEMENTS - OTH"
+},
+"ENCEOTHR": {
+"kind": "ratio",
+"title": "CR EXPOSURE - ENHANCEMENTS - OTH RATIO"
+},
+"ENCERES": {
+"kind": "level",
+"title": "CR EXPOSURE - ENHANCEMENTS - RES"
+},
+"ENCERESR": {
+"kind": "ratio",
+"title": "CR EXPOSURE - ENHANCEMENTS - RES RATIO"
+},
+"ENDEFYMD": {
+"kind": "level",
+"title": "INACTIVE DATE"
+},
+"EOTHINT": {
+"kind": "level",
+"title": "OTHER INTEREST EXPENSE"
+},
+"EOTHINTQ": {
+"kind": "level",
+"title": "OTHER INTEREST EXPENSE QUARTERLY"
+},
+"EOTHINTQR": {
+"kind": "ratio",
+"title": "OTHER INTEREST EXPENSE QUARTERLY RATIO"
+},
+"EOTHINTR": {
+"kind": "ratio",
+"title": "OTHER INTEREST EXPENSE RATIO"
+},
+"EOTHNINQ": {
+"kind": "level",
+"title": "ALL OTHER NONINTEREST EXPENSE QUARTERLY"
+},
+"EOTHNINQR": {
+"kind": "ratio",
+"title": "ALL OTHER NONINTEREST EXPENSE QUARTERLY RATIO"
+},
+"EOTHNINT": {
+"kind": "level",
+"title": "ALL OTHER NONINTEREST EXPENSE"
+},
+"EOTHNINTR": {
+"kind": "ratio",
+"title": "ALL OTHER NONINTEREST EXPENSE RATIO"
+},
+"EOTHTIMA": {
+"kind": "level",
+"title": "INT EXP TIME CD LE $250"
+},
+"EOTHTIME": {
+"kind": "level",
+"title": "INT EXPENSE TIME CD LE $250"
+},
+"EOTHTIMQ": {
+"kind": "level",
+"title": "INT EXP TIME CD LE $250"
+},
+"EPREMAGG": {
+"kind": "level",
+"title": "PREMISES & FIXED ASSETS EXPENSE"
+},
+"EPREMAGGR": {
+"kind": "ratio",
+"title": "PREMISES & EQUIPMENT EXPENSE RATIO"
+},
+"EPREMAGQ": {
+"kind": "level",
+"title": "PREMISES & FIXED ASSETS EXPENSE QUARTERLY"
+},
+"EPREMAGQR": {
+"kind": "ratio",
+"title": "PREMISES & EQUIPMENT EXPENSE QUARTERLY RATIO"
+},
+"EQ": {
+"kind": "level",
+"title": "Equity capital"
+},
+"EQ2": {
+"kind": "level",
+"title": "Equity capital"
+},
+"EQ5": {
+"kind": "level",
+"title": "TOTAL BANK EQUITY CAPITAL-CAVG5"
+},
+"EQCBHCTR": {
+"kind": "level",
+"title": "TRANSACTIONS WITH BHC"
+},
+"EQCBHCTRR": {
+"kind": "ratio",
+"title": "TRANSACTIONS WITH BHC RATIO"
+},
+"EQCCOMPI": {
+"kind": "level",
+"title": "OTHER COMPREHENSIVE INCOME"
+},
+"EQCCOMPIR": {
+"kind": "ratio",
+"title": "OTHER COMPREHENSIVE INCOME RATIO"
+},
+"EQCDIV": {
+"kind": "level",
+"title": "CASH DIVIDENDS ON COMM & PREF"
+},
+"EQCDIVA": {
+"kind": "level",
+"title": "CASH DIVIDENDS ON COMM & PFD-ANN"
+},
+"EQCDIVC": {
+"kind": "level",
+"title": "CASH DIVIDENDS ON COMM STOCK"
+},
+"EQCDIVCR": {
+"kind": "ratio",
+"title": "CASH DIVIDENDS ON COMM STOCK RATIO"
+},
+"EQCDIVNTINC": {
+"kind": "ratio",
+"title": "CASH DIVIDENDS TO NET INCOME (YTD ONLY)"
+},
+"EQCDIVP": {
+"kind": "level",
+"title": "CASH DIVIDENDS ON PREF STOCK"
+},
+"EQCDIVPR": {
+"kind": "ratio",
+"title": "CASH DIVIDENDS ON PREF STOCK RATIO"
+},
+"EQCDIVQ": {
+"kind": "level",
+"title": "CASH DIVIDENDS ON COMM & PREF QUARTERLY"
+},
+"EQCDIVQR": {
+"kind": "ratio",
+"title": "CASH DIVIDENDS ON COMM & PREF QUARTERLY RATIO"
+},
+"EQCDIVR": {
+"kind": "ratio",
+"title": "CASH DIVIDENDS ON COMM & PREF RATIO"
+},
+"EQCMRG": {
+"kind": "level",
+"title": "CHANGES DUE TO MERGERS"
+},
+"EQCMRGR": {
+"kind": "ratio",
+"title": "CHANGES DUE TO MERGERS RATIO"
+},
+"EQCONSUB": {
+"kind": "level",
+"title": "MINOR INT IN CONSOL SUBS-EQ"
+},
+"EQCPREV": {
+"kind": "level",
+"title": "BK EQ CAP MOST RECENTLY REPORTED"
+},
+"EQCPREVR": {
+"kind": "ratio",
+"title": "BK EQ CAP MOST RECENTLY REPORTED RATIO"
+},
+"EQCREST": {
+"kind": "level",
+"title": "ACCOUNTING CHANGES & CORRECTIONS"
+},
+"EQCRESTR": {
+"kind": "ratio",
+"title": "ACCOUNTING CHANGES & CORRECTIONS RATIO"
+},
+"EQCS": {
+"kind": "level",
+"title": "COMMON STOCK"
+},
+"EQCSR": {
+"kind": "ratio",
+"title": "COMMON STOCK RATIO"
+},
+"EQCSTKRX": {
+"kind": "level",
+"title": "SALE OF CAPITAL STOCK"
+},
+"EQCSTKRXR": {
+"kind": "ratio",
+"title": "SALE OF CAPITAL STOCK RATIO"
+},
+"EQCSXQ": {
+"kind": "level",
+"title": "SALE OF CAPITAL STOCK QUARTERLY"
+},
+"EQCSXQR": {
+"kind": "ratio",
+"title": "SALE OF CAPITAL STOCK QUARTERLY RATIO"
+},
+"EQCTRSTX": {
+"kind": "level",
+"title": "TREASURY STOCK TRANSACTIONS"
+},
+"EQCTRSTXR": {
+"kind": "ratio",
+"title": "TREASURY STOCK TRANSACTIONS RATIO"
+},
+"EQNWCERT": {
+"kind": "asis",
+"title": "NET WORTH CERTIFICATES"
+},
+"EQOTHCC": {
+"kind": "level",
+"title": "OTHER EQUITY CAPITAL COMPONENTS"
+},
+"EQPP": {
+"kind": "level",
+"title": "PERPETUAL PREFERRED STOCK"
+},
+"EQPPR": {
+"kind": "ratio",
+"title": "PERPETUAL PREFERRED STOCK RATIO"
+},
+"EQR": {
+"kind": "ratio",
+"title": "EQUITY CAPITAL RATIO"
+},
+"EQSUR": {
+"kind": "level",
+"title": "SURPLUS"
+},
+"EQSURR": {
+"kind": "ratio",
+"title": "SURPLUS RATIO"
+},
+"EQTOT": {
+"kind": "level",
+"title": "TOTAL EQUITY CAPITAL"
+},
+"EQTOTR": {
+"kind": "ratio",
+"title": "TOTAL EQUITY CAPITAL RATIO"
+},
+"EQUP": {
+"kind": "level",
+"title": "EQUP"
+},
+"EQUPGR": {
+"kind": "level",
+"title": "UNDIVIDED PROFITS"
+},
+"EQUPTOT": {
+"kind": "level",
+"title": "UP-NET & OTHER CAPITAL COMP"
+},
+"EQUPTOTR": {
+"kind": "ratio",
+"title": "UP-NET & OTHER CAPITAL RATIO"
+},
+"EQV": {
+"kind": "ratio",
+"title": "BANK EQUITY CAPITAL/ASSETS"
+},
+"ERNAST": {
+"kind": "level",
+"title": "TOTAL EARNING ASSETS"
+},
+"ERNAST2": {
+"kind": "level",
+"title": "TOTAL EARNING ASSETS"
+},
+"ERNAST5": {
+"kind": "level",
+"title": "TOTAL EARNING ASSETS-CAVG5I"
+},
+"ERNASTR": {
+"kind": "ratio",
+"title": "EARNING ASSETS / TOTAL ASSETS"
+},
+"ESAL": {
+"kind": "level",
+"title": "SALARIES AND EMPLOYEE BENEFITS"
+},
+"ESALQ": {
+"kind": "level",
+"title": "SALARIES AND EMPLOYEE BENEFITS QUARTERLY"
+},
+"ESALQR": {
+"kind": "ratio",
+"title": "SALARIES AND EMPLOYEE BENEFITS QUARTERLY RATIO"
+},
+"ESALR": {
+"kind": "ratio",
+"title": "SALARIES AND EMPLOYEE BENEFITS RATIO"
+},
+"ESAVDP": {
+"kind": "level",
+"title": "NONTRANSACTION SAV ACCTS INT EXP"
+},
+"ESAVDPA": {
+"kind": "level",
+"title": "NONTRANSACT SAV ACCT INT EXT-ANN"
+},
+"ESAVDPQ": {
+"kind": "level",
+"title": "NONTRANSACT SAV ACCT INT EXP-QTR"
+},
+"ESTINS": {
+"kind": "ratio",
+"title": "PERCENTAGE INSURED ESTIMATED"
+},
+"ESTINSR": {
+"kind": "ratio",
+"title": "PERCENTAGE INSURED ESTIMATED RATIO"
+},
+"ESUBND": {
+"kind": "level",
+"title": "SUBORDINATED NOTES INT EXPENSE"
+},
+"ESUBNDA": {
+"kind": "level",
+"title": "SUBORDINATED NOTES INT EXP-ANN"
+},
+"ETRANDEP": {
+"kind": "level",
+"title": "TRANSACTION ACCOUNTS INT EXPENSE"
+},
+"ETRANDPA": {
+"kind": "level",
+"title": "TRANSACTION ACCOUNTS INT EXP-ANN"
+},
+"ETRANDPQ": {
+"kind": "level",
+"title": "TRANSACTION ACCOUNTS INT EXP-QTR"
+},
+"ETTLOTBA": {
+"kind": "level",
+"title": "TT&L & OTHER BORROW INT EXP-ANN"
+},
+"ETTLOTBO": {
+"kind": "level",
+"title": "TT&L & OTHER BORROWINGS INT EXP"
+},
+"ETTLOTBQ": {
+"kind": "level",
+"title": "TT&L & OTHER BORROW INT EXP-QTR"
+},
+"ETTLOTMG": {
+"kind": "level",
+"title": "TT&L"
+},
+"EXTRA": {
+"kind": "level",
+"title": "NET DISCONTINUED OPERATIONS"
+},
+"EXTRAQ": {
+"kind": "level",
+"title": "NET DISCONTINUED OPERATIONS QUARTERLY"
+},
+"EXTRAQR": {
+"kind": "ratio",
+"title": "NET DISCONTINUED OPERATIONS QUARTERLY RATIO"
+},
+"EXTRAR": {
+"kind": "ratio",
+"title": "NET DISCONTINUED RATIO"
+},
+"FFPUR": {
+"kind": "level",
+"title": "FEDERAL FUNDS PURCHASED"
+},
+"FREPO": {
+"kind": "level",
+"title": "FED FUNDS & REPOS SOLD"
+},
+"FREPOR": {
+"kind": "ratio",
+"title": "FED FUNDS & REPOS SOLD"
+},
+"FREPP": {
+"kind": "level",
+"title": "FED FUNDS & REPOS PURCHASED"
+},
+"FREPPR": {
+"kind": "ratio",
+"title": "FED FUNDS & REPOS PURCHASED RATIO"
+},
+"FX": {
+"kind": "level",
+"title": "FOREIGN EXCHANGE-TOTAL CONTRACTS"
+},
+"FXFFC": {
+"kind": "level",
+"title": "FOR EXCH-FUTURES & FORWARD CONTR"
+},
+"FXNVS": {
+"kind": "level",
+"title": "FOR EXCHANGE-SWAPS"
+},
+"FXPOC": {
+"kind": "level",
+"title": "FOR EXCH-PUR OPTION CONTRACTS"
+},
+"FXSPOT": {
+"kind": "level",
+"title": "SPOT FOREIGN EXCHANGE CONTRACTS"
+},
+"FXWOC": {
+"kind": "level",
+"title": "FOR EXCH-WRITTEN OPTION CONTRACT"
+},
+"IBEFTAX": {
+"kind": "level",
+"title": "INCOME BEFORE INC TAXES & DISC"
+},
+"IBEFTXA": {
+"kind": "level",
+"title": "INC BEFORE INC TAXS & DISC-ANN"
+},
+"IBEFTXQ": {
+"kind": "level",
+"title": "INC BEFORE INC TAXS & DISC-QTR"
+},
+"IBEFXTR": {
+"kind": "level",
+"title": "INCOME BEFORE DISC OPR"
+},
+"IBEFXTRQ": {
+"kind": "level",
+"title": "INCOME BEFORE DISC OPR QUARTERLY"
+},
+"IBEFXTRQR": {
+"kind": "ratio",
+"title": "INCOME BEFORE DISC OPR QUARTERLY RATIO"
+},
+"IBEFXTRR": {
+"kind": "ratio",
+"title": "INCOME BEFORE DISC OPR RATIO"
+},
+"ICHBAL": {
+"kind": "level",
+"title": "DEPOSITORY INSTITUTIONS INT INC"
+},
+"ICHBALQ": {
+"kind": "level",
+"title": "DEPOSITORY INSTITUTIONS INT INC QUARTERLY"
+},
+"ICHBALQR": {
+"kind": "ratio",
+"title": "DEPOSITORY INSTITUTIONS INT INC QUARTERLY RATIO"
+},
+"ICHBALR": {
+"kind": "ratio",
+"title": "BALANCES FROM DEPOSITORY INSTITUTIONS YTD RATIO"
+},
+"IDDEPINR": {
+"kind": "ratio",
+"title": "IDDEPINR"
+},
+"IDDIVNIR": {
+"kind": "ratio",
+"title": "IDDIVNIR"
+},
+"IDERNCVQR": {
+"kind": "ratio",
+"title": "Earnings coverage of net loan charge-offs"
+},
+"IDERNCVR": {
+"kind": "ratio",
+"title": "EARNINGS COVERAGE OF NET LOAN CHARGE-OFFS (X)"
+},
+"IDLNCORR": {
+"kind": "ratio",
+"title": "NET LOANS AND LEASES TO CORE DEPOSITS RATIO"
+},
+"IDNCATOR": {
+"kind": "ratio",
+"title": "AUTOMOBILE LOANS RATIO"
+},
+"IDNCCIR": {
+"kind": "ratio",
+"title": "COMMERCIAL & INDUSTRIAL LOANS RATIO"
+},
+"IDNCCONR": {
+"kind": "ratio",
+"title": "LOANS TO INDIVIDUALS RATIO"
+},
+"IDNCCOOR": {
+"kind": "ratio",
+"title": "Other loans to individuals"
+},
+"IDNCCOTR": {
+"kind": "ratio",
+"title": "OTHER CONSUMER LOANS RATIO"
+},
+"IDNCCRDR": {
+"kind": "ratio",
+"title": "CREDIT CARDS & RELATED PLANS RATIO"
+},
+"IDNCGTPR": {
+"kind": "ratio",
+"title": "NONCURRENT LOANS WHICH ARE WHOLLY OR PARTIALLY GUARANTEED BY THE U.S. GOVERNMENT RATIO"
+},
+"IDNCOTHR": {
+"kind": "ratio",
+"title": "All other loans & leases (including farm )"
+},
+"IDNTATOR": {
+"kind": "ratio",
+"title": "IDNTATOR"
+},
+"IDNTCIQR": {
+"kind": "ratio",
+"title": "COMMERCIAL & INDUSTRIAL LOANS QUARTERLY"
+},
+"IDNTCIR": {
+"kind": "ratio",
+"title": "COMMERCIAL & INDUSTRIAL LOANS"
+},
+"IDNTCONR": {
+"kind": "ratio",
+"title": "LOANS TO INDIVIDUALS"
+},
+"IDNTCOOQR": {
+"kind": "ratio",
+"title": "OTHER LOANS TO INDIVIDUALS"
+},
+"IDNTCOOR": {
+"kind": "ratio",
+"title": "OTHER LOANS TO INDIVIDUALS"
+},
+"IDNTCOTR": {
+"kind": "ratio",
+"title": "IDNTCOTR"
+},
+"IDNTCRDQR": {
+"kind": "ratio",
+"title": "CREDIT CARDS & RELATED PLANS QUARTERLY"
+},
+"IDNTCRDR": {
+"kind": "ratio",
+"title": "CREDIT CARDS & RELATED PLANS"
+},
+"IDNTILR": {
+"kind": "ratio",
+"title": "IDNTILR"
+},
+"IDOTHNII": {
+"kind": "level",
+"title": "IDOTHNII"
+},
+"IDT1CER": {
+"kind": "ratio",
+"title": "COMMON EQUITY TIER 1 CAPITAL RATIO"
+},
+"IDT1RWAJR": {
+"kind": "ratio",
+"title": "TIER 1 RISK-BASED CAPITAL RATIO"
+},
+"IEFF": {
+"kind": "level",
+"title": "EFFICIENCY RATIO INCOME"
+},
+"IEFFQ": {
+"kind": "level",
+"title": "EFFICIENCY RATIO INCOME QUARTERLY"
+},
+"IFIDUC": {
+"kind": "level",
+"title": "FIDUCIARY ACTIVITIES INCOME"
+},
+"IFIDUCQ": {
+"kind": "level",
+"title": "FIDUCIARY ACTIVITIES INCOME-QTR"
+},
+"IFIDUCQR": {
+"kind": "ratio",
+"title": "FIDUCIARY ACTIVITIES INCOME-QTR RATIO"
+},
+"IFIDUCR": {
+"kind": "ratio",
+"title": "FIDUCIARY ACTIVITIES INCOME RATIO"
+},
+"IFREPO": {
+"kind": "level",
+"title": "FED FUNDS & REPO INTEREST INCOME"
+},
+"IFREPOQ": {
+"kind": "level",
+"title": "FED FUNDS & REPO INTEREST INCOME QUARTERLY"
+},
+"IFREPOQR": {
+"kind": "ratio",
+"title": "FED FUNDS & REPO INTEREST INCOME QUARTERLY RATIO"
+},
+"IFREPOR": {
+"kind": "ratio",
+"title": "FEDERAL FUNDS SOLD YTD RATIO"
+},
+"IGLCMEX": {
+"kind": "level",
+"title": "TRADING ACCOUNT-COMMODITY"
+},
+"IGLCMEXQ": {
+"kind": "level",
+"title": "TRADING ACCOUNT-COMMODITY QUARTERLY"
+},
+"IGLCMEXQR": {
+"kind": "ratio",
+"title": "TRADING ACCOUNT-COMMODITY RATIO QUARTERLY"
+},
+"IGLCMEXR": {
+"kind": "ratio",
+"title": "TRADING ACCOUNT-COMMODITY RATIO"
+},
+"IGLCREX": {
+"kind": "level",
+"title": "TRADING REVENUE- CREDIT EXPOSURE"
+},
+"IGLCREXQ": {
+"kind": "level",
+"title": "TRADING REVENUE- CREDIT EXPOSURE QUARTERLY"
+},
+"IGLCREXQR": {
+"kind": "ratio",
+"title": "TRADING REVENUE- CREDIT EXPOSURE QUARTERLY RATIO"
+},
+"IGLCREXR": {
+"kind": "ratio",
+"title": "TRADING REVENUE- CREDIT EXPOSURE RATIO"
+},
+"IGLEDEX": {
+"kind": "level",
+"title": "TRADING ACCOUNT-EQ DERIVATIVE"
+},
+"IGLEDEXQ": {
+"kind": "level",
+"title": "TRADING ACCOUNT-EQ DERIVATIVE QUARTERLY"
+},
+"IGLEDEXQR": {
+"kind": "ratio",
+"title": "TRADING ACCOUNT-EQ DERIVATIVE QUARTERLY RATIO"
+},
+"IGLEDEXR": {
+"kind": "ratio",
+"title": "TRADING ACCOUNT-EQ DERIVATIVE RATIO"
+},
+"IGLFXEX": {
+"kind": "level",
+"title": "TRADING ACCOUNT-FOREIGN EXCHANGE"
+},
+"IGLFXEXQ": {
+"kind": "level",
+"title": "TRADING ACCOUNT-FOREIGN EXCHANGE QUARTERLY"
+},
+"IGLFXEXQR": {
+"kind": "ratio",
+"title": "RADING ACCOUNT-FOREIGN EXCHANGE QUARTERLY RATIO"
+},
+"IGLFXEXR": {
+"kind": "ratio",
+"title": "RADING ACCOUNT-FOREIGN EXCHANGE RATIO"
+},
+"IGLRTEX": {
+"kind": "level",
+"title": "TRADING ACCOUNT-INTEREST RATE"
+},
+"IGLRTEXQ": {
+"kind": "level",
+"title": "TRADING ACCOUNT-INTEREST RATE QUARTERLY"
+},
+"IGLRTEXQR": {
+"kind": "ratio",
+"title": "TRADING ACCOUNT-INTEREST RATE QUARTERLY RATIO"
+},
+"IGLRTEXR": {
+"kind": "ratio",
+"title": "TRADING ACCOUNT-INTEREST RATE RATIO"
+},
+"IGLSCA": {
+"kind": "level",
+"title": "AVAILABLE-FOR-SALE SECS G/L"
+},
+"IGLSCAQ": {
+"kind": "level",
+"title": "AVAILABLE-FOR-SALE SEC G/L-QTR"
+},
+"IGLSCH": {
+"kind": "asis",
+"title": "HELD-TO-MATURITY SECS G/L"
+},
+"IGLSEC": {
+"kind": "level",
+"title": "SECURITIES GAINS AND LOSSES"
+},
+"IGLSECQ": {
+"kind": "level",
+"title": "SECURITIES GAINS AND LOSSES-QTR"
+},
+"IGLSECQR": {
+"kind": "ratio",
+"title": "SECURITIES GAINS AND LOSSES QUARTERLY RATIO"
+},
+"IGLSECR": {
+"kind": "ratio",
+"title": "SECURITIES GAINS AND LOSSES RATIO"
+},
+"IGLTRAD": {
+"kind": "level",
+"title": "TRADING REVENUES-TOTAL"
+},
+"IGLTRADR": {
+"kind": "ratio",
+"title": "TRADING REVENUES-TOTAL RATIO"
+},
+"IGLTRDQ": {
+"kind": "level",
+"title": "TRADING REVENUE-QTR"
+},
+"IGLTRDQR": {
+"kind": "ratio",
+"title": "TRADING REVENUE-QTR RATIO"
+},
+"IINSCOM": {
+"kind": "level",
+"title": "INSURANCE COMMISSIONS & FEES"
+},
+"IINSCOMQ": {
+"kind": "level",
+"title": "INSURANCE COMMISSIONS & FEES QUARTERLY"
+},
+"IINSCOMQR": {
+"kind": "ratio",
+"title": "INSURANCE COMMISSIONS & FEES QUARTERLY RATIO"
+},
+"IINSCOMR": {
+"kind": "ratio",
+"title": "INSURANCE COMMISSIONS & FEES RATIO"
+},
+"IINSOTH": {
+"kind": "level",
+"title": "INSURANCE COM+FEES-OTHER"
+},
+"IINSOTHQ": {
+"kind": "level",
+"title": "INSURANCE COM+FEES-OTHER QUARTERLY"
+},
+"IINSOTHQR": {
+"kind": "ratio",
+"title": "INSURANCE COM+FEES-OTHER QUARTERLY RATIO"
+},
+"IINSOTHR": {
+"kind": "ratio",
+"title": "INSURANCE COM+FEES-OTHER RATIO"
+},
+"IINSUND": {
+"kind": "level",
+"title": "INSURANCE UNDERWRITNG INCOME"
+},
+"IINSUNDQ": {
+"kind": "asis",
+"title": "INSURANCE UNDERWRITNG INCOME QUARTERLY"
+},
+"IINSUNDQR": {
+"kind": "ratio",
+"title": "INSURANCE UNDERWRITNG INCOME QUARTERLY RATIO"
+},
+"IINSUNDR": {
+"kind": "ratio",
+"title": "INSURANCE UNDERWRITNG INCOME RATIO"
+},
+"IINVFEE": {
+"kind": "level",
+"title": "INVEST BANK"
+},
+"IINVFEEQ": {
+"kind": "level",
+"title": "INVEST BANK QUARTERLY"
+},
+"IINVFEEQR": {
+"kind": "ratio",
+"title": "INVEST BANK QUARTERLY RATIO"
+},
+"IINVFEER": {
+"kind": "ratio",
+"title": "INVEST BANK RATIO"
+},
+"ILNA": {
+"kind": "level",
+"title": "LOAN INCOME-ANN"
+},
+"ILNDOM": {
+"kind": "level",
+"title": "LOAN INCOME-DOM"
+},
+"ILNDOMQ": {
+"kind": "level",
+"title": "LOAN INCOME-DOM QUARTERLY"
+},
+"ILNDOMQR": {
+"kind": "ratio",
+"title": "LOAN INCOME-DOM QUARTERLY RATIO"
+},
+"ILNDOMR": {
+"kind": "ratio",
+"title": "DOMESTIC OFFICE LOANS YTD RATIO"
+},
+"ILNFOR": {
+"kind": "level",
+"title": "LOAN INCOME-FOR"
+},
+"ILNFORQ": {
+"kind": "level",
+"title": "LOAN INCOME-FOR QUARTERLY"
+},
+"ILNFORQR": {
+"kind": "ratio",
+"title": "LOAN INCOME-FOR QUARTERLY RATIO"
+},
+"ILNFORR": {
+"kind": "ratio",
+"title": "FOREIGN OFFICE LOANS YTD RATIO"
+},
+"ILNLS": {
+"kind": "level",
+"title": "LOAN & LEASE INCOME"
+},
+"ILNLSA": {
+"kind": "level",
+"title": "LOAN & LEASE INCOME-ANN"
+},
+"ILNLSQ": {
+"kind": "level",
+"title": "LOAN & LEASE INCOME-QTR"
+},
+"ILNLSXA": {
+"kind": "level",
+"title": "TAX-EXEMPT LN & LS INT INC-ANN"
+},
+"ILNLSXQ": {
+"kind": "level",
+"title": "TAX-EXEMPT LN & LS INT INC-QTR"
+},
+"ILNMUNIQ": {
+"kind": "asis",
+"title": "MUNICIPAL LOAN INCOME-QTR"
+},
+"ILNQ": {
+"kind": "level",
+"title": "LOAN INCOME-QTR"
+},
+"ILS": {
+"kind": "level",
+"title": "LEASE INCOME"
+},
+"ILSQ": {
+"kind": "level",
+"title": "LEASE INCOME QUARTERLY"
+},
+"ILSQR": {
+"kind": "ratio",
+"title": "LEASE INCOME QUARTERLY RATIO"
+},
+"ILSR": {
+"kind": "ratio",
+"title": "LEASE FINANCING RECEIVABLES YTD RATIO"
+},
+"INTAN": {
+"kind": "level",
+"title": "INTANGIBLE ASSETS"
+},
+"INTANGCC": {
+"kind": "asis",
+"title": "PURCH CC REL & NONMTG SER ASTS"
+},
+"INTANGW": {
+"kind": "level",
+"title": "GOODWILL"
+},
+"INTANGWR": {
+"kind": "ratio",
+"title": "GOODWILL RATIO"
+},
+"INTANMSR": {
+"kind": "level",
+"title": "MORTGAGE SERVICING ASSETS"
+},
+"INTANMSRR": {
+"kind": "ratio",
+"title": "MORTGAGE SERVICING ASSETS RATIO"
+},
+"INTANOTH": {
+"kind": "level",
+"title": "OTHER IDENTIFIABLE INTANG ASSETS"
+},
+"INTANOTHR": {
+"kind": "ratio",
+"title": "OTHER IDENTIFIABLE INTANG ASSETS RATIO"
+},
+"INTANR": {
+"kind": "ratio",
+"title": "INTANGIBLE ASSETS RATIO"
+},
+"INTEXPY": {
+"kind": "ratio",
+"title": "INTEREST EXPENSE TO EARNING ASSETS RATIO"
+},
+"INTEXPYQ": {
+"kind": "ratio",
+"title": "COST OF FUNDING EARNING ASSETS QUARTERLY"
+},
+"INTINC": {
+"kind": "level",
+"title": "TOTAL INTEREST INCOME"
+},
+"INTINCA": {
+"kind": "level",
+"title": "TOTAL INTEREST INCOME ANNUAL"
+},
+"INTINCR": {
+"kind": "ratio",
+"title": "TOTAL INTEREST INCOME YTD RATIO"
+},
+"INTINCY": {
+"kind": "ratio",
+"title": "INTEREST INCOME TO EARNING ASSETS RATIO"
+},
+"INTINCYQ": {
+"kind": "ratio",
+"title": "INTEREST INCOME/EARNING ASSETS QUARTERLY"
+},
+"INTINQ": {
+"kind": "level",
+"title": "TOTAL INTEREST INCOME QUARTERLY"
+},
+"INTINQA": {
+"kind": "level",
+"title": "INTINQA"
+},
+"INTINQR": {
+"kind": "ratio",
+"title": "TOTAL INTEREST INCOME QUARTERLY RATIO"
+},
+"INVSUB": {
+"kind": "level",
+"title": "INVEST IN UNCONSOLIDATED SUBS"
+},
+"INVSUORE": {
+"kind": "level",
+"title": "INVESTMENTS IN RE"
+},
+"IOTHFEE": {
+"kind": "asis",
+"title": "OTHER FEE INCOME"
+},
+"IOTHII": {
+"kind": "level",
+"title": "OTHER INTEREST INCOME"
+},
+"IOTHIIQ": {
+"kind": "level",
+"title": "OTHER INTEREST INCOME QUARTERLY"
+},
+"IOTHIIQR": {
+"kind": "ratio",
+"title": "OTHER INTEREST INCOME QUARTERLY RATIO"
+},
+"IOTHIIR": {
+"kind": "ratio",
+"title": "OTHER INTEREST INCOME YTD RATIO"
+},
+"IOTNII": {
+"kind": "level",
+"title": "OTHER NONINTEREST INCOME"
+},
+"IOTNIIQ": {
+"kind": "level",
+"title": "OTHER NONINTEREST INCOME QUARTERLY"
+},
+"IOTNIIQR": {
+"kind": "ratio",
+"title": "OTHER NONINTEREST INCOME QUARTERLY RATIO"
+},
+"IOTNIIR": {
+"kind": "ratio",
+"title": "OTHER NONINTEREST INCOME RATIO"
+},
+"IRAKEOGH": {
+"kind": "level",
+"title": "IRAS AND KEOGH PLANS-DEPOSITS"
+},
+"IRAKEOGHR": {
+"kind": "ratio",
+"title": "IRAS AND KEOGH PLANS-DEPOSITS RATIO"
+},
+"ISC": {
+"kind": "level",
+"title": "TOTAL SECURITY INCOME"
+},
+"ISCA": {
+"kind": "level",
+"title": "TOTAL SECURITY INCOME-ANN"
+},
+"ISCQ": {
+"kind": "level",
+"title": "TOTAL SECURITY INCOME QUARTERLY"
+},
+"ISCQR": {
+"kind": "ratio",
+"title": "TOTAL SECURITY INCOME QUARTERLY RATIO"
+},
+"ISCR": {
+"kind": "ratio",
+"title": "SECURITIES YTD RATIO"
+},
+"ISECZ": {
+"kind": "level",
+"title": "SECURITIZATION INCOME"
+},
+"ISECZQ": {
+"kind": "level",
+"title": "SECURITIZATION INCOME QUARTERLY"
+},
+"ISECZQR": {
+"kind": "ratio",
+"title": "SECURITIZATION INCOME QUARTERLY RATIO"
+},
+"ISECZR": {
+"kind": "ratio",
+"title": "SECURITIZATION INCOME RATIO"
+},
+"ISERCHG": {
+"kind": "level",
+"title": "SERVICE CHARGE ON DEPOSIT ACCTS"
+},
+"ISERCHGA": {
+"kind": "level",
+"title": "SERVICE CHARGE ON DEP ACCTS-ANN"
+},
+"ISERCHGQ": {
+"kind": "level",
+"title": "SERVICE CHARGE ON DEP ACCTS-QTR"
+},
+"ISERCHGQR": {
+"kind": "ratio",
+"title": "SERVICE CHARGE ON DEPOSIT ACCTS-QTR RATIO"
+},
+"ISERCHGR": {
+"kind": "ratio",
+"title": "SERVICE CHARGE ON DEPOSIT ACCTS RATIO"
+},
+"ISERFEE": {
+"kind": "level",
+"title": "SERVICING FEES"
+},
+"ISERFEEQ": {
+"kind": "level",
+"title": "SERVICING FEES QUARTERLY"
+},
+"ISERFEEQR": {
+"kind": "ratio",
+"title": "SERVICING FEES QUARTERLY RATIO"
+},
+"ISERFEER": {
+"kind": "ratio",
+"title": "SERVICING FEES RATIO"
+},
+"ITAX": {
+"kind": "level",
+"title": "APPLICABLE INCOME TAXES"
+},
+"ITAXA": {
+"kind": "level",
+"title": "APPLICABLE INCOME TAXES-ANN"
+},
+"ITAXQ": {
+"kind": "level",
+"title": "APPLICABLE INCOME TAXES QUARTERLY"
+},
+"ITAXQA": {
+"kind": "level",
+"title": "APPLICABLE INCOME TAXES-QTR-ANN"
+},
+"ITAXQR": {
+"kind": "ratio",
+"title": "APPLICABLE INCOME TAXES QUARTERLY RATIO"
+},
+"ITAXR": {
+"kind": "ratio",
+"title": "APPLICABLE INCOME TAXES RATIO"
+},
+"ITRADE": {
+"kind": "level",
+"title": "INTEREST INCOME ON TRADING ACCTS"
+},
+"ITRADEQ": {
+"kind": "level",
+"title": "INTEREST INCOME ON TRADING ACCTS QUARTERLY"
+},
+"ITRADEQR": {
+"kind": "ratio",
+"title": "INTEREST INCOME ON TRADING ACCTS QUARTERLY RATIO"
+},
+"ITRADER": {
+"kind": "ratio",
+"title": "TRADING ACCOUNTS YTD RATIO"
+},
+"IVENCAP": {
+"kind": "level",
+"title": "VENTURE CAPITAL REVENUE"
+},
+"IVENCAPQ": {
+"kind": "level",
+"title": "VENTURE CAPITAL REVENUE QUARTERLY"
+},
+"IVENCAPQR": {
+"kind": "ratio",
+"title": "VENTURE CAPITAL REVENUE QUARTERLY RATIO"
+},
+"IVENCAPR": {
+"kind": "ratio",
+"title": "VENTURE CAPITAL REVENUE RATIO"
+},
+"LAG": {
+"kind": "asis",
+"title": "AG LOANS - LOSS SHARE"
+},
+"LAGR": {
+"kind": "ratio",
+"title": "AG LOANS - LOSS SHARE RATIO"
+},
+"LCI": {
+"kind": "asis",
+"title": "C&I LOANS - LOSS SHARE"
+},
+"LCIR": {
+"kind": "ratio",
+"title": "C&I LOANS - LOSS SHARE RATIO"
+},
+"LCON": {
+"kind": "asis",
+"title": "CONSUMER LOANS - LOSS SHARE"
+},
+"LCONR": {
+"kind": "ratio",
+"title": "CONSUMER LOANS - LOSS SHARE RATIO"
+},
+"LIAB": {
+"kind": "level",
+"title": "TOTAL LIABILITIES"
+},
+"LIABEQ": {
+"kind": "level",
+"title": "TOTAL LIABILITIES & CAPITAL"
+},
+"LIABEQR": {
+"kind": "ratio",
+"title": "TOTAL LIABILITIES & CAPITAL RATIO"
+},
+"LIABFOR": {
+"kind": "level",
+"title": "TOTAL LIABILITIES-FOR"
+},
+"LIABR": {
+"kind": "ratio",
+"title": "TOTAL LIABILITIES RATIO"
+},
+"LIPMTG": {
+"kind": "asis",
+"title": "MORTGAGE LOANS IN PROCESS"
+},
+"LIPNMTG": {
+"kind": "asis",
+"title": "NONMORTGAGE LOANS IN PROCESS"
+},
+"LLPFDSTK": {
+"kind": "asis",
+"title": "LIMITED-LIFE PREFERRED STOCK"
+},
+"LNACOTH": {
+"kind": "asis",
+"title": "ACCEPTANCES OF OTHER BANKS"
+},
+"LNAG": {
+"kind": "level",
+"title": "AGRICULTURAL LOANS"
+},
+"LNAG1": {
+"kind": "level",
+"title": "AGRICULTURAL LOANS-UNDER 100-$"
+},
+"LNAG1N": {
+"kind": "count",
+"title": "AGRICULTURAL LOANS-UNDER 100-NUM"
+},
+"LNAG1NR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-UNDER 100-NUM RATIO"
+},
+"LNAG1R": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-UNDER 100-$ RATIO"
+},
+"LNAG2": {
+"kind": "level",
+"title": "AGRICULTURAL LOANS-100-250-$"
+},
+"LNAG22": {
+"kind": "level",
+"title": "AG LOANS-CAVG2"
+},
+"LNAG2N": {
+"kind": "count",
+"title": "AGRICULTURAL LOANS-100-250-NUM"
+},
+"LNAG2NR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-100-250-NUM RATIO"
+},
+"LNAG2R": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-100-250-$ RATIO"
+},
+"LNAG3": {
+"kind": "level",
+"title": "AGRICULTURAL LOANS-250-500-$"
+},
+"LNAG3N": {
+"kind": "count",
+"title": "AGRICULTURAL LOANS-250-500-NUM"
+},
+"LNAG3NR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-250-500-NUM RATIO"
+},
+"LNAG3R": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-250-500-$ RATIO"
+},
+"LNAG4": {
+"kind": "level",
+"title": "AGRICULTURAL LOANS-UNDER 500-$"
+},
+"LNAG4N": {
+"kind": "count",
+"title": "AGRICULTURAL LOANS-UNDER 500-NUM"
+},
+"LNAG4NR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-UNDER 500-NUM RATIO"
+},
+"LNAG4R": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-UNDER 500-$ RATIO"
+},
+"LNAG5": {
+"kind": "level",
+"title": "AG LOANS-CAVG5"
+},
+"LNAGFOR": {
+"kind": "level",
+"title": "AGRICULTURAL LOANS-FOR"
+},
+"LNAGFORR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS-FOR RATIO"
+},
+"LNAGR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LOANS RATIO"
+},
+"LNATRES": {
+"kind": "level",
+"title": "ALLOW FOR LOANS LOSS ADJUSTED"
+},
+"LNATRESJ": {
+"kind": "level",
+"title": "ALLOW FOR LOANS + ALLOC TRN RISK"
+},
+"LNATRESR": {
+"kind": "ratio",
+"title": "LOAN LOSS RESERVE/GROSS LN&LS"
+},
+"LNATRESRR": {
+"kind": "ratio",
+"title": "ALLOW FOR LOANS + ALLOC TRN RISK RATIO"
+},
+"LNAUTO": {
+"kind": "level",
+"title": "CONSUMER LOANS - AUTO"
+},
+"LNAUTO2": {
+"kind": "level",
+"title": "CONSUMER LOANS - AUTO - CAVG2"
+},
+"LNAUTO5": {
+"kind": "level",
+"title": "CONSUMER LOANS - AUTO - CAVG5"
+},
+"LNAUTOR": {
+"kind": "ratio",
+"title": "CONSUMER LOANS-AUTO RATIO"
+},
+"LNCDT1R": {
+"kind": "ratio",
+"title": "CONSTR & LAND DEV LNS/TIER 1"
+},
+"LNCI": {
+"kind": "level",
+"title": "C&I LOANS"
+},
+"LNCI1": {
+"kind": "level",
+"title": "C&I LOANS-UNDER-100-$"
+},
+"LNCI1N": {
+"kind": "count",
+"title": "C&I LOANS-UNDER-100-NUM"
+},
+"LNCI1NR": {
+"kind": "ratio",
+"title": "C&I LOANS-UNDER-100-NUM RATIO"
+},
+"LNCI1R": {
+"kind": "ratio",
+"title": "C&I LOANS-UNDER-100-$ RATIO"
+},
+"LNCI2": {
+"kind": "level",
+"title": "C&I LOANS-100-250-$"
+},
+"LNCI22": {
+"kind": "level",
+"title": "C&I LOANS-CAVG2"
+},
+"LNCI2N": {
+"kind": "count",
+"title": "C&I LOANS-100-250-NUM"
+},
+"LNCI2NR": {
+"kind": "ratio",
+"title": "C&I LOANS-250-1M-NUM RATIO"
+},
+"LNCI2R": {
+"kind": "ratio",
+"title": "C&I LOANS-100-250-$ RATIO"
+},
+"LNCI3": {
+"kind": "level",
+"title": "C&I LOANS-250-1M-$"
+},
+"LNCI3N": {
+"kind": "count",
+"title": "C&I LOANS-250-1M-NUM"
+},
+"LNCI3NR": {
+"kind": "ratio",
+"title": "C&I LOANS-250-1M-NUM RATIO"
+},
+"LNCI3R": {
+"kind": "ratio",
+"title": "C&I LOANS-250-1M-$ RATIO"
+},
+"LNCI4": {
+"kind": "level",
+"title": "C&I LOANS-UNDER-1M-$"
+},
+"LNCI4N": {
+"kind": "count",
+"title": "C&I LOANS-UNDER-1M-NUM"
+},
+"LNCI4NR": {
+"kind": "ratio",
+"title": "C&I LOANS-UNDER-1M-NUM RATIO"
+},
+"LNCI4R": {
+"kind": "ratio",
+"title": "C&I LOANS-UNDER-1M-$ RATIO"
+},
+"LNCI5": {
+"kind": "level",
+"title": "C&I LOANS-CAVG5"
+},
+"LNCIFOR": {
+"kind": "level",
+"title": "C&I LOANS-FOR"
+},
+"LNCIFORR": {
+"kind": "ratio",
+"title": "C&I LOANS-FOR RATIO"
+},
+"LNCINUS": {
+"kind": "level",
+"title": "C&I LOANS-NON-U.S. DOMICILE"
+},
+"LNCINUSF": {
+"kind": "level",
+"title": "C&I LOANS-NON-U.S. DOMICILE-FOR"
+},
+"LNCINUSFR": {
+"kind": "ratio",
+"title": "C&I LOANS-NON-U.S. DOMICILE-FOR RATIO"
+},
+"LNCIR": {
+"kind": "ratio",
+"title": "C&I LOANS RATIO"
+},
+"LNCIT1R": {
+"kind": "ratio",
+"title": "C&I LOANS/TIER 1"
+},
+"LNCOMRE": {
+"kind": "level",
+"title": "COMMERCIAL RE LOANS"
+},
+"LNCOMRE2": {
+"kind": "level",
+"title": "COMMERCIAL RE LOANS2"
+},
+"LNCOMRE5": {
+"kind": "level",
+"title": "COMMERCIAL RE LOANS CAVG5"
+},
+"LNCOMRER": {
+"kind": "ratio",
+"title": "COMMERCIAL RE LOANS RATIO"
+},
+"LNCON": {
+"kind": "level",
+"title": "CONSUMER LOANS"
+},
+"LNCON2": {
+"kind": "level",
+"title": "CONSUMER LOANS-CAVG2"
+},
+"LNCON5": {
+"kind": "level",
+"title": "CONSUMER LOANS-CAVG5"
+},
+"LNCONFOR": {
+"kind": "level",
+"title": "CONSUMER LOANS-FOR"
+},
+"LNCONFORR": {
+"kind": "ratio",
+"title": "CONSUMER LOANS-FOR RATIO"
+},
+"LNCONORP": {
+"kind": "level",
+"title": "OTHER CONSUMER & RELATED PLANS"
+},
+"LNCONOT1": {
+"kind": "asis",
+"title": "CONSUMER LOANS-HOME IMPROVEMENT"
+},
+"LNCONOT2": {
+"kind": "level",
+"title": "OTHER CONSUMER LOANS-CAVG2"
+},
+"LNCONOT5": {
+"kind": "level",
+"title": "OTHER CONSUMER LOANS-CAVG5"
+},
+"LNCONOTH": {
+"kind": "level",
+"title": "CONSUMER LOANS-OTHER"
+},
+"LNCONOTHR": {
+"kind": "ratio",
+"title": "CONSUMER LOANS-OTHER RATIO"
+},
+"LNCONR": {
+"kind": "ratio",
+"title": "CONSUMER LOANS RATIO"
+},
+"LNCONRP": {
+"kind": "level",
+"title": "CONSUMER LNS-RELATED PLANS"
+},
+"LNCONRPR": {
+"kind": "ratio",
+"title": "CONSUMER LNS-RELATED PLANS RATIO"
+},
+"LNCONT1R": {
+"kind": "ratio",
+"title": "CONSUMER LOANS/TIER 1"
+},
+"LNCONTRA": {
+"kind": "level",
+"title": "OTHER CONTRA ACCOUNTS"
+},
+"LNCONTRAR": {
+"kind": "ratio",
+"title": "OTHER CONTRA ACCOUNTS RATIO"
+},
+"LNCRCD": {
+"kind": "level",
+"title": "CONSUMER LOANS-CREDIT CARD PLAN"
+},
+"LNCRCD2": {
+"kind": "level",
+"title": "CREDIT CARD PLANS-CAVG2"
+},
+"LNCRCD5": {
+"kind": "level",
+"title": "CREDIT CARD PLANS-CAVG5"
+},
+"LNCRCDR": {
+"kind": "ratio",
+"title": "CONSUMER LOANS-CREDIT CARD PLAN RATIO"
+},
+"LNCRCDRP": {
+"kind": "level",
+"title": "LNS-CREDIT CD & RELATED PLAN"
+},
+"LNDEP": {
+"kind": "level",
+"title": "DEP INSTITUTION LOANS"
+},
+"LNDEPAC": {
+"kind": "level",
+"title": "TOTAL DEP INST LNS & ACCEPT"
+},
+"LNDEPACD": {
+"kind": "level",
+"title": "TOTAL DEP INST LNS & ACCEPT-DOM"
+},
+"LNDEPAOBK": {
+"kind": "level",
+"title": "LOANS TO DEPOSITORY INSTITUTIONS AND ACCEPTANCE OF OTHER BANKS"
+},
+"LNDEPAOBKR": {
+"kind": "ratio",
+"title": "LOANS TO DEPOSITORY INSTITUTIONS AND ACCEPTANCE OF OTHER BANKS RATIO"
+},
+"LNDEPCB": {
+"kind": "level",
+"title": "DEP INST LNS-COMMERCIAL BANKS"
+},
+"LNDEPCBF": {
+"kind": "level",
+"title": "DEP INST LNS-COMMERCIAL BK-FOR"
+},
+"LNDEPCBFR": {
+"kind": "ratio",
+"title": "DEP INST LNS-COMMERCIAL BK-FOR RATIO"
+},
+"LNDEPFC": {
+"kind": "level",
+"title": "DEP INST LNS-FOR COUNTRY"
+},
+"LNDEPFCF": {
+"kind": "level",
+"title": "DEP INST LNS-FOR COUNTRY-FOR"
+},
+"LNDEPFCFR": {
+"kind": "ratio",
+"title": "DEP INST LNS-FOR COUNTRY-FOR RATIO"
+},
+"LNDEPFUS": {
+"kind": "level",
+"title": "DEP INST LNS-FOR COUNTRY-U.S. BR"
+},
+"LNDEPUS": {
+"kind": "level",
+"title": "DEP INST LNS-OTH U.S. INST"
+},
+"LNDEPUSB": {
+"kind": "level",
+"title": "DEP INST LNS-COM BKS-U.S.BRANCH"
+},
+"LNDEPUSFR": {
+"kind": "ratio",
+"title": "DEP INST LNS-OTH U.S. INST-FOR RATIO"
+},
+"LNEXAMT": {
+"kind": "level",
+"title": "EXECUTIVE OFFICER LOANS-AMOUNT"
+},
+"LNEXAMTR": {
+"kind": "ratio",
+"title": "EXECUTIVE OFFICER LOANS-AMOUNT RATIO"
+},
+"LNFG": {
+"kind": "level",
+"title": "FOREIGN GOVT LOANS"
+},
+"LNFGFOR": {
+"kind": "level",
+"title": "FOREIGN GOVT LOANS-FOR"
+},
+"LNFGFORR": {
+"kind": "ratio",
+"title": "FOREIGN GOVT LOANS-FOR RATIO"
+},
+"LNFGR": {
+"kind": "ratio",
+"title": "FOREIGN GOVT LOANS RATIO"
+},
+"LNLS": {
+"kind": "level",
+"title": "LN&LS + UNEARNED INC"
+},
+"LNLSDEPR": {
+"kind": "ratio",
+"title": "NET LOANS & LEASES/DEPOSITS"
+},
+"LNLSFOR": {
+"kind": "level",
+"title": "LN&LS + UNEARNED INC-FOR"
+},
+"LNLSFORR": {
+"kind": "ratio",
+"title": "LN&LS + UNEARNED INC-FOR RATIO"
+},
+"LNLSGR": {
+"kind": "level",
+"title": "LOANS AND LEASES-TOTAL"
+},
+"LNLSGR2": {
+"kind": "level",
+"title": "LOANS AND LEASES-TOTAL"
+},
+"LNLSGR5": {
+"kind": "level",
+"title": "LOANS AND LEASES-TOTAL-CAVG5"
+},
+"LNLSGRF": {
+"kind": "level",
+"title": "LOANS AND LEASES-TOTAL-FOR"
+},
+"LNLSGRFR": {
+"kind": "ratio",
+"title": "LOANS AND LEASES-TOTAL-FOR RATIO"
+},
+"LNLSGRJ": {
+"kind": "level",
+"title": "LOANS AND LEASES-TOTAL ADJUSTED"
+},
+"LNLSGRR": {
+"kind": "ratio",
+"title": "LOANS AND LEASES-TOTAL RATIO"
+},
+"LNLSGRS": {
+"kind": "level",
+"title": "LOANS AND LEASES, GROSS"
+},
+"LNLSGRSR": {
+"kind": "ratio",
+"title": "LOANS AND LEASES, GROSS RATIO"
+},
+"LNLSNET": {
+"kind": "level",
+"title": "LOANS AND LEASES-NET"
+},
+"LNLSNETR": {
+"kind": "ratio",
+"title": "LOANS AND LEASES-NET RATIO"
+},
+"LNLSNQR": {
+"kind": "ratio",
+"title": "NET LOANS & LEASES/ASSETS QUARTERLY RATIO"
+},
+"LNLSNTV": {
+"kind": "ratio",
+"title": "NET LOANS & LEASES/ASSETS"
+},
+"LNLSRES": {
+"kind": "level",
+"title": "ALLOWANCE FOR LOAN AND LEASES"
+},
+"LNLSSALE": {
+"kind": "level",
+"title": "LOANS & LEASES HELD FOR RESALE"
+},
+"LNLSSALER": {
+"kind": "ratio",
+"title": "LOANS & LEASES HELD FOR RESALE RATIO"
+},
+"LNMUNI": {
+"kind": "level",
+"title": "MUNI LOANS"
+},
+"LNMUNIFR": {
+"kind": "ratio",
+"title": "MUNI LOANS-FOR RATIO"
+},
+"LNMUNIR": {
+"kind": "ratio",
+"title": "MUNI LOANS RATIO"
+},
+"LNNDEPC": {
+"kind": "level",
+"title": "LOANS TO NONDEP FINANCIAL INST-CON"
+},
+"LNNDEPD": {
+"kind": "level",
+"title": "LOANS TO NONDEP FINANCIAL INST-DOM"
+},
+"LNNDEPDR": {
+"kind": "ratio",
+"title": "LOANS TO NONDEP FINANCIAL INST-DOM"
+},
+"LNOT1T3": {
+"kind": "level",
+"title": "ALL OTHER LNS & LS * 1-3 YEARS"
+},
+"LNOT1T3R": {
+"kind": "ratio",
+"title": "ALL OTHER LNS & LS * 1-3 YEARS RATIO"
+},
+"LNOT3LES": {
+"kind": "level",
+"title": "ALL OTHER LNS & LS*3 MO OR LESS"
+},
+"LNOT3LESR": {
+"kind": "ratio",
+"title": "ALL OTHER LNS & LS*3 MO OR LESS RATIO"
+},
+"LNOT3T12": {
+"kind": "level",
+"title": "ALL OTHER LNS & LS * 3-12 MONS"
+},
+"LNOT3T12R": {
+"kind": "ratio",
+"title": "ALL OTHER LNS & LS * 3-12 MONS RATIO"
+},
+"LNOT3T5": {
+"kind": "level",
+"title": "ALL OTHER LNS & LS * 3-5 YEARS"
+},
+"LNOT3T5R": {
+"kind": "ratio",
+"title": "ALL OTHER LNS & LS * 3-5 YEARS RATIO"
+},
+"LNOT5T15": {
+"kind": "level",
+"title": "ALL OTHER LNS & LS * 5-15 YEARS"
+},
+"LNOT5T15R": {
+"kind": "ratio",
+"title": "ALL OTHER LNS & LS * 5-15 YEARS RATIO"
+},
+"LNOTCI": {
+"kind": "level",
+"title": "OTHER LNS & LS-COMM-QBP"
+},
+"LNOTCI2": {
+"kind": "level",
+"title": "OTHER LOANS & LEASES-QBP-CAVG2"
+},
+"LNOTCI5": {
+"kind": "level",
+"title": "OTHER LOANS & LEASES-QBP-CAVG5"
+},
+"LNOTCIR": {
+"kind": "ratio",
+"title": "OTHER LNS & LS-COMM-QBP RATIO"
+},
+"LNOTHER": {
+"kind": "level",
+"title": "LN TO NONDEP FIN INST & OTH LN"
+},
+"LNOTHERF": {
+"kind": "level",
+"title": "LN TO NONDEP FIN INST & OTH-FGN"
+},
+"LNOTHERFR": {
+"kind": "ratio",
+"title": "LN TO NONDEP FIN INST & OTH-FGN RATIO"
+},
+"LNOTOV15": {
+"kind": "level",
+"title": "ALL OTHER LNS & LS * OVER 15 YRS"
+},
+"LNOTOV15R": {
+"kind": "ratio",
+"title": "ALL OTHER LNS & LS * OVER 15 YRS RATIO"
+},
+"LNPLEDGE": {
+"kind": "level",
+"title": "PLEDGED LOANS AND LEASES"
+},
+"LNPLEDGER": {
+"kind": "ratio",
+"title": "PLEDGED LOANS AND LEASES RATIO"
+},
+"LNRE": {
+"kind": "level",
+"title": "RE LOANS"
+},
+"LNRE2": {
+"kind": "level",
+"title": "RE LOANS"
+},
+"LNRE5": {
+"kind": "level",
+"title": "RE LOANS CAVG5"
+},
+"LNREAG": {
+"kind": "level",
+"title": "RE AGRICULTURAL"
+},
+"LNREAG1": {
+"kind": "level",
+"title": "RE AGRICULTURAL-UNDER 100-$"
+},
+"LNREAG1N": {
+"kind": "count",
+"title": "RE AGRICULTURAL-UNDER 100-NUM"
+},
+"LNREAG1NR": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL-UNDER 100-NUM RATIO"
+},
+"LNREAG1R": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL-UNDER 100-$ RATIO"
+},
+"LNREAG2": {
+"kind": "level",
+"title": "RE AGRICULTURAL-100-250-$"
+},
+"LNREAG2N": {
+"kind": "count",
+"title": "RE AGRICULTURAL-100-250-NUM"
+},
+"LNREAG2NR": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL-100-250-NUM RATIO"
+},
+"LNREAG2R": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL-100-250-$ RATIO"
+},
+"LNREAG3": {
+"kind": "level",
+"title": "RE AGRICULTURAL-250-500-$"
+},
+"LNREAG3N": {
+"kind": "count",
+"title": "RE AGRICULTURAL-250-500-NUM"
+},
+"LNREAG3NR": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL-250-500-NUM RATIO"
+},
+"LNREAG3R": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL-250-500-$ RATIO"
+},
+"LNREAG4": {
+"kind": "level",
+"title": "RE AGRICULTURAL-UNDER 500-$"
+},
+"LNREAG4N": {
+"kind": "count",
+"title": "RE AGRICULTURAL-UNDER 500-NUM"
+},
+"LNREAG4NR": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL-UNDER 500-NUM RATIO"
+},
+"LNREAG4R": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL-UNDER 500-$ RATIO"
+},
+"LNREAG5": {
+"kind": "level",
+"title": "RE AGRICULTURAL-CAVG5"
+},
+"LNREAGR": {
+"kind": "ratio",
+"title": "RE AGRICULTURAL RATIO"
+},
+"LNRECNFM": {
+"kind": "level",
+"title": "1-4 FAM RE CONSTRUCTION LOANS"
+},
+"LNRECNFMR": {
+"kind": "ratio",
+"title": "1-4 FAM RE CONSTRUCTION LOANS RATIO"
+},
+"LNRECNOT": {
+"kind": "level",
+"title": "OTHER RE CONSTRUCTION & LAND LN"
+},
+"LNRECNOTR": {
+"kind": "ratio",
+"title": "OTHER RE CONSTRUCTION & LAND LN"
+},
+"LNRECON2": {
+"kind": "level",
+"title": "LNRECON2"
+},
+"LNRECON5": {
+"kind": "level",
+"title": "RE CONSTRUCTION & LAND DEV-CAV5"
+},
+"LNRECONS": {
+"kind": "level",
+"title": "RE CONSTRUCTION & LAND DEVELOP"
+},
+"LNRECONSR": {
+"kind": "ratio",
+"title": "RE CONSTRUCTION & LAND DEVELOP RATIO"
+},
+"LNREDOM": {
+"kind": "level",
+"title": "RE LOANS-DOM"
+},
+"LNREDOMR": {
+"kind": "ratio",
+"title": "RE LOANS-DOM RATIO"
+},
+"LNREFOR": {
+"kind": "level",
+"title": "RE LOANS-FOR"
+},
+"LNREFORR": {
+"kind": "ratio",
+"title": "RE LOANS-FOR RATIO"
+},
+"LNREJ": {
+"kind": "level",
+"title": "RE LOANS ADJUSTED"
+},
+"LNRELOC": {
+"kind": "level",
+"title": "RE 1-4 FAMILY-LINE"
+},
+"LNRELOC2": {
+"kind": "level",
+"title": "RE 1-4 FAMILY-LINE2"
+},
+"LNRELOC5": {
+"kind": "level",
+"title": "RE 1-4 FAMILY-LINE-CAVG5"
+},
+"LNRELOCR": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY-LINE RATIO"
+},
+"LNREMUL2": {
+"kind": "level",
+"title": "LNREMUL2"
+},
+"LNREMUL5": {
+"kind": "level",
+"title": "RE MULTIFAMILY-CAVG5"
+},
+"LNREMULT": {
+"kind": "level",
+"title": "RE MULTIFAMILY"
+},
+"LNREMULTR": {
+"kind": "ratio",
+"title": "RE MULTIFAMILY RATIO"
+},
+"LNRENR1": {
+"kind": "level",
+"title": "RE NONFARM NONRES-UNDER 100-$"
+},
+"LNRENR1N": {
+"kind": "count",
+"title": "RE NONFARM NONRES-UNDER 100-NUM"
+},
+"LNRENR1NR": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES-UNDER 100-NUM RATIO"
+},
+"LNRENR1R": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES-UNDER 100-$ RATIO"
+},
+"LNRENR2": {
+"kind": "level",
+"title": "RE NONFARM NONRES-100-250-$"
+},
+"LNRENR2N": {
+"kind": "count",
+"title": "RE NONFARM NONRES-100-250-NUM"
+},
+"LNRENR2NR": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES-100-250-NUM RATIO"
+},
+"LNRENR2R": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES-100-250-$ RATIO"
+},
+"LNRENR3": {
+"kind": "level",
+"title": "RE NONFARM NONRES-250-1M-$"
+},
+"LNRENR3N": {
+"kind": "count",
+"title": "RE NONFARM NONRES-250-1M-NUM"
+},
+"LNRENR3NR": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES-250-1M-NUM RATIO"
+},
+"LNRENR3R": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES-250-1M-$ RATIO"
+},
+"LNRENR4": {
+"kind": "level",
+"title": "RE NONFARM NONRES-UNDER 1M-$"
+},
+"LNRENR4N": {
+"kind": "count",
+"title": "RE NONFARM NONRES-UNDER 1M-NUM"
+},
+"LNRENR4NR": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES-UNDER 1M-NUM RATIO"
+},
+"LNRENR4R": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES-UNDER 1M-$ RATIO"
+},
+"LNRENRE2": {
+"kind": "level",
+"title": "RE NONFARM NONRESIDENTIAL CAVG5"
+},
+"LNRENRE5": {
+"kind": "level",
+"title": "RE NONFARM NONRESIDENTIAL CAVG5"
+},
+"LNRENRES": {
+"kind": "level",
+"title": "RE NONFARM NONRESIDENTIAL PROP"
+},
+"LNRENRESR": {
+"kind": "ratio",
+"title": "RE NONFARM NONRESIDENTIAL PROP RATIO"
+},
+"LNRENROT": {
+"kind": "level",
+"title": "OTHER NONFARM NONRES RE LNS"
+},
+"LNRENROTR": {
+"kind": "ratio",
+"title": "OTHER NONFARM NONRES RE LNS RATIO"
+},
+"LNRENROW": {
+"kind": "level",
+"title": "OWNER-OCC NONFARM NONRES RE LNS"
+},
+"LNRENROWR": {
+"kind": "ratio",
+"title": "OWNER-OCC NONFARM NONRES RE LNS"
+},
+"LNRENUS": {
+"kind": "level",
+"title": "RE LNS-NON US ADDRESSEES"
+},
+"LNRENUSR": {
+"kind": "ratio",
+"title": "RE LNS-NON US ADDRESSEES RATIO"
+},
+"LNREOTH": {
+"kind": "level",
+"title": "ALL OTHER RE OWNED-1-4 FAMILY"
+},
+"LNREOTH2": {
+"kind": "level",
+"title": "ALL OTHER RE OWNED-1-4 FAMILY2"
+},
+"LNREOTH5": {
+"kind": "level",
+"title": "RE 1-4 FAMILY OTHER LOANS CAVG5"
+},
+"LNREPP": {
+"kind": "asis",
+"title": "PREPAID TAXES & INS ON MTG LNS"
+},
+"LNRER": {
+"kind": "ratio",
+"title": "RE LOANS RATIO"
+},
+"LNRERES": {
+"kind": "level",
+"title": "RE 1-4 FAMILY"
+},
+"LNRERES2": {
+"kind": "level",
+"title": "RE 1-4 FAMILY2"
+},
+"LNRERES5": {
+"kind": "level",
+"title": "RE 1-4 FAMILY-CAVG5"
+},
+"LNRERESR": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY RATIO"
+},
+"LNRERSF1": {
+"kind": "level",
+"title": "RE 1-4 FAMILY-FIRST LIENS-ADJUST"
+},
+"LNRERSF1R": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY-FIRST LIENS-ADJUST RATIO"
+},
+"LNRERSF2": {
+"kind": "level",
+"title": "RE 1-4 FAMILY-SECOND LIENS"
+},
+"LNRERSF2R": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY-SECOND LIENS RATIO"
+},
+"LNRERSFM": {
+"kind": "level",
+"title": "RE 1-4 FAMILY-FIRST LIENS"
+},
+"LNRERSFMR": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY-FIRST LIENS RATIO"
+},
+"LNRERT1R": {
+"kind": "ratio",
+"title": "RE LOANS/TIER 1"
+},
+"LNRESNCR": {
+"kind": "ratio",
+"title": "LOAN LOSS RESERVE/N/C LOANS"
+},
+"LNRESRE": {
+"kind": "asis",
+"title": "ALLOWANCE FOR RE LOAN"
+},
+"LNRS1T3": {
+"kind": "level",
+"title": "RE 1-4 FAMILY * 1-3 YEARS"
+},
+"LNRS1T3R": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY * 1-3 YEARS RATIO"
+},
+"LNRS3LES": {
+"kind": "level",
+"title": "RE 1-4 FAMILY * 3 MONS OR LESS"
+},
+"LNRS3LESR": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY * 3 MONS OR LESS RATIO"
+},
+"LNRS3T12": {
+"kind": "level",
+"title": "RE 1-4 FAMILY * 3-12 MONTHS"
+},
+"LNRS3T12R": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY * 3-12 MONTHS RATIO"
+},
+"LNRS3T5": {
+"kind": "level",
+"title": "RE 1-4 FAMILY * 3-5 YEARS"
+},
+"LNRS3T5R": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY * 3-5 YEARS RATIO"
+},
+"LNRS5T15": {
+"kind": "level",
+"title": "RE 1-4 FAMILY * 5-15 YEARS"
+},
+"LNRS5T15R": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY * 5-15 YEARS RATIO"
+},
+"LNRSOV15": {
+"kind": "level",
+"title": "RE 1-4 FAMILY * OVER 15 YEARS"
+},
+"LNRSOV15R": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY * OVER 15 YEARS RATIO"
+},
+"LNSB": {
+"kind": "asis",
+"title": "SMALL BUSINESS LNS SOLD-AMT"
+},
+"LNSBR": {
+"kind": "asis",
+"title": "SMALL BUSINESS LNS SOLD"
+},
+"LNSERV": {
+"kind": "level",
+"title": "PRIN BAL- LNS SERVICE FOR OTHERS"
+},
+"LNSERVR": {
+"kind": "ratio",
+"title": "PRIN BAL- LNS SERVICE FOR OTHERS RATIO"
+},
+"LNSOTHER": {
+"kind": "level",
+"title": "OTHER LOANS"
+},
+"LNSOTHERR": {
+"kind": "ratio",
+"title": "OTHER LOANS"
+},
+"LOCCOM": {
+"kind": "level",
+"title": "COMMERCIAL LETTERS OF CREDIT"
+},
+"LOCCOMR": {
+"kind": "ratio",
+"title": "COMMERCIAL LETTERS OF CREDIT RATIO"
+},
+"LOCFPSB": {
+"kind": "level",
+"title": "FIN & PERFORM STANDBY LOC"
+},
+"LOCFPSBK": {
+"kind": "level",
+"title": "FIN & PERFORM STANDBY LOC-CONVEY"
+},
+"LOCFPSBKR": {
+"kind": "ratio",
+"title": "FIN & PERFORM STANDBY LOC-CONVEY RATIO"
+},
+"LOCFPSBR": {
+"kind": "ratio",
+"title": "FIN & PERFORM STANDBY LOC RATIO"
+},
+"LOCFSB": {
+"kind": "level",
+"title": "FINANCIAL STANDBY LOC"
+},
+"LOCFSBK": {
+"kind": "level",
+"title": "FINANCIAL STANDBY LOC-CONVEYED"
+},
+"LOCFSBKR": {
+"kind": "ratio",
+"title": "FINANCIAL STANDBY LOC-CONVEYED RATIO"
+},
+"LOCFSBR": {
+"kind": "ratio",
+"title": "FINANCIAL STANDBY LOC RATIO"
+},
+"LOCPSB": {
+"kind": "level",
+"title": "PERFORMANCE STANDBY LOC"
+},
+"LOCPSBK": {
+"kind": "level",
+"title": "PERFORMANCE STANDBY LOC-CONVEYED"
+},
+"LOCPSBKR": {
+"kind": "ratio",
+"title": "PERFORMANCE STANDBY LOC-CONVEYED RATIO"
+},
+"LOCPSBR": {
+"kind": "ratio",
+"title": "PERFORMANCE STANDBY LOC RATIO"
+},
+"LOREGTY": {
+"kind": "asis",
+"title": "ORE PROTECTED - LOSS SHARE"
+},
+"LOREGTYR": {
+"kind": "ratio",
+"title": "ORE PROTECTED - LOSS SHARE RATIO"
+},
+"LOTH": {
+"kind": "asis",
+"title": "ALL OTHER LN & LS - LOSS SHARE"
+},
+"LOTHR": {
+"kind": "ratio",
+"title": "ALL OTHER LN & LS - LOSS SHARE RATIO"
+},
+"LREAG": {
+"kind": "asis",
+"title": "RE FARMLAND LN - LOSS SH"
+},
+"LREAGR": {
+"kind": "ratio",
+"title": "RE FARMLAND LN - LOSS SH RATIO"
+},
+"LRECONS": {
+"kind": "asis",
+"title": "RE CONSTRUCT LN - LOSS SHARE"
+},
+"LRECONSR": {
+"kind": "ratio",
+"title": "RE CONSTRUCT LN - LOSS SHARE RATIO"
+},
+"LREMULT": {
+"kind": "asis",
+"title": "RE MULTIFAMILY LN-LOSS SH"
+},
+"LREMULTR": {
+"kind": "ratio",
+"title": "RE MULTIFAMILY LN-LOSS SH RATIO"
+},
+"LRENRES": {
+"kind": "asis",
+"title": "RE NONFARM NONRES LN - LOSS SH"
+},
+"LRENRESR": {
+"kind": "ratio",
+"title": "RE NONFARM NONRES LN - LOSS SH RATIO"
+},
+"LRERES": {
+"kind": "asis",
+"title": "RE 1-4 FAMILY LNS - LOSS SHARE"
+},
+"LRERESR": {
+"kind": "ratio",
+"title": "RE 1-4 FAMILY LNS - LOSS SHARE RATIO"
+},
+"LS": {
+"kind": "level",
+"title": "LEASES"
+},
+"LSALNLS": {
+"kind": "asis",
+"title": "CARRY AMT LOSS SHARE-LNLS"
+},
+"LSALNLSR": {
+"kind": "ratio",
+"title": "CARRY AMT LOSS SHARE-LNLS RATIO"
+},
+"LSAOA": {
+"kind": "asis",
+"title": "CARRY AMT LOSS SHARE -OTH ASSET"
+},
+"LSAOAR": {
+"kind": "ratio",
+"title": "CARRY AMT LOSS SHARE -OTH ASSET RATIO"
+},
+"LSAORE": {
+"kind": "asis",
+"title": "CARRY AMT LOSS SHARE- ORE"
+},
+"LSAORER": {
+"kind": "ratio",
+"title": "CARRY AMT LOSS SHARE- ORE RATIO"
+},
+"LSASCDBT": {
+"kind": "asis",
+"title": "CARRY AMT LOSS SHARE -DEBT SEC"
+},
+"LSASCDBTR": {
+"kind": "ratio",
+"title": "CARRY AMT LOSS SHARE -DEBT SEC RATIO"
+},
+"LSFOR": {
+"kind": "level",
+"title": "LEASES-FOR"
+},
+"LSFORR": {
+"kind": "ratio",
+"title": "LEASES-FOR RATIO"
+},
+"LSR": {
+"kind": "ratio",
+"title": "LEASES RATIO"
+},
+"MMLFBAL": {
+"kind": "asis",
+"title": "Outstanding balance of assets purchased under the Money Market Mutual Fund Liquidity Facility (MMLF)."
+},
+"MMLFBALR": {
+"kind": "ratio",
+"title": "Outstanding balance of assets purchased under the Money Market Mutual Fund Liquidity Facility (MMLF) ratio"
+},
+"MNRTYCDE": {
+"kind": "asis",
+"title": "MINORITY CODE"
+},
+"MNRTYDTE": {
+"kind": "level",
+"title": "EFFECTIVE DTE OF MINORITY STATUS"
+},
+"MSA": {
+"kind": "level",
+"title": "FIPS MSA CODE"
+},
+"MSRECE": {
+"kind": "level",
+"title": "OUT PRIN BAL MORT W/ RECOURSE"
+},
+"MSRECER": {
+"kind": "ratio",
+"title": "OUT PRIN BAL MORT W/ RECOURSE RATIO"
+},
+"MSRESFCL": {
+"kind": "level",
+"title": "1-4 FM SERVICED IN FORECLOSURE"
+},
+"MSRESFCLR": {
+"kind": "ratio",
+"title": "1-4 FM SERVICED IN FORECLOSURE RATIO"
+},
+"MSRNRECE": {
+"kind": "level",
+"title": "OUT PRIN BAL MORT W/ NO RECOURSE"
+},
+"MSRNRECER": {
+"kind": "ratio",
+"title": "OUT PRIN BAL MORT W/ NO RECOURSE RATIO"
+},
+"MTGLS": {
+"kind": "asis",
+"title": "MORTGAGE INDEBTEDNESS & CAP LS"
+},
+"NAAG": {
+"kind": "level",
+"title": "NONACCRUAL-AGRICULTURAL LNS"
+},
+"NAAGR": {
+"kind": "ratio",
+"title": "NONACCRUAL-AGRICULTURAL LNS RATIO"
+},
+"NAAGSM": {
+"kind": "level",
+"title": "NONACCRUAL-AG LNS*SMALL BKS"
+},
+"NAAGSMR": {
+"kind": "ratio",
+"title": "NONACCRUAL-AG LNS*SMALL BKS RATIO"
+},
+"NAASSET": {
+"kind": "level",
+"title": "NONACCRUAL-TOTAL ASSETS"
+},
+"NAASSETR": {
+"kind": "ratio",
+"title": "NONACCRUAL-AG LNS*SMALL BKS RATIO"
+},
+"NAAUTO": {
+"kind": "level",
+"title": "NONACCRUAL AUTO LOANS"
+},
+"NAAUTOR": {
+"kind": "ratio",
+"title": "NONACCRUAL AUTO LOANS RATIO"
+},
+"NACDIR": {
+"kind": "level",
+"title": "NOTIONAL AMOUNT OF CREDIT DERIVATIVES"
+},
+"NACI": {
+"kind": "level",
+"title": "NONACCRUAL-C&I LOANS"
+},
+"NACINUS": {
+"kind": "level",
+"title": "NONACCRUAL-C&I*NON-U.S."
+},
+"NACINUSR": {
+"kind": "ratio",
+"title": "NONACCRUAL-C&I*NON-U.S. RATIO"
+},
+"NACIR": {
+"kind": "ratio",
+"title": "NONACCRUAL-C&I LOANS RATIO"
+},
+"NACON": {
+"kind": "level",
+"title": "NONACCRUAL-CONSUMER LOANS"
+},
+"NACONOTH": {
+"kind": "level",
+"title": "NONACCRUAL-OTHER CONSUMER"
+},
+"NACONOTHR": {
+"kind": "ratio",
+"title": "NONACCRUAL-OTHER CONSUMER RATIO"
+},
+"NACONR": {
+"kind": "ratio",
+"title": "NONACCRUAL-CONSUMER LOANS RATIO"
+},
+"NACRCD": {
+"kind": "level",
+"title": "NONACCRUAL-CREDIT CARD PLANS"
+},
+"NACRCDR": {
+"kind": "ratio",
+"title": "NONACCRUAL-CREDIT CARD PLANS RATIO"
+},
+"NADEP": {
+"kind": "asis",
+"title": "NONACCRUAL-DEP INST LOANS"
+},
+"NADEPNUSR": {
+"kind": "ratio",
+"title": "NONACCRUAL-DEP INST*NON U.S. RATIO"
+},
+"NADEPR": {
+"kind": "ratio",
+"title": "NONACCRUAL-DEP INST LOANS RATIO"
+},
+"NAFG": {
+"kind": "level",
+"title": "NONACCRUAL-FOREIGN GOVT"
+},
+"NAFGR": {
+"kind": "ratio",
+"title": "NONACCRUAL-FOREIGN GOVT RATIO"
+},
+"NAGTY": {
+"kind": "level",
+"title": "NONACCRUAL-GTY LN&LS"
+},
+"NAGTYGNM": {
+"kind": "level",
+"title": "NONACCRUAL REBOOKED GNMA LOANS"
+},
+"NAGTYGNMR": {
+"kind": "ratio",
+"title": "NONACCRUAL REBOOKED GNMA LNS"
+},
+"NAGTYPAR": {
+"kind": "level",
+"title": "NONACCRUAL-PART GTY LN&LS"
+},
+"NAGTYPARR": {
+"kind": "ratio",
+"title": "NONACCRUAL-PART GTY LN&LS RATIO"
+},
+"NAGTYR": {
+"kind": "ratio",
+"title": "NONACCRUAL -GTY LN&LS"
+},
+"NALAG": {
+"kind": "asis",
+"title": "NONACCRUAL AG LOANS-LOSS SH"
+},
+"NALAGR": {
+"kind": "ratio",
+"title": "NONACCRUAL AG LOANS-LOSS SH RATIO"
+},
+"NALCI": {
+"kind": "asis",
+"title": "NONACCRUAL C&I LNS-LOSS SH"
+},
+"NALCIR": {
+"kind": "ratio",
+"title": "NONACCRUAL C&I LNS-LOSS SH RATIO"
+},
+"NALCON": {
+"kind": "asis",
+"title": "NONACCRUAL CONSUMER LN -LOSS SH"
+},
+"NALCONR": {
+"kind": "ratio",
+"title": "NONACCRUAL CONSUMER LN -LOSS SH RATIO"
+},
+"NALGTY": {
+"kind": "level",
+"title": "NONACCR PROTECT (GTY)-LOSS SH"
+},
+"NALGTYR": {
+"kind": "ratio",
+"title": "NONACCRUAL PROTECT (GTY)-LOSS SH RATIO"
+},
+"NALNLS": {
+"kind": "level",
+"title": "NONACCRUAL-LOANS & LEASES"
+},
+"NALNSALE": {
+"kind": "level",
+"title": "NONACCRUAL-L&L HELD FOR SALE"
+},
+"NALNSALER": {
+"kind": "ratio",
+"title": "NONACCRUAL-L&L HELD FOR SALE RATIO"
+},
+"NALOTH": {
+"kind": "asis",
+"title": "NONACCRUAL OTHER LNS-LOSS SH"
+},
+"NALOTHR": {
+"kind": "ratio",
+"title": "NONACCRUAL OTHER LNS-LOSS SH RATIO"
+},
+"NALREAG": {
+"kind": "asis",
+"title": "NONACCRUAL RE FARM-LOSS SH"
+},
+"NALREAGR": {
+"kind": "ratio",
+"title": "NONACCRUAL RE FARM LOSS SH RATIO"
+},
+"NALRECON": {
+"kind": "asis",
+"title": "NONACCRUAL CONSTR LN -LOSS SH"
+},
+"NALRECONR": {
+"kind": "ratio",
+"title": "NONACCRUAL CONSTR LN -LOSS SH RATIO"
+},
+"NALREMUL": {
+"kind": "asis",
+"title": "NONACCRUAL MULTIFAM - LOSS SH"
+},
+"NALREMULR": {
+"kind": "ratio",
+"title": "NONACCRUAL MULTIFAM - LOSS SH RATIO"
+},
+"NALRENRS": {
+"kind": "asis",
+"title": "NONACCRUAL NFNR LN - LOSS SH"
+},
+"NALRENRSR": {
+"kind": "ratio",
+"title": "NONACCRUAL NFNR LN - LOSS SH RATIO"
+},
+"NALRERES": {
+"kind": "asis",
+"title": "NONACCRUAL 1-4 FM LN-LOSS SH"
+},
+"NALRERESR": {
+"kind": "ratio",
+"title": "NONACCRUAL 1-4 FM LN-LOSS SH RATIO"
+},
+"NALS": {
+"kind": "level",
+"title": "NONACCRUAL-LEASES"
+},
+"NALSR": {
+"kind": "ratio",
+"title": "NONACCRUAL-LEASES RATIO"
+},
+"NALTOT": {
+"kind": "asis",
+"title": "NONACCRUAL TOTAL LOANS - LOSS SH"
+},
+"NALTOTR": {
+"kind": "ratio",
+"title": "NONACCRUAL TOTAL LOANS - LOSS SH RATIO"
+},
+"NAOTHLN": {
+"kind": "level",
+"title": "NONACCRUAL-ALL OTHER LOANS"
+},
+"NAOTHLNR": {
+"kind": "ratio",
+"title": "NONACCRUAL-ALL OTHER LOANS RATIO"
+},
+"NARE": {
+"kind": "level",
+"title": "NONACCRUAL-REAL ESTATE LOANS"
+},
+"NAREAG": {
+"kind": "level",
+"title": "NONACCRUAL-RE*FARMLAND"
+},
+"NAREAGR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*FARMLAND RATIO"
+},
+"NARECNFM": {
+"kind": "level",
+"title": "NONACCRUAL 1-4 FAM CONSTRUCT LN"
+},
+"NARECNFMR": {
+"kind": "ratio",
+"title": "NONACCRUAL 1-4 FAM CONSTRUCT LN RATIO"
+},
+"NARECNOT": {
+"kind": "level",
+"title": "NONACCRUAL OTHER CONSTR & LAND"
+},
+"NARECNOTR": {
+"kind": "ratio",
+"title": "NONACCRUAL OTHER CONSTR & LAND RATIO"
+},
+"NARECONS": {
+"kind": "level",
+"title": "NONACCRUAL-RE*CONSTRUCTION"
+},
+"NARECONSR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*CONSTRUCTION RATIO"
+},
+"NAREFOR": {
+"kind": "level",
+"title": "NONACCRUAL-RE*FOREIGN"
+},
+"NAREFORR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*FOREIGN RATIO"
+},
+"NARELNDO": {
+"kind": "level",
+"title": "90+ REAL ESTATE LOANS IN DOMESTIC OFFICES"
+},
+"NARELNDOR": {
+"kind": "ratio",
+"title": "90+ REAL ESTATE LOANS IN DOMESTIC OFFICES RATIO"
+},
+"NARELOC": {
+"kind": "level",
+"title": "NONACCRUAL-RE*1-4 FAM LINES"
+},
+"NARELOCR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*1-4 FAM LINES RATIO"
+},
+"NAREMULT": {
+"kind": "level",
+"title": "NONACCRUAL-RE*MULTIFAMILY"
+},
+"NAREMULTR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*MULTIFAMILY RATIO"
+},
+"NARENRES": {
+"kind": "level",
+"title": "NONACCRUAL-RE*NONFARM NONRES"
+},
+"NARENRESR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*NONFARM NONRES RATIO"
+},
+"NARENROT": {
+"kind": "level",
+"title": "NONACCRUAL OTHER NONFARM NONRES"
+},
+"NARENROTR": {
+"kind": "ratio",
+"title": "NONACCRUAL OTHER NONFARM NONRES RATIO"
+},
+"NARENROW": {
+"kind": "level",
+"title": "NONACCRUAL 0WN-OCC NONFRM NONRS"
+},
+"NARENROWR": {
+"kind": "ratio",
+"title": "NONACCRUAL OWN-OCC NONFRM NONRS RATIO"
+},
+"NARENUS": {
+"kind": "level",
+"title": "NONACCRUAL-RE*NON-U.S."
+},
+"NARENUSR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*NON-U.S. RATIO"
+},
+"NARER": {
+"kind": "ratio",
+"title": "NONACCRUAL-REAL ESTATE LOANS RATIO"
+},
+"NARERES": {
+"kind": "level",
+"title": "NONACCRUAL-RE*1-4 FAMILY"
+},
+"NARERESR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*1-4 FAMILY RATIO"
+},
+"NARERSF2": {
+"kind": "level",
+"title": "NONACCRUAL-RE*1-4 JUNIOR LIEN"
+},
+"NARERSF2R": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*1-4 JN LIEN RATIO"
+},
+"NARERSFM": {
+"kind": "level",
+"title": "NONACCRUAL-RE*1-4 IST LIEN"
+},
+"NARERSFMR": {
+"kind": "ratio",
+"title": "NONACCRUAL-RE*1-4 IST LIEN RATIO"
+},
+"NARSCI": {
+"kind": "level",
+"title": "NONACCRUAL RESTRUCT C&I LN"
+},
+"NARSCONS": {
+"kind": "level",
+"title": "NONACCR RESTRUCT CONSTRUCTION"
+},
+"NARSLNFM": {
+"kind": "level",
+"title": "NONACCRUAL RESTRU LN- 1-4 FAM"
+},
+"NARSLNFMR": {
+"kind": "ratio",
+"title": "NONACCRUAL RESTRU LN- 1-4 FAM RATIO"
+},
+"NARSLNLS": {
+"kind": "level",
+"title": "NONACCRUAL RESTRU LN EXCL 1-4 FM"
+},
+"NARSLNLSR": {
+"kind": "ratio",
+"title": "NONACCRUAL RESTRU LN EXCL 1-4 FM RATIO"
+},
+"NARSLNLT": {
+"kind": "level",
+"title": "NONACCRUAL RESTRUCT LN- TOTAL"
+},
+"NARSLNLTR": {
+"kind": "ratio",
+"title": "NONACCRUAL RESTRUCT LN- TOTAL RATIO"
+},
+"NARSMULT": {
+"kind": "level",
+"title": "NONACCRUAL RESTRUCT MULTIFAMILY"
+},
+"NARSNRES": {
+"kind": "level",
+"title": "NONACCR RESTRUCTURED NFNR LN"
+},
+"NARSOTH": {
+"kind": "level",
+"title": "NONACCRUAL RESTRUCT ALL OTH LN"
+},
+"NASCDEBT": {
+"kind": "level",
+"title": "NONACCRUAL-DEBT SECURITIES"
+},
+"NASCDEBTR": {
+"kind": "ratio",
+"title": "NONACCRUAL-DEBT SECURITIES RATIO"
+},
+"NCAG": {
+"kind": "level",
+"title": "TOTAL N/C-AGRICULTURAL LNS"
+},
+"NCAUTO": {
+"kind": "level",
+"title": "N/C AUTO LOANS"
+},
+"NCCI": {
+"kind": "level",
+"title": "TOTAL N/C-C&I LOANS"
+},
+"NCCOMRE": {
+"kind": "level",
+"title": "NC COMMERCIAL RE/COMMERCIAL RE"
+},
+"NCCOMRER": {
+"kind": "ratio",
+"title": "NC COMMERCIAL RE/COMMERCIAL RE"
+},
+"NCCON": {
+"kind": "level",
+"title": "TOTAL N/C-CONSUMER LOANS"
+},
+"NCCONOTH": {
+"kind": "level",
+"title": "TOTAL N/C-OTHER CONSUMER"
+},
+"NCCRCD": {
+"kind": "level",
+"title": "TOTAL N/C CREDIT CARD PLANS"
+},
+"NCDEP": {
+"kind": "asis",
+"title": "TOTAL N/C-DEP INST LOANS"
+},
+"NCFG": {
+"kind": "level",
+"title": "TOTAL N/C-FOREIGN GOVT"
+},
+"NCGTYPAR": {
+"kind": "level",
+"title": "TOTAL N/C-PART GTY LN&LS"
+},
+"NCLNLS": {
+"kind": "level",
+"title": "TOTAL N/C-LOANS & LEASES"
+},
+"NCLNLSR": {
+"kind": "ratio",
+"title": "N/C LNS & LS/GROSS LNS & LS"
+},
+"NCLS": {
+"kind": "level",
+"title": "TOTAL N/C-LEASES"
+},
+"NCOTHLN": {
+"kind": "level",
+"title": "TOTAL N/C-ALL OTHER LOANS"
+},
+"NCRE": {
+"kind": "level",
+"title": "TOTAL N/C REAL ESTATE LOANS"
+},
+"NCREAG": {
+"kind": "level",
+"title": "TOTAL N/C-RE*FARMLAND"
+},
+"NCRECNFM": {
+"kind": "level",
+"title": "N/C 1-4 FAMILY CONSTRUCTION LOAN"
+},
+"NCRECNOT": {
+"kind": "level",
+"title": "N/C OTHER CONSTRUCT & LAND DEV"
+},
+"NCRECONR": {
+"kind": "ratio",
+"title": "N/C CONST REAL ESTATE/CONST RE"
+},
+"NCRECONS": {
+"kind": "level",
+"title": "TOTAL N/C CONST REAL ESTATE CONSTRUCTION"
+},
+"NCRELOC": {
+"kind": "level",
+"title": "TOTAL N/C-RE 1-4 FAMILY LINES"
+},
+"NCRELOCR": {
+"kind": "ratio",
+"title": "N/C HOME EQUITY/HOME EQUITY"
+},
+"NCREMULR": {
+"kind": "ratio",
+"title": "N/C MULTIFAMLY RE/MULTIFAMLY RE"
+},
+"NCREMULT": {
+"kind": "level",
+"title": "TOTAL N/C MULTIFAMLY RE"
+},
+"NCRENRER": {
+"kind": "ratio",
+"title": "N/C NONFARM NONRES RE/NONRES RE"
+},
+"NCRENRES": {
+"kind": "level",
+"title": "TOTAL N/C NONFARM NONRES RE"
+},
+"NCRENROT": {
+"kind": "level",
+"title": "N/C OTHER NONFARM NONRES RE LN"
+},
+"NCRENROW": {
+"kind": "level",
+"title": "N/C OWN-OCCUPIED NONFARM NONRES"
+},
+"NCRER": {
+"kind": "ratio",
+"title": "N/C REAL ESTATE LNS/REAL ESTATE"
+},
+"NCREREOR": {
+"kind": "ratio",
+"title": "N/C 1-4 OTHER RE/1-4 OTHER RE"
+},
+"NCRERES": {
+"kind": "level",
+"title": "N/C 1-4 FAMILY RE"
+},
+"NCRERESO": {
+"kind": "level",
+"title": "N/C 1-4 OTHER RE/1-4 OTHER RE"
+},
+"NCRERESR": {
+"kind": "ratio",
+"title": "N/C 1-4 FAMILY RE/1-4 FAMILY RE"
+},
+"NCRERS2R": {
+"kind": "ratio",
+"title": "N/C 1-4 FAM JR LN/1-4 FAM JR LN"
+},
+"NCRERSF2": {
+"kind": "level",
+"title": "N/C RE 1-4 FAM JUNIOR LIEN"
+},
+"NCRERSFM": {
+"kind": "level",
+"title": "N/C RE 1-4 FAM FIRST LIEN"
+},
+"NCRERSFR": {
+"kind": "ratio",
+"title": "N/C 1-4 FAM 1STLN/1-4 FAM IST LN"
+},
+"NCRSLNLS": {
+"kind": "level",
+"title": "NC RESTRUCT LOANS EXCL 1-4 FM"
+},
+"NETGNAST": {
+"kind": "level",
+"title": "NET G/L ON SALES OF FIX ASSETS"
+},
+"NETGNASTR": {
+"kind": "ratio",
+"title": "NET G/L ON SALES OF FIX ASSETS RATIO"
+},
+"NETGNSLN": {
+"kind": "level",
+"title": "NET G/L ON SALES OF LOANS"
+},
+"NETGNSLNR": {
+"kind": "ratio",
+"title": "NET G/L ON SALES OF LOANS RATIO"
+},
+"NETGNSRE": {
+"kind": "level",
+"title": "NET G/L ON OTHER RE OWNED"
+},
+"NETGNSRER": {
+"kind": "ratio",
+"title": "NET G/L ON OTHER RE OWNED RATIO"
+},
+"NETIBXQA": {
+"kind": "level",
+"title": "NETIBXQA"
+},
+"NETIMIN": {
+"kind": "level",
+"title": "NET INC - ATTRIB TO MINORITY INT"
+},
+"NETIMINQ": {
+"kind": "level",
+"title": "NET INC - ATTRIB TO MINORITY INT QUARTERLY"
+},
+"NETIMINQR": {
+"kind": "ratio",
+"title": "NET INC - ATTRIB TO MINORITY INT QUARTERLY RATIO"
+},
+"NETIMINR": {
+"kind": "ratio",
+"title": "NET INC - ATTRIB TO MINORITY INT RATIO"
+},
+"NETINBM": {
+"kind": "level",
+"title": "NET INC - BANK & MINORITY INT"
+},
+"NETINBMQ": {
+"kind": "level",
+"title": "NET INC - BANK & MINORITY INT QUARTERLY"
+},
+"NETINBMQR": {
+"kind": "ratio",
+"title": "NET INC - BANK & MINORITY INT QUARTERLY RATIO"
+},
+"NETINBMR": {
+"kind": "ratio",
+"title": "NET INC - BANK & MINORITY INT RATIO"
+},
+"NETINBXA": {
+"kind": "level",
+"title": "NET INCOME BEFORE TAXES ANNUALLY"
+},
+"NETINC": {
+"kind": "level",
+"title": "Net income"
+},
+"NETINCA": {
+"kind": "level",
+"title": "NET INCOME- BANK- ANN"
+},
+"NETINCQ": {
+"kind": "level",
+"title": "Net income - quarterly"
+},
+"NETINCQA": {
+"kind": "level",
+"title": "Net income - quarterly"
+},
+"NETINCQR": {
+"kind": "ratio",
+"title": "NET INCOME - QUARTERLY RATIO"
+},
+"NETINCR": {
+"kind": "ratio",
+"title": "NET INCOME - RATIO"
+},
+"NFAA": {
+"kind": "count",
+"title": "NUMBER OF FIDUCIARY ACCOUNTS AND RELATED ASSET ACCOUNTS"
+},
+"NIM": {
+"kind": "level",
+"title": "NET INTEREST INCOME"
+},
+"NIMA": {
+"kind": "level",
+"title": "NET INTEREST INCOME ANNUALLY"
+},
+"NIMQ": {
+"kind": "level",
+"title": "NET INTEREST INCOME QUARTERLY"
+},
+"NIMQA": {
+"kind": "level",
+"title": "NET INTEREST INCOME QUARTERLY"
+},
+"NIMQR": {
+"kind": "ratio",
+"title": "NET INTEREST INCOME QUARTERLY RATIO"
+},
+"NIMR": {
+"kind": "ratio",
+"title": "NET INTEREST INCOME RATIO"
+},
+"NIMY": {
+"kind": "ratio",
+"title": "NET INTEREST MARGIN"
+},
+"NIMYQ": {
+"kind": "ratio",
+"title": "NET INTEREST MARGIN QUARTERLY"
+},
+"NOIJ": {
+"kind": "level",
+"title": "NET OPERATING INCOME-ADJ"
+},
+"NOIJA": {
+"kind": "level",
+"title": "NET OPERATING INCOME-ADJ ANNUALLY"
+},
+"NOIJQ": {
+"kind": "level",
+"title": "NET OPERATING INCOME-ADJ QUARTERLY"
+},
+"NOIJQA": {
+"kind": "level",
+"title": "NET OPERATING INCOME-ADJ QUARTERLY"
+},
+"NOIJQR": {
+"kind": "ratio",
+"title": "NET OPERATING INCOME-ADJ QUARTERLY RATIO"
+},
+"NOIJR": {
+"kind": "ratio",
+"title": "NET OPERATING INCOME-ADJ RATIO"
+},
+"NOIJY": {
+"kind": "ratio",
+"title": "NET OPERATING INCOME-ADJ/ASSETS"
+},
+"NOIJYQ": {
+"kind": "ratio",
+"title": "NET OPERATING INCOME-ADJ/ASSETS QUARTERLY"
+},
+"NOIQ": {
+"kind": "level",
+"title": "NET OPERATING INCOME-QTR"
+},
+"NONII": {
+"kind": "level",
+"title": "TOTAL NONINTEREST INCOME"
+},
+"NONIIA": {
+"kind": "level",
+"title": "TOTAL NONINTEREST INCOME ANNUALLY"
+},
+"NONIIAY": {
+"kind": "ratio",
+"title": "NONINTEREST INC/AVERAGE ASSETS"
+},
+"NONIIAYQ": {
+"kind": "ratio",
+"title": "NONINTEREST INC/AVERAGE ASSETS QUARTERLY"
+},
+"NONIIQ": {
+"kind": "level",
+"title": "TOTAL NONINTEREST INCOME-QTR"
+},
+"NONIIQA": {
+"kind": "level",
+"title": "TOTAL NONINTEREST INCOME-QTR"
+},
+"NONIIQR": {
+"kind": "ratio",
+"title": "TOTAL NONINTEREST INCOME-QTR RATIO"
+},
+"NONIIR": {
+"kind": "ratio",
+"title": "TOTAL NONINTEREST INCOME RATIO"
+},
+"NONIX": {
+"kind": "level",
+"title": "TOTAL NONINTEREST EXPENSE"
+},
+"NONIXA": {
+"kind": "level",
+"title": "TOTAL NONINTEREST EXPENSE ANNUALLY"
+},
+"NONIXAY": {
+"kind": "ratio",
+"title": "NONINTEREST EXP/AVERAGE ASSETS"
+},
+"NONIXAYQ": {
+"kind": "ratio",
+"title": "NONINTEREST EXP/AVERAGE ASSETS QUARTERLY"
+},
+"NONIXQ": {
+"kind": "level",
+"title": "TOTAL NONINTEREST EXPENSE QUARTERLY"
+},
+"NONIXQA": {
+"kind": "level",
+"title": "TOTAL NONINTEREST EXPENSE QUARTERLY"
+},
+"NONIXQR": {
+"kind": "ratio",
+"title": "TOTAL NONINTEREST EXPENSE QUARTERLY RATIO"
+},
+"NONIXR": {
+"kind": "ratio",
+"title": "TOTAL NONINTEREST EXPENSE RATIO"
+},
+"NPERF": {
+"kind": "level",
+"title": "NONPERF ASSETS/TOTAL ASSETS"
+},
+"NPERFV": {
+"kind": "ratio",
+"title": "NONPERF ASSETS/TOTAL ASSETS"
+},
+"NTAG": {
+"kind": "level",
+"title": "AGRICULTURAL LN NET CHARGE-OFFS"
+},
+"NTAGA": {
+"kind": "level",
+"title": "AGRICULTURAL LN NET-CHG-ANN"
+},
+"NTAGQ": {
+"kind": "asis",
+"title": "AG LOAN NET CHARGE-OFFS-QTR"
+},
+"NTAGQA": {
+"kind": "level",
+"title": "AG LOAN NET CHARGE-OFFS-QTR-ANN"
+},
+"NTAGQR": {
+"kind": "ratio",
+"title": "AG LOAN NET CHARGE-OFFS-QTR RATIO"
+},
+"NTAGR": {
+"kind": "ratio",
+"title": "AGRICULTURAL LN NET CHARGE-OFFS RATIO"
+},
+"NTAGSM": {
+"kind": "level",
+"title": "AG LN NET CHARGE-OFFS*SMALL BKS"
+},
+"NTAGSMA": {
+"kind": "level",
+"title": "AG LN NET CHARGE-OFFS ANN*SM BKS"
+},
+"NTAGSMQ": {
+"kind": "level",
+"title": "AG LN NET CHARGE-OFFS*SMALL BKS QUARTERLY"
+},
+"NTAGSMQA": {
+"kind": "level",
+"title": "AG LOAN NET-CHG-QTR-ANN*SMALL BK"
+},
+"NTAGSMQR": {
+"kind": "ratio",
+"title": "AG LN NET CHARGE-OFFS*SMALL BKS QUARTERLY RATIO"
+},
+"NTAGSMR": {
+"kind": "ratio",
+"title": "AG LN NET CHARGE-OFFS*SMALL BKS RATIO"
+},
+"NTALLOTHDEN": {
+"kind": "level",
+"title": "Net Charge-offs All other loans & leases (including farm) denominator"
+},
+"NTALLOTHNUM": {
+"kind": "level",
+"title": "Net Charge-offs All other loans & leases (including farm) Numerator"
+},
+"NTALLOTHQR": {
+"kind": "ratio",
+"title": "Net Charge-offs All other loans & leases (including farm)"
+},
+"NTALLOTHR": {
+"kind": "ratio",
+"title": "ALL OTHER LOANS & LEASES (INCLUDING FARM)"
+},
+"NTAUTO": {
+"kind": "level",
+"title": "AUTO LOANS - NET CHARGE-OFFS"
+},
+"NTAUTOA": {
+"kind": "level",
+"title": "AUTO LNS - NET CHG-OFFS - ANN"
+},
+"NTAUTOLNQR": {
+"kind": "ratio",
+"title": "AUTO LNS - NET CHG-OFFS - QTR RATIO"
+},
+"NTAUTOPR": {
+"kind": "ratio",
+"title": "AUTOMOBILE LOANS"
+},
+"NTAUTOQ": {
+"kind": "level",
+"title": "AUTO LNS - NET CHG-OFFS - QTR"
+},
+"NTAUTOQR": {
+"kind": "ratio",
+"title": "AUTO LN-CHG-OFF- QTR/AUTO LN"
+},
+"NTAUTOR": {
+"kind": "ratio",
+"title": "AUTO LOANS - NET CHARGE-OFFS RATIO"
+},
+"NTCI": {
+"kind": "level",
+"title": "COMMERCIAL LOAN NET CHARGE-OFFS"
+},
+"NTCIA": {
+"kind": "level",
+"title": "COMMERCIAL LOAN NET-CHG-ANN"
+},
+"NTCINUS": {
+"kind": "level",
+"title": "NON-U.S.COMMERCIAL LN NET CHG-OF"
+},
+"NTCINUSQ": {
+"kind": "level",
+"title": "NON-U.S.COMMERCIAL LN NET CHG-OF QUARTERLY"
+},
+"NTCINUSQR": {
+"kind": "ratio",
+"title": "NON-U.S.COMMERCIAL LN NET CHG-OF QUARTERLY RATIO"
+},
+"NTCINUSR": {
+"kind": "ratio",
+"title": "NON-U.S.COMMERCIAL LN NET CHG-OF RATIO"
+},
+"NTCIQ": {
+"kind": "level",
+"title": "COMMERCIAL LOAN NET-CHG-QTR"
+},
+"NTCIQA": {
+"kind": "level",
+"title": "COMMERCIAL LOAN NET-CHG-QTR-ANN"
+},
+"NTCIQR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN NET-CHG-QTR RATIO"
+},
+"NTCIR": {
+"kind": "ratio",
+"title": "COMMERCIAL LOAN NET CHARGE-OFFS RATIO"
+},
+"NTCOMRE": {
+"kind": "level",
+"title": "COMMERCIAL RE LN NET CHARGE-OFFS"
+},
+"NTCOMREA": {
+"kind": "level",
+"title": "COMMERCIAL RE LN CHG-ANN"
+},
+"NTCOMREQ": {
+"kind": "ratio",
+"title": "COMMERCIAL RE CHG-OFF/COMM RE LN QUARTERLY"
+},
+"NTCOMREQR": {
+"kind": "ratio",
+"title": "COMMERCIAL RE CHG-OFF/COMM RE LN QUARTERLY RATIO"
+},
+"NTCOMRER": {
+"kind": "ratio",
+"title": "COMMERCIAL RE CHG-OFF/COMM RE LN"
+},
+"NTCOMRQA": {
+"kind": "level",
+"title": "COMML RE NET-CHARGE-OFF-QTR-ANN"
+},
+"NTCON": {
+"kind": "level",
+"title": "CONSUMER LOAN NET CHARGE-OFFS"
+},
+"NTCONA": {
+"kind": "level",
+"title": "CONSUMER LOAN NET-CHG-ANN"
+},
+"NTCONOTA": {
+"kind": "level",
+"title": "OTHER CONSUMER LOAN NET-CHG-ANN"
+},
+"NTCONOTH": {
+"kind": "level",
+"title": "OTHER CONSUMER LN NET CHARGE-OFF"
+},
+"NTCONOTHR": {
+"kind": "ratio",
+"title": "OTHER CONSUMER LN NET CHARGE-OFF RATIO"
+},
+"NTCONOTQ": {
+"kind": "level",
+"title": "OTHER CONSUMER LN NET-CHG-QTR"
+},
+"NTCONOTQR": {
+"kind": "ratio",
+"title": "OTHER CONSUMER LN NET-CHG-QTR RATIO"
+},
+"NTCONOTR": {
+"kind": "ratio",
+"title": "OTHER CONSUMER LOANS"
+},
+"NTCONQ": {
+"kind": "level",
+"title": "CONSUMER LOAN NET-CHG-QTR"
+},
+"NTCONQA": {
+"kind": "level",
+"title": "CONSUMER LN NET-CHG-QTR-ANN"
+},
+"NTCONQR": {
+"kind": "ratio",
+"title": "CONSUMER LOAN NET-CHG-QTR RATIO"
+},
+"NTCONR": {
+"kind": "ratio",
+"title": "CONSUMER LOAN NET CHARGE-OFFS RATIO"
+},
+"NTCONTQR": {
+"kind": "ratio",
+"title": "OTH.CONSUMER CHGOFF-QTR/OTH.CONS"
+},
+"NTCRCD": {
+"kind": "level",
+"title": "CREDIT CARD LOAN NET CHARGE-OFFS"
+},
+"NTCRCDA": {
+"kind": "level",
+"title": "CREDIT CARD LOAN NET-CHG-ANN"
+},
+"NTCRCDQ": {
+"kind": "level",
+"title": "CREDIT CARD LN NET-CHG-QTR"
+},
+"NTCRCDQA": {
+"kind": "level",
+"title": "CREDIT CARD LN NET-CHG-QTR-ANN"
+},
+"NTCRCDQR": {
+"kind": "ratio",
+"title": "CREDIT CARD LN NET-CHG-QTR RATIO"
+},
+"NTCRCDR": {
+"kind": "ratio",
+"title": "CREDIT CARD LOAN NET CHARGE-OFFS RATIO"
+},
+"NTDEP": {
+"kind": "asis",
+"title": "DEPOSITORY INST LOAN NET CHG-OFF"
+},
+"NTDEPNUQ": {
+"kind": "asis",
+"title": "FOREIGN DEP INST LN NET CHG-OFFS QUARTERLY"
+},
+"NTDEPNUQR": {
+"kind": "ratio",
+"title": "FOREIGN DEP INST LN NET CHG-OFFS QUARTERLY RATIO"
+},
+"NTDEPNUS": {
+"kind": "asis",
+"title": "FOREIGN DEP INST LN NET CHG-OFFS"
+},
+"NTDEPNUSR": {
+"kind": "ratio",
+"title": "FOREIGN DEP INST LN NET CHG-OFFS RATIO"
+},
+"NTDEPQ": {
+"kind": "asis",
+"title": "DEPOSITORY INST LOAN NET-CHG-QTR"
+},
+"NTDEPQR": {
+"kind": "ratio",
+"title": "DEPOSITORY INST LOAN NET-CHG-QTR RATIO"
+},
+"NTDEPR": {
+"kind": "ratio",
+"title": "DEPOSITORY INST LOAN NET CHG-OFF RATIO"
+},
+"NTFORGV": {
+"kind": "asis",
+"title": "FOREIGN GOVT LN NET CHG-OFFS"
+},
+"NTFORGVQ": {
+"kind": "asis",
+"title": "FOREIGN GOV LN NET-CHG-QTR"
+},
+"NTFORGVQR": {
+"kind": "ratio",
+"title": "FOREIGN GOV LN NET-CHG-QTR RATIO"
+},
+"NTFORGVR": {
+"kind": "ratio",
+"title": "FOREIGN GOVT LN NET CHG-OFFS RATIO"
+},
+"NTGLFXAQ": {
+"kind": "level",
+"title": "NET G/L ON SALES OF FIX ASSETS QUARTERLY"
+},
+"NTGLFXAQR": {
+"kind": "ratio",
+"title": "NET G/L ON SALES OF FIX ASSETS QUARTERLY RATIO"
+},
+"NTGLLNQ": {
+"kind": "level",
+"title": "NET G/L ON SALES OF LOANS QUARTERLY"
+},
+"NTGLLNQR": {
+"kind": "ratio",
+"title": "NET G/L ON SALES OF LOANS QUARTERLY RATIO"
+},
+"NTGLREQ": {
+"kind": "asis",
+"title": "NET G/L ON OTHER RE OWNED QUARTERLY"
+},
+"NTGLREQR": {
+"kind": "ratio",
+"title": "NET G/L ON OTHER RE OWNED QUARTERLY RATIO"
+},
+"NTIRTA": {
+"kind": "level",
+"title": "RETAINED EARNINGS ANUALLY"
+},
+"NTIRTQ": {
+"kind": "level",
+"title": "RETAINED EARNINGS- BANK- QTR"
+},
+"NTLNLS": {
+"kind": "level",
+"title": "TOTAL LN&LS NET CHARGE-OFFS"
+},
+"NTLNLSA": {
+"kind": "level",
+"title": "TOTAL LN&LS NET-CHG-ANN"
+},
+"NTLNLSCOQR": {
+"kind": "ratio",
+"title": "TOTAL LN&LS NET CHARGE-OFFS QUARTERLY RATIO"
+},
+"NTLNLSCOR": {
+"kind": "ratio",
+"title": "TOTAL LN&LS NET CHARGE-OFFS RATIO"
+},
+"NTLNLSQ": {
+"kind": "level",
+"title": "TOTAL LN&LS NET CHARGE-OFFS QUARTERLY"
+},
+"NTLNLSQA": {
+"kind": "level",
+"title": "TOTAL LN&LS NET CHARGE-OFFS QUARTERLY"
+},
+"NTLNLSQR": {
+"kind": "ratio",
+"title": "NET CHARGE-OFFS/LOANS & LEASES QUARTERLY"
+},
+"NTLNLSR": {
+"kind": "ratio",
+"title": "NET CHARGE-OFFS/LOANS & LEASES"
+},
+"NTLS": {
+"kind": "level",
+"title": "LEASE NET CHARGE-OFFS"
+},
+"NTLSQ": {
+"kind": "level",
+"title": "LEASE NET CHARGE-OFFS-QTR"
+},
+"NTLSQR": {
+"kind": "ratio",
+"title": "LEASE NET CHARGE-OFFS-QTR RATIO"
+},
+"NTLSR": {
+"kind": "ratio",
+"title": "LEASE NET CHARGE-OFFS RATIO"
+},
+"NTOTHER": {
+"kind": "level",
+"title": "ALL OTHER LOAN NET CHARGE-OFFS"
+},
+"NTOTHERR": {
+"kind": "ratio",
+"title": "ALL OTHER LOAN NET CHARGE-OFFS RATIO"
+},
+"NTOTHQ": {
+"kind": "level",
+"title": "ALL OTHER LN NET-CHG-QTR"
+},
+"NTOTHQR": {
+"kind": "ratio",
+"title": "ALL OTHER LN NET-CHG-QTRS RATIO"
+},
+"NTR": {
+"kind": "level",
+"title": "NONTRANSACTION-TOTAL"
+},
+"NTRCDSM": {
+"kind": "level",
+"title": "AMT TIME DEP OF $100,000 OR LESS"
+},
+"NTRCDSMJ": {
+"kind": "level",
+"title": "Time Deposits Less Than Or Equal To insurance Limit"
+},
+"NTRCDSMR": {
+"kind": "ratio",
+"title": "AMT TIME DEP OF $100,000 OR LESS RATIO"
+},
+"NTRCOMOT": {
+"kind": "level",
+"title": "NONTRANSACTN-COM BKS & OTH U.S."
+},
+"NTRCOMOTR": {
+"kind": "ratio",
+"title": "NONTRANSACTN-COM BKS & OTH U.S RATIO"
+},
+"NTRE": {
+"kind": "level",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS"
+},
+"NTREA": {
+"kind": "level",
+"title": "RE LN NET-CHG-ANN"
+},
+"NTREAG": {
+"kind": "asis",
+"title": "FARMLAND RE LN NET CHARGE-OFFS"
+},
+"NTREAGA": {
+"kind": "asis",
+"title": "FARMLAND RE LN NET-CHG-ANN"
+},
+"NTREAGQ": {
+"kind": "asis",
+"title": "FARMLAND RE LN NET-CHG-QTR"
+},
+"NTREAGQA": {
+"kind": "level",
+"title": "FARM RE LN NET CHRG-OFF-QTR-ANN"
+},
+"NTREAGQR": {
+"kind": "ratio",
+"title": "FARMLAND RE LN NET-CHG-QTR RATIO"
+},
+"NTREAGR": {
+"kind": "ratio",
+"title": "FARMLAND RE LN NET CHARGE-OFFS RATIO"
+},
+"NTRECNFM": {
+"kind": "asis",
+"title": "1-4 FAM CONST LN NET-OFF"
+},
+"NTRECNOT": {
+"kind": "level",
+"title": "OTHER CONSTRUCT NET CHG-OFF"
+},
+"NTRECONQ": {
+"kind": "level",
+"title": "CONSTRUCTION RE LN NET-CHG-QTR"
+},
+"NTRECONQR": {
+"kind": "ratio",
+"title": "CONSTRUCTION RE LN NET-CHG-QTR RATIO"
+},
+"NTRECONS": {
+"kind": "level",
+"title": "CONSTRUCTION RE LN NET CHG-OFFS"
+},
+"NTRECONSR": {
+"kind": "ratio",
+"title": "CONSTRUCTION RE LN NET CHG-OFFS RATIO"
+},
+"NTRECOQA": {
+"kind": "level",
+"title": "NTRECOQA"
+},
+"NTRECOQR": {
+"kind": "ratio",
+"title": "CONST RE CHG-OFF/CONST RE LOANS QUARTERLY"
+},
+"NTRECOSA": {
+"kind": "level",
+"title": "CONST RE LOANS NET-CHG-ANN"
+},
+"NTRECOSR": {
+"kind": "ratio",
+"title": "CONST RE CHG-OFF/CONST RE LOANS"
+},
+"NTREFOR": {
+"kind": "level",
+"title": "REAL ESTATE LN NET CHG-OFF-FOR"
+},
+"NTREFORQ": {
+"kind": "asis",
+"title": "REAL ESTATE LN NET CHG-OFF-FOR QUARTERLY"
+},
+"NTREFORQR": {
+"kind": "ratio",
+"title": "REAL ESTATE LN NET CHG-OFF-FOR QUARTERLY RATIO"
+},
+"NTREFORR": {
+"kind": "ratio",
+"title": "REAL ESTATE LN NET CHG-OFF-FOR RATIO"
+},
+"NTRELNR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS RATIO"
+},
+"NTRELOC": {
+"kind": "level",
+"title": "LINE OF CREDIT RE LN NET CHG-OFF"
+},
+"NTRELOCA": {
+"kind": "level",
+"title": "LINE OF CREDIT RE LN NET CHG-OFF ANNUALLY"
+},
+"NTRELOCLNR": {
+"kind": "ratio",
+"title": "LINE OF CREDIT RE LN NET CHG-OFF RATIO"
+},
+"NTRELOCQ": {
+"kind": "level",
+"title": "LINE OF CREDIT RE LN NET CHG-OFF QUARTERLY"
+},
+"NTRELOCQR": {
+"kind": "ratio",
+"title": "LINE OF CREDIT RE LN NET CHG-OFF QUARTERLY RATIO"
+},
+"NTRELOCR": {
+"kind": "ratio",
+"title": "HOME EQUITY CHG-OFF/HOME EQ LNS"
+},
+"NTRELOCRQ": {
+"kind": "ratio",
+"title": "HOME EQUITY CHG-OFF/HOME EQ LNS QUARTERLY RATIO"
+},
+"NTREMULA": {
+"kind": "level",
+"title": "MULTIFAMILY RES RE LN NET-CHG-ANN"
+},
+"NTREMULQ": {
+"kind": "level",
+"title": "MULTIFAMILY RE LN NET-CHG-QTR"
+},
+"NTREMULQR": {
+"kind": "ratio",
+"title": "MULTIFAMILY RE LN NET-CHG-QTR RATIO"
+},
+"NTREMULR": {
+"kind": "ratio",
+"title": "MULTIFAM RE CHG-OFF/MULTI RE LN"
+},
+"NTREMULT": {
+"kind": "level",
+"title": "MULTIFAMLY RES RE LN NET CHG-OFF"
+},
+"NTREMULTR": {
+"kind": "ratio",
+"title": "MULTIFAMLY RES RE LN NET CHG-OFF RATIO"
+},
+"NTREMUQA": {
+"kind": "level",
+"title": "NTREMUQA"
+},
+"NTREMUQR": {
+"kind": "ratio",
+"title": "MULTIFAM RE CHG-OFF/MULTI RE LN QUARTERLY"
+},
+"NTRENRES": {
+"kind": "level",
+"title": "NONFARM NONRES RE LN NET CHG-OFF"
+},
+"NTRENRESR": {
+"kind": "ratio",
+"title": "NONFARM NONRES RE LN NET CHG-OFF RATIO"
+},
+"NTRENROT": {
+"kind": "level",
+"title": "OTHER NONFARM NONRS NET CHG-OFF"
+},
+"NTRENROW": {
+"kind": "level",
+"title": "OWN OCC NONFRM NONRS NET CHG-OFF"
+},
+"NTRENRQR": {
+"kind": "ratio",
+"title": "NONRES CHG-OFF/NONRES LOANS QUARTERLY"
+},
+"NTRENRSA": {
+"kind": "level",
+"title": "NONFARM NONRES RE LN NET-CHG-ANN"
+},
+"NTRENRSQ": {
+"kind": "level",
+"title": "NONFARM NONRES RE LN NET-CHG-QTR"
+},
+"NTRENRSQR": {
+"kind": "ratio",
+"title": "NONFARM NONRES RE LN NET-CHG-QTR RATIO"
+},
+"NTRENRSR": {
+"kind": "ratio",
+"title": "NONRES CHG-OFF/NONRES LOANS"
+},
+"NTRENUS": {
+"kind": "level",
+"title": "NON-U.S. RE LN NET CHARGE-OFFS"
+},
+"NTRENUSQ": {
+"kind": "asis",
+"title": "NON-U.S. RE LN NET CHARGE-OFFS QUARTERLY"
+},
+"NTRENUSQR": {
+"kind": "ratio",
+"title": "NON-U.S. RE LN NET CHARGE-OFFS QUARTERLY RATIO"
+},
+"NTRENUSR": {
+"kind": "ratio",
+"title": "NON-U.S. RE LN NET CHARGE-OFFS RATIO"
+},
+"NTREOFFDOM": {
+"kind": "level",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS DOMESTIC OFFICES"
+},
+"NTREOFFDOMQ": {
+"kind": "level",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS DOMESTIC OFFICES QUARTERLY"
+},
+"NTREOFFDOMQR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS DOMESTIC OFFICES QUARTERLY RATIO"
+},
+"NTREOFFDOMR": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS DOMESTIC OFFICES RATIO"
+},
+"NTREOTHA": {
+"kind": "level",
+"title": "OTHER 1-4 FAM RE OTHER LN NET-CHG-ANN"
+},
+"NTREOTHR": {
+"kind": "ratio",
+"title": "OTHER 1-4 FAM RE CHG-OFF/OTH 1-4"
+},
+"NTREOTHRQR": {
+"kind": "ratio",
+"title": "OTHER 1-4 FAM RE CHG-OFF/OTH 1-4 QUARTERLY RATIO"
+},
+"NTREOTQA": {
+"kind": "level",
+"title": "OTHER 1-4 FAM RE CHG-OFF/OTH 1-4 QUARTERLY"
+},
+"NTREQ": {
+"kind": "level",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS QUARTERLY"
+},
+"NTREQA": {
+"kind": "level",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS QUARTERLY"
+},
+"NTREQR": {
+"kind": "ratio",
+"title": "RE CHARGE-OFF/RE LOANS QUARTERLY"
+},
+"NTRER": {
+"kind": "ratio",
+"title": "RE CHARGE-OFF/RE LOANS"
+},
+"NTRERES": {
+"kind": "level",
+"title": "RE LOANS 1-4 FAMILY NET CHG-OFFS"
+},
+"NTRERESA": {
+"kind": "level",
+"title": "RE LOANS 1-4 FAMILY NET-CHG-ANN"
+},
+"NTRERESLNR": {
+"kind": "ratio",
+"title": "RE LOANS 1-4 FAMILY NET CHG-OFFS RATIO"
+},
+"NTRERESQ": {
+"kind": "level",
+"title": "RE LOANS 1-4 FAMILY NET-CHG-QTR"
+},
+"NTRERESQR": {
+"kind": "ratio",
+"title": "RE LOANS 1-4 FAMILY NET-CHG-QTR RATIO"
+},
+"NTRERESR": {
+"kind": "ratio",
+"title": "1-4 FAM RE CHG-OFF/1-4 FAM LOANS"
+},
+"NTRERESRQ": {
+"kind": "ratio",
+"title": "1-4 FAM RE CHG-OFF/1-4 FAM LOANS QUARTERLY RATIO"
+},
+"NTRERQ": {
+"kind": "ratio",
+"title": "REAL ESTATE LOAN NET CHARGE-OFFS QUARTERLY RATIO"
+},
+"NTRERS2Q": {
+"kind": "ratio",
+"title": "RE LN 1-4 FAM JR LIEN-NET C/OFF QUARTERLY"
+},
+"NTRERS2QR": {
+"kind": "ratio",
+"title": "RE LN 1-4 FAM JR LIEN-NET C/OFF QUARTERLY RATIO"
+},
+"NTRERSF2": {
+"kind": "ratio",
+"title": "RE LN 1-4 FAM JR LIEN-NET C/OFF"
+},
+"NTRERSF2R": {
+"kind": "ratio",
+"title": "RE LN 1-4 FAM JR LIEN-NET C/OFF RATIO"
+},
+"NTRERSFM": {
+"kind": "ratio",
+"title": "RE LN 1-4FAM IST LIEN-NET C/OFF"
+},
+"NTRERSFMR": {
+"kind": "ratio",
+"title": "RE LN 1-4FAM IST LIEN-NET C/OFF RATIO"
+},
+"NTRERSFQ": {
+"kind": "ratio",
+"title": "RE LN 1-4FAM IST LIEN-NET C/OFF QUARTERLY"
+},
+"NTRERSFQR": {
+"kind": "ratio",
+"title": "RE LN 1-4FAM IST LIEN-NET C/OFF QUARTERLY RATIO"
+},
+"NTRFC": {
+"kind": "level",
+"title": "NONTRANSACTION-FOR COUNTRY"
+},
+"NTRFCFG": {
+"kind": "level",
+"title": "NONTRANSACTION-FOR CNTRY & GOVT"
+},
+"NTRFCFGR": {
+"kind": "ratio",
+"title": "NONTRANSACTION-FOR CNTRY & GOVT RATIO"
+},
+"NTRFG": {
+"kind": "level",
+"title": "NONTRANSACTION-FOR GOVERNMENT"
+},
+"NTRIPC": {
+"kind": "level",
+"title": "NONTRANSACTION-IPC"
+},
+"NTRIPCR": {
+"kind": "ratio",
+"title": "NONTRANSACTION-IPC RATIO"
+},
+"NTRMUNI": {
+"kind": "level",
+"title": "NONTRANSACTION-MUNI"
+},
+"NTRMUNIR": {
+"kind": "ratio",
+"title": "NONTRANSACTION-MUNI RATIO"
+},
+"NTRR": {
+"kind": "ratio",
+"title": "NONTRANSACTION-TOTAL RATIO"
+},
+"NTRSMMDA": {
+"kind": "level",
+"title": "SAVINGS DEP-MMDA"
+},
+"NTRSMMDAR": {
+"kind": "ratio",
+"title": "SAVINGS DEP-MMDA RATIO"
+},
+"NTRSOTH": {
+"kind": "level",
+"title": "SAVINGS DEP-OTHER"
+},
+"NTRSOTHR": {
+"kind": "ratio",
+"title": "SAVINGS DEP-OTHER RATIO"
+},
+"NTRTIME": {
+"kind": "level",
+"title": "TIME DEPOSITS-TOTAL"
+},
+"NTRTMLG": {
+"kind": "level",
+"title": "TIME DEPOSITS OVER $100M"
+},
+"NTRTMLGJ": {
+"kind": "level",
+"title": "AMT TOTAL TIME DEP MORE THAN $250,000"
+},
+"NTRTMLGJR": {
+"kind": "ratio",
+"title": "AMT TOTAL TIME DEP MORE THAN $250,000 RATIO"
+},
+"NTRTMMED": {
+"kind": "level",
+"title": "AMT TIME DEP OF $250,000 OR LESS"
+},
+"NTRTMMEDR": {
+"kind": "ratio",
+"title": "AMT TIME DEP OF $250,000 OR LESS RATIO"
+},
+"NTRUSGOV": {
+"kind": "level",
+"title": "NONTRANSACTION-U.S. GOVERNMENT"
+},
+"NTRUSGOVR": {
+"kind": "ratio",
+"title": "NONTRANSACTION-U.S. GOVERNMENT RATIO"
+},
+"NTTOT": {
+"kind": "level",
+"title": "TOTAL LN & LS LOSS NET CHG-OFFS"
+},
+"NTTOTQ": {
+"kind": "level",
+"title": "PROVISIONS FOR CREDIT LOSSES QUARTERLY RATIO"
+},
+"NUMEMP": {
+"kind": "count",
+"title": "NUMBER OF FULL TIME EMPLOYEES"
+},
+"OA": {
+"kind": "level",
+"title": "OTHER ASSETS"
+},
+"OAIENC": {
+"kind": "level",
+"title": "INCOME EARNED NOT COLLECTED"
+},
+"OALIFGEN": {
+"kind": "level",
+"title": "LIFE INS ASSETS - GENERAL ACC"
+},
+"OALIFGENR": {
+"kind": "ratio",
+"title": "LIFE INS ASSETS - GENERAL ACC RATIO"
+},
+"OALIFHYB": {
+"kind": "level",
+"title": "LIFE INS ASSETS - HYBRID ACC"
+},
+"OALIFHYBR": {
+"kind": "ratio",
+"title": "LIFE INS ASSETS - HYBRID ACC RATIO"
+},
+"OALIFINS": {
+"kind": "level",
+"title": "LIFE INSURANCE ASSETS"
+},
+"OALIFINSR": {
+"kind": "ratio",
+"title": "LIFE INSURANCE RATIO"
+},
+"OALIFSEP": {
+"kind": "level",
+"title": "LIFE INS ASSETS - SEPARATE ACC"
+},
+"OALIFSEPR": {
+"kind": "ratio",
+"title": "LIFE INS ASSETS - SEPARATE ACC RATIO"
+},
+"OBOR": {
+"kind": "level",
+"title": "OTHER BORROWED FUNDS"
+},
+"OBOR2": {
+"kind": "level",
+"title": "OTHER BORROWED FUNDS-CAVG2"
+},
+"OBOR5": {
+"kind": "level",
+"title": "OTHER BORROWED FUNDS-CAVG5"
+},
+"OBSDIR": {
+"kind": "level",
+"title": "OFF-BALANCE SHEET DERIVATIVES"
+},
+"OFFDMULT": {
+"kind": "count",
+"title": "DOMESTIC MULTI-SERVICE OFFICES"
+},
+"OFFDOM": {
+"kind": "count",
+"title": "Number of Domestic Offices"
+},
+"OFFFOR": {
+"kind": "count",
+"title": "Number of Foreign Offices"
+},
+"OFFNDOM": {
+"kind": "count",
+"title": "NONDOMESTIC OFFICES"
+},
+"OFFOA": {
+"kind": "count",
+"title": "Number of US Offices"
+},
+"OFFOTH": {
+"kind": "count",
+"title": "DOMESTIC OTHER OFFICES"
+},
+"OFFSOD": {
+"kind": "count",
+"title": "SOD OFFICES"
+},
+"OFFSTATE": {
+"kind": "count",
+"title": "NUMBER OF STATES WITH OFFICES"
+},
+"OFFTOT": {
+"kind": "count",
+"title": "TOTAL OFFICES"
+},
+"OFFUSOA": {
+"kind": "count",
+"title": "U.S. AND OTHER AREA OFFICES"
+},
+"OLMIN": {
+"kind": "level",
+"title": "OTHER LIAB & MINOR IN SUBS"
+},
+"ORE": {
+"kind": "level",
+"title": "OTHER REAL ESTATE OWNED"
+},
+"OREAG": {
+"kind": "asis",
+"title": "ALL OTHER RE OWNED-FARMLAND"
+},
+"OREAGR": {
+"kind": "ratio",
+"title": "ALL OTHER RE OWNED-FARMLAND RATIO"
+},
+"ORECONS": {
+"kind": "level",
+"title": "ALL OTHER RE OWNED-CONST"
+},
+"ORECONSR": {
+"kind": "ratio",
+"title": "ALL OTHER RE OWNED-CONST RATIO"
+},
+"OREGNMA": {
+"kind": "asis",
+"title": "ALL OTHER RE OWNED-GNMA LOANS"
+},
+"OREINV": {
+"kind": "asis",
+"title": "DIRECT & INDIRECT INVEST IN ORE"
+},
+"OREINVR": {
+"kind": "ratio",
+"title": "DIRECT & INDIRECT INVEST IN ORE RATIO"
+},
+"OREMULT": {
+"kind": "level",
+"title": "ALL OTHER RE OWNED-MULTI"
+},
+"OREMULTR": {
+"kind": "ratio",
+"title": "ALL OTHER RE OWNED-MULTI RATIO"
+},
+"ORENRES": {
+"kind": "level",
+"title": "ALL OTHER RE OWNED-NONFARM"
+},
+"ORENRESR": {
+"kind": "ratio",
+"title": "ALL OTHER RE OWNED-NONFARM RATIO"
+},
+"OREOTH": {
+"kind": "level",
+"title": "OTHER REAL ESTATE OWNED"
+},
+"OREOTHF": {
+"kind": "asis",
+"title": "OTHER REAL ESTATE OWNED-FOR"
+},
+"OREOTHFR": {
+"kind": "ratio",
+"title": "OTHER REAL ESTATE OWNED-FOR RATIO"
+},
+"OREOTHR": {
+"kind": "ratio",
+"title": "OTHER REAL ESTATE OWNED RATIO"
+},
+"ORER": {
+"kind": "ratio",
+"title": "OTHER REAL ESTATE OWNED RATIO"
+},
+"ORERES": {
+"kind": "level",
+"title": "ALL OTHER RE OWNED-1-4 FAMILY"
+},
+"ORERESR": {
+"kind": "ratio",
+"title": "ALL OTHER RE OWNED 1-4 FAMILIY RATIO"
+},
+"ORG_END_NUM_DTE": {
+"kind": "level",
+"title": "INACTIVE DATE"
+},
+"OTBFH1L": {
+"kind": "level",
+"title": "FHLB ADV MAT REP ONE YR OR LESS"
+},
+"OTBFH1LR": {
+"kind": "ratio",
+"title": "FHLB ADV MAT REP ONE YR OR LESS RATIO"
+},
+"OTBFH1T3": {
+"kind": "level",
+"title": "FHLB ADV MAT REP ONE YR THROUGH THREE"
+},
+"OTBFH1T3R": {
+"kind": "ratio",
+"title": "FHLB ADV MAT REP ONE YR THROUGH THREE"
+},
+"OTBFH3T5": {
+"kind": "level",
+"title": "FHLB ADV MAT REP THREE THROUGH FIVE"
+},
+"OTBFH3T5R": {
+"kind": "ratio",
+"title": "FHLB ADV MAT REP THREE THROUGH FIVE RATIO"
+},
+"OTBFHOV5": {
+"kind": "level",
+"title": "FHLB ADV MAT REP OVER FIVE YEARS"
+},
+"OTBFHOV5R": {
+"kind": "ratio",
+"title": "FHLB ADV MAT REP OVER FIVE YEARS RATIO"
+},
+"OTBFHSTA": {
+"kind": "level",
+"title": "FHLB STRUCTURED ADV"
+},
+"OTBFHSTAR": {
+"kind": "ratio",
+"title": "FHLB STRUCTURED ADV"
+},
+"OTBOT1L": {
+"kind": "level",
+"title": "OTH BORR MAT OR NEXT REPRICING ONE YR OR LESS"
+},
+"OTBOT1LR": {
+"kind": "ratio",
+"title": "OTH BORR MAT OR NEXT REPRICING ONE YR OR LESS RATIO"
+},
+"OTBOT1T3": {
+"kind": "level",
+"title": "OTH BORR MAT OR NEXT REPRICING ONE YR THROUGH THREE"
+},
+"OTBOT1T3R": {
+"kind": "ratio",
+"title": "OTH BORR MAT OR NEXT REPRICING ONE YR THROUGH THREE RATIO"
+},
+"OTBOT3T5": {
+"kind": "level",
+"title": "OTH BORR MAT OR NEXT REPRICING THREE YR THROUGH FIVE"
+},
+"OTBOT3T5R": {
+"kind": "ratio",
+"title": "OTH BORR MAT OR NEXT REPRICING THREE YR THROUGH FIVE RATIO"
+},
+"OTBOTOV5": {
+"kind": "level",
+"title": "OTH BORR MAT OR NEXT REPRICING OVER FIVE YRS"
+},
+"OTBOTOV5R": {
+"kind": "ratio",
+"title": "OTH BORR MAT OR NEXT REPRICING OVER FIVE YRS RATIO"
+},
+"OTHBFH03": {
+"kind": "asis",
+"title": "OTH BOR FHLB-OVER 3 YRS"
+},
+"OTHBFH13": {
+"kind": "asis",
+"title": "OTH BOR. FHLB-1 TO 3 YRS"
+},
+"OTHBFH1L": {
+"kind": "level",
+"title": "FHLB ADV WITH REMAINING MAT ONE YR OR LESS"
+},
+"OTHBFH1LR": {
+"kind": "ratio",
+"title": "FHLB ADV WITH REMAINING MAT ONE YR OR LESS RATIO"
+},
+"OTHBFHLB": {
+"kind": "level",
+"title": "OTHER LIABILITIES-FHLB"
+},
+"OTHBFHLBR": {
+"kind": "ratio",
+"title": "OTHER LIABILITIES-FHLB RATIO"
+},
+"OTHBOR": {
+"kind": "level",
+"title": "OTHER BORROWED MONEY"
+},
+"OTHBORF": {
+"kind": "level",
+"title": "OTHER BORROWED MONEY-FOR"
+},
+"OTHBOT1L": {
+"kind": "level",
+"title": "OTH BORR MAT REMAINING MAT OF ONE YR OR LESS"
+},
+"OTHBOT1LR": {
+"kind": "ratio",
+"title": "OTH BORR MAT REMANING MAT OF ONE YR OR LESS RATIO"
+},
+"OTHBRF": {
+"kind": "level",
+"title": "OTH BORROWED FUNDS"
+},
+"OTHBRFR": {
+"kind": "ratio",
+"title": "OTH BORROWED FUNDS RATIO"
+},
+"OTHFFC": {
+"kind": "level",
+"title": "OTHER-FUTURES & FORWARD CONTRACT"
+},
+"OTHFFCR": {
+"kind": "ratio",
+"title": "OTHER-FUTURES & FORWARD CONTRACT RATIO"
+},
+"OTHNVS": {
+"kind": "level",
+"title": "OTHER-NOTIONAL VALUE SWAPS"
+},
+"OTHOFFBS": {
+"kind": "level",
+"title": "ALL OTH OFF-BALANCE SHEET LIAB"
+},
+"OTHOFFBSR": {
+"kind": "ratio",
+"title": "ALL OTH OFF-BALANCE SHEET LIAB RATIO"
+},
+"OTHPOC": {
+"kind": "level",
+"title": "OTHER-PURCHASED OPTION CONTRACTS"
+},
+"OTHWOC": {
+"kind": "level",
+"title": "OTHER-WRITTEN OPTION CONTRACTS"
+},
+"OWNCRCI": {
+"kind": "asis",
+"title": "REC OWN INTEREST SEC - CI"
+},
+"OWNCRCRD": {
+"kind": "asis",
+"title": "REC OWN INTEREST SEC - CRCD"
+},
+"OWNCRHEL": {
+"kind": "asis",
+"title": "REC OWN INTEREST SEC - HEL"
+},
+"OWNDRCI": {
+"kind": "asis",
+"title": "C/O OWN INTEREST SEC - CI"
+},
+"OWNDRCRD": {
+"kind": "asis",
+"title": "C/O OWN INTEREST SEC - CRCD"
+},
+"OWNDRHEL": {
+"kind": "asis",
+"title": "C/O OWN INTEREST SEC - HEL"
+},
+"OWNLNCI": {
+"kind": "asis",
+"title": "LN SECURE HELD IN SEC - CI"
+},
+"OWNLNCRD": {
+"kind": "asis",
+"title": "LN SECURE HELD IN SEC - CRCD"
+},
+"OWNLNHEL": {
+"kind": "asis",
+"title": "LN SECURE HELD IN SEC - HEL"
+},
+"OWNP3CI": {
+"kind": "asis",
+"title": "PD 30-89 OWN INTEREST SEC - CI"
+},
+"OWNP3CRD": {
+"kind": "asis",
+"title": "PD 30-89 OWN INTEREST SEC - CRCD"
+},
+"OWNP3HEL": {
+"kind": "asis",
+"title": "PD30-89 OWN INTEREST SEC - HEL"
+},
+"OWNP9CI": {
+"kind": "asis",
+"title": "PD 90 + OWN INTEREST SEC - CI"
+},
+"OWNP9CRD": {
+"kind": "asis",
+"title": "PD 90 + OWN INTEREST SEC - CRCD"
+},
+"OWNP9HEL": {
+"kind": "asis",
+"title": "PD 90 + OWN INTEREST SEC - HEL"
+},
+"OWNSCCI": {
+"kind": "asis",
+"title": "SEC. SECURE HELD IN RC-B - CI"
+},
+"OWNSCCRD": {
+"kind": "asis",
+"title": "SEC. SECURE HELD IN RC-B - CRCD"
+},
+"OWNSCHEL": {
+"kind": "asis",
+"title": "SEC. SECURE HELD IN RC-B - HEL"
+},
+"P3AG": {
+"kind": "level",
+"title": "30-89 DAYS P/D-AGRICULTURAL LNS"
+},
+"P3AGR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-AGRICULTURAL LNS RATIO"
+},
+"P3AGSM": {
+"kind": "level",
+"title": "30-89 DAYS P/D-AG LNS*SMALL BKS"
+},
+"P3AGSMR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-AG LNS*SMALL BKS RATIO"
+},
+"P3ASSET": {
+"kind": "level",
+"title": "30-89 DAYS P/D-TOTAL ASSETS"
+},
+"P3ASSETR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D TOTAL ASSETS RATIO"
+},
+"P3AUTO": {
+"kind": "level",
+"title": "30-89 DAYS P/D AUTO LOANS"
+},
+"P3AUTOR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D AUTO LOANS RATIO"
+},
+"P3CI": {
+"kind": "level",
+"title": "30-89 DAYS P/D-C&I LOANS"
+},
+"P3CINUS": {
+"kind": "level",
+"title": "30-89 DAYS P/D-C&I*NON-U.S."
+},
+"P3CINUSR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-C&I*NON-U.S. RATIO"
+},
+"P3CIR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-C&I LOANS RATIO"
+},
+"P3COMRE": {
+"kind": "level",
+"title": "30-89 DAYS P/D-COMMERCIAL RE"
+},
+"P3CON": {
+"kind": "level",
+"title": "30-89 DAYS P/D-CONSUMER LOANS"
+},
+"P3CONOTH": {
+"kind": "level",
+"title": "30-89 DAYS P/D-OTHER CONSUMER"
+},
+"P3CONOTHR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-OTHER CONSUMER RATIO"
+},
+"P3CONR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-CONSUMER LOANS RATIO"
+},
+"P3CRCD": {
+"kind": "level",
+"title": "30-89 DAYS P/D-CREDIT CARD PLANS"
+},
+"P3CRCDR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-CREDIT CARD PLANS RATIO"
+},
+"P3DEP": {
+"kind": "asis",
+"title": "30-89 DAYS P/D-DEP INST LOANS"
+},
+"P3DEPNUS": {
+"kind": "asis",
+"title": "30-89 DAYS P/D-DEP INST*NON U.S."
+},
+"P3DEPNUSR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-DEP INST*NON U.S."
+},
+"P3DEPR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-DEP INST LOANS"
+},
+"P3FG": {
+"kind": "asis",
+"title": "30-89 DAYS P/D-FOREIGN GOVT"
+},
+"P3FGR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-FOREIGN GOVT RATIO"
+},
+"P3GTY": {
+"kind": "level",
+"title": "30-89 DAYS P/D-GTY LN&LS"
+},
+"P3GTYGNM": {
+"kind": "level",
+"title": "30-89 DAY P/D-REBOOKED GNMA LNS"
+},
+"P3GTYGNMR": {
+"kind": "ratio",
+"title": "30-89 DAY P/D-REBOOKED GNMA LNS"
+},
+"P3GTYPAR": {
+"kind": "level",
+"title": "30-89 DAYS P/D-PART GTY LN&LS"
+},
+"P3GTYPARR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-PART GTY LN&LS RATIO"
+},
+"P3GTYR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-GTY LN&LS"
+},
+"P3LAG": {
+"kind": "asis",
+"title": "30-89 DAY P/D AG LOANS-LOSS SH"
+},
+"P3LAGR": {
+"kind": "ratio",
+"title": "30-89 DAY P/D AG LOANS-LOSS SH RATIO"
+},
+"P3LCI": {
+"kind": "asis",
+"title": "30-89 DAYS P/D C&I LNS-LOSS SH"
+},
+"P3LCIR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D C&I LNS-LOSS SH RATIO"
+},
+"P3LCON": {
+"kind": "asis",
+"title": "30-89 D P/D CONSUMER -LOSS SH"
+},
+"P3LCONR": {
+"kind": "ratio",
+"title": "30-89 D P/D CONSUMER -LOSS SH RATIO"
+},
+"P3LGTY": {
+"kind": "level",
+"title": "30-89 P/D PROTECT (GTY)-LOSS SH"
+},
+"P3LGTYR": {
+"kind": "ratio",
+"title": "30-89 P/D PROTECT (GTY)-LOSS SH RATIO"
+},
+"P3LNLS": {
+"kind": "level",
+"title": "30-89 DAYS P/D-LOANS & LEASES"
+},
+"P3LNSALE": {
+"kind": "level",
+"title": "30-89 DAYS P/D-L&L HELD FOR SALE"
+},
+"P3LNSALER": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-L&L HELD FOR SALE RATIO"
+},
+"P3LOTH": {
+"kind": "asis",
+"title": "30-89 DAYS P/D OTH LNS-LOSS SH"
+},
+"P3LOTHR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D OTH LNS-LOSS SH RATIO"
+},
+"P3LREAG": {
+"kind": "asis",
+"title": "30-89 DAY P/D RE FARM-LOSS SH"
+},
+"P3LREAGR": {
+"kind": "ratio",
+"title": "30-89 DAY P/D RE FARM-LOSS SH RATIO"
+},
+"P3LRECON": {
+"kind": "asis",
+"title": "30-89 P/D CONSTRUCTION -LOSS SH"
+},
+"P3LRECONR": {
+"kind": "ratio",
+"title": "30-89 P/D CONSTRUCTION -LOSS SH RATIO"
+},
+"P3LREMUL": {
+"kind": "asis",
+"title": "30-89 DAY P/D MULTIFAM -LOSS SH"
+},
+"P3LREMULR": {
+"kind": "ratio",
+"title": "30-89 DAY P/D MULTIFAM -LOSS SH RATIO"
+},
+"P3LRENRS": {
+"kind": "asis",
+"title": "30-89 P/D NONFRM NONRS -LOSS SH"
+},
+"P3LRENRSR": {
+"kind": "ratio",
+"title": "30-89 P/D NONFRM NONRS -LOSS SH RATIO"
+},
+"P3LRERES": {
+"kind": "asis",
+"title": "30-89 D P/D 1-4 FAMILY -LOSS SH"
+},
+"P3LRERESR": {
+"kind": "ratio",
+"title": "30-89 P/D 1-4 FAMILY -LOSS SH RATIO"
+},
+"P3LS": {
+"kind": "level",
+"title": "30-89 DAYS P/D-LEASES"
+},
+"P3LSR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-LEASES RATIO"
+},
+"P3LTOT": {
+"kind": "asis",
+"title": "30-89 D P/D TOTAL LOANS-LOSS SH"
+},
+"P3LTOTR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-TOTAL LOANS-LOSS SH RATIO"
+},
+"P3OTHLN": {
+"kind": "level",
+"title": "30-89 DAYS P/D-ALL OTHER LOANS"
+},
+"P3OTHLNR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-ALL OTHER LOANS RATIO"
+},
+"P3RE": {
+"kind": "level",
+"title": "30-89 DAYS P/D-REAL ESTATE LOANS"
+},
+"P3REAG": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*FARMLAND"
+},
+"P3REAGR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*FARMLAND"
+},
+"P3RECNFM": {
+"kind": "level",
+"title": "30-89 DAYS P/D 1-4 FAM CONSTR LN"
+},
+"P3RECNFMR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D 1-4 FAM CONSTR LN"
+},
+"P3RECNOT": {
+"kind": "level",
+"title": "30-89 DAYS P/D OTH CONSTR & LAND"
+},
+"P3RECNOTR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D OTH CONSTR & LAND"
+},
+"P3RECONR": {
+"kind": "ratio",
+"title": "30-89 PAST DUE CONST RE/CONST RE"
+},
+"P3RECONS": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*CONSTRUCTION"
+},
+"P3RECONSR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*CONSTRUCTION"
+},
+"P3REFOR": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*FOREIGN"
+},
+"P3REFORR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*FOREIGN RATIO"
+},
+"P3RELNDO": {
+"kind": "level",
+"title": "P/D 30-89 REAL ESTATE LOANS IN DOMESTIC OFFICES"
+},
+"P3RELNDOR": {
+"kind": "ratio",
+"title": "P/D 30-89 REAL ESTATE LOANS IN DOMESTIC OFFICES RATIO"
+},
+"P3RELOC": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*1-4 FAM LINES"
+},
+"P3RELOCR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*1-4 FAM LINES RATIO"
+},
+"P3REMULT": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*MULTIFAMILY"
+},
+"P3REMULTR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*MULTIFAMILY"
+},
+"P3RENRES": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*NONFARM NONRES"
+},
+"P3RENRESR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*NONFARM NONRES"
+},
+"P3RENROT": {
+"kind": "level",
+"title": "30-89 DAYS P/D OTH NONFRM NONRES"
+},
+"P3RENROTR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D OTH NONFRM NONRES"
+},
+"P3RENROW": {
+"kind": "level",
+"title": "30-89 DAYS P/D 0WN-OCC NONF NONRS"
+},
+"P3RENROWR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D OWN-OCC NONF NONRS RATIO"
+},
+"P3RENUS": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*NON-U.S."
+},
+"P3RENUSR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*NON-U.S."
+},
+"P3RER": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-REAL ESTATE LOANS RATIO"
+},
+"P3RERES": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*1-4 FAMILY"
+},
+"P3RERESR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*1-4 FAMILY"
+},
+"P3RERS2R": {
+"kind": "ratio",
+"title": "30-89 P/D 1-4FAM JR/1-4 FAM JR"
+},
+"P3RERSF2": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*1-4 JN LIEN"
+},
+"P3RERSF2R": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*1-4 JN LIEN RATIO"
+},
+"P3RERSFM": {
+"kind": "level",
+"title": "30-89 DAYS P/D-RE*1-4 IST LIEN"
+},
+"P3RERSFMR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-RE*1-4 IST LIEN RATIO"
+},
+"P3RSCI": {
+"kind": "level",
+"title": "30-89 DAY P/D RESTRUCT C&I LN"
+},
+"P3RSCONS": {
+"kind": "level",
+"title": "30-89 P/D RESTRUCT CONSTRUCTION"
+},
+"P3RSLNFM": {
+"kind": "level",
+"title": "30-89 DAY P/D RESTR LN- 1-4 FAM"
+},
+"P3RSLNFMR": {
+"kind": "ratio",
+"title": "30-89 DAY P/D RESTR LN- 1-4 FAM RATIO"
+},
+"P3RSLNLS": {
+"kind": "level",
+"title": "30-89 D P/D RESTR LN EXCL1-4 FM"
+},
+"P3RSLNLSR": {
+"kind": "ratio",
+"title": "30-89 D P/D RESTR LN EXCL1-4 FM RATIO"
+},
+"P3RSLNLT": {
+"kind": "level",
+"title": "30-89 DAY P/D RESTR LN- TOTAL"
+},
+"P3RSLNLTR": {
+"kind": "ratio",
+"title": "30-89 DAY P/D RESTR LN- TOTAL RATIO"
+},
+"P3RSMULT": {
+"kind": "level",
+"title": "30-89 D P/D RESTRUCT MULTIFAM"
+},
+"P3RSNRES": {
+"kind": "level",
+"title": "30-89 DAY P/D RESTRUCT NFNR LN"
+},
+"P3RSOTH": {
+"kind": "level",
+"title": "30-89 D P/D RESTRUCT ALL OTH LN"
+},
+"P3SCDEBT": {
+"kind": "level",
+"title": "30-89 DAYS P/D-DEBT SECURITIES"
+},
+"P3SCDEBTR": {
+"kind": "ratio",
+"title": "30-89 DAYS P/D-DEBT SECURITIES RATIO"
+},
+"P9AG": {
+"kind": "asis",
+"title": "90+ DAYS P/D-AGRICULTURAL LNS"
+},
+"P9AGR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-AGRICULTURAL LNS RATIO"
+},
+"P9AGSM": {
+"kind": "asis",
+"title": "90+ DAYS P/D-AG LNS*SMALL BKS"
+},
+"P9AGSMR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-AG LNS*SMALL BKS RATIO"
+},
+"P9ASSET": {
+"kind": "level",
+"title": "90+ DAYS P/D-TOTAL ASSETS"
+},
+"P9ASSETR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-TOTAL ASSETS RATIO"
+},
+"P9AUTO": {
+"kind": "level",
+"title": "90+ DAYS P/D AUTO LOANS"
+},
+"P9AUTOR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D AUTO LOANS RATIO"
+},
+"P9CI": {
+"kind": "level",
+"title": "90+ DAYS P/D-C&I LOANS"
+},
+"P9CINUS": {
+"kind": "level",
+"title": "90+ DAYS P/D-C&I*NON-U.S."
+},
+"P9CINUSR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-C&I*NON-U.S. RATIO"
+},
+"P9CIR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-C&I LOANS RATIO"
+},
+"P9CON": {
+"kind": "level",
+"title": "90+ DAYS P/D-CONSUMER LOANS"
+},
+"P9CONOTH": {
+"kind": "level",
+"title": "90+ DAYS P/D-OTHER CONSUMER"
+},
+"P9CONOTHR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-OTHER CONSUMER RATIO"
+},
+"P9CONR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-CONSUMER LOANS RATIO"
+},
+"P9CRCD": {
+"kind": "level",
+"title": "90+ DAYS P/D-CREDIT CARD PLANS"
+},
+"P9CRCDR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-CREDIT CARD PLANS RATIO"
+},
+"P9DEP": {
+"kind": "asis",
+"title": "90+ DAYS P/D-DEP INST LOANS"
+},
+"P9DEPNUSR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-DEP INST*NON U.S. RATIO"
+},
+"P9DEPR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-DEP INST LOANS RATIO"
+},
+"P9FGR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-FOREIGN GOVT RATIO"
+},
+"P9GTY": {
+"kind": "level",
+"title": "90+ DAYS P/D-GTY LN&LS"
+},
+"P9GTYGNM": {
+"kind": "level",
+"title": "90+ DAYS P/D-REBOOKED GNMA LNS"
+},
+"P9GTYGNMR": {
+"kind": "ratio",
+"title": "90+ DAY P/D-REBOOKED GNMA LNS"
+},
+"P9GTYPAR": {
+"kind": "level",
+"title": "90+ DAYS P/D-PART GTY LN&LS"
+},
+"P9GTYPARR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-PART GTY LN&LS RATIO"
+},
+"P9GTYR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-GTY LN&LS"
+},
+"P9LAG": {
+"kind": "asis",
+"title": "90+ DAYS P/D AG LOANS-LOSS SH"
+},
+"P9LAGR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D AG LOANS-LOSS SH RATIO"
+},
+"P9LCI": {
+"kind": "asis",
+"title": "90+DAYS P/D C&I LNS-LOSS SH"
+},
+"P9LCIR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D C&I LNS-LOSS SH RATIO"
+},
+"P9LCON": {
+"kind": "asis",
+"title": "90+ D P/D CONSUMER LN - LOSS SH"
+},
+"P9LCONR": {
+"kind": "ratio",
+"title": "90+ D P/D CONSUMER LN - LOSS SH RATIO"
+},
+"P9LGTY": {
+"kind": "asis",
+"title": "90+ D P/D PROTECT (GTY)-LOSS SH"
+},
+"P9LGTYR": {
+"kind": "ratio",
+"title": "90+ D P/D PROTECT (GTY)-LOSS SH RATIO"
+},
+"P9LNLS": {
+"kind": "level",
+"title": "90+ DAYS P/D-LOANS & LEASES"
+},
+"P9LNSALE": {
+"kind": "level",
+"title": "90 DAYS P/D-L&L HELD FOR SALE"
+},
+"P9LNSALER": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-L&L HELD FOR SALE RATIO"
+},
+"P9LOTH": {
+"kind": "asis",
+"title": "90+ DAYS P/D OTHER LNS-LOSS SH"
+},
+"P9LOTHR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D OTHER LNS-LOSS SH RATIO"
+},
+"P9LREAG": {
+"kind": "asis",
+"title": "90+ DAY P/D RE FARM-LOSS SH"
+},
+"P9LREAGR": {
+"kind": "ratio",
+"title": "90+ DAY P/D RE FARM-LOSS SH RATIO"
+},
+"P9LRECON": {
+"kind": "asis",
+"title": "90+ D P/D CONSTRUCTION -LOSS SH"
+},
+"P9LRECONR": {
+"kind": "ratio",
+"title": "90+ D P/D CONSTRUCTION -LOSS SH RATIO"
+},
+"P9LREMUL": {
+"kind": "asis",
+"title": "90+ DAY P/D MULTIFAM - LOSS SH"
+},
+"P9LREMULR": {
+"kind": "ratio",
+"title": "90+ DAY P/D MULTIFAM - LOSS SH RATIO"
+},
+"P9LRENRS": {
+"kind": "asis",
+"title": "90+ D P/D NFNR - LOSS SHARE"
+},
+"P9LRENRSR": {
+"kind": "ratio",
+"title": "90+ D P/D NFNR - LOSS SH RATIO"
+},
+"P9LRERES": {
+"kind": "asis",
+"title": "90+ D P/D 1-4 FAMILY - LOSS SH"
+},
+"P9LRERESR": {
+"kind": "ratio",
+"title": "90+ D P/D 1-4 FAMILY - LOSS SH RATIO"
+},
+"P9LS": {
+"kind": "level",
+"title": "90+ DAYS P/D-LEASES"
+},
+"P9LSR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-LEASES RATIO"
+},
+"P9LTOT": {
+"kind": "asis",
+"title": "90+ D P/D TOTAL LOANS - LOSS SH"
+},
+"P9LTOTR": {
+"kind": "ratio",
+"title": "90+ D P/D TOTAL LOANS - LOSS SH RATIO"
+},
+"P9OTHLN": {
+"kind": "level",
+"title": "90+ DAYS P/D-ALL OTHER LOANS"
+},
+"P9OTHLNR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-ALL OTHER LOANS RATIO"
+},
+"P9RE": {
+"kind": "level",
+"title": "90+ DAYS P/D-REAL ESTATE LOANS"
+},
+"P9REAG": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*FARMLAND"
+},
+"P9REAGR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*FARMLAND"
+},
+"P9RECNFM": {
+"kind": "asis",
+"title": "90+ DAYS P/D 1-4 FAM CONSTRUC LN"
+},
+"P9RECNFMR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D 1-4 FAM CONSTRUC LN RATIO"
+},
+"P9RECNOT": {
+"kind": "level",
+"title": "90+ DAYS P/D OTHER CONSTR & LAND"
+},
+"P9RECNOTR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D OTHER CONSTR & LAND RATIO"
+},
+"P9RECONS": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*CONSTRUCTION"
+},
+"P9RECONSR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*CONSTRUCTION RATIO"
+},
+"P9REFOR": {
+"kind": "level",
+"title": "90 + DAYS P/D-RE*FOREIGN"
+},
+"P9REFORR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*FOREIGN RATIO"
+},
+"P9RELNDO": {
+"kind": "level",
+"title": "90+ REAL ESTATE LOANS IN DOMESTIC OFFICES"
+},
+"P9RELNDOR": {
+"kind": "ratio",
+"title": "90+ REAL ESTATE LOANS IN DOMESTIC OFFICES RATIO"
+},
+"P9RELOC": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*1-4 FAM LINES"
+},
+"P9RELOCR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*1-4 FAM LINES RATIO"
+},
+"P9REMULT": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*MULTIFAMILY"
+},
+"P9REMULTR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*MULTIFAMILY RATIO"
+},
+"P9RENRES": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*NONFARM NONRES"
+},
+"P9RENRESR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*NONFARM NONRES RATIO"
+},
+"P9RENROT": {
+"kind": "level",
+"title": "90+ DAYS P/D OTHER NONFRM NONRES"
+},
+"P9RENROTR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D OTHER NONFRM NONRES RATIO"
+},
+"P9RENROW": {
+"kind": "level",
+"title": "90+ DAYS P/D 0WN-OCC NONFR NONRS"
+},
+"P9RENROWR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D OWN-OCC NONFR NONRS RATIO"
+},
+"P9RENUS": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*NON-U.S."
+},
+"P9RENUSR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*NON-U.S."
+},
+"P9RER": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-REAL ESTATE RATIO"
+},
+"P9RERES": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*1-4 FAMILY"
+},
+"P9RERESR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*1-4 FAMILY RATIO"
+},
+"P9RERSF2": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*1-4 JN LIEN"
+},
+"P9RERSF2R": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*1-4 JN LIEN RATIO"
+},
+"P9RERSFM": {
+"kind": "level",
+"title": "90+ DAYS P/D-RE*1-4 IST LIEN"
+},
+"P9RERSFMR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-RE*1-4 IST LIEN RATIO"
+},
+"P9RSCI": {
+"kind": "level",
+"title": "90+ DAY P/D RESTRUCT C&I LN"
+},
+"P9RSCONS": {
+"kind": "level",
+"title": "90+ D P/D RESTRUCT CONSTRUCTION"
+},
+"P9RSLNFM": {
+"kind": "level",
+"title": "90+ DAYS P/D RESTR LN- 1-4 FAM"
+},
+"P9RSLNFMR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D RESTR LN- 1-4 FAM RATIO"
+},
+"P9RSLNLS": {
+"kind": "level",
+"title": "90+ DAY P/D RESTRU LN EXCL 1-4 FM"
+},
+"P9RSLNLSR": {
+"kind": "ratio",
+"title": "90+ DAY P/D RESTRU LN EXCL 1-4 FM RATIO"
+},
+"P9RSLNLT": {
+"kind": "level",
+"title": "90+ DAY P/D RESTR LN- TOTAL"
+},
+"P9RSLNLTR": {
+"kind": "ratio",
+"title": "90+ DAY P/D RESTR LN- TOTAL RATIO"
+},
+"P9RSMULT": {
+"kind": "asis",
+"title": "90+ DAY P/D RESTRUCT MULTIFAM"
+},
+"P9RSNRES": {
+"kind": "level",
+"title": "90+ DAY P/D RESTRUCT NFNR LN"
+},
+"P9RSOTH": {
+"kind": "level",
+"title": "90+ D P/D RESTRUCT ALL OTH LN"
+},
+"P9SCDEBT": {
+"kind": "level",
+"title": "90+ DAYS P/D-DEBT SECURITIES"
+},
+"P9SCDEBTR": {
+"kind": "ratio",
+"title": "90+ DAYS P/D-DEBT SECURITIES RATIO"
+},
+"PARTACQU": {
+"kind": "asis",
+"title": "PARTICIPATIONS ACQUIRED"
+},
+"PARTCONV": {
+"kind": "asis",
+"title": "PARTICIPATIONS CONVEYED"
+},
+"PARTCONVR": {
+"kind": "ratio",
+"title": "PARTICIPATIONS CONVEYED RATIO"
+},
+"PPPLF1LSR": {
+"kind": "ratio",
+"title": "Outstanding balance under the PPPLF with a remaining maturity of one year or less ratio"
+},
+"PPPLFOV1R": {
+"kind": "ratio",
+"title": "Outstanding balance under the PPPLF with a remaining maturity of more than one year ratio"
+},
+"PPPLNBAL": {
+"kind": "level",
+"title": "Outstanding balance of PPP loans"
+},
+"PPPLNBALR": {
+"kind": "ratio",
+"title": "Outstanding balance of PPP loans ratio"
+},
+"PPPLNNUM": {
+"kind": "count",
+"title": "Number of PPP loans outstanding"
+},
+"PPPLNNUMR": {
+"kind": "ratio",
+"title": "Number of PPP loans outstanding ratio"
+},
+"PPPLNPLGR": {
+"kind": "ratio",
+"title": "Outstanding balance of PPP loans pledged to the PPPLF ratio"
+},
+"PTAXNETINC": {
+"kind": "level",
+"title": "PRE-TAX NET INCOME OPERATING INCOME"
+},
+"PTAXNETINCQ": {
+"kind": "level",
+"title": "PRE-TAX NET INCOME OPERATING INCOME QUARTERLY"
+},
+"PTAXNETINCQR": {
+"kind": "ratio",
+"title": "PRE-TAX NET INCOME OPERATING INCOME QUARTERLY RATIO"
+},
+"PTAXNETINCR": {
+"kind": "ratio",
+"title": "PRE-TAX NET INCOME OPERATING INCOME RATIO"
+},
+"QBPRSAVB": {
+"kind": "asis",
+"title": "QBP BIF FUND SAVINGS REGION"
+},
+"RB2LNRES": {
+"kind": "level",
+"title": "ALLOWANCE FOR L&L IN TIER 2"
+},
+"RB2LNRESR": {
+"kind": "ratio",
+"title": "ALLOWANCE FOR L&L IN TIER 2 RATIO"
+},
+"RBC": {
+"kind": "level",
+"title": "RBC-TOTAL-PCA"
+},
+"RBC1AAJ": {
+"kind": "ratio",
+"title": "LEVERAGE RATIO-PCA"
+},
+"RBC1RWAJ": {
+"kind": "ratio",
+"title": "TIER 1 RBC RATIO-PCA"
+},
+"RBCEQUP": {
+"kind": "level",
+"title": "RETAINED EARNINGS - RBC"
+},
+"RBCRWAJ": {
+"kind": "ratio",
+"title": "TOTAL RBC RATIO-PCA"
+},
+"RBCT1": {
+"kind": "level",
+"title": "TIER 1 RBC-PCA"
+},
+"RBCT1C": {
+"kind": "level",
+"title": "RC-R COMMON EQ TIER 1 CAPITAL"
+},
+"RBCT1CER": {
+"kind": "ratio",
+"title": "COMMON EQUITY TIER 1 RATIO"
+},
+"RBCT1J": {
+"kind": "level",
+"title": "TIER 1 RBC ADJUSTED LLR - PCA"
+},
+"RBCT1JR": {
+"kind": "ratio",
+"title": "TIER 1 RBC ADJUSTED LLR - PCA RATIO"
+},
+"RBCT1W": {
+"kind": "level",
+"title": "TIER 1 CAPITAL - REPORTED"
+},
+"RBCT2": {
+"kind": "level",
+"title": "RBC-TIER2-PCA"
+},
+"RBCT2R": {
+"kind": "ratio",
+"title": "RBC-TIER2-PCA RATIO"
+},
+"REPOPUR": {
+"kind": "level",
+"title": "REPURCHASE AGREEMENTS"
+},
+"REPOPURF": {
+"kind": "level",
+"title": "REPURCHASE AGREEMENT-FOR"
+},
+"REPOSLDF": {
+"kind": "level",
+"title": "REVERSE REPURCHASE AGREEMENT-FOR"
+},
+"ROA": {
+"kind": "ratio",
+"title": "Return on assets (ROA)"
+},
+"ROAPTX": {
+"kind": "ratio",
+"title": "Pretax return on assets"
+},
+"ROAPTXQ": {
+"kind": "ratio",
+"title": "Quarterly Pretax return on assets"
+},
+"ROAQ": {
+"kind": "ratio",
+"title": "Quarterly return on assets"
+},
+"ROE": {
+"kind": "ratio",
+"title": "Return on Equity (ROE)"
+},
+"ROEINJR": {
+"kind": "ratio",
+"title": "RETAINED EARNINGS/AVG BK EQUITY"
+},
+"ROEQ": {
+"kind": "ratio",
+"title": "Quarterly return on equity"
+},
+"RSCI": {
+"kind": "level",
+"title": "RESTRUCTURED LN - C&I"
+},
+"RSCONS": {
+"kind": "level",
+"title": "RESTRUCTURED LN - CONSTRUCTION"
+},
+"RSLNLS": {
+"kind": "level",
+"title": "RESTRUCTURED LN EXCL 1-4 FM"
+},
+"RSLNLSR": {
+"kind": "ratio",
+"title": "RESTRUCTURED LN EXCL 1-4 FM RATIO"
+},
+"RSLNLTOT": {
+"kind": "level",
+"title": "RESTRUCTURED LOANS - TOTAL"
+},
+"RSLNLTOTR": {
+"kind": "ratio",
+"title": "RESTRUCTURED LOANS - TOTAL RATIO"
+},
+"RSLNREFM": {
+"kind": "level",
+"title": "RESTRUCTURED LOANS - 1-4 FAMILY"
+},
+"RSLNREFMR": {
+"kind": "ratio",
+"title": "RESTRUCTURED LOANS - 1-4 FAMILY RATIO"
+},
+"RSMULT": {
+"kind": "level",
+"title": "RESTRUCTURED LN - MULTIFAMILY"
+},
+"RSNRES": {
+"kind": "level",
+"title": "RESTRUCT LN - NONFARM NONRES"
+},
+"RSOTHER": {
+"kind": "level",
+"title": "RESTRUCTURED LN - ALL OTHER"
+},
+"RT": {
+"kind": "level",
+"title": "INTEREST RATE-TOTAL CONTRACTS"
+},
+"RTFFC": {
+"kind": "level",
+"title": "INT RATE-FUTURES & FORWARD CONTR"
+},
+"RTNVS": {
+"kind": "level",
+"title": "INT RATE-SWAPS"
+},
+"RTPOC": {
+"kind": "level",
+"title": "INT RATE-PUR OPTION CONTRACTS"
+},
+"RTWOC": {
+"kind": "level",
+"title": "INT RATE-WRITTEN OPTION CONTRACT"
+},
+"RWAJ": {
+"kind": "level",
+"title": "RWA-ADJUST-PCA-T1 & CET1 RATIO"
+},
+"RWAJT": {
+"kind": "level",
+"title": "RWA-ADJUSTED-PCA-TOTAL RBC RAT"
+},
+"RWAJTR": {
+"kind": "ratio",
+"title": "RWA-ADJUSTED-PCA-TOTAL RBC RAT RATIO"
+},
+"SC": {
+"kind": "level",
+"title": "SECURITIES"
+},
+"SC1LES": {
+"kind": "level",
+"title": "Fixed and floating rate debt securities (included above) with remaining maturity of one year or less"
+},
+"SC1LESR": {
+"kind": "ratio",
+"title": "Fixed and floating rate debt securities (included above) with remaining maturity of one year or less ratio"
+},
+"SC2": {
+"kind": "level",
+"title": "SECURITIES-CAVG2"
+},
+"SC5": {
+"kind": "level",
+"title": "SECURITIES-CAVG5"
+},
+"SCAA": {
+"kind": "level",
+"title": "TOTAL AVAILABLE-FOR-SALE AT AMORTIZED COST SECURITIES ON A CONSOLIDATED BASIS"
+},
+"SCABS": {
+"kind": "level",
+"title": "ABS-TOTAL-B/S"
+},
+"SCABSR": {
+"kind": "ratio",
+"title": "ABS-TOTAL-B/S RATIO"
+},
+"SCAF": {
+"kind": "level",
+"title": "SECURITIES-AF"
+},
+"SCAFR": {
+"kind": "ratio",
+"title": "SECURITIES-AF RATIO"
+},
+"SCAGE": {
+"kind": "level",
+"title": "U.S. AGENCY"
+},
+"SCAOT": {
+"kind": "asis",
+"title": "U.S. AGENCY ALL OTH"
+},
+"SCASPNAF": {
+"kind": "level",
+"title": "U.S. AGENCY"
+},
+"SCASPNHA": {
+"kind": "level",
+"title": "U.S. AGENCY"
+},
+"SCASPNSUM": {
+"kind": "level",
+"title": "NON-MORT BACKED ISSUES BY US GOVT OR SPONSORED AGENCIES"
+},
+"SCASPNSUMR": {
+"kind": "ratio",
+"title": "NON-MORT BACKED ISSUES BY US GOVT OR SPONSORED AGENCIES RATIO"
+},
+"SCCMMB": {
+"kind": "level",
+"title": "COMMERCIAL MBS - TOTAL"
+},
+"SCCMOG": {
+"kind": "level",
+"title": "OTHER COMMERCIAL MBS-GOVT"
+},
+"SCCMOGR": {
+"kind": "ratio",
+"title": "OTHER COMMERCIAL MBS-GOVT RATIO"
+},
+"SCCMOS": {
+"kind": "level",
+"title": "OTHER COMM MORTGAGE-BACKED SEC"
+},
+"SCCMOSR": {
+"kind": "ratio",
+"title": "OTHER COMM MORTGAGE-BACKED SEC"
+},
+"SCCMOT": {
+"kind": "level",
+"title": "OTHER COMMERCIAL MBS"
+},
+"SCCMOTR": {
+"kind": "ratio",
+"title": "OTHER COMMERCIAL MBS RATIO"
+},
+"SCCMPT": {
+"kind": "level",
+"title": "COMMERCIAL MBS PASS-THROUGH"
+},
+"SCCMPTR": {
+"kind": "ratio",
+"title": "COMMERCIAL MBS PASS-THROUGH RATIO"
+},
+"SCCOL": {
+"kind": "level",
+"title": "U.S. AGENCY COLLATERAL MTG-RES"
+},
+"SCCOLR": {
+"kind": "ratio",
+"title": "U.S. AGENCY COLLATERAL MTG-RES RATIO"
+},
+"SCCPTG": {
+"kind": "level",
+"title": "COMM MBS PASS-THRU-GOVT"
+},
+"SCCPTGR": {
+"kind": "ratio",
+"title": "COMM MBS PASS-THRU-GOVT RATIO"
+},
+"SCDEQ": {
+"kind": "level",
+"title": "DOMESTIC SEC*DEBT & EQUITY - CON"
+},
+"SCDOMO": {
+"kind": "level",
+"title": "OTHER DOMESTIC DEBT"
+},
+"SCDOMOR": {
+"kind": "ratio",
+"title": "OTHER DOMESTIC DEBT RATIO"
+},
+"SCEQ": {
+"kind": "asis",
+"title": "EQUITY SECURITIES"
+},
+"SCEQFV": {
+"kind": "level",
+"title": "EQ SEC READILY DET FV"
+},
+"SCEQFVR": {
+"kind": "ratio",
+"title": "EQ SEC READILY DET FV RATIO"
+},
+"SCEQNFT": {
+"kind": "level",
+"title": "EQUITY SECURITIES NOT HELD FOR TRADING"
+},
+"SCFDEQ": {
+"kind": "level",
+"title": "FOREIGN DEBT & EQUITY"
+},
+"SCFMN": {
+"kind": "level",
+"title": "U.S. AGENCY ISSUED*FNMA-RES"
+},
+"SCFMNR": {
+"kind": "ratio",
+"title": "U.S. AGENCY ISSUED*FNMA-RES RATIO"
+},
+"SCFORD": {
+"kind": "level",
+"title": "FOREIGN DEBT SECURITIES"
+},
+"SCFORDR": {
+"kind": "ratio",
+"title": "FOREIGN DEBT SECURITIES RATIO"
+},
+"SCGNM": {
+"kind": "level",
+"title": "U.S. AGENCY GTY BY GNMA"
+},
+"SCGNMR": {
+"kind": "ratio",
+"title": "U.S. AGENCY GTY BY GNMA RATIO"
+},
+"SCGTY": {
+"kind": "level",
+"title": "U.S. AGENCY ISSUED OR GTY-RES"
+},
+"SCGTYR": {
+"kind": "ratio",
+"title": "U.S. AGENCY ISSUED OR GTY-RES RATIO"
+},
+"SCHA": {
+"kind": "level",
+"title": "SECURITIES-HA"
+},
+"SCHAR": {
+"kind": "ratio",
+"title": "SECURITIES-HA RATIO"
+},
+"SCHF": {
+"kind": "level",
+"title": "TOTAL HELD-TO-MATURITY AT FAIR VALUE SECURITIES ON A CONSOLIDATED BASIS"
+},
+"SCHTMRES": {
+"kind": "level",
+"title": "LESS ALLOW FOR CREDIT LOSSES ON HELD TO MATURITY DEBT SECURITIES"
+},
+"SCHTMRESR": {
+"kind": "ratio",
+"title": "LESS ALLOW FOR CREDIT LOSSES ON HELD TO MATURITY DEBT SECURITIES RATIO"
+},
+"SCLENT": {
+"kind": "level",
+"title": "SECURITIES LENT"
+},
+"SCLENTR": {
+"kind": "ratio",
+"title": "SECURITIES LENT RATIO"
+},
+"SCMTGBK": {
+"kind": "level",
+"title": "MORTGAGE BACKED SECURITIES"
+},
+"SCMTGBKR": {
+"kind": "ratio",
+"title": "MORTGAGE BACKED SECURITIES RATIO"
+},
+"SCMUNI": {
+"kind": "level",
+"title": "MUNICIPAL SECURITIES"
+},
+"SCMUNIAA": {
+"kind": "level",
+"title": "MUNICIPAL SECURITIES -AA"
+},
+"SCMUNIAF": {
+"kind": "level",
+"title": "MUNICIPAL SECURITIES -AF"
+},
+"SCMUNIHA": {
+"kind": "level",
+"title": "MUNICIPAL SECURITIES -HA"
+},
+"SCMUNIHF": {
+"kind": "level",
+"title": "MUNICIPAL SECURITIES -HF"
+},
+"SCMUNIR": {
+"kind": "ratio",
+"title": "MUNICIPAL RATIO"
+},
+"SCMV": {
+"kind": "level",
+"title": "SECURITIES-MV"
+},
+"SCNM1T3": {
+"kind": "level",
+"title": "NONMTG DEBT SEC * 1-3 YEARS"
+},
+"SCNM1T3R": {
+"kind": "ratio",
+"title": "NONMTG DEBT SEC * 1-3 YEARS RATIO"
+},
+"SCNM3LES": {
+"kind": "level",
+"title": "NONMTG DEBT SEC*3 MONS OR LESS"
+},
+"SCNM3LESR": {
+"kind": "ratio",
+"title": "NONMTG DEBT SEC*3 MONS OR LESS RATIO"
+},
+"SCNM3T12": {
+"kind": "level",
+"title": "NONMTG DEBT SEC * 3-12 MONTHS"
+},
+"SCNM3T12R": {
+"kind": "ratio",
+"title": "NONMTG DEBT SEC * 3-12 MONTHS RATIO"
+},
+"SCNM3T5": {
+"kind": "level",
+"title": "NONMTG DEBT SEC * 3-5 YEARS"
+},
+"SCNM3T5R": {
+"kind": "ratio",
+"title": "NONMTG DEBT SEC * 3-5 YEARS RATIO"
+},
+"SCNM5T15": {
+"kind": "level",
+"title": "NONMTG DEBT SEC * 5-15 YEARS"
+},
+"SCNM5T15R": {
+"kind": "ratio",
+"title": "NONMTG DEBT SEC * 5-15 YEARS RATIO"
+},
+"SCNMOV15": {
+"kind": "level",
+"title": "NONMTG DEBT SEC * OVER 15 YEARS"
+},
+"SCNMOV15R": {
+"kind": "ratio",
+"title": "NONMTG DEBT SEC * OVER 15 YEARS RATIO"
+},
+"SCO3YLES": {
+"kind": "level",
+"title": "OTH MORTGAGE SEC * 3 YR OR LESS"
+},
+"SCO3YLESR": {
+"kind": "ratio",
+"title": "OTH MORTGAGE SEC * 3 YR OR LESS RATIO"
+},
+"SCODOT": {
+"kind": "level",
+"title": "OTH DOM DEBT*ALL OTHER"
+},
+"SCODOTR": {
+"kind": "ratio",
+"title": "OTH DOM DEBT*ALL OTHER RATIO"
+},
+"SCODPC": {
+"kind": "level",
+"title": "RES-OTH DOM DEBT*PRIV CERTS"
+},
+"SCODPCR": {
+"kind": "ratio",
+"title": "RES-OTH DOM DEBT*PRIV CERTS RATIO"
+},
+"SCODPI": {
+"kind": "level",
+"title": "CMO PRIV ISSUED"
+},
+"SCODPIR": {
+"kind": "ratio",
+"title": "CMO PRIV ISSUED RATIO"
+},
+"SCOOV3Y": {
+"kind": "level",
+"title": "OTH MORTGAGE SEC * OVER 3 YRS"
+},
+"SCOOV3YR": {
+"kind": "ratio",
+"title": "OTH MORTGAGE SEC * OVER 3 YRS RATIO"
+},
+"SCPLEDGE": {
+"kind": "level",
+"title": "PLEDGED SECURITIES"
+},
+"SCPLEDGER": {
+"kind": "ratio",
+"title": "PLEDGED SECURITIES RATIO"
+},
+"SCPT1T3": {
+"kind": "level",
+"title": "MTG PASS-THRU SEC * 1-3 YEARS"
+},
+"SCPT1T3R": {
+"kind": "ratio",
+"title": "MTG PASS-THRU SEC * 1-3 YEARS RATIO"
+},
+"SCPT3LES": {
+"kind": "level",
+"title": "MTG PASS-THRU SEC*3 MON OR LESS"
+},
+"SCPT3LESR": {
+"kind": "ratio",
+"title": "MTG PASS-THRU SEC*3 MON OR LESS RATIO"
+},
+"SCPT3T12": {
+"kind": "level",
+"title": "MTG PASS-THRU SEC * 3-12 MONTHS"
+},
+"SCPT3T12R": {
+"kind": "ratio",
+"title": "MTG PASS-THRU SEC * 3-12 MONTHS RATIO"
+},
+"SCPT3T5": {
+"kind": "level",
+"title": "MTG PASS-THRU SEC * 3-5 YEARS"
+},
+"SCPT3T5R": {
+"kind": "ratio",
+"title": "MTG PASS-THRU SEC * 3-5 YEARS RATIO"
+},
+"SCPT5T15": {
+"kind": "level",
+"title": "MTG PASS-THRU SEC * 5-15 YEARS"
+},
+"SCPT5T15R": {
+"kind": "ratio",
+"title": "MTG PASS-THRU SEC * 5-15 YEARS RATIO"
+},
+"SCPTOV15": {
+"kind": "level",
+"title": "MTG PASS-THRU SEC * OVER 15 YRS"
+},
+"SCPTOV15R": {
+"kind": "ratio",
+"title": "MTG PASS-THRU SEC * OVER 15 YRS RATIO"
+},
+"SCR": {
+"kind": "ratio",
+"title": "SECURITIES RATIO"
+},
+"SCRDEBT": {
+"kind": "level",
+"title": "DEBT SECURITIES"
+},
+"SCRDEBTR": {
+"kind": "ratio",
+"title": "DEBT SECURITIES RATIO"
+},
+"SCRES": {
+"kind": "asis",
+"title": "CONTRA-ASSETS TO SECURITIES"
+},
+"SCRMBPI": {
+"kind": "level",
+"title": "PRIV ISSUED RES MORTGAGE-BACKED SECURITIES"
+},
+"SCRMBPIR": {
+"kind": "ratio",
+"title": "PRIV ISSUED RES MORTGAGE-BACKED SECURITIES RATIO"
+},
+"SCSFP": {
+"kind": "level",
+"title": "STRUCTURED FIN PROD - TOTAL"
+},
+"SCSFPR": {
+"kind": "ratio",
+"title": "STRUCTURED FIN PROD - TOTAL RATIO"
+},
+"SCSNHAA": {
+"kind": "level",
+"title": "STRUCTURED NOTES AMORTIZED COST"
+},
+"SCSNHAAR": {
+"kind": "ratio",
+"title": "STRUCTURED NOTES AMORTIZED COST RATIO"
+},
+"SCSNHAF": {
+"kind": "level",
+"title": "STRUCTURED NOTES-FAIR VALUE"
+},
+"SCSNHAFR": {
+"kind": "ratio",
+"title": "STRUCTURED NOTES-FAIR VALUE RATIO"
+},
+"SCSPN": {
+"kind": "asis",
+"title": "U.S. AGENCY GOVT SPONSORED"
+},
+"SCTATFR": {
+"kind": "asis",
+"title": "ASSETS HELD IN TRADING ACCOUNTS FOR TFR REPORTERS"
+},
+"SCUS": {
+"kind": "level",
+"title": "U.S. TREASURY & AGENCY"
+},
+"SCUSA": {
+"kind": "level",
+"title": "U.S. AGENCY ALL OTHER"
+},
+"SCUSO": {
+"kind": "level",
+"title": "U.S GOVERNMENT OBLIGATIONS"
+},
+"SCUSOR": {
+"kind": "ratio",
+"title": "U.S GOVERNMENT OBLIGATIONS RATIOS"
+},
+"SCUSR": {
+"kind": "ratio",
+"title": "U.S. TREASURY & AGENCY RATIO"
+},
+"SCUST": {
+"kind": "level",
+"title": "U.S. TREASURY SECURITIES"
+},
+"SCUSTR": {
+"kind": "ratio",
+"title": "U.S. TREASURY SECURITIES RATIO"
+},
+"SUBLLPF": {
+"kind": "level",
+"title": "SUB. DEBT & L/L PREFERRED STK"
+},
+"SUBND": {
+"kind": "level",
+"title": "SUBORDINATED NOTES & DEBENTURES"
+},
+"SZ30AUTO": {
+"kind": "level",
+"title": "30-89 PD LN-SECURITIZATION-AUTO"
+},
+"SZ30AUTOR": {
+"kind": "ratio",
+"title": "30-89 PD LN-SECURITIZATION-AUTO RATIO"
+},
+"SZ30CIR": {
+"kind": "ratio",
+"title": "30-89 PD LN-SECURITIZATION-CI RATIO"
+},
+"SZ30CON": {
+"kind": "level",
+"title": "30-89 PD LN-SECURITIZATION-CON"
+},
+"SZ30CONR": {
+"kind": "ratio",
+"title": "30-89 PD LN-SECURITIZATION-CON RATIO"
+},
+"SZ30CRCDR": {
+"kind": "ratio",
+"title": "30-89 PD LN-SECURITIZATION-CRCD RATIO"
+},
+"SZ30HEL": {
+"kind": "level",
+"title": "30-89 PD LN-SECURITIZATION-HEL"
+},
+"SZ30HELR": {
+"kind": "ratio",
+"title": "30-89 PD LN-SECURITIZATION-HEL RATIO"
+},
+"SZ30OTH": {
+"kind": "level",
+"title": "30-89 PD LN-SECURITIZATION-OTH"
+},
+"SZ30OTHR": {
+"kind": "ratio",
+"title": "30-89 PD LN-SECURITIZATION-OTH RATIO"
+},
+"SZ30RES": {
+"kind": "level",
+"title": "30-89 PD LN-SECURITIZATION -RES"
+},
+"SZ30RESR": {
+"kind": "ratio",
+"title": "30-89 PD LN-SECURITIZATION -RES RATIO"
+},
+"SZ90AUTO": {
+"kind": "level",
+"title": "90 + PD LN-SECURITIZATION-AUTO"
+},
+"SZ90AUTOR": {
+"kind": "ratio",
+"title": "90 + PD LN-SECURITIZATION-AUTO RATIO"
+},
+"SZ90CIR": {
+"kind": "ratio",
+"title": "90 + PD LN-SECURITIZATION-CI RATIO"
+},
+"SZ90CON": {
+"kind": "level",
+"title": "90 + PD LN-SECURITIZATION-CON"
+},
+"SZ90CONR": {
+"kind": "ratio",
+"title": "90 + PD LN-SECURITIZATION-CON RATIO"
+},
+"SZ90CRCDR": {
+"kind": "ratio",
+"title": "90 + PD LN-SECURITIZATION-CRCD RATIO"
+},
+"SZ90HEL": {
+"kind": "asis",
+"title": "90+ PD LN-SECURITIZATION-HEL"
+},
+"SZ90HELR": {
+"kind": "ratio",
+"title": "90+ PD LN-SECURITIZATION-HEL RATIO"
+},
+"SZ90OTH": {
+"kind": "level",
+"title": "90 + PD LN-SECURITIZATION-OTH"
+},
+"SZ90OTHR": {
+"kind": "ratio",
+"title": "90 + PD LN-SECURITIZATION-OTH RATIO"
+},
+"SZ90RES": {
+"kind": "level",
+"title": "90 + PD LN-SECURITIZATION-RES"
+},
+"SZ90RESR": {
+"kind": "ratio",
+"title": "90 + PD LN-SECURITIZATION-RES RATION"
+},
+"SZCRAUTO": {
+"kind": "level",
+"title": "REC ASSET SECURITIZATION-AUTO"
+},
+"SZCRAUTOR": {
+"kind": "ratio",
+"title": "REC ASSET SECURITIZATION-AUTO"
+},
+"SZCRCDFER": {
+"kind": "ratio",
+"title": "OUTSTDG CC FEES IN SECURITZD CC RATIO"
+},
+"SZCRCIR": {
+"kind": "ratio",
+"title": "REC ASSET SECURITIZATION-CI RATIO"
+},
+"SZCRCON": {
+"kind": "asis",
+"title": "REC ASSET SECURITIZATION-CON"
+},
+"SZCRCONR": {
+"kind": "ratio",
+"title": "REC ASSET SECURITIZATION-CON RATIO"
+},
+"SZCRCRCDR": {
+"kind": "ratio",
+"title": "REC ASSET SECURITIZATION - CRCD RATIO"
+},
+"SZCRHEL": {
+"kind": "asis",
+"title": "RE PRIN SEC ASSET SOLD-HEL"
+},
+"SZCRHELR": {
+"kind": "ratio",
+"title": "RE PRIN SEC ASSET SOLD-HEL RATIO"
+},
+"SZCROTH": {
+"kind": "level",
+"title": "REC ASSET SECURITIZATION-"
+},
+"SZCROTHR": {
+"kind": "ratio",
+"title": "REC ASSET SECURITIZATION- RATIO"
+},
+"SZCRRES": {
+"kind": "asis",
+"title": "REC ASSET SECURITIZATION-RES"
+},
+"SZCRRESR": {
+"kind": "ratio",
+"title": "REC ASSET SECURITIZATION-RES RATIO"
+},
+"SZDRAUTO": {
+"kind": "level",
+"title": "C/O ON ASSET SECURITIZATION-AUTO"
+},
+"SZDRAUTOR": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-AUTO RATIO"
+},
+"SZDRCI": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-CI"
+},
+"SZDRCIR": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-CI RATIO"
+},
+"SZDRCON": {
+"kind": "level",
+"title": "C/O ON ASSET SECURITIZATION-CON"
+},
+"SZDRCONR": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-CON RATIO"
+},
+"SZDRCRCD": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-CRCD"
+},
+"SZDRCRCDR": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-CRCD RATIO"
+},
+"SZDRHEL": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-HEL"
+},
+"SZDRHELR": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-HEL RATIO"
+},
+"SZDROTH": {
+"kind": "level",
+"title": "C/O ON ASSET SECURITIZATION-OTH"
+},
+"SZDROTHR": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-OTH RATIO"
+},
+"SZDRRES": {
+"kind": "ratio",
+"title": "C/O ON ASSET SECURITIZATION-RES"
+},
+"SZISLAUT": {
+"kind": "level",
+"title": "CR EXP ON SECURITIZATN - AUTO"
+},
+"SZISLAUTR": {
+"kind": "ratio",
+"title": "CR EXP ON SECURITIZATN - AUTO RATIO"
+},
+"SZISLCCDR": {
+"kind": "ratio",
+"title": "CR EXP ON SECURITIZATN - CRCD RATIO"
+},
+"SZISLCI": {
+"kind": "level",
+"title": "CR EXP ON SECURITIZATN -CI"
+},
+"SZISLCIR": {
+"kind": "ratio",
+"title": "CR EXP ON SECURITIZATN -CI RATIO"
+},
+"SZISLCONR": {
+"kind": "ratio",
+"title": "CR EXP ON SECURITIZATN - CON RATIO"
+},
+"SZISLHEL": {
+"kind": "level",
+"title": "CR EXP ON SECURITIZATN - HEL"
+},
+"SZISLHELR": {
+"kind": "ratio",
+"title": "CR EXP ON SECURITIZATN - HEL RATIO"
+},
+"SZISLOTH": {
+"kind": "level",
+"title": "CR EXP ON SECURITIZATN -OTH"
+},
+"SZISLOTHR": {
+"kind": "ratio",
+"title": "CR EXP ON SECURITIZATN -OTH RATIO"
+},
+"SZISLRES": {
+"kind": "level",
+"title": "CR EXP ON SECURITIZATION RES"
+},
+"SZISLRESR": {
+"kind": "ratio",
+"title": "CR EXP ON SECURITIZATION RES RATIO"
+},
+"SZLAUTO": {
+"kind": "level",
+"title": "RE PRIN SEC ASSET SOLD - AUTO"
+},
+"SZLAUTOR": {
+"kind": "ratio",
+"title": "RE PRIN SEC ASSET SOLD - AUTO RATIO"
+},
+"SZLNCI": {
+"kind": "level",
+"title": "RE PRIN SEC ASSET SOLD - CI"
+},
+"SZLNCIR": {
+"kind": "ratio",
+"title": "RE PRIN SEC ASSET SOLD - CI RATIO"
+},
+"SZLNCON": {
+"kind": "level",
+"title": "RE PRIN SEC ASSET SOLD - CONS"
+},
+"SZLNCONR": {
+"kind": "ratio",
+"title": "RE PRIN SEC ASSET SOLD - CONS RATIO"
+},
+"SZLNCRCDR": {
+"kind": "ratio",
+"title": "RE PRIN SEC ASSET SOLD - CRCD RATIO"
+},
+"SZLNHEL": {
+"kind": "level",
+"title": "RE PRIN SEC ASSET SOLD - HEL"
+},
+"SZLNHELR": {
+"kind": "ratio",
+"title": "RE PRIN SEC ASSET SOLD - HEL RATIO"
+},
+"SZLNOTH": {
+"kind": "level",
+"title": "RE PRIN SEC ASSET SOLD - OTH"
+},
+"SZLNOTHR": {
+"kind": "ratio",
+"title": "RE PRIN SEC ASSET SOLD - OTH RATIO"
+},
+"SZLNRES": {
+"kind": "level",
+"title": "RE PRIN SEC ASSET SOLD-RES"
+},
+"SZLNRESR": {
+"kind": "ratio",
+"title": "RE PRIN SEC ASSET SOLD-RES RATIO"
+},
+"SZUCCI": {
+"kind": "level",
+"title": "COMMITS FOR LIQUIDITY - CI"
+},
+"SZUCOTH": {
+"kind": "level",
+"title": "COMMITS FOR LIQUIDITY - OTH"
+},
+"TCAMA": {
+"kind": "level",
+"title": "CORP TRUST-MANAGED-AMT"
+},
+"TCAMANUM": {
+"kind": "count",
+"title": "CORP TRUST-MANAGED-NUM"
+},
+"TCANMA": {
+"kind": "level",
+"title": "CORP TRUST-NON-MANAGED-AMT"
+},
+"TCANMNUM": {
+"kind": "count",
+"title": "CORP TRUST-NON-MANAGED-NUM"
+},
+"TCANUM": {
+"kind": "count",
+"title": "CORP TRUST-TRUSTEESHIPS-NUM"
+},
+"TCANUMD": {
+"kind": "count",
+"title": "CORP & MUNI-TRUSTEE-DEFAULT-NUM"
+},
+"TCAPAO": {
+"kind": "asis",
+"title": "CORP TRUST-TRUSTEESHIPS-AMT"
+},
+"TCAPAOD": {
+"kind": "asis",
+"title": "CORP & MUNI-TRUSTEE-DEFAULT-AMT"
+},
+"TCATNUM": {
+"kind": "count",
+"title": "CORP TRUST-TRANSFER-NUM"
+},
+"TCDEMV": {
+"kind": "asis",
+"title": "CIFS -DOM EQUITY-AMT"
+},
+"TCDENUM": {
+"kind": "count",
+"title": "CIFS -DOM EQUITY-NUM"
+},
+"TCIEMV": {
+"kind": "asis",
+"title": "CIFS -INTL/GLOBAL-EQ-AMT"
+},
+"TCIENUM": {
+"kind": "count",
+"title": "CIFS -INTL/GLOBAL-EQ-NUM"
+},
+"TCMBMV": {
+"kind": "asis",
+"title": "CIFS-MUNICIPAL BOND-AMT"
+},
+"TCMBNUM": {
+"kind": "count",
+"title": "CIFS-MUNICIPAL BOND-NUM"
+},
+"TCSBMV": {
+"kind": "asis",
+"title": "CIFS -STOCK/BOND-AMT"
+},
+"TCSBNUM": {
+"kind": "count",
+"title": "CIFS -STOCK/BOND-NUM"
+},
+"TCSNMA": {
+"kind": "level",
+"title": "CUST AND SAFE ACCT-NON-MAN-AMT"
+},
+"TCSNMNUM": {
+"kind": "count",
+"title": "CUST AND SAFE ACCT-NON-MAN-NUM"
+},
+"TCSOMV": {
+"kind": "asis",
+"title": "CIFS-SPECIALTY/OTHER-AMT"
+},
+"TCSONUM": {
+"kind": "count",
+"title": "CIFS-SPECIALTY/OTHER-NUM"
+},
+"TCSTMV": {
+"kind": "asis",
+"title": "CIFS-SHORT TERM INV-AMT"
+},
+"TCSTNUM": {
+"kind": "count",
+"title": "CIFS-SHORT TERM INV-NUM"
+},
+"TCTBMV": {
+"kind": "asis",
+"title": "CIFS - TAXABLE BOND-AMT"
+},
+"TCTBNUM": {
+"kind": "count",
+"title": "CIFS - TAXABLE BOND-NUM"
+},
+"TCTOTMV": {
+"kind": "level",
+"title": "CIFS-TOTAL-AMT"
+},
+"TCTOTNUM": {
+"kind": "count",
+"title": "CIFS-TOTAL-NUM"
+},
+"TEBMA": {
+"kind": "level",
+"title": "EMP BENE-DEF BENE-MANAGE-AMT"
+},
+"TEBMANUM": {
+"kind": "count",
+"title": "EMP BENE-DEF BENE-MANAGED-NUM"
+},
+"TEBNMA": {
+"kind": "level",
+"title": "EMP BENE-DEF BENE-NON-MAN-AMT"
+},
+"TEBNMNUM": {
+"kind": "count",
+"title": "EMP BENE-DEF BENE-NON-MAN-NUM"
+},
+"TECMA": {
+"kind": "level",
+"title": "EMP BENE-CONTRIB-MANAGED-AMT"
+},
+"TECMANUM": {
+"kind": "count",
+"title": "EMP BENE-CONTRI-MANAGED-NUM"
+},
+"TECNMA": {
+"kind": "level",
+"title": "EMP BENE-CONTRI-NON-MAN-AMT"
+},
+"TECNMNUM": {
+"kind": "count",
+"title": "EMP BENE-CONTRI-NON-MANAGE-NUM"
+},
+"TECPS": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - COM & PF STK"
+},
+"TEEQF": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - EQ MUT FUND"
+},
+"TEI": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - INT BEARING"
+},
+"TEMATOT": {
+"kind": "asis",
+"title": "EMP BEN & RET TR-TOT MANAGE AST"
+},
+"TEMISC": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - MISC ASSET"
+},
+"TEMMF": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - MONEY MKT"
+},
+"TENI": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - NONINT BEAR"
+},
+"TEOTHB": {
+"kind": "asis",
+"title": "EMP BEN & RET TR-OTH NOTE & BND"
+},
+"TEOTHF": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - OTH MUT FUND"
+},
+"TERE": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - REAL ESTATE"
+},
+"TEREMTG": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - RE MTG"
+},
+"TESCMUN": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - MUNI"
+},
+"TESCUS": {
+"kind": "asis",
+"title": "EMP BEN & RET TR -U.S TREAS & OB"
+},
+"TESTO": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - SHRT TERM OB"
+},
+"TETOT": {
+"kind": "asis",
+"title": "EXPENSE FIDUCIARY - YTD"
+},
+"TETRF": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - TRUST FUND"
+},
+"TEUF": {
+"kind": "asis",
+"title": "EMP BEN & RET TR - UNREG FUNDS"
+},
+"TFEMA": {
+"kind": "level",
+"title": "FOUNDATION & ENDOW-MANAGED-AMT"
+},
+"TFEMANUM": {
+"kind": "count",
+"title": "FOUNDATION & ENDOW-MANAGED-NUM"
+},
+"TFENMA": {
+"kind": "level",
+"title": "FOUNDATION & END-NON-MANAGE-AMT"
+},
+"TFENMNUM": {
+"kind": "count",
+"title": "FOUNDATION & END-NON-MANAGE-NUM"
+},
+"TFRA": {
+"kind": "level",
+"title": "TOTAL FIDUCIARY AND RELATED ASSETS"
+},
+"TICA": {
+"kind": "level",
+"title": "GR.INC-CORP TRUST & AGENCY-YTD"
+},
+"TICS": {
+"kind": "level",
+"title": "GR.INC-CUSTODY-YTD"
+},
+"TIEB": {
+"kind": "level",
+"title": "GR.INC-EMP. BENEFIT-BENEFIT-YTD"
+},
+"TIEC": {
+"kind": "level",
+"title": "GR.INC-EMP. BENEFIT- CONTRI-YTD"
+},
+"TIFE": {
+"kind": "level",
+"title": "GR. INC- FOUNDATION & ENDOW-YTD"
+},
+"TIMA": {
+"kind": "level",
+"title": "GR.INC - INVESTMENT AGCY - YTD"
+},
+"TIMMA": {
+"kind": "level",
+"title": "INVESTMENT AGENCY-MANAGED-AMT"
+},
+"TIMMANUM": {
+"kind": "count",
+"title": "INVESTMENT AGENCY-MANAGED-NUM"
+},
+"TIMNMA": {
+"kind": "level",
+"title": "INVESTMENT AGCY NON-MANAGED-AMT"
+},
+"TIMNMNUM": {
+"kind": "count",
+"title": "INVESTMENT AGCY NON-MANAGED-NUM"
+},
+"TINTRA": {
+"kind": "asis",
+"title": "INTRACOMPANY INC FIDUCIARY-YTD"
+},
+"TIOF": {
+"kind": "level",
+"title": "GR.INC-OTHER FIDUCIARY-YTD"
+},
+"TIOR": {
+"kind": "level",
+"title": "GR.INC-OTHER RETIREMENT -YTD"
+},
+"TIP": {
+"kind": "level",
+"title": "GR.INC-PERSONAL & AG ACCTS-YTD"
+},
+"TIR": {
+"kind": "level",
+"title": "GR.INC-RELATED SERV-YTD"
+},
+"TITOTF": {
+"kind": "level",
+"title": "TOT FOREIGN OFF GROSS FIDUC-YTD"
+},
+"TMAF": {
+"kind": "level",
+"title": "FIDUCIARY FGN OFF-MANAGED-AMT"
+},
+"TMAFNUM": {
+"kind": "level",
+"title": "FIDUCIARY FGN OFF-MANAGED-AMT"
+},
+"TMASMF": {
+"kind": "asis",
+"title": "ADVISED/SPONSORED MUT FND -AMT"
+},
+"TMASMFN": {
+"kind": "count",
+"title": "ADVISED/SPONSORED MUTAL FND-NUM"
+},
+"TNI": {
+"kind": "asis",
+"title": "NET FIDUCIARY INCOME -YTD"
+},
+"TNL": {
+"kind": "asis",
+"title": "NET LOSS FROM FIDUCIARY-YTD"
+},
+"TNMAF": {
+"kind": "level",
+"title": "FIDUCIARY FGN OFF-NON-MAN-AMT"
+},
+"TNMNUMF": {
+"kind": "count",
+"title": "FIDUCIARY FGN OFF-NON-MAN-NUM"
+},
+"TOCPS": {
+"kind": "asis",
+"title": "ALL OTH MAN ASSET-COM & PFD STK"
+},
+"TOEQF": {
+"kind": "asis",
+"title": "ALL OTH MANAGE AST - EQ MUT FND"
+},
+"TOFMA": {
+"kind": "level",
+"title": "OTH FIDUCIARY-MANAGED-AMT"
+},
+"TOFMANUM": {
+"kind": "count",
+"title": "OTH FIDUCIARY-MANAGED-NUM"
+},
+"TOFNMA": {
+"kind": "level",
+"title": "OTH FIDUCIARY NON-MANAGED-AMT"
+},
+"TOFNMNUM": {
+"kind": "count",
+"title": "OTH FIDUCIARY-NON-MANAGED-NUM"
+},
+"TOI": {
+"kind": "asis",
+"title": "ALL OTH MANAGE ASSET - INT BEAR"
+},
+"TOMATOT": {
+"kind": "asis",
+"title": "ALL OTHER MANAGED ASSET- TOTAL"
+},
+"TOMISC": {
+"kind": "asis",
+"title": "ALL OTH MAN ASSET - MISC ASSET"
+},
+"TOMMF": {
+"kind": "asis",
+"title": "ALL OTH MANAGE AST - MONEY MKT"
+},
+"TONI": {
+"kind": "asis",
+"title": "ALL OTH MAN ASSET - NONINT BEAR"
+},
+"TOOTHB": {
+"kind": "asis",
+"title": "ALL OTH MAN AST -OTH NOTE & BND"
+},
+"TOOTHF": {
+"kind": "asis",
+"title": "ALL OTH MAN ASSET - OTH MUT FND"
+},
+"TORE": {
+"kind": "asis",
+"title": "ALL OTH MAN ASSET - REAL ESTATE"
+},
+"TOREMTG": {
+"kind": "asis",
+"title": "ALL OTHER MANAGE ASSET - RE MTG"
+},
+"TORMA": {
+"kind": "level",
+"title": "OTH RETIREMENT-MANAGED-AMT"
+},
+"TORMANUM": {
+"kind": "count",
+"title": "OTH RETIREMENT-MANAGED-NUM"
+},
+"TORNMA": {
+"kind": "level",
+"title": "OTH RETIREMENT-NON-MAN-AMT"
+},
+"TORNMNUM": {
+"kind": "count",
+"title": "OTH RETIREMENT-NON-MAN-NUM"
+},
+"TOSCMUN": {
+"kind": "asis",
+"title": "ALL OTHER MANAGED ASSET - MUNI"
+},
+"TOSCUS": {
+"kind": "asis",
+"title": "ALL OTH MAN AST-U.S. TREAS & OB"
+},
+"TOSTO": {
+"kind": "asis",
+"title": "ALL OTH MAN AST - SHRT TERM OBL"
+},
+"TOTRF": {
+"kind": "asis",
+"title": "ALL OTH MAN ASSET - TRUST FUND"
+},
+"TOUF": {
+"kind": "asis",
+"title": "ALL OTH MAN ASSET - UNREG FUNDS"
+},
+"TPICPS": {
+"kind": "asis",
+"title": "PER TR & INV AGY- COM & PRF STK"
+},
+"TPIEQF": {
+"kind": "asis",
+"title": "PER TR & INV AGY - EQ MUT FUND"
+},
+"TPII": {
+"kind": "asis",
+"title": "PER TR & INV AGY - INT BEARING"
+},
+"TPIMATOT": {
+"kind": "asis",
+"title": "PER TR & INV AGY-TOT MANAGE AST"
+},
+"TPIMISC": {
+"kind": "asis",
+"title": "PER TR & INV AGY - MISC"
+},
+"TPIMMF": {
+"kind": "asis",
+"title": "PER TR & INV AGY - MONEY MKT"
+},
+"TPINI": {
+"kind": "asis",
+"title": "PER TR & INV AGY-NONINT BEARING"
+},
+"TPIOTHB": {
+"kind": "asis",
+"title": "PER TR & INV AGY-OTH NOTE & BND"
+},
+"TPIOTHF": {
+"kind": "asis",
+"title": "PER TR & INV AGY - OTH MUT FUND"
+},
+"TPIRE": {
+"kind": "asis",
+"title": "PER TR & INV AGY - REAL ESTATE"
+},
+"TPIREMTG": {
+"kind": "asis",
+"title": "PER TR & INV AGY - RE MTG"
+},
+"TPISCMUN": {
+"kind": "asis",
+"title": "PER TR & INV AGY - MUNI"
+},
+"TPISCUS": {
+"kind": "asis",
+"title": "PER TR & INV AGY-U.S TREAS & OB"
+},
+"TPISTO": {
+"kind": "asis",
+"title": "PER TR & INV AGY - SHRT TERM OB"
+},
+"TPITRF": {
+"kind": "asis",
+"title": "PER TR & INV AGY - TRUST FUND"
+},
+"TPIUF": {
+"kind": "asis",
+"title": "PER TR & INV AGY- UNREG FUNDS"
+},
+"TPMA": {
+"kind": "level",
+"title": "MANAGED ASSET-PER & AGEN-AMT"
+},
+"TPMANUM": {
+"kind": "count",
+"title": "MANAGED ASSET - PER&AGEN-NUM"
+},
+"TPNMA": {
+"kind": "level",
+"title": "NON-MANAGED - PER&AGEN-AMT"
+},
+"TPNMNUM": {
+"kind": "count",
+"title": "NON-MANAGED ASSET-PER&AGEN-NUM"
+},
+"TRADE": {
+"kind": "level",
+"title": "TRADING ACCOUNTS"
+},
+"TRADEL": {
+"kind": "level",
+"title": "TRADING LIABILITIES"
+},
+"TRADELR": {
+"kind": "ratio",
+"title": "TRADING LIABILITIES RATIO"
+},
+"TRADER": {
+"kind": "ratio",
+"title": "TRADING ACCOUNTS RATIO"
+},
+"TRFOR": {
+"kind": "level",
+"title": "TRADING ACCOUNTS-FOR"
+},
+"TRHMA": {
+"kind": "level",
+"title": "IRA"
+},
+"TRHMANUM": {
+"kind": "level",
+"title": "IRA"
+},
+"TRHNMA": {
+"kind": "level",
+"title": "IRA"
+},
+"TRHNMNUM": {
+"kind": "level",
+"title": "IRA"
+},
+"TRLREVAL": {
+"kind": "level",
+"title": "TRADE-DERIVATIVES NEG VAL"
+},
+"TRLREVALR": {
+"kind": "ratio",
+"title": "TRADE-DERIVATED NEG VAL RATIO"
+},
+"TRN": {
+"kind": "level",
+"title": "TRANSACTION-TOTAL"
+},
+"TRNCBO": {
+"kind": "level",
+"title": "TRANSACTION-COM BKS& OTHER"
+},
+"TRNCBOR": {
+"kind": "ratio",
+"title": "TRANSACTION-COM BKS& OTHER RATIO"
+},
+"TRNFC": {
+"kind": "level",
+"title": "TRANSACTION-FOR COUNTRY"
+},
+"TRNFCFG": {
+"kind": "level",
+"title": "TRANSACTION-FOR COUNTRY & GOVT"
+},
+"TRNFCFGR": {
+"kind": "ratio",
+"title": "TRANSACTION-FOR COUNTRY & GOVT RATIO"
+},
+"TRNFG": {
+"kind": "level",
+"title": "TRANSACTION-FOREIGN GOVERNMENT"
+},
+"TRNIPC": {
+"kind": "asis",
+"title": "TRANSACTION-IPC"
+},
+"TRNIPCOC": {
+"kind": "level",
+"title": "TRAN-IPC-OFFICIAL CHECKS"
+},
+"TRNIPCOCR": {
+"kind": "ratio",
+"title": "TRAN-IPC-OFFICIAL CHECKS RATIO"
+},
+"TRNMUNI": {
+"kind": "level",
+"title": "TRANSACTION-MUNI"
+},
+"TRNMUNIR": {
+"kind": "ratio",
+"title": "TRANSACTION-MUNI RATIO"
+},
+"TRNNIAR": {
+"kind": "ratio",
+"title": "AMT NON-INTEREST BEARING TRANSACTION ACC MORE THAN $250,000"
+},
+"TRNR": {
+"kind": "ratio",
+"title": "TRANSACTION-TOTAL RATIO"
+},
+"TRNUSGOV": {
+"kind": "level",
+"title": "TRANSACTION-U.S. GOVERNMENT"
+},
+"TRNUSGOVR": {
+"kind": "ratio",
+"title": "TRANSACTION-U.S. GOVERNMENT RATIO"
+},
+"TRREVALD": {
+"kind": "asis",
+"title": "TRADE-DERIV POS VAL-DOM"
+},
+"TRREVALF": {
+"kind": "asis",
+"title": "TRADE-DERIV POS VALUE-FOR"
+},
+"TRREVALSUM": {
+"kind": "ratio",
+"title": "REVALUATION GAINS ON OFF-BALANCE SHEET CONTRACTS"
+},
+"TRREVALSUMR": {
+"kind": "ratio",
+"title": "REVALUATION GAINS ON OFF-BALANCE SHEET CONTRACTS RATIO"
+},
+"TS": {
+"kind": "level",
+"title": "TIME & SAVINGS DEPOSITS-TOTAL"
+},
+"TSR": {
+"kind": "ratio",
+"title": "TIME & SAVINGS DEPOSITS-TOTAL RATIO"
+},
+"TTL": {
+"kind": "asis",
+"title": "TT&L NOTE OPTION"
+},
+"TTLOTBOR": {
+"kind": "level",
+"title": "TT&L & OTHER BORROWINGS"
+},
+"TTMA": {
+"kind": "level",
+"title": "TOT FIDUCIARY ACCTS-MAN-AMT"
+},
+"TTNANUM": {
+"kind": "count",
+"title": "TOT FIDUCIARY ACCTS-MAN-NUM"
+},
+"TTNMA": {
+"kind": "level",
+"title": "TOT FIDUCIARY ACCTS-NON-MAN-AMT"
+},
+"TTNMNUM": {
+"kind": "count",
+"title": "TOT FIDUCIARY ACCTS-NON-MAN-NUM"
+},
+"UC": {
+"kind": "level",
+"title": "UNUSED COMMIT-TOTAL"
+},
+"UCCOMRE": {
+"kind": "level",
+"title": "UNUSED COMMIT-COM RE"
+},
+"UCCOMRER": {
+"kind": "ratio",
+"title": "UNUSED COMMIT-COM RE RATIO"
+},
+"UCCOMRES": {
+"kind": "level",
+"title": "UNUSED COMMIT-SECURED COM RE"
+},
+"UCCOMRESR": {
+"kind": "ratio",
+"title": "UNUSED COMMIT-SECURED COM RE RATIO"
+},
+"UCCOMREU": {
+"kind": "level",
+"title": "UNUSED COMMIT-UNSECURED COM RE"
+},
+"UCCOMREUR": {
+"kind": "ratio",
+"title": "UNUSED COMMIT-UNSECURED COM RE RATIO"
+},
+"UCCRCD": {
+"kind": "level",
+"title": "UNUSED COMMIT-CREDIT CARD LINES"
+},
+"UCCRCDR": {
+"kind": "ratio",
+"title": "UNUSED COMMIT-CREDIT CARD LINES RATIO"
+},
+"UCLN": {
+"kind": "level",
+"title": "UNUSED COMMIT-TOTAL LOANS"
+},
+"UCLOC": {
+"kind": "level",
+"title": "UNUSED COMMIT-HOME EQUITY LINES"
+},
+"UCLOCR": {
+"kind": "ratio",
+"title": "UNUSED COMMIT-HOME EQUITY LINES RATIO"
+},
+"UCOTHER": {
+"kind": "level",
+"title": "UNUSED COMMIT-ALL OTHER"
+},
+"UCOTHERR": {
+"kind": "ratio",
+"title": "UNUSED COMMIT-ALL OTHER RATIO"
+},
+"UCOVER1": {
+"kind": "level",
+"title": "UNUSED COM-OVER 1 YR-RC-R COL A"
+},
+"UCOVER1R": {
+"kind": "ratio",
+"title": "UNUSED COM-OVER 1 YR-RC-R COL A RATIO"
+},
+"UCR": {
+"kind": "ratio",
+"title": "UNUSED COMMIT-TOTAL RATIO"
+},
+"UCSCR": {
+"kind": "ratio",
+"title": "UNUSED COMMIT-SEC UNDERWRITING RATIO"
+},
+"UCSZCI": {
+"kind": "level",
+"title": "UNUSED COMMIT FOR SECUR. - CI"
+},
+"UCSZCRCD": {
+"kind": "asis",
+"title": "UNUSED COMMIT FOR SECUR. - CRCD"
+},
+"UCSZHEL": {
+"kind": "asis",
+"title": "UNUSED COMMIT FOR SECUR. - HEL"
+},
+"UCSZOTH": {
+"kind": "level",
+"title": "UNUSED COMMIT FOR SECUR. - OTH"
+},
+"UCSZRES": {
+"kind": "level",
+"title": "UNUSED COMMIT FOR SECUR. - RES"
+},
+"UNINC": {
+"kind": "level",
+"title": "UNEARNED INCOME"
+},
+"UNINCFOR": {
+"kind": "level",
+"title": "UNEARNED INCOME-FOR"
+},
+"UNINCFORR": {
+"kind": "ratio",
+"title": "UNEARNED INCOME-FOR RATIO"
+},
+"UNINUM": {
+"kind": "level",
+"title": "BANK UNIQUE NUMBER"
+},
+"UYAMTG": {
+"kind": "asis",
+"title": "UNAMORTIZED YIELD ADJ-MTG LOANS"
+},
+"UYANMTG": {
+"kind": "asis",
+"title": "UNAMORTIZED YIELD ADJ-NONMTG LNS"
+},
+"VOLIAB": {
+"kind": "level",
+"title": "VOLATILE LIABILITIES"
+},
+"VOLIABR": {
+"kind": "ratio",
+"title": "VOLATILE LIABILITIES RATIO"
+}
+}

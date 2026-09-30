@@ -327,12 +327,56 @@ _SCREEN_SCOPE_SUFFIXES = ("scope_type", "cohort", "geo_State", "geo_Region",
                           "group", "manual")
 
 
-def _screen_filter_key_to_idx():
-    """metric_key → filter-dropdown index. MIRRORS the builder's `filterable`
-    derivation (kept identical so a restored filter lands on the right metric)."""
-    fk = sorted([(m["key"], m["label"]) for m in METRICS
-                 if m.get("format") in _SCREEN_FILTER_FMTS], key=lambda x: x[1])
-    return {k: i + 1 for i, (k, _) in enumerate(fk)}
+def _screen_formulas(ss) -> dict:
+    """{fx key: {name, expr, fmt}} for the screen's formulas (from screen_dyn)."""
+    return {d["key"]: d for d in ss.get("screen_dyn", [])
+            if str(d.get("key", "")).startswith("fx:")}
+
+
+def _screen_filter_options(ss) -> list[tuple[str, str]]:
+    """THE filter-metric option list: registry metrics (sorted by label), then
+    the screen's call-report fields and formulas in the order they were added
+    (appending keeps earlier filter indices stable). Used by both the builder
+    and saved-screen restore, so a restored filter lands on the right metric."""
+    from data import call_report_fields as crf
+    opts = sorted([(m["key"], m["label"]) for m in METRICS
+                   if m.get("format") in _SCREEN_FILTER_FMTS], key=lambda x: x[1])
+    formulas = _screen_formulas(ss)
+    for d in ss.get("screen_dyn", []):
+        md = crf.metric_def(d["key"], formulas)
+        if md:
+            opts.append((d["key"], md["label"]))
+    return opts
+
+
+def _screen_filter_key_to_idx(ss=None):
+    """metric_key → filter-dropdown index over _screen_filter_options."""
+    return {k: i + 1 for i, (k, _) in enumerate(_screen_filter_options(ss or {}))}
+
+
+def _screen_valid_dyn(entries) -> list[dict]:
+    """Saved/recent call-report fields + formulas that still resolve: a field
+    must be in the FDIC catalog, a formula must parse. Invalid ones are
+    dropped — never restored onto the wrong data."""
+    from data import call_report_fields as crf
+    out, seen = [], set()
+    for d in entries or []:
+        k = str(d.get("key", ""))
+        if k in seen:
+            continue
+        if k.startswith(crf.FIELD_PREFIX) and k[len(crf.FIELD_PREFIX):] in crf.catalog():
+            out.append({"key": k})
+        elif k.startswith(crf.FORMULA_PREFIX) and d.get("name") and d.get("expr"):
+            try:
+                crf.parse_formula(d["expr"])
+            except ValueError:
+                continue
+            out.append({"key": k, "name": d["name"], "expr": d["expr"],
+                        "fmt": d.get("fmt", "Number")})
+        else:
+            continue
+        seen.add(k)
+    return out
 
 
 def _screen_clear_filters(ss, tk):
@@ -349,6 +393,7 @@ def _screen_clear_filters(ss, tk):
     ss[f"sort_{tk}"] = 0
     ss[f"order_{tk}"] = "Desc"
     ss.pop(f"custom_cols_{tk}", None)
+    ss["screen_dyn"] = []
 
 
 def _screen_switch_tab(ss, tk):
@@ -363,7 +408,8 @@ def _screen_restore_cfg(ss, cfg, tk):
     skipped, never mis-mapped onto the wrong metric). Persisted saved screens
     carry filters/sort/columns; this session's Recent entries also carry the
     scope selection and as-of, restored when present."""
-    k2i = _screen_filter_key_to_idx()
+    ss["screen_dyn"] = _screen_valid_dyn(cfg.get("dyn"))
+    k2i = _screen_filter_key_to_idx(ss)
     if cfg.get("sort_idx") is not None:
         ss[f"sort_{tk}"] = cfg["sort_idx"]
     if cfg.get("sort_order"):
@@ -858,11 +904,15 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     from data.bank_groups import save_group
 
     # Filterable metrics span the ENTIRE metric set (not just this table's
-    # columns) so you can screen on, say, CET1 and P/TBV from any table.
-    filterable = sorted(
-        [(m["key"], m["label"]) for m in METRICS if m.get("format") in _SCREEN_FILTER_FMTS],
-        key=lambda x: x[1],
-    )
+    # columns) so you can screen on, say, CET1 and P/TBV from any table —
+    # plus any FDIC call-report field or formula added to this screen
+    # (data/call_report_fields; owner 2026-09-30).
+    from data import call_report_fields as crf
+    st.session_state.setdefault("screen_dyn", [])
+    _dyn_keys = [d["key"] for d in st.session_state["screen_dyn"]]
+    _formulas = _screen_formulas(st.session_state)
+    crf.register(_dyn_keys, _formulas)
+    filterable = _screen_filter_options(st.session_state)
     filter_labels = ["—"] + [lbl for _, lbl in filterable]
     filter_keys = [None] + [k for k, _ in filterable]
 
@@ -917,6 +967,10 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         m = METRICS_BY_KEY.get(col_key)
         if m:
             sort_labels.append(m["label"])
+            sort_keys.append(col_key)
+    for col_key in _dyn_keys:
+        if col_key in (st.session_state.get(f"custom_cols_{tab_key}") or []):
+            sort_labels.append(METRICS_BY_KEY[col_key]["label"])
             sort_keys.append(col_key)
 
     _lbl_of = {t["key"]: t["label"] for t in TABS}
@@ -1017,9 +1071,49 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             ss.pop(f"filt_{sfx}_{tab_key}_{n - 1}", None)
         ss[f"num_filters_{tab_key}"] = max(n - 1, 0)
 
+    def _add_dyn(entry):
+        """Add a call-report field / formula to the screen (or replace a
+        formula of the same name) and show it as a column."""
+        ss = st.session_state
+        dyn = [d for d in ss.get("screen_dyn", []) if d["key"] != entry["key"]]
+        pos = next((i for i, d in enumerate(ss.get("screen_dyn", []))
+                    if d["key"] == entry["key"]), len(dyn))
+        dyn.insert(pos, entry)          # a re-defined formula keeps its slot
+        ss["screen_dyn"] = dyn
+        cols = list(ss.get(f"custom_cols_{tab_key}") or tab_columns)
+        if entry["key"] not in cols:
+            cols.append(entry["key"])
+        ss[f"custom_cols_{tab_key}"] = cols
+
+    def _pick_field():
+        code = st.session_state.get("screen_field_pick")
+        if code:
+            _add_dyn({"key": crf.field_key(code)})
+        st.session_state["screen_field_pick"] = None
+
+    def _add_formula():
+        ss = st.session_state
+        name = (ss.get("screen_fx_name") or "").strip()
+        expr = (ss.get("screen_fx_expr") or "").strip()
+        key = crf.slug(name)
+        if not key:
+            ss["_screen_fx_err"] = "Give the formula a name."
+            return
+        try:
+            crf.parse_formula(expr)
+        except ValueError as e:
+            ss["_screen_fx_err"] = str(e)
+            return
+        ss["_screen_fx_err"] = None
+        _add_dyn({"key": key, "name": name, "expr": expr,
+                  "fmt": ss.get("screen_fx_fmt", "Number")})
+        ss["screen_fx_name"] = ""
+        ss["screen_fx_expr"] = ""
+
     # Columns draft: seed the multiselect's session value once (no `default=`
     # alongside a session-set key — Streamlit warns on that combination).
-    _all_metric_keys = [m["key"] for m in METRICS if m.get("format") != "date"]
+    _all_metric_keys = ([m["key"] for m in METRICS if m.get("format") != "date"]
+                        + _dyn_keys)
     if (f"custom_cols_{tab_key}" not in st.session_state
             or st.session_state.pop("_screen_cols_reset", False)):
         st.session_state[f"custom_cols_{tab_key}"] = list(tab_columns)
@@ -1129,8 +1223,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             if _nf >= _SCREEN_MAX_FILTERS:
                 st.caption(f"Up to {_SCREEN_MAX_FILTERS} filters per screen.")
 
-        # Row 3: Columns (popover — the full picker is ~25 chips tall) · Sort · Order
-        r3 = st.columns([1.15, 1.5, 0.9, 5.4], vertical_alignment="bottom")
+        # Row 3: Columns (popover — the full picker is ~25 chips tall) · call
+        # report field · formula · Sort · Order
+        r3 = st.columns([1.15, 1.45, 1.05, 1.5, 0.9, 2.95], vertical_alignment="bottom")
         with r3[0]:
             _ncols = len(st.session_state.get(f"custom_cols_{tab_key}") or [])
             with st.popover(f"Columns ({_ncols})", use_container_width=True):
@@ -1143,10 +1238,40 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     st.session_state[f"_screen_cols_reset"] = True
                     st.rerun()
         with r3[1]:
+            with st.popover("+ Call report field", use_container_width=True):
+                _cat = crf.catalog()
+                st.selectbox(
+                    "Any FDIC call report field", sorted(_cat), index=None,
+                    format_func=crf.field_label, key="screen_field_pick",
+                    placeholder=f"Search {len(_cat):,} fields by code or name…",
+                    on_change=_pick_field)
+                st.caption("Adds the field as a column and to the Filter and Sort "
+                           "lists. Latest FDIC quarter (or the As of quarter). Dollar "
+                           "items in dollars; ratios as FDIC reports them. A "
+                           "multi-charter bank shows n/a where a ratio can't be "
+                           "rebuilt exactly from its charters.")
+        with r3[2]:
+            with st.popover("ƒ Formula", use_container_width=True):
+                st.text_input("Name", key="screen_fx_name",
+                              placeholder="e.g. CDs repricing ≤12M %")
+                st.text_input("Formula — field codes, numbers, + − * / ( )",
+                              key="screen_fx_expr",
+                              placeholder="(CD3LES + CD3LESS + CD3T12 + CD3T12S) / DEPDOM * 100")
+                st.selectbox("Show as", list(crf.FORMULA_FORMATS), key="screen_fx_fmt")
+                st.button("Add formula", key="screen_fx_add", on_click=_add_formula,
+                          type="primary")
+                if st.session_state.get("_screen_fx_err"):
+                    st.caption(f"⚠ {st.session_state['_screen_fx_err']}")
+                st.caption("Dollar fields enter in dollars. Any missing input or a "
+                           "zero divisor makes that bank n/a — never 0. Re-adding a "
+                           "name replaces its formula.")
+                for f in _formulas.values():
+                    st.caption(f"ƒ **{f['name']}** = `{f['expr']}`")
+        with r3[3]:
             sort_idx = st.selectbox(
                 "Sort", options=list(range(len(sort_labels))),
                 format_func=lambda i: sort_labels[i], key=f"sort_{tab_key}")
-        with r3[2]:
+        with r3[4]:
             sort_order = st.selectbox("Order", options=["Desc", "Asc"],
                                       key=f"order_{tab_key}")
 
@@ -1165,6 +1290,8 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             "tickers": list(display_tickers),
             "filters": filter_specs, "sort_key": sort_key, "sort_order": sort_order,
             "columns": list(display_cols_draft),
+            "dyn": [dict(d) for d in st.session_state.get("screen_dyn", [])],
+            "asof_q": _q.strftime("%Y%m%d") if is_asof else None,
         }
         _applied = st.session_state.get("_screen_applied")
 
@@ -1180,6 +1307,16 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     from analysis.screen_engine import evaluate as _evaluate_screen
     if _run or st.session_state.pop("_screen_run_pending", False):
         kept, n_excluded_nodata = list(display_metrics), 0
+        # Call-report fields / formulas used anywhere in the screen are fetched
+        # ONCE for the whole scope (copies — the snapshot is never mutated).
+        _cr_needed = [k for k in dict.fromkeys(
+            [s["metric"] for s in filter_specs] + list(display_cols_draft)
+            + ([sort_key] if sort_key else [])) if crf.is_dynamic(k)]
+        _cr_repdte = None
+        if _cr_needed and kept:
+            _cr_repdte = _draft["asof_q"] or crf.latest_repdte()
+            with st.spinner("Fetching call report fields…"):
+                kept = crf.attach(kept, _cr_needed, _cr_repdte, _formulas)
         if filter_specs and kept:
             ct_specs = [s for s in filter_specs if s["kind"] in ("change", "trend")]
             if ct_specs:
@@ -1190,8 +1327,20 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     + [int(s.get("quarters", 3)) for s in ct_specs if s["kind"] == "trend"]
                     + [1])
 
-                def _hist_provider(tk, _m=ct_metrics, _n=max_lb):
-                    return _screen_metric_series(tk, _m, _n)
+                _reg_m = tuple(m for m in ct_metrics if not crf.is_dynamic(m))
+                _dyn_m = [m for m in ct_metrics if crf.is_dynamic(m)]
+                _row_of = {r.get("ticker"): r for r in kept}
+                _base = pd.Timestamp(_cr_repdte) if _cr_repdte else None
+                _reps = ([(_base - pd.offsets.QuarterEnd(i)).strftime("%Y%m%d")
+                          if i else _base.strftime("%Y%m%d")
+                          for i in range(max_lb + 1)] if _base is not None else [])
+
+                def _hist_provider(tk, _m=_reg_m, _n=max_lb):
+                    out = _screen_metric_series(tk, _m, _n) if _m else {}
+                    if _dyn_m and _reps:
+                        out = {**(out or {}), **crf.series_for(
+                            _row_of.get(tk, {"ticker": tk}), _dyn_m, _reps, _formulas)}
+                    return out
 
                 with st.spinner("Computing quarterly history for change/trend filters…"):
                     kept, n_excluded_nodata = _evaluate_screen(
@@ -1205,7 +1354,8 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         _applied = _draft
         st.session_state["_screen_applied"] = _applied
         st.session_state["_screen_result"] = {"metrics": kept,
-                                              "n_excluded_nodata": n_excluded_nodata}
+                                              "n_excluded_nodata": n_excluded_nodata,
+                                              "cr_repdte": _cr_repdte}
         # Recent (this session): most-recent first, deduped on the spec, capped.
         _ran_at = time.strftime("%H:%M")
         st.session_state["_screen_ran_at"] = _ran_at
@@ -1220,6 +1370,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 "filters": _specs_to_cfg_filters(filter_specs),
                 "columns": list(display_cols_draft),
                 "scope_keys": _draft["scope_keys"], "asof": _asof_pick,
+                "dyn": _draft["dyn"],
             },
         }
         _rec = [r for r in st.session_state.get("_screen_recent", [])
@@ -1246,7 +1397,12 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     res_metrics = _res["metrics"]
     n_excluded_nodata = _res["n_excluded_nodata"]
     ap_filters = _applied["filters"]
-    ap_cols = [c for c in _applied["columns"] if c in _all_metric_keys] or list(tab_columns)
+    _ap_formulas = {d["key"]: d for d in _applied.get("dyn", [])
+                    if d["key"].startswith(crf.FORMULA_PREFIX)}
+    crf.register([d["key"] for d in _applied.get("dyn", [])], _ap_formulas)
+    ap_cols = [c for c in _applied["columns"]
+               if c in _all_metric_keys or c in METRICS_BY_KEY] or list(tab_columns)
+    _cr_rep = _res.get("cr_repdte")
     ap_tab = next((t for t in TABS if t["key"] == _applied["tab_key"]), screening_tab)
     ap_sort_key = _applied["sort_key"]
     ap_asc = _applied["sort_order"] == "Asc"
@@ -1395,7 +1551,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         _meta = (status_dot("ok", f"{len(res_metrics)} banks")
                  + f" · {ap_tab['title']} · {ap_scope_label}{filter_note}"
                  + f"{nodata_note} · FDIC + SEC fundamentals · "
-                 + f"{len(ap_cols)} columns")
+                 + f"{len(ap_cols)} columns"
+                 + (f" · call report fields as of "
+                    f"{pd.Timestamp(_cr_rep).strftime('%m/%d/%Y')}" if _cr_rep else ""))
     st.markdown(
         f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
         f'margin:10px 0 4px;">{_meta}</div>',
@@ -1430,6 +1588,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                             "num_filters": len(ap_filters),
                             "filters": _specs_to_cfg_filters(ap_filters),
                             "columns": list(ap_cols),
+                            "dyn": list(_applied.get("dyn", [])),
                         }
                         if save_screen(_new_name, _cfg):
                             _vs = screen_versions(_new_name)
@@ -1480,6 +1639,13 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                         "Filters": len(ap_filters) if ap_filters else "none",
                         "Sort": _sort_lbl,
                         "As of": _applied["asof"],
+                        "Call report fields": (
+                            f"FDIC BankFind financials, quarter "
+                            f"{pd.Timestamp(_cr_rep).strftime('%Y-%m-%d')}; dollar items "
+                            "in $, ratios/counts as reported; formulas: "
+                            + ("; ".join(f"{d['name']} = {d['expr']}"
+                                         for d in _ap_formulas.values()) or "none")
+                            if _cr_rep else "none"),
                         "Source": ("FDIC point-in-time reconstruction; market & SEC "
                                    "metrics n/a" if ap_is_asof else
                                    "FDIC/FFIEC bank-subsidiary + SEC companyfacts "
