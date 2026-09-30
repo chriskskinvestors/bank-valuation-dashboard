@@ -258,10 +258,16 @@ jobs:
               # found 4 of its last 12 executions killed at the 1800s limit
               # (max observed 1984s, p50 1675s) — the same silent class as
               # refresh-sod. refresh-13f: 5400s vs a 3869s run = 1.4x headroom.
+              # 2026-09-28 audit: refresh-insider's slowest run grew to
+              # 2684s (1.3x headroom at 3600) — 5400s buys room while the
+              # growth itself is investigated; poll-events was killed once at
+              # its 900s limit (max 1018s) during the weekday PR-sweep window.
               elif [ "$job" = "refresh-insider" ]; then
-                EXTRA="--task-timeout=3600"
+                EXTRA="--task-timeout=5400"
               elif [ "$job" = "refresh-13f" ]; then
                 EXTRA="--task-timeout=9000"
+              elif [ "$job" = "poll-events" ]; then
+                EXTRA="--task-timeout=1800"
               fi
               # Jobs that talk to Cloud SQL (carry DATABASE_URL, or already
               # migrated to DB_PASSWORD) get the password as a secret mount +
