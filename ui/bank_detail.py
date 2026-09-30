@@ -605,8 +605,7 @@ def valuation_series(ticker: str, info: dict, period: str = "1Y"):
     if not cik:
         return None
     try:
-        from ui.financial_highlights import (_per_share_for_ends, _flow_for,
-                                             _sec_map, _sec_prov_map)
+        from ui.financial_highlights import _per_share_for_ends, _flow_for, _sec_map
         from data.fmp_client import get_history
     except Exception:
         return None
@@ -655,15 +654,15 @@ def valuation_series(ticker: str, info: dict, period: str = "1Y"):
 
     # Each quarter's book value / TTM EPS steps in on the date its 10-Q/10-K was
     # actually FILED (not the period-end), so a given day's multiple only uses
-    # fundamentals the market already had — no lookahead.
-    eq_prov = _sec_prov_map(facts, "StockholdersEquity", instant=True) if facts else {}
+    # fundamentals the market already had — no lookahead. The filing is the
+    # one that reported the equity TBVPS was built on (either equity tag).
     frows = []
     for e in ends_all:
         rec = ps.get(e) or {}
         tbvps, eps_ttm = rec.get("tbvps"), ttm.get(e)
         if tbvps is None and eps_ttm is None:
             continue
-        prov = eq_prov.get(e.strftime("%Y-%m-%d"))
+        prov = rec.get("_eq_prov")
         eff = (pd.to_datetime(prov["filed"], errors="coerce")
                if (prov and prov.get("filed")) else pd.Timestamp(e))
         if pd.isna(eff):
