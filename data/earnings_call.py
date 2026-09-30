@@ -194,27 +194,77 @@ _RELEASE_CUE_RE = re.compile(r"\b(?:release|report|announce|issue|publish)\b", r
 def _parse_release_date(text: str, today_iso: str) -> str | None:
     """Earnings-RELEASE date from a PR body — a future '… on <date>' shortly after
     a release/report cue (e.g. 'release its Q2 results on Thursday, July 23').
-    None if not found."""
+    None if not found. A fiscal-period-end date named as the period ('results
+    for the quarter ended September 30, 2026') is never a release date."""
     if not text:
         return None
     for m in _RELEASE_CUE_RE.finditer(text):
-        d = _parse_on_date(text[m.start():m.start() + 130])
-        if d and d >= today_iso:
+        window = text[m.start():m.start() + 130]
+        d, at = _find_on_date(window)
+        if d and d >= today_iso and not _not_a_release_date(window, d, at):
             return d
     return None
 
 
-def _parse_on_date(text: str) -> str | None:
-    """First '… on <Month> <Day>, <Year>' date in `text`, as ISO; None if none."""
+# Words that anchor an on-date to something OTHER than a release: a dividend's
+# payable/record date, an effective/closing/maturity date, an event held on.
+_NON_RELEASE_ANCHOR_RE = re.compile(
+    r"\b(?:payable|record(?:\s+date)?|ex-dividend|effective|closing|maturing|"
+    r"maturity|held|expir\w*|redeem\w*|redemption)\s*$", re.I)
+
+
+def _not_a_release_date(text: str, iso: str, at: int) -> bool:
+    """True when the on-date at offset `at` in `text` is anchored to something
+    other than a release: 'payable on September 30, 2026' (MTB 2026-08-18
+    dividend), 'effective on …', 'held on …' — or a quarter-end named as the
+    period (_is_period_end_ref). Either way a release-date reading would be
+    a plausible-wrong date (cardinal rule: n/a beats a guess)."""
+    before = text[max(0, at - 40):at].rstrip(" ,")
+    return (bool(_NON_RELEASE_ANCHOR_RE.search(before))
+            or _is_period_end_ref(text, iso, at))
+
+
+# Calendar quarter-ends — the dates a "quarter ended …" / "as of …" clause names.
+_QUARTER_ENDS = ((3, 31), (6, 30), (9, 30), (12, 31))
+_PERIOD_REF_RE = re.compile(
+    r"\b(?:ended|ending|ends|as of|through|period|quarter|year)\s*(?:on\s+)?$", re.I)
+
+
+def _is_period_end_ref(text: str, iso: str, at: int) -> bool:
+    """True when the date at offset `at` in `text` is a calendar quarter-end
+    that the prose names as a PERIOD ('quarter ended September 30, 2026',
+    'as of Wednesday, September 30, 2026') rather than as a release day. A
+    quarter-end is never a bank's earnings-release day, so a release-date
+    reading of one is a plausible-wrong date (cardinal rule: n/a beats a
+    guess) — but only the period phrasing rejects it, so an explicit
+    'on Wednesday, September 30' still parses elsewhere (call dates)."""
+    d = _iso_date(iso)
+    if d is None or (d.month, d.day) not in _QUARTER_ENDS:
+        return False
+    before = text[max(0, at - 40):at].rstrip(" ,")
+    # The date-anchor itself ("on"/"for"/weekday) sits between the period
+    # word and the date: "quarter ended on Wednesday, September 30".
+    before = re.sub(r"(?:\b(?:on|for)\s+)?(?:" + _WD + r")?$", "", before, flags=re.I)
+    return bool(_PERIOD_REF_RE.search(before.rstrip(" ,")))
+
+
+def _find_on_date(text: str) -> tuple[str | None, int]:
+    """First '… on <Month> <Day>, <Year>' date in `text` as (ISO, match start);
+    (None, -1) if none."""
     for m in _ON_DATE_RE.finditer(text or ""):
         mon = _MONTHS.get(m.group(1).lower())
         if not mon:
             continue
         try:
-            return date(int(m.group(3)), mon, int(m.group(2))).isoformat()
+            return date(int(m.group(3)), mon, int(m.group(2))).isoformat(), m.start()
         except ValueError:
             continue
-    return None
+    return None, -1
+
+
+def _parse_on_date(text: str) -> str | None:
+    """First '… on <Month> <Day>, <Year>' date in `text`, as ISO; None if none."""
+    return _find_on_date(text)[0]
 
 
 def _announced_release_date(headline: str, today_iso: str) -> str | None:
@@ -225,10 +275,18 @@ def _announced_release_date(headline: str, today_iso: str) -> str | None:
     hl = (headline or "").lower()
     if not any(c in hl for c in _ANNOUNCE_CUES):
         return None
-    if ("conference call" in hl or "webcast" in hl) and not (
-            "result" in hl or "earnings" in hl):
+    if not any(k in hl for k in _EARNINGS_KW):
+        # An announce cue + an on-date is not enough: the headline must name
+        # the results/earnings. MTB 2026-08-18 (google_news, typed 'earnings'
+        # by "third quarter"): "Announces Third Quarter of 2026 Common Stock
+        # Dividend, Payable on September 30, 2026" — the dividend's PAYABLE
+        # date became the announced release date and confirmed a Sep-30
+        # (quarter-end) "release" on the Calendar (owner report 2026-09-30).
+        # This also covers the old call/webcast-only exclusion.
         return None
-    d = _parse_on_date(headline)
+    d, at = _find_on_date(headline)
+    if d and _not_a_release_date(headline, d, at):
+        return None            # "… Results for the Quarter Ended September 30"
     return d if (d and d >= today_iso) else None
 
 
@@ -294,11 +352,17 @@ def _build_call_info_map() -> dict:
         rows = get_events_by_type("earnings", limit=800)
     except Exception:
         return {}
+    # First-party sources only — the same gate the Results board applies
+    # (earnings_results v9). Aggregator rewrites typed 'earnings' carried
+    # dates the parser can't tell from a bank's own announcement: MTB
+    # 2026-08-18 (google_news) "… Common Stock Dividend, Payable on September
+    # 30, 2026" became release_date 2026-09-30 → "Today ✓" on the Calendar.
+    from data.earnings_results import _FIRST_PARTY_SOURCES
     today_iso = date.today().isoformat()
     out: dict = {}
     for r in rows:                                   # newest-first
         tk = r.get("ticker")
-        if not tk:
+        if not tk or r.get("source") not in _FIRST_PARTY_SOURCES:
             continue
         cur = out.get(tk) or {}
         # Call logistics from the PR body (best-effort, when not already found
@@ -646,6 +710,14 @@ def _release_call_infos(board_rows, today, fetch_release, is_safe,
     for r in board_rows or []:
         if r.get("awaiting"):
             continue
+        # A PR-only "pending" row is a headline classification, not a fact:
+        # COLB 2026-09-30 — its date-ANNOUNCEMENT PR was typed as a results
+        # release, the board minted a pending row dated that day, and this
+        # layer confirmed a Sep-30 (quarter-end) release on the Calendar.
+        # Confirm only from facts: posted actuals or the attached 8-K release.
+        if (r.get("pending") and r.get("eps_act") is None
+                and r.get("rev_act") is None and not r.get("rel")):
+            continue
         d = _iso_date(r.get("date"))
         if d is None or (today - d).days > 2:
             continue
@@ -881,8 +953,14 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         # release, so drop the call date/time/dial-in when it doesn't fit.
         if call_d is not None and not (-2 <= (call_d - d).days <= 7):
             call_d = call_time = dial_in = None
-        confirmed = bool(rel_d) or bool(frow.get("confirmed")) or (
-            call_d is not None and 0 <= (call_d - d).days <= 4)
+        # ✓ means a FACT about the displayed date: the company announced it
+        # (rel_d), or FMP confirms THIS date. FMP's flag belongs to FMP's own
+        # date — when yfinance's earlier estimate is the one displayed, the
+        # flag does not carry over (MTB 2026-09-30: a ✓ on a date FMP never
+        # confirmed). A nearby call date is consistent with the estimate but
+        # confirms nothing — it stays "(proj.)" (owner rule 2026-09-30).
+        confirmed = bool(rel_d) or (
+            bool(frow.get("confirmed")) and (fmp or {}).get("d") == d)
         # Report timing: FMP's before/after-open code; else the timing the bank
         # stated in its own announcement ("after the market closes"); else inferred
         # — a call the NEXT morning means the release went out after close.
@@ -924,6 +1002,17 @@ def build_calls_agenda(yf_rows, fmp_rows, universe, call_info, today,
         out.append({"label": label, "date": day.isoformat(),
                     "rows": buckets[day]})
     return out
+
+
+def agenda_counts(agenda, week_days: int = 7, fortnight_days: int = 14):
+    """(reporting within `week_days`, reporting within `fortnight_days`) over
+    a build_calls_agenda() result — THE definition both the Earnings KPI bar
+    ("Reporting This Week N · M in 14d") and the Calendar tab's "This Week"
+    read, so one concept shows one number (2026-09-30: the header counted the
+    raw yfinance snapshot and said 0 while the calendar said 2). Pure."""
+    rows = [r for b in (agenda or []) for r in b.get("rows") or []]
+    return (sum(1 for r in rows if r["days_until"] <= week_days),
+            sum(1 for r in rows if r["days_until"] <= fortnight_days))
 
 
 def earnings_timing_map() -> dict:
