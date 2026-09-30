@@ -1,0 +1,122 @@
+{
+ "0": {
+  "cik_str": 1160330,
+  "ticker": "BBD",
+  "title": "BANK BRADESCO"
+ },
+ "1": {
+  "cik_str": 1160330,
+  "ticker": "BBDO",
+  "title": "BANK BRADESCO"
+ },
+ "2": {
+  "cik_str": 1847360,
+  "ticker": "BCOW",
+  "title": "1895 Bancorp of Wisconsin, Inc. /MD/"
+ },
+ "3": {
+  "cik_str": 1668340,
+  "ticker": "BCTF",
+  "title": "Bancorp 34, Inc."
+ },
+ "4": {
+  "cik_str": 804563,
+  "ticker": "BMBN",
+  "title": "BENCHMARK BANKSHARES INC"
+ },
+ "5": {
+  "cik_str": 9631,
+  "ticker": "BNS",
+  "title": "BANK OF NOVA SCOTIA"
+ },
+ "6": {
+  "cik_str": 1075706,
+  "ticker": "CIZN",
+  "title": "CITIZENS HOLDING CO /MS/"
+ },
+ "7": {
+  "cik_str": 847538,
+  "ticker": "CPKF",
+  "title": "CHESAPEAKE FINANCIAL SHARES INC"
+ },
+ "8": {
+  "cik_str": 1845799,
+  "ticker": "CULL",
+  "title": "Cullman Bancorp, Inc. /MD/"
+ },
+ "9": {
+  "cik_str": 1159508,
+  "ticker": "DB",
+  "title": "DEUTSCHE BANK AKTIENGESELLSCHAFT"
+ },
+ "10": {
+  "cik_str": 912967,
+  "ticker": "FBSI",
+  "title": "FIRST BANCSHARES INC /MO/"
+ },
+ "11": {
+  "cik_str": 1065823,
+  "ticker": "FNFI",
+  "title": "FIRST NILES FINANCIAL INC"
+ },
+ "12": {
+  "cik_str": 1065823,
+  "ticker": "FNFPA",
+  "title": "FIRST NILES FINANCIAL INC"
+ },
+ "13": {
+  "cik_str": 1132597,
+  "ticker": "ITUB",
+  "title": "Itau Unibanco Holding S.A."
+ },
+ "14": {
+  "cik_str": 912764,
+  "ticker": "KSBI",
+  "title": "KS BANCORP INC"
+ },
+ "15": {
+  "cik_str": 2152813,
+  "ticker": "MFDB",
+  "title": "MFB Bancorp, Inc."
+ },
+ "16": {
+  "cik_str": 1947463,
+  "ticker": "NACB",
+  "title": "ODNB Financial Corp"
+ },
+ "17": {
+  "cik_str": 1588871,
+  "ticker": "OAKC",
+  "title": "Oakworth Capital, Inc."
+ },
+ "18": {
+  "cik_str": 1705284,
+  "ticker": "PBAM",
+  "title": "Private Bancorp of America, Inc."
+ },
+ "19": {
+  "cik_str": 925173,
+  "ticker": "PTBS",
+  "title": "POTOMAC BANCSHARES INC"
+ },
+ "20": {
+  "cik_str": 1263043,
+  "ticker": "SHG",
+  "title": "SHINHAN FINANCIAL GROUP CO LTD"
+ },
+ "21": {
+  "cik_str": 1166362,
+  "ticker": "STBI",
+  "title": "STURGIS BANCORP INC"
+ },
+ "22": {
+  "cik_str": 811211,
+  "ticker": "UNIB",
+  "title": "UNIVERSITY BANCORP INC /DE/"
+ },
+ "23": {
+  "cik_str": 2105965,
+  "ticker": "WCCB",
+  "title": "West Coast Community Bancorp"
+ }
+}
