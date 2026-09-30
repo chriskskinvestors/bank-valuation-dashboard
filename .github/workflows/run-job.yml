@@ -85,13 +85,27 @@ jobs:
       # --order=asc the --limit keeps the OLDEST lines, so on 2026-09-30 an
       # earlier same-day verify-metrics run filled the window and this run's
       # results block was cut off entirely.
+      #
+      # Cloud Logging ingests with a lag: read the instant --wait returns and
+      # the job's LAST lines (its summary) are missing — the same day, the
+      # first fixed read stopped at the results header. After an execution,
+      # re-read until the terminal "Container called exit" line is in (≤ ~2
+      # min), then print.
       - name: Print the job's container output (Cloud Logging)
         if: ${{ always() }}
         run: |
           SINCE="${RUN_START:-$(date -u -d '-12 hours' +%Y-%m-%dT%H:%M:%SZ)}"
-          gcloud logging read \
-            "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }} AND timestamp>=\"${SINCE}\"" \
-            --project="${{ env.PROJECT_ID }}" \
-            --order=asc --limit=2000 \
-            --format="value(timestamp,textPayload)" \
-            || echo "::warning::could not read Cloud Logging (github-deployer lacks roles/logging.viewer?)"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            gcloud logging read \
+              "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }} AND timestamp>=\"${SINCE}\"" \
+              --project="${{ env.PROJECT_ID }}" \
+              --order=asc --limit=2000 \
+              --format="value(timestamp,textPayload)" > /tmp/job.log \
+              || { echo "::warning::could not read Cloud Logging (github-deployer lacks roles/logging.viewer?)"; break; }
+            if [ -z "${RUN_START}" ] || grep -q "Container called exit" /tmp/job.log; then
+              break
+            fi
+            echo "(log tail not ingested yet — retry ${attempt}/8 in 15s)"
+            sleep 15
+          done
+          cat /tmp/job.log 2>/dev/null || true
