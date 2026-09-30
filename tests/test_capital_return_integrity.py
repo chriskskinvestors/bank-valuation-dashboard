@@ -304,19 +304,25 @@ class TestP29DividendsFromCashFlow(unittest.TestCase):
         # Payout = 17,313 / (4 × 16,000) against the synthetic NI.
         self.assertAlmostEqual(ttm["payout_ratio_ttm"], 17_313 / 64_000, places=12)
 
-    @unittest.expectedFailure
     def test_slim_projection_serves_dividend_and_buyback_concepts(self):
         # THE P2-9 failure, end to end: the same blob through the slim
         # companyfacts projection (what fetch_company_facts really serves)
-        # loses PaymentsOfDividends / PaymentsForRepurchaseOfCommonStock →
-        # "Dividend data not available". Fix lives in data/sec_client.py
-        # SLIM_USGAAP_CONCEPTS (owned elsewhere at the time of writing) —
-        # when those concepts are added this test passes: DELETE the
-        # expectedFailure decorator then (an unexpected success fails CI).
+        # lost PaymentsOfDividends / PaymentsForRepurchaseOfCommonStock →
+        # "Dividend data not available".
         from data.sec_client import _slim_facts
         res = self._summarize(_slim_facts(_jpm_blob()))
         self.assertEqual(res["ttm"]["dividends_ttm"], 17_313e6)
         self.assertEqual(res["ttm"]["buybacks_ttm"], 31_670e6)
+
+    def test_every_capital_return_concept_is_slimmed_in(self):
+        # Any concept capital_return reads but the slim projection drops is
+        # silently absent in production (P2-9 class).
+        import analysis.capital_return as CR
+        from data.sec_client import SLIM_USGAAP_CONCEPTS
+        read = (CR._DIVIDEND_COMMON_CONCEPTS + CR._DIVIDEND_TOTAL_CONCEPTS
+                + CR._DIVIDEND_PREFERRED_CONCEPTS + CR._BUYBACK_CONCEPTS
+                + CR._NET_INCOME_CONCEPTS)
+        self.assertEqual([c for c in read if c not in SLIM_USGAAP_CONCEPTS], [])
 
     def test_total_minus_preferred_matches_duration_not_just_end(self):
         # A preferred concept tagged BOTH 3-month and YTD at the same end
