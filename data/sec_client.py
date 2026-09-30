@@ -1428,6 +1428,27 @@ def _instant_at(facts: dict, concept: str, end: str) -> tuple | None:
     return top["val"], end, top.get("filed", ""), top.get("form", ""), "USD"
 
 
+def _total_and_nci_same_filing(facts: dict, end: str) -> tuple | None:
+    """(total, NCI, filed, form) at `end` from the latest 10-K/10-Q that tags
+    BOTH the NCI-inclusive total and MinorityInterest there — one balance
+    sheet's own figures — or None."""
+    ug = facts.get("facts", {}).get("us-gaap", {})
+
+    def by_accn(concept):
+        return {e.get("accn"): e
+                for e in sorted(ug.get(concept, {}).get("units", {}).get("USD", []),
+                                key=lambda e: e.get("filed", ""))
+                if e.get("form") in ("10-K", "10-Q") and e.get("end") == end
+                and e.get("val") is not None and e.get("accn")}
+    tot, mi = by_accn(_SE_NCI), by_accn("MinorityInterest")
+    both = [a for a in tot if a in mi]
+    if not both:
+        return None
+    a = max(both, key=lambda a: tot[a].get("filed", ""))
+    t = tot[a]
+    return t["val"], mi[a]["val"], t.get("filed", ""), t.get("form", "")
+
+
 def _balance_sheet_date(facts: dict) -> str | None:
     """Latest 10-K/10-Q balance-sheet date: the freshest end across total
     assets and both equity tags."""
@@ -1491,9 +1512,27 @@ def _parent_equity_at(facts: dict, end: str):
     """Equity attributable to the parent at balance-sheet date `end`, same
     return shape as _resolve_parent_equity: plain SE at `end`, else the
     NCI-inclusive total less same-date MinorityInterest, else n/a when a
-    noncontrolling interest may exist that no fact separates."""
+    noncontrolling interest may exist that no fact separates.
+
+    A plain-SE fact within half the NCI of a filing's NCI-inclusive total IS
+    that total — re-tagged or rounded — not parent equity, so that filing's
+    total − NCI serves instead. CPF/QNTO's later filings tagged the total as
+    SE (558,267,000 @ 2021-12-31 vs R3 558,219,000 + 48,000 NCI; 48,763,000
+    @ 2023-06-30 vs R2 45,759,000 + 3,004,000); RBB's only plain SE is Note
+    1's rounded "$523.4 million" (10-K 0001437749-26-007387 R58) vs R2
+    523,410,000 incl. 72,000 NCI. A plain SE nearer the parent figure stands
+    even when it doesn't foot to the cent: WAL's face parent 7,842.0M beside
+    8,135.3M − 293.0M ($M rounding); AMTB's restated 2022 SE."""
     se = _instant_at(facts, _SE, end)
     if se is not None:
+        tn = _total_and_nci_same_filing(facts, end)
+        if tn is not None:
+            total, nci, filed, form = tn
+            if nci and abs(se[0] - total) < abs(nci) / 2:
+                return ((total - nci, end, filed, form, "USD"),
+                        f"{_SE_NCI} − MinorityInterest",
+                        "Plain StockholdersEquity is the NCI-inclusive total — "
+                        "noncontrolling interest removed")
         return se, _SE, None
     incl = _instant_at(facts, _SE_NCI, end)
     if incl is None:
@@ -1506,6 +1545,22 @@ def _parent_equity_at(facts: dict, end: str):
         return None, _SE_NCI, ("NCI-inclusive total only, and a noncontrolling "
                                "interest may exist that no fact separates")
     return incl, _SE_NCI, "No noncontrolling interest — total equity is parent equity"
+
+
+def _parent_equity_series(facts: dict) -> dict:
+    """{end 'YYYY-MM-DD': parent equity} for every 10-K/10-Q end either equity
+    tag carries, each resolved by _parent_equity_at; ends it can't resolve
+    (unseparable NCI) are omitted, never filled from the other tag."""
+    ug = facts.get("facts", {}).get("us-gaap", {})
+    ends = {e["end"] for c in (_SE, _SE_NCI)
+            for e in ug.get(c, {}).get("units", {}).get("USD", [])
+            if e.get("form") in ("10-K", "10-Q") and e.get("end")}
+    out = {}
+    for end in ends:
+        tup, _, _ = _parent_equity_at(facts, end)
+        if tup and tup[0] is not None:
+            out[end] = tup[0]
+    return out
 
 
 def get_fundamentals_with_provenance(cik: int) -> dict:
