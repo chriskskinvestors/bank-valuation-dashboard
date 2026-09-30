@@ -10,6 +10,7 @@ module holding its own data.db engine, and (3) check it routes and restores.
 from __future__ import annotations
 
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -63,6 +64,35 @@ class TestAppTestStoreIsolation(unittest.TestCase):
         finally:
             case.doCleanups()
         self.assertEqual((db._engine, cache._engine), before)
+
+
+class TestDiscoveryStoreIsolation(unittest.TestCase):
+    """Found 2026-09-30: `python -m unittest discover -s tests -t .` wrote the
+    developer's REAL cache.db (announcement_call_snap overwritten with {},
+    fake-domain q4_site probes, sec_facts rows). tests/__init__ now routes the
+    shared data.db engine at a per-process temp file before any test runs."""
+
+    REAL = (REPO / "cache.db").resolve()
+
+    def test_package_engine_is_a_private_temp_file(self):
+        import tests
+        import data.db as db
+        path = Path(tests._STORE_ENGINE.url.database).resolve()
+        self.assertNotEqual(path, self.REAL)
+        self.assertTrue(path.is_relative_to(Path(tempfile.gettempdir()).resolve()),
+                        path)
+        self.assertFalse(db.USE_POSTGRES)
+
+    def test_store_writes_never_reach_the_real_cache_db(self):
+        import data.cache as cache
+        live = cache._get_engine().url.database   # None = in-memory (a suite's own)
+        self.assertNotEqual(Path(live).resolve() if live else None, self.REAL,
+                            "data.cache writes the developer's REAL cache.db "
+                            "under the test runner — tests/__init__ isolation "
+                            "is not in effect")
+        for name in STORE_MODULES:
+            mod = __import__(name, fromlist=["_USE_POSTGRES"])
+            self.assertFalse(mod._USE_POSTGRES, name)
 
 
 if __name__ == "__main__":
