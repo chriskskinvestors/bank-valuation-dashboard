@@ -552,7 +552,7 @@ def _latest_filing_period_end(cik) -> str | None:
     return max(ends) if ends else None
 
 
-def _compute_fresh_capital(cik) -> dict | None:
+def _compute_fresh_capital(cik, covered_through: str | None = None) -> dict | None:
     try:
         rel = latest_earnings_release(cik)
     except Exception:
@@ -571,8 +571,13 @@ def _compute_fresh_capital(cik) -> dict | None:
     # quarter — otherwise the periodic filing (and the Regulatory Capital tab) has
     # it and there's no lead to add. Unconfirmable (fetch/parse fails) → None, so
     # we never show an unverifiable "preliminary" ratio.
+    # covered_through = the newest period the caller's FILED capital table
+    # actually carries. A 10-Q can be on file without tagging its capital table
+    # (C/ONB tag it only in the 10-K — P2-1), so "a filing reports through this
+    # quarter" is the wrong gate there: the quarter's ratios would show nowhere.
     try:
-        filed_through = _latest_filing_period_end(cik)
+        filed_through = (covered_through if covered_through is not None
+                         else _latest_filing_period_end(cik))
     except Exception:
         return None
     if filed_through is None or filed_through >= qend:
@@ -581,24 +586,27 @@ def _compute_fresh_capital(cik) -> dict | None:
             "filed_date": rel.get("filed_date"), "url": rel.get("url")}
 
 
-def fresh_capital(cik) -> dict | None:
+def fresh_capital(cik, covered_through: str | None = None) -> dict | None:
     """Current-quarter STANDARDIZED capital ratios from the latest earnings
     release, returned ONLY when that quarter is fresher than the latest 10-Q/10-K
     reports (freshest-wins). {ratios: {cet1_ratio,t1_ratio,total_ratio,lev_ratio},
     quarter, filed_date, url} or None — each ratio double-confirmed in the release
-    or None per extract_capital_ratios. Cached ~12h (heavy fetch+parse)."""
+    or None per extract_capital_ratios. Cached ~12h (heavy fetch+parse).
+    covered_through (ISO period end): gate against the caller's filed capital
+    table instead of the latest filing's period (see _compute_fresh_capital)."""
     if not cik:
         return None
     from data import cache as _cache
     from data.freshness import is_fresh
-    key = f"ir_fresh_capital:v1:{int(cik)}"
+    key = f"ir_fresh_capital:v1:{int(cik)}" + (
+        f":{covered_through}" if covered_through else "")
     try:
         cached = _cache.get(key)
         if cached is not None and is_fresh(cached, 12 * 3600):
             return cached.get("value")
     except Exception:
         pass
-    val = _compute_fresh_capital(cik)
+    val = _compute_fresh_capital(cik, covered_through)
     try:
         from datetime import datetime
         _cache.put(key, {"cached_at": datetime.now().isoformat(), "value": val})

@@ -729,7 +729,14 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
     CET1 and reconcile-gated by extract_holdco_capital — the stitch only widens the
     window, it never loosens a gate. The latest-filing periods are kept as-is
     (including a 10-Q quarter-end), so capital_dynamics still shows the timeliest
-    quarter. Returns {"meta": <latest filing>, "capital": {period: {...}}} or None.
+    quarter. Returns {"meta": <latest filing>, "capital": {period: {...}},
+    "untagged": <newer 10-Q whose iXBRL tags no capital table, or None>} or None.
+
+    "untagged" is provenance for the reader, never a value: C and ONB tag the
+    capital table only in their 10-K (their 10-Qs carry it in untagged MD&A
+    text — P2-1, 2026-09-24), so the table legitimately ends at the FY-end
+    while a newer 10-Q is on file; the caller says so instead of implying the
+    10-K is the latest filing.
     """
     if not cik:
         return None
@@ -739,12 +746,15 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
     #    FY-end) plus its FY-end columns; drop any other stub quarter so the annual
     #    series stays clean (a non-December filer's 10-K can carry an off-cycle stub).
     latest_meta = None
+    untagged = None
     capital: dict = {}
     for forms in (("10-Q",), ("10-K",)):
         meta = latest_filing(cik, forms)
         if not meta:
             continue
         cap = _holdco_capital_extract_cached(meta, anchor)
+        if not _has_capital(cap) and forms == ("10-Q",):
+            untagged = meta
         if _has_capital(cap):
             latest_meta = meta
             fye = _fye_month_for(meta) or "12"
@@ -774,7 +784,9 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
             break
     if not _has_capital(capital):
         return None
-    return {"meta": latest_meta, "capital": capital}
+    if untagged and untagged["date"] <= latest_meta["date"]:
+        untagged = None                  # an older 10-Q is not news
+    return {"meta": latest_meta, "capital": capital, "untagged": untagged}
 
 
 def holdco_capital_quarterly_for(cik, cert=None, n_quarters: int = 8) -> dict | None:
@@ -784,7 +796,9 @@ def holdco_capital_quarterly_for(cik, cert=None, n_quarters: int = 8) -> dict | 
     (_holdco_capital_extract_cached), newest filing wins a shared period, cap
     to the newest n_quarters period-ends. Quarters whose filing doesn't tag
     the table simply aren't present (n/a downstream). Returns
-    {"meta": <latest contributing filing>, "capital": {period: {...}}} or None."""
+    {"meta": <latest contributing filing>, "capital": {period: {...}},
+    "untagged": <newest filing, newer than meta, that tags no capital table,
+    or None>} or None (see holdco_capital_for on "untagged")."""
     if not cik:
         return None
     anchor = _fdic_cet1(cert)
@@ -806,7 +820,10 @@ def holdco_capital_quarterly_for(cik, cert=None, n_quarters: int = 8) -> dict | 
     if not _has_capital(capital):
         return None
     keep = sorted(capital, reverse=True)[:n_quarters]
-    return {"meta": latest_meta, "capital": {p: capital[p] for p in keep}}
+    untagged = (metas[0] if metas[0]["accession"] != latest_meta["accession"]
+                else None)                     # newest-first: all ahead lack it
+    return {"meta": latest_meta, "capital": {p: capital[p] for p in keep},
+            "untagged": untagged}
 
 
 # ── Fair-value hierarchy (ASC 820) extraction ───────────────────────────────
