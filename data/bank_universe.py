@@ -1466,7 +1466,15 @@ def run_curated_cik_guard(max_age_days: int = 200) -> list[str]:
     rendering "no SEC filer". A listing alone is NOT the signal: ~20 curated
     Nones are still in SEC's ticker file with filings 1-20 years stale (their
     None is deliberate, see the §12(i) block) or have no periodic filing yet.
-    Prints [curated-cik] lines; never raises, never fails the job."""
+    Prints [curated-cik] lines; never raises, never fails the job.
+
+    Review of the 23 SEC-listed curated Nones (2026-09-30, from closed PR
+    #187): 6 foreign ADRs, 11 stopped SEC reporting, 6 never filed a
+    10-Q/10-K. Watch: WCCB (Form 10 filed 2026-08-31, CIK 2105965 — this
+    guard flags it at its first 10-Q); NACB is listed by SEC as "ODNB
+    Financial Corp" with 2026 merger filings — confirm the ticker's entity
+    before setting any CIK. OAKC and MFDB are also listed with no periodic
+    filing yet."""
     try:
         from datetime import date, timedelta
         from data.bank_mapping import BANK_MAP, _RESOLVED_FROM_JSON
