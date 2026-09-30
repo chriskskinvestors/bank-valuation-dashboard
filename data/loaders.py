@@ -16,9 +16,11 @@ def _scrub_capital(recs: list[dict]) -> list[dict]:
     before that scrub existed (or by a path that skipped it) still carry the
     literal-0 capital ratios — BSBK, a CBLR filer (RWAJ=0), rendered
     "CET1 Ratio 0.00%" on Corporate Profile (UX-P0-13). Copies, because the
-    cached objects are shared with every other caller."""
-    from data.fdic_client import null_unreported_capital
-    return [null_unreported_capital(dict(r)) for r in recs]
+    cached objects are shared with every other caller. The undefined-quotient
+    zeros (Rsv/NPL 0.0% with no noncurrent loans) are scrubbed the same way."""
+    from data.fdic_client import null_unreported_capital, null_undefined_quotients
+    return [null_undefined_quotients(null_unreported_capital(dict(r)))
+            for r in recs]
 
 
 def load_fdic_hist(ticker: str, min_quarters: int = 8, limit: int = 20) -> list[dict]:
