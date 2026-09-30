@@ -264,7 +264,7 @@ _HOLDCO_MEMBER_HINT = re.compile(
 _HOLDCO_RANK = {"default": 0, "parent": 1, "fuzzy": 2}
 
 
-def _classify(members: dict) -> tuple[str, str | None]:
+def _classify(members: dict, entity_axes=frozenset()) -> tuple[str, str | None]:
     """Classify a fact's entity dimension → (basis, confidence):
     ('holdco', 'default') — no entity dimension (consolidated holdco)
     ('holdco', 'parent')  — an explicit holdco member (ParentCompany, …Inc, …)
@@ -273,7 +273,7 @@ def _classify(members: dict) -> tuple[str, str | None]:
     for dim, mem in members.items():
         d, m = dim.split(":")[-1], mem.split(":")[-1]
         if d in ("ConsolidatedEntitiesAxis", "LegalEntityAxis",
-                 "RegulatoryCapitalRequirementsForBanksAxis"):
+                 "RegulatoryCapitalRequirementsForBanksAxis") or d in entity_axes:
             if _HOLDCO_MEMBER_HINT.search(m):
                 return ("holdco", "parent")
             if _BANK_MEMBER_HINT.search(m):
@@ -294,6 +294,18 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
     otherwise collides with the actual. If no candidate is within band, CET1 is
     left out (n/a) rather than guessed. Each period carries '_confidence' (worst
     relied on) and '_anchored' (whether the FDIC anchor was used)."""
+    # Some filers split holdco / bank on a MISUSED axis (GSBC: PropertyPlantAnd-
+    # EquipmentByTypeAxis "GreatSouthernBancorpInc" / "…BankMember"; KFFB:
+    # CollateralAxis) or tag a trust-preferred note as Tier 1 capital (CCBG: $15M
+    # on CCBGCapitalTrustIMember). An axis on which any capital fact names a
+    # holdco/bank member is an entity axis for THIS filing — else every fact on
+    # it ranks as the consolidated one.
+    entity_axes = frozenset(
+        k.split(":")[-1] for f in facts
+        if any(p.match(f.concept.split(":")[-1]) for p in _CAP_LINE_PATTERNS.values())
+        for k, v in f.members.items()
+        if _HOLDCO_MEMBER_HINT.search(v.split(":")[-1])
+        or _BANK_MEMBER_HINT.search(v.split(":")[-1]))
     # cand[(period, line)] = [(basis, conf, members, value), …]
     cand: dict[tuple, list] = {}
     for f in facts:
@@ -303,7 +315,13 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
         line = next((ln for ln, pat in _CAP_LINE_PATTERNS.items() if pat.match(local)), None)
         if not line:
             continue
-        basis, conf = _classify(f.members)
+        # A RangeAxis Minimum/Maximum member is a regulatory threshold on the
+        # actual-ratio concept (PFIS: 6% / 8% / 4% undimensioned-but-for-range,
+        # outranking its real 11.28% / 14.31% parent figures).
+        if any(v.split(":")[-1] in ("MinimumMember", "MaximumMember")
+               for v in f.members.values()):
+            continue
+        basis, conf = _classify(f.members, entity_axes)
         value = f.value
         # Some filers tag a ratio as the PERCENTAGE number (NBHC/UBSI: CET1 "14.9")
         # instead of the decimal (0.149). A real CET1/Tier-1/Total/leverage ratio

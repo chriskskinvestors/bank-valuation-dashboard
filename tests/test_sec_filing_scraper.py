@@ -352,6 +352,60 @@ class TestHoldcoExtraction(unittest.TestCase):
         self.assertAlmostEqual(out["t1_ratio"], 0.11219)
         self.assertNotIn("_suspect", out)
 
+    def test_range_minimum_member_is_a_threshold(self):
+        # PFIS FY2025: minimums on RangeAxis MinimumMember outranked the parent
+        # actuals (percent-tagged 11.28 / 14.31).
+        R = {"srt:RangeAxis": "srt:MinimumMember"}
+        C = {_AX: "us-gaap:ConsolidatedEntityExcludingVariableInterestEntitiesVIEMember"}
+        facts = [
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.06, R),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.08, R),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 11.28, C),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 14.31, C),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["t1_ratio"], 0.1128)
+        self.assertAlmostEqual(out["total_ratio"], 0.1431)
+
+    def test_entity_named_on_a_misused_axis(self):
+        # GSBC splits holdco / bank on PropertyPlantAndEquipmentByTypeAxis; the
+        # bank's 12.6% sat nearer the FDIC anchor than the holdco's 12.3%. CCBG
+        # tags a $15M trust-preferred note as "Tier 1 capital".
+        PX = "us-gaap:PropertyPlantAndEquipmentByTypeAxis"
+        hc, bk = {PX: "gsbc:GreatSouthernBancorpInc.Member"}, {PX: "gsbc:GreatSouthernBankMember"}
+        facts = [
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.123, hc),
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.126, bk),
+            _f("us-gaap:CommonEquityTierOneCapital", 643_639e3, hc),
+            _f("us-gaap:CommonEquityTierOneCapital", 660_411e3, bk),
+        ]
+        out = extract_holdco_capital(facts, anchor_cet1=13.32)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.123)
+        self.assertAlmostEqual(out["cet1_cap"], 643_639e3)
+        trust = {"us-gaap:RelatedPartyTransactionsByRelatedPartyAxis": "ccbg:CCBGCapitalTrustIMember"}
+        facts = [
+            _f("us-gaap:TierOneRiskBasedCapital", 15e6, trust),
+            _f("us-gaap:TierOneRiskBasedCapital", 505_340e3, {_LE: "ccbg:CCBGMember"}),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.202, {_LE: "ccbg:CCBGMember"}),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["t1_cap"], 505_340e3)
+        # KFFB (CollateralAxis): an UNHINTED member on that axis is a charter
+        # ("…SavingsAndLoanAssociationOfHazard"), not the consolidated fact.
+        CX = "us-gaap:CollateralAxis"
+        facts = [
+            _f("us-gaap:Capital", 50_423e3, {CX: "kffb:KentuckyFirstFederalBancorpMember"}),
+            _f("us-gaap:TierOneLeverageCapitalToAverageAssets", 0.136,
+               {CX: "kffb:KentuckyFirstFederalBancorpMember"}),
+            _f("us-gaap:Capital", 18_247e3,
+               {CX: "kffb:FirstFederalSavingsAndLoanAssociationOfHazardMember"}),
+            _f("us-gaap:TierOneLeverageCapitalToAverageAssets", 0.216,
+               {CX: "kffb:FirstFederalSavingsAndLoanAssociationOfHazardMember"}),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["total_cap"], 50_423e3)
+        self.assertAlmostEqual(out["lev_ratio"], 0.136)
+
     def test_consistent_ratio_untouched(self):
         # Ratio ties to Standardized capital / RWA → nothing to do.
         P, MX = self._PARENT, self._MX
