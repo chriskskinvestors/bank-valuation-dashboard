@@ -440,6 +440,58 @@ def _match_tbvps_label(cl: str) -> bool:
     return _strip_trailing_qualifiers(cl) in _TBVPS_LABELS
 
 
+# SECOND-TIER labels without an explicit "per share" — ONB 2Q26 prints its TBVPS
+# as "Tangible book value" (Per Common Share Data block, Table 5) and "Tangible
+# common book value" (non-GAAP Table 14). The same words can label a DOLLAR
+# TOTAL elsewhere, so they are consulted only when NO explicit per-share row
+# exists, and the value must still clear every gate (per-share magnitude,
+# tangible < book, ±15% of the reconstruction) — a $K/$M total fails them.
+_TBVPS_BARE_LABELS: frozenset = frozenset({
+    "tangible book value",
+    "tangible common book value",
+})
+
+# LAST-RESORT prose form — JPM 2Q26 EX-99.1 states TBVPS only in a page-1
+# bullet: "…up 9% YoY; tangible book value per share² of $113.35, up 10% YoY".
+# Admitted only at a clause start (text start, or after . ; : • or "and") so a
+# qualified variant ("excluding AOCI, tangible book value per share of $X",
+# "compared with tangible book value per share of $Y") never matches, and only
+# as "<label>[footnote] of|was $NN.NN".
+_TBVPS_PROSE = re.compile(
+    r"(?:^|[.;:•·▪]\s*|\band\s+)"
+    r"tangible (?:common )?book value per (?:common )?share"
+    r"(?:\d{1,2}|\s*\([a-z0-9]{1,3}\))?"
+    r"\s+(?:of|was)\s+\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})\b",
+    re.IGNORECASE,
+)
+
+
+def _tbvps_prose_value(html_bytes: bytes) -> float | None:
+    """The TBVPS stated in the release's prose, or None. Every clause-start
+    match must state the SAME figure — two different values (current vs a
+    prior-period comparison) are ambiguous and yield None, never a pick."""
+    from lxml import html as lhtml
+    text = lhtml.fromstring(html_bytes).text_content().replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text)
+    vals = {float(m.group(1).replace(",", "")) for m in _TBVPS_PROSE.finditer(text)}
+    return vals.pop() if len(vals) == 1 else None
+
+
+def _tbvps_candidate(html_bytes: bytes, rows: list[tuple]) -> tuple:
+    """(value, explicit) — the release's TBVPS candidate BEFORE gating, by
+    descending label strength: an explicit per-share table row, else a bare
+    "tangible (common) book value" row, else the prose statement. The first
+    matching row of a tier decides (its blank latest-quarter cell → None,
+    audit P3). explicit=False marks the two weaker tiers."""
+    for cl, nums in rows:
+        if _match_tbvps_label(cl):
+            return nums[0], True
+    for cl, nums in rows:
+        if _strip_trailing_qualifiers(cl) in _TBVPS_BARE_LABELS:
+            return nums[0], False
+    return _tbvps_prose_value(html_bytes), False
+
+
 def _match_bvps_label(cl: str) -> bool:
     """True when a cleaned row label denotes (GAAP) book value per COMMON share."""
     return _strip_trailing_qualifiers(cl) in _BVPS_LABELS
@@ -530,7 +582,9 @@ def extract_reported_tbvps_status(
     Only when NOTHING ties the match — no reconstruction, no passed bvps, no
     in-release book value, no in-release tie-out — is the raw match rejected.
     Take the FIRST numeric column (releases lead every table with the
-    most-recent period).
+    most-recent period). The candidate is found by _tbvps_candidate: an
+    explicit per-share row first, then a bare "tangible (common) book value"
+    row (ONB), then the prose statement (JPM) — every tier faces the same gates.
     """
     rows = _book_value_rows(ex991_html)
     # In-release reported book value per common share, the fallback cross-check
@@ -542,38 +596,39 @@ def extract_reported_tbvps_status(
             if _match_bvps_label(cl) and nums[0] is not None:
                 bvps = nums[0]
                 break
-    for cl, nums in rows:
-        if not _match_tbvps_label(cl):
-            continue
-        v = nums[0]
-        # Blank latest-quarter cell → n/a; never serve the prior column as
-        # the current quarter (audit P3).
-        if v is None:
-            return None, "not_disclosed"
-        # Positive, per-share magnitude (rejects a $-thousands equity total or a
-        # negative/zero cell mis-aligned into the row).
-        if not (0 < v < 10_000):
-            return None, "not_disclosed"
-        # Tangible < book, when book value per share is disclosed.
-        if bvps is not None and bvps > 0 and not (v < bvps):
-            return None, "not_disclosed"
-        # Tie to the corrected reconstruction within a tight band. This is the
-        # primary defense against an EPS/dividend value grabbed into the slot.
-        if reconstructed is not None and reconstructed > 0:
-            if abs(v - reconstructed) / reconstructed >= 0.15:
-                return None, "gate_rejected"
-            return v, "ok"
-        # No reconstruction anchor: accept only if it cleared the book-value
-        # cross-check (something real to tie to); otherwise nothing anchors it.
-        if bvps is not None and bvps > 0:
-            return v, "ok"
-        # Last anchor — the release's own reconciliation inputs (the MBIN case:
-        # unresolvable preferred kills the reconstruction AND the release prints
-        # no book-value-per-share line, but tangible common equity ÷ ending
-        # common shares reproduces the printed figure). See _internal_tie_out.
-        if _internal_tie_out(rows, v):
-            return v, "ok"
+    v, explicit = _tbvps_candidate(ex991_html, rows)
+    # No TBVPS disclosed, or a blank latest-quarter cell → n/a; never serve the
+    # prior column as the current quarter (audit P3).
+    if v is None:
         return None, "not_disclosed"
+    # Positive, per-share magnitude (rejects a $-thousands equity total or a
+    # negative/zero cell mis-aligned into the row).
+    if not (0 < v < 10_000):
+        return None, "not_disclosed"
+    # Tangible < book, when book value per share is disclosed.
+    if bvps is not None and bvps > 0 and not (v < bvps):
+        return None, "not_disclosed"
+    # Tie to the corrected reconstruction within a tight band. This is the
+    # primary defense against an EPS/dividend value grabbed into the slot.
+    # A weak-tier (bare-label / prose) miss is not known to BE the release's
+    # TBVPS (a growth-% or other row under the same words), so it is not
+    # raised as a release-vs-reconstruction conflict.
+    if reconstructed is not None and reconstructed > 0:
+        if abs(v - reconstructed) / reconstructed >= 0.15:
+            return None, "gate_rejected" if explicit else "not_disclosed"
+        return v, "ok"
+    # No reconstruction anchor: accept only if it cleared the book-value
+    # cross-check (something real to tie to); otherwise nothing anchors it.
+    # tangible < book alone is too weak for the bare/prose tiers (a growth-%
+    # row passes it) — they need the reconstruction or the tie-out below.
+    if explicit and bvps is not None and bvps > 0:
+        return v, "ok"
+    # Last anchor — the release's own reconciliation inputs (the MBIN case:
+    # unresolvable preferred kills the reconstruction AND the release prints
+    # no book-value-per-share line, but tangible common equity ÷ ending
+    # common shares reproduces the printed figure). See _internal_tie_out.
+    if _internal_tie_out(rows, v):
+        return v, "ok"
     return None, "not_disclosed"
 
 
@@ -837,9 +892,11 @@ def reported_bvps_status(
 # v5: release-internal tie-out anchor (MBIN) — a v4 None for the no-anchor
 #     case would otherwise serve the miss forever.
 # v6: "… per common share at end of period" labels (OCFC miss).
-# v7: table-less releases read from the page text layer (AMAL miss) and
-#     "… at period end" labels (EGBN).
-_REPORTED_TBVPS_CKEY_V = "v7"
+# v7: bare "tangible (common) book value" rows (ONB) + prose statement (JPM).
+# v8: table-less releases read from the page text layer (AMAL miss) and
+#     "… at period end" labels (EGBN). (A parallel branch also used "v7" for
+#     a different spec — v8 so neither spec's cached answers serve the other.)
+_REPORTED_TBVPS_CKEY_V = "v8"
 
 
 def reported_tbvps_status(
