@@ -463,19 +463,7 @@ class _DataQualitySite(_ExportSite):
     def _render(self, *, tab, sec_prov, bank_metrics):
         import data.cache as cache
         import data.ffiec_client as fc
-        import data.validation as validation
         DQ = self.DQ
-
-        class _Frozen(dt.datetime):
-            # Staleness severity is age-based (warning > 135 d, error ≥ 270 d);
-            # against the wall clock the 2025-12-31 fixture turned Warning →
-            # Error on 2026-09-27 and failed every CI run. 182 days old: stale,
-            # but a warning, forever.
-            @classmethod
-            def now(cls, tz=None):
-                return cls(2026, 7, 1)
-
-        self._patch(validation, "datetime", _Frozen)
         self._patch(DQ, "get_fdic_cert", lambda t: 28489)
         self._patch(DQ, "get_cik", lambda t: 946673)
         self._patch(DQ, "get_name", lambda t: "Banner Corp")
@@ -492,8 +480,19 @@ class TestDataQualityFindings(_DataQualitySite):
     def test_finding_value_is_a_number(self):
         # roaa 5.0 breaches the [-3.0, 3.5] % band → one range warning. No SEC
         # provenance, so no cross-source checks; the FDIC staleness check fires
-        # too (a 2025-12-31 Call Report is 182 days old at the frozen now) with
-        # value=None — the honest n/a row.
+        # too (a 2025-12-31 Call Report is >135 days old) with value=None —
+        # the honest n/a row. "Today" is frozen at 2026-06-01 (152 days after
+        # the report): check_staleness escalates to ERROR past 2x the limit
+        # (270 days), which this unfrozen test crossed on 2026-09-27 and began
+        # failing every CI run — a clock time-bomb, not a behaviour change.
+        import data.validation as V
+        from datetime import datetime as _dt
+
+        class _Frozen(_dt):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 6, 1)
+        self._patch(V, "datetime", _Frozen)
         self._render(tab=0, sec_prov={}, bank_metrics=[{"ticker": "BANR", "roaa": 5.0}])
         wb, ws, kw = self._book()
         self.assertEqual(kw["file_name"], "data_quality_findings_BANR_2025-12-31.xlsx")
