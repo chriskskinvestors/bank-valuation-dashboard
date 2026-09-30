@@ -262,6 +262,13 @@ jobs:
                 EXTRA="--task-timeout=3600"
               elif [ "$job" = "refresh-13f" ]; then
                 EXTRA="--task-timeout=9000"
+              # poll-events: the 2026-09-28 audit found 1 of 9 executions
+              # killed at the 900s limit (max 1018s, p50 567s). Its 780s
+              # polling budget (jobs/poll_events._TASK_BUDGET_S) already stops
+              # new sources in time; the overrun was the post-loop tail, so
+              # 1500s is tail headroom — still under the ~30-min full cadence.
+              elif [ "$job" = "poll-events" ]; then
+                EXTRA="--task-timeout=1500"
               fi
               # Jobs that talk to Cloud SQL (carry DATABASE_URL, or already
               # migrated to DB_PASSWORD) get the password as a secret mount +
