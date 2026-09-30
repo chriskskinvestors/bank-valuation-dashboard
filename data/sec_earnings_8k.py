@@ -32,6 +32,11 @@ FHN/WAL/ONB/FITB/RF/KEY, docs/COMPANY-REPORTED-PLAN.md §6):
 
 Everything carries `_preliminary: True`. The UI must label it as as-released and
 must NEVER overwrite an audited 10-K/10-Q figure with it.
+
+Per-share BOOK VALUE (reported_tbvps_status / reported_bvps_status) also reads
+the same 8-K's supplementary exhibits (EX-99.2+, again located by index TYPE)
+when EX-99.1 discloses nothing — period-verified table rows only (see
+_supplement_rows). The headline figures above stay EX-99.1-only.
 """
 from __future__ import annotations
 
@@ -114,14 +119,19 @@ def _submissions_record(cik) -> dict:
     return record
 
 
-def _ex991_document(cik, accession_dash) -> str | None:
-    """Filename of the EX-99.1 exhibit, read from the filing index's exhibit-type
-    table (the authoritative SEC-declared type), never guessed from the name."""
+_EX99_TYPE = re.compile(r"EX-99\.(\d+)")
+
+
+def _ex99_documents(cik, accession_dash) -> list[tuple]:
+    """[(n, filename)] of the filing's EX-99.n exhibits, ascending n, read from
+    the filing index's exhibit-type table (the authoritative SEC-declared
+    type), never guessed from the name."""
     from lxml import html as lhtml
     acc = accession_dash.replace("-", "")
     url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/"
            f"{accession_dash}-index.htm")
     root = lhtml.fromstring(_get(url))
+    out: list[tuple] = []
     for table in root.findall(".//table"):
         hdr = [th.text_content().strip().lower() for th in table.findall(".//th")]
         if "type" not in hdr or "document" not in hdr:
@@ -131,12 +141,21 @@ def _ex991_document(cik, accession_dash) -> str | None:
             cells = tr.findall("td")
             if len(cells) <= max(ti, di):
                 continue
-            if cells[ti].text_content().strip().upper() == "EX-99.1":
-                a = cells[di].find(".//a")
-                doc = (a.text_content().strip() if a is not None
-                       else cells[di].text_content().strip())
-                return doc.split("/")[-1] or None
-    return None
+            m = _EX99_TYPE.fullmatch(cells[ti].text_content().strip().upper())
+            if not m:
+                continue
+            a = cells[di].find(".//a")
+            doc = (a.text_content().strip() if a is not None
+                   else cells[di].text_content().strip())
+            if doc.split("/")[-1]:
+                out.append((int(m.group(1)), doc.split("/")[-1]))
+    return sorted(out, key=lambda t: t[0])   # stable: index order within n
+
+
+def _ex991_document(cik, accession_dash) -> str | None:
+    """Filename of the EX-99.1 exhibit (see _ex99_documents), or None."""
+    return next((d for n, d in _ex99_documents(cik, accession_dash) if n == 1),
+                None)
 
 
 # ── Parse the press-release tables ───────────────────────────────────────────
@@ -200,45 +219,177 @@ def _table_rows(html_bytes: bytes) -> list[tuple]:
     root = lhtml.fromstring(html_bytes)
     rows: list[tuple] = []
     for table in root.findall(".//table"):
-        # Colspan-expanded text grid: cell index == table column on every row.
-        grid: list[list[str]] = []
-        for tr in table.findall(".//tr"):
-            row: list[str] = []
-            for c in tr.findall(".//td"):
-                txt = c.text_content().strip().replace("\xa0", " ")
-                try:
-                    span = max(1, int(c.get("colspan") or 1))
-                except (TypeError, ValueError):
-                    span = 1
-                row.append(txt)
-                row.extend([""] * (span - 1))
-            grid.append(row)
-        # A value column is any column with a numeric cell in ANY row.
-        num_cols = sorted({i for row in grid for i, c in enumerate(row)
-                           if _num(c) is not None})
-        for row in grid:
-            label_idx = next((i for i, c in enumerate(row) if c.strip()), None)
-            if label_idx is None:
+        grid, _ = _table_grid(table)
+        rows.extend((cl, nums) for _, cl, nums, _ in _grid_rows(grid))
+    return rows
+
+
+def _table_grid(table) -> tuple[list, list]:
+    """(grid, spans) for one <table>. grid is the colspan-expanded text grid
+    (cell index == table column on every row); spans[r] lists row r's cells
+    as (first_col, last_col, text) — which header cell COVERS a column."""
+    grid: list[list[str]] = []
+    spans: list[list[tuple]] = []
+    for tr in table.findall(".//tr"):
+        row: list[str] = []
+        cells: list[tuple] = []
+        for c in tr.findall(".//td"):
+            txt = c.text_content().strip().replace("\xa0", " ")
+            try:
+                span = max(1, int(c.get("colspan") or 1))
+            except (TypeError, ValueError):
+                span = 1
+            cells.append((len(row), len(row) + span - 1, txt))
+            row.append(txt)
+            row.extend([""] * (span - 1))
+        grid.append(row)
+        spans.append(cells)
+    return grid, spans
+
+
+def _grid_rows(grid: list) -> list[tuple]:
+    """(row_index, clean_label, nums, cols) for every data row of one table
+    grid — _table_rows' per-table body; cols[i] is the table column nums[i]
+    was read from."""
+    out: list[tuple] = []
+    # A value column is any column with a numeric cell in ANY row.
+    num_cols = sorted({i for row in grid for i, c in enumerate(row)
+                       if _num(c) is not None})
+    for r, row in enumerate(grid):
+        label_idx = next((i for i, c in enumerate(row) if c.strip()), None)
+        if label_idx is None:
+            continue
+        label = row[label_idx]
+        if _num(label) is not None:        # a number, not a label
+            continue
+        cl = _clean_label(label)
+        if not cl:
+            continue
+        nums, cols = [], []
+        for i in num_cols:
+            if i <= label_idx:
                 continue
-            label = row[label_idx]
-            if _num(label) is not None:        # a number, not a label
+            if i >= len(row):
+                nums.append(None)
+                cols.append(i)
                 continue
-            cl = _clean_label(label)
-            if not cl:
+            if row[i].strip() in ("$", "%"):   # this row's decoration cell
                 continue
-            nums = []
-            for i in num_cols:
-                if i <= label_idx:
-                    continue
-                if i >= len(row):
-                    nums.append(None)
-                    continue
-                if row[i].strip() in ("$", "%"):   # this row's decoration cell
-                    continue
-                nums.append(_num(row[i]))
-            if not any(n is not None for n in nums):
-                continue
-            rows.append((cl, nums))
+            nums.append(_num(row[i]))
+            cols.append(i)
+        if not any(n is not None for n in nums):
+            continue
+        out.append((r, cl, nums, cols))
+    return out
+
+
+# ── Supplementary exhibits (EX-99.2+): period-verified table rows only ───────
+# Some banks print book value per share only in ANOTHER exhibit of the same
+# earnings 8-K — RBCAA's EX-99.2 financial tables, FCNCA's EX-99.3 financial
+# supplement (2026-09-30 sweep). The first-column-is-the-latest-quarter
+# assumption that the EX-99.1 reader leans on does NOT carry over: investor
+# decks commonly run oldest → newest, and a year-old TBVPS clears the ±15%
+# reconstruction band. So a supplementary-exhibit row is admitted only when
+# the header over ITS latest-quarter column names the release quarter-end.
+_MONTHS = {m: i for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
+_ORDINAL_Q = {"first": 1, "second": 2, "third": 3, "fourth": 4}
+_PERIOD_TOKEN = re.compile(
+    # "June 30, 2026" / "Jun. 30, 2026" / "June 30,2026" (a <br> joins cells)
+    r"(?<![a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+    r"\s*\d{1,2},?\s*(\d{4})(?!\d)"
+    # "6/30/2026" / "6/30/26"
+    r"|(?<![\d/])(\d{1,2})/\d{1,2}/(\d{4}|\d{2})(?![\d/])"
+    # "2Q26" / "2Q 2026" / "2Q'26"
+    r"|(?<![a-z0-9])([1-4])q\s?'?(\d{4}|\d{2})(?!\d)"
+    # "Q2 2026" / "Q2'26"
+    r"|(?<![a-z0-9])q([1-4])\s?'?(\d{4}|\d{2})(?!\d)"
+    # "Second Quarter 2026" / "second quarter of 2026"
+    r"|(first|second|third|fourth) quarter,?\s+(?:of\s+)?(\d{4})(?!\d)")
+
+
+def _periods(text: str) -> list[tuple]:
+    """Every (year, month) period a header text names, in order — month-day-
+    year dates and quarter labels (a quarter maps to its calendar quarter-end
+    month). A bare year names no period: it can't place a quarter."""
+    out = []
+    for m in _PERIOD_TOKEN.finditer(text.lower()):
+        g = m.groups()
+        if g[0]:
+            y, mo = g[1], _MONTHS[g[0]]
+        elif g[2]:
+            y, mo = g[3], int(g[2])
+        elif g[4] or g[6]:
+            y, mo = (g[5], int(g[4]) * 3) if g[4] else (g[7], int(g[6]) * 3)
+        else:
+            y, mo = g[9], _ORDINAL_Q[g[8]] * 3
+        out.append((int(y) + (2000 if len(y) == 2 else 0), mo))
+    return out
+
+
+def _release_quarter_end(filed: str) -> tuple | None:
+    """(year, month) of the latest calendar quarter-end strictly before the
+    8-K's filing date — the quarter an Item-2.02 release reports (filed
+    2026-07-24 → (2026, 6); filed ON a quarter-end, 2026-06-30 → (2026, 3):
+    a release can't report a quarter that ends the day it is filed). None
+    for an unparseable date."""
+    try:
+        y, m, _ = (int(p) for p in filed.split("-"))
+    except (AttributeError, ValueError):
+        return None
+    qe_month = 3 * ((m - 1) // 3)            # last quarter-end month before m
+    return (y - 1, 12) if qe_month == 0 else (y, qe_month)
+
+
+def _column_periods(grid: list, spans: list, data_rows: set,
+                    r: int, col: int) -> list[tuple]:
+    """Periods named over column `col` for data row `r`: the nearest block of
+    contiguous NON-data rows above r whose cells covering `col` name any
+    period (joined in document order, so a "June 30," row over a "2026" row
+    reads "June 30, 2026"). Nearest, so a mid-table re-header ("Year ended
+    December 31, …") governs the rows beneath it, not the table's top."""
+    block: list[str] = []
+    for k in range(r - 1, -1, -1):
+        if k in data_rows:
+            if block and _periods(" ".join(block)):
+                break
+            block = []
+            continue
+        txt = next((t for a, b, t in spans[k] if a <= col <= b), "")
+        block.insert(0, txt)
+    return _periods(" ".join(block)) if block else []
+
+
+_YEAR_CELL = re.compile(r"(?:19|20)\d{2}")
+
+
+def _is_year_header(row: list) -> bool:
+    """True for a header line whose only numeric cells are bare years
+    ("(Dollars in millions…) | 2026 | 2026 | 2025", TFC; CFG's "2Q26 … 2026
+    2025"). _grid_rows emits it as a data row, which would cut the header
+    block off above it ("June 30" without its "2026")."""
+    nums = [c.strip() for c in row if _num(c) is not None]
+    return bool(nums) and all(_YEAR_CELL.fullmatch(c) for c in nums)
+
+
+def _supplement_rows(html_bytes: bytes, period_end: tuple) -> list[tuple]:
+    """(clean_label, nums) table rows of a SUPPLEMENTARY exhibit whose
+    latest-quarter column (nums[0]'s column) is headed by `period_end` — every
+    named period over it equal to the release quarter-end. Other rows are
+    DROPPED (not kept as n/a): they are not known to be the current quarter,
+    so they may not decide; a verified row carries the same exact label. No
+    text-layer rows — flat page text has no columns to verify."""
+    from lxml import html as lhtml
+    rows: list[tuple] = []
+    for table in lhtml.fromstring(html_bytes).findall(".//table"):
+        grid, spans = _table_grid(table)
+        drows = _grid_rows(grid)
+        data_rows = {r for r, *_ in drows if not _is_year_header(grid[r])}
+        for r, cl, nums, cols in drows:
+            periods = _column_periods(grid, spans, data_rows, r, cols[0])
+            if periods and all(p == period_end for p in periods):
+                rows.append((cl, nums))
     return rows
 
 
@@ -418,8 +569,15 @@ _ENDING_SHARES_LABELS: frozenset = frozenset({
 # "(i/c)". These sit inside a balanced paren, so _clean_label (which keeps a
 # trailing ")") leaves them intact; we peel them here. A meaningful qualifier
 # like "(te)" is NOT in this set, so it is preserved.
+# Two unparenthesized forms from reconciliation tables ride the same way: a
+# dash qualifier ("book value per share - gaap (a/e)", RBCAA EX-99.2) and a
+# bare formula reference ("book value per share x/dd", "… (non-gaap) aa/dd",
+# FCNCA's deck text layer) — letters-slash-letters only, so no number or word
+# of the label itself can be peeled.
 _TRAIL_QUALIFIER = re.compile(
     r"\s*\((?:non[- ]?gaap|period[- ]end|end of period|[a-z0-9]{1,3}(?:/[a-z0-9]{1,3})?)\)\s*$"
+    r"|\s+-\s+(?:non-)?gaap\s*$"
+    r"|\s+[a-z]{1,2}/[a-z]{1,2}\s*$"
 )
 
 
@@ -477,19 +635,21 @@ def _tbvps_prose_value(html_bytes: bytes) -> float | None:
     return vals.pop() if len(vals) == 1 else None
 
 
-def _tbvps_candidate(html_bytes: bytes, rows: list[tuple]) -> tuple:
+def _tbvps_candidate(html_bytes: bytes, rows: list[tuple],
+                     prose: bool = True) -> tuple:
     """(value, explicit) — the release's TBVPS candidate BEFORE gating, by
     descending label strength: an explicit per-share table row, else a bare
-    "tangible (common) book value" row, else the prose statement. The first
-    matching row of a tier decides (its blank latest-quarter cell → None,
-    audit P3). explicit=False marks the two weaker tiers."""
+    "tangible (common) book value" row, else the prose statement (unless
+    prose=False — a supplementary exhibit's prose has no verifiable period).
+    The first matching row of a tier decides (its blank latest-quarter cell
+    → None, audit P3). explicit=False marks the two weaker tiers."""
     for cl, nums in rows:
         if _match_tbvps_label(cl):
             return nums[0], True
     for cl, nums in rows:
         if _strip_trailing_qualifiers(cl) in _TBVPS_BARE_LABELS:
             return nums[0], False
-    return _tbvps_prose_value(html_bytes), False
+    return (_tbvps_prose_value(html_bytes) if prose else None), False
 
 
 def _match_bvps_label(cl: str) -> bool:
@@ -550,6 +710,7 @@ def extract_reported_tbvps_status(
     ex991_html: bytes,
     reconstructed: float | None = None,
     bvps: float | None = None,
+    period_end: tuple | None = None,
 ) -> tuple[float | None, str]:
     """The bank's OWN reported tangible book value per common share from one
     EX-99.1 document, or None when not cleanly disclosed / fails a sanity gate.
@@ -592,8 +753,14 @@ def extract_reported_tbvps_status(
     most-recent period). The candidate is found by _tbvps_candidate: an
     explicit per-share row first, then a bare "tangible (common) book value"
     row (ONB), then the prose statement (JPM) — every tier faces the same gates.
+
+    period_end=(year, month) marks the document as a SUPPLEMENTARY exhibit
+    (EX-99.2+) of a release for that quarter: only table rows whose latest
+    column is headed by that quarter-end are read (_supplement_rows) and the
+    prose tier is off; every gate above applies unchanged.
     """
-    rows = _book_value_rows(ex991_html)
+    rows = (_supplement_rows(ex991_html, period_end) if period_end
+            else _book_value_rows(ex991_html))
     # In-release reported book value per common share, the fallback cross-check
     # anchor when the caller had none (same first-column / most-recent period).
     if bvps is None:
@@ -603,7 +770,8 @@ def extract_reported_tbvps_status(
             if _match_bvps_label(cl) and nums[0] is not None:
                 bvps = nums[0]
                 break
-    v, explicit = _tbvps_candidate(ex991_html, rows)
+    v, explicit = _tbvps_candidate(ex991_html, rows,
+                                   prose=period_end is None)
     # No TBVPS disclosed, or a blank latest-quarter cell → n/a; never serve the
     # prior column as the current quarter (audit P3).
     if v is None:
@@ -777,19 +945,42 @@ def latest_earnings_8k_figures(cik) -> dict | None:
     return payload or None
 
 
-def _fetch_ex991_html(cik) -> bytes | None:
-    """Raw EX-99.1 press-release bytes for the latest earnings 8-K, or None.
-    Locates the exhibit the same deterministic way as latest_earnings_8k_figures
-    (index exhibit-TYPE table, never a guessed filename)."""
-    f8k = _latest_earnings_8k(cik)
-    if not f8k:
-        return None
-    doc = _ex991_document(cik, f8k["accession_dash"])
-    if not doc:
-        return None
-    url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
-           f"{f8k['accession']}/{doc}")
-    return _get(url)
+# A supplementary exhibit is read only for a release whose quarter-end is
+# within this many days — the repo's release-staleness convention (valuation
+# _otc_release_ps / otc_release._IR_STALE_DAYS). UBOH's latest earnings 8-K
+# is from 2023-01-19: its EX-99.2 figure is a 4Q22 TBVPS, never "current".
+_SUPPLEMENT_STALE_DAYS = 200
+
+
+def _exhibit_status(f8k: dict, extract,
+                    today=None) -> tuple[float | None, str]:
+    """(value, status) of `extract(html, period_end)` over the earnings 8-K's
+    EX-99.n exhibits in ascending n — EX-99.1 first (period_end=None, the
+    release reader), then each supplementary exhibit (period_end = the
+    release quarter-end, the period-verified reader). The FIRST exhibit whose
+    status is not "not_disclosed" decides, so an EX-99.1 answer ("ok" OR a
+    "gate_rejected" conflict) is never second-guessed by a later exhibit, and
+    a later exhibit is fetched only when every earlier one disclosed nothing
+    (RBCAA: EX-99.2 financial tables; FCNCA: EX-99.3 financial supplement).
+    Supplements are skipped when the release quarter is unknown or older than
+    _SUPPLEMENT_STALE_DAYS (`today` is injectable for tests)."""
+    import calendar
+    from datetime import date
+    period_end = _release_quarter_end(f8k.get("date"))
+    fresh = False
+    if period_end is not None:
+        y, m = period_end
+        qend = date(y, m, calendar.monthrange(y, m)[1])
+        fresh = ((today or date.today()) - qend).days <= _SUPPLEMENT_STALE_DAYS
+    for n, doc in _ex99_documents(f8k["cik"], f8k["accession_dash"]):
+        if n != 1 and not fresh:
+            break                  # no verifiable / current quarter to read
+        url = (f"https://www.sec.gov/Archives/edgar/data/{int(f8k['cik'])}/"
+               f"{f8k['accession']}/{doc}")
+        value, status = extract(_get(url), None if n == 1 else period_end)
+        if status != "not_disclosed":
+            return value, status
+    return None, "not_disclosed"
 
 
 def reported_tbvps(
@@ -805,6 +996,7 @@ def extract_reported_bvps_status(
     ex991_html: bytes,
     reconstructed: float | None = None,
     tbvps: float | None = None,
+    period_end: tuple | None = None,
 ) -> tuple[float | None, str]:
     """The bank's OWN reported (tangible-INCLUSIVE) book value per common share
     from one EX-99.1 document — the BVPS sibling of
@@ -821,8 +1013,10 @@ def extract_reported_bvps_status(
       • no reconstruction: the in-release TBVPS (caller-passed, else matched
         from the same document) anchors it; with NOTHING to tie to →
         "not_disclosed".
+    period_end: a supplementary exhibit, as in extract_reported_tbvps_status.
     """
-    rows = _book_value_rows(ex991_html)
+    rows = (_supplement_rows(ex991_html, period_end) if period_end
+            else _book_value_rows(ex991_html))
     if tbvps is None:
         for cl, nums in rows:
             # A blank latest-quarter cell must not anchor (audit P3).
@@ -886,17 +1080,17 @@ def reported_bvps_status(
     # v2: "… per common share at end of period" label (OCFC miss).
     # v3: "(end of period)" qualifier (BBT) + bare "book value" tier (ONB).
     # v4: table-less text-layer rows (AMAL) + "at period end" label (EGBN).
-    ckey = f"reported_bvps:v4:{f8k['accession']}:{rk}:{tk}"
+    # v5: supplementary exhibits EX-99.2+ (RBCAA/FCNCA) + formula-ref suffixes.
+    ckey = f"reported_bvps:v5:{f8k['accession']}:{rk}:{tk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling.
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached.get("value"), cached.get("status") or "not_disclosed"
 
     try:
-        html = _fetch_ex991_html(cik)
-        value, status = (extract_reported_bvps_status(
-                             html, reconstructed=reconstructed, tbvps=tbvps)
-                         if html else (None, "not_disclosed"))
+        value, status = _exhibit_status(
+            f8k, lambda html, pe: extract_reported_bvps_status(
+                html, reconstructed=reconstructed, tbvps=tbvps, period_end=pe))
         try:
             cache.put(ckey, {"value": value, "status": status})
         except Exception:
@@ -921,7 +1115,9 @@ def reported_bvps_status(
 # v9: table-less releases read from the page text layer (AMAL miss) and
 #     "… at period end" labels (EGBN). (Parallel branches bumped the same
 #     numbers for different specs — v9 so no spec's cache serves another.)
-_REPORTED_TBVPS_CKEY_V = "v9"
+# v10: supplementary exhibits EX-99.2+ of the same 8-K (RBCAA EX-99.2, FCNCA
+#      EX-99.3) + reconciliation-formula label suffixes ("x/dd", "- GAAP").
+_REPORTED_TBVPS_CKEY_V = "v10"
 
 
 def reported_tbvps_status(
@@ -930,7 +1126,8 @@ def reported_tbvps_status(
     bvps: float | None = None,
 ) -> tuple[float | None, str]:
     """The bank's OWN reported tangible book value per common share, read straight
-    from its latest earnings release (8-K EX-99.1), or None when it isn't cleanly
+    from its latest earnings release (8-K EX-99.1, else the first supplementary
+    EX-99.n that discloses it — _exhibit_status), or None when it isn't cleanly
     disclosed / fails a sanity gate (→ caller falls back to the reconstruction).
 
     Returns (value, status) — see extract_reported_tbvps_status. A
@@ -968,10 +1165,9 @@ def reported_tbvps_status(
         return cached.get("value"), cached.get("status") or "not_disclosed"
 
     try:
-        html = _fetch_ex991_html(cik)
-        value, status = (extract_reported_tbvps_status(
-                             html, reconstructed=reconstructed, bvps=bvps)
-                         if html else (None, "not_disclosed"))
+        value, status = _exhibit_status(
+            f8k, lambda html, pe: extract_reported_tbvps_status(
+                html, reconstructed=reconstructed, bvps=bvps, period_end=pe))
         try:
             cache.put(ckey, {"value": value, "status": status})
         except Exception:
