@@ -520,6 +520,7 @@ class TestMacroExports(_SiteCase):
                 {"asof": "2026-09-15", "savings": {"rate_pct": 0.42},
                  "cd_12mo": {"rate_pct": 1.86}}]
         with _patched(macro, latest_value=lambda sid: 4.33,
+                      latest_date=lambda sid: None,
                       fetch_series=lambda sid, years=5: pd.DataFrame()), \
                 _fake_module("data.national_rates",
                              get_national_rates=lambda: rates,

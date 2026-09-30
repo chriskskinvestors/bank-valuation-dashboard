@@ -137,29 +137,37 @@ def _equity_series(cik: int) -> dict:
     ])
 
 
-def _preferred_share_counts(cik: int) -> dict:
-    """{end: [PreferredStockShares(Outstanding|Issued) values at that end]}.
-    Explicit zeros are KEPT: a redemption quarter's 0 must end presence, not
-    let the prior count carry ~1y."""
+def _preferred_share_counts(cik: int, common: dict) -> tuple[dict, set]:
+    """({end: [PreferredStockShares(Outstanding|Issued) values at that end]},
+    common-tagged ends). Explicit zeros are KEPT: a redemption quarter's 0
+    must end presence, not let the prior count carry ~1y. A value equal to
+    the same-end common count (`common`: {end: {counts}}) is the common line
+    tagged as preferred (sec_client._common_as_preferred_at; PLBC 2018-03-31):
+    it is dropped and its end returned, so no ladder value there is taken."""
     out: dict = {}
+    tagged: set = set()
     for con in ("PreferredStockSharesOutstanding", "PreferredStockSharesIssued"):
         for q, v in _series(cik, [con]).items():
+            if v and v in common.get(q, ()):
+                tagged.add(q)
+                continue
             out.setdefault(q, []).append(v)
-    return out
+    return out, tagged
 
 
-def _preferred_value_series(cik: int, counts: dict) -> dict:
+def _preferred_value_series(cik: int, counts: dict, skip: set) -> dict:
     """_merged_series over the preferred ladder, skipping any rung value that
     can't be a carrying total against the same-end share count — the
     snapshot's par-only / per-share guard (sec_client._not_a_carrying_total;
     OCFC's $1K par over 57,370 shares, its per-share $1,000 liquidation
-    preference after redemption). An end whose share counts are all
+    preference after redemption) — or that sits at a `skip` end (common
+    tagged as preferred). An end whose share counts are all
     explicitly 0 and has no accepted value reads 0.0, so a pre-redemption
     value doesn't forward-fill past the redemption."""
     out: dict = {}
     for con in _PREFERRED_VALUE_CONCEPTS:
         for q, v in _series(cik, [con]).items():
-            if not v or q in out or _not_a_carrying_total(
+            if not v or q in out or q in skip or _not_a_carrying_total(
                     con, v, _same_date_preferred_count(counts.get(q, []))):
                 continue
             out[q] = v
@@ -194,8 +202,9 @@ def _bank_per_share(cik: int, ends: list) -> dict:
     it_fin = _series(cik, ["FiniteLivedIntangibleAssetsNet"])
     incl = _series(cik, ["IntangibleAssetsNetIncludingGoodwill"])
     msr = _series(cik, ["ServicingAssetAtFairValueAmount"])
-    pfd_counts = _preferred_share_counts(cik)
-    pfd = _preferred_value_series(cik, pfd_counts)
+    pfd_counts, common_tagged = _preferred_share_counts(
+        cik, {q: {sh.get(q), issued.get(q)} for q in set(sh) | set(issued)})
+    pfd = _preferred_value_series(cik, pfd_counts, common_tagged)
     pfd_sh = {q: max(vals) for q, vals in pfd_counts.items()}
     universe = (set(eq) | set(sh) | set(issued) | set(wavg) | set(gw)
                 | set(it_ex) | set(it_fin) | set(incl) | set(msr)
@@ -310,6 +319,8 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     n = max(int(n_quarters), 1)
     ends = [pd.Timestamp(e).normalize() for e in recent_quarter_ends(n)]
     labels = [quarter_label(e) for e in ends]
+    # v7: a preferred share count equal to the same-end common count is the
+    # common line tagged as preferred — no value subtracted there (PLBC).
     # v6: preferred par-only / per-share liquidation values are no longer a
     # carrying total, and an explicit zero share count ends presence (OCFC).
     # v5: equity reads fall back to the including-NCI tag (AUBN/PRK all-n/a)
@@ -318,7 +329,7 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     # pre-warmed v4 grids so the fixed values serve once re-warmed. (v4 was
     # the CCFN share-count corroboration bump, v3 the intangible-adjustment
     # main-path mirror.)
-    key = f"sec_pershare:v6:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
+    key = f"sec_pershare:v7:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
     cached = cache.get(key, max_age_s=None)     # freshness is _GRID_TTL_S (36h), not the 24h default
     if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached
