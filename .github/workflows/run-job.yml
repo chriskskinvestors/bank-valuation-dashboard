@@ -61,6 +61,8 @@ jobs:
       - name: Execute job and wait
         if: ${{ !inputs.logs_only }}
         run: |
+          # The log step below reads from HERE, not 12h back (see its note).
+          echo "RUN_START=$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           ARGS=()
           if [ -n "${{ inputs.args }}" ]; then
             ARGS+=(--args="${{ inputs.args }}")
@@ -77,12 +79,16 @@ jobs:
       #
       # The window is an explicit timestamp bound in the filter, not
       # --freshness: gcloud ignores --freshness under --order=asc, which
-      # silently returned the job's 400 OLDEST entries. 12h so a
-      # mid-morning read still covers the 06:00 ET nightly run.
-      - name: Print the job's container output (Cloud Logging, last 12h)
+      # silently returned the job's 400 OLDEST entries. logs_only reads the
+      # last 12h so a mid-morning read still covers the 06:00 ET nightly run.
+      # After an execution it reads from that execution's start instead: with
+      # --order=asc the --limit keeps the OLDEST lines, so on 2026-09-30 an
+      # earlier same-day verify-metrics run filled the window and this run's
+      # results block was cut off entirely.
+      - name: Print the job's container output (Cloud Logging)
         if: ${{ always() }}
         run: |
-          SINCE="$(date -u -d '-12 hours' +%Y-%m-%dT%H:%M:%SZ)"
+          SINCE="${RUN_START:-$(date -u -d '-12 hours' +%Y-%m-%dT%H:%M:%SZ)}"
           gcloud logging read \
             "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }} AND timestamp>=\"${SINCE}\"" \
             --project="${{ env.PROJECT_ID }}" \
