@@ -176,6 +176,137 @@ class TestHoldcoExtraction(unittest.TestCase):
         out = extract_holdco_capital(facts)
         self.assertAlmostEqual(out["2025-12-31"]["rwa"], 100_000_000_000.0)
 
+    # Citi FY2025 10-K (acc 0000831001-26-000011), holdco facts as tagged: the
+    # ratios carry no methodology member; RWA / total capital carry both.
+    _MX = "us-gaap:RiskWeightedAssetsCalculationMethodologyAxis"
+    _STD, _ADV = "us-gaap:StandardizedApproachMember", "us-gaap:AdvancedApproachMember"
+    _PARENT = {_AX: "us-gaap:ParentCompanyMember"}
+
+    def _citi(self):
+        P, MX = self._PARENT, self._MX
+        return [
+            _f("c:TierOneCommonCapital", 157_099e6, P),
+            _f("c:TierOneCommonCapitalRatio", 0.1318, P),
+            _f("us-gaap:TierOneRiskBasedCapital", 179_675e6, P),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.1365, P),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.1566, P),
+            _f("us-gaap:Capital", 216_468e6, {**P, MX: self._STD}),
+            _f("us-gaap:Capital", 206_170e6, {**P, MX: self._ADV}),
+            _f("us-gaap:RiskWeightedAssets", 1_192_174e6, {**P, MX: self._STD}),
+            _f("us-gaap:RiskWeightedAssets", 1_316_371e6, {**P, MX: self._ADV}),
+            _f("us-gaap:TierOneLeverageCapitalToAverageAssets", 0.0669, P),
+        ]
+
+    def test_tier_one_common_is_cet1_not_cblr(self):
+        # Unmatched, Citi's CET1 read n/a and the leverage-only rule flagged a
+        # $2.6T bank as a Community Bank Leverage Ratio electee.
+        out = extract_holdco_capital(self._citi(), anchor_cet1=14.33)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.1318)
+        self.assertAlmostEqual(out["cet1_cap"], 157_099e6)
+        self.assertFalse(out["_cblr"])
+
+    def test_advanced_basis_ratio_rederived_on_standardized(self):
+        # 10-K Standardized column (hand): T1 179,675 / 1,192,174 = 15.07%,
+        # Total 216,468 / 1,192,174 = 18.16%. The tagged 13.65% / 15.66% tie to
+        # the Advanced RWA 1,316,371 (179,675 and 206,170 / 1,316,371).
+        out = extract_holdco_capital(self._citi(), anchor_cet1=14.33)["2025-12-31"]
+        self.assertAlmostEqual(out["rwa"], 1_192_174e6)
+        self.assertAlmostEqual(out["t1_ratio"], 179_675 / 1_192_174)
+        self.assertAlmostEqual(out["total_ratio"], 216_468 / 1_192_174)
+        self.assertEqual(round(out["t1_ratio"] * 100, 2), 15.07)
+        self.assertEqual(round(out["total_ratio"] * 100, 2), 18.16)
+        self.assertAlmostEqual(out["cet1_ratio"], 0.1318)       # already Standardized
+        self.assertEqual(sorted(out["_rederived"]), ["t1_ratio", "total_ratio"])
+
+    def test_unexplained_ratio_mismatch_left_as_tagged(self):
+        # A mismatch the Advanced RWA does NOT explain is not "corrected".
+        P, MX = self._PARENT, self._MX
+        facts = [
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.12, P),
+            _f("us-gaap:TierOneRiskBasedCapital", 130e6, P),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.125, P),
+            _f("us-gaap:RiskWeightedAssets", 1_000e6, {**P, MX: self._STD}),
+            _f("us-gaap:RiskWeightedAssets", 1_100e6, {**P, MX: self._ADV}),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["t1_ratio"], 0.125)
+        self.assertNotIn("_rederived", out)
+
+    def test_custom_methodology_axis_and_tier_one_common_tag(self):
+        # STT FY2025 10-K (acc 0000093751-26-000124): custom axis + members
+        # "BaselIII{standardized,Advanced}ApproachMember", CET1 as
+        # stt:TierOneCommonRiskBasedCapitaltoTotalRiskWeightedAssets, RWA as
+        # stt:TotalRiskWeightedAssets. Previously: CET1 n/a, Tier 1 / Total the
+        # ADVANCED 16.1% / 17.7%. 10-K Standardized: 11.6% / 14.4% / 16.1%.
+        AX = "stt:RegulatoryCapitalrequirementsforBankingOrganizationsbyImplementationApproachesAxis"
+        std, adv = {AX: "stt:BaselIIIstandardizedApproachMember"}, {AX: "stt:BaselIIIAdvancedApproachMember"}
+        facts = [
+            _f("stt:TierOneCommonRiskBasedCapitaltoTotalRiskWeightedAssets", 0.130, adv),
+            _f("stt:TierOneCommonRiskBasedCapitaltoTotalRiskWeightedAssets", 0.116, std),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.161, adv),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.144, std),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.177, adv),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.161, std),
+            _f("stt:TotalRiskWeightedAssets", 114_357e6, adv),
+            _f("stt:TotalRiskWeightedAssets", 127_263e6, std),
+            _f("us-gaap:TierOneLeverageCapitalToAverageAssets", 0.055, std),
+        ]
+        out = extract_holdco_capital(facts, anchor_cet1=14.72)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.116)
+        self.assertAlmostEqual(out["t1_ratio"], 0.144)
+        self.assertAlmostEqual(out["total_ratio"], 0.161)
+        self.assertAlmostEqual(out["rwa"], 127_263e6)
+        self.assertFalse(out["_cblr"])
+
+    def test_other_lines_follow_cet1_entity_member(self):
+        # MTB FY2025 10-K (acc 0000036270-26-000010): the regulatory MINIMUMS
+        # sit under the actual-ratio concepts with ParentCompanyMember; the
+        # actuals under "MAndTMember". Previously Tier 1 / Total read 6% / 8%.
+        P, MT = {_AX: "us-gaap:ParentCompanyMember"}, {_AX: "mtb:MAndTMember"}
+        facts = [
+            _f("mtb:CommonEquityTierOneRiskBasedCapitalToRiskWeightedAssets", 0.045, P),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.06, P),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.08, P),
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.1084, MT),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.1259, MT),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.1444, MT),
+            _f("us-gaap:TierOneLeverageCapitalToAverageAssets", 0.0998, MT),
+        ]
+        out = extract_holdco_capital(facts, anchor_cet1=11.81)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.1084)
+        self.assertAlmostEqual(out["t1_ratio"], 0.1259)
+        self.assertAlmostEqual(out["total_ratio"], 0.1444)
+        self.assertAlmostEqual(out["lev_ratio"], 0.0998)
+
+    def test_consolidated_cet1_beats_nearer_subsidiary_member(self):
+        # WTFC FY2025: consolidated (undimensioned) 10.3% vs a charter member
+        # read as parent-like ("…BankCorporation") at 11.8%, nearer the 12.25%
+        # FDIC anchor. COF: consolidated 14.3% vs "CapitalOneN.A.Member" 13.4%
+        # (anchor 13.21) — which put a bank-sub CET1 beside holdco Tier 1 15.3%.
+        for anchor, cons, sub_member, sub in (
+                (12.25, 0.103, "wtfc:MacatawaBankCorporationMember", 0.118),
+                (13.21, 0.143, "cof:CapitalOneN.A.Member", 0.134)):
+            facts = [
+                _f("us-gaap:CommonEquityTierOneCapitalRatio", cons),
+                _f("us-gaap:CommonEquityTierOneCapitalRatio", sub, {_LE: sub_member}),
+            ]
+            out = extract_holdco_capital(facts, anchor_cet1=anchor)["2025-12-31"]
+            self.assertAlmostEqual(out["cet1_ratio"], cons, msg=sub_member)
+
+    def test_consistent_ratio_untouched(self):
+        # Ratio ties to Standardized capital / RWA → nothing to do.
+        P, MX = self._PARENT, self._MX
+        facts = [
+            _f("us-gaap:CommonEquityTier1CapitalToRiskWeightedAssets", 0.12, P),
+            _f("us-gaap:TierOneRiskBasedCapital", 130e6, P),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.13, P),
+            _f("us-gaap:RiskWeightedAssets", 1_000e6, {**P, MX: self._STD}),
+            _f("us-gaap:RiskWeightedAssets", 1_100e6, {**P, MX: self._ADV}),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["t1_ratio"], 0.13)
+        self.assertNotIn("_rederived", out)
+
 
 class TestCapitalWalk(unittest.TestCase):
     """The holdco regulatory-capital WALK reconstruction + reconciliation gate

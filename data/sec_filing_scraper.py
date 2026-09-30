@@ -227,15 +227,20 @@ def parse_inline_xbrl_documentset(docs: list[bytes]) -> list[Fact]:
 # CET1 has the most spelling variants across filers: TierOne / Tier1 / TierI,
 # an optional "RiskBased" infix, and the abbreviation "Cet1". The ratio suffix
 # is "Ratio" or "ToRiskWeightedAssets".
-_CET1 = r"(CommonEquityTier(One|1|I)(RiskBased)?Capital|Cet1Capital)"
+# "Tier 1 common (risk-based) capital" is the custom-tag name for CET1 at Citi
+# (c:TierOneCommonCapitalRatio 13.18% = its 10-K Standardized CET1) and State
+# Street (stt:TierOneCommonRiskBasedCapitaltoTotalRiskWeightedAssets); unmatched,
+# their CET1 read n/a. STT also tags RWA as "TotalRiskWeightedAssets".
+_CET1 = (r"(CommonEquityTier(One|1|I)(RiskBased)?Capital|Cet1Capital"
+         r"|Tier(One|1)Common(RiskBased)?Capital)")
 _CAP_LINE_PATTERNS = {
     "cet1_cap":    re.compile(rf"^{_CET1}$", re.I),
-    "cet1_ratio":  re.compile(rf"^{_CET1}(Ratio|ToRiskWeightedAssets(Ratio)?)$", re.I),
+    "cet1_ratio":  re.compile(rf"^{_CET1}(Ratio|To(Total)?RiskWeightedAssets(Ratio)?)$", re.I),
     "t1_cap":      re.compile(r"^Tier(One|1)RiskBasedCapital$", re.I),
     "t1_ratio":    re.compile(r"^Tier(One|1)RiskBasedCapital(Ratio|ToRiskWeightedAssets(Ratio)?)$", re.I),
     "total_cap":   re.compile(r"^Capital$", re.I),
     "total_ratio": re.compile(r"^CapitalToRiskWeightedAssets(Ratio)?$", re.I),
-    "rwa":         re.compile(r"^RiskWeightedAssets$", re.I),
+    "rwa":         re.compile(r"^(Total)?RiskWeightedAssets$", re.I),
     "lev_cap":     re.compile(r"^Tier(One|1)LeverageCapital$", re.I),
     "lev_ratio":   re.compile(r"^Tier(One|1)LeverageCapitalToAverageAssets$", re.I),
 }
@@ -316,23 +321,36 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
     # comes from ONE consistent methodology. Without this, the FDIC CET1 anchor —
     # which for these names sits closer to the Advanced ratio (WFC: bank-sub 12.58%
     # vs Standardized 10.61% / Advanced 12.35%) — mis-selects the Advanced ratio.
+    # Matched by member NAME on any axis: STT uses a custom axis with
+    # "BaselIIIstandardizedApproachMember" / "BaselIIIAdvancedApproachMember"
+    # (unrecognized, its Advanced Tier 1 16.1% displayed over Standardized 14.4%).
     def _methodology(members):
         for v in members.values():
-            m = v.split(":")[-1]
-            if m == "StandardizedApproachMember":
+            m = v.split(":")[-1].lower()
+            if "standardized" in m and "approach" in m:
                 return "std"
-            if m == "AdvancedApproachMember":
+            if "advanced" in m and "approach" in m:
                 return "adv"
         return None
 
+    # Advanced-member candidates, kept aside before the filter below: they are
+    # the evidence that an UNDIMENSIONED ratio is Advanced-basis (see step 3).
+    adv_cand = {key: [c for c in lst if _methodology(c[2]) == "adv"]
+                for key, lst in cand.items()}
     for key, lst in cand.items():
         if any(_methodology(c[2]) == "std" for c in lst):
             cand[key] = [c for c in lst if _methodology(c[2]) != "adv"]
 
     def _score(c):
         _b, conf, mems, _v = c
-        meth = next((v for k, v in mems.items() if "Methodology" in k), "")
-        return (_HOLDCO_RANK.get(conf, 9), len(mems), 0 if "Standardized" in meth else 1)
+        return (_HOLDCO_RANK.get(conf, 9), len(mems), 0 if _methodology(mems) == "std" else 1)
+
+    def _entity(members):
+        """The entity-axis member (None = undimensioned / consolidated)."""
+        return next((v for k, v in members.items()
+                     if k.split(":")[-1] in ("ConsolidatedEntitiesAxis", "LegalEntityAxis",
+                                             "RegulatoryCapitalRequirementsForBanksAxis")),
+                    None)
 
     def _pick(pool):
         """Best candidate by anchor (for cet1) or dimensional score."""
@@ -355,6 +373,12 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
                 inb = [c for c in pool if abs(c[3] * 100 - anchor_cet1) <= 6.0]
                 if not inb:
                     continue
+                # Most-confident entity first, THEN nearest the anchor: WTFC's
+                # consolidated (undimensioned) CET1 10.3% lost to a subsidiary
+                # member classified parent-like ("MacatawaBankCorporation",
+                # 11.8%) that merely sat nearer the bank-level FDIC anchor.
+                top = min(_HOLDCO_RANK.get(c[1], 9) for c in inb)
+                inb = [c for c in inb if _HOLDCO_RANK.get(c[1], 9) == top]
                 best = min(inb, key=lambda c: abs(c[3] * 100 - anchor_cet1))
                 d["_anchored"] = True
             else:
@@ -366,11 +390,18 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
         # 2) Extract every other line from the SAME basis (never mix holdco CET1
         #    with bank Tier 1); fall back to holdco-class facts if that basis is
         #    absent for a line. CBLR banks have no CET1 — default to holdco.
+        #    Within the basis, prefer the CET1's own entity member: MTB tags the
+        #    regulatory MINIMUMS (6% / 8%) under the actual-ratio concepts with
+        #    ParentCompanyMember and its actuals under "MAndTMember" — the anchor
+        #    picked the actual CET1 10.84%, then Tier 1 / Total took 6% / 8%.
         basis = chosen_basis or "holdco"
+        ent = _entity(best[2]) if chosen_basis else None
         for (p, line), lst in cand.items():
             if p != period or line == "cet1_ratio":
                 continue
             pool = [c for c in lst if c[0] == basis] or [c for c in lst if c[0] == "holdco"]
+            if chosen_basis:
+                pool = [c for c in pool if _entity(c[2]) == ent] or pool
             if not pool:
                 continue
             best = _pick(pool)
@@ -392,6 +423,30 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
     # Tier-1/Total ratios but no CET1 ratio; this derives it rather than n/a.
     _PAIRS = (("cet1_cap", "cet1_ratio"), ("t1_cap", "t1_ratio"),
               ("total_cap", "total_ratio"))
+    # 3) One methodology per table. A filer can tag each ratio with NO
+    #    methodology member while tagging RWA/capital under both — Citi FY2025
+    #    tags the binding (lower) ratio per line: CET1 13.18% (Standardized) but
+    #    Tier 1 13.65% / Total 15.66% (Advanced), beside Standardized RWA
+    #    $1,192B. A ratio that does NOT tie to the chosen capital / RWA but DOES
+    #    tie to the same basis's Advanced RWA is Advanced-basis: replace it with
+    #    the exact Standardized identity (Citi: 15.07% / 18.16%, its 10-K
+    #    Standardized column). An unexplained mismatch is left as tagged.
+    _TIE = 0.0006          # ratios are tagged to 0.01%; identity rounding < 0.006%
+    for period, d in out.items():
+        basis = "bank" if d.get("_basis") == "bank" else "holdco"
+        rwa = d.get("rwa")
+        adv_rwa = [c[3] for c in adv_cand.get((period, "rwa"), []) if c[0] == basis]
+        if not rwa or not adv_rwa:
+            continue
+        for c, r in _PAIRS:
+            cap, ratio = d.get(c), d.get(r)
+            if not cap or not ratio or abs(cap / rwa - ratio) <= _TIE:
+                continue
+            adv_caps = [x[3] for x in adv_cand.get((period, c), [])
+                        if x[0] == basis] or [cap]
+            if any(abs(ac / ar - ratio) <= _TIE for ac in adv_caps for ar in adv_rwa):
+                d[r] = cap / rwa
+                d.setdefault("_rederived", []).append(r)
     for d in out.values():
         implied = [d[c] / d[r] for c, r in _PAIRS if d.get(c) and d.get(r)]
         if implied and (max(implied) - min(implied) <= 0.01 * max(implied)):
@@ -641,7 +696,7 @@ def _holdco_capital_extract_cached(meta: dict, anchor: float | None) -> dict:
     Version the key (v3): the prior v2 entries predate the multi-year stitch and
     are abandoned so the freshly-extracted capital is always served, never stale."""
     from data import cache
-    ckey = f"holdco_cap:v3:{meta['accession']}"
+    ckey = f"holdco_cap:v4:{meta['accession']}"   # v4: one entity + one methodology
     cap = cache.get(ckey, max_age_s=None)
     if cap is None:
         try:
