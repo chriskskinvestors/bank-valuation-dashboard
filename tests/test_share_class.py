@@ -291,5 +291,81 @@ class TestCertTickerMap(unittest.TestCase):
         self.assertNotIn(21843, self.bu.cert_ticker_map())
 
 
+# First Niles Financial (Niles, OH) as it sits in bank_map_resolved.json: an
+# FDIC-only bank (deregistered 2006, no CIK) whose common FNFI and Series A
+# preferred FNFPA share cert 28349. The preferred exists because the 2006
+# going-private reclassification turned holdings of <=300 common shares into
+# Series A Preferred (SEC SC 13E3/A, CIK 1065823, filed 2006-11-16) — so FNFI
+# is the common. Keyed on CIK alone, neither was clustered and every Screen
+# listed the bank twice (prod finding 2026-09-30).
+FNF = {
+    "FNFI":  {"cik": None, "fdic_cert": 28349, "name": "First Niles Financial",
+              "exchange": "OTC"},
+    "FNFPA": {"cik": None, "fdic_cert": 28349, "name": "First Niles Financial",
+              "exchange": "OTC"},
+}
+
+
+class TestCertlessSiblings(unittest.TestCase):
+    def test_fnfpa_excluded_fnfi_kept(self):
+        self.assertEqual(noncommon_tickers({t: {**v} for t, v in FNF.items()}),
+                         {"FNFPA"})
+
+    def test_served_snapshot_labels_both_common(self):
+        """The snapshot built before this fix annotated both as singleton
+        'common'; the persisted-label path must still keep only FNFI."""
+        uni = {t: {**v, "share_class": "common"} for t, v in FNF.items()}
+        self.assertEqual(noncommon_tickers(uni), {"FNFPA"})
+
+    def test_annotate_and_canonicalize(self):
+        from data.share_class import noncommon_to_primary
+        uni = {t: {**v} for t, v in FNF.items()}
+        self.assertEqual(noncommon_to_primary(uni), {"FNFPA": "FNFI"})
+        annotate_share_classes(uni)
+        self.assertEqual(uni["FNFI"]["share_class"], "common")
+        self.assertEqual(uni["FNFPA"]["share_class"], "preferred")
+
+    def test_certless_banks_on_distinct_certs_untouched(self):
+        uni = {"FNFI": {**FNF["FNFI"]},
+               "OAKC": {"cik": None, "fdic_cert": 99991, "name": "Oak"}}
+        self.assertEqual(noncommon_tickers(uni), set())
+
+    def test_cik_and_certless_on_one_cert_not_silently_merged(self):
+        """A CIK'd ticker and a CIK-less one on the same cert are different
+        registrant keys — a wrong-entity join, not siblings. The classifier
+        leaves both; shared_cert_claims (the deploy gate) reports it."""
+        from data.bank_universe import shared_cert_claims
+        uni = {"AAA": {"cik": 111, "fdic_cert": 500},
+               "BBB": {"cik": None, "fdic_cert": 500}}
+        self.assertEqual(noncommon_tickers(uni), set())
+        self.assertEqual(shared_cert_claims({t: v["fdic_cert"]
+                                             for t, v in uni.items()}),
+                         {500: ["AAA", "BBB"]})
+
+
+class TestSharedCertClaims(unittest.TestCase):
+    def test_shape(self):
+        from data.bank_universe import shared_cert_claims
+        self.assertEqual(
+            shared_cert_claims({"FNFPA": 28349, "FNFI": 28349, "JPM": 628,
+                                "X": None, "Y": 0}),
+            {28349: ["FNFI", "FNFPA"]})
+
+    def test_curated_maps_one_covered_ticker_per_cert(self):
+        """Every cert in the committed curated maps (BANK_MAP over
+        bank_map_resolved.json, get_cik/get_fdic_cert precedence) belongs to
+        exactly one covered ticker once share-class siblings and skip-listed
+        tickers are dropped. The live-universe twin of this check runs in the
+        deploy gate (tests/test_universe_coverage.py)."""
+        from data.bank_mapping import BANK_MAP, _RESOLVED_FROM_JSON
+        from data.bank_universe import _SKIP_TICKERS, shared_cert_claims
+        uni = {t: dict(v) for t, v in {**_RESOLVED_FROM_JSON, **BANK_MAP}.items()}
+        excluded = noncommon_tickers(uni) | _SKIP_TICKERS
+        self.assertEqual(
+            shared_cert_claims({t: v.get("fdic_cert") for t, v in uni.items()
+                                if t not in excluded}),
+            {})
+
+
 if __name__ == "__main__":
     unittest.main()

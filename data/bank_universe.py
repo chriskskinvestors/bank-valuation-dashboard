@@ -903,6 +903,20 @@ def cert_ticker_map() -> dict[int, str]:
         return {}
 
 
+def shared_cert_claims(ticker_certs: dict[str, int | None]) -> dict[int, list[str]]:
+    """{cert: sorted tickers} for every FDIC cert claimed by 2+ of the given
+    tickers ({ticker: cert}, None = no cert). Over the COVERED universe this
+    must be empty: a charter's fundamentals belong to exactly one screen row,
+    so a shared cert means the same bank listed twice (FNFI + its preferred
+    FNFPA, 2026-09-30) or a wrong-entity join. The deploy gate
+    (tests/test_universe_coverage.py) fails on any claim."""
+    by_cert: dict[int, list[str]] = {}
+    for t, cert in ticker_certs.items():
+        if cert:
+            by_cert.setdefault(int(cert), []).append(t)
+    return {c: sorted(ts) for c, ts in sorted(by_cert.items()) if len(ts) > 1}
+
+
 def coverage_excluded() -> set[str]:
     """Tickers hidden from every covered/display surface (screens, leaderboard,
     search, count):
