@@ -948,42 +948,26 @@ def _avg_eps_surprise_cached(tickers: tuple) -> float | None:
 
 def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict):
     """Top summary KPIs across the whole watchlist."""
-    from datetime import datetime, date
+    from datetime import date
 
-    # Reports in next 14 days. A feed failure must NOT display as "0 reporting"
-    # — that's a confident wrong number; show unavailable instead.
+    # Reports this week / next 14 days — counted over the SAME agenda the
+    # Calendar tab renders (one concept, one number; the raw yfinance snapshot
+    # this used to count said 0 while the calendar said 2, 2026-09-30). A feed
+    # failure must NOT display as "0 reporting" — that's a confident wrong
+    # number; show unavailable instead (_upcoming_agenda raises, never caches,
+    # when every source leg is down).
     cal_failed = False
+    upcoming_7 = upcoming_14 = 0
+    upcoming: list[tuple] = []          # (date, ticker) for every future report
     try:
-        from data.estimates import (fetch_earnings_calendar,
-                                    earnings_calendar_available)
-        cal = fetch_earnings_calendar(tuple(watchlist))
-        # fetch_earnings_calendar returns [] for BOTH "genuinely no upcoming
-        # earnings" and "snapshot missing / unreadable". Only the latter is an
-        # outage — distinguish via the snapshot-presence check so a feed outage
-        # shows "unavailable", not a confident "0 reporting" (AUDIT #34).
-        if not cal and not earnings_calendar_available():
-            cal_failed = True
+        from data.earnings_call import agenda_counts
+        agenda = _upcoming_agenda(date.today().isoformat())["agenda"]
+        upcoming_7, upcoming_14 = agenda_counts(agenda)
+        upcoming = [(date.fromisoformat(r["date"]), r["ticker"])
+                    for b in agenda for r in b["rows"]]
     except Exception as e:
         print(f"[earnings] calendar fetch failed: {type(e).__name__}: {e}")
-        cal = []
         cal_failed = True
-
-    today = date.today()
-    upcoming_14 = 0
-    upcoming_7 = 0
-    upcoming: list[tuple] = []          # (date, ticker) for every future report
-    for entry in cal:
-        try:
-            ed = datetime.strptime(entry.get("next_earnings_date", ""), "%Y-%m-%d").date()
-            days = (ed - today).days
-            if 0 <= days <= 7:
-                upcoming_7 += 1
-            if 0 <= days <= 14:
-                upcoming_14 += 1
-            if days >= 0 and entry.get("ticker"):
-                upcoming.append((ed, str(entry["ticker"])))
-        except (ValueError, TypeError):
-            continue
 
     # Beat/miss stats across all consensus
     total_beats = 0
@@ -1440,56 +1424,28 @@ def _render_earnings_calendar(watchlist: list[str]):
 
     horizon_days = 75            # full upcoming-season window
     today = date.today()
+    unavailable = False
     with _skeleton():
         try:
-            from data.bank_universe import get_universe
-            # Common shares only — preferred/note listings share the parent's
-            # report (ZIONP rendered as a second Zions row, 2026-07-20).
-            universe = {tk for tk, v in get_universe().items()
-                        if (v or {}).get("share_class", "common") == "common"}
+            agenda = _upcoming_agenda(today.isoformat(), horizon_days)["agenda"]
         except Exception:
-            universe = set()
-        # Date spine: the universe-wide yfinance snapshot (real near-term dates,
-        # nightly-cached) carrying the analyst estimates; FMP overlays timing, the
-        # confirmed flag and revenue; the IR/PR pipeline adds call time + webcast.
-        try:
-            yf_cal = fetch_earnings_calendar(tuple(sorted(universe)))
-        except Exception:
-            yf_cal = []
-        try:
-            fmp_cal = _fmp_earnings_window(
-                today.isoformat(), (today + timedelta(days=horizon_days)).isoformat())
-        except Exception:
-            fmp_cal = None
-        calls, agenda = {}, []
-        try:
-            from data import earnings_call as _ecall
-            calls = _ecall.merged_call_info()
-            agenda = _ecall.build_calls_agenda(
-                yf_cal, fmp_cal, universe, calls, today, horizon_days=horizon_days)
-        except Exception:
-            agenda = []
+            # Universe missing or every source leg down (the helper raises so
+            # an outage is never cached) — "no upcoming earnings" would be a
+            # confident wrong answer (AUDIT-2026-07-02 #34, agenda tail).
+            agenda, unavailable = [], True
 
-    if not universe:
+    if unavailable:
         st.info("Earnings calendar is temporarily unavailable. Please try again "
                 "shortly.")
         return
     if not agenda:
-        # An empty agenda is honest ONLY if at least one of its three source
-        # legs (yfinance snapshot / FMP window / IR-PR call pipeline) is up.
-        # All three down is an outage — "no upcoming earnings" would be a
-        # confident wrong answer (AUDIT-2026-07-02 #34, agenda tail).
-        from data.estimates import earnings_agenda_sources_down
-        if earnings_agenda_sources_down(fmp_cal, calls):
-            st.info("Earnings calendar is temporarily unavailable. Please try "
-                    "again shortly.")
-        else:
-            from ui.states import empty_state
-            empty_state('No upcoming bank earnings found in the next 75 days')
+        from ui.states import empty_state
+        empty_state('No upcoming bank earnings found in the next 75 days')
         return
 
+    from data.earnings_call import agenda_counts
     all_rows = [r for b in agenda for r in b["rows"]]
-    n_week = sum(1 for r in all_rows if r["days_until"] <= 7)
+    n_week = agenda_counts(agenda)[0]        # same number as the KPI header
     n_confirmed = sum(1 for r in all_rows if r["confirmed"])
     n_webcast = sum(1 for r in all_rows if r.get("webcast_url"))
     n_time = sum(1 for r in all_rows if r.get("call_time"))
@@ -1503,8 +1459,9 @@ def _render_earnings_calendar(watchlist: list[str]):
     st.caption(
         "Full bank universe, by week. Two dates per bank: **Release** = the "
         "earnings release date (FMP/yfinance estimate; **When** is its before/"
-        "after-open timing, a **✓** marks a confirmed date — FMP, or the company "
-        "has published its earnings call — others are **(proj.)**), and **Call** = "
+        "after-open timing, a **✓** marks a confirmed date — the company's own "
+        "announcement, or FMP confirming that date — others are **(proj.)**), "
+        "and **Call** = "
         "the conference-call date + time (often a "
         "different day — e.g. release after close, call next morning), with "
         "**Webcast / Dial-in**, all from the bank's own IR announcement, plus the "
@@ -1607,6 +1564,55 @@ def _fmt_rev_est(v) -> str:
     if abs(v) >= 1e6:
         return f"${v / 1e6:.0f}M"
     return f"${v:,.0f}"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _upcoming_agenda(today_iso: str, horizon_days: int = 75) -> dict:
+    """THE upcoming-earnings agenda for the Earnings page — the KPI bar's
+    "Reporting This Week" and the Calendar tab both read this one build, so
+    one concept shows one number. {"agenda": build_calls_agenda() buckets,
+    "universe": common-share tickers}.
+
+    Date spine: the universe-wide yfinance snapshot (real near-term dates,
+    nightly-cached) carrying the analyst estimates; FMP overlays timing, the
+    confirmed flag and revenue; the IR/PR pipeline adds call time + webcast.
+    Common shares only — preferred/note listings share the parent's report
+    (ZIONP rendered as a second Zions row, 2026-07-20).
+
+    RAISES (so the failure is never cached) when the universe is missing or
+    every source leg is down — an empty agenda is honest ONLY if at least one
+    of the three legs (yfinance snapshot / FMP window / IR-PR pipeline) is up
+    (AUDIT-2026-07-02 #34). Callers render "unavailable" on the exception."""
+    from datetime import date, timedelta
+    from data import earnings_call as _ecall
+    from data.bank_universe import get_universe
+    from data.estimates import earnings_agenda_sources_down
+    # fetch_earnings_calendar is the MODULE-level import (top of file) —
+    # tests patch that name (test_export_sites_earnings).
+    today = date.fromisoformat(today_iso)
+    universe = {tk for tk, v in get_universe().items()
+                if (v or {}).get("share_class", "common") == "common"}
+    if not universe:
+        raise RuntimeError("bank universe unavailable")
+    try:
+        yf_cal = fetch_earnings_calendar(tuple(sorted(universe)))
+    except Exception:
+        yf_cal = []
+    try:
+        fmp_cal = _fmp_earnings_window(
+            today_iso, (today + timedelta(days=horizon_days)).isoformat())
+    except Exception:
+        fmp_cal = None
+    calls, agenda = {}, []
+    try:
+        calls = _ecall.merged_call_info()
+        agenda = _ecall.build_calls_agenda(
+            yf_cal, fmp_cal, universe, calls, today, horizon_days=horizon_days)
+    except Exception:
+        agenda = []
+    if not agenda and earnings_agenda_sources_down(fmp_cal, calls):
+        raise RuntimeError("earnings agenda sources unavailable")
+    return {"agenda": agenda, "universe": universe}
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
