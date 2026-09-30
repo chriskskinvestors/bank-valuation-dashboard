@@ -404,20 +404,64 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
                 quarters[e1] = d1["val"] - d2["val"]
                 break
 
+    # Same-END pairs give the EARLIER quarter: a YTD minus the direct quarter
+    # that closes it (H1 − Q2 = Q1; only a ~3-month remainder counts). This
+    # completes the window when SEC companyfacts skips an interim 10-Q and
+    # data/sec_facts_overlay supplies only the NEWEST filing: Citi 2026-09 had
+    # Q3-25, Q4-25 (FY − 9M) and the overlaid Q2-26 3M + H1 but no Q1-26, so
+    # the window broke and the FY2025 figure was served as "EPS (TTM, co.
+    # 10-Q)" $6.99 (REVIEW-2026-09-24 P0-5; the company's TTM is 9.26).
+    direct = {(s, e): d for (s, e), d in durations.items() if 80 <= d["span"] <= 100}
+
+    def _near_known(end: str) -> bool:
+        """A quarter ending within 15 days of `end` is already known — the
+        same period on a 52/53-week or odd-start calendar, never a new one
+        (a derived near-duplicate would break the consecutive-gap check)."""
+        return any(abs(_gap_days(end, e)) <= 15 for e in quarters)
+    for (s1, e1), d1 in durations.items():
+        if d1["span"] <= 100:
+            continue
+        for (s2, e2), d2 in direct.items():
+            if e2 != e1 or s2 <= s1:
+                continue
+            q_end = (datetime.fromisoformat(s2) - timedelta(days=1)).strftime("%Y-%m-%d")
+            if 80 <= _gap_days(s1, q_end) <= 100 and not _near_known(q_end):
+                quarters[q_end] = d1["val"] - d2["val"]
+
+    # Q4 = FY − (Q1 + Q2 + Q3) when a filer tags all three discrete quarters but
+    # no 9M YTD (HOMB 2025: FY − 9M impossible, so the window broke and the
+    # FY2025 figure was served as TTM beside June-2026 facts).
+    for (s1, e1), d1 in durations.items():
+        if not (350 <= d1["span"] <= 380) or _near_known(e1):
+            continue
+        inside = sorted(e for e in quarters if s1 < e < e1)
+        if (len(inside) == 3
+                and 80 <= _gap_days(s1, inside[0]) + 1 <= 100
+                and all(80 <= _gap_days(a, b) <= 100 for a, b in zip(inside, inside[1:]))
+                and 80 <= _gap_days(inside[-1], e1) <= 100):
+            quarters[e1] = d1["val"] - sum(quarters[e] for e in inside)
+
     # Path 1: latest 4 quarters, required consecutive (~3-month gaps)
     if len(quarters) >= 4:
         ends = sorted(quarters)[-4:]
         if all(80 <= _gap_days(a, b) <= 100 for a, b in zip(ends, ends[1:])):
             return float(sum(quarters[e] for e in ends))
 
-    # Path 2: latest annual report
+    # Path 2: latest annual report — ONLY when nothing newer exists. A fiscal
+    # year that ended before the freshest filed period is not the trailing
+    # twelve months: serving it as TTM put a quarter-or-two-old figure on the
+    # profile under a current label (Citi "EPS (TTM, co. 10-Q)" = FY2025,
+    # REVIEW-2026-09-24 P0-5; PNFP/CBC/ENBP, whose Q3-2025 10-Q companyfacts
+    # never ingested). None, never a stale figure dressed as current.
     annual = [
         {"end": end, "val": d["val"], "filed": d["filed"]}
         for (start, end), d in durations.items() if 350 <= d["span"] <= 380
     ]
     if annual:
         annual.sort(key=lambda x: (x["end"], x["filed"]), reverse=True)
-        return float(annual[0]["val"])
+        newest = max(end for (_s, end) in durations)
+        if annual[0]["end"] >= newest:
+            return float(annual[0]["val"])
 
     return None
 
