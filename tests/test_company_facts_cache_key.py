@@ -52,7 +52,11 @@ def _no_network(*a, **k):
 class TestKeyIsTheOneServed(_IsolatedCache):
     def test_fetch_serves_blob_under_helper_key(self):
         cache.put(sec_client.company_facts_cache_key(CIK), BLOB)
-        with patch.object(sec_client, "_download_company_facts", _no_network):
+        # latest_periodic_filing is the overlay's EDGAR filing index; None is
+        # its "companyfacts is current" no-op (served blob == cached blob).
+        with patch.object(sec_client, "_download_company_facts", _no_network), \
+                patch("data.sec_earnings_8k.latest_periodic_filing",
+                      return_value=None):
             self.assertEqual(sec_client.fetch_company_facts(CIK), BLOB)
 
     def test_key_is_versioned_and_int_normalised(self):

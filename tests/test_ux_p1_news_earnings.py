@@ -315,6 +315,7 @@ class TestBranchMapAndTables(unittest.TestCase):
         with mock.patch.object(ba, "st", fake_st), \
                 mock.patch.object(ba, "_roster", lambda cert: self._roster()), \
                 mock.patch.object(ba, "get_fdic_cert", lambda t: 111), \
+                mock.patch.object(ba, "get_bank_info", lambda t: None), \
                 mock.patch.object(ba, "table_export", lambda *a, **k: None):
             ba.render_branch_list("TST")
         self.assertEqual(list(shown[0]["% of bank"]), ["75.00%", "25.00%", "—"])

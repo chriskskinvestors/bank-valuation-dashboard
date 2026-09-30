@@ -1,0 +1,6077 @@
+{
+"fdic_active": {
+"10055": true,
+"10663": true,
+"10677": true,
+"11112": true,
+"11113": true,
+"11492": true,
+"11580": true,
+"11729": true,
+"11860": true,
+"11953": true,
+"12203": true,
+"12204": true,
+"1225": true,
+"12266": true,
+"12517": true,
+"1265": true,
+"12788": true,
+"1281": true,
+"12839": true,
+"12874": true,
+"13109": true,
+"13297": true,
+"13341": true,
+"13397": true,
+"13561": true,
+"13737": true,
+"14073": true,
+"14168": true,
+"14355": true,
+"14507": true,
+"14523": true,
+"14578": true,
+"14587": true,
+"14679": true,
+"14722": true,
+"14773": true,
+"1487": true,
+"14929": true,
+"15091": true,
+"15359": true,
+"1536": true,
+"15932": true,
+"160": true,
+"16130": true,
+"16250": true,
+"16288": true,
+"16370": true,
+"16501": true,
+"16539": true,
+"16546": true,
+"16982": true,
+"1711": true,
+"17437": true,
+"17739": true,
+"18355": true,
+"18569": true,
+"18858": true,
+"18922": true,
+"18983": true,
+"19101": true,
+"19690": true,
+"19978": true,
+"20484": true,
+"20568": true,
+"2068": true,
+"20884": true,
+"2093": true,
+"2102": true,
+"23007": true,
+"2359": true,
+"23749": true,
+"24015": true,
+"26381": true,
+"26530": true,
+"26912": true,
+"2718": true,
+"27235": true,
+"2740": true,
+"27742": true,
+"27760": true,
+"27989": true,
+"28105": true,
+"28288": true,
+"28302": true,
+"28349": true,
+"28400": true,
+"28445": true,
+"28593": true,
+"28703": true,
+"28989": true,
+"29056": true,
+"29087": true,
+"29089": true,
+"29120": true,
+"29268": true,
+"29548": true,
+"29577": true,
+"29690": true,
+"29695": true,
+"29696": true,
+"29700": true,
+"29705": true,
+"29708": true,
+"29731": true,
+"29771": true,
+"29783": true,
+"29787": true,
+"29839": true,
+"29847": true,
+"2987": true,
+"29878": true,
+"29907": true,
+"30111": true,
+"30167": true,
+"30220": true,
+"30422": true,
+"31146": true,
+"31236": true,
+"31410": true,
+"31461": true,
+"31485": true,
+"31999": true,
+"32203": true,
+"32282": true,
+"33136": true,
+"33418": true,
+"34023": true,
+"34068": true,
+"34160": true,
+"34422": true,
+"34685": true,
+"34788": true,
+"34805": true,
+"34966": true,
+"35029": true,
+"35095": true,
+"35151": true,
+"35214": true,
+"35365": true,
+"35366": true,
+"35427": true,
+"35521": true,
+"4319": true,
+"4419": true,
+"444": true,
+"4506": true,
+"5015": true,
+"5018": true,
+"5019": true,
+"5058": true,
+"5286": true,
+"5452": true,
+"5685": true,
+"57033": true,
+"57061": true,
+"57073": true,
+"57074": true,
+"57101": true,
+"57176": true,
+"57184": true,
+"57197": true,
+"57543": true,
+"57585": true,
+"57591": true,
+"57610": true,
+"57624": true,
+"57672": true,
+"57706": true,
+"57740": true,
+"57825": true,
+"57873": true,
+"57874": true,
+"57967": true,
+"57990": true,
+"58": true,
+"58054": true,
+"58069": true,
+"58088": true,
+"58090": true,
+"58214": true,
+"58218": true,
+"58234": true,
+"58239": true,
+"58276": true,
+"58278": true,
+"58281": true,
+"58297": true,
+"58307": true,
+"58310": true,
+"58322": true,
+"58341": true,
+"58407": true,
+"58446": true,
+"58481": true,
+"58534": true,
+"58588": true,
+"58687": true,
+"58689": true,
+"58691": true,
+"5873": true,
+"5874": true,
+"58778": true,
+"58783": true,
+"58789": true,
+"59086": true,
+"59098": true,
+"59112": true,
+"59188": true,
+"6051": true,
+"6137": true,
+"6275": true,
+"6442": true,
+"6464": true,
+"6528": true,
+"6574": true,
+"660": true,
+"6636": true,
+"6760": true,
+"6803": true,
+"6811": true,
+"6813": true,
+"6862": true,
+"6913": true,
+"6985": true,
+"7123": true,
+"7151": true,
+"7526": true,
+"7599": true,
+"7613": true,
+"763": true,
+"7631": true,
+"7646": true,
+"7658": true,
+"7659": true,
+"7789": true,
+"7909": true,
+"8033": true,
+"823": true,
+"8426": true,
+"8468": true,
+"8745": true,
+"8866": true,
+"8870": true,
+"90211": true,
+"9023": true,
+"9462": true,
+"9620": true,
+"9647": true,
+"9719": true,
+"9888": true,
+"9997": true
+},
+"universe": {
+"ABBB": {
+"bank_name": "Auburn Savings Bank, FSB",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28288,
+"name": "Auburn Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.auburnsavings.com"
+},
+"ABCB": {
+"bank_name": "Ameris Bank",
+"cik": 351569,
+"exchange": "NYSE",
+"fdic_cert": 20504,
+"name": "Ameris Bancorp",
+"share_class": "common",
+"webaddr": "http://www.amerisbank.com"
+},
+"ACNB": {
+"bank_name": "ACNB Bank",
+"cik": 715579,
+"exchange": "Nasdaq",
+"fdic_cert": 7506,
+"name": "ACNB Corp",
+"share_class": "common",
+"webaddr": "http://www.acnb.com"
+},
+"ADKT": {
+"bank_name": "The Adirondack Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 660,
+"name": "Adirondack Tr Employee Stk Ownership Tr",
+"share_class": "common",
+"webaddr": "adirondacktrust.com"
+},
+"ALBY": {
+"bank_name": "Ab&T",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 35029,
+"name": "Community Capital Bancshares",
+"share_class": "common",
+"webaddr": "www.abtgold.com"
+},
+"ALPIB": {
+"bank_name": "Alpine Bank",
+"cik": 872716,
+"exchange": "OTC",
+"fdic_cert": 23091,
+"name": "Alpine Banks Of Colorado",
+"share_class": "common",
+"webaddr": "www.alpinebank.com"
+},
+"ALRS": {
+"bank_name": "Alerus Financial, National Association",
+"cik": 903419,
+"exchange": "Nasdaq",
+"fdic_cert": 3931,
+"name": "Alerus Financial Corp.",
+"share_class": "common",
+"webaddr": "http://www.alerus.com"
+},
+"AMAL": {
+"bank_name": "Amalgamated Bank",
+"cik": 1823608,
+"exchange": "Nasdaq",
+"fdic_cert": 622,
+"name": "Amalgamated Financial",
+"share_class": "common",
+"webaddr": "http://AMALGAMATEDBANK.COM"
+},
+"AMBK": {
+"bank_name": "American Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 34422,
+"name": "American Bank Incorporated",
+"share_class": "common",
+"webaddr": "www.ambk.com"
+},
+"AMBZ": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 34788,
+"name": "American Business Bank",
+"share_class": "common"
+},
+"AMFC": {
+"bank_name": "American Community Bank of Indiana",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29878,
+"name": "Amb Financial Corp",
+"share_class": "common",
+"webaddr": "www.acbanker.com"
+},
+"AMJB": {
+"bank_name": "JPMorgan Chase Bank, National Association",
+"cik": 19617,
+"exchange": "NYSE",
+"fdic_cert": 628,
+"name": "Jpmorgan Chase & Co",
+"share_class": "preferred",
+"webaddr": "www.jpmorganchase.com"
+},
+"AMTB": {
+"bank_name": "Amerant Bank, National Association",
+"cik": 1734342,
+"exchange": "NYSE",
+"fdic_cert": 22953,
+"name": "Amerant Bancorp",
+"share_class": "common",
+"webaddr": "www.amerantbank.com"
+},
+"ANDC": {
+"bank_name": "The Andover Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 10663,
+"name": "Andover Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.andover.bank"
+},
+"APLO": {
+"bank_name": "Apollo Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6051,
+"name": "Apollo Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "http://www.apollotrust.com"
+},
+"ARBV": {
+"bank_name": "American Riviera Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58281,
+"name": "American Riviera Bancorp",
+"share_class": "common",
+"webaddr": "www.americanriviera.bank"
+},
+"AROW": {
+"bank_name": "Arrow Bank National Association",
+"cik": 717538,
+"exchange": "Nasdaq",
+"fdic_cert": 7074,
+"name": "Arrow Financial",
+"share_class": "common",
+"webaddr": "www.arrowbank.com"
+},
+"ASB": {
+"bank_name": "Associated Bank, National Association",
+"cik": 7789,
+"exchange": "NYSE",
+"fdic_cert": 5296,
+"name": "Associated Banc-Corp",
+"share_class": "common",
+"webaddr": "www.associatedbank.com"
+},
+"ASBA": {
+"bank_name": "Associated Bank, National Association",
+"cik": 7789,
+"exchange": "NYSE",
+"fdic_cert": 5296,
+"name": "Associated Banc-Corp",
+"share_class": "preferred",
+"webaddr": "www.associatedbank.com"
+},
+"ASCN": {
+"bank_name": "The First National Bank of Absecon",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6442,
+"name": "Absecon Bancorp",
+"share_class": "common",
+"webaddr": "http://www.fnbabsecon.com"
+},
+"ASRV": {
+"bank_name": "Ameriserv Financial Bank",
+"cik": 707605,
+"exchange": "Nasdaq",
+"fdic_cert": 7542,
+"name": "Ameriserv Financial",
+"share_class": "common",
+"webaddr": "AmeriServ.com"
+},
+"ATLO": {
+"bank_name": "First National Bank, Ames, Iowa",
+"cik": 1132651,
+"exchange": "Nasdaq",
+"fdic_cert": 1545,
+"name": "Ames National",
+"share_class": "common",
+"webaddr": "WWW.FNBAMES.COM"
+},
+"AUB": {
+"bank_name": "Atlantic Union Bank",
+"cik": 883948,
+"exchange": "NYSE",
+"fdic_cert": 34589,
+"name": "Atlantic Union Bankshares",
+"share_class": "common",
+"webaddr": "www.atlanticunionbank.com"
+},
+"AUBN": {
+"bank_name": "AuburnBank",
+"cik": 750574,
+"exchange": "Nasdaq",
+"fdic_cert": 35,
+"name": "Auburn National Bancorporation",
+"share_class": "common",
+"webaddr": "www.auburnbank.com"
+},
+"AVBC": {
+"bank_name": "Avidia Bank",
+"cik": 2058758,
+"exchange": "NYSE",
+"fdic_cert": 90215,
+"name": "Avidia Bancorp",
+"share_class": "common",
+"webaddr": "www.avidiabank.com"
+},
+"AVBH": {
+"bank_name": "Avidbank",
+"cik": 1443575,
+"exchange": "Nasdaq",
+"fdic_cert": 57510,
+"name": "Avidbank Holdings",
+"share_class": "common",
+"webaddr": "www.avidbank.com"
+},
+"AX": {
+"bank_name": "Axos Bank",
+"cik": 1299709,
+"exchange": "NYSE",
+"fdic_cert": 35546,
+"name": "Axos Financial",
+"share_class": "common",
+"webaddr": "www.axosbank.com"
+},
+"BAC": {
+"bank_name": "Bank of America, National Association",
+"cik": 70858,
+"exchange": "NYSE",
+"fdic_cert": 3510,
+"name": "Bank of America Corp.",
+"share_class": "common",
+"webaddr": "www.bankofamerica.com"
+},
+"BAFN": {
+"bank_name": "BayFirst National Bank",
+"cik": 1649739,
+"exchange": "Nasdaq",
+"fdic_cert": 34997,
+"name": "BayFirst Financial Corp.",
+"share_class": "common",
+"webaddr": "www.bayfirstfinancial.com"
+},
+"BANC": {
+"bank_name": "Banc of California",
+"cik": 1169770,
+"exchange": "NYSE",
+"fdic_cert": 24045,
+"name": "Banc of California Inc.",
+"share_class": "common",
+"webaddr": "www.bancofcal.com"
+},
+"BANF": {
+"bank_name": "BancFirst",
+"cik": 760498,
+"exchange": "Nasdaq",
+"fdic_cert": 27476,
+"name": "Bancfirst",
+"share_class": "common",
+"webaddr": "www.bancfirst.bank"
+},
+"BANFP": {
+"bank_name": "BancFirst",
+"cik": 760498,
+"exchange": "Nasdaq",
+"fdic_cert": 27476,
+"name": "Bancfirst",
+"share_class": "preferred",
+"webaddr": "www.bancfirst.bank"
+},
+"BANR": {
+"bank_name": "Banner Bank",
+"cik": 946673,
+"exchange": "Nasdaq",
+"fdic_cert": 28489,
+"name": "Banner Corp.",
+"share_class": "common",
+"webaddr": "www.bannerbank.com"
+},
+"BAOB": {
+"bank_name": "Baraboo State Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 12788,
+"name": "The Baraboo Bancorporation, Inc.",
+"share_class": "common",
+"webaddr": "http://www.baraboobank.com"
+},
+"BBBK": {
+"bank_name": "Baker-Boyer National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 2987,
+"name": "Baker Boyer Bancorp",
+"share_class": "common",
+"webaddr": "www.bakerboyer.com"
+},
+"BBNA": {
+"bank_name": "Bonvenu Bank, National Association",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 26381,
+"name": "Bonvenu Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "bonvenubank.com"
+},
+"BBT": {
+"bank_name": "Beacon Bank and Trust",
+"cik": 1108134,
+"exchange": "NYSE",
+"fdic_cert": 17798,
+"name": "Beacon Financial",
+"share_class": "common",
+"webaddr": "www.beaconbank.com"
+},
+"BCAL": {
+"bank_name": "California Bank of Commerce, National Association",
+"cik": 1795815,
+"exchange": "Nasdaq",
+"fdic_cert": 57044,
+"name": "California BanCorp",
+"share_class": "common",
+"webaddr": "www.californiabankofcommerce.com"
+},
+"BCBP": {
+"bank_name": "BCB Community Bank",
+"cik": 1228454,
+"exchange": "Nasdaq",
+"fdic_cert": 35541,
+"name": "BCB Bancorp",
+"share_class": "common",
+"webaddr": "www.bcb.bank"
+},
+"BCML": {
+"bank_name": "United Business Bank",
+"cik": 1730984,
+"exchange": "Nasdaq",
+"fdic_cert": 57716,
+"name": "BayCom",
+"share_class": "common",
+"webaddr": "http://www.unitedbusinessbank.com"
+},
+"BCOW": {
+"bank_name": "PyraMax Bank, FSB",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29120,
+"name": "1895 Bancorp of Wisconsin",
+"share_class": "common",
+"webaddr": "https://www.pyramaxbank.com"
+},
+"BCSO": {
+"bank_name": "Jackson County Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 13109,
+"name": "Bancorp Of Southern Indiana",
+"share_class": "common",
+"webaddr": "jcbank.com"
+},
+"BCTF": {
+"bank_name": "Southwest Heritage Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29087,
+"name": "Bancorp 34",
+"share_class": "common",
+"webaddr": "www.swhbank.com"
+},
+"BFC": {
+"bank_name": "Bank First, N.A.",
+"cik": 1746109,
+"exchange": "Nasdaq",
+"fdic_cert": 5304,
+"name": "Bank First",
+"share_class": "common",
+"webaddr": "www.bankfirst.com"
+},
+"BFCC": {
+"bank_name": "BankFirst Financial Services",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 8870,
+"name": "BankFirst Capital Corporation",
+"share_class": "common",
+"webaddr": "http://www.bankfirstfs.com"
+},
+"BFST": {
+"bank_name": "b1BANK",
+"cik": 1624322,
+"exchange": "Nasdaq",
+"fdic_cert": 58228,
+"name": "Business First Bancshares",
+"share_class": "common",
+"webaddr": "www.b1bank.com"
+},
+"BHB": {
+"bank_name": "Bar Harbor Bank & Trust",
+"cik": 743367,
+"exchange": "NYSE",
+"fdic_cert": 11971,
+"name": "Bar Harbor Bankshares",
+"share_class": "common",
+"webaddr": "www.barharbor.bank"
+},
+"BHRB": {
+"bank_name": "Burke & Herbert Bank & Trust Company",
+"cik": 1964333,
+"exchange": "Nasdaq",
+"fdic_cert": 11578,
+"name": "Burke & Herbert Financial Services",
+"share_class": "common",
+"webaddr": "www.burkeandherbertbank.com"
+},
+"BK": {
+"bank_name": "The Bank of New York Mellon",
+"cik": 1390777,
+"exchange": "OTC",
+"fdic_cert": 639,
+"name": "Bank of New York Mellon",
+"share_class": "preferred",
+"webaddr": "www.bny.com"
+},
+"BKGM": {
+"bank_name": "Bank of Guam",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 20884,
+"name": "BankGuam Holding Co.",
+"share_class": "common",
+"webaddr": "www.bankofguam.com"
+},
+"BKOR": {
+"bank_name": "Bank of Oak Ridge",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 35365,
+"name": "Oak Ridge Financial Services, Inc.",
+"share_class": "common",
+"webaddr": "www.bankofoakridge.com"
+},
+"BKSC": {
+"bank_name": "The Bank of South Carolina",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 26912,
+"name": "Bank of South Carolina",
+"share_class": "common",
+"webaddr": "www.banksc.com"
+},
+"BKU": {
+"bank_name": "BankUnited, National Association",
+"cik": 1504008,
+"exchange": "NYSE",
+"fdic_cert": 58979,
+"name": "BankUnited Inc.",
+"share_class": "common",
+"webaddr": "www.BankUnited.com"
+},
+"BKUTK": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 13397,
+"name": "Bank of Utica",
+"share_class": "common"
+},
+"BLHK": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58691,
+"name": "Blueharbor Bank",
+"share_class": "common"
+},
+"BMBN": {
+"bank_name": "Benchmark Community Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 20484,
+"name": "Benchmark Bankshares",
+"share_class": "common",
+"webaddr": "www.BCBforlife.bank"
+},
+"BMRC": {
+"bank_name": "Bank of Marin",
+"cik": 1403475,
+"exchange": "Nasdaq",
+"fdic_cert": 32779,
+"name": "Bank of Marin Bancorp",
+"share_class": "common",
+"webaddr": "www.bankofmarin.com"
+},
+"BNCC": {
+"bank_name": "BNC National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57197,
+"name": "BNCCORP, Inc.",
+"share_class": "common",
+"webaddr": "www.bncbank.com"
+},
+"BNY": {
+"bank_name": "The Bank of New York Mellon",
+"cik": 1390777,
+"exchange": "NYSE",
+"fdic_cert": 639,
+"name": "Bank of New York Mellon Corp",
+"share_class": "common",
+"webaddr": "www.bny.com"
+},
+"BOH": {
+"bank_name": "Bank of Hawaii",
+"cik": 46195,
+"exchange": "NYSE",
+"fdic_cert": 18053,
+"name": "Bank of Hawaii Corp.",
+"share_class": "common",
+"webaddr": "www.boh.com"
+},
+"BOKF": {
+"bank_name": "BOKF, National Association",
+"cik": 875357,
+"exchange": "Nasdaq",
+"fdic_cert": 4214,
+"name": "BOK Financial Corp.",
+"share_class": "common",
+"webaddr": "www.bokfinancial.com"
+},
+"BORT": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6137,
+"name": "Bank of Botetourt",
+"share_class": "common"
+},
+"BOTJ": {
+"bank_name": "Bank of the James",
+"cik": 1275101,
+"exchange": "Nasdaq",
+"fdic_cert": 35207,
+"name": "Bank of the James Financial Group",
+"share_class": "common",
+"webaddr": "www.bankofthejames.bank"
+},
+"BPOP": {
+"bank_name": "Banco Popular de Puerto Rico",
+"cik": 763901,
+"exchange": "Nasdaq",
+"fdic_cert": 34968,
+"name": "Popular, Inc.",
+"share_class": "common",
+"webaddr": "www.popular.com"
+},
+"BPOPM": {
+"bank_name": "Banco Popular de Puerto Rico",
+"cik": 763901,
+"exchange": "Nasdaq",
+"fdic_cert": 34968,
+"name": "Popular, Inc.",
+"share_class": "preferred",
+"webaddr": "www.popular.com"
+},
+"BPOPO": {
+"bank_name": "Banco Popular de Puerto Rico",
+"cik": 763901,
+"exchange": "OTC",
+"fdic_cert": 34968,
+"name": "Popular, Inc.",
+"share_class": "preferred",
+"webaddr": "www.popular.com"
+},
+"BPRN": {
+"bank_name": "The Bank of Princeton",
+"cik": 1913971,
+"exchange": "Nasdaq",
+"fdic_cert": 58513,
+"name": "Princeton Bancorp",
+"share_class": "common",
+"webaddr": "WWW.THEBANKOFPRINCETON.COM"
+},
+"BRBS": {
+"bank_name": "Blue Ridge Bank,  National Association",
+"cik": 842717,
+"exchange": "NYSE",
+"fdic_cert": 35274,
+"name": "Blue Ridge Bankshares",
+"share_class": "common",
+"webaddr": "www.mybrb.com"
+},
+"BSBK": {
+"bank_name": "Bogota Savings Bank",
+"cik": 1787414,
+"exchange": "Nasdaq",
+"fdic_cert": 29941,
+"name": "Bogota Financial",
+"share_class": "common",
+"webaddr": "http://www.bogotasavingsbank.com"
+},
+"BSFO": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58069,
+"name": "Bank Of San Francisco",
+"share_class": "common"
+},
+"BSPA": {
+"bank_name": "Ballston Spa National Bank",
+"cik": 2094107,
+"exchange": "OTC",
+"fdic_cert": 6959,
+"name": "Ballston Spa Bancorp",
+"share_class": "common",
+"webaddr": "www.nbcoxsackie.com"
+},
+"BSRR": {
+"bank_name": "Bank of the Sierra",
+"cik": 1130144,
+"exchange": "Nasdaq",
+"fdic_cert": 22597,
+"name": "Sierra Bancorp",
+"share_class": "common",
+"webaddr": "www.bankofthesierra.com"
+},
+"BSSC": {
+"bank_name": "The Bank of Southside Virginia",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 11580,
+"name": "Bank Of Southside Va Corp The",
+"share_class": "common",
+"webaddr": "www.bsvnet.com"
+},
+"BSVN": {
+"bank_name": "Bank 7",
+"cik": 1746129,
+"exchange": "Nasdaq",
+"fdic_cert": 4147,
+"name": "Bank7",
+"share_class": "common",
+"webaddr": "www.bank7.com"
+},
+"BUSE": {
+"bank_name": "Busey Bank",
+"cik": 314489,
+"exchange": "Nasdaq",
+"fdic_cert": 16450,
+"name": "First Busey",
+"share_class": "common",
+"webaddr": "www.busey.com"
+},
+"BUSEP": {
+"bank_name": "Busey Bank",
+"cik": 314489,
+"exchange": "Nasdaq",
+"fdic_cert": 16450,
+"name": "First Busey Corp /Nv/",
+"share_class": "preferred",
+"webaddr": "www.busey.com"
+},
+"BVFL": {
+"bank_name": "BayVanguard Bank",
+"cik": 1302387,
+"exchange": "Nasdaq",
+"fdic_cert": 32527,
+"name": "BV Financial",
+"share_class": "common",
+"webaddr": "www.bayvanguard.com"
+},
+"BWB": {
+"bank_name": "Bridgewater Bank",
+"cik": 1341317,
+"exchange": "Nasdaq",
+"fdic_cert": 58210,
+"name": "Bridgewater Bancshares",
+"share_class": "common",
+"webaddr": "www.bridgewaterbankmn.com"
+},
+"BWBBP": {
+"bank_name": "Bridgewater Bank",
+"cik": 1341317,
+"exchange": "Nasdaq",
+"fdic_cert": 58210,
+"name": "Bridgewater Bancshares",
+"share_class": "preferred",
+"webaddr": "www.bridgewaterbankmn.com"
+},
+"BWFG": {
+"bank_name": "Bankwell Bank",
+"cik": 1505732,
+"exchange": "Nasdaq",
+"fdic_cert": 57368,
+"name": "Bankwell Financial Group",
+"share_class": "common",
+"webaddr": "www.mybankwell.com"
+},
+"BY": {
+"bank_name": "Byline Bank",
+"cik": 1702750,
+"exchange": "NYSE",
+"fdic_cert": 20624,
+"name": "Byline Bancorp",
+"share_class": "common",
+"webaddr": "www.bylinebank.com"
+},
+"BYFC": {
+"bank_name": "City First Bank, National Association",
+"cik": 1001171,
+"exchange": "Nasdaq",
+"fdic_cert": 34352,
+"name": "Broadway Financial Corp De",
+"share_class": "common",
+"webaddr": "www.cityfirstbank.com"
+},
+"BYLB": {
+"bank_name": "The Farmers National Bank of Danville",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 2740,
+"name": "Boyle Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.fnbky.com"
+},
+"C": {
+"bank_name": "Citibank, National Association",
+"cik": 831001,
+"exchange": "NYSE",
+"fdic_cert": 7213,
+"name": "Citigroup Inc.",
+"share_class": "common",
+"webaddr": "www.citibank.com"
+},
+"CAC": {
+"bank_name": "The Camden National Bank",
+"cik": 750686,
+"exchange": "Nasdaq",
+"fdic_cert": 4255,
+"name": "Camden National",
+"share_class": "common",
+"webaddr": "www.camdennational.bank"
+},
+"CARE": {
+"bank_name": "Carter Bank & Trust",
+"cik": 1829576,
+"exchange": "Nasdaq",
+"fdic_cert": 58596,
+"name": "Carter Bankshares Inc.",
+"share_class": "common",
+"webaddr": "www.carterbank.com"
+},
+"CARV": {
+"bank_name": "Carver Federal Savings Bank",
+"cik": 1016178,
+"exchange": "OTC",
+"fdic_cert": 30394,
+"name": "Carver Bancorp",
+"share_class": "common",
+"webaddr": "http://www.Carverbank.com"
+},
+"CASH": {
+"bank_name": "Pathward, National Association",
+"cik": 907471,
+"exchange": "Nasdaq",
+"fdic_cert": 30776,
+"name": "Pathward Financial",
+"share_class": "common",
+"webaddr": "http://www.pathward.com"
+},
+"CATY": {
+"bank_name": "Cathay Bank",
+"cik": 861842,
+"exchange": "Nasdaq",
+"fdic_cert": 18503,
+"name": "Cathay General Bancorp",
+"share_class": "common",
+"webaddr": "www.cathaybank.com"
+},
+"CBAF": {
+"bank_name": "Citizens Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 9647,
+"name": "Citba Financial Corp",
+"share_class": "common",
+"webaddr": "www.citizens-banking.com"
+},
+"CBAN": {
+"bank_name": "Colony Bank",
+"cik": 711669,
+"exchange": "NYSE",
+"fdic_cert": 22257,
+"name": "Colony Bankcorp Inc.",
+"share_class": "common",
+"webaddr": "colony.bank"
+},
+"CBBI": {
+"bank_name": "Commonwealth Business Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57873,
+"name": "CBB Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.cbb-bank.com"
+},
+"CBC": {
+"bank_name": "The Central Trust Bank",
+"cik": 2065601,
+"exchange": "Nasdaq",
+"fdic_cert": 12633,
+"name": "Central Bancompany",
+"share_class": "common",
+"webaddr": "www.centralbank.net"
+},
+"CBFC": {
+"bank_name": "CNB Bank, Inc.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14507,
+"name": "Cnb Financial Services Inc",
+"share_class": "common",
+"webaddr": "www.cnb.bank"
+},
+"CBFV": {
+"bank_name": "Community Bank",
+"cik": 1605301,
+"exchange": "Nasdaq",
+"fdic_cert": 7848,
+"name": "CB Financial Services",
+"share_class": "common",
+"webaddr": "www.cb.bank"
+},
+"CBHC": {
+"bank_name": "Community Banking Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 34160,
+"name": "Cbc Holding Co",
+"share_class": "common",
+"webaddr": "www.communitybankingcompany.com"
+},
+"CBK": {
+"cik": 1981546,
+"exchange": "Nasdaq",
+"fdic_cert": null,
+"name": "Commercial Bancgroup Inc.",
+"share_class": "common"
+},
+"CBKM": {
+"bank_name": "Consumers National Bank",
+"cik": 1006830,
+"exchange": "OTC",
+"fdic_cert": 19482,
+"name": "Consumers Bancorp",
+"share_class": "common",
+"webaddr": "www.consumers.bank"
+},
+"CBNA": {
+"bank_name": "Chain Bridge Bank, National Association",
+"cik": 1392272,
+"exchange": "NYSE",
+"fdic_cert": 58595,
+"name": "Chain Bridge Bancorp",
+"share_class": "common",
+"webaddr": "www.chainbridgebank.com"
+},
+"CBNK": {
+"bank_name": "Capital Bank, National Association",
+"cik": 1419536,
+"exchange": "Nasdaq",
+"fdic_cert": 35278,
+"name": "Capital Bancorp Inc.",
+"share_class": "common",
+"webaddr": "http://www.capitalbankmd.com"
+},
+"CBSH": {
+"bank_name": "Commerce Bank",
+"cik": 22356,
+"exchange": "Nasdaq",
+"fdic_cert": 24998,
+"name": "Commerce Bancshares",
+"share_class": "common",
+"webaddr": "www.commercebank.com"
+},
+"CBTN": {
+"bank_name": "Wellworth Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 1711,
+"name": "Citizens Bancorp Investment, Inc.",
+"share_class": "common",
+"webaddr": "www.wellworth.bank"
+},
+"CBU": {
+"bank_name": "Community Bank, National Association",
+"cik": 723188,
+"exchange": "NYSE",
+"fdic_cert": 6989,
+"name": "Community Financial System",
+"share_class": "common",
+"webaddr": "www.cbna.com"
+},
+"CBWA": {
+"bank_name": "Commencement Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58446,
+"name": "Commencement Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.commencementbank.com"
+},
+"CCB": {
+"bank_name": "Coastal Community Bank",
+"cik": 1437958,
+"exchange": "Nasdaq",
+"fdic_cert": 34403,
+"name": "Coastal Financial",
+"share_class": "common",
+"webaddr": "www.coastalbank.com"
+},
+"CCBC": {
+"bank_name": "Chino Commercial Bank, N.A.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 35366,
+"name": "Chino Commercial Bancorp",
+"share_class": "common",
+"webaddr": "www.chinocommercialbank.com"
+},
+"CCBG": {
+"bank_name": "Capital City Bank",
+"cik": 726601,
+"exchange": "Nasdaq",
+"fdic_cert": 9622,
+"name": "Capital City Bank Group",
+"share_class": "common",
+"webaddr": "www.ccbg.com"
+},
+"CCFN": {
+"bank_name": "Journey Bank",
+"cik": 731122,
+"exchange": "OTC",
+"fdic_cert": 686,
+"name": "Muncy Columbia Financial",
+"share_class": "common",
+"webaddr": "www.journeybank.com"
+},
+"CCNB": {
+"bank_name": "Coastal Carolina National Bank",
+"cik": 1437213,
+"exchange": "OTC",
+"fdic_cert": 58864,
+"name": "Coastal Carolina Bancshares",
+"share_class": "common",
+"webaddr": "WWW.MYCCNB.COM"
+},
+"CCNE": {
+"bank_name": "CNB Bank",
+"cik": 736772,
+"exchange": "Nasdaq",
+"fdic_cert": 13876,
+"name": "CNB Financial",
+"share_class": "common",
+"webaddr": "www.cnbbank.bank"
+},
+"CCNEP": {
+"bank_name": "CNB Bank",
+"cik": 736772,
+"exchange": "Nasdaq",
+"fdic_cert": 13876,
+"name": "CNB Financial",
+"share_class": "preferred",
+"webaddr": "www.cnbbank.bank"
+},
+"CCYY": {
+"bank_name": "Clarion County Community Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57624,
+"name": "CCCB Bancorp Inc.",
+"share_class": "common",
+"webaddr": "http://www.clarionbank.com"
+},
+"CDAB": {
+"bank_name": "bankcda",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57074,
+"name": "Coeur d'Alene Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.bankcda.bank"
+},
+"CFBK": {
+"bank_name": "CFBank, National Association",
+"cik": 1070680,
+"exchange": "Nasdaq",
+"fdic_cert": 28263,
+"name": "CF Bankshares",
+"share_class": "common",
+"webaddr": "www.cf.bank"
+},
+"CFFI": {
+"bank_name": "Citizens and Farmers Bank",
+"cik": 913341,
+"exchange": "Nasdaq",
+"fdic_cert": 10363,
+"name": "C&F Financial Corp.",
+"share_class": "common",
+"webaddr": "www.cffc.com"
+},
+"CFFN": {
+"bank_name": "Capitol Federal Savings Bank",
+"cik": 1490906,
+"exchange": "Nasdaq",
+"fdic_cert": 27981,
+"name": "Capitol Federal Financial",
+"share_class": "common",
+"webaddr": "www.capfed.com"
+},
+"CFG": {
+"bank_name": "Citizens Bank, National Association",
+"cik": 759944,
+"exchange": "NYSE",
+"fdic_cert": 57957,
+"name": "Citizens Financial Group",
+"share_class": "common",
+"webaddr": "www.citizensbank.com"
+},
+"CFR": {
+"bank_name": "Frost  Bank",
+"cik": 39263,
+"exchange": "NYSE",
+"fdic_cert": 5510,
+"name": "Cullen/Frost Bankers",
+"share_class": "common",
+"webaddr": "www.frostbank.com"
+},
+"CHBH": {
+"bank_name": "The Croghan Colonial Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 13341,
+"name": "Croghan Bancshares, Inc.",
+"share_class": "common",
+"webaddr": "https://www.croghan.com"
+},
+"CHCO": {
+"bank_name": "City National Bank of West Virginia",
+"cik": 726854,
+"exchange": "Nasdaq",
+"fdic_cert": 17735,
+"name": "City Holding",
+"share_class": "common",
+"webaddr": "www.bankatcity.com"
+},
+"CHMG": {
+"bank_name": "Chemung Canal Trust Company",
+"cik": 763563,
+"exchange": "Nasdaq",
+"fdic_cert": 597,
+"name": "Chemung Financial",
+"share_class": "common",
+"webaddr": "WWW.CHEMUNGCANAL.COM"
+},
+"CIBH": {
+"bank_name": "CIBM Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 11729,
+"name": "CIB Marine Bancshares, Inc.",
+"share_class": "common",
+"webaddr": "www.cibmbank.com"
+},
+"CIBN": {
+"bank_name": "First Federal Community Bank of Bucyrus",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29705,
+"name": "Community Investors Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.ffcb.com"
+},
+"CITZ": {
+"bank_name": "The Citizens Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 15932,
+"name": "Citizens Bancshares Corp",
+"share_class": "common",
+"webaddr": "www.tcbsc.bank"
+},
+"CIVB": {
+"bank_name": "Civista Bank",
+"cik": 944745,
+"exchange": "Nasdaq",
+"fdic_cert": 12982,
+"name": "Civista Bancshares",
+"share_class": "common",
+"webaddr": "www.civista.bank"
+},
+"CIWV": {
+"bank_name": "Citizens Bank of West Virginia, Inc.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6760,
+"name": "Citizens Financial Corp",
+"share_class": "common",
+"webaddr": "www.citizenswv.com"
+},
+"CIZN": {
+"bank_name": "The Citizens Bank of Philadelphia, Mississippi",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 12204,
+"name": "Citizens Holding Co",
+"share_class": "common",
+"webaddr": "www.thecitizensbankphila.com"
+},
+"CLBK": {
+"bank_name": "Columbia Bank",
+"cik": 1723596,
+"exchange": "Nasdaq",
+"fdic_cert": 28834,
+"name": "Columbia Financial",
+"share_class": "common",
+"webaddr": "www.columbiabankonline.com"
+},
+"CLST": {
+"bank_name": "Catalyst Bank",
+"cik": 1849867,
+"exchange": "Nasdaq",
+"fdic_cert": 29804,
+"name": "Catalyst Bancorp",
+"share_class": "common",
+"webaddr": "www.catalystbank.com"
+},
+"CMHF": {
+"bank_name": "Middletown Valley Bank",
+"cik": 1792597,
+"exchange": "OTC",
+"fdic_cert": 14017,
+"name": "Community Heritage Financial, Inc.",
+"share_class": "common",
+"webaddr": "www.mvbbank.com"
+},
+"CMRB": {
+"bank_name": "First Commerce Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58054,
+"name": "First Commerce Bank",
+"share_class": "common",
+"webaddr": "http://www.firstcommercebk.com"
+},
+"CMTV": {
+"bank_name": "Community National Bank",
+"cik": 718413,
+"exchange": "Nasdaq",
+"fdic_cert": 6271,
+"name": "Community Bancorp",
+"share_class": "common",
+"webaddr": "www.communitynationalbank.com"
+},
+"CNBA": {
+"bank_name": "Chester National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 30220,
+"name": "Chester Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.chesternationalbank.com"
+},
+"CNBB": {
+"bank_name": "County National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14073,
+"name": "CNB Community Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "WWW.CNBB.BANK"
+},
+"CNBP": {
+"bank_name": "Cornerstone National Bank & Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57061,
+"name": "Cornerstone Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.cnbtc.bank"
+},
+"CNBW": {
+"bank_name": "The Conway National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 2102,
+"name": "CNB Corp.",
+"share_class": "common",
+"webaddr": "www.conwaynationalbank.com"
+},
+"CNBZ": {
+"bank_name": "Citizens National Bank of Cheboygan",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5018,
+"name": "CNB Corp",
+"share_class": "common",
+"webaddr": "www.cnbismybank.com"
+},
+"CNND": {
+"bank_name": "The Canandaigua National Bank and Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6985,
+"name": "Canandaigua National Corp",
+"share_class": "common",
+"webaddr": "www.cnbank.com"
+},
+"CNOB": {
+"bank_name": "ConnectOne Bank",
+"cik": 712771,
+"exchange": "Nasdaq",
+"fdic_cert": 57919,
+"name": "ConnectOne Bancorp",
+"share_class": "common",
+"webaddr": "www.connectonebank.com"
+},
+"CNOBP": {
+"bank_name": "ConnectOne Bank",
+"cik": 712771,
+"exchange": "Nasdaq",
+"fdic_cert": 57919,
+"name": "ConnectOne Bancorp",
+"share_class": "preferred",
+"webaddr": "www.connectonebank.com"
+},
+"CNUN": {
+"bank_name": "The Vinton County National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6636,
+"name": "Community Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.vcnbfamily.bank"
+},
+"COFS": {
+"bank_name": "ChoiceOne Bank",
+"cik": 803164,
+"exchange": "Nasdaq",
+"fdic_cert": 1014,
+"name": "Choiceone Financial Services",
+"share_class": "common",
+"webaddr": "WWW.CHOICEONE.BANK"
+},
+"COLB": {
+"bank_name": "Columbia Bank",
+"cik": 887343,
+"exchange": "Nasdaq",
+"fdic_cert": 17266,
+"name": "Columbia Banking System",
+"share_class": "common",
+"webaddr": "www.columbiabank.com/"
+},
+"COSO": {
+"bank_name": "Coastal States Bank",
+"cik": 1297107,
+"exchange": "NYSE",
+"fdic_cert": 57756,
+"name": "CoastalSouth Bancshares",
+"share_class": "common",
+"webaddr": "www.coastalstatesbank.com"
+},
+"CPBI": {
+"bank_name": "Home Federal Savings and Loan Association of Grand Island",
+"cik": 1979332,
+"exchange": "Nasdaq",
+"fdic_cert": 29476,
+"name": "Central Plains Bancshares",
+"share_class": "common",
+"webaddr": "www.homefederalne.bank"
+},
+"CPF": {
+"bank_name": "Central Pacific Bank",
+"cik": 701347,
+"exchange": "NYSE",
+"fdic_cert": 17308,
+"name": "Central Pacific Financial",
+"share_class": "common",
+"webaddr": "WWW.CPB.BANK"
+},
+"CPKF": {
+"bank_name": "Chesapeake Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6862,
+"name": "Chesapeake Financial Shares",
+"share_class": "common",
+"webaddr": "www.ches.bank"
+},
+"CRZY": {
+"bank_name": "Buffalo Federal Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29696,
+"name": "Crazy Woman Creek Bancorp Incorporated",
+"share_class": "common",
+"webaddr": "www.buffalofed.bank"
+},
+"CSBA": {
+"cik": 2114521,
+"exchange": "OTC",
+"fdic_cert": null,
+"name": "CSB Financial Inc.",
+"share_class": "common"
+},
+"CSBB": {
+"bank_name": "The Commercial and Savings Bank of Millersburg, Ohio",
+"cik": 880417,
+"exchange": "OTC",
+"fdic_cert": 9139,
+"name": "CSB Bancorp",
+"share_class": "common",
+"webaddr": "www.csb1.com"
+},
+"CSHX": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 1265,
+"name": "Cashmere Valley Bank",
+"share_class": "common"
+},
+"CTBI": {
+"bank_name": "Community Trust Bank, Inc.",
+"cik": 350852,
+"exchange": "Nasdaq",
+"fdic_cert": 2720,
+"name": "Community Trust Bancorp",
+"share_class": "common",
+"webaddr": "www.ctbi.com"
+},
+"CTUY": {
+"bank_name": "Century Next Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29700,
+"name": "Century Next Financial Corp",
+"share_class": "common",
+"webaddr": "www.cnext.bank"
+},
+"CTYP": {
+"bank_name": "Marion Center Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7909,
+"name": "Community Bankers Corp",
+"share_class": "common",
+"webaddr": "http://www.marioncenterbank.com"
+},
+"CUBB": {
+"bank_name": "Customers Bank",
+"cik": 1488813,
+"exchange": "NYSE",
+"fdic_cert": 34444,
+"name": "Customers Bancorp",
+"share_class": "preferred",
+"webaddr": "www.customersbank.com"
+},
+"CUBI": {
+"bank_name": "Customers Bank",
+"cik": 1488813,
+"exchange": "NYSE",
+"fdic_cert": 34444,
+"name": "Customers Bancorp",
+"share_class": "common",
+"webaddr": "www.customersbank.com"
+},
+"CULL": {
+"bank_name": "Cullman Savings Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 30167,
+"name": "Cullman Bancorp",
+"share_class": "common",
+"webaddr": "www.cullmansavingsbank.com"
+},
+"CVBF": {
+"bank_name": "Citizens Business Bank, National Association",
+"cik": 354647,
+"exchange": "Nasdaq",
+"fdic_cert": 21716,
+"name": "CVB Financial",
+"share_class": "common",
+"webaddr": "http://www.cbbank.com"
+},
+"CWBC": {
+"bank_name": "Community West Bank",
+"cik": 1127371,
+"exchange": "Nasdaq",
+"fdic_cert": 23030,
+"name": "Community West Bancshares",
+"share_class": "common",
+"webaddr": "www.communitywestbank.com"
+},
+"CWBK": {
+"bank_name": "Commerce West Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57176,
+"name": "CW Bancorp",
+"share_class": "common",
+"webaddr": "www.cwbk.com"
+},
+"CYFL": {
+"bank_name": "Century Bank and Trust",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5015,
+"name": "Century Financial Corporation",
+"share_class": "common",
+"webaddr": "www.centurybankandtrust.com"
+},
+"CYSM": {
+"bank_name": "Community Bank of Santa Maria",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57073,
+"name": "Community Bancorp of Santa Maria",
+"share_class": "common",
+"webaddr": "www.yourcbsm.com"
+},
+"CYVF": {
+"bank_name": "First State Bank of Middlebury",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 8745,
+"name": "Crystal Valley Financial Corp",
+"share_class": "common",
+"webaddr": "www.Bfirst.bank"
+},
+"CZBS": {
+"bank_name": "Citizens Trust Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 8033,
+"name": "Citizens Bancshares Corp",
+"share_class": "common",
+"webaddr": "www.ctbconnect.com"
+},
+"CZBT": {
+"bank_name": "Citizens Bank and Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 823,
+"name": "Citizens Bancorp of Virginia, Inc.",
+"share_class": "common",
+"webaddr": "http://www.cbtva.com"
+},
+"CZFS": {
+"bank_name": "First Citizens Community Bank",
+"cik": 739421,
+"exchange": "Nasdaq",
+"fdic_cert": 7593,
+"name": "Citizens Financial Services",
+"share_class": "common",
+"webaddr": "www.firstcitizensbank.com"
+},
+"CZNL": {
+"bank_name": "Citizens Bank of Kentucky, Inc.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 2718,
+"name": "Citizens National Corp",
+"share_class": "common",
+"webaddr": "http://www.wercitizens.bank"
+},
+"CZWI": {
+"bank_name": "CCFBank National Association",
+"cik": 1367859,
+"exchange": "Nasdaq",
+"fdic_cert": 57265,
+"name": "Citizens Community Bancorp",
+"share_class": "common",
+"webaddr": "www.ccf.us"
+},
+"DBIN": {
+"bank_name": "Dacotah Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 17437,
+"name": "Dacotah Banks, Inc.",
+"share_class": "common",
+"webaddr": "www.dacotahbank.com"
+},
+"DCBG": {
+"bank_name": "Dime Commercial Bank",
+"cik": 846617,
+"exchange": "NYSE",
+"fdic_cert": 6976,
+"name": "Dime Community Bancshares",
+"share_class": "preferred",
+"webaddr": "www.dime.com"
+},
+"DCOM": {
+"bank_name": "Dime Commercial Bank",
+"cik": 846617,
+"exchange": "NYSE",
+"fdic_cert": 6976,
+"name": "Dime Community Bancshares",
+"share_class": "common",
+"webaddr": "www.dime.com"
+},
+"DENI": {
+"bank_name": "Denali State Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 26530,
+"name": "Denali Bancorporation, Inc.",
+"share_class": "common",
+"webaddr": "www.denalistatebank.com"
+},
+"DIMC": {
+"bank_name": "The Dime Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 9888,
+"name": "Dimeco, Inc.",
+"share_class": "common",
+"webaddr": "www.thedime.bank"
+},
+"DMNB": {
+"bank_name": "The Antwerp Exchange Bank Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14523,
+"name": "Diamond Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.antwerpexchangebank.com"
+},
+"DWNX": {
+"bank_name": "The Delaware National Bank of Delhi",
+"cik": 927719,
+"exchange": "OTC",
+"fdic_cert": 7025,
+"name": "Delhi Bank",
+"share_class": "common",
+"webaddr": "www.dnbd.bank"
+},
+"EBC": {
+"bank_name": "Eastern Bank",
+"cik": 1810546,
+"exchange": "Nasdaq",
+"fdic_cert": 32773,
+"name": "Eastern Bankshares",
+"share_class": "common",
+"webaddr": "www.easternbank.com"
+},
+"EBMT": {
+"bank_name": "Opportunity Bank of Montana",
+"cik": 1478454,
+"exchange": "Nasdaq",
+"fdic_cert": 30182,
+"name": "Eagle Bancorp Montana",
+"share_class": "common",
+"webaddr": "www.opportunitybank.com"
+},
+"EBSH": {
+"bank_name": "The Hicksville Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 16370,
+"name": "Empire Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.thb.bank"
+},
+"ECBK": {
+"bank_name": "Everett Co-operative Bank",
+"cik": 1914605,
+"exchange": "Nasdaq",
+"fdic_cert": 26444,
+"name": "ECB Bancorp",
+"share_class": "common",
+"webaddr": "www.everettbank.com"
+},
+"EFSC": {
+"bank_name": "Enterprise Bank & Trust",
+"cik": 1025835,
+"exchange": "Nasdaq",
+"fdic_cert": 27237,
+"name": "Enterprise Financial Services",
+"share_class": "common",
+"webaddr": "http://www.enterprisebank.com"
+},
+"EFSCP": {
+"bank_name": "Enterprise Bank & Trust",
+"cik": 1025835,
+"exchange": "Nasdaq",
+"fdic_cert": 27237,
+"name": "Enterprise Financial Services",
+"share_class": "preferred",
+"webaddr": "http://www.enterprisebank.com"
+},
+"EFSI": {
+"bank_name": "Bank Of Clarke",
+"cik": 880641,
+"exchange": "Nasdaq",
+"fdic_cert": 6123,
+"name": "Eagle Financial Services",
+"share_class": "common",
+"webaddr": "http://www.bankofclarke.bank"
+},
+"EGBN": {
+"bank_name": "EagleBank",
+"cik": 1050441,
+"exchange": "Nasdaq",
+"fdic_cert": 34742,
+"name": "Eagle Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.eaglebankcorp.com"
+},
+"ELMA": {
+"bank_name": "The First National Bank of Elmer",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6464,
+"name": "Elmer Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "http://www.elmerbank.com"
+},
+"EMYB": {
+"bank_name": "Embassy Bank for the Lehigh Valley",
+"cik": 1449794,
+"exchange": "OTC",
+"fdic_cert": 57228,
+"name": "Embassy Bancorp",
+"share_class": "common",
+"webaddr": "www.embassybank.com"
+},
+"ENBP": {
+"bank_name": "The Ephrata National Bank",
+"cik": 1437479,
+"exchange": "OTC",
+"fdic_cert": 7493,
+"name": "ENB Financial",
+"share_class": "common",
+"webaddr": "http://www.epnb.com"
+},
+"EQBK": {
+"bank_name": "Equity Bank",
+"cik": 1227500,
+"exchange": "NYSE",
+"fdic_cert": 25858,
+"name": "Equity Bancshares",
+"share_class": "common",
+"webaddr": "www.equitybank.com"
+},
+"EQFN": {
+"bank_name": "Equitable Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 31485,
+"name": "Equitable Financial Corp",
+"share_class": "common",
+"webaddr": "www.equitableonline.com"
+},
+"ERKH": {
+"bank_name": "Eureka Homestead",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29268,
+"name": "Eureka Homestead Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.eurekahomestead.com"
+},
+"ESBS": {
+"bank_name": "Empire State Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57672,
+"name": "Es Bancshares Inc",
+"share_class": "common",
+"webaddr": "http://www.esbna.com"
+},
+"ESQ": {
+"bank_name": "Esquire Bank, National Association",
+"cik": 1531031,
+"exchange": "Nasdaq",
+"fdic_cert": 58140,
+"name": "Esquire Financial Holdings",
+"share_class": "common",
+"webaddr": "www.esquirebank.com"
+},
+"EWBC": {
+"bank_name": "East West Bank",
+"cik": 1069157,
+"exchange": "Nasdaq",
+"fdic_cert": 31628,
+"name": "East West Bancorp",
+"share_class": "common",
+"webaddr": "https://www.eastwestbank.com"
+},
+"EWSB": {
+"bank_name": "East Wisconsin Savings Bank",
+"cik": 2013792,
+"exchange": "OTC",
+"fdic_cert": 30313,
+"name": "EWSB Bancorp",
+"share_class": "common",
+"webaddr": "WWW.EASTWIS.BANK"
+},
+"EXCH": {
+"bank_name": "Exchange Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 160,
+"name": "Exchange Bankshares Inc",
+"share_class": "common",
+"webaddr": "www.exch.bank"
+},
+"EXSR": {
+"bank_name": "Exchange Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 8468,
+"name": "Exchange Bank (Santa Rosa, CA)",
+"share_class": "common",
+"webaddr": "www.exchangebank.com"
+},
+"FAHE": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 2068,
+"name": "The Fahey Banking Company",
+"share_class": "common"
+},
+"FBAK": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 16130,
+"name": "First National Bank Alaska",
+"share_class": "common"
+},
+"FBIP": {
+"bank_name": "First National Bank and Trust Company of Newtown",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7658,
+"name": "FNB Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "WWW.FNBN.COM"
+},
+"FBIZ": {
+"bank_name": "First Business Bank",
+"cik": 1521951,
+"exchange": "Nasdaq",
+"fdic_cert": 15229,
+"name": "First Business Financial Services",
+"share_class": "common",
+"webaddr": "http://www.firstbusiness.bank"
+},
+"FBK": {
+"bank_name": "FirstBank",
+"cik": 1649749,
+"exchange": "NYSE",
+"fdic_cert": 8663,
+"name": "FB Financial",
+"share_class": "common",
+"webaddr": "www.firstbankonline.com"
+},
+"FBLA": {
+"cik": 2013639,
+"exchange": "Nasdaq",
+"fdic_cert": null,
+"name": "FB Bancorp (MD)",
+"share_class": "common"
+},
+"FBNC": {
+"bank_name": "First Bank",
+"cik": 811589,
+"exchange": "Nasdaq",
+"fdic_cert": 15019,
+"name": "First Bancorp (NC)",
+"share_class": "common",
+"webaddr": "www.localfirstbank.com"
+},
+"FBP": {
+"bank_name": "FirstBank Puerto Rico",
+"cik": 1057706,
+"exchange": "NYSE",
+"fdic_cert": 30387,
+"name": "First Bancorp",
+"share_class": "common",
+"webaddr": "www.1firstbank.com"
+},
+"FBPA": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6813,
+"name": "The Farmers Bank Of Appomattox",
+"share_class": "common"
+},
+"FBPI": {
+"bank_name": "First Federal Savings Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29056,
+"name": "First Bancorp of Indiana, Inc.",
+"share_class": "common",
+"webaddr": "www.firstfedsavings.bank"
+},
+"FBTT": {
+"bank_name": "First Bankers Trust Company, National Association",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 16501,
+"name": "First Bankers Trustshares Inc",
+"share_class": "common",
+"webaddr": "www.firstbankers.com"
+},
+"FBVI": {
+"bank_name": "FCN Bank, National Association",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 4319,
+"name": "Fcn Banc Corp",
+"share_class": "common",
+"webaddr": "www.fcnbank.com"
+},
+"FCAP": {
+"bank_name": "First Harrison Bank",
+"cik": 1070296,
+"exchange": "Nasdaq",
+"fdic_cert": 31223,
+"name": "First Capital",
+"share_class": "common",
+"webaddr": "www.firstharrison.com"
+},
+"FCBC": {
+"bank_name": "First Community Bank",
+"cik": 859070,
+"exchange": "Nasdaq",
+"fdic_cert": 13012,
+"name": "First Community Bankshares",
+"share_class": "common",
+"webaddr": "www.firstcommunitybank.com"
+},
+"FCBM": {
+"bank_name": "First Carolina Bank",
+"cik": 1531193,
+"exchange": "NYSE",
+"fdic_cert": 35530,
+"name": "First Carolina Financial Services",
+"share_class": "common",
+"webaddr": "www.firstcarolinabank.com"
+},
+"FCCO": {
+"bank_name": "First Community Bank",
+"cik": 932781,
+"exchange": "Nasdaq",
+"fdic_cert": 34047,
+"name": "First Community",
+"share_class": "common",
+"webaddr": "www.firstcommunitysc.com"
+},
+"FCF": {
+"bank_name": "First Commonwealth Bank",
+"cik": 712537,
+"exchange": "NYSE",
+"fdic_cert": 7468,
+"name": "First Commonwealth Financial",
+"share_class": "common",
+"webaddr": "www.fcbanking.com"
+},
+"FCNCA": {
+"bank_name": "First-Citizens Bank & Trust Company",
+"cik": 798941,
+"exchange": "Nasdaq",
+"fdic_cert": 11063,
+"name": "First Citizens Bancshares",
+"share_class": "common",
+"webaddr": "www.firstcitizens.com"
+},
+"FCNCB": {
+"bank_name": "First-Citizens Bank & Trust Company",
+"cik": 798941,
+"exchange": "OTC",
+"fdic_cert": 11063,
+"name": "First Citizens Bancshares",
+"share_class": "preferred",
+"webaddr": "www.firstcitizens.com"
+},
+"FCNCN": {
+"bank_name": "First-Citizens Bank & Trust Company",
+"cik": 798941,
+"exchange": "Nasdaq",
+"fdic_cert": 11063,
+"name": "First Citizens Bancshares",
+"share_class": "preferred",
+"webaddr": "www.firstcitizens.com"
+},
+"FCNCO": {
+"bank_name": "First-Citizens Bank & Trust Company",
+"cik": 798941,
+"exchange": "Nasdaq",
+"fdic_cert": 11063,
+"name": "First Citizens Bancshares",
+"share_class": "preferred",
+"webaddr": "www.firstcitizens.com"
+},
+"FCNCP": {
+"bank_name": "First-Citizens Bank & Trust Company",
+"cik": 798941,
+"exchange": "Nasdaq",
+"fdic_cert": 11063,
+"name": "First Citizens Bancshares",
+"share_class": "preferred",
+"webaddr": "www.firstcitizens.com"
+},
+"FCPB": {
+"bank_name": "First Capital Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 34966,
+"name": "First Capital Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.bankwithfirstcapitalbank.com"
+},
+"FDBC": {
+"bank_name": "The Fidelity Deposit and Discount Bank",
+"cik": 1098151,
+"exchange": "Nasdaq",
+"fdic_cert": 11868,
+"name": "Fidelity D & D Bancorp",
+"share_class": "common",
+"webaddr": "http://www.bankatfidelity.com"
+},
+"FDSB": {
+"bank_name": "Fifth District Savings Bank",
+"cik": 2012726,
+"exchange": "Nasdaq",
+"fdic_cert": 27697,
+"name": "Fifth District Bancorp",
+"share_class": "common",
+"webaddr": "www.fifthdistrict.com"
+},
+"FDVA": {
+"bank_name": "The Freedom Bank of Virginia",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57184,
+"name": "Freedom Financial Holdings Inc",
+"share_class": "common",
+"webaddr": "freedom.bank"
+},
+"FFBB": {
+"bank_name": "FFB Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58090,
+"name": "FFB Bancorp",
+"share_class": "common",
+"webaddr": "www.FFB.bank"
+},
+"FFBC": {
+"bank_name": "First Financial Bank",
+"cik": 708955,
+"exchange": "Nasdaq",
+"fdic_cert": 6600,
+"name": "First Financial Bancorp",
+"share_class": "common",
+"webaddr": "www.bankatfirst.com"
+},
+"FFBW": {
+"bank_name": "First Federal Bank of Wisconsin",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 30422,
+"name": "Ffbw Inc",
+"share_class": "common",
+"webaddr": "www.ffbwi.com"
+},
+"FFDF": {
+"bank_name": "First Federal Community Bank, National Association",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29787,
+"name": "FFD Financial Corporation",
+"share_class": "common",
+"webaddr": "www.firstfed.com"
+},
+"FFIN": {
+"bank_name": "First Financial Bank",
+"cik": 36029,
+"exchange": "Nasdaq",
+"fdic_cert": 3066,
+"name": "First Financial Bankshares",
+"share_class": "common",
+"webaddr": "www.ffin.com/"
+},
+"FFMH": {
+"bank_name": "First Farmers and Merchants Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 1487,
+"name": "First Farmers and Merchants Corporation",
+"share_class": "common",
+"webaddr": "www.myfirstfarmers.com"
+},
+"FFMR": {
+"bank_name": "First Farmers Bank & Trust Co.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 12839,
+"name": "First Farmers Financial Corporation",
+"share_class": "common",
+"webaddr": "www.ffbt.com"
+},
+"FFWC": {
+"bank_name": "Crossroads Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29839,
+"name": "Ffw Corp",
+"share_class": "common",
+"webaddr": "www.crossroadsbanking.com"
+},
+"FGBI": {
+"bank_name": "First Guaranty Bank",
+"cik": 1408534,
+"exchange": "Nasdaq",
+"fdic_cert": 14028,
+"name": "First Guaranty Bancshares",
+"share_class": "common",
+"webaddr": "www.fgb.net"
+},
+"FGBIP": {
+"bank_name": "First Guaranty Bank",
+"cik": 1408534,
+"exchange": "Nasdaq",
+"fdic_cert": 14028,
+"name": "First Guaranty Bancshares",
+"share_class": "preferred",
+"webaddr": "www.fgb.net"
+},
+"FGFH": {
+"bank_name": "Foresight Bank",
+"cik": 786298,
+"exchange": "OTC",
+"fdic_cert": 5749,
+"name": "Foresight Financial Group",
+"share_class": "common",
+"webaddr": "www.ffgbank.com"
+},
+"FGFI": {
+"bank_name": "The First Bank of Greenwich",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58307,
+"name": "First Greenwich Financial Inc",
+"share_class": "common",
+"webaddr": "http://www.greenwichfirst.com"
+},
+"FHB": {
+"bank_name": "First Hawaiian Bank",
+"cik": 36377,
+"exchange": "Nasdaq",
+"fdic_cert": 17985,
+"name": "First Hawaiian",
+"share_class": "common",
+"webaddr": "www.fhb.com"
+},
+"FHN": {
+"bank_name": "First Horizon Bank",
+"cik": 36966,
+"exchange": "NYSE",
+"fdic_cert": 4977,
+"name": "First Horizon Corp.",
+"share_class": "common",
+"webaddr": "www.firsthorizon.com"
+},
+"FIBH": {
+"bank_name": "The First National Bank of Bellevue",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6528,
+"name": "First Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.fnblifetime.com"
+},
+"FIBK": {
+"bank_name": "First Interstate Bank",
+"cik": 860413,
+"exchange": "Nasdaq",
+"fdic_cert": 1105,
+"name": "First Interstate Bancsystem",
+"share_class": "common",
+"webaddr": "www.firstinterstatebank.com"
+},
+"FIDS": {
+"bank_name": "The First National Bank of Dennison",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6574,
+"name": "Fnb Inc",
+"share_class": "common",
+"webaddr": "www.fnbdennison.BANK"
+},
+"FIISO": {
+"bank_name": "Five Star Bank",
+"cik": 862831,
+"exchange": "OTC",
+"fdic_cert": 659,
+"name": "Financial Institutions",
+"share_class": "preferred",
+"webaddr": "www.five-starbank.com"
+},
+"FIISP": {
+"bank_name": "Five Star Bank",
+"cik": 862831,
+"exchange": "OTC",
+"fdic_cert": 659,
+"name": "Financial Institutions",
+"share_class": "preferred",
+"webaddr": "www.five-starbank.com"
+},
+"FINN": {
+"bank_name": "First National Bank of Omaha",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5452,
+"name": "First National of Nebraska, Inc.",
+"share_class": "common",
+"webaddr": "www.fnbo.com"
+},
+"FINW": {
+"bank_name": "FinWise Bank",
+"cik": 1856365,
+"exchange": "Nasdaq",
+"fdic_cert": 35323,
+"name": "Finwise Bancorp",
+"share_class": "common",
+"webaddr": "www.finwise.bank"
+},
+"FISI": {
+"bank_name": "Five Star Bank",
+"cik": 862831,
+"exchange": "Nasdaq",
+"fdic_cert": 659,
+"name": "Financial Institutions",
+"share_class": "common",
+"webaddr": "www.five-starbank.com"
+},
+"FITB": {
+"bank_name": "Fifth Third Bank, National Association",
+"cik": 35527,
+"exchange": "NYSE",
+"fdic_cert": 6672,
+"name": "Fifth Third Bancorp",
+"share_class": "common",
+"webaddr": "www.53.com"
+},
+"FITBI": {
+"bank_name": "Fifth Third Bank, National Association",
+"cik": 35527,
+"exchange": "OTC",
+"fdic_cert": 6672,
+"name": "Fifth Third Bancorp",
+"share_class": "preferred",
+"webaddr": "www.53.com"
+},
+"FITBM": {
+"bank_name": "Fifth Third Bank, National Association",
+"cik": 35527,
+"exchange": "OTC",
+"fdic_cert": 6672,
+"name": "Fifth Third Bancorp",
+"share_class": "preferred",
+"webaddr": "www.53.com"
+},
+"FITBO": {
+"bank_name": "Fifth Third Bank, National Association",
+"cik": 35527,
+"exchange": "OTC",
+"fdic_cert": 6672,
+"name": "Fifth Third Bancorp",
+"share_class": "preferred",
+"webaddr": "www.53.com"
+},
+"FITBP": {
+"bank_name": "Fifth Third Bank, National Association",
+"cik": 35527,
+"exchange": "OTC",
+"fdic_cert": 6672,
+"name": "Fifth Third Bancorp",
+"share_class": "preferred",
+"webaddr": "www.53.com"
+},
+"FKYS": {
+"bank_name": "First Keystone Community Bank",
+"cik": 737875,
+"exchange": "OTC",
+"fdic_cert": 7404,
+"name": "First Keystone",
+"share_class": "common",
+"webaddr": "www.fkc.bank"
+},
+"FLEW": {
+"bank_name": "Fleetwood Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 13561,
+"name": "Fleetwood Bank Corp",
+"share_class": "common",
+"webaddr": "https://fleetwoodbank.com"
+},
+"FLG": {
+"cik": 910073,
+"exchange": "NYSE",
+"fdic_cert": 32541,
+"name": "Flagstar Financial Inc.",
+"share_class": "common"
+},
+"FMAO": {
+"bank_name": "The Farmers & Merchants State Bank",
+"cik": 792966,
+"exchange": "Nasdaq",
+"fdic_cert": 5969,
+"name": "Farmers & Merchants Bancorp (OH)",
+"share_class": "common",
+"webaddr": "www.fm.bank"
+},
+"FMBH": {
+"bank_name": "First Mid Bank & Trust, National Association",
+"cik": 700565,
+"exchange": "Nasdaq",
+"fdic_cert": 3705,
+"name": "First Mid Bancshares",
+"share_class": "common",
+"webaddr": "www.firstmid.com"
+},
+"FMBL": {
+"bank_name": "Farmers and Merchants Bank of Long Beach",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 1225,
+"name": "Farmers & Merchants Bank of Long Beach",
+"share_class": "common",
+"webaddr": "www.fmb.com"
+},
+"FMBM": {
+"bank_name": "Farmers & Merchants Bank",
+"cik": 740806,
+"exchange": "OTC",
+"fdic_cert": 8668,
+"name": "F&M Bank",
+"share_class": "common",
+"webaddr": "www.FMBankVA.com"
+},
+"FMBN": {
+"bank_name": "Farmers & Merchants Bank & Trust",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 13737,
+"name": "Farmers & Merchants Bancshares, Inc. (IA)",
+"share_class": "common",
+"webaddr": "www.fmbanktrust.bank"
+},
+"FMCB": {
+"bank_name": "Farmers & Merchants Bank of Central California",
+"cik": 1085913,
+"exchange": "OTC",
+"fdic_cert": 1331,
+"name": "Farmers & Merchants Bancorp",
+"share_class": "common",
+"webaddr": "www.fmbonline.com"
+},
+"FMFG": {
+"bank_name": "Farmers and Merchants Bank",
+"cik": 1698022,
+"exchange": "OTC",
+"fdic_cert": 1895,
+"name": "Farmers & Merchants Bancshares",
+"share_class": "common",
+"webaddr": "www.fmb1919.bank"
+},
+"FMFP": {
+"bank_name": "Pennian Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7613,
+"name": "First Community Financial Corp",
+"share_class": "common",
+"webaddr": "www.pennian.bank"
+},
+"FMNB": {
+"bank_name": "The Farmers National Bank of Canfield",
+"cik": 709337,
+"exchange": "Nasdaq",
+"fdic_cert": 6540,
+"name": "Farmers National Banc Corp.",
+"share_class": "common",
+"webaddr": "www.farmersbankgroup.com"
+},
+"FMOO": {
+"bank_name": "Farmers & Merchants Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 9462,
+"name": "F&M Bancorp",
+"share_class": "common",
+"webaddr": "www.bankwithfm.com"
+},
+"FNB": {
+"bank_name": "First National Bank of Pennsylvania",
+"cik": 37808,
+"exchange": "NYSE",
+"fdic_cert": 7888,
+"name": "FNB Corp.",
+"share_class": "common",
+"webaddr": "www.fnb-online.com"
+},
+"FNFI": {
+"bank_name": "Home Federal Savings and Loan Association of Niles",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28349,
+"name": "First Niles Financial",
+"share_class": "common",
+"webaddr": "http://www.HomeFedNiles.com"
+},
+"FNFPA": {
+"bank_name": "Home Federal Savings and Loan Association of Niles",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28349,
+"name": "First Niles Financial",
+"share_class": "common",
+"webaddr": "http://www.HomeFedNiles.com"
+},
+"FNLC": {
+"bank_name": "First National Bank",
+"cik": 765207,
+"exchange": "Nasdaq",
+"fdic_cert": 4256,
+"name": "First Bancorp",
+"share_class": "common",
+"webaddr": "www.thefirst.com"
+},
+"FNRN": {
+"bank_name": "First Northern Bank of Dixon",
+"cik": 1114927,
+"exchange": "Nasdaq",
+"fdic_cert": 3440,
+"name": "First Northern Community Bancorp",
+"share_class": "common",
+"webaddr": "www.thatsmybank.com"
+},
+"FNWB": {
+"bank_name": "First Fed Bank",
+"cik": 1556727,
+"exchange": "Nasdaq",
+"fdic_cert": 28405,
+"name": "First Northwest Bancorp",
+"share_class": "common",
+"webaddr": "www.ourfirstfed.com"
+},
+"FNWD": {
+"bank_name": "Peoples Bank",
+"cik": 919864,
+"exchange": "Nasdaq",
+"fdic_cert": 29523,
+"name": "Finward Bancorp",
+"share_class": "common",
+"webaddr": "http://www.ibankpeoples.com"
+},
+"FOTB": {
+"bank_name": "American Commercial Bank & Trust, National Association",
+"cik": 1099668,
+"exchange": "OTC",
+"fdic_cert": 3719,
+"name": "First Ottawa Bancshares",
+"share_class": "common",
+"webaddr": "www.acbandt.com"
+},
+"FPBC": {
+"bank_name": "First Pacific Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58218,
+"name": "First Pacific Bancorp",
+"share_class": "common",
+"webaddr": "www.firstpacbank.com"
+},
+"FRAF": {
+"bank_name": "Farmers and Merchants Trust Company of Chambersburg",
+"cik": 723646,
+"exchange": "Nasdaq",
+"fdic_cert": 8405,
+"name": "Franklin Financial Services",
+"share_class": "common",
+"webaddr": "fmtrust.bank"
+},
+"FRBA": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58481,
+"name": "First Bank (NJ)",
+"share_class": "common"
+},
+"FRBT": {
+"bank_name": "Forbright Bank",
+"cik": 1925062,
+"exchange": "Nasdaq",
+"fdic_cert": 57614,
+"name": "Forbright, Inc.",
+"share_class": "common",
+"webaddr": "WWW.FORBRIGHTBANK.COM"
+},
+"FRFC": {
+"bank_name": "First Robinson Savings Bank, National Association",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28105,
+"name": "First Robinson Financial Corp",
+"share_class": "common",
+"webaddr": "www.frsb.net"
+},
+"FRME": {
+"bank_name": "First Merchants Bank",
+"cik": 712534,
+"exchange": "Nasdaq",
+"fdic_cert": 4365,
+"name": "First Merchants Corp.",
+"share_class": "common",
+"webaddr": "http://www.firstmerchants.com"
+},
+"FRMEP": {
+"bank_name": "First Merchants Bank",
+"cik": 712534,
+"exchange": "Nasdaq",
+"fdic_cert": 4365,
+"name": "First Merchants Corp",
+"share_class": "preferred",
+"webaddr": "http://www.firstmerchants.com"
+},
+"FRSB": {
+"bank_name": "First Resource Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57967,
+"name": "First Resource Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.firstresourcebank.com"
+},
+"FRST": {
+"bank_name": "Primis Bank",
+"cik": 1325670,
+"exchange": "Nasdaq",
+"fdic_cert": 57968,
+"name": "Primis Financial",
+"share_class": "common",
+"webaddr": "www.primisbank.com"
+},
+"FSBC": {
+"bank_name": "Five Star Bank",
+"cik": 1275168,
+"exchange": "Nasdaq",
+"fdic_cert": 35361,
+"name": "Five Star Bancorp",
+"share_class": "common",
+"webaddr": "www.fivestarbank.com"
+},
+"FSBH": {
+"bank_name": "First Southern Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 10055,
+"name": "Fsbh Corp",
+"share_class": "common",
+"webaddr": "www.fsb-bank.bank"
+},
+"FSBW": {
+"bank_name": "1st Security Bank of Washington",
+"cik": 1530249,
+"exchange": "Nasdaq",
+"fdic_cert": 57633,
+"name": "FS Bancorp Inc.",
+"share_class": "common",
+"webaddr": "WWW.FSBWA.com"
+},
+"FSDK": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14355,
+"name": "The First Citizens National Bank Of Upper Sandusky",
+"share_class": "common"
+},
+"FSEA": {
+"bank_name": "First Seacoast Bank",
+"cik": 1943802,
+"exchange": "Nasdaq",
+"fdic_cert": 29744,
+"name": "First Seacoast Bancorp",
+"share_class": "common",
+"webaddr": "www.firstseacoastbank.com"
+},
+"FSGB": {
+"bank_name": "1st Federal Savings Bank of SC, Inc.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 31410,
+"name": "First Carolina Bancshares M H C",
+"share_class": "common",
+"webaddr": "www.1stfederalofsc.com"
+},
+"FSMK": {
+"bank_name": "1st Summit Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 8426,
+"name": "1ST SUMMIT BANCORP of Johnstown, Inc.",
+"share_class": "common",
+"webaddr": "www.1stsummit.bank"
+},
+"FSRL": {
+"bank_name": "First Reliance Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 35214,
+"name": "First Reliance Bancshares, Inc.",
+"share_class": "common",
+"webaddr": "firstreliance.com"
+},
+"FSUN": {
+"bank_name": "Sunflower Bank, National Association",
+"cik": 1709442,
+"exchange": "Nasdaq",
+"fdic_cert": 4767,
+"name": "Firstsun Capital Bancorp",
+"share_class": "common",
+"webaddr": "www.sunflowerbank.com"
+},
+"FTFI": {
+"bank_name": "Fortifi Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5286,
+"name": "First Berlin Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.fortifibank.com"
+},
+"FULT": {
+"bank_name": "Fulton Bank, National Association",
+"cik": 700564,
+"exchange": "Nasdaq",
+"fdic_cert": 7551,
+"name": "Fulton Financial",
+"share_class": "common",
+"webaddr": "www.fultonbank.com"
+},
+"FULTP": {
+"bank_name": "Fulton Bank, National Association",
+"cik": 700564,
+"exchange": "Nasdaq",
+"fdic_cert": 7551,
+"name": "Fulton Financial",
+"share_class": "preferred",
+"webaddr": "www.fultonbank.com"
+},
+"FUNC": {
+"bank_name": "First United Bank & Trust",
+"cik": 763907,
+"exchange": "Nasdaq",
+"fdic_cert": 4857,
+"name": "First United",
+"share_class": "common",
+"webaddr": "https://www.mybank.com"
+},
+"FUSB": {
+"bank_name": "First US Bank",
+"cik": 717806,
+"exchange": "Nasdaq",
+"fdic_cert": 17077,
+"name": "First US Bancshares",
+"share_class": "common",
+"webaddr": "www.firstusbank.com"
+},
+"FVCB": {
+"bank_name": "FVCbank",
+"cik": 1675644,
+"exchange": "Nasdaq",
+"fdic_cert": 58696,
+"name": "FVCBankcorp",
+"share_class": "common",
+"webaddr": "www.fvcbank.com"
+},
+"FXLG": {
+"bank_name": "Farmers State Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14578,
+"name": "FS Bancorp",
+"share_class": "common",
+"webaddr": "www.farmersstatebank.com"
+},
+"FXNC": {
+"bank_name": "First Bank",
+"cik": 719402,
+"exchange": "Nasdaq",
+"fdic_cert": 6917,
+"name": "First National Corp /Va/",
+"share_class": "common",
+"webaddr": "www.fbvirginia.com"
+},
+"GABC": {
+"bank_name": "German American Bank",
+"cik": 714395,
+"exchange": "Nasdaq",
+"fdic_cert": 17393,
+"name": "German American Bancorp",
+"share_class": "common",
+"webaddr": "www.germanamerican.com"
+},
+"GBCI": {
+"bank_name": "Glacier Bank",
+"cik": 868671,
+"exchange": "NYSE",
+"fdic_cert": 30788,
+"name": "Glacier Bancorp",
+"share_class": "common",
+"webaddr": "www.glacierbank.com"
+},
+"GBFH": {
+"bank_name": "GBank",
+"cik": 1791145,
+"exchange": "Nasdaq",
+"fdic_cert": 58626,
+"name": "GBank Financial Holdings",
+"share_class": "common",
+"webaddr": "http://www.g.bank"
+},
+"GCBC": {
+"bank_name": "The Bank of Greene",
+"cik": 1070524,
+"exchange": "Nasdaq",
+"fdic_cert": 21591,
+"name": "Greene County Bancorp",
+"share_class": "common",
+"webaddr": "www.tbogc.com"
+},
+"GLBZ": {
+"bank_name": "The Bank of Glen Burnie",
+"cik": 890066,
+"exchange": "OTC",
+"fdic_cert": 16820,
+"name": "Glen Burnie Bancorp",
+"share_class": "common",
+"webaddr": "www.thebankofglenburnie.com"
+},
+"GNRV": {
+"bank_name": "Grand River Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58789,
+"name": "Grand River Commerce Inc",
+"share_class": "common",
+"webaddr": "www.grandriverbank.com"
+},
+"GOVB": {
+"bank_name": "Gouverneur Savings and Loan Association",
+"cik": 1978811,
+"exchange": "OTC",
+"fdic_cert": 30976,
+"name": "Gouverneur Bancorp",
+"share_class": "common",
+"webaddr": "www.gouverneurbank.com"
+},
+"GS": {
+"bank_name": "Goldman Sachs Bank USA",
+"cik": 886982,
+"exchange": "NYSE",
+"fdic_cert": 33124,
+"name": "Goldman Sachs Group",
+"share_class": "common",
+"webaddr": "www.marcus.com"
+},
+"GSBC": {
+"bank_name": "Great Southern Bank",
+"cik": 854560,
+"exchange": "Nasdaq",
+"fdic_cert": 29546,
+"name": "Great Southern Bancorp",
+"share_class": "common",
+"webaddr": "www.greatsouthernbank.com"
+},
+"GSBX": {
+"bank_name": "Golden State Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57585,
+"name": "Golden State Bancorp",
+"share_class": "common",
+"webaddr": "www.goldenstatebank.com"
+},
+"GSCE": {
+"bank_name": "Goldman Sachs Bank USA",
+"cik": 886982,
+"exchange": "OTC",
+"fdic_cert": 33124,
+"name": "Goldman Sachs Group Inc",
+"share_class": "preferred",
+"webaddr": "www.marcus.com"
+},
+"GTPS": {
+"bank_name": "First Federal Savings Bank of Champaign Urbana",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28445,
+"name": "Great American Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.356bank.com"
+},
+"GVYB": {
+"bank_name": "Golden Valley Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58278,
+"name": "Golden Valley Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.goldenvalley.bank"
+},
+"HAFC": {
+"bank_name": "Hanmi Bank",
+"cik": 1109242,
+"exchange": "Nasdaq",
+"fdic_cert": 24170,
+"name": "Hanmi Financial",
+"share_class": "common",
+"webaddr": "www.hanmi.com"
+},
+"HAPN": {
+"bank_name": "Happen Bank, National Association",
+"cik": 1409970,
+"exchange": "Nasdaq",
+"fdic_cert": 32551,
+"name": "Happen, Inc.",
+"share_class": "common",
+"webaddr": "www.happen.com"
+},
+"HARL": {
+"bank_name": "Harleysville Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 31461,
+"name": "Harleysville Financial Corp",
+"share_class": "common",
+"webaddr": "www.harleysvillebank.com"
+},
+"HBAN": {
+"bank_name": "The Huntington National Bank",
+"cik": 49196,
+"exchange": "Nasdaq",
+"fdic_cert": 6560,
+"name": "Huntington Bancshares",
+"share_class": "common",
+"webaddr": "www.huntington.com"
+},
+"HBANL": {
+"bank_name": "The Huntington National Bank",
+"cik": 49196,
+"exchange": "Nasdaq",
+"fdic_cert": 6560,
+"name": "Huntington Bancshares",
+"share_class": "preferred",
+"webaddr": "www.huntington.com"
+},
+"HBANM": {
+"bank_name": "The Huntington National Bank",
+"cik": 49196,
+"exchange": "Nasdaq",
+"fdic_cert": 6560,
+"name": "Huntington Bancshares",
+"share_class": "preferred",
+"webaddr": "www.huntington.com"
+},
+"HBANP": {
+"bank_name": "The Huntington National Bank",
+"cik": 49196,
+"exchange": "Nasdaq",
+"fdic_cert": 6560,
+"name": "Huntington Bancshares",
+"share_class": "preferred",
+"webaddr": "www.huntington.com"
+},
+"HBANZ": {
+"bank_name": "The Huntington National Bank",
+"cik": 49196,
+"exchange": "Nasdaq",
+"fdic_cert": 6560,
+"name": "Huntington Bancshares",
+"share_class": "preferred",
+"webaddr": "www.huntington.com"
+},
+"HBCP": {
+"bank_name": "Home Bank, National Association",
+"cik": 1436425,
+"exchange": "Nasdaq",
+"fdic_cert": 28094,
+"name": "Home Bancorp",
+"share_class": "common",
+"webaddr": "www.home24bank.com"
+},
+"HBIA": {
+"bank_name": "Hills Bank and Trust Company",
+"cik": 732417,
+"exchange": "OTC",
+"fdic_cert": 14650,
+"name": "Hills Bancorporation",
+"share_class": "common",
+"webaddr": "www.hillsbank.com"
+},
+"HBNC": {
+"bank_name": "Horizon Bank",
+"cik": 706129,
+"exchange": "Nasdaq",
+"fdic_cert": 4360,
+"name": "Horizon Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.horizonbank.com"
+},
+"HBSI": {
+"bank_name": "Highlands Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 11953,
+"name": "Highlands Bankshares Inc",
+"share_class": "common",
+"webaddr": "www.highlands.bank"
+},
+"HBT": {
+"bank_name": "Heartland Bank and Trust Company",
+"cik": 775215,
+"exchange": "Nasdaq",
+"fdic_cert": 20369,
+"name": "HBT Financial",
+"share_class": "common",
+"webaddr": "http://www.hbtbank.com"
+},
+"HCBC": {
+"bank_name": "High Country Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29783,
+"name": "High Country Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.highcountrybank.net"
+},
+"HCKG": {
+"bank_name": "The Hocking Valley Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 18858,
+"name": "Hocking Valley Bancshares Inc",
+"share_class": "common",
+"webaddr": "https://www.hvbonline.com"
+},
+"HFBA": {
+"bank_name": "Hearthside Bank Corporation",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 31236,
+"name": "Hfb Financial Corp",
+"share_class": "common",
+"webaddr": "www.hearthsidebank.com"
+},
+"HFBK": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 19101,
+"name": "Harford Bank",
+"share_class": "common"
+},
+"HFBL": {
+"bank_name": "Home Federal Bank",
+"cik": 1500375,
+"exchange": "Nasdaq",
+"fdic_cert": 27654,
+"name": "Home Federal Bancorp, Inc. of Louisiana",
+"share_class": "common",
+"webaddr": "www.hfb.bank"
+},
+"HFG": {
+"bank_name": "TruNorth Bank",
+"cik": 2152644,
+"exchange": "OTC",
+"fdic_cert": 90188,
+"name": "Hometown Financial Group, Inc./MD",
+"share_class": "common",
+"webaddr": "http://www.bankesb.com"
+},
+"HFWA": {
+"bank_name": "Heritage Bank",
+"cik": 1046025,
+"exchange": "Nasdaq",
+"fdic_cert": 29012,
+"name": "Heritage Financial Corp.",
+"share_class": "common",
+"webaddr": "www.heritagebanknw.com"
+},
+"HIFS": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 90211,
+"name": "Hingham Institution for Savings",
+"share_class": "common"
+},
+"HLFN": {
+"bank_name": "The Home Loan Savings Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29695,
+"name": "Home Loan Financial Corp",
+"share_class": "common",
+"webaddr": "www.homeloansavingsbank.com"
+},
+"HMLN": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 11113,
+"name": "Hamlin Bank And Trust Company",
+"share_class": "common"
+},
+"HNVR": {
+"bank_name": "Hanover Community Bank",
+"cik": 1828588,
+"exchange": "Nasdaq",
+"fdic_cert": 58675,
+"name": "Hanover Bancorp",
+"share_class": "common",
+"webaddr": "www.hanoverbank.com"
+},
+"HOMB": {
+"bank_name": "Centennial Bank",
+"cik": 1331520,
+"exchange": "NYSE",
+"fdic_cert": 11241,
+"name": "Home BancShares Inc.",
+"share_class": "common",
+"webaddr": "http://www.my100bank.com"
+},
+"HONT": {
+"bank_name": "The Honesdale National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7526,
+"name": "Honat Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.hnbbank.bank"
+},
+"HOPE": {
+"bank_name": "Bank of Hope",
+"cik": 1128361,
+"exchange": "Nasdaq",
+"fdic_cert": 26610,
+"name": "HOPE Bancorp",
+"share_class": "common",
+"webaddr": "www.bankofhope.com"
+},
+"HRBK": {
+"bank_name": "The Harbor Bank of Maryland",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 24015,
+"name": "Harbor Bankshares Corp",
+"share_class": "common",
+"webaddr": "HTTPS://WWW.THEHARBORBANK.COM"
+},
+"HRGG": {
+"bank_name": "Heritage Bank of St Tammany",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29577,
+"name": "Heritage NOLA Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.heritagebank.org"
+},
+"HTB": {
+"bank_name": "HomeTrust Bank",
+"cik": 1538263,
+"exchange": "NYSE",
+"fdic_cert": 27677,
+"name": "HomeTrust Bancshares",
+"share_class": "common",
+"webaddr": "www.htb.com"
+},
+"HVLM": {
+"bank_name": "Huron Valley State Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57990,
+"name": "Huron Valley Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.hvsb.com"
+},
+"HWBK": {
+"bank_name": "Hawthorn Bank",
+"cik": 893847,
+"exchange": "Nasdaq",
+"fdic_cert": 10619,
+"name": "Hawthorn Bancshares",
+"share_class": "common",
+"webaddr": "WWW.HAWTHORNBANK.COM"
+},
+"HWC": {
+"bank_name": "Hancock Whitney Bank",
+"cik": 750577,
+"exchange": "Nasdaq",
+"fdic_cert": 12441,
+"name": "Hancock Whitney Corp",
+"share_class": "common",
+"webaddr": "www.hancockwhitney.com"
+},
+"HWCPZ": {
+"bank_name": "Hancock Whitney Bank",
+"cik": 750577,
+"exchange": "Nasdaq",
+"fdic_cert": 12441,
+"name": "Hancock Whitney Corp",
+"share_class": "preferred",
+"webaddr": "www.hancockwhitney.com"
+},
+"HYNE": {
+"bank_name": "Hoyne Savings Bank",
+"cik": 2073153,
+"exchange": "Nasdaq",
+"fdic_cert": 28747,
+"name": "Hoyne Bancorp",
+"share_class": "common",
+"webaddr": "www.hoyne.bank"
+},
+"IBCP": {
+"bank_name": "Independent Bank",
+"cik": 39311,
+"exchange": "Nasdaq",
+"fdic_cert": 27811,
+"name": "Independent Bank Corp. (MI)",
+"share_class": "common",
+"webaddr": "www.independentbank.com"
+},
+"IBOC": {
+"bank_name": "International Bank of Commerce",
+"cik": 315709,
+"exchange": "Nasdaq",
+"fdic_cert": 19629,
+"name": "International Bancshares Corp.",
+"share_class": "common",
+"webaddr": "www.ibc.com"
+},
+"IBTN": {
+"bank_name": "InsBank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 35521,
+"name": "InsCorp, Inc.",
+"share_class": "common",
+"webaddr": "www.insbank.com"
+},
+"IBWC": {
+"bank_name": "Industrial Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14679,
+"name": "Ibw Financial Corp",
+"share_class": "common",
+"webaddr": "www.industrial-bank.com"
+},
+"INBC": {
+"bank_name": "InBank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 11492,
+"name": "InBankshares, Corp.",
+"share_class": "common",
+"webaddr": "www.inbank.com"
+},
+"INBK": {
+"bank_name": "First Internet Bank of Indiana",
+"cik": 1562463,
+"exchange": "Nasdaq",
+"fdic_cert": 34607,
+"name": "First Internet Bancorp",
+"share_class": "common",
+"webaddr": "www.firstib.com"
+},
+"INBKZ": {
+"bank_name": "First Internet Bank of Indiana",
+"cik": 1562463,
+"exchange": "Nasdaq",
+"fdic_cert": 34607,
+"name": "First Internet Bancorp",
+"share_class": "preferred",
+"webaddr": "www.firstib.com"
+},
+"INDB": {
+"bank_name": "Rockland Trust Company",
+"cik": 776901,
+"exchange": "Nasdaq",
+"fdic_cert": 9712,
+"name": "Independent Bank",
+"share_class": "common",
+"webaddr": "http://www.rocklandtrust.com"
+},
+"INFT": {
+"bank_name": "Infinity Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 59098,
+"name": "Infinity Bancorp",
+"share_class": "common",
+"webaddr": "www.infinity.bank"
+},
+"ISBA": {
+"bank_name": "Isabella Bank",
+"cik": 842517,
+"exchange": "Nasdaq",
+"fdic_cert": 1005,
+"name": "Isabella Bank Corp.",
+"share_class": "common",
+"webaddr": "www.isabellabank.com"
+},
+"ISTR": {
+"bank_name": "Investar Bank, National Association",
+"cik": 1602658,
+"exchange": "Nasdaq",
+"fdic_cert": 58316,
+"name": "Investar Holding",
+"share_class": "common",
+"webaddr": "http://www.investarbank.com"
+},
+"JBTC": {
+"bank_name": "Jonestown Bank and Trust Company, of Jonestown, Pennsylvania",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 10677,
+"name": "JBT Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.jbt.bank"
+},
+"JDVB": {
+"bank_name": "JD Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 16546,
+"name": "JD Bancshares, Inc.",
+"share_class": "common",
+"webaddr": "www.jdbank.com"
+},
+"JFBC": {
+"bank_name": "Jeff Bank, National Association",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7123,
+"name": "Jeffersonville Bancorp",
+"share_class": "common",
+"webaddr": "www.jeff.bank"
+},
+"JFWV": {
+"bank_name": "Jefferson Security Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 9997,
+"name": "Jsb Financial Inc",
+"share_class": "common",
+"webaddr": "https://www.jsb.bank"
+},
+"JMSB": {
+"bank_name": "John Marshall Bank",
+"cik": 1710482,
+"exchange": "Nasdaq",
+"fdic_cert": 58243,
+"name": "John Marshall Bancorp",
+"share_class": "common",
+"webaddr": "www.johnmarshallbank.com"
+},
+"JPM": {
+"bank_name": "JPMorgan Chase Bank, National Association",
+"cik": 19617,
+"exchange": "NYSE",
+"fdic_cert": 628,
+"name": "JPMorgan Chase & Co.",
+"share_class": "common",
+"webaddr": "www.jpmorganchase.com"
+},
+"JTNB": {
+"bank_name": "Jim Thorpe Neighborhood Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7599,
+"name": "JTNB Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.jtnb.com"
+},
+"JUVF": {
+"bank_name": "The Juniata Valley Bank",
+"cik": 714712,
+"exchange": "OTC",
+"fdic_cert": 7614,
+"name": "Juniata Valley Financial",
+"share_class": "common",
+"webaddr": "www.jvbonline.com"
+},
+"KEFI": {
+"bank_name": "Superior National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5058,
+"name": "Keweenaw Financial Corp",
+"share_class": "common",
+"webaddr": "www.snb-t.com"
+},
+"KEY": {
+"bank_name": "KeyBank National Association",
+"cik": 91576,
+"exchange": "NYSE",
+"fdic_cert": 17534,
+"name": "KeyCorp",
+"share_class": "common",
+"webaddr": "www.key.com"
+},
+"KFFB": {
+"bank_name": "Bank of Maysville",
+"cik": 1297341,
+"exchange": "Nasdaq",
+"fdic_cert": 9315,
+"name": "Kentucky First Federal Bancorp",
+"share_class": "common",
+"webaddr": "www.bankofmaysville.com"
+},
+"KISB": {
+"bank_name": "Kish Bank",
+"cik": 803742,
+"exchange": "OTC",
+"fdic_cert": 14969,
+"name": "Kish Bancorp Inc",
+"share_class": "common",
+"webaddr": "www.mykish.com"
+},
+"KLIB": {
+"bank_name": "The Killbuck Savings Bank Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 11860,
+"name": "Killbuck Bancshares Inc",
+"share_class": "common",
+"webaddr": "http://www.killbuckbank.com"
+},
+"KRNY": {
+"bank_name": "Kearny Bank",
+"cik": 1617242,
+"exchange": "Nasdaq",
+"fdic_cert": 28765,
+"name": "Kearny Financial",
+"share_class": "common",
+"webaddr": "www.kearnybank.com"
+},
+"KSBI": {
+"bank_name": "KS Bank, Inc.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29771,
+"name": "KS Bancorp",
+"share_class": "common",
+"webaddr": "www.KSBankinc.com"
+},
+"KTHN": {
+"bank_name": "Katahdin Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 12874,
+"name": "Katahdin Bankshares Corp.",
+"share_class": "common",
+"webaddr": "www.katahdintrust.com"
+},
+"LARK": {
+"bank_name": "Landmark National Bank",
+"cik": 1141688,
+"exchange": "Nasdaq",
+"fdic_cert": 5826,
+"name": "Landmark Bancorp",
+"share_class": "common",
+"webaddr": "www.banklandmark.com"
+},
+"LBNW": {
+"bank_name": "Liberty Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58778,
+"name": "Liberty Northwest Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.libertybanknw.com"
+},
+"LCNB": {
+"bank_name": "LCNB National Bank",
+"cik": 1074902,
+"exchange": "Nasdaq",
+"fdic_cert": 6623,
+"name": "LCNB Corp",
+"share_class": "common",
+"webaddr": "www.lcnb.com"
+},
+"LFGP": {
+"bank_name": "Ledyard National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 33418,
+"name": "Ledyard Financial Group, Inc.",
+"share_class": "common",
+"webaddr": "www.ledyard.bank"
+},
+"LKFN": {
+"bank_name": "Lake City Bank",
+"cik": 721994,
+"exchange": "Nasdaq",
+"fdic_cert": 13102,
+"name": "Lakeland Financial",
+"share_class": "common",
+"webaddr": "www.lakecitybank.com"
+},
+"LOB": {
+"bank_name": "Live Oak Banking Company",
+"cik": 1462120,
+"exchange": "NYSE",
+"fdic_cert": 58665,
+"name": "Live Oak Bancshares",
+"share_class": "common",
+"webaddr": "www.liveoak.bank"
+},
+"LOGN": {
+"bank_name": "Logansport Savings Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29907,
+"name": "Logansport Financial Corp",
+"share_class": "common",
+"webaddr": "www.logansportsavings.bank"
+},
+"LRBI": {
+"bank_name": "Lake Ridge Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 15091,
+"name": "Lake Ridge Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.lakeridge.bank"
+},
+"LSBK": {
+"bank_name": "Lake Shore Bank",
+"cik": 2059653,
+"exchange": "Nasdaq",
+"fdic_cert": 30530,
+"name": "Lake Shore Bancorp",
+"share_class": "common",
+"webaddr": "www.mylsbank.com"
+},
+"LUMB": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 20568,
+"name": "Lumbee Guaranty Bank",
+"share_class": "common"
+},
+"LYBC": {
+"bank_name": "The Lyons National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7151,
+"name": "Lyons Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.bankwithlnb.com"
+},
+"MBBC": {
+"bank_name": "Marathon Bank",
+"cik": 1835385,
+"exchange": "Nasdaq",
+"fdic_cert": 29745,
+"name": "Marathon Bancorp",
+"share_class": "common",
+"webaddr": "WWW.MARATHONBANK.COM"
+},
+"MBIN": {
+"bank_name": "Merchants Bank of Indiana",
+"cik": 1629019,
+"exchange": "Nasdaq",
+"fdic_cert": 8056,
+"name": "Merchants Bancorp",
+"share_class": "common",
+"webaddr": "www.bankmerchants.com"
+},
+"MBINL": {
+"bank_name": "Merchants Bank of Indiana",
+"cik": 1629019,
+"exchange": "Nasdaq",
+"fdic_cert": 8056,
+"name": "Merchants Bancorp",
+"share_class": "preferred",
+"webaddr": "www.bankmerchants.com"
+},
+"MBINM": {
+"bank_name": "Merchants Bank of Indiana",
+"cik": 1629019,
+"exchange": "Nasdaq",
+"fdic_cert": 8056,
+"name": "Merchants Bancorp",
+"share_class": "preferred",
+"webaddr": "www.bankmerchants.com"
+},
+"MBINN": {
+"bank_name": "Merchants Bank of Indiana",
+"cik": 1629019,
+"exchange": "Nasdaq",
+"fdic_cert": 8056,
+"name": "Merchants Bancorp",
+"share_class": "preferred",
+"webaddr": "www.bankmerchants.com"
+},
+"MBKL": {
+"bank_name": "Metairie Bank & Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 16539,
+"name": "Mbt Bancshares Inc",
+"share_class": "common",
+"webaddr": "http://www.METAIRIEBANK.COM"
+},
+"MBWM": {
+"bank_name": "Mercantile Bank",
+"cik": 1042729,
+"exchange": "Nasdaq",
+"fdic_cert": 34598,
+"name": "Mercantile Bank",
+"share_class": "common",
+"webaddr": "www.mercbank.com"
+},
+"MCB": {
+"bank_name": "Metropolitan Commercial Bank",
+"cik": 1476034,
+"exchange": "NYSE",
+"fdic_cert": 34699,
+"name": "Metropolitan Bank Holding",
+"share_class": "common",
+"webaddr": "www.mcbankny.com"
+},
+"MCBK": {
+"bank_name": "Madison County Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 31999,
+"name": "Madison County Financial Inc",
+"share_class": "common",
+"webaddr": "www.madisoncountybank.com"
+},
+"MCBS": {
+"bank_name": "Metro City Bank",
+"cik": 1747068,
+"exchange": "Nasdaq",
+"fdic_cert": 58181,
+"name": "MetroCity Bankshares",
+"share_class": "common",
+"webaddr": "www.metrocitybank.bank"
+},
+"MCHB": {
+"bank_name": "Mechanics Bank",
+"cik": 1518715,
+"exchange": "Nasdaq",
+"fdic_cert": 1768,
+"name": "Mechanics Bancorp",
+"share_class": "common",
+"webaddr": "www.mechanicsbank.com"
+},
+"MCHT": {
+"bank_name": "Mauch Chunk Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 2359,
+"name": "Mauch Chunk Trust Financial Corp.",
+"share_class": "common",
+"webaddr": "www.mct.bank"
+},
+"MDVT": {
+"bank_name": "The National Bank of Middlebury",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6275,
+"name": "Middlebury National Corp",
+"share_class": "common",
+"webaddr": "www.nbmvt.com"
+},
+"MFBI": {
+"bank_name": "Monroe Federal Savings and Loan Association",
+"cik": 2024899,
+"exchange": "OTC",
+"fdic_cert": 29578,
+"name": "Monroe Federal Bancorp",
+"share_class": "common",
+"webaddr": "www.monroefederal.com"
+},
+"MFBP": {
+"bank_name": "Mechanics & Farmers Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 12266,
+"name": "M&F Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.mfbonline.com"
+},
+"MFDB": {
+"bank_name": "Mutual Federal Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28302,
+"name": "Mutual Federal Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.mutualfederalbank.com"
+},
+"MFGI": {
+"bank_name": "Merchants Bank, National Association",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 8866,
+"name": "Merchants Financial Group, Inc.",
+"share_class": "common",
+"webaddr": "www.merchantsbank.com"
+},
+"MGNO": {
+"cik": 2033615,
+"exchange": "OTC",
+"fdic_cert": null,
+"name": "Magnolia Bancorp",
+"share_class": "common"
+},
+"MGYR": {
+"bank_name": "Magyar Bank",
+"cik": 1337068,
+"exchange": "Nasdaq",
+"fdic_cert": 30704,
+"name": "Magyar Bancorp",
+"share_class": "common",
+"webaddr": "www.magbank.com"
+},
+"MKIN": {
+"bank_name": "MCNB Bank and Trust Co.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6803,
+"name": "Mcnb Banks Inc",
+"share_class": "common",
+"webaddr": "www.mcnbbanks.com"
+},
+"MLGF": {
+"bank_name": "Malaga Bank F.S.B.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 32282,
+"name": "Malaga Financial Corporation",
+"share_class": "common",
+"webaddr": "www.malagabank.com"
+},
+"MNAT": {
+"bank_name": "Marquette Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 16250,
+"name": "Marquette National Corporation",
+"share_class": "common",
+"webaddr": "www.emarquettebank.com"
+},
+"MNBO": {
+"bank_name": "Mission National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 23749,
+"name": "Mnb Holdings Corp",
+"share_class": "common",
+"webaddr": "www.mnbsf.com"
+},
+"MNMB": {
+"bank_name": "Merchants & Marine Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 12203,
+"name": "Merchants & Marine Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "http://www.fmbanking.com"
+},
+"MNSB": {
+"bank_name": "MainStreet Bank",
+"cik": 1693577,
+"exchange": "Nasdaq",
+"fdic_cert": 57742,
+"name": "MainStreet Bancshares",
+"share_class": "common",
+"webaddr": "www.mstreetbank.com"
+},
+"MNSBP": {
+"bank_name": "MainStreet Bank",
+"cik": 1693577,
+"exchange": "Nasdaq",
+"fdic_cert": 57742,
+"name": "MainStreet Bancshares",
+"share_class": "preferred",
+"webaddr": "www.mstreetbank.com"
+},
+"MPB": {
+"bank_name": "Mid Penn Bank",
+"cik": 879635,
+"exchange": "Nasdaq",
+"fdic_cert": 9889,
+"name": "Mid Penn Bancorp",
+"share_class": "common",
+"webaddr": "www.midpennbank.com"
+},
+"MPCB": {
+"bank_name": "Mountain Pacific Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58341,
+"name": "Mountain Pacific Bancorp Inc",
+"share_class": "common",
+"webaddr": "www.mp.bank"
+},
+"MRBK": {
+"bank_name": "Meridian Bank",
+"cik": 1750735,
+"exchange": "Nasdaq",
+"fdic_cert": 57777,
+"name": "Meridian Corporation",
+"share_class": "common",
+"webaddr": "www.meridianbanker.com"
+},
+"MS": {
+"bank_name": "Morgan Stanley Bank, National Association",
+"cik": 895421,
+"exchange": "NYSE",
+"fdic_cert": 32992,
+"name": "Morgan Stanley",
+"share_class": "common"
+},
+"MSBB": {
+"bank_name": "Mercer Savings Bank",
+"cik": 1967306,
+"exchange": "OTC",
+"fdic_cert": 30084,
+"name": "Mercer Bancorp",
+"share_class": "common",
+"webaddr": "www.mercersavings.com"
+},
+"MSBC": {
+"bank_name": "Mission Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 34805,
+"name": "Mission Bancorp",
+"share_class": "common",
+"webaddr": "www.missionbank.bank"
+},
+"MSBI": {
+"bank_name": "Midland States Bank",
+"cik": 1466026,
+"exchange": "Nasdaq",
+"fdic_cert": 1040,
+"name": "Midland States Bancorp",
+"share_class": "common",
+"webaddr": "www.midlandsb.com"
+},
+"MSBIP": {
+"bank_name": "Midland States Bank",
+"cik": 1466026,
+"exchange": "Nasdaq",
+"fdic_cert": 1040,
+"name": "Midland States Bancorp",
+"share_class": "preferred",
+"webaddr": "www.midlandsb.com"
+},
+"MSWV": {
+"bank_name": "Main Street Bank Corp.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29847,
+"name": "Main Street Financial Services Corp.",
+"share_class": "common",
+"webaddr": "www.mymainstreetbank.bank"
+},
+"MTB": {
+"bank_name": "Manufacturers and Traders Trust Company",
+"cik": 36270,
+"exchange": "NYSE",
+"fdic_cert": 588,
+"name": "M&T Bank",
+"share_class": "common",
+"webaddr": "www.mtb.com"
+},
+"MTFC": {
+"bank_name": "Minster Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 763,
+"name": "Minster Financial Corp",
+"share_class": "common",
+"webaddr": "https://www.minsterbank.com"
+},
+"MVBF": {
+"bank_name": "MVB Bank, Inc",
+"cik": 1277902,
+"exchange": "Nasdaq",
+"fdic_cert": 34603,
+"name": "MVB Financial",
+"share_class": "common",
+"webaddr": "www.mvbbanking.com"
+},
+"MVLY": {
+"bank_name": "Mission Valley Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57101,
+"name": "Mission Valley Bancorp",
+"share_class": "common",
+"webaddr": "www.missionvalleybank.com"
+},
+"MYFW": {
+"bank_name": "First Western Trust Bank",
+"cik": 1327607,
+"exchange": "Nasdaq",
+"fdic_cert": 57607,
+"name": "First Western Financial",
+"share_class": "common",
+"webaddr": "www.myfw.com"
+},
+"NACB": {
+"bank_name": "The National Capital Bank of Washington",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 2093,
+"name": "National Capital Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.nationalcapitalbank.bank"
+},
+"NARA": {
+"bank_name": "BayCoast Bank",
+"cik": 2138186,
+"exchange": "OTC",
+"fdic_cert": 90196,
+"name": "Narragansett Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.baycoast.bank"
+},
+"NASB": {
+"bank_name": "North American Savings Bank, F.S.B.",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29708,
+"name": "NASB Financial, Inc.",
+"share_class": "common",
+"webaddr": "www.nasb.com"
+},
+"NBBK": {
+"bank_name": "Needham Bank",
+"cik": 1979330,
+"exchange": "Nasdaq",
+"fdic_cert": 26483,
+"name": "NB Bancorp",
+"share_class": "common",
+"webaddr": "www.needhambank.com"
+},
+"NBHC": {
+"bank_name": "NBH Bank",
+"cik": 1475841,
+"exchange": "NYSE",
+"fdic_cert": 59052,
+"name": "National Bank Holdings",
+"share_class": "common",
+"webaddr": "www.nbhbank.com"
+},
+"NBN": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 19690,
+"name": "Northeast Bank",
+"share_class": "common"
+},
+"NBTB": {
+"bank_name": "NBT Bank, National Association",
+"cik": 790359,
+"exchange": "Nasdaq",
+"fdic_cert": 7230,
+"name": "NBT Bancorp",
+"share_class": "common",
+"webaddr": "www.nbtbank.com"
+},
+"NECB": {
+"bank_name": "NorthEast Community Bank",
+"cik": 1847398,
+"exchange": "Nasdaq",
+"fdic_cert": 29147,
+"name": "NorthEast Community Bancorp",
+"share_class": "common",
+"webaddr": "https://www.necommunitybank.com"
+},
+"NEFB": {
+"bank_name": "The Neffs National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7646,
+"name": "Neffs Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "http://www.neffsnatl.com"
+},
+"NEWT": {
+"bank_name": "Newtek Bank, National Association",
+"cik": 1587987,
+"exchange": "Nasdaq",
+"fdic_cert": 18734,
+"name": "NewtekOne, Inc.",
+"share_class": "common",
+"webaddr": "www.newtekbank.com"
+},
+"NEWTG": {
+"bank_name": "Newtek Bank, National Association",
+"cik": 1587987,
+"exchange": "Nasdaq",
+"fdic_cert": 18734,
+"name": "NewtekOne, Inc.",
+"share_class": "preferred",
+"webaddr": "www.newtekbank.com"
+},
+"NEWTH": {
+"bank_name": "Newtek Bank, National Association",
+"cik": 1587987,
+"exchange": "Nasdaq",
+"fdic_cert": 18734,
+"name": "NewtekOne, Inc.",
+"share_class": "preferred",
+"webaddr": "www.newtekbank.com"
+},
+"NEWTI": {
+"bank_name": "Newtek Bank, National Association",
+"cik": 1587987,
+"exchange": "Nasdaq",
+"fdic_cert": 18734,
+"name": "NewtekOne, Inc.",
+"share_class": "preferred",
+"webaddr": "www.newtekbank.com"
+},
+"NEWTO": {
+"bank_name": "Newtek Bank, National Association",
+"cik": 1587987,
+"exchange": "Nasdaq",
+"fdic_cert": 18734,
+"name": "NewtekOne, Inc.",
+"share_class": "preferred",
+"webaddr": "www.newtekbank.com"
+},
+"NEWTP": {
+"bank_name": "Newtek Bank, National Association",
+"cik": 1587987,
+"exchange": "Nasdaq",
+"fdic_cert": 18734,
+"name": "NewtekOne, Inc.",
+"share_class": "preferred",
+"webaddr": "www.newtekbank.com"
+},
+"NIC": {
+"bank_name": "Nicolet National Bank",
+"cik": 1174850,
+"exchange": "NYSE",
+"fdic_cert": 57038,
+"name": "Nicolet Bankshares",
+"share_class": "common",
+"webaddr": "www.nicoletbank.com"
+},
+"NIDB": {
+"bank_name": "First Federal Savings Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29690,
+"name": "Northeast Indiana Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.firstfedindiana.bank"
+},
+"NKSH": {
+"bank_name": "The National Bank of Blacksburg",
+"cik": 796534,
+"exchange": "Nasdaq",
+"fdic_cert": 6821,
+"name": "National Bankshares",
+"share_class": "common",
+"webaddr": "www.nbbank.com"
+},
+"NMBF": {
+"bank_name": "New Millennium Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 35151,
+"name": "Nmb Financial Corp",
+"share_class": "common",
+"webaddr": "https://WWW.NMBONLINE.COM"
+},
+"NODB": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 18355,
+"name": "North Dallas Bank & Trust Co.",
+"share_class": "common"
+},
+"NPB": {
+"bank_name": "Northpointe Bank",
+"cik": 1336706,
+"exchange": "NYSE",
+"fdic_cert": 34953,
+"name": "Northpointe Bancshares",
+"share_class": "common",
+"webaddr": "www.northpointe.com"
+},
+"NRIM": {
+"bank_name": "Northrim Bank",
+"cik": 1163370,
+"exchange": "Nasdaq",
+"fdic_cert": 33216,
+"name": "Northrim Bancorp",
+"share_class": "common",
+"webaddr": "https://www.northrim.com"
+},
+"NSTS": {
+"bank_name": "North Shore Trust and Savings",
+"cik": 1881592,
+"exchange": "Nasdaq",
+"fdic_cert": 27683,
+"name": "NSTS Bancorp",
+"share_class": "common",
+"webaddr": "www.northshoretrust.com"
+},
+"NTBP": {
+"bank_name": "New Tripoli Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7659,
+"name": "New Tripoli Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "http://www.newtripolibank.net"
+},
+"NTRS": {
+"bank_name": "The Northern Trust Company",
+"cik": 73124,
+"exchange": "Nasdaq",
+"fdic_cert": 913,
+"name": "Northern Trust",
+"share_class": "common",
+"webaddr": "www.northerntrust.com"
+},
+"NTRSO": {
+"bank_name": "The Northern Trust Company",
+"cik": 73124,
+"exchange": "Nasdaq",
+"fdic_cert": 913,
+"name": "Northern Trust Corp",
+"share_class": "preferred",
+"webaddr": "www.northerntrust.com"
+},
+"NWBI": {
+"bank_name": "Northwest Bank",
+"cik": 1471265,
+"exchange": "Nasdaq",
+"fdic_cert": 28178,
+"name": "Northwest Bancshares",
+"share_class": "common",
+"webaddr": "WWW.NORTHWEST.COM"
+},
+"NWFL": {
+"bank_name": "Wayne Bank",
+"cik": 1013272,
+"exchange": "Nasdaq",
+"fdic_cert": 698,
+"name": "Norwood Financial",
+"share_class": "common",
+"webaddr": "Wayne.Bank"
+},
+"NWPP": {
+"bank_name": "New Peoples Bank, Inc.",
+"cik": 1163389,
+"exchange": "OTC",
+"fdic_cert": 34890,
+"name": "New Peoples Bankshares",
+"share_class": "common",
+"webaddr": "www.newpeoples.bank"
+},
+"OAKC": {
+"bank_name": "Oakworth Capital Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58783,
+"name": "Oakworth Capital",
+"share_class": "common",
+"webaddr": "www.oakworth.com"
+},
+"OAKV": {
+"bank_name": "Oak View National Bank",
+"cik": 1865429,
+"exchange": "OTC",
+"fdic_cert": 58827,
+"name": "Oak View Bankshares",
+"share_class": "common",
+"webaddr": "WWW.OAKVIEWBANK.COM"
+},
+"OBK": {
+"bank_name": "Origin Bank",
+"cik": 1516912,
+"exchange": "NYSE",
+"fdic_cert": 12614,
+"name": "Origin Bancorp",
+"share_class": "common",
+"webaddr": "www.origin.bank"
+},
+"OBT": {
+"bank_name": "Orange Bank & Trust Company",
+"cik": 1754226,
+"exchange": "Nasdaq",
+"fdic_cert": 12944,
+"name": "Orange County Bancorp",
+"share_class": "common",
+"webaddr": "www.orangebanktrust.com"
+},
+"OCFC": {
+"bank_name": "OceanFirst Bank, National Association",
+"cik": 1004702,
+"exchange": "Nasdaq",
+"fdic_cert": 28359,
+"name": "Oceanfirst Financial",
+"share_class": "common",
+"webaddr": "www.oceanfirst.com"
+},
+"OCNB": {
+"bank_name": "Bank Five Nine",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 12517,
+"name": "Oconomowoc Bancshares Inc",
+"share_class": "common",
+"webaddr": "WWW.BANKFIVENINE.COM"
+},
+"OFED": {
+"bank_name": "Oconee Federal Savings and Loan Association",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 30111,
+"name": "Oconee Federal Financial Corp.",
+"share_class": "common",
+"webaddr": "www.oconeefederal.com"
+},
+"OFG": {
+"bank_name": "Oriental Bank",
+"cik": 1030469,
+"exchange": "NYSE",
+"fdic_cert": 31469,
+"name": "OFG Bancorp",
+"share_class": "common",
+"webaddr": "http://www.orientalbank.com"
+},
+"ONB": {
+"bank_name": "Old National Bank",
+"cik": 707179,
+"exchange": "Nasdaq",
+"fdic_cert": 3832,
+"name": "Old National Bancorp",
+"share_class": "common",
+"webaddr": "www.oldnational.com"
+},
+"ONBPO": {
+"bank_name": "Old National Bank",
+"cik": 707179,
+"exchange": "Nasdaq",
+"fdic_cert": 3832,
+"name": "Old National Bancorp",
+"share_class": "preferred",
+"webaddr": "www.oldnational.com"
+},
+"ONBPP": {
+"bank_name": "Old National Bank",
+"cik": 707179,
+"exchange": "Nasdaq",
+"fdic_cert": 3832,
+"name": "Old National Bancorp",
+"share_class": "preferred",
+"webaddr": "www.oldnational.com"
+},
+"OPBK": {
+"bank_name": "Open Bank",
+"cik": 1722010,
+"exchange": "Nasdaq",
+"fdic_cert": 57944,
+"name": "OP Bancorp",
+"share_class": "common",
+"webaddr": "www.myopenbank.com"
+},
+"OPHC": {
+"bank_name": "OptimumBank",
+"cik": 1288855,
+"exchange": "NYSE",
+"fdic_cert": 35430,
+"name": "OptimumBank Holdings",
+"share_class": "common",
+"webaddr": "www.optimumbank.com"
+},
+"ORBN": {
+"bank_name": "Willamette Valley Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57033,
+"name": "Oregon Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "WWW.WillametteValleyBank.com"
+},
+"ORPB": {
+"bank_name": "Oregon Pacific Banking Company dba Oregon Pacific Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 23007,
+"name": "Oregon Pacific Bancorp",
+"share_class": "common",
+"webaddr": "www.oregonpacificbank.com"
+},
+"ORRF": {
+"bank_name": "Orrstown Bank",
+"cik": 826154,
+"exchange": "Nasdaq",
+"fdic_cert": 713,
+"name": "Orrstown Financial Services",
+"share_class": "common",
+"webaddr": "www.orrstown.com"
+},
+"OSBC": {
+"bank_name": "Old Second National Bank",
+"cik": 357173,
+"exchange": "Nasdaq",
+"fdic_cert": 3603,
+"name": "Old Second Bancorp",
+"share_class": "common",
+"webaddr": "www.oldsecond.com"
+},
+"OSBK": {
+"bank_name": "Oconee State Bank",
+"cik": 1076691,
+"exchange": "OTC",
+"fdic_cert": 18143,
+"name": "Oconee Financial",
+"share_class": "common",
+"webaddr": "www.oconeestatebank.com"
+},
+"OTTW": {
+"bank_name": "OSB Community Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 27989,
+"name": "Ottawa Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.myosb.bank"
+},
+"OVBC": {
+"bank_name": "The Ohio Valley Bank Company",
+"cik": 894671,
+"exchange": "Nasdaq",
+"fdic_cert": 384,
+"name": "Ohio Valley Banc Corp.",
+"share_class": "common",
+"webaddr": "www.ovbc.com"
+},
+"OVLY": {
+"bank_name": "Oak Valley Community Bank",
+"cik": 1431567,
+"exchange": "Nasdaq",
+"fdic_cert": 33457,
+"name": "Oak Valley Bancorp",
+"share_class": "common",
+"webaddr": "www.ovcb.com"
+},
+"OXBC": {
+"bank_name": "Oxford Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 9719,
+"name": "Oxford Bank Corporation",
+"share_class": "common",
+"webaddr": "www.oxfordbank.com"
+},
+"OZK": {
+"cik": 1569650,
+"exchange": "Nasdaq",
+"fdic_cert": 110,
+"name": "Bank OZK",
+"share_class": "common"
+},
+"PB": {
+"bank_name": "Prosperity Bank",
+"cik": 1068851,
+"exchange": "NYSE",
+"fdic_cert": 16835,
+"name": "Prosperity Bancshares",
+"share_class": "common",
+"webaddr": "www.prosperitybankusa.com"
+},
+"PBAM": {
+"bank_name": "CalPrivate Bank",
+"cik": 1705284,
+"exchange": "Nasdaq",
+"fdic_cert": 58291,
+"name": "Private Bancorp of America, Inc.",
+"share_class": "common",
+"webaddr": "www.calprivate.bank"
+},
+"PBCO": {
+"bank_name": "People's Bank of Commerce",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 34685,
+"name": "PBCO Financial Corporation",
+"share_class": "common",
+"webaddr": "www.peoplesbank.bank"
+},
+"PBFS": {
+"bank_name": "Pioneer Bank, National Association",
+"cik": 1769663,
+"exchange": "Nasdaq",
+"fdic_cert": 20741,
+"name": "Pioneer Bancorp",
+"share_class": "common",
+"webaddr": "www.pioneerny.com"
+},
+"PBHC": {
+"bank_name": "Pathfinder Bank",
+"cik": 1609065,
+"exchange": "Nasdaq",
+"fdic_cert": 57497,
+"name": "Pathfinder Bancorp",
+"share_class": "common",
+"webaddr": "http://www.PATHFINDERBANK.com"
+},
+"PBKC": {
+"bank_name": "First Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 9620,
+"name": "Pioneer Bankcorp, Inc.",
+"share_class": "common",
+"webaddr": "www.first1bank.com"
+},
+"PBKX": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58588,
+"name": "Partners Bank Of California",
+"share_class": "common"
+},
+"PBNC": {
+"bank_name": "Providence Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58239,
+"name": "PB Financial Corporation",
+"share_class": "common",
+"webaddr": "www.pbknc.com"
+},
+"PBNK": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58297,
+"name": "Pinnacle Bank",
+"share_class": "common"
+},
+"PCB": {
+"bank_name": "PCB Bank",
+"cik": 1423869,
+"exchange": "Nasdaq",
+"fdic_cert": 57463,
+"name": "PCB Bancorp",
+"share_class": "common",
+"webaddr": "www.mypcbbank.com"
+},
+"PCLB": {
+"bank_name": "Pinnacle Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29548,
+"name": "Pinnacle Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.pinnaclebanc.com"
+},
+"PDLB": {
+"bank_name": "Ponce Bank, National Association",
+"cik": 1874071,
+"exchange": "Nasdaq",
+"fdic_cert": 31189,
+"name": "Ponce Financial Group",
+"share_class": "common",
+"webaddr": "www.poncebank.com"
+},
+"PEBA": {
+"bank_name": "The Pennsville National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 19978,
+"name": "Penn Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.pennsvillenb.com"
+},
+"PEBK": {
+"bank_name": "Peoples Bank",
+"cik": 1093672,
+"exchange": "Nasdaq",
+"fdic_cert": 5956,
+"name": "Peoples Bancorp of North Carolina",
+"share_class": "common",
+"webaddr": "https://www.peoplesbanknc.com"
+},
+"PEBO": {
+"bank_name": "Peoples Bank",
+"cik": 318300,
+"exchange": "Nasdaq",
+"fdic_cert": 6544,
+"name": "Peoples Bancorp",
+"share_class": "common",
+"webaddr": "https://www.peoplesbancorp.com/"
+},
+"PFBN": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58234,
+"name": "Pacific Alliance Bank",
+"share_class": "common"
+},
+"PFBX": {
+"bank_name": "The Peoples Bank, Biloxi, Mississippi",
+"cik": 770460,
+"exchange": "OTC",
+"fdic_cert": 340,
+"name": "Peoples Financial",
+"share_class": "common",
+"webaddr": "www.thepeoples.com"
+},
+"PFIS": {
+"bank_name": "Peoples Security Bank and Trust Company",
+"cik": 1056943,
+"exchange": "Nasdaq",
+"fdic_cert": 7514,
+"name": "Peoples Financial Services",
+"share_class": "common",
+"webaddr": "www.psbt.com"
+},
+"PFS": {
+"bank_name": "Provident Bank",
+"cik": 1178970,
+"exchange": "NYSE",
+"fdic_cert": 12010,
+"name": "Provident Financial Services",
+"share_class": "common",
+"webaddr": "http://www.provident.Bank"
+},
+"PFSB": {
+"bank_name": "Peru Federal Savings Bank",
+"cik": 1967656,
+"exchange": "OTC",
+"fdic_cert": 29384,
+"name": "PFS Bancorp",
+"share_class": "common",
+"webaddr": "www.perufederalsavings.com"
+},
+"PGC": {
+"bank_name": "Peapack Private Bank & Trust",
+"cik": 1050743,
+"exchange": "Nasdaq",
+"fdic_cert": 11035,
+"name": "Peapack-Gladstone Financial",
+"share_class": "common",
+"webaddr": "www.peapackprivate.com"
+},
+"PGNN": {
+"bank_name": "Paragon Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57874,
+"name": "Paragon Financial Solutions, Inc.",
+"share_class": "common",
+"webaddr": "http://www.bankparagon.com"
+},
+"PKBK": {
+"bank_name": "Parke Bank",
+"cik": 1315399,
+"exchange": "Nasdaq",
+"fdic_cert": 34888,
+"name": "Parke Bancorp",
+"share_class": "common",
+"webaddr": "www.parkebank.com"
+},
+"PLBC": {
+"bank_name": "Plumas Bank",
+"cik": 1168455,
+"exchange": "Nasdaq",
+"fdic_cert": 23275,
+"name": "Plumas Bancorp",
+"share_class": "common",
+"webaddr": "http://www.plumasbank.com"
+},
+"PLQC": {
+"bank_name": "Plains State Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 17739,
+"name": "Plains Acquisition Corporation",
+"share_class": "common",
+"webaddr": "http://www.psbplains.com"
+},
+"PNBI": {
+"bank_name": "Pioneer Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6913,
+"name": "Pioneer Bankshares, Inc.",
+"share_class": "common",
+"webaddr": "www.pioneerbks.com"
+},
+"PNBK": {
+"bank_name": "Patriot Bank, National Association",
+"cik": 1098146,
+"exchange": "Nasdaq",
+"fdic_cert": 33928,
+"name": "Patriot National Bancorp",
+"share_class": "common",
+"webaddr": "www.bankpatriot.com"
+},
+"PNC": {
+"bank_name": "PNC Bank, National Association",
+"cik": 713676,
+"exchange": "NYSE",
+"fdic_cert": 6384,
+"name": "PNC Financial Services",
+"share_class": "common",
+"webaddr": "www.pnc.com"
+},
+"PNFP": {
+"bank_name": "Pinnacle Bank",
+"cik": 2082866,
+"exchange": "NYSE",
+"fdic_cert": 35583,
+"name": "Pinnacle Financial Partners",
+"share_class": "common",
+"webaddr": "www.pnfp.com"
+},
+"PNSB": {
+"bank_name": "Pioneer State Bank",
+"cik": 2087419,
+"exchange": "OTC",
+"fdic_cert": 29517,
+"name": "PSB Financial",
+"share_class": "common",
+"webaddr": "www.pioneerstate.bank"
+},
+"PONT": {
+"bank_name": "Bank of Pontiac",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 16982,
+"name": "Pontiac Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.bankofpontiac.com"
+},
+"PPAL": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14168,
+"name": "Peoples Trust Company Of St. Albans",
+"share_class": "common"
+},
+"PPBN": {
+"bank_name": "First National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 6811,
+"name": "Pinnacle Bankshares Corporation",
+"share_class": "common",
+"webaddr": "http://www.1stnatbk.com"
+},
+"PPLL": {
+"bank_name": "PS Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 444,
+"name": "Peoples Ltd.",
+"share_class": "common",
+"webaddr": "psbanking.com"
+},
+"PRK": {
+"bank_name": "The Park National Bank",
+"cik": 805676,
+"exchange": "NYSE",
+"fdic_cert": 6653,
+"name": "Park National",
+"share_class": "common",
+"webaddr": "www.parknationalbank.com"
+},
+"PRMY": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 59086,
+"name": "Primary Bank",
+"share_class": "common"
+},
+"PROV": {
+"bank_name": "Provident Savings Bank, F.S.B.",
+"cik": 1010470,
+"exchange": "Nasdaq",
+"fdic_cert": 30879,
+"name": "Provident Financial Holdings",
+"share_class": "common",
+"webaddr": "www.myprovident.com"
+},
+"PSBQ": {
+"bank_name": "Peoples State Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 18569,
+"name": "PSB Holdings, Inc.",
+"share_class": "common",
+"webaddr": "www.bankpeoples.com"
+},
+"PTBS": {
+"bank_name": "Potomac Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 9023,
+"name": "Potomac Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.potomac.bank"
+},
+"PVBK": {
+"bank_name": "Pacific Valley Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57740,
+"name": "Pacific Valley Bancorp",
+"share_class": "common",
+"webaddr": "www.pacificvalleybank.com"
+},
+"QCRH": {
+"bank_name": "Quad City Bank and Trust Company",
+"cik": 906465,
+"exchange": "Nasdaq",
+"fdic_cert": 33867,
+"name": "QCR Holdings",
+"share_class": "common",
+"webaddr": "www.qcbt.com"
+},
+"QNBC": {
+"bank_name": "QNB Bank",
+"cik": 750558,
+"exchange": "Nasdaq",
+"fdic_cert": 7714,
+"name": "QNB",
+"share_class": "common",
+"webaddr": "www.qnbbank.com"
+},
+"QNTO": {
+"bank_name": "Quaint Oak Bank",
+"cik": 1391933,
+"exchange": "OTC",
+"fdic_cert": 35497,
+"name": "Quaint Oak Bancorp",
+"share_class": "common",
+"webaddr": "www.quaintoak.com"
+},
+"RBB": {
+"bank_name": "Royal Business Bank",
+"cik": 1499422,
+"exchange": "Nasdaq",
+"fdic_cert": 58816,
+"name": "RBB Bancorp",
+"share_class": "common",
+"webaddr": "www.royalbusinessbankusa.com"
+},
+"RBCAA": {
+"bank_name": "Republic Bank & Trust Company",
+"cik": 921557,
+"exchange": "Nasdaq",
+"fdic_cert": 23627,
+"name": "Republic Bancorp",
+"share_class": "common",
+"webaddr": "www.republicbank.com"
+},
+"RBKB": {
+"bank_name": "Rhinebeck Bank",
+"cik": 1751783,
+"exchange": "Nasdaq",
+"fdic_cert": 16032,
+"name": "Rhinebeck Bancorp",
+"share_class": "common",
+"webaddr": "www.rhinebeckbank.com"
+},
+"RBNK": {
+"bank_name": "RiverBank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58322,
+"name": "Riverbank Holding Co",
+"share_class": "common",
+"webaddr": "http://www.riverbankonline.com"
+},
+"RCBC": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 18983,
+"name": "River City Bank",
+"share_class": "common"
+},
+"REDW": {
+"bank_name": "HomeTown  Bank",
+"cik": 942895,
+"exchange": "OTC",
+"fdic_cert": 31028,
+"name": "Redwood Financial Inc /MN/",
+"share_class": "common",
+"webaddr": "www.myht.bank"
+},
+"RF": {
+"bank_name": "Regions Bank",
+"cik": 1281761,
+"exchange": "NYSE",
+"fdic_cert": 12368,
+"name": "Regions Financial",
+"share_class": "common",
+"webaddr": "http://www.regions.com"
+},
+"RMBI": {
+"bank_name": "First Bank Midwest",
+"cik": 1767837,
+"exchange": "Nasdaq",
+"fdic_cert": 28533,
+"name": "Richmond Mutual Bancorporation",
+"share_class": "common",
+"webaddr": "www.firstbankrichmond.com"
+},
+"RNST": {
+"bank_name": "Renasant Bank",
+"cik": 715072,
+"exchange": "NYSE",
+"fdic_cert": 12437,
+"name": "Renasant Corp.",
+"share_class": "common",
+"webaddr": "www.renasant.com"
+},
+"RRBI": {
+"bank_name": "Red River Bank",
+"cik": 1071236,
+"exchange": "Nasdaq",
+"fdic_cert": 34980,
+"name": "Red River Bancshares",
+"share_class": "common",
+"webaddr": "http://www.RedRiverBank.net"
+},
+"RVCB": {
+"bank_name": "River Valley Community Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58276,
+"name": "River Valley Community Bancorp",
+"share_class": "common",
+"webaddr": "www.myrvcb.com"
+},
+"RVRF": {
+"bank_name": "River Bank & Trust",
+"cik": 1641601,
+"exchange": "OTC",
+"fdic_cert": 58255,
+"name": "River Financial",
+"share_class": "common",
+"webaddr": "http://www.riverbankandtrust.com"
+},
+"RVSB": {
+"bank_name": "Riverview Bank",
+"cik": 1041368,
+"exchange": "Nasdaq",
+"fdic_cert": 29922,
+"name": "Riverview Bancorp Inc.",
+"share_class": "common",
+"webaddr": "www.riverviewbank.com"
+},
+"RWCB": {
+"bank_name": "Redwood Capital Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57610,
+"name": "Redwood Capital Bancorp",
+"share_class": "common",
+"webaddr": "http://www.rdwo.com"
+},
+"SABK": {
+"bank_name": "South Atlantic Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58689,
+"name": "South Atlantic Bancshares, Inc.",
+"share_class": "common",
+"webaddr": "SouthAtlantic.bank"
+},
+"SBCF": {
+"bank_name": "Seacoast National Bank",
+"cik": 730708,
+"exchange": "Nasdaq",
+"fdic_cert": 131,
+"name": "Seacoast Banking Corp of Florida",
+"share_class": "common",
+"webaddr": "www.seacoastbank.com"
+},
+"SBFG": {
+"bank_name": "The State Bank and Trust Company",
+"cik": 767405,
+"exchange": "Nasdaq",
+"fdic_cert": 13339,
+"name": "SB Financial Group",
+"share_class": "common",
+"webaddr": "www.yourstatebank.com"
+},
+"SBKO": {
+"bank_name": "Summit Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57706,
+"name": "Summit Bank Group, Inc.",
+"share_class": "common",
+"webaddr": "https://sbko.bank"
+},
+"SBMW": {
+"bank_name": "Security Bank, s.b.",
+"cik": 2036060,
+"exchange": "OTC",
+"fdic_cert": 27723,
+"name": "Security Midwest Bancorp",
+"share_class": "common",
+"webaddr": "www.securitybk.com"
+},
+"SBNC": {
+"bank_name": "Southern Bank and Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 15359,
+"name": "Southern BancShares (N.C.), Inc.",
+"share_class": "common",
+"webaddr": "www.southernbank.com"
+},
+"SBSI": {
+"bank_name": "Southside Bank",
+"cik": 705432,
+"exchange": "NYSE",
+"fdic_cert": 18297,
+"name": "Southside Bancshares",
+"share_class": "common",
+"webaddr": "www.southside.com"
+},
+"SCYT": {
+"bank_name": "Security Federal Savings Bank of McMinnville",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 31146,
+"name": "Security Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.secfed.net"
+},
+"SEBC": {
+"bank_name": "Southeastern Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5685,
+"name": "Southeastern Banking Corp",
+"share_class": "common",
+"webaddr": "https://www.southeasternbank.com"
+},
+"SFBC": {
+"bank_name": "Sound Community Bank",
+"cik": 1541119,
+"exchange": "Nasdaq",
+"fdic_cert": 57451,
+"name": "Sound Financial Bancorp",
+"share_class": "common",
+"webaddr": "http://www.soundcb.com"
+},
+"SFBS": {
+"bank_name": "ServisFirst Bank",
+"cik": 1430723,
+"exchange": "NYSE",
+"fdic_cert": 57993,
+"name": "ServisFirst Bancshares",
+"share_class": "common",
+"webaddr": "WWW.SERVISFIRSTBANK.COM"
+},
+"SFCO": {
+"bank_name": "Southern Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 16288,
+"name": "Southern Financial",
+"share_class": "common",
+"webaddr": "www.thesouthern.bank"
+},
+"SFDL": {
+"bank_name": "Security Federal Bank",
+"cik": 818677,
+"exchange": "OTC",
+"fdic_cert": 31100,
+"name": "Security Federal",
+"share_class": "common",
+"webaddr": "www.securityfederalbank.com"
+},
+"SFIGA": {
+"bank_name": "STAR Financial Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 27235,
+"name": "STAR Financial Group, Inc.",
+"share_class": "common",
+"webaddr": "www.starfinancial.com"
+},
+"SFNC": {
+"bank_name": "Simmons Bank",
+"cik": 90498,
+"exchange": "Nasdaq",
+"fdic_cert": 3890,
+"name": "Simmons First National",
+"share_class": "common",
+"webaddr": "www.simmonsbank.com"
+},
+"SFST": {
+"bank_name": "Southern First Bank",
+"cik": 1090009,
+"exchange": "Nasdaq",
+"fdic_cert": 35295,
+"name": "Southern First Bancshares",
+"share_class": "common",
+"webaddr": "http://www.southernfirst.com"
+},
+"SHBI": {
+"bank_name": "Shore United Bank, National Association",
+"cik": 1035092,
+"exchange": "Nasdaq",
+"fdic_cert": 4832,
+"name": "Shore Bancshares",
+"share_class": "common",
+"webaddr": "shoreunitedbank.com"
+},
+"SLBK": {
+"bank_name": "Skyline National Bank",
+"cik": 1657642,
+"exchange": "OTC",
+"fdic_cert": 6861,
+"name": "Skyline Bankshares",
+"share_class": "common",
+"webaddr": "www.skylinenationalbank.bank"
+},
+"SLRK": {
+"bank_name": "Solera National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58534,
+"name": "Solera National Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.solerabank.com"
+},
+"SMBC": {
+"bank_name": "Southern Bank",
+"cik": 916907,
+"exchange": "Nasdaq",
+"fdic_cert": 28332,
+"name": "Southern Missouri Bancorp",
+"share_class": "common",
+"webaddr": "www.bankwithsouthern.com"
+},
+"SMBK": {
+"bank_name": "SmartBank",
+"cik": 1038773,
+"exchange": "NYSE",
+"fdic_cert": 58463,
+"name": "SmartFinancial Inc.",
+"share_class": "common",
+"webaddr": "http://www.smartbank.com"
+},
+"SNLC": {
+"bank_name": "The Security National Bank of Sioux City, Iowa",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 4506,
+"name": "Security National Corporation",
+"share_class": "common",
+"webaddr": "https://www.snbonline.com"
+},
+"SNNF": {
+"bank_name": "Seneca Savings Bank, National Association",
+"cik": 2072421,
+"exchange": "OTC",
+"fdic_cert": 29496,
+"name": "Seneca Bancorp",
+"share_class": "common",
+"webaddr": "senecasavings.com"
+},
+"SOBS": {
+"bank_name": "Solvay Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 13297,
+"name": "Solvay Bank Corp",
+"share_class": "common",
+"webaddr": "www.solvaybank.com"
+},
+"SOMC": {
+"bank_name": "Southern Michigan Bank & Trust",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5019,
+"name": "Southern Michigan Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.smb-t.com"
+},
+"SOME": {
+"bank_name": "Somerset Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 11112,
+"name": "Somerset Trust Holding Co",
+"share_class": "common",
+"webaddr": "somersettrust.com"
+},
+"SOUB": {
+"bank_name": "SouthPoint Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58088,
+"name": "Southpoint Bancshares Inc",
+"share_class": "common",
+"webaddr": "http://www.southpoint.bank"
+},
+"SPFI": {
+"bank_name": "City Bank",
+"cik": 1163668,
+"exchange": "Nasdaq",
+"fdic_cert": 25103,
+"name": "South Plains Financial Inc.",
+"share_class": "common",
+"webaddr": "www.city.bank"
+},
+"SRBK": {
+"bank_name": "Somerset Regal Bank",
+"cik": 1951276,
+"exchange": "Nasdaq",
+"fdic_cert": 28778,
+"name": "SR Bancorp",
+"share_class": "common",
+"webaddr": "www.somersetregalbank.com"
+},
+"SRCE": {
+"bank_name": "1st Source Bank",
+"cik": 34782,
+"exchange": "Nasdaq",
+"fdic_cert": 9087,
+"name": "1ST Source",
+"share_class": "common",
+"webaddr": "www.1stsource.com"
+},
+"SRNN": {
+"bank_name": "The Southern Bank Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29731,
+"name": "Southern Banc Co Inc The",
+"share_class": "common",
+"webaddr": "www.sobanco.com"
+},
+"SSB": {
+"bank_name": "SouthState Bank, National Association",
+"cik": 764038,
+"exchange": "NYSE",
+"fdic_cert": 33555,
+"name": "SouthState Bank",
+"share_class": "common",
+"webaddr": "www.southstatebank.com"
+},
+"SSBI": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 32203,
+"name": "Summit State Bank",
+"share_class": "common"
+},
+"SSBP": {
+"bank_name": "State Savings Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14773,
+"name": "SSB Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.statesavings.bank"
+},
+"STBA": {
+"bank_name": "S&T Bank",
+"cik": 719220,
+"exchange": "Nasdaq",
+"fdic_cert": 11124,
+"name": "S&T Bancorp",
+"share_class": "common",
+"webaddr": "http://www.stbank.com"
+},
+"STBI": {
+"bank_name": "Sturgis Bank & Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28593,
+"name": "Sturgis Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.sturgis.bank"
+},
+"STBK": {
+"bank_name": "Studio Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 59112,
+"name": "Studio Financial Holdings Inc",
+"share_class": "common",
+"webaddr": "www.studiobank.com"
+},
+"STLE": {
+"bank_name": "Central Penn Bank & Trust",
+"cik": 779227,
+"exchange": "OTC",
+"fdic_cert": 10685,
+"name": "Steele Bancorp",
+"share_class": "common",
+"webaddr": "www.centralpennbank.com"
+},
+"STT": {
+"bank_name": "State Street Bank and Trust Company",
+"cik": 93751,
+"exchange": "NYSE",
+"fdic_cert": 14,
+"name": "State Street Corp",
+"share_class": "common",
+"webaddr": "www.statestreet.com"
+},
+"SVBT": {
+"bank_name": "Springs Valley Bank & Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 4419,
+"name": "SVB & T Corporation",
+"share_class": "common",
+"webaddr": "www.svbt.bank"
+},
+"SYBT": {
+"bank_name": "Stock Yards Bank & Trust Company",
+"cik": 835324,
+"exchange": "Nasdaq",
+"fdic_cert": 258,
+"name": "Stock Yards Bancorp",
+"share_class": "common",
+"webaddr": "www.syb.com"
+},
+"TBBC": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 59188,
+"name": "Triad Business Bank",
+"share_class": "common"
+},
+"TBBK": {
+"bank_name": "The Bancorp Bank, National Association",
+"cik": 1295401,
+"exchange": "Nasdaq",
+"fdic_cert": 35444,
+"name": "Bancorp",
+"share_class": "common",
+"webaddr": "www.thebancorp.com"
+},
+"TCBI": {
+"bank_name": "Texas Capital Bank",
+"cik": 1077428,
+"exchange": "Nasdaq",
+"fdic_cert": 34383,
+"name": "Texas Capital Bancshares",
+"share_class": "common",
+"webaddr": "www.texascapitalbank.com"
+},
+"TCBIO": {
+"bank_name": "Texas Capital Bank",
+"cik": 1077428,
+"exchange": "Nasdaq",
+"fdic_cert": 34383,
+"name": "Texas Capital Bancshares",
+"share_class": "preferred",
+"webaddr": "www.texascapitalbank.com"
+},
+"TCBK": {
+"bank_name": "Tri Counties Bank",
+"cik": 356171,
+"exchange": "Nasdaq",
+"fdic_cert": 21943,
+"name": "Trico Bancshares",
+"share_class": "common",
+"webaddr": "www.tcbk.com"
+},
+"TCBS": {
+"bank_name": "Broadstreet Bank S S B",
+"cik": 1849466,
+"exchange": "Nasdaq",
+"fdic_cert": 28868,
+"name": "Texas Community Bancshares",
+"share_class": "common",
+"webaddr": "www.broadstreet.bank"
+},
+"TCBX": {
+"bank_name": "Third Coast Bank",
+"cik": 1781730,
+"exchange": "NYSE",
+"fdic_cert": 58716,
+"name": "Third Coast Bancshares",
+"share_class": "common",
+"webaddr": "www.thirdcoast.bank"
+},
+"TCNB": {
+"bank_name": "Town Center Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58214,
+"name": "Tc Financial Holdings Inc",
+"share_class": "common",
+"webaddr": "www.towncenterbank.net"
+},
+"TDCB": {
+"bank_name": "Mutual Savings Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 27742,
+"name": "Third Century Bancorp",
+"share_class": "common",
+"webaddr": "www.mymsb.bank"
+},
+"TFC": {
+"bank_name": "Truist Bank",
+"cik": 92230,
+"exchange": "NYSE",
+"fdic_cert": 9846,
+"name": "Truist Financial Corp.",
+"share_class": "common",
+"webaddr": "www.Truist.com"
+},
+"TFIN": {
+"bank_name": "Tbk Bank, Ssb",
+"cik": 1539638,
+"exchange": "NYSE",
+"fdic_cert": 23498,
+"name": "Triumph Financial",
+"share_class": "common",
+"webaddr": "www.tbkbank.com"
+},
+"TFSL": {
+"bank_name": "Third Federal Savings and Loan Association of Cleveland",
+"cik": 1381668,
+"exchange": "Nasdaq",
+"fdic_cert": 30012,
+"name": "TFS Financial Corp.",
+"share_class": "common",
+"webaddr": "www.thirdfederal.com"
+},
+"THFF": {
+"bank_name": "First Financial Bank, National Association",
+"cik": 714562,
+"exchange": "Nasdaq",
+"fdic_cert": 4382,
+"name": "First Financial",
+"share_class": "common",
+"webaddr": "www.first-online.bank"
+},
+"THVB": {
+"bank_name": "Thomasville National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 34068,
+"name": "Thomasville Bancshares, Inc.",
+"share_class": "common",
+"webaddr": "www.tnbank.com"
+},
+"TMAK": {
+"bank_name": "Touchmark National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58687,
+"name": "Touchmark Bancshares Inc",
+"share_class": "common",
+"webaddr": "www.touchmarknb.com"
+},
+"TMP": {
+"bank_name": "Tompkins Bank & Trust",
+"cik": 1005817,
+"exchange": "NYSE",
+"fdic_cert": 609,
+"name": "Tompkins Financial",
+"share_class": "common",
+"webaddr": "www.tompkinsbank.com"
+},
+"TOWN": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 35095,
+"name": "TowneBank",
+"share_class": "common"
+},
+"TRCY": {
+"bank_name": "Tri City National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 18922,
+"name": "Tri City Bankshares Corporation",
+"share_class": "common",
+"webaddr": "www.tcnb.com"
+},
+"TRMK": {
+"bank_name": "Trustmark Bank",
+"cik": 36146,
+"exchange": "Nasdaq",
+"fdic_cert": 4988,
+"name": "Trustmark",
+"share_class": "common",
+"webaddr": "www.trustmark.com"
+},
+"TRST": {
+"bank_name": "TrustCo Bank",
+"cik": 357301,
+"exchange": "Nasdaq",
+"fdic_cert": 31945,
+"name": "Trustco Bank Corp N Y",
+"share_class": "common",
+"webaddr": "www.trustcobank.com"
+},
+"TRUX": {
+"bank_name": "Truxton Trust Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57825,
+"name": "Truxton Corporation",
+"share_class": "common",
+"webaddr": "www.truxtontrust.com"
+},
+"TSBK": {
+"bank_name": "Timberland Bank",
+"cik": 1046050,
+"exchange": "Nasdaq",
+"fdic_cert": 28453,
+"name": "Timberland Bancorp",
+"share_class": "common",
+"webaddr": "http://www.timberlandbank.com"
+},
+"TVLF": {
+"bank_name": "Tnbank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 34023,
+"name": "Tennessee Valley Financial Holdings, Inc.",
+"share_class": "common",
+"webaddr": "www.tnbank.bank"
+},
+"TVNB": {
+"bank_name": "The Turbotville National Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7789,
+"name": "Turbotville National Bcorp Inc",
+"share_class": "common",
+"webaddr": "www.ttnb.com"
+},
+"TYBT": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 57543,
+"name": "Trinity Bank, N.A.",
+"share_class": "common"
+},
+"TYCB": {
+"bank_name": "Calvin B. Taylor Banking Company of Berlin, Maryland",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5874,
+"name": "Calvin B. Taylor Bankshares, Inc.",
+"share_class": "common",
+"webaddr": "www.taylorbank.com"
+},
+"TYFG": {
+"bank_name": "First State Bank",
+"cik": 1725262,
+"exchange": "OTC",
+"fdic_cert": 15752,
+"name": "Tri-County Financial Group",
+"share_class": "common",
+"webaddr": "WWW.FIRSTSTATEBANK.BIZ"
+},
+"UBAB": {
+"bank_name": "United Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58,
+"name": "United Bancorporation of Alabama, Inc.",
+"share_class": "common",
+"webaddr": "http://www.unitedbank.com"
+},
+"UBCP": {
+"bank_name": "Unified Bank",
+"cik": 731653,
+"exchange": "Nasdaq",
+"fdic_cert": 9463,
+"name": "United Bancorp",
+"share_class": "common",
+"webaddr": "www.unifiedbank.com"
+},
+"UBOH": {
+"bank_name": "The Union Bank Company",
+"cik": 1087456,
+"exchange": "OTC",
+"fdic_cert": 12969,
+"name": "United Bancshares Inc/OH",
+"share_class": "common",
+"webaddr": "www.theubank.com"
+},
+"UBSI": {
+"bank_name": "United Bank",
+"cik": 729986,
+"exchange": "Nasdaq",
+"fdic_cert": 22858,
+"name": "United Bankshares Inc.",
+"share_class": "common",
+"webaddr": "www.bankwithunited.com"
+},
+"UCB": {
+"bank_name": "United Community Bank",
+"cik": 857855,
+"exchange": "NYSE",
+"fdic_cert": 16889,
+"name": "United Community Banks",
+"share_class": "common",
+"webaddr": "www.ucbi.com"
+},
+"UFCP": {
+"bank_name": "Union Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14722,
+"name": "Union Financial Corp",
+"share_class": "common",
+"webaddr": "www.ubmich.com"
+},
+"UMBF": {
+"bank_name": "UMB Bank, National Association",
+"cik": 101382,
+"exchange": "Nasdaq",
+"fdic_cert": 8273,
+"name": "UMB Financial",
+"share_class": "common",
+"webaddr": "www.umb.com"
+},
+"UMBFO": {
+"bank_name": "UMB Bank, National Association",
+"cik": 101382,
+"exchange": "Nasdaq",
+"fdic_cert": 8273,
+"name": "UMB Financial",
+"share_class": "preferred",
+"webaddr": "www.umb.com"
+},
+"UNB": {
+"bank_name": "Union Bank",
+"cik": 706863,
+"exchange": "Nasdaq",
+"fdic_cert": 14158,
+"name": "Union Bankshares",
+"share_class": "common",
+"webaddr": "www.ublocal.com"
+},
+"UNBK": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 35427,
+"name": "United National Bank",
+"share_class": "common"
+},
+"UNIB": {
+"bank_name": "University Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14587,
+"name": "University Bancorp",
+"share_class": "common",
+"webaddr": "www.university-bank.com"
+},
+"UNIF": {
+"bank_name": "UniBank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58407,
+"name": "U & I Financial Corp.",
+"share_class": "common",
+"webaddr": "www.unibankusa.com"
+},
+"UNPA": {
+"bank_name": "UNB Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 7631,
+"name": "UNB Corp.",
+"share_class": "common",
+"webaddr": "http://www.unb.bank"
+},
+"UNTN": {
+"bank_name": "Newport Federal Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 29089,
+"name": "United Tennessee Bankshares",
+"share_class": "common",
+"webaddr": "www.newportfederalbank.com"
+},
+"UNTY": {
+"bank_name": "Unity Bank",
+"cik": 920427,
+"exchange": "Nasdaq",
+"fdic_cert": 33503,
+"name": "Unity Bancorp",
+"share_class": "common",
+"webaddr": "www.unitybank.com"
+},
+"URSB": {
+"bank_name": "United Roosevelt Savings Bank",
+"cik": 2084261,
+"exchange": "OTC",
+"fdic_cert": 29170,
+"name": "URSB Bancorp",
+"share_class": "common",
+"webaddr": "ursb.bank"
+},
+"USB": {
+"bank_name": "U.S. Bank National Association",
+"cik": 36104,
+"exchange": "NYSE",
+"fdic_cert": 6548,
+"name": "U.S. Bancorp",
+"share_class": "common",
+"webaddr": "www.usbank.com"
+},
+"USCB": {
+"bank_name": "U. S. Century Bank",
+"cik": 1901637,
+"exchange": "Nasdaq",
+"fdic_cert": 57369,
+"name": "USCB Financial Holdings",
+"share_class": "common",
+"webaddr": "www.uscentury.com"
+},
+"USMT": {
+"bank_name": "US Metro Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 58310,
+"name": "US Metro Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "http://WWW.USMETROBANK.COM"
+},
+"UVSP": {
+"bank_name": "Univest  Bank and Trust Co.",
+"cik": 102212,
+"exchange": "Nasdaq",
+"fdic_cert": 7759,
+"name": "Univest Financial",
+"share_class": "common",
+"webaddr": "http://www.univest.net"
+},
+"UWHR": {
+"bank_name": "Uwharrie Bank",
+"cik": 898171,
+"exchange": "OTC",
+"fdic_cert": 24919,
+"name": "Uwharrie Capital",
+"share_class": "common",
+"webaddr": "http://www.uwharrie.com"
+},
+"VABK": {
+"bank_name": "Virginia National Bank",
+"cik": 1572334,
+"exchange": "Nasdaq",
+"fdic_cert": 34755,
+"name": "Virginia National Bankshares",
+"share_class": "common",
+"webaddr": "www.vnb.com"
+},
+"VERF": {
+"bank_name": "Versailles Savings and Loan Company",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28703,
+"name": "Versailles Financial Corp",
+"share_class": "common",
+"webaddr": "www.versaillessavingsbank.com"
+},
+"VLY": {
+"bank_name": "Valley National Bank",
+"cik": 714310,
+"exchange": "Nasdaq",
+"fdic_cert": 9396,
+"name": "Valley National Bancorp",
+"share_class": "common",
+"webaddr": "www.valley.com"
+},
+"VLYPN": {
+"bank_name": "Valley National Bank",
+"cik": 714310,
+"exchange": "Nasdaq",
+"fdic_cert": 9396,
+"name": "Valley National Bancorp",
+"share_class": "preferred",
+"webaddr": "www.valley.com"
+},
+"VLYPO": {
+"bank_name": "Valley National Bank",
+"cik": 714310,
+"exchange": "Nasdaq",
+"fdic_cert": 9396,
+"name": "Valley National Bancorp",
+"share_class": "preferred",
+"webaddr": "www.valley.com"
+},
+"VLYPP": {
+"bank_name": "Valley National Bank",
+"cik": 714310,
+"exchange": "Nasdaq",
+"fdic_cert": 9396,
+"name": "Valley National Bancorp",
+"share_class": "preferred",
+"webaddr": "www.valley.com"
+},
+"VWFB": {
+"bank_name": "GreenWay Bank",
+"cik": 1913838,
+"exchange": "OTC",
+"fdic_cert": 29495,
+"name": "VWF Bancorp",
+"share_class": "common",
+"webaddr": "www.greenwaybank.com"
+},
+"VYLD": {
+"bank_name": "JPMorgan Chase Bank, National Association",
+"cik": 19617,
+"exchange": "NYSE",
+"fdic_cert": 628,
+"name": "Jpmorgan Chase & Co",
+"share_class": "preferred",
+"webaddr": "www.jpmorganchase.com"
+},
+"WABC": {
+"bank_name": "Westamerica Bank",
+"cik": 311094,
+"exchange": "Nasdaq",
+"fdic_cert": 3430,
+"name": "Westamerica Bancorporation",
+"share_class": "common",
+"webaddr": "www.westamerica.com"
+},
+"WAFD": {
+"bank_name": "WaFd Bank",
+"cik": 936528,
+"exchange": "Nasdaq",
+"fdic_cert": 28088,
+"name": "Wafd Inc",
+"share_class": "common",
+"webaddr": "www.wafdbank.com"
+},
+"WAFDP": {
+"bank_name": "WaFd Bank",
+"cik": 936528,
+"exchange": "Nasdaq",
+"fdic_cert": 28088,
+"name": "Wafd Inc",
+"share_class": "preferred",
+"webaddr": "www.wafdbank.com"
+},
+"WAL": {
+"bank_name": "Western Alliance Bank",
+"cik": 1212545,
+"exchange": "NYSE",
+"fdic_cert": 57512,
+"name": "Western Alliance Bancorporation",
+"share_class": "common",
+"webaddr": "www.westernalliancebancorporation.com"
+},
+"WASH": {
+"bank_name": "The Washington Trust Company, of Westerly",
+"cik": 737468,
+"exchange": "Nasdaq",
+"fdic_cert": 23623,
+"name": "Washington Trust Bancorp",
+"share_class": "common",
+"webaddr": "www.washtrust.com"
+},
+"WBBW": {
+"bank_name": "Westbury Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28400,
+"name": "Westbury Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "westburybankwi.com"
+},
+"WBHC": {
+"bank_name": "Wilson Bank and Trust",
+"cik": 885275,
+"exchange": "OTC",
+"fdic_cert": 26962,
+"name": "Wilson Bank Holding",
+"share_class": "common",
+"webaddr": "www.wilsonbank.com"
+},
+"WCCB": {
+"bank_name": "West Coast Community Bank",
+"cik": null,
+"exchange": "Nasdaq",
+"fdic_cert": 57591,
+"name": "West Coast Community Bancorp",
+"share_class": "common",
+"webaddr": "www.wccb.com"
+},
+"WCFB": {
+"bank_name": "WCF Financial Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 28989,
+"name": "WCF Bancorp, Inc.",
+"share_class": "common",
+"webaddr": "www.wcfbank.com"
+},
+"WDFN": {
+"bank_name": "Woodlands Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 33136,
+"name": "Woodlands Financial Services Company",
+"share_class": "common",
+"webaddr": "www.woodlandsbank.com"
+},
+"WFC": {
+"bank_name": "Wells Fargo Bank, National Association",
+"cik": 72971,
+"exchange": "NYSE",
+"fdic_cert": 3511,
+"name": "Wells Fargo & Co.",
+"share_class": "common",
+"webaddr": "www.wellsfargo.com"
+},
+"WFCL": {
+"bank_name": "Bank of Stockton",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 1536,
+"name": "1867 Western Financial Corp",
+"share_class": "common",
+"webaddr": "www.bankofstockton.com"
+},
+"WNEB": {
+"bank_name": "Westfield Bank",
+"cik": 1157647,
+"exchange": "Nasdaq",
+"fdic_cert": 90300,
+"name": "Western New England Bancorp",
+"share_class": "common",
+"webaddr": "www.westfieldbank.com"
+},
+"WOBK": {
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 5873,
+"name": "Woodsboro Bank",
+"share_class": "common"
+},
+"WRIV": {
+"bank_name": "Signature Bank of Arkansas",
+"cik": 1328409,
+"exchange": "OTC",
+"fdic_cert": 89,
+"name": "White River Bancshares",
+"share_class": "common",
+"webaddr": "www.signature.bank"
+},
+"WSBC": {
+"bank_name": "WesBanco Bank, Inc.",
+"cik": 203596,
+"exchange": "Nasdaq",
+"fdic_cert": 803,
+"name": "Wesbanco",
+"share_class": "common",
+"webaddr": "www.wesbanco.com"
+},
+"WSBCO": {
+"bank_name": "WesBanco Bank, Inc.",
+"cik": 203596,
+"exchange": "Nasdaq",
+"fdic_cert": 803,
+"name": "Wesbanco",
+"share_class": "preferred",
+"webaddr": "www.wesbanco.com"
+},
+"WSBF": {
+"bank_name": "WaterStone Bank, SSB",
+"cik": 1569994,
+"exchange": "Nasdaq",
+"fdic_cert": 28513,
+"name": "Waterstone Financial",
+"share_class": "common",
+"webaddr": "www.wsbonline.com"
+},
+"WSBK": {
+"bank_name": "Winchester Savings Bank",
+"cik": 2047235,
+"exchange": "Nasdaq",
+"fdic_cert": 90308,
+"name": "Winchester Bancorp",
+"share_class": "common",
+"webaddr": "www.winchestersavings.com"
+},
+"WSFS": {
+"bank_name": "Wilmington Savings Fund Society, FSB",
+"cik": 828944,
+"exchange": "Nasdaq",
+"fdic_cert": 17838,
+"name": "WSFS Financial",
+"share_class": "common",
+"webaddr": "www.wsfsbank.com"
+},
+"WSSH": {
+"bank_name": "West Shore Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 14929,
+"name": "West Shore Bank Corp",
+"share_class": "common",
+"webaddr": "www.westshorebank.com"
+},
+"WTBA": {
+"bank_name": "West Bank",
+"cik": 1166928,
+"exchange": "Nasdaq",
+"fdic_cert": 15614,
+"name": "West Bancorporation",
+"share_class": "common",
+"webaddr": "WWW.WESTBANKSTRONG.COM"
+},
+"WTBFB": {
+"bank_name": "Washington Trust Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 1281,
+"name": "W.T.B. Financial Corporation",
+"share_class": "common",
+"webaddr": "www.watrust.com"
+},
+"WTFC": {
+"bank_name": "Wintrust Bank, National Association",
+"cik": 1015328,
+"exchange": "Nasdaq",
+"fdic_cert": 33935,
+"name": "Wintrust Financial",
+"share_class": "common",
+"webaddr": "www.wintrustbank.com"
+},
+"WTFCN": {
+"bank_name": "Wintrust Bank, National Association",
+"cik": 1015328,
+"exchange": "Nasdaq",
+"fdic_cert": 33935,
+"name": "Wintrust Financial",
+"share_class": "preferred",
+"webaddr": "www.wintrustbank.com"
+},
+"WVFC": {
+"bank_name": "West View Savings Bank",
+"cik": null,
+"exchange": "OTC",
+"fdic_cert": 27760,
+"name": "Wvs Financial Corp",
+"share_class": "common",
+"webaddr": "www.wvsbank.com"
+},
+"ZION": {
+"cik": 109380,
+"exchange": "Nasdaq",
+"fdic_cert": 2270,
+"name": "Zions Bancorporation",
+"share_class": "common"
+},
+"ZIONP": {
+"cik": 109380,
+"exchange": "Nasdaq",
+"fdic_cert": 2270,
+"name": "Zions Bancorporation",
+"share_class": "preferred"
+}
+}
+}

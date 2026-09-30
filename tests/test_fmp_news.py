@@ -62,10 +62,11 @@ class TestSubjectConfirmation(unittest.TestCase):
 
     def test_wrong_company_polluted_symbol_dropped(self):
         # The live CMA failure: FMP tagged Country-Music / mining releases to CMA.
-        evs = _poll("CMA", [
-            _row("Tractor Supply Celebrates Country Music's Rising Stars at CMA Fest"),
-            _row("First Stoping Operations at Perseus Mining's CMA Underground"),
-        ])
+        with patch.object(bank_mapping, "get_name", return_value="Comerica Incorporated"):
+            evs = _poll("CMA", [
+                _row("Tractor Supply Celebrates Country Music's Rising Stars at CMA Fest"),
+                _row("First Stoping Operations at Perseus Mining's CMA Underground"),
+            ])
         self.assertEqual(evs, [], "releases not about the bank must be dropped")
 
     def test_subject_confirmed_via_body_when_title_is_terse(self):

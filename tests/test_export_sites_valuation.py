@@ -149,12 +149,16 @@ class _ExportSite(unittest.TestCase):
         cards (ui.source_trace, not a table) are stubbed out."""
         self._bind(_StubSt(tab=tab, slider_values=slider_values))
         V = self.V
+        # "AAA" is a placeholder: every bank_mapping tier misses, so it is
+        # resolved as unknown instead of via the live SEC ticker search.
         with mock.patch.object(V, "_load_hist", lambda t: HIST), \
                 mock.patch.object(V, "_load_sec", lambda t: SEC), \
                 mock.patch.object(V, "_load_price", lambda t: price), \
                 mock.patch.object(V, "_derive_defaults", lambda t, h, s: dict(DEFAULTS)), \
                 mock.patch.object(V, "list_consensus", lambda t: []), \
                 mock.patch.object(V, "get_name", lambda t: f"{t} Bancorp"), \
+                mock.patch("data.bank_mapping.resolve_ticker",
+                           lambda t: {"ticker": t.upper()}), \
                 mock.patch.object(V, "_render_valuation_headline", _noop), \
                 mock.patch("data.consensus.list_consensus", lambda t: []):
             V.render_valuation_model("AAA")
