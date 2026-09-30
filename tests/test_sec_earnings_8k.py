@@ -582,3 +582,63 @@ class TestResolveTbvpsFallback(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReleaseBvpsShapes(unittest.TestCase):
+    """Release BVPS shapes the explicit label set missed (review P1-3 follow-up;
+    the TBVPS twin is TestReleaseTbvpsShapes). The reconstruction served
+    instead of the company's own figure:
+      BBT 2Q26 EX-99.1: "Book value per share (end of period)" 30.30 on
+        83,816,086 shares (2,539,796 / 83,816,086 = 30.30); reconstruction
+        30.105 on issued − treasury (84,364,733).
+      ONB 2Q26 Table 5: bare "Book value" 21.80 (8,340,124 / 382,537 = 21.80);
+        reconstruction 21.837."""
+
+    def test_end_of_period_qualifier_is_stripped(self):
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(_row("Book value per share (end of period)", "30.30", "", "29.88")
+                     + _row("Tangible book value per share (end of period) (non-GAAP)",
+                            "23.98", "", "23.48"))
+        self.assertEqual(extract_reported_bvps_status(html, reconstructed=30.105),
+                         (30.30, "ok"))
+
+    def test_end_of_period_qualifier_also_serves_tbvps(self):
+        html = _html(_row("Tangible book value per share (end of period) (non-GAAP)",
+                          "23.98", "", "23.48"))
+        self.assertEqual(extract_reported_tbvps_status(html, reconstructed=23.35, bvps=None),
+                         (23.98, "ok"))
+
+    def test_bare_book_value_row_ties_to_reconstruction(self):
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(_row("Book value", "21.80", "21.40", "21.17")
+                     + _row("Tangible book value", "14.32", "", "13.93"))
+        self.assertEqual(extract_reported_bvps_status(html, reconstructed=21.837),
+                         (21.80, "ok"))
+
+    def test_explicit_row_outranks_bare_row(self):
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(_row("Book value", "21.95")
+                     + _row("Book value per common share", "21.80"))
+        self.assertEqual(extract_reported_bvps_status(html, reconstructed=21.837),
+                         (21.80, "ok"))
+
+    def test_bare_row_dollar_total_is_not_bvps(self):
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        for total in ("8,340,124", "8,340"):          # $K and $M totals
+            html = _html(_row("Book value", total))
+            self.assertEqual(extract_reported_bvps_status(html, reconstructed=21.837),
+                             (None, "not_disclosed"), total)
+
+    def test_bare_row_needs_the_reconstruction(self):
+        # With nothing to tie to, a bare "book value" is never accepted — even
+        # though it is above the in-release TBVPS (a growth or ratio row can be).
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(_row("Book value", "21.80") + _row("Tangible book value per share", "14.32"))
+        self.assertEqual(extract_reported_bvps_status(html, reconstructed=None),
+                         (None, "not_disclosed"))
+
+    def test_bare_row_far_from_reconstruction_is_not_a_conflict(self):
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(_row("Book value", "9.5"))        # e.g. a growth % row
+        self.assertEqual(extract_reported_bvps_status(html, reconstructed=21.837),
+                         (None, "not_disclosed"))
