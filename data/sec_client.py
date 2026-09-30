@@ -1449,6 +1449,22 @@ def _parent_equity_at(facts: dict, end: str):
     return incl, _SE_NCI, "No noncontrolling interest — total equity is parent equity"
 
 
+def _parent_equity_series(facts: dict) -> dict:
+    """{end 'YYYY-MM-DD': parent equity} for every 10-K/10-Q end either equity
+    tag carries, each resolved by _parent_equity_at; ends it can't resolve
+    (unseparable NCI) are omitted, never filled from the other tag."""
+    ug = facts.get("facts", {}).get("us-gaap", {})
+    ends = {e["end"] for c in (_SE, _SE_NCI)
+            for e in ug.get(c, {}).get("units", {}).get("USD", [])
+            if e.get("form") in ("10-K", "10-Q") and e.get("end")}
+    out = {}
+    for end in ends:
+        tup, _, _ = _parent_equity_at(facts, end)
+        if tup and tup[0] is not None:
+            out[end] = tup[0]
+    return out
+
+
 def get_fundamentals_with_provenance(cik: int) -> dict:
     """
     Fetch fundamentals + track WHERE each value came from.

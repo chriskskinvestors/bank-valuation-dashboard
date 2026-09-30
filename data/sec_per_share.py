@@ -16,7 +16,9 @@ import pandas as pd
 
 from data.sec_client import (
     _not_a_carrying_total,
+    _parent_equity_series,
     _same_date_preferred_count,
+    fetch_company_facts,
     get_historical_fundamentals,
 )
 
@@ -125,16 +127,19 @@ def _merged_series(cik: int, concepts) -> dict:
 
 
 def _equity_series(cik: int) -> dict:
-    """Equity per end across the snapshot path's concept ladder (sec_client
-    get_latest_fundamentals falls back to the including-NCI tag when the
-    primary is missing/stale): AUBN/PRK tag ONLY the including-NCI concept, so
-    a primary-only read rendered their entire per-share history n/a. Per-END
-    merge (primary wins wherever both exist) so tag-switchers resolve both
-    eras."""
-    return _merged_series(cik, [
-        "StockholdersEquity",
-        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-    ])
+    """Parent equity per balance-sheet end, resolved exactly like the snapshot
+    (sec_client._parent_equity_at): plain StockholdersEquity, else the
+    including-NCI total less same-date MinorityInterest, else — when a
+    noncontrolling interest may exist that no fact separates — no value (the
+    quarter renders n/a). AUBN/PRK tag ONLY the including-NCI concept; RBB's
+    including-NCI total carries a $72K NCI at every end tagged since
+    2024-06-30 (2026-03-31: $531,054K total, $530,982K parent), which the old
+    per-end tag merge served as parent equity."""
+    facts = fetch_company_facts(cik)
+    if not facts:
+        return {}
+    return {pd.Timestamp(end).normalize(): v
+            for end, v in _parent_equity_series(facts).items() if v}
 
 
 def _preferred_share_counts(cik: int, common: dict) -> tuple[dict, set]:
@@ -319,6 +324,9 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     n = max(int(n_quarters), 1)
     ends = [pd.Timestamp(e).normalize() for e in recent_quarter_ends(n)]
     labels = [quarter_label(e) for e in ends]
+    # v8: equity is parent equity per end via sec_client._parent_equity_at
+    # (RBB's including-NCI total had its $72K NCI served as parent equity;
+    # unseparable NCI now n/a).
     # v7: a preferred share count equal to the same-end common count is the
     # common line tagged as preferred — no value subtracted there (PLBC).
     # v6: preferred par-only / per-share liquidation values are no longer a
@@ -329,7 +337,7 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     # pre-warmed v4 grids so the fixed values serve once re-warmed. (v4 was
     # the CCFN share-count corroboration bump, v3 the intangible-adjustment
     # main-path mirror.)
-    key = f"sec_pershare:v7:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
+    key = f"sec_pershare:v8:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
     cached = cache.get(key, max_age_s=None)     # freshness is _GRID_TTL_S (36h), not the 24h default
     if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached

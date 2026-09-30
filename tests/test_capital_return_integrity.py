@@ -12,6 +12,11 @@ D3 — absent dividend/buyback data fabricated 0% shareholder yields and
      $0 quarterly totals (fillna(0)).
 D6 — duration concepts (DPS, flows) deduped by end-date alone mixed 3-month
      and YTD-cumulative facts (JPM "DPS TTM" $14.60 vs true ~$5.70).
+D7 — equity read the first fresh concept (plain StockholdersEquity, 2-year
+     tolerance) and forward-filled it: tag-switchers carried their last
+     plain-SE balance into later quarters (TMP 713,444,000 @ 2024-12-31 in
+     every 2025-26 row) and RBB's NCI-inclusive total read as parent equity
+     (2026-09-30; real fragments from tests.test_parent_equity_resolution).
 
 All expectations hand-computed. Dates are generated relative to today so the
 2-year freshness cutoff in _extract_series never silently stales the fixtures.
@@ -21,6 +26,7 @@ from __future__ import annotations
 import sys
 import unittest
 from datetime import date
+from unittest.mock import patch
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +43,8 @@ from tests import _streamlit_stub  # noqa: E402
 
 _streamlit_stub.install()
 
+import analysis.capital_return as cr  # noqa: E402
+import tests.test_parent_equity_resolution as _pe  # noqa: E402
 from analysis.capital_return import (  # noqa: E402
     _derive_quarterly_from_ytd,
     _full_window_sum,
@@ -351,6 +359,38 @@ class TestP29DividendsFromCashFlow(unittest.TestCase):
         tl = res["timeline"]
         self.assertEqual(list(tl["dividends_q"]), [450e6, 490e6])
         self.assertEqual(list(tl["dividends_q_ytd"]), [450e6, 940e6])
+class TestParentEquityTimeline(unittest.TestCase):
+    """D7. Values hand-verified against R2.htm (see
+    tests.test_parent_equity_resolution): RBB Mar 31 2026 total 531,054,000
+    less NCI 72,000 = 530,982,000 (10-Q 0001437749-26-015865); TMP Jun 30
+    2026 "Total Equity" 959,932 ($K), no NCI (10-Q 0001005817-26-000112)."""
+
+    def _equity(self, facts):
+        with patch.object(cr, "fetch_company_facts", return_value=facts):
+            tl = cr.build_capital_return_timeline(1)
+        return dict(zip(tl["end"], tl["equity"]))
+
+    def test_tmp_stale_plain_se_not_carried_forward(self):
+        eq = self._equity(_pe.TMP)
+        self.assertEqual(eq["2026-06-30"], 959_932_000)     # was 713,444,000
+        self.assertEqual(eq["2026-03-31"], 946_741_000)
+        self.assertEqual(eq["2024-12-31"], 713_444_000)
+
+    def test_rbb_nci_removed(self):
+        eq = self._equity(_pe.RBB)
+        self.assertEqual(eq["2026-03-31"], 531_054_000 - 72_000)
+        self.assertEqual(eq["2026-06-30"], 535_177_000 - 72_000)
+
+    def test_unseparable_nci_is_na_not_forward_filled(self):
+        # RBB's real Q1-2026 dividend fact (10-Q 0001437749-26-015865) gives
+        # 2026-03-31 a timeline row even when equity can't resolve there.
+        facts = _pe._drop(_pe.RBB, _pe.MI, "2026-03-31")
+        facts["facts"]["us-gaap"]["PaymentsOfDividends"] = {"units": {"USD": [
+            _pe._e("2026-03-31", 2758000, "0001437749-26-015865", "10-Q",
+                   "2026-05-08", "2026-01-01")]}}
+        eq = self._equity(facts)
+        self.assertTrue(pd.isna(eq["2026-03-31"]))
+        self.assertEqual(eq["2026-06-30"], 535_105_000)
 
 
 if __name__ == "__main__":

@@ -19,9 +19,12 @@ Pins (all against a mocked get_historical_fundamentals; no network):
   7. equity falls back to the including-NCI concept (AUBN/PRK, 2026-07-22);
   8. preferred presence/value carry at most ~1y past origin — an abandoned
      tag is not presence (CTBI/WABC, 2026-07-22) — with the PNC par-zero
-     guard intact.
+     guard intact;
+  9. equity is PARENT equity per end via sec_client._parent_equity_at — NCI
+     removed (RBB), unseparable NCI n/a (2026-09-30).
 """
 import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 # Order-independent streamlit stub (shared helper) before importing data
@@ -33,6 +36,7 @@ _streamlit_stub.install()
 import pandas as pd  # noqa: E402
 
 import data.sec_per_share as sps  # noqa: E402
+import tests.test_parent_equity_resolution as _pe  # noqa: E402
 
 Q1 = pd.Timestamp("2026-03-31")
 Q4 = pd.Timestamp("2025-12-31")
@@ -42,11 +46,26 @@ def _df(rows):
     return pd.DataFrame([{"end": q, "val": v} for q, v in rows])
 
 
-def _mock_hist(series_by_concept):
+def _mock_hist(series_by_concept, facts=None):
+    """Stub both read seams: get_historical_fundamentals (per-concept frames)
+    and fetch_company_facts (equity is resolved from raw facts by
+    sec_client._parent_equity_at). Without `facts`, the equity blob is built
+    from the same {concept: [(end, val)]} rows."""
     def fake(cik, concept):
         rows = series_by_concept.get(concept)
         return _df(rows) if rows else None
-    return patch.object(sps, "get_historical_fundamentals", side_effect=fake)
+    if facts is None:
+        facts = {"facts": {"us-gaap": {
+            c: {"units": {"USD": [
+                {"end": q.date().isoformat(), "val": v, "form": "10-Q",
+                 "filed": "2026-05-01", "accn": "x"} for q, v in rows]}}
+            for c, rows in series_by_concept.items()}}}
+    stack = ExitStack()
+    stack.enter_context(patch.object(sps, "get_historical_fundamentals",
+                                     side_effect=fake))
+    stack.enter_context(patch.object(sps, "fetch_company_facts",
+                                     return_value=facts))
+    return stack
 
 
 class TestPreferredSubtracted(unittest.TestCase):
@@ -376,6 +395,75 @@ class TestSharesCorroboration(unittest.TestCase):
         with _mock_hist(data):
             r = sps._bank_per_share(1, [Q1])[Q1]
         self.assertAlmostEqual(r["bvps_hist"], 10.0)
+
+
+class TestParentEquityPerEnd(unittest.TestCase):
+    """Equity per end is PARENT equity, resolved like the snapshot
+    (sec_client._parent_equity_at). The old per-end tag merge served RBB's
+    NCI-inclusive total as parent equity at every end it lacked plain SE.
+    Real companyfacts fragments (tests.test_parent_equity_resolution),
+    hand-verified against R2.htm:
+
+      RBB 10-Q 0001437749-26-015865, Mar 31 2026: "Total shareholders'
+          equity" 531,054,000 incl. "Non-controlling interest" 72,000 →
+          parent 530,982,000; Goodwill 71,498,000; 17,074,159 shares; no
+          preferred. BVPS 530,982,000 / 17,074,159 = 31.0986 (old 31.1028);
+          TBVPS 459,484,000 / 17,074,159 = 26.9111.
+      TMP 10-Q 0001005817-26-000112, Jun 30 2026: "Total Equity" 959,932
+          ($K), no NCI line, tagged ONLY as the including-NCI concept;
+          14,410,189 issued − 90,521 treasury = 14,319,668 shares →
+          BVPS 67.0359.
+    """
+
+    RBB_SHARES = {
+        "CommonStockSharesOutstanding": [(Q1, 17_074_159.0)],
+        "WeightedAverageNumberOfDilutedSharesOutstanding": [(Q1, 17_174_526.0)],
+        "Goodwill": [(Q1, 71_498_000.0)],
+        "PreferredStockValue": [(Q1, 0.0)],
+    }
+
+    def test_rbb_nci_removed_per_end(self):
+        with _mock_hist({}, facts=_pe.RBB):
+            eq = sps._equity_series(1)
+        self.assertEqual(eq[Q1], 531_054_000 - 72_000)
+        self.assertEqual(eq[pd.Timestamp("2026-06-30")], 535_177_000 - 72_000)
+
+    def test_rbb_per_share_on_parent_equity(self):
+        with _mock_hist(self.RBB_SHARES, facts=_pe.RBB):
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertAlmostEqual(r["bvps_hist"], 530_982_000 / 17_074_159)
+        self.assertAlmostEqual(r["bvps_hist"], 31.0986, places=4)
+        self.assertAlmostEqual(r["tbvps_hist"], 459_484_000 / 17_074_159)
+        self.assertAlmostEqual(r["tbvps_hist"], 26.9111, places=4)
+
+    def test_unseparable_nci_is_na_not_the_total(self):
+        # MinorityInterest missing at Q1 while RBB's $72K NCI was tagged a
+        # quarter earlier: the total can't be split → n/a, never 531,054,000.
+        facts = _pe._drop(_pe.RBB, _pe.MI, "2026-03-31")
+        with _mock_hist(self.RBB_SHARES, facts=facts):
+            self.assertNotIn(Q1, sps._equity_series(1))
+            r = sps._bank_per_share(1, [Q1])[Q1]
+        self.assertIsNone(r["bvps_hist"])
+        self.assertIsNone(r["tbvps_hist"])
+
+    def test_tmp_including_nci_only_resolves(self):
+        q = pd.Timestamp("2026-06-30")
+        data = {"CommonStockSharesIssued": [(q, 14_410_189.0)],
+                "TreasuryStockCommonShares": [(q, 90_521.0)],
+                "WeightedAverageNumberOfDilutedSharesOutstanding":
+                    [(q, 14_333_390.0)]}
+        with _mock_hist(data, facts=_pe.TMP):
+            eq = sps._equity_series(1)
+            r = sps._bank_per_share(1, [q])[q]
+        self.assertEqual(eq[q], 959_932_000)
+        self.assertEqual(eq[pd.Timestamp("2024-12-31")], 713_444_000)
+        self.assertAlmostEqual(r["bvps_hist"], 959_932_000 / 14_319_668)
+        self.assertAlmostEqual(r["bvps_hist"], 67.0359, places=4)
+
+    def test_deal_comps_tce_uses_parent_equity(self):
+        with _mock_hist(self.RBB_SHARES, facts=_pe.RBB):
+            tce, end = sps.tangible_common_equity_at(1, "2026-04-30")
+        self.assertEqual((tce, end), (459_484_000.0, "2026-03-31"))
 
 
 if __name__ == "__main__":
