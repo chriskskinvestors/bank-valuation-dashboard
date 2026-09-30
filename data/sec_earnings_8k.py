@@ -334,7 +334,7 @@ _ENDING_SHARES_LABELS: frozenset = frozenset({
 # trailing ")") leaves them intact; we peel them here. A meaningful qualifier
 # like "(te)" is NOT in this set, so it is preserved.
 _TRAIL_QUALIFIER = re.compile(
-    r"\s*\((?:non[- ]?gaap|period[- ]end|[a-z0-9]{1,3}(?:/[a-z0-9]{1,3})?)\)\s*$"
+    r"\s*\((?:non[- ]?gaap|period[- ]end|end of period|[a-z0-9]{1,3}(?:/[a-z0-9]{1,3})?)\)\s*$"
 )
 
 
@@ -410,6 +410,13 @@ def _tbvps_candidate(html_bytes: bytes, rows: list[tuple]) -> tuple:
 def _match_bvps_label(cl: str) -> bool:
     """True when a cleaned row label denotes (GAAP) book value per COMMON share."""
     return _strip_trailing_qualifiers(cl) in _BVPS_LABELS
+
+
+# SECOND-TIER BVPS label without "per share" — ONB 2Q26 prints "Book value"
+# ($21.80) in its Per Common Share Data block. The same words can label a
+# dollar TOTAL, so it is consulted only when no explicit per-share row exists
+# and must tie to the reconstruction (±15%); nothing weaker admits it.
+_BVPS_BARE_LABELS: frozenset = frozenset({"book value"})
 
 
 def _internal_tie_out(rows: list[tuple], v: float) -> bool:
@@ -754,6 +761,22 @@ def extract_reported_bvps_status(
         if tbvps is not None and tbvps > 0:
             return v, "ok"
         return None, "not_disclosed"
+    # Second tier (no explicit per-share row): a bare "book value" row, the
+    # FIRST one decides. Stricter than the explicit tier: it must tie to the
+    # reconstruction — a $K/$M total or a growth % under the same words fails
+    # the per-share magnitude or the ±15% band — and a miss is "not_disclosed",
+    # never a release-vs-reconstruction conflict (the row is not known to BE
+    # the BVPS).
+    for cl, nums in rows:
+        if _strip_trailing_qualifiers(cl) not in _BVPS_BARE_LABELS:
+            continue
+        v = nums[0]
+        if (v is None or not (0 < v < 10_000)
+                or (tbvps is not None and tbvps > 0 and v < tbvps)
+                or reconstructed is None or reconstructed <= 0
+                or abs(v - reconstructed) / reconstructed >= 0.15):
+            return None, "not_disclosed"
+        return v, "ok"
     return None, "not_disclosed"
 
 
@@ -776,7 +799,8 @@ def reported_bvps_status(
     rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
     tk = f"{tbvps:.4f}" if tbvps is not None else "na"
     # v2: "… per common share at end of period" label (OCFC miss).
-    ckey = f"reported_bvps:v2:{f8k['accession']}:{rk}:{tk}"
+    # v3: "(end of period)" qualifier (BBT) + bare "book value" tier (ONB).
+    ckey = f"reported_bvps:v3:{f8k['accession']}:{rk}:{tk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling.
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
@@ -807,7 +831,8 @@ def reported_bvps_status(
 #     case would otherwise serve the miss forever.
 # v6: "… per common share at end of period" labels (OCFC miss).
 # v7: bare "tangible (common) book value" rows (ONB) + prose statement (JPM).
-_REPORTED_TBVPS_CKEY_V = "v7"
+# v8: "(end of period)" trailing qualifier (BBT) — changes which row matches.
+_REPORTED_TBVPS_CKEY_V = "v8"
 
 
 def reported_tbvps_status(
