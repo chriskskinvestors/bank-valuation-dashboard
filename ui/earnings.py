@@ -1398,7 +1398,9 @@ def _cal_tr(r: dict, soon: bool) -> str:
         _tk_cell(r["ticker"]),
         _cell(get_name(r["ticker"]), "nm"),
         _cell(date_str),
-        _cell("✓" if r["confirmed"] else None),
+        # ✓ = confirmed fact; ◐ = the company's published call date fits the
+        # estimate (date still projected); — = estimate only.
+        _cell("✓" if r["confirmed"] else ("◐" if r.get("call_consistent") else None)),
         _cell(days_str),
         _cell(r.get("when")),
         _cell(_call_label(r.get("call_date"), r.get("call_time"))),
@@ -1460,8 +1462,9 @@ def _render_earnings_calendar(watchlist: list[str]):
         "Full bank universe, by week. Two dates per bank: **Release** = the "
         "earnings release date (FMP/yfinance estimate; **When** is its before/"
         "after-open timing, a **✓** marks a confirmed date — the company's own "
-        "announcement, or FMP confirming that date — others are **(proj.)**), "
-        "and **Call** = "
+        "announcement, or FMP confirming that date; a **◐** means the company "
+        "has published a call date that fits the estimate, which stays "
+        "**(proj.)**; others are **(proj.)**), and **Call** = "
         "the conference-call date + time (often a "
         "different day — e.g. release after close, call next morning), with "
         "**Webcast / Dial-in**, all from the bank's own IR announcement, plus the "
