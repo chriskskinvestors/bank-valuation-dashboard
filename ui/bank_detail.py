@@ -12,7 +12,7 @@ from data.bank_mapping import get_name, get_bank_info, get_ir_url
 from data import sec_client
 from data.ibkr_client import get_ibkr_client
 from analysis.peer_comparison import build_radar_data, get_peer_group_by_asset_size
-from utils.formatting import format_value
+from utils.formatting import format_value, usd_compact_from_thousands
 from ui.charts import (
     price_chart, price_readout, metrics_trend_chart, peer_radar_chart, balance_sheet_chart,
     asset_composition_chart, loan_mix_chart, funding_mix_chart,
@@ -44,6 +44,65 @@ def _usd_b_thou(v):
     """FDIC $thousands → $X.XB / $XXX.XM."""
     v = _num(v)
     return _usd_b(v * 1000) if v is not None else None
+
+
+def _page_quote(ticker):
+    """The ONE live quote a Corporate Profile render uses (UX-P1-13): fetched
+    once per page run and handed to every block, so Market Data, Valuation and
+    the price-card header can't show different "current" prices."""
+    try:
+        from data.fmp_client import get_quote
+        return get_quote(ticker) or {}
+    except Exception:
+        return {}
+
+
+def _page_price(quote, row):
+    """(price, change, change_pct) for every block on the page. The quote's own
+    fields when it has a price; otherwise the metrics row's cached price and
+    day change (no $ change there). Never mixes the two sources."""
+    quote = quote or {}
+    if _num(quote.get("price")) is not None:
+        return (_num(quote.get("price")), _num(quote.get("change")),
+                _num(quote.get("change_pct")))
+    return _num(row.get("price")), None, _num(row.get("change_pct"))
+
+
+def _quote_time_label(quote):
+    """'2:31 PM ET' (today, ET) / 'Sep 29, 4:00 PM ET' from the quote's epoch
+    timestamp; None when the quote has no price or no timestamp."""
+    quote = quote or {}
+    ts = _num(quote.get("timestamp"))
+    if ts is None or _num(quote.get("price")) is None:
+        return None
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    et_zone = ZoneInfo("America/New_York")
+    et = datetime.fromtimestamp(ts, timezone.utc).astimezone(et_zone)
+    t = et.strftime("%I:%M %p").lstrip("0") + " ET"
+    if et.date() == datetime.now(et_zone).date():
+        return t
+    return f"{_MONTHS[et.month]} {et.day}, {t}"
+
+
+def _price_header_html(hist_df, ticker, page_price):
+    """The price card's header. With a page price it reads that price (the
+    same one Market Data shows) and the period move from the chart's first bar
+    to it; without one it is the chart's own last bar, dated so it never
+    passes for a live quote."""
+    if hist_df is None or hist_df.empty or "close" not in hist_df.columns:
+        return price_readout(hist_df, ticker, over_period=False)
+    d = hist_df.sort_values("date")
+    if page_price is not None:
+        # Ordinal dates: cached history can carry string dates, and only the
+        # order (first bar → now) matters to the readout.
+        two = pd.DataFrame({"date": [0, 1],
+                            "close": [float(d["close"].iloc[0]), page_price]})
+        return price_readout(two, ticker, over_period=False)
+    last = pd.to_datetime(d["date"].iloc[-1], errors="coerce")
+    when = (f" <span style='color:var(--text-muted);font-weight:400;'>"
+            f"· close {_MONTHS[last.month]} {last.day}</span>") if pd.notna(last) else ""
+    return price_readout(hist_df, ticker, over_period=False) + when
 
 
 def _fy_end(mmdd):
@@ -178,13 +237,16 @@ def _sec_lag_note(row) -> str | None:
             f"are as of {_mdy(facts)}.")
 
 
-def _render_valuation_performance_tables(row, fdic_rec=None):
+def _render_valuation_performance_tables(row, fdic_rec=None, quote=None):
     """Valuation + Performance as two side-by-side reference tables, matching the
     Market Data / Company Profile format above (consistent, dense).
 
     Performance ratios read from a live FDIC record (passed in) rather than the
     batch metrics row — the batch build can silently drop FDIC fields on a
-    transient API failure, which left this column blank."""
+    transient API failure, which left this column blank.
+
+    Last Price / Change come from the page's one quote (`quote`, see
+    _page_price) so they match the Market Data block (UX-P1-13)."""
     fdic_rec = fdic_rec or {}
 
     def disp(key):
@@ -197,7 +259,7 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
         v = _num(fdic_rec.get(field))
         return f"{v:.2f}%" if v is not None else None
 
-    chg = _num(row.get("change_pct"))
+    last_px, _, chg = _page_price(quote, row)
     chg_html = None
     if chg is not None:
         c = "var(--success)" if chg >= 0 else "var(--danger)"
@@ -207,7 +269,7 @@ def _render_valuation_performance_tables(row, fdic_rec=None):
     bv_label = _ps_label(row, "BV / Share", "bvps_source")
     eps_label = _eps_label(row)
     valuation = [
-        ("Last Price", disp("price")),
+        ("Last Price", format_value(last_px, "currency", 2) if last_px is not None else None),
         ("Change", chg_html),
         ("Market Cap", disp("market_cap")),
         ("P/E (LTM)", disp("pe_ratio")),
@@ -281,8 +343,9 @@ def _render_financial_highlights_table(ticker, info):
         return _num(rec.get(f))
 
     def bil(rec, f):
-        v = num(rec, f)
-        return f"${v/1e6:.2f}B" if v is not None else "—"
+        # Shared auto-scaling formatter: a sub-$1B bank reads $871.8M, not
+        # $0.87B (UX-P1-28). FDIC fields are $thousands.
+        return usd_compact_from_thousands(num(rec, f))
 
     def pct(rec, f):
         v = num(rec, f)
@@ -391,7 +454,7 @@ def _render_latest_activity(ticker, info):
                         "New filings appear within minutes of hitting EDGAR")
 
 
-def _render_snapshot(ticker, info, name, row, fdic_rec=None):
+def _render_snapshot(ticker, info, name, row, fdic_rec=None, quote=None):
     """Capital-IQ-style snapshot: identity line, quick links, and a two-column
     Market Data / Company Profile block built from the data we already pull."""
     cik = info.get("cik") if info else None
@@ -403,12 +466,8 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
             filing = sec_client.get_filing_info(cik) or {}
         except Exception:
             filing = {}
-    quote = {}
-    try:
-        from data.fmp_client import get_quote
-        quote = get_quote(ticker) or {}
-    except Exception:
-        quote = {}
+    if quote is None:
+        quote = _page_quote(ticker)
     if fdic_rec is None:
         fdic_rec = {}
         if cert:
@@ -471,11 +530,8 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None):
     ids_html = " · ".join(ident_bits + id_links)
 
     # ── Market Data + Company Profile (two columns) ────────────────────
-    price = _num(quote.get("price")) if quote.get("price") is not None else _num(row.get("price"))
+    price, chg, chg_pct = _page_price(quote, row)
     prev = _num(quote.get("close"))
-    chg = _num(quote.get("change")); chg_pct = _num(quote.get("change_pct"))
-    if chg_pct is None:
-        chg_pct = _num(row.get("change_pct"))
     o = _num(quote.get("open")); hi = _num(quote.get("high")); lo = _num(quote.get("low"))
     vol = _num(quote.get("volume")) or _num(row.get("volume"))
     shares = _num(fund.get("shares_outstanding"))
@@ -695,11 +751,16 @@ def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",
 
 
 @st.fragment
-def _render_price_panel(ticker: str):
+def _render_price_panel(ticker: str, page_price: float | None = None):
     """Interactive price + volume chart. One header row: the price readout
     (ticker · last · period move) on the left, a flat Koyfin-style timeframe strip
     (borderless square buttons, active on a subtle brand tint) right-aligned. The
-    chart drops its own title (show_title=False) so the readout isn't shown twice."""
+    chart drops its own title (show_title=False) so the readout isn't shown twice.
+
+    page_price: the page's one quote price (UX-P1-13) — the readout shows it,
+    not the chart's last bar, so it can't disagree with Market Data. A
+    fragment rerun (timeframe click) reuses the args of the full run, so the
+    header keeps that same quote."""
     with st.container(key="ov_price_box"):
         st.markdown(
             "<style>"
@@ -749,7 +810,7 @@ def _render_price_panel(ticker: str):
         except Exception:
             pass
         _hl.markdown(
-            f"<div class='ovp-readout'>{price_readout(hist_df, ticker, over_period=False)}</div>",
+            f"<div class='ovp-readout'>{_price_header_html(hist_df, ticker, page_price)}</div>",
             unsafe_allow_html=True)
         st.plotly_chart(price_chart(hist_df, ticker, show_title=False),
                         use_container_width=True, key=f"ov_price_{ticker}")
@@ -885,14 +946,19 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     # table stays exactly its prior size; only their positions change. Each pair
     # is one markdown block so the only break between the two tables is the lower
     # table's heading (no Streamlit inter-block gap).
+    # ONE quote for the whole render (UX-P1-13): Market Data, Valuation and
+    # the price-card header all read it.
+    quote = _page_quote(ticker)
+    page_price = _page_price(quote, row)[0]
     with timed("cp.snapshot"):
-        mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec)
+        mkt_html, co_html, ids_html = _render_snapshot(ticker, info, name, row, fdic_rec,
+                                                       quote=quote)
     from ui.chrome import title_bar
     title_bar(f"{name} ({ticker})", "Corporate Profile", ids_html)
     # Breathing room between the identity line and the ledger headers — the app's
     # global 0.45rem block gap leaves them almost touching.
     st.markdown("<div style='height:0.6rem'></div>", unsafe_allow_html=True)
-    val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec)
+    val_html, perf_html = _render_valuation_performance_tables(row, fdic_rec, quote)
     _gap = '<div style="margin-top:0.5rem"></div>'  # heading-sized break only
     # Two stacked-pair ledger columns at 1/6 width each, then the two charts
     # side by side filling the right two-thirds: price (col 3) and the
@@ -902,7 +968,7 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     _cols[1].markdown(val_html + _gap + co_html, unsafe_allow_html=True)
     with _cols[2]:
         with timed("cp.price_panel"):
-            _render_price_panel(ticker)
+            _render_price_panel(ticker, page_price)
     with _cols[3]:
         with timed("cp.val_panel"):
             _render_valuation_panel(ticker, info)
@@ -915,10 +981,12 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
         st.markdown(
             f'<div style="margin-top:5px; font-size:0.75rem; color:var(--warning);">'
             f'{_lag}</div>', unsafe_allow_html=True)
+    _qt = _quote_time_label(quote)
     st.markdown(
         '<div style="margin-top:5px; font-size:0.75rem; color:var(--text-secondary);">'
         'Sources: SEC filings (EDGAR) &nbsp;·&nbsp; FDIC Call Report &nbsp;·&nbsp; '
-        'FMP (market data)</div>', unsafe_allow_html=True)
+        'FMP (market data' + (f', quote as of {_qt}' if _qt else '') + ')</div>',
+        unsafe_allow_html=True)
     st.markdown("---")
     # Highlights (year-ago vs latest) beside the activity feed so both fill the
     # width instead of each spreading across the page.

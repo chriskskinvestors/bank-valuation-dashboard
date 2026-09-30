@@ -53,6 +53,63 @@ class TestAnnouncedReleaseDate(unittest.TestCase):
                 "July 23, 2026, after the close. Conference call on July 24.")
         self.assertEqual(_parse_release_date(body, self.T), "2026-07-23")
 
+    def test_quarter_end_named_as_period_is_never_a_release_date(self):
+        """Owner rule 2026-09-30: a fiscal quarter-end named as the PERIOD
+        ('results for the quarter ended September 30, 2026') is not a release
+        date — no bank releases on the quarter end. Only the period phrasing
+        rejects it; an explicitly stated release day still parses."""
+        from data.earnings_call import _is_period_end_ref
+        T = "2026-09-30"
+        # Period clause before the release date: the release date wins.
+        self.assertEqual(_parse_release_date(
+            "Acme will report results for the quarter ended September 30, 2026 "
+            "on Friday, October 16, 2026.", T), "2026-10-16")
+        # Period clause carrying the on/weekday anchor: rejected, not Sep 30.
+        self.assertIsNone(_parse_release_date(
+            "Acme will report results for the period ending on Wednesday, "
+            "September 30, 2026.", T))
+        self.assertIsNone(_parse_release_date(
+            "Acme will release results for the quarter ended Wednesday, "
+            "September 30, 2026.", T))
+        self.assertIsNone(_announced_release_date(
+            "Acme to Report Results for the Quarter Ended Wednesday, "
+            "September 30, 2026", T))
+        # Explicit release-day phrasing on a quarter-end still parses.
+        self.assertEqual(_parse_release_date(
+            "Acme will report third quarter results on Wednesday, "
+            "September 30, 2026.", T), "2026-09-30")
+        # Non-quarter-end dates are never touched by the guard.
+        self.assertFalse(_is_period_end_ref(
+            "quarter ended on October 16, 2026", "2026-10-16", 17))
+        self.assertTrue(_is_period_end_ref(
+            "for the quarter ended September 30, 2026", "2026-09-30", 22))
+
+    def test_dividend_payable_date_is_never_a_release_date(self):
+        """MTB 2026-09-30 (owner report, prod events store): a google_news
+        item typed 'earnings' by its "third quarter" keyword — "M&T Bank
+        Corporation Announces Third Quarter of 2026 Common Stock Dividend,
+        Payable on September 30, 2026" — parsed as an ANNOUNCED release date
+        of 2026-09-30 (announce cue + on-date, no results/earnings), which
+        overrode both estimates (Oct 16) and rendered "Today ✓" on the
+        quarter END. Neither the headline nor a body 'payable on' parses."""
+        T = "2026-09-30"
+        self.assertIsNone(_announced_release_date(
+            "M&T Bank Corporation Announces Third Quarter of 2026 Common Stock "
+            "Dividend, Payable on September 30, 2026", T))
+        self.assertIsNone(_parse_release_date(
+            "M&T Bank Corporation announced that it has declared a quarterly "
+            "cash dividend of $1.50 per share on its common stock, payable on "
+            "September 30, 2026 to shareholders of record on September 1, 2026.",
+            T))
+        # Effective / held-on dates are not release dates either.
+        self.assertIsNone(_parse_release_date(
+            "Acme announced it will increase its prime rate effective on "
+            "Thursday, October 1, 2026.", T))
+        # A genuine announcement still confirms its stated release day.
+        self.assertEqual(_announced_release_date(
+            "Acme Bancorp Will Announce Third Quarter 2026 Results on "
+            "October 16, 2026", T), "2026-10-16")
+
     def test_announcement_headlines(self):
         f = _announced_release_date
         self.assertEqual(f("Equity Bancshares, Inc. Will Announce Second Quarter "
@@ -303,7 +360,9 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertEqual(jpm["date"], "2026-07-14")       # yfinance date wins over FMP's 08-06
         self.assertEqual(jpm["days_until"], 1)
         self.assertEqual(jpm["when"], "Before open")      # overlaid from FMP
-        self.assertTrue(jpm["confirmed"])                 # FMP confirmed
+        # FMP's confirmed flag belongs to FMP's 08-06 date, not the displayed
+        # yfinance 07-14 — it does not carry over (MTB 2026-09-30 class).
+        self.assertFalse(jpm["confirmed"])
         self.assertEqual(jpm["eps_est"], 5.41)            # yfinance EPS preferred
         self.assertEqual(jpm["rev_est"], 4.2e10)          # FMP revenue
         self.assertEqual(jpm["webcast_url"], "https://investor.jpm.com/q2")
@@ -330,10 +389,12 @@ class TestBuildCallsAgenda(unittest.TestCase):
         self.assertNotIn("OLD", tickers)                  # date in the past
         self.assertNotIn("FAR", tickers)                  # beyond the 75-day horizon
 
-    def test_call_date_carried_separately_and_confirms_consistent_report(self):
+    def test_call_date_carried_separately_never_confirms_estimate(self):
         # The call is often a different day than the release; the row date stays
         # the REPORT date and call_date rides along (so the UI shows both). A call
-        # within a few days of the report = the cycle is announced ⇒ confirmed.
+        # near the estimate is consistent with it but confirms nothing — ✓ is
+        # only an announced release date or FMP confirming the displayed date
+        # (owner rule 2026-09-30); the estimate stays "(proj.)".
         calls = dict(self.CALLS)
         calls["BKSC"] = {"call_time": "9:00a ET",
                          "webcast_url": "https://events.q4inc.com/x",
@@ -343,9 +404,54 @@ class TestBuildCallsAgenda(unittest.TestCase):
         rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
         bksc = rows["BKSC"]
         self.assertEqual(bksc["date"], "2026-07-16")        # report date unchanged
-        self.assertTrue(bksc["confirmed"])                  # announced call ⇒ confirmed
+        self.assertFalse(bksc["confirmed"])                 # still (proj.)
         self.assertEqual(bksc["call_date"], "2026-07-17")   # carried for display
         self.assertEqual(bksc["call_time"], "9:00a ET")
+
+    def test_fmp_confirmed_flag_only_confirms_fmp_own_date(self):
+        """MTB 2026-09-30 (owner report): the Calendar showed "2026-09-30 ✓"
+        — the quarter END — while FMP confirmed Oct 16. A ✓ is a fact about
+        the DISPLAYED date: FMP's flag counts only when FMP's date is the one
+        shown; an estimate that disagrees with it stays "(proj.)"."""
+        yf = [{"ticker": "MTB", "next_earnings_date": "2026-10-16", "eps_estimate": 4.93},
+              {"ticker": "BAD", "next_earnings_date": "2026-09-30", "eps_estimate": 1.0}]
+        fmp = [{"symbol": "MTB", "date": "2026-10-16", "time": "bmo", "confirmed": True,
+                "epsEstimated": 4.93, "revenueEstimated": 2.53e9},
+               {"symbol": "BAD", "date": "2026-10-16", "time": "bmo", "confirmed": True,
+                "epsEstimated": 1.0, "revenueEstimated": 1e8}]
+        agenda = build_calls_agenda(yf, fmp, {"MTB", "BAD"}, {}, date(2026, 9, 30))
+        rows = {r["ticker"]: r for b in agenda for r in b["rows"]}
+        self.assertEqual(rows["MTB"]["date"], "2026-10-16")
+        self.assertTrue(rows["MTB"]["confirmed"])           # dates agree → ✓
+        self.assertEqual(rows["BAD"]["date"], "2026-09-30")  # estimate shown as-is …
+        self.assertFalse(rows["BAD"]["confirmed"])           # … but never ✓
+        self.assertEqual(rows["BAD"]["when"], "Before open")  # timing still overlays
+
+    def test_announced_date_wins_over_disagreeing_estimates(self):
+        # COLB 2026-09-30: its own PR states Oct 22; yfinance says Oct 22, FMP
+        # projects Oct 29 (unconfirmed). The announced date shows, confirmed,
+        # with the PR's call time / timing / webcast riding along.
+        yf = [{"ticker": "COLB", "next_earnings_date": "2026-10-22", "eps_estimate": 0.77}]
+        fmp = [{"symbol": "COLB", "date": "2026-10-29", "time": "amc", "confirmed": False,
+                "epsEstimated": 0.767, "revenueEstimated": 688043800}]
+        calls = {"COLB": {"release_date": "2026-10-22", "call_time": "2:00p PT",
+                          "when": "After close",
+                          "webcast_url": "https://www.columbiabankingsystem.com"}}
+        agenda = build_calls_agenda(yf, fmp, {"COLB"}, calls, date(2026, 9, 30))
+        colb = {r["ticker"]: r for b in agenda for r in b["rows"]}["COLB"]
+        self.assertEqual(colb["date"], "2026-10-22")
+        self.assertTrue(colb["confirmed"])
+        self.assertEqual(colb["call_time"], "2:00p PT")
+        self.assertEqual(colb["rev_est"], 688043800)
+
+    def test_agenda_counts_shared_definition(self):
+        from data.earnings_call import agenda_counts
+        agenda = build_calls_agenda(
+            self._yf(), self._fmp(), self.UNIVERSE, self.CALLS, date(2026, 7, 13))
+        # JPM 07-14 (1d), BKSC 07-16 (3d), FMPONLY 07-20 (7d), WFC 07-21 (8d)
+        self.assertEqual(agenda_counts(agenda), (3, 4))
+        self.assertEqual(agenda_counts([]), (0, 0))
+        self.assertEqual(agenda_counts(None), (0, 0))
 
     def test_call_far_from_report_does_not_confirm(self):
         # A call date wildly inconsistent with the report estimate is NOT used to
@@ -405,7 +511,7 @@ class TestBuildCallsAgenda(unittest.TestCase):
         bksc = {r["ticker"]: r for b in agenda for r in b["rows"]}["BKSC"]
         self.assertEqual(bksc["call_date"], "2026-07-17")
         self.assertEqual(bksc["call_time"], "9:00a ET")
-        self.assertTrue(bksc["confirmed"])
+        self.assertFalse(bksc["confirmed"])      # kept for display, never a ✓
 
     def test_horizon_days_bounds_window(self):
         # FMPONLY reports 2026-07-20 — inside 75 days, outside a tight 5-day window.
@@ -501,6 +607,31 @@ class TestBuildCallsAgenda(unittest.TestCase):
                                    store.get, store.__setitem__)
         self.assertEqual(fetches, ["RF"])
         self.assertEqual(out2["RF"]["release_date"], "2026-07-17")
+
+    def test_release_call_infos_pr_only_pending_row_never_confirms(self):
+        """COLB 2026-09-30 (owner report): the board minted a PENDING row from
+        the bank's date-ANNOUNCEMENT PR (published that morning) and this
+        layer turned the row's date into a confirmed Sep-30 release on the
+        Calendar — a ✓ on the quarter END. A PR-only pending row is a
+        headline classification, not a fact: only posted actuals or the
+        attached 8-K release confirm."""
+        from data.earnings_call import _release_call_infos
+        store = {}
+        rows = [
+            {"ticker": "COLB", "date": "2026-09-30", "pending": True,
+             "awaiting": False, "eps_act": None, "rev_act": None, "rel": None,
+             "pr_headline": "Columbia Banking System Announces Date of Third "
+                            "Quarter 2026 Earnings Release and Conference Call"},
+            {"ticker": "RF", "date": "2026-09-30", "pending": True,        # 8-K attached
+             "eps_act": None, "rev_act": None, "rel": {"url": "https://sec.gov/x"}},
+            {"ticker": "JPM", "date": "2026-09-30", "pending": False,      # actuals posted
+             "eps_act": 5.9, "rev_act": 5.1e10, "rel": None},
+        ]
+        out = _release_call_infos(rows, date(2026, 9, 30), lambda tk: None,
+                                  lambda u: True, store.get, store.__setitem__)
+        self.assertEqual(sorted(out), ["JPM", "RF"])
+        self.assertNotIn("COLB", out)
+        self.assertEqual(out["RF"]["release_date"], "2026-09-30")
 
     def test_release_call_infos_stale_release_still_confirms(self):
         # Fetch returns LAST quarter's release (filed months before the

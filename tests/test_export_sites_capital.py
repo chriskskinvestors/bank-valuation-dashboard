@@ -327,7 +327,8 @@ class TestHoldcoCapitalAnnual(_HoldcoSite):
         self.assertEqual(rows["= Total capital ($)"][1], 17_205_000_000)
         # Screen shows the same values scaled to $B, from the same raw numbers.
         self.assertIn("19.00B", self._screen())
-        self.assertIn("-5.73B", self._screen())
+        # A deduction in accounting parens (owner rule 2026-09-30) — was "$-5.73B".
+        self.assertIn("(&#36;5.73B)", self._screen())
         self.assertIn("1.37B", self._screen())
         self.assertIn("— (in CET1)", self._screen())
 

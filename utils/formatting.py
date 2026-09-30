@@ -141,35 +141,51 @@ def num(v) -> float | None:
         return None
 
 
+def _sign(v: float, dp: int) -> str:
+    """"-" when v is still negative once rounded to dp decimals, else "" — so
+    -0.004 at 2dp prints 0.00, never "-0.00" (UX-P1-11 negative zero)."""
+    return "-" if round(v, dp) < 0 else ""
+
+
+def neg_parens(s: str) -> str:
+    """Accounting negative for statement / ratio TABLES (owner rule
+    2026-09-30): a leading-minus formatted value "-$9.30B" / "-4.27%" becomes
+    "($9.30B)" / "(4.27%)". Anything else passes through unchanged. Market
+    data, period changes and KPI cards keep the leading minus (no call)."""
+    return f"({s[1:]})" if isinstance(s, str) and s.startswith("-") else s
+
+
 def thou(v) -> str:
     """Comma-grouped integer (FDIC's native $-in-thousands display), or —."""
     v = num(v)
-    return f"{v:,.0f}" if v is not None else "—"
+    return f"{_sign(v, 0)}{abs(v):,.0f}" if v is not None else "—"
 
 
 def pct(v, dp: int = 2) -> str:
     """Percentage with dp decimals, or —."""
     v = num(v)
-    return f"{v:.{dp}f}%" if v is not None else "—"
+    return f"{_sign(v, dp)}{abs(v):.{dp}f}%" if v is not None else "—"
 
 
 def usd_compact_from_thousands(v_thousands) -> str:
-    """FDIC $thousands → compact $X.XXB / $X.XM / $XK / $N, or —."""
+    """FDIC $thousands → compact $X.XXB / $X.XM / $XK / $N, or —. A negative
+    carries its sign BEFORE the $ ("-$9.30B", never "$-9.30B" — UX-P2-10)."""
     v = num(v_thousands)
     if v is None:
         return "—"
     d = v * 1000.0
     a = abs(d)
+    s = "-" if d < 0 else ""
     if a >= 1e9:
-        return f"${d/1e9:,.2f}B"
+        return f"{s}${a/1e9:,.2f}B"
     if a >= 1e6:
-        return f"${d/1e6:,.1f}M"
+        return f"{s}${a/1e6:,.1f}M"
     # $1K–$999K compacts to $XK rather than spelling out the full figure
     # (e.g. $843K, not $843,000) so a sub-$1M cell matches the rest of the
     # column's compact convention. Below $1K shows the exact dollar amount.
     if a >= 1e3:
-        return f"${d/1e3:,.0f}K"
-    return f"${d:,.0f}"
+        return f"{s}${a/1e3:,.0f}K"
+    return f"{_sign(d, 0)}${a:,.0f}"
 
 
 def fmt_dollars(dollars: float | None, decimals: int = 2) -> str:
@@ -193,7 +209,7 @@ def fmt_dollars(dollars: float | None, decimals: int = 2) -> str:
         return f"{sign}${abs_v/1e6:,.{decimals}f}M"
     elif abs_v >= 1e3:
         return f"{sign}${abs_v/1e3:,.0f}K"
-    return f"{sign}${abs_v:,.0f}"
+    return f"{_sign(v, 0)}${abs_v:,.0f}"
 
 
 def fmt_dollars_from_thousands(amount_k: float | None, decimals: int = 2) -> str:
@@ -204,6 +220,17 @@ def fmt_dollars_from_thousands(amount_k: float | None, decimals: int = 2) -> str
         return fmt_dollars(float(amount_k) * 1000, decimals)
     except (TypeError, ValueError):
         return "—"
+
+
+def _money_scaled(v: float, dp: int, unit: str) -> str:
+    """One $-scaled cell, v already in `unit`s ("$1.2M"). A NON-zero value
+    that rounds to zero at dp shows its resolution floor — "<$0.1M" /
+    ">-$0.1M" — never "$0.0M", which reads as a reported zero (UX-P1-12:
+    ALBY 30-89 past-dues $3K). An exact 0 IS a reported zero: "$0.0M"."""
+    if v != 0 and round(v, dp) == 0:
+        floor = f"{10.0 ** -dp:.{dp}f}"
+        return f"<${floor}{unit}" if v > 0 else f">-${floor}{unit}"
+    return f"{_sign(v, dp)}${abs(v):,.{dp}f}{unit}"
 
 
 def format_value(value, fmt: str, decimals: int = 2) -> str:
@@ -221,36 +248,34 @@ def format_value(value, fmt: str, decimals: int = 2) -> str:
     except (TypeError, ValueError):
         return str(value)
 
+    # Every signed branch puts the sign BEFORE the "$" ("-$1.54", never
+    # "$-1.54" — UX-P2-10) and drops the sign of a value that rounds to zero
+    # ("0.00%", never "-0.00%" — UX-P1-11). This is the leading-minus (market
+    # data / screen) convention; statement tables wrap it in neg_parens().
     if fmt == "currency":
-        return f"${value:,.{decimals}f}"
+        return f"{_sign(value, decimals)}${abs(value):,.{decimals}f}"
     elif fmt == "pct":
-        return f"{value:.{decimals}f}%"
+        return f"{_sign(value, decimals)}{abs(value):.{decimals}f}%"
     elif fmt == "ratio":
-        return f"{value:.{decimals}f}x"
+        return f"{_sign(value, decimals)}{abs(value):.{decimals}f}x"
     elif fmt == "millions":
         # Auto-upgrade to B if >= $1B
         if abs(value) >= 1e9:
-            return f"${value / 1e9:,.{decimals}f}B"
-        return f"${value / 1e6:,.{decimals}f}M"
+            return _money_scaled(value / 1e9, decimals, "B")
+        return _money_scaled(value / 1e6, decimals, "M")
     elif fmt == "billions":
-        # Auto-upgrade to T if >= $1T
-        if abs(value) >= 1e12:
-            return f"${value / 1e12:,.{decimals}f}T"
-        return f"${value / 1e9:,.{decimals}f}B"
+        # Auto-scale: T >= $1T, B >= $1B, and M below $1B — a sub-$1B value
+        # must not collapse to "$0.0B" / "$0.1B" (UX-P1-09, BAFN/ATLO
+        # market cap). Each cell carries its own unit suffix.
+        abs_v = abs(value)
+        if abs_v >= 1e12:
+            return _money_scaled(value / 1e12, decimals, "T")
+        if abs_v >= 1e9:
+            return _money_scaled(value / 1e9, decimals, "B")
+        return _money_scaled(value / 1e6, decimals, "M")
     elif fmt == "dollars_auto":
         # Auto-scale dollars: T ≥ $1T, B ≥ $1B, M ≥ $1M, K ≥ $1K
-        abs_v = abs(value)
-        sign = "-" if value < 0 else ""
-        if abs_v >= 1e12:
-            return f"{sign}${abs_v / 1e12:,.{decimals}f}T"
-        elif abs_v >= 1e9:
-            return f"{sign}${abs_v / 1e9:,.{decimals}f}B"
-        elif abs_v >= 1e6:
-            return f"{sign}${abs_v / 1e6:,.{decimals}f}M"
-        elif abs_v >= 1e3:
-            return f"{sign}${abs_v / 1e3:,.0f}K"
-        else:
-            return f"{sign}${abs_v:,.0f}"
+        return fmt_dollars(value, decimals)
     elif fmt == "number":
         # Tier by |value| so large NEGATIVE numbers scale too (-2,500,000 →
         # "-2.5M", not "-2,500,000.00") — matching the branches above (audit P3).
@@ -259,7 +284,7 @@ def format_value(value, fmt: str, decimals: int = 2) -> str:
             return f"{value / 1e6:,.1f}M"
         elif abs_v >= 1e3:
             return f"{value / 1e3:,.1f}K"
-        return f"{value:,.{decimals}f}"
+        return f"{_sign(value, decimals)}{abs_v:,.{decimals}f}"
     return str(value)
 
 

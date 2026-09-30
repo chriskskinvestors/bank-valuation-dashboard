@@ -123,6 +123,19 @@ class TestUndefinedQuotientsNulled(unittest.TestCase):
         self.assertEqual(r["IDNCCIR"], 0)                          # 0 / 28,878
         self.assertEqual(r["NCRECONR"], 0)                         # 0 / 22,621
 
+    def test_efficiency_negative_or_null_revenue_is_na(self):
+        """(2026-09-30) FDIC reports EEFFR 0 whenever IEFF is null or <= 0.
+        Live 6/30/2026: cert 12013 EEFF 7,318 / IEFF -2,607 → EEFFR 0;
+        JPM lead charter (628) 48,709,000 / 89,575,000 = 54.3779% is kept."""
+        r = null_undefined_quotients({"EEFF": 7318, "IEFF": -2607, "EEFFR": 0})
+        self.assertIsNone(r["EEFFR"])
+        r = null_undefined_quotients({"EEFF": None, "IEFF": None, "EEFFR": 0})
+        self.assertIsNone(r["EEFFR"])
+        jpm = {"EEFF": 48709000, "IEFF": 89575000, "EEFFR": 54.37789561819704}
+        r = null_undefined_quotients(dict(jpm))
+        self.assertEqual(r, jpm)
+        self.assertAlmostEqual(r["EEFFR"], 48709000 / 89575000 * 100, places=12)
+
     def test_absent_denominator_key_means_no_inference(self):
         # A cache/history row written before NTTOT/NCLNLS were fetched.
         r = null_undefined_quotients({"ELNANTR": 0, "LNRESNCR": 0, "NCRECONR": 0})

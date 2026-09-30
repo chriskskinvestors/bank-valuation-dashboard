@@ -91,6 +91,8 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=No
                                    return_value=[]))
     stack.enter_context(mock.patch("data.earnings_call.refresh_pr_call_snapshot",
                                    return_value={}))
+    stack.enter_context(mock.patch(
+        "data.earnings_results.refresh_results_board_snapshot", return_value=0))
     stack.enter_context(mock.patch.dict("os.environ", {}, clear=False))
     if "ANTHROPIC_API_KEY" in __import__("os").environ:
         stack.enter_context(mock.patch.dict("os.environ",

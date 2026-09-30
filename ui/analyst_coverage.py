@@ -49,6 +49,29 @@ def _fmt_upside(pct) -> str:
     return tmpl.format(f"{pct:+.1f}%")
 
 
+def _window_rows(summary: dict, price) -> list[tuple[str, str, str, str]]:
+    """Price Targets by Window cells: (window, # targets, avg target, vs
+    price). A window with no targets has no average — FMP reports 0.0 there,
+    which rendered "$0.00" (UX-P1-18) — so avg and vs price read "—"; any
+    other absent cell is "—" too (on-screen absence marker)."""
+    windows = [
+        ("Last month", summary.get("last_month_count"), summary.get("last_month_avg")),
+        ("Last quarter", summary.get("last_quarter_count"), summary.get("last_quarter_avg")),
+        ("Last year", summary.get("last_year_count"), summary.get("last_year_avg")),
+        ("All time", summary.get("all_time_count"), summary.get("all_time_avg")),
+    ]
+    out = []
+    for label, n, avg in windows:
+        if n == 0:
+            avg = None
+        up = _upside_pct(avg, price)
+        out.append((label,
+                    str(n) if n is not None else "—",
+                    _fmt_px(avg) if isinstance(avg, (int, float)) else "—",
+                    _fmt_upside(up) if up is not None else "—"))
+    return out
+
+
 def _grade_action_html(action) -> str:
     a = (action or "").strip()
     low = a.lower()
@@ -101,20 +124,13 @@ def render_analyst_coverage(ticker: str):
 
     # ── Target summary by window ─────────────────────────────────────────
     if summary:
-        windows = [
-            ("Last month", summary.get("last_month_count"), summary.get("last_month_avg")),
-            ("Last quarter", summary.get("last_quarter_count"), summary.get("last_quarter_avg")),
-            ("Last year", summary.get("last_year_count"), summary.get("last_year_avg")),
-            ("All time", summary.get("all_time_count"), summary.get("all_time_avg")),
-        ]
         rows = ""
-        for label, n, avg in windows:
-            up = _upside_pct(avg, price)
+        for label, n, avg, up in _window_rows(summary, price):
             rows += ("<tr>"
                      f'<td style="text-align:left;">{label}</td>'
-                     f'<td style="text-align:right;">{n if n is not None else "n/a"}</td>'
-                     f'<td style="text-align:right;">{_fmt_px(avg)}</td>'
-                     f'<td style="text-align:right;">{_fmt_upside(up)}</td>'
+                     f'<td style="text-align:right;">{n}</td>'
+                     f'<td style="text-align:right;">{avg}</td>'
+                     f'<td style="text-align:right;">{up}</td>'
                      "</tr>")
         st.markdown("#### Price Targets by Window")
         st.markdown(
