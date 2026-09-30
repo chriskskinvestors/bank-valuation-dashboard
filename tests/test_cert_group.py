@@ -184,6 +184,31 @@ class TestExactRatiosRecomputed(unittest.TestCase):
         for k in ("IDT1CER", "RBC1RWAJ", "RBCRWAJ"):
             self.assertIsNone(agg[k], f"{k} must be n/a without RWA")
 
+    def test_quarterly_efficiency_bk_group_live_values(self):
+        """(2026-09-30) EEFFQR was dropped as "average-based" — it is EEFFQ /
+        IEFFQ, single-quarter flow ÷ flow. BNY's four charters, live FDIC
+        6/30/2026 ($K); FDIC stores each charter's EEFFQR rounded to 2 dp."""
+        recs = [
+            {"CERT": 639, "EEFFQ": 2577000, "IEFFQ": 4562000, "EEFFQR": 56.49},
+            {"CERT": 7946, "EEFFQ": 209000, "IEFFQ": 303000, "EEFFQR": 68.98},
+            {"CERT": 23472, "EEFFQ": 51928, "IEFFQ": 116147, "EEFFQR": 44.71},
+            {"CERT": 24867, "EEFFQ": 1581, "IEFFQ": 6321, "EEFFQR": 25.01},
+        ]
+        for r in recs:
+            self.assertAlmostEqual(r["EEFFQ"] / r["IEFFQ"] * 100, r["EEFFQR"],
+                                   delta=0.005)
+        self.assertNotIn("EEFFQR", AVERAGE_BASED_RATIOS)
+        # 2,839,509 / 4,987,468 = 56.9329% (lead charter 56.49%; the four
+        # ratios summed 195.19%; n/a before this change)
+        self.assertAlmostEqual(aggregate_records(recs)["EEFFQR"],
+                               2839509 / 4987468 * 100, places=12)
+
+    def test_quarterly_efficiency_na_when_incomplete_or_non_positive(self):
+        a = {"CERT": 1, "EEFFQ": 450, "IEFFQ": 800}
+        self.assertIsNone(aggregate_records([a, {"CERT": 2, "EEFFQ": 240}])["EEFFQR"])
+        self.assertIsNone(aggregate_records(
+            [a, {"CERT": 2, "EEFFQ": 100, "IEFFQ": -900}])["EEFFQR"])  # Σ = -100
+
     def test_missing_efficiency_component_yields_na_not_a_sum(self):
         """A cache/deep-store row written before EEFF/IEFF were fetched: n/a,
         never the sum of the charters' ratios and never the old NONIX-based
