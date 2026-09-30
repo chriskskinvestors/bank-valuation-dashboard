@@ -187,6 +187,49 @@ class TestReportedTbvpsLabelMatch(unittest.TestCase):
         self.assertEqual(extract_reported_bvps_status(
             html, reconstructed=37.73), (37.73, "ok"))
 
+    def test_sweep_label_variants_match(self):
+        """2026-09-30 universe sweep: tangible-book rows each release prints,
+        verbatim, that were missed. Each was checked against its release's
+        own reconciliation to be per-COMMON-share tangible book (see
+        TestSweepReleaseRows for the values)."""
+        for lbl in (
+            "Tangible stockholders' equity (book value) per common share (3)(4)",  # AMTB
+            "Common shareholders’ tangible equity per share (1) (2)",              # BANR
+            "Tangible common shareholders’ equity (tangible book value) per "
+            "share (non-GAAP)",                                                    # BANR
+            "Tangible book value per share, period-end (2)",                      # BHB
+            "Tangible book value per common share (non-GAAP1)",                   # BHRB
+            "Tangible book value per common share – Non-GAAP (b)",                # BNY
+            "Tangible book value per common share - non-GAAP",                    # FBP
+            "Tangible common equity per total common share outstanding "
+            "(non-GAAP)",                                                          # FRBT
+            "Common shareholders' equity (tangible), per share",                  # FULT
+            "Non-GAAP tangible book value per share",                             # HBCP
+            "Tangible common equity (“TCE”) per share (1)",                       # HOPE
+            "Tangible common equity per share of common stock (2)",               # IBCP
+            "Tangible equity per common share",                                   # MTB
+            "TCE per common share (2)",                                           # PCB
+            "Tangible book value per share (total tangible stockholders' "
+            "equity/shares outstanding)",                                          # PFS
+            "Tangible book value per common share at period end – non-GAAP(1)",   # SHBI
+            "Tangible book value per common share – non-GAAP (m)/(n)",            # SHBI
+            "Tangible common equity book value per share (1)",                    # UVSP
+            "Tangible book value per common share, net of tax (3)",               # WAL
+        ):
+            self.assertTrue(_match_tbvps_label(_clean_label(lbl)), lbl)
+
+    def test_fully_diluted_variants_do_not_match(self):
+        """Fully-diluted TBVPS (BWFG, CMTV, OPHC) and per-diluted-share (CCBG)
+        divide by a different share count — a different measure."""
+        for lbl in (
+            "Fully diluted tangible book value per common share(1)(2)",   # BWFG
+            "Fully diluted tangible book value per common share (1)",     # CMTV
+            "Fully diluted tangible book value per share",                # OPHC
+            "Tangible book value per share - diluted",                    # OPHC
+            "Tangible Book Value per Diluted Share (non-GAAP)",            # CCBG
+        ):
+            self.assertFalse(_match_tbvps_label(_clean_label(lbl)), lbl)
+
     def test_non_tbvps_labels_do_not_match(self):
         for lbl in (
             "Book value per share",            # NOT tangible → reconstruction
@@ -196,6 +239,139 @@ class TestReportedTbvpsLabelMatch(unittest.TestCase):
             "Tangible common equity",          # not per-share
         ):
             self.assertFalse(_match_tbvps_label(_clean_label(lbl)), lbl)
+
+
+class TestSweepReleaseRows(unittest.TestCase):
+    """The newly matched rows, in their release's real row structure, extract
+    the figure the release's own reconciliation reproduces. Anchors are the
+    SEC reconstruction as of 2026-09-30 (data.sec_client), exactly as
+    analysis.valuation passes them."""
+
+    def test_banr_tangible_equity_per_share(self):
+        """BANR Q2-2026 (8-K 0000946673-26-000163): tangible common
+        shareholders' equity 1,625,163K ÷ 33,984,909 shares = 47.821;
+        + goodwill/intangibles 374,100K → 1,999,263K ÷ 33,984,909 = 58.829."""
+        html = _html(
+            _row("Common shareholders&#8217; equity per share (1)",
+                 "58.83", "58.06", "57.08", "53.95")
+            + _row("Common shareholders&#8217; tangible equity per share (1) (2)",
+                   "47.82", "47.00", "46.09", "43.09"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=47.82, bvps=58.83), (47.82, "ok"))
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        self.assertEqual(extract_reported_bvps_status(
+            html, reconstructed=58.83, tbvps=47.82), (58.83, "ok"))
+
+    def test_mtb_tangible_equity_per_common_share(self):
+        """MTB Q2-2026: 'Tangible equity per common share' $117.41 is total
+        tangible COMMON equity ($17,016M, preferred $2,434M deducted) per
+        common share; the percent-change cells follow each period pair."""
+        html = _html(
+            _row("Common shareholders' equity per share", "$", "176.03", "$",
+                 "173.82", "$", "166.94")
+            + _row("Tangible equity per common share", "117.41", "115.96", "1",
+                   "112.48", "4"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=117.71, bvps=176.66), (117.41, "ok"))
+
+    def test_wal_net_of_tax(self):
+        """WAL Q2-2026: total tangible common equity, net of tax $6,906M ÷
+        109.2M common shares = 63.24."""
+        html = _html(
+            _row("Book value per common share", "$", "69.11", "", "$", "61.77", "11.9")
+            + _row("Tangible book value per common share, net of tax (3)",
+                   "63.24", "", "55.87", "13.2"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=63.23, bvps=69.17), (63.24, "ok"))
+
+    def test_bny_dash_non_gaap(self):
+        """BNY Q2-2026: TBVPS 'excludes goodwill and intangible assets, net of
+        deferred tax liabilities' (footnote b). The SEC reconstruction (30.04)
+        omits the DTL add-back: (1,225 + 659)$M ÷ 678.504M shares = 2.78, and
+        30.04 + 2.78 = 32.82 ≈ the printed 32.81 (within the 15% band)."""
+        html = _html(
+            _row("Book value per common share", "$", "58.82", "$", "57.48", "$", "57.36")
+            + _row("Tangible book value per common share &#8211; Non-GAAP (b)",
+                   "$", "32.81", "$", "31.75", "$", "31.64"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=30.04, bvps=58.82), (32.81, "ok"))
+
+    def test_key_bare_period_end_rows(self):
+        """KEY Q2-2026 prints its per-share book values in a 'Per common
+        share' block as bare 'Book value at period end' $16.19 / 'Tangible
+        book value at period end' $13.62 (TCE $14,597M ÷ 1,072,035K shares =
+        13.616). Bare tier: admitted only when tied to the reconstruction."""
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(
+            _row("Book value at period end", "16.19", "", "16.13", "", "15.32")
+            + _row("Tangible book value at period end", "13.62", "", "13.60",
+                   "", "12.83"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=13.63, bvps=16.21), (13.62, "ok"))
+        self.assertEqual(extract_reported_bvps_status(
+            html, reconstructed=16.21, tbvps=13.62), (16.19, "ok"))
+        # No reconstruction: a bare row has nothing to tie to → n/a.
+        self.assertEqual(extract_reported_tbvps_status(html),
+                         (None, "not_disclosed"))
+
+    def test_npb_total_equity_bvps_needs_a_reconstruction(self):
+        """NPB Q2-2026 prints 'Book value per share (GAAP)' $17.10 = total
+        equity $589,993K INCLUDING $24,979K preferred ÷ 34.49M common shares;
+        per-common book is (589,993 − 24,979) ÷ 34,494 = 16.38. NPB has no SEC
+        reconstruction (unresolvable preferred), so the only anchor is the
+        in-release TBVPS — too weak for a label that doesn't say COMMON when
+        the release itself deducts preferred ("Less: preferred stock").
+        The TBVPS itself (TCE $563,985K, preferred deducted, ÷ 34,494K =
+        16.35) is correct and still extracts."""
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(
+            _row("Tangible book value per share", "16.35", "15.74", "14.17")
+            + _row("Book value per share (GAAP)", "17.10", "16.50", "17.09")
+            + _row("Less: preferred stock", "24,979", "", "24,979"))
+        self.assertEqual(extract_reported_bvps_status(html),
+                         (None, "not_disclosed"))
+        self.assertEqual(extract_reported_tbvps_status(html), (16.35, "ok"))
+
+    def test_no_preferred_equity_bare_label_bvps_still_served(self):
+        """The NPB rule needs preferred EQUITY in the release. SFBS Q2-2026
+        prints only preferred DIVIDENDS ($31K, subsidiary REIT preferred);
+        its 'Book value per share' $36.19 = total common stockholders' equity
+        1,978,418K ÷ 54,671,023 shares — common, and still served (as are
+        MS $67.80 and RJF $66.11, same shape)."""
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(
+            _row("Book value per share", "36.19", "34.99", "33.87")
+            + _row("Tangible book value per share (1)", "35.94", "34.74", "33.62")
+            + _row("Dividends on preferred stock", "31", "", "31"))
+        self.assertEqual(extract_reported_bvps_status(html), (36.19, "ok"))
+
+    def test_tangible_above_book_never_admitted(self):
+        """The no-intangibles waiver (tangible == book, USCB) covers cent
+        rounding only. BCTF Q2-2026 prints 'Tangible book value per share'
+        $12.94 (total stockholders' equity 60,721K ÷ 4,694,010 shares) against
+        a reconstruction of $11.56 for BOTH tangible and book: 12% above book
+        is a disagreement, not rounding → n/a."""
+        html = _html(
+            _row("Total stockholders' equity", "60,721", "49,238")
+            + _row("Shares outstanding", "4,694,010", "3,554,455")
+            + _row("Tangible book value per share", "12.94", "13.85"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=11.56, bvps=11.56), (None, "not_disclosed"))
+        # FSBC (no intangibles): $22.14 printed, reconstruction 473,771K ÷
+        # 21,402,864 = 22.136 for both → within rounding → served.
+        html = _html(_row("Tangible book value per share(1)", "22.14", "21.45"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=22.136, bvps=22.136), (22.14, "ok"))
+
+    def test_gaap_qualifier_bvps_with_reconstruction(self):
+        """'(GAAP)' is a presentational suffix: CFG Q2-2026 'Book value per
+        common share (GAAP)' $56.95 = common stockholders' equity $24,072M ÷
+        422.7M shares (TCE $16,185M ÷ 38.29)."""
+        from data.sec_earnings_8k import extract_reported_bvps_status
+        html = _html(_row("Book value per common share (GAAP)", "$", "56.95",
+                          "$", "56.48", "$", "53.43"))
+        self.assertEqual(extract_reported_bvps_status(
+            html, reconstructed=56.95, tbvps=38.29), (56.95, "ok"))
 
 
 class TestReportedTbvpsExtraction(unittest.TestCase):
