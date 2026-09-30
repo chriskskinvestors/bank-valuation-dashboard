@@ -37,9 +37,17 @@ class TestReserveCoverageBasis(unittest.TestCase):
         self.assertEqual(_reserve_coverage(
             {"LNATRESR": 2.0, "NCLNLSR": None, "LNRESNCR": 150,
              "IDERNCVR": 7.3}), 150)
-        # NPL ratio zero -> no coverage math -> LNRESNCR
-        self.assertEqual(_reserve_coverage(
-            {"LNATRESR": 2.0, "NCLNLSR": 0.0, "LNRESNCR": 250}), 250)
+        # NPL ratio zero -> reserves/NPL is undefined -> n/a. (Was: fall back
+        # to LNRESNCR. With zero noncurrent loans FDIC zero-fills LNRESNCR, so
+        # that fallback rendered "0%" in bottom-quintile red — AMBK/ALBY on
+        # Compare, 2026-09-30. A zero NPL ratio never carries a real LNRESNCR.)
+        self.assertIsNone(_reserve_coverage(
+            {"LNATRESR": 2.0, "NCLNLSR": 0.0, "LNRESNCR": 0.0}))
+        self.assertIsNone(_reserve_coverage(
+            {"LNATRESR": 2.0, "NCLNLSR": 0.0, "LNRESNCR": 250}))
+        # NPL ratio missing and FDIC's zero-fill -> n/a, not 0%
+        self.assertIsNone(_reserve_coverage(
+            {"LNATRESR": 2.0, "NCLNLSR": None, "LNRESNCR": 0.0}))
         # neither -> n/a, never earnings coverage
         self.assertIsNone(_reserve_coverage(
             {"LNATRESR": 2.0, "NCLNLSR": None, "IDERNCVR": 7.3}))

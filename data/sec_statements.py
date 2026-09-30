@@ -1544,6 +1544,48 @@ def _interim_restated(facts: dict, qe: tuple, acc_q: str, acc_k: str) -> bool:
     return False
 
 
+def _q4_from_10k_tags(fk: dict, qe: tuple, nine_end: tuple) -> dict:
+    """{row_key: value} for the fourth quarter straight from the FY 10-K's own
+    iXBRL: an UNDIMENSIONED fact of the row's element whose period is exactly
+    the fiscal fourth quarter (the day after the 9M end through qe). Used only
+    when the interims were restated (_interim_restated) and FY − 9M is
+    therefore not a quarter: Beacon's FY2025 10-K tags Q4-25 NII 199,741 and
+    net income 53,366 ($K) although its R-file face shows FY columns only
+    (REVIEW-2026-09-24 P0-2 residual). Monetary rows only (never EPS/shares,
+    same rule as the differencing). A row the 10-K did not tag for Q4 stays
+    blank; any fetch/parse failure returns {} (the whole column stays blank)."""
+    from datetime import date, timedelta
+    meta = fk.get("_meta") or {}
+    if not (meta.get("cik") and meta.get("accession") and meta.get("doc")):
+        return {}
+    ny, nm = nine_end
+    q4_start = (date(ny + (nm == 12), nm % 12 + 1, 1)).isoformat()   # day after 9M end
+    y, m = qe
+    q4_end = (date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).isoformat()
+    try:
+        from data.sec_filing_scraper import instance_facts
+        inst = instance_facts({"cik": meta["cik"], "accession": meta["accession"],
+                               "doc": meta["doc"]})
+    except Exception as e:
+        print(f"[sec_statements] Q4 tag fill skipped for {meta.get('accession')}: "
+              f"{type(e).__name__}: {e}")
+        return {}
+    by_concept = {}
+    for f in inst:
+        if (not f.members and f.period_start == q4_start
+                and f.period_end == q4_end):
+            by_concept.setdefault(f.concept, f.value)
+    out = {}
+    for k, r in _keyed_rows(fk["rows"]):
+        if r["header"] or k[2] != "monetary":
+            continue
+        eid = r.get("element_id") or ""
+        concept = eid.replace("_", ":", 1) if "_" in eid else ""
+        if concept in by_concept:
+            out[k] = by_concept[concept]
+    return out
+
+
 def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
                           facts: dict | None = None) -> dict | None:
     """Discrete-quarter stitch for a FLOW statement (income / cash flow). Q1–Q3
@@ -1608,7 +1650,12 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
             fq, iq = nine_by_end[nine_end]
             fk, ik = _nearest_vintage(k_by_fy[qe], _filed(fq))
             if facts and _interim_restated(facts, qe, _accn(fq), _accn(fk)):
-                continue                          # restated interim -> blank Q4
+                # The original 9M no longer ties to the FY; the only clean Q4
+                # source left is the 10-K's OWN tagged three-month facts.
+                tagged = _q4_from_10k_tags(fk, qe, nine_end)
+                if tagged:
+                    col[qe] = tagged
+                continue                          # else restated interim -> blank Q4
             fy = _column_values(fk, ik)
             nine = _column_values(fq, iq)
             diff = {}
@@ -1651,7 +1698,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v5:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v5: member blocks + Q4 vintage (after v4 row kind)
+    ckey = f"asreported_mq:v6:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v6: restated Q4 from 10-K tags
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None

@@ -27,7 +27,7 @@ from ui.history_range import (table_range_picker, load_hist_df_for_range, range_
 # Shared numeric primitives — one implementation in utils/formatting.
 from utils.formatting import (
     num as _num, thou as _thou, pct as _pct_plain,
-    usd_compact_from_thousands as _usd_plain,
+    usd_compact_from_thousands as _usd_plain, format_value, neg_parens,
 )
 
 
@@ -59,7 +59,7 @@ def _pct(v, dp: int = 2):
 
 def _pctv(x, dp: int = 2):
     """Inline percent (percent units already) with the raw value attached."""
-    return _V(f"{x:.{dp}f}%", x, "pct")
+    return _V(_pct_plain(x, dp), x, "pct")
 
 
 def _yr(repdte):
@@ -78,8 +78,10 @@ def _disp(repdte):
 
 
 def _psd(v):
+    # "-$1.54" (never "$-1.54"): the table component turns a leading minus
+    # into accounting parens; it cannot see a sign after the "$".
     v = _num(v)
-    return _V(f"${v:,.2f}", v, "usd2") if v is not None else "—"
+    return _V(format_value(v, "currency", 2), v, "usd2") if v is not None else "—"
 
 
 def _eff_tax(rec):
@@ -1481,7 +1483,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            "Core income ÷ avg equity × 100", False)
         if kind == "core_eps":
             core = _core_income(rec); sh = _num(ps.get("shares"))
-            v = _V(f"${core*1000/sh:,.2f}", core*1000/sh, "usd2") if (core is not None and sh) else "—"
+            v = _psd(core*1000/sh) if (core is not None and sh) else "—"
             return v, calc(label, v, asof, "Computed (FDIC core income ÷ SEC shares)",
                            [{"label": "Core income", "val": _usd(core)},
                             {"label": "Avg diluted shares", "val": f"{sh:,.0f}" if sh else "—"}],
@@ -1520,6 +1522,10 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                     v, c = "—", None
                 raws.append(getattr(v, "raw", None))
                 unit = unit or getattr(v, "unit", None)
+                if v == "n/a":
+                    # One absent-value token on screen (UX-P1-19): the reason
+                    # stays in the click-through; the export writes n/a.
+                    v = "—"
                 cid = f"{ri}_{ci}"
                 if c:
                     cells[cid] = c
@@ -2305,8 +2311,10 @@ def _cr_component(col_labels: list, rows: list, *, entity: str = "", src: str | 
 
 
 def _cr_usd(raw):
-    """Company-Reported raw dollars -> Templated $-compact ($673.0M / $1.16B)."""
-    return _usd(raw / 1000.0) if raw is not None else ""   # _usd takes $thousands
+    """Company-Reported raw dollars -> Templated $-compact ($673.0M / $1.16B);
+    a negative in accounting parens ($-compact of |v|: "($9.30B)") — the
+    statement-table convention (owner rule 2026-09-30)."""
+    return neg_parens(_usd(raw / 1000.0)) if raw is not None else ""   # _usd takes $thousands
 
 
 # Label fallback for a stitched Company-Reported row whose XBRL data type is
@@ -2343,11 +2351,28 @@ def _cr_fmt(kind: str, v) -> str:
     if v is None:
         return ""
     if kind == "eps":
-        return f"${v:,.2f}"                     # $/share (component escapes)
+        # $/share (component escapes); negatives in parens: ($0.57)
+        return neg_parens(format_value(v, "currency", 2))
     if kind == "shares":
         return f"{v / 1e6:,.1f}M"               # share counts in millions
     # Dollar lines: raw dollars -> Templated $-compact; negatives in parens.
-    return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+    return _cr_usd(v)
+
+
+def _cr_hl_fmt(v, kind):
+    """Screen text for one cell of the Company-Reported Highlights /
+    Performance / Credit-Quality tables (fmts in _CR_HL_XKIND; one copy — was
+    three per-page _fmt). None stays None (the caller drops all-None rows);
+    negatives in accounting parens."""
+    if v is None:
+        return None
+    if kind == "usd":
+        return _cr_usd(v)
+    if kind == "eps":
+        return neg_parens(format_value(v, "currency", 2))
+    if kind == "x":
+        return f"{v:.2f}x"
+    return neg_parens(_pct_plain(v * 100, 2))            # pct2 (fraction → %)
 
 
 # Export row kind -> ui.export FORMATS key. "frac" is a FRACTION in the data
@@ -3096,8 +3121,8 @@ def _render_fair_value_hierarchy(ticker):
         if v is None:
             return None
         if fmt == "pct":
-            return f"{v * 100:.1f}%"
-        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+            return neg_parens(_pct_plain(v * 100, 1))
+        return _cr_usd(v)
 
     needs_netting = any(
         (fv.get(p) or {}).get(side) and not (fv[p][side]).get("_reconciles")
@@ -3283,7 +3308,7 @@ def _render_securities_portfolio(ticker):
             return None
         if fmt == "pct":
             return f"{v * 100:+.1f}%"
-        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+        return _cr_usd(v)
 
     any_gross_gated = False
     rows, xrows = [], []
@@ -3438,21 +3463,12 @@ def _render_credit_quality(ticker):
     for d in dicts:
         d["_acl_cov_na"] = _cov(d)
 
-    def _fmt(v, kind):
-        if v is None:
-            return None
-        if kind == "usd":
-            return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
-        if kind == "x":
-            return f"{v:.2f}x"
-        return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
-
     rows, xrows = [], []
     for sec_name, metrics in _CR_CREDIT_SECTIONS:
         sec_rows, sec_x = [], []
         for label, key, kind in metrics:
             raw = [dicts[i].get(key) for i in order]
-            vals = [_fmt(v, kind) for v in raw]
+            vals = [_cr_hl_fmt(v, kind) for v in raw]
             # Drop a row that is n/a for every year; keep if any year has data.
             if any(v is not None for v in vals):
                 sec_rows.append({"label": label, "values": vals, "kind": "data"})
@@ -4227,10 +4243,12 @@ def _render_preliminary_quarter(ticker, cik):
             # with the next one and Streamlit renders the span between as LaTeX
             # (mangling "$28.11B · Total deposits $22.64B"). Escape it like the EPS
             # branch already does. The HTML-iframe table (_cr_component) is exempt.
-            return _cr_usd(v).replace("$", "\\$")
+            # A KPI line, not a statement table: leading minus ("-$1.2M"), not
+            # parens (owner rule 2026-09-30).
+            return _usd_plain(v / 1000.0).replace("$", "\\$")
         if kind == "eps":
-            return f"\\${v:,.2f}"
-        return f"{v:.2f}%"                              # as-printed percent
+            return format_value(v, "currency", 2).replace("$", "\\$")
+        return _pct_plain(v, 2)                         # as-printed percent
 
     acc = res.get("accession", "")
     acc_nodash = acc.replace("-", "")
@@ -4290,20 +4308,13 @@ def _render_financial_highlights(ticker):
     periods = years[::-1]                               # oldest → newest (Templated)
     order = list(range(len(years)))[::-1]               # column order, oldest-first
 
-    def _fmt(v, kind):
-        if v is None:
-            return None
-        if kind == "usd":
-            return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
-        return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
-
     rows, xrows = [], []
     for sec_name, metrics in _CR_HL_SECTIONS:
         rows.append({"label": sec_name, "values": [], "kind": "header"})
         xrows.append((sec_name, "header", []))
         for label, key, kind in metrics:
             raw = [dicts[i].get(key) for i in order]
-            rows.append({"label": label, "values": [_fmt(v, kind) for v in raw],
+            rows.append({"label": label, "values": [_cr_hl_fmt(v, kind) for v in raw],
                          "kind": "data"})
             xrows.append((label, _CR_HL_XKIND[kind], raw))
 
@@ -4390,21 +4401,12 @@ def _render_performance(ticker):
     periods = years[::-1]                               # oldest → newest
     order = list(range(len(years)))[::-1]               # column order, oldest-first
 
-    def _fmt(v, kind):
-        if v is None:
-            return None
-        if kind == "usd":
-            return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
-        if kind == "eps":
-            return f"$({abs(v):,.2f})" if v < 0 else f"${v:,.2f}"
-        return f"{v * 100:.2f}%"                        # pct2 (fraction → %)
-
     rows, xrows = [], []
     for sec_name, metrics in _CR_PERF_SECTIONS:
         sec_rows, sec_x = [], []
         for label, key, kind in metrics:
             raw = [dicts[i].get(key) for i in order]
-            vals = [_fmt(v, kind) for v in raw]
+            vals = [_cr_hl_fmt(v, kind) for v in raw]
             # Drop a row that is n/a for every year; keep if any year has data.
             if any(v is not None for v in vals):
                 sec_rows.append({"label": label, "values": vals, "kind": "data"})
@@ -4507,7 +4509,7 @@ def _render_segments(ticker):
         f"{measure_note} Blank = segment not separately reported that year.")
 
     def _b(v):
-        return "n/a" if v is None else _cr_usd(v)
+        return "—" if v is None else _cr_usd(v)
 
     # Union of segment labels in as-reported order, newest year first (so the
     # current structure leads); a renamed/dropped segment simply blanks in the
@@ -4532,7 +4534,7 @@ def _render_segments(ticker):
                 seg = next((s for s in seg_data[p]["segments"] if s["label"] == lbl), None)
                 raw.append(seg.get(key) if seg is not None else None)
             vals = [_b(v) if v is not None else "" for v in raw]
-            if any(v not in ("", "n/a") for v in vals):
+            if any(v not in ("", "—") for v in vals):
                 body.append({"label": lbl, "values": vals, "kind": "data"})
                 xbody.append((lbl, "usd", raw))
         if not body and not (residual or consolidated):
@@ -4723,10 +4725,10 @@ def _render_rate_risk(ticker):
     def _usd_cell(v):
         if v is None:
             return None
-        return f"({_cr_usd(abs(v))})" if v < 0 else _cr_usd(v)
+        return _cr_usd(v)
 
     def _pct_cell(v):
-        return None if v is None else f"{v * 100:.2f}%"
+        return None if v is None else neg_parens(_pct_plain(v * 100, 2))
 
     afs_row, htm_row, tot_row, eq_row, loss_eq_row, loss_cet1_row = ([] for _ in range(6))
     eq_pct_series = []                                   # for the trend chart

@@ -24,6 +24,9 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))  # _apptest_store, not via tests/__init__
+
+from _apptest_store import isolate_store  # noqa: E402
 
 _STUB_UNIVERSE = {
     "AMAL": {"cik": 1823608, "fdic_cert": 622, "share_class": "common",
@@ -87,6 +90,7 @@ class TestScreenRunGating(unittest.TestCase):
             from streamlit.testing.v1 import AppTest  # noqa: F401
         except Exception as e:  # stubbed / very old streamlit — skip, not fail
             self.skipTest(f"AppTest unavailable: {e}")
+        isolate_store(self)   # never the dev's real cache.db
         import data.bank_universe as bu
         from data import cache
         self._bu = bu

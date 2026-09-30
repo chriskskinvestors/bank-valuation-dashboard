@@ -208,6 +208,46 @@ class TestFlowStitchQ4(unittest.TestCase):
         st2 = S._stitch_flow_quarters([q3_25], [k25], [(2025, 12), (2025, 9)])
         self.assertEqual(self._nii(st2, "Q4'25"), 461_714 - 206_607)
 
+    def test_restated_interim_q4_from_10k_own_tags(self):
+        # Beacon's FY2025 10-K tags the fourth quarter itself (NII 199,741 $K,
+        # 2025-10-01..2025-12-31, undimensioned); that fills the restated
+        # column exactly. A dimensioned or differently-dated fact must not.
+        from unittest import mock
+        from data.sec_filing_scraper import Fact
+        k25 = self._k([461_714, 0, 0], "2026-03-02", "0001628280-26-013247", (2025, 2024, 2023))
+        k25["_meta"].update({"cik": 1108134, "doc": "brkl-20251231.htm"})
+        q3_25 = self._q3([45_078, 0, 206_607, 0], "2025-11-10", "000110813425000020",
+                         (2025, 2024))
+        facts = _facts([_fact("2025-07-01", "2025-09-30", -50_240_000, "0001108134-25-000020"),
+                        _fact("2025-07-01", "2025-09-30", -4_221_000,
+                              "0001628280-26-013247", "10-K")])
+        inst = [
+            Fact("us-gaap:InterestIncomeExpenseNet", 199_741, "2025-12-31", "2025-10-01", {}, "usd"),
+            Fact("us-gaap:InterestIncomeExpenseNet", 9, "2025-12-31", "2025-10-01",
+                 {"seg": "A"}, "usd"),
+            Fact("us-gaap:InterestIncomeExpenseNet", 503_106, "2025-12-31", "2025-01-01", {}, "usd"),
+        ]
+        with mock.patch("data.sec_filing_scraper.instance_facts", return_value=inst) as m:
+            st = S._stitch_flow_quarters([q3_25], [k25], [(2025, 12), (2025, 9)], facts=facts)
+        self.assertEqual(self._nii(st, "Q4'25"), 199_741)   # was blank; FY − 9M = 255,107
+        self.assertEqual(m.call_args[0][0]["accession"], "0001628280-26-013247")
+
+    def test_restated_interim_untagged_q4_stays_blank(self):
+        from unittest import mock
+        k25 = self._k([461_714, 0, 0], "2026-03-02", "0001628280-26-013247", (2025, 2024, 2023))
+        k25["_meta"].update({"cik": 1108134, "doc": "brkl-20251231.htm"})
+        q3_25 = self._q3([45_078, 0, 206_607, 0], "2025-11-10", "000110813425000020",
+                         (2025, 2024))
+        facts = _facts([_fact("2025-07-01", "2025-09-30", -50_240_000, "0001108134-25-000020"),
+                        _fact("2025-07-01", "2025-09-30", -4_221_000,
+                              "0001628280-26-013247", "10-K")])
+        for inst in ([], RuntimeError("503")):
+            kw = {"side_effect": inst} if isinstance(inst, Exception) else {"return_value": inst}
+            with mock.patch("data.sec_filing_scraper.instance_facts", **kw):
+                st = S._stitch_flow_quarters([q3_25], [k25], [(2025, 12), (2025, 9)],
+                                             facts=facts)
+            self.assertIsNone(self._nii(st, "Q4'25"))
+
     def test_hban_duplicate_block_row_no_longer_clobbers_9m(self):
         k = _filing([_row("Income after income taxes", [2_229, 1_960, 1_971],
                           eid="us-gaap_ProfitLoss")],

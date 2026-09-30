@@ -17,6 +17,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent))  # _apptest_store, not via tests/__init__
+
+from _apptest_store import isolate_store  # noqa: E402
 
 
 # Bounded universe for the AppTest run — same rationale as tests/test_nav_renders:
@@ -36,6 +39,7 @@ _STUB_UNIVERSE = {
 class TestTransactionsSection(unittest.TestCase):
 
     def setUp(self):
+        isolate_store(self)   # never the dev's real cache.db
         import data.bank_universe as bu
         self._bu = bu
         self._saved = (bu._UNIVERSE_CACHE, bu._NONCOMMON_CACHE,

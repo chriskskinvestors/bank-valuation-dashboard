@@ -108,7 +108,9 @@ _AF_DEFAULT_OVERLAY = ("SPY", "QQQ", "KRE")
 #   fred   — everything from FRED series `a`
 #   spread — live 2Y−10Y level/1D/1W when BOTH legs are live (2Y never is —
 #            see data/live_rates), else all from FRED series `a` (−T10Y2Y)
-#   calc   — FRED series `a` minus `b`, all anchors (no live; 52w range n/a)
+#   calc   — FRED series `a` minus `b`, all anchors (no live). Range bars need
+#            the aligned a−b history (min of a−b ≠ min a − min b): read from
+#            the bundle's "a-b" entry when the warm job provides one, else n/a.
 # Live tenors map to their FRED fallback series for the history anchors.
 _LIVE_FRED = {"3M": "DGS3MO", "2Y": "DGS2", "5Y": "DGS5",
               "10Y": "DGS10", "30Y": "DGS30"}
@@ -126,7 +128,7 @@ _AF_RATES_SECTIONS = [
         ("2Y − 10Y", "spread", "T10Y2Y", None),
         ("3M − 10Y", "fredn", "T10Y3M", None),
         ("10Y − 30Y", "calc", "DGS10", "DGS30"),
-        ("Fed Funds − 2Y", "calc", "DFF", "DGS2"),
+        ("FF − 2Y", "calc", "DFF", "DGS2"),   # "Fed Funds − 2Y" clipped (UX-P1-02)
     ]),
     ("Credit · OAS", [
         ("AAA", "fred", "BAMLC0A1CAAA", None),
@@ -146,6 +148,10 @@ _AF_RATES_SECTIONS = [
         ("10Y B/E", "fred", "T10YIE", None),
     ]),
 ]
+
+# Full names for board labels shortened to fit the Instrument column — shown
+# as the label's hover title.
+_AF_RATES_FULL_NAME = {"FF − 2Y": "Fed Funds − 2Y"}
 
 _AF_TIERS = [("all", "All"), ("mc", "Money-Center"), ("lg", "Large Regional"),
              ("reg", "Regional"), ("comm", "Community")]
@@ -204,8 +210,13 @@ _AF_CSS = r"""
 .afwrap .erow.v1 .num{font-size:var(--fs-grid-10);}
 /* Rates · Credit board, 10 cols: Instrument | Level | 1D bp | 1W bp | 1W range |
    1M bp | 1M range | YTD bp | YTD range | 52wk. Each window is two SEPARATE
-   columns — a bp number ('bp' header) and a range bar ('range' header). */
-.afwrap .erow.r10{grid-template-columns:.92fr .54fr .4fr .44fr .52fr .44fr .52fr .46fr .52fr .56fr;column-gap:12px;padding:0 10px;}
+   columns — a bp number ('bp' header) and a range bar ('range' header).
+   Level and YTD bp get the width their headers need ('LEVE…', 'YTD …' at
+   1536 px, UX-P1-01), paid for by a 10px gap; the header row may break onto
+   two lines (2 x .53rem font fits the 1.3125rem row) so a narrower window
+   wraps 'LEVEL %' instead of ellipsizing it. */
+.afwrap .erow.r10{grid-template-columns:.92fr .66fr .4fr .44fr .52fr .44fr .52fr .56fr .52fr .5fr;column-gap:10px;padding:0 10px;}
+.afwrap .erow.r10.eh>*{white-space:normal;line-height:1.05;}
 .afwrap .erow.r10 .num{font-size:var(--fs-grid-10);}
 .afwrap .h.rh{text-align:center;}
 .afwrap .rsec{font-size:var(--fs-grid-8);font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#1e3a8a;background:#f7f9fc;padding:4px 10px 3px;border-bottom:1px solid #eef1f5;}
@@ -472,10 +483,15 @@ def _af_row_anchors(kind, a, b, bundle, ly):
 
     Curve-spread convention: SHORTER tenor first (short − long), so a steep
     upward curve reads negative. Live overlays (intraday level/1D/1W) ride on
-    top of the FRED history anchors. Computed (calc) spreads get no 52w range —
-    the min of a difference ≠ the difference of the per-leg extremes, so n/a,
+    top of the FRED history anchors. Computed (calc) spreads take every anchor
+    and range from the bundle's "a-b" entry — built over the date-aligned a−b
+    history (both legs present) — when there is one. Without it the ranges are
+    n/a: the min of a difference ≠ the difference of the per-leg extremes, so
     never a guess; FRED-series spreads keep a real (possibly negated) range."""
     if kind == "calc":   # a − b, config ordered short − long
+        diff = _rate_anchors(f"{a}-{b}", bundle)
+        if diff:
+            return dict(diff), False
         A = _rate_anchors(a, bundle) or {}
         B = _rate_anchors(b, bundle) or {}
         out = {k: ((A.get(k) - B.get(k))
@@ -566,9 +582,12 @@ def _af_rates_table() -> str:
             lv = an.get("level")
             dot = ('<span class="dotc" style="background:#059669;margin-right:4px;"'
                    ' title="live ~15m"></span>') if is_live else ""
+            full = _AF_RATES_FULL_NAME.get(label)
+            nm = (f'<span class="nm" title="{full}">' if full
+                  else '<span class="nm">')
             if lv is None:
                 body += (f'{_macro_a}<div class="erow r10 ed">'
-                         f'<span class="nm">{dot}{label}</span>'
+                         f'{nm}{dot}{label}</span>'
                          + '<span class="num mut">—</span>' * 9 + '</div></a>')
                 continue
             lvl = f'{lv:+.2f}' if is_spread else f'{lv:.2f}'
@@ -589,7 +608,7 @@ def _af_rates_table() -> str:
             wc_y = _win(an.get("ytd"), an.get("y_lo"), an.get("y_hi"), "YTD")
             rng = _af_range_bar(lv, an.get("lo"), an.get("hi"))
             body += (f'{_macro_a}<div class="erow r10 ed">'
-                     f'<span class="nm">{dot}{label}</span>'
+                     f'{nm}{dot}{label}</span>'
                      f'<span class="num">{lvl}</span>'
                      f'<span class="num {d1c}">{d1t}</span>'
                      f'{wc_w}{wc_m}{wc_y}{rng}</div></a>')

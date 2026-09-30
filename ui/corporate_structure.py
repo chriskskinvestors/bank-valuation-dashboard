@@ -19,6 +19,7 @@ from data.bank_mapping import get_name, get_fdic_cert
 from ui.chrome import title_bar, table_export
 
 _MAX_CLIMB = 4  # regulated chains are shallow; guard against loops
+_COLLAPSED_DEPTH = 2  # default view: top holder + two tiers (UX-P1-15)
 
 
 def _top_holder_rssd(bank_rssd: int) -> tuple[int, list[dict]]:
@@ -63,6 +64,37 @@ def _flatten(tree: dict, subject_rssd: int | None) -> list[dict]:
     return rows
 
 
+def _visible_rows(rows: list[dict], *, expand_all: bool = False,
+                  query: str = "",
+                  max_depth: int = _COLLAPSED_DEPTH) -> list[dict]:
+    """The rows to draw, in tree order, each with its ancestors so the
+    indentation still reads as a tree (UX-P1-15: JPM's full hierarchy was one
+    18,600 px table).
+
+    query (case-insensitive substring of the entity name) searches the WHOLE
+    tree, collapse or not — a match hidden below the fold would read as
+    "not found". Otherwise, collapsed shows depth <= max_depth plus the
+    subject bank (and its chain) wherever it sits; expand_all shows all."""
+    q = (query or "").strip().lower()
+    if q:
+        keep = {i for i, r in enumerate(rows) if q in (r.get("name") or "").lower()}
+    elif expand_all:
+        return list(rows)
+    else:
+        keep = {i for i, r in enumerate(rows)
+                if r["depth"] <= max_depth or r.get("is_subject")}
+    # Pre-order: a row's parent is the nearest earlier row one level up.
+    for i in sorted(keep):
+        want = rows[i]["depth"] - 1
+        for j in range(i - 1, -1, -1):
+            if want < 0:
+                break
+            if rows[j]["depth"] == want:
+                keep.add(j)
+                want -= 1
+    return [rows[i] for i in sorted(keep)]
+
+
 def render_corporate_structure(ticker: str):
     from data.fdic_client import get_rssd_for_cert
     from data.nic_client import get_org_hierarchy
@@ -88,8 +120,28 @@ def render_corporate_structure(ticker: str):
 
     rows = _flatten(tree, subject_rssd=rssd)
 
+    _f, _t = st.columns([3, 1], vertical_alignment="bottom")
+    with _f:
+        query = st.text_input("Filter entities", key=f"struct_filter_{ticker}",
+                              placeholder="Filter by entity name",
+                              label_visibility="collapsed")
+    with _t:
+        expand_all = st.toggle("Expand all", key=f"struct_expand_{ticker}")
+    shown = _visible_rows(rows, expand_all=expand_all, query=query)
+    if query.strip():
+        q = query.strip().lower()
+        n_match = sum(1 for r in rows if q in (r["name"] or "").lower())
+        st.caption(f"{n_match:,} of {len(rows):,} entities match the filter "
+                   "(shown with their parent entities).")
+    elif len(shown) < len(rows):
+        st.caption(f"Showing {len(shown):,} of {len(rows):,} entities (levels "
+                   f"0–{_COLLAPSED_DEPTH}). Turn on Expand all or filter by name "
+                   "to see the rest; the export has the full tree.")
+    if not shown:
+        st.info("No entity in this organization matches that filter.")
+
     body = ""
-    for r in rows:
+    for r in shown:
         pad = r["depth"] * 22
         name = _h.escape(r["name"] or "(unnamed entity)")
         if r["depth"] == 0:
@@ -99,20 +151,21 @@ def render_corporate_structure(ticker: str):
         pct = f'{r["ownership_pct"]:.0f}%' if r["ownership_pct"] is not None else "—"
         body += ("<tr>"
                  f'<td style="text-align:left;padding-left:{pad + 8}px;">{name}</td>'
-                 f'<td style="text-align:left;">{_h.escape(r["type"] or "n/a")}</td>'
-                 f'<td style="text-align:left;">{_h.escape(r["location"] or "n/a")}</td>'
+                 f'<td style="text-align:left;">{_h.escape(r["type"] or "—")}</td>'
+                 f'<td style="text-align:left;">{_h.escape(r["location"] or "—")}</td>'
                  f'<td style="text-align:right;">{pct}</td>'
                  f'<td style="text-align:left;">{_h.escape(r["relationship"] or "—")}</td>'
                  "</tr>")
-    st.markdown(
-        '<div class="ksk-grid"><table><thead><tr>'
-        '<th style="text-align:left;">Entity</th>'
-        '<th style="text-align:left;">Type</th>'
-        '<th style="text-align:left;">Location</th>'
-        '<th style="text-align:right;">Ownership</th>'
-        '<th style="text-align:left;">Control</th>'
-        f"</tr></thead><tbody>{body}</tbody></table></div>",
-        unsafe_allow_html=True)
+    if shown:
+        st.markdown(
+            '<div class="ksk-grid"><table><thead><tr>'
+            '<th style="text-align:left;">Entity</th>'
+            '<th style="text-align:left;">Type</th>'
+            '<th style="text-align:left;">Location</th>'
+            '<th style="text-align:right;">Ownership</th>'
+            '<th style="text-align:left;">Control</th>'
+            f"</tr></thead><tbody>{body}</tbody></table></div>",
+            unsafe_allow_html=True)
 
     notes = [f"Source: Federal Reserve NIC organizational hierarchy, "
              f"as of {tree.get('as_of')}. Ownership is NIC PCT_EQUITY as "

@@ -53,7 +53,6 @@ from ui.chrome import table_export, title_bar, ledger
 # ── Beat/miss styling ───────────────────────────────────────────────────
 _BEAT_STYLE = "background-color: rgba(5, 150, 105, 0.08); color: #059669; font-weight: 600;"
 _MISS_STYLE = "background-color: rgba(220, 38, 38, 0.08); color: #dc2626; font-weight: 600;"
-_INLINE_STYLE = "background-color: rgba(217, 119, 6, 0.08); color: #d97706;"
 _NA_STYLE = "color: #999;"
 
 _BEAT_LABEL = "Beat"
@@ -410,10 +409,33 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
                         f"{', '.join(detail['firms'])}"):
                     _render_firm_matrix(detail, f"{ticker}_{selected_period}")
     else:
-        st.info(
-            f"No consensus data for {ticker} yet. "
-            "Enter estimates manually or upload a consensus file above."
-        )
+        # This block is about UPLOADED house/broker estimates only — the street
+        # consensus (market data) already renders above in the Next Report /
+        # Analyst Estimates strips and the surprise chart, so an info box
+        # saying "No consensus data" under a "Consensus EPS" line read as a
+        # contradiction (UX review 2026-09-24). Name the street source only
+        # when it actually rendered.
+        has_street = bool(estimates and not estimates.get("error"))
+        st.caption(_no_uploaded_estimates_note(ticker, has_street))
+
+
+def _no_uploaded_estimates_note(ticker: str, has_street: bool) -> str:
+    """Caption for a bank with no uploaded broker/house estimates."""
+    if has_street:
+        return (f"No uploaded broker estimates for {ticker} — street consensus "
+                "above is from market data.")
+    return (f"No uploaded broker estimates for {ticker} — upload a research "
+            "file or enter estimates above.")
+
+
+def _rec_label(rec) -> str:
+    """Consensus-rating display: None and the provider's literal "None" /
+    "none" / "" are absent → "—" (BSBK/ALBY showed "Consensus Rating: None",
+    UX review 2026-09-24); "strong_buy" → "Strong Buy"."""
+    s = str(rec).strip() if rec is not None else ""
+    if not s or s.lower() in ("none", "nan", "null", "n/a"):
+        return "—"
+    return s.replace("_", " ").title()
 
 
 def _render_auto_estimates(ticker: str, estimates: dict):
@@ -435,7 +457,7 @@ def _render_auto_estimates(ticker: str, estimates: dict):
         ("Target Range", (f"${t_low:.2f} – ${t_high:.2f}" if t_low and t_high
                           else "—"),
          "Low–high of analysts' 12-month price targets."),
-        ("Consensus Rating", (rec.replace("_", " ").title() if rec else "—"),
+        ("Consensus Rating", _rec_label(rec),
          "Analyst consensus recommendation."),
         ("Analyst Coverage", (str(analysts) if analysts else "—"),
          "Number of sell-side analysts contributing estimates."),
@@ -936,10 +958,13 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict):
     # when every source leg is down).
     cal_failed = False
     upcoming_7 = upcoming_14 = 0
+    upcoming: list[tuple] = []          # (date, ticker) for every future report
     try:
         from data.earnings_call import agenda_counts
         agenda = _upcoming_agenda(date.today().isoformat())["agenda"]
         upcoming_7, upcoming_14 = agenda_counts(agenda)
+        upcoming = [(date.fromisoformat(r["date"]), r["ticker"])
+                    for b in agenda for r in b["rows"]]
     except Exception as e:
         print(f"[earnings] calendar fetch failed: {type(e).__name__}: {e}")
         cal_failed = True
@@ -968,27 +993,54 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict):
                 elif c["beat_miss"] == "inline":
                     total_inlines += 1
 
-    total_cmp = total_beats + total_misses + total_inlines
-    beat_pct = (total_beats / total_cmp * 100) if total_cmp else 0
-
     avg_surprise = _avg_eps_surprise_cached(tuple(watchlist[:30]))
 
+    rows = _earnings_summary_rows(
+        cal_failed=cal_failed, upcoming_7=upcoming_7, upcoming_14=upcoming_14,
+        upcoming=upcoming, banks_with_consensus=banks_with_consensus,
+        beats=total_beats, misses=total_misses, inlines=total_inlines,
+        avg_surprise=avg_surprise)
+    if rows:
+        ledger("Earnings Summary", rows)
+
+
+def _earnings_summary_rows(*, cal_failed: bool, upcoming_7: int,
+                           upcoming_14: int, upcoming: list[tuple],
+                           banks_with_consensus: int, beats: int, misses: int,
+                           inlines: int, avg_surprise) -> list[tuple[str, str]]:
+    """Earnings Summary ledger rows. Out of season the strip read as a row of
+    zeros ("Reporting This Week 0 · Total Metrics Compared 0 · Beat Rate —",
+    UX review 2026-09-24): a KPI whose value is 0/absent is HIDDEN, and a zero
+    "Reporting This Week" becomes the next scheduled report from the same
+    calendar data. A calendar OUTAGE still says so (never a confident 0)."""
     _m = "color:var(--text-muted);font-size:var(--fs-xs)"
-    ledger("Earnings Summary", [
-        ("Reporting This Week",
-         (f'n/a <span style="{_m}">calendar feed unavailable</span>' if cal_failed
-          else f'{upcoming_7} <span style="{_m}">{upcoming_14} in 14d</span>')),
-        ("Banks w/ Consensus", str(banks_with_consensus)),
-        ("Total Metrics Compared",
-         f'{total_cmp}' + (f' <span style="{_m}">{banks_with_consensus} banks</span>'
-                           if banks_with_consensus else "")),
-        ("Beat Rate",
-         (f'{beat_pct:.0f}% <span style="{_m}">{total_beats}B / {total_misses}M / {total_inlines}I</span>'
-          if total_cmp else "—")),
-        ("Last Qtr Avg Surprise",
-         (f'{avg_surprise:+.1f}% <span style="{_m}">EPS vs consensus</span>'
-          if avg_surprise is not None else "—")),
-    ])
+    rows: list[tuple[str, str]] = []
+    if cal_failed:
+        rows.append(("Reporting This Week",
+                     f'— <span style="{_m}">calendar feed unavailable</span>'))
+    elif upcoming_7:
+        rows.append(("Reporting This Week",
+                     f'{upcoming_7} <span style="{_m}">{upcoming_14} in 14d</span>'))
+    elif upcoming:
+        nd = min(d for d, _t in upcoming)
+        tks = sorted({t for d, t in upcoming if d == nd})
+        more = f" +{len(tks) - 1}" if len(tks) > 1 else ""
+        rows.append(("Next Report",
+                     f'{nd.isoformat()} <span style="{_m}">'
+                     f'({_html.escape(tks[0])}{more})</span>'))
+    if banks_with_consensus:
+        rows.append(("Banks w/ Consensus", str(banks_with_consensus)))
+    total_cmp = beats + misses + inlines
+    if total_cmp:
+        rows.append(("Total Metrics Compared",
+                     f'{total_cmp} <span style="{_m}">{banks_with_consensus} banks</span>'))
+        rows.append(("Beat Rate",
+                     f'{beats / total_cmp * 100:.0f}% <span style="{_m}">'
+                     f'{beats}B / {misses}M / {inlines}I</span>'))
+    if avg_surprise is not None:
+        rows.append(("Last Qtr Avg Surprise",
+                     f'{avg_surprise:+.1f}% <span style="{_m}">EPS vs consensus</span>'))
+    return rows
 
 
 # ── Surprise Heat-Map ──────────────────────────────────────────────────
@@ -2396,30 +2448,25 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
         filtered = [s for s in filtered if "Efficiency" in s["Metric"]]
 
     if filtered:
-        df = pd.DataFrame(filtered[:50])
-        df["Surprise %"] = df["Surprise %"].apply(lambda x: f"{x:+.2f}%")
-
-        # Color by result
-        def _color_surprise(row):
-            result = row.get("Result", "")
-            if result == "beat":
-                return [_BEAT_STYLE] * len(row)
-            elif result == "miss":
-                return [_MISS_STYLE] * len(row)
-            elif result == "inline":
-                return [_INLINE_STYLE] * len(row)
-            return [""] * len(row)
-
-        display_cols = ["Ticker", "Bank", "Metric", "Period", "Consensus", "Actual", "Surprise %", "Source"]
-        disp = df[display_cols].copy()
-        disp["Ticker"] = disp["Ticker"].map(_df_ticker_url)
-        styled = disp.style.apply(_color_surprise, axis=1).set_properties(
-            **{"font-size": "0.75rem", "padding": "3px 6px"}
-        )
-
-        st.dataframe(styled, use_container_width=True, hide_index=True,
-                      height=min(600, 40 + 35 * len(df)),
-                      column_config=_df_ticker_linkcol())
+        # House table (ksk_table): the list is already ranked by |surprise| and
+        # filtered by the selectors above, so st.dataframe's column sorting
+        # bought nothing (UX review 2026-09-24, P1-23). The Result column
+        # replaces the old whole-row tint; the signed Surprise % is colored.
+        from ui.tables import ksk_table, ticker_anchor_cells
+        top = filtered[:50]
+        disp = pd.DataFrame({
+            "Ticker": ticker_anchor_cells([s["Ticker"] for s in top]),
+            "Bank": [s["Bank"] or "—" for s in top],
+            "Metric": [s["Metric"] for s in top],
+            "Period": [s["Period"] or "—" for s in top],
+            "Consensus": [s["Consensus"] or "—" for s in top],
+            "Actual": [s["Actual"] or "—" for s in top],
+            "Surprise %": [f"{s['Surprise %']:+.2f}%" for s in top],
+            "Result": [str(s["Result"]).title() for s in top],
+            "Source": [s["Source"] for s in top],
+        })
+        ksk_table(disp, signed_cols=("Surprise %",), html_cols=("Ticker",),
+                  txt_cols=("Period",), max_height_px=600)
         # Underlying numeric rows (unformatted consensus / actual / surprise);
         # the unit varies by row and travels in the Unit column.
         table_export(

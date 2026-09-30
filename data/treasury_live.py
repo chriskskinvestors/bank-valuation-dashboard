@@ -14,7 +14,7 @@ never a wrong number).
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 # FRED series id (what the rates board keys on) -> CBOE yield index (Yahoo
 # symbol). The index value IS the yield in percent, quoted directly.
@@ -24,8 +24,10 @@ _CBOE = {
     "DGS10":  "^TNX",   # 10-year
     "DGS30":  "^TYX",   # 30-year
 }
-_CACHE_KEY = "treasury_live_cboe:v1"
-_TTL_SECONDS = 90  # near-live, but easy on Yahoo's rate limits
+# data/live_rates snapshot tenor -> FRED series id (what the rates board keys
+# on). The snapshot's symbols are exactly _CBOE's.
+_TENOR_TO_SID = {"3M": "DGS3MO", "5Y": "DGS5", "10Y": "DGS10", "30Y": "DGS30"}
+_SNAP_MAX_AGE_S = 600  # same freshness bar as Home's rates pane
 
 
 def _plausible(y) -> bool:
@@ -40,44 +42,37 @@ def _plausible(y) -> bool:
 
 def live_yields() -> dict:
     """{fred_sid: {"yield": float_pct, "asof": datetime}} for the CBOE tenors
-    that resolved, or {} if none did / on any failure. Never raises."""
-    from data import cache
-    from data.freshness import is_fresh
+    in the job-warmed live snapshot, or {} if there is none / it is stale.
+    Never raises, never fetches.
 
-    cached = cache.get(_CACHE_KEY)
-    if is_fresh(cached, _TTL_SECONDS) and cached.get("yields") is not None:
-        return _decode(cached["yields"])
-
-    out = {}
+    READ-ONLY at render (UX review P1-05, 2026-09-30): this used to call Yahoo
+    four times, serially, on the page-render thread whenever its 90 s cache had
+    lapsed — the Market & Macro › Rates tab took ~36 s warm. The same four
+    CBOE indices are already fetched by the refresh-live-yields job into
+    data/live_rates' snapshot (jobs build, renders read), so read that. A
+    missing/stale snapshot (off-hours, job down) returns {} and the board
+    falls back to FRED daily — a stale yield is never shown as live."""
     try:
-        import yfinance as yf
-        for sid, sym in _CBOE.items():
-            try:
-                h = yf.Ticker(sym).history(period="1d", interval="1m")
-                if h is None or h.empty:           # off-hours: fall back to dailies
-                    h = yf.Ticker(sym).history(period="5d", interval="1d")
-                if h is None or h.empty or "Close" not in h:
-                    continue
-                s = h["Close"].dropna()
-                if s.empty or not _plausible(s.iloc[-1]):
-                    continue
-                out[sid] = {"yield": round(float(s.iloc[-1]), 3),
-                            "asof": s.index[-1].to_pydatetime()}
-            except Exception:
-                continue
+        import time
+        from data import cache
+        from data.live_rates import _SNAP_KEY
+        snap = cache.get(_SNAP_KEY)
+        if not snap:
+            return {}
+        ts = snap.get("_ts")
+        if not ts or (time.time() - float(ts)) > _SNAP_MAX_AGE_S:
+            return {}
+        asof = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        vals = snap.get("_v") or {}
+        out = {}
+        for tenor, sid in _TENOR_TO_SID.items():
+            row = vals.get(tenor)
+            level = row[0] if row else None
+            if level is not None and _plausible(level):
+                out[sid] = {"yield": round(float(level), 3), "asof": asof}
+        return out
     except Exception:
-        # yfinance import / network blew up entirely — serve last good, else {}.
-        return _decode(cached["yields"]) if (cached and cached.get("yields")) else {}
-
-    if not out:
-        return _decode(cached["yields"]) if (cached and cached.get("yields")) else {}
-
-    enc = {k: {"yield": v["yield"], "asof": v["asof"].isoformat()} for k, v in out.items()}
-    try:
-        cache.put(_CACHE_KEY, {"cached_at": datetime.now().isoformat(), "yields": enc})
-    except Exception:
-        pass
-    return out
+        return {}
 
 
 def _decode(enc) -> dict:

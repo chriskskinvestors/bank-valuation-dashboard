@@ -66,6 +66,9 @@ class _ExportCapture(unittest.TestCase):
         "markdown": _noop, "caption": _noop, "subheader": _noop, "info": _noop,
         "dataframe": _noop, "plotly_chart": _noop, "download_button": _noop,
         "spinner": lambda *a, **k: _Ctx(),
+        # Corporate Structure filter + expand toggle (UX-P1-15).
+        "text_input": lambda *a, **k: "",
+        "toggle": lambda *a, **k: False,
         "container": lambda *a, **k: _Ctx(),
         "expander": lambda *a, **k: _Ctx(),
         "columns": lambda spec, **k: [_Ctx() for _ in range(
@@ -130,7 +133,9 @@ class TestCorporateStructureExport(_ExportCapture):
     def test_depth_column_numeric_and_entity_unindented(self):
         import ui.corporate_structure as cs
         calls = self._capture()
-        with patch.object(cs, "get_name", lambda t: "Banner Corporation"), \
+        # Rebind: under discovery cs may be bound to an earlier-installed stub
+        # that lacks the filter widgets (streamlit stub replace hazard).
+        with patch.object(cs, "st", self.st),              patch.object(cs, "get_name", lambda t: "Banner Corporation"), \
              patch.object(cs, "get_fdic_cert", lambda t: 28489), \
              patch("data.fdic_client.get_rssd_for_cert", lambda c: 352772), \
              patch("data.nic_client.get_parent",

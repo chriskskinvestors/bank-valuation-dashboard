@@ -1207,7 +1207,8 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
         st.session_state["_screen_result"] = {"metrics": kept,
                                               "n_excluded_nodata": n_excluded_nodata}
         # Recent (this session): most-recent first, deduped on the spec, capped.
-        _ran_at = time.strftime("%H:%M")
+        from ui.generic_table import ran_at_et
+        _ran_at = ran_at_et()   # "HH:MM ET" (the container clock is UTC)
         st.session_state["_screen_ran_at"] = _ran_at
         _nm = st.session_state.get("_screen_name")
         _entry = {
@@ -1435,8 +1436,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                             _vs = screen_versions(_new_name)
                             _v = _vs[0]["version"] if _vs else 1
                             st.session_state["_screen_name"] = _new_name.strip()
+                            from ui.generic_table import ran_at_et
                             st.session_state.setdefault("_screen_lastrun", {})[
-                                _new_name.strip()] = time.strftime("%H:%M")
+                                _new_name.strip()] = ran_at_et()
                             st.success(f"Saved '{_new_name}' (v{_v})")
                         else:
                             st.error("Could not save.")
