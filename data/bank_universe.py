@@ -1457,6 +1457,41 @@ def _cert_still_files(cert: int) -> bool:
     return _is_still_filing_call_reports(int(cert))
 
 
+def run_curated_cik_guard(max_age_days: int = 200) -> list[str]:
+    """Observe-only: curated `cik: None` tickers that SEC now lists AND that
+    have filed a 10-Q/10-K for a period within `max_age_days`. A curated None
+    wins over discovery (bank_mapping lookup order), so a bank that becomes
+    an SEC registrant stays FDIC/wire-only until someone sets its CIK — PBAM
+    registered in 2026-07 (Form 10-12B, first 10-Q for 2026-06-30) and kept
+    rendering "no SEC filer". A listing alone is NOT the signal: ~20 curated
+    Nones are still in SEC's ticker file with filings 1-20 years stale (their
+    None is deliberate, see the §12(i) block) or have no periodic filing yet.
+    Prints [curated-cik] lines; never raises, never fails the job."""
+    try:
+        from datetime import date, timedelta
+        from data.bank_mapping import BANK_MAP, _RESOLVED_FROM_JSON
+        from data.sec_earnings_8k import latest_periodic_filing
+        effective = {**_RESOLVED_FROM_JSON, **BANK_MAP}   # BANK_MAP wins
+        nulls = {t.upper() for t, v in effective.items()
+                 if isinstance(v, dict) and v.get("cik") is None}
+        sec_cik = {str(r[2]).upper(): int(r[0])
+                   for r in _fetch_sec_companies() if r[0] and r[2]}
+        cutoff = (date.today() - timedelta(days=max_age_days)).isoformat()
+        flagged = []
+        for t in sorted(nulls & set(sec_cik)):
+            p = latest_periodic_filing(sec_cik[t]) or {}
+            if (p.get("report_date") or "") >= cutoff:
+                print(f"[curated-cik] {t}: curated cik=None, but SEC CIK "
+                      f"{sec_cik[t]} filed a {p.get('form')} for "
+                      f"{p['report_date']} — set the CIK in data/bank_mapping.py "
+                      f"and data/bank_map_resolved.json", flush=True)
+                flagged.append(t)
+        return flagged
+    except Exception as e:
+        print(f"[curated-cik] guard skipped: {type(e).__name__}: {e}", flush=True)
+        return []
+
+
 def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
     """Observe-only wrong-entity guard, run by jobs/refresh_universe after
     every snapshot rebuild. Prints loud [namehcr-guard] lines for anything a

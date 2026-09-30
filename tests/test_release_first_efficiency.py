@@ -7,15 +7,16 @@ flag and NO cross-band gate between them).
 Pinned here:
 - CACHE-ONLY / NO-FETCH (the perf contract): cached_release_metrics never
   touches the frontier/fetch path, and the resolver never calls
-  release_metrics() (the fetching entrypoint) nor the OTC transport for a
-  bank with XBRL — call-counted via mocks, so the 440-bank build gains
-  zero cold fetches by construction.
+  release_metrics() (the fetching entrypoint); the wire/IR envelope is read
+  serve-only (allow_fetch=False) — call-counted via mocks, so the 440-bank
+  build gains zero cold fetches by construction.
 - Reader/writer key coupling: cached_release_metrics and release_metrics()
   carry ONE versioned key literal — a bump that misses one fails here.
 - Staleness gate: a release quarter-end older than ~200 days -> (None, None)
   (the _otc_release_ps precedent — a stopped-publishing bank never drifts).
-- OTC path: a cikless (or empty-XBRL) bank serves from its wire release,
-  same 200-day gate.
+- OTC path: with no 8-K figure, the wire release serves — cikless banks and
+  (owner, 2026-09-30: company-reported first) wire-only SEC filers like
+  PBAM alike; same 200-day gate.
 - Config: efficiency_release declared (computed/pct/lower_better, thresholds
   copied from efficiency_ratio); efficiency_ratio UNTOUCHED (still fdic/EEFFR).
 - Wiring: compute-side keys emitted; build_bank_metrics passes both through.
@@ -74,7 +75,7 @@ class TestCacheOnlyNoFetch(_CikBank):
                 patch.object(drm, "release_metrics") as rm, \
                 patch.object(drm, "_current_accession") as acc, \
                 patch("data.otc_release.otc_release_metrics") as otc:
-            out = va._resolve_release_efficiency("JPM", sec_has_xbrl=True)
+            out = va._resolve_release_efficiency("JPM")
         self.assertEqual(out, (57.3, FRESH_QEND))
         rm.assert_not_called()
         acc.assert_not_called()
@@ -86,17 +87,20 @@ class TestCacheOnlyNoFetch(_CikBank):
 
     def test_cold_cache_is_na_never_a_fetch(self):
         """No cached extraction -> (None, None) ('—' until the Results board
-        / poll-events warms it) — never a live fetch, never the OTC wire for
-        a bank that has XBRL."""
+        / poll-events warms it) — never a live fetch. The wire/IR envelope IS
+        consulted (company-reported first, owner 2026-09-30) but serve-only:
+        every read is allow_fetch=False."""
         with patch("data.cache.get", return_value=None), \
                 patch.object(drm, "release_metrics") as rm, \
                 patch.object(drm, "_current_accession") as acc, \
-                patch("data.otc_release.otc_release_metrics") as otc:
-            out = va._resolve_release_efficiency("JPM", sec_has_xbrl=True)
+                patch("data.otc_release.otc_release_metrics",
+                      return_value=None) as otc:
+            out = va._resolve_release_efficiency("JPM")
         self.assertEqual(out, (None, None))
         rm.assert_not_called()
         acc.assert_not_called()
-        otc.assert_not_called()
+        for call in otc.call_args_list:
+            self.assertIs(call.kwargs.get("allow_fetch"), False)
 
     def test_reader_and_writer_share_one_versioned_key(self):
         """cached_release_metrics duplicates release_metrics()'s key literal
@@ -109,25 +113,38 @@ class TestCacheOnlyNoFetch(_CikBank):
         self.assertEqual(len(versions), 1, f"key versions diverged: {versions}")
 
 
+class TestWireOnlySecFiler(_CikBank):
+    def test_no_8k_figure_serves_the_wire_release(self):
+        """PBAM class: an SEC filer (CIK resolves) with no cached 8-K release
+        keeps its released efficiency from the wire envelope (prod showed
+        "Efficiency (co. release) 48.8%" before PBAM had a CIK)."""
+        with patch("data.cache.get", return_value=None), \
+                patch("data.otc_release.otc_release_metrics",
+                      return_value={"qend": FRESH_QEND,
+                                    "metrics": {"efficiency": 48.8}}):
+            self.assertEqual(va._resolve_release_efficiency("PBAM"),
+                             (48.8, FRESH_QEND))
+
+
 class TestStalenessGate(_CikBank):
     def test_stale_release_qend_is_none(self):
         with patch("data.cache.get",
                    return_value=_envelope(qend=STALE_QEND)):
             self.assertEqual(
-                va._resolve_release_efficiency("JPM", sec_has_xbrl=True),
+                va._resolve_release_efficiency("JPM"),
                 (None, None))
 
     def test_missing_qend_is_none(self):
         with patch("data.cache.get", return_value=_envelope(qend=None)):
             self.assertEqual(
-                va._resolve_release_efficiency("JPM", sec_has_xbrl=True),
+                va._resolve_release_efficiency("JPM"),
                 (None, None))
 
     def test_missing_efficiency_metric_is_none(self):
         with patch("data.cache.get",
                    return_value=_envelope(efficiency=None)):
             self.assertEqual(
-                va._resolve_release_efficiency("JPM", sec_has_xbrl=True),
+                va._resolve_release_efficiency("JPM"),
                 (None, None))
 
 
@@ -146,7 +163,7 @@ class TestOtcPath(unittest.TestCase):
                    return_value={"qend": FRESH_QEND,
                                  "metrics": {"efficiency": 61.2}}):
             self.assertEqual(
-                va._resolve_release_efficiency("PBAM", sec_has_xbrl=False),
+                va._resolve_release_efficiency("PBAM"),
                 (61.2, FRESH_QEND))
 
     def test_stale_wire_release_is_none(self):
@@ -154,13 +171,13 @@ class TestOtcPath(unittest.TestCase):
                    return_value={"qend": STALE_QEND,
                                  "metrics": {"efficiency": 61.2}}):
             self.assertEqual(
-                va._resolve_release_efficiency("PBAM", sec_has_xbrl=False),
+                va._resolve_release_efficiency("PBAM"),
                 (None, None))
 
     def test_nothing_available_is_none(self):
         with patch("data.otc_release.otc_release_metrics", return_value=None):
             self.assertEqual(
-                va._resolve_release_efficiency("PBAM", sec_has_xbrl=False),
+                va._resolve_release_efficiency("PBAM"),
                 (None, None))
 
 

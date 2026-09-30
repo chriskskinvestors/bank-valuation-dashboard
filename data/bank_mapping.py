@@ -91,7 +91,9 @@ BANK_MAP = {
     "RCBC":    {"name": "River City Bank",                               "fdic_cert": 18983,  "cik": None},
     "WCCB":    {"name": "West Coast Community Bancorp",                  "fdic_cert": 57591,  "cik": None},
     "DBIN":    {"name": "Dacotah Banks, Inc.",                           "fdic_cert": 17437,  "cik": None},
-    "PBAM":    {"name": "Private Bancorp of America, Inc.",              "fdic_cert": 58291,  "cik": None},
+    # SEC registrant since its 2026-07 Form 10-12B (Nasdaq; first 10-Q for
+    # 2026-06-30, acc 0001705284-26-000008) — no longer FDIC/wire-only.
+    "PBAM":    {"name": "Private Bancorp of America, Inc.",              "fdic_cert": 58291,  "cik": 1705284},
     "FAHE":    {"name": "The Fahey Banking Company",                     "fdic_cert": 2068,   "cik": None},
     # THREE different companies are "SECURITY NATIONAL CORP" to the FDIC, in
     # NE, SD and FL. cert 19213 is the NEBRASKA one's bank (Security National
