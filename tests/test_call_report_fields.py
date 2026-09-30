@@ -99,6 +99,7 @@ class TestCatalogClassification(unittest.TestCase):
         lvl = crf.metric_def("fdic:CD3LES")
         self.assertEqual((lvl["format"], lvl["category"]), ("dollars_auto", "Call report (FDIC)"))
         self.assertTrue(lvl["label"].startswith("CD3LES · "))
+        self.assertEqual(lvl["header"], "CD3LES", "grid header is the short code; label is the tooltip")
         self.assertEqual(crf.metric_def("fdic:NIMY")["format"], "number")
         self.assertIn("(count)", crf.metric_def("fdic:NUMEMP")["label"])
         self.assertIsNone(crf.metric_def("fdic:NOT_A_FIELD"))

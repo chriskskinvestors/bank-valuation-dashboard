@@ -76,8 +76,9 @@ def metric_def(key: str, formulas: dict | None = None) -> dict | None:
             return None
         fmt, dec = {"level": ("dollars_auto", 1), "ratio": ("number", 2),
                     "count": ("number", 0), "asis": ("number", 2)}[c["kind"]]
-        return {"key": key, "label": field_label(code), "source": "call_report",
-                "format": fmt, "decimals": dec, "category": "Call report (FDIC)"}
+        return {"key": key, "label": field_label(code), "header": code,
+                "source": "call_report", "format": fmt, "decimals": dec,
+                "category": "Call report (FDIC)"}
     if key.startswith(FORMULA_PREFIX):
         f = (formulas or {}).get(key)
         if not f:
