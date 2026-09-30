@@ -176,6 +176,43 @@ class TestResolveClassShares(unittest.TestCase):
         self.assertEqual(rec["status"], "unresolved")
         self.assertIsNone(rec["value"])
 
+    def test_outstanding_contradicting_issued_minus_treasury_is_unresolved(self):
+        """CIA 10-Q 0000024090-26-000043: Class A "outstanding" 54,968,998 =
+        issued, yet 4,327,810 Class A treasury (true 50,641,188; dei cover
+        50,643,108). Summing the tag would overstate the count 10.5%."""
+        ents = [
+            _e("CommonStockSharesOutstanding", _AXIS_A, 54_968_998),
+            _e("CommonStockSharesIssued", _AXIS_A, 54_968_998),
+            _e("TreasuryStockCommonShares", _AXIS_A, 4_327_810),
+            _e("CommonStockSharesOutstanding", _AXIS_B, 1_001_714),
+            _e("CommonStockSharesIssued", _AXIS_B, 1_001_714),
+            _e("TreasuryStockCommonShares", _AXIS_B, 1_001_714),
+        ]
+        rec = ov.resolve_class_shares(ents, EQ_END)
+        self.assertEqual(rec["status"], "unresolved")
+        self.assertIsNone(rec["value"])
+
+    def test_consistent_class_treasury_resolves(self):
+        """EQBK 10-Q 0001193125-26-340292: A 27,038,988 − 6,460,949 =
+        20,578,039 (= its outstanding tag); B fully in treasury → 0."""
+        ents = [
+            _e("CommonStockSharesIssued", _AXIS_A, 27_038_988),
+            _e("TreasuryStockCommonShares", _AXIS_A, 6_460_949),
+            _e("CommonStockSharesOutstanding", _AXIS_A, 20_578_039),
+            _e("CommonStockSharesIssued", _AXIS_B, 234_903),
+            _e("TreasuryStockCommonShares", _AXIS_B, 234_903),
+        ]
+        rec = ov.resolve_class_shares(ents, EQ_END)
+        self.assertEqual(rec["value"], 20_578_039)
+        self.assertEqual(rec["classes"][_AXIS_B], 0)
+
+    def test_preferred_member_under_common_concept_is_unresolved(self):
+        """CFBK tags its Series D preferred with CommonStockSharesIssued."""
+        ents = _fcnca_entries() + [
+            _e("CommonStockSharesIssued", "us-gaap:SeriesDPreferredStockMember",
+               16_000)]
+        self.assertIsNone(ov.resolve_class_shares(ents, EQ_END)["value"])
+
     def test_conflicting_values_for_one_slot_are_unresolved(self):
         ents = _fcnca_entries() + [
             _e("CommonStockSharesOutstanding", _AXIS_B, 1_005_186)]
