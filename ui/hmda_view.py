@@ -112,7 +112,7 @@ def render_hmda_mortgages(ticker):
         tbl = pd.DataFrame([
             {"State": r["state"], "Originations": f"{r['count']:,}",
              "Volume": fmt_dollars(r["volume_usd"], 2),
-             "% of volume": round(r["volume_usd"] / tot * 100, 1)}
+             "% of volume": f"{r['volume_usd'] / tot * 100:.1f}%"}
             for r in top])
         st.markdown(f"**{latest_yr} by state** (top {len(tbl)})")
         from ui.tables import ksk_table

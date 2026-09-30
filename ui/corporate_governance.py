@@ -88,8 +88,7 @@ def render_corporate_governance(ticker: str):
                    "filing; n/a means the proxy is silent or the evidence "
                    f"didn't verify. Source:{link}.")
     else:
-        st.info("No verified charter/bylaw extraction is available for this "
-                "company (needs a DEF 14A on EDGAR and the summarizer API)."
+        st.info("No proxy statement has been processed for this company yet."
                 if cik else
                 "No SEC filer mapping — charter/bylaw extraction needs a "
                 "proxy on EDGAR.")

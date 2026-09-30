@@ -410,6 +410,12 @@ def null_unreported_capital(rec: dict) -> dict:
         for k in _RISK_BASED_RATIOS:
             if _fnum(rec.get(k)) == 0:
                 rec[k] = None
+    # Same class, one more field: FDIC zero-fills LNRESNCR (reserves ÷
+    # noncurrent loans) when noncurrent loans are zero. x/0 is undefined, not
+    # 0% — AMBK/ALBY rendered "Rsv/NPL 0%" in bottom-quintile red (2026-09-30).
+    if "NCLNLS" in rec and _fnum(rec.get("NCLNLS")) == 0 \
+            and _fnum(rec.get("LNRESNCR")) == 0:
+        rec["LNRESNCR"] = None
     return rec
 
 

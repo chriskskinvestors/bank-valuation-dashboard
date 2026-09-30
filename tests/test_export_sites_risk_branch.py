@@ -374,12 +374,17 @@ class TestBranchAnalyticsExports(_ExportSite):
         (subject 50,000 + Rival 150,000) = 1,200,000 $K. Rival 750,000 =
         62.50%, 4 branches, 2 counties; subject 450,000 = 37.50%."""
         def county(fips, year):
-            subj = (111, "Test Bank", "TST")
-            rival = (222, "Rival Bank", None)
+            subj = ("TST", 111, "Test Bank", "TST")
+            rival = ("c222", 222, "Rival Bank", None)
             data = {"06001": [(*subj, 2, 400_000), (*rival, 3, 600_000)],
                     "06013": [(*subj, 1, 50_000), (*rival, 1, 150_000)]}[fips]
-            return pd.DataFrame(data, columns=["cert", "bank_name", "ticker",
-                                               "n_branches", "total_deposits"])
+            return pd.DataFrame(data, columns=["owner_key", "cert", "bank_name",
+                                               "ticker", "n_branches",
+                                               "total_deposits"])
+        # Per-county path (the one-query path is pinned in
+        # tests/test_ux_p1_branch_competitors.py).
+        self._patch("ui.branch_analytics._footprint_participants",
+                    return_value={})
         self._patch("ui.branch_analytics._county_banks", side_effect=county)
 
         self.ba.render_branch_competitors("TST")
@@ -487,6 +492,22 @@ class TestHmdaExports(_ExportSite):
         self.assertEqual(src2["Source"], "CFPB HMDA LAR 2024 (public loan-level data)")
         self.assertEqual(src2["HMDA year"], 2024)
         self.assertIn("top 2 of 2", src2["States"])
+
+    def test_state_share_on_screen_carries_percent(self):
+        """UX review P1: the on-screen "% of volume" column showed bare
+        69.4 / 30.6. The export keeps the raw number under "(%)"."""
+        import ui.hmda_view as hv
+        shown = []
+        self._patch("ui.hmda_view._lei_for", return_value="LEI123")
+        self._patch("data.hmda_client.originations_by_year",
+                    return_value={2024: {"count": 900, "volume_usd": 288e6}})
+        self._patch("data.hmda_client.latest_breakdown", return_value=[
+            {"state": "OR", "count": 300, "volume_usd": 88e6},
+            {"state": "WA", "count": 600, "volume_usd": 200e6}])
+        self._patch("ui.tables.ksk_table",
+                    side_effect=lambda df, **k: shown.append(df))
+        hv.render_hmda_mortgages("TST")
+        self.assertEqual(list(shown[-1]["% of volume"]), ["69.4%", "30.6%"])
 
     def test_no_lei_renders_no_export(self):
         import ui.hmda_view as hv

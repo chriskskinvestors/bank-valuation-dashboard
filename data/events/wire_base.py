@@ -134,6 +134,11 @@ _BRAND_ALIASES: dict[str, list[str]] = {
     # branded by the subsidiary still match via this alias; MRBK is the only
     # Meridian in the universe, so the phrase can't collide.
     "MRBK": ["Meridian Bank"],
+    # Same shape: "Happen, Inc." normalizes to the English verb "HAPPEN" (now
+    # in _COMMON_NAME_WORDS — a Venezuela politics headline "...Elections Need
+    # To Happen..." was tagged HAPN, UX review 2026-09-24). The subsidiary
+    # brand keeps recall for "Happen Bank ..." releases.
+    "HAPN": ["Happen Bank"],
 }
 
 
@@ -425,6 +430,9 @@ _COMMON_NAME_WORDS = {
     # Energy / Audio — a bare match tagged Centene's Medicaid PR to the bank
     # (live mis-tag 2026-07-09). The alias "Meridian Bank" keeps recall.
     "MERIDIAN",
+    # "Happen, Inc." (HAPN) — the English verb ("Elections Need To Happen"
+    # tagged HAPN, UX review 2026-09-24). Alias "Happen Bank" keeps recall.
+    "HAPPEN",
 }
 
 # A name whose entire core is a single common word OR a short initialism is
@@ -1157,7 +1165,11 @@ _CASHTAG_RE = re.compile(r"\$([A-Z]{2,6})\b")
 #   "raises TI estimates"             junk   vs  "raises dividend"        keep
 # Aggregator-scoped (see _AGGREGATOR_SOURCES): a first-party wire is trusted,
 # an aggregator rewrite must be material — the house rule for this filter.
-_COMMENTARY_RE = re.compile(
+# Was also named _COMMENTARY_RE, which silently replaced the first-party
+# gate's regex above: is_company_press_release lost its analyst/rating
+# rejection ("WTFC Initiated Coverage by Wells Fargo -- Rating Set to…"
+# passed as a WFC press release — UX review P1-31, 2026-09-30).
+_AGGREGATOR_COMMENTARY_RE = re.compile(
     # trailing/leading attribution: "…, Morgan Stanley Says", "according to X"
     r",\s*[A-Z][\w.&' ]{2,40}\s+says\b"
     r"|\baccording\s+to\s+[A-Z][\w.&' ]{2,40}$"
@@ -1213,6 +1225,72 @@ _OFFSUBJECT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── Bank as COUNTERPARTY, not subject (UX review 2026-09-24) ─────────────────
+# The name matcher confirms the bank is NAMED in the title, not that it is the
+# story's subject: "WTFC Initiated Coverage by Wells Fargo" tagged WFC; "VKTX
+# Stock Offering Raised to $225M with Morgan Stanley and JPMo" tagged MS. These
+# run on the normalized (uppercased, punctuation-stripped, space-padded) title.
+# Deliberately narrow — "by"/"with" alone is NOT enough (real bank news: "to be
+# acquired by Fifth Third", "to merge with Comerica"): the title must ALSO carry
+# analyst-coverage or capital-markets-deal language.
+_CP_ANALYST_RE = re.compile(
+    r"\b(?:COVERAGE|RATING|RATED|PRICE TARGET|UPGRADE\w*|DOWNGRADE\w*"
+    r"|OVERWEIGHT|UNDERWEIGHT|EQUAL WEIGHT|OUTPERFORM|UNDERPERFORM)\b")
+_CP_DEAL_RE = re.compile(
+    r"\b(?:OFFERING|IPO|PLACEMENT|UNDERWRIT\w*|BOOKRUN\w*|BOOK RUNN\w*"
+    r"|NOTES|DEBT|FINANCING|CREDIT FACILITY)\b")
+# "<Bank> initiates / reiterates / starts coverage of|on ..." — the bank is the
+# analyst. "of|on" is load-bearing: "<Bank> Initiated Coverage by X" is the
+# passive form where the bank IS the covered subject.
+_CP_COVERAGE_VERB_RE = re.compile(
+    r"^\s*(?:INITIAT\w*|REITERAT\w*|RESUM\w*|ASSUM\w*|STARTS?|BEGINS?)\b"
+    r"(?:\s+\S+){0,2}?\s+COVERAGE\s+(?:OF|ON)\b")
+_CP_ACQ_WORDS = {"ACQUIRED", "PURCHASED", "BOUGHT", "SOLD"}
+# "... with <Bank A> and <Bank B>" — a bank anywhere in a with-list.
+_CP_WITH_LIST_RE = re.compile(r"\bWITH(?:\s+\S+){0,4}?\s+AND\s*$")
+
+
+def _is_counterparty_mention(headline: str, ticker: str) -> bool:
+    """True when EVERY title mention of `ticker`'s bank casts it as the analyst
+    or deal counterparty on someone else's story — "(initiated coverage /
+    underwritten / led) by <Bank>", "<offering> with <Bank>", "<Bank> initiates
+    coverage of ...". False when the bank isn't found by name at all (nothing
+    to judge — the caller's other gates decide), or when any mention reads as
+    the subject."""
+    global _NAME_INDEX, _NAME_LEADING_TOKENS
+    if not _NAME_INDEX:
+        _NAME_INDEX = build_name_index()
+        _NAME_LEADING_TOKENS = None
+    hay = " " + _normalize_name(headline) + " "
+    t = (ticker or "").upper()
+    analyst = bool(_CP_ANALYST_RE.search(hay))
+    deal = bool(_CP_DEAL_RE.search(hay))
+    if not (analyst or deal):
+        return False
+    mentions = []
+    for name, tk in _NAME_INDEX:
+        if tk.upper() != t:
+            continue
+        needle = " " + name + " "
+        pos = hay.find(needle)
+        while pos != -1:
+            mentions.append((pos, pos + len(needle) - 1))
+            pos = hay.find(needle, pos + 1)
+    if not mentions:
+        return False
+    for start, end in mentions:
+        before, after = hay[:start], hay[end:]
+        prev = _word_before(hay, start)
+        # "... acquired by <Bank>" is the bank's own M&A news — subject.
+        if prev == "BY" and _word_before(hay, start - 3) not in _CP_ACQ_WORDS:
+            continue
+        if deal and (prev == "WITH" or _CP_WITH_LIST_RE.search(before)):
+            continue
+        if analyst and _CP_COVERAGE_VERB_RE.search(after):
+            continue
+        return False                      # this mention reads as the subject
+    return True
+
 
 def is_junk_news(headline: str, ticker: str | None = None,
                  source: str | None = None) -> bool:
@@ -1248,6 +1326,9 @@ def is_junk_news(headline: str, ticker: str | None = None,
       • structured-note issuance (is_routine_noise)
       • (when ``ticker`` is given) headlines tagged with a DIFFERENT company's
         exchange ticker, both "(NYSE:XXX)" and bare "$XXX" cashtag forms.
+      • (when ``ticker`` is given) the bank named only as analyst / deal
+        counterparty (_is_counterparty_mention) — "Initiated Coverage by
+        <Bank>", "Offering ... with <Bank>".
 
     Conservative by construction: every rule targets a documented junk phrasing
     and the test suite pins legitimate press releases (dividends, M&A, earnings,
@@ -1272,7 +1353,7 @@ def is_junk_news(headline: str, ticker: str | None = None,
     # first-party wires — drop their soft fluff and their sell-side commentary
     # (bank as SPEAKER, not subject), keep their material events.
     if source in _AGGREGATOR_SOURCES:
-        if _AGGREGATOR_FLUFF_RE.search(h) or _COMMENTARY_RE.search(h):
+        if _AGGREGATOR_FLUFF_RE.search(h) or _AGGREGATOR_COMMENTARY_RE.search(h):
             return True
         # Trailing colon-attribution: "Europe's diesel inventories set to hit a
         # decade low: Morgan Stanley". Matching ':<Title Case>$' alone would eat
@@ -1286,6 +1367,8 @@ def is_junk_news(headline: str, ticker: str | None = None,
                 return True
     if ticker:
         t = ticker.upper()
+        if _is_counterparty_mention(h, t):
+            return True
         for other in _PAREN_TICKER_RE.findall(h):
             if other.upper() != t:
                 return True

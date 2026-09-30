@@ -16,7 +16,8 @@ from analysis.capital_dynamics import (
     summarize_bank_capital,
     CET1_REG_MIN, CET1_BUFFER_FLOOR,
 )
-from utils.formatting import fmt_dollars_from_thousands
+from utils.formatting import (fmt_dollars_from_thousands, neg_parens,
+                              pct as _pct_fmt, usd_compact_from_thousands)
 
 
 from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
@@ -33,16 +34,24 @@ def _absmax(series) -> float:
     return 0.0 if pd.isna(m) else float(m)
 
 
-def _kg_table(col0, period_labels, rows):
+def _kg_table(col0, period_labels, rows, bold=frozenset()):
     """Render rows as a design-system .ksk-grid table (SNL spreadsheet look).
     rows: list of (label, [cell strings]). '$' is neutralised so Streamlit's
-    markdown doesn't read two amounts on a line as LaTeX."""
+    markdown doesn't read two amounts on a line as LaTeX. A row whose label is
+    in `bold` is a subtotal line, bolded by the row's own style — never by
+    markdown asterisks, which render literally inside HTML (UX-P1-20). A cell
+    in accounting parens gets the grid's red .neg class."""
     def esc(s):
         return _html.escape(str(s)).replace("$", "&#36;")
+
+    def td(c):
+        neg = ' class="neg"' if str(c).startswith("(") else ""
+        return f"<td{neg}>{esc(c)}</td>"
     head = f"<th>{esc(col0)}</th>" + "".join(f"<th>{esc(p)}</th>" for p in period_labels)
     body = "".join(
-        "<tr><td>" + esc(lab) + "</td>"
-        + "".join(f"<td>{esc(c)}</td>" for c in cells) + "</tr>"
+        ('<tr style="font-weight:700">' if lab in bold else "<tr>")
+        + "<td>" + esc(lab) + "</td>"
+        + "".join(td(c) for c in cells) + "</tr>"
         for lab, cells in rows)
     st.markdown(f'<div class="ksk-grid"><table><thead><tr>{head}</tr></thead>'
                 f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
@@ -103,6 +112,9 @@ def _load_shares(ticker: str) -> float | None:
     return None
 
 
+# Cached: one cache_get per universe bank (~600) ran on EVERY render —
+# ~9.5 s warm on prod (UX review P1, 2026-09-30). fdic_hist refreshes nightly.
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_peer_cet1_median(watchlist: list[str]) -> float | None:
     cet1s = []
     for t in watchlist:
@@ -315,7 +327,8 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             x=waterfall_labels,
             measure=["absolute", "relative", "relative", "total"],
             y=wf_scaled,
-            text=[f"${v:,.1f}{unit}" for v in wf_scaled],
+            text=[f"{'-' if round(v, 1) < 0 else ''}${abs(v):,.1f}{unit}"
+                  for v in wf_scaled],
             textposition="outside",
             connector={"line": {"color": "rgb(150,150,150)"}},
             increasing={"marker": {"color": COLOR_SUCCESS}},
@@ -367,7 +380,11 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
 
     # ── Holding-company regulatory capital (SEC 10-K/10-Q — SNL basis) ──
     st.markdown("---")
-    _render_holdco_capital(ticker)
+    # ONE Annual/Quarterly control per page (UX-P1-21): the statement table's
+    # toggle above (render_statement key "capadq_period_…") also drives the
+    # holding-company block, which therefore renders no radio of its own here.
+    _render_holdco_capital(
+        ticker, period=st.session_state.get(f"capadq_period_{ticker}", "Annual"))
 
     # ── RC-R Part I capital walk (SNL Capital Adequacy table) ──────────
     st.markdown("---")
@@ -378,12 +395,16 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     _render_capital_return_attribution(ticker, rng)
 
 
-def _render_holdco_capital(ticker: str):
+def _render_holdco_capital(ticker: str, period: str | None = None):
     """SNL-basis Capital Adequacy highlights for the HOLDING COMPANY, sourced
     from the company's own latest SEC 10-K/10-Q (timely; not delayed FR Y-9C).
     Values are scraped from the filing's inline XBRL and anchored to the bank's
     FDIC CET1; anything that can't be reconciled renders n/a. See
-    docs/DATA-SOURCING-ARCHITECTURE.md."""
+    docs/DATA-SOURCING-ARCHITECTURE.md.
+
+    period: "Annual" / "Quarterly" chosen by the caller's own page control
+    (Templated Capital Adequacy); None renders this block's own toggle
+    (Company Reported › Regulatory Capital, where it stands alone)."""
     cik = get_cik(ticker)
     if not cik:
         return
@@ -418,9 +439,10 @@ def _render_holdco_capital(ticker: str):
     # Annual = FY-end stitch (+ the timeliest quarter, as before). Quarterly =
     # the full quarter-end series from recent 10-Qs/10-Ks (2026-07-14 sweep) —
     # same per-filing FDIC-CET1 anchor + reconcile gate either way.
-    _qtr = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
-                    key=f"hc_period_{ticker}",
-                    label_visibility="collapsed") == "Quarterly"
+    if period is None:
+        period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
+                          key=f"hc_period_{ticker}", label_visibility="collapsed")
+    _qtr = period == "Quarterly"
     try:
         if _qtr:
             from data.sec_filing_scraper import holdco_capital_quarterly_for
@@ -472,8 +494,9 @@ def _render_holdco_capital(ticker: str):
 
     def _cell(v, kind):
         if v is None:
-            return "n/a"
-        return f"{v * 100:.2f}%" if kind == "pct" else f"${v / 1e9:,.2f}B"
+            return "—"
+        return neg_parens(_pct_fmt(v * 100) if kind == "pct"
+                          else usd_compact_from_thousands(v / 1000.0))
 
     plabs = [_plab(p) for p in periods]
     _kg_table("($)", plabs,
@@ -551,7 +574,7 @@ def _render_holdco_walk(cap: dict, periods: list, _plab, *, ticker: str,
     def usd(v):
         if isinstance(v, str):
             return v
-        return "n/a" if v is None else f"${v / 1e9:,.2f}B"
+        return "—" if v is None else neg_parens(usd_compact_from_thousands(v / 1000.0))
 
     def comp(p, key, negate=False):
         """A WALK component cell — only for periods that reconcile."""
@@ -601,26 +624,26 @@ def _render_holdco_walk(cap: dict, periods: list, _plab, *, ticker: str,
         ("Less: goodwill", lambda p: comp(p, "goodwill", negate=True)),
         ("Less: other intangibles", lambda p: comp(p, "other_intangibles", negate=True)),
         ("Less: AOCI removed (opt-out)", aoci_removed),
-        ("**= Common Equity Tier 1 capital**", lambda p: bridge(p, "cet1_cap")),
+        ("= Common Equity Tier 1 capital", lambda p: bridge(p, "cet1_cap")),
         ("Additional Tier 1 (qualifying preferred)", at1),
-        ("**= Tier 1 capital**", lambda p: bridge(p, "t1_cap")),
+        ("= Tier 1 capital", lambda p: bridge(p, "t1_cap")),
         ("Subordinated debt & qualifying Tier 2", lambda p: comp(p, "subordinated_debt")),
         ("Other Tier 2 (allowance & adjustments)", t2_other),
-        ("**= Tier 2 capital**", lambda p: bridge(p, "tier2_cap")),
-        ("**= Total capital**", lambda p: bridge(p, "total_cap")),
+        ("= Tier 2 capital", lambda p: bridge(p, "tier2_cap")),
+        ("= Total capital", lambda p: bridge(p, "total_cap")),
     ]
     raw_rows = [(lab, [fn(p) for p in periods]) for lab, fn in walk_rows]
     plabs = [_plab(p) for p in periods]
     _kg_table("Walk ($)", plabs,
-              [(lab, [usd(v) for v in cells]) for lab, cells in raw_rows])
+              [(lab, [usd(v) for v in cells]) for lab, cells in raw_rows],
+              bold={lab for lab, _ in raw_rows if lab.startswith("= ")})
     st.caption("CET1 = common equity − intangibles ± AOCI − deductions; "
                "Tier 1 = CET1 + qualifying preferred; Tier 2 = sub-debt + "
                "allowance; Total = Tier 1 + Tier 2. Component steps are inline-XBRL "
                "tags; bridge totals are the FDIC-anchored extracted amounts. "
                "A step the filing doesn't tag is n/a.")
-    # Export: the same raw whole-dollar values (the "**" bold markers on the
-    # bridge labels are screen markup, dropped from the row labels).
-    xlabels = [f"{lab.strip('*')} ($)" for lab, _ in raw_rows]
+    # Export: the same raw whole-dollar values under the same row labels.
+    xlabels = [f"{lab} ($)" for lab, _ in raw_rows]
     table_export(
         pd.DataFrame([{"Line item": xl, **dict(zip(plabs, cells))}
                       for xl, (_, cells) in zip(xlabels, raw_rows)],
@@ -811,7 +834,7 @@ def _render_rcr_capital_walk(ticker: str):
         def b(det, asof, doc):
             a, r = _n(det.get(num_key)), _n(det.get("rwa"))
             raw = (a / r * 100) if (a is not None and r) else None
-            v = f"{raw:.2f}%" if raw is not None else "—"
+            v = _pct_fmt(raw)
             terms = [{"label": f"{num_label} (MDRM {num_code})", "val": _t(a), "doc": doc},
                      {"label": "Risk-weighted assets (MDRM A223)", "val": _t(r), "doc": doc}]
             return v, _calc(label, v, asof, "Computed from Schedule RC-R Part I",
@@ -1018,8 +1041,10 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
         ("Buyback Ratio",
          (f"{bb_ratio:.0f}%" if ttm.get("buyback_ratio_ttm") is not None else "—")
          + _mut((fmt_dollars(ttm.get("buybacks_ttm"), 2) + " TTM") if ttm.get("buybacks_ttm") else "")),
+        # ":+z" formats: a change that rounds to zero prints "+0.00%", never
+        # "-0.00%" (UX-P1-11); period changes keep the leading sign.
         ("Share Reduction",
-         (f"{sc_change:+.2f}%" if sc_change is not None else "—")
+         (f"{sc_change:+z.2f}%" if sc_change is not None else "—")
          + _mut("TTM" if sc_change is not None else "")),
         ("Shareholder Yield",
          (f"{sy:.2f}%" if sy is not None else "—")
@@ -1034,10 +1059,10 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
         bg = growth.get("buybacks_yoy_pct")
         tg = growth.get("total_return_yoy_pct")
         ledger("Year-over-Year Growth", [
-            ("DPS YoY Growth", (f"{dps_g:+.1f}%" if dps_g is not None else "—") + _mut("$/share declared")),
-            ("Dividends YoY", (f"{dg:+.1f}%" if dg is not None else "—") + _mut("$ paid")),
-            ("Buybacks YoY", (f"{bg:+.1f}%" if bg is not None else "—") + _mut("$ paid")),
-            ("Total Return YoY", (f"{tg:+.1f}%" if tg is not None else "—") + _mut("combined")),
+            ("DPS YoY Growth", (f"{dps_g:+z.1f}%" if dps_g is not None else "—") + _mut("$/share declared")),
+            ("Dividends YoY", (f"{dg:+z.1f}%" if dg is not None else "—") + _mut("$ paid")),
+            ("Buybacks YoY", (f"{bg:+z.1f}%" if bg is not None else "—") + _mut("$ paid")),
+            ("Total Return YoY", (f"{tg:+z.1f}%" if tg is not None else "—") + _mut("combined")),
         ])
 
     # ── Quarterly trend chart ──────────────────────────────────────────
@@ -1136,12 +1161,12 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
         def _fmt_d(v):
             if pd.isna(v) or v is None:
                 return "—"
-            return fmt_dollars(v, 2)
+            return neg_parens(fmt_dollars(v, 2))
 
         def _fmt_pct(v):
             if pd.isna(v) or v is None:
                 return "—"
-            return f"{v*100:.1f}%"
+            return neg_parens(_pct_fmt(v * 100, 1))
 
         def _num(v):
             """Raw numeric cell for the export: None where the timeline has
@@ -1171,7 +1196,7 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
                 "Buyback %": _fmt_pct(r.get("buyback_ratio_q")),
                 "Total Ret %": _fmt_pct(r.get("total_return_ratio_q")),
                 "Share Chg": (
-                    f"{r.get('share_change_pct'):+.2f}%"
+                    f"{r.get('share_change_pct'):+z.2f}%"
                     if r.get("share_change_pct") is not None and not pd.isna(r.get("share_change_pct"))
                     else "—"
                 ),
