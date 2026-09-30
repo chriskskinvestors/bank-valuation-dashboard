@@ -93,7 +93,8 @@ BANK_MAP = {
     "DBIN":    {"name": "Dacotah Banks, Inc.",                           "fdic_cert": 17437,  "cik": None},
     # PBAM became an SEC registrant in 2026 (Form 10; Nasdaq; SIC 6021; 10-Q
     # for 2026-06-30 filed 2026-09-04) — the curated None here shadowed it
-    # (review P1-8). Guarded by tests/test_none_cik_guard.py.
+    # (review P1-8). Guarded by tests/test_none_cik_guard.py and, nightly,
+    # bank_universe.run_curated_cik_guard.
     "PBAM":    {"name": "Private Bancorp of America, Inc.",              "fdic_cert": 58291,  "cik": 1705284},
     "FAHE":    {"name": "The Fahey Banking Company",                     "fdic_cert": 2068,   "cik": None},
     # THREE different companies are "SECURITY NATIONAL CORP" to the FDIC, in
