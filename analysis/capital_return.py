@@ -289,17 +289,23 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
             # Subtract preferred from total to estimate common.
             # Guard against None values on either side (some banks file
             # a total without a matching preferred at every period).
-            by_end = {e["end"]: e for e in total_divs}
+            # Match on the SAME DURATION (end, start) — the key the series
+            # were deduped on. Keyed by end alone, a preferred concept tagged
+            # both 3-month and YTD (equity-statement DividendsPreferredStockCash)
+            # was subtracted TWICE from one YTD total, and a total's 3-month and
+            # YTD facts collapsed into one (the D6 duration-mix class).
+            by_key = {(e["end"], e.get("start")): e for e in total_divs}
             for p in pref_divs:
-                if p["end"] in by_end:
-                    total = by_end[p["end"]].copy()
+                k = (p["end"], p.get("start"))
+                if k in by_key:
+                    total = by_key[k].copy()
                     tv = total.get("val")
                     pv = p.get("val")
                     if tv is None:
                         continue  # can't subtract from nothing
                     total["val"] = tv - (pv or 0)  # treat missing preferred as 0
-                    by_end[p["end"]] = total
-            divs = _derive_quarterly_from_ytd(sorted(by_end.values(), key=lambda x: x["end"]))
+                    by_key[k] = total
+            divs = _derive_quarterly_from_ytd(sorted(by_key.values(), key=lambda x: x["end"]))
             dividend_source = "total minus preferred"
         elif total_divs:
             divs = _derive_quarterly_from_ytd(total_divs)

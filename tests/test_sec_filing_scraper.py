@@ -1713,6 +1713,58 @@ class TestHoldcoCapitalMultiyear(unittest.TestCase):
         res = self._run(None, ks[0], ks, {"K25": {}})
         self.assertIsNone(res)
 
+    def test_newer_10q_without_capital_tags_is_reported_untagged(self):
+        # P2-1 (review 2026-09-24): ONB's Q2-2026 10-Q (filed 2026-07-29) tags
+        # no regulatory-capital facts in its iXBRL — the table (CET1 11.09%) is
+        # untagged MD&A text — so the table stays on the 10-K (filed 02-19,
+        # FY2025 CET1 11.08%). The FY values are unchanged; the newer 10-Q is
+        # surfaced as "untagged" so the page says why Q2 is n/a instead of
+        # implying the 10-K is the latest filing.
+        q = self._meta("2026-07-29", "Q2", "10-Q")
+        ks = [self._meta("2026-02-19", "K25", "10-K")]
+        extracts = {"Q2": {}, "K25": {"2025-12-31": self._cap(0.1108),
+                                      "2024-12-31": self._cap(0.1138)}}
+        res = self._run(q, ks[0], ks, extracts)
+        self.assertEqual(res["meta"]["accession"], "K25")
+        self.assertEqual(sorted(res["capital"]), ["2024-12-31", "2025-12-31"])
+        self.assertAlmostEqual(res["capital"]["2025-12-31"]["cet1_ratio"], 0.1108)
+        self.assertEqual(res["untagged"]["accession"], "Q2")
+        self.assertEqual(res["untagged"]["date"], "2026-07-29")
+
+    def test_tagging_10q_or_older_10q_is_not_untagged(self):
+        # A 10-Q that tags the table IS the source (JPM) → nothing untagged.
+        q = self._meta("2026-08-06", "Q2", "10-Q")
+        ks = [self._meta("2026-02-13", "K25", "10-K")]
+        res = self._run(q, ks[0], ks, {"Q2": {"2026-06-30": self._cap(0.142)},
+                                       "K25": {"2025-12-31": self._cap(0.146)}})
+        self.assertEqual(res["meta"]["accession"], "Q2")
+        self.assertIsNone(res["untagged"])
+        # An untagged 10-Q OLDER than the 10-K (Q3 10-Q in Nov, 10-K in Feb)
+        # is not a newer filing — never reported.
+        q_old = self._meta("2025-11-04", "Q3", "10-Q")
+        res = self._run(q_old, ks[0], ks, {"Q3": {},
+                                           "K25": {"2025-12-31": self._cap(0.146)}})
+        self.assertEqual(res["meta"]["accession"], "K25")
+        self.assertIsNone(res["untagged"])
+
+    def test_quarterly_reports_newest_untagged_filing(self):
+        import data.sec_filing_scraper as S
+        import data.sec_statements as SS
+        metas = [self._meta("2026-07-29", "Q2", "10-Q"),
+                 self._meta("2026-04-29", "Q1", "10-Q"),
+                 self._meta("2026-02-19", "K25", "10-K")]
+        extracts = {"Q2": {}, "Q1": {},
+                    "K25": {"2025-12-31": self._cap(0.1108)}}
+        with mock.patch.object(S, "_fdic_cet1", return_value=None), \
+             mock.patch.object(SS, "_recent_filing_metas",
+                               side_effect=lambda cik, forms, n: metas), \
+             mock.patch.object(S, "_holdco_capital_extract_cached",
+                               side_effect=lambda m, anchor: extracts[m["accession"]]):
+            res = S.holdco_capital_quarterly_for(99)
+        self.assertEqual(res["meta"]["accession"], "K25")
+        self.assertEqual(res["untagged"]["accession"], "Q2")
+        self.assertEqual(list(res["capital"]), ["2025-12-31"])
+
 
 class TestAssetQualityNimWindow(unittest.TestCase):
     """company_asset_quality_nim must fetch a deep enough 10-K window that the
