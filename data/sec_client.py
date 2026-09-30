@@ -1369,10 +1369,10 @@ def _instant_at(facts: dict, concept: str, end: str) -> tuple | None:
     return top["val"], end, top.get("filed", ""), top.get("form", ""), "USD"
 
 
-def _total_less_nci_same_filing(facts: dict, end: str) -> tuple | None:
-    """(total − NCI, end, filed, form, unit) at `end` from the latest 10-K/10-Q
-    that tags BOTH the NCI-inclusive total and MinorityInterest there — one
-    balance sheet's own arithmetic — or None."""
+def _total_and_nci_same_filing(facts: dict, end: str) -> tuple | None:
+    """(total, NCI, filed, form) at `end` from the latest 10-K/10-Q that tags
+    BOTH the NCI-inclusive total and MinorityInterest there — one balance
+    sheet's own figures — or None."""
     ug = facts.get("facts", {}).get("us-gaap", {})
 
     def by_accn(concept):
@@ -1387,7 +1387,7 @@ def _total_less_nci_same_filing(facts: dict, end: str) -> tuple | None:
         return None
     a = max(both, key=lambda a: tot[a].get("filed", ""))
     t = tot[a]
-    return (t["val"] - mi[a]["val"], end, t.get("filed", ""), t.get("form", ""), "USD")
+    return t["val"], mi[a]["val"], t.get("filed", ""), t.get("form", "")
 
 
 def _balance_sheet_date(facts: dict) -> str | None:
@@ -1455,18 +1455,25 @@ def _parent_equity_at(facts: dict, end: str):
     NCI-inclusive total less same-date MinorityInterest, else n/a when a
     noncontrolling interest may exist that no fact separates.
 
-    A plain-SE fact that disagrees with one filing's own total − NCI isn't
-    the balance-sheet line, and the balance-sheet arithmetic wins: RBB's only
-    plain SE (523,400,000 @ 2025-12-31) is Note 1's rounded "$523.4 million"
-    (10-K 0001437749-26-007387 R58), while R2 shows 523,410,000 total incl.
-    72,000 NCI → 523,338,000."""
+    A plain-SE fact within half the NCI of a filing's NCI-inclusive total IS
+    that total — re-tagged or rounded — not parent equity, so that filing's
+    total − NCI serves instead. CPF/QNTO's later filings tagged the total as
+    SE (558,267,000 @ 2021-12-31 vs R3 558,219,000 + 48,000 NCI; 48,763,000
+    @ 2023-06-30 vs R2 45,759,000 + 3,004,000); RBB's only plain SE is Note
+    1's rounded "$523.4 million" (10-K 0001437749-26-007387 R58) vs R2
+    523,410,000 incl. 72,000 NCI. A plain SE nearer the parent figure stands
+    even when it doesn't foot to the cent: WAL's face parent 7,842.0M beside
+    8,135.3M − 293.0M ($M rounding); AMTB's restated 2022 SE."""
     se = _instant_at(facts, _SE, end)
     if se is not None:
-        bs = _total_less_nci_same_filing(facts, end)
-        if bs is not None and bs[0] != se[0]:
-            return bs, f"{_SE_NCI} − MinorityInterest", (
-                "Plain StockholdersEquity disagrees with the balance-sheet total "
-                "less noncontrolling interest — the balance sheet wins")
+        tn = _total_and_nci_same_filing(facts, end)
+        if tn is not None:
+            total, nci, filed, form = tn
+            if nci and abs(se[0] - total) < abs(nci) / 2:
+                return ((total - nci, end, filed, form, "USD"),
+                        f"{_SE_NCI} − MinorityInterest",
+                        "Plain StockholdersEquity is the NCI-inclusive total — "
+                        "noncontrolling interest removed")
         return se, _SE, None
     incl = _instant_at(facts, _SE_NCI, end)
     if incl is None:

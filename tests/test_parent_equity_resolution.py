@@ -116,6 +116,34 @@ FUSB = _facts({
 })
 
 
+# Plain-SE-vs-total fragments (2026-09-30 universe scan of _parent_equity_at).
+CPF = _facts({
+    SE: [_e("2021-12-31", 558219000, "0000701347-22-000013", "10-K", "2022-02-23"),
+         _e("2021-12-31", 558267000, "0000701347-25-000007", "10-K", "2025-02-26")],
+    NCI: [_e("2021-12-31", 558267000, "0000701347-22-000013", "10-K", "2022-02-23"),
+          _e("2021-12-31", 558267000, "0000701347-23-000008", "10-K", "2023-02-24")],
+    MI: [_e("2021-12-31", 48000, "0000701347-22-000013", "10-K", "2022-02-23"),
+         _e("2021-12-31", 48000, "0000701347-23-000008", "10-K", "2023-02-24")],
+})
+QNTO = _facts({
+    SE: [_e("2023-06-30", 45759000, "0000927089-23-000120", "10-Q", "2023-08-14"),
+         _e("2023-06-30", 48763000, "0000927089-24-000125", "10-Q", "2024-08-14")],
+    NCI: [_e("2023-06-30", 48763000, "0000927089-23-000120", "10-Q", "2023-08-14")],
+    MI: [_e("2023-06-30", 3004000, "0000927089-23-000120", "10-Q", "2023-08-14")],
+})
+WAL = _facts({
+    SE: [_e("2026-06-30", 7842000000, "0001628280-26-051418", "10-Q", "2026-07-31")],
+    NCI: [_e("2026-06-30", 8135300000, "0001628280-26-051418", "10-Q", "2026-07-31")],
+    MI: [_e("2026-06-30", 293000000, "0001628280-26-051418", "10-Q", "2026-07-31")],
+})
+AMTB = _facts({
+    SE: [_e("2022-06-30", 711450000, "0001734342-22-000044", "10-Q", "2022-07-29"),
+         _e("2022-06-30", 697757000, "0001734342-23-000049", "10-Q", "2023-07-31")],
+    NCI: [_e("2022-06-30", 713341000, "0001734342-22-000044", "10-Q", "2022-07-29")],
+    MI: [_e("2022-06-30", 1891000, "0001734342-22-000044", "10-Q", "2022-07-29")],
+})
+
+
 def _drop(facts, concept, end):
     f = copy.deepcopy(facts)
     rows = f["facts"]["us-gaap"][concept]["units"]["USD"]
@@ -156,13 +184,38 @@ class TestResolveParentEquity(unittest.TestCase):
 
     def test_narrative_plain_se_loses_to_balance_sheet(self):
         # RBB's only plain SE is Note 1's rounded "$523.4 million" (10-K
-        # 0001437749-26-007387 R58). R2/R6/R35 of that 10-K all show
-        # 523,410,000 total incl. 72,000 NCI → parent 523,338,000; the Q2-26
-        # 10-Q (0001437749-26-026563) tags both at 2025-12-31.
+        # 0001437749-26-007387 R58) — the TOTAL, rounded. R2/R6/R35 of that
+        # 10-K all show 523,410,000 total incl. 72,000 NCI → parent
+        # 523,338,000; the Q2-26 10-Q (0001437749-26-026563) tags both.
         tup, concept, _ = sc._parent_equity_at(RBB, "2025-12-31")
         self.assertEqual(tup[0], 523_410_000 - 72_000)
         self.assertEqual(tup[0], 523_338_000)
         self.assertEqual(concept, f"{NCI} − MinorityInterest")
+
+    def test_later_filing_retagging_total_as_se(self):
+        # CPF 10-K 0000701347-22-000013 R3, Dec 31 2021: "Total shareholders'
+        # equity" 558,219 + "Non-controlling interest" 48 = "Total equity"
+        # 558,267 ($K); the 2024/2025 10-Ks tag 558,267 as plain SE.
+        self.assertEqual(sc._parent_equity_at(CPF, "2021-12-31")[0][0], 558_219_000)
+        # QNTO 10-Q 0000927089-23-000120 R2, Jun 30 2023: parent 45,759 +
+        # NCI 3,004 = 48,763 ($K); the 2024 10-Q tags 48,763 as plain SE.
+        self.assertEqual(sc._parent_equity_at(QNTO, "2023-06-30")[0][0], 45_759_000)
+
+    def test_face_parent_se_kept_when_rounding_does_not_foot(self):
+        # WAL 10-Q 0001628280-26-051418 R2 ($ in millions), Jun 30 2026:
+        # "Total Western Alliance stockholders' equity" 7,842.0, NCI 293.0,
+        # "Total equity" 8,135.3 (8,135.3 − 293.0 = 7,842.3). The face
+        # parent line stands.
+        tup, concept, _ = sc._parent_equity_at(WAL, "2026-06-30")
+        self.assertEqual((tup[0], concept), (7_842_000_000, SE))
+
+    def test_restated_plain_se_not_reverted(self):
+        # AMTB: the 2023 10-Qs restate 2022-06-30 (SE 697,757K, 10-Q
+        # 0001734342-23-000049 R5); only the ORIGINAL 10-Q tagged total and
+        # NCI (713,341K / 1,891K). Its total − NCI (711,450K) must not revert
+        # the restatement.
+        tup, concept, _ = sc._parent_equity_at(AMTB, "2022-06-30")
+        self.assertEqual((tup[0], concept), (697_757_000, SE))
 
     def test_consistent_plain_se_kept(self):
         # OCFC 10-Q 0001004702-25-000129 at 2025-09-30: SE 1,652,537,000 ==
@@ -172,7 +225,7 @@ class TestResolveParentEquity(unittest.TestCase):
 
     def test_no_filing_tags_both_keeps_plain_se(self):
         # Total and NCI only in DIFFERENT filings: no one balance sheet's
-        # arithmetic to prefer → plain SE stands.
+        # figures to compare against → plain SE stands.
         f = copy.deepcopy(RBB)
         for r in f["facts"]["us-gaap"][MI]["units"]["USD"]:
             if r["end"] == "2025-12-31":
