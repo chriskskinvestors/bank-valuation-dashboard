@@ -155,7 +155,7 @@ class TestImmutableExtractionCachesAnyAge(_IsolatedCache):
         cache.put(key, {"value": 10.1, "status": "ok"})
         self._age(key, 72 * 3600)
         with patch.object(se8k, "_latest_earnings_8k", return_value=_F8K), \
-                patch.object(se8k, "_fetch_ex991_html", _boom):
+                patch.object(se8k, "_exhibit_status", _boom):
             out = se8k.reported_tbvps(77, reconstructed=12.3456, bvps=15.0)
         self.assertEqual(out, 10.1)
 
