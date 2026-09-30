@@ -480,17 +480,19 @@ class TestDataQualityFindings(_DataQualitySite):
     def test_finding_value_is_a_number(self):
         # roaa 5.0 breaches the [-3.0, 3.5] % band → one range warning. No SEC
         # provenance, so no cross-source checks; the FDIC staleness check fires
-        # too (a 2025-12-31 Call Report is >135 days old from today on) with
-        # value=None — the honest n/a row. The validator's clock is pinned
-        # inside the 135–270-day Warning band: on the real clock this report
-        # aged into "Error" on 2026-09-27 and the test broke on its own.
+        # too (a 2025-12-31 Call Report is >135 days old) with value=None —
+        # the honest n/a row. "Today" is frozen at 2026-06-01 (152 days after
+        # the report): check_staleness escalates to ERROR past 2x the limit
+        # (270 days), which this unfrozen test crossed on 2026-09-27 and began
+        # failing every CI run — a clock time-bomb, not a behaviour change.
         import data.validation as V
+        from datetime import datetime as _dt
 
-        class _Clock(dt.datetime):
+        class _Frozen(_dt):
             @classmethod
             def now(cls, tz=None):
-                return dt.datetime(2026, 6, 1)
-        self._patch(V, "datetime", _Clock)
+                return cls(2026, 6, 1)
+        self._patch(V, "datetime", _Frozen)
         self._render(tab=0, sec_prov={}, bank_metrics=[{"ticker": "BANR", "roaa": 5.0}])
         wb, ws, kw = self._book()
         self.assertEqual(kw["file_name"], "data_quality_findings_BANR_2025-12-31.xlsx")
