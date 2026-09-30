@@ -293,6 +293,65 @@ class TestHoldcoExtraction(unittest.TestCase):
             out = extract_holdco_capital(facts, anchor_cet1=anchor)["2025-12-31"]
             self.assertAlmostEqual(out["cet1_ratio"], cons, msg=sub_member)
 
+    def test_amounts_from_another_entity_are_na(self):
+        # WTFC FY2025: consolidated ratios (undimensioned) 10.3 / 11.0 / 12.4%;
+        # the only $ amounts are a charter's ($355.5M CET1 = T1, $382.2M total;
+        # implied RWA 3.45 / 3.23 / 3.08B disagree) — shown as holdco capital.
+        facts = [
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.103),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.110),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.124),
+            _f("us-gaap:CommonEquityTierOneCapital", 355.5e6, {_LE: "wtfc:MacatawaBankCorporationMember"}),
+            _f("us-gaap:TierOneRiskBasedCapital", 355.5e6, {_LE: "wtfc:MacatawaBankCorporationMember"}),
+            _f("us-gaap:Capital", 382.2e6, {_LE: "wtfc:MacatawaBankCorporationMember"}),
+        ]
+        out = extract_holdco_capital(facts, anchor_cet1=12.25)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.103)
+        self.assertAlmostEqual(out["total_ratio"], 0.124)
+        for k in ("cet1_cap", "t1_cap", "total_cap", "tier2_cap", "rwa"):
+            self.assertNotIn(k, out, k)
+        self.assertEqual(out["_suspect"], ["amounts"])
+
+    def test_consistent_amounts_kept_at_rounded_ratios(self):
+        # Ratios rounded to 0.1% move capital ÷ ratio < 1%: not "inconsistent".
+        facts = [
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.103),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.110),
+            _f("us-gaap:CommonEquityTierOneCapital", 5_150e6),     # RWA 50.0B
+            _f("us-gaap:TierOneRiskBasedCapital", 5_520e6),        # RWA 50.2B
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_cap"], 5_150e6)
+        self.assertNotIn("_suspect", out)
+
+    def test_capital_stack_violation_blanks_both_sides(self):
+        # MTB's FY2022 10-K tags FY2021 CET1 13.11% / Tier 1 11.42% (swapped vs
+        # its FY2021 10-K). The filing can't say which is wrong: both n/a.
+        facts = [
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.1311, period="2021-12-31"),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.1142, period="2021-12-31"),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.1533, period="2021-12-31"),
+            _f("us-gaap:TierOneLeverageCapitalToAverageAssets", 0.0870, period="2021-12-31"),
+        ]
+        out = extract_holdco_capital(facts)["2021-12-31"]
+        self.assertNotIn("cet1_ratio", out)
+        self.assertNotIn("t1_ratio", out)
+        self.assertAlmostEqual(out["total_ratio"], 0.1533)
+        self.assertEqual(out["_suspect"], ["cet1_ratio", "t1_ratio"])
+        self.assertFalse(out["_cblr"])                   # a blanked CET1 is not CBLR
+
+    def test_cet1_equal_to_tier1_is_not_a_violation(self):
+        # No preferred → CET1 = Tier 1 (FFIN 19.99 / 19.99); a derived Tier 1 a
+        # rounding hair below CET1 is not a stack break.
+        facts = [
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.1122),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.11219),
+            _f("us-gaap:CapitalToRiskWeightedAssets", 0.1386),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["t1_ratio"], 0.11219)
+        self.assertNotIn("_suspect", out)
+
     def test_consistent_ratio_untouched(self):
         # Ratio ties to Standardized capital / RWA → nothing to do.
         P, MX = self._PARENT, self._MX
@@ -306,6 +365,68 @@ class TestHoldcoExtraction(unittest.TestCase):
         out = extract_holdco_capital(facts)["2025-12-31"]
         self.assertAlmostEqual(out["t1_ratio"], 0.13)
         self.assertNotIn("_rederived", out)
+
+
+class TestHoldcoStitchPrefersCleanPeriod(unittest.TestCase):
+    """holdco_capital_for: newest filing wins a period — unless its figures
+    broke the capital stack (_suspect) and an older filing's are clean."""
+
+    def test_older_clean_fy_replaces_newer_suspect(self):
+        import data.sec_filing_scraper as S
+        k24 = {"accession": "a24", "form": "10-K", "date": "2024-02-21"}
+        k23 = {"accession": "a23", "form": "10-K", "date": "2023-02-22"}
+        k22 = {"accession": "a22", "form": "10-K", "date": "2022-02-16"}
+        caps = {
+            "a24": {"2023-12-31": {"cet1_ratio": 0.1098, "t1_ratio": 0.1229}},
+            "a23": {"2022-12-31": {"cet1_ratio": 0.1044, "t1_ratio": 0.1179},
+                    "2021-12-31": {"total_ratio": 0.1533,
+                                   "_suspect": ["cet1_ratio", "t1_ratio"]}},
+            "a22": {"2021-12-31": {"cet1_ratio": 0.1142, "t1_ratio": 0.1311,
+                                   "total_ratio": 0.1533}},
+        }
+        with mock.patch.object(S, "_fdic_cet1", lambda cert: None), \
+             mock.patch.object(S, "latest_filing",
+                               lambda cik, forms: k24 if forms == ("10-K",) else None), \
+             mock.patch.object(S, "_holdco_capital_extract_cached",
+                               lambda meta, anchor: caps[meta["accession"]]), \
+             mock.patch.object(S, "_fye_month_for", lambda meta: "12"), \
+             mock.patch.object(S, "_list_10k_filings", lambda cik, n: [k24, k23, k22]):
+            res = S.holdco_capital_for(1)
+        self.assertEqual(res["capital"]["2021-12-31"]["cet1_ratio"], 0.1142)
+        self.assertEqual(res["capital"]["2021-12-31"]["t1_ratio"], 0.1311)
+        self.assertEqual(res["capital"]["2022-12-31"]["cet1_ratio"], 0.1044)
+
+    def test_full_window_still_walks_back_for_a_suspect_year_only(self):
+        # 5 years already covered, FY2021 suspect: the walk continues to the
+        # FY2021 10-K to replace it, but adds no FY2020 sixth column.
+        import data.sec_filing_scraper as S
+        metas = [{"accession": f"a{y}", "form": "10-K", "date": f"{y}-02-20"}
+                 for y in (2026, 2025, 2024, 2023, 2022)]
+        clean = lambda v: {"cet1_ratio": v, "t1_ratio": v + 0.01}
+        caps = {
+            "a2026": {"2025-12-31": clean(0.108), "2024-12-31": clean(0.116)},
+            "a2025": {"2024-12-31": clean(0.116), "2023-12-31": clean(0.109)},
+            "a2024": {"2023-12-31": clean(0.109), "2022-12-31": clean(0.104)},
+            "a2023": {"2022-12-31": clean(0.104),
+                      "2021-12-31": {"total_ratio": 0.15, "_suspect": ["cet1_ratio"]}},
+            "a2022": {"2021-12-31": clean(0.114), "2020-12-31": clean(0.100)},
+        }
+        with mock.patch.object(S, "_fdic_cet1", lambda cert: None),              mock.patch.object(S, "latest_filing",
+                               lambda cik, forms: metas[0] if forms == ("10-K",) else None),              mock.patch.object(S, "_holdco_capital_extract_cached",
+                               lambda meta, anchor: caps[meta["accession"]]),              mock.patch.object(S, "_fye_month_for", lambda meta: "12"),              mock.patch.object(S, "_list_10k_filings", lambda cik, n: metas):
+            res = S.holdco_capital_for(1)
+        self.assertEqual(res["capital"]["2021-12-31"]["cet1_ratio"], 0.114)
+        self.assertNotIn("2020-12-31", res["capital"])
+
+    def test_better_rule(self):
+        from data.sec_filing_scraper import _better
+        clean, sus = {"cet1_ratio": 0.1}, {"_suspect": ["t1_ratio"]}
+        self.assertTrue(_better(clean, None))
+        self.assertTrue(_better(clean, sus))
+        self.assertFalse(_better(sus, clean))      # newer clean stays
+        self.assertFalse(_better(clean, clean))    # newest filing wins a tie
+        self.assertFalse(_better(sus, sus))
+        self.assertFalse(_better(None, None))
 
 
 class TestCapitalWalk(unittest.TestCase):

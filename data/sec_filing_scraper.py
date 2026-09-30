@@ -453,17 +453,47 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
             rwa = sum(implied) / len(implied)            # the agreed, reliable RWA
             if "rwa" not in d or abs(d["rwa"] - rwa) > 0.02 * rwa:
                 d["rwa"] = rwa
+        elif len(implied) >= 2 and max(implied) - min(implied) > 0.02 * max(implied):
+            # The amounts are not the ratios' entity: every ratio shares ONE RWA,
+            # so capital ÷ ratio must agree across the pairs (ratios rounded to
+            # 0.1% move it < 1%). WTFC FY2025: consolidated ratios 10.3/11.0/12.4%
+            # beside a CHARTER's $355.5M / $382.2M (implied RWA 3.45 / 3.23 /
+            # 3.08B) — shown as the holdco's $ capital. Amounts → n/a; a tagged
+            # RWA survives only if some pair ties to it.
+            for c in ("cet1_cap", "t1_cap", "total_cap", "lev_cap"):
+                d.pop(c, None)
+            if d.get("rwa") and not any(abs(d["rwa"] - x) <= 0.02 * x for x in implied):
+                d.pop("rwa")
+            d["_suspect"] = ["amounts"]
         if d.get("rwa"):
             for c, r in _PAIRS:                          # fill gaps by exact identity
                 if d.get(c) and not d.get(r):
                     d[r] = d[c] / d["rwa"]
                 elif d.get(r) and not d.get(c):
                     d[c] = d[r] * d["rwa"]
+        # The capital stack is nested: CET1 ≤ Tier 1 ≤ Total, as ratios and as
+        # amounts (same RWA). A filing that breaks it has mis-tagged one side and
+        # the filing alone can't say which — MTB's FY2022 10-K tags FY2021 CET1
+        # 13.11% / Tier 1 11.42% (its FY2021 10-K: 11.42 / 13.11); its FY2023
+        # 10-K puts the 6% minimum on Tier 1. Both sides → n/a, period flagged
+        # _suspect so the stitch prefers another filing's clean figures.
+        bad = set()
+        for chain in (("cet1_ratio", "t1_ratio", "total_ratio"),
+                      ("cet1_cap", "t1_cap", "total_cap")):
+            for lo, hi in zip(chain, chain[1:]):
+                if d.get(lo) and d.get(hi) and d[lo] > d[hi] * 1.005:
+                    bad |= {lo, hi}
+        if bad:
+            for k in bad:
+                d.pop(k, None)
+            d["_suspect"] = sorted(set(d.get("_suspect", [])) | bad)
         if "tier2_cap" not in d and d.get("total_cap") and d.get("t1_cap"):
             d["tier2_cap"] = d["total_cap"] - d["t1_cap"]
         # A bank with only a leverage ratio (no CET1) is on the Community Bank
         # Leverage Ratio election — CET1/RWA are legitimately not disclosed.
-        d["_cblr"] = ("cet1_ratio" not in d and "lev_ratio" in d)
+        # (A CET1 blanked above as suspect is not a CBLR election.)
+        d["_cblr"] = ("cet1_ratio" not in d and "lev_ratio" in d
+                      and "cet1_ratio" not in d.get("_suspect", []))
 
     # Regulatory-capital WALK (SNL "Regulatory Capital ($000)" panel). Attempt
     # the CET1 reconstruction per period from the filing's UNDIMENSIONED
@@ -683,6 +713,14 @@ def _fdic_cet1(cert) -> float | None:
         return None
 
 
+def _better(cand: dict | None, have: dict | None) -> bool:
+    """Stitch rule: fill a period nobody supplied yet; replace a supplied
+    period only when it is _suspect and the (older) candidate is clean."""
+    if cand is None:
+        return False
+    return have is None or (bool(have.get("_suspect")) and not cand.get("_suspect"))
+
+
 def _has_capital(cap: dict) -> bool:
     return bool(cap) and any("cet1_ratio" in d or d.get("_cblr") for d in cap.values())
 
@@ -696,7 +734,7 @@ def _holdco_capital_extract_cached(meta: dict, anchor: float | None) -> dict:
     Version the key (v3): the prior v2 entries predate the multi-year stitch and
     are abandoned so the freshly-extracted capital is always served, never stale."""
     from data import cache
-    ckey = f"holdco_cap:v4:{meta['accession']}"   # v4: one entity + one methodology
+    ckey = f"holdco_cap:v5:{meta['accession']}"   # v5: stack invariants + amount/ratio entity check
     cap = cache.get(ckey, max_age_s=None)
     if cap is None:
         try:
@@ -777,10 +815,15 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
             continue
         fye = _fye_month_for(meta) or "12"
         for period in sorted(cap, reverse=True):
-            if period[5:7] != fye or period in capital:
+            if period[5:7] != fye or not _better(cap.get(period), capital.get(period)):
                 continue
+            if period not in capital and len({p[:4] for p in capital}) >= _MAX_YEARS:
+                continue                   # window full: only replace suspect years
             capital[period] = cap[period]
-        if len({p[:4] for p in capital}) >= _MAX_YEARS:
+        # Enough years — unless one is _suspect and an older 10-K may hold it
+        # clean (MTB FY2021: the FY2022 10-K's is swapped, the FY2021 10-K's isn't).
+        if (len({p[:4] for p in capital}) >= _MAX_YEARS
+                and not any(d.get("_suspect") for d in capital.values())):
             break
     if not _has_capital(capital):
         return None
@@ -815,7 +858,7 @@ def holdco_capital_quarterly_for(cik, cert=None, n_quarters: int = 8) -> dict | 
         if latest_meta is None:
             latest_meta = meta
         for period, d in cap.items():
-            if period not in capital:                 # newest filing wins
+            if _better(d, capital.get(period)):       # newest clean filing wins
                 capital[period] = d
     if not _has_capital(capital):
         return None
