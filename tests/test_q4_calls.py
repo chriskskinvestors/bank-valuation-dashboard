@@ -181,15 +181,18 @@ class TestQ4Events(unittest.TestCase):
 
 class TestRefreshSnapshot(unittest.TestCase):
     def setUp(self):
-        self._eps, self._evs, self._ann = (
-            ir.get_ir_endpoints, ir._q4_events, ir._q4_announcement)
+        self._eps, self._evs, self._ann, self._irapp = (
+            ir.get_ir_endpoints, ir._q4_events, ir._q4_announcement,
+            ir._irapp_announcement)
         ir.get_ir_endpoints = lambda: {"ACME": "https://investor.acme.com",
                                        "NONE": "https://investor.none.com"}
         ir._q4_announcement = lambda url, today_iso: None   # no PR body in this test
+        # The IRapp fallback for a host with no Q4 data (live RSS fetch).
+        ir._irapp_announcement = lambda url, today_iso: None
 
     def tearDown(self):
         ir.get_ir_endpoints, ir._q4_events = self._eps, self._evs
-        ir._q4_announcement = self._ann
+        ir._q4_announcement, ir._irapp_announcement = self._ann, self._irapp
 
     def test_picks_soonest_upcoming_and_skips_empty(self):
         now = datetime.now(timezone.utc)
