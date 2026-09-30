@@ -8,7 +8,8 @@ Sources:
     - CommonStockSharesOutstanding  (point-in-time share count, for buyback inference)
     - CommonStockDividendsPerShareDeclared  (DPS)
     - NetIncomeLoss  (net income)
-    - StockholdersEquity  (book equity)
+    - parent equity (sec_client._parent_equity_series: StockholdersEquity,
+      else the including-NCI total less same-date MinorityInterest)
     - CommonStockSharesRepurchased  (alternative share-count measure)
 
 Key outputs per period:
@@ -26,7 +27,7 @@ from __future__ import annotations
 import pandas as pd
 from datetime import datetime
 
-from data.sec_client import fetch_company_facts
+from data.sec_client import _parent_equity_series, fetch_company_facts
 
 
 # XBRL concepts we look up, in priority order (first successful match wins).
@@ -65,10 +66,6 @@ _NET_INCOME_CONCEPTS = [
     "NetIncomeLoss",                                      # standard — most banks
     "NetIncomeLossAvailableToCommonStockholdersBasic",    # PNC-style — NI to common
     "ProfitLoss",                                         # broadest — includes minority int
-]
-_EQUITY_CONCEPTS = [
-    "StockholdersEquity",
-    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
 ]
 _SHARES_CONCEPTS = [
     "CommonStockSharesOutstanding",
@@ -325,9 +322,13 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
     # derivation as the flows. Merging the raw fact used to mix durations and
     # sum cumulatives into "DPS TTM" (JPM: $14.60 vs true ~$5.70).
     dps = _derive_quarterly_from_ytd(_extract_series(gaap, _DPS_CONCEPTS))
-    # Shares and equity are point-in-time, not YTD
+    # Shares and equity are point-in-time, not YTD. Equity is parent equity AT
+    # each end, resolved like the snapshot: a first-fresh-concept read served
+    # tag-switchers' last plain-SE balance (OCFC 2025-12-31 into 2026) and
+    # RBB's NCI-inclusive total as parent equity.
     shares = _extract_series(gaap, _SHARES_CONCEPTS)
-    equity = _extract_series(gaap, _EQUITY_CONCEPTS)
+    equity = [{"end": end, "val": v}
+              for end, v in sorted(_parent_equity_series(facts).items())]
 
     # Merge on 'end' date
     rows = {}
@@ -360,9 +361,10 @@ def build_capital_return_timeline(cik: int, lookback_quarters: int = 20) -> pd.D
         if col not in df.columns:
             df[col] = None
 
-    # Fill shares & equity forward where reported less frequently
-    for col in ["shares_outstanding", "equity"]:
-        df[col] = df[col].ffill()
+    # Fill shares forward where reported less frequently. Equity is NOT
+    # filled: an end it can't resolve (unseparable NCI) stays n/a rather than
+    # carrying a prior quarter's balance.
+    df["shares_outstanding"] = df["shares_outstanding"].ffill()
 
     # Total capital returned per quarter. One known component treats the other
     # as 0 (a bank tagging dividends but no buyback concept genuinely didn't

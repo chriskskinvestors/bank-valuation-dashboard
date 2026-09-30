@@ -38,7 +38,6 @@ import sys
 import unittest
 import warnings
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 warnings.filterwarnings("ignore")
@@ -143,11 +142,9 @@ class TestPlbcTrends(unittest.TestCase):
             "PreferredStockValue": [(self.Q4, 6_415_000.0), (self.Q1, 6_544_000.0)],
             "PreferredStockSharesOutstanding": [(self.Q4, 0.0), (self.Q1, 5_082_676.0)],
         }
-
-        def fake(cik, concept):
-            rows = data.get(concept)
-            return pd.DataFrame([{"end": q, "val": v} for q, v in rows]) if rows else None
-        with patch.object(sps, "get_historical_fundamentals", side_effect=fake):
+        # Both read seams (per-concept frames + raw facts for equity).
+        from tests.test_sec_per_share import _mock_hist
+        with _mock_hist(data):
             return sps._bank_per_share(1168455, [self.Q4, self.Q1])
 
     def test_q1_18_common_line_not_subtracted(self):

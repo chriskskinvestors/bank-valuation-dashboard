@@ -783,6 +783,11 @@ def get_latest_fundamentals(cik: int) -> dict:
             elif dei_val and dei_val > 0 and dei_end and dei_end > sh_end:
                 result["shares_outstanding"] = dei_val
 
+    # Same-date tag conflict (the FGBI shape) — see _reconcile_same_date_shares.
+    result["shares_outstanding"], _tag = _reconcile_same_date_shares(
+        facts, equity_date, result.get("shares_outstanding"))
+    result["shares_tag_conflict"] = _tag == "conflict"
+
     # Multi-class filer (data/sec_facts_overlay.overlay_class_shares): the
     # per-class sum at the equity date is THE count — or None when it can't
     # be resolved, and then no fallback below may substitute a single-class
@@ -797,7 +802,8 @@ def get_latest_fundamentals(cik: int) -> dict:
     # 2. EntityCommonStockSharesOutstanding (DEI namespace — usually fresh)
     # 3. WeightedAverageNumberOfSharesOutstandingBasic (period average)
     # 4. CommonStockSharesIssued − TreasuryStockCommonShares (derived)
-    if not result.get("shares_outstanding") and not class_shares:
+    if (not result.get("shares_outstanding") and not class_shares
+            and not result["shares_tag_conflict"]):
         # 2: try dei:EntityCommonStockSharesOutstanding (point-in-time)
         dei = facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding", {})
         for unit, entries in dei.get("units", {}).items():
@@ -808,12 +814,14 @@ def get_latest_fundamentals(cik: int) -> dict:
                 if entries[0].get("end", "") >= cutoff:
                     result["shares_outstanding"] = entries[0].get("val")
                     break
-    if not result.get("shares_outstanding") and not class_shares:
+    if (not result.get("shares_outstanding") and not class_shares
+            and not result["shares_tag_conflict"]):
         # 3: weighted-average basic shares (from NI statement)
         result["shares_outstanding"] = _extract_latest_value(
             facts, "WeightedAverageNumberOfSharesOutstandingBasic", max_age_years=1,
         )
-    if not result.get("shares_outstanding") and not class_shares:
+    if (not result.get("shares_outstanding") and not class_shares
+            and not result["shares_tag_conflict"]):
         # 4: issued − treasury (rarely needed)
         issued = _extract_latest_value(facts, "CommonStockSharesIssued", max_age_years=1)
         treasury = _extract_latest_value(facts, "TreasuryStockCommonShares", max_age_years=1) or 0
@@ -965,6 +973,57 @@ def _class_shares_at(facts: dict, equity_date: str | None) -> dict | None:
     if rec and equity_date and rec.get("end") == equity_date:
         return rec
     return None
+
+
+# Same-date share-tag CONFLICT (the FGBI / BFST shape, 2026-09-30). FGBI's
+# 10-Q tags the balance-sheet sentence "16,539,094 and 15,793,433 shares
+# issued and outstanding" (6/30/26 and 12/31/25 columns) as ISSUED =
+# 16,539,094 at BOTH dates and OUTSTANDING = 15,793,433 at BOTH dates, so the
+# primary count at 6/30/26 is last year's: BVPS 12.30 vs the release's 11.75.
+# BFST does the same (29,510,668 vs "End of Period Common Shares Outstanding
+# 32,535,659" — reconstruction 10% high, inside the ±15% release gate).
+# A same-date outstanding ≠ issued − treasury is usually benign (13 of the 15
+# universe cases: treasury simply isn't tagged), so the dei cover count from
+# the same filing arbitrates: it sides with exactly one of the two in every
+# case found. Conflict + cover backing neither → n/a (flagged).
+_SHARE_TAG_TOL = 0.01
+_COVER_WITNESS_DAYS = 120
+
+
+def _reconcile_same_date_shares(facts: dict, equity_date: str | None,
+                                shares) -> tuple:
+    """(shares, reason). reason is "" when `shares` stands, "derived" when
+    the same-date issued − treasury replaces a mis-tagged primary count, or
+    "conflict" when the tags disagree and the cover backs neither (shares →
+    None). Only a primary CommonStockSharesOutstanding dated AT the equity
+    date, with a same-date issued count, is examined."""
+    from datetime import date
+    cso, cso_end = _val_end(facts, "CommonStockSharesOutstanding")
+    issued, iss_end = _val_end(facts, "CommonStockSharesIssued")
+    if (not shares or not equity_date or shares != cso
+            or cso_end != equity_date or iss_end != equity_date
+            or not issued or issued <= 0):
+        return shares, ""
+    treasury, tre_end = _val_end(facts, "TreasuryStockCommonShares")
+    derived = issued - (treasury if tre_end == equity_date and treasury else 0)
+    if derived <= 0 or abs(cso - derived) / derived <= _SHARE_TAG_TOL:
+        return shares, ""
+    cover, cover_end = _latest_dei_share_count(facts)
+    try:
+        lag = (date.fromisoformat(cover_end)
+               - date.fromisoformat(equity_date)).days if cover_end else None
+    except ValueError:
+        lag = None
+    if not cover or lag is None or not 0 <= lag <= _COVER_WITNESS_DAYS:
+        return shares, ""          # no witness: the direct tag stands
+
+    def near(x):
+        return abs(cover - x) / x <= _SHARE_TAG_TOL
+    if near(cso):
+        return shares, ""
+    if near(derived):
+        return derived, "derived"
+    return None, "conflict"
 
 
 def _best_share_evidence_end(facts: dict) -> str | None:
@@ -1369,6 +1428,27 @@ def _instant_at(facts: dict, concept: str, end: str) -> tuple | None:
     return top["val"], end, top.get("filed", ""), top.get("form", ""), "USD"
 
 
+def _total_and_nci_same_filing(facts: dict, end: str) -> tuple | None:
+    """(total, NCI, filed, form) at `end` from the latest 10-K/10-Q that tags
+    BOTH the NCI-inclusive total and MinorityInterest there — one balance
+    sheet's own figures — or None."""
+    ug = facts.get("facts", {}).get("us-gaap", {})
+
+    def by_accn(concept):
+        return {e.get("accn"): e
+                for e in sorted(ug.get(concept, {}).get("units", {}).get("USD", []),
+                                key=lambda e: e.get("filed", ""))
+                if e.get("form") in ("10-K", "10-Q") and e.get("end") == end
+                and e.get("val") is not None and e.get("accn")}
+    tot, mi = by_accn(_SE_NCI), by_accn("MinorityInterest")
+    both = [a for a in tot if a in mi]
+    if not both:
+        return None
+    a = max(both, key=lambda a: tot[a].get("filed", ""))
+    t = tot[a]
+    return t["val"], mi[a]["val"], t.get("filed", ""), t.get("form", "")
+
+
 def _balance_sheet_date(facts: dict) -> str | None:
     """Latest 10-K/10-Q balance-sheet date: the freshest end across total
     assets and both equity tags."""
@@ -1432,9 +1512,27 @@ def _parent_equity_at(facts: dict, end: str):
     """Equity attributable to the parent at balance-sheet date `end`, same
     return shape as _resolve_parent_equity: plain SE at `end`, else the
     NCI-inclusive total less same-date MinorityInterest, else n/a when a
-    noncontrolling interest may exist that no fact separates."""
+    noncontrolling interest may exist that no fact separates.
+
+    A plain-SE fact within half the NCI of a filing's NCI-inclusive total IS
+    that total — re-tagged or rounded — not parent equity, so that filing's
+    total − NCI serves instead. CPF/QNTO's later filings tagged the total as
+    SE (558,267,000 @ 2021-12-31 vs R3 558,219,000 + 48,000 NCI; 48,763,000
+    @ 2023-06-30 vs R2 45,759,000 + 3,004,000); RBB's only plain SE is Note
+    1's rounded "$523.4 million" (10-K 0001437749-26-007387 R58) vs R2
+    523,410,000 incl. 72,000 NCI. A plain SE nearer the parent figure stands
+    even when it doesn't foot to the cent: WAL's face parent 7,842.0M beside
+    8,135.3M − 293.0M ($M rounding); AMTB's restated 2022 SE."""
     se = _instant_at(facts, _SE, end)
     if se is not None:
+        tn = _total_and_nci_same_filing(facts, end)
+        if tn is not None:
+            total, nci, filed, form = tn
+            if nci and abs(se[0] - total) < abs(nci) / 2:
+                return ((total - nci, end, filed, form, "USD"),
+                        f"{_SE_NCI} − MinorityInterest",
+                        "Plain StockholdersEquity is the NCI-inclusive total — "
+                        "noncontrolling interest removed")
         return se, _SE, None
     incl = _instant_at(facts, _SE_NCI, end)
     if incl is None:
@@ -1447,6 +1545,22 @@ def _parent_equity_at(facts: dict, end: str):
         return None, _SE_NCI, ("NCI-inclusive total only, and a noncontrolling "
                                "interest may exist that no fact separates")
     return incl, _SE_NCI, "No noncontrolling interest — total equity is parent equity"
+
+
+def _parent_equity_series(facts: dict) -> dict:
+    """{end 'YYYY-MM-DD': parent equity} for every 10-K/10-Q end either equity
+    tag carries, each resolved by _parent_equity_at; ends it can't resolve
+    (unseparable NCI) are omitted, never filled from the other tag."""
+    ug = facts.get("facts", {}).get("us-gaap", {})
+    ends = {e["end"] for c in (_SE, _SE_NCI)
+            for e in ug.get(c, {}).get("units", {}).get("USD", [])
+            if e.get("form") in ("10-K", "10-Q") and e.get("end")}
+    out = {}
+    for end in ends:
+        tup, _, _ = _parent_equity_at(facts, end)
+        if tup and tup[0] is not None:
+            out[end] = tup[0]
+    return out
 
 
 def get_fundamentals_with_provenance(cik: int) -> dict:
@@ -1529,6 +1643,28 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
                     ),
                 }
 
+    # Same-date tag conflict (the FGBI shape) — mirror of get_latest_fundamentals.
+    _sh, _tag = _reconcile_same_date_shares(
+        facts, equity_date, result["shares_outstanding"]["value"])
+    tag_conflict = _tag == "conflict"
+    if _tag:
+        result["shares_outstanding"] = {
+            "value": _sh,
+            "source": Source(
+                origin="COMPUTED", identifier=str(cik),
+                concept=("CommonStockSharesIssued − TreasuryStockCommonShares"
+                         if _tag == "derived" else "shares_outstanding"),
+                as_of=equity_date, unit="shares",
+                notes=("Primary CommonStockSharesOutstanding disagrees with the "
+                       "same-date issued − treasury; the filing's cover-page "
+                       "count backs issued − treasury (mis-tagged primary)"
+                       if _tag == "derived" else
+                       "CONFLICT: same-date outstanding ≠ issued − treasury "
+                       "and the cover-page count backs neither — per-share "
+                       "metrics render n/a"),
+            ),
+        }
+
     # Multi-class filer — mirror of get_latest_fundamentals: the per-class sum
     # at the equity date (or n/a, with no fallback substituting for it).
     class_shares = _class_shares_at(facts, equity_date)
@@ -1553,7 +1689,8 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
         }
 
     # Share count fallback chain (same as get_latest_fundamentals but provenance-aware)
-    if result["shares_outstanding"]["value"] is None and not class_shares:
+    if (result["shares_outstanding"]["value"] is None and not class_shares
+            and not tag_conflict):
         dei = facts.get("facts", {}).get("dei", {}).get("EntityCommonStockSharesOutstanding", {})
         for unit, entries in dei.get("units", {}).items():
             if entries:
@@ -1573,7 +1710,8 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
                         ),
                     }
                     break
-    if result["shares_outstanding"]["value"] is None and not class_shares:
+    if (result["shares_outstanding"]["value"] is None and not class_shares
+            and not tag_conflict):
         tup = _extract_latest_value_with_source(
             facts, "WeightedAverageNumberOfSharesOutstandingBasic", max_age_years=1
         )

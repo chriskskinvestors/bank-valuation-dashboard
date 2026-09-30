@@ -187,6 +187,9 @@ def _clean_label(s: str) -> str:
     marks / superscripts (keeping a balanced '(TE)'-style qualifier), collapse
     whitespace."""
     s = s.strip().lower().replace("\xa0", " ")
+    # Typographic quotes → ASCII, so one label spelling matches both
+    # ("shareholders’ equity" — BANR, HBCP; '(“tce”)' — HOPE).
+    s = s.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     # Strip a trailing footnote run, but only when it's NOT closing a paren group
     # (so "margin (te)" keeps its ")"; "diluted shares8" loses its "8").
     if not s.endswith(")"):
@@ -459,9 +462,122 @@ def _text_layer_rows(root) -> list[tuple]:
     return rows
 
 
+# ── Table-less releases: absolutely-positioned text fragments ────────────────
+# Another table-less shape (2026-09-30 sweep: FBP, USCB, CCBG): every word run
+# is its own <div style="position:absolute; left:…px; top:…px">, one page per
+# position:relative container. FBP Q1-2026 (8-K 0001057706-26-000010) prints
+# "Tangible book value per share" + "(1)" + "$" "12.45" "$" "12.29" "$" "10.64"
+# as separate divs at top≈422px; _text_layer_rows sees each div as its own
+# block and supplies nothing. The row and its columns are rebuilt from the
+# coordinates instead.
+_POS_PX = re.compile(r"(left|top|font-size)\s*:\s*(-?[\d.]+)px", re.I)
+_ABSOLUTE = re.compile(r"position\s*:\s*absolute", re.I)
+# Fragments within this many px of a line's first top share the line.
+_LINE_TOL_PX = 2.0
+# Right edges within this many px of each other belong to one column.
+_COL_TOL_PX = 8.0
+# A numeric fragment set this much smaller than the page's value font is a
+# superscript footnote marker, not a value.
+_SUPERSCRIPT_RATIO = 0.75
+# Approximate advance widths (em) of the glyphs in a numeric cell (Times-like
+# serif), used to find a right-aligned number's right edge from its left.
+_GLYPH_EM = {".": 0.25, ",": 0.25, "(": 0.333, ")": 0.333, "-": 0.333,
+             "%": 0.833, " ": 0.25}
+_DASHES = frozenset({"-", "–", "—"})
+
+
+def _positioned_rows(root) -> list[tuple]:
+    """(clean_label, nums) rows, in _table_rows' shape, from absolutely
+    positioned text fragments. Per page: fragments within _LINE_TOL_PX of a
+    line's first top form a line; left-to-right, a line reads as runs of
+    (label, values) — the label is the LAST text fragment before the values
+    (a two-column page puts body prose to the left of the figures on the same
+    line), '$'/'%'/dash cells and footnote markers are skipped.
+
+    COLUMN ALIGNMENT (audit P3): a page's value columns are the clusters of
+    value right edges (numbers are right-aligned; right = left + estimated
+    glyph width) that at least _MIN_ALIGNED_ROWS rows populate. A row's nums
+    are its value in each such column right of its label — a blank cell stays
+    None, so a missing latest quarter can never pull the prior period into
+    nums[0]. A row with a value outside a supported column, or two values in
+    one column, is unaligned: nums = [None] (it still wins first-match → n/a)."""
+    pages: dict = {}
+    for el in root.iter():
+        if not isinstance(el.tag, str) or not _ABSOLUTE.search(el.get("style") or ""):
+            continue
+        if any(isinstance(d.tag, str) and _ABSOLUTE.search(d.get("style") or "")
+               for d in el.iterdescendants()):
+            continue                       # only the innermost positioned text
+        txt = " ".join(el.text_content().replace("\xa0", " ").split())
+        pos = {k.lower(): float(v) for k, v in _POS_PX.findall(el.get("style"))}
+        if not txt or "left" not in pos or "top" not in pos:
+            continue
+        pages.setdefault(el.getparent(), []).append(
+            (pos["top"], pos["left"], pos.get("font-size", 10.0), txt))
+    rows: list[tuple] = []
+    for frags in pages.values():
+        num_fonts = sorted(f for _, _, f, t in frags if _num(t) is not None)
+        body_font = num_fonts[len(num_fonts) // 2] if num_fonts else 0.0
+        lines: list[list] = []
+        for fr in sorted(frags):
+            if lines and fr[0] - lines[-1][0][0] <= _LINE_TOL_PX:
+                lines[-1].append(fr)
+            else:
+                lines.append([fr])
+        # records: [label, label_left, [(value, right_edge)], limit_left]
+        records: list[list] = []
+        for line in lines:
+            line_recs: list[list] = []
+            for _, left, font, txt in sorted(line, key=lambda f: f[1]):
+                if txt in ("$", "%") or txt in _DASHES:
+                    continue
+                v = _num(txt)
+                if v is not None and font < _SUPERSCRIPT_RATIO * body_font:
+                    continue                                 # superscript mark
+                if not (line_recs and line_recs[-1][2]) and _FOOTNOTE_TOKEN.match(txt):
+                    continue                                 # "(1)" after a label
+                if v is None:
+                    line_recs.append([txt, left, [], None])
+                    continue
+                if not line_recs:
+                    continue                                 # header / orphan number
+                right = left + font * sum(_GLYPH_EM.get(c, 0.5) for c in txt)
+                line_recs[-1][2].append((v, right))
+            for i, rec in enumerate(line_recs):
+                if i + 1 < len(line_recs):
+                    rec[3] = line_recs[i + 1][1]
+            records.extend(r for r in line_recs if r[2])
+        # Columns: right-edge clusters populated by ≥ _MIN_ALIGNED_ROWS rows.
+        edges = sorted((right, n) for n, r in enumerate(records) for _, right in r[2])
+        clusters: list[list] = []
+        for right, n in edges:
+            if clusters and right - clusters[-1][-1][0] <= _COL_TOL_PX:
+                clusters[-1].append((right, n))
+            else:
+                clusters.append([(right, n)])
+        cols = [(c[0][0], c[-1][0]) for c in clusters
+                if len({n for _, n in c}) >= _MIN_ALIGNED_ROWS]
+        for label, left, vals, limit in records:
+            cl = _clean_label(label)
+            if not cl:
+                continue
+            mine = [i for i, (lo, hi) in enumerate(cols)
+                    if lo > left and (limit is None or hi < limit)]
+            slots: dict = {}
+            for v, right in vals:
+                hit = [i for i in mine if cols[i][0] <= right <= cols[i][1]]
+                if len(hit) != 1 or hit[0] in slots:
+                    slots = None
+                    break
+                slots[hit[0]] = v
+            rows.append((cl, [slots.get(i) for i in mine] if slots else [None]))
+    return rows
+
+
 def _book_value_rows(html_bytes: bytes) -> list[tuple]:
     """Rows for the per-share BOOK VALUE extractors: the table rows, or — for a
-    table-less release only — the page text-layer rows. Deliberately NOT used
+    table-less release only — the positioned-fragment rows (FBP), else the
+    page text-layer rows (AMAL). Deliberately NOT used
     for extract_earnings_figures: an image release mixes $-billion summary
     pages with $-million statements, and its single release-wide scale then
     mis-scales a first-matched flow (BAC Q2-2026: "Net income $9.1" billion
@@ -472,7 +588,9 @@ def _book_value_rows(html_bytes: bytes) -> list[tuple]:
         return rows
     from lxml import html as lhtml
     root = lhtml.fromstring(html_bytes)
-    return rows if root.findall(".//table") else _text_layer_rows(root)
+    if root.findall(".//table"):
+        return rows
+    return _positioned_rows(root) or _text_layer_rows(root)
 
 
 # Exact label sets per figure. The FIRST row whose cleaned label is in the set
@@ -529,6 +647,24 @@ _TBVPS_LABELS: frozenset = frozenset({
     "tangible book value per common share outstanding",
     "tangible book value per common share at end of period",   # OCFC
     "tangible book value per common share at period end",      # EGBN
+    # 2026-09-30 universe sweep — each verified per-COMMON-share tangible
+    # book in its release (TCE ÷ common shares reproduces the printed figure).
+    "tangible stockholders' equity (book value) per common share",  # AMTB
+    "tangible stockholders' equity book value per common share",    # AMTB
+    "common shareholders' tangible equity per share",               # BANR
+    "tangible common shareholders' equity (tangible book value) per share",  # BANR
+    "common shareholders' equity (tangible), per share",            # FULT
+    "non-gaap tangible book value per share",                       # HBCP
+    'tangible common equity ("tce") per share',                     # HOPE
+    "tangible common equity per share of common stock",             # IBCP
+    "tangible equity per common share",                             # MTB
+    "tce per common share",                                         # PCB
+    "tangible common equity per total common share outstanding",    # FRBT
+    "tangible book value per share (total tangible stockholders' "
+    "equity/shares outstanding)",                                   # PFS
+    "tangible common equity book value per share",                  # UVSP
+    "tangible book value per common share, net of tax",             # WAL
+    "tangible book value per share, net of tax",                    # WAL
 })
 
 # Reported (GAAP) book value per COMMON share — the in-release cross-check anchor
@@ -540,6 +676,10 @@ _BVPS_LABELS: frozenset = frozenset({
     "book value per common share",
     "book value per common share at end of period",            # OCFC
     "book value per common share at period end",               # EGBN
+    "common shareholders' equity per share",                   # BANR, MTB
+    "common shareholders' equity (book value) per share",      # BANR
+    "common shareholders' equity per share of common stock",   # IBCP
+    "common equity book value per share",                      # UVSP
 })
 
 # Release-INTERNAL tie-out anchor (the MBIN case): when neither a reconstruction
@@ -568,16 +708,20 @@ _ENDING_SHARES_LABELS: frozenset = frozenset({
 # qualifier, or a short footnote token like "(b)", "(1)", "(a)", "(b)/(f)",
 # "(i/c)". These sit inside a balanced paren, so _clean_label (which keeps a
 # trailing ")") leaves them intact; we peel them here. A meaningful qualifier
-# like "(te)" is NOT in this set, so it is preserved.
-# Two unparenthesized forms from reconciliation tables ride the same way: a
-# dash qualifier ("book value per share - gaap (a/e)", RBCAA EX-99.2) and a
-# bare formula reference ("book value per share x/dd", "… (non-gaap) aa/dd",
-# FCNCA's deck text layer) — letters-slash-letters only, so no number or word
-# of the label itself can be peeled.
+# like "(te)" is NOT in this set, so it is preserved. Also peeled (2026-09-30
+# sweep): "(non-gaap1)" (BHRB), "(gaap)" (BANR, HOPE), a split footnote pair
+# "(m)/(n)" (SHBI), a dash-joined "– non-gaap" / "- gaap" (BNY, SHBI, FBP,
+# RBCAA EX-99.2), ", period-end" (BHB), and a bare reconciliation-formula
+# reference "x/dd" / "(non-gaap) aa/dd" (FCNCA; letters-slash-letters only,
+# so no number or word of the label itself can be peeled) — all
+# presentational suffixes on the same figure.
 _TRAIL_QUALIFIER = re.compile(
-    r"\s*\((?:non[- ]?gaap|period[- ]end|end of period|[a-z0-9]{1,3}(?:/[a-z0-9]{1,3})?)\)\s*$"
-    r"|\s+-\s+(?:non-)?gaap\s*$"
-    r"|\s+[a-z]{1,2}/[a-z]{1,2}\s*$"
+    r"(?:\s*\((?:(?:non[- ]?)?gaap\d?|period[- ]end|end of period"
+    r"|[a-z0-9]{1,3}(?:/[a-z0-9]{1,3})?)\)"
+    r"|\s*/\s*\([a-z0-9]{1,3}\)"
+    r"|\s*[–—-]\s*(?:non[- ]?)?gaap"
+    r"|,\s*period[- ]end"
+    r"|\s+[a-z]{1,2}/[a-z]{1,2})\s*$"
 )
 
 
@@ -607,6 +751,7 @@ def _match_tbvps_label(cl: str) -> bool:
 _TBVPS_BARE_LABELS: frozenset = frozenset({
     "tangible book value",
     "tangible common book value",
+    "tangible book value at period end",    # KEY (Per common share block)
 })
 
 # LAST-RESORT prose form — JPM 2Q26 EX-99.1 states TBVPS only in a page-1
@@ -661,7 +806,10 @@ def _match_bvps_label(cl: str) -> bool:
 # ($21.80) in its Per Common Share Data block. The same words can label a
 # dollar TOTAL, so it is consulted only when no explicit per-share row exists
 # and must tie to the reconstruction (±15%); nothing weaker admits it.
-_BVPS_BARE_LABELS: frozenset = frozenset({"book value"})
+_BVPS_BARE_LABELS: frozenset = frozenset({
+    "book value",
+    "book value at period end",             # KEY (Per common share block)
+})
 
 
 def _internal_tie_out(rows: list[tuple], v: float) -> bool:
@@ -736,7 +884,8 @@ def extract_reported_tbvps_status(
     Cardinal rule — never emit a plausible-wrong number. The matched value must:
       • be a positive per-share number in a sane band (0 < x < 10 000);
       • be LESS than reported book value per share (tangible < book), when bvps
-        is known — this also rejects a book-value row mismatched into the slot;
+        is known — this also rejects a book-value row mismatched into the slot
+        (waived when the reconstruction itself has tangible == book: USCB);
       • land within 15% of the reconstruction, when the reconstruction resolved —
         this rejects an EPS/dividend value mis-grabbed into the TBVPS slot and a
         wrong-period/wrong-column pick.
@@ -780,8 +929,16 @@ def extract_reported_tbvps_status(
     # negative/zero cell mis-aligned into the row).
     if not (0 < v < 10_000):
         return None, "not_disclosed"
-    # Tangible < book, when book value per share is disclosed.
-    if bvps is not None and bvps > 0 and not (v < bvps):
+    # Tangible < book, when book value per share is disclosed — unless the
+    # reconstruction itself has tangible == book (no intangibles: USCB prints
+    # $12.64 for both). There a book row in the slot IS the tangible figure,
+    # and the ±15% reconstruction band below still gates the value.
+    # The waiver covers the release's cent rounding only — a tangible figure
+    # ABOVE book is never admitted (BCTF: $12.94 vs a $11.56 reconstruction).
+    no_intangibles = (reconstructed is not None and bvps is not None
+                      and abs(reconstructed - bvps) < 0.005)
+    if (bvps is not None and bvps > 0 and not (v < bvps)
+            and not (no_intangibles and v <= bvps + 0.01)):
         return None, "not_disclosed"
     # Tie to the corrected reconstruction within a tight band. This is the
     # primary defense against an EPS/dividend value grabbed into the slot.
@@ -992,6 +1149,16 @@ def reported_tbvps(
     return reported_tbvps_status(cik, reconstructed=reconstructed, bvps=bvps)[0]
 
 
+def _shows_preferred_equity(rows: list[tuple]) -> bool:
+    """True when the release carries a preferred-stock EQUITY row (balance
+    sheet or TCE reconciliation — NPB's "Less: preferred stock" $24,979K) with
+    a nonzero latest value. Preferred DIVIDEND rows (MS, RJF, SFBS print only
+    those) and trust-preferred debt are not equity evidence."""
+    return any("preferred stock" in cl and "dividend" not in cl
+               and "trust" not in cl and nums[0]
+               for cl, nums in rows)
+
+
 def extract_reported_bvps_status(
     ex991_html: bytes,
     reconstructed: float | None = None,
@@ -1011,8 +1178,9 @@ def extract_reported_bvps_status(
         book slot);
       • ±15% vs the reconstruction when it resolved → "ok"/"gate_rejected";
       • no reconstruction: the in-release TBVPS (caller-passed, else matched
-        from the same document) anchors it; with NOTHING to tie to →
-        "not_disclosed".
+        from the same document) anchors it — when the release shows
+        preferred equity, for an explicit per-COMMON label only (NPB); with
+        NOTHING to tie to → "not_disclosed".
     period_end: a supplementary exhibit, as in extract_reported_tbvps_status.
     """
     rows = (_supplement_rows(ex991_html, period_end) if period_end
@@ -1037,7 +1205,14 @@ def extract_reported_bvps_status(
             if abs(v - reconstructed) / reconstructed >= 0.15:
                 return None, "gate_rejected"
             return v, "ok"
-        if tbvps is not None and tbvps > 0:
+        # No reconstruction usually means unresolvable PREFERRED (PNC, MBIN,
+        # NPB). When the release itself carries preferred EQUITY, a label that
+        # doesn't say COMMON may be total equity ÷ common shares: NPB 2Q26
+        # "Book value per share (GAAP)" $17.10 = $589,993K total equity incl.
+        # its "Less: preferred stock" $24,979K ÷ 34.49M shares — per-common
+        # book is $16.38. There only an explicit per-COMMON label passes.
+        if tbvps is not None and tbvps > 0 and (
+                "common" in cl or not _shows_preferred_equity(rows)):
             return v, "ok"
         return None, "not_disclosed"
     # Second tier (no explicit per-share row): a bare "book value" row, the
@@ -1080,8 +1255,11 @@ def reported_bvps_status(
     # v2: "… per common share at end of period" label (OCFC miss).
     # v3: "(end of period)" qualifier (BBT) + bare "book value" tier (ONB).
     # v4: table-less text-layer rows (AMAL) + "at period end" label (EGBN).
-    # v5: supplementary exhibits EX-99.2+ (RBCAA/FCNCA) + formula-ref suffixes.
-    ckey = f"reported_bvps:v5:{f8k['accession']}:{rk}:{tk}"
+    # v5: sweep label/qualifier variants (BANR, MTB, IBCP, UVSP, KEY),
+    #     positioned-fragment releases (FBP), and no-reconstruction rows
+    #     must say COMMON when the release shows preferred equity (NPB).
+    # v6: supplementary exhibits EX-99.2+ (RBCAA/FCNCA) + formula-ref suffixes.
+    ckey = f"reported_bvps:v6:{f8k['accession']}:{rk}:{tk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling.
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
@@ -1115,9 +1293,12 @@ def reported_bvps_status(
 # v9: table-less releases read from the page text layer (AMAL miss) and
 #     "… at period end" labels (EGBN). (Parallel branches bumped the same
 #     numbers for different specs — v9 so no spec's cache serves another.)
-# v10: supplementary exhibits EX-99.2+ of the same 8-K (RBCAA EX-99.2, FCNCA
-#      EX-99.3) + reconciliation-formula label suffixes ("x/dd", "- GAAP").
-_REPORTED_TBVPS_CKEY_V = "v10"
+# v10: 2026-09-30 sweep label/qualifier variants (BANR, MTB, WAL, BNY, …),
+#      table-less positioned-fragment releases (FBP, USCB), and the
+#      no-intangibles tangible == book allowance (USCB).
+# v11: supplementary exhibits EX-99.2+ of the same 8-K (RBCAA EX-99.2, FCNCA
+#      EX-99.3) + bare reconciliation-formula label suffixes ("x/dd").
+_REPORTED_TBVPS_CKEY_V = "v11"
 
 
 def reported_tbvps_status(

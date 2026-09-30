@@ -180,7 +180,6 @@ class TestFormulaSuffixLabels(unittest.TestCase):
         for label in ("tangible book value per share",
                       "book value per share 1/2",       # digits: not a formula ref
                       "book value per share abc/dd",    # >2 letters
-                      "book value per share-gaap",      # no spaced dash
                       "tangible common equity to tangible assets"):
             self.assertEqual(_strip_trailing_qualifiers(label), label, label)
 

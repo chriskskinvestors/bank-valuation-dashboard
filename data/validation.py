@@ -207,7 +207,10 @@ def check_coherence_flags(metrics: dict | None,
       share evidence predates the equity date beyond grace — the guard
       already renders per-share metrics n/a (and the release figure serves
       where extracted), so this is the alarm WORKING: warning severity,
-      visible in the nightly summary without failing the job."""
+      visible in the nightly summary without failing the job.
+    • shares_tag_conflict (sec_data, from data/sec_client): same-date share
+      tags contradict each other and the cover count backs neither — same
+      n/a-and-warn treatment."""
     findings = []
     # eps joins the loop (release-first increment 2): eps_conflict means the
     # release-anchored composite TTM and the XBRL TTM disagree >=15%.
@@ -233,6 +236,18 @@ def check_coherence_flags(metrics: dict | None,
                 "Newest share-count evidence predates the equity date beyond "
                 "the coherence grace — per-share metrics render n/a and the "
                 "bank's released figure serves where cleanly extracted."
+            ),
+            source="SEC",
+        ))
+    if sec_data and sec_data.get("shares_tag_conflict"):
+        findings.append(Finding(
+            severity="warning",
+            field="shares_outstanding",
+            message=(
+                "Same-date outstanding and issued − treasury share tags "
+                "disagree and the cover-page count backs neither (FGBI "
+                "class) — per-share metrics render n/a; hand-check the "
+                "filing's balance-sheet share line."
             ),
             source="SEC",
         ))
