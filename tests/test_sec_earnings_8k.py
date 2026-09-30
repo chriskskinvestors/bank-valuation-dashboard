@@ -377,6 +377,138 @@ class TestInternalTieOutAnchor(unittest.TestCase):
         self.assertEqual(status, "not_disclosed")
 
 
+class TestReleaseTbvpsShapes(unittest.TestCase):
+    """Review P1-3 (docs/REVIEW-2026-09-24-numbers.md): two releases that state
+    TBVPS in shapes the exact per-share label set missed, so the
+    reconstruction served instead of the company's figure. Fixtures reproduce
+    the real EX-99.1 markup (fonts, superscript footnote runs, colspans).
+
+      JPM 2Q26 (8-K 0001628280-26-048078, a2q26erfexhibit991narrative.htm):
+        prose only — "…; tangible book value per share² of $113.35, up 10% YoY".
+        TCE 301,314 / 2,658.2M shares = 113.35. Reconstruction 112.69.
+      ONB 2Q26 (8-K 0001628280-26-049108, onb_exhibit991er2q26.htm):
+        Table 5 "Tangible book value³" and Table 14 "Tangible common book
+        value" = 14.32; 5,477,697 / 382,537 = 14.3194. Reconstruction 14.35."""
+
+    _FONT = "<font style=\"font-family:'Times New Roman',serif;font-size:8.95pt\">"
+    _SUP = ("<font style=\"font-size:5.81pt;position:relative;top:-3.13pt;"
+            "vertical-align:baseline\">")
+
+    def _jpm(self, bullet_tail=""):
+        return (
+            "<html><body>"
+            "<table><tr><td>Return on tangible common equity</td>"
+            "<td>29</td><td>%</td><td>23</td><td>%</td></tr></table>"
+            "<div><div style=\"margin-top:6pt\"><font>FORTRESS PRINCIPLES</font></div>"
+            "<div style=\"padding-left:11.25pt;text-indent:-9pt\">"
+            "<font style=\"font-family:'Wingdings',sans-serif\">n</font>"
+            f"{self._FONT} &#160;&#160;&#160;&#160;Book value per share of $133.01,"
+            " up 9% YoY&#59; tangible book value per share</font>"
+            f"{self._SUP}2</font>"
+            f"{self._FONT} of $113.35, up 10% YoY</font></div>{bullet_tail}</div>"
+            "<div>b. Tangible common equity (&#8220;TCE&#8221;), return on tangible"
+            " common equity (&#8220;ROTCE&#8221;) and tangible book value per share"
+            " (&#8220;TBVPS&#8221;) are each non-GAAP financial measures. Book value"
+            " per share was $133.01, $128.38 and $122.51 at June 30, 2026, March 31,"
+            " 2026 and June 30, 2025, respectively.</div>"
+            "</body></html>").encode("utf-8")
+
+    def _onb_row(self, label, sup, *vals, dollar=False):
+        lab = ("<td colspan=\"3\"><div><font style=\"font-size:9pt\">"
+               f"{label}</font>"
+               + (f"<font style=\"font-size:5.85pt;top:-3.15pt\">{sup}</font>"
+                  if sup else "") + "</div></td>")
+        if dollar:
+            cells = "".join(f"<td>$</td><td>{v}</td><td></td>" for v in vals)
+        else:
+            cells = "".join(f"<td colspan=\"2\">{v}</td><td></td>" for v in vals)
+        return f"<tr>{lab}{cells}</tr>"
+
+    def _onb_table5(self):
+        return ("<table>"
+                + self._onb_row("Book value", None, "21.80", "21.40", "21.17",
+                                dollar=True)
+                + self._onb_row("Stock price", None, "25.90", "22.10", "22.31")
+                + self._onb_row("Tangible book value", "3", "14.32", "13.93",
+                                "13.71")
+                + "</table>")
+
+    def _onb_table14(self):
+        return ("<table>"
+                + self._onb_row("Tangible shareholders' common equity", None,
+                                "5,477,697", "5,380,515", "5,343,083", dollar=True)
+                + "<tr><td colspan=\"3\">Tangible Common Book Value:</td></tr>"
+                + self._onb_row("Common shares outstanding", None,
+                                "382,537", "386,315", "389,662")
+                + self._onb_row("Tangible common book value", None,
+                                "14.32", "13.93", "13.71", dollar=True)
+                + "</table>")
+
+    def test_hand_verified_inputs(self):
+        self.assertAlmostEqual(301_314 / 2_658.2, 113.35, places=2)
+        self.assertAlmostEqual(5_477_697 / 382_537, 14.32, places=2)
+
+    def test_jpm_prose_statement_extracted(self):
+        self.assertEqual(extract_reported_tbvps_status(
+            self._jpm(), reconstructed=112.69, bvps=133.01), (113.35, "ok"))
+
+    def test_onb_bare_tangible_book_value_row(self):
+        html = (f"<html><body>{self._onb_table5()}{self._onb_table14()}"
+                "</body></html>").encode("utf-8")
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=14.35, bvps=21.84), (14.32, "ok"))
+
+    def test_onb_table14_tangible_common_book_value_alone(self):
+        html = f"<html><body>{self._onb_table14()}</body></html>".encode("utf-8")
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=14.35, bvps=21.84), (14.32, "ok"))
+
+    def test_explicit_per_share_row_outranks_bare_row(self):
+        """A bare 'Tangible book value' $-total row ahead of an explicit
+        per-share row must not displace it (no regression for C/HBAN/…)."""
+        html = _html(_row("Tangible book value", "5,477")          # $M total
+                     + _row("Tangible book value per share", "42.68"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=42.68, bvps=52.10), (42.68, "ok"))
+
+    def test_bare_row_dollar_total_is_not_tbvps(self):
+        """The same words labelling a DOLLAR total fail the per-share gates."""
+        for cell in ("5,477,697", "5,477"):                  # $K, $M
+            html = _html(_row("Tangible book value", cell))
+            self.assertEqual(extract_reported_tbvps_status(
+                html, reconstructed=14.35, bvps=21.84), (None, "not_disclosed"),
+                cell)
+
+    def test_bare_row_growth_percent_not_tbvps(self):
+        """A bare 'Tangible book value' % -change row: tangible<book alone
+        must not admit it (no reconstruction), and against a reconstruction it
+        is a mis-grab, not a release-vs-pipeline conflict."""
+        html = _html(_row("Tangible book value", "4.5%"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=None, bvps=21.84), (None, "not_disclosed"))
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=14.35, bvps=21.84), (None, "not_disclosed"))
+
+    def test_prose_non_tbvps_numbers_not_picked(self):
+        """Book value per share, ROTCE and a qualified (ex-AOCI) or comparison
+        TBVPS clause in the same prose are never taken as TBVPS."""
+        html = (b"<html><body><p>Book value per share of $133.01; return on"
+                b" tangible common equity of 29%. Excluding AOCI, tangible book"
+                b" value per share of $120.00. Compared with tangible book value"
+                b" per share of $103.07 a year ago.</p></body></html>")
+        self.assertEqual(extract_reported_tbvps_status(
+            html, reconstructed=112.69, bvps=133.01), (None, "not_disclosed"))
+
+    def test_prose_two_different_values_is_ambiguous(self):
+        """Two clause-start statements with different figures (current vs a
+        prior period) → n/a, never a pick."""
+        tail = ("<div>A year earlier: tangible book value per share was"
+                " $103.07 at June 30, 2025.</div>")
+        self.assertEqual(extract_reported_tbvps_status(
+            self._jpm(bullet_tail=tail), reconstructed=112.69, bvps=133.01),
+            (None, "not_disclosed"))
+
+
 class TestResolveTbvpsFallback(unittest.TestCase):
     """analysis.valuation._resolve_tbvps returns (value, source, conflict):
     prefers the reported figure, falls back to the reconstruction, and never
