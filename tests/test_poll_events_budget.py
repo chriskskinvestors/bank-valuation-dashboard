@@ -93,6 +93,11 @@ def _run_main(stack, adapters, time_values=None, universe=("AAA", "BBB"), env=No
                                    return_value={}))
     stack.enter_context(mock.patch(
         "data.earnings_results.refresh_results_board_snapshot", return_value=0))
+    # The Form 4 firehose lane: per-ticker CIK resolution (live SEC ticker
+    # lookup for an unmapped ticker) + the EDGAR current-filings poll.
+    stack.enter_context(mock.patch("data.bank_mapping.get_cik", return_value=None))
+    stack.enter_context(mock.patch("data.form4_client.poll_form4_firehose",
+                                   return_value=(0, 0)))
     stack.enter_context(mock.patch.dict("os.environ", {}, clear=False))
     if "ANTHROPIC_API_KEY" in __import__("os").environ:
         stack.enter_context(mock.patch.dict("os.environ",

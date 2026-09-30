@@ -333,12 +333,6 @@ def _list_filings(cik: int, forms: tuple[str, ...], limit: int) -> list[dict]:
     return out
 
 
-def _latest_filing(cik: int, forms: tuple[str, ...]) -> dict | None:
-    """Newest filing among `forms`. Returns {form, accession, filed, report_date}."""
-    filings = _list_filings(cik, forms, 1)
-    return filings[0] if filings else None
-
-
 # ──────────────────────────────────────────────────────────────────────────
 # Credit-quality extraction (FinancingReceivable × InternalCreditAssessment)
 # ──────────────────────────────────────────────────────────────────────────
@@ -500,41 +494,6 @@ def extract_credit_quality(facts: dict) -> dict | None:
         "classified": classified,
         "criticized": criticized,
     }
-
-
-def get_credit_quality_breakdown(cik: int, form: str | None = None) -> dict | None:
-    """
-    Credit-quality (pass / special mention / substandard / doubtful) loan
-    breakdown from the latest 10-K/10-Q XBRL instance.
-
-    form: restrict to one form type (e.g. "10-K"); default newest of either.
-
-    Returns
-        {as_of, concept, total_by_grade, grade_members, by_class,
-         totals_source, classified, criticized,
-         source: {form, accession, filed, report_date, url}}
-    or None when the filer didn't tag the disclosure dimensionally.
-    """
-    forms = (form,) if form else ("10-K", "10-Q")
-    filing = _latest_filing(cik, forms)
-    if not filing or not filing.get("accession"):
-        return None
-    bundle = fetch_dimensional_facts(cik, filing["accession"])
-    if not bundle:
-        return None
-    breakdown = extract_credit_quality(bundle.get("facts") or {})
-    if breakdown is None:
-        print(f"[xbrl-dim] no credit-quality dimensional facts in "
-              f"{filing['form']} {filing['accession']} (CIK {cik})")
-        return None
-    breakdown["source"] = {
-        "form": filing["form"],
-        "accession": filing["accession"],
-        "filed": filing["filed"],
-        "report_date": filing["report_date"],
-        "url": bundle.get("instance_url"),
-    }
-    return breakdown
 
 
 # How many filings the two history modes walk: 5 10-Ks ≈ 5 FY-end instants;

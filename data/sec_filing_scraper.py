@@ -1145,37 +1145,9 @@ def extract_securities(facts: list[Fact]) -> dict:
     return out
 
 
-def securities_for(cik) -> dict | None:
-    """Cached AFS/HTM debt-securities summary for a company from its own latest SEC
-    filing (timeliest 10-Q, then 10-K). Returns
-    {"meta": {...}, "securities": {period: {...}}} or None."""
-    if not cik:
-        return None
-    from data import cache
-    for forms in (("10-Q",), ("10-K",)):
-        meta = latest_filing(cik, forms)
-        if not meta:
-            continue
-        ckey = f"securities:v1:{meta['accession']}"
-        sec = cache.get(ckey, max_age_s=None)
-        if sec is None:
-            try:
-                sec = extract_securities(instance_facts(meta))
-                try:
-                    cache.put(ckey, sec)
-                except Exception:
-                    pass
-            except Exception as e:
-                print(f"[sec_scraper] securities failed for cik {cik}: {type(e).__name__}: {e}")
-                sec = {}
-        if sec:
-            return {"meta": meta, "securities": sec}
-    return None
-
-
 def _securities_extract_cached(meta: dict) -> dict:
-    """extract_securities for one filing, cached per accession (shared key with
-    securities_for). {} on failure (never cache a transient None)."""
+    """extract_securities for one filing, cached per accession. {} on failure
+    (never cache a transient None)."""
     from data import cache
     ckey = f"securities:v1:{meta['accession']}"
     sec = cache.get(ckey, max_age_s=None)
@@ -2496,8 +2468,8 @@ def extract_segments(facts: list[Fact]) -> dict:
 
 
 def _segments_extract_cached(meta: dict) -> dict:
-    """extract_segments for one filing, cached per accession (shared key with
-    segments_for). {} on failure (never cache a transient None)."""
+    """extract_segments for one filing, cached per accession. {} on failure
+    (never cache a transient None)."""
     from data import cache
     ckey = f"segments:v1:{meta['accession']}"
     seg = cache.get(ckey, max_age_s=None)
@@ -2513,20 +2485,6 @@ def _segments_extract_cached(meta: dict) -> dict:
                   f"{type(e).__name__}: {e}")
             seg = {}
     return seg or {}
-
-
-def segments_for(cik) -> dict | None:
-    """Cached business-segment summary for a company from its own latest 10-K.
-    Returns {"meta": {...}, "segments": {...}} or None."""
-    if not cik:
-        return None
-    meta = latest_filing(cik, ("10-K",))
-    if not meta:
-        return None
-    seg = _segments_extract_cached(meta)
-    if seg:
-        return {"meta": meta, "segments": seg}
-    return None
 
 
 def segments_multiyear_for(cik, n_years: int = 5) -> dict | None:

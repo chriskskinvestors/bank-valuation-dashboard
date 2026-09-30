@@ -184,7 +184,10 @@ def invalidate_company_facts(cik: int) -> None:
 # extractors), so memoizing the parsed dict makes every tab switch that reads
 # SEC facts skip that repeat cost. Companyfacts is quarterly — 1h staleness is
 # invisible to values. Same pattern as get_latest_fundamentals below.
-@st.cache_data(ttl=3600, show_spinner=False)
+# max_entries: each slim dict is up to ~1-5 MB and a Screen/Compare build walks
+# hundreds of CIKs on one instance — unbounded, that held hundreds of MB for
+# the TTL (REVIEW-2026-09-24). 64 covers every tab switch within a session.
+@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def fetch_company_facts(cik: int) -> dict:
     """
     Fetch the XBRL facts the dashboard uses for a company, cached for

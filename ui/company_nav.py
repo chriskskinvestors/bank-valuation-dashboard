@@ -402,14 +402,6 @@ def _cr_reg_capital(t, ctx):
     _cr_capital_trends(t, "crreg")
 
 
-def _cr_todo(label):
-    def _render(t, ctx):
-        import streamlit as st
-        st.info(f"**{label}** — Company-Reported view, sourced directly from the "
-                f"company's own filings. Building now.")
-    return _render
-
-
 _RENDERERS = {
     "Corporate Profile": _corporate_profile,
     "Stock Chart": _stock_chart,

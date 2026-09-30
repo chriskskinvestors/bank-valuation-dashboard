@@ -8,7 +8,6 @@ Requires TWS or IB Gateway running and API enabled.
 import threading
 import time
 from datetime import datetime
-from typing import Callable
 
 import asyncio
 import pandas as pd
@@ -80,14 +79,6 @@ class IBKRClient:
         # Set up pending tickers event
         self.ib.pendingTickersEvent += self._on_pending_tickers
 
-    def unsubscribe(self, ticker: str):
-        """Cancel market data for a ticker."""
-        if ticker in self.contracts and self.connected:
-            self.ib.cancelMktData(self.contracts[ticker])
-            del self.contracts[ticker]
-            del self.tickers[ticker]
-            self.prices.pop(ticker, None)
-
     def _on_pending_tickers(self, tickers_set):
         """Called when new tick data arrives."""
         for tk in tickers_set:
@@ -114,17 +105,9 @@ class IBKRClient:
             except Exception:
                 pass
 
-    def on_price_update(self, callback: Callable):
-        """Register a callback for price updates: callback(prices_dict)."""
-        self._callbacks.append(callback)
-
     def get_price(self, ticker: str) -> dict:
         """Get current price data for a ticker."""
         return self.prices.get(ticker, {})
-
-    def get_all_prices(self) -> dict:
-        """Get all current prices."""
-        return dict(self.prices)
 
     def get_historical_data(
         self, ticker: str, duration: str = "1 Y", bar_size: str = "1 day"
@@ -174,11 +157,6 @@ class IBKRClient:
 
         self._thread = threading.Thread(target=_run, daemon=True)
         self._thread.start()
-
-    def stop_event_loop(self):
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=2)
 
 
 # Singleton instance

@@ -83,8 +83,10 @@ class TestFetchCompanyFactsOk(unittest.TestCase):
         self.assertEqual(facts, {})
         self.assertFalse(ok)
 
+    # The lag overlay on the way out reads the live submissions index.
+    @patch("data.sec_earnings_8k.latest_periodic_filing", return_value=None)
     @patch("data.cache.get")
-    def test_cache_hit_is_ok_true(self, mock_cget):
+    def test_cache_hit_is_ok_true(self, mock_cget, _lpf):
         from data.sec_client import fetch_company_facts_ok
         mock_cget.return_value = {"facts": {"dei": {}}}
         facts, ok = fetch_company_facts_ok(320193)

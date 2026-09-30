@@ -218,6 +218,7 @@ class TestHighlightsLabelVariants(unittest.TestCase):
                                side_effect=lambda cik, st, n: inc if st == "income" else bal), \
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
                         return_value=None):
             years, dicts, _src = fs._cr_highlights_by_year("TEST")
@@ -247,6 +248,7 @@ class TestHighlightsLabelVariants(unittest.TestCase):
                                side_effect=lambda cik, st, n: inc if st == "income" else bal), \
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
                         return_value=None):
             _years, dicts, _src = fs._cr_highlights_by_year("TEST")
@@ -273,6 +275,7 @@ class TestHighlightsLabelVariants(unittest.TestCase):
                                side_effect=lambda cik, st, n: inc if st == "income" else bal), \
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
                         return_value=None):
             years, dicts, _src = fs._cr_highlights_by_year("TEST")
@@ -309,6 +312,7 @@ class TestReconcileGatedAmbiguousLabels(unittest.TestCase):
                                side_effect=lambda cik, st, n: inc if st == "income" else bal), \
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
                         return_value=None):
             _y, dicts, _s = fs._cr_highlights_by_year("TEST")
@@ -344,6 +348,7 @@ class TestBareTotalAssetsGuard(unittest.TestCase):
                                side_effect=lambda cik, st, n: inc if st == "income" else bal), \
              mock.patch("data.sec_filing_scraper.holdco_capital_for",
                         return_value=None), \
+             mock.patch("data.bank_mapping.get_fdic_cert", return_value=None), \
              mock.patch("data.sec_filing_scraper.company_asset_quality_nim",
                         return_value=None):
             _y, dicts, _s = fs._cr_highlights_by_year("TEST")

@@ -2148,13 +2148,6 @@ _DLC_TRENDS = [
 ]
 
 
-_FAIR_VALUE = [
-    ("Investment Securities", [
-        ("Total investment securities", "dollar", "SC"),
-        ("Securities / total assets", "ratio", "SC", "ASSET"),
-    ]),
-]
-
 # ── Portfolio Analysis — securities composition (SNL depth, 2026-07-13) ─────
 # Type tree probed TCBK/BANR 12/31/2025: leaves are ORTHOGONAL — the residual
 # (SC − leaves) equals equity-NFT + rounding (TCBK 2,693 exact; BANR 115 vs
@@ -3406,14 +3399,6 @@ def _cr_securities_trends(periods, sec, ticker, key_prefix, quarterly=False):
                 tighten_yaxis(fig, values=[y for y in ys if y is not None] or None)
                 st.plotly_chart(fig, use_container_width=True,
                                 key=f"{key_prefix}_sectr_{ticker}_{r + j}")
-
-
-def render_fair_value(ticker):
-    render_statement(ticker, "fv", "Fair Value Analysis", _FAIR_VALUE)
-    _render_fair_value_hierarchy(ticker)
-    st.caption("AFS/HTM unrealized gain/loss (AOCI) detail from FFIEC Schedule RC-B, "
-               "and the ASC 825 fair-value-of-financial-instruments table (loans, "
-               "deposits, debt), are next on the roadmap.")
 
 
 @st.fragment

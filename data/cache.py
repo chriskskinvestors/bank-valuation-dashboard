@@ -260,15 +260,3 @@ def fdic_age(ticker: str) -> float | None:
 
 def sec_age(ticker: str) -> float | None:
     return get_age(f"sec:{ticker}")
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Diagnostic
-# ──────────────────────────────────────────────────────────────────────────
-
-def backend_info() -> dict:
-    """Return backend type for diagnostics / Data Quality tab."""
-    return {
-        "backend": "postgres" if _USE_POSTGRES else "sqlite",
-        "ttl_hours": FUNDAMENTAL_CACHE_TTL_HOURS,
-    }

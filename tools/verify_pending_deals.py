@@ -59,9 +59,9 @@ def main() -> int:
         deals = get_ma_history(cert, cik=cik, name=get_name(tk) or tk)
         pend = [d for d in deals if d["status"] == "pending"]
         results[tk] = pend
-        print(f"{tk:5} {len(deals):3} deals | pending: "
-              f"{[(p['counterparty']['name'], p['value_usd'], p['direction'])
-                  for p in pend]}", flush=True)
+        pend_summary = [(p["counterparty"]["name"], p["value_usd"], p["direction"])
+                        for p in pend]
+        print(f"{tk:5} {len(deals):3} deals | pending: {pend_summary}", flush=True)
 
     # Known-closed: zero pending rows, forever.
     for tk in ("CLST", "PB", "FULT", "UMBF", "HOPE", "BANR"):

@@ -82,7 +82,6 @@ def _footprint_participants(cert: int, year: int) -> dict:
             for k, g in mp.groupby("market_key", sort=False)}
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def _dep_usd(v) -> str:
     """SOD deposits are $thousands — convert at the display boundary."""
     return "—" if v is None or pd.isna(v) else fmt_dollars(float(v) * 1000, 1)

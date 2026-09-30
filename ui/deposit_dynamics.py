@@ -10,14 +10,12 @@ Shows:
 """
 
 import streamlit as st
-import pandas as pd
 
-from data.bank_mapping import get_fdic_cert, get_name
+from data.bank_mapping import get_name
 from data.cache import get as cache_get
 from ui.chrome import title_bar
 from data import fdic_client
 from analysis.deposit_dynamics import summarize_bank_deposits, build_deposit_timeline
-from utils.formatting import fmt_dollars_from_thousands
 
 
 from utils.chart_style import (ALERT_STYLE as _SEVERITY_STYLE,
@@ -38,101 +36,6 @@ def _fmt_quarter(ts) -> str:
 # Shared loader (data/loaders) — was a verbatim copy in five tab modules.
 from data.loaders import load_fdic_hist as _load_hist
 from ui.history_range import range_picker, chart_timeline
-
-
-def _render_deposit_headline(ticker, hist, summary, timeline):
-    """Deposit headline cards — click-to-source. Reported FDIC fields (total
-    deposits, funding cost) link to the Call Report; computed shares and the
-    model betas show their formula + the FDIC/FRED inputs."""
-    from ui.source_trace import render_traceable_cards, fdic_calc, make_calc
-    from ui.financial_highlights import _fdic_doc, _disp_date, _thou, _num
-
-    cert = get_fdic_cert(ticker)
-    entity = f"{get_name(ticker)} ({ticker})"
-    rec = hist[0]
-    latest = summary["latest"]
-    cycle_beta = summary.get("cycle_beta") or {}
-    rolling_beta = summary.get("rolling_beta") or {}
-    cr_doc = _fdic_doc(cert, rec.get("REPDTE")) if cert else None
-    asof = _disp_date(rec.get("REPDTE"))
-
-    total = _num(latest.get("total_dep"))
-    qoq = latest.get("dep_qoq_growth")
-    cod = latest.get("cost_of_deposits")
-    nonint_pct = latest.get("nonint_dep_pct"); unins = latest.get("uninsured_pct")
-    depni = _num(rec.get("DEPNIDOM")); dep = _num(rec.get("DEP"))
-
-    tot_disp = fmt_dollars_from_thousands(total)
-    if qoq is not None:
-        col = "var(--success)" if qoq >= 0 else "var(--danger)"
-        tot_disp += (f" <span style='font-size:var(--fs-xs); color:{col}; "
-                     f"font-weight:600;'>{qoq:+.1f}%</span>")
-    cod_disp = f"{cod:.2f}%" if cod is not None else "—"
-    if len(timeline) >= 2 and cod is not None:
-        prev = timeline["cost_of_deposits"].iloc[-2]
-        if prev is not None and not pd.isna(prev):
-            chg = (cod - prev) * 100
-            col = "var(--danger)" if chg >= 0 else "var(--success)"  # rising cost = bad
-            cod_disp += (f" <span style='font-size:var(--fs-xs); color:{col}; "
-                         f"font-weight:600;'>{chg:+.0f}bps</span>")
-
-    cb = cycle_beta.get("beta"); rb = rolling_beta.get("beta")
-    r2 = rolling_beta.get("r_squared")
-    ff_chg = cycle_beta.get("ff_change"); cod_chg = cycle_beta.get("cod_change")
-
-    cards = [
-        {"label": "Total Deposits", "value": tot_disp,
-         "calc": fdic_calc("Total deposits", "DEP", rec, cert, unit="$ in thousands",
-                           entity=entity, value=fmt_dollars_from_thousands(total),
-                           reported=True, definition="Total domestic and foreign deposits.")},
-        {"label": "Cost of Deposits", "value": cod_disp,
-         "calc": fdic_calc("Cost of deposits (funding)", "INTEXPY", rec, cert, unit="%",
-                           entity=entity, value=(f"{cod:.2f}%" if cod is not None else "—"),
-                           reported=True,
-                           definition="Annualized cost of interest-bearing liabilities (FDIC "
-                                       "INTEXPY — deposits plus other borrowings; a funding-cost "
-                                       "proxy for pure-deposit banks).")},
-        {"label": f"Cycle Beta", "value": (f"{cb:.2f}" if cb is not None else "—"),
-         "calc": make_calc("Deposit cycle beta", (f"{cb:.2f}" if cb is not None else "—"),
-                           entity=entity, source="Model — rate-cycle regression", asof=asof,
-                           unit="beta", ref="Δ cost of deposits ÷ Δ fed funds (cycle)",
-                           definition="How much of a Fed-funds move passes through to deposit "
-                                       "cost over a full rate cycle. <0.30 = sticky deposits, "
-                                       ">0.50 = rate-sensitive.",
-                           terms=[{"label": "Δ Fed funds over cycle (pp)",
-                                   "val": (f"{ff_chg:+.2f}" if ff_chg is not None else "—"),
-                                   "sub": "FRED — effective federal funds rate"},
-                                  {"label": "Δ Cost of deposits over cycle (pp)",
-                                   "val": (f"{cod_chg:+.2f}" if cod_chg is not None else "—"),
-                                   "doc": cr_doc, "sub": "FDIC INTEXPY"}],
-                           op="Δ cost of deposits ÷ Δ fed funds")},
-        {"label": "Rolling Beta (4Q)", "value": (f"{rb:.2f}" if rb is not None else "—"),
-         "calc": make_calc("Rolling deposit beta (4-quarter)",
-                           (f"{rb:.2f}" if rb is not None else "—"), entity=entity,
-                           source="Model — 4Q rolling regression", asof=asof, unit="beta",
-                           ref="regression slope, trailing 4 quarters",
-                           definition="Recent deposit-cost sensitivity to Fed funds, fit over the "
-                                       "last four quarters (more responsive than the cycle beta).",
-                           terms=[{"label": "Regression R²",
-                                   "val": (f"{r2:.2f}" if r2 is not None else "—"),
-                                   "sub": "goodness of fit"}],
-                           op="slope of Δ cost-of-deposits vs Δ fed funds (4Q)")},
-        {"label": "Non-Int Dep %", "value": (f"{nonint_pct:.1f}%" if nonint_pct is not None else "—"),
-         "calc": make_calc("Non-interest-bearing deposit share",
-                           (f"{nonint_pct:.1f}%" if nonint_pct is not None else "—"), entity=entity,
-                           source="FDIC Call Report", asof=asof, unit="%",
-                           ref="Computed from Call Report",
-                           definition="Non-interest-bearing (checking) deposits as a share of total "
-                                       "— a stickiness/low-cost-funding gauge."
-                                       + (f" Uninsured deposits {unins:.0f}% of total."
-                                          if unins is not None else ""),
-                           terms=[{"label": "Non-interest-bearing deposits ($000)",
-                                   "val": _thou(depni), "doc": cr_doc},
-                                  {"label": "Total deposits ($000)", "val": _thou(dep), "doc": cr_doc}],
-                           op="Non-interest deposits ÷ total deposits × 100", reported=False,
-                           link=(cr_doc or {}).get("url"))},
-    ]
-    render_traceable_cards(cards, key=f"deposits_{ticker}", columns=5)
 
 
 # @st.fragment: the statement table's Annual/Quarterly radio must not rerun

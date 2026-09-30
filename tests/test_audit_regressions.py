@@ -48,9 +48,12 @@ class TestA1PeerTierUnits(unittest.TestCase):
     def test_metrics_boundary_converts_asset_to_dollars(self):
         # The contract A1 relies on: build_bank_metrics emits total_assets in
         # raw dollars (FDIC reports $thousands).
+        from unittest.mock import patch
         from analysis.metrics import build_bank_metrics
-        out = build_bank_metrics("X", {"ASSET": 800_000, "REPDTE": "2025-12-31"},
-                                 {}, {}, [])
+        # Unmapped "X" → get_cik fell through to the live SEC ticker lookup.
+        with patch("data.bank_mapping.get_cik", return_value=None):
+            out = build_bank_metrics("X", {"ASSET": 800_000, "REPDTE": "2025-12-31"},
+                                     {}, {}, [])
         self.assertEqual(out.get("total_assets"), 800_000 * 1000)
 
 
@@ -479,7 +482,10 @@ class TestPastDueLoansNotAssets(unittest.TestCase):
         fdic = {"REPDTE": "2025-12-31",
                 "P3LNLS": 8_000, "P9LNLS": 2_000,       # $thousands (FDIC)
                 "P3ASSET": 10_000, "P9ASSET": 3_000}    # must NOT be picked
-        row = build_bank_metrics("X", fdic, {}, {"price": None}, [])
+        from unittest.mock import patch
+        # Unmapped "X" → get_cik fell through to the live SEC ticker lookup.
+        with patch("data.bank_mapping.get_cik", return_value=None):
+            row = build_bank_metrics("X", fdic, {}, {"price": None}, [])
         # 8,000 $K -> $8.0M raw dollars (thousands conversion at the boundary)
         self.assertEqual(row.get("past_due_30_89"), 8_000_000)
         self.assertEqual(row.get("past_due_90"), 2_000_000)
@@ -1579,6 +1585,16 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
         comp_pkg.v1 = comp_v1
         st.components = comp_pkg
         import importlib
+        from unittest.mock import patch
+        # The statement's Export control (ui.export.table_export) renders via
+        # st.container + st.download_button on ui.export's OWN `st` binding —
+        # which this local stub never reaches once ui.export is imported, and
+        # which lacks .container when this module runs alone (under discovery
+        # another module's stub happened to supply it). Import it before the
+        # swap and bind a private stub, so the class is order-independent.
+        import ui.export as _export
+        export_st = _t.SimpleNamespace(container=lambda *a, **k: _Ctx(),
+                                       download_button=lambda *a, **k: None)
         keys = ("streamlit", "streamlit.components", "streamlit.components.v1")
         saved_mods = {k: sys.modules.get(k) for k in keys}
         sys.modules["streamlit"] = st
@@ -1597,7 +1613,8 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
                 "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
             dl.load_fdic_hist_df = (
                 lambda ticker, quarters=44: pd.DataFrame([dict(r) for r in hist_rows]))
-            fs.render_balance_sheet("BANR")
+            with patch.object(_export, "st", export_st):
+                fs.render_balance_sheet("BANR")
         finally:
             fs.get_bank_info, dl.load_fdic_hist_df = saved
             # Restore the module table and reload fs against the real streamlit

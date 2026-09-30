@@ -140,9 +140,12 @@ class TestLoaderDeepPath(_DbCase):
             calls.append(limit)
             return [{"REPDTE": "20260630", "ASSET": 1}]
         import data.cache as cache
+        # get_cert_group too: with cache.get stubbed to a miss, the deep path's
+        # group resolution fell through to a LIVE FDIC institutions lookup.
         with patch.object(loaders, "__name__", "data.loaders"), \
              patch("data.cert_group.fetch_group_history",
                    side_effect=fake_group), \
+             patch("data.cert_group.get_cert_group", return_value=[123]), \
              patch("data.bank_mapping.get_fdic_cert", return_value=123), \
              patch.object(cache, "get", return_value=None), \
              patch.object(cache, "put"):
