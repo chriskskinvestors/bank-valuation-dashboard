@@ -217,7 +217,7 @@ class _HoldcoSite(_CapitalSite):
         import data.ir_provider as irp
         import data.sec_filing_scraper as sfs
         res = {"meta": dict(META), "capital": cap}
-        self._patch(irp, "fresh_capital", lambda cik: None)
+        self._patch(irp, "fresh_capital", lambda cik, covered_through=None: None)
         if quarterly:
             self._patch(sfs, "holdco_capital_quarterly_for", lambda cik, cert=None, n=8: res)
         else:
@@ -405,6 +405,69 @@ class TestHoldcoCapitalQuarterly(_HoldcoSite):
         self.assertAlmostEqual(rows["Other Tier 2 (allowance & adjustments) ($)"][1],
                                1_100_000_000, delta=1)
         self.assertIn("1.20B", self._screen())
+
+
+class TestHoldcoNewerUntaggedFiling(_HoldcoSite):
+    """P2-1 (review 2026-09-24): C / ONB file Q2-2026 10-Qs that tag NO
+    capital table, so the SEC table stays on the 10-K's FY columns. The page
+    must (a) say the newer 10-Q exists but is untagged — never imply the 10-K
+    is the latest filing — and (b) gate the earnings-release callout on the
+    TABLE's newest period, so the quarter's release CET1 (C: 12.8%, the 10-Q
+    narrates 12.8% / tables 12.78%) still shows instead of vanishing because
+    "a 10-Q is on file"."""
+    RADIO = "Annual"
+
+    UNTAGGED = {"form": "10-Q", "date": "2026-08-06",
+                "accession": "000083100126000045", "doc": "c-20260630.htm"}
+
+    def _render_untagged(self, fc_value):
+        import data.ir_provider as irp
+        import data.sec_filing_scraper as sfs
+        seen = []
+        res = {"meta": dict(META), "capital": {"2025-12-31": dict(FY25)},
+               "untagged": dict(self.UNTAGGED)}
+        self._patch(sfs, "holdco_capital_for", lambda cik, cert=None: res)
+
+        def _fc(cik, covered_through=None):
+            seen.append(covered_through)
+            return fc_value
+        self._patch(irp, "fresh_capital", _fc)
+        self.stub.info = lambda s, *a, **k: self.stub.text.append("INFO:" + str(s))
+        self.CD._render_holdco_capital("RF")
+        return seen
+
+    def test_untagged_newer_10q_named_in_caption_and_export(self):
+        seen = self._render_untagged(None)
+        self.assertEqual(seen, ["2025-12-31"])        # gated on the table
+        scr = self._screen()
+        self.assertIn("The newer 10-Q filed 2026-08-06 does not tag its "
+                      "regulatory-capital table in inline XBRL, so its quarter "
+                      "is n/a here.", scr)
+        self.assertNotIn("INFO:", scr)
+        wb, ws, kw = self._book(0, expect=2)
+        self.assertEqual(self._grid(ws)[0], ["Line item", "FY2025"])   # no guessed Q2
+        src = self._source(wb)
+        self.assertIn("SEC 10-K filed 2026-02-24", src["Source"])
+        self.assertIn("10-Q filed 2026-08-06 does not tag", src["Newer filing"])
+
+    def test_release_callout_keeps_release_precision(self):
+        fc = {"ratios": {"cet1_ratio": 12.8, "t1_ratio": None,
+                         "total_ratio": None, "lev_ratio": None},
+              "quarter": "2026-06-30", "filed_date": "2026-07-14",
+              "url": "https://www.sec.gov/x.htm"}
+        self._render_untagged(fc)
+        info = [t for t in self.stub.text if t.startswith("INFO:")]
+        self.assertEqual(len(info), 1)
+        self.assertIn("Latest quarter (preliminary, Q2 2026):** CET1 **12.8%**", info[0])
+        self.assertNotIn("12.80%", info[0])
+        self.assertIn("not yet in the SEC-filed capital table below", info[0])
+        self.assertNotIn("ahead of the next 10-Q", info[0])
+
+    def test_no_untagged_filing_no_note(self):
+        self._render({"2025-12-31": dict(FY25)})
+        self.assertNotIn("does not tag its", self._screen())
+        wb, ws, kw = self._book(0, expect=2)
+        self.assertNotIn("Newer filing", self._source(wb))
 
 
 # ═══════════════════════════════════════════════════════════════════════

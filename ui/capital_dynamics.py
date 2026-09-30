@@ -416,25 +416,10 @@ def _render_holdco_capital(ticker: str, period: str | None = None):
     # shown only when genuinely fresher (data.ir_provider.fresh_capital). Rendered
     # BEFORE the early-return below so it still appears for banks whose holdco
     # walk is n/a (reconcile-gated) — exactly where a fresh CET1 is most useful.
-    try:
-        from data.ir_provider import fresh_capital
-        _fc = fresh_capital(cik)
-    except Exception:
-        _fc = None
-    if _fc and _fc.get("ratios"):
-        _q = _fc["quarter"]
-        _ql = f"Q{(int(_q[5:7]) - 1) // 3 + 1} {_q[:4]}"
-        _parts = [f"{lab} **{_fc['ratios'][k]:.2f}%**"
-                  for lab, k in (("CET1", "cet1_ratio"), ("Tier 1", "t1_ratio"),
-                                 ("Total", "total_ratio"), ("Leverage", "lev_ratio"))
-                  if _fc["ratios"].get(k) is not None]
-        if _parts:
-            st.info(
-                f"**Latest quarter (preliminary, {_ql}):** " + " · ".join(_parts)
-                + f" — from the [earnings release filed {_fc['filed_date']}]"
-                f"({_fc['url']}), ahead of the next 10-Q. Standardized basis, each "
-                "ratio double-confirmed in the release; the filed figures supersede "
-                "it once published.")
+    # The slot is reserved here (top of the section) and filled once the filed
+    # table is known: the gate is "the filed TABLE doesn't carry this quarter",
+    # not "a 10-Q is on file" — C/ONB file 10-Qs that don't tag the table (P2-1).
+    _fresh_slot = st.container()
 
     # Annual = FY-end stitch (+ the timeliest quarter, as before). Quarterly =
     # the full quarter-end series from recent 10-Qs/10-Ks (2026-07-14 sweep) —
@@ -452,6 +437,31 @@ def _render_holdco_capital(ticker: str, period: str | None = None):
             res = holdco_capital_for(cik, get_fdic_cert(ticker))
     except Exception:
         res = None
+    _covered = max(res["capital"]) if res and res.get("capital") else None
+    try:
+        from data.ir_provider import fresh_capital
+        _fc = fresh_capital(cik, covered_through=_covered)
+    except Exception:
+        _fc = None
+    if _fc and _fc.get("ratios"):
+        _q = _fc["quarter"]
+        _ql = f"Q{(int(_q[5:7]) - 1) // 3 + 1} {_q[:4]}"
+        # :g keeps the release's own precision — a narrated "12.8%" must not
+        # render as "12.80%" (the 10-Q's 12.78% is a different, finer figure).
+        _parts = [f"{lab} **{_fc['ratios'][k]:g}%**"
+                  for lab, k in (("CET1", "cet1_ratio"), ("Tier 1", "t1_ratio"),
+                                 ("Total", "total_ratio"), ("Leverage", "lev_ratio"))
+                  if _fc["ratios"].get(k) is not None]
+        _lead = ("not yet in the SEC-filed capital table below" if _covered
+                 else "ahead of the next 10-Q")
+        if _parts:
+            with _fresh_slot:
+                st.info(
+                    f"**Latest quarter (preliminary, {_ql}):** " + " · ".join(_parts)
+                    + f" — from the [earnings release filed {_fc['filed_date']}]"
+                    f"({_fc['url']}), {_lead}. Standardized basis, each "
+                    "ratio double-confirmed in the release; tagged filing figures "
+                    "supersede it once published.")
     if not res or not res.get("capital"):
         if _qtr:
             st.caption("Quarterly capital table not tagged in this filer's "
@@ -475,10 +485,18 @@ def _render_holdco_capital(ticker: str, period: str | None = None):
            f"{meta['accession']}/{meta['doc']}")
     note = (" · bank-subsidiary basis (holdco not separately disclosed)"
             if basis == "bank" else "")
+    # A newer periodic filing that doesn't tag the table (C/ONB 10-Qs carry it
+    # only in untagged MD&A text — P2-1): say so, so the FY-only table isn't
+    # read as "no newer filing" or as the 10-K carried forward.
+    _ut = res.get("untagged")
+    untagged_note = (
+        f" The newer {_ut['form']} filed {_ut['date']} does not tag its "
+        "regulatory-capital table in inline XBRL, so its quarter is n/a here."
+        if _ut else "")
     st.caption(
         f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — holding-company "
         f"consolidated, anchored to the bank's FDIC CET1{note}. Updates as soon as "
-        f"the company files (not the delayed FR Y-9C).")
+        f"the company files (not the delayed FR Y-9C).{untagged_note}")
 
     rows = [
         ("Common Equity Tier 1 ratio", "cet1_ratio", "pct"),
@@ -519,6 +537,8 @@ def _render_holdco_capital(ticker: str, period: str | None = None):
         "Periods": f"{plabs[-1]} to {plabs[0]}",
         "Report date": periods[0],
     }
+    if _ut:
+        provenance["Newer filing"] = untagged_note.strip()
     table_export(
         pd.DataFrame(
             [{"Line item": f"{lab} ({'%' if kind == 'pct' else '$'})",
