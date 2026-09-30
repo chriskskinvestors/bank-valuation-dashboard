@@ -53,7 +53,6 @@ from ui.chrome import table_export, title_bar, ledger
 # ── Beat/miss styling ───────────────────────────────────────────────────
 _BEAT_STYLE = "background-color: rgba(5, 150, 105, 0.08); color: #059669; font-weight: 600;"
 _MISS_STYLE = "background-color: rgba(220, 38, 38, 0.08); color: #dc2626; font-weight: 600;"
-_INLINE_STYLE = "background-color: rgba(217, 119, 6, 0.08); color: #d97706;"
 _NA_STYLE = "color: #999;"
 
 _BEAT_LABEL = "Beat"
@@ -410,10 +409,33 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
                         f"{', '.join(detail['firms'])}"):
                     _render_firm_matrix(detail, f"{ticker}_{selected_period}")
     else:
-        st.info(
-            f"No consensus data for {ticker} yet. "
-            "Enter estimates manually or upload a consensus file above."
-        )
+        # This block is about UPLOADED house/broker estimates only — the street
+        # consensus (market data) already renders above in the Next Report /
+        # Analyst Estimates strips and the surprise chart, so an info box
+        # saying "No consensus data" under a "Consensus EPS" line read as a
+        # contradiction (UX review 2026-09-24). Name the street source only
+        # when it actually rendered.
+        has_street = bool(estimates and not estimates.get("error"))
+        st.caption(_no_uploaded_estimates_note(ticker, has_street))
+
+
+def _no_uploaded_estimates_note(ticker: str, has_street: bool) -> str:
+    """Caption for a bank with no uploaded broker/house estimates."""
+    if has_street:
+        return (f"No uploaded broker estimates for {ticker} — street consensus "
+                "above is from market data.")
+    return (f"No uploaded broker estimates for {ticker} — upload a research "
+            "file or enter estimates above.")
+
+
+def _rec_label(rec) -> str:
+    """Consensus-rating display: None and the provider's literal "None" /
+    "none" / "" are absent → "—" (BSBK/ALBY showed "Consensus Rating: None",
+    UX review 2026-09-24); "strong_buy" → "Strong Buy"."""
+    s = str(rec).strip() if rec is not None else ""
+    if not s or s.lower() in ("none", "nan", "null", "n/a"):
+        return "—"
+    return s.replace("_", " ").title()
 
 
 def _render_auto_estimates(ticker: str, estimates: dict):
@@ -435,7 +457,7 @@ def _render_auto_estimates(ticker: str, estimates: dict):
         ("Target Range", (f"${t_low:.2f} – ${t_high:.2f}" if t_low and t_high
                           else "—"),
          "Low–high of analysts' 12-month price targets."),
-        ("Consensus Rating", (rec.replace("_", " ").title() if rec else "—"),
+        ("Consensus Rating", _rec_label(rec),
          "Analyst consensus recommendation."),
         ("Analyst Coverage", (str(analysts) if analysts else "—"),
          "Number of sell-side analysts contributing estimates."),
@@ -926,39 +948,26 @@ def _avg_eps_surprise_cached(tickers: tuple) -> float | None:
 
 def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict):
     """Top summary KPIs across the whole watchlist."""
-    from datetime import datetime, date
+    from datetime import date
 
-    # Reports in next 14 days. A feed failure must NOT display as "0 reporting"
-    # — that's a confident wrong number; show unavailable instead.
+    # Reports this week / next 14 days — counted over the SAME agenda the
+    # Calendar tab renders (one concept, one number; the raw yfinance snapshot
+    # this used to count said 0 while the calendar said 2, 2026-09-30). A feed
+    # failure must NOT display as "0 reporting" — that's a confident wrong
+    # number; show unavailable instead (_upcoming_agenda raises, never caches,
+    # when every source leg is down).
     cal_failed = False
+    upcoming_7 = upcoming_14 = 0
+    upcoming: list[tuple] = []          # (date, ticker) for every future report
     try:
-        from data.estimates import (fetch_earnings_calendar,
-                                    earnings_calendar_available)
-        cal = fetch_earnings_calendar(tuple(watchlist))
-        # fetch_earnings_calendar returns [] for BOTH "genuinely no upcoming
-        # earnings" and "snapshot missing / unreadable". Only the latter is an
-        # outage — distinguish via the snapshot-presence check so a feed outage
-        # shows "unavailable", not a confident "0 reporting" (AUDIT #34).
-        if not cal and not earnings_calendar_available():
-            cal_failed = True
+        from data.earnings_call import agenda_counts
+        agenda = _upcoming_agenda(date.today().isoformat())["agenda"]
+        upcoming_7, upcoming_14 = agenda_counts(agenda)
+        upcoming = [(date.fromisoformat(r["date"]), r["ticker"])
+                    for b in agenda for r in b["rows"]]
     except Exception as e:
         print(f"[earnings] calendar fetch failed: {type(e).__name__}: {e}")
-        cal = []
         cal_failed = True
-
-    today = date.today()
-    upcoming_14 = 0
-    upcoming_7 = 0
-    for entry in cal:
-        try:
-            ed = datetime.strptime(entry.get("next_earnings_date", ""), "%Y-%m-%d").date()
-            days = (ed - today).days
-            if 0 <= days <= 7:
-                upcoming_7 += 1
-            if 0 <= days <= 14:
-                upcoming_14 += 1
-        except (ValueError, TypeError):
-            continue
 
     # Beat/miss stats across all consensus
     total_beats = 0
@@ -984,27 +993,54 @@ def _render_earnings_kpi_bar(watchlist: list[str], all_consensus: dict):
                 elif c["beat_miss"] == "inline":
                     total_inlines += 1
 
-    total_cmp = total_beats + total_misses + total_inlines
-    beat_pct = (total_beats / total_cmp * 100) if total_cmp else 0
-
     avg_surprise = _avg_eps_surprise_cached(tuple(watchlist[:30]))
 
+    rows = _earnings_summary_rows(
+        cal_failed=cal_failed, upcoming_7=upcoming_7, upcoming_14=upcoming_14,
+        upcoming=upcoming, banks_with_consensus=banks_with_consensus,
+        beats=total_beats, misses=total_misses, inlines=total_inlines,
+        avg_surprise=avg_surprise)
+    if rows:
+        ledger("Earnings Summary", rows)
+
+
+def _earnings_summary_rows(*, cal_failed: bool, upcoming_7: int,
+                           upcoming_14: int, upcoming: list[tuple],
+                           banks_with_consensus: int, beats: int, misses: int,
+                           inlines: int, avg_surprise) -> list[tuple[str, str]]:
+    """Earnings Summary ledger rows. Out of season the strip read as a row of
+    zeros ("Reporting This Week 0 · Total Metrics Compared 0 · Beat Rate —",
+    UX review 2026-09-24): a KPI whose value is 0/absent is HIDDEN, and a zero
+    "Reporting This Week" becomes the next scheduled report from the same
+    calendar data. A calendar OUTAGE still says so (never a confident 0)."""
     _m = "color:var(--text-muted);font-size:var(--fs-xs)"
-    ledger("Earnings Summary", [
-        ("Reporting This Week",
-         (f'n/a <span style="{_m}">calendar feed unavailable</span>' if cal_failed
-          else f'{upcoming_7} <span style="{_m}">{upcoming_14} in 14d</span>')),
-        ("Banks w/ Consensus", str(banks_with_consensus)),
-        ("Total Metrics Compared",
-         f'{total_cmp}' + (f' <span style="{_m}">{banks_with_consensus} banks</span>'
-                           if banks_with_consensus else "")),
-        ("Beat Rate",
-         (f'{beat_pct:.0f}% <span style="{_m}">{total_beats}B / {total_misses}M / {total_inlines}I</span>'
-          if total_cmp else "—")),
-        ("Last Qtr Avg Surprise",
-         (f'{avg_surprise:+.1f}% <span style="{_m}">EPS vs consensus</span>'
-          if avg_surprise is not None else "—")),
-    ])
+    rows: list[tuple[str, str]] = []
+    if cal_failed:
+        rows.append(("Reporting This Week",
+                     f'— <span style="{_m}">calendar feed unavailable</span>'))
+    elif upcoming_7:
+        rows.append(("Reporting This Week",
+                     f'{upcoming_7} <span style="{_m}">{upcoming_14} in 14d</span>'))
+    elif upcoming:
+        nd = min(d for d, _t in upcoming)
+        tks = sorted({t for d, t in upcoming if d == nd})
+        more = f" +{len(tks) - 1}" if len(tks) > 1 else ""
+        rows.append(("Next Report",
+                     f'{nd.isoformat()} <span style="{_m}">'
+                     f'({_html.escape(tks[0])}{more})</span>'))
+    if banks_with_consensus:
+        rows.append(("Banks w/ Consensus", str(banks_with_consensus)))
+    total_cmp = beats + misses + inlines
+    if total_cmp:
+        rows.append(("Total Metrics Compared",
+                     f'{total_cmp} <span style="{_m}">{banks_with_consensus} banks</span>'))
+        rows.append(("Beat Rate",
+                     f'{beats / total_cmp * 100:.0f}% <span style="{_m}">'
+                     f'{beats}B / {misses}M / {inlines}I</span>'))
+    if avg_surprise is not None:
+        rows.append(("Last Qtr Avg Surprise",
+                     f'{avg_surprise:+.1f}% <span style="{_m}">EPS vs consensus</span>'))
+    return rows
 
 
 # ── Surprise Heat-Map ──────────────────────────────────────────────────
@@ -1388,56 +1424,28 @@ def _render_earnings_calendar(watchlist: list[str]):
 
     horizon_days = 75            # full upcoming-season window
     today = date.today()
+    unavailable = False
     with _skeleton():
         try:
-            from data.bank_universe import get_universe
-            # Common shares only — preferred/note listings share the parent's
-            # report (ZIONP rendered as a second Zions row, 2026-07-20).
-            universe = {tk for tk, v in get_universe().items()
-                        if (v or {}).get("share_class", "common") == "common"}
+            agenda = _upcoming_agenda(today.isoformat(), horizon_days)["agenda"]
         except Exception:
-            universe = set()
-        # Date spine: the universe-wide yfinance snapshot (real near-term dates,
-        # nightly-cached) carrying the analyst estimates; FMP overlays timing, the
-        # confirmed flag and revenue; the IR/PR pipeline adds call time + webcast.
-        try:
-            yf_cal = fetch_earnings_calendar(tuple(sorted(universe)))
-        except Exception:
-            yf_cal = []
-        try:
-            fmp_cal = _fmp_earnings_window(
-                today.isoformat(), (today + timedelta(days=horizon_days)).isoformat())
-        except Exception:
-            fmp_cal = None
-        calls, agenda = {}, []
-        try:
-            from data import earnings_call as _ecall
-            calls = _ecall.merged_call_info()
-            agenda = _ecall.build_calls_agenda(
-                yf_cal, fmp_cal, universe, calls, today, horizon_days=horizon_days)
-        except Exception:
-            agenda = []
+            # Universe missing or every source leg down (the helper raises so
+            # an outage is never cached) — "no upcoming earnings" would be a
+            # confident wrong answer (AUDIT-2026-07-02 #34, agenda tail).
+            agenda, unavailable = [], True
 
-    if not universe:
+    if unavailable:
         st.info("Earnings calendar is temporarily unavailable. Please try again "
                 "shortly.")
         return
     if not agenda:
-        # An empty agenda is honest ONLY if at least one of its three source
-        # legs (yfinance snapshot / FMP window / IR-PR call pipeline) is up.
-        # All three down is an outage — "no upcoming earnings" would be a
-        # confident wrong answer (AUDIT-2026-07-02 #34, agenda tail).
-        from data.estimates import earnings_agenda_sources_down
-        if earnings_agenda_sources_down(fmp_cal, calls):
-            st.info("Earnings calendar is temporarily unavailable. Please try "
-                    "again shortly.")
-        else:
-            from ui.states import empty_state
-            empty_state('No upcoming bank earnings found in the next 75 days')
+        from ui.states import empty_state
+        empty_state('No upcoming bank earnings found in the next 75 days')
         return
 
+    from data.earnings_call import agenda_counts
     all_rows = [r for b in agenda for r in b["rows"]]
-    n_week = sum(1 for r in all_rows if r["days_until"] <= 7)
+    n_week = agenda_counts(agenda)[0]        # same number as the KPI header
     n_confirmed = sum(1 for r in all_rows if r["confirmed"])
     n_webcast = sum(1 for r in all_rows if r.get("webcast_url"))
     n_time = sum(1 for r in all_rows if r.get("call_time"))
@@ -1451,8 +1459,9 @@ def _render_earnings_calendar(watchlist: list[str]):
     st.caption(
         "Full bank universe, by week. Two dates per bank: **Release** = the "
         "earnings release date (FMP/yfinance estimate; **When** is its before/"
-        "after-open timing, a **✓** marks a confirmed date — FMP, or the company "
-        "has published its earnings call — others are **(proj.)**), and **Call** = "
+        "after-open timing, a **✓** marks a confirmed date — the company's own "
+        "announcement, or FMP confirming that date — others are **(proj.)**), "
+        "and **Call** = "
         "the conference-call date + time (often a "
         "different day — e.g. release after close, call next morning), with "
         "**Webcast / Dial-in**, all from the bank's own IR announcement, plus the "
@@ -1555,6 +1564,55 @@ def _fmt_rev_est(v) -> str:
     if abs(v) >= 1e6:
         return f"${v / 1e6:.0f}M"
     return f"${v:,.0f}"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _upcoming_agenda(today_iso: str, horizon_days: int = 75) -> dict:
+    """THE upcoming-earnings agenda for the Earnings page — the KPI bar's
+    "Reporting This Week" and the Calendar tab both read this one build, so
+    one concept shows one number. {"agenda": build_calls_agenda() buckets,
+    "universe": common-share tickers}.
+
+    Date spine: the universe-wide yfinance snapshot (real near-term dates,
+    nightly-cached) carrying the analyst estimates; FMP overlays timing, the
+    confirmed flag and revenue; the IR/PR pipeline adds call time + webcast.
+    Common shares only — preferred/note listings share the parent's report
+    (ZIONP rendered as a second Zions row, 2026-07-20).
+
+    RAISES (so the failure is never cached) when the universe is missing or
+    every source leg is down — an empty agenda is honest ONLY if at least one
+    of the three legs (yfinance snapshot / FMP window / IR-PR pipeline) is up
+    (AUDIT-2026-07-02 #34). Callers render "unavailable" on the exception."""
+    from datetime import date, timedelta
+    from data import earnings_call as _ecall
+    from data.bank_universe import get_universe
+    from data.estimates import earnings_agenda_sources_down
+    # fetch_earnings_calendar is the MODULE-level import (top of file) —
+    # tests patch that name (test_export_sites_earnings).
+    today = date.fromisoformat(today_iso)
+    universe = {tk for tk, v in get_universe().items()
+                if (v or {}).get("share_class", "common") == "common"}
+    if not universe:
+        raise RuntimeError("bank universe unavailable")
+    try:
+        yf_cal = fetch_earnings_calendar(tuple(sorted(universe)))
+    except Exception:
+        yf_cal = []
+    try:
+        fmp_cal = _fmp_earnings_window(
+            today_iso, (today + timedelta(days=horizon_days)).isoformat())
+    except Exception:
+        fmp_cal = None
+    calls, agenda = {}, []
+    try:
+        calls = _ecall.merged_call_info()
+        agenda = _ecall.build_calls_agenda(
+            yf_cal, fmp_cal, universe, calls, today, horizon_days=horizon_days)
+    except Exception:
+        agenda = []
+    if not agenda and earnings_agenda_sources_down(fmp_cal, calls):
+        raise RuntimeError("earnings agenda sources unavailable")
+    return {"agenda": agenda, "universe": universe}
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -2390,30 +2448,25 @@ def _render_surprise_rankings(all_consensus: dict, watchlist: list[str]):
         filtered = [s for s in filtered if "Efficiency" in s["Metric"]]
 
     if filtered:
-        df = pd.DataFrame(filtered[:50])
-        df["Surprise %"] = df["Surprise %"].apply(lambda x: f"{x:+.2f}%")
-
-        # Color by result
-        def _color_surprise(row):
-            result = row.get("Result", "")
-            if result == "beat":
-                return [_BEAT_STYLE] * len(row)
-            elif result == "miss":
-                return [_MISS_STYLE] * len(row)
-            elif result == "inline":
-                return [_INLINE_STYLE] * len(row)
-            return [""] * len(row)
-
-        display_cols = ["Ticker", "Bank", "Metric", "Period", "Consensus", "Actual", "Surprise %", "Source"]
-        disp = df[display_cols].copy()
-        disp["Ticker"] = disp["Ticker"].map(_df_ticker_url)
-        styled = disp.style.apply(_color_surprise, axis=1).set_properties(
-            **{"font-size": "0.75rem", "padding": "3px 6px"}
-        )
-
-        st.dataframe(styled, use_container_width=True, hide_index=True,
-                      height=min(600, 40 + 35 * len(df)),
-                      column_config=_df_ticker_linkcol())
+        # House table (ksk_table): the list is already ranked by |surprise| and
+        # filtered by the selectors above, so st.dataframe's column sorting
+        # bought nothing (UX review 2026-09-24, P1-23). The Result column
+        # replaces the old whole-row tint; the signed Surprise % is colored.
+        from ui.tables import ksk_table, ticker_anchor_cells
+        top = filtered[:50]
+        disp = pd.DataFrame({
+            "Ticker": ticker_anchor_cells([s["Ticker"] for s in top]),
+            "Bank": [s["Bank"] or "—" for s in top],
+            "Metric": [s["Metric"] for s in top],
+            "Period": [s["Period"] or "—" for s in top],
+            "Consensus": [s["Consensus"] or "—" for s in top],
+            "Actual": [s["Actual"] or "—" for s in top],
+            "Surprise %": [f"{s['Surprise %']:+.2f}%" for s in top],
+            "Result": [str(s["Result"]).title() for s in top],
+            "Source": [s["Source"] for s in top],
+        })
+        ksk_table(disp, signed_cols=("Surprise %",), html_cols=("Ticker",),
+                  txt_cols=("Period",), max_height_px=600)
         # Underlying numeric rows (unformatted consensus / actual / surprise);
         # the unit varies by row and travels in the Unit column.
         table_export(

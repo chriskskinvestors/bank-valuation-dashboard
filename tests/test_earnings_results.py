@@ -413,6 +413,61 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertEqual(sorted(rows), ["REAL"])
         self.assertTrue(rows["REAL"]["pending"])
 
+    def test_q3_2026_date_announcement_wave_never_mints_pending_rows(self):
+        """Owner report 2026-09-30: the Calendar showed COLB and MTB reporting
+        "Today" (Sep 30, the quarter END) with a ✓. Six first-party
+        date-announcement headline shapes had escaped the upcoming filter and
+        minted PENDING rows dated the PR day; the release layer then read
+        COLB's (published that morning) as a report and confirmed it. A
+        dividend PR typed 'earnings' by its "third quarter" keyword minted a
+        row too (CAC). Real results shapes must still qualify."""
+        announcements = {
+            "COLB": "Columbia Banking System Announces Date of Third Quarter "
+                    "2026 Earnings Release and Conference Call",
+            "MTB": "M&T Bank Corporation Announces Third Quarter 2026 Earnings "
+                   "Release and Conference Call",
+            "TFC": "Truist announces third quarter 2026 earnings call details",
+            "FBK": "FB Financial Corporation Announces 2026 Third Quarter "
+                   "Earnings Call",
+            "IBCP": "Independent Bank Corporation Announces Date for Its Third "
+                    "Quarter 2026 Earnings Release",
+            "CBK": "Commercial Bancgroup, Inc. Announces Date for Third Quarter "
+                   "2026 Earnings Release",
+            "CAC": "Camden National Corporation Announces its Third Quarter "
+                   "2026 Dividend",
+        }
+        results = {
+            "BKSC": "Bank of South Carolina Reports Q3 2026 Results",
+            "MNSB": "8-K · Results of Operations — MainStreet Bancshares",
+            "ACME": "Acme Bancorp Reports Third Quarter Net Income of $4.1 Million",
+            "COLR": "Columbia Banking System, Inc. Reports Third Quarter 2026 "
+                    "Results",
+            "MS": "Morgan Stanley Reports Second Quarter",
+        }
+        pub = self.TODAY.isoformat() + "T08:15:00"
+        events = {tk: [{"headline": h, "url": "u", "published_at": pub}]
+                  for tk, h in {**announcements, **results}.items()}
+        rows = {r["ticker"]: r for r in build_results_rows(
+            [], set(events), events, self.TODAY)}
+        self.assertEqual(sorted(rows), sorted(results))
+        for tk in results:
+            self.assertTrue(rows[tk]["pending"], tk)
+            self.assertEqual(rows[tk]["date"], self.TODAY.isoformat())
+
+    def test_non_results_pr_near_fmp_date_is_awaiting_not_pending(self):
+        # FMP-row path, same gate: a dividend PR (typed 'earnings' by its
+        # "third quarter" keyword) within the results window must not flip the
+        # row to pending — pending claims the release is OUT.
+        fmp = [{"symbol": "CAC", "date": self.TODAY.isoformat(),
+                "epsActual": None, "revenueActual": None}]
+        events = {"CAC": [{"headline": "Camden National Corporation Announces "
+                           "its Third Quarter 2026 Dividend", "url": "u",
+                           "published_at": self.TODAY.isoformat() + "T09:00:00"}]}
+        rows = build_results_rows(fmp, {"CAC"}, events, self.TODAY)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["awaiting"])
+        self.assertFalse(rows[0]["pending"])
+
     def test_events_row_never_duplicates_fmp_row(self):
         fmp = [{"symbol": "MNSB", "date": "2026-07-14", "epsActual": 0.55}]
         events = {"MNSB": [{"headline": "8-K · Results of Operations",

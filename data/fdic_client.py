@@ -31,6 +31,9 @@ _BASE_FINANCIALS_FIELDS = {
     "EQTOT", "INTANGW", "ERNAST", "INTEXPY", "INTINCY", "NIMY",
     "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR", "ITAX", "PTAXNETINC",
     "SC", "LNLSGR", "CHBAL", "DEPNIDOM", "LIAB", "ROA", "ROE", "EEFFR",
+    # EEFFR's own components (risview: EEFFR = EEFF / IEFF) — multi-charter
+    # groups rebuild efficiency as ΣEEFF / ΣIEFF (data/cert_group).
+    "EEFF", "IEFF",
     "NCLNLSR", "NTLNLSR", "LNATRESR", "IDT1CER", "RBCRWAJ", "RBCT1JR", "INTAN",
     # Single-QUARTER ratio variants (the defaults above are YTD-annualized):
     # the earnings-exhibit history columns are quarters (EXHIBIT_FDIC_Q_MAP).
@@ -410,6 +413,12 @@ def null_unreported_capital(rec: dict) -> dict:
         for k in _RISK_BASED_RATIOS:
             if _fnum(rec.get(k)) == 0:
                 rec[k] = None
+    # Same class, one more field: FDIC zero-fills LNRESNCR (reserves ÷
+    # noncurrent loans) when noncurrent loans are zero. x/0 is undefined, not
+    # 0% — AMBK/ALBY rendered "Rsv/NPL 0%" in bottom-quintile red (2026-09-30).
+    if "NCLNLS" in rec and _fnum(rec.get("NCLNLS")) == 0 \
+            and _fnum(rec.get("LNRESNCR")) == 0:
+        rec["LNRESNCR"] = None
     return rec
 
 
@@ -420,14 +429,16 @@ def null_unreported_capital(rec: dict) -> dict:
 # cert 639 NTTOT=-12,000 → ELNANTR 0; cert 23472 NCLNLS=0 → LNRESNCR 0; a
 # bank with no construction loans → NCRECONR 0. Deliberately NOT here: the
 # ASSET-denominated ratios (denominator never <= 0 in the probe), RBC1RWAJ and
-# ASTEMPM (FDIC already reports null), RBCRWAJ/IDT1CER (the RWAJ rule above),
-# and EEFFR (only 3 distinct certs across the 3 quarters, and its components
-# do not reproduce FDIC's figure for ~20% of banks). Denominators are
-# data/cert_group._EXACT_QUOTIENTS' — one formula table for both paths.
+# ASTEMPM (FDIC already reports null) and RBCRWAJ/IDT1CER (the RWAJ rule
+# above). EEFFR joined 2026-09-30 once its dictionary components were known:
+# IEFF null or <= 0 gave EEFFR 0 in every case (17-19 institutions per
+# quarter, and every pre-1990 quarter — JPM's 1984 rows read "0.0%").
+# Denominators are data/cert_group._EXACT_QUOTIENTS' — one formula table for
+# both paths.
 _DEN_ZERO_REPORTED_AS_ZERO = (
     "LNLSDEPR", "IDLNCORR", "NCLNLSR", "LNATRESR", "LNRESNCR",
     "IDNCCIR", "IDNCCONR", "NCRER", "NCRECONR", "NCRELOCR", "NCREMULR",
-    "NCRENRER", "NCRERESR", "ELNANTR", "IDERNCVR",
+    "NCRENRER", "NCRERESR", "ELNANTR", "IDERNCVR", "EEFFR",
 )
 
 

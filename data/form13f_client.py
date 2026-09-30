@@ -27,6 +27,9 @@ from config import SEC_USER_AGENT
 
 FORM13F_CACHE_PREFIX = "form13f_cache"
 CACHE_TTL_SECONDS = 86400
+# Render-path file TTL: 13F-HRs change quarterly (trickling in over the 45 days
+# after quarter-end), so a week bounds staleness without a crawl per bank per day.
+RENDER_TTL_SECONDS = 7 * 86400
 
 HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept": "application/json"}
 
@@ -36,7 +39,7 @@ EDGAR_FTS = "https://efts.sec.gov/LATEST/search-index"
 # Shared freshness check (data/freshness) bound to this module's TTL.
 def _is_fresh(cached: dict | None) -> bool:
     from data.freshness import is_fresh
-    return is_fresh(cached, CACHE_TTL_SECONDS)
+    return is_fresh(cached, RENDER_TTL_SECONDS)
 
 
 def _search_13f_for_ticker(ticker: str, limit: int = 40,
@@ -550,14 +553,19 @@ def backfill_quarter(ticker: str, company_name: str = "",
 
 def fetch_institutional_holdings(ticker: str, company_name: str = "",
                                    max_filers: int = 25,
-                                   with_changes: bool = True) -> list[dict]:
+                                   with_changes: bool = True, *,
+                                   force: bool = False) -> list[dict]:
     """
     Find 13F filings holding this ticker's stock, return list of holders.
+
+    force=True skips the cached-file read and refetches + persists — the
+    warming job's path (a fresh file would otherwise be handed back unrefreshed).
     """
     if not ticker:
         return []
 
-    cached = load_json(FORM13F_CACHE_PREFIX, f"{ticker.upper()}.json")
+    cached = None if force else load_json(FORM13F_CACHE_PREFIX,
+                                          f"{ticker.upper()}.json")
     if _is_fresh(cached) and "holders" in cached:
         return cached["holders"]
 
