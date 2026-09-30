@@ -135,17 +135,29 @@ def overlay_lagging_filing(cik: int, slim: dict) -> dict:
     period facts appended (a shallow copy — the cached blob is never
     mutated), or `slim` itself when companyfacts is current, the filing
     index is unavailable, or the instance can't be parsed. Failure is a
-    no-op with a log line: the row then renders the (dated) blob figures."""
+    no-op with a log line: the row then renders the (dated) blob figures.
+
+    Then fills any EARLIER quarter companyfacts skipped entirely
+    (_fill_skipped_quarters) — PNFP/CBC/ENBP 2026-09: the Q3-2025 10-Q was
+    never ingested although later 10-Qs were, so no TTM window could form."""
     if not slim or not slim.get("facts"):
         return slim
     try:
         from data.sec_earnings_8k import latest_periodic_filing
-        from data.sec_filing_scraper import latest_filing
         periodic = latest_periodic_filing(cik)
     except Exception as e:
         print(f"[SEC] overlay: filing index unavailable for CIK {cik}: "
               f"{type(e).__name__}: {e}")
         return slim
+    if not periodic:
+        return slim
+    out = _overlay_latest(cik, slim, periodic)
+    return _fill_skipped_quarters(cik, out)
+
+
+def _overlay_latest(cik: int, slim: dict, periodic: dict) -> dict:
+    """The latest-filing overlay (see overlay_lagging_filing)."""
+    from data.sec_filing_scraper import latest_filing
     as_of = _blob_as_of(slim)
     if not periodic or not periodic.get("report_date") or not as_of:
         return slim
@@ -182,4 +194,106 @@ def overlay_lagging_filing(cik: int, slim: dict) -> dict:
           f"{meta.get('form')} for {periodic['report_date']} filed "
           f"{meta.get('date')} — {len(new)} facts overlaid from the filing's "
           f"own iXBRL", flush=True)
+    return out
+
+
+# Flow concepts whose period ENDS reveal a skipped filing (any duration fact
+# ending at a quarter-end means companyfacts has that filing's flows).
+_FLOW_ANCHORS = ("NetIncomeLoss", "ProfitLoss", "EarningsPerShareDiluted")
+_NEAR_DAYS = 15                    # 52/53-week calendars: same period-end
+
+
+def _quarter_end_before(end: str, months: int) -> str:
+    """Month-end `months` before `end` (ISO), e.g. 2026-06-30, 9 → 2025-09-30."""
+    from datetime import date, timedelta
+    y, m = int(end[:4]), int(end[5:7]) - months
+    while m <= 0:
+        m += 12
+        y -= 1
+    nxt = date(y + (m == 12), m % 12 + 1, 1)
+    return (nxt - timedelta(days=1)).isoformat()
+
+
+def _days_apart(a: str, b: str) -> int:
+    from datetime import date
+    return abs((date.fromisoformat(a) - date.fromisoformat(b)).days)
+
+
+def _fill_skipped_quarters(cik: int, blob: dict) -> dict:
+    """Append the flows of any 10-Q/10-K that companyfacts SKIPPED inside the
+    trailing window (the three quarter-ends before the freshest flow end).
+
+    A quarter-end with no duration fact at all in any flow anchor means that
+    filing was never ingested (companyfacts' own entries for later periods are
+    present, so this is not a lag at the head — the latest-filing overlay does
+    not reach it). Only then is the filing index read (15-min cached) and the
+    first 10-Q/10-K filed after that quarter-end parsed (cached per accession),
+    and only its facts for that quarter-end that the blob lacks are appended.
+    Healthy banks cost nothing: the check reads the blob only. Any failure is
+    a no-op — the TTM rules then return None for the gap, never a guess."""
+    ug = (blob.get("facts") or {}).get("us-gaap") or {}
+    ends: set = set()
+    for concept in _FLOW_ANCHORS:
+        for entries in (ug.get(concept) or {}).get("units", {}).values():
+            for e in entries:
+                if e.get("start") and e.get("end") and e.get("form") in ("10-Q", "10-K"):
+                    ends.add(e["end"])
+    if not ends:
+        return blob
+    latest = max(ends)
+    wanted = [_quarter_end_before(latest, m) for m in (3, 6, 9)]
+    missing = [q for q in wanted
+               if not any(_days_apart(q, e) <= _NEAR_DAYS for e in ends)]
+    if not missing:
+        return blob
+    try:
+        from data.sec_filing_scraper import _recent_metas
+        metas = _recent_metas(cik, ("10-Q", "10-K"), 8)
+    except Exception as e:
+        print(f"[SEC] gap overlay: filing index unavailable for CIK {cik}: "
+              f"{type(e).__name__}: {e}")
+        return blob
+    have = {(ns, c, e.get("start"), e.get("end"))
+            for ns, concepts in (blob.get("facts") or {}).items()
+            if isinstance(concepts, dict)
+            for c, cd in concepts.items()
+            for entries in (cd.get("units") or {}).values()
+            for e in entries}
+    add, filled = [], []
+    for q in missing:
+        after = sorted((m for m in metas if (m.get("date") or "") > q),
+                       key=lambda m: m.get("date") or "")
+        if not after:
+            continue
+        meta = dict(after[0], report_date=q)
+        try:
+            entries = filing_entries(cik, meta)
+        except Exception as e:
+            print(f"[SEC] gap overlay: instance parse failed for CIK {cik} "
+                  f"{meta.get('accession')}: {type(e).__name__}: {e}")
+            continue
+        got = [e for e in entries
+               if _days_apart(e["end"], q) <= _NEAR_DAYS
+               and (e["ns"], e["concept"], e.get("start"), e["end"]) not in have]
+        if got:
+            add.extend(got)
+            filled.append({"accession": meta["accession"], "form": meta.get("form"),
+                           "report_date": q, "filed": meta.get("date"),
+                           "n_facts": len(got)})
+    if not add:
+        return blob
+    out = dict(blob)
+    facts = {ns: {c: {**cd, "units": {u: list(v) for u, v in cd.get("units", {}).items()}}
+                  for c, cd in (blob["facts"].get(ns) or {}).items()}
+             for ns in blob["facts"]}
+    for e in add:
+        cd = facts.setdefault(e["ns"], {}).setdefault(e["concept"], {"units": {}})
+        unit = _unit_for(e["concept"], cd["units"])
+        cd["units"].setdefault(unit, []).append(
+            {k: v for k, v in e.items() if k not in ("ns", "concept")})
+    out["facts"] = facts
+    out["_overlay_gaps"] = filled
+    print(f"[SEC] gap overlay: CIK {cik} companyfacts skipped "
+          f"{', '.join(f['form'] + ' ' + f['report_date'] for f in filled)} — "
+          f"{len(add)} facts filled from the filings' own iXBRL", flush=True)
     return out
