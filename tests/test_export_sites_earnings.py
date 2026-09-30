@@ -165,7 +165,7 @@ class TestSurpriseHistory(_ExportSite):
         self.assertEqual(kw["file_name"], "earnings_surprises_BANR.xlsx")
         self.assertEqual(kw["key"], "exp_earnings_surprises_BANR")
         g = self._grid(ws)
-        self.assertEqual(g[0], ["Date", "EPS Est ($)", "EPS Act ($)", "Surprise (%)"])
+        self.assertEqual(g[0], ["Date", "EPS Est ($)", "EPS Act adj. ($)", "Surprise (%)"])
         self.assertEqual(g[1], [dt.datetime(2026, 7, 15), 1.2, 1.26, 5.0])
         self.assertEqual(g[2][:2], [dt.datetime(2026, 10, 15), 1.3])
         self._assert_na(ws, "C3")
@@ -178,6 +178,75 @@ class TestSurpriseHistory(_ExportSite):
         self.assertEqual(src["Ticker"], "BANR")
         self.assertIn("Surprise History", src["Page"])
         self.assertIn("Yahoo Finance", src["Source"])
+        # Review P2-4: the actual is the provider's ADJUSTED EPS, not GAAP.
+        self.assertIn("ADJUSTED", src["EPS Act basis"])
+        self.assertIn("Yahoo Finance", src["EPS Act basis"])
+        self.assertIn("not the GAAP", src["EPS Act basis"])
+
+
+class _RecSt(_StubSt):
+    """_StubSt that records markdown / caption text and plotly figures."""
+
+    def __init__(self):
+        self.md, self.captions, self.figs = [], [], []
+
+    def markdown(self, body, *a, **k):
+        self.md.append(body)
+
+    def caption(self, body, *a, **k):
+        self.captions.append(body)
+
+    def plotly_chart(self, fig, *a, **k):
+        self.figs.append(fig)
+
+
+class TestSurpriseHistoryLabelsAndAxis(_ExportSite):
+    """Review 2026-09-24 P2-4 (EPS Act is adjusted, unlabeled beside the GAAP
+    Key Reported EPS) and P2-11 (a one-point chart printed sub-second ticks
+    "23:59:59.9996Jul 28, 2026")."""
+
+    ONE = [{"date": "2026-07-28", "eps_estimate": 0.40, "eps_actual": 0.44,
+            "surprise_pct": 10.0}]
+    MANY = [{"date": d, "eps_estimate": 1.0, "eps_actual": 1.1, "surprise_pct": 10.0}
+            for d in ("2026-07-14", "2026-04-14", "2026-01-13")]
+
+    def setUp(self):
+        super().setUp()
+        self.rec = _RecSt()
+        p = mock.patch.object(self.E, "st", self.rec)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _render(self, hist):
+        self.E._render_earnings_history_chart("LARK", {"earnings_history": hist})
+        self.assertEqual(len(self.rec.figs), 1)
+        return self.rec.figs[0]
+
+    def test_header_and_caption_say_adjusted_and_name_source(self):
+        self._render(self.MANY)
+        grid = next(m for m in self.rec.md if "<th" in m)
+        self.assertIn(">EPS Act (adj.)</th>", grid)
+        self.assertNotIn(">EPS Act</th>", grid)
+        cap = " ".join(self.rec.captions)
+        self.assertIn("ADJUSTED", cap)
+        self.assertIn("Yahoo Finance", cap)
+        self.assertIn("not the GAAP", cap)
+
+    def test_chart_series_labeled_adjusted_values_unchanged(self):
+        fig = self._render(self.MANY)
+        self.assertEqual(fig.data[0].name, "Actual EPS (adj.)")
+        self.assertEqual(list(fig.data[0].y), [1.1, 1.1, 1.1])   # not replaced
+        self.assertEqual(list(fig.data[1].y), [1.0, 1.0, 1.0])
+
+    def test_single_point_uses_category_axis(self):
+        fig = self._render(self.ONE)
+        self.assertEqual(fig.layout.xaxis.type, "category")
+        self.assertEqual(list(fig.data[0].x), ["2026-07-28"])
+        self.assertEqual(fig.layout.annotations[0].x, "2026-07-28")
+
+    def test_multi_point_keeps_auto_date_axis(self):
+        fig = self._render(self.MANY)
+        self.assertIsNone(fig.layout.xaxis.type)
 
 
 class TestConsensusVsActual(_ExportSite):
