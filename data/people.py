@@ -22,6 +22,9 @@ import json
 import re
 
 PEOPLE_CACHE_PREFIX = "people_cache"
+# After a failed extraction (text fetch, Claude call, or no rows surviving the
+# guards), retry at most this often per proxy — 4 attempts/day, not one per view.
+_FAILED_RETRY_S = 6 * 3600
 
 _EXTRACT_PROMPT = """\
 From the proxy-statement text below, extract every DIRECTOR and EXECUTIVE \
@@ -126,9 +129,7 @@ def _latest_proxy(cik: int) -> dict | None:
     return None
 
 
-def _extract_via_claude(text: str, ticker: str) -> list[dict] | None:
-    """One structured-extraction call. None = API unavailable/failed
-    (callers must NOT cache that — retry next view)."""
+def _api_key() -> str | None:
     import os
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -137,6 +138,14 @@ def _extract_via_claude(text: str, ticker: str) -> list[dict] | None:
             api_key = st.secrets.get("ANTHROPIC_API_KEY")
         except Exception:
             api_key = None
+    return api_key or None
+
+
+def _extract_via_claude(text: str, ticker: str) -> list[dict] | None:
+    """One structured-extraction call. None = API unavailable/failed
+    (callers must NOT cache a result for that; they may record a short-lived
+    retry marker — see get_proxy_people)."""
+    api_key = _api_key()
     if not api_key:
         return None
     try:
@@ -167,24 +176,45 @@ def get_proxy_people(cik: int, ticker: str) -> dict | None:
     accession = proxy["accession"]
 
     from data.cloud_storage import load_json, save_json
+    from data.freshness import is_fresh
     fname = f"{int(cik)}_{accession.replace('-', '')}.json"
     cached = load_json(PEOPLE_CACHE_PREFIX, fname)
     if cached and cached.get("people"):
         return cached
+    # A recent failure for this proxy: n/a until the retry window passes,
+    # instead of re-downloading the ~400 KB proxy and re-calling Claude on
+    # EVERY view (REVIEW-2026-09-24 P1-11: 67–80 s People Summary renders).
+    if cached and cached.get("failed") and is_fresh(cached, _FAILED_RETRY_S):
+        return None
+
+    def _mark_failed(reason: str) -> None:
+        # No key = this environment cannot extract at all (typically local);
+        # never let it write a marker another environment would honour.
+        if not _api_key():
+            return
+        from datetime import datetime
+        try:
+            save_json(PEOPLE_CACHE_PREFIX, fname,
+                      {"failed": reason, "cached_at": datetime.now().isoformat()})
+        except Exception:
+            pass
 
     from data.filing_summarizer import fetch_filing_text
     text = fetch_filing_text(proxy.get("url"), max_chars=400_000)
     if not text or len(text) < 2_000:
         print(f"[people] proxy text unavailable for CIK {cik} {accession}")
+        _mark_failed("proxy text unavailable")
         return None
     sliced = _slice_people_sections(text)
 
     raw = _extract_via_claude(sliced, ticker)
     if raw is None:
-        return None  # API failure — do not cache, retry next view
+        _mark_failed("extraction call failed")
+        return None
     people = _guard_people(raw, text)
     if not people:
         print(f"[people] extraction yielded no guarded rows for CIK {cik}")
+        _mark_failed("no guarded rows")
         return None
 
     result = {

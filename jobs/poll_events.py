@@ -331,6 +331,31 @@ def main() -> int:
         print(f"  [calls] snapshot refresh failed: {type(e).__name__}: {e}",
               flush=True)
 
+    # Fifth sibling (REVIEW-2026-09-24 P1-9): the Earnings Results board was
+    # built on the RENDER thread every 15 min (FMP calendar + EDGAR release
+    # metrics per reporting bank + an FDIC institutions walk). Build it here;
+    # renders serve it up to 2h old. Capped to the remaining budget like the
+    # summarizer — in earnings season the build can take minutes, and an
+    # overrun must not push the run past the task kill.
+    rb_budget = _TASK_BUDGET_S + 60 - (time.time() - t0)
+    if rb_budget < 30:
+        print(f"  [results] board skipped — only {rb_budget:.0f}s left in budget",
+              flush=True)
+    else:
+        try:
+            from data.earnings_results import refresh_results_board_snapshot
+            tr = time.time()
+            n_rb = _run_with_timeout("results board",
+                                     refresh_results_board_snapshot, rb_budget)
+            print(f"▶ Results board refreshed — {n_rb} rows "
+                  f"({time.time()-tr:.0f}s)", flush=True)
+        except TimeoutError:
+            print(f"  [results] board hit {rb_budget:.0f}s cap — last good board "
+                  "kept; renders rebuild it if it ages past 2h", flush=True)
+        except Exception as e:
+            print(f"  [results] board refresh failed: {type(e).__name__}: {e}",
+                  flush=True)
+
     elapsed = time.time() - t0
     print(f"✓ Done in {elapsed:.1f}s — {total_new} new events, "
           f"{crashes} crashes, {timeouts} timeouts")
