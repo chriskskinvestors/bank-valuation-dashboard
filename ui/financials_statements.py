@@ -51,6 +51,17 @@ def _usd(v):
     return _V(t, r if t != "—" else None, "usd_k")
 
 
+_SEC_UNIT_000 = re.compile(r"\s*\(\$000\)")
+
+
+def _screen_section(sec_name: str) -> str:
+    """On-screen section header: the spec's "($000)" dropped, because the
+    cells beneath it are $-compact ("$4,091.39B"), not thousands (REVIEW-2026-09-24
+    P2-2). The $000 raw value lives in the click-through; the Excel export
+    keeps the spec name and its "($K)" row labels unchanged."""
+    return _SEC_UNIT_000.sub("", sec_name)
+
+
 def _pct(v, dp: int = 2):
     t = _pct_plain(v, dp)
     r = _num(v)
@@ -214,6 +225,13 @@ def _fte_adjustment(tax_exempt_loan, tax_exempt_sec, rate=_FTE_TAX_RATE):
 _DEP_PRIOR_MISSING = "prior quarter not ingested — cannot de-cumulate YTD"
 _DEP_FY_INCOMPLETE = "incomplete quarterly average history"
 _DEP_NO_RECONCILE = "components do not reconcile to total interest expense"
+# FTE rows' dead-cell reason: the Schedule RI detail store (refreshed by the
+# quarterly refresh-ffiec job) can trail the FDIC SDI release by a quarter.
+_RI_NOT_INGESTED = ("Schedule RI detail not yet ingested for this period "
+                    "(the FFIEC detail refresh can trail the FDIC release)")
+# Quarterly (single-quarter) view: a non-Q1 column also needs the prior
+# quarter's YTD detail to de-cumulate (_decum_detail).
+_RI_NOT_INGESTED_Q = " — or the prior quarter's, needed to de-cumulate YTD"
 
 # side → (RIAD YTD-interest codes, RCON quarterly-average codes)
 _DEP_SPLIT_CODES = {
@@ -909,7 +927,14 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind in ("fte_adj", "nii_fte"):
             det = ri_by_ci.get(ci)
             if det is None:
-                return "—", None   # RI detail not ingested for this period
+                # Store lags the FDIC release (quarterly refresh-ffiec job):
+                # say so in the click-through, never impute (P2-10).
+                why = _RI_NOT_INGESTED + (_RI_NOT_INGESTED_Q if _decum_active else "")
+                return "n/a", calc(label, "n/a", asof, "n/a — " + why,
+                                   [{"label": label, "val": "n/a — " + why}],
+                                   None, False,
+                                   source="FFIEC Call Report — Schedule RI",
+                                   link=_ri_doc_link(rec))
             tel = _num(det.get("tax_exempt_loan_income"))
             tes = _num(det.get("tax_exempt_sec_income"))
             fte = _fte_adjustment(tel, tes)
@@ -1503,7 +1528,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     xrows = []   # (label, kind, raw values) for the Excel export — raw, never parsed
     ncol = len(recs_list)
     for sec_name, rows in spec:
-        rows_html.append(f'<tr><td class="sec" colspan="{ncol+1}">{sec_name}</td></tr>')
+        rows_html.append(f'<tr><td class="sec" colspan="{ncol+1}">{_screen_section(sec_name)}</td></tr>')
         xrows.append((sec_name, "header", []))
         for row in rows:
             label, kind, args = row[0], row[1], row[2:]

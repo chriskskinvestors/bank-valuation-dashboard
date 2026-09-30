@@ -321,6 +321,28 @@ class TestBareLabelEpsRows(_CrExportSite):
         self.assertEqual(k({"label": "Net income"}), "usd")
         self.assertEqual(k({"label": "Ratio", "kind": "other"}), "usd")
 
+    def test_onb_stated_value_common_stock_is_compact(self):
+        # REVIEW-2026-09-24 P2-6: ONB's equity caption mentions "per share";
+        # its XBRL kind is monetary, so it is $-compact, never "$389,662,000.00".
+        import data.sec_statements as S
+        label = ("Common stock, no par value, $1.00 per share stated value, 600,000 "
+                 "shares authorized, 389,662 and 318,980 shares issued and outstanding")
+        stmt = {"statement": {"periods": ["2025-12-31", "2024-12-31"], "rows": [
+                    {"label": "Shareholders' equity", "header": True, "values": []},
+                    {"label": label, "header": False, "kind": "monetary",
+                     "values": [389_662_000.0, 318_980_000.0]}]},
+                "filings": [META_10K], "meta": META_10K}
+        with mock.patch.object(S, "as_reported_statement_multiyear",
+                               lambda cik, stype, n_years=5: stmt):
+            self.FS._render_company_statement_annual(TICKER, "balance", CIK, INFO)
+        wb, ws, _kw = self._book()
+        html = self.htmls[0]
+        self.assertIn(">$389.7M<", html)
+        self.assertIn(">$319.0M<", html)
+        self.assertNotIn("389,662,000", html)
+        row = next(r for r in self._grid(ws) if r[0] == label)
+        self.assertEqual(row[1:], [318_980_000, 389_662_000])   # export: raw dollars
+
     def test_fmt_hand_values(self):
         f = self.FS._cr_fmt
         self.assertEqual(f("eps", 3.07), "$3.07")
