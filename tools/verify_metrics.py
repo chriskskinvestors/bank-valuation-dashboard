@@ -66,16 +66,26 @@ FDIC_DOLLAR_FIELDS = {
 }
 
 
+def _absent(v) -> bool:
+    """None OR NaN. FDIC values arrive via DataFrame.to_dict, so an unreported
+    field is NaN, not None — and NaN never compares close to anything. Until
+    2026-09-30 two AGREEING absences (dashboard n/a, oracle n/a) therefore
+    counted as a divergence: every CBLR bank's CET1/total-capital ratio
+    (CBLRIND=1, RWAJ=0; nulled by fdic_client.null_unreported_capital), 112
+    banks, failing 10 of 12 nightly runs and burying any real regression."""
+    return v is None or (isinstance(v, float) and v != v)
+
+
 def _rel_close(a: float, b: float) -> bool:
-    if a is None or b is None:
-        return a is None and b is None
+    if _absent(a) or _absent(b):
+        return _absent(a) and _absent(b)
     denom = max(abs(a), abs(b), 1e-9)
     return abs(a - b) / denom <= REL_TOL
 
 
 def _abs_close(a: float, b: float) -> bool:
-    if a is None or b is None:
-        return a is None and b is None
+    if _absent(a) or _absent(b):
+        return _absent(a) and _absent(b)
     return abs(a - b) <= ABS_TOL_RATIO
 
 
