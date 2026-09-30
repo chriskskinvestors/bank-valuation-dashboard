@@ -9,8 +9,9 @@ walks the whole universe once so every bank's current-quarter snapshot exists.
 
 13F-HRs are filed up to 45 days AFTER quarter-end, so the natural schedule is
 quarterly, ~5 days after each deadline (≈ Feb 19 / May 20 / Aug 19 / Nov 19).
-Running it more often is harmless (the per-ticker 24h cache makes reruns
-idempotent) but pointless between filing seasons.
+Running it more often is harmless but pointless between filing seasons. Each
+call is force=True: the render path serves the per-ticker file for 7 days, so an
+unforced call would hand a fresh file back instead of refreshing it.
 
 Cost: ~1 EDGAR full-text search + up to ~25 filer info-table fetches (plus
 prior-quarter lookups for QoQ change status) per bank — tens of thousands of
@@ -82,19 +83,34 @@ def backfill(quarters: list[str]) -> int:
     return 0
 
 
+# A file this young was written by this execution (or its failed first
+# attempt): skip it, so the Cloud Run retry after a 5400s timeout resumes
+# where the first attempt stopped instead of recrawling from the top and
+# timing out at the same point. force=True applies to everything older.
+_RESUME_WINDOW_S = 12 * 3600
+
+
 def main() -> int:
     from data.bank_universe import get_universe_tickers
     from data.bank_mapping import get_name
-    from data.form13f_client import fetch_institutional_holdings
+    from data.cloud_storage import load_json
+    from data.form13f_client import FORM13F_CACHE_PREFIX, fetch_institutional_holdings
+    from data.freshness import is_fresh
 
     tickers = sorted(get_universe_tickers())
     print(f"▶ Warming 13F snapshots for {len(tickers)} banks", flush=True)
 
     t0 = time.time()
-    covered = failed = 0
+    covered = failed = resumed = 0
     for i, t in enumerate(tickers, 1):
+        done = load_json(FORM13F_CACHE_PREFIX, f"{t.upper()}.json")
+        if is_fresh(done, _RESUME_WINDOW_S) and "holders" in done:
+            resumed += 1
+            covered += bool(done["holders"])
+            continue
         try:
-            holders = fetch_institutional_holdings(t, get_name(t) or "")
+            holders = fetch_institutional_holdings(t, get_name(t) or "",
+                                                   force=True)
             if holders:
                 covered += 1
         except Exception as e:
@@ -108,7 +124,8 @@ def main() -> int:
         time.sleep(0.3)
 
     print(f"✓ 13F warm pass: {covered}/{len(tickers)} banks with holders, "
-          f"{failed} errors in {time.time() - t0:.0f}s", flush=True)
+          f"{failed} errors, {resumed} already done this run, "
+          f"in {time.time() - t0:.0f}s", flush=True)
     if covered == 0:
         # Zero coverage across the whole universe is an outage, not sparse
         # small-bank coverage — fail loudly so the #42 alert pages.

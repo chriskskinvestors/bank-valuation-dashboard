@@ -257,8 +257,12 @@ def build_name_index() -> list[tuple[str, str]]:
     return unique
 
 
-# Lazy-initialized at first match call
+# Lazy-initialized at first match call; rebuilt when bank_universe reloads a
+# newer snapshot (review 2026-09-24 P1-7).
 _NAME_INDEX: list[tuple[str, str]] = []
+# (index match_tickers built, universe generation at build). Only an index
+# that `is` the built one goes stale, so one assigned directly (tests) stays.
+_NAME_INDEX_BUILT: tuple[list, int] | None = None
 # normname -> [candidate tickers] for names shared by >1 bank (built alongside
 # _NAME_INDEX). Resolved at match time by ticker / geo cues in the release body.
 _AMBIGUOUS_INDEX: dict[str, list[str]] = {}
@@ -502,9 +506,14 @@ def match_tickers(text: str, context: str = "") -> list[str]:
 
     Returns a deduplicated list of tickers (preserving order of appearance).
     """
-    global _NAME_INDEX, _NAME_LEADING_TOKENS
-    if not _NAME_INDEX:
+    global _NAME_INDEX, _NAME_LEADING_TOKENS, _NAME_INDEX_BUILT
+    from data.bank_universe import universe_generation
+    gen = universe_generation()
+    stale = (_NAME_INDEX_BUILT is not None and _NAME_INDEX is _NAME_INDEX_BUILT[0]
+             and _NAME_INDEX_BUILT[1] != gen)
+    if not _NAME_INDEX or stale:
         _NAME_INDEX = build_name_index()
+        _NAME_INDEX_BUILT = (_NAME_INDEX, gen)
         _NAME_LEADING_TOKENS = None      # rebuild alongside the index
 
     haystack = " " + _normalize_name(text) + " "

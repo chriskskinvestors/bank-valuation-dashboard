@@ -472,6 +472,17 @@ class _DataQualitySite(_ExportSite):
         self._patch(cache, "get", lambda key, *a, **k: bank_metrics)
         self._patch(DQ, "lazy_tabs", lambda labels, key=None, default=0: labels[tab])
         self._patch(fc, "is_configured", lambda: False)
+        # Pin "today" so the fixture's 2025-12-31 Call Report is ~150 days old
+        # — inside the staleness WARNING band (135..270 d). Unpinned, the test
+        # aged into the ERROR band on 2026-09-28 and failed CI on every PR.
+        import data.validation as validation
+
+        class _Today(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 5, 30)
+
+        self._patch(validation, "datetime", _Today)
         DQ.render_data_quality("BANR")
 
 

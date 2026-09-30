@@ -1609,12 +1609,35 @@ FILING_FORM_TYPES = {
 }
 
 
-# 15-min memo: this SEC-submissions fetch is called on several render paths and
-# up to 3× within a single Company page (bank_detail) plus the Filings tab, each
-# an uncached HTTP round-trip for the SAME cik. Memoizing dedupes those to one
-# fetch and makes repeat renders instant. Short TTL keeps a newly-filed 8-K
-# visible within ~15 min; the in-render dedup holds at any TTL. Only ui/ render
-# paths call this (no universe-loop job), so no job-memory concern.
+# The raw submissions JSON (1–3 MB for a large filer), memoised per CIK ONLY.
+# get_filing_info is called with five different max_filings values (1, 50, 80,
+# 200, 1000) across the Company page, Filings, Key Exhibits, Recent Documents,
+# People and the universe name guard; keyed on (cik, max_filings) that was up to
+# five downloads of the same document per CIK per 15 min (REVIEW-2026-09-24
+# P1-8). max_entries bounds memory: the nightly namehcr guard walks every CIK
+# through get_filing_info(cik, max_filings=1), so an unbounded raw memo would
+# hold hundreds of these documents for the TTL.
+@st.cache_data(ttl=900, max_entries=16, show_spinner=False)
+def _submissions_json(cik: int) -> dict | None:
+    """data.sec.gov submissions JSON for one CIK, or None on failure."""
+    # Shared retry (429 / timeouts) so the Filings page doesn't show
+    # "Failed to load" on a single hiccup. The old inline loop here swallowed
+    # ALL exceptions bare — including code bugs.
+    from data.http import get_with_retry
+    url = SEC_SUBMISSIONS_URL.format(cik=_pad_cik(cik))
+    try:
+        resp = get_with_retry(url, headers=HEADERS, timeout=15)
+        if resp is not None:
+            return resp.json()
+    except Exception as e:
+        print(f"[SEC] submissions fetch failed for CIK {cik}: {type(e).__name__}: {e}")
+    return None
+
+
+# 15-min memo of the parsed result: called up to 3× within a single Company page
+# (bank_detail) plus the Filings tab. Short TTL keeps a newly-filed 8-K visible
+# within ~15 min. The download itself is shared across max_filings values by
+# _submissions_json above.
 @st.cache_data(ttl=900, show_spinner=False)
 def get_filing_info(cik: int, max_filings: int = 50) -> dict:
     """
@@ -1624,19 +1647,7 @@ def get_filing_info(cik: int, max_filings: int = 50) -> dict:
       form, date, report_date, description, items, accession,
       url (direct link), index_url, is_earnings, size
     """
-    padded = _pad_cik(cik)
-    url = SEC_SUBMISSIONS_URL.format(cik=padded)
-    # Shared retry (429 / timeouts) so the Filings page doesn't show
-    # "Failed to load" on a single hiccup. The old inline loop here swallowed
-    # ALL exceptions bare — including code bugs.
-    from data.http import get_with_retry
-    data = None
-    try:
-        resp = get_with_retry(url, headers=HEADERS, timeout=15)
-        if resp is not None:
-            data = resp.json()
-    except Exception as e:
-        print(f"[SEC] submissions fetch failed for CIK {cik}: {type(e).__name__}: {e}")
+    data = _submissions_json(cik)
     if data is None:
         return {}
 

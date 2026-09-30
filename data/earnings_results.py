@@ -621,9 +621,91 @@ def results_board_available(days_back: int = 30) -> bool:
     return bool(snap and isinstance(snap.get("value"), list))
 
 
+def _build_results_board(days_back: int) -> list[dict]:
+    """Build the Results-board rows (FMP calendar + events store + EDGAR
+    release metrics + FDIC/SEC history). Raises on a total FMP-calendar
+    failure so nothing is cached. Called by poll-events every ~30 min
+    (refresh_results_board_snapshot) and, as a backstop, by results_board."""
+    from data import cache as _cache
+    from data import fmp_client
+    from data.bank_universe import get_universe
+    today = date.today()
+    fmp_rows = fmp_client.get_earnings_calendar(
+        (today - timedelta(days=days_back)).isoformat(), today.isoformat())
+    if fmp_rows is None:
+        raise RuntimeError("FMP earnings calendar unavailable")
+    try:
+        # Common shares only: preferred/ETN listings share the parent's
+        # CIK+name and FMP carries junk rows for them (AMJB rendered as
+        # "Jpmorgan Chase" with a negative revenue, 2026-07-14).
+        universe = {tk for tk, v in get_universe().items()
+                    if (v or {}).get("share_class", "common") == "common"}
+    except Exception:
+        universe = set()
+    try:
+        # Bank-sub total assets (raw dollars; FDIC reports $thousands)
+        # for the estimate-less revenue junk guard. Day-stale is fine —
+        # it only anchors an order-of-magnitude sanity check. String
+        # keys: the cache JSON round-trip stringifies dict keys.
+        def _assets_by_cert():
+            from data.fdic_client import list_all_active_institutions
+            return {str(int(r["cert"])): float(r["asset"]) * 1000.0
+                    for r in list_all_active_institutions()
+                    if r.get("cert") and r.get("asset")}
+        by_cert = _cache.served_snapshot(
+            "fdic_assets_by_cert_v1", 86400, _assets_by_cert) or {}
+        assets = {}
+        for tk, v in get_universe().items():
+            c = (v or {}).get("fdic_cert")
+            if c and by_cert.get(str(int(c))):
+                assets[tk] = by_cert[str(int(c))]
+    except Exception:
+        assets = {}
+    try:
+        from data.events.store import get_events_by_type
+        events: dict = {}
+        for e in get_events_by_type("earnings", limit=800):
+            tk = e.get("ticker")
+            if tk:
+                events.setdefault(tk, []).append(e)   # store order: newest-first
+        events = first_party_events(events)
+    except Exception:
+        events = {}
+    rows = build_results_rows(fmp_rows, universe, events, today,
+                              days_back=days_back,
+                              assets_by_ticker=assets)
+    _fill_price_reactions(rows, today)
+    _fill_release_metrics(rows)
+    _fill_fdic_history(rows)
+    _fill_sec_history(rows)
+    return rows
+
+
+# poll-events rebuilds the board every ~30 min (refresh_results_board_snapshot),
+# so a render serves the stored board up to this age and never builds it on
+# the interactive path while the job is healthy. Past it (the job stopped), the
+# render rebuilds inline exactly as before — self-healing, never frozen.
+# REVIEW-2026-09-24 P1-9: the old 15-min render TTL meant the first Earnings
+# view each 15 min paid the full FMP + EDGAR + FDIC build.
+_BOARD_RENDER_MAX_AGE_S = 2 * 3600
+
+
+def refresh_results_board_snapshot(days_back: int = 30) -> int:
+    """Build + persist the Results board (poll-events, every ~30 min). Returns
+    the row count. Raises on a total source failure — nothing is written, so the
+    last good board stays in place."""
+    from datetime import datetime
+    from data import cache as _cache
+    rows = _build_results_board(days_back)
+    _cache.put(_board_key(days_back),
+               {"cached_at": datetime.now().isoformat(), "guard": None, "value": rows})
+    return len(rows)
+
+
 def results_board(days_back: int = 30) -> list[dict]:
-    """The Results board rows, cross-instance cached 15 min (earnings-week
-    freshness without per-render fetch storms). Empty list when nothing has
+    """The Results board rows, served from the poll-events snapshot (see
+    _BOARD_RENDER_MAX_AGE_S) and rebuilt inline only when it is older than
+    that or absent. Empty list when nothing has
     reported in the window; on total source failure the LAST GOOD board is
     served at whatever age (an empty board reads as "nobody reported", which
     is a confident wrong statement during an outage). A genuine FMP-calendar
@@ -633,62 +715,11 @@ def results_board(days_back: int = 30) -> list[dict]:
     from data import cache as _cache
 
     def _build():
-        from data import fmp_client
-        from data.bank_universe import get_universe
-        today = date.today()
-        fmp_rows = fmp_client.get_earnings_calendar(
-            (today - timedelta(days=days_back)).isoformat(), today.isoformat())
-        if fmp_rows is None:
-            raise RuntimeError("FMP earnings calendar unavailable")
-        try:
-            # Common shares only: preferred/ETN listings share the parent's
-            # CIK+name and FMP carries junk rows for them (AMJB rendered as
-            # "Jpmorgan Chase" with a negative revenue, 2026-07-14).
-            universe = {tk for tk, v in get_universe().items()
-                        if (v or {}).get("share_class", "common") == "common"}
-        except Exception:
-            universe = set()
-        try:
-            # Bank-sub total assets (raw dollars; FDIC reports $thousands)
-            # for the estimate-less revenue junk guard. Day-stale is fine —
-            # it only anchors an order-of-magnitude sanity check. String
-            # keys: the cache JSON round-trip stringifies dict keys.
-            def _assets_by_cert():
-                from data.fdic_client import list_all_active_institutions
-                return {str(int(r["cert"])): float(r["asset"]) * 1000.0
-                        for r in list_all_active_institutions()
-                        if r.get("cert") and r.get("asset")}
-            by_cert = _cache.served_snapshot(
-                "fdic_assets_by_cert_v1", 86400, _assets_by_cert) or {}
-            assets = {}
-            for tk, v in get_universe().items():
-                c = (v or {}).get("fdic_cert")
-                if c and by_cert.get(str(int(c))):
-                    assets[tk] = by_cert[str(int(c))]
-        except Exception:
-            assets = {}
-        try:
-            from data.events.store import get_events_by_type
-            events: dict = {}
-            for e in get_events_by_type("earnings", limit=800):
-                tk = e.get("ticker")
-                if tk:
-                    events.setdefault(tk, []).append(e)   # store order: newest-first
-            events = first_party_events(events)
-        except Exception:
-            events = {}
-        rows = build_results_rows(fmp_rows, universe, events, today,
-                                  days_back=days_back,
-                                  assets_by_ticker=assets)
-        _fill_price_reactions(rows, today)
-        _fill_release_metrics(rows)
-        _fill_fdic_history(rows)
-        _fill_sec_history(rows)
-        return rows
+        return _build_results_board(days_back)
 
     key = _board_key(days_back)
     try:
-        return _cache.served_snapshot(key, 900, _build) or []
+        return _cache.served_snapshot(key, _BOARD_RENDER_MAX_AGE_S, _build) or []
     except Exception as e:
         # The build raised — by design on a total source failure (an FMP
         # calendar outage), so nothing was cached. Serve the last good board at

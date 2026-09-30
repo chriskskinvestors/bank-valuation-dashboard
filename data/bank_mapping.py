@@ -492,13 +492,20 @@ def get_cik(ticker: str) -> int | None:
 # beyond the curated files. Without this tier, each newly discovered bank
 # triggered a live per-ticker SEC resolution in EVERY fresh process —
 # measured 174s for the universe list on a cold start. Read directly from
-# data.cache (not bank_universe) to avoid a circular import.
+# data.cache (not bank_universe) to avoid a circular import. Re-read when
+# bank_universe reloads a newer snapshot (its generation moves) so a bank the
+# nightly run added resolves on a long-lived instance (review 2026-09-24 P1-7);
+# only the generation counter is consulted — never get_universe(), which could
+# recurse into the universe build this tier serves.
 _SNAPSHOT_MAP: dict[str, dict] | None = None
+_SNAPSHOT_MAP_GEN = 0
 
 
 def _universe_snapshot_map() -> dict[str, dict]:
-    global _SNAPSHOT_MAP
-    if _SNAPSHOT_MAP is None:
+    global _SNAPSHOT_MAP, _SNAPSHOT_MAP_GEN
+    from data.bank_universe import universe_generation
+    gen = universe_generation()
+    if _SNAPSHOT_MAP is None or _SNAPSHOT_MAP_GEN != gen:
         try:
             from data import cache
             # max_age_s=None: the snapshot resolves tickers at any age (the
@@ -512,11 +519,12 @@ def _universe_snapshot_map() -> dict[str, dict]:
             if not found:
                 # No snapshot yet (fresh DB) — retry on the next call rather
                 # than pinning this tier empty for the process lifetime.
-                return {}
-            _SNAPSHOT_MAP = found
+                return _SNAPSHOT_MAP or {}
+            _SNAPSHOT_MAP, _SNAPSHOT_MAP_GEN = found, gen
         except Exception as e:
             print(f"[bank_mapping] snapshot tier unavailable: {type(e).__name__}: {e}")
-            return {}  # transient (DB hiccup) — retry on the next call
+            # transient (DB hiccup) — serve the prior map, retry next call
+            return _SNAPSHOT_MAP or {}
     return _SNAPSHOT_MAP
 
 
