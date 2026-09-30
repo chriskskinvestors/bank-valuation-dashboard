@@ -255,11 +255,9 @@ class TestOcfcTrends(unittest.TestCase):
             "PreferredStockSharesIssued": [(self.Q1, 57_370.0), (self.Q2, 0.0)],
         }
         data.update(overrides or {})
-
-        def fake(cik, concept):
-            rows = data.get(concept)
-            return pd.DataFrame([{"end": q, "val": v} for q, v in rows]) if rows else None
-        with patch.object(sps, "get_historical_fundamentals", side_effect=fake):
+        # Both read seams (per-concept frames + raw facts for equity).
+        from tests.test_sec_per_share import _mock_hist
+        with _mock_hist(data):
             return sps._bank_per_share(1, [self.Q1, self.Q2])
 
     def test_par_only_quarter_na_redemption_quarter_resolves(self):
