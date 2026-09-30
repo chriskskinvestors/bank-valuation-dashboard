@@ -466,6 +466,13 @@ def _render_auto_estimates(ticker: str, estimates: dict):
     _kpi_strip([(l, v, d, None) for l, v, d in kpis], cols=5)
 
 
+_SURPRISE_ACT_BASIS = (
+    "EPS Act is Yahoo Finance's consensus-basis actual (market data) — "
+    "typically ADJUSTED EPS excluding items, the same basis as the consensus "
+    "estimate it is scored against — not the GAAP diluted EPS shown in Key "
+    "Reported Metrics.")
+
+
 def _render_surprise_history_grid(ticker: str, past: list[dict]):
     """The past-surprises table (est / act / surprise / beat-miss per quarter)
     — rendered beside the surprise chart so the visual and the precise numbers
@@ -488,23 +495,27 @@ def _render_surprise_history_grid(ticker: str, past: list[dict]):
             _signed_pct_cell(surprise),
             result,
         ]) + "</tr>")
+    # "EPS Act" is the consensus provider's actual — typically ADJUSTED EPS
+    # (JPM 2Q26 $6.14 ex-items vs GAAP $7.70; review P2-4) — so it is labeled
+    # as such beside the GAAP figures in Key Reported Metrics.
     _render_earnings_grid(
-        [("Date", "nm"), ("EPS Est", ""), ("EPS Act", ""),
+        [("Date", "nm"), ("EPS Est", ""), ("EPS Act (adj.)", ""),
          ("Surprise", ""), ("Result", "")], trs,
         col_widths=["28%", "18%", "18%", "18%", "18%"])
     # Underlying numeric history (unformatted EPS / surprise)
     table_export(
         pd.DataFrame([{"Date": e.get("date"),
                        "EPS Est ($)": e.get("eps_estimate"),
-                       "EPS Act ($)": e.get("eps_actual"),
+                       "EPS Act adj. ($)": e.get("eps_actual"),
                        "Surprise (%)": e.get("surprise_pct")} for e in past[:8]]),
         f"earnings_surprises_{ticker}", key=f"exp_earnings_surprises_{ticker}",
-        formats={"Date": "date", "EPS Est ($)": "usd2", "EPS Act ($)": "usd2",
+        formats={"Date": "date", "EPS Est ($)": "usd2", "EPS Act adj. ($)": "usd2",
                  "Surprise (%)": "pct"},
         provenance={"Page": "Company Analysis › Earnings › Earnings Surprise History",
                     "Ticker": ticker,
                     "Source": "Yahoo Finance earnings history (analyst EPS estimate "
-                              "vs reported EPS per announcement; market data)"})
+                              "vs reported EPS per announcement; market data)",
+                    "EPS Act basis": _SURPRISE_ACT_BASIS})
 
 
 def _render_manual_input(ticker: str):
@@ -621,6 +632,7 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
 
     st.markdown('<div class="ec-sec">Earnings Surprise History</div>',
                 unsafe_allow_html=True)
+    st.caption(_SURPRISE_ACT_BASIS)
     chart_col, table_col = st.columns(2, gap="medium")
     with table_col:
         tbl = [e for e in history if e.get("eps_estimate") is not None]
@@ -639,7 +651,7 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
 
     fig.add_trace(go.Bar(
         x=dates, y=actuals,
-        name="Actual EPS",
+        name="Actual EPS (adj.)",
         marker_color=[COLOR_SUCCESS if s >= 0 else COLOR_DANGER for s in surprises],
         opacity=0.7,
     ))
@@ -664,6 +676,11 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
 
     # Secondary chart → compact height (300px full read as oversized here).
     apply_standard_layout(fig, height=CHART_HEIGHT_COMPACT, yaxis_title="EPS ($)")
+    if len(dates) == 1:
+        # One report: a date axis sizes the lone bar at 1 ms and autozooms to
+        # it, printing sub-second ticks ("23:59:59.9996Jul 28, 2026" — LARK,
+        # review P2-11). A category axis shows the date string as-is.
+        fig.update_xaxes(type="category")
 
     with chart_col:
         st.plotly_chart(fig, use_container_width=True)
