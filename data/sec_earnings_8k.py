@@ -197,7 +197,7 @@ def _clean_label(s: str) -> str:
     return re.sub(r"\s+", " ", s)
 
 
-def _table_rows(html_bytes: bytes) -> list[tuple]:
+def _table_rows(html_bytes: bytes, year_spans: bool = False) -> list[tuple]:
     """Every (clean_label, [numeric cells…]) row across the document's tables, in
     document order. A row needs a non-numeric label and ≥1 numeric cell.
 
@@ -222,8 +222,9 @@ def _table_rows(html_bytes: bytes) -> list[tuple]:
     root = lhtml.fromstring(html_bytes)
     rows: list[tuple] = []
     for table in root.findall(".//table"):
-        grid, _ = _table_grid(table)
-        rows.extend((cl, nums) for _, cl, nums, _ in _grid_rows(grid))
+        grid, spans = _table_grid(table)
+        rows.extend((cl, nums) for _, cl, nums, _
+                    in _grid_rows(grid, spans if year_spans else None))
     return rows
 
 
@@ -250,14 +251,37 @@ def _table_grid(table) -> tuple[list, list]:
     return grid, spans
 
 
-def _grid_rows(grid: list) -> list[tuple]:
+def _grid_rows(grid: list, spans: list | None = None) -> list[tuple]:
     """(row_index, clean_label, nums, cols) for every data row of one table
     grid — _table_rows' per-table body; cols[i] is the table column nums[i]
-    was read from."""
+    was read from. A value column is any column with a numeric cell in ANY
+    row — unless `spans` is given (the book-value path, _book_value_rows):
+
+    then a value column is any column with a numeric cell in a DATA row. A bare
+    header year is not data, but it is kept as a column when it heads one no
+    data row fills — an all-blank latest-quarter column must still read None
+    (audit P3). A year whose colspan COVERS a data column heads that column
+    instead: BHB Q2-2026 (8-K 0001104659-26-085415) centres "2026" over a
+    colspan-2 cell whose first column is the '$' column, so that '$' column
+    became the first "value" column and every row read [None, 23.43, …] —
+    the whole table, TBVPS included, rendered n/a.
+
+    NOT applied to the headline figures (extract_earnings_figures): the same
+    fix there exposed rows its single release-wide scale and first-match
+    gates cannot vet — $-thousands flows scaled by a $-millions summary
+    table (BHB NII read as $37.9B, UCB/CSBB net income ×1000), average or
+    six-month columns inside the ±band (FCAP deposits −20%, PBHC NII +98%)
+    — measured over the 2026-09-30 sweep, 2026-10-01. Per-share book values
+    are scale-free and gated against the reconstruction / tangible < book."""
     out: list[tuple] = []
-    # A value column is any column with a numeric cell in ANY row.
-    num_cols = sorted({i for row in grid for i, c in enumerate(row)
-                       if _num(c) is not None})
+    headers = ({r for r, row in enumerate(grid) if _is_year_header(row)}
+               if spans is not None else set())
+    num_cols = {i for r, row in enumerate(grid) if r not in headers
+                for i, c in enumerate(row) if _num(c) is not None}
+    num_cols |= {a for r in headers for a, b, t in (spans or [])[r]
+                 if _num(t) is not None
+                 and not any(a <= i <= b for i in num_cols)}
+    num_cols = sorted(num_cols)
     for r, row in enumerate(grid):
         label_idx = next((i for i, c in enumerate(row) if c.strip()), None)
         if label_idx is None:
@@ -583,7 +607,7 @@ def _book_value_rows(html_bytes: bytes) -> list[tuple]:
     mis-scales a first-matched flow (BAC Q2-2026: "Net income $9.1" billion
     read as $9.1M). Per-share values carry no scale, and the book-value gates
     (±15% vs the reconstruction, tangible < book) cross-check every pick."""
-    rows = _table_rows(html_bytes)
+    rows = _table_rows(html_bytes, year_spans=True)
     if rows:
         return rows
     from lxml import html as lhtml
@@ -1259,7 +1283,8 @@ def reported_bvps_status(
     #     positioned-fragment releases (FBP), and no-reconstruction rows
     #     must say COMMON when the release shows preferred equity (NPB).
     # v6: supplementary exhibits EX-99.2+ (RBCAA/FCNCA) + formula-ref suffixes.
-    ckey = f"reported_bvps:v6:{f8k['accession']}:{rk}:{tk}"
+    # v7: header-year phantom column dropped in _table_rows (BHB).
+    ckey = f"reported_bvps:v7:{f8k['accession']}:{rk}:{tk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling.
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
@@ -1298,7 +1323,9 @@ def reported_bvps_status(
 #      no-intangibles tangible == book allowance (USCB).
 # v11: supplementary exhibits EX-99.2+ of the same 8-K (RBCAA EX-99.2, FCNCA
 #      EX-99.3) + bare reconciliation-formula label suffixes ("x/dd").
-_REPORTED_TBVPS_CKEY_V = "v11"
+# v12: a header year spanning a value column no longer adds a phantom first
+#      column to _table_rows (BHB: every row read [None, 23.43, …]).
+_REPORTED_TBVPS_CKEY_V = "v12"
 
 
 def reported_tbvps_status(
