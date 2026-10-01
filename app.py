@@ -1123,13 +1123,16 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
 
     # ── Builder panel ──────────────────────────────────────────────────
     with st.container(key="screen_builder"):
-        # Row 1: Table · Scope (+ its secondary picker) · As of
-        r1 = st.columns([2.1, 1.35, 2.4, 1.3, 1.9])
+        # Row 1: Table · As of · Scope (+ its secondary picker). As of sits
+        # before Scope because it picks the universe the scope cohorts come
+        # from, and because the secondary picker is empty for "All banks" —
+        # As of after it sat 600 px right of Scope (UX-P2-09).
+        r1 = st.columns([2.1, 1.3, 1.35, 2.4, 1.85])
         with r1[0]:
             st.selectbox(
                 "Table", options=_ordered_keys,
                 format_func=lambda k: _lbl_of.get(k, k), key="screen_tab_key")
-        with r1[3]:
+        with r1[1]:
             _asof_pick = st.selectbox(
                 "As of", _asof_opts, key=f"asof_{tab_key}",
                 help="Screen the universe as it filed at a past quarter-end (FDIC "
@@ -1156,10 +1159,10 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                 st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
         else:
             screen_metrics = all_metrics
-        with r1[1]:
+        with r1[2]:
             _scope_type = st.selectbox("Scope", scope_type_options(),
                                        key=f"screen_{tab_key}_scope_type")
-        with r1[2]:
+        with r1[3]:
             display_metrics, display_tickers, scope_label = render_scope_sub(
                 screen_metrics, _scope_type, key_prefix=f"screen_{tab_key}")
 

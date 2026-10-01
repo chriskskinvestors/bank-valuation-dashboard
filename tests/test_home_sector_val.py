@@ -162,7 +162,8 @@ class TestSectorValStripHtml(unittest.TestCase):
         self.assertIn("3.00%", h)                        # div yield
         self.assertIn("Community", h)
         self.assertIn("n/a", h)                          # empty tiers refuse
-        self.assertIn("(n=0)", h)
+        self.assertIn("(n=0, min 5)", h)                 # and say why (UX-P2-02)
+        self.assertNotIn("Δ1Y n/a", h)                   # header: "pending", not N/A
         self.assertIn("collecting since", h)             # no 1y history yet
         self.assertIn("Sector Valuation", h)
 

@@ -201,7 +201,8 @@ METRICS = [
     # ROATCE ≤ g → n/a (model not applicable — never a $0 fair value).
     # Discount > 15% flags a potential buying opportunity.
     {
-        "key": "roatce_blended", "label": "ROATCE Bl.", "source": "computed",
+        "key": "roatce_blended", "label": "ROATCE Blended", "header": "ROATCE Bl.",
+        "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 12, "warn": 7},
         "category": "Fair Value",
@@ -209,7 +210,8 @@ METRICS = [
     {
         # Reported ROATCE with one-time earnings spikes winsorized out — the
         # sustainable figure that drives fair value and ranking.
-        "key": "roatce_normalized", "label": "ROATCE adj", "source": "computed",
+        "key": "roatce_normalized", "label": "ROATCE Adjusted", "header": "ROATCE adj",
+        "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 12, "warn": 7},
         "category": "Fair Value",
@@ -1151,7 +1153,7 @@ TABS = [
         "columns": [
             "price", "change_pct", "market_cap",
             "eps", "pe_ratio", "tbvps", "ptbv_ratio", "dividend_yield",
-            "roatce_blended", "roatce_normalized", "earnings_distorted",
+            "roatce_blended", "roatce_normalized",
             "fair_ptbv", "fair_price", "ptbv_discount",
             "roaa", "roaa_4q", "roatce", "roatce_4q", "nim", "nim_4q",
             "efficiency_ratio", "efficiency_release",

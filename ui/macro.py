@@ -156,18 +156,17 @@ def _render_bank_sector_etfs():
     from ui.chrome import ledger
 
     names = {e["ticker"]: e["name"] for e in ETFS}
-    # ETF selector on its own row (top-left); the timeframe selector lives
-    # directly above the chart it controls (rendered inside c_chart below).
-    c_etf, _ = st.columns([1, 3])
+    # ETF and window pickers share one row (one nesting level fewer than
+    # ETF-row › window-row › chart, UX-P2-08).
+    c_etf, c_win, _ = st.columns([0.55, 1, 1.4])
     with c_etf:
         ticker = st.radio("ETF", [e["ticker"] for e in ETFS], index=0, horizontal=True,
                           format_func=lambda t: t, key="bank_sector_etf",
                           label_visibility="collapsed")
-
-    # The timeframe radio renders above the chart (below), so read the current
-    # selection from session state here to drive the EOD fetch.
-    st.session_state.setdefault("bank_sector_period", "1Y")
-    period = st.session_state["bank_sector_period"]
+    with c_win:
+        period = st.radio("Window", PERIODS, index=PERIODS.index("1Y"),
+                          key="bank_sector_period", horizontal=True,
+                          format_func=lambda p: p, label_visibility="collapsed")
 
     st.caption(f"**{ticker}** — {names.get(ticker, '')} · {period} · EOD closes")
 
@@ -183,13 +182,10 @@ def _render_bank_sector_etfs():
     stats = compute_stats(df)
     md = get_etf_market_data(ticker)  # live quote + ETF fund fields (Premium)
 
-    # ── Compact price panel (~1/3 width, taller): timeframe tabs directly
-    # above the price chart, volume below; the Price/Range/Valuation stats
-    # sit tight to its right. ──────────────────────────────────────────
+    # ── Compact price panel (~1/3 width, taller): price chart with volume
+    # below; the Price/Range/Valuation stats sit tight to its right. ────
     c_chart, c_stats, _ = st.columns([1, 0.7, 1.3])
     with c_chart:
-        st.radio("Window", PERIODS, key="bank_sector_period", horizontal=True,
-                 format_func=lambda p: p, label_visibility="collapsed")
         figp = go.Figure()
         figp.add_trace(go.Scatter(
             x=df["date"], y=df["close"], name=ticker, mode="lines",
@@ -1033,7 +1029,7 @@ def _fig_activity(window="5Y"):
                 x=s["date"], y=s["value"], name=label, mode="lines",
                 line=dict(color=color, width=2)))
     _shade_recessions(fig, years=_rec_years(window))
-    apply_standard_layout(fig, title=f"Activity — Industrial Production & Retail (YoY, {window})",
+    apply_standard_layout(fig, title=f"Activity — IP & Retail Sales (YoY, {window})",
                           height=_GRID_H, yaxis_title="YoY")
     fig.update_yaxes(ticksuffix="%")
     return fig
@@ -1325,7 +1321,7 @@ def _render_regime():
         unsafe_allow_html=True,
     )
     st.caption(
-        "Curve: 10Y−2Y / 10Y−3M shape + 3-month direction. Credit: HY OAS band "
+        "Curve: 2Y−10Y / 3M−10Y shape + 3-month direction. Credit: HY OAS band "
         "(Tight <350 · Normal 350–500 · Elevated 500–800 · Stressed ≥800 bps). "
         "Fed Path: change in the effective funds rate over 6 months. Source: FRED."
     )
@@ -1814,7 +1810,7 @@ def _render_credit_spreads():
     body += (f'<tr><td colspan="6" style="text-align:left;background:var(--grid-head-bg);'
              'color:var(--brand-primary);font-weight:700;text-transform:uppercase;'
              'font-size:var(--fs-2xs);letter-spacing:0.06em;">Risk premium</td></tr>'
-             '<tr><td style="text-align:left;">HY - IG differential</td>'
+             '<tr><td style="text-align:left;">HY − IG differential</td>'
              f'<td style="text-align:right;font-weight:600;">{_bps(diff)}</td>'
              '<td style="text-align:right;color:var(--text-muted);">-</td>'
              '<td style="text-align:right;color:var(--text-muted);">-</td>'
@@ -1882,7 +1878,7 @@ def _render_credit_spreads():
                     showarrow=True, arrowhead=0, ax=-66, ay=-24,
                     font=dict(size=10, color="#dc2626"),
                     bgcolor="#ffffff", bordercolor="#e5e7eb", borderpad=3)
-            apply_standard_layout(fig, title="Credit spreads (5Y) - IG / BBB / HY OAS with regime bands",
+            apply_standard_layout(fig, title="Credit spreads (5Y) — IG / BBB / HY OAS",
                                   height=352, yaxis_title="OAS")
             fig.update_yaxes(ticksuffix="%")
             st.plotly_chart(fig, use_container_width=True)
@@ -1899,7 +1895,7 @@ def _render_credit_spreads():
                 figd.add_trace(go.Scatter(
                     x=m["date"], y=(m["value_hy"] - m["value_ig"]), mode="lines",
                     line=dict(color="#1e3a8a", width=2),
-                    fill="tozeroy", fillcolor="rgba(30,58,138,0.06)", name="HY - IG"))
+                    fill="tozeroy", fillcolor="rgba(30,58,138,0.06)", name="HY − IG"))
             apply_standard_layout(figd, title="HY − IG risk premium (5Y)",
                                   height=352, yaxis_title="pp", show_legend=False)
             figd.update_yaxes(ticksuffix="pp")

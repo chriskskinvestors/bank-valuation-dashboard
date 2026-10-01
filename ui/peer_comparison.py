@@ -679,6 +679,7 @@ def _render_metrics_table(cohort: list[dict], display_peers: list[dict],
         st.markdown(
             "<style>"
             ".cmp-wrap{max-height:640px;overflow:auto;border:0.5px solid var(--grid-head);}"
+            ".cmp-wrap table{width:100%;}"
             ".cmp-wrap thead th{position:sticky;top:0;z-index:3;}"
             ".cmp-wrap td.nm,.cmp-wrap th.nm{text-align:left;}"
             ".cmp-wrap td.med{color:var(--text-secondary);font-weight:600;}"
