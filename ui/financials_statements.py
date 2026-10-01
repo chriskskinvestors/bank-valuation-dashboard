@@ -21,7 +21,7 @@ from ui.export import table_export
 from ui.financial_highlights import _build_component
 from ui.history_range import (table_range_picker, load_hist_df_for_range, range_years,
                               first_live_index, structure_breaks, describe_window,
-                              entity_note)
+                              entity_note, acquisitions_between, group_acquisitions)
 
 
 # Shared numeric primitives — one implementation in utils/formatting.
@@ -728,6 +728,14 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     _computed_src = ("Computed from Call Report" + _Q_NOTE) if _decum_active \
         else "Computed from Call Report"
 
+    # Annualized growth rows: a period in which the bank completed a
+    # whole-bank acquisition grows by the target, not organically. The
+    # arithmetic is as documented, so the cell keeps its value but carries a
+    # † marker and names the deal in the click-through — never a bare 203%
+    # (REVIEW-2026-09-24 P2-7: ONB/Bremer, HBAN/Cadence). Charter group,
+    # FDIC structure history, cached 7d; [] on failure = unflagged.
+    _acq_deals = group_acquisitions(ticker, cert)
+
     def cell(ci, kind, args, label):
         rec = recs_list[ci]
         asof = _disp(rec.get("REPDTE"))
@@ -1328,8 +1336,16 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "n/a", calc(label, "n/a — non-positive balance ratio",
                                    asof, "Computed from Call Report", terms, op, False)
             g = ((ratio ** 4 - 1.0) if quarterly else (ratio - 1.0)) * 100.0
-            return _pctv(g), calc(label, _pctv(g), asof,
-                                     "Computed from Call Report", terms, op, False)
+            acq = acquisitions_between(_acq_deals, recs_list[ci - 1].get("REPDTE"),
+                                       rec.get("REPDTE"))
+            for d in acq:
+                terms.append({"label": "Acquisition completed in period (FDIC structure history)",
+                              "val": f"{d.get('target_name') or 'unnamed target'} "
+                                     f"({d.get('date')}) — growth is not organic"})
+            c = calc(label, _pctv(g), asof, "Computed from Call Report", terms, op, False)
+            if acq:
+                c["flag"] = "acq"
+            return _pctv(g), c
         if kind == "flow":
             # Income-statement flow shown as a PERIOD dollar amount (not a
             # rate): Annual columns are 12/31 rows, so the calendar-YTD figure
@@ -1531,6 +1547,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         return "—", None
 
     cells, rows_html, ri = {}, [], 0
+    any_acq = False   # a † growth cell rendered → the caption explains the marker
     cell_errors: list[str] = []
     xrows = []   # (label, kind, raw values) for the Excel export — raw, never parsed
     ncol = len(recs_list)
@@ -1559,7 +1576,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 cid = f"{ri}_{ci}"
                 if c:
                     cells[cid] = c
-                    tds.append(f'<td class="val" data-cid="{cid}">{v}</td>')
+                    acq_cls = " acq" if c.get("flag") == "acq" else ""
+                    any_acq = any_acq or bool(acq_cls)
+                    tds.append(f'<td class="val{acq_cls}" data-cid="{cid}">{v}</td>')
                 else:
                     tds.append(f'<td class="val dead">{v}</td>')
                 live_flags.append(v not in ("—", "n/a", ""))
@@ -1589,6 +1608,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     tr = _DEFAULT_TRENDS if trends is None else trends
     latest_iso = pd.Timestamp(recs_list[-1].get("REPDTE")).date().isoformat()
     cap = f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load."
+    if any_acq:
+        cap += (" · † growth includes a whole-bank acquisition completed in the "
+                "period — not organic (click the cell for the deal)")
 
     def _export():
         _cr_export(labels, xrows,

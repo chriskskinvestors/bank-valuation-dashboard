@@ -238,11 +238,7 @@ def resolve_owners(absorptions: list[dict]) -> dict[int, dict]:
     return owners
 
 
-def get_acquisition_history(cert: int) -> list[dict]:
-    """
-    Completed acquisitions (institutions absorbed by this cert), newest-first,
-    shaped for the M&A table: [{date, target_name, target_cert, event_desc}].
-    """
+def _acquisitions(events: list[dict]) -> list[dict]:
     return [
         {
             "date": e["date"],
@@ -250,9 +246,34 @@ def get_acquisition_history(cert: int) -> list[dict]:
             "target_cert": e["other_institution"]["cert"],
             "event_desc": e["description"],
         }
-        for e in get_structure_events(cert)
-        if e["direction"] == "acquired" and e["other_institution"]
+        for e in events
+        if e.get("direction") == "acquired" and e.get("other_institution")
     ]
+
+
+def get_acquisition_history(cert: int) -> list[dict]:
+    """
+    Completed acquisitions (institutions absorbed by this cert), newest-first,
+    shaped for the M&A table: [{date, target_name, target_cert, event_desc}].
+    """
+    return _acquisitions(get_structure_events(cert))
+
+
+def get_acquisition_history_cached(cert: int) -> list[dict]:
+    """The same list from the persistent cache ONLY — never a fetch. For
+    render paths (the statement tables' growth-row acquisition flag): jobs
+    build, renders read. Any cached history is used regardless of age (it
+    only ever grows; the nightly universe refresh re-warms it) and a miss
+    is [] — the caller renders unflagged rather than blocking on FDIC."""
+    if not cert:
+        return []
+    from data import cache
+    try:
+        cached = cache.get(f"fdic_structure:{int(cert)}", max_age_s=None)
+    except Exception:
+        return []
+    events = (cached or {}).get("events") if isinstance(cached, dict) else None
+    return _acquisitions(events) if isinstance(events, list) else []
 
 
 if __name__ == "__main__":

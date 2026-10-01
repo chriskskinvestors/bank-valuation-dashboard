@@ -1543,7 +1543,7 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
         self.assertEqual(components, 3_418_233)
         self.assertEqual(r["EQTOT"] - r["EQPP"], 1_952_235)           # common equity
 
-    def _render(self, hist_rows):
+    def _render(self, hist_rows, acquisitions=()):
         # Drive the real render path against a streamlit stub and read the
         # produced iframe HTML. The fixtures are a Dec year-end PRIOR + a
         # 03/31 quarter, so the view MUST be Quarterly for the quarter column
@@ -1610,16 +1610,19 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
         # this test silently rendering LIVE data (the forced fixture never
         # entered the pipeline, so the negative-residual assert went dead).
         import data.loaders as dl
-        saved = (fs.get_bank_info, dl.load_fdic_hist_df)
+        saved = (fs.get_bank_info, dl.load_fdic_hist_df, fs.group_acquisitions)
         try:
             fs.get_bank_info = lambda t: {
                 "name": "Banner Bank", "fdic_cert": 28489, "cik": None}
+            # The growth-row acquisition flag reads the FDIC structure seam;
+            # the fixture supplies the deals (default none) — never live.
+            fs.group_acquisitions = lambda t, c=None: [dict(d) for d in acquisitions]
             dl.load_fdic_hist_df = (
                 lambda ticker, quarters=44: pd.DataFrame([dict(r) for r in hist_rows]))
             with patch.object(_export, "st", export_st):
                 fs.render_balance_sheet("BANR")
         finally:
-            fs.get_bank_info, dl.load_fdic_hist_df = saved
+            fs.get_bank_info, dl.load_fdic_hist_df, fs.group_acquisitions = saved
             # Restore the module table and reload fs against the real streamlit
             # so this test does not poison any class that runs after it.
             for k in keys:
@@ -1673,6 +1676,24 @@ class TestBalanceSheetComputedLines(unittest.TestCase):
         # Negative residual → n/a + flag in the click-through, never a negative
         # plug shown as the cell value.
         self.assertIn("itemized lines exceed total", h)
+
+    def test_growth_in_acquisition_quarter_is_flagged(self):
+        # REVIEW-2026-09-24 P2-7: ONB's Q2'25 "Asset Growth 203.30%" was the
+        # Bremer acquisition compounded, shown as if organic. The arithmetic
+        # stays exactly as documented (−0.24% here); the cell gains the † class
+        # and the click-through names the deal. A deal dated inside the PRIOR
+        # quarter is outside (prior REPDTE, REPDTE] and flags nothing.
+        deal = {"date": "2026-02-15", "target_name": "Example Bank",
+                "target_cert": 1, "event_desc": "Merger"}
+        rows = [dict(self.BANR_PRIOR), dict(self.BANR_Q1_26)]
+        h = self._render(rows, acquisitions=[deal])
+        self.assertIn('class="val acq"', h)
+        self.assertIn("Acquisition completed in period", h)
+        self.assertIn("Example Bank (2026-02-15)", h)
+        self.assertIn("-0.24%", h)
+        h = self._render(rows, acquisitions=[dict(deal, date="2025-12-31")])
+        self.assertNotIn('class="val acq"', h)
+        self.assertNotIn("Acquisition completed in period", h)
 
 
 class TestPreferredStockExcludedFromBookValue(unittest.TestCase):
