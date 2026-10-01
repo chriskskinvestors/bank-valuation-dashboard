@@ -239,6 +239,26 @@ def warm_group_map(institutions: list[dict]) -> int:
     return len(m)
 
 
+def get_cert_group_cached(cert: int | None) -> list[int]:
+    """The charter group from the persisted bulk map ONLY — no per-cert
+    resolution, no network. A cert absent from the map (or no map yet) is
+    its own single-charter group; None/0 is []. For render paths that must
+    never block on FDIC (the growth-row acquisition flag)."""
+    if not cert:
+        return []
+    cert = int(cert)
+    from data import cache
+    try:
+        m = cache.get(_GROUP_MAP_KEY, max_age_s=None)
+    except Exception:
+        m = None
+    if isinstance(m, dict):
+        g = m.get(str(cert))
+        if g:
+            return [int(c) for c in g]
+    return [cert]
+
+
 def _resolve_group(cert: int) -> list[int]:
     """Live FDIC lookup: the cert's holdco RSSD, then every active cert under
     it, ordered by assets descending. [] on any failure (caller falls back)."""

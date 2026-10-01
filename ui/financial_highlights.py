@@ -904,6 +904,8 @@ td.val {{ text-align:right; padding:2px 7px; color:#1e40af; cursor:pointer;
   font-variant-numeric:tabular-nums; }}
 td.val.dead {{ color:#94a3b8; cursor:default; }}
 td.val.neg {{ color:#b91c1c; }}
+/* † = growth includes an acquisition completed in the period (P2-7) */
+td.val.acq::after {{ content:"†"; font-size:9px; color:#94a3b8; margin-left:2px; }}
 tr.zebra td.lbl, tr.zebra td.val {{ background:#fafbfc; }}
 tbody tr:hover td.lbl, tbody tr:hover td.val {{ background:rgba(30,64,175,0.07); }}
 tbody tr:hover td.lbl {{ color:#0f172a; font-weight:600; }}
