@@ -44,6 +44,7 @@ from utils.chart_style import (
     COLOR_SUCCESS,
     COLOR_WARNING,
     COLOR_DANGER,
+    COLOR_NEUTRAL,
     apply_standard_layout,
     CHART_HEIGHT_COMPACT,
 )
@@ -645,14 +646,18 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
     dates = [e["date"] for e in past_reversed]
     actuals = [e["eps_actual"] for e in past_reversed]
     estimates_vals = [e["eps_estimate"] for e in past_reversed]
-    surprises = [e.get("surprise_pct", 0) or 0 for e in past_reversed]
+    # None (not 0) when the source has no surprise: an unknown quarter gets a
+    # neutral bar and no label, never a fabricated "+0.0%".
+    surprises = [e.get("surprise_pct") for e in past_reversed]
 
     fig = go.Figure()
 
     fig.add_trace(go.Bar(
         x=dates, y=actuals,
         name="Actual EPS (adj.)",
-        marker_color=[COLOR_SUCCESS if s >= 0 else COLOR_DANGER for s in surprises],
+        marker_color=[COLOR_NEUTRAL if s is None
+                      else COLOR_SUCCESS if s >= 0 else COLOR_DANGER
+                      for s in surprises],
         opacity=0.7,
     ))
 
@@ -666,6 +671,8 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
 
     # Add surprise % as text above bars
     for i, (d, a, s) in enumerate(zip(dates, actuals, surprises)):
+        if s is None:
+            continue
         fig.add_annotation(
             x=d, y=a,
             text=f"{s:+.1f}%",
