@@ -50,9 +50,20 @@ REVIEWED_NON_FILERS = {
     "FNFPA": _NO_PERIODIC.format("Form D only; FNFI's second class"),
     "OAKC": _NO_PERIODIC.format("Form D only"),
     "MFDB": _NO_PERIODIC.format("SEC 'MFB Bancorp', S-1 2026-09-14 conversion"),
-    "NACB": _NO_PERIODIC.format("SEC 'ODNB Financial Corp', S-4/425 merger 2026"),
-    "WCCB": _NO_PERIODIC.format("Form 10-12B 2026-08-31, CERT/8-K 2026-09-15 "
-                                "— registered; first 10-Q expected Q3-2026"),
+    # Rechecked 2026-10-01: SEC's CIK 1947463 is ODNB Financial Corp (VA; bank
+    # Old Dominion National Bank, FDIC cert 58504; Form D only, never a
+    # 10-Q/10-K) — the ACQUIRER of our NACB (National Capital Bancorp, DC;
+    # cert 2093, FDIC NAMEHCR "NATIONAL CAPITAL BCORP INC"), which has no SEC
+    # CIK. Per S-4/A 2026-09-16, NACB merges into ODNB (close expected Q4-2026),
+    # ODNB is renamed National Capital Bancorp and lists as NACB, cert 2093
+    # survives. Mapping 1947463 now would show ODNB's filings for NACB; set it
+    # only after closing AND its first 10-Q/10-K.
+    "NACB": "SEC lists NACB under the pending acquirer's CIK (ODNB Financial "
+            "Corp, S-4/425 2026; no 10-Q/10-K) — not our bank until the "
+            "merger closes and that CIK files periodically",
+    "WCCB": _NO_PERIODIC.format("rechecked 2026-10-01: 10-12B 2026-08-31, "
+                                "CERT/8-K 2026-09-15, S-8 2026-09-17; "
+                                "first 10-Q expected for Q3-2026"),
 }
 
 
