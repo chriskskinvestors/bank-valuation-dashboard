@@ -44,7 +44,7 @@ def _stub_st(period):
     return st
 
 
-def _render(spec, hist, period="Annual", ri_rows=(), flow_fields=None):
+def _render(spec, hist, period="Annual", ri_rows=(), flow_fields=None, rie_rows=()):
     """Render one Templated statement; returns (iframe html, export workbook)."""
     calls, html = [], []
     fake_ex = types.SimpleNamespace(
@@ -60,7 +60,7 @@ def _render(spec, hist, period="Annual", ri_rows=(), flow_fields=None):
          mock.patch.object(FS, "_render_statement_trends", lambda *a, **k: None), \
          mock.patch.object(loaders, "load_fdic_hist_df", lambda t, q: hist.copy()), \
          mock.patch.object(crs, "get_stored_ri_detail", lambda cert, quarters=40: list(ri_rows)), \
-         mock.patch.object(crs, "get_stored_rie_detail", lambda cert, quarters=40: []), \
+         mock.patch.object(crs, "get_stored_rie_detail", lambda cert, quarters=40: list(rie_rows)), \
          mock.patch.object(ex, "st", fake_ex):
         FS.render_statement("TBNK", "stmt", "Statement", spec, trends=[],
                             with_ri=True, flow_fields=flow_fields)
@@ -193,6 +193,29 @@ class TestFteRowsNotIngestedReason(unittest.TestCase):
         rows = [[c.value for c in r] for r in self.a_ws.iter_rows()]
         fte = next(r for r in rows if str(r[0]).startswith("FTE adjustment"))
         self.assertEqual(fte[1], "n/a")
+
+
+class TestRieRowsNotIngestedReason(unittest.TestCase):
+    """RI-E itemized-expense rows for a quarter the store hasn't ingested: a
+    click-through with the reason (same contract as the FTE rows), not a dead
+    cell."""
+
+    HIST = TestFteRowsNotIngestedReason.HIST
+    RIE = [{"reporting_period": "2026-03-31", "data_processing": 2_500}]
+    SPEC = [("Non-Interest Expense",
+             [("Other non-interest expense", "dollar", "EOTHNINT")])]
+
+    def test_missing_quarter_has_reason_and_ingested_quarter_computes(self):
+        html, _ws = _render(self.SPEC, self.HIST, "Quarterly", rie_rows=self.RIE,
+                            flow_fields=TestFteRowsNotIngestedReason.FLOWS)
+        cells = _row_cells(html, "&nbsp;&nbsp;&nbsp;&nbsp;Data processing expenses")
+        # columns: Q4 '25 (no RI-E), Q1 '26 ($2.5M, as filed), Q2 '26 (not yet)
+        self.assertEqual(cells[1][1], "$2.5M")
+        for tag, text in (cells[0], cells[2]):
+            self.assertEqual(text, "\u2014")              # UX-P1-19 token
+            self.assertIn("data-cid", tag)                # click-through
+            self.assertNotIn("dead", tag)
+        self.assertIn("Schedule RI-E detail not yet ingested for this period", html)
 
 
 if __name__ == "__main__":

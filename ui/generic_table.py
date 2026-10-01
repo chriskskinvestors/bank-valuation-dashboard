@@ -149,7 +149,12 @@ def render_generic_table(
     # can't carry per-row deep-links.
     heads = ['<th>Ticker</th>', '<th class="nm">Bank</th>']
     for c in valid_cols:
-        heads.append(f'<th>{_html.escape(METRICS_BY_KEY.get(c, {}).get("label", c))}</th>')
+        _m = METRICS_BY_KEY.get(c, {})
+        _lbl = _m.get("label", c)
+        # A short "header" (call-report fields: the code) keeps FDIC's long
+        # titles from blowing out the grid; the full label is the tooltip.
+        heads.append(f'<th title="{_html.escape(_lbl, quote=True)}">'
+                     f'{_html.escape(_m.get("header") or _lbl)}</th>')
     thead = "<tr>" + "".join(heads) + "</tr>"
 
     body = []

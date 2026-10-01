@@ -62,6 +62,7 @@ def _lift(names: set[str]) -> dict:
 
 _NAMES = {"_SCREEN_FILTER_FMTS", "_SCREEN_MAX_FILTERS", "_SCREEN_FILTER_SUFFIXES",
           "_SCREEN_SCOPE_SUFFIXES", "_screen_filter_key_to_idx",
+          "_screen_formulas", "_screen_filter_options", "_screen_valid_dyn",
           "_screen_clear_filters", "_screen_restore_cfg",
           "_filter_specs_from_state", "_specs_to_cfg_filters", "_remove_filter",
           "_add_filter"}
