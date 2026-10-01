@@ -1232,11 +1232,11 @@ def _resolve_release_efficiency(
 
 
 def _earnings_8k_predates(cik, sec_as_of: str | None) -> bool:
-    """True when the bank's latest Item 2.02 8-K covers a quarter BEFORE its
+    """True when the bank's latest earnings 8-K covers a quarter BEFORE its
     latest SEC balance sheet (sec_as_of) — the release is stale against the
     10-Q the reconstruction comes from. TYFG stopped furnishing earnings on
-    8-K after Q3-2025; FBP and NPB furnished their Q2-2026 releases under
-    Item 2.01, so the 2.02 finder still lands on Q1 (found 2026-10-01). The
+    8-K after Q3-2025. (FBP/NPB's mis-itemized Q2-2026 releases are now found
+    by the finder itself — data.sec_earnings_8k._is_misitemized_release.) The
     covered quarter is the last quarter-end before the 8-K's filing date.
     A lookup failure is False (the 8-K path runs as before)."""
     if not sec_as_of:
