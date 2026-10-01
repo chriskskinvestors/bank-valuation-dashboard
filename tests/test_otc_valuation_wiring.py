@@ -238,6 +238,34 @@ class TestStale8kNeverOutranksTheNewer10q(unittest.TestCase):
         self.assertEqual(va._resolve_tbvps("TYFG", 65.44, 69.08, sec_as_of="2026-06-30"),
                          (65.45, "reported_8k", False))
 
+    def _wire(self, qend, tbv, bv):
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
+            "qend": qend, "metrics": {"tbv_ps": tbv, "bv_ps": bv}}
+
+    def test_glbz_newer_wire_release_beats_older_8k(self):
+        # GLBZ 2026-10-01: last earnings 8-K Q3-2025 (BV $7.10), 10-Q stuck
+        # at 2025-09-30 (BV 7.10 / TBV 6.99); its Q2-2026 wire release says
+        # BV $7.27 / TBV $7.16. The newest company figure wins for both.
+        q2 = (date.today() - timedelta(days=60)).isoformat()
+        self._eightk("2025-11-03", None, 7.10)
+        self._wire(q2, 7.16, 7.27)
+        self.assertEqual(va._resolve_tbvps("GLBZ", 6.99, 7.10, sec_as_of="2025-09-30"),
+                         (7.16, "company_release", False))
+        self.assertEqual(va._resolve_bvps("GLBZ", 7.10, 7.16, sec_as_of="2025-09-30"),
+                         (7.27, "company_release", False))
+
+    def test_glbz_before_the_wire_is_warmed_keeps_the_8k(self):
+        self._eightk("2025-11-03", None, 7.10)
+        self.assertEqual(va._resolve_bvps("GLBZ", 7.10, 6.99, sec_as_of="2025-09-30"),
+                         (7.10, "reported_8k", False))
+
+    def test_newer_wire_release_beats_8k_without_reconstruction(self):
+        q2 = (date.today() - timedelta(days=60)).isoformat()
+        self._eightk("2026-04-21", 16.35, None)
+        self._wire(q2, 17.02, 17.10)
+        self.assertEqual(va._resolve_tbvps("NPB", None, None, sec_as_of="2026-06-30"),
+                         (17.02, "company_release", False))
+
     def test_no_reconstruction_keeps_the_8k(self):
         # NPB: nothing newer to serve — the release stays (no regression to n/a).
         self._eightk("2026-04-21", 16.35, None)
