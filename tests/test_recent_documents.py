@@ -131,6 +131,17 @@ class TestMenuHtmlEscaping(unittest.TestCase):
         out = RD._filing_menu(_f("8-K", items="2.02", is_earnings=True), "PB")
         self.assertIn("pdf=er%7C0001193125-26-077437", out)
 
+    def test_current_report_label_is_the_bare_code(self):
+        # UX-P2-26: the Current Reports panel labelled every 8-K "8-K (8-K)"
+        # (it builds its cell here, not through doc_label). The code alone is
+        # the label; the item description is the sub text.
+        out = RD._filing_menu(_f("8-K", items="8.01"), "PB")
+        self.assertNotIn("(8-K)", out)
+        self.assertIn("<summary>8-K <span", out)
+        out = RD._filing_menu(_f("8-K/A", items="8.01"), "PB")
+        self.assertIn("<summary>8-K/A <span", out)
+        self.assertNotIn("(8-K)", out)
+
 
 if __name__ == "__main__":
     unittest.main()
