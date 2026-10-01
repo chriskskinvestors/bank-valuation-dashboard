@@ -22,7 +22,7 @@ from ui.states import skeleton as _skeleton
 import streamlit.components.v1 as components
 import pandas as pd
 
-from data.bank_mapping import get_bank_info
+from data.bank_mapping import get_bank_info, get_name
 from ui.chrome import table_export, title_bar
 from ui.history_range import (table_range_picker, load_hist_df_for_range, range_years,
                               first_live_index, structure_breaks, describe_window,
@@ -442,7 +442,8 @@ _EXPORT_UNIT = {
 # ── the table ───────────────────────────────────────────────────────────────
 def render_financial_highlights(ticker: str):
     info = get_bank_info(ticker)
-    name = info.get("name") if info else ticker
+    # THE display name, same string as every other leaf header (UX-P2-23).
+    name = get_name(ticker) or (info.get("name") if info else ticker)
     cert = info.get("fdic_cert") if info else None
     cik = info.get("cik") if info else None
 
