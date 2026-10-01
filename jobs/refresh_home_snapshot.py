@@ -302,7 +302,10 @@ def _warm_otc_releases(tickers: list[str], sec: dict) -> None:
     # through the cheap wire lookup only (no 30-100s IR-site crawl).
     wire_only = [t for t in tickers if t in sec and _no_recent_earnings_8k(t)]
     warmed = failed = 0
-    for t, crawl in [(t, True) for t in targets] + [(t, False) for t in wire_only]:
+    # Cheap wire-only lookups FIRST: the full list can spend an hour in IR-site
+    # crawls after an extraction-version bump resets every crawl throttle
+    # (2026-10-01: PBAM/GLBZ sat on the reconstruction while ~80 crawls ran).
+    for t, crawl in [(t, False) for t in wire_only] + [(t, True) for t in targets]:
         try:
             otc_release_metrics(t, allow_fetch=True, ir_crawl=crawl)
             warmed += 1
