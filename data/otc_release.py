@@ -305,6 +305,7 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v10 (2026-10-01): release_metrics v19 — deterministic bv_ps (GLBZ).
     # v9 (2026-08-20): release_metrics v18 — EPS tie-out input rows (NI
     # applicable to common + weighted average diluted shares). OTC banks
     # never reach the composite-EPS tie-out (no CIK), but the coupling rule
@@ -330,7 +331,7 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
     # v4 subject guard + title-governed qend; v3 prose-EPS connector
     # (release_metrics v12). COUPLING: any release_metrics extraction-spec
     # bump must bump THIS version too (extractions immutable per URL).
-    key = f"otc_release:v9:{ticker.upper()}"
+    key = f"otc_release:v10:{ticker.upper()}"
     try:
         # Freshness is judged below (15-min is_fresh + URL-match re-stamp);
         # the default 24h read ceiling would drop `prev` after any >24h gap

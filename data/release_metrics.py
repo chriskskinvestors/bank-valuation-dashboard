@@ -247,6 +247,19 @@ _TBV_PATS = [
 ]
 _TBV_BAND = (1.0, 500.0)
 
+# Book value per share — the same three label-led forms as TBV. The label
+# must not be the tail of "tangible (common) book value per share": prose
+# patterns scan anywhere, so the fixed-width lookbehinds keep a TBV sentence
+# from becoming a BV candidate. (Table rows match at the label START, so the
+# table spec needs no such guard.) Without a deterministic BV the wire banks'
+# BV/share came only from the AI fill — GLBZ 2026-10-01 showed TBV $7.16
+# from its Q2 release beside a year-old reconstructed BV $7.10 (release
+# table: "Book value per share $ 7.27").
+_BV_LABEL = r"(?<!tangible )(?<!tangible common )book value per (?:common )?share"
+_BV_PATS = [re.compile(p.pattern.replace(_TBV_LABEL, _BV_LABEL, 1), re.I)
+            for p in _TBV_PATS]
+_BV_BAND = (1.0, 900.0)
+
 _DIV_PATS = [
     re.compile(r"(?<!special )(?<!annual )dividend of \$\s?(\d{1,2}\.\d{2,4}) per "
                r"(?:common )?share", re.I),
@@ -294,7 +307,7 @@ def _dollar_metric(text: str, pats, band) -> float | None:
 
 def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict:
     """{nim, efficiency, roa, roe, rotce, nco_ratio, npa_assets, acl_loans,
-    tbv_ps, div_ps} from an earnings release — never guessed. Prose first
+    tbv_ps, bv_ps, div_ps} from an earnings release — never guessed. Prose first
     (the narrated value is the bank's own headline); where prose gives None
     and `expected_qend` is known, a structurally-parsed TABLE value fills the
     gap (see extract_table_metrics — the current-quarter column is identified
@@ -307,6 +320,7 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
     for key, (label, denom, band) in _PINNED_SPECS.items():
         out[key] = _pinned_metric(text, label, denom, band)
     out["tbv_ps"] = _dollar_metric(text, _TBV_PATS, _TBV_BAND)
+    out["bv_ps"] = _dollar_metric(text, _BV_PATS, _BV_BAND)
     out["div_ps"] = _dollar_metric(text, _DIV_PATS, _DIV_BAND)
     out["eps_diluted"] = _dollar_metric(text, _EPS_PATS, _EPS_BAND)
     if expected_qend and any(v is None for v in out.values()):
@@ -448,6 +462,7 @@ _TABLE_SPECS = {
                   r"(?:to|/|as a percentage of) (?:total )?loans", "%",
                   (0.1, 6.0)),
     "tbv_ps": (r"tangible book value per (?:common )?share", "$", (1.0, 500.0)),
+    "bv_ps": (r"book value per (?:common )?share", "$", (1.0, 900.0)),
     "div_ps": (r"(?:cash )?dividends?(?: declared| paid)? per (?:common )?share",
                "$", (0.005, 10.0)),
     # Actuals fill (2026-07-13, owner): EPS + total revenue from the release
@@ -915,7 +930,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v18:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v19:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -936,6 +951,9 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v19 (2026-10-01): deterministic bv_ps (prose + table) — BV/share was
+    # AI-fill only, so wire banks showed a stale reconstructed BV beside a
+    # fresh release TBV (GLBZ). Forces a universe-wide re-extraction.
     # v18 (2026-08-20): EPS tie-out input rows — net income applicable to
     # common ("$K", scale-sniffed) + weighted average diluted shares ("#",
     # raw printed count) so analysis/valuation._release_eps_tie_out can
@@ -967,7 +985,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v18:{int(cik)}"
+    key = f"release_metrics:v19:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
