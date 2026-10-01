@@ -16,7 +16,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 
-from data.bank_mapping import get_bank_info
+from data.bank_mapping import get_bank_info, get_name
 from ui.export import table_export
 from ui.financial_highlights import _build_component
 from ui.history_range import (table_range_picker, load_hist_df_for_range, range_years,
@@ -1599,7 +1599,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
 
     head = ('<th class="lblh">(figures in USD)</th>'
             + "".join(f'<th class="colh">{lb}</th>' for lb in labels))
-    height = 96 + 23 * (ri + len(spec) + 1) + (16 if deep else 0)
+    # Rows render at 20 px (measured: header 20, each data/section row 20,
+    # footer ~22). 21/row + 60 leaves ~65 px of slack for a wrapped label on
+    # a 24-row table instead of the 150-300 px blank band the old 96 + 23/row
+    # left under Capital Adequacy (UX-P2-20); scrolling is off, never undersize.
+    height = 60 + 21 * (ri + len(spec) + 1) + (16 if deep else 0)
     sec_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K"
                 if cik else fdic_link)
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link,
@@ -2309,8 +2313,9 @@ _CAPITAL_STRUCTURE = [
 def _cr_title(ticker: str, page: str) -> None:
     """SNL title bar for a Company-Reported sub-tab (replaces st.subheader)."""
     from ui.chrome import title_bar
-    info = get_bank_info(ticker)
-    name = info.get("name") if info else ticker
+    # THE display name (get_name -> format_bank_name), the same string as
+    # every other leaf header — never the source's own casing (UX-P2-23).
+    name = get_name(ticker) or ticker
     title_bar(f"{name} ({ticker})", page)
 
 

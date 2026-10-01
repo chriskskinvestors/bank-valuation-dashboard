@@ -803,7 +803,8 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
     """Show key reported metrics — every value click-to-source (same provenance
     as the Overview cards): FDIC ratios → Call Report, SEC per-share → 10-K/10-Q,
     ROATCE → formula + inputs, with the one-time-item flag preserved."""
-    st.markdown("---")
+    # No rule here: the caller already draws one above this block, and two
+    # stacked rules were the ~100 px blank band (UX-P2-25).
     st.markdown('<div class="ec-sec">Key Reported Metrics</div>',
                 unsafe_allow_html=True)
 

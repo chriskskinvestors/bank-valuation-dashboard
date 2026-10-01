@@ -22,7 +22,7 @@ from ui.states import skeleton as _skeleton
 import streamlit.components.v1 as components
 import pandas as pd
 
-from data.bank_mapping import get_bank_info
+from data.bank_mapping import get_bank_info, get_name
 from ui.chrome import table_export, title_bar
 from ui.history_range import (table_range_picker, load_hist_df_for_range, range_years,
                               first_live_index, structure_breaks, describe_window,
@@ -446,7 +446,9 @@ def render_financial_highlights(ticker: str):
     cert = info.get("fdic_cert") if info else None
     cik = info.get("cik") if info else None
 
-    title_bar(f"{name} ({ticker})", "Financial Highlights")
+    # Header: THE display name, the same string as every other leaf header
+    # (UX-P2-23). `name` (the mapping's name) still labels the export.
+    title_bar(f"{get_name(ticker) or name} ({ticker})", "Financial Highlights")
     _pc, _rc = st.columns([1, 2])
     with _pc:
         period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
