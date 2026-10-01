@@ -165,6 +165,22 @@ class TestRelExhibit(unittest.TestCase):
         self.assertIsNone(rows2["eps_adj"]["cur"])
         self.assertEqual(rows2["eps_diluted"]["cur"], 1.64)
 
+    def test_board_marks_release_eps_basis(self):
+        # The board's EPS Act column is the consensus (adjusted) basis: a
+        # release-filled GAAP figure is marked † (and noted), adjusted *.
+        from ui.earnings import _results_tr, _eps_src_mark
+        self.assertEqual(_eps_src_mark(None), "")
+        self.assertEqual(_eps_src_mark("release, adj."), "*")
+        self.assertEqual(_eps_src_mark("release, GAAP"), "†")
+        base = {"ticker": "JPM", "date": "2026-07-15", "eps_est": 1.50}
+        gaap = _results_tr({**base, "eps_act": 1.64, "eps_act_src": "release, GAAP"}, 14)
+        adj = _results_tr({**base, "eps_act": 1.64, "eps_act_src": "release, adj."}, 14)
+        feed = _results_tr({**base, "eps_act": 1.64}, 14)
+        self.assertIn("$1.64†", gaap)
+        self.assertIn("$1.64*", adj)
+        self.assertNotIn("$1.64†", adj)
+        self.assertIn("$1.64<", feed)
+
     def test_detail_row_is_exhibit_table(self):
         html = _rel_detail_tr(self.FIX, ncols=14)
         for want in ("2Q25A", "1Q26A", "2Q26A", "Cons.", "LQ Δ", "Y/Y Δ",

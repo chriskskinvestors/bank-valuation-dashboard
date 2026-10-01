@@ -30,6 +30,7 @@ from unittest import mock
 STORE_MODULES = (
     "data.cache",
     "data.branches_store",
+    "data.call_report_full",
     "data.call_report_store",
     "data.events.store",
     "data.fdic_history_store",
