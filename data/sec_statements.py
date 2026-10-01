@@ -953,9 +953,17 @@ def _norm_label(s: str) -> str:
     """Match key for a line across filings: drop year-varying numeric detail
     (allowance amounts, share counts, note numbers, dates) so the same line
     doesn't fragment when a filing embeds changing numbers in its label —
-    e.g. 'AFS securities, net of allowance of $75 and $69'."""
+    e.g. 'AFS securities, net of allowance of $75 and $69'. Also drops the
+    empty parentheses a footnote marker leaves behind ('Other operating(1)(3)',
+    'Earnings per share (1):'), the us-gaap standard-label '[Abstract]' suffix
+    SEC renders on an unlabeled section header ('Revenues [Abstract]' in Citi's
+    10-Q vs 'Revenues' in its 10-K), and a trailing colon ('Interest expense:'
+    vs 'Interest expense' — the same header across two filing agents), so a
+    header is ONE row across filings and an older filing's lines anchor under
+    it instead of after a duplicate (REVIEW-2026-09-24 P2-5)."""
     s = re.sub(r"[\d,]+", "", s).replace("$", "").replace("—", "").replace("–", "")
-    return re.sub(r"\s+", " ", s).strip().lower()
+    s = re.sub(r"\(\s*\)|\[abstract\]", "", s, flags=re.I)
+    return re.sub(r"\s+", " ", s).strip().lower().rstrip(":").strip()
 
 
 # An injected XBRL standard-label placeholder, NOT an economic line: SEC renders
@@ -1599,6 +1607,30 @@ def _q4_from_10k_tags(fk: dict, qe: tuple, nine_end: tuple) -> dict:
     return out
 
 
+def _element_key_map(src: dict, dst: dict) -> dict:
+    """{src_key: dst_key} for the data rows of two parsed filings that tag the
+    SAME XBRL element but normalize to DIFFERENT stitch keys — a line the filer
+    words differently in its 10-K than in its 10-Q (Citi: 'Provision for income
+    taxes' ↔ 'Provision (benefit) for income taxes', 'Citigroup's net income' ↔
+    'Net income', and the us-gaap standard label 'Net Income (Loss), Including
+    Portion Attributable to Noncontrolling Interest, Total' ↔ 'Net income before
+    attribution to noncontrolling interests'). Only an element that occurs
+    exactly ONCE in each filing qualifies — a repeated element is a dimensioned
+    member block (HBAN), ambiguous, and stays on its label key — and the two
+    keys must be of the same value kind."""
+    def _unique(f):
+        seen: dict = {}
+        for k, r in _keyed_rows(f["rows"]):
+            eid = r.get("element_id") or ""
+            if r["header"] or not eid:
+                continue
+            seen[eid] = None if eid in seen else k
+        return {e: k for e, k in seen.items() if k is not None}
+    s, d = _unique(src), _unique(dst)
+    return {s[e]: d[e] for e in s.keys() & d.keys()
+            if s[e] != d[e] and s[e][2] == d[e][2]}
+
+
 def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
                           facts: dict | None = None) -> dict | None:
     """Discrete-quarter stitch for a FLOW statement (income / cash flow). Q1–Q3
@@ -1671,6 +1703,17 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
                 continue                          # else restated interim -> blank Q4
             fy = _column_values(fk, ik)
             nine = _column_values(fq, iq)
+            # A line the 10-K words differently from the 10-Q (same element)
+            # would sit under two label keys — FY under one, 9M under the other
+            # — and never be differenced: Citi's Q4 'Provision for income taxes',
+            # 'Net income before attribution to NCI' and 'Citigroup's net income'
+            # rendered blank while pretax income was populated (REVIEW-2026-09-24
+            # P2-8). Re-key the FY value onto the 9M key via the shared element
+            # id; the 10-K-worded row is then all-blank and folds into the
+            # 10-Q-worded one in _consolidate_variants (same element, tier 1).
+            for k_fy, k_nine in _element_key_map(fk, fq).items():
+                if k_fy in fy and k_nine not in fy and k_fy not in nine:
+                    fy[k_nine] = fy.pop(k_fy)
             diff = {}
             for k in set(fy) | set(nine):
                 a, b = fy.get(k), nine.get(k)
@@ -1711,7 +1754,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v7:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v7: untyped equity caption = $
+    ckey = f"asreported_mq:v8:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v8: relabeled-line Q4 + header keys (after v7 untyped equity caption = $)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
@@ -1825,7 +1868,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     from datetime import date, timedelta
     if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
         return None
-    ckey = f"asreported_my:v10:{stype}:{metas[0]['accession']}:{n_years}"  # v10: untyped equity caption = $
+    ckey = f"asreported_my:v11:{stype}:{metas[0]['accession']}:{n_years}"  # v11: header keys drop footnote/colon (after v10 untyped equity caption = $)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
