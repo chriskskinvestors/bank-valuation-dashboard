@@ -148,6 +148,41 @@ class TestCompanyReportedFirstForSecFilers(unittest.TestCase):
         self.assertEqual(va._resolve_tbvps("PBAM", 49.87, 49.87),
                          (49.87, "reconstructed", True))
 
+    def _release_at(self, qend, tbv, bv):
+        self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
+            "qend": qend, "metrics": {"tbv_ps": tbv, "bv_ps": bv}}
+
+    def test_release_older_than_the_10q_never_wins(self):
+        # TYFG 2026-09-30: an older release ($61.17 / $64.82) outranked the
+        # 2026-06-30 10-Q. The Q2 release says $65.45 / $69.08; the
+        # reconstruction $65.44 / $69.08 — the 10-Q is the current figure.
+        q_old = (date.today() - timedelta(days=120)).isoformat()
+        q_10q = (date.today() - timedelta(days=30)).isoformat()
+        self._release_at(q_old, 61.17, 64.82)
+        self.assertEqual(va._resolve_tbvps("TYFG", 65.44, 69.08, sec_as_of=q_10q),
+                         (65.44, "reconstructed", False))
+        self.assertEqual(va._resolve_bvps("TYFG", 69.08, 65.44, sec_as_of=q_10q),
+                         (69.08, "reconstructed", False))
+
+    def test_release_same_or_newer_quarter_wins(self):
+        q = (date.today() - timedelta(days=30)).isoformat()
+        self._release_at(q, 49.57, 49.87)          # PBAM: same quarter
+        self.assertEqual(va._resolve_tbvps("PBAM", 49.87, 49.87, sec_as_of=q),
+                         (49.57, "company_release", False))
+        # GLBZ: Q2-2026 release ($7.16) vs a 10-Q stuck at 2025-09-30 ($6.99).
+        old_10q = (date.today() - timedelta(days=300)).isoformat()
+        self._release_at(q, 7.16, 7.27)
+        self.assertEqual(va._resolve_tbvps("GLBZ", 6.99, 7.10, sec_as_of=old_10q),
+                         (7.16, "company_release", False))
+
+    def test_cikless_bank_has_no_10q_to_be_older_than(self):
+        self.bm.get_cik = lambda t: None
+        q_old = (date.today() - timedelta(days=120)).isoformat()
+        self._release_at(q_old, 49.57, 49.87)
+        self.assertEqual(va._resolve_tbvps("PBAM", None, None,
+                                           sec_as_of="2026-12-31"),
+                         (49.57, "company_release", False))
+
     def test_no_release_keeps_reconstruction(self):
         self.orl.otc_release_metrics = lambda t, allow_fetch=True: None
         self.assertEqual(va._resolve_tbvps("PBAM", 49.87, 49.87),

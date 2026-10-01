@@ -565,9 +565,10 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     reconstructed_bvps = sec_data.get("book_value_per_share")
     reconstructed_tbvps = sec_data.get("tangible_book_value_per_share")
     tbvps, tbvps_source, tbvps_conflict = _resolve_tbvps(
-        ticker, reconstructed_tbvps, reconstructed_bvps)
+        ticker, reconstructed_tbvps, reconstructed_bvps,
+        sec_as_of=sec_data.get("sec_as_of"))
     bvps, bvps_source, bvps_conflict = _resolve_bvps(
-        ticker, reconstructed_bvps, tbvps)
+        ticker, reconstructed_bvps, tbvps, sec_as_of=sec_data.get("sec_as_of"))
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
     facts_lag = _sec_facts_lag(ticker, sec_data.get("sec_as_of"))
@@ -801,6 +802,7 @@ def _resolve_tbvps(
     ticker: str | None,
     reconstructed: float | None,
     bvps: float | None,
+    sec_as_of: str | None = None,
 ) -> tuple[float | None, str | None]:
     """(Tangible book value per common share, source), preferring the bank's
     OWN reported figure (earnings-release non-GAAP line) over our
@@ -856,7 +858,9 @@ def _resolve_tbvps(
     # A CIK-less bank (reconstructed None) is served the release as before.
     if ticker and not conflict:
         try:
-            otc = _otc_tbvps(ticker)
+            # Never an older quarter than the 10-Q the reconstruction is from.
+            otc = _otc_tbvps(
+                ticker, not_before=sec_as_of if reconstructed is not None else None)
             if otc is not None:
                 if reconstructed and abs(otc - reconstructed) / reconstructed >= 0.15:
                     conflict = True
@@ -876,6 +880,7 @@ def _resolve_bvps(
     ticker: str | None,
     reconstructed: float | None,
     tbvps: float | None,
+    sec_as_of: str | None = None,
 ) -> tuple[float | None, str | None, bool]:
     """(Book value per common share, source, conflict) — the BVPS sibling of
     _resolve_tbvps (release-first increment 1, owner directive 2026-08-19).
@@ -909,7 +914,9 @@ def _resolve_bvps(
     # Company-reported first — same rule and gate as _resolve_tbvps.
     if ticker and not conflict:
         try:
-            otc = _otc_release_ps(ticker, "bv_ps")
+            otc = _otc_release_ps(
+                ticker, "bv_ps",
+                not_before=sec_as_of if reconstructed is not None else None)
             if otc is not None:
                 if reconstructed and abs(otc - reconstructed) / reconstructed >= 0.15:
                     conflict = True
@@ -1220,13 +1227,14 @@ def _resolve_release_efficiency(
     return None, None
 
 
-def _otc_tbvps(ticker: str) -> float | None:
-    """A non-SEC bank's tangible book value per share from its latest wire
+def _otc_tbvps(ticker: str, not_before: str | None = None) -> float | None:
+    """A bank's tangible book value per share from its latest wire
     earnings release — see _otc_release_ps."""
-    return _otc_release_ps(ticker, "tbv_ps")
+    return _otc_release_ps(ticker, "tbv_ps", not_before=not_before)
 
 
-def _otc_release_ps(ticker: str, key: str) -> float | None:
+def _otc_release_ps(ticker: str, key: str,
+                    not_before: str | None = None) -> float | None:
     """A non-SEC bank's per-share figure from its latest wire earnings release
     (guarded extraction, band-checked at the source in data/otc_release +
     release_metrics/release_ai specs). STALENESS GATE: a release quarter-end
@@ -1247,6 +1255,12 @@ def _otc_release_ps(ticker: str, key: str) -> float | None:
     try:
         age_days = (date.today() - date.fromisoformat(qend)).days
     except ValueError:
+        return None
+    # A release for a quarter BEFORE the bank's latest SEC balance sheet is
+    # not the company's current figure — its own 10-Q is newer (TYFG
+    # 2026-09-30: an older release, $61.17, outranked its 2026-06-30 10-Q;
+    # the Q2 release says $65.45, the reconstruction $65.44).
+    if not_before and qend < not_before:
         return None
     return v if age_days <= 200 else None
 
