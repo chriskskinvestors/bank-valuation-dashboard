@@ -155,20 +155,20 @@ def _render_deposits_core(selected_cert: int, selected_name: str):
     # FDIC SOD deposits are in thousands; auto-scale T / B / M
     from utils.formatting import fmt_dollars_from_thousands
     ledger("SUMMARY", [
-        ("Branches", f"{num_branches}"),
+        ("Branches", f"{num_branches:,}"),
         ("Total Deposits", fmt_dollars_from_thousands(total_deposits, 2)),
         ("States", f"{states}"),
-        ("Counties", f"{counties}"),
+        ("Counties", f"{counties:,}"),
     ])
     charters = [n for n in notes if n.get("kind") == "charter"]
     merged = [n for n in notes if n.get("kind") == "merged"]
     if charters:
         st.caption("Includes sibling charter" + ("s " if len(charters) > 1 else " ")
-                   + ", ".join(f"{c['name']} ({c['n_branches']} branches)"
+                   + ", ".join(f"{c['name']} ({c['n_branches']:,} branches)"
                                for c in charters)
                    + " — one company, counted as one bank.")
     if merged:
-        parts = ", ".join(f"{m['n_branches']} branches of {m['name']} "
+        parts = ", ".join(f"{m['n_branches']:,} branches of {m['name']} "
                           f"(merged in {m['date']})" for m in merged)
         st.caption(f"Includes {parts} — the merger closed after the SOD "
                    "survey date, so the survey still files those branches "

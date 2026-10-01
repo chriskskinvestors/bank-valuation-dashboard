@@ -706,7 +706,8 @@ def render_valuation_model(ticker: str):
         return _model_provenance(ticker, name, price, asof, base_params, table, **extra)
 
     # ── DCF cash flow waterfall ────────────────────────────────────────
-    st.markdown("#### Projected FCFE & Terminal Value")
+    st.markdown('<div class="ksk-sec">Projected FCFE &amp; Terminal Value</div>',
+                unsafe_allow_html=True)
     projected_eps = dcf.get("projected_eps", [])
     projected_fcfe = dcf.get("projected_fcfe", [])
     tv = dcf.get("terminal_value")
@@ -1275,13 +1276,13 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
 
     available = list_consensus(ticker)
     if not available:
-        st.markdown("##### Model vs Consensus")
+        st.markdown('<div class="ksk-sec">Model vs Consensus</div>', unsafe_allow_html=True)
         from ui.states import empty_state
         empty_state('No consensus uploaded for this bank yet',
                     'Upload estimates in the Earnings tab to compare your model projection against street consensus')
         return
 
-    st.markdown("##### Model vs Consensus")
+    st.markdown('<div class="ksk-sec">Model vs Consensus</div>', unsafe_allow_html=True)
 
     col_p, _ = st.columns([1, 3])
     with col_p:

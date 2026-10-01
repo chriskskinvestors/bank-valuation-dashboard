@@ -7,6 +7,7 @@ source-linked, plus the Section 16 insider roster from Form 4 activity.
 from __future__ import annotations
 
 import html as _h
+import re
 
 import pandas as pd
 import streamlit as st
@@ -21,6 +22,33 @@ def _yn(v) -> str:
     if v is False:
         return "No"
     return "n/a"
+
+
+_GENERATIONAL = {"ii", "iii", "iv"}
+
+
+def _person_name(name: str) -> str:
+    """Form 4 reporting-owner names arrive as EDGAR stores them — some ALL CAPS
+    ("BACON ASHLEY"), some mixed ("Leopold Robin"). Title-case only the
+    shouting ones (generational suffixes stay upper); mixed-case input is the
+    filer's own casing and is kept (UX-P2-18)."""
+    s = (name or "").strip()
+    if s != s.upper():
+        return s
+    return " ".join(
+        w.upper() if w.lower().strip(".,") in _GENERATIONAL
+        else re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(), w)
+        for w in s.split())
+
+
+def _is_issuer(name: str, ticker: str) -> bool:
+    """True when a Form 4 reporting owner IS the issuer (a company-filed Form 4
+    lists the registrant as the owner) — not a person, so it leaves the
+    insider roster. Both names go through format_bank_name so EDGAR's
+    ALL-CAPS entityName matches the curated display name (UX-P2-18)."""
+    from utils.formatting import format_bank_name
+    own = (get_name(ticker) or "").upper()
+    return bool(own) and format_bank_name(name, ticker).upper() == own
 
 
 def render_people_summary(ticker: str):
@@ -40,7 +68,8 @@ def render_people_summary(ticker: str):
 
     if proxy and proxy.get("people"):
         people = proxy["people"]
-        st.markdown("#### Directors & Executive Officers")
+        st.markdown('<div class="ksk-sec">Directors &amp; Executive Officers</div>',
+                    unsafe_allow_html=True)
         body = ""
         for p in people:
             committees = ", ".join(p["committees"]) if p.get("committees") else "n/a"
@@ -107,12 +136,14 @@ def render_people_summary(ticker: str):
                     'The Section 16 roster below still reflects insider filings')
 
     # ── Section 16 roster (Form 4 activity) ──────────────────────────────
-    roster = get_insider_roster(cik)
+    # The issuer's own Form 4s (registrant as reporting owner) are not people.
+    roster = [r for r in get_insider_roster(cik) if not _is_issuer(r["name"], ticker)]
     if roster:
-        st.markdown("#### Section 16 Insiders (recent Form 4 filers)")
+        st.markdown('<div class="ksk-sec">Section 16 Insiders (recent Form 4 filers)</div>',
+                    unsafe_allow_html=True)
         body = "".join(
             "<tr>"
-            f'<td style="text-align:left;">{_h.escape(r["name"])}</td>'
+            f'<td style="text-align:left;">{_h.escape(_person_name(r["name"]))}</td>'
             f'<td style="text-align:left;">{_h.escape(r["role"])}</td>'
             f'<td style="text-align:left;">{_h.escape(r["latest_date"] or "n/a")}</td>'
             "</tr>" for r in roster)

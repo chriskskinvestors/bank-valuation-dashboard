@@ -138,8 +138,11 @@ def doc_label(f: dict) -> str:
         return _FORM_LABELS[form]
     if form in ("8-K", "8-K/A"):
         primary = _filing_primary(form, f.get("items", ""), False)
-        return f"{form} — {primary}" if primary != form else f"{form} (8-K)"
-    return f"{form} ({form})"
+        return f"{form} — {primary}" if primary != form else form
+    # The parenthetical names the form code behind a descriptive label
+    # ("Proxy (DEF 14A)"); a bare code is its own label — never "10-Q (10-Q)"
+    # (UX-P2-26).
+    return form
 
 
 def classify_filings(filings: list[dict]) -> dict[str, list[dict]]:

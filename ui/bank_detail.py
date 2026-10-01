@@ -28,6 +28,11 @@ from utils.formatting import num as _num
 from utils.timing import timed
 
 
+# Market cap's display spec (format + decimals) — read once so the Market Data
+# block and the Valuation table share it (UX-P2-14).
+_MC_FMT = METRICS_BY_KEY.get("market_cap", {})
+
+
 def _usd_b(v):
     """Dollars → $X.XB / $XXX.XM."""
     v = _num(v)
@@ -394,6 +399,14 @@ def _render_financial_highlights_table(ticker, info):
         unsafe_allow_html=True)
 
 
+def _form_label(form: str) -> str:
+    """EDGAR form code as a list label: a bare-number form ("4", "3", "4/A",
+    "425") reads as "Form 4"; lettered codes ("10-Q", "8-K", "DEF 14A") are
+    self-describing and stay as filed (UX-P2-15)."""
+    f = (form or "").strip()
+    return f"Form {f}" if f.split("/")[0].isdigit() else f
+
+
 def _render_latest_activity(ticker, info):
     """SNL-style Latest Activity — recent first-party news + recent filings."""
     # THE junk filter (CLAUDE.md shared infrastructure): the same rules as the
@@ -425,14 +438,21 @@ def _render_latest_activity(ticker, info):
                     'color:var(--brand-hover);font-weight:700;margin:0 0 3px;">Latest News</div>',
                     unsafe_allow_html=True)
         if evs:
+            # Source · age under each headline (UX-P2-15) — the same display
+            # labels and relative-age rule as the Recent Activity feed.
+            from ui.recent_activity import SOURCE_LABELS, tag_label, _fmt_ago
             rows = []
             for e in evs:
                 h = _html.escape((e.get("headline") or "")[:90])
                 url = e.get("url")
                 link = (f'<a href="{_html.escape(str(url))}" target="_blank" '
                         f'style="color:var(--text-primary);text-decoration:none;">{h}</a>') if url else h
+                meta = " · ".join(m for m in (tag_label(e.get("source"), SOURCE_LABELS),
+                                              _fmt_ago(e.get("published_at"))) if m)
+                meta_html = (f'<div style="font-size:0.7rem;color:var(--text-muted);">'
+                             f'{_html.escape(meta)}</div>') if meta else ""
                 rows.append(f'<div style="padding:3px 0;border-bottom:1px solid rgba(148,163,184,0.10);'
-                            f'font-size:0.82rem;line-height:1.3;">{link}</div>')
+                            f'font-size:0.82rem;line-height:1.3;">{link}{meta_html}</div>')
             st.markdown("".join(rows), unsafe_allow_html=True)
         else:
             from ui.states import empty_state
@@ -447,7 +467,7 @@ def _render_latest_activity(ticker, info):
             for f in docs:
                 acc = (f.get("accession") or "").replace("-", "")
                 url = f.get("url") or (f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}" if acc else "")
-                label = f"{f.get('form','')} — {f.get('date','')}"
+                label = f"{_form_label(f.get('form', ''))} — {f.get('date','')}"
                 link = (f'<a href="{_html.escape(str(url))}" target="_blank" '
                         f'style="color:var(--text-primary);text-decoration:none;">{_html.escape(label)}</a>') if url else _html.escape(label)
                 rows.append(f'<div style="padding:3px 0;border-bottom:1px solid rgba(148,163,184,0.10);'
@@ -560,7 +580,11 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None, quote=None):
         ("52-Week Range", f"${wk_lo:,.2f} – ${wk_hi:,.2f}" if (wk_lo and wk_hi) else None),
         ("Volume", f"{vol:,.0f}" if vol is not None else None),
         ("Avg Volume (3M)", f"{avg_vol:,.0f}" if avg_vol else None),
-        ("Market Cap", _usd_b(mcap)),
+        # Same METRICS-driven format as the Valuation table below (and the
+        # Screen) — one page must not show "$829.30B" beside "$829.3B" (UX-P2-14).
+        ("Market Cap", format_value(mcap, _MC_FMT.get("format", "billions"),
+                                    _MC_FMT.get("decimals", 1))
+         if mcap is not None else None),
         ("Shares Outstanding", f"{shares:,.0f}" if shares else None),
         ("Dividend Yield", f"{dy:.2f}%" if dy is not None else None),
     ]
@@ -921,7 +945,9 @@ def render_corporate_profile(ticker: str, all_metrics_df: pd.DataFrame):
     """Overview ▸ Corporate Profile — identity snapshot, market + company data,
     quick links, and the valuation/performance key-stat cards."""
     info = get_bank_info(ticker)
-    name = info["name"] if info else ticker
+    # THE display name (format_bank_name via get_name) — every leaf header
+    # shows the same string, never the raw source casing (UX-P2-23).
+    name = get_name(ticker) or ticker
 
     bank_row = all_metrics_df[all_metrics_df["ticker"] == ticker]
     if bank_row.empty:

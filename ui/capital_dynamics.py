@@ -315,11 +315,17 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             curr_eq * 1000 / scale,
         ]
 
+        # Short two-line labels that fit a half-width tile horizontally; the
+        # composition of "Capital Returned" moves to the hover (UX-P2-19).
         waterfall_labels = [
-            "Starting<br>Equity",
+            "Start<br>Equity",
             "+ Net<br>Income",
-            "- Capital Returned<br>(Divs + Buybacks + AOCI)",
-            "Ending<br>Equity",
+            "− Capital<br>Returned",
+            "End<br>Equity",
+        ]
+        waterfall_hover = [
+            "Starting equity", "Net income",
+            "Capital returned (dividends + buybacks + AOCI)", "Ending equity",
         ]
 
         fig4 = go.Figure()
@@ -329,6 +335,8 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             y=wf_scaled,
             text=[f"{'-' if round(v, 1) < 0 else ''}${abs(v):,.1f}{unit}"
                   for v in wf_scaled],
+            hovertext=waterfall_hover,
+            hovertemplate="%{hovertext}: %{text}<extra></extra>",
             textposition="outside",
             connector={"line": {"color": "rgb(150,150,150)"}},
             increasing={"marker": {"color": COLOR_SUCCESS}},
@@ -356,6 +364,9 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         _lo, _hi = min(_levels), max(_levels)
         _pad = max((_hi - _lo) * 0.6, 0.03 * max(abs(x) for x in _levels), 0.02)
         fig4.update_yaxes(range=[_lo - _pad, _hi + _pad])
+        # Horizontal category labels — Plotly auto-rotates and they overlap
+        # in the 2×2 tile (UX-P2-19).
+        fig4.update_xaxes(tickangle=0)
 
     # Owner layout (2026-07-13, same as Asset Quality Detail): the SNL-depth
     # statement table on the LEFT (Annual/Quarterly toggle, click-to-source),

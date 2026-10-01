@@ -214,7 +214,9 @@ def _render_filings_core(ticker: str):
     # ── Quick links bar ──────────────────────────────────────────────────
     st.markdown("---")
 
-    link_cols = st.columns(4)
+    # Four content-width buttons packed left (each column just wider than its
+    # button); the trailing column absorbs the rest of the row (UX-P2-27).
+    link_cols = st.columns([1, 1.4, 1.1, 1.3, 5.2], gap="small")
     if ir_url:
         link_cols[0].link_button("IR Page", ir_url)
     else:
@@ -237,7 +239,9 @@ def _render_filings_core(ticker: str):
         link_cols[3].caption("—")
 
     # ── Company info ─────────────────────────────────────────────────────
-    name = info.get("name", ticker)
+    # THE display name (get_name → format_bank_name), not EDGAR's ALL-CAPS
+    # entityName — same string as the title bar above (UX-P2-23).
+    name = get_name(ticker) or info.get("name", ticker)
     sic_desc = info.get("sic_description", "")
     fy_end = info.get("fiscal_year_end", "")
     website = info.get("website", "")
