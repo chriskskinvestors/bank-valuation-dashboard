@@ -256,9 +256,73 @@ _TBV_BAND = (1.0, 500.0)
 # from its Q2 release beside a year-old reconstructed BV $7.10 (release
 # table: "Book value per share $ 7.27").
 _BV_LABEL = r"(?<!tangible )(?<!tangible common )book value per (?:common )?share"
+# Plus the bare verb-then-level form: "book value per common share decreased
+# to $18.38 compared to $19.80" (BANC 2Q26) — the level is pinned to "to $",
+# so the comparison figure that follows is never the capture.
+_VERB_TO = (r"[^$%]{0,40}?\b(?:increased|decreased|rose|fell|grew|declined|"
+            r"improved)\s+to\s*\$\s?(\d{1,3}\.\d{2})")
 _BV_PATS = [re.compile(p.pattern.replace(_TBV_LABEL, _BV_LABEL, 1), re.I)
-            for p in _TBV_PATS]
+            for p in _TBV_PATS] + [re.compile(_BV_LABEL + _VERB_TO, re.I)]
 _BV_BAND = (1.0, 900.0)
+# Explicitly per-COMMON label — the only BV that may serve when the release
+# carries preferred EQUITY: there a bare "book value per share" can be total
+# equity (incl. preferred) ÷ common shares. NPB 2Q26 "Book value per share
+# (GAAP)" $17.69 includes its $24,979K preferred (same rule as
+# sec_earnings_8k.extract_reported_bvps_status).
+_BV_COMMON_LABEL = r"(?<!tangible )book value per common share"
+_BV_COMMON_PATS = [re.compile(p.pattern.replace(_TBV_LABEL, _BV_COMMON_LABEL, 1),
+                              re.I) for p in _TBV_PATS] + [
+    re.compile(_BV_COMMON_LABEL + _VERB_TO, re.I)]
+
+
+def _bv_ties_to_common(html: str, bv: float | None) -> bool:
+    """True when the release's own rows prove a bare-label BV is per COMMON
+    share: BV × ending common shares ties (±0.5%, at a $/$K/$M scale) to the
+    stated common equity or to total equity − preferred, and does NOT also
+    tie to total equity (the NPB shape: total incl. preferred ÷ shares).
+    TCBI 2Q26: $77.01 × 43,470,167 = $3,347.6M = $3,647.7M − $300M preferred.
+    Anything unprovable is False — the caller then renders n/a."""
+    if not bv:
+        return False
+    try:
+        from data.sec_earnings_8k import _table_rows
+        rows = _table_rows((html or "").encode("utf-8"))
+    except Exception:
+        return False
+
+    def first(pred):
+        return next((n[0] for cl, n in rows if pred(cl) and n and n[0]), None)
+
+    shares = first(lambda cl: "shares outstanding" in cl and "average" not in cl
+                   and "weighted" not in cl)
+    total = first(lambda cl: re.fullmatch(
+        r"(?:total )?(?:stockholders|shareholders)['’]? equity(?: \(gaap\))?", cl))
+    common = first(lambda cl: re.fullmatch(
+        r"(?:total )?common (?:stockholders['’]? |shareholders['’]? )?equity", cl))
+    pref = first(lambda cl: "preferred stock" in cl and "dividend" not in cl
+                 and "trust" not in cl)
+    if not shares:
+        return False
+
+    def ties(target):
+        return bool(target) and any(
+            abs(bv * shares / s - target) / target < 0.005 for s in (1, 1e3, 1e6))
+    per_common = ties(common) or (total and pref and ties(total - pref))
+    return bool(per_common) and not ties(total)
+
+
+def _release_shows_preferred_equity(html: str) -> bool:
+    """True when the release carries a nonzero preferred-stock EQUITY row
+    (sec_earnings_8k._shows_preferred_equity — one rule for both release
+    readers). Unknown counts as True — no parseable table rows (a prose-only
+    release can't rule preferred out) or a detection failure: the
+    per-common-only path can only turn a value into n/a, never a wrong one."""
+    try:
+        from data.sec_earnings_8k import _shows_preferred_equity, _table_rows
+        rows = _table_rows((html or "").encode("utf-8"))
+        return _shows_preferred_equity(rows) if rows else True
+    except Exception:
+        return True
 
 _DIV_PATS = [
     re.compile(r"(?<!special )(?<!annual )dividend of \$\s?(\d{1,2}\.\d{2,4}) per "
@@ -321,6 +385,7 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
         out[key] = _pinned_metric(text, label, denom, band)
     out["tbv_ps"] = _dollar_metric(text, _TBV_PATS, _TBV_BAND)
     out["bv_ps"] = _dollar_metric(text, _BV_PATS, _BV_BAND)
+    out["bv_ps_common"] = _dollar_metric(text, _BV_COMMON_PATS, _BV_BAND)
     out["div_ps"] = _dollar_metric(text, _DIV_PATS, _DIV_BAND)
     out["eps_diluted"] = _dollar_metric(text, _EPS_PATS, _EPS_BAND)
     if expected_qend and any(v is None for v in out.values()):
@@ -328,6 +393,11 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
         for k, v in tab.items():
             if out.get(k) is None:
                 out[k] = v
+    bv_common = out.pop("bv_ps_common", None)
+    if out.get("bv_ps") is not None and _release_shows_preferred_equity(html):
+        out["bv_ps"] = (bv_common if bv_common is not None
+                        else out["bv_ps"] if _bv_ties_to_common(html, out["bv_ps"])
+                        else None)
     return out
 
 
@@ -463,6 +533,7 @@ _TABLE_SPECS = {
                   (0.1, 6.0)),
     "tbv_ps": (r"tangible book value per (?:common )?share", "$", (1.0, 500.0)),
     "bv_ps": (r"book value per (?:common )?share", "$", (1.0, 900.0)),
+    "bv_ps_common": (r"book value per common share", "$", (1.0, 900.0)),
     "div_ps": (r"(?:cash )?dividends?(?: declared| paid)? per (?:common )?share",
                "$", (0.005, 10.0)),
     # Actuals fill (2026-07-13, owner): EPS + total revenue from the release
@@ -930,7 +1001,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v19:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v20:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -951,6 +1022,8 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v20 (2026-10-01): bv_ps per-COMMON only when the release carries
+    # preferred equity (NPB: v19 served $17.69 incl. preferred).
     # v19 (2026-10-01): deterministic bv_ps (prose + table) — BV/share was
     # AI-fill only, so wire banks showed a stale reconstructed BV beside a
     # fresh release TBV (GLBZ). Forces a universe-wide re-extraction.
@@ -985,7 +1058,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v19:{int(cik)}"
+    key = f"release_metrics:v20:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -1140,10 +1213,16 @@ def _ai_fill(val: dict, cik, rel: dict) -> str:
         return "pending"
     if not ai:
         return "pending"
+    # The AI can't tell per-common from total-equity BV: with preferred equity
+    # in the release, BV/share stays deterministic-only (NPB, see _BV_COMMON).
+    pref = _release_shows_preferred_equity(rel.get("html") or "")
     for bucket_key, period in (("metrics", "cur"), ("prior_metrics", "prior"),
                                ("yoy_metrics", "yoy")):
         bucket = val.setdefault(bucket_key, {})
         for k, v in (ai.get(period) or {}).items():
+            if k == "bv_ps" and pref and not _bv_ties_to_common(
+                    rel.get("html") or "", v):
+                continue
             if bucket.get(k) is None:
                 bucket[k] = v
     # Current-quarter capital: the dedicated extractor's values win; AI fills
