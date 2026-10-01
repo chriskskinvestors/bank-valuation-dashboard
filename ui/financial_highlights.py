@@ -442,12 +442,13 @@ _EXPORT_UNIT = {
 # ── the table ───────────────────────────────────────────────────────────────
 def render_financial_highlights(ticker: str):
     info = get_bank_info(ticker)
-    # THE display name, same string as every other leaf header (UX-P2-23).
-    name = get_name(ticker) or (info.get("name") if info else ticker)
+    name = info.get("name") if info else ticker
     cert = info.get("fdic_cert") if info else None
     cik = info.get("cik") if info else None
 
-    title_bar(f"{name} ({ticker})", "Financial Highlights")
+    # Header: THE display name, the same string as every other leaf header
+    # (UX-P2-23). `name` (the mapping's name) still labels the export.
+    title_bar(f"{get_name(ticker) or name} ({ticker})", "Financial Highlights")
     _pc, _rc = st.columns([1, 2])
     with _pc:
         period = st.radio("Period", ["Annual", "Quarterly"], horizontal=True,
