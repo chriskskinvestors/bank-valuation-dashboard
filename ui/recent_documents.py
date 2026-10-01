@@ -286,7 +286,10 @@ def _filing_menu(f: dict, ticker: str) -> str:
             items.append(("Download PDF", _pdf_href(ticker, f"doc|{acc}|{doc_name}")))
     sub = ""
     if form in ("8-K", "8-K/A") and not f.get("is_earnings"):
-        return _menu_html(f"{form} (8-K)", items,
+        # The code is its own label; the item description rides as `sub`
+        # ("8-K  Other event"), never "8-K (8-K)" (UX-P2-26 — the Current
+        # Reports panel bypasses doc_label, which #226 fixed alone).
+        return _menu_html(form, items,
                           sub=_filing_primary(form, f.get("items", ""), False))
     return _menu_html(doc_label(f), items, sub=sub)
 
