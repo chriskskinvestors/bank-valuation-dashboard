@@ -513,6 +513,22 @@ def extract_holdco_capital(facts: list[Fact], anchor_cet1: float | None = None) 
         d["_cblr"] = ("cet1_ratio" not in d and "lev_ratio" in d
                       and "cet1_ratio" not in d.get("_suspect", []))
 
+    # Scale check against the filing's OWN total assets: capital can't exceed
+    # assets, and RWA sits well inside 0.1-2.5x assets for any bank (custody
+    # banks ~0.35x, card lenders ~1x). MTB's FY2022 10-K tags FY2022 amounts
+    # x1000 (CET1 "$15.56T" beside ~$200B of assets) - mutually consistent, so
+    # the RWA identity can't catch it. Outside the band the $ amounts are n/a.
+    for period, d in out.items():
+        assets = _undimensioned_total(facts, "Assets", period)
+        if not assets or assets <= 0:
+            continue
+        caps = [d[k] for k in ("cet1_cap", "t1_cap", "total_cap") if d.get(k)]
+        rwa = d.get("rwa")
+        if any(c > assets for c in caps) or (rwa and not 0.1 * assets <= rwa <= 2.5 * assets):
+            for k in ("cet1_cap", "t1_cap", "total_cap", "tier2_cap", "lev_cap", "rwa"):
+                d.pop(k, None)
+            d["_suspect"] = sorted(set(d.get("_suspect", [])) | {"scale"})
+
     # Regulatory-capital WALK (SNL "Regulatory Capital ($000)" panel). Attempt
     # the CET1 reconstruction per period from the filing's UNDIMENSIONED
     # balance-sheet tags and reconcile it to the already-extracted (anchored)
@@ -752,7 +768,7 @@ def _holdco_capital_extract_cached(meta: dict, anchor: float | None) -> dict:
     Version the key (v3): the prior v2 entries predate the multi-year stitch and
     are abandoned so the freshly-extracted capital is always served, never stale."""
     from data import cache
-    ckey = f"holdco_cap:v5:{meta['accession']}"   # v5: stack invariants + amount/ratio entity check
+    ckey = f"holdco_cap:v6:{meta['accession']}"   # v6: amounts scale-checked vs total assets
     cap = cache.get(ckey, max_age_s=None)
     if cap is None:
         try:

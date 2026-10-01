@@ -587,6 +587,22 @@ class TestStitchIncome(unittest.TestCase):
         kinds = [r["kind"] for r in _stitch_statement([f], n_years=1)["rows"]]
         self.assertEqual(kinds, ["pershare", "shares", "monetary"])
 
+    def test_untyped_equity_caption_is_monetary(self):
+        # No element type: ONB's caption says "per share" but is a $ balance;
+        # read as per-share it would skip the "$ in thousands" scale (1000x).
+        from data.sec_statements import _row_kind
+        onb = ("Common stock, no par value, $1.00 per share stated value, 600,000 "
+               "shares authorized, 389,662 and 318,980 shares issued and outstanding")
+        self.assertEqual(_row_kind(onb, ""), "monetary")
+        self.assertEqual(_row_kind("Common stock, par value (in dollars per share)", ""),
+                         "pershare")
+        self.assertEqual(_row_kind("Common stock, shares issued (in shares)", ""), "shares")
+        self.assertEqual(_row_kind("Diluted earnings per share", ""), "pershare")
+        self.assertEqual(_row_kind("Weighted average diluted shares", ""), "shares")
+        self.assertEqual(_row_kind("Common stock, $1 par; 100 shares authorized; "
+                                   "50 shares outstanding", ""), "monetary")
+        self.assertEqual(_row_kind("Basic shares outstanding", ""), "shares")
+
     def test_quarterly_assemble_carries_kind(self):
         from data.sec_statements import _assemble
         parsed = [self._typed(["Jun. 30, 2026"], [
