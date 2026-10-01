@@ -110,8 +110,10 @@ class TestCompanyReportedFirstForSecFilers(unittest.TestCase):
         import data.sec_earnings_8k as s8k
         self.bm, self.orl, self.s8k = bm, orl, s8k
         self._orig = (bm.get_cik, orl.otc_release_metrics,
-                      s8k.reported_tbvps_status, s8k.reported_bvps_status)
+                      s8k.reported_tbvps_status, s8k.reported_bvps_status,
+                      s8k._latest_earnings_8k)
         bm.get_cik = lambda t: 1705284
+        s8k._latest_earnings_8k = lambda cik: None     # PBAM: no Item 2.02 8-K
         s8k.reported_tbvps_status = (
             lambda cik, reconstructed=None, bvps=None: (None, "not_disclosed"))
         s8k.reported_bvps_status = (
@@ -119,7 +121,8 @@ class TestCompanyReportedFirstForSecFilers(unittest.TestCase):
 
     def tearDown(self):
         (self.bm.get_cik, self.orl.otc_release_metrics,
-         self.s8k.reported_tbvps_status, self.s8k.reported_bvps_status) = self._orig
+         self.s8k.reported_tbvps_status, self.s8k.reported_bvps_status,
+         self.s8k._latest_earnings_8k) = self._orig
 
     def _release(self, tbv, bv):
         self.orl.otc_release_metrics = lambda t, allow_fetch=True: {
@@ -153,9 +156,9 @@ class TestCompanyReportedFirstForSecFilers(unittest.TestCase):
             "qend": qend, "metrics": {"tbv_ps": tbv, "bv_ps": bv}}
 
     def test_release_older_than_the_10q_never_wins(self):
-        # TYFG 2026-09-30: an older release ($61.17 / $64.82) outranked the
-        # 2026-06-30 10-Q. The Q2 release says $65.45 / $69.08; the
-        # reconstruction $65.44 / $69.08 — the 10-Q is the current figure.
+        # A wire release for a quarter before the latest 10-Q must not win
+        # (TYFG's numbers; its stale figure actually came through the 8-K
+        # path — see TestStale8kNeverOutranksTheNewer10q).
         q_old = (date.today() - timedelta(days=120)).isoformat()
         q_10q = (date.today() - timedelta(days=30)).isoformat()
         self._release_at(q_old, 61.17, 64.82)
@@ -187,6 +190,59 @@ class TestCompanyReportedFirstForSecFilers(unittest.TestCase):
         self.orl.otc_release_metrics = lambda t, allow_fetch=True: None
         self.assertEqual(va._resolve_tbvps("PBAM", 49.87, 49.87),
                          (49.87, "reconstructed", False))
+
+
+class TestStale8kNeverOutranksTheNewer10q(unittest.TestCase):
+    """2026-10-01 sweep: three banks served an earnings 8-K for a quarter
+    older than their latest 10-Q. TYFG: last Item 2.02 8-K 2025-10-29 (Q3)
+    → $61.17 / $64.82 shown; its 2026-06-30 10-Q reconstructs $65.44 /
+    $69.08 and the Q2 release says $65.45 / $69.08. FBP: Q2 release filed as
+    Item 2.01, so the Q1 8-K ($12.45) kept winning over the Q2 10-Q ($12.68)."""
+
+    def setUp(self):
+        import data.bank_mapping as bm
+        import data.otc_release as orl
+        import data.sec_earnings_8k as s8k
+        self.bm, self.orl, self.s8k = bm, orl, s8k
+        self._orig = (bm.get_cik, orl.otc_release_metrics, s8k._latest_earnings_8k,
+                      s8k.reported_tbvps_status, s8k.reported_bvps_status)
+        bm.get_cik = lambda t: 1725262
+        orl.otc_release_metrics = lambda t, allow_fetch=True: None
+
+    def tearDown(self):
+        (self.bm.get_cik, self.orl.otc_release_metrics, self.s8k._latest_earnings_8k,
+         self.s8k.reported_tbvps_status, self.s8k.reported_bvps_status) = self._orig
+
+    def _eightk(self, filed, tbv, bv):
+        self.s8k._latest_earnings_8k = lambda cik: {"date": filed}
+        self.s8k.reported_tbvps_status = (
+            lambda cik, reconstructed=None, bvps=None: (tbv, "ok"))
+        self.s8k.reported_bvps_status = (
+            lambda cik, reconstructed=None, tbvps=None: (bv, "ok"))
+
+    def test_tyfg_q3_8k_loses_to_the_q2_10q(self):
+        self._eightk("2025-10-29", 61.17, 64.82)
+        self.assertEqual(va._resolve_tbvps("TYFG", 65.44, 69.08, sec_as_of="2026-06-30"),
+                         (65.44, "reconstructed", False))
+        self.assertEqual(va._resolve_bvps("TYFG", 69.08, 65.44, sec_as_of="2026-06-30"),
+                         (69.08, "reconstructed", False))
+
+    def test_fbp_q1_8k_loses_to_the_q2_10q(self):
+        self._eightk("2026-04-22", 12.45, 12.72)
+        self.assertEqual(va._resolve_tbvps("FBP", 12.68, 12.95, sec_as_of="2026-06-30"),
+                         (12.68, "reconstructed", False))
+
+    def test_same_quarter_8k_still_wins(self):
+        # The normal cycle: Q2 release (July) vs Q2 10-Q (Aug) — 8-K first.
+        self._eightk("2026-07-22", 65.45, 69.08)
+        self.assertEqual(va._resolve_tbvps("TYFG", 65.44, 69.08, sec_as_of="2026-06-30"),
+                         (65.45, "reported_8k", False))
+
+    def test_no_reconstruction_keeps_the_8k(self):
+        # NPB: nothing newer to serve — the release stays (no regression to n/a).
+        self._eightk("2026-04-21", 16.35, None)
+        self.assertEqual(va._resolve_tbvps("NPB", None, None, sec_as_of="2026-06-30"),
+                         (16.35, "reported_8k", False))
 
 
 class TestComputeAllValuationsWiring(unittest.TestCase):

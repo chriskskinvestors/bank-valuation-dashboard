@@ -832,7 +832,10 @@ def _resolve_tbvps(
             cik = get_cik(ticker)
         except Exception:
             cik = None
-    if cik:
+    # An earnings 8-K for a quarter BEFORE the latest 10-Q is not the current
+    # company figure (TYFG: its last 8-K is the Q3-2025 release, $61.17).
+    if cik and not (reconstructed is not None
+                    and _earnings_8k_predates(cik, sec_as_of)):
         try:
             from data.sec_earnings_8k import reported_tbvps_status
             reported, status = reported_tbvps_status(
@@ -895,7 +898,8 @@ def _resolve_bvps(
             cik = get_cik(ticker)
         except Exception:
             cik = None
-    if cik:
+    if cik and not (reconstructed is not None
+                    and _earnings_8k_predates(cik, sec_as_of)):
         try:
             from data.sec_earnings_8k import reported_bvps_status
             reported, status = reported_bvps_status(
@@ -1225,6 +1229,26 @@ def _resolve_release_efficiency(
         print(f"[valuation] otc efficiency lookup failed for {ticker}: "
               f"{type(e).__name__}: {e}")
     return None, None
+
+
+def _earnings_8k_predates(cik, sec_as_of: str | None) -> bool:
+    """True when the bank's latest Item 2.02 8-K covers a quarter BEFORE its
+    latest SEC balance sheet (sec_as_of) — the release is stale against the
+    10-Q the reconstruction comes from. TYFG stopped furnishing earnings on
+    8-K after Q3-2025; FBP and NPB furnished their Q2-2026 releases under
+    Item 2.01, so the 2.02 finder still lands on Q1 (found 2026-10-01). The
+    covered quarter is the last quarter-end before the 8-K's filing date.
+    A lookup failure is False (the 8-K path runs as before)."""
+    if not sec_as_of:
+        return False
+    try:
+        from data.ir_provider import _quarter_end_before
+        from data.sec_earnings_8k import _latest_earnings_8k
+        f8k = _latest_earnings_8k(cik)
+        q = _quarter_end_before(f8k["date"]) if f8k else None
+        return bool(q) and q < sec_as_of
+    except Exception:
+        return False
 
 
 def _otc_tbvps(ticker: str, not_before: str | None = None) -> float | None:
