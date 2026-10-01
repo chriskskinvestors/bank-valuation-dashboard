@@ -155,7 +155,8 @@ class TestWarmTargetsNoXbrlSet(unittest.TestCase):
                              side_effect=lambda t: t == "PBAM"):
             job._warm_otc_releases(["FBK", "PBAM", "CCC"],
                                    sec={"FBK": {"x": 1}, "PBAM": {"x": 1}})
-        self.assertEqual(seen, [("CCC", True, True), ("PBAM", True, False)])
+        # Wire-only (cheap) first, so slow IR crawls can never starve them.
+        self.assertEqual(seen, [("PBAM", True, False), ("CCC", True, True)])
 
     def test_no_recent_8k_rule(self):
         from datetime import date, timedelta
