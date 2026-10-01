@@ -70,7 +70,7 @@ class TestSubmissionsRecordCarriesPeriodicFiling(unittest.TestCase):
 
     def test_old_shape_cache_row_is_refreshed_once(self):
         # A pre-2026-09-22 row ({"f8k": ...} only) must not answer "no filing".
-        cache.put("earnings_8k_latest:v1:707179", {"f8k": None})
+        cache.put("earnings_8k_latest:v2:707179", {"f8k": None})
         with patch.object(se8k, "_get", return_value=_SUBS_JSON) as g:
             self.assertEqual(se8k.latest_periodic_filing(707179)["report_date"],
                              "2026-06-30")
