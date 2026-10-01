@@ -204,6 +204,7 @@ _AF_CSS = r"""
 .afwrap .erow.e1{grid-template-columns:1.3fr .58fr .95fr .85fr .62fr .62fr .62fr .62fr .8fr;column-gap:4px;padding:0 10px;}
 .afwrap .erow.selrow{background:#f3f7ff;}
 .afwrap .erow.e1 .num{font-size:var(--fs-grid-10);}
+.afwrap .erow.e1.noext{grid-template-columns:1.3fr .58fr .95fr .85fr .62fr .62fr .62fr .8fr;}
 .afwrap .erow.m1{grid-template-columns:1.3fr .55fr .9fr .8fr .58fr .58fr .58fr .72fr;column-gap:4px;padding:0 12px;}
 .afwrap .erow.m1 .num{font-size:var(--fs-grid-10);}
 .afwrap .erow.v1{grid-template-columns:1.45fr .58fr .95fr .66fr .72fr .98fr;column-gap:5px;padding:0 12px;}
@@ -409,12 +410,21 @@ def _af_etf_table() -> str:
     _ext_lbl = "Pre %" if is_premarket() else "Aft %"
     sel_list = list(st.session_state.get("af_overlay") or _AF_DEFAULT_OVERLAY)
     sel = set(sel_list)
+    # The extended-hours column is omitted while NO ETF has a move (a column
+    # of dashes all session, UX-P2-01); it appears once after-hours data lands.
+    ext = {t: _fc.aftermarket_move((aftq.get(t) or {}).get("bid"),
+                                   (aftq.get(t) or {}).get("ask"),
+                                   (warm.get(t) or {}).get("price"))
+           for t, _ in _AF_ETFS}
+    show_ext = any(v is not None for v in ext.values())
+    row_cls = "erow e1" if show_ext else "erow e1 noext"
+    ext_h = f'<span class="num h">{_ext_lbl}</span>' if show_ext else ""
     # Headers carry the unit so $ moves (Chg) read distinctly from % moves
     # (day %, Pre/Aft, 1W, YTD).
-    rows = ('<div class="erow e1 eh"><span class="h">Name</span>'
+    rows = (f'<div class="{row_cls} eh"><span class="h">Name</span>'
             '<span class="h">Tkr</span><span class="num h">Last</span>'
             '<span class="num h">Chg $</span><span class="num h">%</span>'
-            f'<span class="num h">{_ext_lbl}</span><span class="num h">1W %</span>'
+            f'{ext_h}<span class="num h">1W %</span>'
             '<span class="num h">YTD %</span><span class="num h">Vol</span></div>')
     for t, name in _AF_ETFS:
         q = warm.get(t) or {}
@@ -422,9 +432,9 @@ def _af_etf_table() -> str:
         last = _af_n(price) or "—"
         chg_t, chg_c = _af_signed(q.get("change"))
         pct_t, pct_c = _af_signed(q.get("change_pct"))
-        aq = aftq.get(t) or {}
-        aft = _fc.aftermarket_move(aq.get("bid"), aq.get("ask"), price)
+        aft = ext[t]
         aft_t, aft_c = _af_signed(aft) if aft is not None else ("—", "mut")
+        ext_cell = f'<span class="num {aft_c}">{aft_t}</span>' if show_ext else ""
         # 1W / YTD from the same warm cache the Movers pane reads — populated by
         # the nightly refresh_avg_volume job (chg_1w EOD-derived, chg_ytd from
         # FMP's year-anchored field). One source for all 1W/YTD on this page.
@@ -449,12 +459,12 @@ def _af_etf_table() -> str:
         rows += (
             f'<a class="crow" href="?s=Home&overlay={",".join(new_sel)}" '
             f'target="_self" title="{ttl}">'
-            f'<div class="erow e1 ed{sel_cls}">'
+            f'<div class="{row_cls} ed{sel_cls}">'
             f'<span class="nm">{name}</span><span class="tk">{t}</span>'
             f'<span class="num">{last}</span>'
             f'<span class="num {chg_c}">{chg_t}</span>'
             f'<span class="num {pct_c}">{pct_t}</span>'
-            f'<span class="num {aft_c}">{aft_t}</span>'
+            f'{ext_cell}'
             f'<span class="num {w1_c}">{w1_t}</span>'
             f'<span class="num {ytd_c}">{ytd_t}</span>'
             f'<span class="num">{vol}</span></div></a>')
@@ -1574,8 +1584,11 @@ def _sector_val_history():
 
 
 def _sv_val(v, n, unit, dp) -> str:
-    txt = "n/a" if v is None else f"{v:.{dp}f}{unit}"
-    return f'{txt} <span class="mut">(n={n})</span>'
+    """'1.44x (n=329)', or 'n/a (n=4, min 5)' — the count alone read as a
+    bug (UX-P2-02); the hidden median is a too-small tier, not missing data."""
+    if v is None:
+        return f'n/a <span class="mut">(n={n}, min {_SECVAL_MIN_N})</span>'
+    return f'{v:.{dp}f}{unit} <span class="mut">(n={n})</span>'
 
 
 def _sv_delta(cur, prior, unit, dp) -> str:
@@ -1596,7 +1609,9 @@ def _sector_val_strip_html(all_metrics: list[dict], hist: dict | None) -> str:
     yoy, since = sector_val_yoy(hist)
     if yoy is None:
         import datetime as _dt
-        status = ("Δ1Y n/a · collecting since "
+        # "pending", not "n/a": the header is CSS-uppercased, so n/a there
+        # read as N/A against the cells' n/a (UX-P2-02).
+        status = ("Δ1Y pending · collecting since "
                   + (since or _dt.date.today().strftime("%Y-%m")))
     else:
         status = "Δ1Y vs stored daily history"
@@ -1664,7 +1679,9 @@ def _render_above_fold(all_metrics: list[dict], watchlist: list[str]):
             print(f"[home.af] sector valuation strip failed: {type(e).__name__}: {e}")
             sv = ""
         if sv:
-            with st.container(border=True, key="afpane_secval"):
+            # 2/3 width: full-bleed, the 7 columns sat 200 px apart (UX-P2-03).
+            _sv_col, _ = st.columns([2, 1])
+            with _sv_col, st.container(border=True, key="afpane_secval"):
                 _md(sv)
 
 

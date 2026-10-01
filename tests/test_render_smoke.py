@@ -309,6 +309,30 @@ class TestHomeRendersPopulated(unittest.TestCase):
         self.assertIn("+2.0", h)             # pre-market $ chg = 48.10 * 4.2%
         self.assertNotIn("WBHC", h)          # the -2.1% loser excluded from gainers
 
+    def test_etf_table_hides_extended_hours_column_until_data(self):
+        # UX-P2-01: the Aft/Pre % column was a column of dashes all session.
+        # No ETF has an after-hours print -> the column is omitted (8-col
+        # row variant); one real bid/ask print -> it is back for every row.
+        import data.market_session as ms
+        import data.price_cache_store as pcs
+        import data.fmp_client as fmp
+        saved = (ms.is_premarket, pcs.get_prices, fmp.get_aftermarket_quote_batch)
+        try:
+            ms.is_premarket = lambda *a, **k: False
+            pcs.get_prices = lambda tks: {t: {"price": 100.0} for t in tks}
+            fmp.get_aftermarket_quote_batch = lambda *a, **k: {}
+            h_none = self.home._af_etf_table()
+            fmp.get_aftermarket_quote_batch = lambda *a, **k: {
+                "SPY": {"bid": 101.0, "ask": 101.2}}      # mid 101.1 -> +1.10%
+            h_some = self.home._af_etf_table()
+        finally:
+            ms.is_premarket, pcs.get_prices, fmp.get_aftermarket_quote_batch = saved
+        self.assertNotIn("Aft %", h_none)
+        self.assertIn('class="erow e1 noext eh"', h_none)
+        self.assertIn("Aft %", h_some)
+        self.assertNotIn("noext", h_some)
+        self.assertIn("+1.10", h_some)
+
     def test_above_fold_integration_renders(self):
         # End-to-end grid assembly. Network sources are mocked off; every
         # other pane reads local cache/snapshots, and _af_safe isolates any
