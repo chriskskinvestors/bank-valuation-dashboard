@@ -86,6 +86,11 @@ _SHARES_TYPE = re.compile(r"sharesItemType", re.I)
 _PERSHARE_LABEL = re.compile(r"per\s+share|per\s+common\s+share", re.I)
 _SHARES_LABEL = re.compile(r"\(in\s+shares\)|\bin\s+shares\b|"
                            r"weighted[- ]average.*shares|shares\s+outstanding", re.I)
+# An equity CAPTION ("Common stock, no par value, $1.00 per share stated value,
+# 600,000 shares authorized, 389,662 ... issued" - ONB) mentions "per share" but
+# reports a $ balance. Only consulted when the R-file carries no element type.
+_EQUITY_CAPTION = re.compile(r"\bauthori[sz]ed\b|\bissued\b", re.I)
+_IN_SHARES = re.compile(r"\(in\s+shares\)|\bin\s+shares\b", re.I)
 
 
 def _row_kind(label: str, etype: str) -> str:
@@ -107,6 +112,10 @@ def _row_kind(label: str, etype: str) -> str:
         if _MONETARY_TYPE.search(etype):
             return "monetary"
         return "other"
+    if _IN_SHARES.search(label):
+        return "shares"
+    if _EQUITY_CAPTION.search(label):
+        return "monetary"
     if _PERSHARE_LABEL.search(label):
         return "pershare"
     if _SHARES_LABEL.search(label):
@@ -474,12 +483,16 @@ def parse_rfile(html_bytes: bytes) -> dict | None:
         # title's OWN "shares in <unit>" scale (_share_scale; 1.0 when absent)
         # and a per-share row is always $/share (1.0) — applying the dollar
         # scale to either inflates it 1000×. When the R-file carries no type
-        # (older/odd filers), fall back to the LABEL heuristics in the same
-        # order: per-share, then share count, then monetary.
+        # (older/odd filers), fall back to the LABEL heuristics: an explicit
+        # "(in shares)" count, then an equity caption ("... shares authorized /
+        # issued" - a $ balance even though it says "per share"), then
+        # per-share, share count, monetary.
         element_id = _row_element_id(cells[0])
         etype = el_types.get(element_id, "")
         rkind = _row_kind(label, etype) if etype else (
-            "pershare" if _PERSHARE_LABEL.search(label)
+            "shares" if _IN_SHARES.search(label)
+            else "monetary" if _EQUITY_CAPTION.search(label)
+            else "pershare" if _PERSHARE_LABEL.search(label)
             else "shares" if _SHARES_LABEL.search(label) or _PERSHARE.search(label)
             else "monetary")
         rscale = {"monetary": scale, "shares": sscale}.get(rkind, 1.0)
@@ -1741,7 +1754,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v7:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v7: relabeled-line Q4 + header keys (after v6 restated Q4 from 10-K tags)
+    ckey = f"asreported_mq:v8:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v8: relabeled-line Q4 + header keys (after v7 untyped equity caption = $)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
@@ -1855,7 +1868,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     from datetime import date, timedelta
     if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
         return None
-    ckey = f"asreported_my:v10:{stype}:{metas[0]['accession']}:{n_years}"  # v10: header keys drop footnote/colon (after v9 member blocks)
+    ckey = f"asreported_my:v11:{stype}:{metas[0]['accession']}:{n_years}"  # v11: header keys drop footnote/colon (after v10 untyped equity caption = $)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None

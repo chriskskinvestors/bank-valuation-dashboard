@@ -44,6 +44,7 @@ from utils.chart_style import (
     COLOR_SUCCESS,
     COLOR_WARNING,
     COLOR_DANGER,
+    COLOR_NEUTRAL,
     apply_standard_layout,
     CHART_HEIGHT_COMPACT,
 )
@@ -83,6 +84,15 @@ _EC_CSS = (
     ".ksk-grid .miss{color:var(--danger);font-weight:600;}"
     ".ec-grid table{width:100%;}"
     "</style>")
+
+
+def _eps_src_mark(src) -> str:
+    """Cell mark for an EPS actual filled from the bank's own release: '*' when
+    it is the release's adjusted EPS (the consensus basis), '†' when it is GAAP
+    diluted — a GAAP figure in an adjusted-basis column must say so."""
+    if not src:
+        return ""
+    return "†" if "GAAP" in src else "*"
 
 
 def _ec_cell(s):
@@ -219,13 +229,15 @@ def _render_reported_panel(ticker: str):
             return "—"
         return f"{_fmt_rev_est(act)} vs {_fmt_rev_est(est)} est"
 
-    eps_mark = "*" if row.get("eps_act_src") else ""
+    eps_mark = _eps_src_mark(row.get("eps_act_src"))
     rev_mark = "*" if row.get("rev_act_src") else ""
     _kpi_strip([
         ("Reported", _ec_cell(rep), "Report date and timing.", None),
         ("EPS", _ec_cell(_vs(row.get("eps_act"), row.get("eps_est")) + eps_mark),
-         "Actual vs consensus estimate. * = actual taken from the bank's own "
-         "release while the consensus feed catches up.", None),
+         "Actual vs consensus estimate. The consensus feed's actual is "
+         "typically ADJUSTED EPS (the estimate's basis). * = taken from the "
+         "bank's own release (adjusted) while the feed catches up; † = the "
+         "release's GAAP diluted EPS (no adjusted figure stated).", None),
         ("EPS Surprise", _delta_html(row.get("eps_surprise")),
          "Actual vs estimate, % of estimate.", None),
         ("Revenue", _ec_cell(_rev_vs(row.get("rev_act"), row.get("rev_est"))
@@ -645,14 +657,18 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
     dates = [e["date"] for e in past_reversed]
     actuals = [e["eps_actual"] for e in past_reversed]
     estimates_vals = [e["eps_estimate"] for e in past_reversed]
-    surprises = [e.get("surprise_pct", 0) or 0 for e in past_reversed]
+    # None (not 0) when the source has no surprise: an unknown quarter gets a
+    # neutral bar and no label, never a fabricated "+0.0%".
+    surprises = [e.get("surprise_pct") for e in past_reversed]
 
     fig = go.Figure()
 
     fig.add_trace(go.Bar(
         x=dates, y=actuals,
         name="Actual EPS (adj.)",
-        marker_color=[COLOR_SUCCESS if s >= 0 else COLOR_DANGER for s in surprises],
+        marker_color=[COLOR_NEUTRAL if s is None
+                      else COLOR_SUCCESS if s >= 0 else COLOR_DANGER
+                      for s in surprises],
         opacity=0.7,
     ))
 
@@ -666,6 +682,8 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
 
     # Add surprise % as text above bars
     for i, (d, a, s) in enumerate(zip(dates, actuals, surprises)):
+        if s is None:
+            continue
         fig.add_annotation(
             x=d, y=a,
             text=f"{s:+.1f}%",
@@ -1910,6 +1928,8 @@ def _rel_exhibit_table(r: dict) -> str:
              "the consensus feed"]
     if r.get("eps_act_src") or r.get("rev_act_src"):
         notes.append("* actuals from the release")
+    if "GAAP" in (r.get("eps_act_src") or ""):
+        notes.append("† EPS is the release's GAAP diluted (no adjusted stated)")
     src = rel.get("url")
     link = (f'<a class="lnk" href="{_html.escape(src, quote=True)}" '
             f'target="_blank" rel="noopener">release ↗</a>' if src else "")
@@ -1944,7 +1964,7 @@ def _results_tr(r: dict, ncols: int) -> str:
         return None if v is None else (f"-${-v:.2f}" if v < 0 else f"${v:.2f}")
     eps_act, eps_est = _usd(r.get("eps_act")), _usd(r.get("eps_est"))
     if eps_act is not None and r.get("eps_act_src"):
-        eps_act += "*"                # filled from the bank's own release
+        eps_act += _eps_src_mark(r["eps_act_src"])   # filled from the release
     if r.get("pending") and eps_act is None:
         eps_act = "pending"           # release is out; FMP actuals not posted yet
     elif r.get("awaiting") and eps_act is None:
@@ -2032,7 +2052,9 @@ def _render_results_board():
     st.caption(
         "Every universe bank that has **reported** in the trailing 30 days, "
         "newest first — actual vs estimated **EPS / Revenue** with the surprise "
-        "(FMP, filled the day results land), **Px React** = the release "
+        "(FMP, filled the day results land; EPS Act is the consensus basis — "
+        "typically ADJUSTED EPS; \\* = from the bank's release, adjusted; "
+        "† = the release's GAAP diluted EPS), **Px React** = the release "
         "session's close-over-prior-close move (after-close reports react the "
         "NEXT session; *live* marks today's in-progress session), and the "
         "results press **Release** from the news feed. Every bank SCHEDULED "

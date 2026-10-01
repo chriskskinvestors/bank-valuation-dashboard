@@ -406,6 +406,36 @@ class TestHoldcoExtraction(unittest.TestCase):
         self.assertAlmostEqual(out["total_cap"], 50_423e3)
         self.assertAlmostEqual(out["lev_ratio"], 0.136)
 
+    def test_amounts_scaled_x1000_vs_total_assets_are_na(self):
+        # MTB FY2022 10-K tags FY2022 amounts x1000: CET1 $15,562B / RWA
+        # $149,016B (consistent with the 10.44% ratio, so the identity can't
+        # see it) beside ~$200B of total assets. Ratios stay; amounts n/a.
+        P = "2022-12-31"
+        facts = [
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.1044, period=P),
+            _f("us-gaap:CommonEquityTierOneCapital", 15_562_037e6, period=P),
+            _f("us-gaap:TierOneRiskBasedCapital", 17_572_586e6, period=P),
+            _f("us-gaap:TierOneRiskBasedCapitalToRiskWeightedAssets", 0.1179, period=P),
+            _f("us-gaap:Assets", 200_730e6, period=P),
+        ]
+        out = extract_holdco_capital(facts)[P]
+        self.assertAlmostEqual(out["cet1_ratio"], 0.1044)
+        self.assertAlmostEqual(out["t1_ratio"], 0.1179)
+        for k in ("cet1_cap", "t1_cap", "rwa"):
+            self.assertNotIn(k, out, k)
+        self.assertIn("scale", out["_suspect"])
+
+    def test_amounts_in_band_vs_total_assets_kept(self):
+        # Custody-bank density (RWA ~0.36x assets, STT) is inside the band.
+        facts = [
+            _f("us-gaap:CommonEquityTierOneCapitalRatio", 0.116),
+            _f("us-gaap:CommonEquityTierOneCapital", 14_810e6),     # RWA 127.7B
+            _f("us-gaap:Assets", 353_000e6),
+        ]
+        out = extract_holdco_capital(facts)["2025-12-31"]
+        self.assertAlmostEqual(out["cet1_cap"], 14_810e6)
+        self.assertNotIn("_suspect", out)
+
     def test_consistent_ratio_untouched(self):
         # Ratio ties to Standardized capital / RWA → nothing to do.
         P, MX = self._PARENT, self._MX
