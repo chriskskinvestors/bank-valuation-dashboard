@@ -2116,5 +2116,268 @@ class TestEfscpStandardLabelStatements(unittest.TestCase):
         self.assertEqual(ta["values"][0], 17_300_884_000.0)
 
 
+# ── REVIEW-2026-09-24 P2-5: Company Reported row order / duplicated headers ───
+class TestP25HeaderKeys(unittest.TestCase):
+    """A section header must be ONE row across filings. BBT's FY2025 10-K (a new
+    filing agent) renders 'Interest expense' where the older 10-Ks rendered
+    'Interest expense:'; LARK's 10-K footnotes its EPS header 'Earnings per share
+    (1):' vs the 10-Q's 'Earnings per share:'; Citi's 10-Q renders the us-gaap
+    standard label 'Revenues [Abstract]' vs the 10-K's 'Revenues'. Each pair
+    normalized to two keys, so the older filing's header was inserted as a
+    duplicate and its lines anchored after it instead of under the real one."""
+
+    def _filing(self, periods, rows):
+        return {"periods": periods, "units_scale": 1e3,
+                "rows": [{"label": l, "header": h, "values": v} for l, h, v in rows]}
+
+    def test_norm_label_drops_footnote_marker_abstract_suffix_and_colon(self):
+        from data.sec_statements import _norm_label
+        self.assertEqual(_norm_label("Interest expense:"), "interest expense")
+        self.assertEqual(_norm_label("Interest expense"), "interest expense")
+        self.assertEqual(_norm_label("Earnings per share (1):"), "earnings per share")
+        self.assertEqual(_norm_label("Other operating(1)(3)"), "other operating")
+        self.assertEqual(_norm_label("Revenues [Abstract]"), "revenues")
+        # A real parenthetical is NOT a footnote marker — it stays in the key.
+        self.assertEqual(_norm_label("Provision (benefit) for income taxes"),
+                         "provision (benefit) for income taxes")
+
+    def test_bbt_colon_header_is_one_row_and_older_lines_anchor_under_it(self):
+        from data.sec_statements import _stitch_statement
+        newer = self._filing(["Dec. 31, 2025", "Dec. 31, 2024"], [
+            ("Interest expense", True, []),                      # new agent: no colon
+            ("Deposits", False, [280.5, 233.0]),
+            ("Borrowed funds", False, [49.2, 66.0]),
+            ("Total interest expense", False, [329.7, 298.9]),
+        ])
+        older = self._filing(["Dec. 31, 2024", "Dec. 31, 2023"], [
+            ("Interest expense:", True, []),                     # old agent: colon
+            ("Deposits", False, [233.0, 175.7]),
+            ("Subordinated debt", False, [1.0, 0.9]),            # only the older filing
+            ("Total interest expense", False, [298.9, 237.6]),
+        ])
+        out = _stitch_statement([newer, older], n_years=3)
+        order = [(r["label"], r["header"]) for r in out["rows"]]
+        # ONE header (the newest filing's wording); the older-only line sits
+        # right after the row it followed in its own filing, inside the section.
+        self.assertEqual(order, [("Interest expense", True), ("Deposits", False),
+                                 ("Subordinated debt", False), ("Borrowed funds", False),
+                                 ("Total interest expense", False)])
+        byl = {r["label"]: r["values"] for r in out["rows"] if not r["header"]}
+        self.assertEqual(byl["Deposits"], [280.5, 233.0, 175.7])
+        self.assertEqual(byl["Subordinated debt"], [None, None, 0.9])
+        self.assertEqual(byl["Total interest expense"], [329.7, 298.9, 237.6])
+
+    def test_lark_footnoted_eps_header_is_one_row(self):
+        from data.sec_statements import _stitch_statement
+        newer = self._filing(["Dec. 31, 2025", "Dec. 31, 2024"], [
+            ("Earnings per share (1):", True, []),
+            ("Basic earnings per share", False, [3.09, 2.15]),
+        ])
+        older = self._filing(["Dec. 31, 2024", "Dec. 31, 2023"], [
+            ("Earnings per share:", True, []),
+            ("Basic earnings per share", False, [2.15, 2.03]),
+        ])
+        out = _stitch_statement([newer, older], n_years=3)
+        headers = [r["label"] for r in out["rows"] if r["header"]]
+        self.assertEqual(headers, ["Earnings per share (1):"])
+        self.assertEqual(out["rows"][1]["values"], [3.09, 2.15, 2.03])
+
+
+class TestP25RepeatedLabelRowOrder(unittest.TestCase):
+    """WTFC: 'Other' appears under BOTH non-interest income and non-interest
+    expense. When the two collapsed to one stitch key, the merge anchor jumped
+    back to the income block's 'Other' at the second occurrence, so 'Total
+    non-interest expense' / 'Income before taxes' / … were inserted inside the
+    NON-INTEREST INCOME block and 'Total non-interest income' landed after the
+    EPS rows (REVIEW-2026-09-24 P2-5). Pins the ORDER, not just the key."""
+
+    def _filing(self, rows):
+        return {"periods": ["Dec. 31, 2025"], "units_scale": 1e3,
+                "rows": [{"label": l, "header": h, "values": [] if h else [1.0]}
+                         for l, h in rows]}
+
+    def test_total_expense_stays_in_expense_block(self):
+        from data.sec_statements import _merge_row_order
+        newer = self._filing([
+            ("Non-interest income", True), ("Wealth management", False),
+            ("Other", False), ("Total non-interest income", False),
+            ("Non-interest expense", True), ("Salaries and employee benefits", False),
+            ("Other", False), ("Total non-interest expense", False),
+            ("Income before taxes", False), ("Net income", False),
+            ("Net income per common share-Basic (usd per share)", False),
+        ])
+        older = self._filing([                     # one extra expense line
+            ("Non-interest income", True), ("Wealth management", False),
+            ("Other", False), ("Total non-interest income", False),
+            ("Non-interest expense", True), ("Salaries and employee benefits", False),
+            ("FDIC insurance", False), ("Other", False),
+            ("Total non-interest expense", False),
+            ("Income before taxes", False), ("Net income", False),
+            ("Net income per common share-Basic (usd per share)", False),
+        ])
+        labels = [label for _, label, _, _, _ in _merge_row_order([newer, older])]
+        self.assertEqual(labels, [
+            "Non-interest income", "Wealth management", "Other",
+            "Total non-interest income",
+            "Non-interest expense", "Salaries and employee benefits",
+            "FDIC insurance", "Other", "Total non-interest expense",
+            "Income before taxes", "Net income",
+            "Net income per common share-Basic (usd per share)",
+        ])
+
+
+# ── REVIEW-2026-09-24 P2-8: Citi Q4 blank where the 10-K relabels the line ────
+# Citi's Q3-25 10-Q and FY2025 10-K tag the SAME elements under DIFFERENT
+# wording. Values are the real filings' ($ in millions):
+#   IncomeTaxExpenseBenefit  10-Q 'Provision for income taxes'            9M 4,085
+#                            10-K 'Provision (benefit) for income taxes'  FY 5,373
+#   ProfitLoss               10-Q 'Net income before attribution to
+#                                  noncontrolling interests'              9M 11,930
+#                            10-K standard label 'Net Income (Loss),
+#                                  Including Portion Attributable to
+#                                  Noncontrolling Interest, Total'        FY 14,452
+#   NetIncomeLoss            10-Q "Citigroup's net income"                9M 11,835
+#                            10-K 'Net income'                            FY 14,306
+#   OtherNoninterestExpense  10-Q 'Other operating(1)(3)' (footnotes)     9M  4,266
+#                            10-K 'Other operating'                       FY  5,862
+# while the pretax line is worded identically in both (control).
+_CITI_Q3_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED STATEMENT OF INCOME - USD ($) '
+    b'$ in Millions</th>'
+    b'<th class="th" colspan="2">3 Months Ended</th>'
+    b'<th class="th" colspan="2">9 Months Ended</th></tr>'
+    b'<tr><th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th>'
+    b'<th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th></tr>'
+    + _pgc_row(b'us-gaap_OtherNoninterestExpense', b'Other operating(1)(3)',
+               b'2,005', b'1,322', b'4,266', b'4,571')
+    + _pgc_row(b'us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxes',
+               b'Income from continuing operations before income taxes',
+               b'5,350', b'4,390', b'16,017', b'13,244')
+    + _pgc_row(b'us-gaap_IncomeTaxExpenseBenefit', b'Provision for income taxes',
+               b'1,559', b'1,116', b'4,085', b'3,299')
+    + _pgc_row(b'us-gaap_ProfitLoss',
+               b'Net income before attribution to noncontrolling interests',
+               b'3,790', b'3,273', b'11,930', b'9,943')
+    + _pgc_row(b'us-gaap_NetIncomeLoss', b"Citigroup's net income",
+               b'3,752', b'3,238', b'11,835', b'9,826')
+    + b'</table>'
+    + _ar(b'us-gaap_OtherNoninterestExpense', b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxes',
+          b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_IncomeTaxExpenseBenefit', b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_ProfitLoss', b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_NetIncomeLoss', b'xbrli:monetaryItemType'))
+
+_CITI_FY_INCOME = (
+    b'<table class="report">'
+    b'<tr><th class="tl">CONSOLIDATED STATEMENT OF INCOME - USD ($) '
+    b'$ in Millions</th><th class="th">12 Months Ended</th></tr>'
+    b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+    + _pgc_row(b'us-gaap_OtherNoninterestExpense', b'Other operating', b'5,862')
+    + _pgc_row(b'us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxes',
+               b'Income from continuing operations before income taxes', b'19,828')
+    + _pgc_row(b'us-gaap_IncomeTaxExpenseBenefit',
+               b'Provision (benefit) for income taxes', b'5,373')
+    + _pgc_row(b'us-gaap_ProfitLoss',
+               b'Net Income (Loss), Including Portion Attributable to '
+               b'Noncontrolling Interest, Total', b'14,452')
+    + _pgc_row(b'us-gaap_NetIncomeLoss', b'Net income', b'14,306')
+    + b'</table>'
+    + _ar(b'us-gaap_OtherNoninterestExpense', b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxes',
+          b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_IncomeTaxExpenseBenefit', b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_ProfitLoss', b'xbrli:monetaryItemType')
+    + _ar(b'us-gaap_NetIncomeLoss', b'xbrli:monetaryItemType'))
+
+
+class TestP28RelabeledLineQ4Differenced(unittest.TestCase):
+    """Q4 = FY − 9M must pair a 10-K line with its 10-Q line by the SHARED XBRL
+    element when the filer words it differently in the two forms. Before: the
+    FY value sat under the 10-K's label key, the 9M under the 10-Q's, nothing
+    was differenced, and Citi's Q4 'Provision for income taxes', 'Net income
+    before attribution to NCI' and 'Citigroup's net income' rendered blank
+    while the identically-worded pretax line was populated."""
+
+    def _build(self):
+        from data.sec_statements import _stitch_flow_quarters
+        return _stitch_flow_quarters([_parsed(_CITI_Q3_INCOME, "Q3ACC")],
+                                     [_parsed(_CITI_FY_INCOME, "KACC")],
+                                     [(2025, 12), (2025, 9)])
+
+    def test_element_key_map_pairs_relabeled_lines_only(self):
+        from data.sec_statements import _element_key_map
+        m = _element_key_map(_parsed(_CITI_FY_INCOME, "K"), _parsed(_CITI_Q3_INCOME, "Q"))
+        self.assertEqual(m, {
+            ("provision (benefit) for income taxes", False, "monetary"):
+                ("provision for income taxes", False, "monetary"),
+            ("net income (loss) including portion attributable to noncontrolling "
+             "interest total", False, "monetary"):
+                ("net income before attribution to noncontrolling interests", False,
+                 "monetary"),
+            ("net income", False, "monetary"):
+                ("citigroup's net income", False, "monetary"),
+        })                       # pretax and 'Other operating' already share a key
+
+    def test_citi_q4_lines_populated_with_hand_computed_values(self):
+        st = self._build()
+        self.assertEqual(st["periods"], ["Q4'25", "Q3'25"])
+        byl = {r["label"]: r["values"] for r in st["rows"] if not r["header"]}
+        # Control: identically worded in both filings (worked before the fix).
+        self.assertEqual(byl["Income from continuing operations before income taxes"],
+                         [(19_828 - 16_017) * 1e6, 5_350e6])
+        # The three relabeled lines from the review, FY − 9M by hand.
+        self.assertEqual(byl["Provision for income taxes"],
+                         [(5_373 - 4_085) * 1e6, 1_559e6])          # 1,288
+        self.assertEqual(byl["Net income before attribution to noncontrolling interests"],
+                         [(14_452 - 11_930) * 1e6, 3_790e6])        # 2,522
+        self.assertEqual(byl["Citigroup's net income"],
+                         [(14_306 - 11_835) * 1e6, 3_752e6])        # 2,471
+        # Footnote markers in the 10-Q label normalize away — same key both sides.
+        self.assertEqual(byl["Other operating(1)(3)"],
+                         [(5_862 - 4_266) * 1e6, 2_005e6])          # 1,596
+
+    def test_no_blank_10k_worded_twin_row_remains(self):
+        # The 10-K-worded rows fold into the 10-Q-worded ones (same element):
+        # exactly one row per element, labeled as the newest (10-Q) filing.
+        st = self._build()
+        labels = [r["label"] for r in st["rows"] if not r["header"]]
+        self.assertEqual(len(labels), 5)
+        self.assertNotIn("Provision (benefit) for income taxes", labels)
+        self.assertNotIn("Net income", labels)
+
+    def test_repeated_element_is_ambiguous_and_stays_blank(self):
+        # HBAN shape: one element tagged on several member-block rows in the
+        # 10-K. Which 10-Q row it pairs with is ambiguous — no remap, the Q4
+        # cell stays blank (n/a), never a guessed difference.
+        from data.sec_statements import _element_key_map, _stitch_flow_quarters
+        eid = b'us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax'
+        q3 = (b'<table class="report">'
+              b'<tr><th class="tl">INCOME $ in Millions</th>'
+              b'<th class="th" colspan="2">3 Months Ended</th>'
+              b'<th class="th" colspan="2">9 Months Ended</th></tr>'
+              b'<tr><th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th>'
+              b'<th class="th">Sep. 30, 2025</th><th class="th">Sep. 30, 2024</th></tr>'
+              + _pgc_row(eid, b'Wealth management', b'100', b'90', b'300', b'270')
+              + _pgc_row(eid, b'Insurance', b'20', b'18', b'60', b'54')
+              + b'</table>' + _ar(eid, b'xbrli:monetaryItemType'))
+        fy = (b'<table class="report">'
+              b'<tr><th class="tl">INCOME $ in Millions</th>'
+              b'<th class="th">12 Months Ended</th></tr>'
+              b'<tr><th class="th">Dec. 31, 2025</th></tr>'
+              + _pgc_row(eid, b'Wealth and asset management revenue', b'400')
+              + _pgc_row(eid, b'Insurance income', b'80')
+              + b'</table>' + _ar(eid, b'xbrli:monetaryItemType'))
+        pq, pk = [_parsed(q3, "Q3ACC")], [_parsed(fy, "KACC")]
+        self.assertEqual(_element_key_map(pk[0], pq[0]), {})
+        st = _stitch_flow_quarters(pq, pk, [(2025, 12), (2025, 9)])
+        for r in st["rows"]:
+            if not r["header"]:
+                self.assertIsNone(r["values"][0])       # Q4 blank for every row
+        wm = next(r for r in st["rows"] if r["label"] == "Wealth management")
+        self.assertEqual(wm["values"][1], 100e6)        # Q3 still as reported
+
+
 if __name__ == "__main__":
     unittest.main()
