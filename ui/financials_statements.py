@@ -229,7 +229,7 @@ _DEP_FY_INCOMPLETE = "incomplete quarterly average history"
 _DEP_NO_RECONCILE = "components do not reconcile to total interest expense"
 # FTE rows' dead-cell reason: the Schedule RI detail store (refreshed by the
 # quarterly refresh-ffiec job) can trail the FDIC SDI release by a quarter.
-_RI_NOT_INGESTED = ("Schedule RI detail not yet ingested for this period "
+_RI_NOT_INGESTED = ("Schedule {sched} detail not yet ingested for this period "
                     "(the FFIEC detail refresh can trail the FDIC release)")
 # Quarterly (single-quarter) view: a non-Q1 column also needs the prior
 # quarter's YTD detail to de-cumulate (_decum_detail).
@@ -707,6 +707,17 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         except Exception:
             return fdic_link
 
+    def _not_ingested(label, rec, asof, sched):
+        """n/a cell for a column the FFIEC detail store hasn't ingested yet —
+        the reason lives in the click-through, never an imputed value (P2-10)."""
+        why = (_RI_NOT_INGESTED.format(sched=sched)
+               + (_RI_NOT_INGESTED_Q if _decum_active else ""))
+        return "n/a", calc(label, "n/a", asof, "n/a — " + why,
+                           [{"label": label, "val": "n/a — " + why}],
+                           None, False,
+                           source=f"FFIEC Call Report — Schedule {sched}",
+                           link=_ri_doc_link(rec))
+
     def _term000(v):
         """$000 term value; absent stays honest — never rendered as $0."""
         return _thou(v) + " ($000)" if v is not None else "n/a — not reported in this filing"
@@ -929,14 +940,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind in ("fte_adj", "nii_fte"):
             det = ri_by_ci.get(ci)
             if det is None:
-                # Store lags the FDIC release (quarterly refresh-ffiec job):
-                # say so in the click-through, never impute (P2-10).
-                why = _RI_NOT_INGESTED + (_RI_NOT_INGESTED_Q if _decum_active else "")
-                return "n/a", calc(label, "n/a", asof, "n/a — " + why,
-                                   [{"label": label, "val": "n/a — " + why}],
-                                   None, False,
-                                   source="FFIEC Call Report — Schedule RI",
-                                   link=_ri_doc_link(rec))
+                # Store lags the FDIC release (quarterly refresh-ffiec job).
+                return _not_ingested(label, rec, asof, "RI")
             tel = _num(det.get("tax_exempt_loan_income"))
             tes = _num(det.get("tax_exempt_sec_income"))
             fte = _fte_adjustment(tel, tes)
@@ -1021,7 +1026,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             key, code, clean = args
             det = rie_by_ci.get(ci)
             if det is None:
-                return "—", None   # RI-E not ingested for this period
+                return _not_ingested(clean, rec, asof, "RI-E")
             doc_link = _ri_doc_link(rec)
             ref = f"Schedule RI-E (MDRM RIAD{code})"
             raw = _num(det.get(key))
@@ -1042,9 +1047,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "rie_wi":
             list_key, wlabel = args
             det = rie_by_ci.get(ci)
-            if det is None:
-                return "—", None   # RI-E not ingested for this period
             clean = f"Write-in: {wlabel}"
+            if det is None:
+                return _not_ingested(clean, rec, asof, "RI-E")
             codes = ("RIAD4461/4462/4463" if list_key == "income_writeins"
                      else "RIAD4464/4467/4468")
             doc_link = _ri_doc_link(rec)

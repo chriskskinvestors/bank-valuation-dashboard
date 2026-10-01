@@ -1141,9 +1141,16 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
     intangibles = result.get("intangibles")  # IntangibleAssetsNetExcludingGoodwill
     intangibles_is_rollup = intangibles is not None
     _, intang_end = _val_end(facts, "IntangibleAssetsNetExcludingGoodwill")
-    if intangibles is None:
-        intangibles, intang_end = _val_end(
-            facts, "FiniteLivedIntangibleAssetsNet", max_age_years=1)
+    # The finite-lived tag wins when it is FRESHER, not only when the rollup
+    # is absent: post-Synovus PNFP tags IntangibleAssetsNetExcludingGoodwill
+    # only in its 10-K ($29.7M, 2025-12-31) and the quarter's $1,045M of core
+    # deposit intangibles only as FiniteLivedIntangibleAssetsNet (2026-06-30);
+    # the stale rollup served TBVPS $69.86 against the release's $63.02
+    # (2026-10-01). Same-date ties keep the rollup (MSR netting applies to it).
+    flian, flian_end = _val_end(facts, "FiniteLivedIntangibleAssetsNet", max_age_years=1)
+    if flian is not None and (intangibles is None
+                              or (intang_end and flian_end and flian_end > intang_end)):
+        intangibles, intang_end, intangibles_is_rollup = flian, flian_end, False
         result["intangibles"] = intangibles
 
     incl, incl_end = _val_end(facts, "IntangibleAssetsNetIncludingGoodwill")
@@ -1201,6 +1208,94 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
 
     result["intangible_adjustment"] = adjustment
     return adjustment
+
+
+def _usd_at(facts: dict, concept: str, as_of: str) -> float | None:
+    """USD value of a balance-sheet concept tagged exactly at `as_of`
+    (_instant_at's tuple, value only), else None."""
+    tup = _instant_at(facts, concept, as_of)
+    return float(tup[0]) if tup else None
+
+
+def _usd_latest_before(facts: dict, as_of: str, *concepts: str,
+                       max_days: int = 366) -> tuple[float | None, str | None, bool]:
+    """(value, end, is_first_concept) of the newest 10-K/10-Q fact among
+    `concepts` dated BEFORE `as_of` and within `max_days` of it — the first
+    concept wins a tie on date. (None, None, False) when nothing qualifies."""
+    from datetime import date, timedelta
+    floor = (date.fromisoformat(as_of) - timedelta(days=max_days)).isoformat()
+    best = (None, None, False)
+    for i, concept in enumerate(concepts):
+        units = facts.get("facts", {}).get("us-gaap", {}).get(concept, {}).get("units", {})
+        for e in units.get("USD", []):
+            end = e.get("end")
+            if (e.get("form") in ("10-K", "10-Q") and e.get("val") is not None
+                    and end and floor <= end < as_of
+                    and (best[1] is None or end > best[1])):
+                best = (float(e["val"]), end, i == 0)
+    return best
+
+
+def _intangible_adjustment_at(facts: dict, as_of: str) -> tuple[float | None, str]:
+    """(goodwill + other-intangibles to deduct for tangible book AT `as_of`,
+    basis label) — the per-period twin of _resolve_intangible_adjustment, on
+    the SAME TCE rules, read at one balance-sheet date instead of "latest".
+
+    Why a twin exists: the Financial Highlights / P/TBV-history path read only
+    `IntangibleAssetsNetExcludingGoodwill` for other intangibles, while the
+    snapshot path also falls back to `FiniteLivedIntangibleAssetsNet`. HFWA
+    tags its $47M of core-deposit intangibles ONLY under the finite-lived
+    tag, so the Corporate Profile card said P/TBV 1.44x (TBVPS $19.15) while
+    the chart beside it said 1.36x ($20.31, goodwill-only) — two answers for
+    one number on one page (owner, 2026-10-01). Rules, same order as the
+    snapshot resolver, all same-date:
+      other  = IANEG (an MSR-inclusive rollup for some filers) else FLIAN
+               (never holds MSRs); a same-date MSR that fits inside a rollup
+               is netted back out (MSRs stay in tangible equity).
+      incl   = IANIG rollup, MSR-netted the same way.
+      goodwill > incl × 1.05 → incl (goodwill tag dimensional/stale);
+      goodwill → goodwill + max(other, incl − goodwill);
+      else incl; else other; else (None, "no intangibles tagged at this date")
+    — None, not 0: the caller decides whether an untagged date is "no
+    intangibles" or "not tagged here" (ui/financial_highlights
+    _recent_intangibles), never a silent goodwill-only deduction."""
+    goodwill = _usd_at(facts, "Goodwill", as_of)
+    other = _usd_at(facts, "IntangibleAssetsNetExcludingGoodwill", as_of)
+    other_is_rollup = other is not None
+    other_end = as_of if other is not None else None
+    if other is None:
+        other = _usd_at(facts, "FiniteLivedIntangibleAssetsNet", as_of)
+        other_end = as_of if other is not None else None
+    if other is None and goodwill is not None:
+        # Other intangibles tagged only on an earlier sheet within the year
+        # (JPM tags them annually): carry the latest forward, as the snapshot
+        # resolver does (max_age_years=1) — goodwill-only would understate
+        # the deduction by the whole carried amount ($1.3B for JPM).
+        other, other_end, other_is_rollup = _usd_latest_before(
+            facts, as_of, "IntangibleAssetsNetExcludingGoodwill",
+            "FiniteLivedIntangibleAssetsNet")
+    incl = _usd_at(facts, "IntangibleAssetsNetIncludingGoodwill", as_of)
+    msr = _usd_at(facts, "ServicingAssetAtFairValueAmount", other_end or as_of)
+
+    def _strip(val, is_rollup):
+        if val is None or not is_rollup or not msr:
+            return val
+        return val - msr if 0 < msr < val else val
+
+    other_s, incl_s = _strip(other, other_is_rollup), _strip(incl, True)
+    carried = f" (other intangibles as of {other_end})" if other_end and other_end != as_of else ""
+    if goodwill is not None and incl is not None and goodwill > incl * 1.05:
+        return incl_s, "intangibles incl. goodwill (goodwill tag exceeds the rollup)"
+    if goodwill is not None:
+        o = other_s or 0.0
+        if incl_s is not None:
+            o = max(o, incl_s - goodwill)
+        return goodwill + o, (("goodwill + other intangibles" + carried) if o else "goodwill")
+    if incl is not None:
+        return incl_s, "intangibles incl. goodwill"
+    if other is not None:
+        return other_s, "other intangibles"
+    return None, "no intangibles tagged at this date"
 
 
 def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[float | None, bool]:
