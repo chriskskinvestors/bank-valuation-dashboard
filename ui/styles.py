@@ -189,6 +189,14 @@ CUSTOM_CSS = """
         font-size: 10px !important;
     }
 
+    /* Multiselect chips: BaseWeb clamps the chip's label span at 128px with
+       an ellipsis, so "Real GDP (QoQ SA…" and "Press Release / Pr…" truncated
+       on the Macro explorer and Key Exhibits filter (UX-P2-05). Bounded, not
+       unbounded, so a very long label wraps the row rather than the chip.
+       Streamlit-internal selector — re-verify on a Streamlit bump
+       (memory: streamlit-dom-css-skew). */
+    [data-baseweb="tag"] span[title] { max-width: 260px !important; }
+
     /* SNL-style title bar */
     .ksk-titlebar { padding: 2px 0 0; }
     .ksk-titlebar .tb-main { font-size: var(--fs-md); font-weight: 600; color: var(--text-primary); }
