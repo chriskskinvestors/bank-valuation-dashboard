@@ -111,13 +111,16 @@ def _render_phased_inputs(ticker, latest, inputs, tax_rate):
     cr_doc = _fdic_doc(cert, latest.get("REPDTE")) if (cert and latest.get("REPDTE")) else None
     asof = _disp_date(latest.get("REPDTE")) if latest.get("REPDTE") else "latest"
     ern = _num(latest.get("ERNAST")); sc = _num(latest.get("SC")); ln = _num(latest.get("LNLSNET"))
-    nim = inputs.get("current_nim_pct", 0); ea = inputs.get("earning_assets_usd")
+    nim = inputs.get("current_nim_pct"); ea = inputs.get("earning_assets_usd")
+    # NIMY can be present-None (e.g. multi-charter consolidated records):
+    # "—", never a format crash or a fabricated 0.00%.
+    nim_s = f"{nim:.2f}%" if nim is not None else "—"
     sec_sh = inputs.get("securities_share", 0); ln_sh = inputs.get("loans_share", 0)
 
     cards = [
-        {"label": "Current NIM", "value": f"{nim:.2f}%",
+        {"label": "Current NIM", "value": nim_s,
          "calc": fdic_calc("Current net interest margin", "NIMY", latest, cert, unit="%",
-                           entity=entity, value=f"{nim:.2f}%", reported=True,
+                           entity=entity, value=nim_s, reported=True,
                            definition="The bank's latest reported net interest margin — the "
                                        "starting point the rate scenarios shock.")},
         {"label": "Earning Assets", "value": fmt_dollars(ea),

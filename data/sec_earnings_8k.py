@@ -54,9 +54,13 @@ _LATEST_8K_TTL_S = 2 * 3600
 
 
 def _latest_earnings_8k(cik) -> dict | None:
-    """Most-recent Item-2.02 (Results of Operations) 8-K: {accession, accession_dash,
-    date, cik} or None. Item 2.02 is the earnings item — a press-release-only 8-K
-    (7.01/8.01) is skipped so we land on the quarter's results filing.
+    """Most-recent earnings 8-K: {accession, accession_dash, date, cik} or None.
+    Item 2.02 (Results of Operations) is the earnings item, trusted outright. A
+    NEWER 8-K without 2.02 is taken only when its EX-99.1 proves itself the
+    release for a newer quarter (_is_misitemized_release) — FBP and NPB
+    furnished their Q2-2026 releases under Items 2.01/9.01 and 2.01/7.01, so
+    a 2.02-only finder landed on their Q1 8-Ks (found 2026-10-01). A furnished
+    deck or dividend notice never qualifies: the item code alone decides nothing.
 
     The result (a no-8-K bank included) is cached ~2h: this runs per bank on
     every metrics build, and the uncached submissions fetch × ~440 SEC filers
@@ -79,7 +83,9 @@ def latest_periodic_filing(cik) -> dict | None:
 def _submissions_record(cik) -> dict:
     """{f8k, periodic} for a CIK, cached ~2h (see _latest_earnings_8k)."""
     from data import cache
-    ckey = f"earnings_8k_latest:v1:{int(cik)}"
+    from data.ir_provider import _FURNISH_ITEMS
+    # v2: f8k may be a mis-itemized release newer than the latest 2.02 (FBP/NPB).
+    ckey = f"earnings_8k_latest:v2:{int(cik)}"
     hit = cache.get(ckey, max_age_s=_LATEST_8K_TTL_S)
     if hit is not None and "periodic" in hit:
         return hit
@@ -99,24 +105,82 @@ def _submissions_record(cik) -> dict:
                         "report_date": rdates[i] if i < len(rdates) else ""}
             break
     f8k = None
+    furnished = []                 # non-2.02 8-Ks newer than f8k, newest first
     for i, form in enumerate(forms):
         if form != "8-K":
             continue
         item_str = items[i] if i < len(items) else ""
-        if "2.02" not in item_str:
-            continue
         acc_dash = accs[i] if i < len(accs) else ""
         if not acc_dash:
             continue
-        f8k = {"accession_dash": acc_dash, "accession": acc_dash.replace("-", ""),
+        row = {"accession_dash": acc_dash, "accession": acc_dash.replace("-", ""),
                "date": dates[i] if i < len(dates) else "", "cik": int(cik)}
-        break
+        if "2.02" in item_str:
+            f8k = row
+            break
+        present = {s.strip() for s in item_str.replace(";", ",").split(",")}
+        if present & _FURNISH_ITEMS:
+            furnished.append(row)
+    # A mis-itemized release can only supersede the 2.02 8-K when it reports a
+    # NEWER quarter; candidates are newest-first, so the first one at or
+    # before the 2.02's quarter ends the scan. Each check is accession-cached.
+    floor = _release_quarter_end(f8k["date"]) if f8k else None
+    for row in furnished[:_MISITEMIZED_MAX_CHECKS]:
+        qe = _release_quarter_end(row["date"])
+        if qe is None or (floor is not None and qe <= floor):
+            break
+        try:
+            if _is_misitemized_release(row):
+                f8k = row
+                break
+        except Exception as e:
+            # Unverifiable: a newer release may exist, so the older 2.02 8-K
+            # must not stand in for it. No 8-K this call, and nothing cached.
+            print(f"[sec_earnings_8k] release check failed for cik {cik} "
+                  f"{row['accession_dash']}: {type(e).__name__}: {e}")
+            return {"f8k": None, "periodic": periodic}
     record = {"f8k": f8k, "periodic": periodic}
     try:
         cache.put(ckey, record)
     except Exception:
         pass
     return record
+
+
+# Non-2.02 8-Ks checked per scan — bounds a bank with no 2.02 8-K at all.
+_MISITEMIZED_MAX_CHECKS = 4
+
+
+def _is_misitemized_release(f8k: dict) -> bool:
+    """True when a non-2.02 8-K's EX-99.1 is demonstrably the earnings release
+    for the quarter its filing date implies: the exhibit's opening text passes
+    the earnings-headline gate (data.ir_provider._is_earnings_headline — ASB's
+    "Announces Results of Annual Meeting" and Bank OZK's "Announces Date for
+    … Earnings Release" fail it) AND the FIRST period that text names is that
+    quarter-end ("FIRST BANCORP. ANNOUNCES EARNINGS FOR THE QUARTER ENDED JUNE
+    30, 2026", filed 2026-07-22). A text that names no period, or opens on a
+    different one, is not proven — False. Cached forever by accession (the
+    filing is immutable); a fetch EXCEPTION propagates uncached."""
+    from data import cache
+    from data.ir_provider import _headline_text, _is_earnings_headline
+    ckey = f"earnings_8k_misitemized:v1:{f8k['accession']}"
+    hit = cache.get(ckey, max_age_s=None)
+    if hit is not None:
+        return bool(hit.get("ok"))
+    ok = False
+    doc = _ex991_document(f8k["cik"], f8k["accession_dash"])
+    if doc:
+        html = _get(f"https://www.sec.gov/Archives/edgar/data/{int(f8k['cik'])}/"
+                    f"{f8k['accession']}/{doc}")
+        text = _headline_text(html.decode("utf-8", "replace"))
+        periods = _periods(text)
+        ok = (_is_earnings_headline(text) and bool(periods)
+              and periods[0] == _release_quarter_end(f8k["date"]))
+    try:
+        cache.put(ckey, {"ok": ok})
+    except Exception:
+        pass
+    return ok
 
 
 _EX99_TYPE = re.compile(r"EX-99\.(\d+)")
@@ -197,7 +261,7 @@ def _clean_label(s: str) -> str:
     return re.sub(r"\s+", " ", s)
 
 
-def _table_rows(html_bytes: bytes) -> list[tuple]:
+def _table_rows(html_bytes: bytes, year_spans: bool = False) -> list[tuple]:
     """Every (clean_label, [numeric cells…]) row across the document's tables, in
     document order. A row needs a non-numeric label and ≥1 numeric cell.
 
@@ -222,8 +286,9 @@ def _table_rows(html_bytes: bytes) -> list[tuple]:
     root = lhtml.fromstring(html_bytes)
     rows: list[tuple] = []
     for table in root.findall(".//table"):
-        grid, _ = _table_grid(table)
-        rows.extend((cl, nums) for _, cl, nums, _ in _grid_rows(grid))
+        grid, spans = _table_grid(table)
+        rows.extend((cl, nums) for _, cl, nums, _
+                    in _grid_rows(grid, spans if year_spans else None))
     return rows
 
 
@@ -250,14 +315,37 @@ def _table_grid(table) -> tuple[list, list]:
     return grid, spans
 
 
-def _grid_rows(grid: list) -> list[tuple]:
+def _grid_rows(grid: list, spans: list | None = None) -> list[tuple]:
     """(row_index, clean_label, nums, cols) for every data row of one table
     grid — _table_rows' per-table body; cols[i] is the table column nums[i]
-    was read from."""
+    was read from. A value column is any column with a numeric cell in ANY
+    row — unless `spans` is given (the book-value path, _book_value_rows):
+
+    then a value column is any column with a numeric cell in a DATA row. A bare
+    header year is not data, but it is kept as a column when it heads one no
+    data row fills — an all-blank latest-quarter column must still read None
+    (audit P3). A year whose colspan COVERS a data column heads that column
+    instead: BHB Q2-2026 (8-K 0001104659-26-085415) centres "2026" over a
+    colspan-2 cell whose first column is the '$' column, so that '$' column
+    became the first "value" column and every row read [None, 23.43, …] —
+    the whole table, TBVPS included, rendered n/a.
+
+    NOT applied to the headline figures (extract_earnings_figures): the same
+    fix there exposed rows its single release-wide scale and first-match
+    gates cannot vet — $-thousands flows scaled by a $-millions summary
+    table (BHB NII read as $37.9B, UCB/CSBB net income ×1000), average or
+    six-month columns inside the ±band (FCAP deposits −20%, PBHC NII +98%)
+    — measured over the 2026-09-30 sweep, 2026-10-01. Per-share book values
+    are scale-free and gated against the reconstruction / tangible < book."""
     out: list[tuple] = []
-    # A value column is any column with a numeric cell in ANY row.
-    num_cols = sorted({i for row in grid for i, c in enumerate(row)
-                       if _num(c) is not None})
+    headers = ({r for r, row in enumerate(grid) if _is_year_header(row)}
+               if spans is not None else set())
+    num_cols = {i for r, row in enumerate(grid) if r not in headers
+                for i, c in enumerate(row) if _num(c) is not None}
+    num_cols |= {a for r in headers for a, b, t in (spans or [])[r]
+                 if _num(t) is not None
+                 and not any(a <= i <= b for i in num_cols)}
+    num_cols = sorted(num_cols)
     for r, row in enumerate(grid):
         label_idx = next((i for i, c in enumerate(row) if c.strip()), None)
         if label_idx is None:
@@ -583,7 +671,7 @@ def _book_value_rows(html_bytes: bytes) -> list[tuple]:
     mis-scales a first-matched flow (BAC Q2-2026: "Net income $9.1" billion
     read as $9.1M). Per-share values carry no scale, and the book-value gates
     (±15% vs the reconstruction, tangible < book) cross-check every pick."""
-    rows = _table_rows(html_bytes)
+    rows = _table_rows(html_bytes, year_spans=True)
     if rows:
         return rows
     from lxml import html as lhtml
@@ -1259,7 +1347,9 @@ def reported_bvps_status(
     #     positioned-fragment releases (FBP), and no-reconstruction rows
     #     must say COMMON when the release shows preferred equity (NPB).
     # v6: supplementary exhibits EX-99.2+ (RBCAA/FCNCA) + formula-ref suffixes.
-    ckey = f"reported_bvps:v6:{f8k['accession']}:{rk}:{tk}"
+    # v7: the finder also selects mis-itemized releases (FBP/NPB Q2-2026).
+    # v8: header-year phantom column dropped in _table_rows (BHB).
+    ckey = f"reported_bvps:v8:{f8k['accession']}:{rk}:{tk}"
     # Accession+anchor-keyed = immutable; no 24h read ceiling.
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
@@ -1298,7 +1388,11 @@ def reported_bvps_status(
 #      no-intangibles tangible == book allowance (USCB).
 # v11: supplementary exhibits EX-99.2+ of the same 8-K (RBCAA EX-99.2, FCNCA
 #      EX-99.3) + bare reconciliation-formula label suffixes ("x/dd").
-_REPORTED_TBVPS_CKEY_V = "v11"
+# v12: _latest_earnings_8k also selects an 8-K whose EX-99.1 proves itself a
+#      newer quarter's release despite a non-2.02 item (FBP 2.01, NPB 2.01/7.01).
+# v13: a header year spanning a value column no longer adds a phantom first
+#      column to _table_rows (BHB: every row read [None, 23.43, …]).
+_REPORTED_TBVPS_CKEY_V = "v13"
 
 
 def reported_tbvps_status(

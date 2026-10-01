@@ -307,6 +307,7 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
                 **_sec_map(facts, sec_client._SE, instant=True)}
     goodwill = _sec_map(facts, "Goodwill", instant=True)
     intang = _sec_map(facts, "IntangibleAssetsNetExcludingGoodwill", instant=True)
+    flian = _sec_map(facts, "FiniteLivedIntangibleAssetsNet", instant=True)
     incl = _sec_map(facts, "IntangibleAssetsNetIncludingGoodwill", instant=True)
     shares = _shares_map(facts)
     # provenance (original filing accession/form per period) for source-doc links
@@ -338,27 +339,28 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
             sh, sh_date = shares[key], key
         else:
             sh_date, sh = _nearest_kv(shares, d)
-        # Align intangibles to the SAME balance-sheet date as equity (eq_date),
-        # not the requested column end (key). On an equity date-miss these lists
-        # would otherwise not join, silently zeroing the intangible adjustment
-        # and collapsing TBVPS onto BVPS (goodwill never subtracted).
-        gw = goodwill.get(eq_date)
-        other = intang.get(eq_date)
-        if gw is not None:
-            adj = gw + (other or 0)
-            adj_basis = "goodwill + other intangibles" if other else "goodwill"
-        elif incl.get(eq_date) is not None:
-            adj = incl.get(eq_date)
-            adj_basis = "intangibles incl. goodwill"
-        elif (not eq_date or _recent_intangibles(eq_date, goodwill, incl)
-              or (other is None and _recent_intangibles(eq_date, intang))):
+        # Intangibles at the SAME balance-sheet date as equity (eq_date), on
+        # the snapshot path's TCE rules (sec_client._intangible_adjustment_at:
+        # finite-lived fallback, MSR netting, combined-tag back-out) — the card
+        # and this history must deduct the same thing (HFWA, 2026-10-01).
+        adj, adj_basis = (sec_client._intangible_adjustment_at(facts, eq_date)
+                          if eq_date else (None, "no balance-sheet date"))
+        gw_here = eq_date and (goodwill.get(eq_date) is not None or incl.get(eq_date) is not None)
+        if adj is None and (not eq_date or _recent_intangibles(eq_date, goodwill, incl)
+                            or _recent_intangibles(eq_date, intang, flian)):
             # Goodwill (or other intangibles) on a recent balance sheet but not
             # tagged at eq_date: n/a, never a TBVPS with part or all of the
             # deduction silently dropped (it used to fall back to BVPS).
+            adj_basis = "intangibles not tagged at this date"
+        elif adj is None:
+            adj, adj_basis = 0.0, "no intangibles reported"
+        elif not gw_here and _recent_intangibles(eq_date, goodwill, incl):
+            # Other intangibles tagged here but goodwill only on a recent
+            # earlier sheet: the deduction would silently drop the goodwill.
             adj, adj_basis = None, "intangibles not tagged at this date"
-        else:
-            adj = other or 0.0
-            adj_basis = "other intangibles" if other else "no intangibles reported"
+        # raw inputs for the drill-down (what the deduction was built from)
+        gw = goodwill.get(eq_date)
+        other = intang.get(eq_date) if intang.get(eq_date) is not None else flian.get(eq_date)
         bvps = (ce / sh) if (ce and sh) else None
         tbvps = ((ce - adj) / sh) if (ce and sh and adj is not None) else None
         eps, eps_note = _flow_for(d, eps_q, eps_a, quarterly)
@@ -904,6 +906,8 @@ td.val {{ text-align:right; padding:2px 7px; color:#1e40af; cursor:pointer;
   font-variant-numeric:tabular-nums; }}
 td.val.dead {{ color:#94a3b8; cursor:default; }}
 td.val.neg {{ color:#b91c1c; }}
+/* † = growth includes an acquisition completed in the period (P2-7) */
+td.val.acq::after {{ content:"†"; font-size:9px; color:#94a3b8; margin-left:2px; }}
 tr.zebra td.lbl, tr.zebra td.val {{ background:#fafbfc; }}
 tbody tr:hover td.lbl, tbody tr:hover td.val {{ background:rgba(30,64,175,0.07); }}
 tbody tr:hover td.lbl {{ color:#0f172a; font-weight:600; }}

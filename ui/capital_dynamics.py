@@ -1062,6 +1062,10 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
     bb_ratio = (ttm.get("buyback_ratio_ttm") or 0) * 100
     sc_change = ttm.get("share_change_pct_ttm")
     sy = yld.get("total_shareholder_yield_pct")
+
+    def _yp(v):
+        return f"{v:.1f}%" if v is not None else "n/a"
+
     ledger("Capital Return — TTM", [
         ("Total Return Ratio",
          (f"{tr_ratio:.0f}%" if ttm.get("total_return_ratio_ttm") is not None else "—")
@@ -1079,7 +1083,9 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
          + _mut("TTM" if sc_change is not None else "")),
         ("Shareholder Yield",
          (f"{sy:.2f}%" if sy is not None else "—")
-         + _mut((f"{yld.get('dividend_yield_pct',0):.1f}% div + {yld.get('buyback_yield_pct',0):.1f}% bb")
+         # One component can be None while the total is known (capital_return's
+         # one-known convention) — that side renders n/a, never a format crash.
+         + _mut((f"{_yp(yld.get('dividend_yield_pct'))} div + {_yp(yld.get('buyback_yield_pct'))} bb")
                 if sy is not None else "")),
     ])
 
@@ -1126,11 +1132,12 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
             opacity=0.45,
         ))
         fig1.add_trace(go.Bar(
-            x=df["date"], y=df["dividends_q"].fillna(0) / scale,
+            # NaN (not 0): an unknown quarter draws no bar, never a $0 bar.
+            x=df["date"], y=_div / scale,
             name="Dividends", marker_color=COLOR_SUCCESS,
         ))
         fig1.add_trace(go.Bar(
-            x=df["date"], y=df["buybacks_q"].fillna(0) / scale,
+            x=df["date"], y=_bb / scale,
             name="Buybacks", marker_color=COLOR_WARNING,
         ))
         apply_standard_layout(

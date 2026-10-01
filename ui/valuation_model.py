@@ -182,7 +182,9 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     # non-goodwill intangibles.
     tbvps = sec.get("tangible_book_value_per_share")
     if tbvps is None:
-        equity = latest.get("EQTOT") or 0
+        # None (not 0) when EQTOT is absent: 0 − intangibles is a NEGATIVE
+        # TBV/share that slips past the `tbvps is None` headline gate.
+        equity = latest.get("EQTOT")
         # max(INTAN, INTANGW), the same belt-and-braces analysis/capital_dynamics
         # uses. INTAN (total intangibles) is the convention and normally the
         # larger, so this resolves to it; but a record missing INTAN would
@@ -190,7 +192,8 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
         # overstatement than the goodwill-only bug this replaced. Falling back to
         # goodwill is the conservative floor.
         intangibles = max(latest.get("INTAN") or 0, latest.get("INTANGW") or 0)
-        tbvps = ((equity - intangibles) * 1000 / shares) if shares > 0 else None
+        tbvps = (((equity - intangibles) * 1000 / shares)
+                 if (shares > 0 and equity is not None) else None)
 
     # Trailing loan growth (TTM)
     loans = [r.get("LNLSNET") for r in hist[:5] if r.get("LNLSNET") is not None]

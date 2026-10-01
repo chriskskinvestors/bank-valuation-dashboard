@@ -100,6 +100,18 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
                 fdic_data = fdic_hist[0]
                 cache.put_fdic(ticker, fdic_data)
                 cache.put(f"fdic_hist:{ticker}", fdic_hist)
+            # Warm the FDIC structure history per charter (7d cache): the
+            # statement tables' growth-row acquisition flag reads it
+            # cache-only (ui/history_range.group_acquisitions) so a render
+            # never blocks on FDIC. A failure here is logged by the client
+            # and leaves the flag unwarmed for that charter, never the row.
+            try:
+                from data.cert_group import get_cert_group
+                from data.fdic_structure import get_acquisition_history
+                for c in get_cert_group(ticker, cert):
+                    get_acquisition_history(c)
+            except Exception as e:
+                row["warnings"].append(f"structure_warm:{type(e).__name__}")
         if cik:
             sec_data = sec_client.get_latest_fundamentals(cik) or {}
             if sec_data:
