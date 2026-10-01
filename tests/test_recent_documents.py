@@ -94,7 +94,10 @@ class TestClassifyFilings(unittest.TestCase):
     def test_earnings_8k_is_er_row(self):
         f = _f("8-K", items="2.02", is_earnings=True)
         self.assertEqual(RD.doc_label(f), "Earnings Release (ER)")
-        self.assertEqual(RD.doc_label(_f("10-K")), "10-K (10-K)")
+        # A bare form code is its own label — never "10-K (10-K)" (UX-P2-26);
+        # the parenthetical survives only behind a descriptive label.
+        self.assertEqual(RD.doc_label(_f("10-K")), "10-K")
+        self.assertEqual(RD.doc_label(_f("8-K")), "8-K")
         self.assertEqual(RD.doc_label(_f("ARS")), "Annual Report (ARS)")
 
 

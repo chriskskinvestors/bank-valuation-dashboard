@@ -117,7 +117,7 @@ class TestLatest8kResultCached(_IsolatedCache):
 
         with patch.object(se8k, "_get", side_effect=fake_get):
             se8k._latest_earnings_8k(1234567)
-            self._age("earnings_8k_latest:v1:1234567",
+            self._age("earnings_8k_latest:v2:1234567",
                       se8k._LATEST_8K_TTL_S + 60)
             se8k._latest_earnings_8k(1234567)
         self.assertEqual(len(calls), 2)

@@ -325,10 +325,21 @@ def to_yoy(df: pd.DataFrame) -> pd.DataFrame:
     d = _clean(df)
     if d.empty:
         return d
-    yoy = []
-    for i in range(len(d)):
-        yoy.append(_yoy_at(d, i))
-    res = pd.DataFrame({"date": d["date"], "value": yoy}).dropna(subset=["value"])
+    # Vectorized _yoy_at: for every row, the LAST observation dated on or
+    # before (date − 1 year) — a backward as-of join, identical to calling
+    # _yoy_at(d, i) per row. The per-row loop re-filtered the whole frame each
+    # time (O(n²)); on a 10-year daily series that was most of a cold Market &
+    # Macro render (75% of the render thread, profiled 2026-10-01; prod
+    # macro.render measured 17.6 s cold).
+    cur = pd.DataFrame({"date": d["date"], "cur": d["value"].astype(float),
+                        "target": d["date"] - pd.DateOffset(years=1)})
+    base = d[["date", "value"]].rename(columns={"date": "prior_date",
+                                                "value": "base"})
+    m = pd.merge_asof(cur, base, left_on="target", right_on="prior_date",
+                      direction="backward")
+    ok = m["base"].notna() & (m["base"] != 0)
+    value = ((m["cur"] / m["base"] - 1.0) * 100.0).where(ok)
+    res = pd.DataFrame({"date": d["date"], "value": value}).dropna(subset=["value"])
     return res.reset_index(drop=True)
 
 

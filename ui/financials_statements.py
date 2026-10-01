@@ -16,12 +16,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 
-from data.bank_mapping import get_bank_info
+from data.bank_mapping import get_bank_info, get_name
 from ui.export import table_export
 from ui.financial_highlights import _build_component
 from ui.history_range import (table_range_picker, load_hist_df_for_range, range_years,
                               first_live_index, structure_breaks, describe_window,
-                              entity_note)
+                              entity_note, acquisitions_between, group_acquisitions)
 
 
 # Shared numeric primitives — one implementation in utils/formatting.
@@ -229,7 +229,7 @@ _DEP_FY_INCOMPLETE = "incomplete quarterly average history"
 _DEP_NO_RECONCILE = "components do not reconcile to total interest expense"
 # FTE rows' dead-cell reason: the Schedule RI detail store (refreshed by the
 # quarterly refresh-ffiec job) can trail the FDIC SDI release by a quarter.
-_RI_NOT_INGESTED = ("Schedule RI detail not yet ingested for this period "
+_RI_NOT_INGESTED = ("Schedule {sched} detail not yet ingested for this period "
                     "(the FFIEC detail refresh can trail the FDIC release)")
 # Quarterly (single-quarter) view: a non-Q1 column also needs the prior
 # quarter's YTD detail to de-cumulate (_decum_detail).
@@ -707,6 +707,17 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         except Exception:
             return fdic_link
 
+    def _not_ingested(label, rec, asof, sched):
+        """n/a cell for a column the FFIEC detail store hasn't ingested yet —
+        the reason lives in the click-through, never an imputed value (P2-10)."""
+        why = (_RI_NOT_INGESTED.format(sched=sched)
+               + (_RI_NOT_INGESTED_Q if _decum_active else ""))
+        return "n/a", calc(label, "n/a", asof, "n/a — " + why,
+                           [{"label": label, "val": "n/a — " + why}],
+                           None, False,
+                           source=f"FFIEC Call Report — Schedule {sched}",
+                           link=_ri_doc_link(rec))
+
     def _term000(v):
         """$000 term value; absent stays honest — never rendered as $0."""
         return _thou(v) + " ($000)" if v is not None else "n/a — not reported in this filing"
@@ -716,6 +727,14 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     _Q_NOTE = " — single quarter: calendar-YTD(q) − YTD(q−1), Q1 as filed"
     _computed_src = ("Computed from Call Report" + _Q_NOTE) if _decum_active \
         else "Computed from Call Report"
+
+    # Annualized growth rows: a period in which the bank completed a
+    # whole-bank acquisition grows by the target, not organically. The
+    # arithmetic is as documented, so the cell keeps its value but carries a
+    # † marker and names the deal in the click-through — never a bare 203%
+    # (REVIEW-2026-09-24 P2-7: ONB/Bremer, HBAN/Cadence). Charter group,
+    # FDIC structure history, cached 7d; [] on failure = unflagged.
+    _acq_deals = group_acquisitions(ticker, cert)
 
     def cell(ci, kind, args, label):
         rec = recs_list[ci]
@@ -929,14 +948,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind in ("fte_adj", "nii_fte"):
             det = ri_by_ci.get(ci)
             if det is None:
-                # Store lags the FDIC release (quarterly refresh-ffiec job):
-                # say so in the click-through, never impute (P2-10).
-                why = _RI_NOT_INGESTED + (_RI_NOT_INGESTED_Q if _decum_active else "")
-                return "n/a", calc(label, "n/a", asof, "n/a — " + why,
-                                   [{"label": label, "val": "n/a — " + why}],
-                                   None, False,
-                                   source="FFIEC Call Report — Schedule RI",
-                                   link=_ri_doc_link(rec))
+                # Store lags the FDIC release (quarterly refresh-ffiec job).
+                return _not_ingested(label, rec, asof, "RI")
             tel = _num(det.get("tax_exempt_loan_income"))
             tes = _num(det.get("tax_exempt_sec_income"))
             fte = _fte_adjustment(tel, tes)
@@ -1021,7 +1034,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             key, code, clean = args
             det = rie_by_ci.get(ci)
             if det is None:
-                return "—", None   # RI-E not ingested for this period
+                return _not_ingested(clean, rec, asof, "RI-E")
             doc_link = _ri_doc_link(rec)
             ref = f"Schedule RI-E (MDRM RIAD{code})"
             raw = _num(det.get(key))
@@ -1042,9 +1055,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         if kind == "rie_wi":
             list_key, wlabel = args
             det = rie_by_ci.get(ci)
-            if det is None:
-                return "—", None   # RI-E not ingested for this period
             clean = f"Write-in: {wlabel}"
+            if det is None:
+                return _not_ingested(clean, rec, asof, "RI-E")
             codes = ("RIAD4461/4462/4463" if list_key == "income_writeins"
                      else "RIAD4464/4467/4468")
             doc_link = _ri_doc_link(rec)
@@ -1323,8 +1336,16 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "n/a", calc(label, "n/a — non-positive balance ratio",
                                    asof, "Computed from Call Report", terms, op, False)
             g = ((ratio ** 4 - 1.0) if quarterly else (ratio - 1.0)) * 100.0
-            return _pctv(g), calc(label, _pctv(g), asof,
-                                     "Computed from Call Report", terms, op, False)
+            acq = acquisitions_between(_acq_deals, recs_list[ci - 1].get("REPDTE"),
+                                       rec.get("REPDTE"))
+            for d in acq:
+                terms.append({"label": "Acquisition completed in period (FDIC structure history)",
+                              "val": f"{d.get('target_name') or 'unnamed target'} "
+                                     f"({d.get('date')}) — growth is not organic"})
+            c = calc(label, _pctv(g), asof, "Computed from Call Report", terms, op, False)
+            if acq:
+                c["flag"] = "acq"
+            return _pctv(g), c
         if kind == "flow":
             # Income-statement flow shown as a PERIOD dollar amount (not a
             # rate): Annual columns are 12/31 rows, so the calendar-YTD figure
@@ -1526,6 +1547,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         return "—", None
 
     cells, rows_html, ri = {}, [], 0
+    any_acq = False   # a † growth cell rendered → the caption explains the marker
     cell_errors: list[str] = []
     xrows = []   # (label, kind, raw values) for the Excel export — raw, never parsed
     ncol = len(recs_list)
@@ -1554,7 +1576,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 cid = f"{ri}_{ci}"
                 if c:
                     cells[cid] = c
-                    tds.append(f'<td class="val" data-cid="{cid}">{v}</td>')
+                    acq_cls = " acq" if c.get("flag") == "acq" else ""
+                    any_acq = any_acq or bool(acq_cls)
+                    tds.append(f'<td class="val{acq_cls}" data-cid="{cid}">{v}</td>')
                 else:
                     tds.append(f'<td class="val dead">{v}</td>')
                 live_flags.append(v not in ("—", "n/a", ""))
@@ -1575,7 +1599,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
 
     head = ('<th class="lblh">(figures in USD)</th>'
             + "".join(f'<th class="colh">{lb}</th>' for lb in labels))
-    height = 96 + 23 * (ri + len(spec) + 1) + (16 if deep else 0)
+    # Rows render at 20 px (measured: header 20, each data/section row 20,
+    # footer ~22). 21/row + 60 leaves ~65 px of slack for a wrapped label on
+    # a 24-row table instead of the 150-300 px blank band the old 96 + 23/row
+    # left under Capital Adequacy (UX-P2-20); scrolling is off, never undersize.
+    height = 60 + 21 * (ri + len(spec) + 1) + (16 if deep else 0)
     sec_link = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K"
                 if cik else fdic_link)
     html = _build_component(head, "".join(rows_html), cells, entity, fdic_link, sec_link,
@@ -1584,6 +1612,9 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     tr = _DEFAULT_TRENDS if trends is None else trends
     latest_iso = pd.Timestamp(recs_list[-1].get("REPDTE")).date().isoformat()
     cap = f"Latest: FDIC Call Report {_disp(recs_list[-1].get('REPDTE'))} · live each load."
+    if any_acq:
+        cap += (" · † growth includes a whole-bank acquisition completed in the "
+                "period — not organic (click the cell for the deal)")
 
     def _export():
         _cr_export(labels, xrows,
@@ -2282,8 +2313,9 @@ _CAPITAL_STRUCTURE = [
 def _cr_title(ticker: str, page: str) -> None:
     """SNL title bar for a Company-Reported sub-tab (replaces st.subheader)."""
     from ui.chrome import title_bar
-    info = get_bank_info(ticker)
-    name = info.get("name") if info else ticker
+    # THE display name (get_name -> format_bank_name), the same string as
+    # every other leaf header — never the source's own casing (UX-P2-23).
+    name = get_name(ticker) or ticker
     title_bar(f"{name} ({ticker})", page)
 
 

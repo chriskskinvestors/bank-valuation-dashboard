@@ -305,7 +305,7 @@ class TestProjectedFcfeTable(unittest.TestCase):
 
     def test_render_uses_ksk_table_not_dataframe(self):
         src = Path(vm.__file__).read_text(encoding="utf-8")
-        start = src.index("#### Projected FCFE & Terminal Value")
+        start = src.index("Projected FCFE &amp; Terminal Value")
         block = src[start:src.index("table_export(", start)]
         self.assertIn("ksk_table(df_cf)", block)
         self.assertNotIn("st.dataframe", block)

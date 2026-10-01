@@ -233,3 +233,41 @@ def chart_timeline(ticker: str, rng: str, base_timeline, build, notes_cols=(),
                           notes=series_notes(tl, notes_cols),
                           entity=entity_note(ticker))
     return tl, cap
+
+
+def acquisitions_between(deals, start, end) -> list[dict]:
+    """Whole-bank acquisitions completed in (start, end]: deals whose
+    completion `date` is after the prior column's report date and on or
+    before this column's. Undated deals are skipped. Pure — the growth-row
+    flag (REVIEW-2026-09-24 P2-7) and its test share this one window rule."""
+    s = pd.to_datetime(start, errors="coerce") if start is not None else None
+    e = pd.to_datetime(end, errors="coerce")
+    if pd.isna(e):
+        return []
+    out = []
+    for d in deals or []:
+        dt = pd.to_datetime(d.get("date"), errors="coerce")
+        if pd.isna(dt) or dt > e or (s is not None and not pd.isna(s) and dt <= s):
+            continue
+        out.append(d)
+    return out
+
+
+def group_acquisitions(ticker: str, cert=None) -> list[dict]:
+    """Completed whole-bank acquisitions across the bank's charter group,
+    newest first: [{date, target_name, target_cert, event_desc}] — read
+    from the persistent cache only (jobs build, renders read: the nightly
+    universe refresh warms data.fdic_structure per charter, and the
+    Transactions / Corporate Structure tabs warm it on visit). A miss or
+    any failure is [] — the growth cell renders unflagged rather than
+    blocking a statement page on FDIC; nothing is fabricated either way."""
+    try:
+        from data.cert_group import get_cert_group_cached
+        from data.fdic_structure import get_acquisition_history_cached
+        deals = []
+        for c in get_cert_group_cached(cert):
+            deals.extend(get_acquisition_history_cached(c))
+        deals.sort(key=lambda d: str(d.get("date") or ""), reverse=True)
+        return deals
+    except Exception:
+        return []

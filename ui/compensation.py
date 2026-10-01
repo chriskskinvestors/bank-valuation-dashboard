@@ -100,7 +100,8 @@ def _render_neo_tables(ticker: str, pvp: dict | None):
     link = next((r.get("link") for r in latest_rows if r.get("link")), None)
 
     # ── Latest-year Summary Compensation Table ───────────────────────────
-    st.markdown(f"#### Summary Compensation — FY{latest}")
+    st.markdown(f'<div class="ksk-sec">Summary Compensation — FY{latest}</div>',
+                unsafe_allow_html=True)
     if status[latest] != "ok":
         from ui.states import empty_state
         empty_state(_unverified_note(latest, status[latest]),
@@ -112,7 +113,8 @@ def _render_neo_tables(ticker: str, pvp: dict | None):
     # ── Multi-year total-comp trend (current NEO group) ──────────────────
     trend_years = years[:5]
     if len(trend_years) > 1:
-        st.markdown("#### Total compensation — 5-year trend")
+        st.markdown('<div class="ksk-sec">Total compensation — 5-year trend</div>',
+                    unsafe_allow_html=True)
         by_exec_year = {}
         for r in rows:
             by_exec_year[(r["name_position"], r["year"])] = r.get("total")
@@ -200,7 +202,8 @@ def _render_pay_versus_performance(pvp: dict | None):
                    "in this company's proxy XBRL.")
         return
 
-    st.markdown("#### Pay versus Performance")
+    st.markdown('<div class="ksk-sec">Pay versus Performance</div>',
+                unsafe_allow_html=True)
     head = ('<div class="ksk-grid"><table><thead><tr>'
             '<th style="text-align:left;">Fiscal Year</th>'
             '<th style="text-align:right;">PEO SCT Total</th>'

@@ -330,5 +330,57 @@ class TestCapitalTimelineNoneRatios(unittest.TestCase):
         self.assertEqual(tl["equity_qoq_k"].dropna().tolist(), [3.0, 3.0, 3.0])
 
 
+class TestAcquisitionWindow(unittest.TestCase):
+    """REVIEW-2026-09-24 P2-7: a growth column whose period contains a
+    completed whole-bank acquisition is flagged. The window is (prior
+    REPDTE, this REPDTE]: a deal ON the column's report date belongs to it,
+    a deal ON the prior date belongs to the prior column, undated deals
+    never match, and the loader fails closed (unflagged, never raising)."""
+    DEALS = [
+        {"date": "2025-05-01", "target_name": "Bremer Bank", "target_cert": 1},
+        {"date": "2025-06-30", "target_name": "On-the-date Bank", "target_cert": 2},
+        {"date": "2025-03-31", "target_name": "Prior-date Bank", "target_cert": 3},
+        {"date": None, "target_name": "Undated", "target_cert": 4},
+    ]
+
+    def test_window_is_half_open(self):
+        hit = hr.acquisitions_between(self.DEALS, "2025-03-31", "2025-06-30")
+        self.assertEqual([d["target_name"] for d in hit],
+                         ["Bremer Bank", "On-the-date Bank"])
+        hit = hr.acquisitions_between(self.DEALS, "2024-12-31", "2025-03-31")
+        self.assertEqual([d["target_name"] for d in hit], ["Prior-date Bank"])
+        # First column of a window has no prior date: open on the left.
+        self.assertEqual(len(hr.acquisitions_between(self.DEALS, None, "2025-06-30")), 3)
+        self.assertEqual(hr.acquisitions_between([], "2025-03-31", "2025-06-30"), [])
+        self.assertEqual(hr.acquisitions_between(self.DEALS, "2025-03-31", "not a date"), [])
+
+    @staticmethod
+    def _event(date, name, cert, direction="acquired"):
+        return {"date": date, "event_type": 810, "description": "Merger",
+                "other_institution": {"name": name, "cert": cert},
+                "direction": direction}
+
+    def test_group_acquisitions_reads_cache_only_newest_first(self):
+        # Renders read, jobs build: the loader fans out over the persisted
+        # bulk charter map and each charter's cached structure history and
+        # never fetches (the discovery network guard would abort the run).
+        from datetime import datetime
+        from data import cache
+        from data.cert_group import _GROUP_MAP_KEY
+        cache.put(_GROUP_MAP_KEY, {"9011": [9011, 9022]})
+        cache.put("fdic_structure:9011", {
+            "cached_at": datetime.now().isoformat(),
+            "events": [self._event("2024-01-01", "T11a", 1),
+                       self._event("2023-06-01", "Gone Bank", 2, "was_acquired")]})
+        cache.put("fdic_structure:9022", {
+            "cached_at": "2020-01-01T00:00:00",       # stale is still used
+            "events": [self._event("2025-01-01", "T22b", 3)]})
+        out = hr.group_acquisitions("XXX", 9011)
+        self.assertEqual([d["target_name"] for d in out], ["T22b", "T11a"])
+        # A cert outside the map is its own group; no history cached = [].
+        self.assertEqual(hr.group_acquisitions("XXX", 9099), [])
+        self.assertEqual(hr.group_acquisitions("XXX", None), [])
+
+
 if __name__ == "__main__":
     unittest.main()

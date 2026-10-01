@@ -477,13 +477,9 @@ def compute_yoy_growth(timeline: pd.DataFrame) -> dict:
 
     def _ttm(df, col):
         # Full consecutive 4-quarter windows only — a partial-window sum would
-        # produce a plausible-wrong growth % (same rule as _sum_or_none).
-        if col not in df.columns or len(df) < 4:
-            return None
-        s = pd.to_numeric(df[col], errors="coerce")
-        if not s.notna().all():
-            return None
-        v = float(s.sum())
+        # produce a plausible-wrong growth % (same rule as _sum_or_none,
+        # including its quarterly-cadence gap check).
+        v = _full_window_sum(df, col)
         return v if v else None
 
     def _growth(curr, prior):

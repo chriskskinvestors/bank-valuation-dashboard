@@ -132,7 +132,8 @@ def render_analyst_coverage(ticker: str):
                      f'<td style="text-align:right;">{avg}</td>'
                      f'<td style="text-align:right;">{up}</td>'
                      "</tr>")
-        st.markdown("#### Price Targets by Window")
+        st.markdown('<div class="ksk-sec">Price Targets by Window</div>',
+                    unsafe_allow_html=True)
         st.markdown(
             '<div class="ksk-grid"><table><thead><tr>'
             '<th style="text-align:left;">Window</th>'
@@ -152,7 +153,8 @@ def render_analyst_coverage(ticker: str):
                  [("DCF", "dcf"), ("ROE", "roe"), ("ROA", "roa"),
                   ("D/E", "debt_to_equity"), ("P/E", "pe"), ("P/B", "pb")]]
         detail = " · ".join(f"{k} {v}" for k, v in parts if v is not None)
-        st.markdown("#### Composite Rating")
+        st.markdown('<div class="ksk-sec">Composite Rating</div>',
+                    unsafe_allow_html=True)
         st.markdown(
             f'**{_h.escape(str(rating["rating"]))}**'
             + (f" (overall {score}/5)" if score is not None else "")
@@ -163,7 +165,8 @@ def render_analyst_coverage(ticker: str):
 
     # ── Grade actions ────────────────────────────────────────────────────
     if grades:
-        st.markdown("#### Recent Grade Actions")
+        st.markdown('<div class="ksk-sec">Recent Grade Actions</div>',
+                    unsafe_allow_html=True)
         rows = ""
         for g in grades:
             frm, to = g.get("from_grade"), g.get("to_grade")

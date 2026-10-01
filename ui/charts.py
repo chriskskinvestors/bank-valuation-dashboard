@@ -290,11 +290,13 @@ def peer_radar_chart(radar_data: dict) -> go.Figure:
 
 
 def _b(v):
-    """FDIC $thousands → $billions."""
+    """FDIC $thousands → $billions; None when absent (None/NaN) or
+    unparseable — never 0.0 (a real FDIC 0 still converts to 0.0)."""
     try:
-        return float(v) / 1e6
+        f = float(v) / 1e6
     except (TypeError, ValueError):
-        return 0.0
+        return None
+    return None if pd.isna(f) else f
 
 
 def balance_sheet_chart(fdic_df: pd.DataFrame) -> go.Figure:
@@ -351,6 +353,10 @@ def asset_composition_chart(fdic_df: pd.DataFrame) -> go.Figure:
     r = fdic_df.sort_values("REPDTE").iloc[-1]
     asset = _b(r.get("ASSET")); loans = _b(r.get("LNLSNET"))
     sec = _b(r.get("SC")); cash = _b(r.get("CHBAL"))
+    # An absent part makes the residual "Other" (and every slice's share)
+    # unknowable — no-data, never a 0 that shifts its value into "Other".
+    if None in (asset, loans, sec, cash):
+        return _donut([], [], "Asset Composition", [])
     other = max(0.0, asset - loans - sec - cash)
     return _donut(["Net loans", "Securities", "Cash & balances", "Other"],
                   [loans, sec, cash, other], "Asset Composition (latest)",
@@ -363,10 +369,13 @@ def loan_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
         return _donut([], [], "Loan Mix", [])
     r = fdic_df.sort_values("REPDTE").iloc[-1]
     resi = _b(r.get("LNRERES"))
-    cre = _b(r.get("LNRENRES")) + _b(r.get("LNREMULT"))
+    cre_parts = (_b(r.get("LNRENRES")), _b(r.get("LNREMULT")))
+    cre = None if None in cre_parts else sum(cre_parts)
     constr = _b(r.get("LNRECONS"))
     ci = _b(r.get("LNCI")); cons = _b(r.get("LNCON")); ag = _b(r.get("LNREAG"))
     total = _b(r.get("LNLSNET"))
+    if None in (resi, cre, constr, ci, cons, ag, total):
+        return _donut([], [], "Loan Mix", [])
     named = resi + cre + constr + ci + cons + ag
     other = max(0.0, total - named)
     return _donut(["1-4 Family residential", "CRE (income property)", "Construction",
@@ -381,8 +390,10 @@ def funding_mix_chart(fdic_df: pd.DataFrame) -> go.Figure:
         return _donut([], [], "Funding Mix", [])
     r = fdic_df.sort_values("REPDTE").iloc[-1]
     nib = _b(r.get("DEPNIDOM")); dep = _b(r.get("DEP"))
-    ib = max(0.0, dep - nib)
     equity = _b(r.get("EQTOT")); liab = _b(r.get("LIAB"))
+    if None in (nib, dep, equity, liab):
+        return _donut([], [], "Funding Mix", [])
+    ib = max(0.0, dep - nib)
     borrow = max(0.0, liab - dep)
     fig = _donut(["Non-int deposits", "Interest-bearing deposits", "Borrowings / other", "Equity"],
                  [nib, ib, borrow, equity], "Funding Mix (latest)",

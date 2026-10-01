@@ -60,7 +60,8 @@ def render_corporate_governance(ticker: str):
         with st.spinner("Reading the latest proxy statement (first view runs "
                         "the extraction; later views are cached)…"):
             gov = get_governance_provisions(cik, ticker)
-    st.markdown("#### Charter & Bylaw Provisions")
+    st.markdown('<div class="ksk-sec">Charter &amp; Bylaw Provisions</div>',
+                unsafe_allow_html=True)
     if gov and gov.get("provisions"):
         p = gov["provisions"]
         body = ""
@@ -98,7 +99,8 @@ def render_corporate_governance(ticker: str):
     if cik:
         info = get_filing_info(cik) or {}
         state = (info.get("state_of_incorp") or "").strip().upper() or None
-    st.markdown("#### State Corporate Law")
+    st.markdown('<div class="ksk-sec">State Corporate Law</div>',
+                unsafe_allow_html=True)
     ref = get_state_reference(state)
     if ref:
         rows = [
@@ -131,7 +133,8 @@ def render_corporate_governance(ticker: str):
         st.caption("State of incorporation unavailable from SEC submissions.")
 
     # ── 3. Federal banking overlay ───────────────────────────────────────
-    st.markdown("#### Federal Banking Control Overlay")
+    st.markdown('<div class="ksk-sec">Federal Banking Control Overlay</div>',
+                unsafe_allow_html=True)
     body = "".join(
         "<tr>"
         f'<td style="text-align:left;font-weight:600;">{_h.escape(name)}</td>'

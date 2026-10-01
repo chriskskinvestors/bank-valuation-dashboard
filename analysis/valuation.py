@@ -832,10 +832,11 @@ def _resolve_tbvps(
             cik = get_cik(ticker)
         except Exception:
             cik = None
-    # An earnings 8-K for a quarter BEFORE the latest 10-Q is not the current
-    # company figure (TYFG: its last 8-K is the Q3-2025 release, $61.17).
-    if cik and not (reconstructed is not None
-                    and _earnings_8k_predates(cik, sec_as_of)):
+    # The newest company-reported figure wins: an earnings 8-K yields to a
+    # LATER 10-Q (TYFG: its last 8-K is the Q3-2025 release, $61.17) or a
+    # later wire/IR release (GLBZ: Q3-2025 8-K vs its Q2-2026 release).
+    if cik and not _earnings_8k_predates(
+            cik, _newer_company_source(ticker, "tbv_ps", reconstructed, sec_as_of)):
         try:
             from data.sec_earnings_8k import reported_tbvps_status
             reported, status = reported_tbvps_status(
@@ -898,8 +899,8 @@ def _resolve_bvps(
             cik = get_cik(ticker)
         except Exception:
             cik = None
-    if cik and not (reconstructed is not None
-                    and _earnings_8k_predates(cik, sec_as_of)):
+    if cik and not _earnings_8k_predates(
+            cik, _newer_company_source(ticker, "bv_ps", reconstructed, sec_as_of)):
         try:
             from data.sec_earnings_8k import reported_bvps_status
             reported, status = reported_bvps_status(
@@ -1232,11 +1233,12 @@ def _resolve_release_efficiency(
 
 
 def _earnings_8k_predates(cik, sec_as_of: str | None) -> bool:
-    """True when the bank's latest Item 2.02 8-K covers a quarter BEFORE its
-    latest SEC balance sheet (sec_as_of) — the release is stale against the
-    10-Q the reconstruction comes from. TYFG stopped furnishing earnings on
-    8-K after Q3-2025; FBP and NPB furnished their Q2-2026 releases under
-    Item 2.01, so the 2.02 finder still lands on Q1 (found 2026-10-01). The
+    """True when the bank's latest earnings 8-K covers a quarter BEFORE
+    `sec_as_of` — the latest quarter of another company-reported source (the
+    10-Q the reconstruction comes from, or a newer wire release; see
+    _newer_company_source), so the 8-K is not the current figure. TYFG stopped furnishing earnings on
+    8-K after Q3-2025. (FBP/NPB's mis-itemized Q2-2026 releases are now found
+    by the finder itself — data.sec_earnings_8k._is_misitemized_release.) The
     covered quarter is the last quarter-end before the 8-K's filing date.
     A lookup failure is False (the 8-K path runs as before)."""
     if not sec_as_of:
@@ -1249,6 +1251,26 @@ def _earnings_8k_predates(cik, sec_as_of: str | None) -> bool:
         return bool(q) and q < sec_as_of
     except Exception:
         return False
+
+
+def _newer_company_source(ticker, key: str, reconstructed,
+                          sec_as_of: str | None) -> str | None:
+    """The latest quarter-end among the OTHER company-reported sources for
+    `key`: the 10-Q/10-K the reconstruction comes from (only when there is
+    one), and a fresh wire/IR release that carries this figure. An earnings
+    8-K covering an earlier quarter must yield to it (_earnings_8k_predates).
+    GLBZ 2026-10-01: last earnings 8-K = Q3-2025 (BV $7.10), last 10-Q =
+    Q3-2025, but its Q2-2026 wire release states BV $7.27 / TBV $7.16."""
+    dates = [sec_as_of if reconstructed is not None else None]
+    try:
+        if ticker and _otc_release_ps(ticker, key) is not None:
+            from data.otc_release import otc_release_metrics
+            dates.append((otc_release_metrics(ticker, allow_fetch=False)
+                          or {}).get("qend"))
+    except Exception:
+        pass
+    dates = [d for d in dates if d]
+    return max(dates) if dates else None
 
 
 def _otc_tbvps(ticker: str, not_before: str | None = None) -> float | None:

@@ -315,11 +315,17 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             curr_eq * 1000 / scale,
         ]
 
+        # Short two-line labels that fit a half-width tile horizontally; the
+        # composition of "Capital Returned" moves to the hover (UX-P2-19).
         waterfall_labels = [
-            "Starting<br>Equity",
+            "Start<br>Equity",
             "+ Net<br>Income",
-            "- Capital Returned<br>(Divs + Buybacks + AOCI)",
-            "Ending<br>Equity",
+            "− Capital<br>Returned",
+            "End<br>Equity",
+        ]
+        waterfall_hover = [
+            "Starting equity", "Net income",
+            "Capital returned (dividends + buybacks + AOCI)", "Ending equity",
         ]
 
         fig4 = go.Figure()
@@ -329,6 +335,8 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
             y=wf_scaled,
             text=[f"{'-' if round(v, 1) < 0 else ''}${abs(v):,.1f}{unit}"
                   for v in wf_scaled],
+            hovertext=waterfall_hover,
+            hovertemplate="%{hovertext}: %{text}<extra></extra>",
             textposition="outside",
             connector={"line": {"color": "rgb(150,150,150)"}},
             increasing={"marker": {"color": COLOR_SUCCESS}},
@@ -356,6 +364,9 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
         _lo, _hi = min(_levels), max(_levels)
         _pad = max((_hi - _lo) * 0.6, 0.03 * max(abs(x) for x in _levels), 0.02)
         fig4.update_yaxes(range=[_lo - _pad, _hi + _pad])
+        # Horizontal category labels — Plotly auto-rotates and they overlap
+        # in the 2×2 tile (UX-P2-19).
+        fig4.update_xaxes(tickangle=0)
 
     # Owner layout (2026-07-13, same as Asset Quality Detail): the SNL-depth
     # statement table on the LEFT (Annual/Quarterly toggle, click-to-source),
@@ -1051,6 +1062,10 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
     bb_ratio = (ttm.get("buyback_ratio_ttm") or 0) * 100
     sc_change = ttm.get("share_change_pct_ttm")
     sy = yld.get("total_shareholder_yield_pct")
+
+    def _yp(v):
+        return f"{v:.1f}%" if v is not None else "n/a"
+
     ledger("Capital Return — TTM", [
         ("Total Return Ratio",
          (f"{tr_ratio:.0f}%" if ttm.get("total_return_ratio_ttm") is not None else "—")
@@ -1068,7 +1083,9 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
          + _mut("TTM" if sc_change is not None else "")),
         ("Shareholder Yield",
          (f"{sy:.2f}%" if sy is not None else "—")
-         + _mut((f"{yld.get('dividend_yield_pct',0):.1f}% div + {yld.get('buyback_yield_pct',0):.1f}% bb")
+         # One component can be None while the total is known (capital_return's
+         # one-known convention) — that side renders n/a, never a format crash.
+         + _mut((f"{_yp(yld.get('dividend_yield_pct'))} div + {_yp(yld.get('buyback_yield_pct'))} bb")
                 if sy is not None else "")),
     ])
 
@@ -1115,11 +1132,12 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
             opacity=0.45,
         ))
         fig1.add_trace(go.Bar(
-            x=df["date"], y=df["dividends_q"].fillna(0) / scale,
+            # NaN (not 0): an unknown quarter draws no bar, never a $0 bar.
+            x=df["date"], y=_div / scale,
             name="Dividends", marker_color=COLOR_SUCCESS,
         ))
         fig1.add_trace(go.Bar(
-            x=df["date"], y=df["buybacks_q"].fillna(0) / scale,
+            x=df["date"], y=_bb / scale,
             name="Buybacks", marker_color=COLOR_WARNING,
         ))
         apply_standard_layout(

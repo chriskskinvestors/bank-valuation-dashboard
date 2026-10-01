@@ -182,7 +182,9 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     # non-goodwill intangibles.
     tbvps = sec.get("tangible_book_value_per_share")
     if tbvps is None:
-        equity = latest.get("EQTOT") or 0
+        # None (not 0) when EQTOT is absent: 0 − intangibles is a NEGATIVE
+        # TBV/share that slips past the `tbvps is None` headline gate.
+        equity = latest.get("EQTOT")
         # max(INTAN, INTANGW), the same belt-and-braces analysis/capital_dynamics
         # uses. INTAN (total intangibles) is the convention and normally the
         # larger, so this resolves to it; but a record missing INTAN would
@@ -190,7 +192,8 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
         # overstatement than the goodwill-only bug this replaced. Falling back to
         # goodwill is the conservative floor.
         intangibles = max(latest.get("INTAN") or 0, latest.get("INTANGW") or 0)
-        tbvps = ((equity - intangibles) * 1000 / shares) if shares > 0 else None
+        tbvps = (((equity - intangibles) * 1000 / shares)
+                 if (shares > 0 and equity is not None) else None)
 
     # Trailing loan growth (TTM)
     loans = [r.get("LNLSNET") for r in hist[:5] if r.get("LNLSNET") is not None]
@@ -706,7 +709,8 @@ def render_valuation_model(ticker: str):
         return _model_provenance(ticker, name, price, asof, base_params, table, **extra)
 
     # ── DCF cash flow waterfall ────────────────────────────────────────
-    st.markdown("#### Projected FCFE & Terminal Value")
+    st.markdown('<div class="ksk-sec">Projected FCFE &amp; Terminal Value</div>',
+                unsafe_allow_html=True)
     projected_eps = dcf.get("projected_eps", [])
     projected_fcfe = dcf.get("projected_fcfe", [])
     tv = dcf.get("terminal_value")
@@ -1275,13 +1279,13 @@ def _render_consensus_vs_model(ticker: str, projected_eps: list[float], fdic_lat
 
     available = list_consensus(ticker)
     if not available:
-        st.markdown("##### Model vs Consensus")
+        st.markdown('<div class="ksk-sec">Model vs Consensus</div>', unsafe_allow_html=True)
         from ui.states import empty_state
         empty_state('No consensus uploaded for this bank yet',
                     'Upload estimates in the Earnings tab to compare your model projection against street consensus')
         return
 
-    st.markdown("##### Model vs Consensus")
+    st.markdown('<div class="ksk-sec">Model vs Consensus</div>', unsafe_allow_html=True)
 
     col_p, _ = st.columns([1, 3])
     with col_p:

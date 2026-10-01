@@ -411,6 +411,32 @@ discloses, label/unit issues.
 
 ---
 
+## Resolution of the P2s (2026-10-01)
+
+Owner: "pull the next item from the plan docs" — the P2 list was the last open
+item in the review's suggested order. Seven of twelve had already been closed
+by the P0/P1 lanes; the remainder was reconciled against the code before
+anything was built.
+
+| ID | Status | What changed |
+|---|---|---|
+| P2-1 | Fixed PR #201 | Capital Adequacy holdco table: untagged-10-Q provenance, stays on the filed table |
+| P2-2 | Fixed PR #199 | Unit-clean statement section headers |
+| P2-3 | Honest n/a (source) | PBAM's first 10-Q (filed 2026-09-04) tags only 2025 / 2026 half-year EPS; no four consecutive quarters exist in SEC data, so the profile omits EPS / P/E rather than guess. Resolves itself once four quarterly filings exist (the wire-release trend table is not a primary-source TTM). |
+| P2-4 | Fixed PR #200 | Earnings-surprise EPS Act labelled adjusted |
+| P2-5 | Fixed PR #223 | Duplicated headers: `_norm_label` now drops a trailing colon, footnote parens and `[Abstract]`, so one header row across filings (BBT 8 → 4, HBAN, LARK). The WTFC/LARK order scramble was fixed by 8c4486b the day after the review; #223 adds the order pin. |
+| P2-6 | Fixed PR #199 | ONB stated-value common stock row formatted $-compact |
+| P2-7 | Fixed PR #224 | Growth cells in a period containing a completed whole-bank acquisition carry `†`, name the deal in the click-through and the caption explains it (ONB Q2'25 Bremer 203.30% kept as documented arithmetic, never shown as organic). Cache-only read; nightly refresh warms the structure history. |
+| P2-8 | Fixed PR #223 | Citi Q4 columns: FY − 9M now differences a line the 10-K words differently from the 10-Q via the shared element id (taxes 1,288M / NI incl. NCI 2,522M / Citi NI 2,471M for Q4'25, hand-checked). |
+| P2-9 | Fixed PR #201 | Dividends / buybacks back in slim facts |
+| P2-10 | Fixed PR #199 | FTE not-ingested n/a note |
+| P2-11 | Fixed PR #200 | One-point surprise chart axis |
+| P2-12 | Withdrawn | Not an app defect: the Chrome extension's click landed on a widget outside the viewport (same cause as the JPM MAX pill). After `scroll_to`, the identical click switched ONB's CR Balance Sheet to Quarterly at once (12 quarter columns). CZWI's cold 18 s render is the P1-2 render-path class, addressed in PR #185. |
+
+Observed during P2-5/P2-8, not in scope: HBAN's FY2024 10-K member-block
+values (wealth / insurance revenue both showing the undimensioned 1,318M
+total for Dec-2022) look like a `_fold_member_blocks` value bug — its own lane.
+
 ## Checked and found correct (a clean page is a result)
 
 * **Templated Balance Sheet levels tie to FDIC at 20260630 for all ten banks**

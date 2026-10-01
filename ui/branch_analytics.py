@@ -48,10 +48,10 @@ def _survey_note(yr: int, notes: list[dict]) -> str:
     merged = [n for n in notes if n.get("kind") == "merged"]
     charters = [n for n in notes if n.get("kind") == "charter"]
     if charters:
-        note += " · includes sibling charter" + ("s " if len(charters) > 1 else " ")             + ", ".join(f"{c['name']} ({c['n_branches']} branches)"
+        note += " · includes sibling charter" + ("s " if len(charters) > 1 else " ")             + ", ".join(f"{c['name']} ({c['n_branches']:,} branches)"
                         for c in charters)
     if merged:
-        parts = ", ".join(f"{m['n_branches']} branches of {m['name']} "
+        parts = ", ".join(f"{m['n_branches']:,} branches of {m['name']} "
                           f"(merged in {m['date']})" for m in merged)
         note += (f" · includes {parts} — merger closed after the {yr} survey; "
                  "the next survey reports the combined bank directly")
@@ -132,8 +132,8 @@ def render_branch_list(ticker):
         return _empty(ticker)
     yr = int(df.iloc[0]["year"])
     total = df["deposits"].sum(skipna=True)
-    st.markdown(f"**{len(df)} branches** · {df['state'].nunique()} states · "
-                f"{df['stcntybr'].nunique()} counties · "
+    st.markdown(f"**{len(df):,} branches** · {df['state'].nunique()} states · "
+                f"{df['stcntybr'].nunique():,} counties · "
                 f"deposits {_dep_usd(total)} — {_survey_note(yr, notes)}")
     out = df[["branch_name", "address", "city", "state", "county", "msa_name",
               "deposits"]].copy()
@@ -180,7 +180,7 @@ def render_branch_map(ticker):
     fig.update_layout(map_style="carto-positron", height=560,
                       margin=dict(l=0, r=0, t=0, b=0))
     st.plotly_chart(fig, use_container_width=True, key=f"brmap_{ticker}")
-    st.caption(f"{len(pts)} mapped branches (dot size = SOD deposits, "
+    st.caption(f"{len(pts):,} mapped branches (dot size = SOD deposits, "
                f"$thousands as reported) — "
                f"{_survey_note(int(pts.iloc[0]['year']), notes)}.")
 
