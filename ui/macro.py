@@ -1083,9 +1083,12 @@ def _render_economy_calendar():
     # ── Key indicators board · chart grid, then the two calendars side by side ──
     # Limit generous so a heavy print day (the 8:30 ET cluster alone can be ~16
     # marquee US releases) doesn't crowd out the prior few days entirely.
-    recent = get_recent_releases(days=10, limit=30)
-    up = get_upcoming_releases(days=14, limit=20)
-    rows = _cached_print_board()
+    from utils.timing import timed
+    with timed("macro.econ_calendar"):
+        recent = get_recent_releases(days=10, limit=30)
+        up = get_upcoming_releases(days=14, limit=20)
+    with timed("macro.print_board"):
+        rows = _cached_print_board()
     # Board (left) · a 2×2 chart grid on the right: Inflation/Labor stacked
     # beside Growth/Activity stacked. board_col is sized to hug the full
     # 7-column board (indicator…Trend…As of) at ~1536 px; on a narrower window
@@ -1131,7 +1134,7 @@ def _render_economy_calendar():
                                                 "mom_chg_k / level_k / level_k_raw = thousands; "
                                                 "level_idx = index level. Z-score = latest vs "
                                                 "~10y of the series' own history (σ)."})
-    with chart_col:
+    with chart_col, timed("macro.grid"):
         _render_macro_grid()
 
     rec_col, up_col = st.columns(2)
@@ -1164,7 +1167,8 @@ def _render_economy_calendar():
     # ── Explore any indicator (interactive; charts any of the 27 on demand) ──
     # In an st.fragment so changing the selection re-runs ONLY this block, not
     # the whole macro script (the calendars / board / grid stay put).
-    _render_indicator_explorer()
+    with timed("macro.explorer"):
+        _render_indicator_explorer()
 
 
 @st.fragment
