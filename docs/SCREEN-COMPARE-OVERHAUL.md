@@ -124,6 +124,56 @@ Build order (each its own verified, shippable batch):
   599 banks with the flag showing; Run → 96 banks · 1 filter · 270 excluded
   (no data). Not done: persisted last-run time on saved screens (needs
   `data/saved_screens.py`), Recent across sessions.
+- **B9** ✅ SHIPPED 2026-09-25 (PR #164) — **Rate & Funding Risk table** (owner:
+  "we need to be able to do stuff like this", a third-party *Higher Rate Bank
+  Screen*; scoring explicitly out of scope). New screenable bank-sub FDIC
+  metrics, each built from summed LEVELS so multi-charter groups stay exact:
+  non-core funding (1 − COREDEP/LIAB), time dep % dom dep (NTRTIME/DEPDOM), CDs
+  maturing/repricing ≤3M and ≤12M % dom dep (CD3LES+CD3LESS[+CD3T12+CD3T12S] /
+  DEPDOM — FDIC's >$250K and ≤$250K buckets), CD book rate (quarter CD interest
+  ECD100Q+EOTHTIMQ ×4 over avg begin/end NTRTIME) and CD rate − 6M bill (FRED
+  DGS6MO at the quarter end, injected; n/a without it). 84/84 values matched the
+  reference screen on 12 banks. Fixed alongside: "Unreal G/L" read IGLSEC
+  (REALIZED gains) → AFS mark SCAF−SCAA; "HTM Unreal" read SCSNHAA (structured
+  notes; JPM $0 vs a −$18.2B mark) → SCHF−SCHA; both labeled pre-tax, keys kept.
+  Not shipped: AOCI % TCE — FDIC EQCCOMPI is YEAR-TO-DATE OCI, not the balance
+  (JPM 3.1→8.5B through 2025, −3.1B in Q1 2026). Bank-sub AOCI = FFIEC RC-R
+  B530; holdco AOCI from SEC AccumulatedOtherComprehensiveIncomeLossNetOfTax
+  measured at ~81% coverage (10/10 reference banks within 0.22pt) — **open owner
+  decisions**: holdco coverage (ship ~81% vs parse filings for ~86%), year-end-
+  only goodwill (21 banks), AOCI+HTM basis. Uninsured % is wrong for
+  foreign-office banks (domestic numerator ÷ total deposits; C 47.8 vs ref 76.8)
+  but ÷DEPDOM gives STT 102% — needs its own investigation, unchanged.
+- **B10** ✅ SHIPPED 2026-10-01 (PRs #175 stage 1, #183 stage 2) — **any call
+  report field is screenable** (owner: "have any call report field be an
+  option"). Stage 1 (live, prod-verified): builder gains **+ Call report field**
+  (search ~2,190 FDIC BankFind financials fields by code/name) and **ƒ Formula**
+  (name + expression over field codes, + − * / ( ), shown as number/%/$/x);
+  anything added is a column and appears in Filter and Sort (all filter types,
+  incl. Change/Trend via per-quarter fetches). One FDIC request per quarter
+  covers every filer (~2-3 s cold, cached a week); latest published quarter or
+  the As-of quarter. Saved screens/Recent carry the definitions (`dyn`); on
+  reopen a field must still be in the catalog and a formula must still parse.
+  Units: $K levels → dollars at the boundary; ratios/counts as reported;
+  unproven fields "(as reported)". FDIC's dictionary cannot tell $ from ratios
+  (its "double" tag marks 25 $ items and misses ~20 ratios) — the vendored
+  `data/fdic_field_catalog.json` is classified from real values by
+  `tools/build_fdic_field_catalog.py` (top-50 banks, then all filers); 38 traps
+  pinned. Multi-charter: levels/counts strict-sum, ratios only via
+  cert_group's exact quotients, else n/a. Grid header = field code, full title
+  as tooltip/export header. Verified: a hand-typed CDs-≤12M formula matched
+  the reference screen on 10 banks incl. JPM/WFC/BAC/BNY groups; prod CD3LES
+  filled for 593/598 banks (JPM $157.7B, BAC $31.1B = sum of charters). Stage 2
+  (deployed, **no data until the next refresh-ffiec run** — Nov 1 or manual):
+  refresh-ffiec also stores EVERY line item of the call report it already
+  downloads (`data/call_report_full.py`, long format by raw MDRM; Fed MDRM
+  dictionary for titles; blank → NULL; a late filer's prior-quarter fallback is
+  refused, not stored under the wrong quarter). **Open:** add FFIEC line items
+  to the picker once data lands (brings bank-sub AOCI B530); MDRM→schedule map
+  needs the FFIEC taxonomy; the local FFIEC JWT expired ~2026-08-31 — prod
+  token health unverified (owner: Secret Manager); pre-existing bug found:
+  existing call_report_store schedules are stamped with the requested quarter
+  even when fetch_call_report fell back to the prior one (late filers).
 
 ## Do-not-touch (other lanes)
 
