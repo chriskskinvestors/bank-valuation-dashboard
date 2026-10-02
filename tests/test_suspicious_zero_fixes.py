@@ -68,18 +68,25 @@ class TestYoyGrowthGapRule(unittest.TestCase):
 
 # ── 2. _derive_defaults: absent EQTOT → tbvps None ──────────────────────────
 class TestDeriveDefaultsTbvpsEqtot(unittest.TestCase):
+    """No SEC TBV/share -> None, whatever FDIC carries: the FDIC bank-sub /
+    holdco-shares fallback is gone (REVIEW 2026-10-02 P0-1) — absent EQTOT
+    can no longer produce a negative TBV, present EQTOT no longer a guess."""
+
+    def setUp(self):
+        from tests.test_tbv_conventions import _passthrough_resolvers
+        _passthrough_resolvers(self)
+
     def test_absent_eqtot_is_none_not_negative(self):
         from ui.valuation_model import _derive_defaults
         rec = {"REPDTE": "20250630", "INTAN": 50_000}
         d = _derive_defaults("X", [rec], {"shares_outstanding": 1e6})
         self.assertIsNone(d["tbvps"])
 
-    def test_present_eqtot_hand_computed(self):
+    def test_present_eqtot_without_sec_tbvps_is_none(self):
         from ui.valuation_model import _derive_defaults
-        # ($1,000,000K − $50,000K) × 1000 / 1,000,000 shares = $950.00
         rec = {"REPDTE": "20250630", "EQTOT": 1_000_000, "INTAN": 50_000}
         d = _derive_defaults("X", [rec], {"shares_outstanding": 1e6})
-        self.assertAlmostEqual(d["tbvps"], 950.0)
+        self.assertIsNone(d["tbvps"])
 
 
 # ── 3 + 6b. capital-return attribution render ───────────────────────────────

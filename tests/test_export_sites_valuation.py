@@ -377,7 +377,10 @@ class TestTornado(_ExportSite):
         self.assertEqual(g[0], ["Input", "Low-case FV ($/sh)", "Δ Low (%)",
                                 "High-case FV ($/sh)", "Δ High (%)", "Range ($/sh)"])
         rows = {r[0]: r[1:] for r in g[1:]}
-        self.assertEqual(len(rows), 6)
+        # 5 inputs: payout is not a model input (run_fcfe_dcf never reads it),
+        # so it no longer shows as a $0-range "driver" (REVIEW 2026-10-02 P1-3).
+        self.assertEqual(len(rows), 5)
+        self.assertNotIn("Payout ratio (±15pp)", rows)
         ranges = [r[5] for r in g[1:]]
         self.assertEqual(ranges, sorted(ranges, reverse=True))
         # Cost of equity ±1pp: same FCFE stream discounted at 11% / 9%
@@ -394,13 +397,6 @@ class TestTornado(_ExportSite):
         self.assertAlmostEqual(tg[0], 47.183677017218145, places=9)
         self.assertAlmostEqual(tg[2], 49.18911240724987, places=9)
         self.assertAlmostEqual(tg[4], 2.005435390031728, places=9)
-        # Payout ratio does not enter FCFE → both cases equal the base, range 0
-        po = rows["Payout ratio (±15pp)"]
-        self.assertAlmostEqual(po[0], FV, places=9)
-        self.assertAlmostEqual(po[2], FV, places=9)
-        self.assertEqual(po[1], 0.0)
-        self.assertEqual(po[3], 0.0)
-        self.assertEqual(po[4], 0.0)
         self.assertEqual(ws["B2"].number_format, USD2)
         self.assertEqual(ws["C2"].number_format, PCT1)
         self.assertEqual(ws["F2"].number_format, USD2)

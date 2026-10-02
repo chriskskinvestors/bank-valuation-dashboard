@@ -110,6 +110,10 @@ class TestNoPlaceholderSeed(unittest.TestCase):
     _HIST = [{"REPDTE": "20260331", "EQTOT": 1_000_000, "INTANGW": 200_000,
               "NETINC": 30_000, "LNLSNET": 5_000_000}]
 
+    def setUp(self):
+        from tests.test_tbv_conventions import _passthrough_resolvers
+        _passthrough_resolvers(self)
+
     def test_missing_sec_yields_none_not_placeholder(self):
         d = _derive_defaults("XYZ", self._HIST, {})   # no SEC data
         self.assertIsNone(d["base_eps"],
@@ -118,10 +122,10 @@ class TestNoPlaceholderSeed(unittest.TestCase):
                           "no share count must be None, never a $20 placeholder")
 
     def test_present_sec_yields_real_values(self):
-        sec = {"eps": 3.50, "shares_outstanding": 40_000_000}
+        sec = {"eps": 3.50, "shares_outstanding": 40_000_000,
+               "tangible_book_value_per_share": 20.00}
         d = _derive_defaults("XYZ", self._HIST, sec)
         self.assertAlmostEqual(d["base_eps"], 3.50)
-        # $800M TCE / 40M shares = $20.00 / share (hand-computed).
         self.assertAlmostEqual(d["tbvps"], 20.00)
 
 

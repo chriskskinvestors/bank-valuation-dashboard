@@ -310,7 +310,6 @@ def tornado_sensitivity(base_params: dict, perturbations: dict | None = None) ->
         perturbations = {
             "eps_growth_rates": (-0.03, 0.03),      # ±3pp: slower growth = low FV
             "loan_growth_rates": (0.03, -0.03),     # ±3pp: faster growth = more cap need = low FV
-            "payout_ratio": (-0.15, 0.15),          # ±15pp payout (doesn't affect FCFE)
             "cost_of_equity_pct": (1.0, -1.0),      # ±1pp: higher CoE = low FV
             "terminal_growth_pct": (-0.5, 0.5),     # ±0.5pp: lower g = low FV
             "target_cet1_pct": (1.0, -1.0),         # ±1pp: higher target = more cap need = low FV
@@ -432,7 +431,11 @@ def rank_peer_warranted_ptbv(
     """
     results = []
     for m in peer_metrics:
-        roatce = m.get("roatce") or m.get("roatce_blended")
+        # The NORMALIZED return the headline / screen fair value use; the
+        # latest-quarter "roatce" (FDIC bank-sub, YTD-annualized) priced the
+        # subject bank differently on this tab than in the headline.
+        roatce = (m.get("roatce_normalized") or m.get("roatce_blended")
+                  or m.get("roatce"))
         ptbv_actual = m.get("ptbv_ratio")
         tbvps = m.get("tbvps")
         price = m.get("price")
