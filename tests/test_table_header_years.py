@@ -19,10 +19,10 @@ Pins:
      so an all-blank latest quarter reads None → n/a, never the prior period.
   3. A year in its own cell beside the data column (no span over it) is also
      still kept — the conservative pre-fix behavior.
-  4. Book-value path ONLY: the headline figures keep the old columns. There
-     the fix exposed rows the release-wide scale can't vet (BHB NII read as
-     $37.9B; UCB/CSBB net income ×1000; FCAP deposits −20%), so those
-     tables stay n/a for extract_earnings_figures.
+  4. The headline figures read the same columns (since 2026-10-02, once
+     they carry a per-row unit and prior-quarter flow bands): BHB's NII is
+     $37.9M from its "(in thousands)" table — the single release-wide scale
+     had read it as $37.9B. Default _table_rows (no spans) is unchanged.
 
 Run: python -m unittest tests.test_table_header_years
 """
@@ -119,22 +119,25 @@ class TestBhbHeaderYears(unittest.TestCase):
                          [None, 23.43, None, 22.58])
 
 
-class TestHeadlineFiguresUnchanged(unittest.TestCase):
-    def test_headline_path_keeps_the_old_columns(self):
-        """BHB's real mix: a $-thousands statement row in the header-year
-        shape. The headline reader must still see [None, …] there — the fix
-        is scoped to per-share book values."""
+class TestHeadlineFiguresReadTheValueColumns(unittest.TestCase):
+    def test_bhb_headline_rows_at_their_own_scale(self):
+        """BHB's real shape on the headline path: "(in thousands)" rides the
+        year-header row, so NII 37,919 is $37.9M (10-Q: $37,919K) and total
+        assets $4,742.5M — read from the value columns, not [None, …]."""
         doc = _doc(
             _HEADER,
             _data("Net interest income", "(B)",
                   ("37,919", "36,812", "36,544", "35,770", "30,101"), dollar=True),
             _data("Total assets", "(F)",
                   ("4,742,502", "4,676,228", "4,683,891", "4,717,252", "4,112,005")))
-        self.assertEqual(dict(_table_rows(doc))["total assets"][0], None)
-        out = extract_earnings_figures(doc, {"total_assets": 4_742_502_000.0})
-        self.assertIsNone(out["total_assets"])
-        self.assertIsNone(out["net_interest_income"])
-        self.assertEqual(dict(_book_value_rows(doc))["total assets"][0], 4742502.0)
+        self.assertIsNone(dict(_table_rows(doc))["total assets"][0])  # default
+        # Anchor = the prior quarter (Q1-2026 10-Q): $4,676,228K assets,
+        # $36,812K NII.
+        out = extract_earnings_figures(doc, {
+            "total_assets": 4_676_228_000.0,
+            "prior_net_interest_income": 36_812_000.0})
+        self.assertEqual(out["total_assets"], 4_742_502_000.0)
+        self.assertEqual(out["net_interest_income"], 37_919_000.0)
 
 
 if __name__ == "__main__":
