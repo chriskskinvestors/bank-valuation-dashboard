@@ -25,7 +25,18 @@ import streamlit as st
 from data.cloud_storage import save_json, load_json, list_files
 from config import SEC_USER_AGENT
 
-FORM13F_CACHE_PREFIX = "form13f_cache"
+# v2 (2026-10-02): snapshots written before the common-CUSIP / report-period
+# fixes hold option-inflated, non-common and wrong-quarter rows, and the
+# merge-only writer never drops a filer — a new namespace keeps every reader
+# off them. The nightly job re-seeds the current quarter; `--backfill`
+# rebuilds past quarters with the corrected code.
+FORM13F_CACHE_PREFIX = "form13f_cache_v2"
+# Instrument words that mark a non-common row (whole words, see the filter).
+_NON_COMMON_WORDS = frozenset({
+    "PREFERRED", "PREF", "PFD", "DEPOSITARY", "DEP", "WARRANT", "WARRANTS",
+    "WTS", "CONVERTIBLE", "CONV", "NOTE", "NOTES", "BOND", "BONDS", "DEBT",
+    "DEBENTURE", "DEBENTURES", "RIGHTS", "RTS", "UNIT", "UNITS",
+})
 CACHE_TTL_SECONDS = 86400
 # Render-path file TTL: 13F-HRs change quarterly (trickling in over the 45 days
 # after quarter-end), so a week bounds staleness without a crawl per bank per day.
@@ -297,15 +308,14 @@ def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str,
             continue
 
         # Exclude non-common instruments
-        NON_COMMON_KEYWORDS = (
-            "PREFERRED", "PREF ", "PFD", "DEPOSITARY", "DEP SHARE",
-            "WARRANT", "CONVERTIBLE", "NOTE ", "BOND", "DEBT",
-            "RIGHTS", "UNIT",
-        )
-        # Trailing space: "PREF " / "NOTE " must also catch a class string
-        # that ENDS in the keyword (IAT Reinsurance's WTFC row: class "Pref").
-        combined = f"{name_upper} {class_upper} "
-        if any(kw in combined for kw in NON_COMMON_KEYWORDS):
+        # WHOLE-WORD match (a substring "UNIT" dropped every COMMUNITY /
+        # UNITED bank's holders; "PREFERRED" dropped Preferred Bank's), and
+        # the search term's own words never count against the issuer name.
+        # Class "Pref" (IAT Reinsurance's WTFC row) is a whole word.
+        words = (set(re.findall(r"[A-Z0-9]+", name_upper))
+                 - set(re.findall(r"[A-Z0-9]+", target_ticker.upper())))
+        words |= set(re.findall(r"[A-Z0-9]+", class_upper))
+        if words & _NON_COMMON_WORDS:
             continue
 
         positions.append({

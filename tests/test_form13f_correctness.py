@@ -138,6 +138,29 @@ class TestOptionRowsExcluded(unittest.TestCase):
                                              "WINTRUST FINL CORP")
         self.assertEqual([r["cusip"] for r in rows], [WTFC_COMMON])
 
+    def test_keyword_guard_is_whole_word(self):
+        # The substring guard dropped every COMMUNITY / UNITED bank ("UNIT")
+        # and Preferred Bank ("PREFERRED") — zero 13F holders shown.
+        cases = [("COMMUNITY BANK SYS INC", "COM", "Community Bank"),
+                 ("UNITED BANKSHARES INC", "COM", "United Bankshares"),
+                 ("PREFERRED BANK LOS ANGELES", "COM", "Preferred Bank")]
+        for name, cls, term in cases:
+            table = _info_xml(_row(name, cls, "000000001", 1_000, 10))
+            routes = {"/index.json": _index("primary_doc.xml", "infotable.xml"),
+                      "/infotable.xml": _Resp(table)}
+            with patch.object(f13.requests, "get", _router(routes)):
+                rows = f13._fetch_13f_info_table("1", "0000000001-26-000003", term)
+            self.assertEqual(len(rows), 1, name)
+        # ...while instrument words still exclude, in name or class.
+        table = _info_xml(_row("UNITED BANKSHARES INC", "PFD SER A", "000000002", 1, 1),
+                          _row("UNITED BANKSHARES INC DEP SHS", "COM", "000000003", 1, 1),
+                          _row("UNITED BANKSHARES INC", "*W EXP UNITS", "000000004", 1, 1))
+        routes = {"/index.json": _index("primary_doc.xml", "infotable.xml"),
+                  "/infotable.xml": _Resp(table)}
+        with patch.object(f13.requests, "get", _router(routes)):
+            rows = f13._fetch_13f_info_table("1", "0000000001-26-000004", "United Bankshares")
+        self.assertEqual(rows, [])
+
 
 class TestCommonCusipRestriction(unittest.TestCase):
     """_holders_from_candidates keeps only the common CUSIP (the one held by
