@@ -193,7 +193,7 @@ class TestTableRowsColumnAlignment(unittest.TestCase):
         self.assertEqual(by_label["total assets"], [28109935.0, 27500000.0])
 
     def test_extract_earnings_figures_blank_current_is_na(self):
-        anchor = {"total_assets": 28_109_935_000.0}
+        anchor = {"total_assets": 27_500_000_000.0}         # the prior quarter
         out = extract_earnings_figures(_html(self._TWO_QTR), anchor)
         self.assertIsNone(out["nim"])                       # blank -> n/a
         self.assertAlmostEqual(out["roaa"], 1.62)           # populated -> kept
