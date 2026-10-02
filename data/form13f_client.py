@@ -25,7 +25,18 @@ import streamlit as st
 from data.cloud_storage import save_json, load_json, list_files
 from config import SEC_USER_AGENT
 
-FORM13F_CACHE_PREFIX = "form13f_cache"
+# v2 (2026-10-02): snapshots written before the common-CUSIP / report-period
+# fixes hold option-inflated, non-common and wrong-quarter rows, and the
+# merge-only writer never drops a filer — a new namespace keeps every reader
+# off them. The nightly job re-seeds the current quarter; `--backfill`
+# rebuilds past quarters with the corrected code.
+FORM13F_CACHE_PREFIX = "form13f_cache_v2"
+# Instrument words that mark a non-common row (whole words, see the filter).
+_NON_COMMON_WORDS = frozenset({
+    "PREFERRED", "PREF", "PFD", "DEPOSITARY", "DEP", "WARRANT", "WARRANTS",
+    "WTS", "CONVERTIBLE", "CONV", "NOTE", "NOTES", "BOND", "BONDS", "DEBT",
+    "DEBENTURE", "DEBENTURES", "RIGHTS", "RTS", "UNIT", "UNITS",
+})
 CACHE_TTL_SECONDS = 86400
 # Render-path file TTL: 13F-HRs change quarterly (trickling in over the 45 days
 # after quarter-end), so a week bounds staleness without a crawl per bank per day.
@@ -44,13 +55,16 @@ def _is_fresh(cached: dict | None) -> bool:
 
 def _search_13f_for_ticker(ticker: str, limit: int = 40,
                            startdt: str | None = None,
-                           enddt: str | None = None) -> list[dict]:
+                           enddt: str | None = None,
+                           quarter: str | None = None) -> list[dict]:
     """
     Search EDGAR full-text for 13F-HR filings mentioning the ticker.
-    Returns list of {cik, accession, filer_name, date_filed}. Defaults to
-    the trailing ~130-day window (the current-holders path); pass explicit
-    startdt/enddt (YYYY-MM-DD) to search a past quarter's filing season
-    (the backfill path).
+    Returns list of {cik, accession, filer_name, date_filed, period_ending,
+    form} — ONE filing per filer, all covering the same report quarter (see
+    _current_period_filings). Defaults to the trailing ~130-day window (the
+    current-holders path, quarter = the live filing season); pass explicit
+    startdt/enddt (YYYY-MM-DD) + quarter ("YYYYQn") to search a past
+    quarter's filing season (the backfill path).
     """
     since_date = startdt or (datetime.now() - timedelta(days=130)).strftime("%Y-%m-%d")
     end_date = enddt or datetime.now().strftime("%Y-%m-%d")
@@ -81,7 +95,7 @@ def _search_13f_for_ticker(ticker: str, limit: int = 40,
 
     hits = data.get("hits", {}).get("hits", [])
     results = []
-    for hit in hits[:limit]:
+    for hit in hits:
         src = hit.get("_source", {})
         adsh = hit.get("_id", "").split(":")[0]
         filer_ciks = src.get("ciks", [])
@@ -95,8 +109,88 @@ def _search_13f_for_ticker(ticker: str, limit: int = 40,
                 "accession": adsh,
                 "filer_name": filer_clean,
                 "date_filed": src.get("file_date"),
+                "period_ending": src.get("period_ending"),
+                "form": src.get("form"),
             })
-    return results
+    # Period filter BEFORE the limit, so catch-up filings for old quarters
+    # can't eat the candidate budget; rank order (first hit per filer) kept.
+    return _current_period_filings(results, quarter)[:limit]
+
+
+def _current_period_filings(results: list[dict],
+                            quarter: str | None = None) -> list[dict]:
+    """Keep one filing per filer, all covering the same report quarter.
+
+    EDGAR full-text hits mix the live filing season with catch-up filings for
+    old periods (a manager filing 2019–2025 13Fs in Aug 2026) — taken by
+    filing date they were shown as current holders. Target quarter = the
+    given ``quarter``, else the most common period_ending among the hits (the
+    live season; a tie goes to the later quarter). Hits for any other period,
+    or with no period_ending, are dropped. Per filer the latest-filed filing
+    wins, except that a 13F-HR/A whose amendmentType is not RESTATEMENT (a
+    "NEW HOLDINGS" add-on, or unreadable) never replaces the original. When
+    NO hit carries period_ending the list is returned unfiltered (legacy
+    filing-date routing applies downstream)."""
+    quarters = [_period_quarter(r.get("period_ending")) for r in results]
+    if not any(quarters):
+        return results
+    if quarter is None:
+        counts: dict[str, int] = {}
+        for q in quarters:
+            if q:
+                counts[q] = counts.get(q, 0) + 1
+        top = max(counts.values())
+        tied = sorted(q for q, n in counts.items() if n == top)
+        if len(tied) > 1:
+            print(f"[13F] period tie {tied} ({top} hits each) — using {tied[-1]}")
+        quarter = tied[-1]
+
+    by_filer: dict[str, list[dict]] = {}
+    for r, q in zip(results, quarters):
+        if q == quarter:
+            by_filer.setdefault(r["cik"], []).append(r)
+
+    # dict order = first-hit rank
+    return [_pick_filing(group) for group in by_filer.values()]
+
+
+def _pick_filing(group: list[dict]) -> dict:
+    """One filer's filing for one report period, from dicts carrying cik,
+    accession, date_filed, form. The latest-filed original 13F-HR, unless a
+    13F-HR/A RESTATEMENT supersedes it (newest first); a "NEW HOLDINGS" (or
+    unreadable) amendment never replaces an original. Amendment-only → the
+    latest amendment."""
+    def _filed(r):
+        return (r.get("date_filed") or "", r.get("accession") or "")
+
+    originals = [r for r in group if r.get("form") != "13F-HR/A"]
+    amendments = sorted((r for r in group if r.get("form") == "13F-HR/A"),
+                        key=_filed, reverse=True)
+    if not originals:
+        return amendments[0]
+    choice = max(originals, key=_filed)
+    for a in amendments:
+        kind = _amendment_type(a["cik"], a["accession"])
+        if kind == "RESTATEMENT":
+            return a
+        print(f"[13F] keeping original over {a['accession']} "
+              f"(amendmentType={kind!r})")
+    return choice
+
+
+def _amendment_type(cik: str, accession: str) -> str | None:
+    """amendmentType of a 13F-HR/A from its primary_doc.xml ("RESTATEMENT" /
+    "NEW HOLDINGS"), upper-cased; None when unreadable."""
+    acc_no_hyphens = accession.replace("-", "")
+    url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
+           f"{acc_no_hyphens}/primary_doc.xml")
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        r.raise_for_status()
+    except Exception:
+        return None
+    m = re.search(r"<(?:\w+:)?amendmentType>\s*([^<]+?)\s*<", r.text)
+    return m.group(1).upper() if m else None
 
 
 def _issuer_matches(target: str, name_upper: str) -> bool:
@@ -119,57 +213,67 @@ def _issuer_matches(target: str, name_upper: str) -> bool:
     return target_upper in set(re.findall(r"[A-Z0-9]+", name_upper))
 
 
-def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str) -> list[dict]:
+def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str,
+                          cusip: str | None = None) -> list[dict] | None:
     """
     Parse the 13F infoTable.xml to extract holdings for a specific ticker/CUSIP.
+    Rows match by issuer name, or — when ``cusip`` is given — by CUSIP alone
+    (a filer's issuer spelling drifts between quarters: "OLD NATIONAL
+    BANCORP" vs "OLD NATL BANCORP IND"). Returns the matched rows ([] = the
+    table holds no such security), or None when the filing's information
+    table could not be fetched/parsed — a failed read is not evidence of
+    "not held".
     """
     acc_no_hyphens = accession.replace("-", "")
-    index_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_hyphens}/index.json"
+    base = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_hyphens}"
     try:
-        r = requests.get(index_url, headers=HEADERS, timeout=10)
+        r = requests.get(f"{base}/index.json", headers=HEADERS, timeout=10)
         r.raise_for_status()
         items = r.json().get("directory", {}).get("item", [])
     except Exception:
-        return []
+        return None
 
-    # Find the infoTable XML (contains the holdings)
-    info_file = next(
-        (it["name"] for it in items
-         if it["name"].lower().endswith(".xml") and "info" in it["name"].lower()),
-        None,
-    )
-    if not info_file:
-        return []
-
-    try:
-        xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_hyphens}/{info_file}"
-        resp = requests.get(xml_url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        root = ET.fromstring(resp.text)
-    except Exception:
-        return []
-
-    # Namespace handling — 13F uses various namespaces
-    ns_match = re.match(r"\{(.+)\}", root.tag)
-    ns = {"n": ns_match.group(1)} if ns_match else {}
+    # The information table is the filing's non-cover XML. Its filename is
+    # free-form ("13f_Filer.xml", "57123.xml", "jun26.xml") — matching on
+    # "info" dropped ~half of the holders. If several XMLs remain, the one
+    # whose root element is informationTable wins.
+    xml_files = [it["name"] for it in items
+                 if it["name"].lower().endswith(".xml")
+                 and it["name"].lower() != "primary_doc.xml"]
+    root = None
+    for info_file in xml_files:
+        try:
+            resp = requests.get(f"{base}/{info_file}", headers=HEADERS, timeout=15)
+            resp.raise_for_status()
+            candidate = ET.fromstring(resp.text)
+        except Exception:
+            continue
+        if len(xml_files) == 1 or candidate.tag.endswith("informationTable"):
+            root = candidate
+            break
+    if root is None:
+        return None
 
     positions = []
     for info in root.iter():
         if not info.tag.endswith("infoTable"):
             continue
         name = None
-        cusip = None
+        cusip_row = None
         shares = None
         value = None
         class_ = None
+        put_call = None
         for child in info:
             tag = child.tag.split("}")[-1]
             if tag == "nameOfIssuer":
                 name = (child.text or "").strip()
             elif tag == "cusip":
-                cusip = (child.text or "").strip()
+                cusip_row = (child.text or "").strip()
             elif tag == "titleOfClass":
                 class_ = (child.text or "").strip()
+            elif tag == "putCall":
+                put_call = (child.text or "").strip()
             elif tag == "value":
                 try:
                     # Pre-2023 values in $ thousands; post-2023 in $ 1s
@@ -186,6 +290,10 @@ def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str) -> list[
 
         if not name:
             continue
+        # Options (a putCall row's sshPrnamt is the UNDERLYING share count,
+        # its value the option's) are never common-share ownership.
+        if put_call:
+            continue
         # Match the ticker's issuer name (loose matching) but EXCLUDE preferred
         # stock, depositary shares, warrants, convertibles, and other non-common
         # instruments — these have different prices/economics than common shares
@@ -193,21 +301,25 @@ def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str) -> list[
         name_upper = name.upper()
         class_upper = (class_ or "").upper()
 
-        if not _issuer_matches(target_ticker, name_upper):
+        if cusip:
+            if _norm_cusip(cusip_row) != _norm_cusip(cusip):
+                continue
+        elif not _issuer_matches(target_ticker, name_upper):
             continue
 
         # Exclude non-common instruments
-        NON_COMMON_KEYWORDS = (
-            "PREFERRED", "PREF ", "PFD", "DEPOSITARY", "DEP SHARE",
-            "WARRANT", "CONVERTIBLE", "NOTE ", "BOND", "DEBT",
-            "RIGHTS", "UNIT",
-        )
-        combined = f"{name_upper} {class_upper}"
-        if any(kw in combined for kw in NON_COMMON_KEYWORDS):
+        # WHOLE-WORD match (a substring "UNIT" dropped every COMMUNITY /
+        # UNITED bank's holders; "PREFERRED" dropped Preferred Bank's), and
+        # the search term's own words never count against the issuer name.
+        # Class "Pref" (IAT Reinsurance's WTFC row) is a whole word.
+        words = (set(re.findall(r"[A-Z0-9]+", name_upper))
+                 - set(re.findall(r"[A-Z0-9]+", target_ticker.upper())))
+        words |= set(re.findall(r"[A-Z0-9]+", class_upper))
+        if words & _NON_COMMON_WORDS:
             continue
 
         positions.append({
-            "issuer": name, "cusip": cusip, "class": class_,
+            "issuer": name, "cusip": cusip_row, "class": class_,
             "shares": shares, "value_thousands": value,
         })
 
@@ -221,8 +333,10 @@ def filing_index_url(cik: str | int, accession: str) -> str:
             f"{acc_no_hyphens}/{accession}-index.htm")
 
 
-def _filer_13f_history(cik: str | int) -> list[tuple[str, str]]:
-    """List a filer's 13F-HR accessions as (accession, filing_date), newest first."""
+def _filer_13f_history(cik: str | int) -> list[tuple[str, str, str, str]]:
+    """List a filer's 13F-HR accessions as (accession, filing_date,
+    report_date, form), newest first. report_date is the period the filing
+    covers (submissions' reportDate, e.g. "2026-03-31")."""
     try:
         url = f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json"
         r = requests.get(url, headers=HEADERS, timeout=10)
@@ -233,30 +347,50 @@ def _filer_13f_history(cik: str | int) -> list[tuple[str, str]]:
     forms = recent.get("form", [])
     accs = recent.get("accessionNumber", [])
     dates = recent.get("filingDate", [])
-    out = [(accs[i], dates[i]) for i in range(len(forms))
-           if forms[i] in ("13F-HR", "13F-HR/A")]
+    periods = recent.get("reportDate", [])
+    out = [(accs[i], dates[i], periods[i] if i < len(periods) else "", forms[i])
+           for i in range(len(forms)) if forms[i] in ("13F-HR", "13F-HR/A")]
     # submissions API is already newest-first, but sort defensively by date
     out.sort(key=lambda t: t[1], reverse=True)
     return out
 
 
-def _prior_quarter_shares(cik: str, current_date: str, target_ticker: str):
-    """Shares this filer held of target_ticker in their 13F-HR filed *before*
-    current_date. Returns float shares, or None if no prior filing / not held."""
-    history = _filer_13f_history(cik)
-    prior_acc = next((acc for acc, dt in history if dt < (current_date or "")), None)
-    if not prior_acc:
+def _prior_quarter_shares(cik: str, quarter: str, target_ticker: str,
+                          cusip: str | None = None):
+    """Shares this filer held of target_ticker in its 13F-HR for the quarter
+    BEFORE ``quarter`` ("YYYYQn") — the previous report PERIOD, never merely
+    the previous filing (that can be the same quarter's original).
+
+    Returns float shares (0.0 = the filer reported that quarter without the
+    stock → a genuine New position), or None when the filer has NO 13F-HR for
+    the prior quarter (no basis → change n/a). Filing choice = _pick_filing,
+    the same rule as the current period: a 13F-HR/A RESTATEMENT supersedes
+    the original (JPMorgan's own Q1-2026 original omits its JPM rows; the
+    same-day restatement carries them), a NEW HOLDINGS /A never replaces it.
+    Rows match by the common ``cusip`` when known (never the name: Quadrant's
+    and PanAgora's Q1 tables spell ONB "OLD NATL BANCORP IND" → a name match
+    made them false "New"); option rows excluded as in the current table.
+    Raises when the prior table can't be read."""
+    prior_q = _prev_quarter(quarter)
+    if not prior_q:
         return None
-    positions = _fetch_13f_info_table(cik, prior_acc, target_ticker)
-    if not positions:
+    same = [{"cik": cik, "accession": acc, "date_filed": filed, "form": form}
+            for acc, filed, period, form in _filer_13f_history(cik)
+            if _period_quarter(period) == prior_q]
+    if not same:
         return None
-    return sum(p.get("shares") or 0 for p in positions) or None
+    prior_acc = _pick_filing(same)["accession"]
+    positions = _fetch_13f_info_table(cik, prior_acc, target_ticker, cusip)
+    if positions is None:
+        raise RuntimeError(f"prior 13F-HR {prior_acc} information table unreadable")
+    return float(sum(p.get("shares") or 0 for p in positions))
 
 
 def _classify_change(current_shares, prior_shares) -> dict:
-    """Position-change status vs prior quarter."""
+    """Position-change status vs prior quarter. prior_shares None = no
+    prior-quarter 13F-HR to compare against → "n/a", never "New"."""
     if prior_shares is None:
-        return {"change_status": "New", "change_pct": None}
+        return {"change_status": "n/a", "change_pct": None}
     if prior_shares <= 0:
         return {"change_status": "New", "change_pct": None}
     delta = (current_shares - prior_shares) / prior_shares * 100
@@ -301,6 +435,31 @@ def _report_quarter(date_filed: str) -> str | None:
     return f"{d.year}Q{completed}"
 
 
+def _period_quarter(period_ending: str | None) -> str | None:
+    """Report period end date ("2026-06-30") → "2026Q2"; None if unparseable."""
+    try:
+        d = datetime.strptime(str(period_ending)[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+    return f"{d.year}Q{(d.month - 1) // 3 + 1}"
+
+
+def _prev_quarter(quarter: str | None) -> str | None:
+    """"2026Q2" → "2026Q1"; "2026Q1" → "2025Q4"; None if malformed."""
+    m = re.fullmatch(r"(\d{4})Q([1-4])", str(quarter or ""))
+    if not m:
+        return None
+    year, q = int(m.group(1)), int(m.group(2))
+    return f"{year - 1}Q4" if q == 1 else f"{year}Q{q - 1}"
+
+
+def _holder_quarter(h: dict) -> str | None:
+    """Quarter a holder's filing covers: its own period_ending; the
+    filing-date heuristic only when the period is absent."""
+    return (_period_quarter(h.get("period_ending"))
+            or _report_quarter(h.get("date_filed") or ""))
+
+
 def _quarter_filename(ticker: str, quarter: str) -> str:
     return f"{ticker.upper()}_{quarter}.json"
 
@@ -308,15 +467,16 @@ def _quarter_filename(ticker: str, quarter: str) -> str:
 def _save_quarter_snapshots(ticker: str, holders: list[dict]) -> None:
     """
     Persist holders into quarter-keyed snapshot files alongside the latest
-    window. Each holder lands in the quarter its own filing covers (a refresh
-    during a filing window can straddle two quarters). Merge is by filer CIK
+    window. Each holder lands in the quarter its own filing covers (its
+    period_ending; filing-date heuristic only when absent — a refresh during
+    a filing window can straddle two quarters). Merge is by filer CIK
     with the fresh fetch winning per filer, so re-running the same refresh is
     idempotent and a holder seen in an earlier refresh of the same quarter is
     never dropped.
     """
     by_quarter: dict[str, list[dict]] = {}
     for h in holders:
-        q = _report_quarter(h.get("date_filed") or "")
+        q = _holder_quarter(h)
         if q:
             by_quarter.setdefault(q, []).append(h)
 
@@ -436,62 +596,131 @@ def _holders_from_candidates(candidates: list[dict], search_term: str,
                              max_filers: int) -> list[dict]:
     """Fetch + filter each candidate filer's info table into holder dicts,
     value-desc sorted. Shared by the current-holders path and the backfill
-    path — no caching or QoQ side effects here."""
-    all_holders = []
+    path — no caching or QoQ side effects here.
+
+    Name matching also catches the issuer's CDs, ETNs, structured notes and
+    preferreds (JPMorgan Chase Bank NA CDs, JPMorgan Chase Financial notes).
+    Rows are therefore restricted to the bank's COMMON CUSIP — the CUSIP held
+    by the most distinct filers among the matched rows (see _common_cusip);
+    when that is ambiguous (tie / no CUSIPs) all matched rows are kept, as
+    before, and the ambiguity is logged."""
+    queue = []
     seen_filers = set()
     for c in candidates:
-        if len(all_holders) >= max_filers:
-            break
-        filer_id = c["cik"]
-        if filer_id in seen_filers:
-            continue
-        seen_filers.add(filer_id)
-        positions = _fetch_13f_info_table(filer_id, c["accession"], search_term)
-        if not positions:
-            continue
+        if c["cik"] not in seen_filers:
+            seen_filers.add(c["cik"])
+            queue.append(c)
 
-        # Aggregate this filer's positions in this ticker
-        total_shares = sum(p.get("shares") or 0 for p in positions)
-        total_raw_value = sum(p.get("value_thousands") or 0 for p in positions)
+    def _fetch(c):
+        return _fetch_13f_info_table(c["cik"], c["accession"], search_term)
 
-        if total_shares <= 0:
-            continue
+    # Phase 1: up to max_filers candidates with matched rows → common CUSIP.
+    fetched = []
+    nxt = 0
+    while nxt < len(queue) and len(fetched) < max_filers:
+        c = queue[nxt]
+        nxt += 1
+        positions = _fetch(c)
+        if positions:
+            fetched.append((c, positions))
+    cusip = _common_cusip([p for _, p in fetched])
+    if cusip is None and fetched:
+        print(f"[13F] no unambiguous common CUSIP for {search_term!r} — "
+              f"keeping all name-matched rows")
 
-        # 13F reporting changed Q4 2022 (filings after ~Feb 2023):
-        #   - Pre-Q4 2022: <value> is in $ thousands
-        #   - Q4 2022+: <value> is in raw $
-        # Detect which: check filing date, OR sanity-check value-per-share
-        file_date = c.get("date_filed", "")
-        post_2023 = file_date >= "2023-02-01"
+    def _common_only(positions):
+        if cusip is None:
+            return positions
+        return [p for p in positions if _norm_cusip(p.get("cusip")) == cusip]
 
-        if post_2023:
-            total_value_usd = total_raw_value
-        else:
-            total_value_usd = total_raw_value * 1000
+    all_holders = []
 
-        # Sanity check: value/share should be reasonable vs typical equity prices
-        if total_shares > 0:
-            implied_price = total_value_usd / total_shares
-            # If implied price < $0.50, we likely guessed wrong — flip the scale up
-            if implied_price < 0.50 and total_raw_value > 0:
-                total_value_usd = total_raw_value * 1000
-            # If implied price > $100,000, flip the scale down
-            elif implied_price > 100_000 and total_raw_value > 0:
-                total_value_usd = total_raw_value
+    def _add(c, positions):
+        h = _holder_row(c, _common_only(positions), cusip)
+        if h:
+            all_holders.append(h)
 
-        all_holders.append({
-            "filer_cik": filer_id,
-            "filer_name": c["filer_name"],
-            "date_filed": c["date_filed"],
-            "accession": c["accession"],
-            "filing_url": filing_index_url(filer_id, c["accession"]),
-            "shares": total_shares,
-            "value_usd": total_value_usd,
-            "positions": positions,
-        })
+    for c, positions in fetched:
+        _add(c, positions)
+    # Phase 2: the CUSIP filter can drop filers whose only match was a
+    # non-common instrument — top up from the remaining candidates.
+    while nxt < len(queue) and len(all_holders) < max_filers:
+        c = queue[nxt]
+        nxt += 1
+        positions = _fetch(c)
+        if positions:
+            _add(c, positions)
 
     all_holders.sort(key=lambda h: h.get("value_usd", 0), reverse=True)
     return all_holders
+
+
+def _norm_cusip(cusip) -> str:
+    return str(cusip or "").strip().upper()
+
+
+def _common_cusip(position_lists: list[list[dict]]) -> str | None:
+    """The CUSIP held by the most distinct filers (one vote per filer per
+    CUSIP). None when no row carries a CUSIP or the top count is tied."""
+    votes: dict[str, int] = {}
+    for positions in position_lists:
+        for cu in {_norm_cusip(p.get("cusip")) for p in positions} - {""}:
+            votes[cu] = votes.get(cu, 0) + 1
+    if not votes:
+        return None
+    ranked = sorted(votes.values(), reverse=True)
+    if len(ranked) > 1 and ranked[0] == ranked[1]:
+        return None
+    return max(votes, key=votes.get)
+
+
+def _holder_row(c: dict, positions: list[dict], cusip: str | None) -> dict | None:
+    """One filer's holder dict from its (filtered) matched rows; None when
+    nothing positive remains."""
+    if not positions:
+        return None
+    filer_id = c["cik"]
+    # Aggregate this filer's positions in this ticker
+    total_shares = sum(p.get("shares") or 0 for p in positions)
+    total_raw_value = sum(p.get("value_thousands") or 0 for p in positions)
+
+    if total_shares <= 0:
+        return None
+
+    # 13F reporting changed Q4 2022 (filings after ~Feb 2023):
+    #   - Pre-Q4 2022: <value> is in $ thousands
+    #   - Q4 2022+: <value> is in raw $
+    # Detect which: check filing date, OR sanity-check value-per-share
+    file_date = c.get("date_filed", "")
+    post_2023 = file_date >= "2023-02-01"
+
+    if post_2023:
+        total_value_usd = total_raw_value
+    else:
+        total_value_usd = total_raw_value * 1000
+
+    # Sanity check: value/share should be reasonable vs typical equity prices
+    if total_shares > 0:
+        implied_price = total_value_usd / total_shares
+        # If implied price < $0.50, we likely guessed wrong — flip the scale up
+        if implied_price < 0.50 and total_raw_value > 0:
+            total_value_usd = total_raw_value * 1000
+        # If implied price > $100,000, flip the scale down
+        elif implied_price > 100_000 and total_raw_value > 0:
+            total_value_usd = total_raw_value
+
+    return {
+        "filer_cik": filer_id,
+        "filer_name": c["filer_name"],
+        "date_filed": c["date_filed"],
+        "accession": c["accession"],
+        "filing_url": filing_index_url(filer_id, c["accession"]),
+        "shares": total_shares,
+        "value_usd": total_value_usd,
+        "positions": positions,
+        "period_ending": c.get("period_ending"),
+        "cusip": cusip,
+    }
 
 
 def _quarter_filing_window(quarter: str) -> tuple[str, str] | None:
@@ -542,7 +771,8 @@ def backfill_quarter(ticker: str, company_name: str = "",
 
     startdt, enddt = window
     candidates = _search_13f_for_ticker(search_term, limit=max_filers * 2,
-                                        startdt=startdt, enddt=enddt)
+                                        startdt=startdt, enddt=enddt,
+                                        quarter=quarter.strip().upper())
     holders = _holders_from_candidates(candidates, search_term, max_filers)
     # Route strictly by each filing's own covered quarter (an amended or
     # late-window filing lands in ITS quarter, never mislabeled into this one).
@@ -579,13 +809,14 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
     candidates = _search_13f_for_ticker(search_term, limit=max_filers * 2)
     all_holders = _holders_from_candidates(candidates, search_term, max_filers)
 
-    # Quarter-over-quarter position change vs each filer's prior 13F-HR. Best
-    # effort and bounded to what we display (one extra EDGAR fetch per filer).
+    # Quarter-over-quarter position change vs each filer's 13F-HR for the
+    # PREVIOUS report quarter. Best effort and bounded to what we display.
     if with_changes:
         for h in all_holders[:max_filers]:
             try:
                 prior = _prior_quarter_shares(
-                    h["filer_cik"], h.get("date_filed", ""), search_term)
+                    h["filer_cik"], _holder_quarter(h), search_term,
+                    h.get("cusip"))
             except Exception as e:
                 # A failed lookup must not masquerade as a confident "New"
                 # position — that's a wrong label, not missing data.

@@ -71,7 +71,7 @@ class Test13FRenderCache(unittest.TestCase):
                      "shares": 100.0, "value_usd": 5000.0,
                      "date_filed": "2026-08-12"}]
 
-        def _prior(cik, date_filed, term):
+        def _prior(cik, quarter, term, cusip=None):
             self.calls["prior"] += 1
             return 80.0
 

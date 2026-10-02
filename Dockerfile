@@ -28,7 +28,7 @@ COPY . .
 # write at runtime are handed to the app user — inventoried from the code:
 #   • every data/cloud_storage.save_json prefix (the local cache copy beside
 #     each GCS write: consensus, estimates_cache, bank_groups, saved_screens,
-#     form13f_cache, form4_cache, macro_cache, governance_cache, nport_cache,
+#     form13f_cache_v2, form4_cache, macro_cache, governance_cache, nport_cache,
 #     people_cache, release_ai_cache) — consensus/estimates_cache are also
 #     mkdir'd at import time;
 #   • /app/tests — the verify-metrics and live-audit jobs write CSV reports.
@@ -36,11 +36,11 @@ COPY . .
 # chromium (~/.pki, ~/.cache/fontconfig) and yfinance (~/.cache) can write.
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin app \
     && mkdir -p /app/consensus /app/estimates_cache /app/bank_groups \
-        /app/saved_screens /app/form13f_cache /app/form4_cache \
+        /app/saved_screens /app/form13f_cache_v2 /app/form4_cache \
         /app/macro_cache /app/governance_cache /app/nport_cache \
         /app/people_cache /app/release_ai_cache \
     && chown -R app:app /app/consensus /app/estimates_cache /app/bank_groups \
-        /app/saved_screens /app/form13f_cache /app/form4_cache \
+        /app/saved_screens /app/form13f_cache_v2 /app/form4_cache \
         /app/macro_cache /app/governance_cache /app/nport_cache \
         /app/people_cache /app/release_ai_cache /app/tests
 ENV HOME=/home/app \

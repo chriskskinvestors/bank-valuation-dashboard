@@ -524,7 +524,9 @@ def render_ownership_detailed(ticker: str, metrics: dict):
 
     def _delta_cell(r):
         if r["is_new"]:
-            return '<span style="color:#059669;font-weight:600;">New</span>'
+            # Absent from the stored prior-quarter SAMPLE only — not proof
+            # the holder had no position, so no "New" claim.
+            return "n/a (not in prior sample)"
         if r["d_shares"] is None:
             return "—"
         color = "#059669" if r["d_shares"] >= 0 else "#dc2626"
