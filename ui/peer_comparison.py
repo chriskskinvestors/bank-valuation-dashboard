@@ -9,7 +9,7 @@ import html as _html
 import streamlit as st
 import pandas as pd
 
-from config import METRICS_BY_KEY
+from config import METRICS, METRICS_BY_KEY
 from data.bank_mapping import get_name
 from analysis.peer_groups import (
     asset_size_tier, business_mix_tier, compute_peer_percentile,
@@ -789,10 +789,13 @@ def _render_peer_scatters(selected_peers: list[dict]):
     st.markdown("##### Custom Scatter")
 
     # Build list of pickable metrics — numeric ones only
+    # The static registry only: the Screen builder registers per-screen
+    # call-report fields/formulas into METRICS_BY_KEY at runtime, which must
+    # not leak into this picker (review 2026-10-02).
     numeric_metrics = [
-        (k, METRICS_BY_KEY[k]["label"])
-        for k in METRICS_BY_KEY
-        if METRICS_BY_KEY[k].get("format") in ("pct", "ratio", "currency", "number", "millions", "billions", "dollars_auto")
+        (m["key"], m["label"])
+        for m in METRICS
+        if m.get("format") in ("pct", "ratio", "currency", "number", "millions", "billions", "dollars_auto")
     ]
     numeric_metrics.sort(key=lambda x: x[1])
     metric_keys = [k for k, _ in numeric_metrics]

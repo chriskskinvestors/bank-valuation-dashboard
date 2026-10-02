@@ -583,6 +583,8 @@ METRICS = [
 
     # ── Deposit Ratios (computed) ────────────────────────────────────────
     {
+        # Uninsured ÷ (insured + uninsured) — the FDIC insurance base; see
+        # analysis/valuation (was ÷ total deposits incl. foreign offices).
         "key": "uninsured_pct", "label": "Uninsured %", "source": "computed",
         "format": "pct", "decimals": 1,
         "color_rule": "lower_better", "thresholds": {"good": 30, "warn": 50},

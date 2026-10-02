@@ -231,6 +231,11 @@ def render_generic_table(
         ".scrn-wrap td.nm,.scrn-wrap th.nm{text-align:left;color:var(--text-secondary);"
         "max-width:240px;overflow:hidden;text-overflow:ellipsis;}"
         ".scrn-wrap a.tk{font-weight:700;text-decoration:none;}"
+        # Ticker stays put while wide screens (call-report columns, formulas)
+        # scroll horizontally; the header cell sits above both sticky axes.
+        ".scrn-wrap tbody td:first-child{position:sticky;left:0;z-index:1;"
+        "background:var(--bg-base);box-shadow:1px 0 0 var(--grid-head);}"
+        ".scrn-wrap thead th:first-child{position:sticky;left:0;z-index:3;}"
         "</style>"
         f'<div class="scrn-wrap"><table class="ksk-grid">'
         f'<thead>{thead}</thead><tbody>{"".join(body)}</tbody></table></div>',

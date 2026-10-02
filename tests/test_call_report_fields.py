@@ -199,13 +199,192 @@ class TestResolution(_Stubbed):
         self.assertIn("CD3LES", METRICS_BY_KEY["fdic:CD3LES"]["label"])
 
 
+class TestFfiecLineItems(_Stubbed):
+    """Stage 2: FFIEC full-report line items (data/call_report_full) in the
+    same picker/formula/filter machinery. Store stubbed: RCONB530 (AOCI, a USD
+    fact in $K) and RCFA7204 (leverage ratio, non-monetary)."""
+    CAT = [{"code": "RCONB530", "title": "ACCUMULATED OTHER COMPREHENSIVE INCOME",
+            "schedule": None, "unit": "usd_thousands"},
+           {"code": "RCFA7204", "title": "LEVERAGE RATIO", "schedule": None,
+            "unit": "non_monetary"}]
+    VALS = {628: {"RCONB530": -3500000.0, "RCFA7204": 8.1},
+            21761: {"RCONB530": -10.0, "RCFA7204": 30.0},
+            3309: {"RCONB530": -42000.0, "RCFA7204": 9.4}}
+
+    def setUp(self):
+        super().setUp()
+        from data import call_report_full
+        crf._FFIEC_MEMO.update(at=0.0, cat={})
+        self.calls = []
+
+        def _values(codes, report_date, certs):
+            self.calls.append((tuple(codes), report_date, tuple(certs)))
+            return {c: {k: self.VALS.get(c, {}).get(k) for k in codes} for c in certs}
+        self.patches += [mock.patch.object(call_report_full, "catalog", return_value=self.CAT),
+                         mock.patch.object(call_report_full, "values", side_effect=_values)]
+        for p in self.patches[-2:]:
+            p.start()
+
+    def tearDown(self):
+        super().tearDown()
+        crf._FFIEC_MEMO.update(at=0.0, cat={})
+
+    def test_catalog_kinds_and_labels(self):
+        cat = crf.ffiec_catalog()
+        self.assertEqual(cat["RCONB530"]["kind"], "level")
+        self.assertEqual(cat["RCFA7204"]["kind"], "asis")
+        d = crf.metric_def("ffiec:RCONB530")
+        self.assertEqual((d["format"], d["header"], d["category"]),
+                         ("dollars_auto", "RCONB530", "Call report (FFIEC)"))
+        self.assertIn("(FFIEC)", d["label"])
+        self.assertIn("(as reported)", crf.metric_def("ffiec:RCFA7204")["label"])
+
+    def test_single_charter_units_and_group_rules(self):
+        rows = crf.attach([{"ticker": "SBSI"}, {"ticker": "JPM"}],
+                          ["ffiec:RCONB530", "ffiec:RCFA7204"], "20260630")
+        sbsi, jpm = rows
+        self.assertEqual(sbsi["ffiec:RCONB530"], -42000.0 * 1000)   # $K → $
+        self.assertEqual(sbsi["ffiec:RCFA7204"], 9.4)                # as filed
+        self.assertEqual(jpm["ffiec:RCONB530"], (-3500000.0 - 10.0) * 1000)  # strict sum
+        self.assertIsNone(jpm["ffiec:RCFA7204"], "non-monetary item: n/a for a group")
+        # one batched store read for every cert of every row
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(sorted(self.calls[0][2]), [628, 3309, 21761])
+
+    def test_formula_can_mix_fdic_and_ffiec_codes(self):
+        F = {"fx:aoci_cd": {"key": "fx:aoci_cd", "name": "AOCI / CDs",
+                            "expr": "RCONB530 / CD3LES", "fmt": "Number"}}
+        r = crf.attach([{"ticker": "SBSI"}], ["fx:aoci_cd"], "20260630", F)[0]
+        self.assertAlmostEqual(r["fx:aoci_cd"], (-42000.0 * 1000) / (375319.0 * 1000))
+
+    def test_unreachable_store_means_no_items_and_na(self):
+        from data import call_report_full
+        crf._FFIEC_MEMO.update(at=0.0, cat={})
+        with mock.patch.object(call_report_full, "catalog", side_effect=RuntimeError("no db")),              mock.patch.object(call_report_full, "values", side_effect=RuntimeError("no db")):
+            self.assertEqual(crf.ffiec_catalog(), {})
+            r = crf.attach([{"ticker": "SBSI"}], ["ffiec:RCONB530"], "20260630")[0]
+        self.assertIsNone(r["ffiec:RCONB530"])
+        with self.assertRaises(ValueError):
+            crf.parse_formula("RCONB530 / ASSET")
+
+
+class TestReviewRegressions(_Stubbed):
+    """Each test pins one defect confirmed by the 2026-10-02 hostile review."""
+
+    def test_literal_zero_ratios_over_zero_denominator_are_na(self):
+        # 1,831 CBLR filers report RBCRWAJ = 0 with RWAJ = 0; 582 report
+        # LNRESNCR = 0 with NCLNLS = 0. The pipeline nulls both; so must we.
+        TABLE.update({"RBCRWAJ": {3309: 0.0, 628: 15.0},
+                      "RWAJ": {3309: 0.0, 628: 2000000.0},
+                      "LNRESNCR": {3309: 0.0}, "NCLNLS": {3309: 0.0}})
+        try:
+            r = crf.attach([{"ticker": "SBSI"}], ["fdic:RBCRWAJ", "fdic:LNRESNCR"],
+                           "20260630")[0]
+            self.assertIsNone(r["fdic:RBCRWAJ"], "x/0 is n/a, not 0.00%")
+            self.assertIsNone(r["fdic:LNRESNCR"])
+            ok = crf.values_for(["fdic:RBCRWAJ"], [628], crf.quarter_table(
+                crf.codes_needed(["fdic:RBCRWAJ"]), "20260630", [628]))
+            self.assertEqual(ok["fdic:RBCRWAJ"], 15.0, "a genuine ratio is untouched")
+        finally:
+            for k in ("RBCRWAJ", "RWAJ", "LNRESNCR", "NCLNLS"):
+                TABLE.pop(k, None)
+
+    def test_guard_fields_are_fetched_with_any_ratio(self):
+        need = crf.codes_needed(["fdic:RBCRWAJ"])
+        for g in ("RWAJ", "RBCT1J", "NCLNLS"):
+            self.assertIn(g, need)
+        self.assertNotIn("RWAJ", crf.codes_needed(["fdic:CD3LES"]), "levels need no guards")
+
+    def test_offstate_is_not_summed_across_charters(self):
+        TABLE["OFFSTATE"] = {628: 40.0, 21761: 1.0, 3309: 3.0}
+        try:
+            jpm, sbsi = crf.attach([{"ticker": "JPM"}, {"ticker": "SBSI"}],
+                                   ["fdic:OFFSTATE"], "20260630")
+            self.assertIsNone(jpm["fdic:OFFSTATE"], "overlapping states can't be added")
+            self.assertEqual(sbsi["fdic:OFFSTATE"], 3.0)
+        finally:
+            TABLE.pop("OFFSTATE", None)
+
+    def test_fdic_outage_is_na_and_reported_not_a_crash(self):
+        from data import http
+        self.patches[0].stop()          # use the real fetch_quarter
+        try:
+            with mock.patch.object(http, "get_with_retry",
+                                   side_effect=RuntimeError("503 Service Unavailable")), \
+                 mock.patch("data.cache.get", return_value=None):
+                r = crf.attach([{"ticker": "SBSI"}], ["fdic:NUMEMP"], "20260630")[0]
+            self.assertIsNone(r["fdic:NUMEMP"])
+            self.assertTrue(crf.last_errors(), "the outage must be surfaced")
+        finally:
+            self.patches[0].start()
+
+    def test_ffiec_store_gets_an_iso_date(self):
+        from data import call_report_full
+        seen = []
+        with mock.patch.object(call_report_full, "values",
+                               side_effect=lambda c, d, ce: seen.append(d) or {}):
+            crf.quarter_table(["RCONB530"], "20260630", [3309])
+        self.assertEqual(seen, ["2026-06-30"])
+
+    def test_series_for_reuses_prefetched_tables(self):
+        tables = {"20260630": {"NIMY": {3309: 3.1}}, "20260331": {"NIMY": {3309: 3.0}}}
+        with mock.patch.object(crf, "quarter_table", side_effect=AssertionError("refetched")):
+            s = crf.series_for({"ticker": "SBSI"}, ["fdic:NIMY"], ["20260630", "20260331"],
+                               tables=tables)
+        self.assertEqual(s, {"fdic:NIMY": [3.1, 3.0]})
+
+
+class TestFormulaHardening(unittest.TestCase):
+    def test_oversized_or_pathological_formulas_are_rejected(self):
+        for bad in ("ASSET+" * 200 + "ASSET",          # node/char limits
+                    "-" * 600 + "ASSET",
+                    "ASSET * " + "9" * 400,             # 400-digit literal
+                    "ASSET * 1E999", "ASSET / 1E-320 * 1E13"):
+            with self.assertRaises(ValueError, msg=bad[:40]):
+                crf.parse_formula(bad)
+
+    def test_eval_never_returns_inf_or_nan(self):
+        tree, _ = crf.parse_formula("ASSET * 1000000000000 * 1000000000000")
+        self.assertIsNone(crf.eval_formula(tree, {"ASSET": 1e300}))
+        tree, _ = crf.parse_formula("ASSET - ASSET")
+        self.assertEqual(crf.eval_formula(tree, {"ASSET": 5.0}), 0.0)
+
+    def test_formula_keys_are_per_definition(self):
+        a = crf.formula_key("CD %", "CD3LES/DEPDOM*100", "Percent")
+        b = crf.formula_key("CD", "CD3LES/DEPDOM*100", "Percent")
+        c = crf.formula_key("CD %", "CD3LES/DEPDOM*100", "Number")
+        d = crf.formula_key("CD %", " cd3les / depdom * 100 ", "Percent")
+        self.assertNotEqual(a, c, "same name, different format → different key")
+        self.assertTrue(a.startswith("fx:cd_") and b.startswith("fx:cd_"))
+        self.assertEqual(a, b, "the slug part matches; the definition hash decides")
+        self.assertEqual(a, crf.formula_key("CD %", "CD3LES / DEPDOM * 100", "Percent"))
+        self.assertNotEqual(a, crf.formula_key("CD %", "CD3LES/DEP*100", "Percent"))
+        self.assertEqual(crf.formula_key("", "ASSET", "Number"), "")
+        del d
+
+    def test_level_labels_carry_the_dollar_unit(self):
+        self.assertTrue(crf.metric_def("fdic:CD3LES")["label"].endswith("($)"))
+        self.assertFalse(crf.metric_def("fdic:NIMY")["label"].endswith("($)"))
+
+
+class TestCatalogReviewCases(unittest.TestCase):
+    def test_integer_valued_dollar_items_are_levels_constants_stay_ratios(self):
+        cat = crf.catalog()
+        for code in ("NTCOMREQ", "NTRERS2Q", "NTRERSF2", "NTRERSFM", "NTRERSFQ", "AVPPPPLG"):
+            self.assertEqual(cat[code]["kind"], "level", code)
+        for code in ("ASSETR", "LIABEQR", "IDNTILR"):
+            self.assertEqual(cat[code]["kind"], "ratio", code)
+        self.assertNotIn("CBLRIND", cat, "a 0/1 election flag is not a measure")
+
+
 class TestSavedScreenDynRestore(unittest.TestCase):
     def test_valid_entries_restore_invalid_are_dropped(self):
         import ast
         src = (Path(__file__).parent.parent / "app.py").read_text(encoding="utf-8")
         fn = next(n for n in ast.parse(src).body
                   if isinstance(n, ast.FunctionDef) and n.name == "_screen_valid_dyn")
-        ns: dict = {}
+        import re
+        ns: dict = {"re": re}
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "app.py", "exec"), ns)
         got = ns["_screen_valid_dyn"]([
             {"key": "fdic:CD3LES"}, {"key": "fdic:CD3LES"},            # dup dropped
@@ -213,10 +392,13 @@ class TestSavedScreenDynRestore(unittest.TestCase):
             {"key": "fx:ok", "name": "OK", "expr": "ASSET/DEP", "fmt": "Percent"},
             {"key": "fx:bad", "name": "Bad", "expr": "ASSET/"},         # no longer parses
             {"key": "price"},                                            # not dynamic
+            {"key": "ffiec:RCONB530"},                                   # MDRM-shaped: kept
+            {"key": "ffiec:not-a-code"},                                 # junk: dropped
         ])
         self.assertEqual(got, [{"key": "fdic:CD3LES"},
                                {"key": "fx:ok", "name": "OK", "expr": "ASSET/DEP",
-                                "fmt": "Percent"}])
+                                "fmt": "Percent"},
+                               {"key": "ffiec:RCONB530"}])
 
 
 if __name__ == "__main__":

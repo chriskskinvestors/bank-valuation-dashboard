@@ -52,7 +52,9 @@ RANGE_RULES = {
     "nco_ratio":         {"min": -0.5,  "max": 5.0,  "unit": "%"},
 
     # Deposits
-    "uninsured_pct":     {"min": 5.0,   "max": 75.0, "unit": "%"},
+    # Share of the insurance base — bounded by 100; custody banks are 85-95%
+    # (STT 92.3, BNY 88.4 at 6/30/2026), so the old 75 cap flagged truth.
+    "uninsured_pct":     {"min": 5.0,   "max": 100.0, "unit": "%"},
     "nonint_dep_pct":    {"min": 0.0,   "max": 60.0, "unit": "%"},
     "brokered_pct":      {"min": 0.0,   "max": 50.0, "unit": "%"},
 

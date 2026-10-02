@@ -52,6 +52,7 @@ _EXCLUDE = {
     "SPECGRP", "TRUSTPWR", "TRACT", "USA", "ACTIVE", "INSTCNT", "BRANCH",
     "EDGECODE", "N", "METRO", "NTINCHPP", "NTINQHPP", "TREXER", "TRPOWER",
     "CBSA_NO", "CSA_NO", "MSA_NO", "FLDOFF_NO",
+    "CBLRIND",          # "Community Bank Ratio" is a 0/1 CBLR-election flag
 }
 _FLAG_RE = re.compile(r"\bFLAG\b|\bFLG\b", re.I)
 # Counts: explicit count wording (NOT "offices" — "Deposits held in domestic
@@ -118,20 +119,32 @@ def build(repdte: str) -> dict:
         else:
             kind = "asis"
         out[code] = {"title": title, "kind": kind}
-    # Second pass for the inconclusive ones: niche dollar items (farmland
-    # charge-offs, trust-department assets) are tiny at the megabanks but not
-    # everywhere. Any filer reporting |value| > LEVEL_FLOOR proves a $K amount
-    # — safe only because "asis" fields carry NO ratio signal by construction.
-    asis = [k for k, v in out.items() if v["kind"] == "asis"]
-    for code, mx in _all_filers_max(asis, repdte).items():
-        if mx > LEVEL_FLOOR:
+    # Second pass over EVERY filer for the ratio/asis candidates:
+    #  * integer evidence — FDIC reports $ amounts as whole $thousands and
+    #    computes ratios as decimals. A field whose every nonzero value across
+    #    all filers is an integer is a $K amount even if its title has a "/"
+    #    (NTCOMREQ "COMMERCIAL RE CHG-OFF/…" is a $ charge-off; review 2026-10-02
+    #    found 5 such "ratios" and 53 integer "asis" fields shown 1000x off).
+    #  * magnitude — an "asis" field (no ratio signal) with any |value| >
+    #    LEVEL_FLOOR at some filer is a $K amount.
+    #  A ratio-signalled field needs more than integers: constant ratios
+    #  (ASSETR/LIABEQR/IDNTILR are always 100) are whole numbers too, so it
+    #  also needs a value > 100 or "amount" in its title (AVPPPPLG).
+    cand = [k for k, v in out.items() if v["kind"] in ("ratio", "asis")]
+    for code, (mx, n_nonzero, all_int) in _all_filers_stats(cand, repdte).items():
+        kind = out[code]["kind"]
+        amount = re.search(r"\bAMOUNT\b|\bAMT\b", out[code]["title"], re.I)
+        if n_nonzero and all_int and (kind == "asis" or mx > 100 or amount):
+            out[code]["kind"] = "level"
+        elif kind == "asis" and mx > LEVEL_FLOOR:
             out[code]["kind"] = "level"
     return out
 
 
-def _all_filers_max(codes: list[str], repdte: str) -> dict[str, float]:
-    """max |value| per field across every filer of the quarter."""
-    best: dict[str, float] = {}
+def _all_filers_stats(codes: list[str], repdte: str) -> dict[str, tuple]:
+    """(max |value|, nonzero count, every nonzero value an integer) per field
+    across every filer of the quarter."""
+    st: dict[str, list] = {}
     for i in range(0, len(codes), 50):
         chunk = codes[i:i + 50]
         rows = requests.get(FIN, params={"filters": f"REPDTE:{repdte}",
@@ -141,8 +154,12 @@ def _all_filers_max(codes: list[str], repdte: str) -> dict[str, float]:
             for k in chunk:
                 v = r["data"].get(k)
                 if isinstance(v, (int, float)):
-                    best[k] = max(best.get(k, 0.0), abs(float(v)))
-    return best
+                    s = st.setdefault(k, [0.0, 0, True])
+                    s[0] = max(s[0], abs(float(v)))
+                    if v != 0:
+                        s[1] += 1
+                        s[2] = s[2] and float(v).is_integer()
+    return {k: tuple(v) for k, v in st.items()}
 
 
 if __name__ == "__main__":
