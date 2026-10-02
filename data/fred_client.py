@@ -101,19 +101,39 @@ def _fetch_api(series_id: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+# Per-render storage-read accounting for the Market & Macro timing panel
+# (app.py records it after macro.render): how much of a cold render is the
+# per-series cache read, and how many reads vs distinct series it took.
+_IO = {"ms": 0.0, "reads": 0, "series": set()}
+
+
+def reset_io_stats() -> None:
+    _IO["ms"], _IO["reads"], _IO["series"] = 0.0, 0, set()
+
+
+def io_stats() -> dict:
+    return {"ms": _IO["ms"], "reads": _IO["reads"], "series": len(_IO["series"])}
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def fetch_series(series_id: str, years: int = 5) -> pd.DataFrame:
-    """
-    Fetch a FRED series with caching. Returns DataFrame with columns (date, value).
-    """
-    # Check cloud cache first
+def _series_full(series_id: str) -> pd.DataFrame:
+    """The series' FULL stored history (date, value) — one cache read (or live
+    fetch + persist when stale) per series per process, shared by every
+    `years` window. fetch_series used to be memoised on (series_id, years)
+    with the read inside, and callers ask for the same series with ten
+    different `years` values: a cold Market & Macro render read 28 series 44
+    times (2026-10-02), each read a cloud-storage round trip on Cloud Run."""
+    import time as _time
+    _t0 = _time.perf_counter()
     cached = load_json(FRED_CACHE_PREFIX, f"{series_id}.json")
+    _IO["ms"] += (_time.perf_counter() - _t0) * 1000
+    _IO["reads"] += 1
+    _IO["series"].add(series_id)
     if _is_fresh(cached) and cached.get("records"):
         df = pd.DataFrame(cached["records"])
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df["value"] = pd.to_numeric(df["value"], errors="coerce")
-        cutoff = datetime.now() - timedelta(days=365 * years)
-        return df[df["date"] >= cutoff].reset_index(drop=True)
+        return df
 
     # Fetch fresh
     if FRED_API_KEY:
@@ -136,7 +156,18 @@ def fetch_series(series_id: str, years: int = 5) -> pd.DataFrame:
         })
     except Exception:
         pass
+    return df
 
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def fetch_series(series_id: str, years: int = 5) -> pd.DataFrame:
+    """
+    Fetch a FRED series with caching. Returns DataFrame with columns (date, value),
+    the last `years` of the series' full history (see _series_full).
+    """
+    df = _series_full(series_id)
+    if df.empty:
+        return df
     cutoff = datetime.now() - timedelta(days=365 * years)
     return df[df["date"] >= cutoff].reset_index(drop=True)
 
