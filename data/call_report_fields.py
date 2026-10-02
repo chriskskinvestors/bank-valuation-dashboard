@@ -6,8 +6,15 @@ BankFind financials API (catalog vendored in data/fdic_field_catalog.json —
 see tools/build_fdic_field_catalog.py for how each field's KIND was proven).
 
 Metric keys:
-    "fdic:<CODE>"   a raw field, e.g. "fdic:CD3LES"
-    "fx:<slug>"     a user formula over field codes, e.g. (CD3LES+CD3LESS)/DEPDOM*100
+    "fdic:<CODE>"   a raw FDIC field, e.g. "fdic:CD3LES"
+    "ffiec:<MDRM>"  a raw FFIEC Call Report line item from the full-report store
+                    (data/call_report_full — every line item the quarterly
+                    refresh-ffiec job downloads), e.g. "ffiec:RCONB530"
+    "fx:<slug>"     a user formula over FDIC codes and/or MDRM codes
+
+FFIEC line items: units come from the filing itself (USD facts are
+$thousands → dollars here; non-monetary items as filed, labeled "as reported").
+Multi-charter groups: $ items strict-sum; non-monetary items n/a.
 
 Units (CLAUDE.md contract): FDIC reports dollar LEVELS in $thousands; they are
 converted ×1000 to raw dollars here, at the boundary. Ratios and counts are
@@ -29,7 +36,9 @@ from functools import lru_cache
 from pathlib import Path
 
 FIELD_PREFIX = "fdic:"
+FFIEC_PREFIX = "ffiec:"
 FORMULA_PREFIX = "fx:"
+_FFIEC_CATALOG_TTL_S = 3600        # the store changes quarterly; catalog() scans it
 _CATALOG_PATH = Path(__file__).parent / "fdic_field_catalog.json"
 _VALUES_TTL_S = 7 * 86400          # a filed quarter is effectively immutable
 _LATEST_TTL_S = 6 * 3600
@@ -50,13 +59,57 @@ def catalog() -> dict[str, dict]:
         return {}
 
 
+_FFIEC_MEMO: dict = {"at": 0.0, "cat": {}}
+
+
+def ffiec_catalog() -> dict[str, dict]:
+    """{MDRM: {"title", "kind"}} for line items in the full-report store
+    (memoised an hour). {} when the store is empty or unreachable — the
+    picker then simply offers no FFIEC items; nothing is guessed."""
+    import time
+    ttl = _FFIEC_CATALOG_TTL_S if _FFIEC_MEMO.get("ok") else 60
+    if time.time() - _FFIEC_MEMO["at"] < ttl:
+        return _FFIEC_MEMO["cat"]
+    cat: dict[str, dict] = {}
+    ok = False
+    try:
+        from data import call_report_full
+        for r in call_report_full.catalog():
+            code = str(r.get("code") or "").upper()
+            if code:
+                cat[code] = {"title": r.get("title") or code,
+                             "kind": "level" if r.get("unit") == "usd_thousands" else "asis"}
+        ok = True
+    except Exception as e:
+        print(f"[call_report_fields] FFIEC catalog unavailable: {type(e).__name__}")
+    # A failed read retries after a minute; a good one is kept an hour.
+    _FFIEC_MEMO.update(at=time.time(), cat=cat, ok=ok)
+    return cat
+
+
+def _kind(code: str) -> str | None:
+    c = catalog().get(code) or ffiec_catalog().get(code)
+    return c.get("kind") if c else None
+
+
 def field_key(code: str) -> str:
     return f"{FIELD_PREFIX}{code.upper()}"
 
 
+def ffiec_key(code: str) -> str:
+    return f"{FFIEC_PREFIX}{code.upper()}"
+
+
 def is_dynamic(key) -> bool:
     return isinstance(key, str) and (key.startswith(FIELD_PREFIX)
+                                     or key.startswith(FFIEC_PREFIX)
                                      or key.startswith(FORMULA_PREFIX))
+
+
+def ffiec_label(code: str) -> str:
+    c = ffiec_catalog().get(code, {})
+    suffix = "" if c.get("kind") == "level" else " (as reported)"
+    return f"{code} · {c.get('title') or code} (FFIEC){suffix}"
 
 
 def field_label(code: str) -> str:
@@ -79,6 +132,15 @@ def metric_def(key: str, formulas: dict | None = None) -> dict | None:
         return {"key": key, "label": field_label(code), "header": code,
                 "source": "call_report", "format": fmt, "decimals": dec,
                 "category": "Call report (FDIC)"}
+    if key.startswith(FFIEC_PREFIX):
+        code = key[len(FFIEC_PREFIX):]
+        c = ffiec_catalog().get(code)
+        # Unknown here (store empty in this environment) still gets a label:
+        # values resolve to n/a, the saved definition is never lost.
+        fmt, dec = ("dollars_auto", 1) if (c or {}).get("kind") == "level" else ("number", 2)
+        return {"key": key, "label": ffiec_label(code), "header": code,
+                "source": "call_report_ffiec", "format": fmt, "decimals": dec,
+                "category": "Call report (FFIEC)"}
     if key.startswith(FORMULA_PREFIX):
         f = (formulas or {}).get(key)
         if not f:
@@ -130,7 +192,7 @@ def parse_formula(expr: str) -> tuple[ast.Expression, list[str]]:
         if isinstance(node, ast.Constant) and not isinstance(node.value, (int, float)):
             raise ValueError("Only numbers and field codes are allowed.")
         if isinstance(node, ast.Name):
-            if node.id not in catalog():
+            if node.id not in catalog() and node.id not in ffiec_catalog():
                 raise ValueError(f"Unknown call report field: {node.id}.")
             names.append((node.col_offset, node.id))
     codes = list(dict.fromkeys(n for _, n in sorted(names)))   # source order
@@ -259,7 +321,7 @@ def fetch_quarter(codes, repdte: str) -> dict[str, dict[int, float | None]]:
 def _resolve(code: str, certs: list[int], table: dict) -> float | None:
     """One field for one bank (its charter group), in DISPLAY units."""
     from data.cert_group import _EXACT_QUOTIENTS
-    kind = catalog().get(code, {}).get("kind")
+    kind = _kind(code)
     col = table.get(code, {})
     if len(certs) == 1:
         v = col.get(certs[0])
@@ -286,6 +348,8 @@ def codes_needed(keys, formulas: dict | None = None) -> list[str]:
     for k in keys:
         if k.startswith(FIELD_PREFIX):
             codes.append(k[len(FIELD_PREFIX):])
+        elif k.startswith(FFIEC_PREFIX):
+            codes.append(k[len(FFIEC_PREFIX):])
         elif k.startswith(FORMULA_PREFIX) and (formulas or {}).get(k):
             try:
                 codes += parse_formula(formulas[k]["expr"])[1]
@@ -330,6 +394,8 @@ def values_for(keys, certs: list[int], table: dict,
     for k in keys:
         if k.startswith(FIELD_PREFIX):
             out[k] = code_val(k[len(FIELD_PREFIX):])
+        elif k.startswith(FFIEC_PREFIX):
+            out[k] = code_val(k[len(FFIEC_PREFIX):])
         elif k.startswith(FORMULA_PREFIX) and (formulas or {}).get(k):
             try:
                 tree, used = parse_formula(formulas[k]["expr"])
@@ -340,6 +406,26 @@ def values_for(keys, certs: list[int], table: dict,
     return out
 
 
+def quarter_table(codes, repdte: str, certs) -> dict[str, dict[int, float | None]]:
+    """{CODE: {cert: raw value}} for one quarter (YYYYMMDD) from BOTH sources:
+    FDIC financials (every filer) for FDIC codes, the FFIEC full-report store
+    (the requested certs) for MDRM codes. FDIC wins a name clash."""
+    codes = list(dict.fromkeys(codes))
+    fdic_codes = [c for c in codes if c in catalog()]
+    ffiec_codes = [c for c in codes if c not in catalog()]
+    table = fetch_quarter(fdic_codes, repdte) if fdic_codes else {}
+    if ffiec_codes and certs:
+        try:
+            from data import call_report_full
+            got = call_report_full.values(ffiec_codes, repdte, list(certs))
+        except Exception as e:
+            print(f"[call_report_fields] FFIEC values unavailable: {type(e).__name__}")
+            got = {}
+        for c in ffiec_codes:
+            table[c] = {int(cert): vals.get(c) for cert, vals in got.items()}
+    return table
+
+
 def attach(rows: list[dict], keys, repdte: str | None,
            formulas: dict | None = None) -> list[dict]:
     """Copies of ``rows`` with every dynamic key's value for quarter
@@ -348,11 +434,13 @@ def attach(rows: list[dict], keys, repdte: str | None,
     keys = [k for k in dict.fromkeys(keys) if is_dynamic(k)]
     if not keys:
         return list(rows)
-    table = fetch_quarter(codes_needed(keys, formulas), repdte) if repdte else {}
+    certs_of = [row_certs(r) for r in rows]
+    all_certs = sorted({c for cs in certs_of for c in cs})
+    table = quarter_table(codes_needed(keys, formulas), repdte, all_certs) if repdte else {}
     out = []
-    for r in rows:
+    for r, certs in zip(rows, certs_of):
         r2 = dict(r)
-        r2.update(values_for(keys, row_certs(r), table, formulas))
+        r2.update(values_for(keys, certs, table, formulas))
         out.append(r2)
     return out
 
@@ -366,7 +454,7 @@ def series_for(row: dict, keys, repdtes: list[str],
     codes = codes_needed(keys, formulas)
     out = {k: [] for k in keys}
     for rep in repdtes:
-        vals = values_for(keys, certs, fetch_quarter(codes, rep), formulas)
+        vals = values_for(keys, certs, quarter_table(codes, rep, certs), formulas)
         for k in keys:
             out[k].append(vals.get(k))
     return out

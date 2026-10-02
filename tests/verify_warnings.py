@@ -339,10 +339,12 @@ def verify_one(ticker: str, cik: str, cert: str, parsed: dict,
             return {"classification": "NEEDS_MANUAL",
                     "evidence": f"NCO={val}", "note": ""}
         if field == "uninsured_pct":
+            # Same basis as the metric: uninsured ÷ (insured + uninsured).
             depins = _to_f(fdic.get("DEPINS")) or 0
-            dep = _to_f(fdic.get("DEP")) or 0
+            depunins = _to_f(fdic.get("DEPUNINS")) or 0
+            dep = depins + depunins
             if dep > 0:
-                uninsured = (dep - depins) / dep * 100
+                uninsured = depunins / dep * 100
                 if abs(uninsured - val) < 2:
                     # Value matches — legit for many commercial/treasury banks
                     if val > 75:

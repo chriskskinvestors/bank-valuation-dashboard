@@ -580,7 +580,15 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     brokered = fdic_data.get("BRO")
     depnidom = fdic_data.get("DEPNIDOM")
 
-    uninsured_pct = (uninsured / dep * 100) if (dep and uninsured is not None) else None
+    # Uninsured share of the FDIC deposit-insurance base: DEPUNINS ÷ (DEPINS +
+    # DEPUNINS). Both estimates cover the SAME perimeter (domestic offices +
+    # insured US-territory branches); dividing by DEP (incl. foreign offices)
+    # understated custody/global banks — C showed 47.8% vs 76.8%, STT 75.9% vs
+    # 92.3% — and ÷DEPDOM overshot (STT 102%). Verified 2026-10-02: matches a
+    # third-party reference screen on 12/12 banks incl. charter groups.
+    insured = fdic_data.get("DEPINS")
+    uninsured_pct = (uninsured / (insured + uninsured) * 100) if (
+        uninsured is not None and insured is not None and insured + uninsured > 0) else None
     core_dep_pct = (coredep / dep * 100) if (dep and coredep is not None) else None
     brokered_pct = (brokered / dep * 100) if (dep and brokered is not None) else None
     nonint_dep_pct = (depnidom / dep * 100) if (dep and depnidom is not None) else None

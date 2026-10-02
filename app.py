@@ -5,6 +5,7 @@ A comprehensive, live-updating bank valuation screen using FDIC, SEC EDGAR,
 and IBKR APIs. Built with Streamlit for company-wide sharing.
 """
 
+import re
 import time
 import streamlit as st
 import pandas as pd
@@ -365,6 +366,12 @@ def _screen_valid_dyn(entries) -> list[dict]:
         if k in seen:
             continue
         if k.startswith(crf.FIELD_PREFIX) and k[len(crf.FIELD_PREFIX):] in crf.catalog():
+            out.append({"key": k})
+        elif (k.startswith(crf.FFIEC_PREFIX)
+              and re.fullmatch(r"[A-Z]{4}[A-Z0-9]{4}", k[len(crf.FFIEC_PREFIX):])):
+            # An MDRM-shaped code is kept even if this environment's store
+            # doesn't list it yet (values then render n/a) — a saved screen
+            # never silently loses a line item.
             out.append({"key": k})
         elif k.startswith(crf.FORMULA_PREFIX) and d.get("name") and d.get("expr"):
             try:
@@ -1091,6 +1098,12 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             _add_dyn({"key": crf.field_key(code)})
         st.session_state["screen_field_pick"] = None
 
+    def _pick_ffiec():
+        code = st.session_state.get("screen_ffiec_pick")
+        if code:
+            _add_dyn({"key": crf.ffiec_key(code)})
+        st.session_state["screen_ffiec_pick"] = None
+
     def _add_formula():
         ss = st.session_state
         name = (ss.get("screen_fx_name") or "").strip()
@@ -1253,6 +1266,19 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                            "items in dollars; ratios as FDIC reports them. A "
                            "multi-charter bank shows n/a where a ratio can't be "
                            "rebuilt exactly from its charters.")
+                _ffcat = crf.ffiec_catalog()
+                if _ffcat:
+                    st.selectbox(
+                        "Any FFIEC Call Report line item", sorted(_ffcat), index=None,
+                        format_func=crf.ffiec_label, key="screen_ffiec_pick",
+                        placeholder=f"Search {len(_ffcat):,} line items by MDRM code or name…",
+                        on_change=_pick_ffiec)
+                    st.caption("Every line item of the filed Call Report (e.g. RCONB530 "
+                               "AOCI). Values exist for quarters the FFIEC job has "
+                               "loaded; other quarters show n/a.")
+                else:
+                    st.caption("FFIEC line items (every Call Report MDRM code) appear "
+                               "here once the quarterly FFIEC load has run.")
         with r3[2]:
             with st.popover("ƒ Formula", use_container_width=True):
                 st.text_input("Name", key="screen_fx_name",

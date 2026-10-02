@@ -118,7 +118,12 @@ def build_deposit_timeline(hist_records: list[dict]) -> pd.DataFrame:
         # zero brokered deposits) is data and renders 0%, never n/a. A falsy
         # total still yields None (zero denominator).
         nonint_pct = (nonint / total * 100) if (total and nonint is not None) else None
-        uninsured_pct = (uninsured / total * 100) if (total and uninsured is not None) else None
+        # Same basis as analysis/valuation's uninsured_pct (THE definition):
+        # uninsured ÷ the insurance base (insured + uninsured), not ÷ DEP.
+        insured = r.get("DEPINS")
+        uninsured_pct = (uninsured / (insured + uninsured) * 100) if (
+            uninsured is not None and insured is not None
+            and insured + uninsured > 0) else None
         brokered_pct = (brokered / total * 100) if (total and brokered is not None) else None
 
         rows.append({

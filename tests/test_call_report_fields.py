@@ -199,13 +199,83 @@ class TestResolution(_Stubbed):
         self.assertIn("CD3LES", METRICS_BY_KEY["fdic:CD3LES"]["label"])
 
 
+class TestFfiecLineItems(_Stubbed):
+    """Stage 2: FFIEC full-report line items (data/call_report_full) in the
+    same picker/formula/filter machinery. Store stubbed: RCONB530 (AOCI, a USD
+    fact in $K) and RCFA7204 (leverage ratio, non-monetary)."""
+    CAT = [{"code": "RCONB530", "title": "ACCUMULATED OTHER COMPREHENSIVE INCOME",
+            "schedule": None, "unit": "usd_thousands"},
+           {"code": "RCFA7204", "title": "LEVERAGE RATIO", "schedule": None,
+            "unit": "non_monetary"}]
+    VALS = {628: {"RCONB530": -3500000.0, "RCFA7204": 8.1},
+            21761: {"RCONB530": -10.0, "RCFA7204": 30.0},
+            3309: {"RCONB530": -42000.0, "RCFA7204": 9.4}}
+
+    def setUp(self):
+        super().setUp()
+        from data import call_report_full
+        crf._FFIEC_MEMO.update(at=0.0, cat={})
+        self.calls = []
+
+        def _values(codes, report_date, certs):
+            self.calls.append((tuple(codes), report_date, tuple(certs)))
+            return {c: {k: self.VALS.get(c, {}).get(k) for k in codes} for c in certs}
+        self.patches += [mock.patch.object(call_report_full, "catalog", return_value=self.CAT),
+                         mock.patch.object(call_report_full, "values", side_effect=_values)]
+        for p in self.patches[-2:]:
+            p.start()
+
+    def tearDown(self):
+        super().tearDown()
+        crf._FFIEC_MEMO.update(at=0.0, cat={})
+
+    def test_catalog_kinds_and_labels(self):
+        cat = crf.ffiec_catalog()
+        self.assertEqual(cat["RCONB530"]["kind"], "level")
+        self.assertEqual(cat["RCFA7204"]["kind"], "asis")
+        d = crf.metric_def("ffiec:RCONB530")
+        self.assertEqual((d["format"], d["header"], d["category"]),
+                         ("dollars_auto", "RCONB530", "Call report (FFIEC)"))
+        self.assertIn("(FFIEC)", d["label"])
+        self.assertIn("(as reported)", crf.metric_def("ffiec:RCFA7204")["label"])
+
+    def test_single_charter_units_and_group_rules(self):
+        rows = crf.attach([{"ticker": "SBSI"}, {"ticker": "JPM"}],
+                          ["ffiec:RCONB530", "ffiec:RCFA7204"], "20260630")
+        sbsi, jpm = rows
+        self.assertEqual(sbsi["ffiec:RCONB530"], -42000.0 * 1000)   # $K → $
+        self.assertEqual(sbsi["ffiec:RCFA7204"], 9.4)                # as filed
+        self.assertEqual(jpm["ffiec:RCONB530"], (-3500000.0 - 10.0) * 1000)  # strict sum
+        self.assertIsNone(jpm["ffiec:RCFA7204"], "non-monetary item: n/a for a group")
+        # one batched store read for every cert of every row
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(sorted(self.calls[0][2]), [628, 3309, 21761])
+
+    def test_formula_can_mix_fdic_and_ffiec_codes(self):
+        F = {"fx:aoci_cd": {"key": "fx:aoci_cd", "name": "AOCI / CDs",
+                            "expr": "RCONB530 / CD3LES", "fmt": "Number"}}
+        r = crf.attach([{"ticker": "SBSI"}], ["fx:aoci_cd"], "20260630", F)[0]
+        self.assertAlmostEqual(r["fx:aoci_cd"], (-42000.0 * 1000) / (375319.0 * 1000))
+
+    def test_unreachable_store_means_no_items_and_na(self):
+        from data import call_report_full
+        crf._FFIEC_MEMO.update(at=0.0, cat={})
+        with mock.patch.object(call_report_full, "catalog", side_effect=RuntimeError("no db")),              mock.patch.object(call_report_full, "values", side_effect=RuntimeError("no db")):
+            self.assertEqual(crf.ffiec_catalog(), {})
+            r = crf.attach([{"ticker": "SBSI"}], ["ffiec:RCONB530"], "20260630")[0]
+        self.assertIsNone(r["ffiec:RCONB530"])
+        with self.assertRaises(ValueError):
+            crf.parse_formula("RCONB530 / ASSET")
+
+
 class TestSavedScreenDynRestore(unittest.TestCase):
     def test_valid_entries_restore_invalid_are_dropped(self):
         import ast
         src = (Path(__file__).parent.parent / "app.py").read_text(encoding="utf-8")
         fn = next(n for n in ast.parse(src).body
                   if isinstance(n, ast.FunctionDef) and n.name == "_screen_valid_dyn")
-        ns: dict = {}
+        import re
+        ns: dict = {"re": re}
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "app.py", "exec"), ns)
         got = ns["_screen_valid_dyn"]([
             {"key": "fdic:CD3LES"}, {"key": "fdic:CD3LES"},            # dup dropped
@@ -213,10 +283,13 @@ class TestSavedScreenDynRestore(unittest.TestCase):
             {"key": "fx:ok", "name": "OK", "expr": "ASSET/DEP", "fmt": "Percent"},
             {"key": "fx:bad", "name": "Bad", "expr": "ASSET/"},         # no longer parses
             {"key": "price"},                                            # not dynamic
+            {"key": "ffiec:RCONB530"},                                   # MDRM-shaped: kept
+            {"key": "ffiec:not-a-code"},                                 # junk: dropped
         ])
         self.assertEqual(got, [{"key": "fdic:CD3LES"},
                                {"key": "fx:ok", "name": "OK", "expr": "ASSET/DEP",
-                                "fmt": "Percent"}])
+                                "fmt": "Percent"},
+                               {"key": "ffiec:RCONB530"}])
 
 
 if __name__ == "__main__":
