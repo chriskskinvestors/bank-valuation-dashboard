@@ -82,6 +82,78 @@ class TestFoldMemberBlocks(unittest.TestCase):
                          [("Consolidated VIEs", True), ("Trading assets", False),
                           ("Loans", False)])
 
+    def test_member_rerendering_resolves_shared_concept_face_rows(self):
+        # HBAN FY2024 10-K R5 ($M, FY24/FY23/FY22): SEC renders the shared
+        # concept's TOTAL on both face rows, then re-renders the face lines per
+        # member. Each face row takes its member's own line; blocks drop.
+        RC = "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax"
+        rows = [
+            _row("Noninterest income:", [], header=True, eid="us-gaap_NoninterestIncomeAbstract"),
+            _row("Wealth and asset management revenue", [1468, 1400, 1318], eid=RC),
+            _row("Insurance income", [1468, 1400, 1318], eid=RC),
+            _row("Other noninterest income", [130, 160, 156],
+                 eid="us-gaap_NoninterestIncomeOtherOperatingIncome"),
+            _row("Total noninterest income", [2040, 1921, 1981], eid="us-gaap_NoninterestIncome"),
+            _row("Wealth and asset management revenue", [], header=True,
+                 eid="srt_ProductOrServiceAxis"),
+            _row("Noninterest income:", [], header=True, eid="us-gaap_NoninterestIncomeAbstract"),
+            _row("Wealth and asset management revenue", [364, 328, 300], eid=RC),
+            _row("Insurance income", [364, 328, 300], eid=RC),
+            _row("Insurance income", [], header=True, eid="srt_ProductOrServiceAxis"),
+            _row("Noninterest income:", [], header=True, eid="us-gaap_NoninterestIncomeAbstract"),
+            _row("Wealth and asset management revenue", [77, 74, 79], eid=RC),
+            _row("Insurance income", [77, 74, 79], eid=RC),
+        ]
+        out = S._fold_member_blocks(rows)
+        data = [(r["label"], r["values"]) for r in out if not r["header"]]
+        self.assertEqual(data, [
+            ("Wealth and asset management revenue", [364, 328, 300]),
+            ("Insurance income", [77, 74, 79]),
+            ("Other noninterest income", [130, 160, 156]),
+            ("Total noninterest income", [2040, 1921, 1981]),
+        ])
+        # A re-rendering block that never states a face row's own member:
+        # that row is n/a, never the total.
+        out2 = S._fold_member_blocks(rows[:5] + [
+            _row("Wealth and asset management revenue", [], header=True,
+                 eid="srt_ProductOrServiceAxis"),
+            _row("Wealth and asset management revenue", [364, 328, 300], eid=RC),
+            _row("Insurance income", [364, 328, 300], eid=RC)])
+        byl = {r["label"]: r["values"] for r in out2 if not r["header"]}
+        self.assertEqual(byl["Wealth and asset management revenue"], [364, 328, 300])
+        self.assertEqual(byl["Insurance income"], [None, None, None])
+
+    def test_segment_blocks_and_repeated_totals_untouched(self):
+        # 100-bank diff: C / ONB loan segments (loans + allowance per member),
+        # MCHB per-class EPS, COF consolidated trusts — blocks mixing elements
+        # are real disclosures. COF's face repeats a total under two labels
+        # (same element, same values) with no re-rendering block: untouched.
+        L, A = "us-gaap_LoansAndLeasesReceivable", "us-gaap_AllowanceForCreditLoss"
+        rows = [
+            _row("Total loans held for investment", [320472, 312331], eid=L),
+            _row("Total", [320472, 312331], eid=L),
+            _row("Allowance for credit losses", [-16194, -16018], eid=A),
+            _row("Consumer", [], header=True, eid="us-gaap_FinancingReceivablePortfolioSegmentAxis"),
+            _row("Total loans held for investment", [408533, 393102], eid=L),
+            _row("Allowance for credit losses", [-16194, -16018], eid=A),
+            _row("Common Class A", [], header=True, eid="us-gaap_StatementClassOfStockAxis"),
+            _row("Basic (in dollars per share)", [1.22, 0.14], eid="us-gaap_EarningsPerShareBasic"),
+            _row("Basic (in shares)", [207512468, 200878747],
+                 eid="us-gaap_WeightedAverageNumberOfSharesOutstandingBasic"),
+        ]
+        out = S._fold_member_blocks(rows)
+        self.assertEqual([(r["label"], r["header"], r["values"]) for r in out], [
+            ("Total loans held for investment", False, [320472, 312331]),
+            ("Total", False, [320472, 312331]),
+            ("Allowance for credit losses", False, [-16194, -16018]),
+            ("Consumer", True, []),
+            ("Total loans held for investment", False, [408533, 393102]),
+            ("Allowance for credit losses", False, [-16194, -16018]),
+            ("Common Class A", True, []),
+            ("Basic (in dollars per share)", False, [1.22, 0.14]),
+            ("Basic (in shares)", False, [207512468, 200878747]),
+        ])
+
     def test_no_axis_rows_untouched(self):
         rows = [_row("Net income", [1.0]), _row("Other", [2.0])]
         self.assertIs(S._fold_member_blocks(rows), rows)
