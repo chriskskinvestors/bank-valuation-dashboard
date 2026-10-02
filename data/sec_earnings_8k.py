@@ -45,7 +45,7 @@ import re
 from collections import Counter
 
 from data.sec_filing_scraper import (
-    _get, latest_filing, instance_facts, _undimensioned_total,
+    _get, _recent_metas, instance_facts, _undimensioned_total,
 )
 
 
@@ -1357,6 +1357,20 @@ def extract_earnings_figures(ex991_html: bytes, anchor: dict) -> dict:
     return out
 
 
+def _prior_periodic(cik, release_date: str) -> dict | None:
+    """The anchor filing: the latest 10-Q/10-K filed BEFORE the release —
+    the quarter preceding it, whatever day the payload is computed. The
+    latest filing is the release quarter's own 10-Q once it lands (Q2
+    releases in July, their 10-Qs in August), and every guard that reads
+    the anchor as the PRIOR quarter — prior-quarter flow bands, the
+    prior-column equality check — would then drop the release's figures
+    exactly when they match it. A Q1 release's anchor is the 10-K."""
+    for meta in _recent_metas(cik, ("10-Q", "10-K"), 8):
+        if meta.get("date") and meta["date"] < release_date:
+            return meta
+    return None
+
+
 # ── Public, cached entry point ───────────────────────────────────────────────
 def latest_earnings_8k_figures(cik) -> dict | None:
     """Latest-quarter headline figures from a bank's most-recent earnings 8-K
@@ -1387,7 +1401,9 @@ def latest_earnings_8k_figures(cik) -> dict | None:
     # v2: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss).
     # v3: per-row units + prior-quarter flow bands + average/prior-column
     #     guards (_headline_rows) — a v2 ×1000 value must not serve forever.
-    ckey = f"earnings_8k:v3:{f8k['accession']}"
+    # v4: anchored on the periodic report filed BEFORE the 8-K (v3 payloads
+    #     computed after the release quarter's own 10-Q anchored on it).
+    ckey = f"earnings_8k:v4:{f8k['accession']}"
     # Accession-keyed and version-prefixed = immutable; the default 24h read
     # ceiling would silently re-run the fetch+parse for every bank every day.
     payload = cache.get(ckey, max_age_s=None)
@@ -1397,8 +1413,7 @@ def latest_earnings_8k_figures(cik) -> dict | None:
             if not doc:
                 payload = {}
             else:
-                # Anchor against the prior 10-Q (timeliest), falling back to 10-K.
-                anchor_meta = latest_filing(cik, ("10-Q", "10-K"))
+                anchor_meta = _prior_periodic(cik, f8k["date"])
                 anchor = (_anchor_balance_sheet(instance_facts(anchor_meta))
                           if anchor_meta else {})
                 url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
